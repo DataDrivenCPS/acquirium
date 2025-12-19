@@ -1,0 +1,81 @@
+@prefix acq: <urn:acquirium#> .
+@prefix ex: <urn:ex/> .
+@prefix qudt: <http://qudt.org/schema/qudt/> .
+@prefix s223: <http://data.ashrae.org/standard223#> .
+
+ex:point_11 a acq:QuantifiableObservableProperty ;
+    s223:hasMedium acq:Medium3 ;
+    s223:ofSubstance acq:Substance3 ;
+    qudt:hasQuantityKind acq:QuantityKind5 ;
+    qudt:hasUnit acq:Unit11 ;
+    acq:hasExternalReference ex:point_11_mqtt_ref .
+
+ex:point_11_mqtt_ref a acq:MQTTReference ;
+    acq:Broker "mosquitto" ;
+    acq:DataSource "SCADA" ;
+    acq:Port "1883" ;
+    acq:Topic "topic1" ;
+    acq:time_key "Timestamp" ;
+    acq:value_key "Value" .
+
+ex:point_12 a acq:QuantifiableObservableProperty ;
+    s223:hasMedium acq:Medium4 ;
+    s223:ofSubstance acq:Substance4 ;
+    qudt:hasQuantityKind acq:QuantityKind6 ;
+    qudt:hasUnit acq:Unit12 ;
+    acq:hasExternalReference ex:point_12_mqtt_ref .
+
+ex:point_12_mqtt_ref a acq:MQTTReference ;
+    acq:Broker "mosquitto" ;
+    acq:DataSource "SCADA" ;
+    acq:Port "1883" ;
+    acq:Topic "topic2" ;
+    acq:time_key "Timestamp" ;
+    acq:value_key "Value" .
+
+ex:point_13 a acq:QuantifiableObservableProperty ;
+    s223:hasMedium acq:Medium4 ;
+    s223:ofSubstance acq:Substance4 ;
+    qudt:hasQuantityKind acq:QuantityKind6 ;
+    qudt:hasUnit acq:Unit13 ;
+    acq:hasExternalReference ex:point_13_mqtt_ref .
+
+ex:point_13_mqtt_ref a acq:MQTTReference ;
+    acq:Broker "mosquitto" ;
+    acq:DataSource "SCADA" ;
+    acq:Port "1883" ;
+    acq:Topic "topic3" ;
+    acq:time_key "Timestamp" ;
+    acq:value_key "Value" .
+
+ex:point_14 a acq:QuantifiableObservableProperty ;
+    s223:hasMedium acq:Medium4 ;
+    s223:ofSubstance acq:Substance4 ;
+    qudt:hasQuantityKind acq:QuantityKind7 ;
+    qudt:hasUnit acq:Unit14 ;
+    acq:hasExternalReference ex:point_14_mqtt_ref .
+
+ex:point_14_mqtt_ref a acq:MQTTReference ;
+    acq:Broker "mosquitto" ;
+    acq:DataSource "SCADA" ;
+    acq:Port "1883" ;
+    acq:Topic "topic4" ;
+    acq:time_key "Timestamp" ;
+    acq:value_key "Value" .
+
+ex:eq_11 a acq:A ;
+    acq:x ex:eq_12 ;
+    acq:y ex:eq_13 .
+
+ex:eq_12 a acq:C ;
+    acq:hasProperty ex:point_11,
+        ex:point_12 ;
+    acq:x ex:eq_13 ;
+    acq:z ex:eq_11 .
+
+ex:eq_13 a acq:A ;
+    acq:hasProperty ex:point_13,
+        ex:point_14 ;
+    acq:w ex:eq_11 ;
+    acq:z ex:eq_12 .
+

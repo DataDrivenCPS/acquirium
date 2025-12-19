@@ -1,0 +1,40 @@
+[project]
+name = "acquirium"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Gabe Fierro", email = "gtfierro@mines.edu" },
+    { name = "Mete Saka", email = "saka@mines.edu"}
+]
+requires-python = ">=3.11"
+
+dependencies = [
+    "adbc-driver-postgresql>=1.9.0",
+    "fastapi>=0.125.0",
+    "ipykernel==7.0.1",
+    "numpy==2.3.5",
+    "paho-mqtt>=2.1.0",
+    "polars>=1.36.1",
+    "psycopg[binary]>=3.3.1",
+    "pyarrow>=22.0.0",
+    "pydantic>=2.12.5",
+    "pyontoenv==0.4.0a4",
+    "pyoxigraph>=0.5.2",
+    "pytest>=9.0.2",
+    "python-dateutil>=2.9.0.post0",
+    "requests>=2.32.5",
+    "rich>=14.2.0",
+    "uvicorn>=0.38.0",
+]
+
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = [
+    "q>=2.7",
+]
+no-build-isolation-package = ["pygit2"]

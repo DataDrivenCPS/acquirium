@@ -1,0 +1,87 @@
+version: "3.9"
+
+services:
+  timescaledb:
+    image: timescale/timescaledb-ha:pg17
+    container_name: acquirium_timescaledb
+    environment:
+      POSTGRES_USER: acquirium
+      POSTGRES_PASSWORD: acquirium
+      POSTGRES_DB: acquirium_test
+    ports:
+      - "5432:5432"
+
+    volumes:
+      - tsdb_data:/var/lib/postgresql/data
+      - ./src/acquirium/Internals/init-timescaledb.sql:/docker-entrypoint-initdb.d/init-timescaledb.sql:ro
+
+    networks:
+      - acquirium_net
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: acquirium_mosquitto
+    ports:
+      - "1883:1883"   # MQTT
+      # - "9001:9001" # WebSockets (optional; enable in config if you want it)
+    volumes:
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+      - ./src/acquirium/Internals/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    networks:
+      - acquirium_net
+
+  acquirium:
+    build: 
+      context: .
+      dockerfile: ./src/acquirium/Dockerfile
+    container_name: acquirium_server
+    ports:
+      - "8000:8000"
+    environment:
+      # Use service names as hostnames inside the docker network
+      ACQUIRIUM_DATA_DIR: ./.acquirium
+      PG_DSN: "postgresql://acquirium:acquirium@timescaledb:5432/acquirium_test"
+      ACQUIRIUM_LEXICON_PATH : ./lexicon.json
+      ACQUIRIUM_RECREATE: "true"
+    depends_on:
+      - timescaledb
+      - mosquitto
+    restart: unless-stopped
+    networks:
+      - acquirium_net
+
+  watertap_sim:
+    platform: linux/arm64
+    build:
+      context: ./deployments/WATERTAP/scripts
+      dockerfile: Dockerfile
+    container_name: acquirium_watertap_sim
+    depends_on:
+      - mosquitto
+    networks:
+      - acquirium_net
+    profiles:
+      - watertap_simulation
+
+  testing_service:
+    platform: linux/arm64
+    build:
+      context: .
+      dockerfile: ./tests/Dockerfile
+    container_name: acquirium_testing_service
+    depends_on:
+      - mosquitto
+      - timescaledb
+    networks:
+      - acquirium_net
+    profiles:
+      - test
+
+volumes:
+  tsdb_data:
+  mosquitto_data:
+  mosquitto_log:
+
+networks:
+  acquirium_net:
