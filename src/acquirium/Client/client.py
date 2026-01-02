@@ -8,7 +8,7 @@ import polars as pl
 import pyarrow.ipc as ipc
 # from io import BytesIO
 from acquirium.internals.models import Order
-
+from acquirium.internals.internals_namespaces import *
 
 class AcquiriumClient:
     def __init__(self, 
@@ -49,6 +49,8 @@ class AcquiriumClient:
         }
         response = requests.post(url, json=data)
         response.raise_for_status()
+        self.ingest_external_references_from_graph()
+
 
     def timeseries_df(
         self,
@@ -168,3 +170,71 @@ class AcquiriumClient:
         """
         status = self.ingest_status()
         return status.get("scheduled_tasks", 0) > 0
+
+    def ingest_external_references_from_graph(self) -> dict:
+        """
+        Query the server graph for CSV/Parquet external references.
+        Read those files locally (host filesystem) and upload bytes to server for ingestion.
+        Returns counts.
+        """
+        q = f"""
+            SELECT ?data ?ref ?type ?path ?timeCol ?valueCol
+            WHERE {{
+              ?data <{HAS_EXTERNAL_REFERENCE}> ?ref .
+              ?ref a ?type .
+              OPTIONAL {{ ?ref <{REF_PATH}> ?path . }}
+              OPTIONAL {{ ?ref <{REF_TIME_COL}> ?timeCol . }}
+              OPTIONAL {{ ?ref <{REF_VALUE_COL}> ?valueCol . }}
+              FILTER(?type IN (<{PARQUET_REF}>, <{CSV_REF}>))
+            }}
+        """
+
+        res = self.sparql_query(q, use_union=True)
+        rows = res.get("rows", [])
+
+        ok = 0
+        skipped = 0
+        failed = 0
+
+        url = f"{self.base_url}/ingest_external_reference"
+
+        for data_uri, ref_uri, ref_type, path, time_col, value_col in rows:
+            if not path:
+                skipped += 1
+                continue
+
+            # path is likely a quoted literal from SPARQL JSON results
+            p_str = str(path).strip().strip('"').strip("'")
+            p = Path(p_str)
+
+            if not p.is_absolute():
+                # Interpret relative paths relative to the client's current working directory
+                p = (Path.cwd() / p).resolve()
+
+            if not p.exists():
+                failed += 1
+                continue
+
+            time_column_no = int(str(time_col).strip('"')) if time_col else 0
+            value_column_no = int(str(value_col).strip('"')) if value_col else 1
+
+            try:
+                with open(p, "rb") as f:
+                    content = f.read()
+
+                files = {"file": (p.name, content, "application/octet-stream")}
+                data = {
+                    "data_uri": str(data_uri),
+                    "ref_uri": str(ref_uri),
+                    "ref_type": str(ref_type),
+                    "time_column_no": str(time_column_no),
+                    "value_column_no": str(value_column_no),
+                }
+
+                r = requests.post(url, data=data, files=files)
+                r.raise_for_status()
+                ok += 1
+            except Exception:
+                failed += 1
+
+        return {"ok": ok, "skipped": skipped, "failed": failed, "total": len(rows)}

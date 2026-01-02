@@ -19,7 +19,17 @@ uv sync
 
 To run any example script using Acquirium, you must first start the backend services and Acquirium Server:
 ```
-docker compose up -d
+make up
+```
+
+If you want to recreate the instance (will delete all previously inserted data - graphs):
+
+```
+make up ACQUIRIUM_RECREATE=true
+```
+To stop:
+```
+make down
 ```
 
 #### Running the WaterTAP and Streaming Simulations:
@@ -27,7 +37,7 @@ docker compose up -d
 To run the WaterTAP simulation, streaming simulator, and API examples, start Docker using the WaterTAP profile instead:
 
 ```
-docker compose --profile watertap_simulation up -d
+make watertap-up
 ```
 
 After that you can run our API example:
@@ -37,14 +47,20 @@ uv run scripts/api_example.py
 or the notebook examples
 [Example notebook](./notebooks/watertap-single-pump.ipynb)
 
+After you're done, run this to stop containers:
+
+```
+make watertap-down
+```
+
+Note that every start of watertap workflow recreates the system (all data is lost)
 
 
 #### Running Tests
 
 To run pytest tests:
 ```
-docker compose --profile test up -d
-uv run pytest tests
+make test
 ```
 
 #### Data Persistence Note

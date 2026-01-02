@@ -17,6 +17,11 @@ services:
 
     networks:
       - acquirium_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U acquirium -d acquirium_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   mosquitto:
     image: eclipse-mosquitto:2
@@ -30,6 +35,11 @@ services:
       - ./src/acquirium/internals/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
     networks:
       - acquirium_net
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -h localhost -p 1883 -t '$$SYS/broker/version' -C 1 >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   acquirium:
     build: 
@@ -43,13 +53,21 @@ services:
       ACQUIRIUM_DATA_DIR: ./.acquirium
       PG_DSN: "postgresql://acquirium:acquirium@timescaledb:5432/acquirium_test"
       ACQUIRIUM_LEXICON_PATH : ./lexicon.json
-      ACQUIRIUM_RECREATE: "true"
+      ACQUIRIUM_RECREATE: ${ACQUIRIUM_RECREATE:-false}
     depends_on:
-      - timescaledb
-      - mosquitto
+      mosquitto:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - acquirium_net
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()\""]
+      interval: 3s
+      timeout: 2s
+      retries: 40
+      start_period: 20s
 
   watertap_sim:
     platform: linux/arm64
@@ -58,7 +76,12 @@ services:
       dockerfile: Dockerfile
     container_name: acquirium_watertap_sim
     depends_on:
-      - mosquitto
+      mosquitto:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+      acquirium:
+        condition: service_healthy
     networks:
       - acquirium_net
     profiles:
@@ -71,8 +94,12 @@ services:
       dockerfile: ./tests/Dockerfile
     container_name: acquirium_testing_service
     depends_on:
-      - mosquitto
-      - timescaledb
+      mosquitto:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+      acquirium:
+        condition: service_healthy
     networks:
       - acquirium_net
     profiles:

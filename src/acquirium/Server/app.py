@@ -5,7 +5,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Any, Optional, Iterator
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from dateutil import parser as dtparser
 from pydantic import BaseModel, Field
@@ -23,7 +23,6 @@ log = logging.getLogger("acquirium.api")
 
 class Health(BaseModel):
     ok: bool
-    mqtt_subscriptions: int | None = None
 
 
 class IngestStatus(BaseModel):
@@ -65,9 +64,6 @@ async def lifespan(app: FastAPI):
 
     # Start ingestion services at startup
     try:
-        # one time file ingestion kickoff (async threads inside Manager)
-        m._ingest_external_references_async()
-
         # start mqtt subscribers from graph
         n = m._connect_mqtt_streams_from_graph()
         app.state.mqtt_subscriptions = n
@@ -96,8 +92,7 @@ app = FastAPI(title="Acquirium API", version="0.1", lifespan=lifespan)
 @app.get("/health", response_model=Health)
 def health():
     # If we got here, the app is up
-    mqtt_n = getattr(app.state, "mqtt_subscriptions", None)
-    return Health(ok=True, mqtt_subscriptions=mqtt_n)
+    return Health(ok=True)
 
 @app.get("/ingest_status", response_model=IngestStatus)
 def ingest_status():
@@ -122,6 +117,32 @@ def insert_graph(req: InsertGraphRequest) -> dict[str, Any]:
         return {"ok": True}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/ingest_external_reference")
+async def ingest_external_reference(
+    data_uri: str = Form(...),
+    ref_uri: str = Form(...),
+    ref_type: str = Form(...),          # PARQUET_REF or CSV_REF URI as string
+    time_column_no: int = Form(0),
+    value_column_no: int = Form(1),
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+    try:
+        content = await file.read()
+        n = app.state.manager.ingest_reference_bytes(
+            data_uri=data_uri,
+            ref_uri=ref_uri,
+            ref_type=ref_type,
+            content=content,
+            time_column_no=time_column_no,
+            value_column_no=value_column_no,
+            filename=file.filename or "upload",
+        )
+        return {"ok": True, "rows_ingested": n}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 
 
 def _parse_dt(s: Optional[str]) -> Optional[datetime]:
