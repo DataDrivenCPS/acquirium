@@ -13,7 +13,7 @@ import logging
 import paho.mqtt.client as mqtt
 
 from acquirium.Storage.timescale_store import TimescaleStore  # adjust import if needed
-from acquirium.Internals.internals_namespaces import *
+from acquirium.internals.internals_namespaces import *
 import numpy as np
 
 @dataclass(frozen=True)

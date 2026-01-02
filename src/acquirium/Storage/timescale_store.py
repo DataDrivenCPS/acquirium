@@ -10,7 +10,7 @@ import psycopg
 from psycopg import sql
 from psycopg.types.json import Json
 
-from acquirium.Internals.models import Order, TimeseriesInfo 
+from acquirium.internals.models import Order, TimeseriesInfo 
 from acquirium.Storage.base import TimeseriesStore
 import logging
 import pyarrow as pa

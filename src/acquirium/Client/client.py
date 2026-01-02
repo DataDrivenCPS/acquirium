@@ -7,7 +7,7 @@ import polars as pl
 # import pyarrow as pa
 import pyarrow.ipc as ipc
 # from io import BytesIO
-from acquirium.Internals.models import Order
+from acquirium.internals.models import Order
 
 
 class AcquiriumClient:

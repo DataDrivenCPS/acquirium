@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from acquirium import Acquirium
 
 from acquirium.Client.query import Query
-from acquirium.Internals.internals_namespaces import (
+from acquirium.internals.internals_namespaces import (
     HAS_UNIT,
     HAS_MEDIUM,
     HAS_QUANTITY_KIND,

@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Protocol, runtime_checkable
 
-from acquirium.Internals.models import Order, TimeseriesInfo
+from acquirium.internals.models import Order, TimeseriesInfo
 
 
 @runtime_checkable

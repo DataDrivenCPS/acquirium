@@ -13,7 +13,7 @@ services:
 
     volumes:
       - tsdb_data:/var/lib/postgresql/data
-      - ./src/acquirium/Internals/init-timescaledb.sql:/docker-entrypoint-initdb.d/init-timescaledb.sql:ro
+      - ./src/acquirium/internals/init-timescaledb.sql:/docker-entrypoint-initdb.d/init-timescaledb.sql:ro
 
     networks:
       - acquirium_net
@@ -27,7 +27,7 @@ services:
     volumes:
       - mosquitto_data:/mosquitto/data
       - mosquitto_log:/mosquitto/log
-      - ./src/acquirium/Internals/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./src/acquirium/internals/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
     networks:
       - acquirium_net
 
