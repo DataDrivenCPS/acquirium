@@ -19,6 +19,7 @@ def acquirium_client_csv():
     )
 
     acq.insert_graph("tests/test_model_csv.ttl")
+    time.sleep(1)
     status = acq.client.ingest_status()
     done = status['done']
     total = status['total']

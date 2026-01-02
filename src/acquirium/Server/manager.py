@@ -75,7 +75,7 @@ class Manager:
         effective_dsn = pg_dsn or os.getenv("PG_DSN")
         if not effective_dsn:
             raise ValueError("Timescale/Postgres DSN not provided. Set pg_dsn or PG_DSN.")
-        timescale: TimeseriesStore = TimescaleStore(
+        timescale: TimescaleStore = TimescaleStore(
             dsn=effective_dsn,
             recreate=recreate,
         )
@@ -198,77 +198,6 @@ class Manager:
 
         return count
 
-    def _ingest_external_references_async(self) -> list[Future]:
-        """
-        Scan the graph for external references and ingest backing files asynchronously.
-
-        Returns: list of futures (you can ignore them, or inspect .done(), .exception(), etc.)
-        """
-
-        # 1) query graph for data_node -> ref_node pairs and ref type + path
-        q = f"""
-            SELECT ?data ?ref ?type ?path ?timeCol ?valueCol
-            WHERE {{
-            ?data <{HAS_EXTERNAL_REFERENCE}> ?ref .
-            ?ref a ?type . 
-            OPTIONAL {{ ?ref <{REF_PATH}> ?path . }}
-            OPTIONAL {{ ?ref <{REF_TIME_COL}> ?timeCol . }}
-            OPTIONAL {{ ?ref <{REF_VALUE_COL}> ?valueCol . }}
-            FILTER(?type IN (<{PARQUET_REF}>, <{CSV_REF}>))
-            }}
-        """
-        res = self.graph_store.sparql_query(q, use_union=True)
-        rows = res.get("rows", [])
-
-        futures: list[Future] = []
-        for data_uri, ref_uri, ref_type, path, time_col, value_col in rows:
-            if not path:
-                continue
-            file_path = Path(str(path).strip('"'))
-
-            # 2) compute hash and consult cache
-            if not file_path.exists():
-                continue
-            
-            if not time_col:
-                time_column_no = 0
-            else:
-                time_column_no = int(str(time_col).strip('"'))
-            if not value_col:
-                value_column_no = 1
-            else:
-                value_column_no = int(str(value_col).strip('"'))
-
-            digest = self._file_sha256(file_path)
-            cache_key = f"{ref_uri}"
-            with self._ingest_cache_lock:
-                cache = self._load_ingest_cache()
-                prev: dict = cache.get(cache_key, {})
-                if prev.get("sha256") == digest:
-                    continue
-                # mark “scheduled” now to avoid duplicate scheduling in fast successive calls
-                cache[cache_key] = {"sha256": digest, "status": "scheduled", "path": str(file_path)}
-                self._save_ingest_cache(cache)
-
-            # 3) schedule ingestion in background thread
-            fut = self._executor.submit(
-                _ingest_reference_worker,
-                pg_dsn=self.pg_dsn,
-                data_uri=str(data_uri),
-                ref_uri=str(ref_uri),
-                ref_type=str(ref_type),
-                file_path=str(file_path),
-                cache_path=str(self._ingest_cache_path),
-                time_column_no=time_column_no,
-                value_column_no=value_column_no,
-                lock=self._ingest_cache_lock,
-            )
-            futures.append(fut)
-            self._pending_ingests.append(fut)
-
-        return futures
-
-
     def _save_ingest_cache(self, cache: dict[str, Any]) -> None:
         tmp = self._ingest_cache_path.with_suffix(".tmp")
         tmp.write_text(json.dumps(cache, indent=2, sort_keys=True, default=str))
@@ -301,10 +230,7 @@ class Manager:
         
         try:
             self.graph_store.insert_graph(rdf_graph, format=format, replace=replace)
-            logging.info("acquirium: inserted graph into store, refreshing text match indexes")
-            # refresh matcher using updated union graph
             logging.info("acquirium: inserted graph into store, now ingesting data")
-            self._ingest_external_references_async()
             self._connect_mqtt_streams_from_graph()
             
         except Exception as e:
@@ -342,6 +268,86 @@ class Manager:
             batch_size=batch_size,
         )
     
+    def ingest_reference_bytes(
+            self,
+            *,
+            data_uri: str,
+            ref_uri: str,
+            ref_type: str,
+            content: bytes,
+            time_column_no: int = 0,
+            value_column_no: int = 1,
+            filename: str = "upload",
+        ) -> int:
+        import polars as pl
+        from io import BytesIO
+        import time
+
+        # Optional: cache using sha256 of bytes to avoid re-ingesting same ref
+        digest = hashlib.sha256(content).hexdigest()
+        cache_key = ref_uri
+        with self._ingest_cache_lock:
+            cache = self._load_ingest_cache()
+            prev: dict = cache.get(cache_key, {})
+            if prev.get("sha256") == digest and prev.get("status") == "done":
+                return int(prev.get("rows_ingested", 0) or 0)
+            cache[cache_key] = {
+                "sha256": digest,
+                "status": "scheduled",
+                "filename": filename,
+            }
+            self._save_ingest_cache(cache)
+
+        try:
+            bio = BytesIO(content)
+
+            if ref_type == str(PARQUET_REF):
+                df = pl.read_parquet(bio, columns=[time_column_no, value_column_no])
+            elif ref_type == str(CSV_REF):
+                df = pl.read_csv(bio, columns=[time_column_no, value_column_no])
+            else:
+                raise ValueError(f"Unsupported reference type: {ref_type}")
+
+            # Rename selected columns to ts/value regardless of original names
+            if df.width != 2:
+                raise ValueError(f"Expected 2 columns after selection, got {df.width}")
+
+            df = df.rename({df.columns[0]: "ts", df.columns[1]: "value"})
+
+            df = df.with_columns(pl.lit(data_uri).alias("point_uri"))
+            df = df.select(["point_uri", "ts", "value"])
+
+            if df.schema.get("ts") == pl.Utf8:
+                df = df.with_columns(pl.col("ts").str.to_datetime())
+
+            if df.schema.get("value") != pl.Utf8:
+                df = df.with_columns(pl.col("value").cast(pl.Utf8))
+
+            result = self.timescale.bulk_insert_polars(df)
+
+            with self._ingest_cache_lock:
+                cache = self._load_ingest_cache()
+                entry = cache.get(cache_key, {})
+                entry["status"] = "done"
+                entry["ingested_at"] = time.time()
+                entry["rows_ingested"] = result
+                entry["filename"] = filename
+                cache[cache_key] = entry
+                self._save_ingest_cache(cache)
+
+            return int(result)
+
+        except Exception as exc:
+            with self._ingest_cache_lock:
+                cache = self._load_ingest_cache()
+                entry = cache.get(cache_key, {})
+                entry["status"] = "error"
+                entry["error"] = str(exc)
+                entry["filename"] = filename
+                cache[cache_key] = entry
+                self._save_ingest_cache(cache)
+            raise
+
 
     def sparql_dict(self, query: str, use_union: bool = True) -> dict[str, Any]:
         """
@@ -388,84 +394,3 @@ class Manager:
         self.timescale.close()
         self.graph_store.close()
 
-
-###########################################
-## Background ingestion worker
-###########################################
-
-def _ingest_reference_worker(*, pg_dsn: str, data_uri: str, ref_uri: str, ref_type: str, file_path: str, cache_path: str, time_column_no: int, value_column_no:int, lock) -> None:
-    import polars as pl
-    from datetime import datetime
-    from pathlib import Path
-    import json
-    import time
-
-    from acquirium.Storage.timescale_store import TimescaleStore  # adjust import to your layout
-
-    cache_p = Path(cache_path)
-    lock_p = cache_p.with_suffix(".lock")
-
-    def load_cache() -> dict:
-        if not cache_p.exists():
-            return {}
-        try:
-            return json.loads(cache_p.read_text())
-        except Exception:
-            return {}
-
-    def save_cache(cache: dict) -> None:
-        tmp = cache_p.with_suffix(f".tmp.{int(time.time())}")
-        tmp.write_text(json.dumps(cache, indent=2, sort_keys=True, default=str))
-        tmp.replace(cache_p)
-
-    try:
-        ts = TimescaleStore(dsn=pg_dsn)
-
-        p = Path(file_path)
-
-        if ref_type == str(PARQUET_REF):
-            df = pl.read_parquet(p,columns=[time_column_no,value_column_no],new_columns=['ts','value'])
-        elif ref_type == str(CSV_REF):  # CSV_REF
-            df = pl.read_csv(p,columns=[time_column_no,value_column_no],new_columns=['ts','value'])
-        else:
-            # should not happen due to prior filtering
-            raise ValueError(f"Unsupported reference type: {ref_type}")
-
-        # Example assumption: long-form file
-        # the data_uri is used as the point id, so add point_id column
-        df = df.with_columns(pl.lit(data_uri).alias("point_uri"))
-        df = df.select(["point_uri","ts", "value"])
-        # Parse time if needed; your ingestion expects datetime objects
-        # If your time is already datetime, this is fine.
-        if df.schema.get("ts") == pl.Utf8:
-            df = df.with_columns(pl.col("ts").str.to_datetime())
-        # force all values to utf8 strings
-        if df.schema.get("value") != pl.Utf8:
-            df = df.with_columns(pl.col("value").cast(pl.Utf8))
-        result = ts.bulk_insert_polars(df)
-
-        ts.close()
-
-        if result and result >= 0:
-            logging.info("Ingested %d rows for %s from %s", result, data_uri, file_path)
-            with lock:
-                # Update cache as done
-                cache = load_cache()
-                entry = cache.get(ref_uri, {})
-                entry["status"] = "done"
-                entry["ingested_at"] = time.time()
-                entry["rows_ingested"] = result
-                cache[ref_uri] = entry
-                save_cache(cache)
-        else:
-            raise RuntimeError(f"Ingestion failed for {data_uri} from {file_path}")
-    except Exception as exc:
-        with lock:
-            # Update cache as error
-            cache = load_cache()
-            entry = cache.get(ref_uri, {})
-            entry["status"] = "error"
-            entry["error"] = str(exc)
-            cache[ref_uri] = entry
-            save_cache(cache)
-            raise
