@@ -1,6 +1,6 @@
 import pytest
 from acquirium import Acquirium
-from acquirium.Internals.internals_namespaces import *
+from acquirium.internals.internals_namespaces import *
 from acquirium.Client.query import Query
 import shutil
 

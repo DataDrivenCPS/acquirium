@@ -8,9 +8,9 @@ from time import perf_counter
 from rdflib import Graph
 
 from acquirium.Storage import OxigraphGraphStore, TimescaleStore, TimeseriesStore
-from acquirium.Internals.qudt_units import QUDTUnitConverter
+from acquirium.internals.qudt_units import QUDTUnitConverter
 from acquirium.soft_sensors import SoftSensorRunner
-from acquirium.Internals.internals_namespaces import *
+from acquirium.internals.internals_namespaces import *
 
 import json
 import hashlib

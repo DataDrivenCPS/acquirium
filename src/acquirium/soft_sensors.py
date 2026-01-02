@@ -17,7 +17,7 @@ from contextlib import nullcontext
 
 from typing import Any
 
-from acquirium.Internals.models import SoftSensorSpec
+from acquirium.internals.models import SoftSensorSpec
 from acquirium.Storage import TimeseriesStore
 from acquirium.Storage.graph_store import OxigraphGraphStore
 

@@ -13,7 +13,7 @@ from datetime import datetime
 
 from acquirium.Server.manager import Manager
 
-from acquirium.Internals.models import Order
+from acquirium.internals.models import Order
 
 import pyarrow.ipc as ipc
 import pyarrow as pa

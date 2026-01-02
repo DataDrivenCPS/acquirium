@@ -3,7 +3,7 @@ from rich.console import Console
 from rich.table import Table
 from dataclasses import dataclass, field, replace
 from typing import Any, Dict, List, Optional , Union
-from acquirium.Internals.internals_namespaces import *
+from acquirium.internals.internals_namespaces import *
 import polars as pl
 from datetime import datetime
 from acquirium.TextMatch.decorators import flex_query_rdf_inputs, FlexSpec

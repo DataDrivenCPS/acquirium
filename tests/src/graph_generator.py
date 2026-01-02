@@ -14,7 +14,7 @@ from rdflib import Graph, Namespace, Literal
 from rdflib.namespace import RDF
 
 # Pull in your namespaces (adjust import path if needed)
-from acquirium.Internals.internals_namespaces import *
+from acquirium.internals.internals_namespaces import *
 
 
 def build_test_graph_csv() -> Graph:

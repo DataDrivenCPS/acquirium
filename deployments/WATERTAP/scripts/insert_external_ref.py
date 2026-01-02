@@ -1,5 +1,5 @@
 import rdflib
-from acquirium.Internals.internals_namespaces import *
+from acquirium.internals.internals_namespaces import *
 
 wbs = rdflib.Namespace("urn:ex/")
 watr = rdflib.Namespace("urn:nawi-water-ontology#")

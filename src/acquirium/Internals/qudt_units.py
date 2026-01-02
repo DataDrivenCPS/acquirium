@@ -29,7 +29,7 @@ from decimal import Decimal, getcontext
 from rdflib import Graph, Literal, URIRef
 from rdflib.namespace import RDF, RDFS, SKOS, XSD
 
-from acquirium.Internals.internals_namespaces import QUDT, UNIT
+from acquirium.internals.internals_namespaces import QUDT, UNIT
 
 # QUDT also defines a quantity kind vocabulary; we keep the namespace local to
 # avoid coupling other parts of the codebase to it.

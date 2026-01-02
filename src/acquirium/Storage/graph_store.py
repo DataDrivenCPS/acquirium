@@ -10,10 +10,10 @@ from rdflib.namespace import OWL
 
 
 ## ALL NAMESPACES AND INTERNAL PREDICATES HERE ##
-from acquirium.Internals.internals_namespaces import *
+from acquirium.internals.internals_namespaces import *
 
-from acquirium.Internals.models import Point, PointCreateRequest
-from acquirium.Internals.qudt_units import QUDTUnitConverter, UnitNotFound
+from acquirium.internals.models import Point, PointCreateRequest
+from acquirium.internals.qudt_units import QUDTUnitConverter, UnitNotFound
 
 
 
