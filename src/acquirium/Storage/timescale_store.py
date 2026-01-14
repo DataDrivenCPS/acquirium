@@ -10,7 +10,7 @@ import psycopg
 from psycopg import sql
 from psycopg.types.json import Json
 
-from acquirium.internals.models import Order, TimeseriesInfo 
+from acquirium.internals.models import Order, TimeseriesInfo, TimeInterval, LogEntry, TimeIntervalModel
 from acquirium.Storage.base import TimeseriesStore
 import logging
 import pyarrow as pa
@@ -23,6 +23,7 @@ TIMESERIES_TABLE = "timeseries"
 STREAMS_TABLE = "streams"
 SOFT_SENSOR_TABLE = "soft_sensors"
 SOFT_SENSOR_RUNS = "soft_sensor_runs"
+LOGS_TABLE = "logs"
 
 
 class TimescaleStore(TimeseriesStore):
@@ -45,6 +46,7 @@ class TimescaleStore(TimeseriesStore):
                 cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(STREAMS_TABLE)))
                 cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(SOFT_SENSOR_TABLE)))
                 cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(SOFT_SENSOR_RUNS)))
+                cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(LOGS_TABLE)))
         self.ensure_table()
 
     # -------------------- table management --------------------
@@ -109,6 +111,25 @@ class TimescaleStore(TimeseriesStore):
                 );
                 """
             )
+            cur.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {LOGS_TABLE} (
+                    point_uri TEXT NOT NULL,
+                    timestamp TIMESTAMPTZ NOT NULL,
+                    observed tstzrange,
+                    message TEXT NOT NULL
+                );
+                """
+            )
+            # index to support lookups by point_uri, timestamp
+            cur.execute(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS idx_logs_point_time ON {LOGS_TABLE} (point_uri, timestamp);"
+            )
+            # index to support lookups by observed time range
+            cur.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_logs_observed ON {LOGS_TABLE} USING GIST (observed);"
+            )
+
         if not self._in_tx:
             self.conn.commit()
         return TIMESERIES_TABLE
@@ -124,6 +145,7 @@ class TimescaleStore(TimeseriesStore):
                 f"INSERT INTO {TIMESERIES_TABLE} (point_uri, ts, value) VALUES (%s, %s, %s) ON CONFLICT (point_uri, ts) DO UPDATE SET value = EXCLUDED.value",
                 payload,
             )
+        logger.d
         return len(rows_list)
 
     def replace_rows(self, point_uri: str, rows: Iterable[tuple[datetime, Any]]) -> int:
@@ -162,10 +184,10 @@ class TimescaleStore(TimeseriesStore):
                     """
                 )
                 cur.execute(f"DROP TABLE IF EXISTS {random_string};")
-            logging.info(f"acquirium: bulk inserted {rows_affected} rows into {TIMESERIES_TABLE}")
+            logger.info(f"acquirium: bulk inserted {rows_affected} rows into {TIMESERIES_TABLE}")
             return rows_affected
         except Exception as e:
-            print(f"An error occurred: {e}")
+            logger.error(f"An error occurred: {e}")
             return -1
 
     # -------------------- stream handles --------------------
@@ -259,6 +281,129 @@ class TimescaleStore(TimeseriesStore):
             cnt, earliest, latest = cur.fetchone()
         return TimeseriesInfo(table=TIMESERIES_TABLE, row_count=cnt, earliest=earliest, latest=latest)
 
+    # -------------------- logging API --------------------
+
+    def insert_log(self, log: LogEntry) -> None:
+        point_uri: str = log.point_uri
+        ts: datetime = log.timestamp
+        message: str = log.message
+
+        # if period is optional
+        if log.period is None:
+            observation_start = None
+            observation_end = None
+        else:
+            observation_start = log.period.start
+            observation_end = log.period.end
+
+        if observation_start is not None and observation_end is not None:
+            # Let Postgres build the range
+            sql = f"""
+                INSERT INTO {LOGS_TABLE} (point_uri, timestamp, observed, message)
+                VALUES (%s, %s, tstzrange(%s, %s, '[)'), %s)
+                ON CONFLICT (point_uri, timestamp) DO UPDATE SET message = EXCLUDED.message, observed = EXCLUDED.observed      
+            """
+            params = [point_uri, ts, observation_start, observation_end, message]
+        elif observation_start is not None:
+            sql = f"""
+                INSERT INTO {LOGS_TABLE} (point_uri, timestamp, observed, message)
+                VALUES (%s, %s, tstzrange(%s, 'infinity', '[)'), %s)
+                ON CONFLICT (point_uri, timestamp) DO UPDATE SET message = EXCLUDED.message, observed = EXCLUDED.observed
+            """
+            params = [point_uri, ts, observation_start, message]
+        elif observation_end is not None:
+            sql = f"""
+                INSERT INTO {LOGS_TABLE} (point_uri, timestamp, observed, message)
+                VALUES (%s, %s, tstzrange('-infinity', %s, '[)'), %s)
+                ON CONFLICT (point_uri, timestamp) DO UPDATE SET message = EXCLUDED.message, observed = EXCLUDED.observed
+            """
+            params = [point_uri, ts, observation_end, message]
+        else:
+            sql = f"""
+                INSERT INTO {LOGS_TABLE} (point_uri, timestamp, observed, message)
+                VALUES (%s, %s, NULL, %s)
+                ON CONFLICT (point_uri, timestamp) DO UPDATE SET message = EXCLUDED.message, observed = EXCLUDED.observed
+            """
+            params = [point_uri, ts, message]
+        
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(sql, params)
+        except Exception as e:
+            logger.error(f"An error occurred while inserting log: {e}")
+            logger.error(f"SQL: {sql}")
+            logger.error(f"Params: {params}")
+            raise e
+    def query_logs(
+        self,
+        point_uri: str,
+        log_time_interval: TimeIntervalModel | None = None,
+        obs_time_interval: TimeIntervalModel | None = None
+    ) -> list[LogEntry]:
+        start = log_time_interval.start if log_time_interval else None
+        end = log_time_interval.end if log_time_interval else None
+        observation_start = obs_time_interval.start if obs_time_interval else None
+        observation_end = obs_time_interval.end if obs_time_interval else None
+        
+        clauses = ["point_uri = %s"]
+        params: list[Any] = [point_uri]
+
+        if start is not None:
+            clauses.append("timestamp >= %s")
+            params.append(start)
+        if end is not None:
+            clauses.append("timestamp <= %s")
+            params.append(end)
+
+        # observed overlap semantics with open ended windows
+        if observation_start is not None and observation_end is not None:
+            clauses.append("observed && tstzrange(%s, %s, '[)')")
+            params.extend([observation_start, observation_end])
+        elif observation_start is not None:
+            clauses.append("observed && tstzrange(%s, 'infinity', '[)')")
+            params.append(observation_start)
+        elif observation_end is not None:
+            clauses.append("observed && tstzrange('-infinity', %s, '[)')")
+            params.append(observation_end)
+        where = " AND ".join(clauses)
+        query = f"""
+            SELECT point_uri, timestamp, observed, message
+            FROM {LOGS_TABLE}
+            WHERE {where}
+            ORDER BY timestamp ASC
+        """
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(query, params)
+                rows = cur.fetchall()
+
+            result: list[LogEntry] = []
+            for point_uri, ts, observed_range, msg in rows:
+                print(point_uri, ts, observed_range, msg)
+                period = None
+                if observed_range is not None:
+                    period = TimeIntervalModel(start=observed_range.lower, end=observed_range.upper)
+                else:
+                    period = TimeIntervalModel(start=None, end=None)
+
+                result.append(
+                    LogEntry(
+                        point_uri=point_uri,
+                        timestamp=ts,
+                        period=period,
+                        message=msg,
+                    )
+                )
+            return result
+        except Exception as e:
+            logger.error(f"An error occurred while querying logs: {e}")
+            logger.error(f"Query: {query}")
+            return []
+
+    def delete_logs(self, point_uri: str) -> None:
+        with self.conn.cursor() as cur:
+            cur.execute(f"DELETE FROM {LOGS_TABLE} WHERE point_uri=%s", (point_uri,))
+        return True
     # -------------------- soft sensor catalog --------------------
     def upsert_soft_sensor(self, *, uri: str, module_path: str, sources: list[str], params: dict | None, schedule: str | None) -> None:
         with self.conn.cursor() as cur:

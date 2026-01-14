@@ -44,6 +44,10 @@ HAS_ENUMERATION_KIND = QUDT.hasEnumerationKind
 HAS_UNIT = QUDT.hasUnit
 DATA_SOURCE = ACQUIRIUM_NS.DataSource
 
+HAS_LOG = ACQUIRIUM_NS.hasLog
+LOGBOOK = ACQUIRIUM_NS.Logbook
+
+
 # File-based Reference predicates
 PARQUET_REF = ACQUIRIUM_NS.ParquetReference
 CSV_REF = ACQUIRIUM_NS.CSVReference

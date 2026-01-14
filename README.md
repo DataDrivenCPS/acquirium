@@ -55,7 +55,6 @@ make watertap-down
 
 Note that every start of watertap workflow recreates the system (all data is lost)
 
-
 #### Running Tests
 
 To run pytest tests:
@@ -70,6 +69,15 @@ By default, every Docker run resets the system. This means all stored data and m
 To preserve data across runs, set the following environment variable in compose.yaml:
 ```
 ACQUIRIUM_RECREATE=false
+```
+
+## Logging
+
+Acquirium supports insert user logs for each entity in the system. To see how it works check [this script](./scripts/logging_example.py):
+
+```
+make up
+uv run scripts/logging_example.py
 ```
 
 
