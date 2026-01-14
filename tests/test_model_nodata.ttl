@@ -1,0 +1,41 @@
+@prefix nawi: <urn:nawi-water-ontology#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix qudt: <http://qudt.org/schema/qudt/> .
+@prefix qudtqk: <http://qudt.org/vocab/quantitykind/> .
+@prefix s223: <http://data.ashrae.org/standard223#> .
+@prefix unit: <http://qudt.org/vocab/unit/> .
+@prefix wbs: <urn:ex/> .
+
+wbs: a owl:Ontology .
+
+wbs:Pump1 a nawi:Pump ;
+    s223:hasConnectionPoint wbs:Pump1-in,
+        wbs:Pump1-out .
+
+wbs:Pump1-in a s223:InletConnectionPoint ;
+    s223:isConnectionPointOf wbs:Pump1 ;
+    s223:hasMedium s223:Medium-Water ;
+    s223:hasProperty wbs:Pump1-in-flow-mass-seawater,
+        wbs:Pump1-in-flow-mass-water,
+        wbs:Pump1-in-pressure,
+        wbs:Pump1-in-temperature .
+
+wbs:Pump1-in-flow-mass-seawater a s223:QuantifiableObservableProperty ;
+    s223:ofMedium nawi:Water-Seawater ;
+    qudt:hasQuantityKind qudtqk:MassFlowRate ;
+    qudt:hasUnit unit:KiloGM-PER-SEC .
+
+wbs:Pump1-in-flow-mass-water a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    qudt:hasQuantityKind qudtqk:MassFlowRate ;
+    qudt:hasUnit unit:KiloGM-PER-SEC .
+
+wbs:Pump1-in-pressure a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Pressure .
+
+wbs:Pump1-in-temperature a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Temperature .
+
+wbs:Pump1-out a s223:OutletConnectionPoint ;
+    s223:hasMedium s223:Medium-Water .
+

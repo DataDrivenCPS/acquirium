@@ -13,7 +13,7 @@ from datetime import datetime
 
 from acquirium.Server.manager import Manager
 
-from acquirium.internals.models import Order
+from acquirium.internals.models import Order, LogEntry, TimeInterval, TimeIntervalModel
 
 import pyarrow.ipc as ipc
 import pyarrow as pa
@@ -220,5 +220,59 @@ def sparql_json(query: str, use_union: bool = True) -> dict[str, Any]:
     try:
         result = app.state.manager.sparql_dict(query, use_union=use_union)
         return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/insert_log")
+def insert_log(
+        point_uri: str,
+        log_timestamp: str,
+        observation_timestamp_start: Optional[str] = None,
+        observation_timestamp_end: Optional[str] = None,
+        message: str = "",
+    ) -> dict[str, Any]:
+    try:
+        log_time = dtparser.isoparse(log_timestamp)
+        obs_start = _parse_dt(observation_timestamp_start)
+        obs_end = _parse_dt(observation_timestamp_end)
+        log_entry = LogEntry(
+            point_uri=point_uri,
+            timestamp=log_time,
+            period=TimeIntervalModel(start=obs_start, end=obs_end),
+            message=message,
+        )
+        log.info(f"Inserting log entry: {log_entry}")
+        app.state.manager.insert_log(log_entry)
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/query_logs", response_model=list[LogEntry])
+def query_logs(
+        point_uri: str,
+        log_time_interval_start: Optional[str] = None,
+        log_time_interval_end: Optional[str] = None,
+        obs_time_interval_start: Optional[str] = None,
+        obs_time_interval_end: Optional[str] = None,
+    ) -> list[LogEntry]:
+    try:
+        log_time_interval = None
+        if log_time_interval_start is not None or log_time_interval_end is not None:
+            log_time_interval = TimeIntervalModel(
+                start=_parse_dt(log_time_interval_start) if log_time_interval_start is not None else None,
+                end=_parse_dt(log_time_interval_end) if log_time_interval_end is not None else None,
+            )
+        obs_time_interval = None
+        if obs_time_interval_start is not None or obs_time_interval_end is not None:
+            obs_time_interval = TimeIntervalModel(
+                start=_parse_dt(obs_time_interval_start) if obs_time_interval_start is not None else None,
+                end=_parse_dt(obs_time_interval_end) if obs_time_interval_end is not None else None,
+            )
+        logs = app.state.manager.query_logs(
+            point_uri=point_uri,
+            log_time_interval=log_time_interval,
+            obs_time_interval=obs_time_interval,
+        )
+        return logs
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
