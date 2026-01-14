@@ -4,7 +4,11 @@ COMPOSE ?= docker compose
 
 # Default; user can override: make up ACQUIRIUM_RECREATE=true
 ACQUIRIUM_RECREATE ?= false
-
+ACQUIRIUM_HOST ?= localhost
+ACQUIRIUM_PORT ?= 8000
+ACQUIRIUM_HEALTH_URL := http://$(ACQUIRIUM_HOST):$(ACQUIRIUM_PORT)/health
+ACQUIRIUM_HEALTH_TIMEOUT_SEC ?= 180
+ACQUIRIUM_HEALTH_SLEEP_SEC ?= 2
 # Optional flag: make up RECREATE=true
 ifeq ($(RECREATE),true)
 ACQUIRIUM_RECREATE := true
@@ -16,7 +20,23 @@ export ACQUIRIUM_RECREATE
 
 up:
 	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) up -d --build
+	@$(MAKE) wait-health
 
+wait-health:
+	@echo "Waiting for Acquirium server health check: $(ACQUIRIUM_HEALTH_URL)"
+	@deadline=$$(( $$(date +%s) + $(ACQUIRIUM_HEALTH_TIMEOUT_SEC) )); \
+	while true; do \
+		if curl -fsS "$(ACQUIRIUM_HEALTH_URL)" >/dev/null 2>&1; then \
+			echo "Acquirium server is ready."; \
+			break; \
+		fi; \
+		if [ $$(date +%s) -ge $$deadline ]; then \
+			echo "ERROR: Acquirium server did not become ready within $(ACQUIRIUM_HEALTH_TIMEOUT_SEC)s"; \
+			echo "Tip: check logs with: $(COMPOSE) logs -f acquirium_server"; \
+			exit 1; \
+		fi; \
+		sleep $(ACQUIRIUM_HEALTH_SLEEP_SEC); \
+	done
 # Always enable for rebuild
 rebuild: ACQUIRIUM_RECREATE := true
 rebuild:

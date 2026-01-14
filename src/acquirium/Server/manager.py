@@ -5,10 +5,11 @@ from pathlib import Path
 import os
 import logging
 from time import perf_counter
-from rdflib import Graph
+from rdflib import Graph, URIRef, Node
 
 from acquirium.Storage import OxigraphGraphStore, TimescaleStore, TimeseriesStore
 from acquirium.internals.qudt_units import QUDTUnitConverter
+from acquirium.internals.models import LogEntry, TimeIntervalModel
 from acquirium.soft_sensors import SoftSensorRunner
 from acquirium.internals.internals_namespaces import *
 
@@ -20,6 +21,8 @@ from typing import Any
 
 from acquirium.mqtt_ingestion import MQTTIngestService, MQTTStreamSpec
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("acquirium.manager")
 
 DEFAULT_DATA_DIR = Path(".acquirium")
 DEFAULT_DB_NAME = "acquirium"
@@ -27,7 +30,7 @@ DEFAULT_DB_NAME = "acquirium"
 
 @dataclass
 class Manager:
-    timescale: TimeseriesStore
+    timescale: TimescaleStore
     graph_store: OxigraphGraphStore
     sensors: SoftSensorRunner
     qudt_converter: QUDTUnitConverter | None = None
@@ -348,6 +351,68 @@ class Manager:
                 self._save_ingest_cache(cache)
             raise
 
+    def insert_log(self, log_message: LogEntry):
+        """
+        Insert a log entry into timescale store.
+
+        Add external reference to the graph. 
+        This is for associating log metadata with points.
+        If we want to associate metadata with the logs of a point, we can do so here.
+        """
+        self.timescale.insert_log(log_message)
+        logger.info("Inserted log entry for point %s at %s to database", log_message.point_uri, log_message.timestamp)
+        G = Graph()
+        log_uri = URIRef(f"{str(log_message.point_uri)}_log")
+        G.add((URIRef(log_message.point_uri), HAS_LOG, log_uri))
+        G.add((log_uri, RDF.type, LOGBOOK))
+        self.graph_store.insert_graph(G, format="turtle", replace=False)
+        logger.info("Inserted log entry for point %s at %s to graph", log_message.point_uri, log_message.timestamp)
+
+
+    def query_logs(
+        self,
+        point_uri: str,
+        log_time_interval: TimeIntervalModel | None = None,
+        obs_time_interval: TimeIntervalModel | None = None
+    ) -> list[LogEntry]:
+        """
+        Query log entries for a given point URI within an optional time interval.
+
+        Args:
+            point_uri: The URI of the time series point.
+            log_time_interval: Optional TimeIntervalModel object specifying start and end times for log entries.
+            obs_time_interval: Optional TimeIntervalModel object specifying start and end times for observation entries.
+
+        Returns:
+            A list of LogEntry objects.
+        """
+        return self.timescale.query_logs(
+            point_uri=point_uri,
+            log_time_interval=log_time_interval,
+            obs_time_interval=obs_time_interval
+        )
+
+    def delete_logs(self, point_uri: str) -> None:
+        """
+        Delete all log entries for a given point URI.
+
+        Args:
+            point_uri: The URI of the time series point.
+        """
+        if not self.timescale.delete_logs(point_uri):
+            logger.warning("Failed to delete log entries for point %s from database", point_uri)
+            return False
+        logger.info("Deleted all log entries for point %s from database", point_uri)
+        # Optionally, remove log references from the graph
+        q = f"""
+        DELETE WHERE {{
+          <{point_uri}> <{HAS_LOG}> ?log .
+          ?log a <{LOGBOOK}> .
+        }}
+        """
+        self.graph_store.sparql_update(q)
+        logger.info("Deleted all log references for point %s from graph", point_uri)
+        return True
 
     def sparql_dict(self, query: str, use_union: bool = True) -> dict[str, Any]:
         """

@@ -331,14 +331,17 @@ class OxigraphGraphStore:
                 merged.add(triple)
         return merged.serialize(format=fmt)
 
-    def insert_graph(self, content: str | bytes, *, format: str = "turtle", replace: bool = False) -> dict[str, int]:
+    def insert_graph(self, content: str | bytes | Graph, *, format: str = "turtle", replace: bool = False) -> dict[str, int]:
         """Parse incoming graph data and merge (or replace) into the main graph, then refresh union.
         format: turtle | n3 | xml | trix
         """
 
         fmt = (format or "turtle").lower()
         incoming = Graph()
-        incoming.parse(data=content, format=fmt)
+        if isinstance(content, Graph):
+            incoming = content
+        else:
+            incoming.parse(data=content, format=fmt)
 
         main = self._main_graph()
         if replace:
