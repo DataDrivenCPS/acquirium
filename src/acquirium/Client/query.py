@@ -624,31 +624,35 @@ class Query:
         if alias == "*":
             pids = list(self._find_all_nodes())
         elif alias is not None:
-            pids = list(self._find_all_nodes(self.query_graph.resolve_alias(alias)))
+            id = self.query_graph.resolve_alias(alias)
+            if id is None:
+                logger.warning(f"Alias {alias} not found")
+                pids = []
+            else:
+                pids = list(self._find_all_nodes(id))
         else:
             pids = list(self._find_all_nodes(self.query_graph.current_pointer))
 
         if not pids:
-            logging.warning("insert_log: no target alias specified or found; skipping log insertion")
+            logger.warning("no target alias specified or found; skipping log insertion")
             return
-
         for pid in pids:
             
             self.client.insert_log(
                 point_uri=pid,
                 log_message=message,
                 log_time=datetime.now().isoformat(),
-                observation_time_start=observation_start,
-                observation_time_end=observation_end,
+                observation_start=observation_start,
+                observation_end=observation_end,
             )
 
     def read_logs(
         self,
         alias: Optional[str] = None,
-        logging_time_start: Union[datetime, str, None] = None,
-        logging_time_end: Union[datetime, str, None] = None,
-        observation_time_start: Union[datetime, str, None] = None,
-        observation_time_end: Union[datetime, str, None] = None
+        log_time_start: Union[datetime, str, None] = None,
+        log_time_end: Union[datetime, str, None] = None,
+        observation_start: Union[datetime, str, None] = None,
+        observation_end: Union[datetime, str, None] = None
     ) -> pl.DataFrame:
         """Read log entries for the specified alias. If not specified, defaults to current pointer alias, if '*', reads logs for all entities in the query."""
         
@@ -656,30 +660,41 @@ class Query:
         if alias == "*":
             pids = list(self._find_all_nodes())
         elif alias is not None:
-            pids = list(self._find_all_nodes(self.query_graph.resolve_alias(alias)))
+            id = self.query_graph.resolve_alias(alias)
+            if id is None:
+                logger.warning(f"Alias {alias} not found")
+                pids = []
+            else:
+                pids = list(self._find_all_nodes(id))
         else:
             pids = list(self._find_all_nodes(self.query_graph.current_pointer))
-
+    
         if not pids:
-            logging.warning("insert_log: no target alias specified or found; skipping log insertion")
+            logger.warning("No entities found, skipping log querying")
             return pl.DataFrame({"point_uri": [], "message": [], "log_time": [], "observation_start": [], "observation_end": []})
 
         frames: list[dict] = []
         for pid in pids:
             logs: LogEntry = self.client.query_logs(
                 point_uri=pid,
-                log_time_interval_start=logging_time_start,
-                log_time_interval_end=logging_time_end,
-                obs_time_interval_start=observation_time_start,
-                obs_time_interval_end=observation_time_end
+                log_time_start=log_time_start,
+                log_time_end=log_time_end,
+                observation_start=observation_start,
+                observation_end=observation_end
             )
             for log in logs:
                 frames.append(log.to_dict())
 
         if not frames:
             return pl.DataFrame({"point_uri": [], "message": [], "log_time": [], "observation_start": [], "observation_end": []})
-
-        combined = pl.concat([pl.DataFrame(f) for f in frames], how="vertical").select(
+        schema = {
+            "point_uri": pl.Utf8,
+            "message": pl.Utf8,
+            "log_time": pl.Datetime(time_zone="UTC"),
+            "observation_start": pl.Datetime(time_zone="UTC"),
+            "observation_end": pl.Datetime(time_zone="UTC")
+        }
+        combined = pl.concat([pl.DataFrame(f, schema=schema) for f in frames], how="vertical").select(
             "point_uri", "message", "log_time", "observation_start", "observation_end"
         ).sort("log_time")
         return combined
