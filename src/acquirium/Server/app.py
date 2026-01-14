@@ -227,14 +227,14 @@ def sparql_json(query: str, use_union: bool = True) -> dict[str, Any]:
 def insert_log(
         point_uri: str,
         log_timestamp: str,
-        observation_timestamp_start: Optional[str] = None,
-        observation_timestamp_end: Optional[str] = None,
+        observation_start: Optional[str] = None,
+        observation_end: Optional[str] = None,
         message: str = "",
     ) -> dict[str, Any]:
     try:
         log_time = dtparser.isoparse(log_timestamp)
-        obs_start = _parse_dt(observation_timestamp_start)
-        obs_end = _parse_dt(observation_timestamp_end)
+        obs_start = _parse_dt(observation_start)
+        obs_end = _parse_dt(observation_end)
         log_entry = LogEntry(
             point_uri=point_uri,
             timestamp=log_time,
@@ -250,23 +250,23 @@ def insert_log(
 @app.get("/query_logs", response_model=list[LogEntry])
 def query_logs(
         point_uri: str,
-        log_time_interval_start: Optional[str] = None,
-        log_time_interval_end: Optional[str] = None,
-        obs_time_interval_start: Optional[str] = None,
-        obs_time_interval_end: Optional[str] = None,
+        log_time_start: Optional[str] = None,
+        log_time_end: Optional[str] = None,
+        observation_start: Optional[str] = None,
+        observation_end: Optional[str] = None,
     ) -> list[LogEntry]:
     try:
         log_time_interval = None
-        if log_time_interval_start is not None or log_time_interval_end is not None:
+        if log_time_start is not None or log_time_end is not None:
             log_time_interval = TimeIntervalModel(
-                start=_parse_dt(log_time_interval_start) if log_time_interval_start is not None else None,
-                end=_parse_dt(log_time_interval_end) if log_time_interval_end is not None else None,
+                start=_parse_dt(log_time_start) if log_time_start is not None else None,
+                end=_parse_dt(log_time_end) if log_time_end is not None else None,
             )
         obs_time_interval = None
-        if obs_time_interval_start is not None or obs_time_interval_end is not None:
+        if observation_start is not None or observation_end is not None:
             obs_time_interval = TimeIntervalModel(
-                start=_parse_dt(obs_time_interval_start) if obs_time_interval_start is not None else None,
-                end=_parse_dt(obs_time_interval_end) if obs_time_interval_end is not None else None,
+                start=_parse_dt(observation_start) if observation_start is not None else None,
+                end=_parse_dt(observation_end) if observation_end is not None else None,
             )
         logs = app.state.manager.query_logs(
             point_uri=point_uri,
@@ -274,5 +274,17 @@ def query_logs(
             obs_time_interval=obs_time_interval,
         )
         return logs
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.delete("/delete_logs")
+def delete_logs(
+        point_uri: str,
+    ) -> dict[str, Any]:
+    try:
+        if app.state.manager.delete_logs(point_uri):
+            return {"ok": True}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to delete logs")
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

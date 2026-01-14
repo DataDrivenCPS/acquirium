@@ -392,6 +392,27 @@ class Manager:
             obs_time_interval=obs_time_interval
         )
 
+    def delete_logs(self, point_uri: str) -> None:
+        """
+        Delete all log entries for a given point URI.
+
+        Args:
+            point_uri: The URI of the time series point.
+        """
+        if not self.timescale.delete_logs(point_uri):
+            logger.warning("Failed to delete log entries for point %s from database", point_uri)
+            return False
+        logger.info("Deleted all log entries for point %s from database", point_uri)
+        # Optionally, remove log references from the graph
+        q = f"""
+        DELETE WHERE {{
+          <{point_uri}> <{HAS_LOG}> ?log .
+          ?log a <{LOGBOOK}> .
+        }}
+        """
+        self.graph_store.sparql_update(q)
+        logger.info("Deleted all log references for point %s from graph", point_uri)
+        return True
 
     def sparql_dict(self, query: str, use_union: bool = True) -> dict[str, Any]:
         """

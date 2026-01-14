@@ -290,34 +290,34 @@ class TimescaleStore(TimeseriesStore):
 
         # if period is optional
         if log.period is None:
-            observed_start = None
-            observed_end = None
+            observation_start = None
+            observation_end = None
         else:
-            observed_start = log.period.start
-            observed_end = log.period.end
+            observation_start = log.period.start
+            observation_end = log.period.end
 
-        if observed_start is not None and observed_end is not None:
+        if observation_start is not None and observation_end is not None:
             # Let Postgres build the range
             sql = f"""
                 INSERT INTO {LOGS_TABLE} (point_uri, timestamp, observed, message)
                 VALUES (%s, %s, tstzrange(%s, %s, '[)'), %s)
                 ON CONFLICT (point_uri, timestamp) DO UPDATE SET message = EXCLUDED.message, observed = EXCLUDED.observed      
             """
-            params = [point_uri, ts, observed_start, observed_end, message]
-        elif observed_start is not None:
+            params = [point_uri, ts, observation_start, observation_end, message]
+        elif observation_start is not None:
             sql = f"""
                 INSERT INTO {LOGS_TABLE} (point_uri, timestamp, observed, message)
                 VALUES (%s, %s, tstzrange(%s, 'infinity', '[)'), %s)
                 ON CONFLICT (point_uri, timestamp) DO UPDATE SET message = EXCLUDED.message, observed = EXCLUDED.observed
             """
-            params = [point_uri, ts, observed_start, message]
-        elif observed_end is not None:
+            params = [point_uri, ts, observation_start, message]
+        elif observation_end is not None:
             sql = f"""
                 INSERT INTO {LOGS_TABLE} (point_uri, timestamp, observed, message)
                 VALUES (%s, %s, tstzrange('-infinity', %s, '[)'), %s)
                 ON CONFLICT (point_uri, timestamp) DO UPDATE SET message = EXCLUDED.message, observed = EXCLUDED.observed
             """
-            params = [point_uri, ts, observed_end, message]
+            params = [point_uri, ts, observation_end, message]
         else:
             sql = f"""
                 INSERT INTO {LOGS_TABLE} (point_uri, timestamp, observed, message)
@@ -400,6 +400,10 @@ class TimescaleStore(TimeseriesStore):
             logger.error(f"Query: {query}")
             return []
 
+    def delete_logs(self, point_uri: str) -> None:
+        with self.conn.cursor() as cur:
+            cur.execute(f"DELETE FROM {LOGS_TABLE} WHERE point_uri=%s", (point_uri,))
+        return True
     # -------------------- soft sensor catalog --------------------
     def upsert_soft_sensor(self, *, uri: str, module_path: str, sources: list[str], params: dict | None, schedule: str | None) -> None:
         with self.conn.cursor() as cur:
