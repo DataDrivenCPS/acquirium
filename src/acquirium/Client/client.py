@@ -7,7 +7,7 @@ import polars as pl
 # import pyarrow as pa
 import pyarrow.ipc as ipc
 # from io import BytesIO
-from acquirium.internals.models import Order
+from acquirium.internals.models import Order, LogEntry
 from acquirium.internals.internals_namespaces import *
 
 class AcquiriumClient:
@@ -238,3 +238,68 @@ class AcquiriumClient:
                 failed += 1
 
         return {"ok": ok, "skipped": skipped, "failed": failed, "total": len(rows)}
+
+    def insert_log(
+        self,
+        point_uri: str,
+        log_time: str,
+        observation_time_start: Optional[str] = None,
+        observation_time_end: Optional[str] = None,
+        log_message: str = "",
+    ) -> dict:
+        """
+        Insert a log entry for a given point URI.
+
+        Args:
+            point_uri: The URI of the time series point.
+            log_time: The timestamp of the log entry in ISO 8601 format.
+            log_message: The log message.
+        Returns:
+            A dictionary with the result of the insertion.
+        """
+        url = f"{self.base_url}/insert_log"
+        data = {
+            "point_uri": point_uri,
+            "log_timestamp": log_time,
+            "observation_timestamp_start": observation_time_start,
+            "observation_timestamp_end": observation_time_end,
+            "message": log_message,
+        }
+        response = requests.post(url, params=data)
+        response.raise_for_status()
+        return response.json()
+    
+    def query_logs(
+        self,
+        point_uri: str,
+        log_time_interval_start: Optional[str] = None,
+        log_time_interval_end: Optional[str] = None,
+        obs_time_interval_start: Optional[str] = None,
+        obs_time_interval_end: Optional[str] = None,
+    ) -> list[LogEntry]:
+        """
+        Query log entries for a given point URI within optional time intervals.
+
+        Args:
+            point_uri: The URI of the time series point.
+            log_time_interval_start: Start of the log time interval in ISO 8601 format.
+            log_time_interval_end: End of the log time interval in ISO 8601 format.
+            obs_time_interval_start: Start of the observation time interval in ISO 8601 format.
+            obs_time_interval_end: End of the observation time interval in ISO 8601 format.
+
+        Returns:
+            A list of log entries matching the query.
+        """
+        url = f"{self.base_url}/query_logs"
+        params = {
+        "point_uri": point_uri,
+        "log_time_interval_start": log_time_interval_start,
+        "log_time_interval_end": log_time_interval_end,
+        "obs_time_interval_start": obs_time_interval_start,
+        "obs_time_interval_end": obs_time_interval_end,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        data = response.json()
+        return [LogEntry.model_validate(x) for x in data]

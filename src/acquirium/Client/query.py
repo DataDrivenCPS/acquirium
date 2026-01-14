@@ -4,6 +4,7 @@ from rich.table import Table
 from dataclasses import dataclass, field, replace
 from typing import Any, Dict, List, Optional , Union
 from acquirium.internals.internals_namespaces import *
+from acquirium.internals.models import LogEntry
 import polars as pl
 from datetime import datetime
 from acquirium.TextMatch.decorators import flex_query_rdf_inputs, FlexSpec
@@ -149,6 +150,35 @@ class Query:
     
     def _query_resolver_adapter(self, text: str, kind: str) -> str:
         return self._resolve_rdf(self,text, kind)
+
+    def _is_uri(self, text: str) -> bool:
+        return isinstance(text, str) and (text.startswith("urn:") or text.startswith("http://") or text.startswith("https://"))
+
+    def _find_all_nodes(self, id_val=None) -> list[URIRef]:
+        '''
+        Finds all nodes in the query result, except literals.
+        If alias is provided, only nodes with that alias are returned.
+
+        '''
+        
+        target_col = None
+        if id_val is not None:
+            target_col = f"v{id_val}"
+        query_result = self.execute(use_union=True)
+        nodes: set[URIRef] = set()
+        if target_col:
+            col_index = query_result["columns"].index(target_col)
+            for row in query_result.get("rows", []):
+                cell = row[col_index]
+                if isinstance(cell, str) and (cell.startswith("urn:")):
+                    nodes.add(URIRef(cell))
+            return list(nodes)
+        else:
+            for row in query_result.get("rows", []):
+                for cell in row:
+                    if isinstance(cell, str) and (cell.startswith("urn:")):
+                        nodes.add(URIRef(cell))
+            return nodes
 
     # ----------------------------------------------------
     # ----------  API ----------
@@ -575,6 +605,85 @@ class Query:
     #TODO: Not working yet
     # def filter_by_data_source(self, data_source: str, *, _from: Optional[str] = None) -> "Query":
         # return self.filter_data_nodes(predicate=DATA_SOURCE, value=data_source, _from=_from)
+
+
+    # ------------------ LOGGING -------------------------
+    
+    
+    
+    def insert_log(
+        self,
+        message: str,
+        alias: Optional[str] = None,
+        observation_start: datetime | None = None,
+        observation_end: datetime | None = None,
+    ) -> None:
+        """Insert a log entry for the specified alias. If not specified, defaults to current pointer alias, if '*', logs to all entities in the query."""
+        
+        pids = []
+        if alias == "*":
+            pids = list(self._find_all_nodes())
+        elif alias is not None:
+            pids = list(self._find_all_nodes(self.query_graph.resolve_alias(alias)))
+        else:
+            pids = list(self._find_all_nodes(self.query_graph.current_pointer))
+
+        if not pids:
+            logging.warning("insert_log: no target alias specified or found; skipping log insertion")
+            return
+
+        for pid in pids:
+            
+            self.client.insert_log(
+                point_uri=pid,
+                log_message=message,
+                log_time=datetime.now().isoformat(),
+                observation_time_start=observation_start,
+                observation_time_end=observation_end,
+            )
+
+    def read_logs(
+        self,
+        alias: Optional[str] = None,
+        logging_time_start: Union[datetime, str, None] = None,
+        logging_time_end: Union[datetime, str, None] = None,
+        observation_time_start: Union[datetime, str, None] = None,
+        observation_time_end: Union[datetime, str, None] = None
+    ) -> pl.DataFrame:
+        """Read log entries for the specified alias. If not specified, defaults to current pointer alias, if '*', reads logs for all entities in the query."""
+        
+        pids = []
+        if alias == "*":
+            pids = list(self._find_all_nodes())
+        elif alias is not None:
+            pids = list(self._find_all_nodes(self.query_graph.resolve_alias(alias)))
+        else:
+            pids = list(self._find_all_nodes(self.query_graph.current_pointer))
+
+        if not pids:
+            logging.warning("insert_log: no target alias specified or found; skipping log insertion")
+            return pl.DataFrame({"point_uri": [], "message": [], "log_time": [], "observation_start": [], "observation_end": []})
+
+        frames: list[dict] = []
+        for pid in pids:
+            logs: LogEntry = self.client.query_logs(
+                point_uri=pid,
+                log_time_interval_start=logging_time_start,
+                log_time_interval_end=logging_time_end,
+                obs_time_interval_start=observation_time_start,
+                obs_time_interval_end=observation_time_end
+            )
+            for log in logs:
+                frames.append(log.to_dict())
+
+        if not frames:
+            return pl.DataFrame({"point_uri": [], "message": [], "log_time": [], "observation_start": [], "observation_end": []})
+
+        combined = pl.concat([pl.DataFrame(f) for f in frames], how="vertical").select(
+            "point_uri", "message", "log_time", "observation_start", "observation_end"
+        ).sort("log_time")
+        return combined
+
 
 
     # ----------------------------------------------------
