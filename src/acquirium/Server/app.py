@@ -156,7 +156,7 @@ def _parse_dt(s: Optional[str]) -> Optional[datetime]:
 @app.get("/timeseries")
 def get_timeseries(
     request: Request,
-    point_uri: str,
+    uri: str,
     start: Optional[str] = None,
     end: Optional[str] = None,
     limit: Optional[int] = None,
@@ -170,7 +170,7 @@ def get_timeseries(
         end_dt = _parse_dt(end)
 
         batches: Iterator[pa.RecordBatch] = app.state.manager.timeseries_batch(
-            point_uri=point_uri,
+            uri=uri,
             start=start_dt,
             end=end_dt,
             limit=limit,
@@ -185,7 +185,7 @@ def get_timeseries(
             ("ts", pa.timestamp("us", tz="UTC")),
             # set value type explicitly if you know it; string shown as safe default
             ("value", pa.string()),
-            ("point_uri", pa.string()),
+            ("uri", pa.string()),
         ])
 
         def arrow_stream() -> Iterator[bytes]:

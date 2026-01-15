@@ -36,7 +36,8 @@ class Query:
 
     def _new_id(self) -> int:
         nid = self._next_id
-        self._next_id + 1
+        # IMPORTANT: must mutate the counter
+        object.__setattr__(self, "_next_id", self._next_id + 1)  # because Query is frozen
         return nid
         
 
@@ -432,14 +433,15 @@ class Query:
         - narrow: columns ["time", "value", "id"]
         """
         if not getattr(self.query_graph, "data_nodes", None):
-            return pl.DataFrame({"time": [], "value": [], "id": []})
+            return pl.DataFrame({"time": [], "value": [], "point_id": [], "ref": []})
 
         res = self.execute(use_union=use_union)
-        cols: list[str] = res.get("columns", [])
-        rows: list[list[Any]] = res.get("rows", [])
+        cols: list[str] = res.get("columns", []) #v0, v1, ext1, ...
+        rows: list[list[Any]] = res.get("rows", []) 
 
         # map "v<ID>" column -> ID
         col_to_id: dict[int, int] = {}
+        ext_ref_col_to_id: dict[int, int] = {}
         for i, c in enumerate(cols):
             if isinstance(c, str) and c.startswith("v"):
                 try:
@@ -447,14 +449,22 @@ class Query:
                     col_to_id[i] = nid
                 except ValueError:
                     pass
+            elif isinstance(c, str) and c.startswith("ext"):
+                try:
+                    nid = int(c[3:])
+                    ext_ref_col_to_id[i] = nid
+                except ValueError:
+                    pass
+        nid_to_ext_ref_col: dict[int, int] = {v: k for k, v in ext_ref_col_to_id.items()}
 
         data_node_ids = set(self.query_graph.data_nodes.keys())
         data_col_indices = [i for i, nid in col_to_id.items() if nid in data_node_ids]
-        if not data_col_indices:
-            return pl.DataFrame({"time": [], "value": [], "id": []})
+        ref_col_indices = [i for i, nid in ext_ref_col_to_id.items() if nid in data_node_ids]
+        if not data_col_indices or not ref_col_indices:
+            return pl.DataFrame({"point_id": [], "ref": [], "time": [], "value": []})
 
         # gather unique point URIs bound to data nodes
-        point_uris: list[tuple[int, str]] = []
+        point_ref_uris: list[tuple[int, str, str]] = []
         seen = set()
         for r in rows:
             for i in data_col_indices:
@@ -463,21 +473,28 @@ class Query:
                 if uri is None:
                     continue
                 uri_s = str(uri)
-                key = (nid, uri_s)
-                if key not in seen:
-                    seen.add(key)
-                    point_uris.append((nid, uri_s))
+                if nid in nid_to_ext_ref_col:
+                    ref_col_idx = nid_to_ext_ref_col[nid]
+                    if ref_col_idx >= len(r):
+                        continue
+                    ref_uri = r[ref_col_idx]
+                    if ref_uri is None:
+                        continue
+                    ref_uri_s = str(ref_uri)
+                    key = (nid, uri_s, ref_uri_s)
+                    if key not in seen:
+                        seen.add(key)
+                        point_ref_uris.append((nid, uri_s, ref_uri_s))
 
-        if not point_uris:
-            return pl.DataFrame({"time": [], "value": [], "id": []})
+        if not point_ref_uris:
+            return pl.DataFrame({"point_id": [], "ref": [], "time": [], "value": []})
 
         # fetch time series for each point URI and build tall frame
         frames: list[pl.DataFrame] = []
-        for nid, point_uri in point_uris:
-            alias = self.query_graph.aliases_reverse.get(nid, f"v{nid}")
+        for nid, point_uri, ref_uri in point_ref_uris:
 
             df = self.client.timeseries_df(
-                point_uri,
+                ref_uri,
                 start=start,
                 end=end,
                 limit=limit,
@@ -486,11 +503,12 @@ class Query:
             if df.is_empty():
                 continue
 
-            df = df.rename({"value": "value", "ts": "time","point_uri": "id"})
+            df = df.rename({"value": "value", "ts": "time","uri": "ref"})
+            df = df.with_columns(pl.lit(point_uri).alias("point_id"))
             frames.append(df)
 
         if not frames:
-            return pl.DataFrame({"time": []})
+            return pl.DataFrame({"point_id": [], "ref": [], "time": [], "value": []})
 
         tall = pl.concat(frames, how="vertical")
 
@@ -507,13 +525,13 @@ class Query:
             except Exception:
                 logging.warning("casting to int failed")
                 pass
-        tall = tall.with_columns(pl.col("id").map_elements(lambda x: self._remove_prefixes(x),return_dtype=pl.Utf8).alias("id"))
+        tall = tall.with_columns(pl.col("point_id").map_elements(lambda x: self._remove_prefixes(x),return_dtype=pl.Utf8).alias("point_id"))
         # else: keep as string
         if shape == "narrow":
-            return tall.select("time", "value", "id").sort("time")
+            return tall.select("point_id","ref","time", "value").sort("time")
 
         # wide
-        wide = tall.pivot(values="value", index="time", on="id", aggregate_function="first")
+        wide = tall.pivot(values="value", index="time", on=["point_id","ref"], aggregate_function="first")
         # wide.columns = ["time"] + [self._remove_prefixes(c) for c in wide.columns[1:]]
         return wide.sort("time")
 
@@ -812,6 +830,7 @@ class Query:
     def to_sparql(self) -> str:
         # node id -> ?v{id}
         var_map = {nid: f"?v{nid}" for nid in self.query_graph.nodes}
+        ext_vars = {}
 
         where_clauses: List[str] = []
 
@@ -831,6 +850,7 @@ class Query:
         for nid, info in self.query_graph.data_nodes.items():
             v = var_map[nid]
             ext = f"?ext{nid}"
+            ext_vars[nid] = ext
             where_clauses.append(f"{v} <{HAS_EXTERNAL_REFERENCE}> {ext} .")
 
             for pred, val in (info.filters or {}).items():
@@ -846,7 +866,7 @@ class Query:
 
 
 
-        select_vars = " ".join(var_map.values())
+        select_vars = " ".join(var_map.values()) + " " + " ".join(ext_vars.values())
         where_block = "\n  ".join(where_clauses) if where_clauses else ""
         return f"SELECT DISTINCT {select_vars}\nWHERE {{\n  {where_block}\n}}"
 
@@ -859,7 +879,7 @@ class Query:
         """
         if self.cache.get("execute") is None:
             sparql = self.to_sparql()
-            # print("Executing SPARQL:\n",sparql)
+            print("Executing SPARQL:\n",sparql)
             self.cache["execute"] = self.client.sparql_query(sparql, use_union=use_union)
         return self.cache["execute"]
 
