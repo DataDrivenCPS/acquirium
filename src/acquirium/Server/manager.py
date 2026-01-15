@@ -23,11 +23,13 @@ from acquirium.mqtt_ingestion import MQTTIngestService, MQTTStreamSpec
 
 DEFAULT_DATA_DIR = Path(".acquirium")
 DEFAULT_DB_NAME = "acquirium"
-
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("acquirium.manager")
+logger.setLevel(logging.INFO)
 
 @dataclass
 class Manager:
-    timescale: TimeseriesStore
+    timescale: TimescaleStore
     graph_store: OxigraphGraphStore
     sensors: SoftSensorRunner
     qudt_converter: QUDTUnitConverter | None = None
@@ -177,7 +179,8 @@ class Manager:
 
         count = 0
         for data_uri, ref_uri, broker, port, topic, tkey, vkey in rows:
-            print(data_uri, ref_uri, broker, port, topic, tkey, vkey)
+            logger.info("Found MQTT reference: %s %s %s %s %s %s %s",
+                        data_uri, ref_uri, broker, port, topic, tkey, vkey)
             broker_s = (broker or "localhost").strip('"')
             port_s = (port or "1883").strip('"')
             topic_s = (topic or "").strip('"')
@@ -239,7 +242,7 @@ class Manager:
     
     def timeseries_batch(
         self,
-        point_uri: str,
+        uri: str,
         start: str | None = None,
         end: str | None = None,
         limit: int | None = None,
@@ -250,7 +253,7 @@ class Manager:
         Retrieve time series data for a given point URI within an optional time range.
 
         Args:
-            point_uri: The URI of the time series point.
+            uri: The URI of the time series point.
             start: Optional start time in ISO format.
             end: Optional end time in ISO format.
             limit: Optional maximum number of results to return.
@@ -260,7 +263,7 @@ class Manager:
             An iterator that yields batches of time series data as Arrow RecordBatches.
         """
         return self.timescale.timeseries(
-            point_uri=point_uri,
+            point_uri=uri,
             start=start,
             end=end,
             limit=limit,
@@ -314,7 +317,7 @@ class Manager:
 
             df = df.rename({df.columns[0]: "ts", df.columns[1]: "value"})
 
-            df = df.with_columns(pl.lit(data_uri).alias("point_uri"))
+            df = df.with_columns(pl.lit(ref_uri).alias("point_uri"))
             df = df.select(["point_uri", "ts", "value"])
 
             if df.schema.get("ts") == pl.Utf8:
