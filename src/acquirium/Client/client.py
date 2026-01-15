@@ -56,7 +56,7 @@ class AcquiriumClient:
 
     def timeseries_df(
         self,
-        point_uri: str,
+        uri: str,
         start: Optional[str] = None,
         end: Optional[str] = None,
         limit: Optional[int] = None,
@@ -69,7 +69,7 @@ class AcquiriumClient:
         """
         url = f"{self.base_url}/timeseries"
         params = {
-            "point_uri": point_uri,
+            "uri": uri,
             "start": start,
             "end": end,
             "limit": limit,
@@ -96,7 +96,7 @@ class AcquiriumClient:
 
     def timeseries_batches(
         self,
-        point_uri: str,
+        uri: str,
         start: Optional[str] = None,
         end: Optional[str] = None,
         limit: Optional[int] = None,
@@ -112,7 +112,7 @@ class AcquiriumClient:
         """
         url = f"{self.base_url}/timeseries"
         params = {
-            "point_uri": point_uri,
+            "uri": uri,
             "start": start,
             "end": end,
             "limit": limit,
