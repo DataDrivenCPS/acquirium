@@ -82,7 +82,8 @@ class TimescaleStore(TimeseriesStore):
                 f"""
                 CREATE TABLE IF NOT EXISTS {STREAMS_TABLE} (
                     handle TEXT PRIMARY KEY,
-                    uri TEXT UNIQUE NOT NULL
+                    point_uri TEXT UNIQUE NOT NULL,
+                    ref_uri TEXT NOT NULL
                 );
                 """
             )
@@ -169,25 +170,29 @@ class TimescaleStore(TimeseriesStore):
             return -1
 
     # -------------------- stream handles --------------------
-    def ensure_stream_handle(self, uri: str, handle: str | None = None) -> str:
+    def ensure_stream_handle(self, point_uri, ref_uri: str, handle: str | None = None) -> str:
         if handle is None:
-            handle = hashlib.sha1(uri.encode("utf-8")).hexdigest()[:10]
+            handle = hashlib.sha1(ref_uri.encode("utf-8")).hexdigest()[:10]
         with self.conn.cursor() as cur:
             cur.execute(
                 f"""
-                INSERT INTO {STREAMS_TABLE} (handle, uri)
-                VALUES (%s, %s)
-                ON CONFLICT (uri) DO UPDATE SET handle = EXCLUDED.handle
+                INSERT INTO {STREAMS_TABLE} (handle, point_uri, ref_uri)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (point_uri) DO UPDATE SET handle = EXCLUDED.handle
                 """,
-                (handle, uri),
+                (handle, point_uri, ref_uri),
             )
         return handle
 
-    def resolve_handle(self, handle_or_uri: str) -> str:
+    def resolve_handle(self, handle: str) -> str:
+        '''
+        Resolves a stream handle to its corresponding point URI and ref URI.
+        Returns a tuple of (point_uri, ref_uri) or (None, None) if not found.
+        '''
         with self.conn.cursor() as cur:
-            cur.execute(f"SELECT uri FROM {STREAMS_TABLE} WHERE handle = %s", (handle_or_uri,))
+            cur.execute(f"SELECT point_uri, ref_uri FROM {STREAMS_TABLE} WHERE handle = %s", (handle,))
             row = cur.fetchone()
-            return row[0] if row else handle_or_uri
+            return (row[0], row[1]) if row else (None, None)
 
     # -------------------- queries --------------------
     def timeseries(
@@ -246,7 +251,7 @@ class TimescaleStore(TimeseriesStore):
                         pa.array(val_col, type=pa.string()),
                         pa.array(point_uri_col, type=pa.string()),
                     ],
-                    names=["ts", "value", "point_uri"],
+                    names=["ts", "value", "uri"],
                 )
                 yield batch
 

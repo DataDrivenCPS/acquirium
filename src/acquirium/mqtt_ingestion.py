@@ -15,7 +15,7 @@ import paho.mqtt.client as mqtt
 from acquirium.Storage.timescale_store import TimescaleStore  # adjust import if needed
 from acquirium.internals.internals_namespaces import *
 import numpy as np
-
+logger = logging.getLogger("acquirium.mqtt")
 @dataclass(frozen=True)
 class MQTTStreamSpec:
     point_uri: str
@@ -30,6 +30,7 @@ class MQTTStreamSpec:
 @dataclass(frozen=True)
 class _Sample:
     point_uri: str
+    ref_uri: str
     ts: datetime
     value: str | None
 
@@ -113,7 +114,7 @@ class MQTTIngestService:
             client = self._clients.get(client_key)
             if client is None:
                 client = mqtt.Client(client_id=f"acquirium_{abs(hash(client_key))}")
-                client.enable_logger(logging.getLogger("acquirium.mqtt"))
+                client.enable_logger(logger)
 
                 client.on_connect = self._on_connect(client_key)
                 client.on_message = self._on_message(client_key)
@@ -124,7 +125,7 @@ class MQTTIngestService:
                 client.connect(spec.broker, spec.port, keepalive=60)
                 client.loop_start()
 
-                logging.info("acquirium: mqtt client created broker=%s port=%d", spec.broker, spec.port)
+                logger.info("mqtt client created broker=%s port=%d", spec.broker, spec.port)
 
             # register spec under topic
             topic_map = self._topic_specs[client_key]
@@ -137,8 +138,8 @@ class MQTTIngestService:
             except Exception:
                 pass
 
-            logging.info(
-                "acquirium: mqtt subscribed point=%s broker=%s port=%d topic=%s",
+            logger.info(
+                "mqtt subscribed point=%s broker=%s port=%d topic=%s",
                 spec.point_uri,
                 spec.broker,
                 spec.port,
@@ -155,13 +156,13 @@ class MQTTIngestService:
     def _on_connect(self, client_key: str):
         def on_connect(client: mqtt.Client, userdata, flags, rc):
             if rc != 0:
-                logging.error("acquirium: mqtt connect failed client=%s rc=%s", client_key, rc)
+                logger.error("mqtt connect failed client=%s rc=%s", client_key, rc)
                 return
             with self._lock:
                 topics = list(self._topic_specs.get(client_key, {}).keys())
             if topics:
                 client.subscribe([(t, self.qos) for t in topics])
-            logging.info("acquirium: mqtt connected client=%s topics=%d", client_key, len(topics))
+            logger.info("mqtt connected client=%s topics=%d", client_key, len(topics))
         return on_connect
 
     def _on_message(self, client_key: str):
@@ -170,8 +171,7 @@ class MQTTIngestService:
             try:
                 payload = msg.payload.decode("utf-8", errors="replace")
                 payload_dict = _decode_payload(payload)
-                
-
+                logger.debug("mqtt message received client=%s topic=%s payload=%r", client_key, topic, payload_dict)
                 with self._lock:
                     specs = list(self._topic_specs.get(client_key, {}).get(topic, []))
 
@@ -185,12 +185,12 @@ class MQTTIngestService:
                     val = None if raw_val is None else str(raw_val)
 
                     try:
-                        self._queue.put_nowait(_Sample(point_uri=spec.point_uri, ts=ts, value=val))
+                        self._queue.put_nowait(_Sample(point_uri=spec.point_uri, ref_uri=spec.ref_uri, ts=ts, value=val))
                     except Exception:
-                        logging.warning("acquirium: mqtt queue full, dropping sample point=%s", spec.point_uri)
+                        logger.warning("mqtt queue full, dropping sample point=%s ref=%s", spec.point_uri, spec.ref_uri)
 
             except Exception as exc:
-                logging.warning("acquirium: mqtt decode failed client=%s topic=%s err=%s", client_key, topic, exc)
+                logger.warning("mqtt decode failed client=%s topic=%s err=%s", client_key, topic, exc)
         return on_message
 
     def _writer_loop(self) -> None:
@@ -199,13 +199,13 @@ class MQTTIngestService:
         '''
         ts_store = TimescaleStore(dsn=self.pg_dsn, connect_timeout=self.connect_timeout)
 
-        pending: dict[str, list[tuple[datetime, Any]]] = {}
+        pending: dict[str, list[_Sample]] = {}
         last_flush = _now_ms()
 
         while not self._stop.is_set():
             try:
                 item = self._queue.get(timeout=self.flush_ms / 1000.0)
-                pending.setdefault(item.point_uri, []).append((item.ts, item.value))
+                pending.setdefault(item.ref_uri, []).append(item)
             except Empty:
                 pass
 
@@ -215,22 +215,26 @@ class MQTTIngestService:
             if should_flush and pending:
                 try:
                     with ts_store.conn.transaction():
-                        for point_uri, rows in pending.items():
-                            ts_store.ensure_stream_handle(point_uri)
-                            ts_store.upsert_rows(point_uri, rows)
+                        for ref_uri, samples in pending.items():
+                            for sample in samples:
+                                rows = [(sample.ts, sample.value)]
+                                ts_store.ensure_stream_handle(sample.point_uri, ref_uri)
+                                ts_store.upsert_rows(ref_uri, rows)
                 except Exception as exc:
-                    logging.error("acquirium: mqtt db flush failed err=%s", exc)
+                    logger.error("mqtt db flush failed err=%s", exc)
                 pending.clear()
                 last_flush = _now_ms()
 
         if pending:
             try:
                 with ts_store.conn.transaction():
-                    for point_uri, rows in pending.items():
-                        ts_store.ensure_stream_handle(point_uri)
-                        ts_store.upsert_rows(point_uri, rows)
+                    for ref_uri, samples in pending.items():
+                        for sample in samples:
+                            rows = [(sample.ts, sample.value)]
+                            ts_store.ensure_stream_handle(sample.point_uri, ref_uri)
+                            ts_store.upsert_rows(ref_uri, rows)
             except Exception:
-                logging.error("acquirium: mqtt db final flush failed")
+                logger.error("mqtt db final flush failed")
         ts_store.close()
 
 
