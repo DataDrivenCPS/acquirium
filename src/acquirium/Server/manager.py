@@ -7,10 +7,9 @@ import logging
 from time import perf_counter
 from rdflib import Graph, URIRef, Node
 
-from acquirium.Storage import OxigraphGraphStore, TimescaleStore, TimeseriesStore
+from acquirium.Storage import OxigraphGraphStore, TimescaleStore
 from acquirium.internals.qudt_units import QUDTUnitConverter
 from acquirium.internals.models import LogEntry, TimeIntervalModel
-from acquirium.soft_sensors import SoftSensorRunner
 from acquirium.internals.internals_namespaces import *
 
 import json
@@ -19,7 +18,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, Future
 from typing import Any
 
-from acquirium.mqtt_ingestion import MQTTIngestService, MQTTStreamSpec
+from acquirium.Server.mqtt_ingestion import MQTTIngestService, MQTTStreamSpec
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("acquirium.manager")
@@ -34,7 +33,6 @@ logger.setLevel(logging.INFO)
 class Manager:
     timescale: TimescaleStore
     graph_store: OxigraphGraphStore
-    sensors: SoftSensorRunner
     qudt_converter: QUDTUnitConverter | None = None
     backend: str = "timescale"
 
@@ -49,7 +47,6 @@ class Manager:
         ontology_dependencies: list[str] | None = None,
         qudt_graph: Graph | None = None,
         qudt_converter: QUDTUnitConverter | None = None,
-        soft_sensor_dir: str | Path | None = None,
         recreate: bool = False,
     ):
         if recreate:
@@ -110,21 +107,10 @@ class Manager:
             graph.refresh_union()
             logging.info("acquirium: refreshed union graph after imports")
 
-        sensors = SoftSensorRunner(timescale, graph, module_dir=soft_sensor_dir or base)
-        sensors.load_registry()
-        logging.info(
-            "acquirium: services ready backend=timescale data_dir=%s db=%s graph=%s sensor_dir=%s elapsed_ms=%.1f",
-            base,
-            getattr(timescale, "db_path", None),
-            graph_path,
-            soft_sensor_dir or base,
-            (perf_counter() - start) * 1000,
-        )
 
         # Assign dataclass fields
         self.timescale = timescale
         self.graph_store = graph
-        self.sensors = sensors
         self.qudt_converter = converter
         self.backend = "timescale"
 
@@ -147,7 +133,6 @@ class Manager:
             ontoenv_root=os.getenv("ACQUIRIUM_ONTOENV_ROOT"),
             graph_name=os.getenv("ACQUIRIUM_GRAPH_NAME"),
             ontology_dependencies=os.getenv("ACQUIRIUM_ONTOLOGY_DEPENDENCIES", "").split(",") if os.getenv("ACQUIRIUM_ONTOLOGY_DEPENDENCIES") else None,
-            soft_sensor_dir=os.getenv("ACQUIRIUM_SOFT_SENSOR_DIR"),
             recreate=os.getenv("ACQUIRIUM_RECREATE", "false").lower() == "true",
         )
 

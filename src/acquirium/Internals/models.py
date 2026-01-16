@@ -43,25 +43,6 @@ class InsertBatchRequest(RootModel[dict[str, list[tuple[datetime, float | int | 
         return self.root
 
 
-class SoftSensorSpec(BaseModel):
-    uri: str
-    sources: list[str] = Field(default_factory=list)
-    module_path: str = Field(..., description="Import path like module:function")
-    params: dict | None = None
-    schedule: str | None = None  # optional cron/interval string for future use
-
-
-class SoftSensorRunRequest(BaseModel):
-    uris: list[str] | None = None  # if None, run all
-
-
-class SoftSensorRunResult(BaseModel):
-    uri: str
-    inserted: int
-    rows: int
-    status: str
-
-
 Order = Literal["asc", "desc"]
 
 @dataclass(frozen=True)

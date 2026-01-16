@@ -21,8 +21,6 @@ logger = logging.getLogger(__name__)
 
 TIMESERIES_TABLE = "timeseries"
 STREAMS_TABLE = "streams"
-SOFT_SENSOR_TABLE = "soft_sensors"
-SOFT_SENSOR_RUNS = "soft_sensor_runs"
 LOGS_TABLE = "logs"
 
 
@@ -44,8 +42,6 @@ class TimescaleStore(TimeseriesStore):
             with self.conn.cursor() as cur:
                 cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(TIMESERIES_TABLE)))
                 cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(STREAMS_TABLE)))
-                cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(SOFT_SENSOR_TABLE)))
-                cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(SOFT_SENSOR_RUNS)))
                 cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(LOGS_TABLE)))
         self.ensure_table()
 
@@ -86,29 +82,6 @@ class TimescaleStore(TimeseriesStore):
                     handle TEXT PRIMARY KEY,
                     point_uri TEXT UNIQUE NOT NULL,
                     ref_uri TEXT NOT NULL
-                );
-                """
-            )
-            cur.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {SOFT_SENSOR_TABLE} (
-                    uri TEXT PRIMARY KEY,
-                    module_path TEXT NOT NULL,
-                    sources TEXT[] NOT NULL,
-                    params JSONB,
-                    schedule TEXT
-                );
-                """
-            )
-            cur.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {SOFT_SENSOR_RUNS} (
-                    uri TEXT,
-                    started TIMESTAMPTZ,
-                    duration_ms DOUBLE PRECISION,
-                    rows_out BIGINT,
-                    status TEXT,
-                    message TEXT
                 );
                 """
             )
@@ -409,68 +382,6 @@ class TimescaleStore(TimeseriesStore):
         with self.conn.cursor() as cur:
             cur.execute(f"DELETE FROM {LOGS_TABLE} WHERE point_uri=%s", (point_uri,))
         return True
-    # -------------------- soft sensor catalog --------------------
-    def upsert_soft_sensor(self, *, uri: str, module_path: str, sources: list[str], params: dict | None, schedule: str | None) -> None:
-        with self.conn.cursor() as cur:
-            encoded_params = Json(params) if params is not None else None
-            cur.execute(
-                f"""
-                INSERT INTO {SOFT_SENSOR_TABLE} (uri, module_path, sources, params, schedule)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (uri) DO UPDATE SET
-                    module_path = EXCLUDED.module_path,
-                    sources = EXCLUDED.sources,
-                    params = EXCLUDED.params,
-                    schedule = EXCLUDED.schedule
-                """,
-                (uri, module_path, sources, encoded_params, schedule),
-            )
-
-    def list_soft_sensors(self) -> list[dict[str, Any]]:
-        with self.conn.cursor() as cur:
-            cur.execute(f"SELECT uri, module_path, sources, params, schedule FROM {SOFT_SENSOR_TABLE}")
-            rows = cur.fetchall()
-        return [
-            {
-                "uri": r[0],
-                "module_path": r[1],
-                "sources": r[2],
-                "params": r[3],
-                "schedule": r[4],
-            }
-            for r in rows
-        ]
-
-    def get_soft_sensor(self, uri: str) -> dict[str, Any] | None:
-        with self.conn.cursor() as cur:
-            cur.execute(
-                f"SELECT uri, module_path, sources, params, schedule FROM {SOFT_SENSOR_TABLE} WHERE uri=%s",
-                (uri,),
-            )
-            row = cur.fetchone()
-        if not row:
-            return None
-        return {
-            "uri": row[0],
-            "module_path": row[1],
-            "sources": row[2],
-            "params": row[3],
-            "schedule": row[4],
-        }
-
-    def record_soft_run(self, uri: str, started: datetime, duration_ms: float, rows_out: int, status: str, message: str | None = None) -> None:
-        with self.conn.cursor() as cur:
-            cur.execute(
-                f"INSERT INTO {SOFT_SENSOR_RUNS} VALUES (%s, %s, %s, %s, %s, %s)",
-                (uri, self._to_utc(started), duration_ms, rows_out, status, message),
-            )
-
-    def delete_soft_sensor(self, uri: str) -> None:
-        with self.conn.cursor() as cur:
-            cur.execute(f"DELETE FROM {SOFT_SENSOR_TABLE} WHERE uri=%s", (uri,))
-            cur.execute(f"DELETE FROM {SOFT_SENSOR_RUNS} WHERE uri=%s", (uri,))
-            cur.execute(f"DELETE FROM {TIMESERIES_TABLE} WHERE point_uri=%s", (uri,))
-            cur.execute(f"DELETE FROM {STREAMS_TABLE} WHERE uri=%s", (uri,))
 
     # -------------------- transaction helpers --------------------
     def begin(self) -> None:

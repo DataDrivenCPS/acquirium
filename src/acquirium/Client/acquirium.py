@@ -7,8 +7,6 @@ from typing import Any, Iterable, Sequence, Callable, Optional
 
 from rdflib import Graph as RDFGraph
 
-# from acquirium.soft_sensors import SoftSensorRunner
-# from acquirium.internals.models import PointCreateRequest, Point, SoftSensorSpec, TimeseriesInfo
 from acquirium.Client.query import Query
 from acquirium.Client.client import AcquiriumClient
 
