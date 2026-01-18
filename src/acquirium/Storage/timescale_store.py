@@ -119,7 +119,7 @@ class TimescaleStore(TimeseriesStore):
                 f"INSERT INTO {TIMESERIES_TABLE} (point_uri, ts, value) VALUES (%s, %s, %s) ON CONFLICT (point_uri, ts) DO UPDATE SET value = EXCLUDED.value",
                 payload,
             )
-        logger.d
+        logger.debug("acquirium: upserted %d rows into %s", len(rows_list), TIMESERIES_TABLE)
         return len(rows_list)
 
     def replace_rows(self, point_uri: str, rows: Iterable[tuple[datetime, Any]]) -> int:
