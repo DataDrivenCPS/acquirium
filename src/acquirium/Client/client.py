@@ -1,4 +1,5 @@
-from typing import Optional, Iterator
+from typing import Optional, Iterator, Any
+from datetime import datetime
 import requests
 import os
 from pathlib import Path
@@ -7,7 +8,7 @@ import polars as pl
 # import pyarrow as pa
 import pyarrow.ipc as ipc
 # from io import BytesIO
-from acquirium.internals.models import Order, LogEntry
+from acquirium.internals.models import Order, LogEntry, AppSpec, AppRunRequest, InsertTimeseriesRequest
 from acquirium.internals.internals_namespaces import *
 import logging
 logger = logging.getLogger(__name__)
@@ -268,6 +269,48 @@ class AcquiriumClient:
             "message": log_message,
         }
         response = requests.post(url, params=data)
+        response.raise_for_status()
+        return response.json()
+
+    def register_app(self, spec: AppSpec) -> dict:
+        url = f"{self.base_url}/apps/register"
+        response = requests.post(url, json=spec.model_dump(mode="json"))
+        response.raise_for_status()
+        return response.json()
+
+    def run_app(
+        self,
+        app_id: str,
+        *,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+        params: Optional[dict] = None,
+    ) -> dict:
+        url = f"{self.base_url}/apps/run"
+        req = AppRunRequest(
+            app_id=app_id,
+            start=start,
+            end=end,
+            params=params or {},
+        )
+        response = requests.post(url, json=req.model_dump(mode="json"))
+        response.raise_for_status()
+        return response.json()
+
+    def insert_timeseries(
+        self,
+        *,
+        ref_uri: str,
+        rows: list[tuple[datetime, Any]],
+        point_uri: Optional[str] = None,
+        replace: bool = False,
+    ) -> dict:
+        url = f"{self.base_url}/insert_timeseries"
+        params = {"ref_uri": ref_uri, "replace": replace}
+        if point_uri:
+            params["point_uri"] = point_uri
+        req = InsertTimeseriesRequest(values=rows)
+        response = requests.post(url, params=params, json=req.model_dump(mode="json"))
         response.raise_for_status()
         return response.json()
     

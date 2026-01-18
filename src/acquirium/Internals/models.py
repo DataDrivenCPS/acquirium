@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Any, TYPE_CHECKING
 from dataclasses import dataclass
 from pydantic import BaseModel, Field, RootModel
 from datetime import timedelta
+
+if TYPE_CHECKING:
+    from acquirium.Client.query import Query
 
 class TimeseriesInfo(BaseModel):
     table: str
@@ -32,10 +35,10 @@ class PointCreateRequest(BaseModel):
 
 
 class InsertTimeseriesRequest(BaseModel):
-    values: list[tuple[datetime, float | int | str]]
+    values: list[tuple[datetime, float | int | str | None]]
 
 
-class InsertBatchRequest(RootModel[dict[str, list[tuple[datetime, float | int | str]]]]):
+class InsertBatchRequest(RootModel[dict[str, list[tuple[datetime, float | int | str | None]]]]):
     """Batch insert where keys are point URIs and values are lists of (ts, value)."""
 
     @property
@@ -104,3 +107,47 @@ class LogEntry(BaseModel):
             "observation_end": self.period.end.isoformat() if self.period.end else None,
             "message": self.message,
         }
+    
+
+@dataclass
+class AppContext:
+    app_id: str
+    started_at: datetime
+    start: datetime | None
+    end: datetime | None
+    query: Query | None
+    params: dict[str, Any]
+    queries: dict[str, Query] | None = None
+
+
+class AppOutputSpec(BaseModel):
+    kind: Literal["timeseries", "event"]
+    point_uri: str
+    ref_uri: str | None = None
+    quantity_kind: str | None = None
+    unit: str | None = None
+    data_source: str | None = None
+    storage_backend: str | None = None
+
+
+class AppSpec(BaseModel):
+    name: str
+    version: str = "0.0"
+    app_type: str = "soft_sensor"
+    docker_image: str | None = None
+    module: str | None = None
+    app_class: str | None = None
+    entrypoint: str | None = None
+    command: str | None = None
+    source_code: str | None = None
+    entry_file: str | None = None
+    queries: dict[str, dict] = Field(default_factory=dict)
+    outputs: list[AppOutputSpec] = Field(default_factory=list)
+    depends_on: list[str] = Field(default_factory=list)
+
+
+class AppRunRequest(BaseModel):
+    app_id: str
+    start: datetime | None = None
+    end: datetime | None = None
+    params: dict[str, Any] = Field(default_factory=dict)
