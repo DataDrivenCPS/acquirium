@@ -109,6 +109,24 @@ services:
     profiles:
       - test
 
+  benicia_sim:
+    platform: linux/arm64
+    build:
+      context: ./deployments/BENICIA/scripts
+      dockerfile: Dockerfile
+    container_name: acquirium_benicia_sim
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+      acquirium:
+        condition: service_healthy
+    networks:
+      - acquirium_net
+    profiles:
+      - benicia_simulation
+
 volumes:
   tsdb_data:
   mosquitto_data:
