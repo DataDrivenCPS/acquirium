@@ -67,3 +67,9 @@ watertap-up:
 
 watertap-down:
 	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile watertap_simulation down --remove-orphans
+
+benicia-up:
+	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile benicia_simulation up -d --build
+
+benicia-down:
+	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile benicia_simulation down --remove-orphans
