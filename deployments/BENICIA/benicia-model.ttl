@@ -22,6 +22,15 @@ wbs:AS_Secondary_Sedimentation-volume a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Volume ;
     qudt:hasUnit unit:GAL_US .
 
+wbs:Chlorination_Basin-cl2-mgL a s223:QuantifiableObservableProperty ;
+    s223:ofSubstance nawi:Chlorine ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:Chlorination_Basin-volume a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Volume ;
+    qudt:hasUnit unit:GAL_US .
+
 wbs:Effluent_Pump-out-bacteria-enterococcus a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance nawi:Constituent-Bacteria ;
@@ -74,6 +83,10 @@ wbs:Effluent_Pump-out-tss-concentration a s223:QuantifiableObservableProperty ;
     s223:ofSubstance s223:Solids-SuspendedSolids ;
     qudt:hasQuantityKind qudtqk:Density ;
     qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:Effluent_Pump-speed-command a s223:QuantifiableActuatableProperty ;
+    qudt:hasQuantityKind qudtqk:SpeedRatio ;
+    qudt:hasUnit unit:PERCENT .
 
 wbs:Grinder-electric-current a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:ElectricCurrent ;
@@ -429,7 +442,9 @@ wbs:Chlorination_Basin a nawi:ChlorinationBasin ;
         wbs:conn-Chlorination_Chamber-to-Chlorination_Basin ;
     s223:connectedTo wbs:Effluent_Pump ;
     s223:hasConnectionPoint wbs:Chlorination_Basin-in,
-        wbs:Chlorination_Basin-out .
+        wbs:Chlorination_Basin-out ;
+    s223:hasProperty wbs:Chlorination_Basin-cl2-mgL,
+        wbs:Chlorination_Basin-volume .
 
 wbs:Chlorination_Chamber-in a s223:InletConnectionPoint ;
     s223:connectsAt wbs:conn-AS_Secondary_Sedimentation-to-Chlorination_Chamber,
@@ -453,7 +468,8 @@ wbs:Effluent_Pump a nawi:Pump ;
         wbs:conn-Effluent_Pump-to-Storage_Basin ;
     s223:connectedTo wbs:Storage_Basin ;
     s223:hasConnectionPoint wbs:Effluent_Pump-in,
-        wbs:Effluent_Pump-out .
+        wbs:Effluent_Pump-out ;
+    s223:hasProperty wbs:Effluent_Pump-speed-command .
 
 wbs:Flow_Return_Pump1 a nawi:Pump ;
     s223:cnx wbs:Flow_Return_Pump1-in,
