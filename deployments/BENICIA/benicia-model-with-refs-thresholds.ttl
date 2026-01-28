@@ -31,7 +31,7 @@ wbs:AS_Aeration_Basin-mlss-concentration a s223:QuantifiableObservableProperty ;
         wbs:AS_Aeration_Basin-mlss-concentration_parquet_ref .
 
 wbs:AS_Aeration_Basin-mlss-concentration_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "localhost" ;
+    acq:Broker "mosquitto" ;
     acq:Port 1883 ;
     acq:Topic "benicia/AS_Aeration_Basin-mlss-concentration" ;
     acq:time_key "Timestamp" ;
@@ -50,7 +50,7 @@ wbs:AS_Aeration_Basin-volume a s223:QuantifiableObservableProperty ;
         wbs:AS_Aeration_Basin-volume_parquet_ref .
 
 wbs:AS_Aeration_Basin-volume_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "localhost" ;
+    acq:Broker "mosquitto" ;
     acq:Port 1883 ;
     acq:Topic "benicia/AS_Aeration_Basin-volume" ;
     acq:time_key "Timestamp" ;
@@ -69,7 +69,7 @@ wbs:AS_Secondary_Sedimentation-volume a s223:QuantifiableObservableProperty ;
         wbs:AS_Secondary_Sedimentation-volume_parquet_ref .
 
 wbs:AS_Secondary_Sedimentation-volume_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "localhost" ;
+    acq:Broker "mosquitto" ;
     acq:Port 1883 ;
     acq:Topic "benicia/AS_Secondary_Sedimentation-volume" ;
     acq:time_key "Timestamp" ;
@@ -78,6 +78,45 @@ wbs:AS_Secondary_Sedimentation-volume_mqtt_ref a acq:MQTTReference ;
 wbs:AS_Secondary_Sedimentation-volume_parquet_ref a acq:ParquetReference ;
     acq:DataSource "data/BENICIA/parquet/AS_Secondary_Sedimentation-volume.parquet" ;
     acq:hasFilePath "data/BENICIA/parquet/AS_Secondary_Sedimentation-volume.parquet" ;
+    acq:hasTimeColumn 0 ;
+    acq:hasValueColumn 1 .
+
+wbs:Chlorination_Basin-cl2-mgL a s223:QuantifiableObservableProperty ;
+    s223:ofSubstance nawi:Chlorine ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MilliGM-PER-L ;
+    acq:hasExternalReference wbs:Chlorination_Basin-cl2-mgL_mqtt_ref,
+        wbs:Chlorination_Basin-cl2-mgL_parquet_ref .
+
+wbs:Chlorination_Basin-cl2-mgL_mqtt_ref a acq:MQTTReference ;
+    acq:Broker "mosquitto" ;
+    acq:Port 1883 ;
+    acq:Topic "benicia/Chlorination_Basin-cl2-mgL" ;
+    acq:time_key "Timestamp" ;
+    acq:value_key "Value" .
+
+wbs:Chlorination_Basin-cl2-mgL_parquet_ref a acq:ParquetReference ;
+    acq:DataSource "data/BENICIA/parquet/Chlorination_Basin-cl2-mgL.parquet" ;
+    acq:hasFilePath "data/BENICIA/parquet/Chlorination_Basin-cl2-mgL.parquet" ;
+    acq:hasTimeColumn 0 ;
+    acq:hasValueColumn 1 .
+
+wbs:Chlorination_Basin-volume a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Volume ;
+    qudt:hasUnit unit:GAL_US ;
+    acq:hasExternalReference wbs:Chlorination_Basin-volume_mqtt_ref,
+        wbs:Chlorination_Basin-volume_parquet_ref .
+
+wbs:Chlorination_Basin-volume_mqtt_ref a acq:MQTTReference ;
+    acq:Broker "mosquitto" ;
+    acq:Port 1883 ;
+    acq:Topic "benicia/Chlorination_Basin-volume" ;
+    acq:time_key "Timestamp" ;
+    acq:value_key "Value" .
+
+wbs:Chlorination_Basin-volume_parquet_ref a acq:ParquetReference ;
+    acq:DataSource "data/BENICIA/parquet/Chlorination_Basin-volume.parquet" ;
+    acq:hasFilePath "data/BENICIA/parquet/Chlorination_Basin-volume.parquet" ;
     acq:hasTimeColumn 0 ;
     acq:hasValueColumn 1 .
 
@@ -114,7 +153,7 @@ wbs:Effluent_Pump-out-bacteria-enterococcus_limit_3 a acq:Limit ;
     acq:value 1000 .
 
 wbs:Effluent_Pump-out-bacteria-enterococcus_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "localhost" ;
+    acq:Broker "mosquitto" ;
     acq:Port 1883 ;
     acq:Topic "benicia/Effluent_Pump-out-bacteria-enterococcus" ;
     acq:time_key "Timestamp" ;
@@ -148,7 +187,7 @@ wbs:Effluent_Pump-out-biochemical-oxygen-demand_limit_2 a acq:Limit ;
     acq:value 45 .
 
 wbs:Effluent_Pump-out-biochemical-oxygen-demand_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "localhost" ;
+    acq:Broker "mosquitto" ;
     acq:Port 1883 ;
     acq:Topic "benicia/Effluent_Pump-out-biochemical-oxygen-demand" ;
     acq:time_key "Timestamp" ;
@@ -191,7 +230,7 @@ wbs:Effluent_Pump-out-cl2-mgL_limit_2 a acq:Limit ;
     acq:value 0e+00 .
 
 wbs:Effluent_Pump-out-cl2-mgL_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "localhost" ;
+    acq:Broker "mosquitto" ;
     acq:Port 1883 ;
     acq:Topic "benicia/Effluent_Pump-out-cl2-mgL" ;
     acq:time_key "Timestamp" ;
@@ -233,7 +272,7 @@ wbs:Effluent_Pump-out-copper_limit_2 a acq:Limit ;
     acq:value 119 .
 
 wbs:Effluent_Pump-out-copper_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "localhost" ;
+    acq:Broker "mosquitto" ;
     acq:Port 1883 ;
     acq:Topic "benicia/Effluent_Pump-out-copper" ;
     acq:time_key "Timestamp" ;
@@ -275,7 +314,7 @@ wbs:Effluent_Pump-out-cyanide_limit_2 a acq:Limit ;
     acq:value 43 .
 
 wbs:Effluent_Pump-out-cyanide_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "localhost" ;
+    acq:Broker "mosquitto" ;
     acq:Port 1883 ;
     acq:Topic "benicia/Effluent_Pump-out-cyanide" ;
     acq:time_key "Timestamp" ;
@@ -295,12 +334,13 @@ wbs:Effluent_Pump-out-cyanide_threshold a acq:Threshold ;
 
 wbs:Effluent_Pump-out-flow-rate a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:VolumeFlowRate ;
+    qudt:hasUnit unit:GAL_US-PER-MIN ;
     acq:hasExternalReference wbs:Effluent_Pump-out-flow-rate_mqtt_ref,
         wbs:Effluent_Pump-out-flow-rate_parquet_ref ;
     acq:hasThreshold wbs:Effluent_Pump-out-flow-rate_threshold .
 
 wbs:Effluent_Pump-out-flow-rate_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "localhost" ;
+    acq:Broker "mosquitto" ;
     acq:Port 1883 ;
     acq:Topic "benicia/Effluent_Pump-out-flow-rate" ;
     acq:time_key "Timestamp" ;
@@ -340,7 +380,7 @@ wbs:Effluent_Pump-out-nh4-mgL_limit_2 a acq:Limit ;
     acq:value 110 .
 
 wbs:Effluent_Pump-out-nh4-mgL_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "localhost" ;
+    acq:Broker "mosquitto" ;
     acq:Port 1883 ;
     acq:Topic "benicia/Effluent_Pump-out-nh4-mgL" ;
     acq:time_key "Timestamp" ;
@@ -380,7 +420,7 @@ wbs:Effluent_Pump-out-ph_limit_2 a acq:Limit ;
     acq:value 9e+00 .
 
 wbs:Effluent_Pump-out-ph_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "localhost" ;
+    acq:Broker "mosquitto" ;
     acq:Port 1883 ;
     acq:Topic "benicia/Effluent_Pump-out-ph" ;
     acq:time_key "Timestamp" ;
@@ -422,7 +462,7 @@ wbs:Effluent_Pump-out-teq-dioxin_limit_2 a acq:Limit ;
     acq:value 2.8e-08 .
 
 wbs:Effluent_Pump-out-teq-dioxin_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "localhost" ;
+    acq:Broker "mosquitto" ;
     acq:Port 1883 ;
     acq:Topic "benicia/Effluent_Pump-out-teq-dioxin" ;
     acq:time_key "Timestamp" ;
@@ -455,7 +495,7 @@ wbs:Effluent_Pump-out-tss-concentration_limit_2 a acq:Limit ;
     acq:value 45 .
 
 wbs:Effluent_Pump-out-tss-concentration_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "localhost" ;
+    acq:Broker "mosquitto" ;
     acq:Port 1883 ;
     acq:Topic "benicia/Effluent_Pump-out-tss-concentration" ;
     acq:time_key "Timestamp" ;
@@ -473,6 +513,25 @@ wbs:Effluent_Pump-out-tss-concentration_threshold a acq:Threshold ;
     acq:monitoring_location "EFF-001" ;
     acq:side "effluent" .
 
+wbs:Effluent_Pump-speed-command a s223:QuantifiableActuatableProperty ;
+    qudt:hasQuantityKind qudtqk:SpeedRatio ;
+    qudt:hasUnit unit:PERCENT ;
+    acq:hasExternalReference wbs:Effluent_Pump-speed-command_mqtt_ref,
+        wbs:Effluent_Pump-speed-command_parquet_ref .
+
+wbs:Effluent_Pump-speed-command_mqtt_ref a acq:MQTTReference ;
+    acq:Broker "mosquitto" ;
+    acq:Port 1883 ;
+    acq:Topic "benicia/Effluent_Pump-speed-command" ;
+    acq:time_key "Timestamp" ;
+    acq:value_key "Value" .
+
+wbs:Effluent_Pump-speed-command_parquet_ref a acq:ParquetReference ;
+    acq:DataSource "data/BENICIA/parquet/Effluent_Pump-speed-command.parquet" ;
+    acq:hasFilePath "data/BENICIA/parquet/Effluent_Pump-speed-command.parquet" ;
+    acq:hasTimeColumn 0 ;
+    acq:hasValueColumn 1 .
+
 wbs:Grinder-electric-current a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:ElectricCurrent ;
     qudt:hasUnit unit:A ;
@@ -480,7 +539,7 @@ wbs:Grinder-electric-current a s223:QuantifiableObservableProperty ;
         wbs:Grinder-electric-current_parquet_ref .
 
 wbs:Grinder-electric-current_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "localhost" ;
+    acq:Broker "mosquitto" ;
     acq:Port 1883 ;
     acq:Topic "benicia/Grinder-electric-current" ;
     acq:time_key "Timestamp" ;
@@ -509,7 +568,7 @@ wbs:Influent_Pump-in a s223:InletConnectionPoint ;
         wbs:Influent_Pump-in-tss-concentration .
 
 wbs:Influent_Pump-in-biochemical-oxygen-demand_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "localhost" ;
+    acq:Broker "mosquitto" ;
     acq:Port 1883 ;
     acq:Topic "benicia/Influent_Pump-in-biochemical-oxygen-demand" ;
     acq:time_key "Timestamp" ;
@@ -544,7 +603,7 @@ wbs:Influent_Pump-in-cyanide_limit_1 a acq:Limit ;
     acq:value 6.6e+00 .
 
 wbs:Influent_Pump-in-cyanide_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "localhost" ;
+    acq:Broker "mosquitto" ;
     acq:Port 1883 ;
     acq:Topic "benicia/Influent_Pump-in-cyanide" ;
     acq:time_key "Timestamp" ;
@@ -578,7 +637,7 @@ wbs:Influent_Pump-in-flow-rate_limit_1 a acq:Limit ;
     acq:value 4.5e+06 .
 
 wbs:Influent_Pump-in-flow-rate_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "localhost" ;
+    acq:Broker "mosquitto" ;
     acq:Port 1883 ;
     acq:Topic "benicia/Influent_Pump-in-flow-rate" ;
     acq:time_key "Timestamp" ;
@@ -596,7 +655,7 @@ wbs:Influent_Pump-in-flow-rate_threshold a acq:Threshold ;
     acq:side "influent" .
 
 wbs:Influent_Pump-in-tss-concentration_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "localhost" ;
+    acq:Broker "mosquitto" ;
     acq:Port 1883 ;
     acq:Topic "benicia/Influent_Pump-in-tss-concentration" ;
     acq:time_key "Timestamp" ;
@@ -619,7 +678,7 @@ wbs:Influent_Pump-status a s223:QuantifiableObservableProperty ;
         wbs:Influent_Pump-status_parquet_ref .
 
 wbs:Influent_Pump-status_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "localhost" ;
+    acq:Broker "mosquitto" ;
     acq:Port 1883 ;
     acq:Topic "benicia/Influent_Pump-status" ;
     acq:time_key "Timestamp" ;
@@ -638,7 +697,7 @@ wbs:Primary_Sedimentation-turbidity a s223:QuantifiableObservableProperty ;
         wbs:Primary_Sedimentation-turbidity_parquet_ref .
 
 wbs:Primary_Sedimentation-turbidity_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "localhost" ;
+    acq:Broker "mosquitto" ;
     acq:Port 1883 ;
     acq:Topic "benicia/Primary_Sedimentation-turbidity" ;
     acq:time_key "Timestamp" ;
@@ -657,7 +716,7 @@ wbs:Primary_Sedimentation-volume a s223:QuantifiableObservableProperty ;
         wbs:Primary_Sedimentation-volume_parquet_ref .
 
 wbs:Primary_Sedimentation-volume_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "localhost" ;
+    acq:Broker "mosquitto" ;
     acq:Port 1883 ;
     acq:Topic "benicia/Primary_Sedimentation-volume" ;
     acq:time_key "Timestamp" ;
@@ -676,7 +735,7 @@ wbs:RBC_Secondary_Sedimentation-volume a s223:QuantifiableObservableProperty ;
         wbs:RBC_Secondary_Sedimentation-volume_parquet_ref .
 
 wbs:RBC_Secondary_Sedimentation-volume_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "localhost" ;
+    acq:Broker "mosquitto" ;
     acq:Port 1883 ;
     acq:Topic "benicia/RBC_Secondary_Sedimentation-volume" ;
     acq:time_key "Timestamp" ;
@@ -694,7 +753,7 @@ wbs:Sluice_Gate-opening-command a s223:QuantifiableActuatableProperty ;
         wbs:Sluice_Gate-opening-command_parquet_ref .
 
 wbs:Sluice_Gate-opening-command_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "localhost" ;
+    acq:Broker "mosquitto" ;
     acq:Port 1883 ;
     acq:Topic "benicia/Sluice_Gate-opening-command" ;
     acq:time_key "Timestamp" ;
@@ -712,7 +771,7 @@ wbs:Sluice_Gate-status a s223:QuantifiableObservableProperty ;
         wbs:Sluice_Gate-status_parquet_ref .
 
 wbs:Sluice_Gate-status_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "localhost" ;
+    acq:Broker "mosquitto" ;
     acq:Port 1883 ;
     acq:Topic "benicia/Sluice_Gate-status" ;
     acq:time_key "Timestamp" ;
@@ -731,7 +790,7 @@ wbs:Storage_Basin-volume a s223:QuantifiableObservableProperty ;
         wbs:Storage_Basin-volume_parquet_ref .
 
 wbs:Storage_Basin-volume_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "localhost" ;
+    acq:Broker "mosquitto" ;
     acq:Port 1883 ;
     acq:Topic "benicia/Storage_Basin-volume" ;
     acq:time_key "Timestamp" ;
@@ -1067,7 +1126,9 @@ wbs:Chlorination_Basin a nawi:ChlorinationBasin ;
         wbs:conn-Chlorination_Chamber-to-Chlorination_Basin ;
     s223:connectedTo wbs:Effluent_Pump ;
     s223:hasConnectionPoint wbs:Chlorination_Basin-in,
-        wbs:Chlorination_Basin-out .
+        wbs:Chlorination_Basin-out ;
+    s223:hasProperty wbs:Chlorination_Basin-cl2-mgL,
+        wbs:Chlorination_Basin-volume .
 
 wbs:Chlorination_Chamber-in a s223:InletConnectionPoint ;
     s223:connectsAt wbs:conn-AS_Secondary_Sedimentation-to-Chlorination_Chamber,
@@ -1091,7 +1152,8 @@ wbs:Effluent_Pump a nawi:Pump ;
         wbs:conn-Effluent_Pump-to-Storage_Basin ;
     s223:connectedTo wbs:Storage_Basin ;
     s223:hasConnectionPoint wbs:Effluent_Pump-in,
-        wbs:Effluent_Pump-out .
+        wbs:Effluent_Pump-out ;
+    s223:hasProperty wbs:Effluent_Pump-speed-command .
 
 wbs:Flow_Return_Pump1 a nawi:Pump ;
     s223:cnx wbs:Flow_Return_Pump1-in,

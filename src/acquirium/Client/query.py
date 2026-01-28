@@ -872,12 +872,16 @@ class Query:
 
     from typing import List
 
-    def _edge_pattern(self,src_var: str, tgt_var: str, edge, edge_idx: int) -> str:
+    def _edge_pattern(self, src_var: str, tgt_var: str, edge, edge_idx: int) -> str:
         """
         Build a WHERE fragment for one edge.
 
+        Enhancement:
+        - Whenever it emits an edge pattern, also emit an alternative where the FIRST hop
+        is taken via a connection point.
+
         Rules:
-        - If edge.predicates is present/non-empty: constrain to those predicates (union) and allow length 1..hops.
+        - If edge.predicates is present/non-empty: constrain to those predicates and allow length 1..hops.
         - Else: allow any predicates, but length <= hops, via UNION of k-step chains.
         """
         hops = int(edge.hops)
@@ -887,7 +891,7 @@ class Query:
         preds = getattr(edge, "predicates", None) or []
         preds = [p for p in preds if p]  # remove falsy
 
-        # Case A: constrained predicate set -> property path with alternation + length range
+        # Case A: constrained predicate set
         if preds:
             seen = set()
             uniq = []
@@ -896,43 +900,91 @@ class Query:
                     seen.add(p)
                     uniq.append(p)
 
-            
-
+            # normal property path (no variables inside)
             if hops == 1:
                 alt = "|".join(f"<{p}>" for p in uniq)
                 path = f"({alt})"
             else:
-                alt = ""
+                parts = []
                 for p in uniq:
-                    for k in range(1,hops+1):
-                        add = [f"<{p}>"] * k
-                        alt += "/".join(add)
-                        if k < hops:
-                            alt += "|"
-                path = f"({alt})"
+                    for k in range(1, hops + 1):
+                        parts.append("/".join([f"<{p}>"] * k))
+                path = f"({'|'.join(parts)})"
 
-            return f"{src_var} {path} {tgt_var} ."
+            normal = f"{src_var} {path} {tgt_var} ."
+
+            # CP alternative:
+            # - For hops==1 we can still keep it as a property path because it's all IRIs:
+            #     src <cp>/<p> tgt
+            # - For hops>1, rewrite as a UNION over k with explicit triples so CP only affects first hop.
+            if hops == 1:
+                via_cp = f"{src_var} <{CONNECTION_POINT}>/{path} {tgt_var} ."
+                return f"{{ {normal} }} UNION {{ {via_cp} }}"
+            else:
+                union_blocks: List[str] = []
+
+                for k in range(1, hops + 1):
+                    # normal k-hop chain with fixed predicate <p0>
+                    triples_normal: List[str] = []
+                    prev = src_var
+                    mids = [f"?x_e{edge_idx}_{i}_k{k}" for i in range(1, k)]  # k-1
+                    p0 = uniq[0]  # placeholder; we'll emit UNION across p below
+
+                    # We'll build a UNION per predicate for this k.
+                    pred_blocks = []
+                    for p in uniq:
+                        triples_normal = []
+                        prev = src_var
+                        for step in range(k):
+                            obj = tgt_var if step == k - 1 else mids[step]
+                            triples_normal.append(f"{prev} <{p}> {obj} .")
+                            prev = obj
+
+                        # CP version: inject cp node only on first hop
+                        cp = f"?cp_e{edge_idx}_k{k}"
+                        triples_cp = list(triples_normal)
+                        first_obj = tgt_var if k == 1 else mids[0]
+                        triples_cp[0] = f"{src_var} <{CONNECTION_POINT}> {cp} . {cp} <{p}> {first_obj} ."
+
+                        block_normal = "{ " + " ".join(triples_normal) + " }"
+                        block_cp = "{ " + " ".join(triples_cp) + " }"
+                        pred_blocks.append(f"{block_normal} UNION {block_cp}")
+
+                    union_blocks.append("{ " + " UNION ".join(pred_blocks) + " }")
+
+                return " UNION ".join(union_blocks)
 
         # Case B: unconstrained predicates -> UNION of explicit k-step chains
         union_blocks: List[str] = []
         for k in range(1, hops + 1):
-            triples: List[str] = []
-            prev = src_var
-
-            # intermediate node vars for this edge/length
             mids = [f"?x_e{edge_idx}_{i}" for i in range(1, k)]  # k-1 intermediates
-            # predicate vars for this edge/length
             ps = [f"?p_e{edge_idx}_{i}" for i in range(1, k + 1)]
 
+            # normal chain triples
+            triples_normal: List[str] = []
+            prev = src_var
             for step in range(k):
                 pvar = ps[step]
                 obj = tgt_var if step == k - 1 else mids[step]
-                triples.append(f"{prev} {pvar} {obj} .")
+                triples_normal.append(f"{prev} {pvar} {obj} .")
                 prev = obj
 
-            union_blocks.append("{ " + " ".join(triples) + " }")
+            # connection-point variant: rewrite first hop using intermediate cp node (NO property path with var)
+            triples_cp: List[str] = []
+            cp = f"?cp_e{edge_idx}_k{k}"
+            first_obj = tgt_var if k == 1 else mids[0]
+            triples_cp.append(f"{src_var} <{CONNECTION_POINT}> {cp} .")
+            triples_cp.append(f"{cp} {ps[0]} {first_obj} .")
+            # remaining hops (if any) unchanged
+            if k > 1:
+                triples_cp.extend(triples_normal[1:])
+
+            block_normal = "{ " + " ".join(triples_normal) + " }"
+            block_cp = "{ " + " ".join(triples_cp) + " }"
+            union_blocks.append(f"{block_normal} UNION {block_cp}")
 
         return " UNION ".join(union_blocks)
+
 
     def _is_iri(self,x: object) -> bool:
         return isinstance(x, str) and ("://" in x or x.startswith("urn:"))
@@ -954,7 +1006,7 @@ class Query:
         for nid, node in self.query_graph.nodes.items():
             v = var_map[nid]
             if node.rdf_class:
-                where_clauses.append(f"{v} a <{node.rdf_class}> .")
+                where_clauses.append(f"{v} <http://www.w3.org/1999/02/22-rdf-syntax-ns#type>/<http://www.w3.org/2000/01/rdf-schema#subClassOf>* <{node.rdf_class}> .")
 
         # edge constraints
         for edge_idx, edge in enumerate(self.query_graph.edges):

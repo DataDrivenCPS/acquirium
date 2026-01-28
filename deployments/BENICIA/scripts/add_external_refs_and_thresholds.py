@@ -425,7 +425,7 @@ def main() -> None:
         default="data/BENICIA/parquet",
         help="Directory for parquet file references.",
     )
-    parser.add_argument("--broker", default="localhost", help="MQTT broker host.")
+    parser.add_argument("--broker", default="mosquitto", help="MQTT broker host.")
     parser.add_argument("--port", type=int, default=1883, help="MQTT broker port.")
     parser.add_argument(
         "--topic-prefix",

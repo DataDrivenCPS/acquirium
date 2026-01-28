@@ -112,8 +112,8 @@ services:
   benicia_sim:
     platform: linux/arm64
     build:
-      context: ./deployments/BENICIA/scripts
-      dockerfile: Dockerfile
+      context: ./deployments/BENICIA/
+      dockerfile: scripts/Dockerfile
     container_name: acquirium_benicia_sim
     depends_on:
       mosquitto:

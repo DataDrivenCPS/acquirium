@@ -137,6 +137,8 @@ class Manager:
             os.getenv("ACQUIRIUM_APP_STORAGE_ROOT", str(self.data_dir / "apps"))
         )
         self.app_storage_root.mkdir(parents=True, exist_ok=True)
+        self._app_runs: dict[str, dict[str, Any]] = {}
+        self._app_runs_lock = threading.Lock()
         
     
     @classmethod
@@ -365,7 +367,7 @@ class Manager:
             graph.add((point_uri, RDF.type, VIRTUAL_POINT))
             graph.add((point_uri, HAS_EXTERNAL_REFERENCE, ref_uri))
             graph.add((ref_uri, RDF.type, STREAM))
-            if out.kind == "event":
+            if out.kind in {"event", "trigger"}:
                 graph.add((ref_uri, RDF.type, EVENT_STREAM))
             else:
                 graph.add((ref_uri, RDF.type, TIMESERIES_STREAM))
@@ -432,7 +434,7 @@ class Manager:
             "command": pick("cmd"),
         }
 
-    def run_app(self, req: AppRunRequest) -> str:
+    def _run_app_once(self, req: AppRunRequest, *, keep_alive: bool = False, interval: float | None = None) -> str:
         runtime = self._lookup_app_runtime(req.app_id)
         logger.info("Running app %s with runtime config: %s", req.app_id, runtime)
 
@@ -469,6 +471,9 @@ class Manager:
             "PYTHONPATH": f"/app/src:{container_app_root}",
             "ACQUIRIUM_LEXICON_PATH": os.getenv("ACQUIRIUM_LEXICON_PATH", "/app/lexicon.json"),
         }
+        if keep_alive:
+            env["ACQUIRIUM_KEEP_ALIVE"] = "true"
+            env["ACQUIRIUM_KEEP_ALIVE_INTERVAL"] = str(interval if interval is not None else req.interval)
         if entry_file:
             env["ACQUIRIUM_APP_FILE"] = f"{container_app_root}/{entry_file}"
 
@@ -509,6 +514,55 @@ class Manager:
         cid = proc.stdout.strip()
         logger.info("Started docker container for app %s: %s", req.app_id, cid)
         return cid
+
+    def run_app(self, req: AppRunRequest) -> str:
+        if not req.keep_alive:
+            return self._run_app_once(req)
+
+        cid = self._run_app_once(req, keep_alive=True, interval=req.interval)
+        with self._app_runs_lock:
+            self._app_runs[cid] = {"app_id": req.app_id, "cid": cid}
+        return cid
+
+    def _stop_container(self, cid: str) -> None:
+        try:
+            subprocess.run(["docker", "stop", cid], capture_output=True, text=True, check=False)
+        except Exception:
+            logger.exception("Failed to stop container %s", cid)
+
+    def stop_app(self, *, run_id: str | None = None, app_id: str | None = None) -> dict[str, Any]:
+        if not run_id and not app_id:
+            raise ValueError("stop_app requires run_id or app_id")
+
+        to_stop: list[str] = []
+        with self._app_runs_lock:
+            if run_id:
+                if run_id in self._app_runs:
+                    to_stop.append(run_id)
+                else:
+                    to_stop.append(run_id)
+            else:
+                for rid, info in self._app_runs.items():
+                    if app_id == "*" or info.get("app_id") == app_id:
+                        to_stop.append(rid)
+
+        stopped: list[str] = []
+        for rid in to_stop:
+            with self._app_runs_lock:
+                record = self._app_runs.pop(rid, None)
+            cid = record.get("cid") if record else rid
+            if cid:
+                self._stop_container(cid)
+            stopped.append(rid)
+
+        return {"stopped": len(stopped), "run_ids": stopped}
+
+    def list_app_runs(self, *, app_id: str | None = None) -> list[dict[str, Any]]:
+        with self._app_runs_lock:
+            runs = list(self._app_runs.values())
+        if app_id:
+            runs = [r for r in runs if r.get("app_id") == app_id]
+        return [{"run_id": r.get("cid"), "app_id": r.get("app_id")} for r in runs]
 
     
     def ingest_reference_bytes(
@@ -688,6 +742,10 @@ class Manager:
             "error_tasks": len(errors),
         }
     def close(self) -> None:
+        try:
+            self.stop_app(app_id="*")
+        except Exception:
+            pass
         try:
             self._executor.shutdown(wait=False, cancel_futures=False)
         except Exception:

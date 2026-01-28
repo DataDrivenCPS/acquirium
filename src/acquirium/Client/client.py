@@ -8,7 +8,14 @@ import polars as pl
 # import pyarrow as pa
 import pyarrow.ipc as ipc
 # from io import BytesIO
-from acquirium.internals.models import Order, LogEntry, AppSpec, AppRunRequest, InsertTimeseriesRequest
+from acquirium.internals.models import (
+    Order,
+    LogEntry,
+    AppSpec,
+    AppRunRequest,
+    AppStopRequest,
+    InsertTimeseriesRequest,
+)
 from acquirium.internals.internals_namespaces import *
 import logging
 logger = logging.getLogger(__name__)
@@ -91,7 +98,7 @@ class AcquiriumClient:
                 else:
                     return pl.DataFrame()
             except Exception as e:
-                logger.error(f"Error reading Arrow IPC stream: {e}")
+                # logger.error(f"Error reading Arrow IPC stream: {e}")
                 return pl.DataFrame()
             
 
@@ -285,6 +292,8 @@ class AcquiriumClient:
         start: Optional[datetime] = None,
         end: Optional[datetime] = None,
         params: Optional[dict] = None,
+        keep_alive: bool = False,
+        interval: float = 10.0,
     ) -> dict:
         url = f"{self.base_url}/apps/run"
         req = AppRunRequest(
@@ -292,8 +301,24 @@ class AcquiriumClient:
             start=start,
             end=end,
             params=params or {},
+            keep_alive=keep_alive,
+            interval=interval,
         )
         response = requests.post(url, json=req.model_dump(mode="json"))
+        response.raise_for_status()
+        return response.json()
+
+    def stop_app(self, *, run_id: Optional[str] = None, app_id: Optional[str] = None) -> dict:
+        url = f"{self.base_url}/apps/stop"
+        req = AppStopRequest(run_id=run_id, app_id=app_id)
+        response = requests.post(url, json=req.model_dump(mode="json"))
+        response.raise_for_status()
+        return response.json()
+
+    def list_app_runs(self, *, app_id: Optional[str] = None) -> dict:
+        url = f"{self.base_url}/apps/list"
+        params = {"app_id": app_id} if app_id else None
+        response = requests.get(url, params=params)
         response.raise_for_status()
         return response.json()
 

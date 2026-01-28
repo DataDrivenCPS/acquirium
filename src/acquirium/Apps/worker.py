@@ -7,6 +7,8 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 import sys
+import requests
+import time
 
 from acquirium import Acquirium
 from acquirium.Apps.base import Output, App
@@ -19,6 +21,17 @@ def _parse_dt(value: str | None) -> datetime | None:
         return None
     value = value.replace("Z", "+00:00")
     return datetime.fromisoformat(value)
+
+
+def _normalize_url(url: str) -> str:
+    if "://" not in url:
+        return f"http://{url}"
+    return url
+
+
+def _run_once(app: App, ctx: AppContext, aq: Acquirium) -> None:
+    outputs = app.run(ctx)
+    _persist_outputs(aq, outputs)
 
 
 def _load_app_from_file(path: str, class_name: str | None) -> App:
@@ -64,6 +77,24 @@ def _persist_outputs(aq: Acquirium, outputs: list[Output]) -> None:
                 ensure_ascii=True,
             )
             aq.client.insert_timeseries(ref_uri=ref_uri, rows=[(ts, value)], point_uri=point_uri)
+        elif out.kind == "trigger":
+            url = out.payload.get("url")
+            if not url:
+                raise ValueError("trigger output requires url")
+            url = _normalize_url(url)
+            message = out.payload.get("message")
+            headers = out.payload.get("headers") or {}
+            timeout = out.payload.get("timeout") or 5
+            ts = out.payload.get("ts") or datetime.now(timezone.utc)
+            payload = {
+                "message": message,
+                "ts": ts.isoformat(),
+            }
+            point_uri = out.payload.get("point_uri")
+            if point_uri:
+                payload["point_uri"] = point_uri
+            response = requests.post(url, json=payload, headers=headers, timeout=timeout)
+            response.raise_for_status()
 
 
 def main() -> None:
@@ -115,8 +146,16 @@ def main() -> None:
         queries=queries,
     )
 
-    outputs = app.run(ctx)
-    _persist_outputs(aq, outputs)
+    keep_alive = os.getenv("ACQUIRIUM_KEEP_ALIVE", "false").lower() == "true"
+    interval = float(os.getenv("ACQUIRIUM_KEEP_ALIVE_INTERVAL", "10"))
+
+    if not keep_alive:
+        _run_once(app, ctx, aq)
+        return
+
+    while True:
+        _run_once(app, ctx, aq)
+        time.sleep(max(interval, 0.0))
 
 
 if __name__ == "__main__":

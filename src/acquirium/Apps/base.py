@@ -73,6 +73,28 @@ class Output:
             },
         )
 
+    @staticmethod
+    def trigger(
+        *,
+        url: str,
+        message: Any,
+        point_uri: str | None = None,
+        ts: datetime | None = None,
+        headers: dict[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> "Output":
+        return Output(
+            kind="trigger",
+            payload={
+                "url": url,
+                "message": message,
+                "point_uri": point_uri,
+                "ts": ts,
+                "headers": headers or {},
+                "timeout": timeout,
+            },
+        )
+
 
 class App(ABC):
     name: str

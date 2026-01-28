@@ -61,7 +61,8 @@ wbs:Effluent_Pump-out-cyanide a s223:QuantifiableObservableProperty ;
     qudt:hasUnit unit:MicroGM-PER-L .
 
 wbs:Effluent_Pump-out-flow-rate a s223:QuantifiableObservableProperty ;
-    qudt:hasQuantityKind qudtqk:VolumeFlowRate .
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate ;
+    qudt:hasUnit unit:GAL_US-PER-MIN .
 
 wbs:Effluent_Pump-out-nh4-mgL a s223:QuantifiableObservableProperty ;
     s223:ofSubstance nawi:Ammonia ;

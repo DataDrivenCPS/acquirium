@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from typing import Any
+import requests
 
 from acquirium.Apps.base import App, AppContext, Output
 from acquirium.Client.acquirium import Acquirium
@@ -71,3 +72,22 @@ class AppRunner:
                     ensure_ascii=True,
                 )
                 self.manager.insert_timeseries(ref_uri=ref_uri, rows=[(ts, value)], point_uri=point_uri)
+            elif out.kind == "trigger":
+                url = out.payload.get("url")
+                if not url:
+                    raise ValueError("trigger output requires url")
+                if "://" not in url:
+                    url = f"http://{url}"
+                message = out.payload.get("message")
+                headers = out.payload.get("headers") or {}
+                timeout = out.payload.get("timeout") or 5
+                ts = out.payload.get("ts") or datetime.now(timezone.utc)
+                payload = {
+                    "message": message,
+                    "ts": ts.isoformat(),
+                }
+                point_uri = out.payload.get("point_uri")
+                if point_uri:
+                    payload["point_uri"] = point_uri
+                response = requests.post(url, json=payload, headers=headers, timeout=timeout)
+                response.raise_for_status()
