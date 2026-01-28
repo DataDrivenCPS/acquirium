@@ -115,7 +115,7 @@ g = Graph(store="Oxigraph")
 # for onto in ontologies:
 #     g.parse(f"ontologies/{onto}", format="turtle")
 
-g.parse("ontologies/water2.ttl", format="turtle")
+g.parse("ontologies/water.ttl", format="turtle")
 g.parse("ontologies/qudt_unit.ttl", format="turtle")
 g.parse("ontologies/qudt_qk.ttl", format="turtle")
 

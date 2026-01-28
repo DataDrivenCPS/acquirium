@@ -121,7 +121,7 @@ class AppContext:
 
 
 class AppOutputSpec(BaseModel):
-    kind: Literal["timeseries", "event"]
+    kind: Literal["timeseries", "event", "trigger"]
     point_uri: str
     ref_uri: str | None = None
     quantity_kind: str | None = None
@@ -151,3 +151,10 @@ class AppRunRequest(BaseModel):
     start: datetime | None = None
     end: datetime | None = None
     params: dict[str, Any] = Field(default_factory=dict)
+    keep_alive: bool = False
+    interval: float = 10.0
+
+
+class AppStopRequest(BaseModel):
+    run_id: str | None = None
+    app_id: str | None = None

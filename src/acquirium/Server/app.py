@@ -20,6 +20,7 @@ from acquirium.internals.models import (
     TimeIntervalModel,
     AppSpec,
     AppRunRequest,
+    AppStopRequest,
     InsertTimeseriesRequest,
 )
 
@@ -147,6 +148,26 @@ def run_app(req: AppRunRequest) -> dict[str, Any]:
         return {"ok": True, "run_id": run_id}
     except Exception as e:
         log.exception("run_app failed") 
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/apps/stop")
+def stop_app(req: AppStopRequest) -> dict[str, Any]:
+    try:
+        result = app.state.manager.stop_app(run_id=req.run_id, app_id=req.app_id)
+        return {"ok": True, **result}
+    except Exception as e:
+        log.exception("stop_app failed")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/apps/list")
+def list_app_runs(app_id: Optional[str] = None) -> dict[str, Any]:
+    try:
+        runs = app.state.manager.list_app_runs(app_id=app_id)
+        return {"ok": True, "runs": runs}
+    except Exception as e:
+        log.exception("list_app_runs failed")
         raise HTTPException(status_code=400, detail=str(e))
 
 

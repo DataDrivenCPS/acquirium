@@ -158,9 +158,33 @@ class Acquirium:
         )
         return self.client.register_app(spec)
 
-    def run_app(self, app_id: str, *, start: datetime | None = None, end: datetime | None = None, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    def run_app(
+        self,
+        app_id: str,
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        params: dict[str, Any] | None = None,
+        keep_alive: bool = False,
+        interval: float = 10.0,
+    ) -> dict[str, Any]:
         """Trigger an app execution in its own container via the server."""
-        return self.client.run_app(app_id, start=start, end=end, params=params or {})
+        return self.client.run_app(
+            app_id,
+            start=start,
+            end=end,
+            params=params or {},
+            keep_alive=keep_alive,
+            interval=interval,
+        )
+
+    def stop_app(self, *, run_id: str | None = None, app_id: str | None = None) -> dict[str, Any]:
+        """Stop a keep-alive app loop by run_id or all loops for an app_id."""
+        return self.client.stop_app(run_id=run_id, app_id=app_id)
+
+    def list_app_runs(self, *, app_id: str | None = None) -> dict[str, Any]:
+        """List active keep-alive app runs."""
+        return self.client.list_app_runs(app_id=app_id)
 
     # ------------------------------------------------------------------
     # SPARQL / GRAPH UTILITIES
