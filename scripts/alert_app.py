@@ -8,61 +8,70 @@ incoming POST /alerts payloads to stdout.
 from __future__ import annotations
 
 import argparse
-import json
-from http.server import BaseHTTPRequestHandler, HTTPServer
 import datetime
-bench_file = "scripts/benchmark/scalability/results_1_1.txt"
+import json
+from typing import Any, Dict, Tuple, Union
 
-class AlertHandler(BaseHTTPRequestHandler):
-    def do_POST(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
-        if self.path != "/alerts":
-            self.send_response(404)
-            self.end_headers()
-            return
+import uvicorn
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
-        length = int(self.headers.get("Content-Length", "0"))
-        raw = self.rfile.read(length) if length > 0 else b""
-        try:
-            payload = json.loads(raw.decode("utf-8")) if raw else {}
-        except json.JSONDecodeError:
-            payload = {"_raw": raw.decode("utf-8", errors="replace")}
-        
-        # print("Received alert payload:", payload)
-        data_ts = payload.get("message",{}).get("data", {}).get("timestamp", "no_timestamp")
-        msg_ts = payload.get("ts", "no_timestamp")
-        
-        with open(bench_file, "a") as f:
-            if "no_timestamp" not in (data_ts, msg_ts):
-                data_ts = datetime.datetime.fromisoformat(data_ts)
-                msg_ts = datetime.datetime.fromisoformat(msg_ts)
-                latency = (msg_ts - data_ts).total_seconds() * 1000  # latency in milliseconds
-                f.write(f"{latency}\n")
+bench_file = "scripts/benchmark/scalability/results_100_2.txt"
 
-        # print("Received alert payload:", json.dumps(payload, ensure_ascii=True))
+app = FastAPI()
 
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(b'{"status":"ok"}')
 
-    def log_message(self, format: str, *args: object) -> None:
-        return
+def _parse_json_body(raw: bytes) -> Dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        decoded = raw.decode("utf-8")
+        return json.loads(decoded)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return {"_raw": raw.decode("utf-8", errors="replace")}
+
+
+def _parse_iso(ts: Any) -> Union[datetime.datetime, None]:
+    if not isinstance(ts, str):
+        return None
+    try:
+        return datetime.datetime.fromisoformat(ts)
+    except ValueError:
+        return None
+
+
+@app.post("/alerts")
+async def alerts(request: Request) -> JSONResponse:
+    raw = await request.body()
+    payload = _parse_json_body(raw)
+
+    data_ts_raw = (
+        payload.get("message", {})
+        .get("data", {})
+        .get("timestamp", "no_timestamp")
+    )
+    msg_ts_raw = payload.get("ts", "no_timestamp")
+
+    data_ts = _parse_iso(data_ts_raw)
+    msg_ts = _parse_iso(msg_ts_raw)
+    # print(f"Received alert at {msg_ts}: {payload}")
+
+    if data_ts is not None and msg_ts is not None:
+        latency_ms = (msg_ts - data_ts).total_seconds() * 1000.0
+        with open(bench_file, "a", encoding="utf-8") as f:
+            f.write(f"{latency_ms}\n")
+
+    return JSONResponse({"status": "ok"})
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Dummy Acquirium alert receiver")
+    parser = argparse.ArgumentParser(description="Dummy Acquirium alert receiver (FastAPI)")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=10000)
     args = parser.parse_args()
 
-    server = HTTPServer((args.host, args.port), AlertHandler)
     print(f"Alert receiver listening on http://{args.host}:{args.port}/alerts")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        server.server_close()
+    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 
 if __name__ == "__main__":
