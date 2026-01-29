@@ -37,17 +37,25 @@ class ChlorineLevelWarning(App):
         )]
 
 if __name__ == "__main__":
+    import sys
+    number_of_instances = int(sys.argv[1]) if len(sys.argv) > 1 else 1
     all_apps=[]
-    for i in range(30):
+    for i in range(number_of_instances):
         all_apps.append(ChlorineLevelWarning())
         all_apps[i].name=f"chlorine_level_warning_{i}"
 
 
     acq = Acquirium(server_url="localhost", server_port=8000, lexicon_path="ontologies/lexicon.json")
-    # acq.insert_graph("deployments/BENICIA/benicia-model-with-refs-thresholds.ttl")
+    acq.insert_graph("deployments/BENICIA/benicia-model-with-refs-thresholds.ttl")
     i = 0
     for app in all_apps:
+        print(f"Starting app instance {app.name}...")
         acq.register_app(app)
-        # acq.run_app(app.name, keep_alive=True, interval=1)
-        acq.stop_app(app_id=app.name)
+        acq.run_app(app.name, keep_alive=True, interval=1)
         i += 1
+    print(f"Started {i} instances of ChlorineLevelWarning app.")
+    print("Press Enter to stop...")
+    input() # wait for user input to stop
+    for app in all_apps:
+        print(f"Stopping app {app.name}...")
+        acq.stop_app(app_id=app.name)
