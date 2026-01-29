@@ -11,7 +11,7 @@ import argparse
 import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import datetime
-bench_file = "scripts/results_20_1.txt"
+bench_file = "scripts/benchmark/scalability/results_1_1.txt"
 
 class AlertHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
