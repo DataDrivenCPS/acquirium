@@ -19,18 +19,28 @@ class ChlorineLevelWarning(App):
 
     def run(self, ctx: AppContext) -> list[Output]:
         df = ctx.query.latest_data(cast_value='float')
+        time_received = datetime.utcnow().isoformat()
         if df.is_empty() or df.shape[0] == 0:
             message = {"text" : "No data available for chlorine level.",
                        "severity": "LOW",
-                       "data": {}}
+                       "data": {},
+                       "time_received": time_received,
+                       "time_completed": datetime.utcnow().isoformat(),
+                       "app_id": ctx.app_id}
         elif df[0,1] >75:
             message = {"text" : "Chlorine level exceeds safe threshold.",
                        "severity": "HIGH",
-                       "data": {"chlorine_level": df[0,1], "timestamp": df[0,0].isoformat()}}
+                       "data": {"chlorine_level": df[0,1], "timestamp": df[0,0].isoformat()},
+                       "time_received": time_received,
+                       "time_completed": datetime.utcnow().isoformat(),
+                       "app_id": ctx.app_id}
         else:
             message = {"text" : "Chlorine level is within safe limits.",
                        "severity": "NORMAL",
-                       "data": {"chlorine_level": df[0,1], "timestamp": df[0,0].isoformat()}}
+                       "data": {"chlorine_level": df[0,1], "timestamp": df[0,0].isoformat()},
+                       "time_received": time_received,
+                       "time_completed": datetime.utcnow().isoformat(),
+                       "app_id": ctx.app_id}
         return [Output.trigger(
             url= "host.docker.internal:10000/alerts",
             message=message
@@ -39,6 +49,7 @@ class ChlorineLevelWarning(App):
 if __name__ == "__main__":
     import sys
     number_of_instances = int(sys.argv[1]) if len(sys.argv) > 1 else 1
+    timeout = int(sys.argv[2]) if len(sys.argv) > 2 else None
     all_apps=[]
     for i in range(number_of_instances):
         all_apps.append(ChlorineLevelWarning())
@@ -54,8 +65,13 @@ if __name__ == "__main__":
         acq.run_app(app.name, keep_alive=True, interval=1)
         i += 1
     print(f"Started {i} instances of ChlorineLevelWarning app.")
-    print("Press Enter to stop...")
-    input() # wait for user input to stop
+    if timeout:
+        print(f"Running for {timeout} seconds...")
+        import time
+        time.sleep(timeout)
+    else:
+        print("Press Enter to stop...")
+        input() # wait for user input to stop
     for app in all_apps:
         print(f"Stopping app {app.name}...")
         acq.stop_app(app_id=app.name)

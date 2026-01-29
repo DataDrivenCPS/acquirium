@@ -27,7 +27,7 @@ class AlertHandler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             payload = {"_raw": raw.decode("utf-8", errors="replace")}
         
-        # print("Received alert payload:", payload)
+        print("Received alert payload:", payload)
         data_ts = payload.get("message",{}).get("data", {}).get("timestamp", "no_timestamp")
         msg_ts = payload.get("ts", "no_timestamp")
         
