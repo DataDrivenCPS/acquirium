@@ -559,10 +559,8 @@ class Manager:
         to_stop: list[str] = []
         with self._app_runs_lock:
             if run_id:
-                if run_id in self._app_runs:
-                    to_stop.append(run_id)
-                else:
-                    to_stop.append(run_id)
+                # Allow stopping by run_id even if not tracked (for cleanup)
+                to_stop.append(run_id)
             else:
                 for rid, info in self._app_runs.items():
                     if app_id == "*" or info.get("app_id") == app_id:
@@ -774,6 +772,11 @@ class Manager:
             pass
         try:
             self.mqtt_ingest.stop()
+        except Exception:
+            pass
+        try:
+            if self._docker is not None:
+                self._docker.close()
         except Exception:
             pass
         self.timescale.close()
