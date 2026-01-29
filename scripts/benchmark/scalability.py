@@ -42,7 +42,7 @@ class ChlorineLevelWarning(App):
                        "time_completed": datetime.utcnow().isoformat(),
                        "app_id": ctx.app_id}
         return [Output.trigger(
-            url= "host.docker.internal:10000/alerts",
+            url= "172.17.0.1:10000/alerts",
             message=message
         )]
 
