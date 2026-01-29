@@ -47,31 +47,84 @@ class ChlorineLevelWarning(App):
         )]
 
 if __name__ == "__main__":
+    import atexit
+    import signal
     import sys
+    import time
+
+    state = {
+        "stop_requested": False,
+        "force_exit": False,
+        "cleanup_in_progress": False,
+    }
+
     number_of_instances = int(sys.argv[1]) if len(sys.argv) > 1 else 1
     timeout = int(sys.argv[2]) if len(sys.argv) > 2 else None
-    all_apps=[]
+    all_apps = []
     for i in range(number_of_instances):
         all_apps.append(ChlorineLevelWarning())
-        all_apps[i].name=f"chlorine_level_warning_{i}"
-
+        all_apps[i].name = f"chlorine_level_warning_{i}"
 
     acq = Acquirium(server_url="localhost", server_port=8000, lexicon_path="ontologies/lexicon.json")
-    acq.insert_graph("deployments/BENICIA/benicia-model-with-refs-thresholds.ttl")
-    i = 0
-    for app in all_apps:
-        print(f"Starting app instance {app.name}...")
-        acq.register_app(app)
-        acq.run_app(app.name, keep_alive=True, interval=1)
-        i += 1
-    print(f"Started {i} instances of ChlorineLevelWarning app.")
-    if timeout:
-        print(f"Running for {timeout} seconds...")
-        import time
-        time.sleep(timeout)
-    else:
-        print("Press Enter to stop...")
-        input() # wait for user input to stop
-    for app in all_apps:
-        print(f"Stopping app {app.name}...")
-        acq.stop_app(app_id=app.name)
+
+    def cleanup():
+        if state["cleanup_in_progress"]:
+            return
+        state["cleanup_in_progress"] = True
+        # Avoid interrupting cleanup; we always want to stop apps on exit.
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        for app in all_apps:
+            try:
+                print(f"Stopping app {app.name}...")
+                acq.stop_app(app_id=app.name)
+            except Exception as exc:
+                print(f"Failed to stop app {app.name}: {exc}")
+
+    def handle_sigint(_signum, _frame):
+        if state["cleanup_in_progress"]:
+            print("\nCleanup in progress, please wait...")
+            return
+        if not state["stop_requested"]:
+            state["stop_requested"] = True
+            print("\nCaught Ctrl-C. Stopping apps... Press Ctrl-C again to exit after cleanup.")
+        else:
+            state["force_exit"] = True
+            print("\nSecond Ctrl-C received. Exiting after cleanup.")
+
+    signal.signal(signal.SIGINT, handle_sigint)
+    atexit.register(cleanup)
+
+    try:
+        acq.insert_graph("deployments/BENICIA/benicia-model-with-refs-thresholds.ttl")
+        i = 0
+        for app in all_apps:
+            print(f"Starting app instance {app.name}...")
+            acq.register_app(app)
+            acq.run_app(app.name, keep_alive=True, interval=1)
+            i += 1
+        print(f"Started {i} instances of ChlorineLevelWarning app.")
+        if timeout:
+            print(f"Running for {timeout} seconds...")
+            last_len = 0
+            for remaining in range(timeout, 0, -1):
+                if state["stop_requested"]:
+                    break
+                line = f"{remaining} seconds remaining"
+                padding = " " * max(0, last_len - len(line))
+                print(f"{line}{padding}", end="\r", flush=True)
+                last_len = len(line)
+                time.sleep(1)
+            if state["stop_requested"]:
+                print("Stopping early...".ljust(last_len))
+            else:
+                print("0 seconds remaining".ljust(last_len))
+        else:
+            print("Press Enter to stop...")
+            try:
+                input()  # wait for user input to stop
+            except KeyboardInterrupt:
+                state["stop_requested"] = True
+    finally:
+        cleanup()
+        if state["force_exit"]:
+            sys.exit(130)
