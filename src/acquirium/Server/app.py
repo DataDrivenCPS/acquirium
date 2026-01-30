@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from typing import Any, Optional, Iterator
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from dateutil import parser as dtparser
 from pydantic import BaseModel, Field
 from datetime import datetime
@@ -124,6 +124,33 @@ def insert_graph(req: InsertGraphRequest) -> dict[str, Any]:
     try:
         app.state.manager.insert_graph(rdf_graph = req.rdf_graph, format=req.format, replace=req.replace)
         return {"ok": True}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/export_graph")
+def export_graph(include_union: bool = True, format: str = "turtle"):
+    """Export the RDF graph in the specified format.
+
+    Args:
+        include_union: If True, includes the union graph with all imports resolved.
+                      If False, returns only the main graph.
+        format: Serialization format - turtle, n3, xml, trig, etc.
+    """
+    try:
+        content = app.state.manager.graph_store.export_graph(
+            include_union=include_union,
+            format=format,
+        )
+        media_types = {
+            "turtle": "text/turtle",
+            "n3": "text/n3",
+            "xml": "application/rdf+xml",
+            "trig": "application/trig",
+            "nquads": "application/n-quads",
+        }
+        media_type = media_types.get(format.lower(), "text/plain")
+        return Response(content=content, media_type=media_type)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
