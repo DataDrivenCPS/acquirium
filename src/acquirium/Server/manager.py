@@ -519,6 +519,7 @@ class Manager:
                 environment=env,
                 volumes=volumes,
                 network=network if network else None,
+                extra_hosts={"host.docker.internal": "host-gateway"},  # Linux compatibility
                 detach=True,
                 auto_remove=True,
             )
