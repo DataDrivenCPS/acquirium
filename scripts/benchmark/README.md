@@ -160,19 +160,19 @@ docker compose up -d
 
 # 3. Run scalability test (10, 20, 50 instances)
 for n in 10 20 50; do
-  python scripts/benchmark/latency_receiver.py results/scale_${n}.csv &
+  uv run python scripts/benchmark/latency_receiver.py results/scale_${n}.csv &
   RECEIVER_PID=$!
   sleep 2
-  ALERT_HOST=172.17.0.1 python scripts/benchmark/scalability.py $n 60
+  ALERT_HOST=172.17.0.1 uv run python scripts/benchmark/scalability.py $n 60
   kill $RECEIVER_PID
 done
 
 # 4. Run chain depth test (1, 3, 5, 10 levels)
 for d in 1 3 5 10; do
-  python scripts/benchmark/chain_receiver.py results/chain_${d}.csv &
+  uv run python scripts/benchmark/chain_receiver.py results/chain_${d}.csv &
   RECEIVER_PID=$!
   sleep 2
-  ALERT_HOST=172.17.0.1 python scripts/benchmark/chain_latency.py $d 60
+  ALERT_HOST=172.17.0.1 uv run python scripts/benchmark/chain_latency.py $d 60
   kill $RECEIVER_PID
 done
 ```
