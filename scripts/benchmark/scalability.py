@@ -1,6 +1,14 @@
+import os
 from datetime import datetime
 from acquirium import App, Output
 from acquirium import Acquirium, AppContext
+
+# Alert endpoint configuration
+# - Mac/Windows Docker Desktop: host.docker.internal (default)
+# - Linux: set ALERT_HOST=172.17.0.1 or use --add-host=host.docker.internal:host-gateway
+ALERT_HOST = os.environ.get("ALERT_HOST", "host.docker.internal")
+ALERT_PORT = os.environ.get("ALERT_PORT", "10000")
+
 
 class ChlorineLevelWarning(App):
     name = "chlorine_level_warning"
@@ -42,7 +50,7 @@ class ChlorineLevelWarning(App):
                        "time_completed": datetime.utcnow().isoformat(),
                        "app_id": ctx.app_id}
         return [Output.trigger(
-            url= "172.17.0.1:10000/alerts",
+            url= f"{ALERT_HOST}:{ALERT_PORT}/alerts",
             message=message
         )]
 
