@@ -142,9 +142,11 @@ sudo ./scripts/benchmark/system_info.sh > system_spec.txt
 
 ## Environment Variables
 
+(shouldn't need adjusting)
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ALERT_HOST` | `host.docker.internal` | Host address for alert receiver (use `172.17.0.1` on Linux) |
+| `ALERT_HOST` | `host.docker.internal` | Host address for alert receiver |
 | `ALERT_PORT` | `10000` | Port for alert receiver |
 
 ---
@@ -163,7 +165,7 @@ for n in 10 20 50; do
   uv run python scripts/benchmark/latency_receiver.py results/scale_${n}.csv &
   RECEIVER_PID=$!
   sleep 2
-  ALERT_HOST=172.17.0.1 uv run python scripts/benchmark/scalability.py $n 60
+  uv run python scripts/benchmark/scalability.py $n 60
   kill $RECEIVER_PID
 done
 
@@ -172,7 +174,7 @@ for d in 1 3 5 10; do
   uv run python scripts/benchmark/chain_receiver.py results/chain_${d}.csv &
   RECEIVER_PID=$!
   sleep 2
-  ALERT_HOST=172.17.0.1 uv run python scripts/benchmark/chain_latency.py $d 60
+  uv run python scripts/benchmark/chain_latency.py $d 60
   kill $RECEIVER_PID
 done
 ```
