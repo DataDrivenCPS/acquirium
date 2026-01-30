@@ -16,6 +16,7 @@ from acquirium.internals.app_utils import app_uri_for, make_stream_ref_uri
 
 import json
 import hashlib
+import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, Future
 from typing import Any
@@ -506,14 +507,19 @@ class Manager:
         # Optional custom entrypoint
         entrypoint = runtime.get("entrypoint")
 
+        # Generate container name (sanitize app_id for Docker naming rules)
+        safe_app_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', req.app_id)
+        container_name = f"acquirium_app_{safe_app_id}"
+
         logger.info(
-            "Starting container: image=%s, network=%s, volume=%s, env_keys=%s",
-            image, network, volume_name, list(env.keys())
+            "Starting container: name=%s, image=%s, network=%s, volume=%s, env_keys=%s",
+            container_name, image, network, volume_name, list(env.keys())
         )
 
         try:
             container = self._docker.containers.run(
                 image=image,
+                name=container_name,
                 command=["sh", "-lc", shell_cmd],
                 entrypoint=entrypoint if entrypoint else None,
                 environment=env,
