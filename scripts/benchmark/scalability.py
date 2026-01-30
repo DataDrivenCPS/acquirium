@@ -18,8 +18,8 @@ class ChlorineLevelWarning(App):
         return aq.find_entity(_class="Chlorination Basin").find_related_data(unit=["MilliGM-PER-L"])
 
     def run(self, ctx: AppContext) -> list[Output]:
-        df = ctx.query.latest_data(cast_value='float')
         time_received = datetime.utcnow().isoformat()
+        df = ctx.query.latest_data(cast_value='float')
         if df.is_empty() or df.shape[0] == 0:
             message = {"text" : "No data available for chlorine level.",
                        "severity": "LOW",
