@@ -10,7 +10,7 @@ import paho.mqtt.client as mqtt
 import rdflib
 from rdflib.namespace import RDF
 from rdflib import Namespace
-
+import logging
 QUDT = Namespace("http://qudt.org/schema/qudt/")
 QUDT_UNIT = Namespace("http://qudt.org/vocab/unit/")
 S223 = Namespace("http://data.ashrae.org/standard223#")
@@ -381,7 +381,13 @@ def main() -> None:
 
     # Per property state for smooth series
     states: dict[str, SeriesState] = {}
-    print(f"Starting simulation of {len(properties)} properties...")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=[logging.StreamHandler()],
+        force=True,  # ensure this takes effect even if something configured logging earlier
+    )
+    logging.info(f"Starting simulation of {len(properties)} properties...")
     try:
         while True:
             timestamp = datetime.now(timezone.utc).isoformat()
