@@ -381,7 +381,7 @@ def main() -> None:
 
     # Per property state for smooth series
     states: dict[str, SeriesState] = {}
-
+    print(f"Starting simulation of {len(properties)} properties...")
     try:
         while True:
             timestamp = datetime.now(timezone.utc).isoformat()
