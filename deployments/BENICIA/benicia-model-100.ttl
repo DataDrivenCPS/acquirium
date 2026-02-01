@@ -1,0 +1,1258 @@
+@prefix nawi: <urn:nawi-water-ontology#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix qudt: <http://qudt.org/schema/qudt/> .
+@prefix qudtqk: <http://qudt.org/vocab/quantitykind/> .
+@prefix s223: <http://data.ashrae.org/standard223#> .
+@prefix unit: <http://qudt.org/vocab/unit/> .
+@prefix wbs: <urn:ex/> .
+
+wbs: a owl:Ontology .
+
+wbs:AS_Aeration_Basin-mlss-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium nawi:Sludge-MixedLiquor ;
+    s223:ofSubstance s223:Solids-SuspendedSolids ;
+    qudt:hasQuantityKind qudtqk:Density ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:AS_Aeration_Basin-ph a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Acidity ;
+    qudt:hasUnit unit:PH .
+
+wbs:AS_Aeration_Basin-tss-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance s223:Solids-SuspendedSolids ;
+    qudt:hasQuantityKind qudtqk:Density ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:AS_Aeration_Basin-turbidity a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Turbidity ;
+    qudt:hasUnit unit:NTU .
+
+wbs:AS_Aeration_Basin-volume a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Volume ;
+    qudt:hasUnit unit:GAL_US .
+
+wbs:AS_Secondary_Sedimentation-ph a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Acidity ;
+    qudt:hasUnit unit:PH .
+
+wbs:AS_Secondary_Sedimentation-temperature a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Temperature .
+
+wbs:AS_Secondary_Sedimentation-tss-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance s223:Solids-SuspendedSolids ;
+    qudt:hasQuantityKind qudtqk:Density ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:AS_Secondary_Sedimentation-turbidity a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Turbidity ;
+    qudt:hasUnit unit:NTU .
+
+wbs:AS_Secondary_Sedimentation-volume a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Volume ;
+    qudt:hasUnit unit:GAL_US .
+
+wbs:Chlorination_Basin-cl2-mgL a s223:QuantifiableObservableProperty ;
+    s223:ofSubstance nawi:Chlorine ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:Chlorination_Basin-ph a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Acidity ;
+    qudt:hasUnit unit:PH .
+
+wbs:Chlorination_Basin-temperature a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Temperature .
+
+wbs:Chlorination_Basin-turbidity a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Turbidity ;
+    qudt:hasUnit unit:NTU .
+
+wbs:Chlorination_Basin-volume a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Volume ;
+    qudt:hasUnit unit:GAL_US .
+
+wbs:Diurnal_Flow_Box-ph a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Acidity ;
+    qudt:hasUnit unit:PH .
+
+wbs:Diurnal_Flow_Box-temperature a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Temperature .
+
+wbs:Diurnal_Flow_Box-turbidity a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Turbidity ;
+    qudt:hasUnit unit:NTU .
+
+wbs:Diurnal_Flow_Box-volume a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Volume ;
+    qudt:hasUnit unit:GAL_US .
+
+wbs:Effluent_Pump-in-cl2-mgL a s223:QuantifiableObservableProperty ;
+    s223:ofSubstance nawi:Chlorine ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:Effluent_Pump-in-cyanide a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance nawi:Constituent-Cyanide ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MicroGM-PER-L .
+
+wbs:Effluent_Pump-in-flow-rate a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate .
+
+wbs:Effluent_Pump-in-pressure a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Pressure .
+
+wbs:Effluent_Pump-in-tss-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance s223:Solids-SuspendedSolids ;
+    qudt:hasQuantityKind qudtqk:Density ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:Effluent_Pump-out-bacteria-enterococcus a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance nawi:Constituent-Bacteria ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:CFU-PER-100ML .
+
+wbs:Effluent_Pump-out-biochemical-oxygen-demand a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance nawi:Oxygen ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:Effluent_Pump-out-cl2-mgL a s223:QuantifiableObservableProperty ;
+    s223:ofSubstance nawi:Chlorine ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:Effluent_Pump-out-copper a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance nawi:Constituent-Metals ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MicroGM-PER-L .
+
+wbs:Effluent_Pump-out-cyanide a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance nawi:Constituent-Cyanide ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MicroGM-PER-L .
+
+wbs:Effluent_Pump-out-flow-rate a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate .
+
+wbs:Effluent_Pump-out-nh4-mgL a s223:QuantifiableObservableProperty ;
+    s223:ofSubstance nawi:Ammonia ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:Effluent_Pump-out-ph a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Acidity ;
+    qudt:hasUnit unit:PH .
+
+wbs:Effluent_Pump-out-pressure a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Pressure .
+
+wbs:Effluent_Pump-out-teq-dioxin a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance nawi:Constituent-Organics ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MicroGM-PER-L .
+
+wbs:Effluent_Pump-out-tss-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance s223:Solids-SuspendedSolids ;
+    qudt:hasQuantityKind qudtqk:Density ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:Effluent_Pump-speed-command a s223:QuantifiableActuatableProperty ;
+    qudt:hasQuantityKind qudtqk:SpeedRatio ;
+    qudt:hasUnit unit:PERCENT .
+
+wbs:Effluent_Pump-status a s223:QuantifiableObservableProperty ;
+    qudt:hasEnumerationKind s223:EnumerationKind-Status .
+
+wbs:Flow_Return_Pump1-in-bacteria-enterococcus a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance nawi:Constituent-Bacteria ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:CFU-PER-100ML .
+
+wbs:Flow_Return_Pump1-in-biochemical-oxygen-demand a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance nawi:Oxygen ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:Flow_Return_Pump1-in-cl2-mgL a s223:QuantifiableObservableProperty ;
+    s223:ofSubstance nawi:Chlorine ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:Flow_Return_Pump1-in-copper a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance nawi:Constituent-Metals ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MicroGM-PER-L .
+
+wbs:Flow_Return_Pump1-in-cyanide a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance nawi:Constituent-Cyanide ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MicroGM-PER-L .
+
+wbs:Flow_Return_Pump1-in-flow-rate a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate .
+
+wbs:Flow_Return_Pump1-in-nh4-mgL a s223:QuantifiableObservableProperty ;
+    s223:ofSubstance nawi:Ammonia ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:Flow_Return_Pump1-in-ph a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Acidity ;
+    qudt:hasUnit unit:PH .
+
+wbs:Flow_Return_Pump1-in-pressure a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Pressure .
+
+wbs:Flow_Return_Pump1-in-teq-dioxin a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance nawi:Constituent-Organics ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MicroGM-PER-L .
+
+wbs:Flow_Return_Pump1-in-tss-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance s223:Solids-SuspendedSolids ;
+    qudt:hasQuantityKind qudtqk:Density ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:Flow_Return_Pump1-out-flow-rate a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate .
+
+wbs:Flow_Return_Pump1-out-pressure a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Pressure .
+
+wbs:Flow_Return_Pump1-speed-command a s223:QuantifiableActuatableProperty ;
+    qudt:hasQuantityKind qudtqk:SpeedRatio ;
+    qudt:hasUnit unit:PERCENT .
+
+wbs:Flow_Return_Pump1-status a s223:QuantifiableObservableProperty ;
+    qudt:hasEnumerationKind s223:EnumerationKind-Status .
+
+wbs:Flow_Return_Pump2-in-flow-rate a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate .
+
+wbs:Flow_Return_Pump2-in-pressure a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Pressure .
+
+wbs:Flow_Return_Pump2-out-flow-rate a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate .
+
+wbs:Flow_Return_Pump2-out-pressure a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Pressure .
+
+wbs:Flow_Return_Pump2-speed-command a s223:QuantifiableActuatableProperty ;
+    qudt:hasQuantityKind qudtqk:SpeedRatio ;
+    qudt:hasUnit unit:PERCENT .
+
+wbs:Flow_Return_Pump2-status a s223:QuantifiableObservableProperty ;
+    qudt:hasEnumerationKind s223:EnumerationKind-Status .
+
+wbs:Grinder-electric-current a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:ElectricCurrent ;
+    qudt:hasUnit unit:A .
+
+wbs:Grinder-status a s223:QuantifiableObservableProperty ;
+    qudt:hasEnumerationKind s223:EnumerationKind-Status .
+
+wbs:Influent_Pump a nawi:Pump ;
+    s223:cnx wbs:Influent_Pump-out ;
+    s223:connected wbs:Screen ;
+    s223:connectedThrough wbs:conn-Influent_Pump-to-Screen ;
+    s223:connectedTo wbs:Screen ;
+    s223:hasConnectionPoint wbs:Influent_Pump-in,
+        wbs:Influent_Pump-out ;
+    s223:hasProperty wbs:Influent_Pump-speed-command,
+        wbs:Influent_Pump-status .
+
+wbs:Influent_Pump-in a s223:InletConnectionPoint ;
+    s223:hasMedium s223:Medium-Water ;
+    s223:hasProperty wbs:Influent_Pump-in-bacteria-enterococcus,
+        wbs:Influent_Pump-in-biochemical-oxygen-demand,
+        wbs:Influent_Pump-in-cl2-mgL,
+        wbs:Influent_Pump-in-copper,
+        wbs:Influent_Pump-in-cyanide,
+        wbs:Influent_Pump-in-flow-rate,
+        wbs:Influent_Pump-in-nh4-mgL,
+        wbs:Influent_Pump-in-ph,
+        wbs:Influent_Pump-in-pressure,
+        wbs:Influent_Pump-in-teq-dioxin,
+        wbs:Influent_Pump-in-tss-concentration .
+
+wbs:Influent_Pump-in-bacteria-enterococcus a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance nawi:Constituent-Bacteria ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:CFU-PER-100ML .
+
+wbs:Influent_Pump-in-biochemical-oxygen-demand a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance nawi:Oxygen ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:Influent_Pump-in-cl2-mgL a s223:QuantifiableObservableProperty ;
+    s223:ofSubstance nawi:Chlorine ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:Influent_Pump-in-copper a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance nawi:Constituent-Metals ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MicroGM-PER-L .
+
+wbs:Influent_Pump-in-cyanide a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance nawi:Constituent-Cyanide ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MicroGM-PER-L .
+
+wbs:Influent_Pump-in-flow-rate a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate .
+
+wbs:Influent_Pump-in-nh4-mgL a s223:QuantifiableObservableProperty ;
+    s223:ofSubstance nawi:Ammonia ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:Influent_Pump-in-ph a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Acidity ;
+    qudt:hasUnit unit:PH .
+
+wbs:Influent_Pump-in-pressure a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Pressure .
+
+wbs:Influent_Pump-in-teq-dioxin a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance nawi:Constituent-Organics ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MicroGM-PER-L .
+
+wbs:Influent_Pump-in-tss-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance s223:Solids-SuspendedSolids ;
+    qudt:hasQuantityKind qudtqk:Density ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:Influent_Pump-out-bacteria-enterococcus a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance nawi:Constituent-Bacteria ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:CFU-PER-100ML .
+
+wbs:Influent_Pump-out-biochemical-oxygen-demand a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance nawi:Oxygen ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:Influent_Pump-out-cl2-mgL a s223:QuantifiableObservableProperty ;
+    s223:ofSubstance nawi:Chlorine ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:Influent_Pump-out-copper a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance nawi:Constituent-Metals ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MicroGM-PER-L .
+
+wbs:Influent_Pump-out-cyanide a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance nawi:Constituent-Cyanide ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MicroGM-PER-L .
+
+wbs:Influent_Pump-out-flow-rate a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate .
+
+wbs:Influent_Pump-out-nh4-mgL a s223:QuantifiableObservableProperty ;
+    s223:ofSubstance nawi:Ammonia ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:Influent_Pump-out-ph a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Acidity ;
+    qudt:hasUnit unit:PH .
+
+wbs:Influent_Pump-out-pressure a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Pressure .
+
+wbs:Influent_Pump-out-teq-dioxin a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance nawi:Constituent-Organics ;
+    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasUnit unit:MicroGM-PER-L .
+
+wbs:Influent_Pump-out-tss-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance s223:Solids-SuspendedSolids ;
+    qudt:hasQuantityKind qudtqk:Density ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:Influent_Pump-speed-command a s223:QuantifiableActuatableProperty ;
+    qudt:hasQuantityKind qudtqk:SpeedRatio ;
+    qudt:hasUnit unit:PERCENT .
+
+wbs:Influent_Pump-status a s223:QuantifiableObservableProperty ;
+    qudt:hasEnumerationKind s223:EnumerationKind-Status .
+
+wbs:Primary_Sedimentation-ph a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Acidity ;
+    qudt:hasUnit unit:PH .
+
+wbs:Primary_Sedimentation-temperature a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Temperature .
+
+wbs:Primary_Sedimentation-tss-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance s223:Solids-SuspendedSolids ;
+    qudt:hasQuantityKind qudtqk:Density ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:Primary_Sedimentation-turbidity a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Turbidity ;
+    qudt:hasUnit unit:NTU .
+
+wbs:Primary_Sedimentation-volume a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Volume ;
+    qudt:hasUnit unit:GAL_US .
+
+wbs:RBC_Secondary_Sedimentation-ph a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Acidity ;
+    qudt:hasUnit unit:PH .
+
+wbs:RBC_Secondary_Sedimentation-temperature a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Temperature .
+
+wbs:RBC_Secondary_Sedimentation-tss-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance s223:Solids-SuspendedSolids ;
+    qudt:hasQuantityKind qudtqk:Density ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:RBC_Secondary_Sedimentation-turbidity a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Turbidity ;
+    qudt:hasUnit unit:NTU .
+
+wbs:RBC_Secondary_Sedimentation-volume a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Volume ;
+    qudt:hasUnit unit:GAL_US .
+
+wbs:Sluice_Gate-opening-command a s223:QuantifiableActuatableProperty ;
+    qudt:hasQuantityKind qudtqk:OpeningRatio .
+
+wbs:Sluice_Gate-status a s223:QuantifiableObservableProperty ;
+    qudt:hasEnumerationKind s223:EnumerationKind-Status .
+
+wbs:Storage_Basin-ph a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Acidity ;
+    qudt:hasUnit unit:PH .
+
+wbs:Storage_Basin-temperature a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Temperature .
+
+wbs:Storage_Basin-turbidity a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Turbidity ;
+    qudt:hasUnit unit:NTU .
+
+wbs:Storage_Basin-volume a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Volume ;
+    qudt:hasUnit unit:GAL_US .
+
+wbs:Wet_Weather_Screen a nawi:Screen ;
+    s223:cnx wbs:Wet_Weather_Screen-in,
+        wbs:Wet_Weather_Screen-out ;
+    s223:connected wbs:Storage_Basin ;
+    s223:connectedThrough wbs:conn-Wet_Weather_Screen-to-Storage_Basin ;
+    s223:connectedTo wbs:Storage_Basin ;
+    s223:hasConnectionPoint wbs:Wet_Weather_Screen-in,
+        wbs:Wet_Weather_Screen-out ;
+    s223:hasProcess nawi:Process-Screening .
+
+wbs:Dewatering_Unit-out a s223:OutletConnectionPoint ;
+    s223:hasMedium nawi:Fluid-Sludge .
+
+wbs:Wet_Weather_Screen-in a s223:InletConnectionPoint ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:AS_Aeration_Basin-in a s223:InletConnectionPoint ;
+    s223:connectsAt wbs:conn-Primary_Sedimentation_Junction-to-AS_Aeration_Basin ;
+    s223:connectsThrough wbs:conn-Primary_Sedimentation_Junction-to-AS_Aeration_Basin ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:AS_Aeration_Basin-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-AS_Aeration_Basin-to-AS_Secondary_Sedimentation ;
+    s223:connectsAt wbs:conn-AS_Aeration_Basin-to-AS_Secondary_Sedimentation ;
+    s223:connectsThrough wbs:conn-AS_Aeration_Basin-to-AS_Secondary_Sedimentation ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:AS_Secondary_Sedimentation-in a s223:InletConnectionPoint ;
+    s223:connectsAt wbs:conn-AS_Aeration_Basin-to-AS_Secondary_Sedimentation ;
+    s223:connectsThrough wbs:conn-AS_Aeration_Basin-to-AS_Secondary_Sedimentation ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:AS_Secondary_Sedimentation-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-AS_Secondary_Sedimentation-to-Chlorination_Chamber ;
+    s223:connectsAt wbs:conn-AS_Secondary_Sedimentation-to-Chlorination_Chamber ;
+    s223:connectsThrough wbs:conn-AS_Secondary_Sedimentation-to-Chlorination_Chamber ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:Chlorination_Basin-in a s223:InletConnectionPoint ;
+    s223:connectsAt wbs:conn-Chlorination_Chamber-to-Chlorination_Basin ;
+    s223:connectsThrough wbs:conn-Chlorination_Chamber-to-Chlorination_Basin ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:Chlorination_Basin-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-Chlorination_Basin-to-Effluent_Pump ;
+    s223:connectsAt wbs:conn-Chlorination_Basin-to-Effluent_Pump ;
+    s223:connectsThrough wbs:conn-Chlorination_Basin-to-Effluent_Pump ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:Chlorination_Chamber-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-Chlorination_Chamber-to-Chlorination_Basin ;
+    s223:connectsAt wbs:conn-Chlorination_Chamber-to-Chlorination_Basin ;
+    s223:connectsThrough wbs:conn-Chlorination_Chamber-to-Chlorination_Basin ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:Dewatering_Unit a nawi:DewateringUnit ;
+    s223:cnx wbs:Dewatering_Unit-in,
+        wbs:Dewatering_Unit-out ;
+    s223:connectedThrough wbs:conn-Sludge_Digester-to-Dewatering_Unit ;
+    s223:hasConnectionPoint wbs:Dewatering_Unit-in,
+        wbs:Dewatering_Unit-out ;
+    nawi:hasProcess nawi:Process-Dewatering .
+
+wbs:Dewatering_Unit-in a s223:InletConnectionPoint ;
+    s223:connectsAt wbs:conn-Sludge_Digester-to-Dewatering_Unit ;
+    s223:connectsThrough wbs:conn-Sludge_Digester-to-Dewatering_Unit ;
+    s223:hasMedium nawi:Fluid-Sludge .
+
+wbs:Effluent_Pump-in a s223:InletConnectionPoint ;
+    s223:connectsAt wbs:conn-Chlorination_Basin-to-Effluent_Pump ;
+    s223:connectsThrough wbs:conn-Chlorination_Basin-to-Effluent_Pump ;
+    s223:hasMedium s223:Medium-Water ;
+    s223:hasProperty wbs:Effluent_Pump-in-cl2-mgL,
+        wbs:Effluent_Pump-in-cyanide,
+        wbs:Effluent_Pump-in-flow-rate,
+        wbs:Effluent_Pump-in-pressure,
+        wbs:Effluent_Pump-in-tss-concentration .
+
+wbs:Effluent_Pump-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-Effluent_Pump-to-Storage_Basin ;
+    s223:connectsAt wbs:conn-Effluent_Pump-to-Storage_Basin ;
+    s223:connectsThrough wbs:conn-Effluent_Pump-to-Storage_Basin ;
+    s223:hasMedium s223:Medium-Water ;
+    s223:hasProperty wbs:Effluent_Pump-out-bacteria-enterococcus,
+        wbs:Effluent_Pump-out-biochemical-oxygen-demand,
+        wbs:Effluent_Pump-out-cl2-mgL,
+        wbs:Effluent_Pump-out-copper,
+        wbs:Effluent_Pump-out-cyanide,
+        wbs:Effluent_Pump-out-flow-rate,
+        wbs:Effluent_Pump-out-nh4-mgL,
+        wbs:Effluent_Pump-out-ph,
+        wbs:Effluent_Pump-out-pressure,
+        wbs:Effluent_Pump-out-teq-dioxin,
+        wbs:Effluent_Pump-out-tss-concentration .
+
+wbs:Flow_Return_Pump1-in a s223:InletConnectionPoint ;
+    s223:connectsAt wbs:conn-Diurnal_Flow_Box-to-Flow_Return_Pump1 ;
+    s223:connectsThrough wbs:conn-Diurnal_Flow_Box-to-Flow_Return_Pump1 ;
+    s223:hasMedium s223:Medium-Water ;
+    s223:hasProperty wbs:Flow_Return_Pump1-in-bacteria-enterococcus,
+        wbs:Flow_Return_Pump1-in-biochemical-oxygen-demand,
+        wbs:Flow_Return_Pump1-in-cl2-mgL,
+        wbs:Flow_Return_Pump1-in-copper,
+        wbs:Flow_Return_Pump1-in-cyanide,
+        wbs:Flow_Return_Pump1-in-flow-rate,
+        wbs:Flow_Return_Pump1-in-nh4-mgL,
+        wbs:Flow_Return_Pump1-in-ph,
+        wbs:Flow_Return_Pump1-in-pressure,
+        wbs:Flow_Return_Pump1-in-teq-dioxin,
+        wbs:Flow_Return_Pump1-in-tss-concentration .
+
+wbs:Flow_Return_Pump1-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-Flow_Return_Pump1-to-Primary_Sedimentation_Junction ;
+    s223:connectsAt wbs:conn-Flow_Return_Pump1-to-Primary_Sedimentation_Junction ;
+    s223:connectsThrough wbs:conn-Flow_Return_Pump1-to-Primary_Sedimentation_Junction ;
+    s223:hasMedium s223:Medium-Water ;
+    s223:hasProperty wbs:Flow_Return_Pump1-out-flow-rate,
+        wbs:Flow_Return_Pump1-out-pressure .
+
+wbs:Flow_Return_Pump2-in a s223:InletConnectionPoint ;
+    s223:connectsAt wbs:conn-Diurnal_Flow_Box-to-Flow_Return_Pump2 ;
+    s223:connectsThrough wbs:conn-Diurnal_Flow_Box-to-Flow_Return_Pump2 ;
+    s223:hasMedium s223:Medium-Water ;
+    s223:hasProperty wbs:Flow_Return_Pump2-in-flow-rate,
+        wbs:Flow_Return_Pump2-in-pressure .
+
+wbs:Flow_Return_Pump2-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-Flow_Return_Pump2-to-Primary_Sedimentation ;
+    s223:connectsAt wbs:conn-Flow_Return_Pump2-to-Primary_Sedimentation ;
+    s223:connectsThrough wbs:conn-Flow_Return_Pump2-to-Primary_Sedimentation ;
+    s223:hasMedium s223:Medium-Water ;
+    s223:hasProperty wbs:Flow_Return_Pump2-out-flow-rate,
+        wbs:Flow_Return_Pump2-out-pressure .
+
+wbs:Grinder-in a s223:InletConnectionPoint ;
+    s223:connectsAt wbs:conn-Grit_Chamber-to-Grinder ;
+    s223:connectsThrough wbs:conn-Grit_Chamber-to-Grinder ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:Grinder-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-Grinder-to-Primary_Sedimentation ;
+    s223:connectsAt wbs:conn-Grinder-to-Primary_Sedimentation ;
+    s223:connectsThrough wbs:conn-Grinder-to-Primary_Sedimentation ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:Grit_Chamber-in a s223:InletConnectionPoint ;
+    s223:connectsAt wbs:conn-Screen-to-Grit_Chamber ;
+    s223:connectsThrough wbs:conn-Screen-to-Grit_Chamber ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:Grit_Chamber-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-Grit_Chamber-to-Grinder ;
+    s223:connectsAt wbs:conn-Grit_Chamber-to-Grinder ;
+    s223:connectsThrough wbs:conn-Grit_Chamber-to-Grinder ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:Influent_Pump-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-Influent_Pump-to-Screen ;
+    s223:connectsAt wbs:conn-Influent_Pump-to-Screen ;
+    s223:connectsThrough wbs:conn-Influent_Pump-to-Screen ;
+    s223:hasMedium s223:Medium-Water ;
+    s223:hasProperty wbs:Influent_Pump-out-bacteria-enterococcus,
+        wbs:Influent_Pump-out-biochemical-oxygen-demand,
+        wbs:Influent_Pump-out-cl2-mgL,
+        wbs:Influent_Pump-out-copper,
+        wbs:Influent_Pump-out-cyanide,
+        wbs:Influent_Pump-out-flow-rate,
+        wbs:Influent_Pump-out-nh4-mgL,
+        wbs:Influent_Pump-out-ph,
+        wbs:Influent_Pump-out-pressure,
+        wbs:Influent_Pump-out-teq-dioxin,
+        wbs:Influent_Pump-out-tss-concentration .
+
+wbs:Primary_Sedimentation-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-Primary_Sedimentation-to-Primary_Sedimentation_Junction ;
+    s223:connectsAt wbs:conn-Primary_Sedimentation-to-Primary_Sedimentation_Junction ;
+    s223:connectsThrough wbs:conn-Primary_Sedimentation-to-Primary_Sedimentation_Junction ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:Primary_Sedimentation-out-sludge a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-Primary_Sedimentation-to-Sludge_Thickener ;
+    s223:connectsAt wbs:conn-Primary_Sedimentation-to-Sludge_Thickener ;
+    s223:connectsThrough wbs:conn-Primary_Sedimentation-to-Sludge_Thickener ;
+    s223:hasMedium nawi:Fluid-Sludge .
+
+wbs:Primary_Sedimentation_Junction-inlet-cp a s223:InletConnectionPoint ;
+    s223:connectsAt wbs:conn-Primary_Sedimentation-to-Primary_Sedimentation_Junction ;
+    s223:connectsThrough wbs:conn-Primary_Sedimentation-to-Primary_Sedimentation_Junction ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:Primary_Sedimentation_Junction-inlet-cp-2 a s223:InletConnectionPoint ;
+    s223:connectsAt wbs:conn-Flow_Return_Pump1-to-Primary_Sedimentation_Junction ;
+    s223:connectsThrough wbs:conn-Flow_Return_Pump1-to-Primary_Sedimentation_Junction ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:Primary_Sedimentation_Junction-outlet-cp a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-Primary_Sedimentation_Junction-to-Sluice_Gate ;
+    s223:connectsAt wbs:conn-Primary_Sedimentation_Junction-to-Sluice_Gate ;
+    s223:connectsThrough wbs:conn-Primary_Sedimentation_Junction-to-Sluice_Gate ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:Primary_Sedimentation_Junction-outlet-cp-2 a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-Primary_Sedimentation_Junction-to-AS_Aeration_Basin ;
+    s223:connectsAt wbs:conn-Primary_Sedimentation_Junction-to-AS_Aeration_Basin ;
+    s223:connectsThrough wbs:conn-Primary_Sedimentation_Junction-to-AS_Aeration_Basin ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:Primary_Sedimentation_Junction-outlet-cp-3 a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-Primary_Sedimentation_Junction-to-RBC_Unit ;
+    s223:connectsAt wbs:conn-Primary_Sedimentation_Junction-to-RBC_Unit ;
+    s223:connectsThrough wbs:conn-Primary_Sedimentation_Junction-to-RBC_Unit ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:RBC_Secondary_Sedimentation-in a s223:InletConnectionPoint ;
+    s223:connectsAt wbs:conn-RBC_Unit-to-RBC_Secondary_Sedimentation ;
+    s223:connectsThrough wbs:conn-RBC_Unit-to-RBC_Secondary_Sedimentation ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:RBC_Secondary_Sedimentation-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-RBC_Secondary_Sedimentation-to-Chlorination_Chamber ;
+    s223:connectsAt wbs:conn-RBC_Secondary_Sedimentation-to-Chlorination_Chamber ;
+    s223:connectsThrough wbs:conn-RBC_Secondary_Sedimentation-to-Chlorination_Chamber ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:RBC_Unit-in a s223:InletConnectionPoint ;
+    s223:connectsAt wbs:conn-Primary_Sedimentation_Junction-to-RBC_Unit ;
+    s223:connectsThrough wbs:conn-Primary_Sedimentation_Junction-to-RBC_Unit ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:RBC_Unit-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-RBC_Unit-to-RBC_Secondary_Sedimentation ;
+    s223:connectsAt wbs:conn-RBC_Unit-to-RBC_Secondary_Sedimentation ;
+    s223:connectsThrough wbs:conn-RBC_Unit-to-RBC_Secondary_Sedimentation ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:Screen-in a s223:InletConnectionPoint ;
+    s223:connectsAt wbs:conn-Influent_Pump-to-Screen ;
+    s223:connectsThrough wbs:conn-Influent_Pump-to-Screen ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:Screen-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-Screen-to-Grit_Chamber ;
+    s223:connectsAt wbs:conn-Screen-to-Grit_Chamber ;
+    s223:connectsThrough wbs:conn-Screen-to-Grit_Chamber ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:Sludge_Digester-in a s223:InletConnectionPoint ;
+    s223:connectsAt wbs:conn-Sludge_Thickener-to-Sludge_Digester ;
+    s223:connectsThrough wbs:conn-Sludge_Thickener-to-Sludge_Digester ;
+    s223:hasMedium nawi:Fluid-Sludge .
+
+wbs:Sludge_Digester-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-Sludge_Digester-to-Dewatering_Unit ;
+    s223:connectsAt wbs:conn-Sludge_Digester-to-Dewatering_Unit ;
+    s223:connectsThrough wbs:conn-Sludge_Digester-to-Dewatering_Unit ;
+    s223:hasMedium nawi:Fluid-Sludge .
+
+wbs:Sludge_Thickener-in a s223:InletConnectionPoint ;
+    s223:connectsAt wbs:conn-Primary_Sedimentation-to-Sludge_Thickener ;
+    s223:connectsThrough wbs:conn-Primary_Sedimentation-to-Sludge_Thickener ;
+    s223:hasMedium nawi:Fluid-Sludge .
+
+wbs:Sludge_Thickener-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-Sludge_Thickener-to-Sludge_Digester ;
+    s223:connectsAt wbs:conn-Sludge_Thickener-to-Sludge_Digester ;
+    s223:connectsThrough wbs:conn-Sludge_Thickener-to-Sludge_Digester ;
+    s223:hasMedium nawi:Fluid-Sludge .
+
+wbs:Sluice_Gate-in a s223:InletConnectionPoint ;
+    s223:connectsAt wbs:conn-Primary_Sedimentation_Junction-to-Sluice_Gate ;
+    s223:connectsThrough wbs:conn-Primary_Sedimentation_Junction-to-Sluice_Gate ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:Sluice_Gate-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-Sluice_Gate-to-Diurnal_Flow_Box ;
+    s223:connectsAt wbs:conn-Sluice_Gate-to-Diurnal_Flow_Box ;
+    s223:connectsThrough wbs:conn-Sluice_Gate-to-Diurnal_Flow_Box ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:Storage_Basin-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-Storage_Basin-to-Diurnal_Flow_Box ;
+    s223:connectsAt wbs:conn-Storage_Basin-to-Diurnal_Flow_Box ;
+    s223:connectsThrough wbs:conn-Storage_Basin-to-Diurnal_Flow_Box ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:Wet_Weather_Screen-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-Wet_Weather_Screen-to-Storage_Basin ;
+    s223:connectsAt wbs:conn-Wet_Weather_Screen-to-Storage_Basin ;
+    s223:connectsThrough wbs:conn-Wet_Weather_Screen-to-Storage_Basin ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:AS_Aeration_Basin a nawi:AerationBasin ;
+    s223:cnx wbs:AS_Aeration_Basin-in,
+        wbs:AS_Aeration_Basin-out ;
+    s223:connected wbs:AS_Secondary_Sedimentation ;
+    s223:connectedThrough wbs:conn-AS_Aeration_Basin-to-AS_Secondary_Sedimentation,
+        wbs:conn-Primary_Sedimentation_Junction-to-AS_Aeration_Basin ;
+    s223:connectedTo wbs:AS_Secondary_Sedimentation ;
+    s223:hasConnectionPoint wbs:AS_Aeration_Basin-in,
+        wbs:AS_Aeration_Basin-out ;
+    s223:hasProperty wbs:AS_Aeration_Basin-mlss-concentration,
+        wbs:AS_Aeration_Basin-ph,
+        wbs:AS_Aeration_Basin-tss-concentration,
+        wbs:AS_Aeration_Basin-turbidity,
+        wbs:AS_Aeration_Basin-volume .
+
+wbs:AS_Secondary_Sedimentation a nawi:SedimentationTank ;
+    s223:cnx wbs:AS_Secondary_Sedimentation-in,
+        wbs:AS_Secondary_Sedimentation-out ;
+    s223:connected wbs:Chlorination_Chamber ;
+    s223:connectedThrough wbs:conn-AS_Aeration_Basin-to-AS_Secondary_Sedimentation,
+        wbs:conn-AS_Secondary_Sedimentation-to-Chlorination_Chamber ;
+    s223:connectedTo wbs:Chlorination_Chamber ;
+    s223:hasConnectionPoint wbs:AS_Secondary_Sedimentation-in,
+        wbs:AS_Secondary_Sedimentation-out ;
+    s223:hasProperty wbs:AS_Secondary_Sedimentation-ph,
+        wbs:AS_Secondary_Sedimentation-temperature,
+        wbs:AS_Secondary_Sedimentation-tss-concentration,
+        wbs:AS_Secondary_Sedimentation-turbidity,
+        wbs:AS_Secondary_Sedimentation-volume .
+
+wbs:Chlorination_Basin a nawi:ChlorinationBasin ;
+    s223:cnx wbs:Chlorination_Basin-in,
+        wbs:Chlorination_Basin-out ;
+    s223:connected wbs:Effluent_Pump ;
+    s223:connectedThrough wbs:conn-Chlorination_Basin-to-Effluent_Pump,
+        wbs:conn-Chlorination_Chamber-to-Chlorination_Basin ;
+    s223:connectedTo wbs:Effluent_Pump ;
+    s223:hasConnectionPoint wbs:Chlorination_Basin-in,
+        wbs:Chlorination_Basin-out ;
+    s223:hasProperty wbs:Chlorination_Basin-cl2-mgL,
+        wbs:Chlorination_Basin-ph,
+        wbs:Chlorination_Basin-temperature,
+        wbs:Chlorination_Basin-turbidity,
+        wbs:Chlorination_Basin-volume .
+
+wbs:Chlorination_Chamber-in a s223:InletConnectionPoint ;
+    s223:connectsAt wbs:conn-AS_Secondary_Sedimentation-to-Chlorination_Chamber,
+        wbs:conn-RBC_Secondary_Sedimentation-to-Chlorination_Chamber ;
+    s223:connectsThrough wbs:conn-AS_Secondary_Sedimentation-to-Chlorination_Chamber,
+        wbs:conn-RBC_Secondary_Sedimentation-to-Chlorination_Chamber ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:Diurnal_Flow_Box-in a s223:InletConnectionPoint ;
+    s223:connectsAt wbs:conn-Sluice_Gate-to-Diurnal_Flow_Box,
+        wbs:conn-Storage_Basin-to-Diurnal_Flow_Box ;
+    s223:connectsThrough wbs:conn-Sluice_Gate-to-Diurnal_Flow_Box,
+        wbs:conn-Storage_Basin-to-Diurnal_Flow_Box ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:Effluent_Pump a nawi:Pump ;
+    s223:cnx wbs:Effluent_Pump-in,
+        wbs:Effluent_Pump-out ;
+    s223:connected wbs:Storage_Basin ;
+    s223:connectedThrough wbs:conn-Chlorination_Basin-to-Effluent_Pump,
+        wbs:conn-Effluent_Pump-to-Storage_Basin ;
+    s223:connectedTo wbs:Storage_Basin ;
+    s223:hasConnectionPoint wbs:Effluent_Pump-in,
+        wbs:Effluent_Pump-out ;
+    s223:hasProperty wbs:Effluent_Pump-speed-command,
+        wbs:Effluent_Pump-status .
+
+wbs:Flow_Return_Pump1 a nawi:Pump ;
+    s223:cnx wbs:Flow_Return_Pump1-in,
+        wbs:Flow_Return_Pump1-out ;
+    s223:connected wbs:Primary_Sedimentation_Junction ;
+    s223:connectedThrough wbs:conn-Diurnal_Flow_Box-to-Flow_Return_Pump1,
+        wbs:conn-Flow_Return_Pump1-to-Primary_Sedimentation_Junction ;
+    s223:connectedTo wbs:Primary_Sedimentation_Junction ;
+    s223:hasConnectionPoint wbs:Flow_Return_Pump1-in,
+        wbs:Flow_Return_Pump1-out ;
+    s223:hasProperty wbs:Flow_Return_Pump1-speed-command,
+        wbs:Flow_Return_Pump1-status .
+
+wbs:Flow_Return_Pump2 a nawi:Pump ;
+    s223:cnx wbs:Flow_Return_Pump2-in,
+        wbs:Flow_Return_Pump2-out ;
+    s223:connected wbs:Primary_Sedimentation ;
+    s223:connectedThrough wbs:conn-Diurnal_Flow_Box-to-Flow_Return_Pump2,
+        wbs:conn-Flow_Return_Pump2-to-Primary_Sedimentation ;
+    s223:connectedTo wbs:Primary_Sedimentation ;
+    s223:hasConnectionPoint wbs:Flow_Return_Pump2-in,
+        wbs:Flow_Return_Pump2-out ;
+    s223:hasProperty wbs:Flow_Return_Pump2-speed-command,
+        wbs:Flow_Return_Pump2-status .
+
+wbs:Grinder a nawi:Grinder ;
+    s223:cnx wbs:Grinder-in,
+        wbs:Grinder-out ;
+    s223:connected wbs:Primary_Sedimentation ;
+    s223:connectedThrough wbs:conn-Grinder-to-Primary_Sedimentation,
+        wbs:conn-Grit_Chamber-to-Grinder ;
+    s223:connectedTo wbs:Primary_Sedimentation ;
+    s223:hasConnectionPoint wbs:Grinder-in,
+        wbs:Grinder-out ;
+    s223:hasProperty wbs:Grinder-electric-current,
+        wbs:Grinder-status ;
+    nawi:hasProcess nawi:Process-Comminution .
+
+wbs:Grit_Chamber a nawi:GritChamber ;
+    s223:cnx wbs:Grit_Chamber-in,
+        wbs:Grit_Chamber-out ;
+    s223:connected wbs:Grinder ;
+    s223:connectedThrough wbs:conn-Grit_Chamber-to-Grinder,
+        wbs:conn-Screen-to-Grit_Chamber ;
+    s223:connectedTo wbs:Grinder ;
+    s223:hasConnectionPoint wbs:Grit_Chamber-in,
+        wbs:Grit_Chamber-out ;
+    s223:hasProcess nawi:Process-Sedimentation .
+
+wbs:Primary_Sedimentation-in a s223:InletConnectionPoint ;
+    s223:connectsAt wbs:conn-Flow_Return_Pump2-to-Primary_Sedimentation,
+        wbs:conn-Grinder-to-Primary_Sedimentation ;
+    s223:connectsThrough wbs:conn-Flow_Return_Pump2-to-Primary_Sedimentation,
+        wbs:conn-Grinder-to-Primary_Sedimentation ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:RBC_Secondary_Sedimentation a nawi:SedimentationTank ;
+    s223:cnx wbs:RBC_Secondary_Sedimentation-in,
+        wbs:RBC_Secondary_Sedimentation-out ;
+    s223:connected wbs:Chlorination_Chamber ;
+    s223:connectedThrough wbs:conn-RBC_Secondary_Sedimentation-to-Chlorination_Chamber,
+        wbs:conn-RBC_Unit-to-RBC_Secondary_Sedimentation ;
+    s223:connectedTo wbs:Chlorination_Chamber ;
+    s223:hasConnectionPoint wbs:RBC_Secondary_Sedimentation-in,
+        wbs:RBC_Secondary_Sedimentation-out ;
+    s223:hasProperty wbs:RBC_Secondary_Sedimentation-ph,
+        wbs:RBC_Secondary_Sedimentation-temperature,
+        wbs:RBC_Secondary_Sedimentation-tss-concentration,
+        wbs:RBC_Secondary_Sedimentation-turbidity,
+        wbs:RBC_Secondary_Sedimentation-volume .
+
+wbs:RBC_Unit a nawi:RotatingBiologicalContactor ;
+    s223:cnx wbs:RBC_Unit-in,
+        wbs:RBC_Unit-out ;
+    s223:connected wbs:RBC_Secondary_Sedimentation ;
+    s223:connectedThrough wbs:conn-Primary_Sedimentation_Junction-to-RBC_Unit,
+        wbs:conn-RBC_Unit-to-RBC_Secondary_Sedimentation ;
+    s223:connectedTo wbs:RBC_Secondary_Sedimentation ;
+    s223:hasConnectionPoint wbs:RBC_Unit-in,
+        wbs:RBC_Unit-out .
+
+wbs:Screen a nawi:Screen ;
+    s223:cnx wbs:Screen-in,
+        wbs:Screen-out ;
+    s223:connected wbs:Grit_Chamber ;
+    s223:connectedThrough wbs:conn-Influent_Pump-to-Screen,
+        wbs:conn-Screen-to-Grit_Chamber ;
+    s223:connectedTo wbs:Grit_Chamber ;
+    s223:hasConnectionPoint wbs:Screen-in,
+        wbs:Screen-out ;
+    s223:hasProcess nawi:Process-Screening .
+
+wbs:Sludge_Digester a nawi:Digester ;
+    s223:cnx wbs:Sludge_Digester-in,
+        wbs:Sludge_Digester-out ;
+    s223:connected wbs:Dewatering_Unit ;
+    s223:connectedThrough wbs:conn-Sludge_Digester-to-Dewatering_Unit,
+        wbs:conn-Sludge_Thickener-to-Sludge_Digester ;
+    s223:connectedTo wbs:Dewatering_Unit ;
+    s223:hasConnectionPoint wbs:Sludge_Digester-in,
+        wbs:Sludge_Digester-out .
+
+wbs:Sludge_Thickener a nawi:Thickener ;
+    s223:cnx wbs:Sludge_Thickener-in,
+        wbs:Sludge_Thickener-out ;
+    s223:connected wbs:Sludge_Digester ;
+    s223:connectedThrough wbs:conn-Primary_Sedimentation-to-Sludge_Thickener,
+        wbs:conn-Sludge_Thickener-to-Sludge_Digester ;
+    s223:connectedTo wbs:Sludge_Digester ;
+    s223:hasConnectionPoint wbs:Sludge_Thickener-in,
+        wbs:Sludge_Thickener-out .
+
+wbs:Sluice_Gate a nawi:SluiceGate ;
+    s223:cnx wbs:Sluice_Gate-in,
+        wbs:Sluice_Gate-out ;
+    s223:connected wbs:Diurnal_Flow_Box ;
+    s223:connectedThrough wbs:conn-Primary_Sedimentation_Junction-to-Sluice_Gate,
+        wbs:conn-Sluice_Gate-to-Diurnal_Flow_Box ;
+    s223:connectedTo wbs:Diurnal_Flow_Box ;
+    s223:hasConnectionPoint wbs:Sluice_Gate-in,
+        wbs:Sluice_Gate-out ;
+    s223:hasProperty wbs:Sluice_Gate-opening-command,
+        wbs:Sluice_Gate-status .
+
+wbs:Diurnal_Flow_Box-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-Diurnal_Flow_Box-to-Flow_Return_Pump1,
+        wbs:conn-Diurnal_Flow_Box-to-Flow_Return_Pump2,
+        wbs:conn-Diurnal_Flow_Box-to-Storage_Basin ;
+    s223:connectsAt wbs:conn-Diurnal_Flow_Box-to-Flow_Return_Pump1,
+        wbs:conn-Diurnal_Flow_Box-to-Flow_Return_Pump2,
+        wbs:conn-Diurnal_Flow_Box-to-Storage_Basin ;
+    s223:connectsThrough wbs:conn-Diurnal_Flow_Box-to-Flow_Return_Pump1,
+        wbs:conn-Diurnal_Flow_Box-to-Flow_Return_Pump2,
+        wbs:conn-Diurnal_Flow_Box-to-Storage_Basin ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:Storage_Basin-in a s223:InletConnectionPoint ;
+    s223:connectsAt wbs:conn-Diurnal_Flow_Box-to-Storage_Basin,
+        wbs:conn-Effluent_Pump-to-Storage_Basin,
+        wbs:conn-Wet_Weather_Screen-to-Storage_Basin ;
+    s223:connectsThrough wbs:conn-Diurnal_Flow_Box-to-Storage_Basin,
+        wbs:conn-Effluent_Pump-to-Storage_Basin,
+        wbs:conn-Wet_Weather_Screen-to-Storage_Basin ;
+    s223:hasMedium s223:Medium-Water .
+
+wbs:Chlorination_Chamber a nawi:StaticMixer ;
+    s223:cnx wbs:Chlorination_Chamber-in,
+        wbs:Chlorination_Chamber-out ;
+    s223:connected wbs:Chlorination_Basin ;
+    s223:connectedThrough wbs:conn-AS_Secondary_Sedimentation-to-Chlorination_Chamber,
+        wbs:conn-Chlorination_Chamber-to-Chlorination_Basin,
+        wbs:conn-RBC_Secondary_Sedimentation-to-Chlorination_Chamber ;
+    s223:connectedTo wbs:Chlorination_Basin ;
+    s223:hasConnectionPoint wbs:Chlorination_Chamber-in,
+        wbs:Chlorination_Chamber-out ;
+    nawi:hasProcess nawi:Process-Mixing .
+
+wbs:conn-AS_Aeration_Basin-to-AS_Secondary_Sedimentation a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:AS_Aeration_Basin-out,
+        wbs:AS_Secondary_Sedimentation-in ;
+    s223:connectsFrom wbs:AS_Aeration_Basin ;
+    s223:connectsTo wbs:AS_Secondary_Sedimentation .
+
+wbs:conn-AS_Secondary_Sedimentation-to-Chlorination_Chamber a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:AS_Secondary_Sedimentation-out,
+        wbs:Chlorination_Chamber-in ;
+    s223:connectsFrom wbs:AS_Secondary_Sedimentation ;
+    s223:connectsTo wbs:Chlorination_Chamber .
+
+wbs:conn-Chlorination_Basin-to-Effluent_Pump a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:Chlorination_Basin-out,
+        wbs:Effluent_Pump-in ;
+    s223:connectsFrom wbs:Chlorination_Basin ;
+    s223:connectsTo wbs:Effluent_Pump .
+
+wbs:conn-Chlorination_Chamber-to-Chlorination_Basin a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:Chlorination_Basin-in,
+        wbs:Chlorination_Chamber-out ;
+    s223:connectsFrom wbs:Chlorination_Chamber ;
+    s223:connectsTo wbs:Chlorination_Basin .
+
+wbs:conn-Diurnal_Flow_Box-to-Flow_Return_Pump1 a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:Diurnal_Flow_Box-out,
+        wbs:Flow_Return_Pump1-in ;
+    s223:connectsFrom wbs:Diurnal_Flow_Box ;
+    s223:connectsTo wbs:Flow_Return_Pump1 .
+
+wbs:conn-Diurnal_Flow_Box-to-Flow_Return_Pump2 a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:Diurnal_Flow_Box-out,
+        wbs:Flow_Return_Pump2-in ;
+    s223:connectsFrom wbs:Diurnal_Flow_Box ;
+    s223:connectsTo wbs:Flow_Return_Pump2 .
+
+wbs:conn-Diurnal_Flow_Box-to-Storage_Basin a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:Diurnal_Flow_Box-out,
+        wbs:Storage_Basin-in ;
+    s223:connectsFrom wbs:Diurnal_Flow_Box ;
+    s223:connectsTo wbs:Storage_Basin .
+
+wbs:conn-Effluent_Pump-to-Storage_Basin a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:Effluent_Pump-out,
+        wbs:Storage_Basin-in ;
+    s223:connectsFrom wbs:Effluent_Pump ;
+    s223:connectsTo wbs:Storage_Basin .
+
+wbs:conn-Flow_Return_Pump1-to-Primary_Sedimentation_Junction a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:Flow_Return_Pump1-out,
+        wbs:Primary_Sedimentation_Junction-inlet-cp-2 ;
+    s223:connectsFrom wbs:Flow_Return_Pump1 ;
+    s223:connectsTo wbs:Primary_Sedimentation_Junction .
+
+wbs:conn-Flow_Return_Pump2-to-Primary_Sedimentation a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:Flow_Return_Pump2-out,
+        wbs:Primary_Sedimentation-in ;
+    s223:connectsFrom wbs:Flow_Return_Pump2 ;
+    s223:connectsTo wbs:Primary_Sedimentation .
+
+wbs:conn-Grinder-to-Primary_Sedimentation a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:Grinder-out,
+        wbs:Primary_Sedimentation-in ;
+    s223:connectsFrom wbs:Grinder ;
+    s223:connectsTo wbs:Primary_Sedimentation .
+
+wbs:conn-Grit_Chamber-to-Grinder a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:Grinder-in,
+        wbs:Grit_Chamber-out ;
+    s223:connectsFrom wbs:Grit_Chamber ;
+    s223:connectsTo wbs:Grinder .
+
+wbs:conn-Influent_Pump-to-Screen a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:Influent_Pump-out,
+        wbs:Screen-in ;
+    s223:connectsFrom wbs:Influent_Pump ;
+    s223:connectsTo wbs:Screen .
+
+wbs:conn-Primary_Sedimentation-to-Primary_Sedimentation_Junction a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:Primary_Sedimentation-out,
+        wbs:Primary_Sedimentation_Junction-inlet-cp ;
+    s223:connectsFrom wbs:Primary_Sedimentation ;
+    s223:connectsTo wbs:Primary_Sedimentation_Junction .
+
+wbs:conn-Primary_Sedimentation-to-Sludge_Thickener a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:Primary_Sedimentation-out-sludge,
+        wbs:Sludge_Thickener-in ;
+    s223:connectsFrom wbs:Primary_Sedimentation ;
+    s223:connectsTo wbs:Sludge_Thickener .
+
+wbs:conn-Primary_Sedimentation_Junction-to-AS_Aeration_Basin a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:AS_Aeration_Basin-in,
+        wbs:Primary_Sedimentation_Junction-outlet-cp-2 ;
+    s223:connectsFrom wbs:Primary_Sedimentation_Junction ;
+    s223:connectsTo wbs:AS_Aeration_Basin .
+
+wbs:conn-Primary_Sedimentation_Junction-to-RBC_Unit a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:Primary_Sedimentation_Junction-outlet-cp-3,
+        wbs:RBC_Unit-in ;
+    s223:connectsFrom wbs:Primary_Sedimentation_Junction ;
+    s223:connectsTo wbs:RBC_Unit .
+
+wbs:conn-Primary_Sedimentation_Junction-to-Sluice_Gate a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:Primary_Sedimentation_Junction-outlet-cp,
+        wbs:Sluice_Gate-in ;
+    s223:connectsFrom wbs:Primary_Sedimentation_Junction ;
+    s223:connectsTo wbs:Sluice_Gate .
+
+wbs:conn-RBC_Secondary_Sedimentation-to-Chlorination_Chamber a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:Chlorination_Chamber-in,
+        wbs:RBC_Secondary_Sedimentation-out ;
+    s223:connectsFrom wbs:RBC_Secondary_Sedimentation ;
+    s223:connectsTo wbs:Chlorination_Chamber .
+
+wbs:conn-RBC_Unit-to-RBC_Secondary_Sedimentation a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:RBC_Secondary_Sedimentation-in,
+        wbs:RBC_Unit-out ;
+    s223:connectsFrom wbs:RBC_Unit ;
+    s223:connectsTo wbs:RBC_Secondary_Sedimentation .
+
+wbs:conn-Screen-to-Grit_Chamber a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:Grit_Chamber-in,
+        wbs:Screen-out ;
+    s223:connectsFrom wbs:Screen ;
+    s223:connectsTo wbs:Grit_Chamber .
+
+wbs:conn-Sludge_Digester-to-Dewatering_Unit a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:Dewatering_Unit-in,
+        wbs:Sludge_Digester-out ;
+    s223:connectsFrom wbs:Sludge_Digester ;
+    s223:connectsTo wbs:Dewatering_Unit .
+
+wbs:conn-Sludge_Thickener-to-Sludge_Digester a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:Sludge_Digester-in,
+        wbs:Sludge_Thickener-out ;
+    s223:connectsFrom wbs:Sludge_Thickener ;
+    s223:connectsTo wbs:Sludge_Digester .
+
+wbs:conn-Sluice_Gate-to-Diurnal_Flow_Box a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:Diurnal_Flow_Box-in,
+        wbs:Sluice_Gate-out ;
+    s223:connectsFrom wbs:Sluice_Gate ;
+    s223:connectsTo wbs:Diurnal_Flow_Box .
+
+wbs:conn-Storage_Basin-to-Diurnal_Flow_Box a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:Diurnal_Flow_Box-in,
+        wbs:Storage_Basin-out ;
+    s223:connectsFrom wbs:Storage_Basin ;
+    s223:connectsTo wbs:Diurnal_Flow_Box .
+
+wbs:conn-Wet_Weather_Screen-to-Storage_Basin a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:Storage_Basin-in,
+        wbs:Wet_Weather_Screen-out ;
+    s223:connectsFrom wbs:Wet_Weather_Screen ;
+    s223:connectsTo wbs:Storage_Basin .
+
+wbs:Primary_Sedimentation a nawi:SedimentationTank ;
+    s223:cnx wbs:Primary_Sedimentation-in,
+        wbs:Primary_Sedimentation-out,
+        wbs:Primary_Sedimentation-out-sludge ;
+    s223:connected wbs:Primary_Sedimentation_Junction,
+        wbs:Sludge_Thickener ;
+    s223:connectedThrough wbs:conn-Flow_Return_Pump2-to-Primary_Sedimentation,
+        wbs:conn-Grinder-to-Primary_Sedimentation,
+        wbs:conn-Primary_Sedimentation-to-Primary_Sedimentation_Junction,
+        wbs:conn-Primary_Sedimentation-to-Sludge_Thickener ;
+    s223:connectedTo wbs:Primary_Sedimentation_Junction,
+        wbs:Sludge_Thickener ;
+    s223:hasConnectionPoint wbs:Primary_Sedimentation-in,
+        wbs:Primary_Sedimentation-out,
+        wbs:Primary_Sedimentation-out-sludge ;
+    s223:hasProperty wbs:Primary_Sedimentation-ph,
+        wbs:Primary_Sedimentation-temperature,
+        wbs:Primary_Sedimentation-tss-concentration,
+        wbs:Primary_Sedimentation-turbidity,
+        wbs:Primary_Sedimentation-volume .
+
+wbs:Diurnal_Flow_Box a nawi:Tank ;
+    s223:cnx wbs:Diurnal_Flow_Box-in,
+        wbs:Diurnal_Flow_Box-out ;
+    s223:connected wbs:Flow_Return_Pump1,
+        wbs:Flow_Return_Pump2,
+        wbs:Storage_Basin ;
+    s223:connectedThrough wbs:conn-Diurnal_Flow_Box-to-Flow_Return_Pump1,
+        wbs:conn-Diurnal_Flow_Box-to-Flow_Return_Pump2,
+        wbs:conn-Diurnal_Flow_Box-to-Storage_Basin,
+        wbs:conn-Sluice_Gate-to-Diurnal_Flow_Box,
+        wbs:conn-Storage_Basin-to-Diurnal_Flow_Box ;
+    s223:connectedTo wbs:Flow_Return_Pump1,
+        wbs:Flow_Return_Pump2,
+        wbs:Storage_Basin ;
+    s223:hasConnectionPoint wbs:Diurnal_Flow_Box-in,
+        wbs:Diurnal_Flow_Box-out ;
+    s223:hasProperty wbs:Diurnal_Flow_Box-ph,
+        wbs:Diurnal_Flow_Box-temperature,
+        wbs:Diurnal_Flow_Box-turbidity,
+        wbs:Diurnal_Flow_Box-volume .
+
+wbs:Primary_Sedimentation_Junction a s223:Junction ;
+    s223:cnx wbs:Primary_Sedimentation_Junction-inlet-cp,
+        wbs:Primary_Sedimentation_Junction-inlet-cp-2,
+        wbs:Primary_Sedimentation_Junction-outlet-cp,
+        wbs:Primary_Sedimentation_Junction-outlet-cp-2,
+        wbs:Primary_Sedimentation_Junction-outlet-cp-3 ;
+    s223:connected wbs:AS_Aeration_Basin,
+        wbs:RBC_Unit,
+        wbs:Sluice_Gate ;
+    s223:connectedThrough wbs:conn-Flow_Return_Pump1-to-Primary_Sedimentation_Junction,
+        wbs:conn-Primary_Sedimentation-to-Primary_Sedimentation_Junction,
+        wbs:conn-Primary_Sedimentation_Junction-to-AS_Aeration_Basin,
+        wbs:conn-Primary_Sedimentation_Junction-to-RBC_Unit,
+        wbs:conn-Primary_Sedimentation_Junction-to-Sluice_Gate ;
+    s223:connectedTo wbs:AS_Aeration_Basin,
+        wbs:RBC_Unit,
+        wbs:Sluice_Gate ;
+    s223:hasConnectionPoint wbs:Primary_Sedimentation_Junction-inlet-cp,
+        wbs:Primary_Sedimentation_Junction-inlet-cp-2,
+        wbs:Primary_Sedimentation_Junction-outlet-cp,
+        wbs:Primary_Sedimentation_Junction-outlet-cp-2,
+        wbs:Primary_Sedimentation_Junction-outlet-cp-3 .
+
+wbs:Storage_Basin a nawi:Basin ;
+    s223:cnx wbs:Storage_Basin-in,
+        wbs:Storage_Basin-out ;
+    s223:connected wbs:Diurnal_Flow_Box ;
+    s223:connectedThrough wbs:conn-Diurnal_Flow_Box-to-Storage_Basin,
+        wbs:conn-Effluent_Pump-to-Storage_Basin,
+        wbs:conn-Storage_Basin-to-Diurnal_Flow_Box,
+        wbs:conn-Wet_Weather_Screen-to-Storage_Basin ;
+    s223:connectedTo wbs:Diurnal_Flow_Box ;
+    s223:hasConnectionPoint wbs:Storage_Basin-in,
+        wbs:Storage_Basin-out ;
+    s223:hasProperty wbs:Storage_Basin-ph,
+        wbs:Storage_Basin-temperature,
+        wbs:Storage_Basin-turbidity,
+        wbs:Storage_Basin-volume .
+
