@@ -38,16 +38,18 @@ class ChlorineLevelWarning(App):
 
 if __name__ == "__main__":
     all_apps=[]
-    for i in range(30):
+    for i in range(100):
         all_apps.append(ChlorineLevelWarning())
         all_apps[i].name=f"chlorine_level_warning_{i}"
 
 
     acq = Acquirium(server_url="localhost", server_port=8000, lexicon_path="ontologies/lexicon.json")
-    # acq.insert_graph("deployments/BENICIA/benicia-model-with-refs-thresholds.ttl")
-    i = 0
+    acq.insert_graph("deployments/BENICIA/benicia-model-with-refs-thresholds.ttl")
+    # i = 0
+    import time
     for app in all_apps:
         acq.register_app(app)
-        # acq.run_app(app.name, keep_alive=True, interval=1)
-        acq.stop_app(app_id=app.name)
-        i += 1
+        acq.run_app(app.name, keep_alive=True, interval=1)
+        # time.sleep(5)
+        # acq.stop_app(app_id=app.name)
+        # i += 1
