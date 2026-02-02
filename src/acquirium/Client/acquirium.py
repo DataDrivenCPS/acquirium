@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence, Callable, Optional
 import inspect
 
-from rdflib import Graph as RDFGraph
+from rdflib import Graph as RDFGraph, URIRef
 
 from acquirium.Client.query import Query
 from acquirium.Client.client import AcquiriumClient
@@ -61,12 +61,18 @@ class Acquirium:
         """Create a new empty Query bound to this Acquirium instance."""
         return Query(client=self.client)
 
-    def find_entity(self, *, _class: str, alias: Optional[str] = None) -> "Query":
-        q = Query(client=self.client).find_entity(_class=_class, alias=alias)
+    def find_entity(
+        self,
+        *,
+        _class: Optional[str] = None,
+        alias: Optional[str] = None,
+        uri: str | URIRef | None = None,
+    ) -> "Query":
+        q = Query(client=self.client).find_entity(_class=_class, alias=alias, uri=uri)
         return q
     
-    def find_all_data(self) -> "Query":
-        q = Query(client=self.client).find_all_data()
+    def find_all_data(self, *, _class: Optional[str] = None, uri: str | URIRef | None = None) -> "Query":
+        q = Query(client=self.client).find_all_data(_class=_class, uri=uri)
         return q
 
     # ------------------------------------------------------------------

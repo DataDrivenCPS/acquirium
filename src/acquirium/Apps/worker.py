@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import inspect
 import json
 import logging
 import os
@@ -38,6 +39,102 @@ def _normalize_url(url: str) -> str:
     return url
 
 
+def _filter_params_for_signature(sig: inspect.Signature, params: dict[str, Any]) -> tuple[dict[str, Any], list[str], bool]:
+    params = params or {}
+    accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+    if accepts_kwargs:
+        return dict(params), [], True
+    accepted = {k: v for k, v in params.items() if k in sig.parameters}
+    missing: list[str] = []
+    for name, p in sig.parameters.items():
+        if name in {"self", "cls"}:
+            continue
+        if p.default is inspect.Parameter.empty and p.kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        ):
+            if name not in accepted:
+                missing.append(name)
+    return accepted, missing, False
+
+
+def _call_with_params(fn: Any, params: dict[str, Any], *, label: str, allow_params_arg: bool = True) -> Any:
+    params = params or {}
+    sig = inspect.signature(fn)
+
+    if allow_params_arg and "params" in sig.parameters:
+        p = sig.parameters["params"]
+        if p.kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        ):
+            try:
+                return fn(params)
+            except TypeError:
+                pass
+
+    kwargs, missing, _ = _filter_params_for_signature(sig, params)
+    if missing:
+        raise TypeError(f"{label} missing required params: {', '.join(missing)}")
+    return fn(**kwargs)
+
+
+def _configure_app(app: App, params: dict[str, Any]) -> None:
+    if not params:
+        return
+    for hook in ("configure", "set_params", "apply_params"):
+        fn = getattr(app, hook, None)
+        if callable(fn):
+            try:
+                _call_with_params(fn, params, label=f"{app.__class__.__name__}.{hook}")
+                return
+            except TypeError as exc:
+                logger.warning("App %s %s failed: %s", app.__class__.__name__, hook, exc)
+    for key, value in params.items():
+        try:
+            setattr(app, key, value)
+        except Exception as exc:
+            logger.debug("Unable to set param %s on %s: %s", key, app.__class__.__name__, exc)
+
+
+def _instantiate_app_class(cls: type[App], params: dict[str, Any]) -> App:
+    if not issubclass(cls, App):
+        raise ValueError(f"{cls.__name__} is not an App subclass")
+
+    factory = getattr(cls, "from_params", None)
+    if callable(factory) and params:
+        try:
+            app = _call_with_params(factory, params, label=f"{cls.__name__}.from_params")
+            if not isinstance(app, App):
+                raise ValueError(f"{cls.__name__}.from_params did not return an App")
+            _configure_app(app, params)
+            return app
+        except Exception as exc:
+            logger.warning("from_params failed for %s: %s; falling back to constructor", cls.__name__, exc)
+
+    sig = inspect.signature(cls.__init__)
+    kwargs, missing, accepts_kwargs = _filter_params_for_signature(sig, params)
+    if missing:
+        raise ValueError(
+            f"{cls.__name__} missing required params: {', '.join(missing)}. "
+            "Provide ACQUIRIUM_APP_PARAMS or run_app(params=...)."
+        )
+    if params and not accepts_kwargs:
+        unused = set(params) - set(kwargs)
+        if unused:
+            logger.debug("Ignoring unused params for %s: %s", cls.__name__, sorted(unused))
+
+    try:
+        app = cls(**kwargs)
+    except TypeError as exc:
+        raise ValueError(f"Failed to instantiate {cls.__name__}") from exc
+
+    _configure_app(app, params)
+    return app
+
+
 def _run_once(app: App, ctx: AppContext, aq: Acquirium, run_count: int = 0) -> int:
     """Execute a single run of the app and persist outputs."""
     run_count += 1
@@ -56,7 +153,7 @@ def _run_once(app: App, ctx: AppContext, aq: Acquirium, run_count: int = 0) -> i
         raise
 
 
-def _load_app_from_file(path: str, class_name: str | None) -> App:
+def _load_app_from_file(path: str, class_name: str | None, params: dict[str, Any]) -> App:
     logger.info("Loading app from file: %s", path)
     spec = importlib.util.spec_from_file_location("acquirium_app", path)
     if spec is None or spec.loader is None:
@@ -67,22 +164,45 @@ def _load_app_from_file(path: str, class_name: str | None) -> App:
         cls = getattr(module, class_name, None)
         if cls is None:
             raise ValueError(f"App class {class_name} not found in {path}")
-        app = cls()
+        app = _instantiate_app_class(cls, params)
         logger.info("Loaded app class '%s' from file", class_name)
         return app
+
+    app_instance = getattr(module, "APP", None) or getattr(module, "app", None)
+    if isinstance(app_instance, App):
+        _configure_app(app_instance, params)
+        logger.info("Loaded app instance from file")
+        return app_instance
+
+    for factory_name in ("build_app", "create_app", "make_app", "get_app"):
+        factory = getattr(module, factory_name, None)
+        if callable(factory):
+            app = _call_with_params(factory, params, label=f"{factory_name}()")
+            if not isinstance(app, App):
+                raise ValueError(f"{factory_name} did not return an App")
+            _configure_app(app, params)
+            logger.info("Loaded app via factory '%s' from file", factory_name)
+            return app
+
+    candidates: list[tuple[str, type[App]]] = []
     for name, obj in module.__dict__.items():
         if isinstance(obj, type) and issubclass(obj, App) and obj is not App:
-            app = obj()
-            logger.info("Loaded app class '%s' (auto-discovered) from file", name)
-            return app
+            candidates.append((name, obj))
+    if candidates:
+        name, cls = candidates[0]
+        if len(candidates) > 1:
+            logger.warning("Multiple App subclasses found, using %s", name)
+        app = _instantiate_app_class(cls, params)
+        logger.info("Loaded app class '%s' (auto-discovered) from file", name)
+        return app
     raise ValueError("No App subclass found in app file")
 
 
-def _load_app(module: str, class_name: str) -> App:
+def _load_app(module: str, class_name: str, params: dict[str, Any]) -> App:
     logger.info("Loading app from module: %s.%s", module, class_name)
     mod = importlib.import_module(module)
     cls = getattr(mod, class_name)
-    app = cls()
+    app = _instantiate_app_class(cls, params)
     logger.info("Loaded app '%s' v%s", getattr(app, 'name', class_name), getattr(app, 'version', '?'))
     return app
 
@@ -172,11 +292,11 @@ def main() -> None:
     # Load the app
     logger.info("-" * 40)
     if app_file:
-        app = _load_app_from_file(app_file, class_name)
+        app = _load_app_from_file(app_file, class_name, params)
     else:
         if not module or not class_name:
             raise ValueError("ACQUIRIUM_APP_MODULE and ACQUIRIUM_APP_CLASS are required")
-        app = _load_app(module, class_name)
+        app = _load_app(module, class_name, params)
     if not app_id:
         app_id = app.name
 
