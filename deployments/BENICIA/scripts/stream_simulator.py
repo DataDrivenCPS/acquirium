@@ -176,7 +176,18 @@ def _logish_next(
 
     if rng.random() < excursion_rate:
         cap = excursion_cap if excursion_cap is not None else 2000.0
-        spike = math.exp(math.log(max(hi, 1e-6)) + abs(rng.gauss(0.0, step_sigma * 8.0)))
+
+        # Build spike in log-space and clamp to avoid exp overflow.
+        base_log = math.log(max(hi, 1e-6))
+        noise = abs(rng.gauss(0.0, step_sigma * 8.0))
+        exp_arg = base_log + noise
+
+        # Clamp exponent argument for numerical safety
+        exp_arg = min(exp_arg, 700)
+
+        spike = math.exp(exp_arg)
+
+        # Apply excursion cap too (your original behavior)
         return logx, float(min(spike, cap))
 
     x = math.exp(logx)

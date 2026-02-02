@@ -5,18 +5,18 @@ This directory contains scripts for benchmarking Acquirium soft sensor performan
 ## Prerequisites
 
 1. Acquirium server running (`docker compose up`)
-2. Benicia deployment graph available at `deployments/BENICIA/benicia-model-with-refs-thresholds.ttl`
+2. A TTL graph file with `hasExternalReference` data nodes (e.g. `deployments/BENICIA/benicia-model-with-refs-thresholds.ttl`)
 3. Python environment with `acquirium` package installed
 
 ## Scalability Benchmark
 
-Tests horizontal scaling by running N identical soft sensor instances in parallel.
+Tests horizontal scaling by running one soft sensor per data node with an external reference in a TTL graph.
 
 ### Components
 
 | File | Description |
 |------|-------------|
-| `scalability.py` | Spawns N instances of a chlorine level warning sensor |
+| `scalability.py` | Spawns one warning app per data node with `hasExternalReference` |
 | `latency_receiver.py` | HTTP server that receives alerts and logs latency metrics |
 
 ### Usage
@@ -31,22 +31,25 @@ python scripts/benchmark/latency_receiver.py scalability_results.csv 10000
 
 **Terminal 2 - Run the benchmark:**
 ```bash
-python scripts/benchmark/scalability.py <num_instances> [timeout_seconds]
+python scripts/benchmark/scalability.py <ttl_path> [--timeout SECONDS] [--interval SECONDS] [--threshold VALUE]
 
-# Example: 20 sensors for 60 seconds
-python scripts/benchmark/scalability.py 20 60
+# Example: run for 60 seconds
+python scripts/benchmark/scalability.py deployments/BENICIA/benicia-model-with-refs-thresholds.ttl --timeout 60
 ```
 
 **On Linux (Docker host networking):**
 ```bash
-ALERT_HOST=172.17.0.1 python scripts/benchmark/scalability.py 20 60
+ALERT_HOST=172.17.0.1 python scripts/benchmark/scalability.py deployments/BENICIA/benicia-model-with-refs-thresholds.ttl --timeout 60
 ```
+
+**Optional args:**
+`--server-url`, `--server-port`, `--lexicon-path`
 
 ### Output
 
 The receiver logs each message with latency breakdown:
 ```
-[1] chlorine_level_warning_0: meas→recv=12.34ms | recv→done=5.67ms | done→endpoint=8.90ms | total=26.91ms
+[1] external_reference_warning_0: meas→recv=12.34ms | recv→done=5.67ms | done→endpoint=8.90ms | total=26.91ms
 ```
 
 CSV columns: `msg_id`, `app_id`, `measurement_time`, `time_received`, `time_completed`, `endpoint_receipt`, latencies (ms)
@@ -160,14 +163,12 @@ docker compose up -d
 # 2. Capture system info
 ./scripts/benchmark/system_info.sh > results/system_spec.txt
 
-# 3. Run scalability test (10, 20, 50 instances)
-for n in 10 20 50; do
-  uv run python scripts/benchmark/latency_receiver.py results/scale_${n}.csv &
-  RECEIVER_PID=$!
-  sleep 2
-  uv run python scripts/benchmark/scalability.py $n 60
-  kill $RECEIVER_PID
-done
+# 3. Run scalability test (one app per external-reference data node)
+uv run python scripts/benchmark/latency_receiver.py results/scale.csv &
+RECEIVER_PID=$!
+sleep 2
+uv run python scripts/benchmark/scalability.py deployments/BENICIA/benicia-model-with-refs-thresholds.ttl --timeout 60
+kill $RECEIVER_PID
 
 # 4. Run chain depth test (1, 3, 5, 10 levels)
 for d in 1 3 5 10; do
