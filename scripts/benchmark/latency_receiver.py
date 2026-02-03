@@ -94,13 +94,13 @@ class LatencyHandler(BaseHTTPRequestHandler):
         def fmt(v: float | None) -> str:
             return f"{v:.2f}" if v is not None else "N/A"
 
-        print(
-            f"[{msg_id}] {app_id}: "
-            f"meas→recv={fmt(latency_measurement_to_received)}ms | "
-            f"recv→done={fmt(latency_received_to_completed)}ms | "
-            f"done→endpoint={fmt(latency_completed_to_endpoint)}ms | "
-            f"total={fmt(latency_total)}ms"
-        )
+        # print(
+        #     f"[{msg_id}] {app_id}: "
+        #     f"meas→recv={fmt(latency_measurement_to_received)}ms | "
+        #     f"recv→done={fmt(latency_received_to_completed)}ms | "
+        #     f"done→endpoint={fmt(latency_completed_to_endpoint)}ms | "
+        #     f"total={fmt(latency_total)}ms"
+        # )
 
         self.send_response(200)
         self.send_header("Content-Type", "application/json")

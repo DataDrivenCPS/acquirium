@@ -25,7 +25,7 @@ Tests horizontal scaling by running one soft sensor per data node with an extern
 ```bash
 python scripts/benchmark/latency_receiver.py results_20sensor.csv [port]
 
-# Example:
+# Commands to run the measurements for the 3 graph sizes. Run these separately:
 python scripts/benchmark/latency_receiver.py scripts/benchmark/scalability/scalability_results_1.csv 10000
 python scripts/benchmark/latency_receiver.py scripts/benchmark/scalability/scalability_results_10.csv 10000
 python scripts/benchmark/latency_receiver.py scripts/benchmark/scalability/scalability_results_100.csv 10000
@@ -36,7 +36,7 @@ python scripts/benchmark/latency_receiver.py scripts/benchmark/scalability/scala
 ```bash
 python scripts/benchmark/scalability.py <ttl_path> [--timeout SECONDS] [--interval SECONDS] [--threshold VALUE]
 
-# Example: run for 60 seconds
+# Commands to run the measurements for the 3 graph sizes, Run the corresponding command for each receiver above seperately:
 python scripts/benchmark/scalability.py deployments/BENICIA/benicia-model-with-refs-1.ttl
 python scripts/benchmark/scalability.py deployments/BENICIA/benicia-model-with-refs-10.ttl
 python scripts/benchmark/scalability.py deployments/BENICIA/benicia-model-with-refs-100.ttl

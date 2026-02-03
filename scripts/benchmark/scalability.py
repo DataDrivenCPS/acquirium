@@ -169,6 +169,7 @@ if __name__ == "__main__":
     atexit.register(cleanup)
 
     try:
+        import time
         acq.insert_graph(args.ttl_path)
         i = 0
         for app in all_apps:
@@ -176,6 +177,7 @@ if __name__ == "__main__":
             acq.register_app(app)
             acq.run_app(app.name, keep_alive=True, interval=args.interval,params={'point_uri':app.point_uri})
             i += 1
+            time.sleep(5)  # slight delay to avoid overwhelming the server
         print(f"Started {i} instances of ExternalReferenceWarning app.")
         if timeout:
             print(f"Running for {timeout} seconds...")
