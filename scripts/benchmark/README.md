@@ -26,7 +26,10 @@ Tests horizontal scaling by running one soft sensor per data node with an extern
 python scripts/benchmark/latency_receiver.py results_20sensor.csv [port]
 
 # Example:
-python scripts/benchmark/latency_receiver.py scalability_results.csv 10000
+python scripts/benchmark/latency_receiver.py scripts/benchmark/scalability/scalability_results_1.csv 10000
+python scripts/benchmark/latency_receiver.py scripts/benchmark/scalability/scalability_results_10.csv 10000
+python scripts/benchmark/latency_receiver.py scripts/benchmark/scalability/scalability_results_100.csv 10000
+
 ```
 
 **Terminal 2 - Run the benchmark:**
@@ -34,12 +37,20 @@ python scripts/benchmark/latency_receiver.py scalability_results.csv 10000
 python scripts/benchmark/scalability.py <ttl_path> [--timeout SECONDS] [--interval SECONDS] [--threshold VALUE]
 
 # Example: run for 60 seconds
-python scripts/benchmark/scalability.py deployments/BENICIA/benicia-model-with-refs-thresholds.ttl --timeout 60
+python scripts/benchmark/scalability.py deployments/BENICIA/benicia-model-with-refs-1.ttl
+python scripts/benchmark/scalability.py deployments/BENICIA/benicia-model-with-refs-10.ttl
+python scripts/benchmark/scalability.py deployments/BENICIA/benicia-model-with-refs-100.ttl
+
 ```
 
 **On Linux (Docker host networking):**
 ```bash
-ALERT_HOST=172.17.0.1 python scripts/benchmark/scalability.py deployments/BENICIA/benicia-model-with-refs-thresholds.ttl --timeout 60
+ALERT_HOST=172.17.0.1 python scripts/benchmark/scalability.py deployments/BENICIA/benicia-model-with-refs-1.ttl --timeout 60
+```
+
+**Plotting Script:**
+```bash
+python scripts/benchmark/scalability/visual.py scripts/benchmark/scalability/scalability_results_1.csv scripts/benchmark/scalability/scalability_results_10.csv scripts/benchmark/scalability/scalability_results_100.csv --outdir scripts/benchmark/scalability/plots
 ```
 
 **Optional args:**
@@ -101,6 +112,8 @@ python scripts/benchmark/chain_latency.py 5 60
 ```bash
 ALERT_HOST=172.17.0.1 python scripts/benchmark/chain_latency.py 5 60
 ```
+
+
 
 ### Output
 
