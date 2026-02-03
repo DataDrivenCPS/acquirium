@@ -74,14 +74,14 @@ def boxplot_one_column(
 
     # Annotate medians
     y_min, y_max = ax.get_ylim()
-    y_offset = (y_max - y_min) * 0.03
+    y_offset = (y_max - y_min) * 0.04
     for i, m in enumerate(medians, start=1):
         if np.isfinite(m):
-            ax.text(i, m + y_offset, f"{m:.1f}", ha="center", va="bottom", fontsize=12)
+            ax.text(i+0.3, m-y_offset, f"{m:.1f}", ha="center", va="bottom", fontsize=12)
 
-    ax.set_title(col)
+    # ax.set_title(col)
     ax.set_ylabel("Latency (ms)")
-    ax.set_xlabel("CSV file")
+    ax.set_xlabel("Number of Concurrent Apps")
     plt.tight_layout()
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -111,7 +111,7 @@ def main() -> None:
 
     csv_paths = args.csvs
     dfs = [load_df(p) for p in csv_paths]
-    labels = [p.stem for p in csv_paths]
+    labels = [str(p.stem).split("_")[-1] for p in csv_paths]
 
     for col in LAT_COLS:
         out = args.outdir / f"boxplot_{col}.png"
