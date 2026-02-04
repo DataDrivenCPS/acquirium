@@ -16,7 +16,6 @@ Example:
 """
 
 import atexit
-import hashlib
 import os
 import signal
 import sys
@@ -28,16 +27,6 @@ from acquirium import Acquirium, App, AppContext, Output
 # Alert endpoint configuration
 ALERT_HOST = os.environ.get("ALERT_HOST", "host.docker.internal")
 ALERT_PORT = os.environ.get("ALERT_PORT", "10000")
-
-# Namespace for derived URIs (must match acquirium internals)
-ACQUIRIUM_NS_PREFIX = "urn:acquirium:"
-
-
-def make_stream_ref_uri(point_uri: str) -> str:
-    """Compute the ref_uri for a given point_uri (mirrors acquirium internal logic)."""
-    digest = hashlib.sha1(point_uri.encode("utf-8")).hexdigest()[:12]
-    return f"{ACQUIRIUM_NS_PREFIX}stream/{digest}"
-
 
 def make_chain_point_uri(level: int) -> str:
     """Generate point_uri for a chain level."""
@@ -63,6 +52,39 @@ def parse_chain_config_from_app_id(app_id: str) -> tuple[int, int, bool]:
         return level, chain_depth, is_final
     # Fallback defaults
     return 0, 1, False
+
+
+def build_chain_message(
+    *,
+    level: int,
+    chain_depth: int,
+    value: float,
+    measurement_time: str,
+    time_received: str,
+    time_completed: str,
+    app_id: str,
+    is_final: bool = False,
+) -> dict:
+    """Build a consistent payload for the chain receiver."""
+    msg = {
+        "level": level,
+        "chain_depth": chain_depth,
+        "value": value,
+        "measurement_time": measurement_time,
+        "time_received": time_received,
+        "time_completed": time_completed,
+        "app_id": app_id,
+        # Keep a data envelope for parity with other benchmark receivers.
+        "data": {
+            "timestamp": measurement_time,
+            "value": value,
+            "level": level,
+            "chain_depth": chain_depth,
+        },
+    }
+    if is_final:
+        msg["is_final"] = True
+    return msg
 
 
 class ChainBaseSensor(App):
@@ -102,7 +124,7 @@ class ChainBaseSensor(App):
     def run(self, ctx: AppContext) -> list[Output]:
         now = datetime.now(timezone.utc)
         df = ctx.query.latest_data(cast_value='float')
-        time_received = datetime.utcnow().isoformat()
+        time_received = datetime.now(timezone.utc).isoformat()
 
         if df.is_empty() or df.shape[0] == 0:
             value = 0.0
@@ -111,18 +133,17 @@ class ChainBaseSensor(App):
             value = float(df[0, 1])
             measurement_time = df[0, 0].isoformat() if hasattr(df[0, 0], 'isoformat') else str(df[0, 0])
 
-        time_completed = datetime.utcnow().isoformat()
+        time_completed = datetime.now(timezone.utc).isoformat()
 
-        # Log message for chain receiver
-        log_message = {
-            "level": self.level,
-            "chain_depth": self.chain_depth,
-            "value": value,
-            "measurement_time": measurement_time,
-            "time_received": time_received,
-            "time_completed": time_completed,
-            "app_id": ctx.app_id,
-        }
+        log_message = build_chain_message(
+            level=self.level,
+            chain_depth=self.chain_depth,
+            value=value,
+            measurement_time=measurement_time,
+            time_received=time_received,
+            time_completed=time_completed,
+            app_id=ctx.app_id,
+        )
 
         return [
             Output.timeseries(
@@ -156,7 +177,6 @@ class ChainIntermediateSensor(App):
             self.level = level
             self.chain_depth = chain_depth
         self.input_point_uri = make_chain_point_uri(self.level - 1)
-        self.input_ref_uri = make_stream_ref_uri(self.input_point_uri)
         self.output_point_uri = make_chain_point_uri(self.level)
         self.name = f"chain_level_{self.level}_of_{self.chain_depth}"
         self.outputs = [
@@ -171,19 +191,13 @@ class ChainIntermediateSensor(App):
         ]
 
     def build_query(self, aq: Acquirium):
-        # We need a query object to access the client, but we'll query derived data directly
-        # Return a minimal query that gives us access to the client
-        return aq.find_entity(_class="Chlorination Basin").find_related_data(unit=["MilliGM-PER-L"])
+        return aq.find_all_data(uri=self.input_point_uri)
 
     def run(self, ctx: AppContext) -> list[Output]:
-        time_received = datetime.utcnow().isoformat()
+        time_received = datetime.now(timezone.utc).isoformat()
 
-        # Query the previous sensor's output directly via ref_uri
-        df = ctx.query.client.timeseries_df(
-            uri=self.input_ref_uri,
-            limit=1,
-            order="desc",
-        )
+        # Query the previous sensor's output via the query interface
+        df = ctx.query.latest_data(cast_value='float')
         now = datetime.now(timezone.utc)
 
         if df.is_empty() or df.shape[0] == 0:
@@ -197,17 +211,17 @@ class ChainIntermediateSensor(App):
             measurement_time = timestamp.isoformat() if hasattr(timestamp, 'isoformat') else str(timestamp)
             value = prev_value + 1
 
-        time_completed = datetime.utcnow().isoformat()
+        time_completed = datetime.now(timezone.utc).isoformat()
 
-        log_message = {
-            "level": self.level,
-            "chain_depth": self.chain_depth,
-            "value": value,
-            "measurement_time": measurement_time,
-            "time_received": time_received,
-            "time_completed": time_completed,
-            "app_id": ctx.app_id,
-        }
+        log_message = build_chain_message(
+            level=self.level,
+            chain_depth=self.chain_depth,
+            value=value,
+            measurement_time=measurement_time,
+            time_received=time_received,
+            time_completed=time_completed,
+            app_id=ctx.app_id,
+        )
 
         return [
             Output.timeseries(
@@ -241,7 +255,6 @@ class ChainFinalSensor(App):
             self.level = level
             self.chain_depth = chain_depth
         self.input_point_uri = make_chain_point_uri(self.level - 1)
-        self.input_ref_uri = make_stream_ref_uri(self.input_point_uri)
         self.name = f"chain_final_{self.level}_of_{self.chain_depth}"
         self.outputs = [
             {
@@ -251,17 +264,13 @@ class ChainFinalSensor(App):
         ]
 
     def build_query(self, aq: Acquirium):
-        return aq.find_entity(_class="Chlorination Basin").find_related_data(unit=["MilliGM-PER-L"])
+        return aq.find_all_data(uri=self.input_point_uri)
 
     def run(self, ctx: AppContext) -> list[Output]:
-        time_received = datetime.utcnow().isoformat()
+        time_received = datetime.now(timezone.utc).isoformat()
 
-        # Query the previous sensor's output
-        df = ctx.query.client.timeseries_df(
-            uri=self.input_ref_uri,
-            limit=1,
-            order="desc",
-        )
+        # Query the previous sensor's output via the query interface
+        df = ctx.query.latest_data(cast_value='float')
         now = datetime.now(timezone.utc)
 
         if df.is_empty() or df.shape[0] == 0:
@@ -273,18 +282,18 @@ class ChainFinalSensor(App):
             measurement_time = timestamp.isoformat() if hasattr(timestamp, 'isoformat') else str(timestamp)
             value = prev_value + 1
 
-        time_completed = datetime.utcnow().isoformat()
+        time_completed = datetime.now(timezone.utc).isoformat()
 
-        log_message = {
-            "level": self.level,
-            "chain_depth": self.chain_depth,
-            "value": value,
-            "measurement_time": measurement_time,
-            "time_received": time_received,
-            "time_completed": time_completed,
-            "app_id": ctx.app_id,
-            "is_final": True,
-        }
+        log_message = build_chain_message(
+            level=self.level,
+            chain_depth=self.chain_depth,
+            value=value,
+            measurement_time=measurement_time,
+            time_received=time_received,
+            time_completed=time_completed,
+            app_id=ctx.app_id,
+            is_final=True,
+        )
 
         return [Output.trigger(
             url=f"{ALERT_HOST}:{ALERT_PORT}/chain",

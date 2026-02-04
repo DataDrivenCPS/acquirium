@@ -6,8 +6,7 @@ per-level and end-to-end latency statistics.
 
 Records:
 - Per-level processing time (time_completed - time_received)
-- Cumulative latency from measurement to each level
-- End-to-end latency for complete chains
+- Measurement→endpoint latencies (subject to clock skew)
 
 Usage:
     python scripts/benchmark/chain_receiver.py <csv_output_file> [port]
@@ -33,7 +32,7 @@ class ChainStats:
 
     NOTE: Only processing_time (time_completed - time_received) is reliable
     since both timestamps come from the same Docker container. Cross-machine
-    latencies are subject to clock skew and are not tracked.
+    latencies (measurement→endpoint) are subject to clock skew.
     """
 
     def __init__(self):
@@ -49,22 +48,29 @@ class ChainStats:
 
         NOTE: Only processing_time (time_completed - time_received) is reliable
         since both timestamps come from the same machine (the Docker container).
-        Cross-machine latencies (to_endpoint, total) are subject to clock skew
-        between Docker containers and the host.
+        Cross-machine latencies (measurement→endpoint) are subject to clock skew.
         """
         level = msg.get("level", 0)
         chain_depth = msg.get("chain_depth", 1)
         is_final = msg.get("is_final", False)
 
+        measurement_time_str = msg.get("measurement_time")
+        if not measurement_time_str:
+            measurement_time_str = msg.get("data", {}).get("timestamp")
         time_received_str = msg.get("time_received")
         time_completed_str = msg.get("time_completed")
 
         # Parse timestamps
+        measurement_time = self._parse_ts(measurement_time_str)
         time_received = self._parse_ts(time_received_str)
         time_completed = self._parse_ts(time_completed_str)
 
         # Compute processing time (RELIABLE - same clock)
         processing_time = self._delta_ms(time_received, time_completed)
+        latency_measurement_to_received = self._delta_ms(measurement_time, time_received)
+        latency_received_to_completed = processing_time
+        latency_completed_to_endpoint = self._delta_ms(time_completed, endpoint_receipt)
+        latency_total = self._delta_ms(measurement_time, endpoint_receipt)
 
         # Record statistics - only processing_time is reliable
         self.message_counts[level] += 1
@@ -77,6 +83,10 @@ class ChainStats:
 
         return {
             "processing_time_ms": processing_time,
+            "latency_measurement_to_received_ms": latency_measurement_to_received,
+            "latency_received_to_completed_ms": latency_received_to_completed,
+            "latency_completed_to_endpoint_ms": latency_completed_to_endpoint,
+            "latency_total_ms": latency_total,
         }
 
     def _parse_ts(self, s: str | None) -> datetime | None:
@@ -185,6 +195,8 @@ class ChainHandler(BaseHTTPRequestHandler):
         value = msg.get("value", "")
         app_id = msg.get("app_id", "unknown")
 
+        measurement_time_str = msg.get("measurement_time") or msg.get("data", {}).get("timestamp", "")
+
         # Write to CSV
         if ChainHandler.csv_writer:
             ChainHandler.csv_writer.writerow([
@@ -194,9 +206,14 @@ class ChainHandler(BaseHTTPRequestHandler):
                 is_final,
                 app_id,
                 value,
+                measurement_time_str or "",
                 msg.get("time_received", ""),
                 msg.get("time_completed", ""),
                 endpoint_receipt.isoformat(),
+                latencies["latency_measurement_to_received_ms"] or "",
+                latencies["latency_received_to_completed_ms"] or "",
+                latencies["latency_completed_to_endpoint_ms"] or "",
+                latencies["latency_total_ms"] or "",
                 latencies["processing_time_ms"] or "",
             ])
             ChainHandler.csv_fp.flush()
@@ -206,10 +223,13 @@ class ChainHandler(BaseHTTPRequestHandler):
             return f"{v:.2f}" if v is not None else "N/A"
 
         final_marker = " [FINAL]" if is_final else ""
-        print(
-            f"[{msg_id}] L{level}/{chain_depth}{final_marker} {app_id}: "
-            f"processing={fmt(latencies['processing_time_ms'])}ms"
-        )
+        # print(
+        #     f"[{msg_id}] L{level}/{chain_depth}{final_marker} {app_id}: "
+        #     f"meas→recv={fmt(latencies['latency_measurement_to_received_ms'])}ms | "
+        #     f"recv→done={fmt(latencies['latency_received_to_completed_ms'])}ms | "
+        #     f"done→endpoint={fmt(latencies['latency_completed_to_endpoint_ms'])}ms | "
+        #     f"total={fmt(latencies['latency_total_ms'])}ms"
+        # )
 
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -241,9 +261,14 @@ def main() -> None:
         "is_final",
         "app_id",
         "value",
+        "measurement_time",
         "time_received",
         "time_completed",
         "endpoint_receipt",
+        "latency_measurement_to_received_ms",
+        "latency_received_to_completed_ms",
+        "latency_completed_to_endpoint_ms",
+        "latency_total_ms",
         "processing_time_ms",
     ])
 

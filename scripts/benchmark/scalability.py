@@ -123,6 +123,7 @@ if __name__ == "__main__":
     parser.add_argument("--server-url", default="localhost")
     parser.add_argument("--server-port", type=int, default=8000)
     parser.add_argument("--lexicon-path", default="ontologies/lexicon.json")
+    parser.add_argument("--multiplier", type=int, default=1, help="Number of times to duplicate the app instances.")
     args = parser.parse_args()
 
     timeout = args.timeout
@@ -133,10 +134,11 @@ if __name__ == "__main__":
 
     all_apps = []
     for i, uri in enumerate(data_node_uris):
-        app = ExternalReferenceWarning(uri, threshold=args.threshold)
-        app.name = f"external_reference_warning_{i}"
-        all_apps.append(app)
-        print(f"Prepared app {app.name} for data node {uri}.")
+        for j in range(args.multiplier):
+            app = ExternalReferenceWarning(uri, threshold=args.threshold)
+            app.name = f"external_reference_warning_{i}_{j}"
+            all_apps.append(app)
+            print(f"Prepared app {app.name} for data node {uri}.")
     # exit()
 
     acq = Acquirium(server_url=args.server_url, server_port=args.server_port, lexicon_path=args.lexicon_path)
