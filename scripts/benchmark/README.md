@@ -1,4 +1,21 @@
-# Acquirium Benchmark Scripts
+# Acquirium Benchmark 
+
+## Details on the benchmarks
+
+1. For every benchmark, recreate the Acquirium server: `ACQUIRIUM_RECREATE=true docker compose up`
+2. Three graphs are specifically prepared for scalability testing with 1, 10, and 100 data nodes with external references:
+   - `deployments/BENICIA/benicia-model-with-refs-1.ttl`
+   - `deployments/BENICIA/benicia-model-with-refs-10.ttl`
+   - `deployments/BENICIA/benicia-model-with-refs-100.ttl`
+3. In one terminal, start the latency receiver script to log incoming alerts, make sure the csv name indicated the test run. 
+   - `python scripts/benchmark/latency_receiver.py scripts/benchmark/scalability/scalability_results_1.csv 10000`
+4. In another terminal, run the scalability benchmark script pointing to one of the graphs:
+   - `python scripts/benchmark/scalability.py deployments/BENICIA/benicia-model-with-refs-1.ttl --multiplier 1`
+   - The `--multiplier` argument can be used to increase the number of soft sensors per data node (e.g. `--multiplier 2` will create 2 soft sensors per data node).
+
+
+
+## How to run the Scripts
 
 This directory contains scripts for benchmarking Acquirium soft sensor performance.
 
