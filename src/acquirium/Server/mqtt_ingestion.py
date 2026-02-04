@@ -49,7 +49,7 @@ class MQTTIngestService:
             queue_max: int = 200_000,
             qos: int = 0,
             batch_size: int = 1000,
-            flush_ms: int = 1000,
+            flush_ms: int = 1,
         ):
         self.pg_dsn = pg_dsn
         self.connect_timeout = connect_timeout
