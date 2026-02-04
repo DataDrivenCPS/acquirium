@@ -22,7 +22,9 @@ def load_df(path: Path) -> pl.DataFrame:
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 
-    df = pl.read_csv(path)
+    df = pl.read_csv(path, columns=LAT_COLS)
+    # remove rows with any negative latencies
+    df = df.filter(pl.all_horizontal(pl.col(LAT_COLS) >= 0))
 
     missing = [c for c in LAT_COLS if c not in df.columns]
     if missing:
@@ -77,12 +79,15 @@ def boxplot_one_column(
     y_offset = (y_max - y_min) * 0.04
     for i, m in enumerate(medians, start=1):
         if np.isfinite(m):
-            ax.text(i+0.3, m-y_offset, f"{m:.1f}", ha="center", va="bottom", fontsize=12)
+            ax.text(i+0.33, m-y_offset, f"{m:.1f}", ha="center", va="bottom", fontsize=12)
 
     # ax.set_title(col)
     ax.set_ylabel("Latency (ms)")
     ax.set_xlabel("Number of Concurrent Apps")
     plt.tight_layout()
+    #log scale if needed
+    # if col == "latency_received_to_completed_ms":
+    #     ax.set_yscale("log")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, dpi=200)
@@ -95,9 +100,9 @@ def main() -> None:
     )
     parser.add_argument(
         "csvs",
-        nargs=3,
+        nargs=4,
         type=Path,
-        help="Three CSV files to compare (exactly 3).",
+        help="Four CSV files to compare (exactly 4).",
     )
     parser.add_argument(
         "--outdir",
