@@ -27,29 +27,36 @@ META_COLS = [
 
 
 def load_df(path: Path) -> pl.DataFrame:
-    if not path.exists():
-        raise FileNotFoundError(f"File not found: {path}")
+    memo_path = Path("scripts/benchmark/chain/memo") / path.name.replace(".csv", ".parquet")
+    if memo_path.exists():
+        # Memoization: if the memo file exists, load from it instead of the original CSV.
+            return None    
+    else:
+        if not path.exists():
+            raise FileNotFoundError(f"File not found: {path}")
 
-    df = pl.read_csv(path)
+        df = pl.read_csv(path)
 
-    required = META_COLS + LAT_COLS
-    missing = [c for c in required if c not in df.columns]
-    if missing:
-        raise ValueError(f"{path} is missing columns: {missing}")
+        required = META_COLS + LAT_COLS
+        missing = [c for c in required if c not in df.columns]
+        if missing:
+            raise ValueError(f"{path} is missing columns: {missing}")
+
+        a = df.select(
+            [
+                pl.col("msg_id").cast(pl.Utf8),
+                pl.col("app_id").cast(pl.Utf8),
+                pl.col("level").cast(pl.Int64),
+                pl.col("chain_depth").cast(pl.Int64),
+                *[pl.col(c).cast(pl.Float64) for c in LAT_COLS],
+            ]
+        )
 
     # Keep only what we need; coerce types for safety
-    return df.select(
-        [
-            pl.col("msg_id").cast(pl.Utf8),
-            pl.col("app_id").cast(pl.Utf8),
-            pl.col("level").cast(pl.Int64),
-            pl.col("chain_depth").cast(pl.Int64),
-            *[pl.col(c).cast(pl.Float64) for c in LAT_COLS],
-        ]
-    )
+    return a
 
 
-def collapse_to_chain_sums(df: pl.DataFrame) -> pl.DataFrame:
+def collapse_to_chain_sums(df: pl.DataFrame, path=None) -> pl.DataFrame:
     """
     Turn many rows (one per chain container) into one row per chain run.
 
@@ -59,6 +66,10 @@ def collapse_to_chain_sums(df: pl.DataFrame) -> pl.DataFrame:
     Also robust to interleaving runs: we keep multiple "open" runs and greedily
     assign each incoming row to the earliest run that still needs that app_id.
     """
+    memo_path = Path("scripts/benchmark/chain/memo") / path.name.replace(".csv", ".parquet") if path else None
+    if path and memo_path.exists():
+        # Memoization: if the memo file exists, load from it instead of recomputing.
+        return pl.read_parquet(memo_path)
 
     # Choose a stable ordering column for streaming assignment
     if "msg_id" in df.columns:
@@ -158,6 +169,7 @@ def collapse_to_chain_sums(df: pl.DataFrame) -> pl.DataFrame:
     # Note: if depth=10 and you truly have 11 containers (0..10),
     # the "average per container" divisor should be (chain_depth + 1), not chain_depth.
     out = out.with_columns([(pl.col(c) / (pl.col("chain_depth") + 1)).alias(c) for c in LAT_COLS])
+    out.write_parquet(memo_path) if memo_path else None
 
     return out
 
@@ -169,11 +181,11 @@ def setup_matplotlib() -> None:
         {
             "font.family": "serif",
             "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
-            "font.size": 16,
-            "axes.titlesize": 18,
-            "axes.labelsize": 16,
-            "xtick.labelsize": 14,
-            "ytick.labelsize": 14,
+            "font.size": 22,
+            "axes.titlesize": 24,
+            "axes.labelsize": 22,
+            "xtick.labelsize": 20,
+            "ytick.labelsize": 20,
         }
     )
 
@@ -191,7 +203,7 @@ def boxplot_one_column(
 
     medians = [float(np.nanmedian(arr)) if arr.size else float("nan") for arr in data]
 
-    plt.figure(figsize=(8, 3.2))
+    plt.figure(figsize=(10.5, 3.5))
     plt.boxplot(
         data,
         tick_labels=labels,
@@ -205,10 +217,10 @@ def boxplot_one_column(
     ax = plt.gca()
 
     y_min, y_max = ax.get_ylim()
-    y_offset = (y_max - y_min) * 0.04 if y_max > y_min else 0.0
+    y_offset = (y_max - y_min) * 0.03 if y_max > y_min else 0.0
     for i, m in enumerate(medians, start=1):
         if np.isfinite(m):
-            ax.text(i + 0.3, m - y_offset, f"{m:.1f}", ha="center", va="bottom", fontsize=12)
+            ax.text(i + 0.375, m - y_offset, f"{m:.1f}", ha="center", va="bottom", fontsize=12)
 
     ax.set_ylabel(ylabel)
     ax.set_xlabel(xlabel)
@@ -234,9 +246,9 @@ def main() -> None:
     )
     parser.add_argument(
         "csvs",
-        nargs=3,
+        nargs=6,
         type=Path,
-        help="Three CSV files to compare (for example chain depths 1, 10, 100).",
+        help="Six CSV files to compare (for example chain depths 1, 10, 100).",
     )
     parser.add_argument(
         "--outdir",
@@ -249,7 +261,7 @@ def main() -> None:
     setup_matplotlib()
 
     raw_dfs = [load_df(p) for p in args.csvs]
-    chain_sum_dfs = [collapse_to_chain_sums(df) for df in raw_dfs]
+    chain_sum_dfs = [collapse_to_chain_sums(df, p) for df, p in zip(raw_dfs, args.csvs)]
 
     # Labels as chain depth (from data). Fallback to filename suffix if needed.
     fallback_labels = [str(p.stem).split("_")[-1] for p in args.csvs]
@@ -265,7 +277,7 @@ def main() -> None:
             labels,
             col,
             out,
-            ylabel="Avg. latency per chain (ms)",
+            ylabel="Avg. latency / step (ms)",
             xlabel="Chain depth",
         )
 
