@@ -39,11 +39,11 @@ def setup_matplotlib() -> None:
         {
             "font.family": "serif",
             "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
-            "font.size": 16,
-            "axes.titlesize": 18,
-            "axes.labelsize": 16,
-            "xtick.labelsize": 14,
-            "ytick.labelsize": 14,
+            "font.size": 22,
+            "axes.titlesize": 24,
+            "axes.labelsize": 22,
+            "xtick.labelsize": 20,
+            "ytick.labelsize": 20,
         }
     )
 
@@ -61,7 +61,7 @@ def boxplot_one_column(
     # Compute medians (nan-safe)
     medians = [float(np.nanmedian(arr)) if arr.size else float("nan") for arr in data]
 
-    plt.figure(figsize=(8, 3.2))
+    plt.figure(figsize=(10.5, 3.5))
     plt.boxplot(
         data,
         tick_labels=labels,
@@ -76,10 +76,10 @@ def boxplot_one_column(
 
     # Annotate medians
     y_min, y_max = ax.get_ylim()
-    y_offset = (y_max - y_min) * 0.04
+    y_offset = (y_max - y_min) * 0.045
     for i, m in enumerate(medians, start=1):
         if np.isfinite(m):
-            ax.text(i+0.33, m-y_offset, f"{m:.1f}", ha="center", va="bottom", fontsize=12)
+            ax.text(i+0.4, m-y_offset, f"{m:.1f}", ha="center", va="bottom", fontsize=12)
 
     # ax.set_title(col)
     ax.set_ylabel("Latency (ms)")
@@ -100,7 +100,7 @@ def main() -> None:
     )
     parser.add_argument(
         "csvs",
-        nargs=4,
+        nargs=6,
         type=Path,
         help="Four CSV files to compare (exactly 4).",
     )
