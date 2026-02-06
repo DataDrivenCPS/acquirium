@@ -326,6 +326,54 @@ class Query:
         )
 
 
+    @flex_query_rdf_inputs(
+        specs=[
+            FlexSpec("_class", "class"),
+            FlexSpec("quantity_kind", "class"),
+            FlexSpec("enumeration_kind", "class"),
+            FlexSpec("unit", "class"),
+            FlexSpec("data_source", "class"),
+            FlexSpec("substance", "class"),
+            FlexSpec("medium", "class"),
+        ]
+    )
+    def find_related_data(
+        self,
+        *,
+        _from: Optional[str] = None,
+        path: Optional[str] = None,
+        _class: Optional[str] = None,
+        quantity_kind: Optional[str] = None,
+        enumeration_kind: Optional[str] = None,
+        unit: Optional[str] = None,
+        data_source: Optional[str] = None,
+        substance: Optional[str] = None,
+        medium: Optional[str] = None,
+        alias: Optional[str] = None,
+        hops: int = 1,
+    ) -> "Query":
+        filters: Dict[str, Any] = {}
+        if quantity_kind:
+            filters[HAS_QUANTITY_KIND] = quantity_kind
+        if enumeration_kind:
+            filters[HAS_ENUMERATION_KIND] = enumeration_kind
+        if unit:
+            filters[HAS_UNIT] = unit
+        if data_source:
+            filters[DATA_SOURCE] = data_source
+        if substance:
+            filters[OF_SUBSTANCE] = substance
+        if medium:
+            filters[HAS_MEDIUM] = medium
+        return self.find_data(
+            _from=_from,
+            path=path,
+            _class=_class,
+            hops=hops,
+            filters_dict=filters or None,
+            alias=alias,
+        )
+
     @flex_query_rdf_inputs(specs=[FlexSpec("_class", "class")])
     def find_data(
         self,
@@ -526,15 +574,26 @@ class Query:
                 logging.warning("casting to int failed")
                 pass
         tall = tall.with_columns(pl.col("point_id").map_elements(lambda x: self._remove_prefixes(x),return_dtype=pl.Utf8).alias("point_id"))
+        tall = tall.with_columns(pl.col("ref").map_elements(lambda x: self._remove_prefixes(x),return_dtype=pl.Utf8).alias("ref"))
         # else: keep as string
         if shape == "narrow":
             return tall.select("point_id","ref","time", "value").sort("time")
 
         # wide
-        wide = tall.pivot(values="value", index="time", on=["point_id","ref"], aggregate_function="first")
+        wide = tall.pivot(values="value", index="time", on=["ref"], aggregate_function="first")
+        wide.columns = [self._clean_column_name(c) for c in wide.columns]
         # wide.columns = ["time"] + [self._remove_prefixes(c) for c in wide.columns[1:]]
         return wide.sort("time")
 
+    def _clean_column_name(self, col_name: str) -> str:
+        if col_name == "time":
+            return col_name
+        if isinstance(col_name, str):
+            return self._remove_prefixes(col_name)
+        if isinstance(col_name, set):
+            return list(col_name)[1]
+        return str(col_name)
+    
     def metadata(self) -> pl.DataFrame:
         """
         Execute the SPARQL query to get the query graph results.
@@ -573,7 +632,7 @@ class Query:
     def filter_data_nodes(
         self,
         *,
-        predicate: str,
+        predicate: str ,
         value: Any,
         _from: Optional[str] = None,
     ) -> "Query":
@@ -601,23 +660,33 @@ class Query:
         return self._clone_with_graph(g2, bump_id=False)
 
     @flex_query_rdf_inputs(specs=[FlexSpec("unit", "class")])
-    def filter_by_unit(self, unit: str, *, _from: Optional[str] = None) -> "Query":
+    def filter_by_unit(self, unit: str | list, *, _from: Optional[str] = None) -> "Query":
+        if isinstance(unit, str):
+            unit = [unit]
         return self.filter_data_nodes(predicate=HAS_UNIT, value=unit, _from=_from)
 
     @flex_query_rdf_inputs(specs=[FlexSpec("medium", "class")])
-    def filter_by_medium(self, medium: str, *, _from: Optional[str] = None) -> "Query":
+    def filter_by_medium(self, medium: str | list, *, _from: Optional[str] = None) -> "Query":
+        if isinstance(medium, str):
+            medium = [medium]
         return self.filter_data_nodes(predicate=HAS_MEDIUM, value=medium, _from=_from)
 
     @flex_query_rdf_inputs(specs=[FlexSpec("substance", "class")])
-    def filter_by_substance(self, substance: str, *, _from: Optional[str] = None) -> "Query":
+    def filter_by_substance(self, substance: str | list, *, _from: Optional[str] = None) -> "Query":
+        if isinstance(substance, str):
+            substance = [substance]
         return self.filter_data_nodes(predicate=OF_SUBSTANCE, value=substance, _from=_from)
 
     @flex_query_rdf_inputs(specs=[FlexSpec("qk", "class")])
-    def filter_by_quantity_kind(self, qk: str, *, _from: Optional[str] = None) -> "Query":
+    def filter_by_quantity_kind(self, qk: str | list, *, _from: Optional[str] = None) -> "Query":
+        if isinstance(qk, str):
+            qk = [qk]
         return self.filter_data_nodes(predicate=HAS_QUANTITY_KIND, value=qk, _from=_from)
 
     @flex_query_rdf_inputs(specs=[FlexSpec("ek", "class")])
-    def filter_by_enumeration_kind(self, ek: str, *, _from: Optional[str] = None) -> "Query":
+    def filter_by_enumeration_kind(self, ek: str | list, *, _from: Optional[str] = None) -> "Query":
+        if isinstance(ek, str):
+            ek = [ek]
         return self.filter_data_nodes(predicate=HAS_ENUMERATION_KIND, value=ek, _from=_from)
 
     #TODO: Not working yet
@@ -717,6 +786,45 @@ class Query:
         ).sort("log_time")
         return combined
 
+    def resolved_nodes(
+        self,
+        *,
+        alias: Optional[str] = None,
+        only_data_nodes: bool = False,
+        use_union: bool = True,
+    ) -> list[str]:
+        res = self.execute(use_union=use_union)
+        cols = res.get("columns", [])
+        rows = res.get("rows", [])
+
+        if alias is not None:
+            nid = self.query_graph.resolve_alias(alias)
+            if nid is None:
+                raise ValueError("resolved_nodes: alias not found")
+            target_cols = [f"v{nid}"]
+        else:
+            node_ids = self.query_graph.data_nodes.keys() if only_data_nodes else self.query_graph.nodes.keys()
+            target_cols = [f"v{nid}" for nid in node_ids]
+
+        col_indices = [i for i, c in enumerate(cols) if c in target_cols]
+        if not col_indices:
+            return []
+
+        uris: set[str] = set()
+        for row in rows:
+            for i in col_indices:
+                if i >= len(row):
+                    continue
+                val = row[i]
+                if isinstance(val, str) and self._is_uri(val):
+                    uris.add(val)
+                elif val is not None:
+                    val_s = str(val)
+                    if self._is_uri(val_s):
+                        uris.add(val_s)
+
+        return sorted(uris)
+
 
 
     # ----------------------------------------------------
@@ -764,12 +872,16 @@ class Query:
 
     from typing import List
 
-    def _edge_pattern(self,src_var: str, tgt_var: str, edge, edge_idx: int) -> str:
+    def _edge_pattern(self, src_var: str, tgt_var: str, edge, edge_idx: int) -> str:
         """
         Build a WHERE fragment for one edge.
 
+        Enhancement:
+        - Whenever it emits an edge pattern, also emit an alternative where the FIRST hop
+        is taken via a connection point.
+
         Rules:
-        - If edge.predicates is present/non-empty: constrain to those predicates (union) and allow length 1..hops.
+        - If edge.predicates is present/non-empty: constrain to those predicates and allow length 1..hops.
         - Else: allow any predicates, but length <= hops, via UNION of k-step chains.
         """
         hops = int(edge.hops)
@@ -779,7 +891,7 @@ class Query:
         preds = getattr(edge, "predicates", None) or []
         preds = [p for p in preds if p]  # remove falsy
 
-        # Case A: constrained predicate set -> property path with alternation + length range
+        # Case A: constrained predicate set
         if preds:
             seen = set()
             uniq = []
@@ -788,45 +900,101 @@ class Query:
                     seen.add(p)
                     uniq.append(p)
 
-            
-
+            # normal property path (no variables inside)
             if hops == 1:
                 alt = "|".join(f"<{p}>" for p in uniq)
                 path = f"({alt})"
             else:
-                alt = ""
+                parts = []
                 for p in uniq:
-                    for k in range(1,hops+1):
-                        add = [f"<{p}>"] * k
-                        alt += "/".join(add)
-                        if k < hops:
-                            alt += "|"
-                path = f"({alt})"
+                    for k in range(1, hops + 1):
+                        parts.append("/".join([f"<{p}>"] * k))
+                path = f"({'|'.join(parts)})"
 
-            return f"{src_var} {path} {tgt_var} ."
+            normal = f"{src_var} {path} {tgt_var} ."
+
+            # CP alternative:
+            # - For hops==1 we can still keep it as a property path because it's all IRIs:
+            #     src <cp>/<p> tgt
+            # - For hops>1, rewrite as a UNION over k with explicit triples so CP only affects first hop.
+            if hops == 1:
+                via_cp = f"{src_var} <{CONNECTION_POINT}>/{path} {tgt_var} ."
+                return f"{{ {normal} }} UNION {{ {via_cp} }}"
+            else:
+                union_blocks: List[str] = []
+
+                for k in range(1, hops + 1):
+                    # normal k-hop chain with fixed predicate <p0>
+                    triples_normal: List[str] = []
+                    prev = src_var
+                    mids = [f"?x_e{edge_idx}_{i}_k{k}" for i in range(1, k)]  # k-1
+                    p0 = uniq[0]  # placeholder; we'll emit UNION across p below
+
+                    # We'll build a UNION per predicate for this k.
+                    pred_blocks = []
+                    for p in uniq:
+                        triples_normal = []
+                        prev = src_var
+                        for step in range(k):
+                            obj = tgt_var if step == k - 1 else mids[step]
+                            triples_normal.append(f"{prev} <{p}> {obj} .")
+                            prev = obj
+
+                        # CP version: inject cp node only on first hop
+                        cp = f"?cp_e{edge_idx}_k{k}"
+                        triples_cp = list(triples_normal)
+                        first_obj = tgt_var if k == 1 else mids[0]
+                        triples_cp[0] = f"{src_var} <{CONNECTION_POINT}> {cp} . {cp} <{p}> {first_obj} ."
+
+                        block_normal = "{ " + " ".join(triples_normal) + " }"
+                        block_cp = "{ " + " ".join(triples_cp) + " }"
+                        pred_blocks.append(f"{block_normal} UNION {block_cp}")
+
+                    union_blocks.append("{ " + " UNION ".join(pred_blocks) + " }")
+
+                return " UNION ".join(union_blocks)
 
         # Case B: unconstrained predicates -> UNION of explicit k-step chains
         union_blocks: List[str] = []
         for k in range(1, hops + 1):
-            triples: List[str] = []
-            prev = src_var
-
-            # intermediate node vars for this edge/length
             mids = [f"?x_e{edge_idx}_{i}" for i in range(1, k)]  # k-1 intermediates
-            # predicate vars for this edge/length
             ps = [f"?p_e{edge_idx}_{i}" for i in range(1, k + 1)]
 
+            # normal chain triples
+            triples_normal: List[str] = []
+            prev = src_var
             for step in range(k):
                 pvar = ps[step]
                 obj = tgt_var if step == k - 1 else mids[step]
-                triples.append(f"{prev} {pvar} {obj} .")
+                triples_normal.append(f"{prev} {pvar} {obj} .")
                 prev = obj
 
-            union_blocks.append("{ " + " ".join(triples) + " }")
+            # connection-point variant: rewrite first hop using intermediate cp node (NO property path with var)
+            triples_cp: List[str] = []
+            cp = f"?cp_e{edge_idx}_k{k}"
+            first_obj = tgt_var if k == 1 else mids[0]
+            triples_cp.append(f"{src_var} <{CONNECTION_POINT}> {cp} .")
+            triples_cp.append(f"{cp} {ps[0]} {first_obj} .")
+            # remaining hops (if any) unchanged
+            if k > 1:
+                triples_cp.extend(triples_normal[1:])
+
+            block_normal = "{ " + " ".join(triples_normal) + " }"
+            block_cp = "{ " + " ".join(triples_cp) + " }"
+            union_blocks.append(f"{block_normal} UNION {block_cp}")
 
         return " UNION ".join(union_blocks)
 
 
+    def _is_iri(self,x: object) -> bool:
+        return isinstance(x, str) and ("://" in x or x.startswith("urn:"))
+    def _term(self,x: object) -> str:
+        """Return SPARQL term for x: <iri> or "literal"."""
+        if self._is_iri(x):
+            return f"<{x}>"
+        # booleans and numbers can be unquoted, but keeping quoted is usually OK.
+        # If you want typed literals, adjust here.
+        return f"\"{x}\""
     def to_sparql(self) -> str:
         # node id -> ?v{id}
         var_map = {nid: f"?v{nid}" for nid in self.query_graph.nodes}
@@ -838,14 +1006,15 @@ class Query:
         for nid, node in self.query_graph.nodes.items():
             v = var_map[nid]
             if node.rdf_class:
-                where_clauses.append(f"{v} a <{node.rdf_class}> .")
+                where_clauses.append(f"{v} <http://www.w3.org/1999/02/22-rdf-syntax-ns#type>/<http://www.w3.org/2000/01/rdf-schema#subClassOf>* <{node.rdf_class}> .")
 
         # edge constraints
         for edge_idx, edge in enumerate(self.query_graph.edges):
             src_var = var_map[edge.source_id]
             tgt_var = var_map[edge.target_id]
             where_clauses.append(self._edge_pattern(src_var, tgt_var, edge, edge_idx))
-
+        
+        
         # data node constraints
         for nid, info in self.query_graph.data_nodes.items():
             v = var_map[nid]
@@ -860,6 +1029,12 @@ class Query:
                 # If value looks like a URI, emit <...>, otherwise emit a literal
                 if isinstance(val, str) and ("://" in val or val.startswith("urn:")):
                     where_clauses.append(f"{v} <{pred}> <{val}> .")
+
+                elif isinstance(val, list):
+                    # If value is a list, emit a UNION of literals
+                    union_block = " UNION ".join(f"{{ {v} <{pred}> {self._term(x)} . }}" for x in val if x is not None)
+                    where_clauses.append(f"{{ {union_block} }}")
+
                 else:
                     # numbers and booleans become literals too
                     where_clauses.append(f'{v} <{pred}> "{val}" .')
@@ -879,7 +1054,7 @@ class Query:
         """
         if self.cache.get("execute") is None:
             sparql = self.to_sparql()
-            print("Executing SPARQL:\n",sparql)
+            # print("Executing SPARQL:\n",sparql)
             self.cache["execute"] = self.client.sparql_query(sparql, use_union=use_union)
         return self.cache["execute"]
 

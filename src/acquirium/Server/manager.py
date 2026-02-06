@@ -1,25 +1,28 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 import os
 import logging
 from time import perf_counter
-from rdflib import Graph, URIRef, Node
+from rdflib import Graph, URIRef, Node, Literal, RDF, RDFS
 
-from acquirium.Storage import OxigraphGraphStore, TimescaleStore, TimeseriesStore
+from acquirium.Storage import OxigraphGraphStore, TimescaleStore
 from acquirium.internals.qudt_units import QUDTUnitConverter
-from acquirium.internals.models import LogEntry, TimeIntervalModel
-from acquirium.soft_sensors import SoftSensorRunner
+from acquirium.internals.models import LogEntry, TimeIntervalModel, AppSpec, AppRunRequest
 from acquirium.internals.internals_namespaces import *
+from acquirium.internals.app_utils import app_uri_for, make_stream_ref_uri
 
 import json
 import hashlib
 import threading
 from concurrent.futures import ThreadPoolExecutor, Future
 from typing import Any
-
-from acquirium.mqtt_ingestion import MQTTIngestService, MQTTStreamSpec
+import subprocess
+import shlex
+import shutil
+from acquirium.Server.mqtt_ingestion import MQTTIngestService, MQTTStreamSpec
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("acquirium.manager")
@@ -30,11 +33,18 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("acquirium.manager")
 logger.setLevel(logging.INFO)
 
+def _wipe_dir_contents(base: Path) -> None:
+    base.mkdir(parents=True, exist_ok=True)
+    for p in base.iterdir():
+        if p.is_dir():
+            shutil.rmtree(p)
+        else:
+            p.unlink()
+
 @dataclass
 class Manager:
     timescale: TimescaleStore
     graph_store: OxigraphGraphStore
-    sensors: SoftSensorRunner
     qudt_converter: QUDTUnitConverter | None = None
     backend: str = "timescale"
 
@@ -49,7 +59,6 @@ class Manager:
         ontology_dependencies: list[str] | None = None,
         qudt_graph: Graph | None = None,
         qudt_converter: QUDTUnitConverter | None = None,
-        soft_sensor_dir: str | Path | None = None,
         recreate: bool = False,
     ):
         if recreate:
@@ -59,9 +68,8 @@ class Manager:
             else:
                 base = DEFAULT_DATA_DIR
             if base.exists():
-                import shutil
-                shutil.rmtree(base)
-                print(f"Deleted data directory {base}")
+                _wipe_dir_contents(base)
+                print(f"Deleted data directory contents: {base}")
             
         if not logging.getLogger().handlers:
             logging.basicConfig(
@@ -110,21 +118,10 @@ class Manager:
             graph.refresh_union()
             logging.info("acquirium: refreshed union graph after imports")
 
-        sensors = SoftSensorRunner(timescale, graph, module_dir=soft_sensor_dir or base)
-        sensors.load_registry()
-        logging.info(
-            "acquirium: services ready backend=timescale data_dir=%s db=%s graph=%s sensor_dir=%s elapsed_ms=%.1f",
-            base,
-            getattr(timescale, "db_path", None),
-            graph_path,
-            soft_sensor_dir or base,
-            (perf_counter() - start) * 1000,
-        )
 
         # Assign dataclass fields
         self.timescale = timescale
         self.graph_store = graph
-        self.sensors = sensors
         self.qudt_converter = converter
         self.backend = "timescale"
 
@@ -136,6 +133,12 @@ class Manager:
         self.pg_dsn = effective_dsn
         self.mqtt_ingest = MQTTIngestService(pg_dsn=effective_dsn)
         self._connect_mqtt_streams_from_graph()
+        self.app_storage_root = Path(
+            os.getenv("ACQUIRIUM_APP_STORAGE_ROOT", str(self.data_dir / "apps"))
+        )
+        self.app_storage_root.mkdir(parents=True, exist_ok=True)
+        self._app_runs: dict[str, dict[str, Any]] = {}
+        self._app_runs_lock = threading.Lock()
         
     
     @classmethod
@@ -147,7 +150,6 @@ class Manager:
             ontoenv_root=os.getenv("ACQUIRIUM_ONTOENV_ROOT"),
             graph_name=os.getenv("ACQUIRIUM_GRAPH_NAME"),
             ontology_dependencies=os.getenv("ACQUIRIUM_ONTOLOGY_DEPENDENCIES", "").split(",") if os.getenv("ACQUIRIUM_ONTOLOGY_DEPENDENCIES") else None,
-            soft_sensor_dir=os.getenv("ACQUIRIUM_SOFT_SENSOR_DIR"),
             recreate=os.getenv("ACQUIRIUM_RECREATE", "false").lower() == "true",
         )
 
@@ -273,6 +275,293 @@ class Manager:
             order=order,
             batch_size=batch_size,
         )
+
+    def insert_timeseries(
+        self,
+        *,
+        ref_uri: str,
+        rows: list[tuple[datetime, Any]],
+        point_uri: str | None = None,
+        replace: bool = False,
+    ) -> int:
+        if replace:
+            n = self.timescale.replace_rows(ref_uri, rows)
+        else:
+            n = self.timescale.upsert_rows(ref_uri, rows)
+        if point_uri:
+            self.timescale.ensure_stream_handle(point_uri, ref_uri)
+        return n
+
+    def _app_type_uri(self, app_type: str) -> URIRef:
+        norm = (app_type or "").strip().lower()
+        if norm in {"soft_sensor", "softsensor"}:
+            return SOFT_SENSOR
+        if norm == "threshold":
+            return THRESHOLD
+        if norm == "alarm":
+            return ALARM
+        if norm == "report":
+            return REPORT
+        if "://" in app_type or app_type.startswith("urn:"):
+            return URIRef(app_type)
+        return URIRef(str(ACQUIRIUM_NS[app_type]))
+
+    def _app_storage_dir(self, app_id: str) -> Path:
+        path = self.app_storage_root / app_id
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _ensure_package_inits(self, target_dir: Path, root: Path) -> None:
+        current = target_dir
+        while current != root and root in current.parents:
+            init_file = current / "__init__.py"
+            if not init_file.exists():
+                init_file.write_text("")
+            current = current.parent
+
+    def _module_to_entry_file(self, module: str | None) -> str | None:
+        if not module:
+            return None
+        return f"{module.replace('.', '/')}.py"
+
+    def _add_literal_or_uri(self, graph: Graph, subj: URIRef, pred: URIRef, value: Any) -> None:
+        if value is None:
+            return
+        if isinstance(value, str) and ("://" in value or value.startswith("urn:")):
+            graph.add((subj, pred, URIRef(value)))
+        else:
+            graph.add((subj, pred, Literal(value)))
+
+    def register_app_spec(self, spec: AppSpec) -> None:
+        app_uri = URIRef(app_uri_for(spec.name))
+        graph = Graph()
+
+        graph.add((app_uri, RDF.type, APP))
+        graph.add((app_uri, RDFS.label, Literal(spec.name)))
+        if spec.app_type:
+            graph.add((app_uri, RDF.type, self._app_type_uri(spec.app_type)))
+
+        if spec.version:
+            graph.add((app_uri, HAS_VERSION, Literal(spec.version)))
+        if spec.module:
+            graph.add((app_uri, HAS_MODULE, Literal(spec.module)))
+        if spec.app_class:
+            graph.add((app_uri, HAS_APP_CLASS, Literal(spec.app_class)))
+        if spec.docker_image:
+            graph.add((app_uri, HAS_IMAGE, Literal(spec.docker_image)))
+        if spec.entrypoint:
+            graph.add((app_uri, HAS_ENTRYPOINT, Literal(spec.entrypoint)))
+        if spec.command:
+            graph.add((app_uri, HAS_COMMAND, Literal(spec.command)))
+        if spec.queries:
+            graph.add((app_uri, APP_QUERY, Literal(json.dumps(spec.queries, sort_keys=True, ensure_ascii=True))))
+
+        for dep in spec.depends_on:
+            graph.add((app_uri, DEPENDS_ON, URIRef(dep)))
+
+        for out in spec.outputs:
+            point_uri = URIRef(out.point_uri)
+            ref_uri = URIRef(out.ref_uri or make_stream_ref_uri(out.point_uri))
+
+            graph.add((app_uri, PRODUCES, point_uri))
+            graph.add((point_uri, RDF.type, VIRTUAL_POINT))
+            graph.add((point_uri, HAS_EXTERNAL_REFERENCE, ref_uri))
+            graph.add((ref_uri, RDF.type, STREAM))
+            if out.kind in {"event", "trigger"}:
+                graph.add((ref_uri, RDF.type, EVENT_STREAM))
+            else:
+                graph.add((ref_uri, RDF.type, TIMESERIES_STREAM))
+
+            graph.add((ref_uri, STORAGE_BACKEND, Literal(out.storage_backend or "timescale")))
+
+            self._add_literal_or_uri(graph, point_uri, HAS_QUANTITY_KIND, out.quantity_kind)
+            self._add_literal_or_uri(graph, point_uri, HAS_UNIT, out.unit)
+            self._add_literal_or_uri(graph, point_uri, DATA_SOURCE, out.data_source)
+            for dep in spec.depends_on:
+                graph.add((point_uri, IS_CALCULATED_FROM, URIRef(dep)))
+
+        app_dir = self._app_storage_dir(spec.name)
+        entry_file = spec.entry_file or self._module_to_entry_file(spec.module) or "app.py"
+        entry_file = entry_file.replace("\\", "/")
+        if entry_file.startswith("/") or ".." in entry_file.split("/"):
+            entry_file = "app.py"
+        if spec.source_code:
+            target = app_dir / entry_file
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(spec.source_code)
+            self._ensure_package_inits(target.parent, app_dir)
+
+        meta = {"entry_file": entry_file}
+        (app_dir / "app.json").write_text(json.dumps(meta, ensure_ascii=True, sort_keys=True))
+
+        self.graph_store.insert_graph(graph, format="turtle", replace=False)
+
+    def _lookup_app_runtime(self, app_id: str) -> dict[str, str | None]:
+        app_uri = app_uri_for(app_id)
+        q = f"""
+        SELECT ?image ?module ?cls ?entry ?cmd
+        WHERE {{
+          BIND(<{app_uri}> AS ?app)
+          OPTIONAL {{ ?app <{HAS_IMAGE}> ?image . }}
+          OPTIONAL {{ ?app <{HAS_MODULE}> ?module . }}
+          OPTIONAL {{ ?app <{HAS_APP_CLASS}> ?cls . }}
+          OPTIONAL {{ ?app <{HAS_ENTRYPOINT}> ?entry . }}
+          OPTIONAL {{ ?app <{HAS_COMMAND}> ?cmd . }}
+        }}
+        """
+        res = self.graph_store.sparql_query(q, use_union=True)
+        rows = res.get("rows", [])
+        if not rows:
+            raise ValueError(f"App not found: {app_id}")
+
+        cols = res.get("columns", [])
+        idx = {name: i for i, name in enumerate(cols)}
+
+        def pick(name: str) -> str | None:
+            i = idx.get(name)
+            if i is None:
+                return None
+            for row in rows:
+                if i < len(row) and row[i] is not None:
+                    return str(row[i])
+            return None
+
+        return {
+            "image": pick("image"),
+            "module": pick("module"),
+            "app_class": pick("cls"),
+            "entrypoint": pick("entry"),
+            "command": pick("cmd"),
+        }
+
+    def _run_app_once(self, req: AppRunRequest, *, keep_alive: bool = False, interval: float | None = None) -> str:
+        runtime = self._lookup_app_runtime(req.app_id)
+        logger.info("Running app %s with runtime config: %s", req.app_id, runtime)
+
+        image = runtime.get("image") or os.getenv("ACQUIRIUM_DEFAULT_APP_IMAGE")
+        if not image:
+            raise ValueError(f"App {req.app_id} has no docker image configured")
+
+        # Paths inside the worker container (backed by named volume)
+        container_data_root = os.getenv("ACQUIRIUM_APP_DATA_ROOT", "/app/.acquirium")
+        container_app_root = f"{container_data_root}/apps/{req.app_id}"
+
+        # entry file discovery remains server side; keep it if you need it
+        app_dir = self._app_storage_dir(req.app_id)
+        entry_file = None
+        meta_path = app_dir / "app.json"
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text())
+                entry_file = meta.get("entry_file")
+            except Exception:
+                entry_file = None
+
+        env = {
+            "ACQUIRIUM_APP_ID": req.app_id,
+            "ACQUIRIUM_APP_MODULE": runtime.get("module") or "",
+            "ACQUIRIUM_APP_CLASS": runtime.get("app_class") or "",
+            "ACQUIRIUM_RUN_START": req.start.isoformat() if req.start else "",
+            "ACQUIRIUM_RUN_END": req.end.isoformat() if req.end else "",
+            "ACQUIRIUM_APP_PARAMS": json.dumps(req.params or {}, ensure_ascii=True),
+            "ACQUIRIUM_SERVER_URL": os.getenv("ACQUIRIUM_APP_SERVER_URL", "acquirium"),
+            "ACQUIRIUM_SERVER_PORT": os.getenv("ACQUIRIUM_APP_SERVER_PORT", "8000"),
+            "ACQUIRIUM_USE_SSL": os.getenv("ACQUIRIUM_APP_USE_SSL", "false"),
+            "ACQUIRIUM_APP_ROOT": container_app_root,
+            "PYTHONPATH": f"/app/src:{container_app_root}",
+            "ACQUIRIUM_LEXICON_PATH": os.getenv("ACQUIRIUM_LEXICON_PATH", "/app/lexicon.json"),
+        }
+        if keep_alive:
+            env["ACQUIRIUM_KEEP_ALIVE"] = "true"
+            env["ACQUIRIUM_KEEP_ALIVE_INTERVAL"] = str(interval if interval is not None else req.interval)
+        if entry_file:
+            env["ACQUIRIUM_APP_FILE"] = f"{container_app_root}/{entry_file}"
+
+        cmd = ["docker", "run", "-d", "--rm"]
+
+        network = os.getenv("ACQUIRIUM_APP_NETWORK")
+        if network:
+            cmd.extend(["--network", network])
+
+        # Named volume that both server and workers share
+        cmd.extend(["-v", f"{os.getenv('ACQUIRIUM_APP_VOLUME', 'acquirium_acquirium_data')}:{container_data_root}:ro"])
+
+        for k, v in env.items():
+            if v:
+                cmd.extend(["-e", f"{k}={v}"])
+
+        entrypoint = runtime.get("entrypoint")
+        if entrypoint:
+            cmd.extend(["--entrypoint", entrypoint])
+
+        cmd.append(image)
+
+        run_cmd = runtime.get("command") or "python -m acquirium.Apps.worker"
+        shell_cmd = f"/app/.venv/bin/{run_cmd}" if run_cmd.startswith("python ") else f"/app/.venv/bin/python -m acquirium.Apps.worker"
+        cmd.extend(["sh", "-lc", shell_cmd])
+
+
+        logger.info("Running docker command: %s", " ".join(shlex.quote(x) for x in cmd))
+
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        except subprocess.CalledProcessError as e:
+            logger.error("docker run failed: %s", " ".join(shlex.quote(x) for x in e.cmd))
+            logger.error("stdout:\n%s", e.stdout)
+            logger.error("stderr:\n%s", e.stderr)
+            raise ValueError(f"Failed to run app {req.app_id}: {e.stderr.strip()}") from e
+
+        cid = proc.stdout.strip()
+        logger.info("Started docker container for app %s: %s", req.app_id, cid)
+        return cid
+
+    def run_app(self, req: AppRunRequest) -> str:
+        if not req.keep_alive:
+            return self._run_app_once(req)
+
+        cid = self._run_app_once(req, keep_alive=True, interval=req.interval)
+        with self._app_runs_lock:
+            self._app_runs[cid] = {"app_id": req.app_id, "cid": cid}
+        return cid
+
+    def _stop_container(self, cid: str) -> None:
+        try:
+            subprocess.run(["docker", "stop", cid], capture_output=True, text=True, check=False)
+        except Exception:
+            logger.exception("Failed to stop container %s", cid)
+
+    def stop_app(self, *, run_id: str | None = None, app_id: str | None = None) -> dict[str, Any]:
+        if not run_id and not app_id:
+            raise ValueError("stop_app requires run_id or app_id")
+
+        to_stop: list[str] = []
+        with self._app_runs_lock:
+            if run_id:
+                # Allow stopping by run_id even if not tracked (for cleanup)
+                to_stop.append(run_id)
+            else:
+                for rid, info in self._app_runs.items():
+                    if app_id == "*" or info.get("app_id") == app_id:
+                        to_stop.append(rid)
+
+        stopped: list[str] = []
+        for rid in to_stop:
+            with self._app_runs_lock:
+                record = self._app_runs.pop(rid, None)
+            cid = record.get("cid") if record else rid
+            if cid:
+                self._stop_container(cid)
+            stopped.append(rid)
+
+        return {"stopped": len(stopped), "run_ids": stopped}
+
+    def list_app_runs(self, *, app_id: str | None = None) -> list[dict[str, Any]]:
+        with self._app_runs_lock:
+            runs = list(self._app_runs.values())
+        if app_id:
+            runs = [r for r in runs if r.get("app_id") == app_id]
+        return [{"run_id": r.get("cid"), "app_id": r.get("app_id")} for r in runs]
+
     
     def ingest_reference_bytes(
             self,
@@ -452,6 +741,10 @@ class Manager:
         }
     def close(self) -> None:
         try:
+            self.stop_app(app_id="*")
+        except Exception:
+            pass
+        try:
             self._executor.shutdown(wait=False, cancel_futures=False)
         except Exception:
             pass
@@ -459,6 +752,10 @@ class Manager:
             self.mqtt_ingest.stop()
         except Exception:
             pass
+        try:
+            if self._docker is not None:
+                self._docker.close()
+        except Exception:
+            pass
         self.timescale.close()
         self.graph_store.close()
-

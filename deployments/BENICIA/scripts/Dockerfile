@@ -2,7 +2,8 @@ FROM python:3.14-slim
 
 WORKDIR /app
 
-COPY deployments/BENICIA/scripts /app/
-RUN pip install -r /app/tests/src/requirements.txt
+COPY ./scripts /app/
+COPY ./benicia-model.ttl /app/benicia-model.ttl
+RUN pip install -r /app/requirements.txt
 
-CMD ["python", "/app/tests/src/stream_simulator.py"]
+CMD ["python", "/app/stream_simulator.py","--model","/app/benicia-model.ttl","--broker","mosquitto"]

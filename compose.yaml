@@ -46,14 +46,18 @@ services:
       context: .
       dockerfile: ./src/acquirium/Dockerfile
     container_name: acquirium_server
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - acquirium_data:/app/.acquirium
     ports:
       - "8000:8000"
     environment:
       # Use service names as hostnames inside the docker network
-      ACQUIRIUM_DATA_DIR: ./.acquirium
+      ACQUIRIUM_DATA_DIR: /app/.acquirium
       PG_DSN: "postgresql://acquirium:acquirium@timescaledb:5432/acquirium_test"
-      ACQUIRIUM_LEXICON_PATH : ./lexicon.json
+      ACQUIRIUM_LEXICON_PATH : /app/lexicon.json
       ACQUIRIUM_RECREATE: ${ACQUIRIUM_RECREATE:-false}
+      ACQUIRIUM_APP_NETWORK: "acquirium_acquirium_net"
     depends_on:
       mosquitto:
         condition: service_healthy
@@ -108,8 +112,8 @@ services:
   benicia_sim:
     platform: linux/arm64
     build:
-      context: ./deployments/BENICIA/scripts
-      dockerfile: Dockerfile
+      context: ./deployments/BENICIA/
+      dockerfile: scripts/Dockerfile
     container_name: acquirium_benicia_sim
     depends_on:
       mosquitto:
@@ -127,6 +131,7 @@ volumes:
   tsdb_data:
   mosquitto_data:
   mosquitto_log:
+  acquirium_data:
 
 networks:
   acquirium_net:

@@ -13,7 +13,16 @@ from datetime import datetime
 
 from acquirium.Server.manager import Manager
 
-from acquirium.internals.models import Order, LogEntry, TimeInterval, TimeIntervalModel
+from acquirium.internals.models import (
+    Order,
+    LogEntry,
+    TimeInterval,
+    TimeIntervalModel,
+    AppSpec,
+    AppRunRequest,
+    AppStopRequest,
+    InsertTimeseriesRequest,
+)
 
 import pyarrow.ipc as ipc
 import pyarrow as pa
@@ -115,6 +124,72 @@ def insert_graph(req: InsertGraphRequest) -> dict[str, Any]:
     try:
         app.state.manager.insert_graph(rdf_graph = req.rdf_graph, format=req.format, replace=req.replace)
         return {"ok": True}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+#### APPS API ENDPOINTS ####
+
+
+@app.post("/apps/register")
+def register_app(spec: AppSpec) -> dict[str, Any]:
+    try:
+        app.state.manager.register_app_spec(spec)
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/apps/run")
+def run_app(req: AppRunRequest) -> dict[str, Any]:
+    try:
+        run_id = app.state.manager.run_app(req)
+        print(f"Started app run with ID: {run_id}")
+        return {"ok": True, "run_id": run_id}
+    except Exception as e:
+        log.exception("run_app failed") 
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/apps/stop")
+def stop_app(req: AppStopRequest) -> dict[str, Any]:
+    try:
+        result = app.state.manager.stop_app(run_id=req.run_id, app_id=req.app_id)
+        return {"ok": True, **result}
+    except Exception as e:
+        log.exception("stop_app failed")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/apps/list")
+def list_app_runs(app_id: Optional[str] = None) -> dict[str, Any]:
+    try:
+        runs = app.state.manager.list_app_runs(app_id=app_id)
+        return {"ok": True, "runs": runs}
+    except Exception as e:
+        log.exception("list_app_runs failed")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+##### TIMESERIES INGESTION API ENDPOINTS ####
+
+
+@app.post("/insert_timeseries")
+def insert_timeseries(
+    ref_uri: str,
+    req: InsertTimeseriesRequest,
+    point_uri: Optional[str] = None,
+    replace: bool = False,
+) -> dict[str, Any]:
+    try:
+        rows = req.values
+        n = app.state.manager.insert_timeseries(
+            ref_uri=ref_uri,
+            rows=rows,
+            point_uri=point_uri,
+            replace=replace,
+        )
+        return {"ok": True, "rows_inserted": n}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -288,3 +363,4 @@ def delete_logs(
             raise HTTPException(status_code=500, detail="Failed to delete logs")
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+    
