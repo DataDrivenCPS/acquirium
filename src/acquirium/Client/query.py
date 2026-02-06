@@ -65,18 +65,23 @@ class Query:
     alias: str | None,
     hops: int,
     filters_dict: Dict[str, Any] | None,
+    instance_uri: str | None,
     force_one_hop: bool = False,
     ) -> tuple["QueryGraph", int]:
         new_id = self._new_id()
+
+        constraints = {
+            "is_data_node": True,
+            "path_from": path,
+        }
+        if instance_uri is not None:
+            constraints["instance_uri"] = instance_uri
 
         node = QueryNode(
             id=new_id,
             rdf_class=_class or None,
             alias=alias,
-            constraints={
-                "is_data_node": True,
-                "path_from": path,
-            },
+            constraints=constraints,
         )
         g2 = g.with_node(node)
 
@@ -155,6 +160,15 @@ class Query:
     def _is_uri(self, text: str) -> bool:
         return isinstance(text, str) and (text.startswith("urn:") or text.startswith("http://") or text.startswith("https://"))
 
+    def _normalize_instance_uri(self, uri: str | URIRef | None, *, param: str = "uri") -> str | None:
+        if uri is None:
+            return None
+        if isinstance(uri, URIRef):
+            return str(uri)
+        if isinstance(uri, str) and self._is_uri(uri):
+            return uri
+        raise ValueError(f"{param} must be a URI (urn:..., http://..., or https://...)")
+
     def _find_all_nodes(self, id_val=None) -> list[URIRef]:
         '''
         Finds all nodes in the query result, except literals.
@@ -187,7 +201,7 @@ class Query:
 
 
     @flex_query_rdf_inputs(specs=[FlexSpec("_class", "class")])
-    def find_entity(self, _class: str, alias: Optional[str] = None) -> "Query":
+    def find_entity(self, _class: Optional[str] = None, alias: Optional[str] = None, uri: str | URIRef | None = None) -> "Query":
         """Add a new entity node to the query and set it as the current pointer.
 
         Example:
@@ -196,11 +210,23 @@ class Query:
                 alias="valve",
             )
 
+        You can also target a specific instance by URI:
+            q = aq.query().find_entity(
+                uri="urn:acquirium:point#MyPump_1",
+                alias="pump_1",
+            )
+
         This creates a new QueryNode and makes it the default pointer.
         """
         self.cache.clear()
+        instance_uri = self._normalize_instance_uri(uri, param="uri")
+        if _class is None and instance_uri is None:
+            raise ValueError("find_entity: provide _class, uri, or both")
         node_id = self._new_id()
-        node = QueryNode(id=node_id, rdf_class=_class, alias=alias)
+        constraints = {}
+        if instance_uri is not None:
+            constraints["instance_uri"] = instance_uri
+        node = QueryNode(id=node_id, rdf_class=_class, alias=alias, constraints=constraints)
         new_graph = self.query_graph.with_node(node)
         # bump internal id counter
         return self._clone_with_graph(new_graph, bump_id=True)
@@ -209,7 +235,8 @@ class Query:
     def find_related(
         self,
         *,
-        _class: str,
+        _class: Optional[str] = None,
+        uri: str | URIRef | None = None,
         alias: Optional[str] = None,
         _from: Optional[str] = None,
         hops: int = 3,
@@ -227,15 +254,24 @@ class Query:
             q1 = aq.query().find_entity(_class=Valve, alias="valve")
             q1 = q1.find_related(_class=Pump, alias="related_pump", _from="valve")
 
+        You can also relate to a specific instance:
+            q1 = q1.find_related(uri="urn:acquirium:point#Pump_42", alias="pump_42")
+
         If `_from` is omitted, this is equivalent because the pointer is 'valve'.
         """
         self.cache.clear()
+        instance_uri = self._normalize_instance_uri(uri, param="uri")
+        if _class is None and instance_uri is None:
+            raise ValueError("find_related: provide _class, uri, or both")
         src_id = self.query_graph.resolve_alias(_from)
         if src_id is None:
             raise ValueError("find_related: no source node to relate from (pointer is None and _from not set)")
 
         new_id = self._new_id()
-        new_node = QueryNode(id=new_id, rdf_class=_class, alias=alias)
+        constraints = {}
+        if instance_uri is not None:
+            constraints["instance_uri"] = instance_uri
+        new_node = QueryNode(id=new_id, rdf_class=_class, alias=alias, constraints=constraints)
         g = self.query_graph.with_node(new_node)
         if predicates and multi_hop_predicates:
             edge = QueryEdge(source_id=src_id, target_id=new_id, hops=hops, predicates=predicates)
@@ -343,6 +379,7 @@ class Query:
         _from: Optional[str] = None,
         path: Optional[str] = None,
         _class: Optional[str] = None,
+        uri: str | URIRef | None = None,
         quantity_kind: Optional[str] = None,
         enumeration_kind: Optional[str] = None,
         unit: Optional[str] = None,
@@ -369,6 +406,7 @@ class Query:
             _from=_from,
             path=path,
             _class=_class,
+            uri=uri,
             hops=hops,
             filters_dict=filters or None,
             alias=alias,
@@ -381,12 +419,14 @@ class Query:
         _from: Optional[str] = None,     # None, alias, "*" or "All"
         path: Optional[str] = None,
         _class: Optional[str] = None,
+        uri: str | URIRef | None = None,
         hops: int = 3,
         filters_dict: Optional[Dict[str, Any]] = None,
         alias: Optional[str] = None,
     ) -> "Query":
         self.cache.clear()
         g = self.query_graph
+        instance_uri = self._normalize_instance_uri(uri, param="uri")
 
         def is_all(x: Optional[str]) -> bool:
             return isinstance(x, str) and x.strip().lower() in {"*", "all"}
@@ -395,6 +435,8 @@ class Query:
         if is_all(_from):
             if not g.nodes:
                 raise ValueError("find_data(from='*'): query graph has no nodes to expand from")
+            if instance_uri is not None:
+                raise ValueError("find_data: uri cannot be used with _from='*'")
             src_ids = sorted(g.nodes.keys())
 
         else:
@@ -421,6 +463,7 @@ class Query:
                 alias=a,
                 hops=hops,
                 filters_dict=filters_dict,
+                instance_uri=instance_uri,
                 force_one_hop=True,   # force 1 hop as requested
             )
             created += 1
@@ -440,12 +483,14 @@ class Query:
         self,
         *,
         _class: Optional[str] = None,
+        uri: str | URIRef | None = None,
         hops: int = 3,
         filters_dict: Optional[Dict[str, Any]] = None,
         alias: Optional[str] = None,
     ) -> "Query":
         self.cache.clear()
         g = self.query_graph
+        instance_uri = self._normalize_instance_uri(uri, param="uri")
 
         if not g.nodes:
             g2, _ = self._add_data_node(
@@ -456,11 +501,12 @@ class Query:
                 alias=alias,
                 hops=hops,
                 filters_dict=filters_dict,
+                instance_uri=instance_uri,
                 force_one_hop=False,
             )
             return self._clone_with_graph(g2, bump_id=True)
 
-        return self.find_data(_from="*", path=None, _class=_class, hops=hops, filters_dict=filters_dict, alias=alias)
+        return self.find_data(_from="*", path=None, _class=_class, uri=uri, hops=hops, filters_dict=filters_dict, alias=alias)
 
     def dataframe(
         self,
@@ -1002,9 +1048,12 @@ class Query:
 
         where_clauses: List[str] = []
 
-        # rdf:type constraints
+        # rdf:type constraints and instance constraints
         for nid, node in self.query_graph.nodes.items():
             v = var_map[nid]
+            instance_uri = (node.constraints or {}).get("instance_uri")
+            if instance_uri is not None:
+                where_clauses.append(f"VALUES {v} {{ <{instance_uri}> }}")
             if node.rdf_class:
                 where_clauses.append(f"{v} <http://www.w3.org/1999/02/22-rdf-syntax-ns#type>/<http://www.w3.org/2000/01/rdf-schema#subClassOf>* <{node.rdf_class}> .")
 
@@ -1114,7 +1163,9 @@ class Query:
                 flags.append("DATA")
             cls = node.rdf_class or "*"
             flags_s = f" [{'|'.join(flags)}]" if flags else ""
-            print(f"  {nid} [{alias}]{flags_s}  class={cls}")
+            inst = node.constraints.get("instance_uri")
+            inst_s = f"  instance={inst}" if inst else ""
+            print(f"  {nid} [{alias}]{flags_s}  class={cls}{inst_s}")
 
         print("\nEdges:")
         for e in self.query_graph.edges:

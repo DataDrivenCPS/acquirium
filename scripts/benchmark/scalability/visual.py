@@ -1,97 +1,127 @@
+#!/usr/bin/env python3
 from __future__ import annotations
+
 import argparse
 from pathlib import Path
-from typing import List, Tuple, Optional
-import os
-#!/usr/bin/env python3
-"""
-Create a box-and-whisker plot from 4 single-column float txt files (no header).
+from typing import Sequence
 
-Usage:
-    python visual.py
-"""
-
-
-
+import polars as pl
+import numpy as np
 import matplotlib.pyplot as plt
 
 
-def load_values(path: Path) -> List[float]:
-        values: List[float] = []
-        with path.open("r", encoding="utf-8") as f:
-                for i, line in enumerate(f, start=1):
-                        s = line.strip()
-                        if not s:
-                                continue
-                        try:
-                                values.append(float(s)/1000.0)  # convert ms to s
-                        except ValueError as e:
-                                raise ValueError(f"Invalid float in {path} at line {i}: {s!r}") from e
-        if not values:
-                raise ValueError(f"No numeric values found in file: {path}")
-        return values
+LAT_COLS = [
+    "latency_measurement_to_received_ms",
+    "latency_received_to_completed_ms",
+    "latency_completed_to_endpoint_ms",
+    "latency_total_ms",
+]
 
-def main() -> None:
-        files= os.listdir("scripts/benchmark/scalability/")
-        files = [f for f in files if f.startswith("results_") and f.endswith(".txt")]
-        paths = [Path("scripts/benchmark/scalability/") /x for x in sorted(files)]
-        for p in paths:
-            if not p.exists():
-                raise FileNotFoundError(f"File not found: {p}")
 
-        data = {int(str(p).split('_')[-2]): load_values(p) for p in paths} 
-        data = dict(sorted(data.items()))  # sort by key (number of apps)
-        plt.rcParams.update(
-            {
+def load_df(path: Path) -> pl.DataFrame:
+    if not path.exists():
+        raise FileNotFoundError(f"File not found: {path}")
+
+    df = pl.read_csv(path, columns=LAT_COLS)
+    # remove rows with any negative latencies
+    df = df.filter(pl.all_horizontal(pl.col(LAT_COLS) >= 0))
+
+    missing = [c for c in LAT_COLS if c not in df.columns]
+    if missing:
+        raise ValueError(f"{path} is missing columns: {missing}")
+
+    # Select only what we need and coerce to float for safety
+    return df.select([pl.col(c).cast(pl.Float64) for c in LAT_COLS])
+
+
+def setup_matplotlib() -> None:
+    plt.rcParams.update(
+        {
             "font.family": "serif",
             "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
-            "font.size": 16,
-            "axes.titlesize": 18,
-            "axes.labelsize": 16,
-            "xtick.labelsize": 14,
-            "ytick.labelsize": 14,
-            }
-        )
+            "font.size": 22,
+            "axes.titlesize": 24,
+            "axes.labelsize": 22,
+            "xtick.labelsize": 20,
+            "ytick.labelsize": 20,
+        }
+    )
 
-        # Median values (in seconds) to annotate after plotting
-        keys = list(data.keys())
-        medians = [float(__import__("numpy").median(v)) for v in data.values()]
- 
-        plt.figure(figsize=(8, 5))
-        plt.boxplot(
-                data.values(),
-                tick_labels=data.keys(),
-                showmeans=False,
-                meanline=False,
-                whis=1.5,   # standard Tukey whiskers
-                notch=False,
-                showfliers=False
-        )
-        # Annotate medians above each box
-        ax = plt.gca()
-        y_min, y_max = ax.get_ylim()
-        y_offset = (y_max - y_min) * -0.04  # small vertical offset
-        x_offset = 0.35  # horizontal offset (not used here)
-        for i, m in enumerate(medians, start=1):
-            ax.text(
-                i + x_offset,
-                m + y_offset,
-                f"{m:.1f}",
-                ha="center",
-                va="bottom",
-                fontsize=12,
-            )
-        # plt.title("Box Plot")
-        plt.ylabel("Latency (seconds)")
-        plt.xlabel("Number of Concurrent Apps")
-        # plt.grid(axis="y", linestyle="--", alpha=0.4)
-        plt.tight_layout()
-        
-        plt.gcf().set_size_inches(8, 3.2)  # reduce figure height
-        out = Path("scripts/benchmark/scalability/boxplot.png")
-        plt.savefig(out, dpi=200)
-        plt.close()
+
+def boxplot_one_column(
+    dfs: Sequence[pl.DataFrame],
+    labels: Sequence[str],
+    col: str,
+    out_path: Path,
+) -> None:
+    # Extract values for this column from each df
+    series_list = [df.get_column(col).drop_nulls() for df in dfs]
+    data = [s.to_numpy() for s in series_list]
+
+    # Compute medians (nan-safe)
+    medians = [float(np.nanmedian(arr)) if arr.size else float("nan") for arr in data]
+
+    plt.figure(figsize=(10.5, 3.5))
+    plt.boxplot(
+        data,
+        tick_labels=labels,
+        showmeans=False,
+        meanline=False,
+        whis=1.5,
+        notch=False,
+        showfliers=False,
+    )
+
+    ax = plt.gca()
+
+    # Annotate medians
+    y_min, y_max = ax.get_ylim()
+    y_offset = (y_max - y_min) * 0.045
+    for i, m in enumerate(medians, start=1):
+        if np.isfinite(m):
+            ax.text(i+0.4, m-y_offset, f"{m:.1f}", ha="center", va="bottom", fontsize=12)
+
+    # ax.set_title(col)
+    ax.set_ylabel("Latency (ms)")
+    ax.set_xlabel("Number of Concurrent Apps")
+    plt.tight_layout()
+    #log scale if needed
+    # if col == "latency_received_to_completed_ms":
+    #     ax.set_yscale("log")
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=200)
+    plt.close()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Save 4 boxplots (one per latency column) comparing multiple CSVs."
+    )
+    parser.add_argument(
+        "csvs",
+        nargs=6,
+        type=Path,
+        help="Four CSV files to compare (exactly 4).",
+    )
+    parser.add_argument(
+        "--outdir",
+        type=Path,
+        default=Path("plots"),
+        help="Output directory for saved PNGs (default: ./plots).",
+    )
+    args = parser.parse_args()
+
+    setup_matplotlib()
+
+    csv_paths = args.csvs
+    dfs = [load_df(p) for p in csv_paths]
+    labels = [str(p.stem).split("_")[-1] for p in csv_paths]
+
+    for col in LAT_COLS:
+        out = args.outdir / f"boxplot_{col}.png"
+        boxplot_one_column(dfs, labels, col, out)
 
 
 if __name__ == "__main__":
-        main()
+    main()

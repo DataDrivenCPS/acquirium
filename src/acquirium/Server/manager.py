@@ -16,6 +16,7 @@ from acquirium.internals.app_utils import app_uri_for, make_stream_ref_uri
 
 import json
 import hashlib
+import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, Future
 from typing import Any
@@ -501,18 +502,34 @@ class Manager:
         cmd.extend(["sh", "-lc", shell_cmd])
 
 
-        logger.info("Running docker command: %s", " ".join(shlex.quote(x) for x in cmd))
+        # Generate container name (sanitize app_id for Docker naming rules)
+        safe_app_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', req.app_id)
+        container_name = f"acquirium_app_{safe_app_id}"
+
+        logger.info(
+            "Starting container: name=%s, image=%s, network=%s, volume=%s, env_keys=%s",
+            container_name, image, network, volume_name, list(env.keys())
+        )
 
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        except subprocess.CalledProcessError as e:
-            logger.error("docker run failed: %s", " ".join(shlex.quote(x) for x in e.cmd))
-            logger.error("stdout:\n%s", e.stdout)
-            logger.error("stderr:\n%s", e.stderr)
-            raise ValueError(f"Failed to run app {req.app_id}: {e.stderr.strip()}") from e
+            container = self._docker.containers.run(
+                image=image,
+                name=container_name,
+                command=["sh", "-lc", shell_cmd],
+                entrypoint=entrypoint if entrypoint else None,
+                environment=env,
+                volumes=volumes,
+                network=network if network else None,
+                extra_hosts={"host.docker.internal": "host-gateway"},  # Linux compatibility
+                detach=True,
+                auto_remove=True,
+            )
+        except DockerException as e:
+            logger.error("Failed to start container for app %s: %s", req.app_id, e)
+            raise ValueError(f"Failed to run app {req.app_id}: {e}") from e
 
-        cid = proc.stdout.strip()
-        logger.info("Started docker container for app %s: %s", req.app_id, cid)
+        cid = container.id
+        logger.info("Started docker container for app %s: %s", req.app_id, cid[:12])
         return cid
 
     def run_app(self, req: AppRunRequest) -> str:

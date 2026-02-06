@@ -10,7 +10,7 @@ import paho.mqtt.client as mqtt
 import rdflib
 from rdflib.namespace import RDF
 from rdflib import Namespace
-
+import logging
 QUDT = Namespace("http://qudt.org/schema/qudt/")
 QUDT_UNIT = Namespace("http://qudt.org/vocab/unit/")
 S223 = Namespace("http://data.ashrae.org/standard223#")
@@ -176,7 +176,18 @@ def _logish_next(
 
     if rng.random() < excursion_rate:
         cap = excursion_cap if excursion_cap is not None else 2000.0
-        spike = math.exp(math.log(max(hi, 1e-6)) + abs(rng.gauss(0.0, step_sigma * 8.0)))
+
+        # Build spike in log-space and clamp to avoid exp overflow.
+        base_log = math.log(max(hi, 1e-6))
+        noise = abs(rng.gauss(0.0, step_sigma * 8.0))
+        exp_arg = base_log + noise
+
+        # Clamp exponent argument for numerical safety
+        exp_arg = min(exp_arg, 700)
+
+        spike = math.exp(exp_arg)
+
+        # Apply excursion cap too (your original behavior)
         return logx, float(min(spike, cap))
 
     x = math.exp(logx)
@@ -381,7 +392,13 @@ def main() -> None:
 
     # Per property state for smooth series
     states: dict[str, SeriesState] = {}
-
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=[logging.StreamHandler()],
+        force=True,  # ensure this takes effect even if something configured logging earlier
+    )
+    logging.info(f"Starting simulation of {len(properties)} properties...")
     try:
         while True:
             timestamp = datetime.now(timezone.utc).isoformat()
