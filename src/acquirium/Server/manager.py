@@ -20,9 +20,9 @@ import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, Future
 from typing import Any
+import subprocess
+import shlex
 import shutil
-import docker
-from docker.errors import DockerException, NotFound as ContainerNotFound
 from acquirium.Server.mqtt_ingestion import MQTTIngestService, MQTTStreamSpec
 
 logging.basicConfig(level=logging.INFO)
@@ -140,16 +140,8 @@ class Manager:
         self.app_storage_root.mkdir(parents=True, exist_ok=True)
         self._app_runs: dict[str, dict[str, Any]] = {}
         self._app_runs_lock = threading.Lock()
-
-        # Initialize Docker client for spawning app containers
-        try:
-            self._docker = docker.from_env()
-            self._docker.ping()
-            logger.info("acquirium: connected to Docker daemon")
-        except DockerException as e:
-            logger.warning("acquirium: Docker not available, app execution disabled: %s", e)
-            self._docker = None
-
+        
+    
     @classmethod
     def from_env(cls) -> Manager:
         return cls(
@@ -444,9 +436,6 @@ class Manager:
         }
 
     def _run_app_once(self, req: AppRunRequest, *, keep_alive: bool = False, interval: float | None = None) -> str:
-        if self._docker is None:
-            raise ValueError("Docker is not available - cannot run apps")
-
         runtime = self._lookup_app_runtime(req.app_id)
         logger.info("Running app %s with runtime config: %s", req.app_id, runtime)
 
@@ -489,23 +478,29 @@ class Manager:
         if entry_file:
             env["ACQUIRIUM_APP_FILE"] = f"{container_app_root}/{entry_file}"
 
-        # Filter out empty environment values
-        env = {k: v for k, v in env.items() if v}
+        cmd = ["docker", "run", "-d", "--rm"]
 
         network = os.getenv("ACQUIRIUM_APP_NETWORK")
-        volume_name = os.getenv("ACQUIRIUM_APP_VOLUME", "acquirium_acquirium_data")
+        if network:
+            cmd.extend(["--network", network])
 
-        # Build volume mount specification
-        volumes = {
-            volume_name: {"bind": container_data_root, "mode": "ro"}
-        }
+        # Named volume that both server and workers share
+        cmd.extend(["-v", f"{os.getenv('ACQUIRIUM_APP_VOLUME', 'acquirium_acquirium_data')}:{container_data_root}:ro"])
 
-        # Build the command to run inside the container
+        for k, v in env.items():
+            if v:
+                cmd.extend(["-e", f"{k}={v}"])
+
+        entrypoint = runtime.get("entrypoint")
+        if entrypoint:
+            cmd.extend(["--entrypoint", entrypoint])
+
+        cmd.append(image)
+
         run_cmd = runtime.get("command") or "python -m acquirium.Apps.worker"
         shell_cmd = f"/app/.venv/bin/{run_cmd}" if run_cmd.startswith("python ") else f"/app/.venv/bin/python -m acquirium.Apps.worker"
+        cmd.extend(["sh", "-lc", shell_cmd])
 
-        # Optional custom entrypoint
-        entrypoint = runtime.get("entrypoint")
 
         # Generate container name (sanitize app_id for Docker naming rules)
         safe_app_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', req.app_id)
@@ -547,17 +542,10 @@ class Manager:
         return cid
 
     def _stop_container(self, cid: str) -> None:
-        if self._docker is None:
-            logger.warning("Docker not available, cannot stop container %s", cid)
-            return
         try:
-            container = self._docker.containers.get(cid)
-            container.stop(timeout=10)
-            logger.info("Stopped container %s", cid[:12])
-        except ContainerNotFound:
-            logger.debug("Container %s already stopped or removed", cid[:12])
-        except DockerException:
-            logger.exception("Failed to stop container %s", cid[:12])
+            subprocess.run(["docker", "stop", cid], capture_output=True, text=True, check=False)
+        except Exception:
+            logger.exception("Failed to stop container %s", cid)
 
     def stop_app(self, *, run_id: str | None = None, app_id: str | None = None) -> dict[str, Any]:
         if not run_id and not app_id:

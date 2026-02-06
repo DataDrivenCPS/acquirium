@@ -11,7 +11,6 @@ requires-python = ">=3.11"
 
 dependencies = [
     "adbc-driver-postgresql>=1.9.0",
-    "docker>=7.1.0",
     "fastapi>=0.125.0",
     "ipykernel==7.0.1",
     "matplotlib>=3.10.8",

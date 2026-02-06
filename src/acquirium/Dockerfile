@@ -2,9 +2,9 @@ FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim
 
 WORKDIR /app
 
-#RUN apt-get update \
-#  && apt-get install -y --no-install-recommends docker.io ca-certificates \
-#  && rm -rf /var/lib/apt/lists/*
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends docker.io ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml /app/pyproject.toml
 COPY src /app/src
