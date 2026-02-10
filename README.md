@@ -80,9 +80,6 @@ make up
 uv run scripts/logging_example.py
 ```
 
-
-
-
 ## Text Matcher
 
 *Under Development*
@@ -108,3 +105,8 @@ uv run ./scripts/text_matcher_example.py
 - Basic abbreviations for common units (KG, M, S) doesn't work
 - Equipments that have the same names in multiple ontologies (e.g., nawi:Pump, s223:pump) gives same result
     - Potential solution: matches with equal points, ask user
+
+## Improvements
+- Acquirium is still under development. We're working on the improvements listed [here](./improvements.md). 
+
+Feel free to open an issue for noticed bugs or new feature ideas!
