@@ -25,6 +25,12 @@ If you have suggestions or improvement ideas, feel free to open an issue, submit
 - More visualization api for incremental query building
 
 ### Infrastructure and Architecture
+- Change union_graph, main_graph structure to named graphs. We should be able to support individual graph updates (e.g. new version of watr should only replace old version of watr)
+- Robust traversal in the plant metadata considering plant topology (not graph topology)
+    - For instance finding upstream downstream equipment, while being careful with cycles
+- Documenting data provenance:
+    - Soft sensor dependencies
+    - Data source specification
 - Build an MCP server for Acquirium
 - Reduce overhead and improve security of the computed property execution environment
     - Limit Docker resources
