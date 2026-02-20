@@ -192,6 +192,9 @@ class Acquirium:
         """List active keep-alive app runs."""
         return self.client.list_app_runs(app_id=app_id)
 
+    def generate_grafana_dashboard(self, grafana_server, api_key):
+        return self.client.generate_grafana_dashboard(grafana_server, api_key)
+
     # ------------------------------------------------------------------
     # SPARQL / GRAPH UTILITIES
     # ------------------------------------------------------------------

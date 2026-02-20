@@ -1232,3 +1232,110 @@ class Query:
         df = self.dataframe(start=start, end=end, order=order, use_union=use_union, shape=shape)
         print(df.head(k))
         return df.head(k)
+
+
+    ### GRAFANA INTEGRATION
+
+    def _create_prop_dicts(self) -> dict:
+        """
+        Create a property dictionary for the Grafana panel based on the query graph.
+
+        out:
+        {
+        'point_uri': 'http://example.com/point1',
+        'ref_uri': 'http://example.com/ref1',
+        }
+        """
+        
+        #check if there're any data nodes in the query graph
+        if not self.query_graph.data_nodes:
+            return False
+              
+        res = self.execute()
+        cols: list[str] = res.get("columns", []) #v0, v1, ext1, ...
+        rows: list[list[Any]] = res.get("rows", []) 
+
+        # map "v<ID>" column -> ID
+        col_to_id: dict[int, int] = {}
+        ext_ref_col_to_id: dict[int, int] = {}
+        for i, c in enumerate(cols):
+            if isinstance(c, str) and c.startswith("v"):
+                try:
+                    nid = int(c[1:])
+                    col_to_id[i] = nid
+                except ValueError:
+                    pass
+            elif isinstance(c, str) and c.startswith("ext"):
+                try:
+                    nid = int(c[3:])
+                    ext_ref_col_to_id[i] = nid
+                except ValueError:
+                    pass
+        nid_to_ext_ref_col: dict[int, int] = {v: k for k, v in ext_ref_col_to_id.items()}
+
+        data_node_ids = set(self.query_graph.data_nodes.keys())
+        data_col_indices = [i for i, nid in col_to_id.items() if nid in data_node_ids]
+        if not data_col_indices:
+            return False
+        # gather unique point URIs bound to data nodes
+        point_ref_uris: list[tuple[int, str, str]] = []
+        seen = set()
+        for r in rows:
+            for i in data_col_indices:
+                nid = col_to_id[i]
+                uri = r[i]
+                if uri is None:
+                    continue
+                uri_s = str(uri)
+                if nid in nid_to_ext_ref_col:
+                    ref_col_idx = nid_to_ext_ref_col[nid]
+                    if ref_col_idx >= len(r):
+                        continue
+                    ref_uri = r[ref_col_idx]
+                    if ref_uri is None:
+                        continue
+                    ref_uri_s = str(ref_uri)
+                    key = (nid, uri_s, ref_uri_s)
+                    if key not in seen:
+                        seen.add(key)
+                        point_ref_uris.append((nid, uri_s, ref_uri_s))
+
+        if not point_ref_uris:
+            return False
+
+        prop_dicts = []
+        for nid, point_uri, ref_uri in point_ref_uris:
+            prop_dicts.append({
+                "point_uri": point_uri,
+                "ref_uri": ref_uri
+            })
+        return prop_dicts
+        
+        
+
+        
+
+
+    def add_grafana_panel(self, panel_title: str = None, type = "Gauge"):
+        '''
+        Add a new panel to the Grafana dashboard.
+        type can be "Gauge" or "TimeSeries"
+
+        title not necessary for gauge, but necessary for timeseries 
+        '''
+
+        prop_dicts = self._create_prop_dicts()
+        if not prop_dicts:
+            logger.warning("No data nodes with external references found in query graph; cannot create Grafana panel")
+            return
+        
+
+        if type == "Gauge":
+            for prop_dict in prop_dicts:
+                self.client.add_gauge_panel(prop_dict)
+        elif type == "TimeSeries":
+            if not panel_title:
+                raise ValueError("Panel title is required for TimeSeries panels")
+            self.client.add_time_series_panel(panel_title, prop_dicts)
+        else:
+            raise ValueError(f"Unsupported panel type: {type}")

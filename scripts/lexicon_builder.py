@@ -46,6 +46,8 @@ def build_lexicon_from_ontology(g: Graph) -> dict:
             all_classes.add(str(o))
         if p == RDF.type and o == URIRef("http://qudt.org/schema/qudt/Unit") and not isinstance(s, BNode):
             all_classes.add(str(s))
+        if p == RDF.type and o == URIRef("http://qudt.org/schema/qudt/QuantityKind") and not isinstance(s, BNode):
+            all_classes.add(str(s))
     abbrevs = []
     for uri in all_classes:
         label = None
