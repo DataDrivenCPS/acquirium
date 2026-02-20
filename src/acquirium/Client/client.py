@@ -17,6 +17,8 @@ from acquirium.internals.models import (
     InsertTimeseriesRequest,
 )
 from acquirium.internals.internals_namespaces import *
+from acquirium.Grafana.grafana_dashboard_creator import GrafanaDashboardCreator
+
 import logging
 logger = logging.getLogger(__name__)
 
@@ -31,6 +33,10 @@ class AcquiriumClient:
                 client=self,
                 lexicon_path=lexicon_path,
             )
+        self.grafana = GrafanaDashboardCreator(
+            title="Acquirium Grafana Dashboard",
+            tags=["acquirium"],
+        )
 
 
     def insert_graph(self, rdf_graph: str, format: str = "turtle", replace: bool = True) -> None:
@@ -385,3 +391,15 @@ class AcquiriumClient:
         response = requests.delete(url, params={"point_uri": point_uri})
         response.raise_for_status()
         return response.json()
+
+
+    ### Grafana dashboard related methods
+    def add_gauge_panel(self, prop_dict: dict) -> None:
+        self.grafana.add_gauge(prop_dict)
+
+    def add_time_series_panel(self, title: str, prop_dicts: list[dict]) -> None:
+        self.grafana.add_time_series(title, prop_dicts)
+
+    def generate_grafana_dashboard(self, server: str, api_key: str) -> None:
+        self.grafana.generate_dashboard()
+        self.grafana.upload_dashboard(server, api_key)
