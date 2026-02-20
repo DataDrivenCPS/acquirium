@@ -91,6 +91,28 @@ services:
     profiles:
       - watertap_simulation
 
+  watertap_w_gui:
+    platform: linux/arm64
+    build:
+      context: ./deployments/WATERTAP2/
+      dockerfile: scripts/Dockerfile
+    container_name: acquirium_watertap_w_gui
+    ports:
+      - "8501:8501"
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+      acquirium:
+        condition: service_healthy
+    networks:
+      - acquirium_net
+    profiles:
+      - watertap_simulation
+      - watertap_gui
+
+
   testing_service:
     platform: linux/arm64
     build:
@@ -127,11 +149,32 @@ services:
     profiles:
       - benicia_simulation
 
+
+
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    environment:
+      - TERM=linux
+      - GF_PLUGINS_PREINSTALL=grafana-clock-panel,grafana-polystat-panel
+    ports:
+      - '3000:3000'
+    volumes:
+      - 'grafana_storage:/var/lib/grafana'
+    networks:
+      - acquirium_net
+    profiles:
+      - grafana
+      - watertap_gui
+
 volumes:
   tsdb_data:
   mosquitto_data:
   mosquitto_log:
   acquirium_data:
+  grafana_storage:
 
 networks:
   acquirium_net:
