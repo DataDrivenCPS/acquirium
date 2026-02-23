@@ -8,6 +8,8 @@ import inspect
 
 from rdflib import Graph as RDFGraph, URIRef
 
+import warnings
+
 from acquirium.Client.query import Query
 from acquirium.Client.client import AcquiriumClient
 from acquirium.Apps.base import App
@@ -32,11 +34,17 @@ class Acquirium:
             use_ssl: bool = False,
             lexicon_path: Optional[Path] = None,
         ) -> Acquirium:
+        if lexicon_path is not None:
+            warnings.warn(
+                "lexicon_path is deprecated and ignored. "
+                "Text resolution now uses server-side embeddings via /resolve_text.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self.client = AcquiriumClient(
             server_url=server_url,
             server_port=server_port,
             use_ssl=use_ssl,
-            lexicon_path=lexicon_path,
         )
 
     # ------------------------------------------------------------------

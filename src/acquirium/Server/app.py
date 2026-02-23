@@ -325,6 +325,19 @@ def sparql_json(query: str, use_union: bool = True) -> dict[str, Any]:
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+@app.get("/resolve_text")
+def resolve_text(
+    text: str,
+    kind: Optional[str] = None,
+    top_k: int = 5,
+    min_score: float = 0.5,
+) -> dict[str, Any]:
+    matches = app.state.manager.resolve_text(
+        text=text, kind=kind, top_k=top_k, min_score=min_score
+    )
+    return {"matches": matches}
+
+
 @app.post("/insert_log")
 def insert_log(
         point_uri: str,
