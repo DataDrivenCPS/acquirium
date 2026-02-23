@@ -1,19 +1,24 @@
 # acquirium/TextMatch/query_decorators.py
 
 from dataclasses import dataclass
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Concatenate, ParamSpec, Sequence, TypeVar
 import functools
 from rdflib import URIRef
+
+P = ParamSpec("P")
+T = TypeVar("T")
 
 @dataclass(frozen=True)
 class FlexSpec:
     arg: str
     kind: str = "any"
 
-def flex_query_rdf_inputs(*, specs: Sequence[FlexSpec]):
-    def deco(fn: Callable[..., Any]) -> Callable[..., Any]:
+def flex_query_rdf_inputs(
+    *, specs: Sequence[FlexSpec],
+) -> Callable[[Callable[Concatenate[Any, P], T]], Callable[Concatenate[Any, P], T]]:
+    def deco(fn: Callable[Concatenate[Any, P], T]) -> Callable[Concatenate[Any, P], T]:
         @functools.wraps(fn)
-        def wrapper(self, *args, **kwargs):
+        def wrapper(self: Any, *args: P.args, **kwargs: P.kwargs) -> T:
             for spec in specs:
                 if spec.arg not in kwargs:
                     continue
@@ -38,5 +43,5 @@ def flex_query_rdf_inputs(*, specs: Sequence[FlexSpec]):
                     kwargs[spec.arg] = self._resolve_rdf(v, spec.kind)
 
             return fn(self, *args, **kwargs)
-        return wrapper
+        return wrapper  # type: ignore[return-value]
     return deco
