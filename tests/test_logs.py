@@ -14,7 +14,6 @@ def acquirium_client_nodata():
         server_url="localhost",
         server_port=8000,
         use_ssl=False,
-        lexicon_path="ontologies/lexicon.json",
     )
     acq.insert_graph("tests/test_model_nodata.ttl")
     time.sleep(1)

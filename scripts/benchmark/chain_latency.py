@@ -348,7 +348,6 @@ def main():
     acq = Acquirium(
         server_url="localhost",
         server_port=8000,
-        lexicon_path="ontologies/lexicon.json"
     )
 
     def cleanup():
