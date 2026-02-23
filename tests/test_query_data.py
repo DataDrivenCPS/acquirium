@@ -15,7 +15,6 @@ def acquirium_client_csv():
         server_url="localhost",
         server_port=8000,
         use_ssl=False,
-        lexicon_path="ontologies/lexicon.json",
     )
 
     acq.insert_graph("tests/test_model_csv.ttl")
@@ -41,7 +40,6 @@ def acquirium_client_stream():
         server_url="localhost",
         server_port=8000,
         use_ssl=False,
-        lexicon_path="ontologies/lexicon.json",
     )
 
     acq.insert_graph("tests/test_model_stream.ttl")

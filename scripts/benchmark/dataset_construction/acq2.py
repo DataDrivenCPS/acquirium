@@ -6,7 +6,6 @@ plX = Acquirium(
         server_url="localhost",
         server_port=8000,
         use_ssl=False,
-        lexicon_path="ontologies/lexicon.json",
     )
 
 #4

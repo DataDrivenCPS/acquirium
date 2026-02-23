@@ -24,6 +24,6 @@ class ChlorineLevelWarning(App):
         test_df = ctx.query.dataframe(cast_value='float',start=datetime.utcnow()-timedelta(hours=1))  )
         fault_isolation_pipeline(ic_df, test_df)
 
-acq = Acquirium(server_url="localhost", server_port=8000, lexicon_path="ontologies/lexicon.json")
+acq = Acquirium(server_url="localhost", server_port=8000)
 acq.register_app(ChlorineLevelWarning())
 acq.run_app("chlorine_level_warning", keep_alive=True, interval=10)

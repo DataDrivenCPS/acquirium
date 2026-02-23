@@ -3,7 +3,6 @@ from acquirium import Acquirium
 acq = Acquirium(
     server_url="localhost",
     server_port=8000,
-    lexicon_path="ontologies/lexicon.json",
 )
 
 acq.insert_graph("deployments/WATERTAP2/models/test-model.ttl")
