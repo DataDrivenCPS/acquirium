@@ -55,7 +55,7 @@ services:
       # Use service names as hostnames inside the docker network
       ACQUIRIUM_DATA_DIR: /app/.acquirium
       PG_DSN: "postgresql://acquirium:acquirium@timescaledb:5432/acquirium_test"
-      ACQUIRIUM_LEXICON_PATH : /app/lexicon.json
+      FASTEMBED_CACHE_PATH: /app/.fastembed_cache
       ACQUIRIUM_RECREATE: ${ACQUIRIUM_RECREATE:-false}
       ACQUIRIUM_APP_NETWORK: "acquirium_acquirium_net"
     depends_on:

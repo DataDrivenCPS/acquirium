@@ -24,6 +24,7 @@ import subprocess
 import shlex
 import shutil
 from acquirium.Server.mqtt_ingestion import MQTTIngestService, MQTTStreamSpec
+from acquirium.TextMatch.embedding_matcher import EmbeddingMatcher, _split_local_name
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("acquirium.manager")
@@ -140,7 +141,13 @@ class Manager:
         self.app_storage_root.mkdir(parents=True, exist_ok=True)
         self._app_runs: dict[str, dict[str, Any]] = {}
         self._app_runs_lock = threading.Lock()
-        
+
+        self.embedding_matcher = EmbeddingMatcher(
+            model_name=os.getenv("ACQUIRIUM_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5"),
+            cache_dir=base / "embedding_cache",
+        )
+        self._rebuild_embedding_index()
+
     
     @classmethod
     def from_env(cls) -> Manager:
@@ -220,6 +227,137 @@ class Manager:
         return h.hexdigest()
 
     
+    # ----- Embedding index methods -----
+
+    def _extract_concepts_for_embedding(self) -> list[dict[str, Any]]:
+        """Extract classes and predicates from the union graph for embedding."""
+        concepts: list[dict[str, Any]] = []
+        seen: set[str] = set()
+
+        # Query 1: Classes (rdfs:Class, owl:Class, rdfs:subClassOf targets, QUDT Units/QuantityKinds,
+        # and any URI used as an rdf:type object)
+        class_query = """
+        SELECT DISTINCT ?uri ?label WHERE {
+          {
+            ?uri a <http://www.w3.org/2000/01/rdf-schema#Class> .
+          } UNION {
+            ?uri a <http://www.w3.org/2002/07/owl#Class> .
+          } UNION {
+            ?x <http://www.w3.org/2000/01/rdf-schema#subClassOf> ?uri .
+          } UNION {
+            ?uri a <http://qudt.org/schema/qudt/Unit> .
+          } UNION {
+            ?uri a <http://qudt.org/schema/qudt/QuantityKind> .
+          } UNION {
+            ?x a ?uri .
+          }
+          OPTIONAL { ?uri <http://www.w3.org/2000/01/rdf-schema#label> ?label . }
+          FILTER(isIRI(?uri))
+        }
+        """
+        try:
+            res = self.graph_store.sparql_query(class_query, use_union=True)
+            for row in res.get("rows", []):
+                uri = str(row[0]) if row[0] else None
+                label = str(row[1]).strip('"') if row[1] else None
+                if not uri or uri in seen:
+                    continue
+                seen.add(uri)
+                surfaces = []
+                if label:
+                    surfaces.append(label.lower())
+                # Always add tokenized local name as a surface
+                tokens = _split_local_name(uri)
+                if tokens:
+                    joined = " ".join(tokens)
+                    if joined not in surfaces:
+                        surfaces.append(joined)
+                concepts.append({
+                    "uri": uri,
+                    "kind": "class",
+                    "label": label or (joined if tokens else uri),
+                    "surfaces": surfaces,
+                })
+        except Exception:
+            logger.warning("Failed to extract class concepts", exc_info=True)
+
+        # Query 2: Predicates (declared properties + any IRI used as a predicate)
+        pred_query = """
+        SELECT DISTINCT ?uri ?label WHERE {
+          {
+            ?uri a <http://www.w3.org/1999/02/22-rdf-syntax-ns#Property> .
+          } UNION {
+            ?uri a <http://www.w3.org/2002/07/owl#ObjectProperty> .
+          } UNION {
+            ?uri a <http://www.w3.org/2002/07/owl#DatatypeProperty> .
+          } UNION {
+            ?s ?uri ?o .
+          }
+          OPTIONAL { ?uri <http://www.w3.org/2000/01/rdf-schema#label> ?label . }
+          FILTER(isIRI(?uri))
+        }
+        """
+        try:
+            res = self.graph_store.sparql_query(pred_query, use_union=True)
+            for row in res.get("rows", []):
+                uri = str(row[0]) if row[0] else None
+                label = str(row[1]).strip('"') if row[1] else None
+                if not uri or uri in seen:
+                    continue
+                seen.add(uri)
+                surfaces = []
+                if label:
+                    surfaces.append(label.lower())
+                tokens = _split_local_name(uri)
+                if tokens:
+                    joined = " ".join(tokens)
+                    if joined not in surfaces:
+                        surfaces.append(joined)
+                concepts.append({
+                    "uri": uri,
+                    "kind": "predicate",
+                    "label": label or (joined if tokens else uri),
+                    "surfaces": surfaces,
+                })
+        except Exception:
+            logger.warning("Failed to extract predicate concepts", exc_info=True)
+
+        return concepts
+
+    def _rebuild_embedding_index(self) -> None:
+        """Rebuild the embedding index from the current graph. Exception-safe."""
+        try:
+            concepts = self._extract_concepts_for_embedding()
+            if concepts:
+                self.embedding_matcher.build_index(concepts)
+                logger.info("Embedding index built with %d concepts", len(concepts))
+            else:
+                logger.info("No concepts found in graph; embedding index is empty")
+        except Exception:
+            logger.warning("Failed to rebuild embedding index", exc_info=True)
+
+    def resolve_text(
+        self,
+        text: str,
+        kind: str | None = None,
+        top_k: int = 5,
+        min_score: float = 0.5,
+    ) -> list[dict[str, Any]]:
+        """Resolve natural language text to ontology URIs via embedding similarity."""
+        results = self.embedding_matcher.query(
+            text=text, kind=kind, top_k=top_k, min_score=min_score
+        )
+        return [
+            {
+                "uri": r.uri,
+                "kind": r.kind,
+                "label": r.label,
+                "score": r.score,
+                "matched_surface": r.matched_surface,
+            }
+            for r in results
+        ]
+
     ###########################################
     #################### API ###############
     ###########################################
@@ -241,7 +379,8 @@ class Manager:
             self.graph_store.insert_graph(rdf_graph, format=format, replace=replace)
             logging.info("acquirium: inserted graph into store, now ingesting data")
             self._connect_mqtt_streams_from_graph()
-            
+            self._rebuild_embedding_index()
+
         except Exception as e:
             logging.error("acquirium: failed to insert graph: %s", e)
             raise
@@ -470,7 +609,6 @@ class Manager:
             "ACQUIRIUM_USE_SSL": os.getenv("ACQUIRIUM_APP_USE_SSL", "false"),
             "ACQUIRIUM_APP_ROOT": container_app_root,
             "PYTHONPATH": f"/app/src:{container_app_root}",
-            "ACQUIRIUM_LEXICON_PATH": os.getenv("ACQUIRIUM_LEXICON_PATH", "/app/lexicon.json"),
         }
         if keep_alive:
             env["ACQUIRIUM_KEEP_ALIVE"] = "true"

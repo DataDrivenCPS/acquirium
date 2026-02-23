@@ -3,11 +3,8 @@ from datetime import datetime
 import requests
 import os
 from pathlib import Path
-from acquirium.TextMatch.service import TextMatchService
 import polars as pl
-# import pyarrow as pa
 import pyarrow.ipc as ipc
-# from io import BytesIO
 from acquirium.internals.models import (
     Order,
     LogEntry,
@@ -23,16 +20,11 @@ import logging
 logger = logging.getLogger(__name__)
 
 class AcquiriumClient:
-    def __init__(self, 
-                 server_url: str = "localhost", 
-                 server_port: int = 8000, 
-                 use_ssl: bool = False,
-                 lexicon_path: Optional[Path] = None):
+    def __init__(self,
+                 server_url: str = "localhost",
+                 server_port: int = 8000,
+                 use_ssl: bool = False):
         self.base_url = f"{'https' if use_ssl else 'http'}://{server_url}:{server_port}"
-        self.textmatch_service = TextMatchService.from_client(
-                client=self,
-                lexicon_path=lexicon_path,
-            )
         self.grafana = GrafanaDashboardCreator(
             title="Acquirium Grafana Dashboard",
             tags=["acquirium"],
@@ -164,6 +156,22 @@ class AcquiriumClient:
         response = requests.get(url, params=data)
         response.raise_for_status()
         return response.json()
+
+    def resolve_text(
+        self,
+        text: str,
+        kind: Optional[str] = None,
+        top_k: int = 5,
+        min_score: float = 0.5,
+    ) -> list[dict]:
+        """Resolve natural language text to ontology URIs via the server's embedding matcher."""
+        url = f"{self.base_url}/resolve_text"
+        params: dict[str, Any] = {"text": text, "top_k": top_k, "min_score": min_score}
+        if kind:
+            params["kind"] = kind
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        return response.json().get("matches", [])
 
     def ingest_status(self) -> dict:
         """
