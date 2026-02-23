@@ -40,7 +40,7 @@ class ChlorineLevelWarning(App):
 
 
 if __name__ == "__main__":
-    acq = Acquirium(server_url="localhost", server_port=8000, lexicon_path="ontologies/lexicon.json")
+    acq = Acquirium(server_url="localhost", server_port=8000)
     # acq.insert_graph("deployments/BENICIA/benicia-model-with-refs-thresholds.ttl")
     # acq.register_app(ChlorineLevelWarning())
     # acq.run_app("chlorine_level_warning", keep_alive=True, interval=10)

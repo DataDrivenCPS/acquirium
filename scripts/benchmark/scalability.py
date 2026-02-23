@@ -141,7 +141,7 @@ if __name__ == "__main__":
             print(f"Prepared app {app.name} for data node {uri}.")
     # exit()
 
-    acq = Acquirium(server_url=args.server_url, server_port=args.server_port, lexicon_path=args.lexicon_path)
+    acq = Acquirium(server_url=args.server_url, server_port=args.server_port)
 
     def cleanup():
         if state["cleanup_in_progress"]:

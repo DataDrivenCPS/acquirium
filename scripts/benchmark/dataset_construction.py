@@ -4,7 +4,6 @@ plX = Acquirium(
         server_url="localhost",
         server_port=8000,
         use_ssl=False,
-        lexicon_path="ontologies/lexicon.json",
     )
 # plX.insert_graph("ontologies/water.ttl")
 # plX.insert_graph("deployments/BENICIA/benicia-model-with-refs-thresholds.ttl",replace=False)
