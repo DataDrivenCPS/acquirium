@@ -277,7 +277,6 @@ def main() -> None:
     server_url = os.getenv("ACQUIRIUM_SERVER_URL", "localhost")
     server_port = int(os.getenv("ACQUIRIUM_SERVER_PORT", "8000"))
     use_ssl = os.getenv("ACQUIRIUM_USE_SSL", "false").lower() == "true"
-    lexicon_path = os.getenv("ACQUIRIUM_LEXICON_PATH")
 
     logger.info("  Server: %s://%s:%d", "https" if use_ssl else "http", server_url, server_port)
 
@@ -303,7 +302,7 @@ def main() -> None:
     # Connect to server
     logger.info("-" * 40)
     logger.info("Connecting to Acquirium server...")
-    aq = Acquirium(server_url=server_url, server_port=server_port, use_ssl=use_ssl, lexicon_path=lexicon_path)
+    aq = Acquirium(server_url=server_url, server_port=server_port, use_ssl=use_ssl)
     logger.info("Connected to server")
 
     # Build query

@@ -148,11 +148,10 @@ class Query:
         return sorted(set(attached)) if attached else []
 
     def _resolve_rdf(self, text: str, kind: str) -> str:
-        svc = self.client.textmatch_service
-
-        from acquirium.TextMatch.service import make_resolver_from_service
-        resolver = make_resolver_from_service(svc)
-        return resolver(text, kind)
+        matches = self.client.resolve_text(text, kind=kind, top_k=1, min_score=0.4)
+        if not matches:
+            raise ValueError(f"Could not resolve '{text}' as {kind}")
+        return matches[0]["uri"]
     
     def _query_resolver_adapter(self, text: str, kind: str) -> str:
         return self._resolve_rdf(self,text, kind)
