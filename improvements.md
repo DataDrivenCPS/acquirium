@@ -13,6 +13,11 @@ If you have suggestions or improvement ideas, feel free to open an issue, submit
 
 These are the improvements are currently under active development
 
+### Infrastructure and Architecture
+- [x] Text matcher improvements
+    - [x] Explore small embedding models similar to RDF-MCP work
+    - [x] Text matcher removed from client and moved to server as a service. This allows all computed properties to access in a simpler fashion.
+ 
 ### Registering WaterTAP Flowsheets in Acquirium
 - [ ] Convert WaterTAP flowsheets into a knowledge graph
 - [ ] Automatically detect input and output requirements
@@ -55,8 +60,6 @@ These are the improvements are currently under active development
     - [ ] Define multiple computed properties connected through boolean or enum outputs
 - [ ] Application requirements satisfaction (similar to Mortar and Seeq)
     - [ ] or providing multiple definitions for an app if one is not available
-- [ ] Text matcher improvements
-    - [ ] Explore small embedding models similar to RDF-MCP work
 - [ ] Unit conversion tool
     - [ ] This might be implemented through soft sensor
     - [ ] Also should be supported in Grafana 
