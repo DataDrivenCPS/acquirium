@@ -60,6 +60,11 @@ These are the improvements are currently under active development
 - [ ] Unit conversion tool
     - [ ] This might be implemented through soft sensor
     - [ ] Also should be supported in Grafana 
+- [ ] Improve testing mechanism:
+    - [ ] Use github actions 
+    - [ ] Write unit tests that doesn’t require backend running (or create a fake backend)
+
+
 
 ### Examples and Demos
 - [ ] Provide example scripts for users with existing models
