@@ -621,9 +621,10 @@ class Manager:
         network = os.getenv("ACQUIRIUM_APP_NETWORK")
         if network:
             cmd.extend(["--network", network])
-
+        
+        volume_name = os.getenv("ACQUIRIUM_APP_VOLUME", "acquirium_app_data")
         # Named volume that both server and workers share
-        cmd.extend(["-v", f"{os.getenv('ACQUIRIUM_APP_VOLUME', 'acquirium_acquirium_data')}:{container_data_root}:ro"])
+        cmd.extend(["-v", f"{volume_name}:{container_data_root}:ro"])
 
         for k, v in env.items():
             if v:
@@ -643,6 +644,7 @@ class Manager:
         # Generate container name (sanitize app_id for Docker naming rules)
         safe_app_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', req.app_id)
         container_name = f"acquirium_app_{safe_app_id}"
+
 
         logger.info(
             "Starting container: name=%s, image=%s, network=%s, volume=%s, env_keys=%s",

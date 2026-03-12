@@ -39,12 +39,12 @@ class ChlorineLevelWarning(App):
 
 if __name__ == "__main__":
     acq = Acquirium(server_url="localhost", server_port=8000)
-    # acq.insert_graph("deployments/BENICIA/benicia-model-with-refs-thresholds.ttl")
-    # acq.register_app(ChlorineLevelWarning())
-    # acq.run_app("chlorine_level_warning", keep_alive=True, interval=10)
-    q = acq.find_entity(_class="Chlorination Basin").find_related_data(unit=["MilliGM-PER-L"])
+    acq.insert_graph("deployments/BENICIA/benicia-model-with-refs-thresholds.ttl")
+    acq.register_app(ChlorineLevelWarning())
+    acq.run_app("chlorine_level_warning", keep_alive=True, interval=10)
+    # q = acq.find_entity(_class="Chlorination Basin").find_related_data(unit=["MilliGM-PER-L"])
     # q.metadata_head()
-    print(q.latest_data())
+    # print(q.latest_data())
     # acq.stop_app(app_id="chlorine_level_warning")
     # print(acq.list_app_runs())
     # print(len(acq.list_app_runs().get("runs", [])))

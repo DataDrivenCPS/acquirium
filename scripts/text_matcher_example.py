@@ -1,13 +1,33 @@
-import json
+from acquirium import Acquirium
 
-with open("ontologies/lexicon.json", "r") as f:
-    lexicon = json.load(f)
+client = Acquirium(
+        server_url="localhost",
+        server_port=8000,
+        use_ssl=False,
+    )
+# client.insert_graph(
+#     "deployments/BENICIA/benicia-model-with-refs-thresholds.ttl"
+# )
+# client.insert_graph(
+#     "ontologies/water.ttl", replace=False
+# )
+# client.insert_graph(
+#     "ontologies/qudt_unit.ttl", replace=False
+# )
 
-from acquirium.TextMatch.matcher import ConceptMatcher
 
-matcher = ConceptMatcher(lexicon)
+matches = client.client.resolve_text("pump", kind="class", top_k=1, min_score=0.6)
 
-results = matcher.match("kilogram per sec", restrict_kinds={"class"}, top_k=5)
-print("Top matches for 'kilogram per sec':")
-for res in results:
-    print(f"- {res.uri} ({res.label}) [score: {res.score:.3f}] matched on '{res.matched_surface}'")
+print(matches)
+
+matches = client.client.resolve_text("has propty", kind="predicate", top_k=1, min_score=0.6)
+
+print(matches)
+
+matches = client.client.resolve_text("nonexistent term", kind="class", top_k=1, min_score=0.6)
+
+print(matches)
+
+matches = client.client.resolve_text("kg per sec", kind="class", top_k=1, min_score=0.6)
+
+print(matches)
