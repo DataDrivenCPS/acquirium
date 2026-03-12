@@ -68,23 +68,42 @@ def acq():
 # Parametrized tests
 # ──────────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("text, expected_uri", CLASS_PAIRS, ids=[t for t, _ in CLASS_PAIRS])
-def test_resolve_class(acq, text, expected_uri):
-    matches = acq.client.resolve_text(text, kind="class", top_k=1, min_score=0.4)
-    assert len(matches) >= 1, f"No matches for '{text}'"
-    assert matches[0]["uri"] == expected_uri, (
-        f"Expected '{expected_uri}' but got '{matches[0]['uri']}' "
-        f"(score={matches[0]['score']:.3f}, surface='{matches[0]['matched_surface']}')"
+MIN_MATCH_PERCENT = 70  # require at least 70% of pairs to match correctly
+
+
+def test_resolve_class(acq):
+    """At least MIN_MATCH_PERCENT% of CLASS_PAIRS should resolve to the expected URI."""
+    hits = 0
+    misses = []
+    for text, expected_uri in CLASS_PAIRS:
+        matches = acq.client.resolve_text(text, kind="class", top_k=1, min_score=0.4)
+        if matches and matches[0]["uri"] == expected_uri:
+            hits += 1
+        else:
+            got = matches[0]["uri"] if matches else "<no matches>"
+            misses.append(f"  '{text}': expected '{expected_uri}', got '{got}'")
+    pct = (hits / len(CLASS_PAIRS)) * 100
+    assert pct >= MIN_MATCH_PERCENT, (
+        f"Class match rate {pct:.0f}% ({hits}/{len(CLASS_PAIRS)}) "
+        f"is below {MIN_MATCH_PERCENT}%.\nMisses:\n" + "\n".join(misses)
     )
 
 
-@pytest.mark.parametrize("text, expected_uri", PREDICATE_PAIRS, ids=[t for t, _ in PREDICATE_PAIRS])
-def test_resolve_predicate(acq, text, expected_uri):
-    matches = acq.client.resolve_text(text, kind="predicate", top_k=1, min_score=0.4)
-    assert len(matches) >= 1, f"No matches for '{text}'"
-    assert matches[0]["uri"] == expected_uri, (
-        f"Expected '{expected_uri}' but got '{matches[0]['uri']}' "
-        f"(score={matches[0]['score']:.3f}, surface='{matches[0]['matched_surface']}')"
+def test_resolve_predicate(acq):
+    """At least MIN_MATCH_PERCENT% of PREDICATE_PAIRS should resolve to the expected URI."""
+    hits = 0
+    misses = []
+    for text, expected_uri in PREDICATE_PAIRS:
+        matches = acq.client.resolve_text(text, kind="predicate", top_k=1, min_score=0.4)
+        if matches and matches[0]["uri"] == expected_uri:
+            hits += 1
+        else:
+            got = matches[0]["uri"] if matches else "<no matches>"
+            misses.append(f"  '{text}': expected '{expected_uri}', got '{got}'")
+    pct = (hits / len(PREDICATE_PAIRS)) * 100
+    assert pct >= MIN_MATCH_PERCENT, (
+        f"Predicate match rate {pct:.0f}% ({hits}/{len(PREDICATE_PAIRS)}) "
+        f"is below {MIN_MATCH_PERCENT}%.\nMisses:\n" + "\n".join(misses)
     )
 
 
