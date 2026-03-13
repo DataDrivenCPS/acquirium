@@ -25,6 +25,7 @@ import docker
 from docker.errors import DockerException, NotFound as ContainerNotFound
 from acquirium.Server.mqtt_ingestion import MQTTIngestService, MQTTStreamSpec
 from acquirium.TextMatch.embedding_matcher import EmbeddingMatcher, _split_local_name
+from acquirium.TextMatch.qudt_store import QUDTStore
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("acquirium.manager")
@@ -151,11 +152,26 @@ class Manager:
             logger.warning("acquirium: Docker not available, app execution disabled: %s", e)
             self._docker = None
 
-        self.embedding_matcher = EmbeddingMatcher(
-            model_name=os.getenv("ACQUIRIUM_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5"),
-            cache_dir=base / "embedding_cache",
+        _emb_model = os.getenv("ACQUIRIUM_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
+
+        # Dual matchers: graph (class/predicate) and QUDT (unit/quantity_kind)
+        self._graph_matcher = EmbeddingMatcher(
+            model_name=_emb_model,
+            cache_dir=base / "embedding_cache" / "graph",
         )
-        self._rebuild_embedding_index()
+        self._qudt_matcher = EmbeddingMatcher(
+            model_name=_emb_model,
+            cache_dir=base / "embedding_cache" / "qudt",
+        )
+        self._qudt_store = QUDTStore(data_dir=base)
+
+        # Kept for backward compat — points to graph matcher
+        self.embedding_matcher = self._graph_matcher
+
+        # Startup: graph index (sync if cache hit, background if miss)
+        self._startup_graph_index()
+        # Startup: QUDT index (always background)
+        self._executor.submit(self._startup_qudt_task)
 
     
     @classmethod
@@ -239,12 +255,16 @@ class Manager:
     # ----- Embedding index methods -----
 
     def _extract_concepts_for_embedding(self) -> list[dict[str, Any]]:
-        """Extract classes and predicates from the union graph for embedding."""
+        """Extract classes and predicates from the union graph for embedding.
+
+        QUDT Units and QuantityKinds are handled separately by QUDTStore/_qudt_matcher.
+        """
         concepts: list[dict[str, Any]] = []
         seen: set[str] = set()
 
-        # Query 1: Classes (rdfs:Class, owl:Class, rdfs:subClassOf targets, QUDT Units/QuantityKinds,
+        # Query 1: Classes (rdfs:Class, owl:Class, rdfs:subClassOf targets,
         # and any URI used as an rdf:type object)
+        # NOTE: QUDT Unit/QuantityKind removed — handled by _qudt_matcher
         class_query = """
         SELECT DISTINCT ?uri ?label WHERE {
           {
@@ -253,10 +273,6 @@ class Manager:
             ?uri a <http://www.w3.org/2002/07/owl#Class> .
           } UNION {
             ?x <http://www.w3.org/2000/01/rdf-schema#subClassOf> ?uri .
-          } UNION {
-            ?uri a <http://qudt.org/schema/qudt/Unit> .
-          } UNION {
-            ?uri a <http://qudt.org/schema/qudt/QuantityKind> .
           } UNION {
             ?x a ?uri .
           }
@@ -333,39 +349,113 @@ class Manager:
 
         return concepts
 
-    def _rebuild_embedding_index(self) -> None:
-        """Rebuild the embedding index from the current graph. Exception-safe."""
+    def _startup_graph_index(self) -> None:
+        """Build graph embedding index on startup. Uses cache if available."""
         try:
             concepts = self._extract_concepts_for_embedding()
             if concepts:
-                self.embedding_matcher.build_index(concepts)
-                logger.info("Embedding index built with %d concepts", len(concepts))
+                self._graph_matcher.build_index(concepts)
+                logger.info("Graph embedding index: %d concepts", len(concepts))
             else:
-                logger.info("No concepts found in graph; embedding index is empty")
+                logger.info("No concepts found in graph; graph embedding index is empty")
         except Exception:
-            logger.warning("Failed to rebuild embedding index", exc_info=True)
+            logger.warning("Failed to build graph embedding index", exc_info=True)
+
+    def _startup_qudt_task(self) -> None:
+        """Background task: extract QUDT, diff, build/update QUDT embedding index."""
+        try:
+            if self._qudt_store.has_cache() and not self._qudt_matcher.is_ready:
+                # Try loading cached concepts + cached embeddings first
+                cached = self._qudt_store.get_all_concepts()
+                if cached:
+                    self._qudt_matcher.build_index(cached)
+                    if self._qudt_matcher.is_ready:
+                        logger.info("QUDT embedding index loaded from cache (%d concepts)", len(cached))
+
+            all_concepts, removed_uris, changed = self._qudt_store.extract_and_diff()
+
+            if not all_concepts:
+                logger.warning("QUDT extraction returned 0 concepts")
+                return
+
+            if not self._qudt_matcher.is_ready:
+                # First build
+                logger.info("Building QUDT embedding index from scratch (%d concepts)...", len(all_concepts))
+                self._qudt_matcher.build_index(all_concepts)
+            elif changed:
+                # Incremental update
+                added = [c for c in all_concepts if c["uri"] not in {m["uri"] for m in self._qudt_matcher._meta}]
+                logger.info("Updating QUDT embedding index: +%d added, -%d removed", len(added), len(removed_uris))
+                self._qudt_matcher.update_index(added, removed_uris)
+            else:
+                logger.info("QUDT data unchanged, embedding index up to date")
+
+        except Exception:
+            logger.warning("Failed QUDT startup task", exc_info=True)
+
+    def _rebuild_graph_index_background(self) -> None:
+        """Rebuild graph embedding index in background after insert_graph."""
+        try:
+            concepts = self._extract_concepts_for_embedding()
+            if concepts:
+                self._graph_matcher.build_index(concepts)
+                logger.info("Graph embedding index rebuilt: %d concepts", len(concepts))
+        except Exception:
+            logger.warning("Failed to rebuild graph embedding index", exc_info=True)
 
     def resolve_text(
         self,
         text: str,
         kind: str | None = None,
         top_k: int = 5,
-        min_score: float = 0.5,
+        min_score: float = 0.6,
     ) -> list[dict[str, Any]]:
-        """Resolve natural language text to ontology URIs via embedding similarity."""
-        results = self.embedding_matcher.query(
-            text=text, kind=kind, top_k=top_k, min_score=min_score
-        )
-        return [
-            {
-                "uri": r.uri,
-                "kind": r.kind,
-                "label": r.label,
-                "score": r.score,
-                "matched_surface": r.matched_surface,
-            }
-            for r in results
-        ]
+        """Resolve natural language text to ontology URIs via embedding similarity.
+
+        Routing:
+          kind="class" or "predicate"     -> _graph_matcher only
+          kind="unit" or "quantity_kind"   -> _qudt_matcher only
+          kind=None                        -> both, merged by score
+        """
+        def _to_dicts(results):
+            return [
+                {
+                    "uri": r.uri,
+                    "kind": r.kind,
+                    "label": r.label,
+                    "score": r.score,
+                    "matched_surface": r.matched_surface,
+                }
+                for r in results
+            ]
+
+        if kind in ("class", "predicate"):
+            return _to_dicts(
+                self._graph_matcher.query(text=text, kind=kind, top_k=top_k, min_score=min_score)
+            )
+        elif kind in ("unit", "quantity_kind"):
+            return _to_dicts(
+                self._qudt_matcher.query(text=text, kind=kind, top_k=top_k, min_score=min_score)
+            )
+        else:
+            # Query both matchers, merge results sorted by score
+            graph_results = self._graph_matcher.query(text=text, kind=kind, top_k=top_k, min_score=min_score)
+            qudt_results = self._qudt_matcher.query(text=text, kind=kind, top_k=top_k, min_score=min_score)
+            merged = sorted(
+                graph_results + qudt_results,
+                key=lambda r: r.score,
+                reverse=True,
+            )
+            # Deduplicate by URI
+            seen: set[str] = set()
+            deduped = []
+            for r in merged:
+                if r.uri not in seen:
+                    seen.add(r.uri)
+                    deduped.append(r)
+                    if len(deduped) >= top_k:
+                        break
+            return _to_dicts(deduped)
 
     ###########################################
     #################### API ###############
@@ -388,7 +478,8 @@ class Manager:
             self.graph_store.insert_graph(rdf_graph, format=format, replace=replace)
             logging.info("acquirium: inserted graph into store, now ingesting data")
             self._connect_mqtt_streams_from_graph()
-            self._rebuild_embedding_index()
+            # Rebuild graph embedding index in background (does not affect QUDT index)
+            self._executor.submit(self._rebuild_graph_index_background)
 
         except Exception as e:
             logging.error("acquirium: failed to insert graph: %s", e)
