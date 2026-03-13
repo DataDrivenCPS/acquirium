@@ -154,7 +154,7 @@ class Query:
         return matches[0]["uri"]
     
     def _query_resolver_adapter(self, text: str, kind: str) -> str:
-        return self._resolve_rdf(self,text, kind)
+        return self._resolve_rdf(text, kind)
 
     def _is_uri(self, text: str) -> bool:
         return isinstance(text, str) and (text.startswith("urn:") or text.startswith("http://") or text.startswith("https://"))
