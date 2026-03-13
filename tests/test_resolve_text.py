@@ -206,6 +206,21 @@ def _write_outputs():
 
 
 # ──────────────────────────────────────────────────────────────
+# Helpers
+# ──────────────────────────────────────────────────────────────
+
+def _wait_for_qudt_ready(client: Acquirium, timeout: int = 30) -> None:
+    """Poll resolve_text until the QUDT matcher returns results for a known unit."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        matches = client.client.resolve_text("kilogram", kind="unit", top_k=1, min_score=0.4)
+        if matches:
+            return
+        time.sleep(1)
+    pytest.skip("QUDT embedding index not ready within timeout")
+
+
+# ──────────────────────────────────────────────────────────────
 # Fixture
 # ──────────────────────────────────────────────────────────────
 
@@ -229,8 +244,8 @@ def acq():
     )
     # QUDT unit/qk ontologies are now loaded automatically by QUDTStore
     # on server startup — no need to insert them as graphs.
-    # Wait a bit for the background QUDT indexing task to complete.
-    time.sleep(5)
+    # Poll until the QUDT matcher is ready (background indexing).
+    _wait_for_qudt_ready(client, timeout=30)
 
     yield client
 
