@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import re
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -49,8 +50,9 @@ class EmbeddingMatcher:
         self._model_name = model_name
         self._cache_dir = Path(cache_dir) if cache_dir else None
         self._model = None  # lazy
+        self._lock = threading.Lock()
 
-        # Index state
+        # Index state — always read/swapped under self._lock
         self._vectors: np.ndarray | None = None  # shape (N, dim), L2-normalized
         self._meta: list[dict[str, str]] = []  # parallel list: uri, kind, label, surface
         self._index_hash: str | None = None
@@ -81,18 +83,9 @@ class EmbeddingMatcher:
         )
         return hashlib.sha256(canonical.encode()).hexdigest()
 
-    def build_index(self, concepts: list[dict[str, Any]]) -> None:
-        """Build embedding index from concept dicts with keys: uri, kind, label, surfaces."""
-        new_hash = self._concepts_hash(concepts)
-
-        # Check disk cache
-        if self._cache_dir and self._try_load_cache(new_hash):
-            logger.info(
-                "Loaded embedding index from cache (%d entries)", len(self._meta)
-            )
-            return
-
-        # Build surface list and metadata
+    @staticmethod
+    def _build_surfaces_and_meta(concepts: list[dict[str, Any]]) -> tuple[list[str], list[dict[str, str]]]:
+        """Extract surface strings and parallel metadata from concept dicts."""
         surfaces: list[str] = []
         meta: list[dict[str, str]] = []
         for concept in concepts:
@@ -102,7 +95,6 @@ class EmbeddingMatcher:
             concept_surfaces = concept.get("surfaces", [])
 
             if not concept_surfaces:
-                # Fallback: split URI local name
                 tokens = _split_local_name(uri)
                 if tokens:
                     concept_surfaces = [" ".join(tokens)]
@@ -120,18 +112,38 @@ class EmbeddingMatcher:
                         "surface": surface,
                     }
                 )
+        return surfaces, meta
+
+    def build_index(self, concepts: list[dict[str, Any]]) -> None:
+        """Build embedding index from concept dicts with keys: uri, kind, label, surfaces."""
+        new_hash = self._concepts_hash(concepts)
+
+        # Check disk cache
+        if self._cache_dir and self._try_load_cache(new_hash):
+            logger.info(
+                "Loaded embedding index from cache (%d entries)", len(self._meta)
+            )
+            return
+
+        surfaces, meta = self._build_surfaces_and_meta(concepts)
 
         if not surfaces:
             logger.warning("No surfaces to embed; index will be empty")
-            self._vectors = np.empty((0, 1), dtype=np.float32)
-            self._meta = []
-            self._index_hash = new_hash
+            with self._lock:
+                self._vectors = np.empty((0, 1), dtype=np.float32)
+                self._meta = []
+                self._index_hash = new_hash
             return
 
         logger.info("Embedding %d surfaces from %d concepts...", len(surfaces), len(concepts))
-        self._vectors = self._embed(surfaces)
-        self._meta = meta
-        self._index_hash = new_hash
+        # Embed outside the lock (expensive I/O)
+        vectors = self._embed(surfaces)
+
+        # Atomic swap under lock
+        with self._lock:
+            self._vectors = vectors
+            self._meta = meta
+            self._index_hash = new_hash
 
         # Save to disk cache
         if self._cache_dir:
@@ -146,15 +158,20 @@ class EmbeddingMatcher:
         top_k: int = 5,
         min_score: float = 0.5,
     ) -> list[ResolveResult]:
-        if self._vectors is None or len(self._meta) == 0:
+        # Snapshot state under lock so reads are consistent
+        with self._lock:
+            vectors = self._vectors
+            meta = self._meta
+
+        if vectors is None or len(meta) == 0:
             return []
 
         q_vec = self._embed([text])  # shape (1, dim)
-        scores = (q_vec @ self._vectors.T).squeeze(0)  # shape (N,)
+        scores = (q_vec @ vectors.T).squeeze(0)  # shape (N,)
 
         # Filter by kind if specified
         if kind:
-            mask = np.array([m["kind"] == kind for m in self._meta], dtype=bool)
+            mask = np.array([m["kind"] == kind for m in meta], dtype=bool)
             scores = np.where(mask, scores, -1.0)
 
         # Get top_k indices
@@ -174,7 +191,7 @@ class EmbeddingMatcher:
             s = float(scores[idx])
             if s < min_score:
                 break
-            m = self._meta[idx]
+            m = meta[idx]
             if m["uri"] in seen_uris:
                 continue
             seen_uris.add(m["uri"])
@@ -192,70 +209,83 @@ class EmbeddingMatcher:
 
         return results
 
-    def update_index(self, added_concepts: list[dict[str, Any]], removed_uris: list[str]) -> None:
-        """Incrementally update the embedding index: remove old URIs, add new concepts."""
-        if self._vectors is None or len(self._meta) == 0:
-            # No existing index — fall back to full build
-            if added_concepts:
+    def update_index(
+        self,
+        added_concepts: list[dict[str, Any]],
+        removed_uris: list[str],
+        all_concepts: list[dict[str, Any]] | None = None,
+    ) -> None:
+        """Incrementally update the embedding index: remove old URIs, add new concepts.
+
+        Args:
+            added_concepts: Only the newly added concepts to embed.
+            removed_uris: URIs to remove from the existing index.
+            all_concepts: The complete concept list (for correct cache hashing).
+                          If None, falls back to full build from added_concepts.
+        """
+        with self._lock:
+            vectors = self._vectors
+            meta = list(self._meta) if self._meta else []
+
+        if vectors is None or len(meta) == 0:
+            # No existing index — need full concept list to build correctly
+            if all_concepts:
+                self.build_index(all_concepts)
+            elif added_concepts:
                 self.build_index(added_concepts)
             return
 
         # 1. Filter out removed URIs
         removed_set = set(removed_uris)
         if removed_set:
-            keep = [i for i, m in enumerate(self._meta) if m["uri"] not in removed_set]
-            self._meta = [self._meta[i] for i in keep]
-            self._vectors = self._vectors[keep]
+            keep = [i for i, m in enumerate(meta) if m["uri"] not in removed_set]
+            meta = [meta[i] for i in keep]
+            vectors = vectors[keep]
 
         # 2. Build surfaces for added concepts and embed them
         if added_concepts:
-            new_surfaces: list[str] = []
-            new_meta: list[dict[str, str]] = []
-            for concept in added_concepts:
-                uri = concept["uri"]
-                kind = concept.get("kind", "class")
-                label = concept.get("label", "")
-                concept_surfaces = concept.get("surfaces", [])
-                if not concept_surfaces:
-                    tokens = _split_local_name(uri)
-                    if tokens:
-                        concept_surfaces = [" ".join(tokens)]
-                if not concept_surfaces:
-                    continue
-                for surface in concept_surfaces:
-                    new_surfaces.append(surface)
-                    new_meta.append({
-                        "uri": uri,
-                        "kind": kind,
-                        "label": label or surface,
-                        "surface": surface,
-                    })
+            new_surfaces, new_meta = self._build_surfaces_and_meta(added_concepts)
 
             if new_surfaces:
                 logger.info("Embedding %d new surfaces from %d added concepts...", len(new_surfaces), len(added_concepts))
                 new_vectors = self._embed(new_surfaces)
-                # 3. Concatenate
-                self._vectors = np.concatenate([self._vectors, new_vectors], axis=0)
-                self._meta = self._meta + new_meta
+                vectors = np.concatenate([vectors, new_vectors], axis=0)
+                meta = meta + new_meta
 
-        # 4. Recompute hash and save
-        all_concepts_for_hash = []
-        seen: set[str] = set()
-        for m in self._meta:
-            if m["uri"] not in seen:
-                seen.add(m["uri"])
-                all_concepts_for_hash.append({"uri": m["uri"]})
-        self._index_hash = self._concepts_hash(all_concepts_for_hash)
+        # 3. Compute hash from full concept list (matches build_index output)
+        if all_concepts is not None:
+            new_hash = self._concepts_hash(all_concepts)
+        else:
+            # Fallback: hash from current meta URIs (won't match build_index cache)
+            seen: set[str] = set()
+            unique = []
+            for m in meta:
+                if m["uri"] not in seen:
+                    seen.add(m["uri"])
+                    unique.append({"uri": m["uri"]})
+            new_hash = self._concepts_hash(unique)
+
+        # 4. Atomic swap under lock
+        with self._lock:
+            self._vectors = vectors
+            self._meta = meta
+            self._index_hash = new_hash
 
         if self._cache_dir:
-            self._save_cache(self._index_hash)
+            self._save_cache(new_hash)
 
-        logger.info("Updated embedding index: %d total entries", len(self._meta))
+        logger.info("Updated embedding index: %d total entries", len(meta))
 
     @property
     def is_ready(self) -> bool:
         """Return True if the index has been built and has entries."""
-        return self._vectors is not None and len(self._meta) > 0
+        with self._lock:
+            return self._vectors is not None and len(self._meta) > 0
+
+    def get_indexed_uris(self) -> set[str]:
+        """Return the set of URIs currently in the index (thread-safe)."""
+        with self._lock:
+            return {m["uri"] for m in self._meta}
 
     # --- Disk caching ---
 
@@ -272,10 +302,12 @@ class EmbeddingMatcher:
             vec_path, meta_path = self._cache_path(hash_val)
             if not vec_path.exists() or not meta_path.exists():
                 return False
-            data = np.load(vec_path)
-            self._vectors = data["vectors"]
-            self._meta = json.loads(meta_path.read_text())
-            self._index_hash = hash_val
+            vectors = np.load(vec_path)["vectors"]
+            meta = json.loads(meta_path.read_text())
+            with self._lock:
+                self._vectors = vectors
+                self._meta = meta
+                self._index_hash = hash_val
             return True
         except Exception:
             logger.warning("Failed to load embedding cache, will rebuild")
@@ -283,9 +315,12 @@ class EmbeddingMatcher:
 
     def _save_cache(self, hash_val: str) -> None:
         try:
+            with self._lock:
+                vectors = self._vectors
+                meta = self._meta
             vec_path, meta_path = self._cache_path(hash_val)
-            np.savez_compressed(vec_path, vectors=self._vectors)
-            meta_path.write_text(json.dumps(self._meta, ensure_ascii=True))
+            np.savez_compressed(vec_path, vectors=vectors)
+            meta_path.write_text(json.dumps(meta, ensure_ascii=True))
             logger.info("Saved embedding cache to %s", self._cache_dir)
         except Exception:
             logger.warning("Failed to save embedding cache", exc_info=True)
