@@ -364,9 +364,9 @@ class Query:
     @flex_query_rdf_inputs(
         specs=[
             FlexSpec("_class", "class"),
-            FlexSpec("quantity_kind", "class"),
+            FlexSpec("quantity_kind", "quantity_kind"),
             FlexSpec("enumeration_kind", "class"),
-            FlexSpec("unit", "class"),
+            FlexSpec("unit", "unit"),
             FlexSpec("data_source", "class"),
             FlexSpec("substance", "class"),
             FlexSpec("medium", "class"),
@@ -704,7 +704,7 @@ class Query:
         )
         return self._clone_with_graph(g2, bump_id=False)
 
-    @flex_query_rdf_inputs(specs=[FlexSpec("unit", "class")])
+    @flex_query_rdf_inputs(specs=[FlexSpec("unit", "unit")])
     def filter_by_unit(self, unit: str | list, *, _from: Optional[str] = None) -> "Query":
         if isinstance(unit, str):
             unit = [unit]
@@ -722,7 +722,7 @@ class Query:
             substance = [substance]
         return self.filter_data_nodes(predicate=OF_SUBSTANCE, value=substance, _from=_from)
 
-    @flex_query_rdf_inputs(specs=[FlexSpec("qk", "class")])
+    @flex_query_rdf_inputs(specs=[FlexSpec("qk", "quantity_kind")])
     def filter_by_quantity_kind(self, qk: str | list, *, _from: Optional[str] = None) -> "Query":
         if isinstance(qk, str):
             qk = [qk]
