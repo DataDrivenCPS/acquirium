@@ -10,6 +10,7 @@ COPY pyproject.toml /app/pyproject.toml
 COPY src /app/src
 COPY README.md /app/README.md
 COPY .python-version /app/.python-version
+COPY ontologies /app/ontologies
 RUN uv sync
 
 ENV FASTEMBED_CACHE_PATH=/app/.fastembed_cache

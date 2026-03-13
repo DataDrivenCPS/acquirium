@@ -29,12 +29,10 @@ from acquirium.TextMatch.qudt_store import QUDTStore
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("acquirium.manager")
+logger.setLevel(logging.INFO)
 
 DEFAULT_DATA_DIR = Path(".acquirium")
 DEFAULT_DB_NAME = "acquirium"
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("acquirium.manager")
-logger.setLevel(logging.INFO)
 
 def _wipe_dir_contents(base: Path) -> None:
     base.mkdir(parents=True, exist_ok=True)
@@ -383,10 +381,11 @@ class Manager:
                 logger.info("Building QUDT embedding index from scratch (%d concepts)...", len(all_concepts))
                 self._qudt_matcher.build_index(all_concepts)
             elif changed:
-                # Incremental update
-                added = [c for c in all_concepts if c["uri"] not in {m["uri"] for m in self._qudt_matcher._meta}]
+                # Incremental update — use public API instead of private _meta
+                indexed_uris = self._qudt_matcher.get_indexed_uris()
+                added = [c for c in all_concepts if c["uri"] not in indexed_uris]
                 logger.info("Updating QUDT embedding index: +%d added, -%d removed", len(added), len(removed_uris))
-                self._qudt_matcher.update_index(added, removed_uris)
+                self._qudt_matcher.update_index(added, removed_uris, all_concepts=all_concepts)
             else:
                 logger.info("QUDT data unchanged, embedding index up to date")
 
@@ -408,7 +407,7 @@ class Manager:
         text: str,
         kind: str | None = None,
         top_k: int = 5,
-        min_score: float = 0.6,
+        min_score: float = 0.5,
     ) -> list[dict[str, Any]]:
         """Resolve natural language text to ontology URIs via embedding similarity.
 
