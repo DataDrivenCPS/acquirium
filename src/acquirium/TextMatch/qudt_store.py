@@ -43,7 +43,7 @@ def _split_local_name(uri: str) -> list[str]:
     return [p.lower() for p in parts if p]
 
 
-def _build_surfaces(uri: str, label: str | None, symbol: str | None, ucum: str | None) -> list[str]:
+def _build_surfaces(uri: str, labels: list[str], symbol: str | None, ucum: str | None) -> list[str]:
     """Build the set of surface forms for a single QUDT concept."""
     surfaces: list[str] = []
     seen: set[str] = set()
@@ -53,7 +53,7 @@ def _build_surfaces(uri: str, label: str | None, symbol: str | None, ucum: str |
             seen.add(s)
             surfaces.append(s)
 
-    if label:
+    for label in labels:
         _add(label.lower())
 
     tokens = _split_local_name(uri)
@@ -88,6 +88,7 @@ class QUDTStore:
     ) -> list[dict[str, Any]]:
         """Parse a QUDT ontology, HTTP-first with local fallback. Returns concept dicts."""
         from rdflib import Graph, URIRef, Namespace
+        from rdflib.namespace import SKOS
 
         QUDT = Namespace("http://qudt.org/schema/qudt/")
         RDFS = Namespace("http://www.w3.org/2000/01/rdf-schema#")
@@ -118,12 +119,25 @@ class QUDTStore:
         type_uri = URIRef(rdf_type)
         concepts: list[dict[str, Any]] = []
 
+        # Label predicates to collect surfaces from
+        label_preds = [RDFS.label, SKOS.prefLabel, SKOS.altLabel]
+
         for subj in g.subjects(RDF.type, type_uri):
             uri = str(subj)
 
-            # Collect labels (may be multi-lang; take first non-empty)
-            labels = list(g.objects(subj, RDFS.label))
-            label = str(labels[0]) if labels else None
+            # Collect all labels; keep untagged or English only
+            labels: list[str] = []
+            display_label: str | None = None
+            for pred in label_preds:
+                for lit in g.objects(subj, pred):
+                    lang = getattr(lit, "language", None)
+                    if lang and not lang.startswith("en"):
+                        continue
+                    text = str(lit)
+                    if text and text not in labels:
+                        labels.append(text)
+                    if display_label is None:
+                        display_label = text
 
             # Symbol and ucumCode
             symbols = list(g.objects(subj, QUDT.symbol))
@@ -132,7 +146,7 @@ class QUDTStore:
             ucums = list(g.objects(subj, QUDT.ucumCode))
             ucum = str(ucums[0]) if ucums else None
 
-            surfaces = _build_surfaces(uri, label, symbol, ucum)
+            surfaces = _build_surfaces(uri, labels, symbol, ucum)
             if not surfaces:
                 continue
 
@@ -140,7 +154,7 @@ class QUDTStore:
             concepts.append({
                 "uri": uri,
                 "kind": kind,
-                "label": label or " ".join(_split_local_name(uri)) or uri,
+                "label": display_label or " ".join(_split_local_name(uri)) or uri,
                 "surfaces": surfaces,
                 "symbol": symbol,
                 "ucum": ucum,

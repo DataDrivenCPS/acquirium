@@ -265,7 +265,8 @@ class Manager:
         QUDT Units and QuantityKinds are handled separately by QUDTStore/_qudt_matcher.
         """
         concepts: list[dict[str, Any]] = []
-        seen: set[str] = set()
+        seen_class: set[str] = set()
+        seen_pred: set[str] = set()
 
         # Query 1: Classes (rdfs:Class, owl:Class, rdfs:subClassOf targets,
         # and any URI used as an rdf:type object)
@@ -283,7 +284,7 @@ class Manager:
           } UNION {
             ?x a ?uri .
           } UNION {
-            ?s a <urn:nawi-water-ontology#Class> .
+            ?uri a <urn:nawi-water-ontology#Class> .
           } UNION {
             ?uri <http://www.w3.org/2000/01/rdf-schema#subClassOf> ?x .
           }
@@ -317,9 +318,9 @@ class Manager:
                     uri_labels[uri].append(label)
 
             for uri, labels in uri_labels.items():
-                if uri in seen:
+                if uri in seen_class:
                     continue
-                seen.add(uri)
+                seen_class.add(uri)
                 surfaces = []
                 for lbl in labels:
                     lbl_lower = lbl.lower()
@@ -385,9 +386,9 @@ class Manager:
                     uri_labels[uri].append(label)
 
             for uri, labels in uri_labels.items():
-                if uri in seen:
+                if uri in seen_pred:
                     continue
-                seen.add(uri)
+                seen_pred.add(uri)
                 surfaces = []
                 for lbl in labels:
                     lbl_lower = lbl.lower()
