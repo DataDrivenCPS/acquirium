@@ -34,6 +34,18 @@ class Health(BaseModel):
     ok: bool
 
 
+class EmbeddingIndexStatus(BaseModel):
+    state: str          # "idle" | "building" | "ready" | "error"
+    concepts: int
+    surfaces: int
+    error: str | None
+    last_built: str | None
+    duration_s: float | None
+
+class EmbeddingStatus(BaseModel):
+    graph: EmbeddingIndexStatus
+    qudt: EmbeddingIndexStatus
+
 class IngestStatus(BaseModel):
     scheduled: int
     done: int
@@ -112,6 +124,15 @@ def ingest_status():
         done=status["done_tasks"],
         error=status["error_tasks"],
         total=status["total_tasks"],
+    )
+
+@app.get("/embedding_status", response_model=EmbeddingStatus)
+def embedding_status():
+    manager = app.state.manager
+    status = manager.embedding_status()
+    return EmbeddingStatus(
+        graph=EmbeddingIndexStatus(**status["graph"]),
+        qudt=EmbeddingIndexStatus(**status["qudt"]),
     )
 
 

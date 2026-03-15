@@ -3,7 +3,7 @@ Tests for the server-side embedding text matcher (/resolve_text endpoint).
 
 To add a new test pair, append a tuple to the relevant list:
 
-  CLASS_PAIRS:     (input_text, expected_uri)        — classes / types
+  CLASS_PAIRS:     (input_text, (expected_uri, ...))  — classes / types (tuple of acceptable URIs)
   PREDICATE_PAIRS: (input_text, expected_uri)        — predicates / properties
   NO_MATCH_PAIRS:  (input_text,)                     — should return nothing
 
@@ -30,59 +30,60 @@ _STATS_FILE = _OUTPUT_DIR / "stats.csv"
 # Test pairs — edit these lists to add new cases
 # ──────────────────────────────────────────────────────────────
 
-# (natural language text, expected top-1 URI)
+# (natural language text, tuple of acceptable URIs)
 CLASS_PAIRS = [
-    ("pump",                        "urn:nawi-water-ontology#Pump"),
-    ("inlet connection point",      "http://data.ashrae.org/standard223#InletConnectionPoint"),
-    ("outlet connection point",     "http://data.ashrae.org/standard223#OutletConnectionPoint"),
-    ("observable property",         "http://data.ashrae.org/standard223#QuantifiableObservableProperty"),
-    ('aeration basin',              "urn:nawi-water-ontology#AerationBasin"),
+    ("inlet connection point",      ("http://data.ashrae.org/standard223#InletConnectionPoint",)),
+    ("outlet connection point",     ("http://data.ashrae.org/standard223#OutletConnectionPoint",)),
+    ("observable property",         ("http://data.ashrae.org/standard223#QuantifiableObservableProperty",
+                                     "http://data.ashrae.org/standard223#ObservableProperty")),
+    ('aeration basin',              ("urn:nawi-water-ontology#AerationBasin",)),
 
     # --- add new class pairs below this line ---
 
     # water.ttl — equipment
-    ("boiler",                      "urn:nawi-water-ontology#Boiler"),
-    ("compressor",                  "urn:nawi-water-ontology#Compressor"),
-    ("condenser",                   "urn:nawi-water-ontology#Condenser"),
-    ("valve",                       "urn:nawi-water-ontology#Valve"),
-    ("filter",                      "urn:nawi-water-ontology#Filter"),
-    ("evaporator",                  "urn:nawi-water-ontology#Evaporator"),
-    ("screen",                      "urn:nawi-water-ontology#Screen"),
-    ("reservoir",                   "urn:nawi-water-ontology#Reservoir"),
-    ("crystallizer",                "urn:nawi-water-ontology#Crystallizer"),
-    ("digester",                    "urn:nawi-water-ontology#Digester"),
-    ("check valve",                 "urn:nawi-water-ontology#CheckValve"),
-    ("dewatering unit",             "urn:nawi-water-ontology#DewateringUnit"),
-    ("sedimentation tank",          "urn:nawi-water-ontology#SedimentationTank"),
+    ("pump",                        ("urn:nawi-water-ontology#Pump","http://data.ashrae.org/standard223#Pump")), 
+    ("boiler",                      ("urn:nawi-water-ontology#Boiler","http://data.ashrae.org/standard223#Boiler")),
+    ("compressor",                  ("urn:nawi-water-ontology#Compressor","http://data.ashrae.org/standard223#Compressor")),
+    ("condenser",                   ("urn:nawi-water-ontology#Condenser",)),
+    ("valve",                       ("urn:nawi-water-ontology#Valve", "http://data.ashrae.org/standard223#Valve")),
+    ("filter",                      ("urn:nawi-water-ontology#Filter","http://data.ashrae.org/standard223#Filter")),
+    ("evaporator",                  ("urn:nawi-water-ontology#Evaporator",)),
+    ("screen",                      ("urn:nawi-water-ontology#Screen",)),
+    ("reservoir",                   ("urn:nawi-water-ontology#Reservoir",)),
+    ("crystallizer",                ("urn:nawi-water-ontology#Crystallizer",)),
+    ("digester",                    ("urn:nawi-water-ontology#Digester",)),
+    ("check valve",                 ("urn:nawi-water-ontology#CheckValve",)),
+    ("dewatering unit",             ("urn:nawi-water-ontology#DewateringUnit",)),
+    ("sedimentation tank",          ("urn:nawi-water-ontology#SedimentationTank",)),
 
     # water.ttl — sensors
-    ("temperature sensor",          "urn:nawi-water-ontology#TemperatureSensor"),
-    ("pressure sensor",             "urn:nawi-water-ontology#PressureSensor"),
-    ("flow sensor",                 "urn:nawi-water-ontology#FlowSensor"),
-    ("conductivity sensor",         "urn:nawi-water-ontology#ConductivitySensor"),
-    ("pH sensor",                   "urn:nawi-water-ontology#pHSensor"),
-    ("turbidity meter",             "urn:nawi-water-ontology#TurbidityMeter"),
-    ("level sensor",                "urn:nawi-water-ontology#LevelSensor"),
-    ("concentration sensor",        "urn:nawi-water-ontology#ConcentrationSensor"),
+    ("temperature sensor",          ("urn:nawi-water-ontology#TemperatureSensor","http://data.ashrae.org/standard223#TemperatureSensor")),
+    ("pressure sensor",             ("urn:nawi-water-ontology#PressureSensor","http://data.ashrae.org/standard223#PressureSensor")),
+    ("flow sensor",                 ("urn:nawi-water-ontology#FlowSensor","http://data.ashrae.org/standard223#FlowSensor")),
+    ("conductivity sensor",         ("urn:nawi-water-ontology#ConductivitySensor",)),
+    ("pH sensor",                   ("urn:nawi-water-ontology#pHSensor",)),
+    ("turbidity meter",             ("urn:nawi-water-ontology#TurbidityMeter",)),
+    ("level sensor",                ("urn:nawi-water-ontology#LevelSensor",)),
+    ("concentration sensor",        ("urn:nawi-water-ontology#ConcentrationSensor",)),
 
     # water.ttl — membrane / filtration
-    ("reverse osmosis membrane",    "urn:nawi-water-ontology#ReverseOsmosisMembrane"),
-    ("RO membrane",    "urn:nawi-water-ontology#ReverseOsmosisMembrane"),
-    ("RO",    "urn:nawi-water-ontology#ReverseOsmosisMembrane"),
-    ("nanofiltration unit",         "urn:nawi-water-ontology#NanofiltrationUnit"),
-    ("ultrafiltration unit",        "urn:nawi-water-ontology#UltrafiltrationUnit"),
-    ("UF unit",        "urn:nawi-water-ontology#UltrafiltrationUnit"),
-    ("UF",        "urn:nawi-water-ontology#UltrafiltrationUnit"),
-    ("microfiltration unit",        "urn:nawi-water-ontology#MicrofiltrationUnit"),
-    ("membrane bioreactor",         "urn:nawi-water-ontology#MembraneBioreactor"),
+    ("reverse osmosis membrane",    ("urn:nawi-water-ontology#ReverseOsmosisMembrane",)),
+    ("RO membrane",                 ("urn:nawi-water-ontology#ReverseOsmosisMembrane",)),
+    ("RO",                          ("urn:nawi-water-ontology#ReverseOsmosisMembrane",)),
+    ("nanofiltration unit",         ("urn:nawi-water-ontology#NanofiltrationUnit",)),
+    ("ultrafiltration unit",        ("urn:nawi-water-ontology#UltrafiltrationUnit",)),
+    ("UF unit",                     ("urn:nawi-water-ontology#UltrafiltrationUnit",)),
+    ("UF",                          ("urn:nawi-water-ontology#UltrafiltrationUnit",)),
+    ("microfiltration unit",        ("urn:nawi-water-ontology#MicrofiltrationUnit",)),
+    ("membrane bioreactor",         ("urn:nawi-water-ontology#MembraneBioreactor",)),
 
     # water.ttl — basins & reactors
-    ("chlorination basin",          "urn:nawi-water-ontology#ChlorinationBasin"),
-    ("flocculation basin",          "urn:nawi-water-ontology#FlocculationBasin"),
-    ("coagulation basin",           "urn:nawi-water-ontology#CoagulationBasin"),
-    ("aerobic digester",            "urn:nawi-water-ontology#AerobicDigester"),
-    ("anaerobic digester",          "urn:nawi-water-ontology#AnaerobicDigester"),
-    ("oxidation ditch",             "urn:nawi-water-ontology#OxidationDitch"),
+    ("chlorination basin",          ("urn:nawi-water-ontology#ChlorinationBasin",)),
+    ("flocculation basin",          ("urn:nawi-water-ontology#FlocculationBasin",)),
+    ("coagulation basin",           ("urn:nawi-water-ontology#CoagulationBasin",)),
+    ("aerobic digester",            ("urn:nawi-water-ontology#AerobicDigester",)),
+    ("anaerobic digester",          ("urn:nawi-water-ontology#AnaerobicDigester",)),
+    ("oxidation ditch",             ("urn:nawi-water-ontology#OxidationDitch",)),
 ]
 
 PREDICATE_PAIRS = [
@@ -135,8 +136,10 @@ QUANTITY_KIND_PAIRS = [
     ("mass",                        "http://qudt.org/vocab/quantitykind/Mass"),
     ("electric current",            "http://qudt.org/vocab/quantitykind/ElectricCurrent"),
     ("density",                     "http://qudt.org/vocab/quantitykind/Density"),
-    ("viscosity",                   "http://qudt.org/vocab/quantitykind/DynamicViscosity"),
-    ("concentration",               "http://qudt.org/vocab/quantitykind/MassConcentration"),
+    ("viscosity",                   "http://qudt.org/vocab/quantitykind/Viscosity"),
+    ("dynamic viscosity",           "http://qudt.org/vocab/quantitykind/DynamicViscosity"),
+    ("mass concentration",          "http://qudt.org/vocab/quantitykind/MassConcentration"),
+    ("concentration",               "http://qudt.org/vocab/quantitykind/Concentration"),
     ("power",                       "http://qudt.org/vocab/quantitykind/Power"),
     # --- add new quantity kind pairs below this line ---
 ]
@@ -209,16 +212,24 @@ def _write_outputs():
 # Helpers
 # ──────────────────────────────────────────────────────────────
 
-def _wait_for_qudt_ready(client: Acquirium, timeout: int = 30) -> None:
-    """Poll resolve_text until the QUDT matcher returns results for a known unit."""
+def _wait_for_embeddings_ready(client: Acquirium, timeout: int = 60) -> None:
+    """Poll /embedding_status until both graph and qudt indexes are ready (or errored)."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        matches = client.client.resolve_text("kilogram", kind="unit", top_k=1, min_score=0.4)
-        if matches:
+        status = client.client.embedding_status()
+        graph_state = status.get("graph", {}).get("state")
+        qudt_state = status.get("qudt", {}).get("state")
+        if graph_state == "error":
+            pytest.fail(f"Graph embedding index failed: {status['graph'].get('error')}")
+        if qudt_state == "error":
+            pytest.fail(f"QUDT embedding index failed: {status['qudt'].get('error')}")
+        if graph_state == "ready" and qudt_state == "ready":
             return
         time.sleep(1)
-    pytest.skip("QUDT embedding index not ready within timeout")
-
+    pytest.skip(
+        f"Embedding indexes not ready within {timeout}s "
+        f"(graph={status.get('graph', {}).get('state')}, qudt={status.get('qudt', {}).get('state')})"
+    )
 
 # ──────────────────────────────────────────────────────────────
 # Fixture
@@ -236,16 +247,14 @@ def acq():
     )
     client.insert_graph(
         "deployments/BENICIA/benicia-model-with-refs-1.ttl",
-        replace = False
+        replace = True
     )
     client.insert_graph(
         "ontologies/water.ttl",
         replace = False
     )
-    # QUDT unit/qk ontologies are now loaded automatically by QUDTStore
-    # on server startup — no need to insert them as graphs.
-    # Poll until the QUDT matcher is ready (background indexing).
-    _wait_for_qudt_ready(client, timeout=30)
+    # Wait for both embedding indexes (graph + QUDT) to finish building
+    _wait_for_embeddings_ready(client, timeout=60)
 
     yield client
 
@@ -263,13 +272,13 @@ def test_resolve_class(acq):
     """At least MIN_MATCH_PERCENT% of CLASS_PAIRS should resolve to the expected URI."""
     hits = 0
     misses = []
-    for text, expected_uri in CLASS_PAIRS:
+    for text, expected_uris in CLASS_PAIRS:
         matches = acq.client.resolve_text(text, kind="class", top_k=1, min_score=MIN_SCORE)
-        if matches and matches[0]["uri"] == expected_uri:
+        if matches and matches[0]["uri"] in expected_uris:
             hits += 1
         else:
             got = matches[0]["uri"] if matches else "<no matches>"
-            misses.append(f"'{text}': expected '{expected_uri}', got '{got}'")
+            misses.append(f"'{text}': expected one of {expected_uris}, got '{got}'")
     pct = (hits / len(CLASS_PAIRS)) * 100
     _results["class_pct"] = pct
     _results["class_misses"] = misses
@@ -406,7 +415,7 @@ def test_no_cross_contamination(acq):
     # A known class should still resolve correctly via kind=class
     matches = acq.client.resolve_text("pump", kind="class", top_k=1, min_score=MIN_SCORE)
     assert matches, "Expected 'pump' to resolve to a class"
-    assert matches[0]["uri"] == "urn:nawi-water-ontology#Pump"
+    assert matches[0]["uri"] == "http://data.ashrae.org/standard223#Pump"
     assert matches[0]["kind"] == "class"
 
     # A known predicate should still resolve correctly

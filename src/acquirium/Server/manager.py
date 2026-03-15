@@ -166,6 +166,13 @@ class Manager:
         # Kept for backward compat — points to graph matcher
         self.embedding_matcher = self._graph_matcher
 
+        # Embedding index status tracking
+        self._embedding_status_lock = threading.Lock()
+        self._embedding_status: dict[str, dict[str, Any]] = {
+            "graph": {"state": "idle", "concepts": 0, "surfaces": 0, "error": None, "last_built": None, "duration_s": None},
+            "qudt":  {"state": "idle", "concepts": 0, "surfaces": 0, "error": None, "last_built": None, "duration_s": None},
+        }
+
         # Startup: graph index (sync if cache hit, background if miss)
         self._startup_graph_index()
         # Startup: QUDT index (always background)
@@ -263,6 +270,8 @@ class Manager:
         # Query 1: Classes (rdfs:Class, owl:Class, rdfs:subClassOf targets,
         # and any URI used as an rdf:type object)
         # NOTE: QUDT Unit/QuantityKind removed — handled by _qudt_matcher
+        # Labels: rdfs:label, skos:prefLabel, skos:altLabel
+        # Language filter: keep English-tagged or untagged labels only
         class_query = """
         SELECT DISTINCT ?uri ?label WHERE {
           {
@@ -273,38 +282,68 @@ class Manager:
             ?x <http://www.w3.org/2000/01/rdf-schema#subClassOf> ?uri .
           } UNION {
             ?x a ?uri .
+          } UNION {
+            ?s a <urn:nawi-water-ontology#Class> .
+          } UNION {
+            ?uri <http://www.w3.org/2000/01/rdf-schema#subClassOf> ?x .
           }
-          OPTIONAL { ?uri <http://www.w3.org/2000/01/rdf-schema#label> ?label . }
+          OPTIONAL {
+            {
+              ?uri <http://www.w3.org/2000/01/rdf-schema#label> ?label .
+            } UNION {
+              ?uri <http://www.w3.org/2004/02/skos/core#prefLabel> ?label .
+            } UNION {
+              ?uri <http://www.w3.org/2004/02/skos/core#altLabel> ?label .
+            }
+            FILTER(LANG(?label) = "" || LANGMATCHES(LANG(?label), "en"))
+          }
           FILTER(isIRI(?uri))
         }
         """
         try:
             res = self.graph_store.sparql_query(class_query, use_union=True)
+            # Aggregate all labels per URI
+            uri_labels: dict[str, list[str]] = {}
+            uri_first_label: dict[str, str | None] = {}
             for row in res.get("rows", []):
                 uri = str(row[0]) if row[0] else None
                 label = str(row[1]).strip('"') if row[1] else None
-                if not uri or uri in seen:
+                if not uri:
+                    continue
+                if uri not in uri_labels:
+                    uri_labels[uri] = []
+                    uri_first_label[uri] = label
+                if label and label not in uri_labels[uri]:
+                    uri_labels[uri].append(label)
+
+            for uri, labels in uri_labels.items():
+                if uri in seen:
                     continue
                 seen.add(uri)
                 surfaces = []
-                if label:
-                    surfaces.append(label.lower())
+                for lbl in labels:
+                    lbl_lower = lbl.lower()
+                    if lbl_lower not in surfaces:
+                        surfaces.append(lbl_lower)
                 # Always add tokenized local name as a surface
                 tokens = _split_local_name(uri)
                 if tokens:
                     joined = " ".join(tokens)
                     if joined not in surfaces:
                         surfaces.append(joined)
+                display_label = uri_first_label[uri] or (joined if tokens else uri)
                 concepts.append({
                     "uri": uri,
                     "kind": "class",
-                    "label": label or (joined if tokens else uri),
+                    "label": display_label,
                     "surfaces": surfaces,
                 })
         except Exception:
             logger.warning("Failed to extract class concepts", exc_info=True)
 
         # Query 2: Predicates (declared properties + any IRI used as a predicate)
+        # Labels: rdfs:label, skos:prefLabel, skos:altLabel
+        # Language filter: keep English-tagged or untagged labels only
         pred_query = """
         SELECT DISTINCT ?uri ?label WHERE {
           {
@@ -316,30 +355,54 @@ class Manager:
           } UNION {
             ?s ?uri ?o .
           }
-          OPTIONAL { ?uri <http://www.w3.org/2000/01/rdf-schema#label> ?label . }
+          OPTIONAL {
+            {
+              ?uri <http://www.w3.org/2000/01/rdf-schema#label> ?label .
+            } UNION {
+              ?uri <http://www.w3.org/2004/02/skos/core#prefLabel> ?label .
+            } UNION {
+              ?uri <http://www.w3.org/2004/02/skos/core#altLabel> ?label .
+            }
+            FILTER(LANG(?label) = "" || LANGMATCHES(LANG(?label), "en"))
+          }
           FILTER(isIRI(?uri))
         }
         """
         try:
             res = self.graph_store.sparql_query(pred_query, use_union=True)
+            # Aggregate all labels per URI
+            uri_labels: dict[str, list[str]] = {}
+            uri_first_label: dict[str, str | None] = {}
             for row in res.get("rows", []):
                 uri = str(row[0]) if row[0] else None
                 label = str(row[1]).strip('"') if row[1] else None
-                if not uri or uri in seen:
+                if not uri:
+                    continue
+                if uri not in uri_labels:
+                    uri_labels[uri] = []
+                    uri_first_label[uri] = label
+                if label and label not in uri_labels[uri]:
+                    uri_labels[uri].append(label)
+
+            for uri, labels in uri_labels.items():
+                if uri in seen:
                     continue
                 seen.add(uri)
                 surfaces = []
-                if label:
-                    surfaces.append(label.lower())
+                for lbl in labels:
+                    lbl_lower = lbl.lower()
+                    if lbl_lower not in surfaces:
+                        surfaces.append(lbl_lower)
                 tokens = _split_local_name(uri)
                 if tokens:
                     joined = " ".join(tokens)
                     if joined not in surfaces:
                         surfaces.append(joined)
+                display_label = uri_first_label[uri] or (joined if tokens else uri)
                 concepts.append({
                     "uri": uri,
                     "kind": "predicate",
-                    "label": label or (joined if tokens else uri),
+                    "label": display_label,
                     "surfaces": surfaces,
                 })
         except Exception:
@@ -347,20 +410,38 @@ class Manager:
 
         return concepts
 
+    def _update_embedding_status(self, index: str, **kwargs: Any) -> None:
+        """Update the embedding status for a given index (thread-safe)."""
+        with self._embedding_status_lock:
+            self._embedding_status[index].update(kwargs)
+
     def _startup_graph_index(self) -> None:
         """Build graph embedding index on startup. Uses cache if available."""
+        self._update_embedding_status("graph", state="building")
+        t0 = perf_counter()
         try:
             concepts = self._extract_concepts_for_embedding()
             if concepts:
                 self._graph_matcher.build_index(concepts)
+                n_surfaces = sum(len(c.get("surfaces", [])) for c in concepts)
+                elapsed = perf_counter() - t0
+                self._update_embedding_status(
+                    "graph", state="ready", concepts=len(concepts),
+                    surfaces=n_surfaces, last_built=datetime.now().isoformat(),
+                    duration_s=round(elapsed, 2), error=None,
+                )
                 logger.info("Graph embedding index: %d concepts", len(concepts))
             else:
+                self._update_embedding_status("graph", state="ready", concepts=0, surfaces=0)
                 logger.info("No concepts found in graph; graph embedding index is empty")
-        except Exception:
+        except Exception as exc:
+            self._update_embedding_status("graph", state="error", error=str(exc))
             logger.warning("Failed to build graph embedding index", exc_info=True)
 
     def _startup_qudt_task(self) -> None:
         """Background task: extract QUDT, diff, build/update QUDT embedding index."""
+        self._update_embedding_status("qudt", state="building")
+        t0 = perf_counter()
         try:
             if self._qudt_store.has_cache() and not self._qudt_matcher.is_ready:
                 # Try loading cached concepts + cached embeddings first
@@ -374,6 +455,7 @@ class Manager:
 
             if not all_concepts:
                 logger.warning("QUDT extraction returned 0 concepts")
+                self._update_embedding_status("qudt", state="ready", concepts=0, surfaces=0)
                 return
 
             if not self._qudt_matcher.is_ready:
@@ -389,17 +471,36 @@ class Manager:
             else:
                 logger.info("QUDT data unchanged, embedding index up to date")
 
-        except Exception:
+            n_surfaces = sum(len(c.get("surfaces", [])) for c in all_concepts)
+            elapsed = perf_counter() - t0
+            self._update_embedding_status(
+                "qudt", state="ready", concepts=len(all_concepts),
+                surfaces=n_surfaces, last_built=datetime.now().isoformat(),
+                duration_s=round(elapsed, 2), error=None,
+            )
+
+        except Exception as exc:
+            self._update_embedding_status("qudt", state="error", error=str(exc))
             logger.warning("Failed QUDT startup task", exc_info=True)
 
     def _rebuild_graph_index_background(self) -> None:
         """Rebuild graph embedding index in background after insert_graph."""
+        self._update_embedding_status("graph", state="building")
+        t0 = perf_counter()
         try:
             concepts = self._extract_concepts_for_embedding()
             if concepts:
                 self._graph_matcher.build_index(concepts)
+                n_surfaces = sum(len(c.get("surfaces", [])) for c in concepts)
+                elapsed = perf_counter() - t0
+                self._update_embedding_status(
+                    "graph", state="ready", concepts=len(concepts),
+                    surfaces=n_surfaces, last_built=datetime.now().isoformat(),
+                    duration_s=round(elapsed, 2), error=None,
+                )
                 logger.info("Graph embedding index rebuilt: %d concepts", len(concepts))
-        except Exception:
+        except Exception as exc:
+            self._update_embedding_status("graph", state="error", error=str(exc))
             logger.warning("Failed to rebuild graph embedding index", exc_info=True)
 
     def resolve_text(
@@ -977,6 +1078,11 @@ class Manager:
             {"cols": [...], "rows": [...]}
         """
         return self.graph_store.sparql_query(query, use_union=use_union)
+
+    def embedding_status(self) -> dict[str, Any]:
+        """Return the current state of each embedding index."""
+        with self._embedding_status_lock:
+            return {k: dict(v) for k, v in self._embedding_status.items()}
 
     def ingest_status(self) -> dict[str, Any]:
         """
