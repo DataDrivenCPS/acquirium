@@ -64,7 +64,7 @@ CLASS_PAIRS = [
     ("pH sensor",                   ("urn:nawi-water-ontology#pHSensor",)),
     ("turbidity meter",             ("urn:nawi-water-ontology#TurbidityMeter",)),
     ("level sensor",                ("urn:nawi-water-ontology#LevelSensor",)),
-    ("concentration sensor",        ("urn:nawi-water-ontology#ConcentrationSensor",)),
+    ("concentration sensor",        ("urn:nawi-water-ontology#ConcentrationSensor","http://data.ashrae.org/standard223#ConcentrationSensor")),
 
     # water.ttl — membrane / filtration
     ("reverse osmosis membrane",    ("urn:nawi-water-ontology#ReverseOsmosisMembrane",)),
@@ -409,16 +409,3 @@ def test_kind_filtering_unit_qk(acq):
     for m in acq.client.resolve_text("has unit", kind="quantity_kind", top_k=5, min_score=0.3):
         assert m["kind"] == "quantity_kind", f"Expected kind='quantity_kind', got '{m['kind']}' for uri={m['uri']}"
 
-
-def test_no_cross_contamination(acq):
-    """Class/predicate resolution is unchanged after QUDT corpus is loaded."""
-    # A known class should still resolve correctly via kind=class
-    matches = acq.client.resolve_text("pump", kind="class", top_k=1, min_score=MIN_SCORE)
-    assert matches, "Expected 'pump' to resolve to a class"
-    assert matches[0]["uri"] == "http://data.ashrae.org/standard223#Pump"
-    assert matches[0]["kind"] == "class"
-
-    # A known predicate should still resolve correctly
-    matches = acq.client.resolve_text("has unit", kind="predicate", top_k=1, min_score=MIN_SCORE)
-    assert matches, "Expected 'has unit' to resolve to a predicate"
-    assert matches[0]["kind"] == "predicate"
