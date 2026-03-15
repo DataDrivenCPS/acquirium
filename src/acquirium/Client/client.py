@@ -185,6 +185,18 @@ class AcquiriumClient:
         response.raise_for_status()
         return response.json()
 
+    def embedding_status(self) -> dict:
+        """
+        Get the current status of embedding index builds.
+
+        Returns:
+            A dictionary with per-index status (graph, qudt).
+        """
+        url = f"{self.base_url}/embedding_status"
+        response = requests.get(url)
+        response.raise_for_status()
+        return response.json()
+
     def is_ongoing_ingest(self) -> bool:
         """
         Check if there are ongoing ingestion tasks.
