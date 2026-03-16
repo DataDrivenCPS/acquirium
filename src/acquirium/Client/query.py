@@ -672,6 +672,37 @@ class Query:
             cast_value=cast_value,
         )
 
+    def data(
+        self,
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        limit: int | None = None,
+        order: str = "asc",
+        use_union: bool = True,
+        cast_value: str | None = "float",
+    ) -> "DataObject":
+        """Return a DataObject with alias-driven, structured access to sensor data.
+
+        Example::
+
+            data = query.data(start=..., end=..., cast_value="float")
+            data["chlorine"]             # pl.DataFrame [time, value]
+            for uri, group in data.by("basin"):
+                cl = group["chlorine"]   # scoped to this basin
+            df = data.dataframe()        # [time, alias_col_1, alias_col_2, ...]
+        """
+        from acquirium.Client.data_object import DataObject
+        return DataObject._from_query(
+            self,
+            start=start,
+            end=end,
+            limit=limit,
+            order=order,
+            use_union=use_union,
+            cast_value=cast_value,
+        )
+
 
     @flex_query_rdf_inputs(specs=[FlexSpec("_class", "class")])
     def filter_data_nodes(
