@@ -118,6 +118,7 @@ class AppContext:
     query: Query | None
     params: dict[str, Any]
     queries: dict[str, Query] | None = None
+    data: Any | None = None
 
 
 class AppOutputSpec(BaseModel):
