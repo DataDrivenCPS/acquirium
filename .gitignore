@@ -212,3 +212,5 @@ scripts/benchmark/chain/*.csv
 scripts/benchmark/chain/*.parquet
 scripts/benchmark/chain/memo
 scripts/benchmark/scalability/*.csv
+
+dpr*
