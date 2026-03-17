@@ -67,6 +67,7 @@ Existing external reference types (open an issue or contact us for other!):
 - "urn:acquirium#CSVReference"      : for connecting CSV files
 - "urn:acquirium#ParquetReference"  : for connecting Parquet files
 - "urn:acquirium#MQTTReference"     : for connecting MQTT streams
+- "urn:acquirium#PGReference"       : for connection a Postgres database
 
 ---
 ### 5. Reference Specific Triples
@@ -134,6 +135,36 @@ Required triples for `acq:MQTTReference`:
 
 ---
 
+#### 5.5 PGReference
+
+Use an existing Postgres Database to retrieve data (e.g. a historian)
+
+Required triples for `acq:PGReference`:
+
+- `ref_node a acq:PGReference`
+
+
+CHOOSE EITHER:
+- `ref_node acq:PG_DSN "postgresql://user:pass@localhost:5432/dpr" `
+OR
+- `ref_node acq:PG_HOST "localhost"`
+- `ref_node acq:PG_PORT "5432"`           (default: `5432`)
+- `ref_node acq:PG_DB "dpr"`
+- `ref_node acq:PG_USER "user"`
+- `ref_node acq:PG_PASS "pass"`
+
+THEN CHOOSE EITHER:
+- `ref_node acq:PG_Query "SELECT time, value FROM data WHERE point_uri = 'sensor1' ORDER BY time"`
+OR
+- `ref_node acq:PG_Table "data"`
+- `ref_node acq:PG_TimeColumn "time"`     (default: `time`)
+- `ref_node acq:PG_ValueColumn "value"`   (default: `value`)
+- `ref_node acq:PG_PointFilter "sensor1"` (optional — filters by `point_uri` column in the external table)
+
+**Important Note:** When using `PG_Query`, the query must return exactly two columns: the first for timestamps and the second for values. When using `PG_Table`, the table is expected to have a `point_uri` column if `PG_PointFilter` is provided.
+
+---
+
 ### 6. Example: Assigning an MQTT External Reference
 
 The following example illustrates the full pattern using a pump work stream. It links a data node to an MQTT reference node and describes how to extract the timestamp and value from JSON payload fields.
@@ -153,6 +184,42 @@ wbs:pump_inlet_flow_mass_seawater_mqtt_ref a ns1:MQTTReference ;
     ns1:Topic "saltwater_flow_mass_rate" ;
     ns1:time_key "Timestamp" ;
     ns1:value_key "Value" .
+```
+---
+
+### 7. Example: Assigning a PGReference (External Postgres Historian)
+
+The following example links a data node to a PGReference using a full DSN connection string. The external database table `data` stores rows in `(point_uri, time, value)` format, and `PG_PointFilter` selects only the rows matching this sensor.
+
+```
+@PREFIX ns1: <urn:acquirium#>
+@PREFIX wbs: <urn:ex/>
+wbs:Pump1-in-flow-mass-seawater a s223:QuantifiableObservableProperty ;
+    s223:ofMedium nawi:Water-Seawater ;
+    qudt:hasQuantityKind qudtqk:MassFlowRate ;
+    qudt:hasUnit unit:KiloGM-PER-SEC ;
+    ns1:hasExternalReference wbs:pump_inlet_flow_mass_seawater_pg_ref .
+
+wbs:pump_inlet_flow_mass_seawater_pg_ref a ns1:PGReference ;
+    ns1:PG_DSN "postgresql://user:pass@localhost:5432/dpr" ;
+    ns1:PG_Table "data" ;
+    ns1:PG_TimeColumn "time" ;
+    ns1:PG_ValueColumn "value" ;
+    ns1:PG_PointFilter "saltwater_flow_mass_rate" .
+```
+
+Alternatively, using individual connection parameters and a custom query:
+
+```
+@PREFIX ns1: <urn:acquirium#>
+@PREFIX wbs: <urn:ex/>
+wbs:pump_inlet_flow_mass_seawater_pg_ref a ns1:PGReference ;
+    ns1:PG_HOST "localhost" ;
+    ns1:PG_PORT "5432" ;
+    ns1:PG_DB "dpr" ;
+    ns1:PG_USER "user" ;
+    ns1:PG_PASS "pass" ;
+    ns1:PG_Query "SELECT time, value FROM data WHERE point_uri = 'saltwater_flow_mass_rate' ORDER BY time" .
 ```
 ---
 
