@@ -8,7 +8,7 @@ import logging
 from time import perf_counter
 from rdflib import Graph, URIRef, Node, Literal, RDF, RDFS
 
-from acquirium.Storage import OxigraphGraphStore, TimescaleStore
+from acquirium.Storage import OxigraphGraphStore, TimescaleStore, PGReferenceRegistry, PGReferenceInfo, resolve_dsn
 from acquirium.internals.qudt_units import QUDTUnitConverter
 from acquirium.internals.models import LogEntry, TimeIntervalModel, AppSpec, AppRunRequest
 from acquirium.internals.internals_namespaces import *
@@ -134,6 +134,8 @@ class Manager:
         self.pg_dsn = effective_dsn
         self.mqtt_ingest = MQTTIngestService(pg_dsn=effective_dsn)
         self._connect_mqtt_streams_from_graph()
+        self.pg_registry = PGReferenceRegistry()
+        self._scan_pg_references_from_graph()
         self.app_storage_root = Path(
             os.getenv("ACQUIRIUM_APP_STORAGE_ROOT", str(self.data_dir / "apps"))
         )
@@ -242,6 +244,56 @@ class Manager:
             self.mqtt_ingest.ensure_subscribed(spec)
             count += 1
 
+        return count
+
+    def _scan_pg_references_from_graph(self) -> int:
+        """Scan graph for PGReference nodes and register them in the registry."""
+        q = f"""
+        SELECT ?data ?ref ?dsn ?host ?port ?db ?user ?pass ?table ?query ?tcol ?vcol ?pfilter
+        WHERE {{
+          ?data <{HAS_EXTERNAL_REFERENCE}> ?ref .
+          ?ref a <{PG_REFERENCE}> .
+          OPTIONAL {{ ?ref <{PG_DSN}> ?dsn . }}
+          OPTIONAL {{ ?ref <{PG_HOST}> ?host . }}
+          OPTIONAL {{ ?ref <{PG_PORT}> ?port . }}
+          OPTIONAL {{ ?ref <{PG_DB}> ?db . }}
+          OPTIONAL {{ ?ref <{PG_USER}> ?user . }}
+          OPTIONAL {{ ?ref <{PG_PASS}> ?pass . }}
+          OPTIONAL {{ ?ref <{PG_TABLE}> ?table . }}
+          OPTIONAL {{ ?ref <{PG_QUERY}> ?query . }}
+          OPTIONAL {{ ?ref <{PG_TIME_COL}> ?tcol . }}
+          OPTIONAL {{ ?ref <{PG_VALUE_COL}> ?vcol . }}
+          OPTIONAL {{ ?ref <{PG_POINT_FILTER}> ?pfilter . }}
+        }}
+        """
+        res = self.graph_store.sparql_query(q, use_union=True)
+        rows = res.get("rows", [])
+
+        count = 0
+        for row in rows:
+            (data_uri, ref_uri, dsn, host, port, db, user, passwd,
+             table, custom_query, tcol, vcol, pfilter) = row
+            try:
+                s = lambda v: str(v).strip().strip('"') if v else None
+                resolved = resolve_dsn(
+                    dsn=s(dsn), host=s(host), port=s(port),
+                    db=s(db), user=s(user), password=s(passwd),
+                )
+                info = PGReferenceInfo(
+                    dsn=resolved,
+                    table=s(table),
+                    custom_query=s(custom_query),
+                    time_col=s(tcol) or "time",
+                    value_col=s(vcol) or "value",
+                    point_filter=s(pfilter),
+                )
+                self.pg_registry.register(str(ref_uri), info)
+                count += 1
+            except Exception:
+                logger.warning("Failed to register PGReference %s", ref_uri, exc_info=True)
+
+        if count:
+            logger.info("Registered %d PGReference(s) from graph", count)
         return count
 
     def _save_ingest_cache(self, cache: dict[str, Any]) -> None:
@@ -579,6 +631,7 @@ class Manager:
             self.graph_store.insert_graph(rdf_graph, format=format, replace=replace)
             logging.info("acquirium: inserted graph into store, now ingesting data")
             self._connect_mqtt_streams_from_graph()
+            self._scan_pg_references_from_graph()
             # Rebuild graph embedding index in background (does not affect QUDT index)
             self._executor.submit(self._rebuild_graph_index_background)
 
@@ -598,16 +651,21 @@ class Manager:
         """
         Retrieve time series data for a given point URI within an optional time range.
 
-        Args:
-            uri: The URI of the time series point.
-            start: Optional start time in ISO format.
-            end: Optional end time in ISO format.
-            limit: Optional maximum number of results to return.
-            order: Order of the results, either "asc" or "desc".
+        If the URI is a registered PGReference, data is fetched directly from
+        the external Postgres database.  Otherwise the internal TimescaleDB is used.
 
         Returns:
             An iterator that yields batches of time series data as Arrow RecordBatches.
         """
+        if self.pg_registry.is_pg_reference(uri):
+            return self.pg_registry.timeseries(
+                point_uri=uri,
+                start=start,
+                end=end,
+                limit=limit,
+                order=order,
+                batch_size=batch_size,
+            )
         return self.timescale.timeseries(
             point_uri=uri,
             start=start,
