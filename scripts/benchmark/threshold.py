@@ -15,26 +15,33 @@ class ChlorineLevelWarning(App):
     ]
 
     def build_query(self, aq: Acquirium):
-        return aq.find_entity(_class="Chlorination Basin").find_related_data(unit=["MilliGM-PER-L"])
+        return (aq.find_entity(_class="Chlorination Basin", alias="basin")
+                  .find_related_data(unit=["MilliGM-PER-L"], alias="chlorine"))
 
     def run(self, ctx: AppContext) -> list[Output]:
-        df = ctx.query.latest_data(cast_value='float')
-        if df.is_empty() or df.shape[0] == 0:
-            message = {"text" : "No data available for chlorine level.",
-                       "severity": "LOW",
-                       "data": {}}
-        elif df[0,1] >75:
-            message = {"text" : "Chlorine level exceeds safe threshold.",
-                       "severity": "HIGH",
-                       "data": {"chlorine_level": df[0,1], "timestamp": df[0,0].isoformat()}}
-        else:
-            message = {"text" : "Chlorine level is within safe limits.",
-                       "severity": "NORMAL",
-                       "data": {"chlorine_level": df[0,1], "timestamp": df[0,0].isoformat()}}
-        return [Output.trigger(
-            url= "host.docker.internal:10000/alerts",
-            message=message
-        )]
+        data = ctx.query.data(limit=1, order="desc", cast_value="float")
+        outputs = []
+        for basin_uri, group in data.by("basin"):
+            cl = group["chlorine"]
+            if cl.is_empty():
+                message = {"text": "No data available for chlorine level.",
+                           "severity": "LOW",
+                           "data": {}}
+            elif cl["value"][0] > 75:
+                message = {"text": "Chlorine level exceeds safe threshold.",
+                           "severity": "HIGH",
+                           "data": {"chlorine_level": cl["value"][0],
+                                    "timestamp": cl["time"][0].isoformat()}}
+            else:
+                message = {"text": "Chlorine level is within safe limits.",
+                           "severity": "NORMAL",
+                           "data": {"chlorine_level": cl["value"][0],
+                                    "timestamp": cl["time"][0].isoformat()}}
+            outputs.append(Output.trigger(
+                url="host.docker.internal:10000/alerts",
+                message=message
+            ))
+        return outputs
 
 
 if __name__ == "__main__":
@@ -42,7 +49,7 @@ if __name__ == "__main__":
     # acq.insert_graph("deployments/BENICIA/benicia-model-with-refs-thresholds.ttl")
     # acq.register_app(ChlorineLevelWarning())
     # acq.run_app("chlorine_level_warning", keep_alive=True, interval=10)
-    # q = acq.find_entity(_class="Chlorination Basin").find_related_data(unit=["MilliGM-PER-L"])
+    # q = acq.find_entity(_class="Chlorination Basin").find_related_data(unit=["MilliGRM-PER-L"])
     # q.metadata_head()
     # print(q.latest_data())
     # acq.stop_app(app_id="chlorine_level_warning")
