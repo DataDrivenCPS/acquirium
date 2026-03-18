@@ -615,7 +615,7 @@ class Manager:
     ###########################################
 
 
-    def insert_graph(self, rdf_graph: str, format: str = "turtle", replace = True) -> None:
+    def insert_graph(self, rdf_graph: str, format: str = "turtle", replace = True, wait_for_embedding: bool = False) -> None:
         """
         Insert RDF graph into the graph store to the main graph
 
@@ -625,15 +625,22 @@ class Manager:
             is the location of the source.
             format: Format of the RDF data [turtle | n3 | xml | trix]
             replace: If True, replaces the existing main graph. If False, appends to it.
+            wait_for_embedding: If True, blocks until the embedding index rebuild is
+                complete and logs progress. If False (default), rebuilds in the background.
         """
-        
+
         try:
             self.graph_store.insert_graph(rdf_graph, format=format, replace=replace)
             logging.info("acquirium: inserted graph into store, now ingesting data")
             self._connect_mqtt_streams_from_graph()
             self._scan_pg_references_from_graph()
-            # Rebuild graph embedding index in background (does not affect QUDT index)
-            self._executor.submit(self._rebuild_graph_index_background)
+
+            if wait_for_embedding:
+                logger.info("acquirium: rebuilding embedding index (synchronous)...")
+                self._rebuild_graph_index_background()
+                logger.info("acquirium: embedding index rebuild complete")
+            else:
+                self._executor.submit(self._rebuild_graph_index_background)
 
         except Exception as e:
             logging.error("acquirium: failed to insert graph: %s", e)
