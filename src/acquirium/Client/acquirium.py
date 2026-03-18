@@ -51,19 +51,21 @@ class Acquirium:
     # GRAPH API
     # ------------------------------------------------------------------
 
-    def insert_graph(self, rdf_graph: str, format: str = "turtle", replace = True) -> None:
+    def insert_graph(self, rdf_graph: str, format: str = "turtle", replace = True, wait_for_embedding: bool = False) -> None:
         """
         Insert RDF graph into the graph store to the main graph
 
         Args:
-            :param rdf_graph: `pathlib.Path` like object, or string. 
+            :param rdf_graph: `pathlib.Path` like object, or string.
             In the case of a string the string it can be either:
                 - graph content as text
                 - location of the source file
             format: Format of the RDF data [turtle | n3 | xml | trix]
             replace: If True, replaces the existing main graph. If False, appends to it.
+            wait_for_embedding: If True, blocks until the server finishes rebuilding
+                the embedding index. Default False (background rebuild).
         """
-        self.client.insert_graph(rdf_graph, format=format, replace=replace)
+        self.client.insert_graph(rdf_graph, format=format, replace=replace, wait_for_embedding=wait_for_embedding)
 
     def query(self) -> Query:
         """Create a new empty Query bound to this Acquirium instance."""

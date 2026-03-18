@@ -57,6 +57,7 @@ class InsertGraphRequest(BaseModel):
     rdf_graph: str = Field(..., description="File path or RDF text")
     format: str = "turtle"
     replace: bool = True
+    wait_for_embedding: bool = False
 
 
 class FindDataRequest(BaseModel):
@@ -143,8 +144,13 @@ def embedding_status():
 @app.post("/insert_graph")
 def insert_graph(req: InsertGraphRequest) -> dict[str, Any]:
     try:
-        app.state.manager.insert_graph(rdf_graph = req.rdf_graph, format=req.format, replace=req.replace)
-        return {"ok": True}
+        app.state.manager.insert_graph(
+            rdf_graph=req.rdf_graph,
+            format=req.format,
+            replace=req.replace,
+            wait_for_embedding=req.wait_for_embedding,
+        )
+        return {"ok": True, "embedding_ready": req.wait_for_embedding}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
