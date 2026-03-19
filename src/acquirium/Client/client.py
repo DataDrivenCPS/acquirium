@@ -124,7 +124,7 @@ class AcquiriumClient:
                 else:
                     return pl.DataFrame()
             except Exception as e:
-                # logger.error(f"Error reading Arrow IPC stream: {e}")
+                logger.error(f"Error reading Arrow IPC stream: {e}")
                 return pl.DataFrame()
             
 

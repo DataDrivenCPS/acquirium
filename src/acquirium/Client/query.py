@@ -241,6 +241,7 @@ class Query:
         hops: int = 3,
         predicates: Optional[List[str]] = None,
         multi_hop_predicates: bool = False,
+        direction: Optional[str] = None,
     ) -> "Query":
         """Add a related entity node, connected from an existing node.
 
@@ -248,6 +249,11 @@ class Query:
         - `_from` is an alias of an existing node; if omitted, uses current pointer.
         - Adds a new node of type `_class` with the given alias.
         - Adds an edge from the `_from` node to the new node, with a hop limit.
+        - `direction` can be "upstream" or "downstream" to traverse along
+          s223:connectedTo / s223:connectedFrom relations:
+          - "upstream": inverse connectedTo OR forward connectedFrom (against the flow)
+          - "downstream": forward connectedTo OR inverse connectedFrom (with the flow)
+          When set, overrides `predicates` and forces `multi_hop_predicates=True`.
 
         Example:
             q1 = aq.query().find_entity(_class=Valve, alias="valve")
@@ -256,7 +262,11 @@ class Query:
         You can also relate to a specific instance:
             q1 = q1.find_related(uri="urn:acquirium:point#Pump_42", alias="pump_42")
 
-        If `_from` is omitted, this is equivalent because the pointer is 'valve'.
+        Direction example (tank --connectedTo--> sth --connectedTo--> pump --connectedTo--> tank2):
+            # At pump, find upstream tank (hops>=2):
+            q.find_related(_class=Tank, alias="tank", direction="upstream", hops=3)
+            # At pump, find downstream tank2:
+            q.find_related(_class=Tank, alias="tank2", direction="downstream", hops=2)
         """
         self.cache.clear()
         instance_uri = self._normalize_instance_uri(uri, param="uri")
@@ -265,6 +275,17 @@ class Query:
         src_id = self.query_graph.resolve_alias(_from)
         if src_id is None:
             raise ValueError("find_related: no source node to relate from (pointer is None and _from not set)")
+
+        if direction is not None:
+            _connected_to = str(S223.connectedTo)
+            _connected_from = str(S223.connectedFrom)
+            if direction == "upstream":
+                predicates = [f"^{_connected_to}", _connected_from]
+            elif direction == "downstream":
+                predicates = [_connected_to, f"^{_connected_from}"]
+            else:
+                raise ValueError(f"find_related: direction must be 'upstream', 'downstream', or None, got '{direction}'")
+            multi_hop_predicates = True
 
         new_id = self._new_id()
         constraints = {}
@@ -978,13 +999,14 @@ class Query:
 
             # normal property path (no variables inside)
             if hops == 1:
-                alt = "|".join(f"<{p}>" for p in uniq)
+                alt = "|".join(self._format_pred(p) for p in uniq)
                 path = f"({alt})"
             else:
                 parts = []
                 for p in uniq:
+                    fp = self._format_pred(p)
                     for k in range(1, hops + 1):
-                        parts.append("/".join([f"<{p}>"] * k))
+                        parts.append("/".join([fp] * k))
                 path = f"({'|'.join(parts)})"
 
             normal = f"{src_var} {path} {tgt_var} ."
@@ -1009,18 +1031,19 @@ class Query:
                     # We'll build a UNION per predicate for this k.
                     pred_blocks = []
                     for p in uniq:
+                        fp = self._format_pred(p)
                         triples_normal = []
                         prev = src_var
                         for step in range(k):
                             obj = tgt_var if step == k - 1 else mids[step]
-                            triples_normal.append(f"{prev} <{p}> {obj} .")
+                            triples_normal.append(f"{prev} {fp} {obj} .")
                             prev = obj
 
                         # CP version: inject cp node only on first hop
                         cp = f"?cp_e{edge_idx}_k{k}"
                         triples_cp = list(triples_normal)
                         first_obj = tgt_var if k == 1 else mids[0]
-                        triples_cp[0] = f"{src_var} <{CONNECTION_POINT}> {cp} . {cp} <{p}> {first_obj} ."
+                        triples_cp[0] = f"{src_var} <{CONNECTION_POINT}> {cp} . {cp} {fp} {first_obj} ."
 
                         block_normal = "{ " + " ".join(triples_normal) + " }"
                         block_cp = "{ " + " ".join(triples_cp) + " }"
@@ -1061,6 +1084,12 @@ class Query:
 
         return " UNION ".join(union_blocks)
 
+
+    def _format_pred(self, p: str) -> str:
+        """Format a predicate for SPARQL. Handles inverse (^) prefix."""
+        if p.startswith("^"):
+            return f"^<{p[1:]}>"
+        return f"<{p}>"
 
     def _is_iri(self,x: object) -> bool:
         return isinstance(x, str) and ("://" in x or x.startswith("urn:"))
