@@ -37,6 +37,7 @@ class QueryEdge:
     hops: int = 3
     predicates: Optional[List[str]] = None
     direction: Optional[str] = None  # "upstream", "downstream", or None
+    cp_filter: Optional[str] = None  # rdf:type URI to filter connection points in CP alternative
 
 
 @dataclass(frozen=True)

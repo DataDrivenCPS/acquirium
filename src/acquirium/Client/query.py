@@ -67,6 +67,7 @@ class Query:
     filters_dict: Dict[str, Any] | None,
     instance_uri: str | None,
     force_one_hop: bool = False,
+    cp_filter: str | None = None,
     ) -> tuple["QueryGraph", int]:
         new_id = self._new_id()
 
@@ -88,13 +89,13 @@ class Query:
         if src_id is not None:
             if path:
                 g2 = g2.with_edge(
-                    QueryEdge(source_id=src_id, target_id=new_id, hops=1, predicates=[path]),
+                    QueryEdge(source_id=src_id, target_id=new_id, hops=1, predicates=[path], cp_filter=cp_filter),
                     new_pointer=new_id,
                 )
             else:
                 eff_hops = 1 if force_one_hop else hops
                 g2 = g2.with_edge(
-                    QueryEdge(source_id=src_id, target_id=new_id, hops=eff_hops, predicates=None),
+                    QueryEdge(source_id=src_id, target_id=new_id, hops=eff_hops, predicates=None, cp_filter=cp_filter),
                     new_pointer=new_id,
                 )
         else:
@@ -465,6 +466,13 @@ class Query:
             g = g.with_edge(edge, new_pointer=mid_id)
 
             # Attach a data node 1 hop from the intermediate entity.
+            # Filter connection point type: upstream → InletConnectionPoint,
+            # downstream → OutletConnectionPoint.
+            if direction == "upstream":
+                data_cp_filter = str(S223.InletConnectionPoint)
+            else:
+                data_cp_filter = str(S223.OutletConnectionPoint)
+
             src_alias = self.query_graph.aliases_reverse.get(src_id, str(src_id))
             data_alias = alias or f"{src_alias}_{direction}_data"
 
@@ -478,6 +486,7 @@ class Query:
                 filters_dict=filters or None,
                 instance_uri=instance_uri,
                 force_one_hop=True,
+                cp_filter=data_cp_filter,
             )
 
             return Query(
@@ -1127,7 +1136,12 @@ class Query:
             #     src <cp>/<p> tgt
             # - For hops>1, rewrite as a UNION over k with explicit triples so CP only affects first hop.
             if hops == 1:
-                via_cp = f"{src_var} <{CONNECTION_POINT}>/{path} {tgt_var} ."
+                cp_f = getattr(edge, "cp_filter", None)
+                if cp_f:
+                    cp = f"?cp_e{edge_idx}"
+                    via_cp = f"{src_var} <{CONNECTION_POINT}> {cp} . {cp} a <{cp_f}> . {cp} {path} {tgt_var} ."
+                else:
+                    via_cp = f"{src_var} <{CONNECTION_POINT}>/{path} {tgt_var} ."
                 return f"{{ {normal} }} UNION {{ {via_cp} }}"
             else:
                 union_blocks: List[str] = []
@@ -1154,7 +1168,9 @@ class Query:
                         cp = f"?cp_e{edge_idx}_k{k}"
                         triples_cp = list(triples_normal)
                         first_obj = tgt_var if k == 1 else mids[0]
-                        triples_cp[0] = f"{src_var} <{CONNECTION_POINT}> {cp} . {cp} {fp} {first_obj} ."
+                        cp_f = getattr(edge, "cp_filter", None)
+                        cp_type = f" {cp} a <{cp_f}> ." if cp_f else ""
+                        triples_cp[0] = f"{src_var} <{CONNECTION_POINT}> {cp} .{cp_type} {cp} {fp} {first_obj} ."
 
                         block_normal = "{ " + " ".join(triples_normal) + " }"
                         block_cp = "{ " + " ".join(triples_cp) + " }"
@@ -1184,6 +1200,9 @@ class Query:
             cp = f"?cp_e{edge_idx}_k{k}"
             first_obj = tgt_var if k == 1 else mids[0]
             triples_cp.append(f"{src_var} <{CONNECTION_POINT}> {cp} .")
+            cp_f = getattr(edge, "cp_filter", None)
+            if cp_f:
+                triples_cp.append(f"{cp} a <{cp_f}> .")
             triples_cp.append(f"{cp} {ps[0]} {first_obj} .")
             # remaining hops (if any) unchanged
             if k > 1:
