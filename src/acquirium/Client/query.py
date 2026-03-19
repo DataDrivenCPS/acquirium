@@ -408,7 +408,19 @@ class Query:
         medium: Optional[str] = None,
         alias: Optional[str] = None,
         hops: int = 1,
+        direction: Optional[str] = None,
     ) -> "Query":
+        """Find data related to an entity, optionally traversing upstream/downstream.
+
+        When ``direction`` is set ("upstream" or "downstream"), ``hops`` controls
+        how many entity-level steps along s223:connectedTo / s223:connectedFrom
+        to search through.  At each reachable intermediate entity the query looks
+        for data nodes 1 hop away.
+
+        Example (tank --connectedTo--> sth --connectedTo--> pump --connectedTo--> tank2):
+            # At pump, find data from up to 3 hops upstream:
+            q.find_related_data(direction="upstream", hops=3, quantity_kind=...)
+        """
         filters: Dict[str, Any] = {}
         if quantity_kind:
             filters[HAS_QUANTITY_KIND] = quantity_kind
@@ -422,6 +434,56 @@ class Query:
             filters[OF_SUBSTANCE] = substance
         if medium:
             filters[HAS_MEDIUM] = medium
+
+        if direction is not None:
+            self.cache.clear()
+            g = self.query_graph
+            instance_uri = self._normalize_instance_uri(uri, param="uri")
+
+            src_id = g.resolve_alias(_from)
+            if src_id is None:
+                raise ValueError("find_related_data: no source node (set _from or ensure pointer is set)")
+
+            _connected_to = str(S223.connectedTo)
+            _connected_from = str(S223.connectedFrom)
+            if direction == "upstream":
+                dir_preds = [f"^{_connected_to}", _connected_from]
+            elif direction == "downstream":
+                dir_preds = [_connected_to, f"^{_connected_from}"]
+            else:
+                raise ValueError(f"find_related_data: direction must be 'upstream', 'downstream', or None, got '{direction}'")
+
+            # Create an intermediate entity node (unconstrained class) reachable
+            # via 1‥hops directional steps from the source.
+            mid_id = self._new_id()
+            mid_node = QueryNode(id=mid_id, rdf_class=None, alias=None, constraints={})
+            g = g.with_node(mid_node)
+
+            edge = QueryEdge(source_id=src_id, target_id=mid_id, hops=hops, predicates=dir_preds)
+            g = g.with_edge(edge, new_pointer=mid_id)
+
+            # Attach a data node 1 hop from the intermediate entity.
+            src_alias = self.query_graph.aliases_reverse.get(src_id, str(src_id))
+            data_alias = alias or f"{src_alias}_{direction}_data"
+
+            g, _ = self._add_data_node(
+                g=g,
+                src_id=mid_id,
+                path=path,
+                _class=_class,
+                alias=data_alias,
+                hops=1,
+                filters_dict=filters or None,
+                instance_uri=instance_uri,
+                force_one_hop=True,
+            )
+
+            return Query(
+                client=self.client,
+                query_graph=g,
+                _next_id=self._next_id,
+            )
+
         return self.find_data(
             _from=_from,
             path=path,
