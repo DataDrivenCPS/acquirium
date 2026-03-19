@@ -100,4 +100,9 @@ RDF_PROP = RDF.Property
 CLASS_TYPES = {RDFS.Class, OWL_CLASS}
 PROP_TYPES = {RDF_PROP, OWL_OBJ_PROP, OWL_DATA_PROP, OWL_ANN_PROP}
 
-CONNECTION_POINT = S223.hasConnectionPoint 
+CONNECTION_POINT = S223.hasConnectionPoint
+
+# Direction-aware topology predicates
+CONNECTED_THROUGH = S223.connectedThrough
+CONNECTS_TO = S223.connectsTo
+CONNECTS_FROM = S223.connectsFrom
