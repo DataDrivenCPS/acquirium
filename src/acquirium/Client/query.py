@@ -1046,22 +1046,27 @@ class Query:
     def _direction_edge_pattern(self, src_var: str, tgt_var: str, edge, edge_idx: int) -> str:
         """Build SPARQL property-path pattern for direction-based traversal.
 
-        Each logical hop is expressed as a property-path alternation of 4 routes:
+        The path reaches **both** entities and Connection resources along
+        the directional chain so that data on pipes/connections is captured.
 
-        **Downstream** (per hop, src → tgt):
-          1. <connectedTo>                                     (direct)
-          2. ^<connectedFrom>                                  (direct inverse)
-          3. <connectedThrough>/<connectsTo>                   (via connection)
-          4. ^<connectsFrom>/^<connectedThrough>               (inverse of upstream CP)
+        Entity-reaching paths (per hop):
 
-        **Upstream** (per hop, finding tgt upstream of src):
-          1. ^<connectedTo>                                    (inverse of direct)
-          2. <connectedFrom>                                   (direct)
-          3. <connectedThrough>/<connectsFrom>                 (via connection)
-          4. ^<connectsTo>/^<connectedThrough>                 (inverse of downstream CP)
+        **Downstream** (src → tgt):
+          <connectedTo> | ^<connectedFrom>
+          | <connectedThrough>/<connectsTo>
+          | ^<connectsFrom>/^<connectedThrough>
 
-        Multi-hop uses k=1..hops repetitions of the one-hop group, joined with ``|``.
-        The entire expression is a single property path — no intermediate variables.
+        **Upstream** (finding tgt upstream of src):
+          ^<connectedTo> | <connectedFrom>
+          | <connectedThrough>/<connectsFrom>
+          | ^<connectsTo>/^<connectedThrough>
+
+        Connection-reaching paths (to land on the Connection resource):
+
+        **Downstream**: ^<connectsFrom> repeated via <connectsTo>/^<connectsFrom>
+        **Upstream**:   ^<connectsTo>   repeated via <connectsFrom>/^<connectsTo>
+
+        Multi-hop spells out k=1..hops repetitions, joined with ``|``.
         """
         hops = int(edge.hops)
         direction = edge.direction
@@ -1072,17 +1077,33 @@ class Query:
         cst = f"<{CONNECTS_TO}>"
         csf = f"<{CONNECTS_FROM}>"
 
+        # --- entity-reaching one-hop group ---
         if direction == "downstream":
-            one_hop = f"({ct}|^{cf}|{cth}/{cst}|^{csf}/^{cth})"
+            one_hop_ent = f"({ct}|^{cf}|{cth}/{cst}|^{csf}/^{cth})"
+            ent_to_conn = f"^{csf}"   # entity → its downstream connection
+            conn_to_ent = cst          # connection → downstream entity
         else:  # upstream
-            one_hop = f"(^{ct}|{cf}|{cth}/{csf}|^{cst}/^{cth})"
+            one_hop_ent = f"(^{ct}|{cf}|{cth}/{csf}|^{cst}/^{cth})"
+            ent_to_conn = f"^{cst}"   # entity → its upstream connection
+            conn_to_ent = csf          # connection → upstream entity
 
-        if hops == 1:
-            path = one_hop
-        else:
-            parts = ["/".join([one_hop] * k) for k in range(1, hops + 1)]
-            path = f"({'|'.join(parts)})"
+        parts: List[str] = []
 
+        # entity-reaching paths: 1..hops entity hops
+        for k in range(1, hops + 1):
+            parts.append("/".join([one_hop_ent] * k))
+
+        # connection-reaching paths: land on Connection at hop k
+        #   k=1: ent_to_conn
+        #   k=2: ent_to_conn / conn_to_ent / ent_to_conn
+        #   k=N: (ent_to_conn / conn_to_ent){N-1} / ent_to_conn
+        for k in range(1, hops + 1):
+            conn_steps = [ent_to_conn]
+            for _ in range(k - 1):
+                conn_steps.extend([conn_to_ent, ent_to_conn])
+            parts.append("/".join(conn_steps))
+
+        path = f"({'|'.join(parts)})"
         return f"{src_var} {path} {tgt_var} ."
 
     def _edge_pattern(self, src_var: str, tgt_var: str, edge, edge_idx: int) -> str:
