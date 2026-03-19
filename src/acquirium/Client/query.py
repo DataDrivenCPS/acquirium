@@ -1035,70 +1035,46 @@ class Query:
     from typing import List
 
     def _direction_edge_pattern(self, src_var: str, tgt_var: str, edge, edge_idx: int) -> str:
-        """Build SPARQL pattern for direction-based traversal.
+        """Build SPARQL property-path pattern for direction-based traversal.
 
-        Each logical hop from entity to entity is a UNION of 4 alternatives:
+        Each logical hop is expressed as a property-path alternation of 4 routes:
 
-        **Downstream** (src → tgt per hop):
-          1. src connectedTo tgt                                         (direct)
-          2. tgt connectedFrom src                                       (direct inverse)
-          3. src connectedThrough ?cp . ?cp connectsTo tgt               (via connection)
-          4. tgt connectedThrough ?cp . ?cp connectsFrom src             (inverse of upstream CP)
+        **Downstream** (per hop, src → tgt):
+          1. <connectedTo>                                     (direct)
+          2. ^<connectedFrom>                                  (direct inverse)
+          3. <connectedThrough>/<connectsTo>                   (via connection)
+          4. ^<connectsFrom>/^<connectedThrough>               (inverse of upstream CP)
 
-        **Upstream** (finding tgt upstream of src):
-          1. tgt connectedTo src                                         (inverse of direct)
-          2. src connectedFrom tgt                                       (direct)
-          3. src connectedThrough ?cp . ?cp connectsFrom tgt             (via connection)
-          4. tgt connectedThrough ?cp . ?cp connectsTo src               (inverse of downstream CP)
+        **Upstream** (per hop, finding tgt upstream of src):
+          1. ^<connectedTo>                                    (inverse of direct)
+          2. <connectedFrom>                                   (direct)
+          3. <connectedThrough>/<connectsFrom>                 (via connection)
+          4. ^<connectsTo>/^<connectedThrough>                 (inverse of downstream CP)
 
-        Multi-hop is a UNION of k=1..hops chains, each chain joining k single-hop blocks.
+        Multi-hop uses k=1..hops repetitions of the one-hop group, joined with ``|``.
+        The entire expression is a single property path — no intermediate variables.
         """
         hops = int(edge.hops)
         direction = edge.direction
 
-        _connected_to = str(S223.connectedTo)
-        _connected_from = str(S223.connectedFrom)
-        _connected_through = str(CONNECTED_THROUGH)
-        _connects_to = str(CONNECTS_TO)
-        _connects_from = str(CONNECTS_FROM)
+        ct  = f"<{S223.connectedTo}>"
+        cf  = f"<{S223.connectedFrom}>"
+        cth = f"<{CONNECTED_THROUGH}>"
+        cst = f"<{CONNECTS_TO}>"
+        csf = f"<{CONNECTS_FROM}>"
 
-        def single_hop_alts(src: str, tgt: str, hop_idx: int, k: int) -> str:
-            """UNION of all alternatives for one logical entity-to-entity hop."""
-            cp = f"?cp_e{edge_idx}_k{k}_h{hop_idx}"
+        if direction == "downstream":
+            one_hop = f"({ct}|^{cf}|{cth}/{cst}|^{csf}/^{cth})"
+        else:  # upstream
+            one_hop = f"(^{ct}|{cf}|{cth}/{csf}|^{cst}/^{cth})"
 
-            if direction == "downstream":
-                alts = [
-                    f"{{ {src} <{_connected_to}> {tgt} . }}",
-                    f"{{ {tgt} <{_connected_from}> {src} . }}",
-                    f"{{ {src} <{_connected_through}> {cp} . {cp} <{_connects_to}> {tgt} . }}",
-                    f"{{ {tgt} <{_connected_through}> {cp} . {cp} <{_connects_from}> {src} . }}",
-                ]
-            else:  # upstream
-                alts = [
-                    f"{{ {tgt} <{_connected_to}> {src} . }}",
-                    f"{{ {src} <{_connected_from}> {tgt} . }}",
-                    f"{{ {src} <{_connected_through}> {cp} . {cp} <{_connects_from}> {tgt} . }}",
-                    f"{{ {tgt} <{_connected_through}> {cp} . {cp} <{_connects_to}> {src} . }}",
-                ]
+        if hops == 1:
+            path = one_hop
+        else:
+            parts = ["/".join([one_hop] * k) for k in range(1, hops + 1)]
+            path = f"({'|'.join(parts)})"
 
-            return " UNION ".join(alts)
-
-        # Build UNION of k=1..hops chains
-        union_blocks: List[str] = []
-        for k in range(1, hops + 1):
-            mids = [f"?mid_e{edge_idx}_k{k}_{i}" for i in range(1, k)]  # k-1 intermediates
-
-            steps = []
-            for step in range(k):
-                step_src = src_var if step == 0 else mids[step - 1]
-                step_tgt = tgt_var if step == k - 1 else mids[step]
-                hop_pattern = single_hop_alts(step_src, step_tgt, step, k)
-                steps.append(f"{{ {hop_pattern} }}")
-
-            block = " ".join(steps)
-            union_blocks.append(f"{{ {block} }}")
-
-        return " UNION ".join(union_blocks)
+        return f"{src_var} {path} {tgt_var} ."
 
     def _edge_pattern(self, src_var: str, tgt_var: str, edge, edge_idx: int) -> str:
         """
