@@ -515,7 +515,7 @@ class Query:
         limit: int | None = None,
         order: str = "asc",
         use_union: bool = True,
-        shape: str = "wide",          # "wide" or "narrow"
+        shape: str = "narrow",          # "wide" or "narrow"
         cast_value: str | None = "str",  # "float", "int", or None to keep string
     ) -> pl.DataFrame:
         """

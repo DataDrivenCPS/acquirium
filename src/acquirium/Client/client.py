@@ -45,11 +45,30 @@ class AcquiriumClient:
             wait_for_embedding: If True, the server will block until the embedding
                 index rebuild is complete before returning. Default False.
         """
-        if (isinstance(rdf_graph, str) and os.path.isfile(rdf_graph) )or Path(rdf_graph).is_file() or (isinstance(rdf_graph, Path) and rdf_graph.is_file()):
+        if isinstance(rdf_graph, Path):
+            if not rdf_graph.is_file():
+                raise FileNotFoundError(f"Graph file not found: {rdf_graph}")
             with open(rdf_graph, "r") as f:
                 rdf_graph = f.read()
+        elif isinstance(rdf_graph, str):
+            if rdf_graph.strip().startswith(("<", "@", "#")) or "\n" in rdf_graph and p.suffix:
+                # Looks like RDF content (has RDF markers or multiple lines) so treat as content
+                pass
+            else:
+                try:
+                    # Treat as file path and attempt to read           
+                    p = Path(rdf_graph)
+                    if p.is_file():
+                        with open(p, "r") as f:
+                            rdf_graph = f.read()
+                    else:
+                        raise FileNotFoundError                
+                except Exception:
+                    # Looks like a file path (no RDF content markers, single line, has extension) but doesn't exist
+                    raise FileNotFoundError(f"Graph file not found: {rdf_graph}")
         else:
-            rdf_graph = rdf_graph
+            raise ValueError("rdf_graph must be a string or Path object")
+
 
         if wait_for_embedding:
             logger.info("acquirium client: requesting server to rebuild embedding index (waiting)...")
