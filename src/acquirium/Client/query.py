@@ -16,6 +16,11 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
+class _Exclude:
+    """Marker wrapper: value should be negated (FILTER NOT EXISTS) in SPARQL."""
+    value: Any
+
+@dataclass(frozen=True)
 class Query:
     """Query builder for Acquirium.
 
@@ -805,6 +810,7 @@ class Query:
         predicate: str ,
         value: Any,
         _from: Optional[str] = None,
+        exclude: bool = False,
     ) -> "Query":
         self.cache.clear()
         g = self.query_graph
@@ -812,11 +818,13 @@ class Query:
         if not targets:
             raise ValueError("filter_data_nodes: no target data nodes selected")
 
+        stored_value = _Exclude(value) if exclude else value
+
         dn2 = dict(g.data_nodes)
         for nid in targets:
             info = dn2[nid]
             new_filters = dict(info.filters)
-            new_filters[predicate] = value
+            new_filters[predicate] = stored_value
             dn2[nid] = replace(info, filters=new_filters)
 
         g2 = QueryGraph(
@@ -830,34 +838,34 @@ class Query:
         return self._clone_with_graph(g2, bump_id=False)
 
     @flex_query_rdf_inputs(specs=[FlexSpec("unit", "unit")])
-    def filter_by_unit(self, unit: str | list, *, _from: Optional[str] = None) -> "Query":
+    def filter_by_unit(self, unit: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Query":
         if isinstance(unit, str):
             unit = [unit]
-        return self.filter_data_nodes(predicate=HAS_UNIT, value=unit, _from=_from)
+        return self.filter_data_nodes(predicate=HAS_UNIT, value=unit, _from=_from, exclude=exclude)
 
     @flex_query_rdf_inputs(specs=[FlexSpec("medium", "class")])
-    def filter_by_medium(self, medium: str | list, *, _from: Optional[str] = None) -> "Query":
+    def filter_by_medium(self, medium: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Query":
         if isinstance(medium, str):
             medium = [medium]
-        return self.filter_data_nodes(predicate=HAS_MEDIUM, value=medium, _from=_from)
+        return self.filter_data_nodes(predicate=HAS_MEDIUM, value=medium, _from=_from, exclude=exclude)
 
     @flex_query_rdf_inputs(specs=[FlexSpec("substance", "class")])
-    def filter_by_substance(self, substance: str | list, *, _from: Optional[str] = None) -> "Query":
+    def filter_by_substance(self, substance: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Query":
         if isinstance(substance, str):
             substance = [substance]
-        return self.filter_data_nodes(predicate=OF_SUBSTANCE, value=substance, _from=_from)
+        return self.filter_data_nodes(predicate=OF_SUBSTANCE, value=substance, _from=_from, exclude=exclude)
 
     @flex_query_rdf_inputs(specs=[FlexSpec("qk", "quantity_kind")])
-    def filter_by_quantity_kind(self, qk: str | list, *, _from: Optional[str] = None) -> "Query":
+    def filter_by_quantity_kind(self, qk: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Query":
         if isinstance(qk, str):
             qk = [qk]
-        return self.filter_data_nodes(predicate=HAS_QUANTITY_KIND, value=qk, _from=_from)
+        return self.filter_data_nodes(predicate=HAS_QUANTITY_KIND, value=qk, _from=_from, exclude=exclude)
 
     @flex_query_rdf_inputs(specs=[FlexSpec("ek", "class")])
-    def filter_by_enumeration_kind(self, ek: str | list, *, _from: Optional[str] = None) -> "Query":
+    def filter_by_enumeration_kind(self, ek: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Query":
         if isinstance(ek, str):
             ek = [ek]
-        return self.filter_data_nodes(predicate=HAS_ENUMERATION_KIND, value=ek, _from=_from)
+        return self.filter_data_nodes(predicate=HAS_ENUMERATION_KIND, value=ek, _from=_from, exclude=exclude)
 
     #TODO: Not working yet
     # def filter_by_data_source(self, data_source: str, *, _from: Optional[str] = None) -> "Query":
@@ -1285,18 +1293,26 @@ class Query:
                 if val is None:
                     continue
 
-                # If value looks like a URI, emit <...>, otherwise emit a literal
+                # Unwrap exclude marker
+                negate = isinstance(val, _Exclude)
+                if negate:
+                    val = val.value
+
+                # Build the triple pattern
                 if isinstance(val, str) and ("://" in val or val.startswith("urn:")):
-                    where_clauses.append(f"{v} <{pred}> <{val}> .")
+                    pattern = f"{v} <{pred}> <{val}> ."
 
                 elif isinstance(val, list):
-                    # If value is a list, emit a UNION of literals
                     union_block = " UNION ".join(f"{{ {v} <{pred}> {self._term(x)} . }}" for x in val if x is not None)
-                    where_clauses.append(f"{{ {union_block} }}")
+                    pattern = f"{{ {union_block} }}"
 
                 else:
-                    # numbers and booleans become literals too
-                    where_clauses.append(f'{v} <{pred}> "{val}" .')
+                    pattern = f'{v} <{pred}> "{val}" .'
+
+                if negate:
+                    where_clauses.append(f"FILTER NOT EXISTS {{ {pattern} }}")
+                else:
+                    where_clauses.append(pattern)
 
 
 
