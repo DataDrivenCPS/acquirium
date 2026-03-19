@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 from contextlib import asynccontextmanager
 from typing import Any, Optional, Iterator
@@ -318,22 +319,19 @@ def get_timeseries(
         ])
 
         def arrow_stream() -> Iterator[bytes]:
-            sink = pa.BufferOutputStream()
-            writer = ipc.new_stream(sink, schema)
-            try:
-                for batch in batches:
-                    writer.write_batch(batch)
-                    # emit whatever has been buffered so far
-                    buf = sink.getvalue()
-                    if buf.size > 0:
-                        yield buf.to_pybytes()
-                        sink = pa.BufferOutputStream()
-                        writer = ipc.new_stream(sink, schema)  # restart stream per chunk
-            finally:
-                try:
-                    writer.close()
-                except Exception:
-                    pass
+            buf = io.BytesIO()
+            writer = ipc.new_stream(buf, schema)
+            for batch in batches:
+                writer.write_batch(batch)
+                data = buf.getvalue()
+                if data:
+                    yield data
+                    buf.seek(0)
+                    buf.truncate(0)
+            writer.close()
+            data = buf.getvalue()
+            if data:
+                yield data
 
         return StreamingResponse(
             arrow_stream(),
