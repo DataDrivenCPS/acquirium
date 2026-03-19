@@ -36,6 +36,7 @@ class QueryEdge:
     target_id: int
     hops: int = 3
     predicates: Optional[List[str]] = None
+    direction: Optional[str] = None  # "upstream", "downstream", or None
 
 
 @dataclass(frozen=True)

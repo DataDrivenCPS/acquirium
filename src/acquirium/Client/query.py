@@ -249,11 +249,22 @@ class Query:
         - `_from` is an alias of an existing node; if omitted, uses current pointer.
         - Adds a new node of type `_class` with the given alias.
         - Adds an edge from the `_from` node to the new node, with a hop limit.
-        - `direction` can be "upstream" or "downstream" to traverse along
-          s223:connectedTo / s223:connectedFrom relations:
-          - "upstream": inverse connectedTo OR forward connectedFrom (against the flow)
-          - "downstream": forward connectedTo OR inverse connectedFrom (with the flow)
-          When set, overrides `predicates` and forces `multi_hop_predicates=True`.
+        - `direction` can be "upstream" or "downstream" to traverse the S223
+          connection topology.  When set, overrides `predicates`.
+
+          Each logical hop is a UNION of 4 patterns:
+
+          **Downstream** (per hop, src → tgt):
+            1. src connectedTo tgt                                       (direct)
+            2. tgt connectedFrom src                                     (direct inverse)
+            3. src connectedThrough ?cp . ?cp connectsTo tgt             (via connection)
+            4. tgt connectedThrough ?cp . ?cp connectsFrom src           (inverse of upstream CP)
+
+          **Upstream** (per hop, finding tgt upstream of src):
+            1. tgt connectedTo src                                       (inverse of direct)
+            2. src connectedFrom tgt                                     (direct)
+            3. src connectedThrough ?cp . ?cp connectsFrom tgt           (via connection)
+            4. tgt connectedThrough ?cp . ?cp connectsTo src             (inverse of downstream CP)
 
         Example:
             q1 = aq.query().find_entity(_class=Valve, alias="valve")
@@ -262,7 +273,7 @@ class Query:
         You can also relate to a specific instance:
             q1 = q1.find_related(uri="urn:acquirium:point#Pump_42", alias="pump_42")
 
-        Direction example (tank --connectedTo--> sth --connectedTo--> pump --connectedTo--> tank2):
+        Direction example:
             # At pump, find upstream tank (hops>=2):
             q.find_related(_class=Tank, alias="tank", direction="upstream", hops=3)
             # At pump, find downstream tank2:
@@ -276,16 +287,8 @@ class Query:
         if src_id is None:
             raise ValueError("find_related: no source node to relate from (pointer is None and _from not set)")
 
-        if direction is not None:
-            _connected_to = str(S223.connectedTo)
-            _connected_from = str(S223.connectedFrom)
-            if direction == "upstream":
-                predicates = [f"^{_connected_to}", _connected_from]
-            elif direction == "downstream":
-                predicates = [_connected_to, f"^{_connected_from}"]
-            else:
-                raise ValueError(f"find_related: direction must be 'upstream', 'downstream', or None, got '{direction}'")
-            multi_hop_predicates = True
+        if direction is not None and direction not in ("upstream", "downstream"):
+            raise ValueError(f"find_related: direction must be 'upstream', 'downstream', or None, got '{direction}'")
 
         new_id = self._new_id()
         constraints = {}
@@ -293,7 +296,10 @@ class Query:
             constraints["instance_uri"] = instance_uri
         new_node = QueryNode(id=new_id, rdf_class=_class, alias=alias, constraints=constraints)
         g = self.query_graph.with_node(new_node)
-        if predicates and multi_hop_predicates:
+
+        if direction is not None:
+            edge = QueryEdge(source_id=src_id, target_id=new_id, hops=hops, direction=direction)
+        elif predicates and multi_hop_predicates:
             edge = QueryEdge(source_id=src_id, target_id=new_id, hops=hops, predicates=predicates)
         elif predicates and not multi_hop_predicates:
             edge = QueryEdge(source_id=src_id, target_id=new_id, hops=1, predicates=predicates)
@@ -444,22 +450,18 @@ class Query:
             if src_id is None:
                 raise ValueError("find_related_data: no source node (set _from or ensure pointer is set)")
 
-            _connected_to = str(S223.connectedTo)
-            _connected_from = str(S223.connectedFrom)
-            if direction == "upstream":
-                dir_preds = [f"^{_connected_to}", _connected_from]
-            elif direction == "downstream":
-                dir_preds = [_connected_to, f"^{_connected_from}"]
-            else:
+            if direction not in ("upstream", "downstream"):
                 raise ValueError(f"find_related_data: direction must be 'upstream', 'downstream', or None, got '{direction}'")
 
             # Create an intermediate entity node (unconstrained class) reachable
             # via 1‥hops directional steps from the source.
             mid_id = self._new_id()
-            mid_node = QueryNode(id=mid_id, rdf_class=None, alias=None, constraints={})
+            src_alias = self.query_graph.aliases_reverse.get(src_id, str(src_id))
+            mid_alias = f"{src_alias}_{direction}_entity"
+            mid_node = QueryNode(id=mid_id, rdf_class=None, alias=mid_alias, constraints={})
             g = g.with_node(mid_node)
 
-            edge = QueryEdge(source_id=src_id, target_id=mid_id, hops=hops, predicates=dir_preds)
+            edge = QueryEdge(source_id=src_id, target_id=mid_id, hops=hops, direction=direction)
             g = g.with_edge(edge, new_pointer=mid_id)
 
             # Attach a data node 1 hop from the intermediate entity.
@@ -1008,6 +1010,7 @@ class Query:
                     "target_id": e.target_id,
                     "hops": e.hops,
                     "predicates": list(e.predicates) if e.predicates else None,
+                    "direction": e.direction,
                 }
                 for e in self.query_graph.edges
             ],
@@ -1031,6 +1034,72 @@ class Query:
 
     from typing import List
 
+    def _direction_edge_pattern(self, src_var: str, tgt_var: str, edge, edge_idx: int) -> str:
+        """Build SPARQL pattern for direction-based traversal.
+
+        Each logical hop from entity to entity is a UNION of 4 alternatives:
+
+        **Downstream** (src → tgt per hop):
+          1. src connectedTo tgt                                         (direct)
+          2. tgt connectedFrom src                                       (direct inverse)
+          3. src connectedThrough ?cp . ?cp connectsTo tgt               (via connection)
+          4. tgt connectedThrough ?cp . ?cp connectsFrom src             (inverse of upstream CP)
+
+        **Upstream** (finding tgt upstream of src):
+          1. tgt connectedTo src                                         (inverse of direct)
+          2. src connectedFrom tgt                                       (direct)
+          3. src connectedThrough ?cp . ?cp connectsFrom tgt             (via connection)
+          4. tgt connectedThrough ?cp . ?cp connectsTo src               (inverse of downstream CP)
+
+        Multi-hop is a UNION of k=1..hops chains, each chain joining k single-hop blocks.
+        """
+        hops = int(edge.hops)
+        direction = edge.direction
+
+        _connected_to = str(S223.connectedTo)
+        _connected_from = str(S223.connectedFrom)
+        _connected_through = str(CONNECTED_THROUGH)
+        _connects_to = str(CONNECTS_TO)
+        _connects_from = str(CONNECTS_FROM)
+
+        def single_hop_alts(src: str, tgt: str, hop_idx: int, k: int) -> str:
+            """UNION of all alternatives for one logical entity-to-entity hop."""
+            cp = f"?cp_e{edge_idx}_k{k}_h{hop_idx}"
+
+            if direction == "downstream":
+                alts = [
+                    f"{{ {src} <{_connected_to}> {tgt} . }}",
+                    f"{{ {tgt} <{_connected_from}> {src} . }}",
+                    f"{{ {src} <{_connected_through}> {cp} . {cp} <{_connects_to}> {tgt} . }}",
+                    f"{{ {tgt} <{_connected_through}> {cp} . {cp} <{_connects_from}> {src} . }}",
+                ]
+            else:  # upstream
+                alts = [
+                    f"{{ {tgt} <{_connected_to}> {src} . }}",
+                    f"{{ {src} <{_connected_from}> {tgt} . }}",
+                    f"{{ {src} <{_connected_through}> {cp} . {cp} <{_connects_from}> {tgt} . }}",
+                    f"{{ {tgt} <{_connected_through}> {cp} . {cp} <{_connects_to}> {src} . }}",
+                ]
+
+            return " UNION ".join(alts)
+
+        # Build UNION of k=1..hops chains
+        union_blocks: List[str] = []
+        for k in range(1, hops + 1):
+            mids = [f"?mid_e{edge_idx}_k{k}_{i}" for i in range(1, k)]  # k-1 intermediates
+
+            steps = []
+            for step in range(k):
+                step_src = src_var if step == 0 else mids[step - 1]
+                step_tgt = tgt_var if step == k - 1 else mids[step]
+                hop_pattern = single_hop_alts(step_src, step_tgt, step, k)
+                steps.append(f"{{ {hop_pattern} }}")
+
+            block = " ".join(steps)
+            union_blocks.append(f"{{ {block} }}")
+
+        return " UNION ".join(union_blocks)
+
     def _edge_pattern(self, src_var: str, tgt_var: str, edge, edge_idx: int) -> str:
         """
         Build a WHERE fragment for one edge.
@@ -1040,9 +1109,13 @@ class Query:
         is taken via a connection point.
 
         Rules:
+        - If edge.direction is set: delegate to _direction_edge_pattern for full topology traversal.
         - If edge.predicates is present/non-empty: constrain to those predicates and allow length 1..hops.
         - Else: allow any predicates, but length <= hops, via UNION of k-step chains.
         """
+        if getattr(edge, "direction", None) is not None:
+            return self._direction_edge_pattern(src_var, tgt_var, edge, edge_idx)
+
         hops = int(edge.hops)
         if hops < 1:
             raise ValueError(f"edge.hops must be >= 1, got {edge.hops}")
@@ -1235,6 +1308,13 @@ class Query:
     # -------- internal helpers --------
     def _col_name_to_alias(self, col_name: str) -> Optional[str]:
         """Map a SPARQL result column name back to an alias, if any."""
+        if col_name.startswith("ext"):
+            try:
+                node_id = int(col_name[3:])
+            except ValueError:
+                return col_name
+            base_alias = self.query_graph.aliases_reverse.get(node_id, col_name)
+            return f"{base_alias}_ref"
         if not col_name.startswith("v"):
             return col_name
         try:
@@ -1292,8 +1372,13 @@ class Query:
         for e in self.query_graph.edges:
             src = self.query_graph.aliases_reverse.get(e.source_id, str(e.source_id))
             tgt = self.query_graph.aliases_reverse.get(e.target_id, str(e.target_id))
-            preds = ", ".join(e.predicates) if e.predicates else "*"
-            print(f"  {src} --({preds}, hops={e.hops})--> {tgt}")
+            if e.direction:
+                label = f"direction={e.direction}, hops={e.hops}"
+            elif e.predicates:
+                label = f"{', '.join(e.predicates)}, hops={e.hops}"
+            else:
+                label = f"*, hops={e.hops}"
+            print(f"  {src} --({label})--> {tgt}")
 
         if self.query_graph.data_nodes:
             print("\nData nodes:")
