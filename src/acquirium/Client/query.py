@@ -419,7 +419,7 @@ class Query:
         path: Optional[str] = None,
         _class: Optional[str] = None,
         uri: str | URIRef | None = None,
-        hops: int = 3,
+        hops: int = 1,
         filters_dict: Optional[Dict[str, Any]] = None,
         alias: Optional[str] = None,
     ) -> "Query":
@@ -483,7 +483,7 @@ class Query:
         *,
         _class: Optional[str] = None,
         uri: str | URIRef | None = None,
-        hops: int = 3,
+        hops: int = 1,
         filters_dict: Optional[Dict[str, Any]] = None,
         alias: Optional[str] = None,
     ) -> "Query":
