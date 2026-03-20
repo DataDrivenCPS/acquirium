@@ -1298,21 +1298,31 @@ class Query:
                 if negate:
                     val = val.value
 
-                # Build the triple pattern
+                # Build the triple pattern(s)
                 if isinstance(val, str) and ("://" in val or val.startswith("urn:")):
-                    pattern = f"{v} <{pred}> <{val}> ."
+                    if negate:
+                        where_clauses.append(f"FILTER NOT EXISTS {{ {v} <{pred}> <{val}> . }}")
+                    else:
+                        where_clauses.append(f"{v} <{pred}> <{val}> .")
 
                 elif isinstance(val, list):
-                    union_block = " UNION ".join(f"{{ {v} <{pred}> {self._term(x)} . }}" for x in val if x is not None)
-                    pattern = f"{{ {union_block} }}"
+                    items = [x for x in val if x is not None]
+                    if negate:
+                        # Exclude any that match: FILTER NOT EXISTS with UNION
+                        if len(items) == 1:
+                            where_clauses.append(f"FILTER NOT EXISTS {{ {v} <{pred}> {self._term(items[0])} . }}")
+                        else:
+                            union_block = " UNION ".join(f"{{ {v} <{pred}> {self._term(x)} . }}" for x in items)
+                            where_clauses.append(f"FILTER NOT EXISTS {{ {union_block} }}")
+                    else:
+                        union_block = " UNION ".join(f"{{ {v} <{pred}> {self._term(x)} . }}" for x in items)
+                        where_clauses.append(f"{{ {union_block} }}")
 
                 else:
-                    pattern = f'{v} <{pred}> "{val}" .'
-
-                if negate:
-                    where_clauses.append(f"FILTER NOT EXISTS {{ {pattern} }}")
-                else:
-                    where_clauses.append(pattern)
+                    if negate:
+                        where_clauses.append(f'FILTER NOT EXISTS {{ {v} <{pred}> "{val}" . }}')
+                    else:
+                        where_clauses.append(f'{v} <{pred}> "{val}" .')
 
 
 
