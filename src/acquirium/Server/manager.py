@@ -339,6 +339,12 @@ class Manager:
             ?uri a <urn:nawi-water-ontology#Class> .
           } UNION {
             ?uri <http://www.w3.org/2000/01/rdf-schema#subClassOf> ?x .
+          } UNION {
+            ?x <http://qudt.org/schema/qudt/hasEnumerationKind> ?uri .
+          } UNION {
+            ?x <http://data.ashrae.org/standard223#ofSubstance> ?uri .
+          } UNION {
+            ?x <http://data.ashrae.org/standard223#hasMedium> ?uri .
           }
           OPTIONAL {
             {
