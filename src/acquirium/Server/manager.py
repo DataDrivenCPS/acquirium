@@ -688,6 +688,18 @@ class Manager:
             batch_size=batch_size,
         )
 
+    def timeseries_info_batch(self, uris: list[str]) -> dict:
+        """Fetch stats for multiple URIs, dispatching to PGRegistry or TimescaleDB."""
+        from acquirium.internals.models import TimeseriesInfo
+        pg_uris = [u for u in uris if self.pg_registry.is_pg_reference(u)]
+        ts_uris = [u for u in uris if not self.pg_registry.is_pg_reference(u)]
+        result: dict[str, TimeseriesInfo] = {}
+        if pg_uris:
+            result.update(self.pg_registry.timeseries_info_batch(pg_uris))
+        if ts_uris:
+            result.update(self.timescale.timeseries_info_batch(ts_uris))
+        return result
+
     def insert_timeseries(
         self,
         *,
@@ -1044,7 +1056,14 @@ class Manager:
             df = df.select(["point_uri", "ts", "value"])
 
             if df.schema.get("ts") == pl.Utf8:
-                df = df.with_columns(pl.col("ts").str.to_datetime())
+                # Try with UTC timezone first (handles tz-aware strings like
+                # "2026-01-27T23:30:16.668982+00:00"), fall back to naive parse.
+                try:
+                    df = df.with_columns(
+                        pl.col("ts").str.to_datetime(time_zone="UTC")
+                    )
+                except Exception:
+                    df = df.with_columns(pl.col("ts").str.to_datetime())
 
             if df.schema.get("value") != pl.Utf8:
                 df = df.with_columns(pl.col("value").cast(pl.Utf8))

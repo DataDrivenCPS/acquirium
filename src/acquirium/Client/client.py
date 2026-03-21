@@ -82,7 +82,9 @@ class AcquiriumClient:
         }
         response = requests.post(url, json=data)
         response.raise_for_status()
-        self.ingest_external_references_from_graph()
+        ingestion_result = self.ingest_external_references_from_graph()
+        if ingestion_result:
+            logger.info(f"acquirium client: external references ingested: {ingestion_result}")
 
         if wait_for_embedding:
             logger.info("acquirium client: server embedding index rebuild complete")
@@ -164,6 +166,15 @@ class AcquiriumClient:
             for batch in reader:
                 # batch is a pyarrow.RecordBatch; convert to Polars
                 yield pl.from_arrow(batch)
+
+    def timeseries_info_batch(self, uris: list[str]) -> dict:
+        """Fetch lightweight stats (row_count, earliest, latest) for multiple URIs in one request."""
+        from acquirium.internals.models import TimeseriesInfo
+        url = f"{self.base_url}/timeseries_info"
+        response = requests.post(url, json={"uris": uris})
+        response.raise_for_status()
+        data = response.json()
+        return {uri: TimeseriesInfo.model_validate(info) for uri, info in data.items()}
 
     def sparql_query(self, sparql: str, use_union: bool = True) -> dict:
         """
@@ -276,6 +287,7 @@ class AcquiriumClient:
                 p = (Path.cwd() / p).resolve()
 
             if not p.exists():
+                print(f"External reference file not found: {p} (skipping)")
                 failed += 1
                 continue
 
@@ -298,7 +310,14 @@ class AcquiriumClient:
                 r = requests.post(url, data=data, files=files)
                 r.raise_for_status()
                 ok += 1
-            except Exception:
+            except Exception as exc:
+                detail = ""
+                if hasattr(exc, "response") and exc.response is not None:
+                    try:
+                        detail = exc.response.json().get("detail", "")
+                    except Exception:
+                        detail = exc.response.text[:200]
+                logger.warning("Failed to ingest %s: %s %s", p.name, exc, detail)
                 failed += 1
 
         return {"ok": ok, "skipped": skipped, "failed": failed, "total": len(rows)}

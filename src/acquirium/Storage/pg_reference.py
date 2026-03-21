@@ -16,6 +16,8 @@ import psycopg
 from psycopg import sql
 import pyarrow as pa
 
+from acquirium.internals.models import TimeseriesInfo
+
 logger = logging.getLogger("acquirium.pg_reference")
 
 
@@ -148,3 +150,31 @@ class PGReferenceRegistry:
                     )
         finally:
             conn.close()
+
+    def timeseries_info_batch(self, point_uris: list[str]) -> dict[str, TimeseriesInfo]:
+        """Return stats for PGReference URIs. Only returns entries for registered URIs."""
+        result: dict[str, TimeseriesInfo] = {}
+        for uri in point_uris:
+            if uri not in self._refs:
+                continue
+            info = self._refs[uri]
+            conn = psycopg.connect(info.dsn, autocommit=True)
+            try:
+                with conn.cursor() as cur:
+                    if info.custom_query:
+                        cur.execute(f"SELECT COUNT(*), MIN(sub.t), MAX(sub.t) FROM ({info.custom_query}) sub(t, v)")
+                    else:
+                        if not info.table:
+                            continue
+                        q = sql.SQL("SELECT COUNT(*), MIN({time}), MAX({time}) FROM {table}").format(
+                            time=sql.Identifier(info.time_col), table=sql.Identifier(info.table),
+                        )
+                        if info.point_filter:
+                            cur.execute(q.as_string(conn) + " WHERE point_uri = %s", [info.point_filter])
+                        else:
+                            cur.execute(q.as_string(conn))
+                    cnt, earliest, latest = cur.fetchone()
+                    result[uri] = TimeseriesInfo(table=info.table or "external", row_count=cnt or 0, earliest=earliest, latest=latest)
+            finally:
+                conn.close()
+        return result
