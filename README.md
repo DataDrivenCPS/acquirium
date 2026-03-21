@@ -82,29 +82,29 @@ uv run scripts/logging_example.py
 
 ## Text Matcher
 
-*Under Development*
+The application uses a text matcher for mapping natural language input to ontology URIs (classes, predicates, units, and quantity kinds).
 
-The application uses a text matcher for mapping natural language input to ontology classes or predicates.
+The matching algorithm uses **semantic embedding similarity** powered by [FastEmbed](https://github.com/qdrant/fastembed) (default model: `BAAI/bge-small-en-v1.5`). Each ontology concept is represented by one or more surface strings, which are embedded and stored in an in-memory vector index. At query time, the input phrase is embedded and compared against the index using cosine similarity.
 
-The text matching algorithm is lightweight, rule based pipeline designed for short phrases of one to four words. The matching happens between the given input phrase and a lexicon. The lexicon is generated automatically by simple rules that pulls related tags of classes from the ontology. These tags are:
+#### How the index is built
 
-1. Rdfs:labels
-2. Local name (removing namespace URI)
-3. abbreviation (if longer than 2 words)
+There are two separate matchers, each with its own embedding index:
 
-[Here's](./scripts/lexicon_builder.py) the lexicon generator.
+1. **Graph matcher** — indexes classes and predicates from user-inserted RDF graphs. Surface strings are derived from `rdfs:label` values and CamelCase/underscore-split local names.
+2. **QUDT matcher** — indexes units and quantity kinds from the QUDT ontology (fetched over HTTP with local fallback). Surface strings include `rdfs:label`, `skos:prefLabel`, `skos:altLabel`, symbols, UCUM codes, and split local names.
 
-[Here's](./ontologies/lexicon.json) the lexicon.
+Both indexes are cached to disk and updated incrementally when graphs change.
 
-[Here's](/scripts/text_matcher_example.py) an example on how text matcher works under the hoods. (Acquirium just uses the first match)
+#### Querying
+
+Results can be filtered by `kind` (`class`, `predicate`, `unit`, `quantity_kind`) and are ranked by cosine similarity score. Duplicate URIs are deduplicated, keeping the highest-scoring surface match.
+
+[Here's](./scripts/text_matcher_example.py) an example of how the text matcher works.
 
 ```
+make up
 uv run ./scripts/text_matcher_example.py
 ```
-### Known Issues:
-- Basic abbreviations for common units (KG, M, S) doesn't work
-- Equipments that have the same names in multiple ontologies (e.g., nawi:Pump, s223:pump) gives same result
-    - Potential solution: matches with equal points, ask user
 
 ## Improvements
 - Acquirium is still under development. We're working on the improvements listed [here](./improvements.md). 
