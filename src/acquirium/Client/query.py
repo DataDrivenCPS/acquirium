@@ -1477,9 +1477,9 @@ class Query:
         """
         Print and return the head of the time series DataFrame for this query.
         """
-        df = self.dataframe(start=start, end=end, order=order, use_union=use_union, shape=shape)
-        print(df.head(k))
-        return df.head(k)
+        df = self.dataframe(start=start, end=end, order=order,limit=k, use_union=use_union, shape=shape)
+        print(df)
+        return df
 
 
     ### GRAFANA INTEGRATION
