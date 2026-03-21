@@ -259,6 +259,24 @@ class TimescaleStore(TimeseriesStore):
             cnt, earliest, latest = cur.fetchone()
         return TimeseriesInfo(table=TIMESERIES_TABLE, row_count=cnt, earliest=earliest, latest=latest)
 
+    def timeseries_info_batch(self, point_uris: list[str]) -> dict[str, TimeseriesInfo]:
+        """Return stats (row_count, earliest, latest) for multiple point URIs in one query."""
+        if not point_uris:
+            return {}
+        with self.conn.cursor() as cur:
+            cur.execute(
+                f"SELECT point_uri, COUNT(*), MIN(ts), MAX(ts) FROM {TIMESERIES_TABLE} WHERE point_uri = ANY(%s) GROUP BY point_uri",
+                (point_uris,),
+            )
+            rows = cur.fetchall()
+        result: dict[str, TimeseriesInfo] = {}
+        for uri, cnt, earliest, latest in rows:
+            result[uri] = TimeseriesInfo(table=TIMESERIES_TABLE, row_count=cnt, earliest=earliest, latest=latest)
+        for uri in point_uris:
+            if uri not in result:
+                result[uri] = TimeseriesInfo(table=TIMESERIES_TABLE, row_count=0)
+        return result
+
     # -------------------- logging API --------------------
 
     def insert_log(self, log: LogEntry) -> None:

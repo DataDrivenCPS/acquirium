@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Iterator, TYPE_CHECKING
 import polars as pl
 import logging
@@ -8,6 +9,7 @@ import logging
 if TYPE_CHECKING:
     from acquirium.Client.query import Query
     from acquirium.Client.query_graph import QueryGraph
+    from acquirium.Client.client import AcquiriumClient
 
 logger = logging.getLogger(__name__)
 
@@ -99,25 +101,79 @@ def _parse_sparql_bindings(
     return point_ref_uris, entity_context
 
 
+def _deduplicate_contexts(contexts: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Return unique context dicts, preserving order."""
+    seen: set[tuple[tuple[str, str], ...]] = set()
+    result: list[dict[str, str]] = []
+    for ctx in contexts:
+        key = tuple(sorted(ctx.items()))
+        if key not in seen:
+            seen.add(key)
+            result.append(ctx)
+    return result
+
+
+@dataclass(frozen=True)
+class BindingInfo:
+    """Lightweight metadata for a single (nid, point_uri, ref_uri) data binding."""
+    nid: int
+    point_uri: str
+    ref_uri: str
+    alias: str
+    entity_contexts: list[dict[str, str]]
+    row_count: int = 0
+    earliest: datetime | None = None
+    latest: datetime | None = None
+
+
 @dataclass
 class DataObject:
-    """Alias-driven structured access to sensor data.
+    """Lazy, alias-driven structured access to sensor data.
 
-    Wraps query metadata and time-series data in an enriched narrow frame:
-        [data_alias, point_uri, ref_uri, entity__*, time, value]
+    On construction only SPARQL metadata and per-series stats (row count,
+    time range) are fetched.  The actual time-series data is materialized
+    on demand when ``__getitem__``, ``dataframe()``, ``iter()``, or
+    ``latest()`` are called.
 
-    All access patterns (``__getitem__``, ``by()``, ``dataframe()``, ``iter()``)
-    reshape from this single internal representation.
+    Lightweight operations such as ``aliases``, ``metadata()``,
+    ``is_empty()``, ``total_rows``, ``time_range``, and ``by()`` all work
+    without triggering materialization.
     """
 
-    _tall: pl.DataFrame
+    _bindings: list[BindingInfo]
     _entity_columns: list[str]
     _query_graph: QueryGraph
+
+    # Deferred fetch state
+    _client: AcquiriumClient | None = field(default=None, repr=False)
+    _query_params: dict = field(default_factory=dict, repr=False)
+
+    # Materialized state
+    _tall: pl.DataFrame | None = field(default=None, repr=False)
+    _materialized: bool = field(default=False, repr=False)
     _metadata_df: pl.DataFrame | None = field(default=None, repr=False)
 
     # ------------------------------------------------------------------
     # Construction
     # ------------------------------------------------------------------
+
+    @classmethod
+    def _empty(cls, qg: QueryGraph, *, cast_value: str | None = "float") -> DataObject:
+        return cls(
+            _bindings=[],
+            _entity_columns=[],
+            _query_graph=qg,
+            _tall=pl.DataFrame(
+                schema={
+                    "data_alias": pl.Utf8,
+                    "point_uri": pl.Utf8,
+                    "ref_uri": pl.Utf8,
+                    "time": pl.Datetime(time_zone="UTC"),
+                    "value": pl.Float64 if cast_value == "float" else pl.Utf8,
+                }
+            ),
+            _materialized=True,
+        )
 
     @classmethod
     def _from_query(
@@ -134,36 +190,12 @@ class DataObject:
         qg = query.query_graph
 
         if not getattr(qg, "data_nodes", None):
-            return cls(
-                _tall=pl.DataFrame(
-                    schema={
-                        "data_alias": pl.Utf8,
-                        "point_uri": pl.Utf8,
-                        "ref_uri": pl.Utf8,
-                        "time": pl.Datetime(time_zone="UTC"),
-                        "value": pl.Float64 if cast_value == "float" else pl.Utf8,
-                    }
-                ),
-                _entity_columns=[],
-                _query_graph=qg,
-            )
+            return cls._empty(qg, cast_value=cast_value)
 
         point_ref_uris, entity_context = _parse_sparql_bindings(query)
 
         if not point_ref_uris:
-            return cls(
-                _tall=pl.DataFrame(
-                    schema={
-                        "data_alias": pl.Utf8,
-                        "point_uri": pl.Utf8,
-                        "ref_uri": pl.Utf8,
-                        "time": pl.Datetime(time_zone="UTC"),
-                        "value": pl.Float64 if cast_value == "float" else pl.Utf8,
-                    }
-                ),
-                _entity_columns=[],
-                _query_graph=qg,
-            )
+            return cls._empty(qg, cast_value=cast_value)
 
         # Determine all entity column names across every context dict
         all_entity_cols: set[str] = set()
@@ -172,10 +204,78 @@ class DataObject:
                 all_entity_cols.update(ctx.keys())
         entity_columns = sorted(all_entity_cols)
 
-        frames: list[pl.DataFrame] = []
+        # Fetch stats for all ref_uris in one batch request
+        ref_uris = list({ref_uri for _, _, ref_uri in point_ref_uris})
+        stats = query.client.timeseries_info_batch(ref_uris)
+
+        # Build BindingInfo for each binding
+        bindings: list[BindingInfo] = []
         for nid, point_uri, ref_uri in point_ref_uris:
-            df = query.client.timeseries_df(
-                ref_uri,
+            alias = qg.aliases_reverse.get(nid, str(nid))
+            key = (nid, point_uri, ref_uri)
+            contexts = entity_context.get(key, [{}])
+            unique_contexts = _deduplicate_contexts(contexts)
+            info = stats.get(ref_uri)
+            bindings.append(BindingInfo(
+                nid=nid,
+                point_uri=point_uri,
+                ref_uri=ref_uri,
+                alias=alias,
+                entity_contexts=unique_contexts,
+                row_count=info.row_count if info else 0,
+                earliest=info.earliest if info else None,
+                latest=info.latest if info else None,
+            ))
+
+        return cls(
+            _bindings=bindings,
+            _entity_columns=entity_columns,
+            _query_graph=qg,
+            _client=query.client,
+            _query_params={
+                "start": start,
+                "end": end,
+                "limit": limit,
+                "order": order,
+                "cast_value": cast_value,
+            },
+            _tall=None,
+            _materialized=False,
+        )
+
+    # ------------------------------------------------------------------
+    # Materialization
+    # ------------------------------------------------------------------
+
+    def _materialize(self) -> None:
+        """Fetch all time-series data and populate _tall. Idempotent."""
+        if self._materialized:
+            return
+
+        cast_value = self._query_params.get("cast_value", "float")
+
+        if not self._bindings:
+            self._tall = pl.DataFrame(
+                schema={
+                    "data_alias": pl.Utf8,
+                    "point_uri": pl.Utf8,
+                    "ref_uri": pl.Utf8,
+                    "time": pl.Datetime(time_zone="UTC"),
+                    "value": pl.Float64 if cast_value == "float" else pl.Utf8,
+                }
+            )
+            self._materialized = True
+            return
+
+        start = self._query_params.get("start")
+        end = self._query_params.get("end")
+        limit = self._query_params.get("limit")
+        order = self._query_params.get("order", "asc")
+
+        frames: list[pl.DataFrame] = []
+        for binding in self._bindings:
+            df = self._client.timeseries_df(
+                binding.ref_uri,
                 start=start,
                 end=end,
                 limit=limit,
@@ -185,50 +285,40 @@ class DataObject:
                 continue
 
             df = df.rename({"ts": "time", "uri": "ref_uri"})
-            alias = qg.aliases_reverse.get(nid, str(nid))
             df = df.with_columns(
-                pl.lit(alias).alias("data_alias"),
-                pl.lit(point_uri).alias("point_uri"),
+                pl.lit(binding.alias).alias("data_alias"),
+                pl.lit(binding.point_uri).alias("point_uri"),
             )
             # Drop the ref_uri from timeseries (use the one from SPARQL)
             df = df.drop("ref_uri")
-            df = df.with_columns(pl.lit(ref_uri).alias("ref_uri"))
+            df = df.with_columns(pl.lit(binding.ref_uri).alias("ref_uri"))
 
             # Resolve entity columns for this data key
-            key = (nid, point_uri, ref_uri)
-            contexts = entity_context.get(key, [{}])
-            # Use the first context (they should be identical for a given data key
-            # when there's only one entity per level; if multiple, take the first)
-            # We need to handle the case where multiple entity rows map to the
-            # same data point — duplicate the timeseries for each unique entity combo
-            unique_contexts = _deduplicate_contexts(contexts)
-            if len(unique_contexts) <= 1:
-                ctx = unique_contexts[0] if unique_contexts else {}
-                for ec in entity_columns:
+            if len(binding.entity_contexts) <= 1:
+                ctx = binding.entity_contexts[0] if binding.entity_contexts else {}
+                for ec in self._entity_columns:
                     df = df.with_columns(pl.lit(ctx.get(ec)).alias(ec))
                 frames.append(df)
             else:
-                for ctx in unique_contexts:
+                for ctx in binding.entity_contexts:
                     df_copy = df.clone()
-                    for ec in entity_columns:
+                    for ec in self._entity_columns:
                         df_copy = df_copy.with_columns(pl.lit(ctx.get(ec)).alias(ec))
                     frames.append(df_copy)
 
         if not frames:
-            schema = {
+            schema: dict[str, Any] = {
                 "data_alias": pl.Utf8,
                 "point_uri": pl.Utf8,
                 "ref_uri": pl.Utf8,
                 "time": pl.Datetime(time_zone="UTC"),
                 "value": pl.Float64 if cast_value == "float" else pl.Utf8,
             }
-            for ec in entity_columns:
+            for ec in self._entity_columns:
                 schema[ec] = pl.Utf8
-            return cls(
-                _tall=pl.DataFrame(schema=schema),
-                _entity_columns=entity_columns,
-                _query_graph=qg,
-            )
+            self._tall = pl.DataFrame(schema=schema)
+            self._materialized = True
+            return
 
         tall = pl.concat(frames, how="vertical")
 
@@ -245,18 +335,13 @@ class DataObject:
                 logger.warning("DataObject: casting value to int failed")
 
         # Reorder columns for consistency
-        base_cols = ["data_alias", "point_uri", "ref_uri"] + entity_columns + ["time", "value"]
+        base_cols = ["data_alias", "point_uri", "ref_uri"] + self._entity_columns + ["time", "value"]
         existing = [c for c in base_cols if c in tall.columns]
-        tall = tall.select(existing)
-
-        return cls(
-            _tall=tall,
-            _entity_columns=entity_columns,
-            _query_graph=qg,
-        )
+        self._tall = tall.select(existing)
+        self._materialized = True
 
     # ------------------------------------------------------------------
-    # Alias-based access
+    # Alias-based access (triggers materialization)
     # ------------------------------------------------------------------
 
     def __getitem__(self, alias: str) -> pl.DataFrame:
@@ -266,6 +351,7 @@ class DataObject:
         If multiple refs exist, returns ``[time, value, ref_uri]`` so the
         caller can disambiguate.
         """
+        self._materialize()
         subset = self._tall.filter(pl.col("data_alias") == alias)
         if subset.is_empty():
             return pl.DataFrame(schema={"time": pl.Datetime(time_zone="UTC"), "value": pl.Float64})
@@ -282,22 +368,55 @@ class DataObject:
     def by(self, entity_alias: str) -> Iterator[tuple[str, DataObject]]:
         """Group by an entity alias and yield ``(entity_uri, sub_DataObject)`` pairs."""
         col = f"entity__{entity_alias}"
-        if col not in self._tall.columns:
+        if col not in self._entity_columns:
             raise KeyError(
                 f"Entity alias '{entity_alias}' not found. "
                 f"Available: {self.entity_aliases}"
             )
 
-        for entity_uri in self._tall[col].drop_nulls().unique().sort().to_list():
-            sub = self._tall.filter(pl.col(col) == entity_uri)
+        if self._materialized:
+            # Fast path: use _tall
+            if self._tall is None or self._tall.is_empty():
+                return
+            for entity_uri in self._tall[col].drop_nulls().unique().sort().to_list():
+                sub_tall = self._tall.filter(pl.col(col) == entity_uri)
+                sub_bindings = [
+                    b for b in self._bindings
+                    if any(ctx.get(col) == entity_uri for ctx in b.entity_contexts)
+                ]
+                yield entity_uri, DataObject(
+                    _bindings=sub_bindings,
+                    _entity_columns=self._entity_columns,
+                    _query_graph=self._query_graph,
+                    _client=self._client,
+                    _query_params=self._query_params,
+                    _tall=sub_tall,
+                    _materialized=True,
+                )
+            return
+
+        # Lazy path: group bindings by entity context
+        entity_to_bindings: dict[str, list[BindingInfo]] = {}
+        for b in self._bindings:
+            for ctx in b.entity_contexts:
+                entity_uri = ctx.get(col)
+                if entity_uri is not None:
+                    entity_to_bindings.setdefault(entity_uri, []).append(b)
+
+        for entity_uri in sorted(entity_to_bindings.keys()):
+            sub_bindings = entity_to_bindings[entity_uri]
             yield entity_uri, DataObject(
-                _tall=sub,
+                _bindings=sub_bindings,
                 _entity_columns=self._entity_columns,
                 _query_graph=self._query_graph,
+                _client=self._client,
+                _query_params=self._query_params,
+                _tall=None,
+                _materialized=False,
             )
 
     # ------------------------------------------------------------------
-    # Flat DataFrame
+    # Flat DataFrame (triggers materialization)
     # ------------------------------------------------------------------
 
     def dataframe(self, shape: str = "wide") -> pl.DataFrame:
@@ -307,6 +426,8 @@ class DataObject:
         - ``shape="wide"``: pivots to ``[time, alias_0, alias_1, ...]``.
           When an alias has multiple refs, columns are suffixed ``_0``, ``_1``, etc.
         """
+        self._materialize()
+
         if self._tall.is_empty():
             return self._tall
 
@@ -368,34 +489,53 @@ class DataObject:
         return wide.sort("time")
 
     # ------------------------------------------------------------------
-    # Iteration
+    # Iteration (triggers materialization)
     # ------------------------------------------------------------------
 
     def iter(self, alias: str) -> Iterator[tuple[str, pl.DataFrame]]:
         """Iterate ``(point_uri, DataFrame[time, value])`` pairs for a data alias."""
+        self._materialize()
         subset = self._tall.filter(pl.col("data_alias") == alias)
         for point_uri in subset["point_uri"].unique().sort().to_list():
             point_df = subset.filter(pl.col("point_uri") == point_uri)
             yield point_uri, point_df.select("time", "value").sort("time")
 
     # ------------------------------------------------------------------
-    # Metadata & introspection
+    # Metadata & introspection (no materialization needed)
     # ------------------------------------------------------------------
 
     def metadata(self) -> pl.DataFrame:
         """Return a DataFrame of unique (data_alias, point_uri, ref_uri, entity__*) tuples."""
-        meta_cols = ["data_alias", "point_uri", "ref_uri"] + self._entity_columns
-        existing = [c for c in meta_cols if c in self._tall.columns]
-        if self._tall.is_empty():
-            return pl.DataFrame(schema={c: pl.Utf8 for c in existing})
-        return self._tall.select(existing).unique().sort("data_alias")
+        if self._materialized and self._tall is not None:
+            meta_cols = ["data_alias", "point_uri", "ref_uri"] + self._entity_columns
+            existing = [c for c in meta_cols if c in self._tall.columns]
+            if self._tall.is_empty():
+                return pl.DataFrame(schema={c: pl.Utf8 for c in existing})
+            return self._tall.select(existing).unique().sort("data_alias")
+
+        # Build from bindings without materializing
+        rows: list[dict[str, str | None]] = []
+        for b in self._bindings:
+            for ctx in (b.entity_contexts or [{}]):
+                row: dict[str, str | None] = {
+                    "data_alias": b.alias,
+                    "point_uri": b.point_uri,
+                    "ref_uri": b.ref_uri,
+                }
+                for ec in self._entity_columns:
+                    row[ec] = ctx.get(ec)
+                rows.append(row)
+        cols = ["data_alias", "point_uri", "ref_uri"] + self._entity_columns
+        if not rows:
+            return pl.DataFrame(schema={c: pl.Utf8 for c in cols})
+        return pl.DataFrame(rows).unique().sort("data_alias")
 
     @property
     def aliases(self) -> list[str]:
         """List of data aliases present in this DataObject."""
-        if self._tall.is_empty():
+        if not self._bindings:
             return []
-        return self._tall["data_alias"].unique().sort().to_list()
+        return sorted(set(b.alias for b in self._bindings))
 
     @property
     def entity_aliases(self) -> list[str]:
@@ -404,12 +544,12 @@ class DataObject:
 
     def ref_info(self, alias: str) -> list[tuple[int, str]]:
         """Return ``[(index, ref_uri), ...]`` for a given data alias."""
-        subset = self._tall.filter(pl.col("data_alias") == alias)
-        refs = subset["ref_uri"].unique().sort().to_list()
+        refs = sorted(set(b.ref_uri for b in self._bindings if b.alias == alias))
         return [(i, ref) for i, ref in enumerate(refs)]
 
     def latest(self, alias: str) -> pl.DataFrame:
         """Return the latest row(s) for a given alias."""
+        self._materialize()
         subset = self._tall.filter(pl.col("data_alias") == alias)
         if subset.is_empty():
             return pl.DataFrame(schema={"time": pl.Datetime(time_zone="UTC"), "value": pl.Float64})
@@ -417,21 +557,44 @@ class DataObject:
 
     def is_empty(self) -> bool:
         """Check if there is any data."""
-        return self._tall.is_empty()
+        if self._materialized:
+            return self._tall.is_empty()
+        return all(b.row_count == 0 for b in self._bindings)
+
+    # ------------------------------------------------------------------
+    # Stats (no materialization needed)
+    # ------------------------------------------------------------------
+
+    @property
+    def total_rows(self) -> int:
+        """Total row count across all bindings (from stats, no materialization)."""
+        return sum(b.row_count for b in self._bindings)
+
+    @property
+    def time_range(self) -> tuple[datetime | None, datetime | None]:
+        """Overall (earliest, latest) across all bindings."""
+        earliests = [b.earliest for b in self._bindings if b.earliest is not None]
+        latests = [b.latest for b in self._bindings if b.latest is not None]
+        return (min(earliests) if earliests else None, max(latests) if latests else None)
+
+    @property
+    def bindings(self) -> list[BindingInfo]:
+        """Read-only access to binding metadata."""
+        return list(self._bindings)
+
+    # ------------------------------------------------------------------
+    # Display
+    # ------------------------------------------------------------------
 
     def __repr__(self) -> str:
-        n_rows = len(self._tall)
         aliases = self.aliases
-        return f"DataObject({n_rows} rows, aliases={aliases}, entities={self.entity_aliases})"
+        if self._materialized:
+            n_rows = len(self._tall) if self._tall is not None else 0
+            return f"DataObject({n_rows} rows, aliases={aliases}, entities={self.entity_aliases})"
 
-
-def _deduplicate_contexts(contexts: list[dict[str, str]]) -> list[dict[str, str]]:
-    """Return unique context dicts, preserving order."""
-    seen: set[tuple[tuple[str, str], ...]] = set()
-    result: list[dict[str, str]] = []
-    for ctx in contexts:
-        key = tuple(sorted(ctx.items()))
-        if key not in seen:
-            seen.add(key)
-            result.append(ctx)
-    return result
+        total = self.total_rows
+        earliest, latest = self.time_range
+        time_str = ""
+        if earliest and latest:
+            time_str = f", range={earliest.isoformat()} to {latest.isoformat()}"
+        return f"DataObject(lazy, ~{total} rows{time_str}, aliases={aliases}, entities={self.entity_aliases})"

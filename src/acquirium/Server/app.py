@@ -19,6 +19,7 @@ from acquirium.internals.models import (
     LogEntry,
     TimeInterval,
     TimeIntervalModel,
+    TimeseriesInfo,
     AppSpec,
     AppRunRequest,
     AppStopRequest,
@@ -59,6 +60,10 @@ class InsertGraphRequest(BaseModel):
     format: str = "turtle"
     replace: bool = True
     wait_for_embedding: bool = False
+
+
+class TimeseriesInfoRequest(BaseModel):
+    uris: list[str]
 
 
 class FindDataRequest(BaseModel):
@@ -340,7 +345,16 @@ def get_timeseries(
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-    
+
+
+@app.post("/timeseries_info")
+def timeseries_info(req: TimeseriesInfoRequest) -> dict[str, Any]:
+    try:
+        result = app.state.manager.timeseries_info_batch(req.uris)
+        return {uri: info.model_dump() for uri, info in result.items()}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 
 @app.get("/sparql_json")
 def sparql_json(query: str, use_union: bool = True) -> dict[str, Any]:
