@@ -899,8 +899,7 @@ class Query:
             pids = list(self._find_all_nodes(self.query_graph.current_pointer))
 
         if not pids:
-            logger.warning("no target alias specified or found; skipping log insertion")
-            return
+            pids = [PLANT_URI]
         for pid in pids:
             
             self.client.insert_log(
@@ -935,8 +934,7 @@ class Query:
             pids = list(self._find_all_nodes(self.query_graph.current_pointer))
     
         if not pids:
-            logger.warning("No entities found, skipping log querying")
-            return pl.DataFrame({"point_uri": [], "message": [], "log_time": [], "observation_start": [], "observation_end": []})
+            pids = [PLANT_URI]
 
         frames: list[dict] = []
         for pid in pids:
