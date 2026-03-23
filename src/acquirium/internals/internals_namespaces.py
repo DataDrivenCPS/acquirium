@@ -60,6 +60,7 @@ DATA_SOURCE = ACQUIRIUM_NS.DataSource
 
 HAS_LOG = ACQUIRIUM_NS.hasLog
 LOGBOOK = ACQUIRIUM_NS.Logbook
+PLANT_URI = str(ACQUIRIUM_NS.Plant)  # Generic URI representing the entire plant
 
 
 # File-based Reference predicates

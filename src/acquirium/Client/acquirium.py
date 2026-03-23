@@ -206,5 +206,77 @@ class Acquirium:
         return self.client.generate_grafana_dashboard(grafana_server, api_key)
 
     # ------------------------------------------------------------------
+    # LOGGING API (plant-level convenience methods)
+    # ------------------------------------------------------------------
+
+    def insert_log(
+        self,
+        message: str,
+        log_time: str | datetime | None = None,
+        observation_start: str | datetime | None = None,
+        observation_end: str | datetime | None = None,
+    ) -> dict:
+        """Insert a plant-level log entry (no specific point URI needed).
+
+        Args:
+            message: The log message.
+            log_time: Timestamp of the log entry (ISO 8601 string or datetime).
+                Defaults to now.
+            observation_start: Optional observation period start.
+            observation_end: Optional observation period end.
+        """
+        def _to_iso(v: str | datetime | None) -> str | None:
+            if v is None:
+                return None
+            return v.isoformat() if isinstance(v, datetime) else v
+
+        return self.client.insert_log(
+            log_time=_to_iso(log_time),
+            log_message=message,
+            observation_start=_to_iso(observation_start),
+            observation_end=_to_iso(observation_end),
+        )
+
+    def read_logs(
+        self,
+        log_time_start: str | datetime | None = None,
+        log_time_end: str | datetime | None = None,
+        observation_start: str | datetime | None = None,
+        observation_end: str | datetime | None = None,
+    ) -> list:
+        """Read plant-level log entries (no query/object needed).
+
+        Returns a list of LogEntry objects for the generic plant URI.
+        """
+        import polars as pl
+
+        def _to_iso(v: str | datetime | None) -> str | None:
+            if v is None:
+                return None
+            return v.isoformat() if isinstance(v, datetime) else v
+
+        logs = self.client.query_logs(
+            log_time_start=_to_iso(log_time_start),
+            log_time_end=_to_iso(log_time_end),
+            observation_start=_to_iso(observation_start),
+            observation_end=_to_iso(observation_end),
+        )
+        if not logs:
+            return pl.DataFrame({"point_uri": [], "message": [], "log_time": [], "observation_start": [], "observation_end": []})
+        frames = [log.to_dict() for log in logs]
+        schema = {
+            "point_uri": pl.Utf8,
+            "message": pl.Utf8,
+            "log_time": pl.Datetime(time_zone="UTC"),
+            "observation_start": pl.Datetime(time_zone="UTC"),
+            "observation_end": pl.Datetime(time_zone="UTC"),
+        }
+        return pl.concat([pl.DataFrame(f, schema=schema) for f in frames], how="vertical").sort("log_time")
+
+    def delete_logs(self) -> dict:
+        """Delete all plant-level log entries."""
+        return self.client.delete_logs()
+
+    # ------------------------------------------------------------------
     # SPARQL / GRAPH UTILITIES
     # ------------------------------------------------------------------

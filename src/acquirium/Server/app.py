@@ -25,6 +25,7 @@ from acquirium.internals.models import (
     AppStopRequest,
     InsertTimeseriesRequest,
 )
+from acquirium.internals.internals_namespaces import PLANT_URI
 
 import pyarrow.ipc as ipc
 import pyarrow as pa
@@ -379,18 +380,19 @@ def resolve_text(
 
 @app.post("/insert_log")
 def insert_log(
-        point_uri: str,
-        log_timestamp: str,
+        point_uri: Optional[str] = None,
+        log_timestamp: str = "",
         observation_start: Optional[str] = None,
         observation_end: Optional[str] = None,
         message: str = "",
     ) -> dict[str, Any]:
     try:
+        uri = point_uri if point_uri else PLANT_URI
         log_time = dtparser.isoparse(log_timestamp)
         obs_start = _parse_dt(observation_start)
         obs_end = _parse_dt(observation_end)
         log_entry = LogEntry(
-            point_uri=point_uri,
+            point_uri=uri,
             timestamp=log_time,
             period=TimeIntervalModel(start=obs_start, end=obs_end),
             message=message,
@@ -403,7 +405,7 @@ def insert_log(
 
 @app.get("/query_logs", response_model=list[LogEntry])
 def query_logs(
-        point_uri: str,
+        point_uri: Optional[str] = None,
         log_time_start: Optional[str] = None,
         log_time_end: Optional[str] = None,
         observation_start: Optional[str] = None,
@@ -422,8 +424,9 @@ def query_logs(
                 start=_parse_dt(observation_start) if observation_start is not None else None,
                 end=_parse_dt(observation_end) if observation_end is not None else None,
             )
+        uri = point_uri if point_uri else PLANT_URI
         logs = app.state.manager.query_logs(
-            point_uri=point_uri,
+            point_uri=uri,
             log_time_interval=log_time_interval,
             obs_time_interval=obs_time_interval,
         )
@@ -433,10 +436,11 @@ def query_logs(
 
 @app.delete("/delete_logs")
 def delete_logs(
-        point_uri: str,
+        point_uri: Optional[str] = None,
     ) -> dict[str, Any]:
     try:
-        if app.state.manager.delete_logs(point_uri):
+        uri = point_uri if point_uri else PLANT_URI
+        if app.state.manager.delete_logs(uri):
             return {"ok": True}
         else:
             raise HTTPException(status_code=500, detail="Failed to delete logs")

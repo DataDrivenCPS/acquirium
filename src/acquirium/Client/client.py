@@ -324,8 +324,8 @@ class AcquiriumClient:
 
     def insert_log(
         self,
-        point_uri: str,
-        log_time: str,
+        point_uri: Optional[str] = None,
+        log_time: Optional[str] = None,
         observation_start: Optional[str] = None,
         observation_end: Optional[str] = None,
         log_message: str = "",
@@ -334,20 +334,25 @@ class AcquiriumClient:
         Insert a log entry for a given point URI.
 
         Args:
-            point_uri: The URI of the time series point.
+            point_uri: The URI of the time series point. If None, defaults to the
+                generic plant URI on the server.
             log_time: The timestamp of the log entry in ISO 8601 format.
+                If None, uses the current time.
             log_message: The log message.
         Returns:
             A dictionary with the result of the insertion.
         """
+        if log_time is None:
+            log_time = datetime.now().isoformat()
         url = f"{self.base_url}/insert_log"
         data = {
-            "point_uri": point_uri,
             "log_timestamp": log_time,
             "observation_start": observation_start,
             "observation_end": observation_end,
             "message": log_message,
         }
+        if point_uri is not None:
+            data["point_uri"] = point_uri
         response = requests.post(url, params=data)
         response.raise_for_status()
         return response.json()
@@ -414,7 +419,7 @@ class AcquiriumClient:
     
     def query_logs(
         self,
-        point_uri: str,
+        point_uri: Optional[str] = None,
         log_time_start: Optional[str] = None,
         log_time_end: Optional[str] = None,
         observation_start: Optional[str] = None,
@@ -424,7 +429,8 @@ class AcquiriumClient:
         Query log entries for a given point URI within optional time intervals.
 
         Args:
-            point_uri: The URI of the time series point.
+            point_uri: The URI of the time series point. If None, defaults to the
+                generic plant URI (retrieves plant-level logs).
             log_time_start: Start of the log time interval in ISO 8601 format.
             log_time_end: End of the log time interval in ISO 8601 format.
             observation_start: Start of the observation time interval in ISO 8601 format.
@@ -435,11 +441,11 @@ class AcquiriumClient:
         """
         url = f"{self.base_url}/query_logs"
         params = {
-        "point_uri": point_uri,
-        "log_time_start": log_time_start,
-        "log_time_end": log_time_end,
-        "observation_start": observation_start,
-        "observation_end": observation_end,
+            "point_uri": point_uri,
+            "log_time_start": log_time_start,
+            "log_time_end": log_time_end,
+            "observation_start": observation_start,
+            "observation_end": observation_end,
         }
         params = {k: v for k, v in params.items() if v is not None}
         response = requests.get(url, params=params)
@@ -447,15 +453,19 @@ class AcquiriumClient:
         data = response.json()
         return [LogEntry.model_validate(x) for x in data]
 
-    def delete_logs(self, point_uri: str) -> dict:
+    def delete_logs(self, point_uri: Optional[str] = None) -> dict:
         """
         Delete all log entries for a given point URI.
 
         Args:
-            point_uri: The URI of the time series point.
+            point_uri: The URI of the time series point. If None, defaults to the
+                generic plant URI.
         """
         url = f"{self.base_url}/delete_logs"
-        response = requests.delete(url, params={"point_uri": point_uri})
+        params = {}
+        if point_uri is not None:
+            params["point_uri"] = point_uri
+        response = requests.delete(url, params=params)
         response.raise_for_status()
         return response.json()
 
