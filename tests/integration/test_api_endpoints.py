@@ -139,7 +139,7 @@ class TestTimeseriesEndpoints:
         assert resp.status_code == 200
 
         resp = requests.get(f"{BASE_URL}/timeseries", params={
-            "uri": self.TEST_POINT,
+            "uri": self.TEST_REF,
         })
         assert resp.status_code == 200
         # Response is Arrow IPC
@@ -175,12 +175,12 @@ class TestTimeseriesEndpoints:
     def test_timeseries_info(self):
         self._insert_data(3)
         resp = requests.post(f"{BASE_URL}/timeseries_info", json={
-            "uris": [self.TEST_POINT],
+            "uris": [self.TEST_REF],
         })
         assert resp.status_code == 200
         data = resp.json()
-        assert self.TEST_POINT in data
-        assert data[self.TEST_POINT]["row_count"] >= 3
+        assert self.TEST_REF in data
+        assert data[self.TEST_REF]["row_count"] >= 3
 
     def test_replace(self):
         self._insert_data(10)
