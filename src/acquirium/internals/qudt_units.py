@@ -82,6 +82,8 @@ class UnitDefinition:
     quantity_kind: URIRef | None
     multiplier: float
     offset: float
+    dimension_vector: URIRef | None = None
+    quantity_kinds: tuple[URIRef, ...] = ()
 
     @classmethod
     def from_graph(cls, graph: Graph, uri: URIRef) -> "UnitDefinition":
@@ -101,13 +103,23 @@ class UnitDefinition:
 
         quantity_kinds = list(graph.objects(uri, QUDT_QUANTITY_KIND_PROP))
         quantity_kinds += list(graph.objects(uri, QUDT.hasQuantityKind))
+        # Deduplicate while preserving order
+        seen_qk: set[URIRef] = set()
+        unique_qks: list[URIRef] = []
+        for qk in quantity_kinds:
+            if isinstance(qk, URIRef) and qk not in seen_qk:
+                seen_qk.add(qk)
+                unique_qks.append(qk)
 
         # Prefer the canonical Length quantity kind when multiple exist (common in QUDT dumps)
         preferred = URIRef("http://qudt.org/vocab/quantitykind/Length")
-        if preferred in quantity_kinds:
+        if preferred in unique_qks:
             quantity_kind = preferred
         else:
-            quantity_kind = quantity_kinds[0] if quantity_kinds else None
+            quantity_kind = unique_qks[0] if unique_qks else None
+
+        # Dimension vector for robust compatibility checking
+        dim_vec = next(graph.objects(uri, QUDT.hasDimensionVector), None)
 
         multiplier_lit = _first_literal(uri, (QUDT.conversionMultiplier,))
         offset_lit = _first_literal(uri, (QUDT.conversionOffset,))
@@ -125,6 +137,8 @@ class UnitDefinition:
             quantity_kind=quantity_kind if isinstance(quantity_kind, URIRef) else None,
             multiplier=multiplier,
             offset=offset,
+            dimension_vector=dim_vec if isinstance(dim_vec, URIRef) else None,
+            quantity_kinds=tuple(unique_qks),
         )
 
 
@@ -201,12 +215,44 @@ class QUDTUnitConverter:
 
         raise UnitNotFound(f"Unit '{identifier}' not found in provided QUDT graph")
 
+    def are_compatible(self, unit_a: str | URIRef, unit_b: str | URIRef) -> bool:
+        """Check if two units are compatible for conversion.
+
+        Uses dimension vectors (most reliable), then falls back to
+        quantity kind overlap.
+        """
+        try:
+            a = self.resolve_unit(unit_a)
+        except UnitNotFound:
+            a = self.infer_unit(str(unit_a))
+        try:
+            b = self.resolve_unit(unit_b)
+        except UnitNotFound:
+            b = self.infer_unit(str(unit_b))
+        return self._check_compatible(a, b)
+
+    @staticmethod
+    def _check_compatible(src: UnitDefinition, tgt: UnitDefinition) -> bool:
+        """Check compatibility using dimension vectors first, then quantity kind overlap."""
+        # Dimension vector is the most reliable check
+        if src.dimension_vector and tgt.dimension_vector:
+            return src.dimension_vector == tgt.dimension_vector
+        # Fall back to quantity kind overlap
+        if src.quantity_kinds and tgt.quantity_kinds:
+            return bool(set(src.quantity_kinds) & set(tgt.quantity_kinds))
+        # If only one has a single quantity_kind, check that
+        if src.quantity_kind and tgt.quantity_kind:
+            return src.quantity_kind == tgt.quantity_kind
+        # If we can't determine, allow the conversion (may fail at math level)
+        return True
+
     def convert(self, value: float, from_unit: str | URIRef, to_unit: str | URIRef) -> float:
         """Convert ``value`` from ``from_unit`` into ``to_unit``.
 
-        Units are resolved via :meth:`resolve_unit`. A check is performed on
-        quantity kinds when both units declare one. Raises
-        :class:`IncompatibleUnits` when quantity kinds differ.
+        Uses dimension vectors for compatibility checking (handles cases where
+        units share the same physical dimension but different quantity kind
+        labels, e.g., L has LiquidVolume, MilliL has Volume).
+        Raises :class:`IncompatibleUnits` when units are incompatible.
         """
 
         try:
@@ -219,9 +265,10 @@ class QUDTUnitConverter:
         except UnitNotFound:
             tgt = self.infer_unit(str(to_unit))
 
-        if src.quantity_kind and tgt.quantity_kind and src.quantity_kind != tgt.quantity_kind:
+        if not self._check_compatible(src, tgt):
             raise IncompatibleUnits(
-                f"Cannot convert {src.uri} ({src.quantity_kind}) to {tgt.uri} ({tgt.quantity_kind})"
+                f"Cannot convert {src.uri} ({src.dimension_vector or src.quantity_kind}) "
+                f"to {tgt.uri} ({tgt.dimension_vector or tgt.quantity_kind})"
             )
 
         # Use Decimal for better reproducibility on small tolerances
@@ -396,6 +443,8 @@ class QUDTUnitConverter:
                 quantity_kind=unit.quantity_kind,
                 multiplier=float(fixed),
                 offset=unit.offset,
+                dimension_vector=unit.dimension_vector,
+                quantity_kinds=unit.quantity_kinds,
             )
         return self._refine_ratio_multiplier(unit)
 
@@ -415,6 +464,8 @@ class QUDTUnitConverter:
                 quantity_kind=unit.quantity_kind,
                 multiplier=float(mult),
                 offset=0.0,
+                dimension_vector=unit.dimension_vector,
+                quantity_kinds=unit.quantity_kinds,
             )
         except Exception:
             return unit

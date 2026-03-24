@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Iterator, TYPE_CHECKING
 import polars as pl
@@ -19,14 +19,18 @@ def _parse_sparql_bindings(
 ) -> tuple[
     list[tuple[int, str, str]],          # (nid, point_uri, ref_uri) — unique data bindings
     dict[tuple[int, str, str], list[dict[str, str]]],  # data_key -> list of entity context dicts
+    dict[tuple[int, str, str], str | None],  # data_key -> property unit URI
+    dict[tuple[int, str, str], str | None],  # data_key -> ext ref unit URI
 ]:
-    """Parse SPARQL result columns to extract data-node bindings and entity context.
+    """Parse SPARQL result columns to extract data-node bindings, entity context, and unit metadata.
 
     Returns:
         point_ref_uris: deduplicated list of (node_id, point_uri, ref_uri)
         entity_context: mapping from each data key to a list of dicts
             like {"entity__basin": "urn:...", "entity__process": "urn:..."} —
             one dict per SPARQL row that matched this data key.
+        property_units: mapping from data key to property unit URI (or None)
+        ref_units: mapping from data key to external reference unit URI (or None)
     """
     res = query.execute(use_union=True)
     cols: list[str] = res.get("columns", [])
@@ -35,22 +39,38 @@ def _parse_sparql_bindings(
     qg = query.query_graph
     data_node_ids = set(qg.data_nodes.keys())
 
-    # Map column index -> node id for v<N> and ext<N> columns
+    # Map column index -> node id for v<N>, ext<N>, unit<N>, extunit<N> columns
     col_to_id: dict[int, int] = {}
     ext_ref_col_to_id: dict[int, int] = {}
+    unit_col_to_id: dict[int, int] = {}
+    extunit_col_to_id: dict[int, int] = {}
     for i, c in enumerate(cols):
-        if isinstance(c, str) and c.startswith("v"):
+        if not isinstance(c, str):
+            continue
+        if c.startswith("extunit"):
             try:
-                col_to_id[i] = int(c[1:])
+                extunit_col_to_id[i] = int(c[7:])
             except ValueError:
                 pass
-        elif isinstance(c, str) and c.startswith("ext"):
+        elif c.startswith("ext"):
             try:
                 ext_ref_col_to_id[i] = int(c[3:])
             except ValueError:
                 pass
+        elif c.startswith("unit"):
+            try:
+                unit_col_to_id[i] = int(c[4:])
+            except ValueError:
+                pass
+        elif c.startswith("v"):
+            try:
+                col_to_id[i] = int(c[1:])
+            except ValueError:
+                pass
 
     nid_to_ext_ref_col: dict[int, int] = {v: k for k, v in ext_ref_col_to_id.items()}
+    nid_to_unit_col: dict[int, int] = {v: k for k, v in unit_col_to_id.items()}
+    nid_to_extunit_col: dict[int, int] = {v: k for k, v in extunit_col_to_id.items()}
 
     data_col_indices = [i for i, nid in col_to_id.items() if nid in data_node_ids]
     ref_col_indices = [i for i, nid in ext_ref_col_to_id.items() if nid in data_node_ids]
@@ -61,13 +81,15 @@ def _parse_sparql_bindings(
         if nid not in data_node_ids:
             entity_col_indices.append((i, nid))
 
-    # Collect unique data bindings and their entity contexts
+    # Collect unique data bindings, entity contexts, and unit info
     point_ref_uris: list[tuple[int, str, str]] = []
     seen: set[tuple[int, str, str]] = set()
     entity_context: dict[tuple[int, str, str], list[dict[str, str]]] = {}
+    property_units: dict[tuple[int, str, str], str | None] = {}
+    ref_units: dict[tuple[int, str, str], str | None] = {}
 
     if not data_col_indices or not ref_col_indices:
-        return [], {}
+        return [], {}, {}, {}
 
     for r in rows:
         # Build entity context for this row
@@ -96,9 +118,20 @@ def _parse_sparql_bindings(
             if key not in seen:
                 seen.add(key)
                 point_ref_uris.append(key)
+                # Extract unit URIs (first non-None wins for each key)
+                unit_col = nid_to_unit_col.get(nid)
+                if unit_col is not None and unit_col < len(r) and r[unit_col] is not None:
+                    property_units[key] = str(r[unit_col])
+                else:
+                    property_units[key] = None
+                extunit_col = nid_to_extunit_col.get(nid)
+                if extunit_col is not None and extunit_col < len(r) and r[extunit_col] is not None:
+                    ref_units[key] = str(r[extunit_col])
+                else:
+                    ref_units[key] = None
             entity_context.setdefault(key, []).append(row_entities)
 
-    return point_ref_uris, entity_context
+    return point_ref_uris, entity_context, property_units, ref_units
 
 
 def _deduplicate_contexts(contexts: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -124,6 +157,8 @@ class BindingInfo:
     row_count: int = 0
     earliest: datetime | None = None
     latest: datetime | None = None
+    property_unit: str | None = None    # unit URI from qudt:hasUnit on the property
+    ref_unit: str | None = None         # unit URI from qudt:hasUnit on the ext reference
 
 
 @dataclass
@@ -152,6 +187,10 @@ class DataObject:
     _tall: pl.DataFrame | None = field(default=None, repr=False)
     _materialized: bool = field(default=False, repr=False)
     _metadata_df: pl.DataFrame | None = field(default=None, repr=False)
+
+    # Pending unit conversions: list of (alias_pattern, from_unit, to_unit)
+    # alias_pattern is "*" for all aliases, or a specific alias name
+    _pending_conversions: list[tuple[str, str, str]] = field(default_factory=list, repr=False)
 
     # ------------------------------------------------------------------
     # Construction
@@ -192,7 +231,7 @@ class DataObject:
         if not getattr(qg, "data_nodes", None):
             return cls._empty(qg, cast_value=cast_value)
 
-        point_ref_uris, entity_context = _parse_sparql_bindings(query)
+        point_ref_uris, entity_context, prop_units, ext_ref_units = _parse_sparql_bindings(query)
 
         if not point_ref_uris:
             return cls._empty(qg, cast_value=cast_value)
@@ -225,6 +264,8 @@ class DataObject:
                 row_count=info.row_count if info else 0,
                 earliest=info.earliest if info else None,
                 latest=info.latest if info else None,
+                property_unit=prop_units.get(key),
+                ref_unit=ext_ref_units.get(key),
             ))
 
         return cls(
@@ -246,6 +287,35 @@ class DataObject:
     # ------------------------------------------------------------------
     # Materialization
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _apply_conversion(df: pl.DataFrame, factors: dict) -> pl.DataFrame:
+        """Apply unit conversion to a DataFrame's value column using pre-computed factors."""
+        src_mult = factors["from_multiplier"]
+        src_off = factors["from_offset"]
+        tgt_mult = factors["to_multiplier"]
+        tgt_off = factors["to_offset"]
+        return df.with_columns(
+            ((pl.col("value") + src_off) * src_mult / tgt_mult - tgt_off).alias("value")
+        )
+
+    def _resolve_effective_units(self) -> dict[str, str | None]:
+        """Determine the effective unit for each alias, handling Case 3.2/3.2.1.
+
+        Returns {alias: effective_unit_uri_or_None}.
+        """
+        alias_units: dict[str, str | None] = {}
+        for b in self._bindings:
+            if b.alias in alias_units:
+                continue
+            if b.property_unit:
+                alias_units[b.alias] = b.property_unit
+            elif b.ref_unit:
+                # Case 3.2: no property unit, adopt ref_unit
+                alias_units[b.alias] = b.ref_unit
+            else:
+                alias_units[b.alias] = None
+        return alias_units
 
     def _materialize(self) -> None:
         """Fetch all time-series data and populate _tall. Idempotent."""
@@ -272,6 +342,18 @@ class DataObject:
         limit = self._query_params.get("limit")
         order = self._query_params.get("order", "asc")
 
+        # Pre-compute effective units per alias for Case 3.2/3.2.1
+        effective_units = self._resolve_effective_units()
+
+        # Cache conversion factors to avoid repeated server calls
+        _factors_cache: dict[tuple[str, str], dict] = {}
+
+        def _get_factors(from_u: str, to_u: str) -> dict:
+            key = (from_u, to_u)
+            if key not in _factors_cache:
+                _factors_cache[key] = self._client.get_conversion_factors(from_u, to_u)
+            return _factors_cache[key]
+
         frames: list[pl.DataFrame] = []
         for binding in self._bindings:
             df = self._client.timeseries_df(
@@ -292,6 +374,28 @@ class DataObject:
             # Drop the ref_uri from timeseries (use the one from SPARQL)
             df = df.drop("ref_uri")
             df = df.with_columns(pl.lit(binding.ref_uri).alias("ref_uri"))
+
+            # --- Case 3 auto-conversion ---
+            target_unit = effective_units.get(binding.alias)
+            if binding.ref_unit and target_unit and binding.ref_unit != target_unit:
+                # Case 3.1: ext ref unit differs from effective unit → convert
+                # Need to cast value to float first for conversion
+                try:
+                    df = df.with_columns(pl.col("value").cast(pl.Float64))
+                    factors = _get_factors(binding.ref_unit, target_unit)
+                    if factors.get("compatible", False):
+                        df = self._apply_conversion(df, factors)
+                    else:
+                        logger.warning(
+                            "DataObject: incompatible units for auto-conversion "
+                            "%s -> %s on ref %s, skipping",
+                            binding.ref_unit, target_unit, binding.ref_uri,
+                        )
+                except Exception:
+                    logger.warning(
+                        "DataObject: auto-conversion failed for ref %s (%s -> %s)",
+                        binding.ref_uri, binding.ref_unit, target_unit,
+                    )
 
             # Resolve entity columns for this data key
             if len(binding.entity_contexts) <= 1:
@@ -333,6 +437,29 @@ class DataObject:
                 tall = tall.with_columns(pl.col("value").cast(pl.Int64, strict=True))
             except Exception:
                 logger.warning("DataObject: casting value to int failed")
+
+        # Apply pending conversions (from convert_to() on a lazy DataObject)
+        for alias_pat, from_unit, to_unit in self._pending_conversions:
+            try:
+                factors = _get_factors(from_unit, to_unit)
+                if not factors.get("compatible", False):
+                    logger.warning(
+                        "DataObject: incompatible units in pending conversion %s -> %s",
+                        from_unit, to_unit,
+                    )
+                    continue
+                if alias_pat == "*":
+                    tall = self._apply_conversion(tall, factors)
+                else:
+                    mask = pl.col("data_alias") == alias_pat
+                    converted = self._apply_conversion(tall.filter(mask), factors)
+                    rest = tall.filter(~mask)
+                    tall = pl.concat([rest, converted], how="vertical")
+            except Exception:
+                logger.warning(
+                    "DataObject: pending conversion failed %s -> %s for alias '%s'",
+                    from_unit, to_unit, alias_pat,
+                )
 
         # Reorder columns for consistency
         base_cols = ["data_alias", "point_uri", "ref_uri"] + self._entity_columns + ["time", "value"]
@@ -413,6 +540,7 @@ class DataObject:
                 _query_params=self._query_params,
                 _tall=None,
                 _materialized=False,
+                _pending_conversions=list(self._pending_conversions),
             )
 
     # ------------------------------------------------------------------
@@ -581,6 +709,130 @@ class DataObject:
     def bindings(self) -> list[BindingInfo]:
         """Read-only access to binding metadata."""
         return list(self._bindings)
+
+    # ------------------------------------------------------------------
+    # Unit conversion
+    # ------------------------------------------------------------------
+
+    def units(self) -> dict[str, str | None]:
+        """Return ``{alias: unit_uri_or_None}`` for each data alias.
+
+        The effective unit considers property annotations and external
+        reference annotations (Case 3.2: ref_unit adopted when property
+        has no unit).
+        """
+        return self._resolve_effective_units()
+
+    def convert_to(
+        self,
+        to_unit: str,
+        *,
+        from_unit: str | None = None,
+        alias: str | None = None,
+    ) -> "DataObject":
+        """Return a new DataObject with values converted to the target unit.
+
+        Args:
+            to_unit: Target unit identifier (URI, label, symbol, or UCUM code).
+            from_unit: Source unit identifier. If None, the property's
+                ``qudt:hasUnit`` annotation is used (Case 2). If the property
+                has no unit, a ValueError is raised — pass ``from_unit``
+                explicitly (Case 1).
+            alias: Apply conversion only to this alias. If None, all aliases
+                are converted.
+
+        Returns:
+            A **new** DataObject with converted values. The original is not
+            modified.
+
+        Raises:
+            ValueError: If ``from_unit`` is None and the alias has no unit
+                annotation, or if the units are incompatible.
+        """
+        if self._client is None:
+            raise ValueError("Cannot convert units without a client connection")
+
+        effective = self._resolve_effective_units()
+        affected_aliases = [alias] if alias else self.aliases
+
+        # Validate and determine from_unit per alias
+        conversions: list[tuple[str, str, str]] = []  # (alias, from, to)
+        for a in affected_aliases:
+            src = from_unit
+            if src is None:
+                src = effective.get(a)
+                if src is None:
+                    raise ValueError(
+                        f"No unit annotation found for alias '{a}'. "
+                        f"Provide from_unit explicitly."
+                    )
+            conversions.append((a, src, to_unit))
+
+        # Deduplicate factor requests
+        factor_pairs = {(c[1], c[2]) for c in conversions}
+        factors_cache: dict[tuple[str, str], dict] = {}
+        for fu, tu in factor_pairs:
+            factors = self._client.get_conversion_factors(fu, tu)
+            if not factors.get("compatible", False):
+                raise ValueError(
+                    f"Incompatible units: {fu} -> {tu}"
+                )
+            factors_cache[(fu, tu)] = factors
+
+        if self._materialized and self._tall is not None:
+            # Eager path: clone the tall frame and apply conversions
+            tall = self._tall.clone()
+            for a, fu, tu in conversions:
+                f = factors_cache[(fu, tu)]
+                mask = pl.col("data_alias") == a
+                converted = self._apply_conversion(tall.filter(mask), f)
+                rest = tall.filter(~mask)
+                tall = pl.concat([rest, converted], how="vertical")
+
+            # Update bindings with new unit
+            new_bindings = []
+            for b in self._bindings:
+                matched = any(c[0] == b.alias for c in conversions)
+                if matched:
+                    # Find the to_unit URI from the factors
+                    conv = next(c for c in conversions if c[0] == b.alias)
+                    new_uri = factors_cache[(conv[1], conv[2])]["to_uri"]
+                    new_bindings.append(replace(b, property_unit=new_uri))
+                else:
+                    new_bindings.append(b)
+
+            return DataObject(
+                _bindings=new_bindings,
+                _entity_columns=self._entity_columns,
+                _query_graph=self._query_graph,
+                _client=self._client,
+                _query_params=self._query_params,
+                _tall=tall,
+                _materialized=True,
+            )
+
+        # Lazy path: store pending conversions to apply during _materialize()
+        new_bindings = []
+        for b in self._bindings:
+            matched = any(c[0] == b.alias for c in conversions)
+            if matched:
+                conv = next(c for c in conversions if c[0] == b.alias)
+                new_uri = factors_cache[(conv[1], conv[2])]["to_uri"]
+                new_bindings.append(replace(b, property_unit=new_uri))
+            else:
+                new_bindings.append(b)
+
+        pending = list(self._pending_conversions) + conversions
+        return DataObject(
+            _bindings=new_bindings,
+            _entity_columns=self._entity_columns,
+            _query_graph=self._query_graph,
+            _client=self._client,
+            _query_params=self._query_params,
+            _tall=None,
+            _materialized=False,
+            _pending_conversions=pending,
+        )
 
     # ------------------------------------------------------------------
     # Display
