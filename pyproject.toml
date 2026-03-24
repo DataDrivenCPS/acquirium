@@ -41,5 +41,13 @@ build-backend = "hatchling.build"
 [tool.uv]
 dev-dependencies = [
     "q>=2.7",
+    "pytest-cov>=6.0",
 ]
 no-build-isolation-package = ["pygit2"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "unit: Unit tests (no external services required)",
+    "integration: Integration tests (require Docker services)",
+]
