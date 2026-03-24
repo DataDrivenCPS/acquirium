@@ -446,4 +446,29 @@ def delete_logs(
             raise HTTPException(status_code=500, detail="Failed to delete logs")
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-    
+
+
+# -------------------- Unit conversion --------------------
+
+class ResolveUnitRequest(BaseModel):
+    identifier: str = Field(..., description="Unit URI, label, symbol, or UCUM code")
+
+class ConversionFactorsRequest(BaseModel):
+    from_unit: str = Field(..., description="Source unit identifier")
+    to_unit: str = Field(..., description="Target unit identifier")
+
+
+@app.post("/resolve_unit")
+def resolve_unit(req: ResolveUnitRequest) -> dict[str, Any]:
+    try:
+        return app.state.manager.resolve_unit_info(req.identifier)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/conversion_factors")
+def conversion_factors(req: ConversionFactorsRequest) -> dict[str, Any]:
+    try:
+        return app.state.manager.get_conversion_factors(req.from_unit, req.to_unit)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))

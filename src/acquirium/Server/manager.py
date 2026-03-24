@@ -97,6 +97,15 @@ class Manager:
         converter = qudt_converter
         if converter is None and qudt_graph is not None:
             converter = QUDTUnitConverter(qudt_graph)
+        if converter is None:
+            # Auto-detect local QUDT unit ontology
+            _qudt_local = Path("ontologies/qudt_unit.ttl")
+            if _qudt_local.exists():
+                try:
+                    converter = QUDTUnitConverter(str(_qudt_local))
+                    logging.info("acquirium: auto-loaded QUDTUnitConverter from %s", _qudt_local)
+                except Exception as exc:
+                    logging.warning("acquirium: failed to load QUDT converter from %s: %s", _qudt_local, exc)
 
         graph = OxigraphGraphStore(
             store_path=graph_path,
@@ -1194,6 +1203,54 @@ class Manager:
             "scheduled_tasks": len(scheduled),
             "error_tasks": len(errors),
         }
+    # -------------------- Unit conversion --------------------
+
+    def _ensure_qudt_converter(self) -> QUDTUnitConverter:
+        """Lazily initialize the QUDT converter if not already available."""
+        if self.qudt_converter is not None:
+            return self.qudt_converter
+        _qudt_local = Path("ontologies/qudt_unit.ttl")
+        if _qudt_local.exists():
+            self.qudt_converter = QUDTUnitConverter(str(_qudt_local))
+            logger.info("Lazily loaded QUDTUnitConverter from %s", _qudt_local)
+            return self.qudt_converter
+        raise ValueError(
+            "QUDT converter not available. Place ontologies/qudt_unit.ttl "
+            "in the working directory or pass qudt_graph to Manager."
+        )
+
+    def resolve_unit_info(self, identifier: str) -> dict[str, Any]:
+        """Resolve a unit identifier to its QUDT metadata."""
+        converter = self._ensure_qudt_converter()
+        unit_def = converter.resolve_unit(identifier)
+        return {
+            "uri": str(unit_def.uri),
+            "label": unit_def.label,
+            "symbol": unit_def.symbol,
+            "quantity_kind": str(unit_def.quantity_kind) if unit_def.quantity_kind else None,
+            "multiplier": unit_def.multiplier,
+            "offset": unit_def.offset,
+        }
+
+    def get_conversion_factors(self, from_unit: str, to_unit: str) -> dict[str, Any]:
+        """Return pre-computed conversion factors between two units.
+
+        The client can apply: result = ((value + src_offset) * src_mult / tgt_mult) - tgt_offset
+        """
+        converter = self._ensure_qudt_converter()
+        src = converter.resolve_unit(from_unit)
+        tgt = converter.resolve_unit(to_unit)
+        compatible = converter._check_compatible(src, tgt)
+        return {
+            "from_uri": str(src.uri),
+            "to_uri": str(tgt.uri),
+            "from_multiplier": src.multiplier,
+            "from_offset": src.offset,
+            "to_multiplier": tgt.multiplier,
+            "to_offset": tgt.offset,
+            "compatible": compatible,
+        }
+
     def close(self) -> None:
         try:
             self.stop_app(app_id="*")
