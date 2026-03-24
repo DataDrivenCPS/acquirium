@@ -7,7 +7,7 @@ authors = [
     { name = "Gabe Fierro", email = "gtfierro@mines.edu" },
     { name = "Mete Saka", email = "saka@mines.edu"}
 ]
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 
 dependencies = [
     "adbc-driver-postgresql>=1.9.0",
