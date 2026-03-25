@@ -114,7 +114,6 @@ services:
 
 
   testing_service:
-    platform: linux/arm64
     build:
       context: .
       dockerfile: ./tests/Dockerfile
