@@ -1281,11 +1281,21 @@ class Query:
         
         
         # data node constraints
+        unit_vars = {}
+        extunit_vars = {}
         for nid, info in self.query_graph.data_nodes.items():
             v = var_map[nid]
             ext = f"?ext{nid}"
             ext_vars[nid] = ext
             where_clauses.append(f"{v} <{HAS_EXTERNAL_REFERENCE}> {ext} .")
+
+            # OPTIONAL unit metadata for property and external reference
+            uvar = f"?unit{nid}"
+            euvar = f"?extunit{nid}"
+            unit_vars[nid] = uvar
+            extunit_vars[nid] = euvar
+            where_clauses.append(f"OPTIONAL {{ {v} <{HAS_UNIT}> {uvar} . }}")
+            where_clauses.append(f"OPTIONAL {{ {ext} <{HAS_UNIT}> {euvar} . }}")
 
             for pred, val in (info.filters or {}).items():
                 if val is None:
@@ -1324,7 +1334,8 @@ class Query:
 
 
 
-        select_vars = " ".join(var_map.values()) + " " + " ".join(ext_vars.values())
+        select_parts = list(var_map.values()) + list(ext_vars.values()) + list(unit_vars.values()) + list(extunit_vars.values())
+        select_vars = " ".join(select_parts)
         where_block = "\n  ".join(where_clauses) if where_clauses else ""
         return f"SELECT DISTINCT {select_vars}\nWHERE {{\n  {where_block}\n}}"
 
