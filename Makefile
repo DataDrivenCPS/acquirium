@@ -74,6 +74,18 @@ benicia-up:
 benicia-down:
 	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile benicia_simulation down --remove-orphans
 
+unit-test:
+	uv run pytest tests/unit/ -v --tb=short
+
+unit-test-cov:
+	uv run pytest tests/unit/ -v --tb=short --cov=acquirium --cov-report=term-missing
+
+integration-test:
+	$(MAKE) testing-up
+	$(MAKE) wait-health
+	uv run pytest tests/ -v --tb=short --ignore=tests/unit; \
+	$(MAKE) testing-down
+
 watertap-gui-up:
 	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile watertap_gui up -d --build
 
