@@ -236,6 +236,29 @@ class AcquiriumClient:
         response.raise_for_status()
         return response.json()
 
+    # -------------------- Unit conversion --------------------
+
+    def resolve_unit(self, identifier: str) -> dict:
+        """Resolve a unit identifier to its QUDT metadata via the server."""
+        url = f"{self.base_url}/resolve_unit"
+        response = requests.post(url, json={"identifier": identifier})
+        if not response.ok:
+            detail = response.json().get("detail", response.text) if response.headers.get("content-type", "").startswith("application/json") else response.text
+            raise ValueError(f"resolve_unit failed: {detail}")
+        return response.json()
+
+    def get_conversion_factors(self, from_unit: str, to_unit: str) -> dict:
+        """Get pre-computed conversion factors between two units.
+
+        Returns dict with from_multiplier, from_offset, to_multiplier, to_offset, compatible.
+        """
+        url = f"{self.base_url}/conversion_factors"
+        response = requests.post(url, json={"from_unit": from_unit, "to_unit": to_unit})
+        if not response.ok:
+            detail = response.json().get("detail", response.text) if response.headers.get("content-type", "").startswith("application/json") else response.text
+            raise ValueError(f"conversion_factors failed: {detail}")
+        return response.json()
+
     def is_ongoing_ingest(self) -> bool:
         """
         Check if there are ongoing ingestion tasks.
