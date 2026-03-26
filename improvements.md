@@ -2,14 +2,10 @@
 
 ## Note
 
-Immediate Improvements are items that are currently under active development.
-
 If you have suggestions or improvement ideas, feel free to open an issue, submit a pull request, or contact us by email at [saka@mines.edu](mailto:saka@mines.edu).
 
 ---
 ---
-
-
 
 ### Visualization and Monitoring
 - [ ] Grafana dashboard generation
@@ -31,7 +27,8 @@ If you have suggestions or improvement ideas, feel free to open an issue, submit
     - [ ] Limit Docker resources
     - [ ] Explore alternatives: Ray, Joblib, Dask
 - [ ] Add API endpoints for easier query graph adjustments (filtering)
-    - [x] Added 
+    - [x] Added exclude tag
+    - [x] Existing filters: single uri, quantity kind, type, substance, medium, unit
 - [ ] Support schema-based inputs for data objects
     - [x] Data object defined and created
     - [x] Using aliases in queries for data object schemas added

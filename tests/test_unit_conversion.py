@@ -215,5 +215,5 @@ class TestDataObjectUnits:
         after_df = data[alias_with_unit]
 
         # Original should be unchanged
-        assert original_df.frame_equal(after_df)
+        assert original_df.equals(after_df)
         assert converted is not data
