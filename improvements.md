@@ -11,11 +11,17 @@ If you have suggestions or improvement ideas, feel free to open an issue, submit
 - [ ] Grafana dashboard generation
     - [ ] Automatically generate dashboards using the soft sensor API
 - [ ] More visualization api for incremental query building
+- [ ] Graph profiling:
+    - [ ] Provide profile information to graphs, so the traversal is simpler (don't show the entire graph to user)
 
 ### Infrastructure and Architecture
 - [x] Text matcher improvements
     - [x] Explore small embedding models similar to RDF-MCP work
     - [x] Text matcher removed from client and moved to server as a service. This allows all computed properties to access in a simpler fashion.
+    - [ ] Explore storing embeddings in pgvector, might improve performance
+    - [ ] Explore reducing similarity search space. Make sure overhead of reducing is smaller than improvement in the search results and time. examples:
+        - [ ] If I'm looking for related equipment of a specific one, just match in that neigborhood
+        - [ ] If I'm looking for a unit where qk is mass, then limit to kilogram etc.
 - [ ] Change union_graph, main_graph structure to named graphs. We should be able to support individual graph updates (e.g. new version of watr should only replace old version of watr)
 - [x] Robust traversal in the plant metadata considering plant topology (not graph topology)
     - [x] For instance finding upstream downstream equipment, while being careful with cycles
@@ -41,12 +47,13 @@ If you have suggestions or improvement ideas, feel free to open an issue, submit
     - [ ] Define multiple computed properties connected through boolean or enum outputs
 - [ ] Application requirements satisfaction (similar to Mortar and Seeq)
     - [ ] or providing multiple definitions for an app if one is not available
-- [ ] Unit conversion tool
+- [x] Unit conversion tool
+    - [x] Integrated unit conversion into data object
     - [ ] This might be implemented through soft sensor
     - [ ] Also should be supported in Grafana 
-- [ ] Improve testing mechanism:
-    - [ ] Use github actions 
-    - [ ] Write unit tests that doesn’t require backend running (or create a fake backend)
+- [x] Improve testing mechanism:
+    - [x] Use github actions 
+    - [x] Write unit tests that doesn’t require backend running (or create a fake backend)
 - [ ] CSV reference ingestion
     - [ ] Support multiple csv files (e.g. all files in a folder or multiple names)
     - [ ] Support column name instead of number to specify csvs with different schemas (or also multiple schemas for different csvs)
@@ -60,6 +67,10 @@ If you have suggestions or improvement ideas, feel free to open an issue, submit
     - [ ] Sensor drift detection
     - [ ] Prediction
 - [ ] Support NAWI knowledge graph and data integration efforts
+- [ ] Application portability
+    - [ ] Take a fix query and try it on different plants:
+
+
 
 ### Registering WaterTAP Flowsheets in Acquirium
 - [ ] Convert WaterTAP flowsheets into a knowledge graph
