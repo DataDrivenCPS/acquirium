@@ -64,6 +64,13 @@ BRICK_REF_DATABASE = BRICK_REF.Database
 # Well-known URI representing the Acquirium TimescaleDB instance
 ACQUIRIUM_DB_URI = URIRef("urn:acquirium:timescaledb")
 
+# Predicates stored on Brick ref nodes to allow handle reconstruction from graph
+ACQUIRIUM_SOURCE_ID  = ACQUIRIUM_NS.sourceId   # the registered datasource name
+ACQUIRIUM_REF_NAME   = ACQUIRIUM_NS.refName    # the source-local stream identifier
+
+# Class for registered datasource nodes
+ACQUIRIUM_DATASOURCE = ACQUIRIUM_NS.DataSourceRegistry
+
 HAS_MEDIUM = S223.hasMedium
 OF_SUBSTANCE = S223.ofSubstance
 HAS_QUANTITY_KIND = QUDT.hasQuantityKind

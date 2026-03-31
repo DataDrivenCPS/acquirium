@@ -12,6 +12,7 @@ from acquirium.internals.models import (
     AppRunRequest,
     AppStopRequest,
     StreamInsert,
+    RegisterDatasourceRequest,
 )
 from acquirium.internals.internals_namespaces import *
 from acquirium.Grafana.grafana_dashboard_creator import GrafanaDashboardCreator
@@ -423,31 +424,41 @@ class AcquiriumClient:
         response.raise_for_status()
         return response.json()
 
+    def register_datasource(self, source_id: str) -> str:
+        """Register a named datasource. Returns source_id."""
+        url = f"{self.base_url}/register_datasource"
+        response = requests.post(url, json=RegisterDatasourceRequest(source_id=source_id).model_dump())
+        response.raise_for_status()
+        return response.json()["source_id"]
+
     def insert_timeseries(
         self,
         *,
+        source_id: str,
         ref_name: str,
         rows: list[tuple[datetime, Any]],
         point_uri: Optional[str] = None,
         replace: bool = False,
     ) -> dict:
         url = f"{self.base_url}/insert_timeseries"
-        payload = [StreamInsert(ref_name=ref_name, point_uri=point_uri, replace=replace, values=rows)]
+        payload = [StreamInsert(source_id=source_id, ref_name=ref_name, point_uri=point_uri, replace=replace, values=rows)]
         response = requests.post(url, json=[s.model_dump(mode="json") for s in payload])
         response.raise_for_status()
         return response.json()
 
     def insert_timeseries_batch(
         self,
+        source_id: str,
         streams: dict[str, list[tuple[datetime, Any]]],
     ) -> dict:
         """Insert timeseries data for multiple streams in one HTTP request.
 
         Args:
+            source_id: The registered datasource identifier.
             streams: Mapping of ref_name → list of (timestamp, value) tuples.
         """
         url = f"{self.base_url}/insert_timeseries"
-        payload = [StreamInsert(ref_name=ref_name, values=rows) for ref_name, rows in streams.items()]
+        payload = [StreamInsert(source_id=source_id, ref_name=rn, values=rows) for rn, rows in streams.items()]
         response = requests.post(url, json=[s.model_dump(mode="json") for s in payload])
         response.raise_for_status()
         return response.json()

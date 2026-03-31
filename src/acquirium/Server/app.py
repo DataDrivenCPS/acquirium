@@ -24,6 +24,7 @@ from acquirium.internals.models import (
     AppRunRequest,
     AppStopRequest,
     StreamInsert,
+    RegisterDatasourceRequest,
 )
 from acquirium.internals.internals_namespaces import PLANT_URI
 
@@ -236,6 +237,20 @@ def list_app_runs(app_id: Optional[str] = None) -> dict[str, Any]:
 ##### TIMESERIES INGESTION API ENDPOINTS ####
 
 
+@app.post("/register_datasource")
+def register_datasource(req: RegisterDatasourceRequest) -> dict[str, Any]:
+    """Register a named datasource in the knowledge graph.
+
+    The source_id is a user-provided string that scopes stream ref_names so
+    two sources with the same ref_name never collide in the timeseries store.
+    """
+    try:
+        source_id = app.state.manager.register_datasource(req.source_id)
+        return {"ok": True, "source_id": source_id}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.post("/insert_timeseries")
 def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[str, Any]:
     """Insert timeseries data for one or more streams.
@@ -249,6 +264,7 @@ def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[st
         total = 0
         for s in streams:
             total += app.state.manager.insert_timeseries(
+                source_id=s.source_id,
                 ref_name=s.ref_name,
                 rows=s.values,
                 point_uri=s.point_uri,
