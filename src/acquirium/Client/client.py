@@ -11,8 +11,7 @@ from acquirium.internals.models import (
     AppSpec,
     AppRunRequest,
     AppStopRequest,
-    InsertTimeseriesRequest,
-    InsertBatchRequest,
+    StreamInsert,
 )
 from acquirium.internals.internals_namespaces import *
 from acquirium.Grafana.grafana_dashboard_creator import GrafanaDashboardCreator
@@ -433,11 +432,8 @@ class AcquiriumClient:
         replace: bool = False,
     ) -> dict:
         url = f"{self.base_url}/insert_timeseries"
-        params = {"ref_uri": ref_uri, "replace": replace}
-        if point_uri:
-            params["point_uri"] = point_uri
-        req = InsertTimeseriesRequest(values=rows)
-        response = requests.post(url, params=params, json=req.model_dump(mode="json"))
+        payload = [StreamInsert(ref_uri=ref_uri, point_uri=point_uri, replace=replace, values=rows)]
+        response = requests.post(url, json=[s.model_dump(mode="json") for s in payload])
         response.raise_for_status()
         return response.json()
 
@@ -450,9 +446,9 @@ class AcquiriumClient:
         Args:
             streams: Mapping of point URI → list of (timestamp, value) tuples.
         """
-        url = f"{self.base_url}/insert_timeseries_batch"
-        req = InsertBatchRequest(streams)
-        response = requests.post(url, json=req.model_dump(mode="json"))
+        url = f"{self.base_url}/insert_timeseries"
+        payload = [StreamInsert(ref_uri=uri, values=rows) for uri, rows in streams.items()]
+        response = requests.post(url, json=[s.model_dump(mode="json") for s in payload])
         response.raise_for_status()
         return response.json()
 

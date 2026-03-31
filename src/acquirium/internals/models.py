@@ -34,16 +34,13 @@ class PointCreateRequest(BaseModel):
     unit: str | None = None
 
 
-class InsertTimeseriesRequest(BaseModel):
+class StreamInsert(BaseModel):
+    """A single stream's data payload, used in the unified insert endpoint."""
+
+    ref_uri: str
+    point_uri: str | None = None
+    replace: bool = False
     values: list[tuple[datetime, float | int | str | None]]
-
-
-class InsertBatchRequest(RootModel[dict[str, list[tuple[datetime, float | int | str | None]]]]):
-    """Batch insert where keys are point URIs and values are lists of (ts, value)."""
-
-    @property
-    def streams(self) -> dict[str, list[tuple[datetime, float | int | str]]]:
-        return self.root
 
 
 Order = Literal["asc", "desc"]
