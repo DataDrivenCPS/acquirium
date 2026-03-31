@@ -856,7 +856,6 @@ class Manager:
         (app_dir / "app.json").write_text(json.dumps(meta, ensure_ascii=True, sort_keys=True))
 
         self.graph_store.insert_graph(graph, format="turtle", replace=False)
-        self._sync_stream_handles_from_graph()
 
     def _lookup_app_runtime(self, app_id: str) -> dict[str, str | None]:
         app_uri = app_uri_for(app_id)
