@@ -36,12 +36,12 @@ safe to call on every startup.
 
 ```python
 aq.insert_timeseries_batch(
-    "mybox-system-metrics",
-    {"cpu_percent": [(ts, 42.0)], "memory_percent": [(ts, 61.3)]},
+    "mybox-system-metrics", # data source name
+    {"cpu_percent": [(ts, 42.0)], "memory_percent": [(ts, 61.3)]}, # ref_name → list of (timestamp, value)
 )
 ```
 
-The handle is computed internally:
+The handle is computed internally to Acquirium:
 ```
 handle = uuid5(namespace, "mybox-system-metrics:cpu_percent")
 ```
