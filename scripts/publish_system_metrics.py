@@ -236,7 +236,8 @@ def main() -> None:
     while True:
         ts = datetime.now(tz=timezone.utc)
         sample = collect()
-        result = aq.insert_timeseries_batch(src_id, sample)
+        streams = {rn: [(ts, value)] for rn, value in sample.items()}
+        result = aq.insert_timeseries_batch(src_id, streams)
         print(f"[{ts.isoformat()}] inserted {result.get('rows_inserted', '?')} rows")
         time.sleep(args.interval)
 
