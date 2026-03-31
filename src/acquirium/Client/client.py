@@ -12,6 +12,7 @@ from acquirium.internals.models import (
     AppRunRequest,
     AppStopRequest,
     InsertTimeseriesRequest,
+    InsertBatchRequest,
 )
 from acquirium.internals.internals_namespaces import *
 from acquirium.Grafana.grafana_dashboard_creator import GrafanaDashboardCreator
@@ -439,7 +440,22 @@ class AcquiriumClient:
         response = requests.post(url, params=params, json=req.model_dump(mode="json"))
         response.raise_for_status()
         return response.json()
-    
+
+    def insert_timeseries_batch(
+        self,
+        streams: dict[str, list[tuple[datetime, Any]]],
+    ) -> dict:
+        """Insert timeseries data for multiple streams in one HTTP request.
+
+        Args:
+            streams: Mapping of point URI → list of (timestamp, value) tuples.
+        """
+        url = f"{self.base_url}/insert_timeseries_batch"
+        req = InsertBatchRequest(streams)
+        response = requests.post(url, json=req.model_dump(mode="json"))
+        response.raise_for_status()
+        return response.json()
+
     def query_logs(
         self,
         point_uri: Optional[str] = None,
