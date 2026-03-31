@@ -4,9 +4,9 @@ import asyncio
 import io
 import logging
 from contextlib import asynccontextmanager
-from typing import Any, Optional, Iterator
+from typing import Annotated, Any, Optional, Iterator
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
+from fastapi import Body, FastAPI, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import StreamingResponse, Response
 from dateutil import parser as dtparser
 from pydantic import BaseModel, Field
@@ -23,8 +23,7 @@ from acquirium.internals.models import (
     AppSpec,
     AppRunRequest,
     AppStopRequest,
-    InsertTimeseriesRequest,
-    InsertBatchRequest,
+    StreamInsert,
 )
 from acquirium.internals.internals_namespaces import PLANT_URI
 
@@ -238,36 +237,23 @@ def list_app_runs(app_id: Optional[str] = None) -> dict[str, Any]:
 
 
 @app.post("/insert_timeseries")
-def insert_timeseries(
-    ref_uri: str,
-    req: InsertTimeseriesRequest,
-    point_uri: Optional[str] = None,
-    replace: bool = False,
-) -> dict[str, Any]:
-    try:
-        rows = req.values
-        n = app.state.manager.insert_timeseries(
-            ref_uri=ref_uri,
-            rows=rows,
-            point_uri=point_uri,
-            replace=replace,
-        )
-        return {"ok": True, "rows_inserted": n}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[str, Any]:
+    """Insert timeseries data for one or more streams.
 
-
-@app.post("/insert_timeseries_batch")
-def insert_timeseries_batch(req: InsertBatchRequest) -> dict[str, Any]:
-    """Insert timeseries data for multiple streams in a single request.
-
-    The request body is a JSON object mapping each point URI to a list of
-    ``[timestamp, value]`` pairs.
+    Each element specifies a ``ref_uri``, an optional ``point_uri`` (defaults
+    to ``ref_uri``), an optional ``replace`` flag, and a list of
+    ``[timestamp, value]`` pairs.  A single-stream insert is just a
+    one-element list.
     """
     try:
         total = 0
-        for point_uri, rows in req.streams.items():
-            total += app.state.manager.insert_timeseries(ref_uri=point_uri, rows=rows)
+        for s in streams:
+            total += app.state.manager.insert_timeseries(
+                ref_uri=s.ref_uri,
+                rows=s.values,
+                point_uri=s.point_uri,
+                replace=s.replace,
+            )
         return {"ok": True, "rows_inserted": total}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
