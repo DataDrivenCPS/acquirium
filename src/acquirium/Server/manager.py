@@ -723,8 +723,9 @@ class Manager:
                 order=order,
                 batch_size=batch_size,
             )
+        storage_key = self.timescale.resolve_storage_key(uri)
         return self.timescale.timeseries(
-            point_uri=uri,
+            point_uri=storage_key,
             start=start,
             end=end,
             limit=limit,
@@ -741,7 +742,11 @@ class Manager:
         if pg_uris:
             result.update(self.pg_registry.timeseries_info_batch(pg_uris))
         if ts_uris:
-            result.update(self.timescale.timeseries_info_batch(ts_uris))
+            # Resolve each URI to its storage key (handle) before querying.
+            # Returns a dict keyed by storage_key; remap back to the original URI.
+            key_to_uri = {self.timescale.resolve_storage_key(u): u for u in ts_uris}
+            raw = self.timescale.timeseries_info_batch(list(key_to_uri.keys()))
+            result.update({key_to_uri[k]: v for k, v in raw.items()})
         return result
 
     def register_datasource(self, source_id: str) -> str:
