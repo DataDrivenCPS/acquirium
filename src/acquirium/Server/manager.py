@@ -305,6 +305,33 @@ class Manager:
             logger.info("Registered %d PGReference(s) from graph", count)
         return count
 
+    def _sync_stream_handles_from_graph(self) -> int:
+        """Scan the graph for point→ref pairs and populate the streams handle table.
+
+        Finds every triple of the form:
+            ?point  acquirium:hasExternalReference  ?ref
+        where ?ref is typed as acquirium:TimeseriesStream, then calls
+        ensure_stream_handle so the streams table stays in sync with the graph.
+        """
+        q = f"""
+        SELECT ?point ?ref
+        WHERE {{
+          ?point <{HAS_EXTERNAL_REFERENCE}> ?ref .
+          ?ref a <{TIMESERIES_STREAM}> .
+        }}
+        """
+        res = self.graph_store.sparql_query(q, use_union=True)
+        count = 0
+        for point_uri, ref_uri in res.get("rows", []):
+            try:
+                self.timescale.ensure_stream_handle(str(point_uri), str(ref_uri))
+                count += 1
+            except Exception:
+                logger.warning("Failed to ensure stream handle %s → %s", point_uri, ref_uri, exc_info=True)
+        if count:
+            logger.info("Synced %d stream handle(s) from graph", count)
+        return count
+
     def _save_ingest_cache(self, cache: dict[str, Any]) -> None:
         tmp = self._ingest_cache_path.with_suffix(".tmp")
         tmp.write_text(json.dumps(cache, indent=2, sort_keys=True, default=str))
@@ -649,6 +676,7 @@ class Manager:
             logging.info("acquirium: inserted graph into store, now ingesting data")
             self._connect_mqtt_streams_from_graph()
             self._scan_pg_references_from_graph()
+            self._sync_stream_handles_from_graph()
 
             if wait_for_embedding:
                 logger.info("acquirium: rebuilding embedding index (synchronous)...")
