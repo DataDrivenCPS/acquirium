@@ -7,94 +7,140 @@ and queried in Acquirium.
 
 | Term | Where it lives | Description |
 |---|---|---|
-| `point_uri` | RDF graph (Oxigraph) | Semantic identity of the measurement. This is the URI your ontology knows about — typed, labelled, linked to equipment. |
-| `ref_uri` | TimescaleDB + RDF graph | Storage key. Data rows are written and read using this URI. Also appears in the graph as the object of `acquirium:hasExternalReference`. |
-| External reference node | RDF graph | The `ref_uri` itself, typed as `acquirium:TimeseriesStream`. Describes *where* the data lives. |
+| `point_uri` | RDF graph (Oxigraph) | Semantic identity of the measurement. Typed, labelled, linked to equipment in your ontology. |
+| `source_id` | TimescaleDB `streams` table + RDF graph | Identifies the datasource (e.g. `"mybox-system-metrics"`). Scopes `ref_name` so two sources with the same stream name don't collide. |
+| `ref_name` | TimescaleDB `streams` table + RDF graph | Source-local stream identifier (e.g. `"cpu_percent"`). Unique within a `source_id`. |
+| `handle` | TimescaleDB `timeseries` table (storage key) | Deterministic UUID: `uuid5(namespace, f"{source_id}:{ref_name}")`. Globally unique, stable, never user-visible. |
+| Brick ref node | RDF graph | An anonymous node typed as `ref:TimeseriesReference` hanging off `point_uri` via `ref:hasExternalReference`. Carries `ref:hasTimeseriesId` (the handle), `acquirium:sourceId`, `acquirium:refName`, and `ref:storedAt`. |
 
-`point_uri` and `ref_uri` are intentionally separate. The semantic identity of
-a measurement can remain stable even if the backing store, ingestion method, or
-data source changes — only the external reference needs updating.
+`point_uri` and (`source_id`, `ref_name`) are intentionally separate. The
+semantic identity of a measurement stays stable even if the datasource is
+renamed, replaced, or re-ingested — only the external reference needs updating.
+
+The `handle` is an implementation detail of the storage layer. It exists solely
+to avoid key collisions when multiple datasources publish the same `ref_name`.
+Users never construct or see it directly.
 
 ## Lifecycle
 
-### 1. Push data → establishes `ref_uri` in TimescaleDB
-
-```
-POST /insert_timeseries_batch
-{ "urn:host:mybox:cpu_percent:acquirium-ref": [["2024-01-01T00:00:00Z", 42.0]] }
-```
-
-This writes a row to TimescaleDB keyed by the `ref_uri`.  At this point the
-data exists in storage but has no semantic context — the graph knows nothing
-about it yet.
-
-### 2. Register metadata → establishes `point_uri` in the graph
+### 1. Register the datasource
 
 ```python
-aq.register_stream(
-    "urn:host:mybox:cpu_percent",          # point_uri
-    label="CPU usage",
-    unit="%",
-    external_reference="urn:host:mybox:cpu_percent:acquirium-ref",  # ref_uri
+aq.register_datasource("mybox-system-metrics")
+```
+
+Writes a graph node typed as `acquirium:DataSourceRegistry`. Idempotent —
+safe to call on every startup.
+
+### 2. Insert data → rows land in TimescaleDB under the handle
+
+```python
+aq.insert_timeseries_batch(
+    "mybox-system-metrics",
+    {"cpu_percent": [(ts, 42.0)], "memory_percent": [(ts, 61.3)]},
 )
 ```
 
-This inserts RDF triples into Oxigraph:
+The handle is computed internally:
+```
+handle = uuid5(namespace, "mybox-system-metrics:cpu_percent")
+```
+
+Rows are written to TimescaleDB keyed by this handle. The data exists in
+storage but has no semantic context yet — the graph knows nothing about it.
+
+### 3. Register metadata → establishes `point_uri` in the graph
+
+```python
+aq.register_stream(
+    "urn:host:mybox:cpu_percent",   # point_uri
+    label="CPU usage",
+    unit="%",
+    quantity_kind="dimensionless ratio",
+    source_id="mybox-system-metrics",
+    ref_name="cpu_percent",
+)
+```
+
+This inserts RDF triples into Oxigraph following the
+[Brick timeseries storage spec](https://docs.brickschema.org/metadata/timeseries-storage.html):
 
 ```turtle
 <urn:host:mybox:cpu_percent>
     a acquirium:VirtualPoint ;
     rdfs:label "CPU usage" ;
     qudt:hasUnit qudt-unit:PERCENT ;
-    acquirium:hasExternalReference <urn:host:mybox:cpu_percent:acquirium-ref> .
+    ref:hasExternalReference <urn:host:mybox:cpu_percent#ref> .
 
-<urn:host:mybox:cpu_percent:acquirium-ref>
-    a acquirium:Stream, acquirium:TimeseriesStream ;
-    acquirium:storageBackend "timescale" .
+<urn:host:mybox:cpu_percent#ref>
+    a ref:TimeseriesReference ;
+    ref:hasTimeseriesId  "<uuid>" ;        # = handle
+    acquirium:sourceId   "mybox-system-metrics" ;
+    acquirium:refName    "cpu_percent" ;
+    ref:storedAt         <urn:acquirium:timescaledb> .
+
+<urn:acquirium:timescaledb>  a  ref:Database .
 ```
 
-The `ref_uri` is the bridge: it is the graph node *and* the TimescaleDB key.
-
-### 3. Query → graph traversal joins to TimescaleDB
-
-When `.data()` is called on a query that resolves to `urn:host:mybox:cpu_percent`,
-the query layer:
-
-1. Finds `point_uri` via SPARQL against the graph
-2. Follows `acquirium:hasExternalReference` to get `ref_uri`
-3. Fetches rows from TimescaleDB where `point_uri = ref_uri`
+When this graph is inserted, the server scans for `acquirium:sourceId` /
+`acquirium:refName` pairs and populates the `streams` table:
 
 ```
-graph:  <point_uri> --hasExternalReference--> <ref_uri>
-                                                  |
-timescale:                             rows keyed by ref_uri
+streams: handle → (point_uri, source_id, ref_name)
 ```
+
+This is the bridge that lets reads resolve a semantic URI back to data.
+
+### 4. Query → point_uri resolves to handle, then to rows
+
+When `.data()` is called on a query that resolves to
+`urn:host:mybox:cpu_percent`, the server:
+
+1. Looks up `point_uri` in the `streams` table → gets `handle`
+2. Fetches rows from TimescaleDB where `point_uri = handle`
+
+```
+graph:  <point_uri> --ref:hasExternalReference--> <ref_node>
+                                                       |
+streams table:  point_uri  ──────────────────────>  handle
+                                                       |
+timescale:                                    rows keyed by handle
+```
+
+If a `point_uri` is not in the `streams` table (e.g. data inserted via the
+bulk CSV path), the server falls back to querying TimescaleDB directly by
+`point_uri`, preserving backwards compatibility with older ingestion paths.
 
 ## Example: system metrics script
 
 The `scripts/publish_system_metrics.py` script follows this pattern:
 
 ```
-urn:host:mybox:cpu_percent              ← point_uri  (graph, s223:Property)
-urn:host:mybox:cpu_percent:acquirium-ref ← ref_uri   (TimescaleDB key + graph node)
+source_id  =  "mybox-system-metrics"
+ref_name   =  "cpu_percent"
+point_uri  =  "urn:host:mybox:cpu_percent"   (s223:Property in the graph)
+handle     =  uuid5(ns, "mybox-system-metrics:cpu_percent")  (TimescaleDB key)
 ```
 
-1. `register_host_graph()` inserts the host as `s223:Computer` with
-   `s223:hasProperty` links to each `point_uri`, and wires each
-   `point_uri → hasExternalReference → ref_uri`.
-2. `register_stream_metadata()` resolves and attaches QUDT unit/quantity-kind
+1. `register_datasource()` registers the datasource node in the graph.
+2. `register_host_graph()` inserts the host as `s223:Computer` with
+   `s223:hasProperty` links to each `point_uri`, and attaches a Brick
+   `ref:TimeseriesReference` node to each stream.
+3. `register_stream_metadata()` resolves and attaches QUDT unit / quantity-kind
    triples to each `point_uri`.
-3. `collect()` returns data keyed by `ref_uri` — the TimescaleDB storage key.
-4. `insert_timeseries_batch()` writes rows to TimescaleDB under those keys.
+4. `collect()` returns samples keyed by `ref_name`.
+5. `insert_timeseries_batch()` computes handles and writes rows to TimescaleDB.
 
-## When `point_uri` and `ref_uri` can differ
+## Why keep `point_uri` and `(source_id, ref_name)` separate?
 
-Keeping them separate pays off when the data source changes:
-
-- **MQTT ingestion**: `ref_uri` is the MQTT reference node carrying broker/topic.
-  The `point_uri` (the sensor in your ontology) never changes.
-- **CSV import**: `ref_uri` is a `acquirium:CSVReference` node with a file path.
-  Reimport from a new file by updating the reference, not the ontology.
-- **Direct push**: For simple cases (like this script) they can share a base name
-  but should still be distinct URIs so the graph's external reference pattern
-  remains consistent and queryable.
+- **MQTT ingestion**: the MQTT topic is the `ref_name`; the sensor URI in your
+  ontology is the `point_uri`. Replace the broker or topic without touching
+  the ontology.
+- **CSV import**: `ref_name` identifies the column; the `point_uri` is the
+  sensor. Re-import from a revised file without changing any semantic triples.
+- **Multiple sources, same stream name**: Two loggers both publishing
+  `"temperature"` get different handles because they have different
+  `source_id`s. No collision, no overwritten data.
+- **Stable queries**: application code queries by `point_uri`. The storage
+  plumbing (`source_id`, `ref_name`, `handle`) can change without breaking
+  any query.
