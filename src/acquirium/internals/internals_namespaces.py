@@ -11,6 +11,7 @@ UNIT = Namespace("http://qudt.org/vocab/unit/")
 S223 = Namespace("http://data.ashrae.org/standard223#")
 WATR = Namespace("urn:nawi-water-ontology#")
 BRICK = Namespace("https://brickschema.org/schema/Brick#")
+BRICK_REF = Namespace("https://brickschema.org/schema/Brick/ref#")
 OWL = Namespace("http://www.w3.org/2002/07/owl#")
 
 
@@ -50,7 +51,19 @@ LAST_RUN = ACQUIRIUM_NS.lastRun
 LAST_INPUT_CHANGE = ACQUIRIUM_NS.lastInputChange
 
 
+# Acquirium-internal external reference (used for MQTT, CSV, PG sources)
 HAS_EXTERNAL_REFERENCE = ACQUIRIUM_NS.hasExternalReference
+
+# Brick ref vocabulary — used for timeseries database linkage
+BRICK_REF_HAS_EXTERNAL_REFERENCE = BRICK_REF.hasExternalReference
+BRICK_REF_TIMESERIES_REFERENCE = BRICK_REF.TimeseriesReference
+BRICK_REF_HAS_TIMESERIES_ID = BRICK_REF.hasTimeseriesId
+BRICK_REF_STORED_AT = BRICK_REF.storedAt
+BRICK_REF_DATABASE = BRICK_REF.Database
+
+# Well-known URI representing the Acquirium TimescaleDB instance
+ACQUIRIUM_DB_URI = URIRef("urn:acquirium:timescaledb")
+
 HAS_MEDIUM = S223.hasMedium
 OF_SUBSTANCE = S223.ofSubstance
 HAS_QUANTITY_KIND = QUDT.hasQuantityKind

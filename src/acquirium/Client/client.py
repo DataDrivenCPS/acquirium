@@ -426,13 +426,13 @@ class AcquiriumClient:
     def insert_timeseries(
         self,
         *,
-        ref_uri: str,
+        ref_name: str,
         rows: list[tuple[datetime, Any]],
         point_uri: Optional[str] = None,
         replace: bool = False,
     ) -> dict:
         url = f"{self.base_url}/insert_timeseries"
-        payload = [StreamInsert(ref_uri=ref_uri, point_uri=point_uri, replace=replace, values=rows)]
+        payload = [StreamInsert(ref_name=ref_name, point_uri=point_uri, replace=replace, values=rows)]
         response = requests.post(url, json=[s.model_dump(mode="json") for s in payload])
         response.raise_for_status()
         return response.json()
@@ -444,10 +444,10 @@ class AcquiriumClient:
         """Insert timeseries data for multiple streams in one HTTP request.
 
         Args:
-            streams: Mapping of point URI → list of (timestamp, value) tuples.
+            streams: Mapping of ref_name → list of (timestamp, value) tuples.
         """
         url = f"{self.base_url}/insert_timeseries"
-        payload = [StreamInsert(ref_uri=uri, values=rows) for uri, rows in streams.items()]
+        payload = [StreamInsert(ref_name=ref_name, values=rows) for ref_name, rows in streams.items()]
         response = requests.post(url, json=[s.model_dump(mode="json") for s in payload])
         response.raise_for_status()
         return response.json()

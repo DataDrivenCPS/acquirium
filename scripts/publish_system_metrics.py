@@ -22,13 +22,14 @@ from rdflib.namespace import RDF, RDFS
 
 from acquirium import Acquirium
 from acquirium.internals.internals_namespaces import (
-    ACQUIRIUM_NS,
-    HAS_EXTERNAL_REFERENCE,
-    HAS_QUANTITY_KIND,
-    HAS_UNIT,
+    ACQUIRIUM_DB_URI,
+    BRICK_REF,
+    BRICK_REF_DATABASE,
+    BRICK_REF_HAS_EXTERNAL_REFERENCE,
+    BRICK_REF_HAS_TIMESERIES_ID,
+    BRICK_REF_STORED_AT,
+    BRICK_REF_TIMESERIES_REFERENCE,
     S223,
-    STREAM,
-    TIMESERIES_STREAM,
     VIRTUAL_POINT,
     QUDT_QUANTITY_KIND,
     QUDT_UNIT,
@@ -61,19 +62,14 @@ def host_uri(hostname: str) -> URIRef:
 def stream_uri(hostname: str, key: str) -> URIRef:
     return URIRef(f"urn:host:{hostname}:{key}")
 
-def ref_uri(hostname: str, key: str) -> URIRef:
-    """URI of the external reference node for this stream.
+def ref_name(hostname: str, key: str) -> str:
+    """Source-native identifier for a metric stream.
 
-    This URI serves double duty:
-      - In the RDF graph it is the object of acquirium:hasExternalReference
-        on the point_uri, typed as acquirium:TimeseriesStream.
-      - In TimescaleDB it is the storage key under which data rows are kept.
-
-    Keeping it distinct from stream_uri (the point_uri) allows the semantic
-    identity of the measurement to remain stable even if the backing store
-    or ingestion path changes.
+    This is the string stored as ``ref:hasTimeseriesId`` in the graph and
+    used as the TimescaleDB storage key.  It is host-scoped so multiple
+    machines can publish to the same Acquirium instance without collisions.
     """
-    return URIRef(f"urn:host:{hostname}:{key}:acquirium-ref")
+    return f"{hostname}:{key}"
 
 
 # ---------------------------------------------------------------------------
@@ -108,54 +104,57 @@ def register_host_graph(aq: Acquirium, host: dict) -> None:
         <urn:host:{hostname}>
             a s223:Computer ;
             rdfs:label "{hostname}" ;
-            host:hasHostname "{hostname}" ;
-            host:hasIPAddress "{ip}" ;
-            host:hasOperatingSystem "{os} {release}" ;
-            host:hasPlatform "{platform}" ;
-            host:hasMachine "{machine}" ;
+            host:hasHostname, host:hasIPAddress, ... ;
             s223:hasProperty <urn:host:{hostname}:cpu_percent> ;
-            s223:hasProperty <urn:host:{hostname}:memory_percent> ;
             ... .
 
         <urn:host:{hostname}:cpu_percent>
             a s223:Property, acquirium:VirtualPoint ;
             rdfs:label "CPU usage" ;
-            acquirium:hasExternalReference <urn:host:{hostname}:cpu_percent:acquirium-ref> .
+            ref:hasExternalReference <urn:host:{hostname}:cpu_percent#ref> .
 
-        <urn:host:{hostname}:cpu_percent:acquirium-ref>
-            a acquirium:Stream, acquirium:TimeseriesStream ;
-            acquirium:storageBackend "timescale" .
+        <urn:host:{hostname}:cpu_percent#ref>
+            a ref:TimeseriesReference ;
+            ref:hasTimeseriesId "{hostname}:cpu_percent" ;
+            ref:storedAt <urn:acquirium:timescaledb> .
+
+        <urn:acquirium:timescaledb>  a  ref:Database .
     """
     hostname = host["hostname"]
     g = Graph()
     h = host_uri(hostname)
 
+    # Declare the Acquirium DB node once per graph (idempotent across calls)
+    g.add((ACQUIRIUM_DB_URI, RDF.type,   BRICK_REF_DATABASE))
+    g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
+
     # Host node
-    g.add((h, RDF.type,               S223.Computer))
-    g.add((h, RDFS.label,             Literal(hostname)))
-    g.add((h, HOST_NS.hasHostname,    Literal(host["hostname"])))
-    g.add((h, HOST_NS.hasIPAddress,   Literal(host["ip"])))
+    g.add((h, RDF.type,                   S223.Computer))
+    g.add((h, RDFS.label,                 Literal(hostname)))
+    g.add((h, HOST_NS.hasHostname,        Literal(host["hostname"])))
+    g.add((h, HOST_NS.hasIPAddress,       Literal(host["ip"])))
     g.add((h, HOST_NS.hasOperatingSystem, Literal(f"{host['os']} {host['release']}")))
-    g.add((h, HOST_NS.hasPlatform,    Literal(host["platform"])))
-    g.add((h, HOST_NS.hasMachine,     Literal(host["machine"])))
+    g.add((h, HOST_NS.hasPlatform,        Literal(host["platform"])))
+    g.add((h, HOST_NS.hasMachine,         Literal(host["machine"])))
 
     for key, label, _unit, _qk in _METRIC_DEFS:
         s = stream_uri(hostname, key)
-        r = ref_uri(hostname, key)
+        rn = ref_name(hostname, key)
+        ref_node = URIRef(str(s) + "#ref")
 
         # Link host → stream
         g.add((h, S223.hasProperty, s))
 
-        # Stream node — typed as both s223:Property and acquirium:VirtualPoint
-        g.add((s, RDF.type,  S223.Property))
-        g.add((s, RDF.type,  VIRTUAL_POINT))
+        # Stream node
+        g.add((s, RDF.type,   S223.Property))
+        g.add((s, RDF.type,   VIRTUAL_POINT))
         g.add((s, RDFS.label, Literal(label)))
 
-        # External reference → acquirium TimescaleDB
-        g.add((s, HAS_EXTERNAL_REFERENCE, r))
-        g.add((r, RDF.type,  STREAM))
-        g.add((r, RDF.type,  TIMESERIES_STREAM))
-        g.add((r, ACQUIRIUM_NS.storageBackend, Literal("timescale")))
+        # Brick-style external reference → Acquirium TimescaleDB
+        g.add((s,        BRICK_REF_HAS_EXTERNAL_REFERENCE, ref_node))
+        g.add((ref_node, RDF.type,                         BRICK_REF_TIMESERIES_REFERENCE))
+        g.add((ref_node, BRICK_REF_HAS_TIMESERIES_ID,      Literal(rn)))
+        g.add((ref_node, BRICK_REF_STORED_AT,              ACQUIRIUM_DB_URI))
 
     turtle = g.serialize(format="turtle")
     aq.client.insert_graph(turtle, format="turtle", replace=False)
@@ -164,11 +163,11 @@ def register_host_graph(aq: Acquirium, host: dict) -> None:
 def register_stream_metadata(aq: Acquirium, hostname: str) -> None:
     """Resolve and attach QUDT unit/quantity-kind metadata to each stream."""
     for key, label, unit, quantity_kind in _METRIC_DEFS:
-        uri = stream_uri(hostname, key)
         aq.register_stream(
-            uri,
+            stream_uri(hostname, key),
             unit=unit,
             quantity_kind=quantity_kind,
+            ref_name=ref_name(hostname, key),
         )
 
 
@@ -177,22 +176,21 @@ def register_stream_metadata(aq: Acquirium, hostname: str) -> None:
 # ---------------------------------------------------------------------------
 
 def collect(hostname: str) -> dict[str, float]:
-    """Collect one sample of each metric, keyed by ref_uri.
+    """Collect one sample of each metric, keyed by ref_name.
 
-    Data is stored in TimescaleDB under the ref_uri (not the point_uri).
-    The graph's hasExternalReference triple links point_uri → ref_uri,
-    so the query layer can join them at read time.
+    Data is stored in TimescaleDB under the ref_name (the source-native
+    identifier stored as ref:hasTimeseriesId in the graph).
     """
     mem  = psutil.virtual_memory()
     disk = psutil.disk_usage("/")
     net  = psutil.net_io_counters()
     return {
-        str(ref_uri(hostname, "cpu_percent")):       psutil.cpu_percent(interval=None),
-        str(ref_uri(hostname, "memory_percent")):    mem.percent,
-        str(ref_uri(hostname, "memory_used_bytes")): mem.used,
-        str(ref_uri(hostname, "disk_percent")):      disk.percent,
-        str(ref_uri(hostname, "net_bytes_sent")):    net.bytes_sent,
-        str(ref_uri(hostname, "net_bytes_recv")):    net.bytes_recv,
+        ref_name(hostname, "cpu_percent"):       psutil.cpu_percent(interval=None),
+        ref_name(hostname, "memory_percent"):    mem.percent,
+        ref_name(hostname, "memory_used_bytes"): mem.used,
+        ref_name(hostname, "disk_percent"):      disk.percent,
+        ref_name(hostname, "net_bytes_sent"):    net.bytes_sent,
+        ref_name(hostname, "net_bytes_recv"):    net.bytes_recv,
     }
 
 

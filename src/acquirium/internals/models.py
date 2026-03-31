@@ -35,9 +35,14 @@ class PointCreateRequest(BaseModel):
 
 
 class StreamInsert(BaseModel):
-    """A single stream's data payload, used in the unified insert endpoint."""
+    """A single stream's data payload, used in the unified insert endpoint.
 
-    ref_uri: str
+    ``ref_name`` is the identifier used by the original data source (e.g. a
+    sensor tag, MQTT topic, or database column name).  It is used as the
+    storage key in TimescaleDB and recorded in the streams handle table.
+    """
+
+    ref_name: str
     point_uri: str | None = None
     replace: bool = False
     values: list[tuple[datetime, float | int | str | None]]
