@@ -2,11 +2,26 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+import uuid
+from datetime import datetime, timedelta
 from typing import Literal, Any, TYPE_CHECKING
 from dataclasses import dataclass
 from pydantic import BaseModel, Field, RootModel
-from datetime import timedelta
+
+# Fixed UUID namespace for deterministic handle generation.
+# All (source_id, ref_name) pairs are hashed within this namespace so handles
+# are globally unique and reproducible without any state.
+_HANDLE_NAMESPACE = uuid.UUID("6a8f3c2e-4b1d-5e7f-9012-3a4b5c6d7e8f")
+
+
+def compute_handle(source_id: str, ref_name: str) -> str:
+    """Return a deterministic UUID5 handle for a (source_id, ref_name) pair.
+
+    The handle is used as the TimescaleDB storage key and stored as
+    ``ref:hasTimeseriesId`` in the RDF graph.  It is stable across restarts
+    and can be recomputed at any time from the same inputs.
+    """
+    return str(uuid.uuid5(_HANDLE_NAMESPACE, f"{source_id}:{ref_name}"))
 
 if TYPE_CHECKING:
     from acquirium.Client.query import Query
@@ -34,14 +49,22 @@ class PointCreateRequest(BaseModel):
     unit: str | None = None
 
 
-class StreamInsert(BaseModel):
-    """A single stream's data payload, used in the unified insert endpoint.
+class RegisterDatasourceRequest(BaseModel):
+    """Request to register a named datasource."""
+    source_id: str
 
-    ``ref_name`` is the identifier used by the original data source (e.g. a
-    sensor tag, MQTT topic, or database column name).  It is used as the
-    storage key in TimescaleDB and recorded in the streams handle table.
+
+class StreamInsert(BaseModel):
+    """A single stream's data payload for the unified insert endpoint.
+
+    ``source_id`` identifies the registered datasource (e.g. ``"mybox-metrics"``).
+    ``ref_name`` is the source-local stream identifier (e.g. ``"cpu_percent"``).
+    The TimescaleDB storage key (handle) is computed deterministically from
+    both via :func:`compute_handle` — so two sources with the same ``ref_name``
+    never collide.
     """
 
+    source_id: str
     ref_name: str
     point_uri: str | None = None
     replace: bool = False

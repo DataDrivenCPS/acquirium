@@ -15,10 +15,13 @@ from acquirium.Client.query import Query
 from acquirium.Client.client import AcquiriumClient
 from acquirium.Apps.base import App
 from acquirium.internals.app_utils import make_stream_ref_uri
-from acquirium.internals.models import AppOutputSpec, AppSpec
+from acquirium.internals.models import AppOutputSpec, AppSpec, compute_handle
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_DB_URI,
-    BRICK_REF,
+    ACQUIRIUM_DATASOURCE,
+    ACQUIRIUM_NS,
+    ACQUIRIUM_REF_NAME,
+    ACQUIRIUM_SOURCE_ID,
     BRICK_REF_DATABASE,
     BRICK_REF_HAS_EXTERNAL_REFERENCE,
     BRICK_REF_HAS_TIMESERIES_ID,
@@ -105,30 +108,43 @@ class Acquirium:
     # TIMESERIES API
     # ------------------------------------------------------------------
 
+    def register_datasource(self, source_id: str) -> str:
+        """Register a named datasource in the knowledge graph.
+
+        The ``source_id`` is a user-provided string that scopes stream
+        ``ref_name`` values so two sources with the same ``ref_name`` never
+        produce colliding TimescaleDB keys.  Safe to call on every startup —
+        the graph write is idempotent.
+
+        Returns ``source_id``.
+        """
+        return self.client.register_datasource(source_id)
+
     def insert_timeseries(
         self,
+        source_id: str,
         ref_name: str,
         rows: list[tuple[datetime, Any]],
         *,
         point_uri: Optional[str] = None,
         replace: bool = False,
     ) -> dict[str, Any]:
-        """Insert timeseries data for a stream.
+        """Insert timeseries data for a single stream.
 
         Args:
-            ref_name: The source-native identifier for this stream (e.g. a sensor
-                tag, MQTT topic, or database column name). Used as the storage key
-                in TimescaleDB and matched against ``ref:hasTimeseriesId`` in the graph.
+            source_id: The registered datasource identifier.
+            ref_name: The source-local stream identifier. Combined with
+                ``source_id`` to derive the unique TimescaleDB storage key.
             rows: List of (timestamp, value) tuples.
-            point_uri: The semantic URI of the measurement point in the knowledge
-                graph. When provided, a handle mapping is registered in the streams
-                table linking point_uri to ref_name.
+            point_uri: Semantic URI of the measurement point. When provided,
+                a handle mapping is registered in the streams table.
             replace: If True, replaces any existing data for this stream.
 
         Returns:
             dict with ``{"ok": True, "rows_inserted": N}``.
         """
         return self.client.insert_timeseries(
+            source_id=source_id,
             ref_name=ref_name,
             rows=rows,
             point_uri=point_uri,
@@ -137,19 +153,19 @@ class Acquirium:
 
     def insert_timeseries_batch(
         self,
+        source_id: str,
         streams: dict[str, list[tuple[datetime, Any]]],
     ) -> dict[str, Any]:
         """Insert timeseries data for multiple streams in one HTTP request.
 
         Args:
+            source_id: The registered datasource identifier.
             streams: Mapping of ref_name → list of (timestamp, value) tuples.
-                ``ref_name`` is the source-native identifier (e.g. sensor tag,
-                MQTT topic) used as the TimescaleDB storage key.
 
         Returns:
             dict with ``{"ok": True, "rows_inserted": N}``.
         """
-        return self.client.insert_timeseries_batch(streams)
+        return self.client.insert_timeseries_batch(source_id, streams)
 
     def _resolve_qudt_uri(self, text: str, kind: str) -> URIRef | None:
         """Try to resolve a plain string to a QUDT URI via the server.
@@ -184,6 +200,7 @@ class Acquirium:
         point_uri: str | URIRef,
         label: str | None = None,
         *,
+        source_id: str | None = None,
         ref_name: str | None = None,
         unit: str | URIRef | None = None,
         quantity_kind: str | URIRef | None = None,
@@ -267,14 +284,19 @@ class Acquirium:
         _add(OF_SUBSTANCE,      _coerce(substance,     "class"))
         _add(DATA_SOURCE, data_source)
 
-        if ref_name is not None:
-            # Brick-style timeseries external reference — use a stable named
-            # URI for the reference node so repeated calls are idempotent.
+        if ref_name is not None and source_id is not None:
+            handle = compute_handle(source_id, ref_name)
+            # Stable named URI for the reference node — idempotent across calls
             ref_node = URIRef(str(point_uri) + "#ref")
             g.add((subj,     BRICK_REF_HAS_EXTERNAL_REFERENCE, ref_node))
             g.add((ref_node, RDF.type,                         BRICK_REF_TIMESERIES_REFERENCE))
-            g.add((ref_node, BRICK_REF_HAS_TIMESERIES_ID,      Literal(ref_name)))
-            g.add((ref_node, BRICK_REF_STORED_AT,              ACQUIRIUM_DB_URI))
+            # ref:hasTimeseriesId holds the globally-unique handle (the actual DB key)
+            g.add((ref_node, BRICK_REF_HAS_TIMESERIES_ID,      Literal(handle)))
+            # Store source_id and ref_name so the handle can be reconstructed
+            # by _sync_stream_handles_from_graph without re-deriving it
+            g.add((ref_node, ACQUIRIUM_SOURCE_ID,               Literal(source_id)))
+            g.add((ref_node, ACQUIRIUM_REF_NAME,                Literal(ref_name)))
+            g.add((ref_node, BRICK_REF_STORED_AT,               ACQUIRIUM_DB_URI))
             # Declare the Acquirium DB node (idempotent)
             g.add((ACQUIRIUM_DB_URI, RDF.type,   BRICK_REF_DATABASE))
             g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))

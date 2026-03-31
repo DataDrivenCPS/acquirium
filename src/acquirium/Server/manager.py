@@ -10,7 +10,7 @@ from rdflib import Graph, URIRef, Node, Literal, RDF, RDFS
 
 from acquirium.Storage import OxigraphGraphStore, TimescaleStore, PGReferenceRegistry, PGReferenceInfo, resolve_dsn
 from acquirium.internals.qudt_units import QUDTUnitConverter
-from acquirium.internals.models import LogEntry, TimeIntervalModel, AppSpec, AppRunRequest
+from acquirium.internals.models import LogEntry, TimeIntervalModel, AppSpec, AppRunRequest, compute_handle
 from acquirium.internals.internals_namespaces import *
 from acquirium.internals.app_utils import app_uri_for, make_stream_ref_uri
 
@@ -311,27 +311,30 @@ class Manager:
         Finds every pattern of the form:
             ?point  ref:hasExternalReference  ?ref_node .
             ?ref_node  a  ref:TimeseriesReference ;
-                       ref:hasTimeseriesId  ?ref_name .
-        and calls ensure_stream_handle(point_uri, ref_name) so the streams
-        table stays in sync with the graph.
+                       acquirium:sourceId  ?source_id ;
+                       acquirium:refName   ?ref_name .
+        Recomputes the handle from (source_id, ref_name) and upserts into the
+        streams table.
         """
         q = f"""
-        SELECT ?point ?ref_name
+        SELECT ?point ?source_id ?ref_name
         WHERE {{
           ?point <{BRICK_REF_HAS_EXTERNAL_REFERENCE}> ?ref_node .
           ?ref_node a <{BRICK_REF_TIMESERIES_REFERENCE}> .
-          ?ref_node <{BRICK_REF_HAS_TIMESERIES_ID}> ?ref_name .
+          ?ref_node <{ACQUIRIUM_SOURCE_ID}> ?source_id .
+          ?ref_node <{ACQUIRIUM_REF_NAME}> ?ref_name .
         }}
         """
         res = self.graph_store.sparql_query(q, use_union=True)
         count = 0
-        for point_uri, ref_name in res.get("rows", []):
+        for point_uri, source_id, ref_name in res.get("rows", []):
             try:
-                ref_name_str = str(ref_name).strip('"')
-                self.timescale.ensure_stream_handle(str(point_uri), ref_name_str)
+                sid = str(source_id).strip('"')
+                rn  = str(ref_name).strip('"')
+                self.timescale.ensure_stream_handle(str(point_uri), sid, rn)
                 count += 1
             except Exception:
-                logger.warning("Failed to ensure stream handle %s → %s", point_uri, ref_name, exc_info=True)
+                logger.warning("Failed to ensure stream handle %s / %s → %s", point_uri, source_id, ref_name, exc_info=True)
         if count:
             logger.info("Synced %d stream handle(s) from graph", count)
         return count
@@ -741,20 +744,36 @@ class Manager:
             result.update(self.timescale.timeseries_info_batch(ts_uris))
         return result
 
+    def register_datasource(self, source_id: str) -> str:
+        """Register a named datasource in the knowledge graph.
+
+        Writes a graph node typed as acquirium:DataSourceRegistry so the
+        datasource is discoverable via SPARQL.  Idempotent — safe to call
+        on every startup.  Returns source_id.
+        """
+        g = Graph()
+        node = URIRef(f"urn:acquirium:datasource:{source_id}")
+        g.add((node, RDF.type,   ACQUIRIUM_DATASOURCE))
+        g.add((node, RDFS.label, Literal(source_id)))
+        self.graph_store.insert_graph(g, format="turtle", replace=False)
+        return source_id
+
     def insert_timeseries(
         self,
         *,
+        source_id: str,
         ref_name: str,
         rows: list[tuple[datetime, Any]],
         point_uri: str | None = None,
         replace: bool = False,
     ) -> int:
+        handle = compute_handle(source_id, ref_name)
         if replace:
-            n = self.timescale.replace_rows(ref_name, rows)
+            n = self.timescale.replace_rows(handle, rows)
         else:
-            n = self.timescale.upsert_rows(ref_name, rows)
+            n = self.timescale.upsert_rows(handle, rows)
         if point_uri:
-            self.timescale.ensure_stream_handle(point_uri, ref_name)
+            self.timescale.ensure_stream_handle(point_uri, source_id, ref_name)
         return n
 
     def _app_type_uri(self, app_type: str) -> URIRef:

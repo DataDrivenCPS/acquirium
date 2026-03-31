@@ -23,7 +23,8 @@ from rdflib.namespace import RDF, RDFS
 from acquirium import Acquirium
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_DB_URI,
-    BRICK_REF,
+    ACQUIRIUM_REF_NAME,
+    ACQUIRIUM_SOURCE_ID,
     BRICK_REF_DATABASE,
     BRICK_REF_HAS_EXTERNAL_REFERENCE,
     BRICK_REF_HAS_TIMESERIES_ID,
@@ -34,6 +35,7 @@ from acquirium.internals.internals_namespaces import (
     QUDT_QUANTITY_KIND,
     QUDT_UNIT,
 )
+from acquirium.internals.models import compute_handle
 
 # Custom namespace for host-level properties not covered by S223 or QUDT.
 HOST_NS = Namespace("urn:acquirium:host#")
@@ -62,14 +64,14 @@ def host_uri(hostname: str) -> URIRef:
 def stream_uri(hostname: str, key: str) -> URIRef:
     return URIRef(f"urn:host:{hostname}:{key}")
 
-def ref_name(hostname: str, key: str) -> str:
-    """Source-native identifier for a metric stream.
+def source_id(hostname: str) -> str:
+    """Datasource identifier for this host's metrics publisher."""
+    return f"{hostname}-system-metrics"
 
-    This is the string stored as ``ref:hasTimeseriesId`` in the graph and
-    used as the TimescaleDB storage key.  It is host-scoped so multiple
-    machines can publish to the same Acquirium instance without collisions.
-    """
-    return f"{hostname}:{key}"
+
+def ref_name(key: str) -> str:
+    """Source-local stream identifier — just the metric key."""
+    return key
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +98,7 @@ def get_host_info() -> dict:
 # Graph registration
 # ---------------------------------------------------------------------------
 
-def register_host_graph(aq: Acquirium, host: dict) -> None:
+def register_host_graph(aq: Acquirium, host: dict, src_id: str) -> None:
     """Insert a one-time RDF description of the host and its metric streams.
 
     Graph shape (per host)::
@@ -139,7 +141,8 @@ def register_host_graph(aq: Acquirium, host: dict) -> None:
 
     for key, label, _unit, _qk in _METRIC_DEFS:
         s = stream_uri(hostname, key)
-        rn = ref_name(hostname, key)
+        rn = ref_name(key)
+        handle = compute_handle(src_id, rn)
         ref_node = URIRef(str(s) + "#ref")
 
         # Link host → stream
@@ -151,23 +154,27 @@ def register_host_graph(aq: Acquirium, host: dict) -> None:
         g.add((s, RDFS.label, Literal(label)))
 
         # Brick-style external reference → Acquirium TimescaleDB
+        # ref:hasTimeseriesId holds the globally-unique handle (actual DB key)
         g.add((s,        BRICK_REF_HAS_EXTERNAL_REFERENCE, ref_node))
         g.add((ref_node, RDF.type,                         BRICK_REF_TIMESERIES_REFERENCE))
-        g.add((ref_node, BRICK_REF_HAS_TIMESERIES_ID,      Literal(rn)))
-        g.add((ref_node, BRICK_REF_STORED_AT,              ACQUIRIUM_DB_URI))
+        g.add((ref_node, BRICK_REF_HAS_TIMESERIES_ID,      Literal(handle)))
+        g.add((ref_node, ACQUIRIUM_SOURCE_ID,               Literal(src_id)))
+        g.add((ref_node, ACQUIRIUM_REF_NAME,                Literal(rn)))
+        g.add((ref_node, BRICK_REF_STORED_AT,               ACQUIRIUM_DB_URI))
 
     turtle = g.serialize(format="turtle")
     aq.client.insert_graph(turtle, format="turtle", replace=False)
 
 
-def register_stream_metadata(aq: Acquirium, hostname: str) -> None:
+def register_stream_metadata(aq: Acquirium, hostname: str, src_id: str) -> None:
     """Resolve and attach QUDT unit/quantity-kind metadata to each stream."""
     for key, label, unit, quantity_kind in _METRIC_DEFS:
         aq.register_stream(
             stream_uri(hostname, key),
             unit=unit,
             quantity_kind=quantity_kind,
-            ref_name=ref_name(hostname, key),
+            source_id=src_id,
+            ref_name=ref_name(key),
         )
 
 
@@ -175,22 +182,18 @@ def register_stream_metadata(aq: Acquirium, hostname: str) -> None:
 # Data collection
 # ---------------------------------------------------------------------------
 
-def collect(hostname: str) -> dict[str, float]:
-    """Collect one sample of each metric, keyed by ref_name.
-
-    Data is stored in TimescaleDB under the ref_name (the source-native
-    identifier stored as ref:hasTimeseriesId in the graph).
-    """
+def collect() -> dict[str, float]:
+    """Collect one sample of each metric, keyed by ref_name."""
     mem  = psutil.virtual_memory()
     disk = psutil.disk_usage("/")
     net  = psutil.net_io_counters()
     return {
-        ref_name(hostname, "cpu_percent"):       psutil.cpu_percent(interval=None),
-        ref_name(hostname, "memory_percent"):    mem.percent,
-        ref_name(hostname, "memory_used_bytes"): mem.used,
-        ref_name(hostname, "disk_percent"):      disk.percent,
-        ref_name(hostname, "net_bytes_sent"):    net.bytes_sent,
-        ref_name(hostname, "net_bytes_recv"):    net.bytes_recv,
+        ref_name("cpu_percent"):       psutil.cpu_percent(interval=None),
+        ref_name("memory_percent"):    mem.percent,
+        ref_name("memory_used_bytes"): mem.used,
+        ref_name("disk_percent"):      disk.percent,
+        ref_name("net_bytes_sent"):    net.bytes_sent,
+        ref_name("net_bytes_recv"):    net.bytes_recv,
     }
 
 
@@ -209,17 +212,22 @@ def main() -> None:
 
     host = get_host_info()
     hostname = host["hostname"]
+    src_id = source_id(hostname)
     print(f"Host: {hostname} ({host['ip']})  {host['platform']}")
+    print(f"Source ID: {src_id}")
+
+    print("Registering datasource...")
+    aq.register_datasource(src_id)
 
     print("Registering host graph...")
-    register_host_graph(aq, host)
+    register_host_graph(aq, host, src_id)
 
     print("Resolving and attaching QUDT metadata...")
-    register_stream_metadata(aq, hostname)
+    register_stream_metadata(aq, hostname, src_id)
 
     print(f"\nPublishing to {args.url}:{args.port} every {args.interval}s")
     for key, label, _, _ in _METRIC_DEFS:
-        print(f"  {stream_uri(hostname, key)}  ({label})")
+        print(f"  {stream_uri(hostname, key)}  ({label})  [{ref_name(key)}]")
     print()
 
     # Warm up cpu_percent (first call always returns 0.0)
@@ -227,9 +235,8 @@ def main() -> None:
 
     while True:
         ts = datetime.now(tz=timezone.utc)
-        sample = collect(hostname)
-        streams = {uri: [(ts, value)] for uri, value in sample.items()}
-        result = aq.insert_timeseries_batch(streams)
+        sample = collect()
+        result = aq.insert_timeseries_batch(src_id, sample)
         print(f"[{ts.isoformat()}] inserted {result.get('rows_inserted', '?')} rows")
         time.sleep(args.interval)
 
