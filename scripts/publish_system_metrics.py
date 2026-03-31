@@ -62,14 +62,18 @@ def stream_uri(hostname: str, key: str) -> URIRef:
     return URIRef(f"urn:host:{hostname}:{key}")
 
 def ref_uri(hostname: str, key: str) -> URIRef:
-    """External reference node for the acquirium TimescaleDB stream.
+    """URI of the external reference node for this stream.
 
-    For direct HTTP push the ref URI is the same as the stream URI — the
-    stream is its own external reference and data is stored under this key
-    in TimescaleDB.  This keeps the graph's hasExternalReference triple
-    consistent with what insert_timeseries_batch uses as the storage key.
+    This URI serves double duty:
+      - In the RDF graph it is the object of acquirium:hasExternalReference
+        on the point_uri, typed as acquirium:TimeseriesStream.
+      - In TimescaleDB it is the storage key under which data rows are kept.
+
+    Keeping it distinct from stream_uri (the point_uri) allows the semantic
+    identity of the measurement to remain stable even if the backing store
+    or ingestion path changes.
     """
-    return stream_uri(hostname, key)
+    return URIRef(f"urn:host:{hostname}:{key}:acquirium-ref")
 
 
 # ---------------------------------------------------------------------------
@@ -173,17 +177,22 @@ def register_stream_metadata(aq: Acquirium, hostname: str) -> None:
 # ---------------------------------------------------------------------------
 
 def collect(hostname: str) -> dict[str, float]:
-    """Collect one sample of each metric, keyed by host-scoped stream URI."""
+    """Collect one sample of each metric, keyed by ref_uri.
+
+    Data is stored in TimescaleDB under the ref_uri (not the point_uri).
+    The graph's hasExternalReference triple links point_uri → ref_uri,
+    so the query layer can join them at read time.
+    """
     mem  = psutil.virtual_memory()
     disk = psutil.disk_usage("/")
     net  = psutil.net_io_counters()
     return {
-        str(stream_uri(hostname, "cpu_percent")):       psutil.cpu_percent(interval=None),
-        str(stream_uri(hostname, "memory_percent")):    mem.percent,
-        str(stream_uri(hostname, "memory_used_bytes")): mem.used,
-        str(stream_uri(hostname, "disk_percent")):      disk.percent,
-        str(stream_uri(hostname, "net_bytes_sent")):    net.bytes_sent,
-        str(stream_uri(hostname, "net_bytes_recv")):    net.bytes_recv,
+        str(ref_uri(hostname, "cpu_percent")):       psutil.cpu_percent(interval=None),
+        str(ref_uri(hostname, "memory_percent")):    mem.percent,
+        str(ref_uri(hostname, "memory_used_bytes")): mem.used,
+        str(ref_uri(hostname, "disk_percent")):      disk.percent,
+        str(ref_uri(hostname, "net_bytes_sent")):    net.bytes_sent,
+        str(ref_uri(hostname, "net_bytes_recv")):    net.bytes_recv,
     }
 
 
