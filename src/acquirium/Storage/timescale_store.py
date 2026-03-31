@@ -81,7 +81,7 @@ class TimescaleStore(TimeseriesStore):
                 CREATE TABLE IF NOT EXISTS {STREAMS_TABLE} (
                     handle TEXT PRIMARY KEY,
                     point_uri TEXT UNIQUE NOT NULL,
-                    ref_uri TEXT NOT NULL
+                    ref_name TEXT NOT NULL
                 );
                 """
             )
@@ -165,27 +165,33 @@ class TimescaleStore(TimeseriesStore):
             return -1
 
     # -------------------- stream handles --------------------
-    def ensure_stream_handle(self, point_uri, ref_uri: str, handle: str | None = None) -> str:
+    def ensure_stream_handle(self, point_uri: str, ref_name: str, handle: str | None = None) -> str:
+        """Register a point_uri → ref_name mapping and return its short handle.
+
+        ``ref_name`` is the identifier used by the original data source
+        (e.g. a sensor tag, MQTT topic, database column, or timeseries ID).
+        It is stored as-is and used as the TimescaleDB storage key.
+        """
         if handle is None:
-            handle = hashlib.sha1(ref_uri.encode("utf-8")).hexdigest()[:10]
+            handle = hashlib.sha1(ref_name.encode("utf-8")).hexdigest()[:10]
         with self.conn.cursor() as cur:
             cur.execute(
                 f"""
-                INSERT INTO {STREAMS_TABLE} (handle, point_uri, ref_uri)
+                INSERT INTO {STREAMS_TABLE} (handle, point_uri, ref_name)
                 VALUES (%s, %s, %s)
-                ON CONFLICT (point_uri) DO UPDATE SET handle = EXCLUDED.handle
+                ON CONFLICT (point_uri) DO UPDATE SET handle = EXCLUDED.handle, ref_name = EXCLUDED.ref_name
                 """,
-                (handle, point_uri, ref_uri),
+                (handle, point_uri, ref_name),
             )
         return handle
 
-    def resolve_handle(self, handle: str) -> str:
-        '''
-        Resolves a stream handle to its corresponding point URI and ref URI.
-        Returns a tuple of (point_uri, ref_uri) or (None, None) if not found.
-        '''
+    def resolve_handle(self, handle: str) -> tuple[str | None, str | None]:
+        """Resolve a short handle to its (point_uri, ref_name) pair.
+
+        Returns (None, None) if the handle is not found.
+        """
         with self.conn.cursor() as cur:
-            cur.execute(f"SELECT point_uri, ref_uri FROM {STREAMS_TABLE} WHERE handle = %s", (handle,))
+            cur.execute(f"SELECT point_uri, ref_name FROM {STREAMS_TABLE} WHERE handle = %s", (handle,))
             row = cur.fetchone()
             return (row[0], row[1]) if row else (None, None)
 

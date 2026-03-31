@@ -249,7 +249,7 @@ def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[st
         total = 0
         for s in streams:
             total += app.state.manager.insert_timeseries(
-                ref_uri=s.ref_uri,
+                ref_name=s.ref_name,
                 rows=s.values,
                 point_uri=s.point_uri,
                 replace=s.replace,

@@ -17,15 +17,19 @@ from acquirium.Apps.base import App
 from acquirium.internals.app_utils import make_stream_ref_uri
 from acquirium.internals.models import AppOutputSpec, AppSpec
 from acquirium.internals.internals_namespaces import (
-    HAS_EXTERNAL_REFERENCE,
+    ACQUIRIUM_DB_URI,
+    BRICK_REF,
+    BRICK_REF_DATABASE,
+    BRICK_REF_HAS_EXTERNAL_REFERENCE,
+    BRICK_REF_HAS_TIMESERIES_ID,
+    BRICK_REF_STORED_AT,
+    BRICK_REF_TIMESERIES_REFERENCE,
     HAS_MEDIUM,
     HAS_QUANTITY_KIND,
     HAS_UNIT,
     OF_SUBSTANCE,
-    TIMESERIES_STREAM,
     VIRTUAL_POINT,
     DATA_SOURCE,
-    STREAM,
 )
 @dataclass
 class Acquirium:
@@ -103,25 +107,29 @@ class Acquirium:
 
     def insert_timeseries(
         self,
-        ref_uri: str,
+        ref_name: str,
         rows: list[tuple[datetime, Any]],
         *,
         point_uri: Optional[str] = None,
         replace: bool = False,
     ) -> dict[str, Any]:
-        """Insert timeseries data for a given reference URI.
+        """Insert timeseries data for a stream.
 
         Args:
-            ref_uri: The URI identifying the data stream (e.g. a sensor or point URI).
-            rows: List of (timestamp, value) tuples. Values may be float, int, str, or None.
-            point_uri: Optional override URI for the timeseries point. Defaults to ref_uri.
-            replace: If True, replaces any existing data for this stream. Default False.
+            ref_name: The source-native identifier for this stream (e.g. a sensor
+                tag, MQTT topic, or database column name). Used as the storage key
+                in TimescaleDB and matched against ``ref:hasTimeseriesId`` in the graph.
+            rows: List of (timestamp, value) tuples.
+            point_uri: The semantic URI of the measurement point in the knowledge
+                graph. When provided, a handle mapping is registered in the streams
+                table linking point_uri to ref_name.
+            replace: If True, replaces any existing data for this stream.
 
         Returns:
             dict with ``{"ok": True, "rows_inserted": N}``.
         """
         return self.client.insert_timeseries(
-            ref_uri=ref_uri,
+            ref_name=ref_name,
             rows=rows,
             point_uri=point_uri,
             replace=replace,
@@ -134,7 +142,9 @@ class Acquirium:
         """Insert timeseries data for multiple streams in one HTTP request.
 
         Args:
-            streams: Mapping of point URI → list of (timestamp, value) tuples.
+            streams: Mapping of ref_name → list of (timestamp, value) tuples.
+                ``ref_name`` is the source-native identifier (e.g. sensor tag,
+                MQTT topic) used as the TimescaleDB storage key.
 
         Returns:
             dict with ``{"ok": True, "rows_inserted": N}``.
@@ -174,12 +184,12 @@ class Acquirium:
         point_uri: str | URIRef,
         label: str | None = None,
         *,
+        ref_name: str | None = None,
         unit: str | URIRef | None = None,
         quantity_kind: str | URIRef | None = None,
         medium: str | URIRef | None = None,
         substance: str | URIRef | None = None,
         data_source: str | URIRef | None = None,
-        external_reference: str | URIRef | None = None,
         properties: dict[URIRef, str | URIRef] | None = None,
     ) -> None:
         """Declare a stream's semantic metadata in the RDF graph.
@@ -188,28 +198,36 @@ class Acquirium:
         any supplied metadata predicates. Call this once (or when metadata
         changes); it does not affect stored timeseries values.
 
+        When ``ref_name`` is provided, a Brick-style external reference is
+        written following the pattern from the Brick timeseries storage spec
+        (https://docs.brickschema.org/metadata/timeseries-storage.html)::
+
+            <point_uri>  ref:hasExternalReference  <point_uri#ref> .
+            <point_uri#ref>  a  ref:TimeseriesReference ;
+                             ref:hasTimeseriesId  "{ref_name}" ;
+                             ref:storedAt  <urn:acquirium:timescaledb> .
+            <urn:acquirium:timescaledb>  a  ref:Database .
+
+        The ``ref_name`` value is what ``_sync_stream_handles_from_graph``
+        reads back to populate the streams handle table.
+
         Plain strings for ``unit``, ``quantity_kind``, ``medium``, and
         ``substance`` are resolved against the QUDT vocabulary via the server
-        (unit resolver + embedding matcher).  If resolution succeeds the
-        matching QUDT URI is written as an RDF resource; otherwise the string
-        is written as a plain literal with a warning.
+        (unit resolver + embedding matcher). Falls back to a plain literal with
+        a warning if no confident match is found.
 
         Args:
             point_uri: The URI identifying this stream in the knowledge graph.
-            label: Human-readable name (written as rdfs:label).
-            unit: Unit of measurement — URIRef, URI string, or plain text
-                (e.g. ``"mg/L"``, ``"%"``, ``"byte"``).
-            quantity_kind: Physical quantity — URIRef, URI string, or plain text
-                (e.g. ``"Mass Concentration"``).
+            label: Human-readable name (rdfs:label).
+            ref_name: Source-native identifier for this stream (sensor tag,
+                MQTT topic, database column, etc.). Written as
+                ``ref:hasTimeseriesId`` on the external reference node.
+            unit: Unit of measurement — URIRef, URI string, or plain text.
+            quantity_kind: Physical quantity — URIRef, URI string, or plain text.
             medium: Medium the measurement applies to (S223 hasMedium).
             substance: Substance being measured (S223 ofSubstance).
             data_source: Origin of the data — written as a literal string.
-            external_reference: URI of the backing data reference node
-                (``acquirium:hasExternalReference``).  A
-                ``acquirium:TimeseriesStream`` triple is also added.
             properties: Arbitrary extra triples as ``{predicate_uri: value}``.
-                Values that are URIRef (or URI-like strings) are written as
-                RDF resources; plain strings are written as literals.
         """
         g = RDFGraph()
         subj = URIRef(str(point_uri))
@@ -219,8 +237,7 @@ class Acquirium:
             g.add((subj, RDFS.label, Literal(label)))
 
         def _coerce(value: str | URIRef | None, qudt_kind: str) -> str | URIRef | None:
-            """Resolve a plain string to a QUDT URIRef, leaving URIRefs and URI
-            strings untouched and falling back to the original string on failure."""
+            """Resolve a plain string to a QUDT URIRef, falling back to literal."""
             if value is None or isinstance(value, URIRef):
                 return value
             if "://" in value or value.startswith("urn:"):
@@ -250,11 +267,17 @@ class Acquirium:
         _add(OF_SUBSTANCE,      _coerce(substance,     "class"))
         _add(DATA_SOURCE, data_source)
 
-        if external_reference is not None:
-            ref = URIRef(str(external_reference))
-            g.add((subj, HAS_EXTERNAL_REFERENCE, ref))
-            g.add((ref, RDF.type, STREAM))
-            g.add((ref, RDF.type, TIMESERIES_STREAM))
+        if ref_name is not None:
+            # Brick-style timeseries external reference — use a stable named
+            # URI for the reference node so repeated calls are idempotent.
+            ref_node = URIRef(str(point_uri) + "#ref")
+            g.add((subj,     BRICK_REF_HAS_EXTERNAL_REFERENCE, ref_node))
+            g.add((ref_node, RDF.type,                         BRICK_REF_TIMESERIES_REFERENCE))
+            g.add((ref_node, BRICK_REF_HAS_TIMESERIES_ID,      Literal(ref_name)))
+            g.add((ref_node, BRICK_REF_STORED_AT,              ACQUIRIUM_DB_URI))
+            # Declare the Acquirium DB node (idempotent)
+            g.add((ACQUIRIUM_DB_URI, RDF.type,   BRICK_REF_DATABASE))
+            g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
 
         for pred, value in (properties or {}).items():
             _add(pred, value)

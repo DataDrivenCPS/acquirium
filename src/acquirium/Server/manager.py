@@ -306,28 +306,32 @@ class Manager:
         return count
 
     def _sync_stream_handles_from_graph(self) -> int:
-        """Scan the graph for point→ref pairs and populate the streams handle table.
+        """Scan the graph for Brick-style timeseries references and sync the streams handle table.
 
-        Finds every triple of the form:
-            ?point  acquirium:hasExternalReference  ?ref
-        where ?ref is typed as acquirium:TimeseriesStream, then calls
-        ensure_stream_handle so the streams table stays in sync with the graph.
+        Finds every pattern of the form:
+            ?point  ref:hasExternalReference  ?ref_node .
+            ?ref_node  a  ref:TimeseriesReference ;
+                       ref:hasTimeseriesId  ?ref_name .
+        and calls ensure_stream_handle(point_uri, ref_name) so the streams
+        table stays in sync with the graph.
         """
         q = f"""
-        SELECT ?point ?ref
+        SELECT ?point ?ref_name
         WHERE {{
-          ?point <{HAS_EXTERNAL_REFERENCE}> ?ref .
-          ?ref a <{TIMESERIES_STREAM}> .
+          ?point <{BRICK_REF_HAS_EXTERNAL_REFERENCE}> ?ref_node .
+          ?ref_node a <{BRICK_REF_TIMESERIES_REFERENCE}> .
+          ?ref_node <{BRICK_REF_HAS_TIMESERIES_ID}> ?ref_name .
         }}
         """
         res = self.graph_store.sparql_query(q, use_union=True)
         count = 0
-        for point_uri, ref_uri in res.get("rows", []):
+        for point_uri, ref_name in res.get("rows", []):
             try:
-                self.timescale.ensure_stream_handle(str(point_uri), str(ref_uri))
+                ref_name_str = str(ref_name).strip('"')
+                self.timescale.ensure_stream_handle(str(point_uri), ref_name_str)
                 count += 1
             except Exception:
-                logger.warning("Failed to ensure stream handle %s → %s", point_uri, ref_uri, exc_info=True)
+                logger.warning("Failed to ensure stream handle %s → %s", point_uri, ref_name, exc_info=True)
         if count:
             logger.info("Synced %d stream handle(s) from graph", count)
         return count
@@ -740,17 +744,17 @@ class Manager:
     def insert_timeseries(
         self,
         *,
-        ref_uri: str,
+        ref_name: str,
         rows: list[tuple[datetime, Any]],
         point_uri: str | None = None,
         replace: bool = False,
     ) -> int:
         if replace:
-            n = self.timescale.replace_rows(ref_uri, rows)
+            n = self.timescale.replace_rows(ref_name, rows)
         else:
-            n = self.timescale.upsert_rows(ref_uri, rows)
+            n = self.timescale.upsert_rows(ref_name, rows)
         if point_uri:
-            self.timescale.ensure_stream_handle(point_uri, ref_uri)
+            self.timescale.ensure_stream_handle(point_uri, ref_name)
         return n
 
     def _app_type_uri(self, app_type: str) -> URIRef:
