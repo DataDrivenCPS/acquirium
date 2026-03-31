@@ -113,30 +113,37 @@ class TestBulkInsertPolars:
 
 
 class TestStreamHandles:
-    def test_auto_handle(self, ts_store, clean_point):
-        handle = ts_store.ensure_stream_handle(clean_point, TEST_REF)
+    TEST_SOURCE = "test_source"
+    TEST_REF_NAME = "test_ref"
+
+    def test_handle_is_uuid(self, ts_store, clean_point):
+        handle = ts_store.ensure_stream_handle(clean_point, self.TEST_SOURCE, self.TEST_REF_NAME)
         assert isinstance(handle, str)
-        assert len(handle) == 10
+        assert len(handle) == 36  # UUID5 string form
 
-    def test_custom_handle(self, ts_store, clean_point):
-        handle = ts_store.ensure_stream_handle(clean_point, TEST_REF, handle="custom123")
-        assert handle == "custom123"
-
-    def test_idempotent(self, ts_store, clean_point):
-        h1 = ts_store.ensure_stream_handle(clean_point, TEST_REF)
-        h2 = ts_store.ensure_stream_handle(clean_point, TEST_REF)
+    def test_deterministic(self, ts_store, clean_point):
+        # Same source_id + ref_name always yields the same handle.
+        h1 = ts_store.ensure_stream_handle(clean_point, self.TEST_SOURCE, self.TEST_REF_NAME)
+        h2 = ts_store.ensure_stream_handle(clean_point, self.TEST_SOURCE, self.TEST_REF_NAME)
         assert h1 == h2
 
+    def test_different_sources_different_handles(self, ts_store, clean_point):
+        h1 = ts_store.ensure_stream_handle(clean_point, "source_a", self.TEST_REF_NAME)
+        h2 = ts_store.ensure_stream_handle(clean_point, "source_b", self.TEST_REF_NAME)
+        assert h1 != h2
+
     def test_resolve_handle(self, ts_store, clean_point):
-        handle = ts_store.ensure_stream_handle(clean_point, TEST_REF)
-        point, ref = ts_store.resolve_handle(handle)
+        handle = ts_store.ensure_stream_handle(clean_point, self.TEST_SOURCE, self.TEST_REF_NAME)
+        point, source_id, ref_name = ts_store.resolve_handle(handle)
         assert point == clean_point
-        assert ref == TEST_REF
+        assert source_id == self.TEST_SOURCE
+        assert ref_name == self.TEST_REF_NAME
 
     def test_resolve_unknown_handle(self, ts_store):
-        point, ref = ts_store.resolve_handle("nonexistent_handle")
+        point, source_id, ref_name = ts_store.resolve_handle("nonexistent_handle")
         assert point is None
-        assert ref is None
+        assert source_id is None
+        assert ref_name is None
 
 
 # ── Query Tests ────────────────────────────────────────────
