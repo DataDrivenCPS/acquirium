@@ -204,6 +204,21 @@ class TimescaleStore(TimeseriesStore):
             row = cur.fetchone()
             return (row[0], row[1], row[2]) if row else (None, None, None)
 
+    def resolve_storage_key(self, point_uri: str) -> str:
+        """Return the storage key (handle) for a point_uri, or point_uri itself if not registered.
+
+        Streams inserted via insert_timeseries are stored under their handle (UUID).
+        This resolves the semantic URI → handle so reads find the right rows.
+        Falls back to the URI itself for data inserted directly (e.g. bulk CSV ingest).
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                f"SELECT handle FROM {STREAMS_TABLE} WHERE point_uri = %s",
+                (point_uri,),
+            )
+            row = cur.fetchone()
+            return row[0] if row else point_uri
+
     # -------------------- queries --------------------
     def timeseries(
         self,
