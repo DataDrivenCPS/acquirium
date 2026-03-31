@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence, Callable, Optional
 import inspect
 
-from rdflib import Graph as RDFGraph, URIRef
+from rdflib import Graph as RDFGraph, URIRef, Literal
+from rdflib.namespace import RDF, RDFS
 
 import warnings
 
@@ -15,6 +16,17 @@ from acquirium.Client.client import AcquiriumClient
 from acquirium.Apps.base import App
 from acquirium.internals.app_utils import make_stream_ref_uri
 from acquirium.internals.models import AppOutputSpec, AppSpec
+from acquirium.internals.internals_namespaces import (
+    HAS_EXTERNAL_REFERENCE,
+    HAS_MEDIUM,
+    HAS_QUANTITY_KIND,
+    HAS_UNIT,
+    OF_SUBSTANCE,
+    TIMESERIES_STREAM,
+    VIRTUAL_POINT,
+    DATA_SOURCE,
+    STREAM,
+)
 @dataclass
 class Acquirium:
     """
@@ -89,6 +101,166 @@ class Acquirium:
     # TIMESERIES API
     # ------------------------------------------------------------------
 
+    def insert_timeseries(
+        self,
+        ref_uri: str,
+        rows: list[tuple[datetime, Any]],
+        *,
+        point_uri: Optional[str] = None,
+        replace: bool = False,
+    ) -> dict[str, Any]:
+        """Insert timeseries data for a given reference URI.
+
+        Args:
+            ref_uri: The URI identifying the data stream (e.g. a sensor or point URI).
+            rows: List of (timestamp, value) tuples. Values may be float, int, str, or None.
+            point_uri: Optional override URI for the timeseries point. Defaults to ref_uri.
+            replace: If True, replaces any existing data for this stream. Default False.
+
+        Returns:
+            dict with ``{"ok": True, "rows_inserted": N}``.
+        """
+        return self.client.insert_timeseries(
+            ref_uri=ref_uri,
+            rows=rows,
+            point_uri=point_uri,
+            replace=replace,
+        )
+
+    def insert_timeseries_batch(
+        self,
+        streams: dict[str, list[tuple[datetime, Any]]],
+    ) -> dict[str, Any]:
+        """Insert timeseries data for multiple streams in one HTTP request.
+
+        Args:
+            streams: Mapping of point URI → list of (timestamp, value) tuples.
+
+        Returns:
+            dict with ``{"ok": True, "rows_inserted": N}``.
+        """
+        return self.client.insert_timeseries_batch(streams)
+
+    def _resolve_qudt_uri(self, text: str, kind: str) -> URIRef | None:
+        """Try to resolve a plain string to a QUDT URI via the server.
+
+        For ``kind="unit"`` the deterministic unit resolver is tried first
+        (handles symbols, UCUM codes, and ratio notation like "mg/L"), then
+        the embedding matcher as a fallback.  For other kinds (``"quantity_kind"``,
+        ``"class"``) only the embedding matcher is used.
+
+        Returns a URIRef on success, or None if no confident match is found.
+        """
+        if kind == "unit":
+            try:
+                result = self.client.resolve_unit(text)
+                uri = result.get("uri")
+                if uri:
+                    return URIRef(uri)
+            except Exception:
+                pass  # fall through to embedding matcher
+
+        try:
+            matches = self.client.resolve_text(text, kind=kind, top_k=1, min_score=0.6)
+            if matches:
+                return URIRef(matches[0]["uri"])
+        except Exception:
+            pass
+
+        return None
+
+    def register_stream(
+        self,
+        point_uri: str | URIRef,
+        label: str | None = None,
+        *,
+        unit: str | URIRef | None = None,
+        quantity_kind: str | URIRef | None = None,
+        medium: str | URIRef | None = None,
+        substance: str | URIRef | None = None,
+        data_source: str | URIRef | None = None,
+        external_reference: str | URIRef | None = None,
+        properties: dict[URIRef, str | URIRef] | None = None,
+    ) -> None:
+        """Declare a stream's semantic metadata in the RDF graph.
+
+        Registers a point URI as a timeseries stream and annotates it with
+        any supplied metadata predicates. Call this once (or when metadata
+        changes); it does not affect stored timeseries values.
+
+        Plain strings for ``unit``, ``quantity_kind``, ``medium``, and
+        ``substance`` are resolved against the QUDT vocabulary via the server
+        (unit resolver + embedding matcher).  If resolution succeeds the
+        matching QUDT URI is written as an RDF resource; otherwise the string
+        is written as a plain literal with a warning.
+
+        Args:
+            point_uri: The URI identifying this stream in the knowledge graph.
+            label: Human-readable name (written as rdfs:label).
+            unit: Unit of measurement — URIRef, URI string, or plain text
+                (e.g. ``"mg/L"``, ``"%"``, ``"byte"``).
+            quantity_kind: Physical quantity — URIRef, URI string, or plain text
+                (e.g. ``"Mass Concentration"``).
+            medium: Medium the measurement applies to (S223 hasMedium).
+            substance: Substance being measured (S223 ofSubstance).
+            data_source: Origin of the data — written as a literal string.
+            external_reference: URI of the backing data reference node
+                (``acquirium:hasExternalReference``).  A
+                ``acquirium:TimeseriesStream`` triple is also added.
+            properties: Arbitrary extra triples as ``{predicate_uri: value}``.
+                Values that are URIRef (or URI-like strings) are written as
+                RDF resources; plain strings are written as literals.
+        """
+        g = RDFGraph()
+        subj = URIRef(str(point_uri))
+
+        g.add((subj, RDF.type, VIRTUAL_POINT))
+        if label is not None:
+            g.add((subj, RDFS.label, Literal(label)))
+
+        def _coerce(value: str | URIRef | None, qudt_kind: str) -> str | URIRef | None:
+            """Resolve a plain string to a QUDT URIRef, leaving URIRefs and URI
+            strings untouched and falling back to the original string on failure."""
+            if value is None or isinstance(value, URIRef):
+                return value
+            if "://" in value or value.startswith("urn:"):
+                return URIRef(value)
+            resolved = self._resolve_qudt_uri(value, qudt_kind)
+            if resolved is None:
+                warnings.warn(
+                    f"Could not resolve {qudt_kind!r} value {value!r} to a QUDT URI; "
+                    "storing as a plain literal.",
+                    stacklevel=3,
+                )
+            return resolved or value
+
+        def _add(pred: URIRef, value: str | URIRef | None) -> None:
+            if value is None:
+                return
+            if isinstance(value, URIRef):
+                g.add((subj, pred, value))
+            elif "://" in value or value.startswith("urn:"):
+                g.add((subj, pred, URIRef(value)))
+            else:
+                g.add((subj, pred, Literal(value)))
+
+        _add(HAS_UNIT,          _coerce(unit,          "unit"))
+        _add(HAS_QUANTITY_KIND, _coerce(quantity_kind, "quantity_kind"))
+        _add(HAS_MEDIUM,        _coerce(medium,        "class"))
+        _add(OF_SUBSTANCE,      _coerce(substance,     "class"))
+        _add(DATA_SOURCE, data_source)
+
+        if external_reference is not None:
+            ref = URIRef(str(external_reference))
+            g.add((subj, HAS_EXTERNAL_REFERENCE, ref))
+            g.add((ref, RDF.type, STREAM))
+            g.add((ref, RDF.type, TIMESERIES_STREAM))
+
+        for pred, value in (properties or {}).items():
+            _add(pred, value)
+
+        turtle = g.serialize(format="turtle")
+        self.client.insert_graph(turtle, format="turtle", replace=False)
 
     # ------------------------------------------------------------------
     # ACQUIRIUM APPS API
