@@ -24,6 +24,7 @@ from acquirium.internals.models import (
     AppRunRequest,
     AppStopRequest,
     InsertTimeseriesRequest,
+    InsertBatchRequest,
 )
 from acquirium.internals.internals_namespaces import PLANT_URI
 
@@ -251,6 +252,22 @@ def insert_timeseries(
             replace=replace,
         )
         return {"ok": True, "rows_inserted": n}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/insert_timeseries_batch")
+def insert_timeseries_batch(req: InsertBatchRequest) -> dict[str, Any]:
+    """Insert timeseries data for multiple streams in a single request.
+
+    The request body is a JSON object mapping each point URI to a list of
+    ``[timestamp, value]`` pairs.
+    """
+    try:
+        total = 0
+        for point_uri, rows in req.streams.items():
+            total += app.state.manager.insert_timeseries(ref_uri=point_uri, rows=rows)
+        return {"ok": True, "rows_inserted": total}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
