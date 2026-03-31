@@ -62,8 +62,14 @@ def stream_uri(hostname: str, key: str) -> URIRef:
     return URIRef(f"urn:host:{hostname}:{key}")
 
 def ref_uri(hostname: str, key: str) -> URIRef:
-    """External reference node — identifies the acquirium TimescaleDB stream."""
-    return URIRef(f"urn:host:{hostname}:{key}:acquirium-ref")
+    """External reference node for the acquirium TimescaleDB stream.
+
+    For direct HTTP push the ref URI is the same as the stream URI — the
+    stream is its own external reference and data is stored under this key
+    in TimescaleDB.  This keeps the graph's hasExternalReference triple
+    consistent with what insert_timeseries_batch uses as the storage key.
+    """
+    return stream_uri(hostname, key)
 
 
 # ---------------------------------------------------------------------------
