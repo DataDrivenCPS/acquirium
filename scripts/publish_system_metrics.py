@@ -32,8 +32,6 @@ from acquirium.internals.internals_namespaces import (
     BRICK_REF_TIMESERIES_REFERENCE,
     S223,
     VIRTUAL_POINT,
-    QUDT_QUANTITY_KIND,
-    QUDT_UNIT,
 )
 from acquirium.internals.models import compute_handle
 
@@ -67,11 +65,6 @@ def stream_uri(hostname: str, key: str) -> URIRef:
 def source_id(hostname: str) -> str:
     """Datasource identifier for this host's metrics publisher."""
     return f"{hostname}-system-metrics"
-
-
-def ref_name(key: str) -> str:
-    """Source-local stream identifier — just the metric key."""
-    return key
 
 
 # ---------------------------------------------------------------------------
@@ -141,8 +134,7 @@ def register_host_graph(aq: Acquirium, host: dict, src_id: str) -> None:
 
     for key, label, _unit, _qk in _METRIC_DEFS:
         s = stream_uri(hostname, key)
-        rn = ref_name(key)
-        handle = compute_handle(src_id, rn)
+        handle = compute_handle(src_id, key)
         ref_node = URIRef(str(s) + "#ref")
 
         # Link host → stream
@@ -159,7 +151,7 @@ def register_host_graph(aq: Acquirium, host: dict, src_id: str) -> None:
         g.add((ref_node, RDF.type,                         BRICK_REF_TIMESERIES_REFERENCE))
         g.add((ref_node, BRICK_REF_HAS_TIMESERIES_ID,      Literal(handle)))
         g.add((ref_node, ACQUIRIUM_SOURCE_ID,               Literal(src_id)))
-        g.add((ref_node, ACQUIRIUM_REF_NAME,                Literal(rn)))
+        g.add((ref_node, ACQUIRIUM_REF_NAME,                Literal(key)))
         g.add((ref_node, BRICK_REF_STORED_AT,               ACQUIRIUM_DB_URI))
 
     turtle = g.serialize(format="turtle")
@@ -174,7 +166,7 @@ def register_stream_metadata(aq: Acquirium, hostname: str, src_id: str) -> None:
             unit=unit,
             quantity_kind=quantity_kind,
             source_id=src_id,
-            ref_name=ref_name(key),
+            ref_name=key,
         )
 
 
@@ -188,12 +180,12 @@ def collect() -> dict[str, float]:
     disk = psutil.disk_usage("/")
     net  = psutil.net_io_counters()
     return {
-        ref_name("cpu_percent"):       psutil.cpu_percent(interval=None),
-        ref_name("memory_percent"):    mem.percent,
-        ref_name("memory_used_bytes"): mem.used,
-        ref_name("disk_percent"):      disk.percent,
-        ref_name("net_bytes_sent"):    net.bytes_sent,
-        ref_name("net_bytes_recv"):    net.bytes_recv,
+        "cpu_percent":       psutil.cpu_percent(interval=None),
+        "memory_percent":    mem.percent,
+        "memory_used_bytes": mem.used,
+        "disk_percent":      disk.percent,
+        "net_bytes_sent":    net.bytes_sent,
+        "net_bytes_recv":    net.bytes_recv,
     }
 
 
@@ -227,7 +219,7 @@ def main() -> None:
 
     print(f"\nPublishing to {args.url}:{args.port} every {args.interval}s")
     for key, label, _, _ in _METRIC_DEFS:
-        print(f"  {stream_uri(hostname, key)}  ({label})  [{ref_name(key)}]")
+        print(f"  {stream_uri(hostname, key)}  ({label})  [{key}]")
     print()
 
     # Warm up cpu_percent (first call always returns 0.0)

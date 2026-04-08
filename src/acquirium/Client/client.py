@@ -441,8 +441,8 @@ class AcquiriumClient:
         replace: bool = False,
     ) -> dict:
         url = f"{self.base_url}/insert_timeseries"
-        payload = [StreamInsert(source_id=source_id, ref_name=ref_name, point_uri=point_uri, replace=replace, values=rows)]
-        response = requests.post(url, json=[s.model_dump(mode="json") for s in payload])
+        body = StreamInsert(source_id=source_id, ref_name=ref_name, point_uri=point_uri, replace=replace, values=rows)
+        response = requests.post(url, json=[body.model_dump(mode="json")])
         response.raise_for_status()
         return response.json()
 
