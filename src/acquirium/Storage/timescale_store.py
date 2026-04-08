@@ -73,7 +73,7 @@ class TimescaleStore(TimeseriesStore):
                 f"ALTER TABLE {TIMESERIES_TABLE} SET (timescaledb.compress, timescaledb.compress_segmentby = 'point_uri', timescaledb.compress_orderby = 'ts');"
             )
             cur.execute(
-                "SELECT add_compression_policy('timeseries', INTERVAL '7 days');"
+                "SELECT add_compression_policy('timeseries', INTERVAL '7 days', if_not_exists => TRUE);"
             )
 
             # add unique constraint on (point_uri, ts) pairs
