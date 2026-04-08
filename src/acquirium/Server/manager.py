@@ -742,9 +742,10 @@ class Manager:
         if pg_uris:
             result.update(self.pg_registry.timeseries_info_batch(pg_uris))
         if ts_uris:
-            # Resolve each URI to its storage key (handle) before querying.
-            # Returns a dict keyed by storage_key; remap back to the original URI.
-            key_to_uri = {self.timescale.resolve_storage_key(u): u for u in ts_uris}
+            # Resolve URIs to storage keys (handles) in one batch query, then
+            # remap results back to the original URIs.
+            uri_to_key = self.timescale.resolve_storage_keys(ts_uris)
+            key_to_uri = {v: k for k, v in uri_to_key.items()}
             raw = self.timescale.timeseries_info_batch(list(key_to_uri.keys()))
             result.update({key_to_uri[k]: v for k, v in raw.items()})
         return result
@@ -778,7 +779,7 @@ class Manager:
         else:
             n = self.timescale.upsert_rows(handle, rows)
         if point_uri:
-            self.timescale.ensure_stream_handle(point_uri, source_id, ref_name)
+            self.timescale.ensure_stream_handle(point_uri, source_id, ref_name, handle=handle)
         return n
 
     def _app_type_uri(self, app_type: str) -> URIRef:

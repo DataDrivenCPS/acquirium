@@ -72,6 +72,10 @@ class TimescaleStore(TimeseriesStore):
             cur.execute(
                 f"ALTER TABLE {TIMESERIES_TABLE} SET (timescaledb.compress, timescaledb.compress_segmentby = 'point_uri', timescaledb.compress_orderby = 'ts');"
             )
+            cur.execute(
+                "SELECT add_compression_policy('timeseries', INTERVAL '7 days');"
+            )
+
             # add unique constraint on (point_uri, ts) pairs
             cur.execute(
                 f"CREATE UNIQUE INDEX IF NOT EXISTS idx_timeseries_point_ts_unique ON {TIMESERIES_TABLE} (point_uri, ts);"
@@ -166,17 +170,19 @@ class TimescaleStore(TimeseriesStore):
             return -1
 
     # -------------------- stream handles --------------------
-    def ensure_stream_handle(self, point_uri: str, source_id: str, ref_name: str) -> str:
+    def ensure_stream_handle(self, point_uri: str, source_id: str, ref_name: str, handle: str | None = None) -> str:
         """Register a (point_uri, source_id, ref_name) mapping in the streams table.
 
         The handle is computed deterministically from (source_id, ref_name) via
         :func:`compute_handle`, so two sources with the same ref_name never
         produce the same storage key.  The handle is also used as the
-        TimescaleDB row key for the stream's data.
+        TimescaleDB row key for the stream's data.  Pass a precomputed handle
+        to avoid recomputing it when already available.
 
         Returns the handle.
         """
-        handle = compute_handle(source_id, ref_name)
+        if handle is None:
+            handle = compute_handle(source_id, ref_name)
         with self.conn.cursor() as cur:
             cur.execute(
                 f"""
@@ -218,6 +224,23 @@ class TimescaleStore(TimeseriesStore):
             )
             row = cur.fetchone()
             return row[0] if row else point_uri
+
+    def resolve_storage_keys(self, point_uris: list[str]) -> dict[str, str]:
+        """Batch-resolve point_uris to storage keys in a single query.
+
+        Returns a mapping of point_uri → handle (or point_uri itself for
+        unregistered URIs, preserving the single-URI fallback behaviour).
+        """
+        if not point_uris:
+            return {}
+        with self.conn.cursor() as cur:
+            cur.execute(
+                f"SELECT point_uri, handle FROM {STREAMS_TABLE} WHERE point_uri = ANY(%s)",
+                (point_uris,),
+            )
+            rows = cur.fetchall()
+        registered = {row[0]: row[1] for row in rows}
+        return {uri: registered.get(uri, uri) for uri in point_uris}
 
     # -------------------- queries --------------------
     def timeseries(
