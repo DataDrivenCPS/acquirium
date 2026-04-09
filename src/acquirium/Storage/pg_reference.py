@@ -7,6 +7,7 @@ returning ``pa.RecordBatch`` iterators identical to ``TimescaleStore``.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterator
@@ -19,6 +20,28 @@ import pyarrow as pa
 from acquirium.internals.models import TimeseriesInfo
 
 logger = logging.getLogger("acquirium.pg_reference")
+
+
+# Per-thread connection cache. Without this, every call to ``timeseries()``
+# opens (and tears down) a fresh psycopg connection — a TCP handshake plus
+# auth on every fetch. Under concurrent load (e.g. 100 ComPs polling at
+# 1Hz against the same DSN) the per-call cost dominates fetch time and
+# Postgres' max_connections limit becomes a hard ceiling. Reusing one
+# connection per worker thread keeps each thread's connection warm and
+# bounds total open connections to ~the FastAPI threadpool size.
+_thread_conns = threading.local()
+
+
+def _get_conn(dsn: str) -> psycopg.Connection:
+    cache: dict[str, psycopg.Connection] = getattr(_thread_conns, "conns", None)  # type: ignore[assignment]
+    if cache is None:
+        cache = {}
+        _thread_conns.conns = cache  # type: ignore[attr-defined]
+    conn = cache.get(dsn)
+    if conn is None or conn.closed:
+        conn = psycopg.connect(dsn, autocommit=True)
+        cache[dsn] = conn
+    return conn
 
 
 @dataclass(frozen=True)
@@ -93,7 +116,7 @@ class PGReferenceRegistry:
         ``[ts: timestamp[us, tz=UTC], value: string, uri: string]``.
         """
         info = self._refs[point_uri]
-        conn = psycopg.connect(info.dsn, autocommit=True)
+        conn = _get_conn(info.dsn)
         try:
             with conn.cursor() as cur:
                 if info.custom_query:
@@ -148,8 +171,18 @@ class PGReferenceRegistry:
                         ],
                         names=["ts", "value", "uri"],
                     )
-        finally:
-            conn.close()
+        except Exception:
+            # On error, drop the cached connection so the next call gets a
+            # fresh one — psycopg connections can transition to a broken
+            # state on a single failure and stay that way.
+            try:
+                conn.close()
+            except Exception:
+                pass
+            cache: dict[str, psycopg.Connection] | None = getattr(_thread_conns, "conns", None)
+            if cache and cache.get(info.dsn) is conn:
+                cache.pop(info.dsn, None)
+            raise
 
     def timeseries_info_batch(self, point_uris: list[str]) -> dict[str, TimeseriesInfo]:
         """Return stats for PGReference URIs. Only returns entries for registered URIs."""
@@ -158,7 +191,7 @@ class PGReferenceRegistry:
             if uri not in self._refs:
                 continue
             info = self._refs[uri]
-            conn = psycopg.connect(info.dsn, autocommit=True)
+            conn = _get_conn(info.dsn)
             try:
                 with conn.cursor() as cur:
                     if info.custom_query:
@@ -175,6 +208,13 @@ class PGReferenceRegistry:
                             cur.execute(q.as_string(conn))
                     cnt, earliest, latest = cur.fetchone()
                     result[uri] = TimeseriesInfo(table=info.table or "external", row_count=cnt or 0, earliest=earliest, latest=latest)
-            finally:
-                conn.close()
+            except Exception:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                cache: dict[str, psycopg.Connection] | None = getattr(_thread_conns, "conns", None)
+                if cache and cache.get(info.dsn) is conn:
+                    cache.pop(info.dsn, None)
+                raise
         return result
