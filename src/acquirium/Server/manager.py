@@ -19,7 +19,7 @@ import hashlib
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, Future
-from typing import Any
+from typing import Any, Callable
 import shutil
 import docker
 from docker.errors import DockerException, NotFound as ContainerNotFound
@@ -151,6 +151,10 @@ class Manager:
         self.app_storage_root.mkdir(parents=True, exist_ok=True)
         self._app_runs: dict[str, dict[str, Any]] = {}
         self._app_runs_lock = threading.Lock()
+        self._graph_change_listeners: list[Callable[[], None]] = []
+        self._graph_change_listeners_lock = threading.Lock()
+        self._graph_version: int = 0
+        self._graph_version_lock = threading.Lock()
 
         # Initialize Docker client for spawning app containers
         try:
@@ -629,6 +633,41 @@ class Manager:
     #################### API ###############
     ###########################################
 
+    def add_graph_change_listener(self, callback: Callable[[], None]) -> None:
+        """Register a callback to be invoked after any graph mutation.
+
+        Listeners run synchronously on the thread that mutated the graph, so
+        they should be cheap (typically: hand off the actual work to a
+        background executor).
+        """
+        with self._graph_change_listeners_lock:
+            if callback not in self._graph_change_listeners:
+                self._graph_change_listeners.append(callback)
+
+    def remove_graph_change_listener(self, callback: Callable[[], None]) -> None:
+        with self._graph_change_listeners_lock:
+            if callback in self._graph_change_listeners:
+                self._graph_change_listeners.remove(callback)
+
+    def _notify_graph_change(self) -> None:
+        with self._graph_version_lock:
+            self._graph_version += 1
+        with self._graph_change_listeners_lock:
+            listeners = list(self._graph_change_listeners)
+        for cb in listeners:
+            try:
+                cb()
+            except Exception:
+                logger.warning("Graph change listener %r failed", cb, exc_info=True)
+
+    def graph_version(self) -> int:
+        """Monotonically-increasing version bumped on every graph mutation.
+
+        Workers can poll this to detect when their cached query becomes stale.
+        """
+        with self._graph_version_lock:
+            return self._graph_version
+
 
     def insert_graph(self, rdf_graph: str, format: str = "turtle", replace = True, wait_for_embedding: bool = False) -> None:
         """
@@ -656,6 +695,8 @@ class Manager:
                 logger.info("acquirium: embedding index rebuild complete")
             else:
                 self._executor.submit(self._rebuild_graph_index_background)
+
+            self._notify_graph_change()
 
         except Exception as e:
             logging.error("acquirium: failed to insert graph: %s", e)
@@ -828,6 +869,7 @@ class Manager:
         (app_dir / "app.json").write_text(json.dumps(meta, ensure_ascii=True, sort_keys=True))
 
         self.graph_store.insert_graph(graph, format="turtle", replace=False)
+        self._notify_graph_change()
 
     def _lookup_app_runtime(self, app_id: str) -> dict[str, str | None]:
         app_uri = app_uri_for(app_id)
@@ -1118,6 +1160,7 @@ class Manager:
         G.add((log_uri, RDF.type, LOGBOOK))
         self.graph_store.insert_graph(G, format="turtle", replace=False)
         logger.info("Inserted log entry for point %s at %s to graph", log_message.point_uri, log_message.timestamp)
+        self._notify_graph_change()
 
 
     def query_logs(
@@ -1163,6 +1206,7 @@ class Manager:
         """
         self.graph_store.sparql_update(q)
         logger.info("Deleted all log references for point %s from graph", point_uri)
+        self._notify_graph_change()
         return True
 
     def sparql_dict(self, query: str, use_union: bool = True) -> dict[str, Any]:
