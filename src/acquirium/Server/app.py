@@ -146,6 +146,16 @@ def embedding_status():
     )
 
 
+@app.get("/graph_version")
+def graph_version() -> dict[str, int]:
+    """Return a counter that the server increments on every graph mutation.
+
+    Long-running clients (e.g. keep-alive app workers) can poll this to
+    decide when to rebuild cached queries that depend on the graph.
+    """
+    return {"version": app.state.manager.graph_version()}
+
+
 
 #### GRAPH API ENDPOINTS ####
 

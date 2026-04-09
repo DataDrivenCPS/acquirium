@@ -66,9 +66,9 @@ services:
       - acquirium_net
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()\""]
-      interval: 3s
+      interval: 5s
       timeout: 2s
-      retries: 40
+      retries: 60
       start_period: 20s
 
   watertap_sim:
