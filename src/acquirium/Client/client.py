@@ -236,6 +236,17 @@ class AcquiriumClient:
         response.raise_for_status()
         return response.json()
 
+    def graph_version(self) -> int:
+        """Return the server's current graph version counter.
+
+        The counter is bumped on every graph mutation. Workers can poll this
+        to detect when their cached query needs to be rebuilt.
+        """
+        url = f"{self.base_url}/graph_version"
+        response = requests.get(url)
+        response.raise_for_status()
+        return int(response.json().get("version", 0))
+
     # -------------------- Unit conversion --------------------
 
     def resolve_unit(self, identifier: str) -> dict:

@@ -153,6 +153,58 @@ def _run_once(app: App, ctx: AppContext, aq: Acquirium, run_count: int = 0) -> i
         raise
 
 
+def _build_query_bundle(app: App, aq: Acquirium) -> tuple[Any, dict[str, Any]]:
+    """Call ``app.build_query`` and normalize the return value.
+
+    Returns ``(default_query, named_queries_dict)``.
+    """
+    query_bundle = app.build_query(aq)
+    if isinstance(query_bundle, dict):
+        queries = query_bundle
+        query = queries.get("default") or (next(iter(queries.values())) if queries else None)
+    else:
+        query = query_bundle
+        queries = {"default": query}
+    return query, queries
+
+
+def _maybe_refresh_query(
+    app: App,
+    aq: Acquirium,
+    ctx: AppContext,
+    last_version: int,
+) -> int:
+    """If the server's graph version has advanced, rebuild the cached query.
+
+    The new query is written into ``ctx`` in place so subsequent runs see it.
+    Returns the version observed (whether or not a rebuild happened). On any
+    error fetching the version, returns ``last_version`` unchanged so the
+    worker keeps using its current query.
+    """
+    try:
+        current_version = aq.client.graph_version()
+    except Exception as exc:
+        logger.warning("graph_version poll failed: %s; keeping cached query", exc)
+        return last_version
+
+    if current_version == last_version:
+        return last_version
+
+    logger.info(
+        "Graph version changed (%d -> %d); rebuilding query for app '%s'",
+        last_version, current_version, ctx.app_id,
+    )
+    try:
+        query, queries = _build_query_bundle(app, aq)
+        ctx.query = query
+        ctx.queries = queries
+    except Exception:
+        logger.exception("Failed to rebuild query after graph change; keeping previous query")
+        # Don't advance last_version: we'll retry on the next iteration.
+        return last_version
+    return current_version
+
+
 def _load_app_from_file(path: str, class_name: str | None, params: dict[str, Any]) -> App:
     logger.info("Loading app from file: %s", path)
     spec = importlib.util.spec_from_file_location("acquirium_app", path)
@@ -307,14 +359,10 @@ def main() -> None:
 
     # Build query
     logger.info("Building query...")
-    query_bundle = app.build_query(aq)
-    if isinstance(query_bundle, dict):
-        queries = query_bundle
-        query = queries.get("default") or (next(iter(queries.values())) if queries else None)
+    query, queries = _build_query_bundle(app, aq)
+    if len(queries) > 1:
         logger.info("Built %d named queries: %s", len(queries), list(queries.keys()))
     else:
-        query = query_bundle
-        queries = {"default": query}
         logger.info("Built single query")
 
     ctx = AppContext(
@@ -340,6 +388,15 @@ def main() -> None:
     logger.info("Running in keep-alive mode (interval=%.1fs)", interval)
     logger.info("=" * 60)
 
+    # Capture the graph version this query was built against. Between runs we
+    # poll /graph_version and rebuild the query if it has advanced.
+    try:
+        graph_version = aq.client.graph_version()
+        logger.info("Initial graph version: %d", graph_version)
+    except Exception as exc:
+        logger.warning("Failed to fetch initial graph_version: %s", exc)
+        graph_version = -1  # forces a rebuild on first successful poll
+
     run_count = 0
     while True:
         try:
@@ -347,6 +404,7 @@ def main() -> None:
         except Exception:
             logger.exception("Error during run #%d, will retry after interval", run_count + 1)
             run_count += 1
+        graph_version = _maybe_refresh_query(app, aq, ctx, graph_version)
         logger.info("Sleeping %.1fs until next run...", interval)
         time.sleep(max(interval, 0.0))
 
