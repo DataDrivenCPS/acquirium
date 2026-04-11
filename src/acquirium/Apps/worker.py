@@ -168,11 +168,79 @@ def _build_query_bundle(app: App, aq: Acquirium) -> tuple[Any, dict[str, Any]]:
     return query, queries
 
 
+def _build_query_bundle_timed(
+    app: App, aq: Acquirium
+) -> tuple[Any, dict[str, Any], float, float]:
+    """Same as :func:`_build_query_bundle` but also runs ``query.execute()``
+    and returns ``(query, queries, build_ms, sparql_ms)``.
+
+    Used only when the configure-latency benchmark is active — pre-executing
+    populates the Query cache, which is harmless for normal runs but lets the
+    benchmark isolate the SPARQL round-trip from other per-run costs.
+    """
+    t0 = time.perf_counter()
+    query, queries = _build_query_bundle(app, aq)
+    build_ms = (time.perf_counter() - t0) * 1000.0
+
+    t1 = time.perf_counter()
+    if query is not None:
+        try:
+            query.execute()
+        except Exception:
+            logger.exception("configure_latency: query.execute() failed")
+    sparql_ms = (time.perf_counter() - t1) * 1000.0
+
+    return query, queries, build_ms, sparql_ms
+
+
+def _resolve_configure_latency_url(params: dict[str, Any]) -> str | None:
+    """Return the configure-latency receiver URL if benchmarking is enabled.
+
+    The driver (``scripts/benchmark/configure_latency/run_configure_latency.py``)
+    passes the URL via ``params["__config_latency_url"]`` when it starts each
+    container. As a fallback the env var ``ACQUIRIUM_CONFIG_LATENCY_URL`` is
+    honored. When neither is set the worker behaves exactly as before and no
+    HTTP calls are made.
+    """
+    if params:
+        url = params.get("__config_latency_url")
+        if url:
+            return str(url)
+    env = os.getenv("ACQUIRIUM_CONFIG_LATENCY_URL")
+    return env or None
+
+
+def _post_configure_latency(
+    url: str,
+    *,
+    app_id: str,
+    event: str,
+    build_ms: float,
+    sparql_ms: float,
+    graph_version: int,
+) -> None:
+    payload = {
+        "app_id": app_id,
+        "event": event,
+        "build_ms": build_ms,
+        "sparql_ms": sparql_ms,
+        "total_ms": build_ms + sparql_ms,
+        "graph_version": graph_version,
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        requests.post(url, json=payload, timeout=5)
+    except Exception as exc:
+        logger.warning("configure_latency POST to %s failed: %s", url, exc)
+
+
 def _maybe_refresh_query(
     app: App,
     aq: Acquirium,
     ctx: AppContext,
     last_version: int,
+    *,
+    config_latency_url: str | None = None,
 ) -> int:
     """If the server's graph version has advanced, rebuild the cached query.
 
@@ -195,13 +263,27 @@ def _maybe_refresh_query(
         last_version, current_version, ctx.app_id,
     )
     try:
-        query, queries = _build_query_bundle(app, aq)
+        if config_latency_url:
+            query, queries, build_ms, sparql_ms = _build_query_bundle_timed(app, aq)
+        else:
+            query, queries = _build_query_bundle(app, aq)
+            build_ms = sparql_ms = 0.0
         ctx.query = query
         ctx.queries = queries
     except Exception:
         logger.exception("Failed to rebuild query after graph change; keeping previous query")
         # Don't advance last_version: we'll retry on the next iteration.
         return last_version
+
+    if config_latency_url:
+        _post_configure_latency(
+            config_latency_url,
+            app_id=ctx.app_id,
+            event="refresh",
+            build_ms=build_ms,
+            sparql_ms=sparql_ms,
+            graph_version=current_version,
+        )
     return current_version
 
 
@@ -337,6 +419,16 @@ def main() -> None:
         params: dict[str, Any] = json.loads(params_raw)
     except json.JSONDecodeError:
         params = {}
+    # Configure-latency benchmark hook: when the driver injects a receiver URL
+    # via params["__config_latency_url"] (or the ACQUIRIUM_CONFIG_LATENCY_URL
+    # env var), the worker times build_query() + query.execute() and POSTs a
+    # report on the initial build and on every graph-change-triggered rebuild.
+    # Popped here so the app class never sees the benchmarking-only key.
+    config_latency_url = _resolve_configure_latency_url(params)
+    params.pop("__config_latency_url", None)
+    if config_latency_url:
+        logger.info("Configure-latency reporting enabled: %s", config_latency_url)
+
     if params:
         logger.info("  Params: %s", list(params.keys()))
 
@@ -359,7 +451,11 @@ def main() -> None:
 
     # Build query
     logger.info("Building query...")
-    query, queries = _build_query_bundle(app, aq)
+    if config_latency_url:
+        query, queries, initial_build_ms, initial_sparql_ms = _build_query_bundle_timed(app, aq)
+    else:
+        query, queries = _build_query_bundle(app, aq)
+        initial_build_ms = initial_sparql_ms = 0.0
     if len(queries) > 1:
         logger.info("Built %d named queries: %s", len(queries), list(queries.keys()))
     else:
@@ -397,6 +493,16 @@ def main() -> None:
         logger.warning("Failed to fetch initial graph_version: %s", exc)
         graph_version = -1  # forces a rebuild on first successful poll
 
+    if config_latency_url:
+        _post_configure_latency(
+            config_latency_url,
+            app_id=app_id,
+            event="initial",
+            build_ms=initial_build_ms,
+            sparql_ms=initial_sparql_ms,
+            graph_version=graph_version,
+        )
+
     run_count = 0
     while True:
         try:
@@ -404,7 +510,9 @@ def main() -> None:
         except Exception:
             logger.exception("Error during run #%d, will retry after interval", run_count + 1)
             run_count += 1
-        graph_version = _maybe_refresh_query(app, aq, ctx, graph_version)
+        graph_version = _maybe_refresh_query(
+            app, aq, ctx, graph_version, config_latency_url=config_latency_url
+        )
         logger.info("Sleeping %.1fs until next run...", interval)
         time.sleep(max(interval, 0.0))
 
