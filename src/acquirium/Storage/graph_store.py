@@ -7,7 +7,8 @@ from ontoenv import OntoEnv
 from rdflib import Dataset, Graph, Literal, RDF, URIRef
 from rdflib.namespace import XSD
 from rdflib.namespace import OWL
-
+import pyoxigraph as oxi
+from oxrdflib import OxigraphStore
 
 ## ALL NAMESPACES AND INTERNAL PREDICATES HERE ##
 from acquirium.internals.internals_namespaces import *
@@ -75,9 +76,9 @@ class OxigraphGraphStore:
         self.store_path = Path(store_path)
         self.env_root = Path(env_root)
         self.store_path.mkdir(parents=True, exist_ok=True)
+        self.store = self._open_store()
 
-        self.dataset = Dataset(store="Oxigraph", default_union=False)
-        self._open_store()
+        self.dataset = Dataset(store=OxigraphStore(store=self.store), default_union=False)
 
         # OntoEnv expects the *root* directory; it manages .ontoenv within it.
         env_exists = (self.env_root / ".ontoenv").exists()
@@ -226,6 +227,7 @@ class OxigraphGraphStore:
 
         # refresh union to pick up new data + imports
         counts = self.refresh_union()
+        self.store.optimize()  # hint to Oxigraph that now is a good time to optimize storage
         return {"main_triples": len(main), "union_triples": counts["union_triples"], "replaced": replace}
 
     # -------------------- helpers --------------------
@@ -273,23 +275,21 @@ class OxigraphGraphStore:
             pass
 
     # -------------------- internal: store bootstrap --------------------
-    def _open_store(self) -> None:
-        """Open the Oxigraph-backed Dataset, clearing stale locks and falling back to temp if needed."""
+    def _open_store(self) -> oxi.Store:
+        """Open the pyoxigraph Store, clearing stale locks and falling back to temp if needed."""
 
-        def try_open(path: Path) -> None:
-            self.dataset.open(str(path))
+        def try_open(path: Path) -> oxi.Store:
+            return oxi.Store(str(path))
 
         try:
-            try_open(self.store_path)
-            return
+            return try_open(self.store_path)
         except OSError as exc:  # pragma: no cover - depends on fs state
             if "LOCK" in str(exc) or "No locks available" in str(exc):
                 lock_file = self.store_path / "LOCK"
                 if lock_file.exists():
                     lock_file.unlink(missing_ok=True)
                 try:
-                    try_open(self.store_path)
-                    return
+                    return try_open(self.store_path)
                 except OSError:
                     # fall through to temp fallback
                     pass
@@ -298,5 +298,4 @@ class OxigraphGraphStore:
 
             tmp_dir = Path(tempfile.mkdtemp(prefix="oxigraph-store-"))
             self.store_path = tmp_dir
-            self.dataset = Dataset(store="Oxigraph", default_union=False)
-            try_open(self.store_path)
+            return try_open(self.store_path)
