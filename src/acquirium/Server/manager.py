@@ -10,7 +10,7 @@ from rdflib import Graph, URIRef, Node, Literal, RDF, RDFS
 
 from acquirium.Storage import OxigraphGraphStore, TimescaleStore, PGReferenceRegistry, PGReferenceInfo, resolve_dsn
 from acquirium.internals.qudt_units import QUDTUnitConverter
-from acquirium.internals.models import LogEntry, TimeIntervalModel, AppSpec, AppRunRequest, compute_handle
+from acquirium.internals.models import LogEntry, Order, TimeIntervalModel, AppSpec, AppRunRequest, compute_handle
 from acquirium.internals.internals_namespaces import *
 from acquirium.internals.app_utils import app_uri_for, make_stream_ref_uri
 
@@ -740,10 +740,10 @@ class Manager:
     def timeseries_batch(
         self,
         uri: str,
-        start: str | None = None,
-        end: str | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
         limit: int | None = None,
-        order: str = "asc",
+        order: Order = "asc",
         batch_size: int = 50_000,
     ) :
         """
@@ -966,7 +966,7 @@ class Manager:
             "command": pick("cmd"),
         }
 
-    def _run_app_once(self, req: AppRunRequest, *, keep_alive: bool = False, interval: float | None = None) -> str:
+    def _run_app_once(self, req: AppRunRequest, *, keep_alive: bool = False, interval: float | None = None) -> str | None :
         if self._docker is None:
             raise ValueError("Docker is not available - cannot run apps")
 
@@ -1056,16 +1056,22 @@ class Manager:
             raise ValueError(f"Failed to run app {req.app_id}: {e}") from e
 
         cid = container.id
-        logger.info("Started docker container for app %s: %s", req.app_id, cid[:12])
+        if isinstance(cid,str):
+            logger.info("Started docker container for app %s: %s", req.app_id, cid[:12])
+        else: 
+            logger.warning("Container ID is not a string for app %s: %s", req.app_id, cid)
         return cid
 
-    def run_app(self, req: AppRunRequest) -> str:
+    def run_app(self, req: AppRunRequest) -> str | None:
         if not req.keep_alive:
             return self._run_app_once(req)
 
         cid = self._run_app_once(req, keep_alive=True, interval=req.interval)
         with self._app_runs_lock:
-            self._app_runs[cid] = {"app_id": req.app_id, "cid": cid}
+            if isinstance(cid, str):
+                self._app_runs[cid] = {"app_id": req.app_id, "cid": cid}
+            else:
+                logger.warning("Received non-string container ID for app %s: %s", req.app_id, cid)
         return cid
 
     def _stop_container(self, cid: str) -> None:
@@ -1243,7 +1249,7 @@ class Manager:
             obs_time_interval=obs_time_interval
         )
 
-    def delete_logs(self, point_uri: str) -> None:
+    def delete_logs(self, point_uri: str) -> bool:
         """
         Delete all log entries for a given point URI.
 
