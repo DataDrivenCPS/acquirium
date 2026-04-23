@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 import polars as pl
 import pytest
 
+from acquirium.BuiltinDrivers._tabular_base import _safe_name
 from acquirium.BuiltinDrivers.csv_ingest import CSVIngestDriver
 
 
@@ -21,7 +22,7 @@ def make_driver(cfg_overrides: dict | None = None, tmp_path: Path | None = None)
     aq.register_stream.return_value = None
     aq.insert_timeseries_batch.return_value = {"ok": True, "rows_inserted": 0}
     watch = str(tmp_path) if tmp_path else "/tmp/csv_test_watch"
-    config = {"driver": {"csv_watch_dir": watch, **(cfg_overrides or {})}}
+    config = {"driver": {"watch_dir": watch, **(cfg_overrides or {})}}
     return CSVIngestDriver(aq, config)
 
 
@@ -80,8 +81,8 @@ def test_normalize_iso_string_col(tmp_path):
 
 
 def test_normalize_string_with_explicit_format(tmp_path):
-    """Non-ISO date strings are parsed when csv_date_format is provided."""
-    driver = make_driver({"csv_date_format": "%m/%d/%Y"}, tmp_path=tmp_path)
+    """Non-ISO date strings are parsed when date_format is provided."""
+    driver = make_driver({"date_format": "%m/%d/%Y"}, tmp_path=tmp_path)
     driver.setup()
     df = pl.DataFrame({"time": ["01/15/2024", "02/20/2024"], "val": [1.0, 2.0]})
     result = driver._normalize_time_col(df)
@@ -107,7 +108,7 @@ def test_parse_wide_date_only_col(tmp_path):
     """Date-only timestamps (no time component) work correctly."""
     p = tmp_path / "dates.csv"
     p.write_text("Date,temp\n2024-01-01,22.5\n2024-01-02,23.0\n")
-    driver = make_driver({"csv_time_col": "Date"}, tmp_path=tmp_path)
+    driver = make_driver({"time_col": "Date"}, tmp_path=tmp_path)
     driver.setup()
     batch, rows = driver.parse_file(p)
     assert rows == 2
@@ -116,12 +117,10 @@ def test_parse_wide_date_only_col(tmp_path):
 
 
 def test_parse_wide_non_iso_date_with_format(tmp_path):
-    """Non-ISO date strings are handled when csv_date_format is set."""
+    """Non-ISO date strings are handled when date_format is set."""
     p = tmp_path / "us_dates.csv"
     p.write_text("Date,temp\n01/15/2024,22.5\n01/16/2024,23.0\n")
-    driver = make_driver(
-        {"csv_time_col": "Date", "csv_date_format": "%m/%d/%Y"}, tmp_path=tmp_path
-    )
+    driver = make_driver({"time_col": "Date", "date_format": "%m/%d/%Y"}, tmp_path=tmp_path)
     driver.setup()
     batch, rows = driver.parse_file(p)
     assert rows == 2
@@ -160,7 +159,7 @@ def test_parse_narrow_basic(tmp_path):
 
 
 def test_parse_narrow_explicit_format(tmp_path):
-    driver = make_driver({"csv_format": "narrow"}, tmp_path=tmp_path)
+    driver = make_driver({"format": "narrow"}, tmp_path=tmp_path)
     driver.setup()
     batch, _ = driver.parse_file(_narrow_csv(tmp_path))
     assert "sensor/temp" in batch
@@ -169,7 +168,7 @@ def test_parse_narrow_explicit_format(tmp_path):
 def test_parse_narrow_missing_id_col_raises(tmp_path):
     p = tmp_path / "no_id.csv"
     p.write_text("time,value\n2024-01-01T00:00:00Z,1.0\n")
-    driver = make_driver({"csv_format": "narrow"}, tmp_path=tmp_path)
+    driver = make_driver({"format": "narrow"}, tmp_path=tmp_path)
     driver.setup()
     with pytest.raises(ValueError, match="id"):
         driver.parse_file(p)
@@ -205,28 +204,31 @@ def test_tsv_parsed_correctly(tmp_path):
     assert batch["temp"][0][1] == 22.5
 
 
-# ------------------------------------------------------------------ file-prefix namespacing
+# ------------------------------------------------------------------ per-file source_id
 
 
-def test_loop_prefixes_stream_names_with_filename(tmp_path):
+def test_loop_uses_full_path_as_source_id(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     driver.setup()
-    _wide_csv(tmp_path)
+    path = _wide_csv(tmp_path)
     driver.loop()
-    streams = driver.aq.insert_timeseries_batch.call_args[0][1]
-    assert "wide.csv/temp" in streams
-    assert "wide.csv/rh" in streams
+    source_id, streams = driver.aq.insert_timeseries_batch.call_args[0]
+    assert source_id == _safe_name(str(path))
+    assert "temp" in streams
+    assert "rh" in streams
 
 
-def test_loop_prefixes_include_subdirectory(tmp_path):
+def test_loop_full_path_source_id_includes_subdirectory(tmp_path):
     sub = tmp_path / "sensors"
     sub.mkdir()
-    (sub / "data.csv").write_text("time,flow\n2024-01-01T00:00:00Z,1.0\n")
+    path = sub / "data.csv"
+    path.write_text("time,flow\n2024-01-01T00:00:00Z,1.0\n")
     driver = make_driver(tmp_path=tmp_path)
     driver.setup()
     driver.loop()
-    streams = driver.aq.insert_timeseries_batch.call_args[0][1]
-    assert "sensors/data.csv/flow" in streams
+    source_id, streams = driver.aq.insert_timeseries_batch.call_args[0]
+    assert source_id == _safe_name(str(path))
+    assert "flow" in streams
 
 
 # ------------------------------------------------------------------ row offset / append tracking

@@ -61,18 +61,23 @@ mqtt_source_id = "mqtt"   # datasource name used for all MQTT streams
 spec     = "acquirium.BuiltinDrivers.system_metrics:SystemMetricsDriver"
 interval = 30.0
 
-# Uncomment to watch a directory for CSV, TSV, and XLSX files.
-# New files and appends to existing files are picked up on each tick.
-# Files are never moved or deleted. Row positions are tracked in memory;
-# on restart the API deduplicates any re-inserted rows.
-# Stream names are prefixed with the file's relative path, e.g. "sensors/data.csv/temp".
+# Watch a directory for CSV and TSV files.
 [[drivers]]
-spec              = "acquirium.BuiltinDrivers.csv_ingest:CSVIngestDriver"
-interval          = 5.0
-csv_source_id     = "csv_files"
-csv_watch_dir     = "./data"
-csv_format        = "wide"           # "auto" | "wide" | "narrow"
-csv_time_col      = "Date"           # name of the timestamp column
-csv_id_col        = "id"             # narrow format: stream ID column
-csv_value_col     = "value"          # narrow format: value column
-csv_xlsx_sheets   = ["Sheet1"]       # xlsx only; omit to read the first sheet
+spec         = "acquirium.BuiltinDrivers.csv_ingest:CSVIngestDriver"
+interval     = 5.0
+watch_dir    = "./data"
+format       = "wide"        # "auto" | "wide" | "narrow"
+time_col     = "Date"        # name of the timestamp column
+id_col       = "id"          # narrow format: stream ID column
+value_col    = "value"       # narrow format: value column
+
+# Watch a directory for Excel (XLSX) files.
+[[drivers]]
+spec         = "acquirium.BuiltinDrivers.xlsx_ingest:XLSXIngestDriver"
+interval     = 5.0
+watch_dir    = "./data"
+format       = "wide"        # "auto" | "wide" | "narrow"
+time_col     = "Date"        # name of the timestamp column
+id_col       = "id"          # narrow format: stream ID column
+value_col    = "value"       # narrow format: value column
+sheets       = ["Sheet1"]    # omit to read the first sheet only
