@@ -38,6 +38,7 @@ class MQTTDriver(Driver):
         self._subscribe()          # initial subscription from graph
 
     def on_graph_change(self):
+        # run queries to find new MQTT topics to subscribe to, update self._subscribe()'s internal state, etc.
         self._subscribe()          # pick up any new MQTTReference nodes
 
     def loop(self):
