@@ -91,15 +91,17 @@ def _apply_server_env(cfg: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def _import_driver_class(driver_spec: str) -> type:
-    """Resolve a ``path/to/file.py:ClassName`` or ``my.module:ClassName`` spec to a Driver subclass."""
+    """Resolve a ``path/to/file.py:ClassName`` or ``my.module:ClassName`` spec to a Driver subclass.
+
+    Raises ``ValueError`` on any resolution failure so callers in background
+    threads see a real exception rather than a silent ``SystemExit``.
+    """
     from acquirium.Driver import Driver as _Driver
 
     if ":" not in driver_spec:
-        typer.echo(
-            f"Error: driver spec must include a class name (e.g. my_driver.py:MyDriver), got {driver_spec!r}",
-            err=True,
+        raise ValueError(
+            f"driver spec must include a class name (e.g. my_driver.py:MyDriver), got {driver_spec!r}"
         )
-        raise typer.Exit(1)
 
     path_part, class_name = driver_spec.rsplit(":", 1)
 
@@ -107,12 +109,10 @@ def _import_driver_class(driver_spec: str) -> type:
     if is_file:
         file_path = Path(path_part).resolve()
         if not file_path.exists():
-            typer.echo(f"Error: driver file not found: {path_part}", err=True)
-            raise typer.Exit(1)
+            raise ValueError(f"driver file not found: {path_part}")
         spec = importlib.util.spec_from_file_location("_acquirium_driver_module", file_path)
         if spec is None or spec.loader is None:
-            typer.echo(f"Error: could not load file: {path_part}", err=True)
-            raise typer.Exit(1)
+            raise ValueError(f"could not load file: {path_part}")
         file_dir = str(file_path.parent)
         if file_dir not in sys.path:
             sys.path.insert(0, file_dir)
@@ -122,16 +122,13 @@ def _import_driver_class(driver_spec: str) -> type:
         try:
             mod = importlib.import_module(path_part)
         except ModuleNotFoundError as exc:
-            typer.echo(f"Error: could not import module '{path_part}': {exc}", err=True)
-            raise typer.Exit(1)
+            raise ValueError(f"could not import module '{path_part}': {exc}") from exc
 
     cls = getattr(mod, class_name, None)
     if cls is None:
-        typer.echo(f"Error: '{class_name}' not found in {path_part}", err=True)
-        raise typer.Exit(1)
+        raise ValueError(f"'{class_name}' not found in {path_part}")
     if not (inspect.isclass(cls) and issubclass(cls, _Driver) and cls is not _Driver):
-        typer.echo(f"Error: '{class_name}' is not a Driver subclass", err=True)
-        raise typer.Exit(1)
+        raise ValueError(f"'{class_name}' is not a Driver subclass")
     return cls
 
 
@@ -296,7 +293,11 @@ def run_cmd(
     server_url, server_port, use_ssl, cfg_interval = _driver_connect_cfg(driver_cfg)
     effective_interval: float = interval if interval is not None else cfg_interval
 
-    driver_cls = _import_driver_class(driver_spec)
+    try:
+        driver_cls = _import_driver_class(driver_spec)
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1)
     typer.echo(f"Loaded driver: {driver_cls.__name__} from {driver_spec}")
 
     aq = Acquirium(server_url=server_url, server_port=server_port, use_ssl=use_ssl)
