@@ -64,6 +64,7 @@ class CSVIngestDriver(Driver):
         csv_value_col     = "value"       # narrow only
         csv_xlsx_sheets   = ["Sheet1"]    # xlsx only; omit to read the first sheet
         csv_date_format   = "%m/%d/%Y"    # optional; only needed for non-ISO date strings
+        csv_encoding      = "utf8-lossy"  # "utf8", "utf8-lossy", "latin1", etc.
 
     **Extending for custom formats**
 
@@ -90,6 +91,7 @@ class CSVIngestDriver(Driver):
         self._id_col: str = cfg.get("csv_id_col", "id")
         self._value_col: str = cfg.get("csv_value_col", "value")
         self._date_fmt: str | None = cfg.get("csv_date_format", None)
+        self._encoding: str = cfg.get("csv_encoding", "utf8-lossy")
         raw_sheets = cfg.get("csv_xlsx_sheets", None)
         self._xlsx_sheets: list[str] | None = list(raw_sheets) if raw_sheets else None
 
@@ -156,6 +158,7 @@ class CSVIngestDriver(Driver):
             df = pl.read_csv(
                 path, separator=sep, try_parse_dates=True,
                 skip_rows_after_header=row_offset,
+                encoding=self._encoding,
             )
 
         rows_read = len(df)
@@ -216,17 +219,29 @@ class CSVIngestDriver(Driver):
 
     # ---------------------------------------------------------- time normalisation
 
+    _FALLBACK_DATE_FORMATS = (
+        "%m/%d/%Y",   # US: 1/15/2025
+        "%d/%m/%Y",   # European: 15/1/2025
+        "%Y/%m/%d",   # ISO with slashes
+        "%m-%d-%Y",   # US with dashes
+        "%d-%m-%Y",   # European with dashes
+        "%m/%d/%y",   # US 2-digit year
+    )
+
     def _normalize_time_col(self, df: pl.DataFrame) -> pl.DataFrame:
-        """Cast the time column to Datetime(us, UTC) regardless of its source type."""
+        """Cast the time column to Datetime(us, UTC) regardless of its source type.
+
+        For string columns, tries (in order): the configured ``csv_date_format``,
+        Polars auto-detection, then common date formats as fallbacks.  Rows whose
+        timestamp still cannot be parsed are dropped with a warning.
+        """
         col = df[self._time_col]
         dtype = col.dtype
 
         if dtype == pl.Date:
             col = col.cast(pl.Datetime("us")).dt.replace_time_zone("UTC")
         elif dtype in (pl.String, pl.Utf8):
-            col = col.str.to_datetime(format=self._date_fmt, strict=False)
-            tz = getattr(col.dtype, "time_zone", None)
-            col = col.dt.replace_time_zone("UTC") if tz is None else col.dt.convert_time_zone("UTC")
+            col = self._parse_string_timestamps(col)
         else:
             # Datetime with some time_unit / time_zone combination
             tz = getattr(dtype, "time_zone", None)
@@ -235,7 +250,44 @@ class CSVIngestDriver(Driver):
             elif tz != "UTC":
                 col = col.dt.convert_time_zone("UTC")
 
-        return df.with_columns(col.alias(self._time_col))
+        df = df.with_columns(col.alias(self._time_col))
+
+        null_count = df[self._time_col].null_count()
+        if null_count:
+            logger.warning(
+                "csv_ingest: %d row(s) with unparseable timestamps skipped "
+                "(hint: set csv_date_format, e.g. csv_date_format = \"%%m/%%d/%%Y\")",
+                null_count,
+            )
+            df = df.drop_nulls(subset=[self._time_col])
+        return df
+
+    def _parse_string_timestamps(self, col: pl.Series) -> pl.Series:
+        """Parse a string Series as UTC Datetime, trying multiple formats."""
+        non_null = col.drop_nulls().len()
+        if non_null == 0:
+            return col.cast(pl.Datetime("us")).dt.replace_time_zone("UTC")
+
+        # Try configured format first, then auto-detect, then common fallbacks
+        candidates: list[str | None] = []
+        if self._date_fmt:
+            candidates.append(self._date_fmt)
+        candidates.append(None)  # Polars auto-detect (ISO 8601, RFC 3339, etc.)
+        candidates.extend(self._FALLBACK_DATE_FORMATS)
+
+        best: pl.Series | None = None
+        best_nulls = non_null + 1
+        for fmt in candidates:
+            parsed = col.str.to_datetime(format=fmt, strict=False)
+            nulls = parsed.null_count()
+            if nulls < best_nulls:
+                best, best_nulls = parsed, nulls
+            if nulls == 0:
+                break
+
+        assert best is not None
+        tz = getattr(best.dtype, "time_zone", None)
+        return best.dt.replace_time_zone("UTC") if tz is None else best.dt.convert_time_zone("UTC")
 
     # ---------------------------------------------------------- Excel
 
