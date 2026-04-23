@@ -8,7 +8,14 @@ import logging
 from time import perf_counter
 from rdflib import Graph, URIRef, Node, Literal, RDF, RDFS
 
-from acquirium.Storage import OxigraphGraphStore, TimescaleStore, PGReferenceRegistry, PGReferenceInfo, resolve_dsn
+from acquirium.Storage import (
+    OxigraphGraphStore,
+    TimeseriesStore,
+    PGReferenceRegistry,
+    PGReferenceInfo,
+    resolve_dsn,
+    create_timeseries_store,
+)
 from acquirium.internals.qudt_units import QUDTUnitConverter
 from acquirium.internals.models import LogEntry, TimeIntervalModel, AppSpec, AppRunRequest, compute_handle
 from acquirium.internals.internals_namespaces import *
@@ -23,7 +30,6 @@ from typing import Any, Callable
 import shutil
 import docker
 from docker.errors import DockerException, NotFound as ContainerNotFound
-from acquirium.Server.mqtt_ingestion import MQTTIngestService, MQTTStreamSpec
 from acquirium.TextMatch.embedding_matcher import EmbeddingMatcher, _split_local_name
 from acquirium.TextMatch.qudt_store import QUDTStore
 
@@ -44,7 +50,7 @@ def _wipe_dir_contents(base: Path) -> None:
 
 @dataclass
 class Manager:
-    timescale: TimescaleStore
+    timescale: TimeseriesStore
     graph_store: OxigraphGraphStore
     qudt_converter: QUDTUnitConverter | None = None
     backend: str = "timescale"
@@ -54,6 +60,8 @@ class Manager:
         data_dir: str | Path | None = None,
         *,
         pg_dsn: str | None = None,
+        duckdb_path: str | Path | None = None,
+        timeseries_backend: str = "timescale",
         graph_path: str | Path | None = None,
         ontoenv_root: str | Path | None = None,
         graph_name: str | None = None,
@@ -62,16 +70,6 @@ class Manager:
         qudt_converter: QUDTUnitConverter | None = None,
         recreate: bool = False,
     ):
-        if recreate:
-            logging.info("acquirium: recreating data directory and database")
-            if data_dir is not None:
-                base = Path(data_dir)
-            else:
-                base = DEFAULT_DATA_DIR
-            if base.exists():
-                _wipe_dir_contents(base)
-                print(f"Deleted data directory contents: {base}")
-            
         if not logging.getLogger().handlers:
             logging.basicConfig(
                 level=logging.INFO,
@@ -79,20 +77,30 @@ class Manager:
             )
         start = perf_counter()
 
-        # Determine data directory and graph database paths
         base = Path(data_dir) if data_dir is not None else DEFAULT_DATA_DIR
+        if recreate:
+            logging.info("acquirium: recreating data directory and database")
+            if base.exists():
+                _wipe_dir_contents(base)
+                print(f"Deleted data directory contents: {base}")
         base.mkdir(parents=True, exist_ok=True)
         graph_path = Path(graph_path) if graph_path is not None else base / ".oxigraph"
         ontoenv_root = Path(ontoenv_root) if ontoenv_root is not None else base
 
-        # Setup Timescale/Postgres connection
-        effective_dsn = pg_dsn or os.getenv("PG_DSN")
-        if not effective_dsn:
-            raise ValueError("Timescale/Postgres DSN not provided. Set pg_dsn or PG_DSN.")
-        timescale: TimescaleStore = TimescaleStore(
-            dsn=effective_dsn,
-            recreate=recreate,
-        )
+        _backend = timeseries_backend.lower()
+        if _backend == "duckdb":
+            _effective_dsn = None
+            _effective_duckdb_path = duckdb_path or (base / "timeseries.duckdb")
+            timescale: TimeseriesStore = create_timeseries_store(
+                "duckdb", duckdb_path=_effective_duckdb_path, recreate=recreate
+            )
+        else:
+            _effective_dsn = pg_dsn or os.getenv("PG_DSN")
+            if not _effective_dsn:
+                raise ValueError("PG_DSN required for timescale backend. Set pg_dsn or PG_DSN env var.")
+            timescale = create_timeseries_store(
+                "timescale", pg_dsn=_effective_dsn, recreate=recreate
+            )
 
         converter = qudt_converter
         if converter is None and qudt_graph is not None:
@@ -129,20 +137,18 @@ class Manager:
             logging.info("acquirium: refreshed union graph after imports")
 
 
-        # Assign dataclass fields
         self.timescale = timescale
         self.graph_store = graph
         self.qudt_converter = converter
-        self.backend = "timescale"
+        self.backend = _backend
 
         self.data_dir = base
         self._ingest_cache_path = base / "ingest_cache.json"
         self._ingest_cache_lock = threading.Lock()
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="acquirium-ingest")
         self._pending_ingests: list[Future] = []
-        self.pg_dsn = effective_dsn
-        self.mqtt_ingest = MQTTIngestService(pg_dsn=effective_dsn)
-        self._connect_mqtt_streams_from_graph()
+        self.pg_dsn = _effective_dsn
+
         self.pg_registry = PGReferenceRegistry()
         self._scan_pg_references_from_graph()
         self.app_storage_root = Path(
@@ -196,13 +202,18 @@ class Manager:
     
     @classmethod
     def from_env(cls) -> Manager:
+        _backend = os.getenv("ACQUIRIUM_TIMESERIES_BACKEND", "timescale").lower()
+        _data_dir = os.getenv("ACQUIRIUM_DATA_DIR")
+        _ontology_deps_raw = os.getenv("ACQUIRIUM_ONTOLOGY_DEPENDENCIES")
         return cls(
-            data_dir=os.getenv("ACQUIRIUM_DATA_DIR"),
+            data_dir=_data_dir,
             pg_dsn=os.getenv("PG_DSN"),
+            duckdb_path=os.getenv("ACQUIRIUM_DUCKDB_PATH"),
+            timeseries_backend=_backend,
             graph_path=os.getenv("ACQUIRIUM_GRAPH_PATH"),
             ontoenv_root=os.getenv("ACQUIRIUM_ONTOENV_ROOT"),
             graph_name=os.getenv("ACQUIRIUM_GRAPH_NAME"),
-            ontology_dependencies=os.getenv("ACQUIRIUM_ONTOLOGY_DEPENDENCIES", "").split(",") if os.getenv("ACQUIRIUM_ONTOLOGY_DEPENDENCIES") else None,
+            ontology_dependencies=_ontology_deps_raw.split(",") if _ontology_deps_raw else None,
             recreate=os.getenv("ACQUIRIUM_RECREATE", "false").lower() == "true",
         )
 
@@ -213,51 +224,6 @@ class Manager:
             return json.loads(self._ingest_cache_path.read_text())
         except Exception:
             return {}
-
-    def _connect_mqtt_streams_from_graph(self) -> int:
-        """
-        Scan graph for MQTTReference nodes attached to data nodes by hasExternalReference
-        and start background subscribers.
-        Returns number of subscriptions ensured.
-        """
-        q = f"""
-        SELECT ?data ?ref ?broker ?port ?topic ?tkey ?vkey
-        WHERE {{
-          ?data <{HAS_EXTERNAL_REFERENCE}> ?ref .
-          ?ref a <{MQTT_REFERENCE}> .
-          OPTIONAL {{ ?ref <{BROKER}> ?broker . }}
-          OPTIONAL {{ ?ref <{PORT}> ?port . }}
-          OPTIONAL {{ ?ref <{TOPIC}> ?topic . }}
-          OPTIONAL {{ ?ref <{TIME_KEY}> ?tkey . }}
-          OPTIONAL {{ ?ref <{VALUE_KEY}> ?vkey . }}
-        }}
-        """
-        res = self.graph_store.sparql_query(q, use_union=True)
-        rows = res.get("rows", [])
-
-        count = 0
-        for data_uri, ref_uri, broker, port, topic, tkey, vkey in rows:
-            logger.info("Found MQTT reference: %s %s %s %s %s %s %s",
-                        data_uri, ref_uri, broker, port, topic, tkey, vkey)
-            broker_s = (broker or "localhost").strip('"')
-            port_s = (port or "1883").strip('"')
-            topic_s = (topic or "").strip('"')
-            if not topic_s:
-                continue
-
-            spec = MQTTStreamSpec(
-                point_uri=str(data_uri),
-                ref_uri=str(ref_uri),
-                broker=broker_s,
-                port=int(port_s),
-                topic=topic_s,
-                time_key=(tkey or "Timestamp").strip('"'),
-                value_key=(vkey or "Value").strip('"'),
-            )
-            self.mqtt_ingest.ensure_subscribed(spec)
-            count += 1
-
-        return count
 
     def _scan_pg_references_from_graph(self) -> int:
         """Scan graph for PGReference nodes and register them in the registry."""
@@ -720,7 +686,6 @@ class Manager:
         try:
             self.graph_store.insert_graph(rdf_graph, format=format, replace=replace)
             logging.info("acquirium: inserted graph into store, now ingesting data")
-            self._connect_mqtt_streams_from_graph()
             self._scan_pg_references_from_graph()
             self._sync_stream_handles_from_graph()
 
@@ -1359,10 +1324,6 @@ class Manager:
             pass
         try:
             self._executor.shutdown(wait=False, cancel_futures=False)
-        except Exception:
-            pass
-        try:
-            self.mqtt_ingest.stop()
         except Exception:
             pass
         try:

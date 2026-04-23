@@ -92,16 +92,10 @@ async def lifespan(app: FastAPI):
     m = Manager.from_env()
     app.state.manager = m
 
-    # Start ingestion services at startup
     try:
-        # start mqtt subscribers from graph
-        n = m._connect_mqtt_streams_from_graph()
-        app.state.mqtt_subscriptions = n
-        log.info("Started %d MQTT subscriptions from graph", n)
         m._sync_stream_handles_from_graph()
     except Exception as e:
         log.exception("Startup failed: %s", e)
-        # If startup fails, ensure we close and crash so Docker restart policy can help
         try:
             m.close()
         finally:
