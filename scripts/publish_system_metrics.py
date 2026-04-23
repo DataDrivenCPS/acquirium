@@ -25,11 +25,11 @@ from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_DB_URI,
     ACQUIRIUM_REF_NAME,
     ACQUIRIUM_SOURCE_ID,
-    BRICK_REF_DATABASE,
-    BRICK_REF_HAS_EXTERNAL_REFERENCE,
-    BRICK_REF_HAS_TIMESERIES_ID,
-    BRICK_REF_STORED_AT,
-    BRICK_REF_TIMESERIES_REFERENCE,
+    DATABASE,
+    HAS_EXTERNAL_REFERENCE,
+    HAS_TIMESERIES_ID,
+    STORED_AT,
+    TIMESERIES_REFERENCE,
     S223,
     VIRTUAL_POINT,
 )
@@ -111,16 +111,16 @@ def register_host_graph(aq: Acquirium, host: dict, src_id: str) -> None:
         <urn:host:{hostname}:cpu_percent#ref>
             a ref:TimeseriesReference ;
             ref:hasTimeseriesId "{hostname}:cpu_percent" ;
-            ref:storedAt <urn:acquirium:timescaledb> .
+            ref:storedAt <urn:acquirium#timescaledb> .
 
-        <urn:acquirium:timescaledb>  a  ref:Database .
+        <urn:acquirium#timescaledb>  a <urn:acquirium#Database> .
     """
     hostname = host["hostname"]
     g = Graph()
     h = host_uri(hostname)
 
     # Declare the Acquirium DB node once per graph (idempotent across calls)
-    g.add((ACQUIRIUM_DB_URI, RDF.type,   BRICK_REF_DATABASE))
+    g.add((ACQUIRIUM_DB_URI, RDF.type,   DATABASE))
     g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
 
     # Host node
@@ -147,12 +147,12 @@ def register_host_graph(aq: Acquirium, host: dict, src_id: str) -> None:
 
         # Brick-style external reference → Acquirium TimescaleDB
         # ref:hasTimeseriesId holds the globally-unique handle (actual DB key)
-        g.add((s,        BRICK_REF_HAS_EXTERNAL_REFERENCE, ref_node))
-        g.add((ref_node, RDF.type,                         BRICK_REF_TIMESERIES_REFERENCE))
-        g.add((ref_node, BRICK_REF_HAS_TIMESERIES_ID,      Literal(handle)))
+        g.add((s,        HAS_EXTERNAL_REFERENCE, ref_node))
+        g.add((ref_node, RDF.type, TIMESERIES_REFERENCE))
+        g.add((ref_node, HAS_TIMESERIES_ID,      Literal(handle)))
         g.add((ref_node, ACQUIRIUM_SOURCE_ID,               Literal(src_id)))
         g.add((ref_node, ACQUIRIUM_REF_NAME,                Literal(key)))
-        g.add((ref_node, BRICK_REF_STORED_AT,               ACQUIRIUM_DB_URI))
+        g.add((ref_node, STORED_AT,               ACQUIRIUM_DB_URI))
 
     turtle = g.serialize(format="turtle")
     aq.client.insert_graph(turtle, format="turtle", replace=False)

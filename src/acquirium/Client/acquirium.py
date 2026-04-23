@@ -3,8 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable, Sequence, Callable, Optional
+from typing import Any, Iterable, Sequence, Callable, Optional, TYPE_CHECKING
 import inspect
+
+if TYPE_CHECKING:
+    import polars as pl
 
 from rdflib import Graph as RDFGraph, URIRef, Literal
 from rdflib.namespace import RDF, RDFS
@@ -18,15 +21,12 @@ from acquirium.internals.app_utils import make_stream_ref_uri
 from acquirium.internals.models import AppOutputSpec, AppSpec, compute_handle
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_DB_URI,
-    ACQUIRIUM_DATASOURCE,
-    ACQUIRIUM_NS,
     ACQUIRIUM_REF_NAME,
     ACQUIRIUM_SOURCE_ID,
-    BRICK_REF_DATABASE,
-    BRICK_REF_HAS_EXTERNAL_REFERENCE,
-    BRICK_REF_HAS_TIMESERIES_ID,
-    BRICK_REF_STORED_AT,
-    BRICK_REF_TIMESERIES_REFERENCE,
+    HAS_TIMESERIES_ID,
+    STORED_AT,
+    TIMESERIES_REFERENCE,
+    HAS_EXTERNAL_REFERENCE,
     HAS_MEDIUM,
     HAS_QUANTITY_KIND,
     HAS_UNIT,
@@ -52,7 +52,7 @@ class Acquirium:
             server_port: int = 8000,
             use_ssl: bool = False,
             lexicon_path: Optional[Path] = None,
-        ) -> Acquirium:
+        ):
         if lexicon_path is not None:
             warnings.warn(
                 "lexicon_path is deprecated and ignored. "
@@ -222,8 +222,8 @@ class Acquirium:
             <point_uri>  ref:hasExternalReference  <point_uri#ref> .
             <point_uri#ref>  a  ref:TimeseriesReference ;
                              ref:hasTimeseriesId  "{ref_name}" ;
-                             ref:storedAt  <urn:acquirium:timescaledb> .
-            <urn:acquirium:timescaledb>  a  ref:Database .
+                             ref:storedAt  <urn:acquirium#timescaledb> .
+            <urn:acquirium#timescaledb>  a <urn:acquirium#Database> .
 
         The ``ref_name`` value is what ``_sync_stream_handles_from_graph``
         reads back to populate the streams handle table.
@@ -288,17 +288,16 @@ class Acquirium:
             handle = compute_handle(source_id, ref_name)
             # Stable named URI for the reference node — idempotent across calls
             ref_node = URIRef(str(point_uri) + "#ref")
-            g.add((subj,     BRICK_REF_HAS_EXTERNAL_REFERENCE, ref_node))
-            g.add((ref_node, RDF.type,                         BRICK_REF_TIMESERIES_REFERENCE))
+            g.add((subj,        HAS_EXTERNAL_REFERENCE, ref_node))
+            g.add((ref_node,    RDF.type,               TIMESERIES_REFERENCE))
             # ref:hasTimeseriesId holds the globally-unique handle (the actual DB key)
-            g.add((ref_node, BRICK_REF_HAS_TIMESERIES_ID,      Literal(handle)))
+            g.add((ref_node,    HAS_TIMESERIES_ID,      Literal(handle)))
             # Store source_id and ref_name so the handle can be reconstructed
             # by _sync_stream_handles_from_graph without re-deriving it
-            g.add((ref_node, ACQUIRIUM_SOURCE_ID,               Literal(source_id)))
-            g.add((ref_node, ACQUIRIUM_REF_NAME,                Literal(ref_name)))
-            g.add((ref_node, BRICK_REF_STORED_AT,               ACQUIRIUM_DB_URI))
+            g.add((ref_node,    ACQUIRIUM_SOURCE_ID,    Literal(source_id)))
+            g.add((ref_node,    ACQUIRIUM_REF_NAME,     Literal(ref_name)))
+            g.add((ref_node,    STORED_AT,              ACQUIRIUM_DB_URI))
             # Declare the Acquirium DB node (idempotent)
-            g.add((ACQUIRIUM_DB_URI, RDF.type,   BRICK_REF_DATABASE))
             g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
 
         for pred, value in (properties or {}).items():
@@ -460,7 +459,7 @@ class Acquirium:
         log_time_end: str | datetime | None = None,
         observation_start: str | datetime | None = None,
         observation_end: str | datetime | None = None,
-    ) -> list:
+    ) -> "pl.DataFrame":
         """Read plant-level log entries (no query/object needed).
 
         Returns a list of LogEntry objects for the generic plant URI.

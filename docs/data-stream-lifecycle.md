@@ -77,9 +77,9 @@ This inserts RDF triples into Oxigraph following the
     ref:hasTimeseriesId  "<uuid>" ;        # = handle
     acquirium:sourceId   "mybox-system-metrics" ;
     acquirium:refName    "cpu_percent" ;
-    ref:storedAt         <urn:acquirium:timescaledb> .
+    ref:storedAt         <urn:acquirium#timescaledb> .
 
-<urn:acquirium:timescaledb>  a  ref:Database .
+<urn:acquirium#timescaledb>  a <urn:acquirium#Database> .
 ```
 
 When this graph is inserted, the server scans for `acquirium:sourceId` /

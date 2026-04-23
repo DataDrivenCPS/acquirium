@@ -1,9 +1,11 @@
 from rdflib.namespace import Namespace
 from rdflib import URIRef, RDF, RDFS
 
+### ACQUIRIUM INTERNAL NAMESPACES
 ACQUIRIUM_NS = Namespace("urn:acquirium#")
 ACQUIRIUM_POINT_NS = Namespace("urn:acquirium:point#")
 
+### External Namespaces
 QUDT = Namespace("http://qudt.org/schema/qudt/")
 QUDT_UNIT = Namespace("http://qudt.org/vocab/unit/")
 QUDT_QUANTITY_KIND = Namespace("http://qudt.org/vocab/quantitykind/")
@@ -19,6 +21,11 @@ OWL = Namespace("http://www.w3.org/2002/07/owl#")
 DEFAULT_MAIN_GRAPH = ACQUIRIUM_NS.MainGraph
 DEFAULT_UNION_GRAPH = ACQUIRIUM_NS.UnionGraph
 VIRTUAL_POINT = ACQUIRIUM_NS.VirtualPoint
+
+# Well-known URI representing the Acquirium TimescaleDB instance
+ACQUIRIUM_DB_URI = ACQUIRIUM_NS.TimescaleDB
+DATABASE = ACQUIRIUM_NS.Database
+
 
 LAST_REPORTED = ACQUIRIUM_NS.lastReported
 IS_CALCULATED_FROM = ACQUIRIUM_NS.isCalculatedFrom
@@ -38,7 +45,6 @@ ALARM = ACQUIRIUM_NS.Alarm
 REPORT = ACQUIRIUM_NS.Report
 
 # Soft sensor SHACL-ish vocabulary
-# SS = Namespace("urn:duckttape:ss#")
 SOFT_SENSOR = ACQUIRIUM_NS.SoftSensor
 STREAM = ACQUIRIUM_NS.Stream
 DATA_SOURCE = ACQUIRIUM_NS.DataSource
@@ -52,17 +58,11 @@ LAST_INPUT_CHANGE = ACQUIRIUM_NS.lastInputChange
 
 
 # Acquirium-internal external reference (used for MQTT, CSV, PG sources)
-HAS_EXTERNAL_REFERENCE = ACQUIRIUM_NS.hasExternalReference
+HAS_EXTERNAL_REFERENCE = BRICK_REF.hasExternalReference
+TIMESERIES_REFERENCE = BRICK_REF.TimeseriesReference
+HAS_TIMESERIES_ID = BRICK_REF.hasTimeseriesId
+STORED_AT = BRICK_REF.storedAt
 
-# Brick ref vocabulary — used for timeseries database linkage
-BRICK_REF_HAS_EXTERNAL_REFERENCE = BRICK_REF.hasExternalReference
-BRICK_REF_TIMESERIES_REFERENCE = BRICK_REF.TimeseriesReference
-BRICK_REF_HAS_TIMESERIES_ID = BRICK_REF.hasTimeseriesId
-BRICK_REF_STORED_AT = BRICK_REF.storedAt
-BRICK_REF_DATABASE = BRICK_REF.Database
-
-# Well-known URI representing the Acquirium TimescaleDB instance
-ACQUIRIUM_DB_URI = URIRef("urn:acquirium:timescaledb")
 
 # Predicates stored on Brick ref nodes to allow handle reconstruction from graph
 ACQUIRIUM_SOURCE_ID  = ACQUIRIUM_NS.sourceId   # the registered datasource name
@@ -76,7 +76,6 @@ OF_SUBSTANCE = S223.ofSubstance
 HAS_QUANTITY_KIND = QUDT.hasQuantityKind
 HAS_ENUMERATION_KIND = QUDT.hasEnumerationKind
 HAS_UNIT = QUDT.hasUnit
-DATA_SOURCE = ACQUIRIUM_NS.DataSource
 
 HAS_LOG = ACQUIRIUM_NS.hasLog
 LOGBOOK = ACQUIRIUM_NS.Logbook
@@ -85,32 +84,33 @@ PLANT_URI = str(ACQUIRIUM_NS.Plant)  # Generic URI representing the entire plant
 
 # File-based Reference predicates
 PARQUET_REF = ACQUIRIUM_NS.ParquetReference
-CSV_REF = ACQUIRIUM_NS.CSVReference
+CSV_REF = BRICK_REF.csvReference
+CSV_LOCATION = BRICK_REF.csvFileLocation
 REF_PATH = ACQUIRIUM_NS.hasFilePath
 REF_TIME_COL = ACQUIRIUM_NS.hasTimeColumn
 REF_VALUE_COL = ACQUIRIUM_NS.hasValueColumn
 
 # MQTT Reference predicates
-BROKER = ACQUIRIUM_NS.Broker
-PORT = ACQUIRIUM_NS.Port
-TOPIC = ACQUIRIUM_NS.Topic
-VALUE_KEY = ACQUIRIUM_NS.value_key
-TIME_KEY = ACQUIRIUM_NS.time_key
 MQTT_REFERENCE = ACQUIRIUM_NS.MQTTReference
+BROKER = ACQUIRIUM_NS.mqttBroker
+PORT = ACQUIRIUM_NS.mqttPort
+TOPIC = ACQUIRIUM_NS.mqttTopic
+VALUE_KEY = ACQUIRIUM_NS.mqttValueKey
+TIME_KEY = ACQUIRIUM_NS.mqttTimeKey
 
 # Postgres Reference predicates
-PG_REFERENCE = ACQUIRIUM_NS.PGReference
-PG_DSN = ACQUIRIUM_NS.PG_DSN
-PG_HOST = ACQUIRIUM_NS.PG_HOST
-PG_PORT = ACQUIRIUM_NS.PG_PORT
-PG_DB = ACQUIRIUM_NS.PG_DB
-PG_USER = ACQUIRIUM_NS.PG_USER
-PG_PASS = ACQUIRIUM_NS.PG_PASS
-PG_TABLE = ACQUIRIUM_NS.PG_Table
-PG_QUERY = ACQUIRIUM_NS.PG_Query
-PG_TIME_COL = ACQUIRIUM_NS.PG_TimeColumn
-PG_VALUE_COL = ACQUIRIUM_NS.PG_ValueColumn
-PG_POINT_FILTER = ACQUIRIUM_NS.PG_PointFilter
+PG_REFERENCE = TIMESERIES_REFERENCE
+PG_DSN = ACQUIRIUM_NS.postgresDSN
+PG_HOST = ACQUIRIUM_NS.postgresHost
+PG_PORT = ACQUIRIUM_NS.postgresPort
+PG_DB = ACQUIRIUM_NS.postgresDB
+PG_USER = ACQUIRIUM_NS.postgresUser
+PG_PASS = ACQUIRIUM_NS.postgresPass
+PG_TABLE = ACQUIRIUM_NS.postgresTable
+PG_QUERY = ACQUIRIUM_NS.postgresQuery
+PG_TIME_COL = ACQUIRIUM_NS.postgresTimeColumn
+PG_VALUE_COL = ACQUIRIUM_NS.postgresValueColumn
+PG_POINT_FILTER = ACQUIRIUM_NS.postgresPointFilter
 
 OWL_CLASS = URIRef("http://www.w3.org/2002/07/owl#Class")
 OWL_OBJ_PROP = URIRef("http://www.w3.org/2002/07/owl#ObjectProperty")

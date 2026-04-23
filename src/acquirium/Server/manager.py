@@ -6,7 +6,7 @@ from pathlib import Path
 import os
 import logging
 from time import perf_counter
-from rdflib import Graph, URIRef, Node, Literal, RDF, RDFS
+from rdflib import Graph, URIRef, Node, Literal, RDF, RDFS, SKOS
 
 from acquirium.Storage import OxigraphGraphStore, TimescaleStore, PGReferenceRegistry, PGReferenceInfo, resolve_dsn
 from acquirium.internals.qudt_units import QUDTUnitConverter
@@ -323,8 +323,8 @@ class Manager:
         q = f"""
         SELECT ?point ?source_id ?ref_name
         WHERE {{
-          ?point <{BRICK_REF_HAS_EXTERNAL_REFERENCE}> ?ref_node .
-          ?ref_node a <{BRICK_REF_TIMESERIES_REFERENCE}> .
+          ?point <{HAS_EXTERNAL_REFERENCE}> ?ref_node .
+          ?ref_node a <{TIMESERIES_REFERENCE}> .
           ?ref_node <{ACQUIRIUM_SOURCE_ID}> ?source_id .
           ?ref_node <{ACQUIRIUM_REF_NAME}> ?ref_name .
         }}
@@ -372,39 +372,39 @@ class Manager:
         # NOTE: QUDT Unit/QuantityKind removed — handled by _qudt_matcher
         # Labels: rdfs:label, skos:prefLabel, skos:altLabel
         # Language filter: keep English-tagged or untagged labels only
-        class_query = """
-        SELECT DISTINCT ?uri ?label WHERE {
-          {
-            ?uri a <http://www.w3.org/2000/01/rdf-schema#Class> .
-          } UNION {
-            ?uri a <http://www.w3.org/2002/07/owl#Class> .
-          } UNION {
-            ?x <http://www.w3.org/2000/01/rdf-schema#subClassOf> ?uri .
-          } UNION {
+        class_query = f"""
+        SELECT DISTINCT ?uri ?label WHERE {{
+          {{
+            ?uri a <{RDFS.Class}> .
+          }} UNION {{
+            ?uri a <{OWL_CLASS}> .
+          }} UNION {{
+            ?x <{RDFS.subClassOf}> ?uri .
+          }} UNION {{
             ?x a ?uri .
-          } UNION {
-            ?uri a <urn:nawi-water-ontology#Class> .
-          } UNION {
-            ?uri <http://www.w3.org/2000/01/rdf-schema#subClassOf> ?x .
-          } UNION {
-            ?x <http://qudt.org/schema/qudt/hasEnumerationKind> ?uri .
-          } UNION {
-            ?x <http://data.ashrae.org/standard223#ofSubstance> ?uri .
-          } UNION {
-            ?x <http://data.ashrae.org/standard223#hasMedium> ?uri .
-          }
-          OPTIONAL {
-            {
-              ?uri <http://www.w3.org/2000/01/rdf-schema#label> ?label .
-            } UNION {
-              ?uri <http://www.w3.org/2004/02/skos/core#prefLabel> ?label .
-            } UNION {
-              ?uri <http://www.w3.org/2004/02/skos/core#altLabel> ?label .
-            }
+          }} UNION {{
+            ?uri a <{WATR.Class}> .
+          }} UNION {{
+            ?uri <{RDFS.subClassOf}> ?x .
+          }} UNION {{
+            ?x <{HAS_ENUMERATION_KIND}> ?uri .
+          }} UNION {{
+            ?x <{OF_SUBSTANCE}> ?uri .
+          }} UNION {{
+            ?x <{HAS_MEDIUM}> ?uri .
+          }}
+          OPTIONAL {{
+            {{
+              ?uri <{RDFS.label}> ?label .
+            }} UNION {{
+              ?uri <{SKOS.prefLabel}> ?label .
+            }} UNION {{
+              ?uri <{SKOS.altLabel}> ?label .
+            }}
             FILTER(LANG(?label) = "" || LANGMATCHES(LANG(?label), "en"))
-          }
+          }}
           FILTER(isIRI(?uri))
-        }
+        }}
         """
         try:
             res = self.graph_store.sparql_query(class_query, use_union=True)
@@ -450,29 +450,29 @@ class Manager:
         # Query 2: Predicates (declared properties + any IRI used as a predicate)
         # Labels: rdfs:label, skos:prefLabel, skos:altLabel
         # Language filter: keep English-tagged or untagged labels only
-        pred_query = """
-        SELECT DISTINCT ?uri ?label WHERE {
-          {
-            ?uri a <http://www.w3.org/1999/02/22-rdf-syntax-ns#Property> .
-          } UNION {
-            ?uri a <http://www.w3.org/2002/07/owl#ObjectProperty> .
-          } UNION {
-            ?uri a <http://www.w3.org/2002/07/owl#DatatypeProperty> .
-          } UNION {
+        pred_query = f"""
+        SELECT DISTINCT ?uri ?label WHERE {{
+          {{
+            ?uri a <{RDF_PROP}> .
+          }} UNION {{
+            ?uri a <{OWL_OBJ_PROP}> .
+          }} UNION {{
+            ?uri a <{OWL_DATA_PROP}> .
+          }} UNION {{
             ?s ?uri ?o .
-          }
-          OPTIONAL {
-            {
-              ?uri <http://www.w3.org/2000/01/rdf-schema#label> ?label .
-            } UNION {
-              ?uri <http://www.w3.org/2004/02/skos/core#prefLabel> ?label .
-            } UNION {
-              ?uri <http://www.w3.org/2004/02/skos/core#altLabel> ?label .
-            }
+          }}
+          OPTIONAL {{
+            {{
+              ?uri <{RDFS.label}> ?label .
+            }} UNION {{
+              ?uri <{SKOS.prefLabel}> ?label .
+            }} UNION {{
+              ?uri <{SKOS.altLabel}> ?label .
+            }}
             FILTER(LANG(?label) = "" || LANGMATCHES(LANG(?label), "en"))
-          }
+          }}
           FILTER(isIRI(?uri))
-        }
+        }}
         """
         try:
             res = self.graph_store.sparql_query(pred_query, use_union=True)
