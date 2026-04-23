@@ -56,12 +56,12 @@ class MQTTIngestDriver(Driver):
     samples via the standard Acquirium timeseries API.
 
     Run alongside the server:
-        acquirium run acquirium.Server.mqtt_ingestion:MQTTIngestDriver \\
+        acquirium run acquirium.BuiltinDrivers.mqtt_ingestion:MQTTIngestDriver \\
             --config acquirium.toml
 
     Or list it in acquirium.toml under [[drivers]] for auto-start:
         [[drivers]]
-        spec           = "acquirium.Server.mqtt_ingestion:MQTTIngestDriver"
+        spec           = "acquirium.BuiltinDrivers.mqtt_ingestion:MQTTIngestDriver"
         interval       = 5.0
         mqtt_source_id = "mqtt"
     """

@@ -94,7 +94,7 @@ Keys in a `[[drivers]]` entry (other than `spec`) are merged on top of `[driver]
 interval = 10.0
 
 [[drivers]]
-spec           = "acquirium.Server.mqtt_ingestion:MQTTIngestDriver"
+spec           = "acquirium.BuiltinDrivers.mqtt_ingestion:MQTTIngestDriver"
 interval       = 5.0
 mqtt_source_id = "mqtt"
 ```

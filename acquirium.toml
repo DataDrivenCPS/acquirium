@@ -53,10 +53,10 @@ interval = 10.0
 
 # Uncomment to enable MQTT ingestion as a default driver:
 [[drivers]]
-spec           = "acquirium.Server.mqtt_ingestion:MQTTIngestDriver"
+spec           = "acquirium.BuiltinDrivers.mqtt_ingestion:MQTTIngestDriver"
 interval       = 5.0
 mqtt_source_id = "mqtt"   # datasource name used for all MQTT streams
 
 [[drivers]]
-spec     = "acquirium.Server.system_metrics:SystemMetricsDriver"
+spec     = "acquirium.BuiltinDrivers.system_metrics:SystemMetricsDriver"
 interval = 30.0
