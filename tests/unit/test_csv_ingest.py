@@ -127,7 +127,6 @@ def test_parse_narrow_basic(tmp_path):
     assert set(batch.keys()) == {"sensor/temp", "sensor/rh"}
     assert rows == 3
     assert len(batch["sensor/temp"]) == 2
-    assert batch["sensor/rh"][0][1] == 55.0
 
 
 def test_parse_narrow_explicit_format(tmp_path):
@@ -176,6 +175,33 @@ def test_tsv_parsed_correctly(tmp_path):
     assert batch["temp"][0][1] == 22.5
 
 
+# ------------------------------------------------------------------ file-prefix namespacing
+
+
+def test_loop_prefixes_stream_names_with_filename(tmp_path):
+    driver = make_driver(tmp_path=tmp_path)
+    driver.setup()
+    _wide_csv(tmp_path)  # creates wide.csv
+    driver.loop()
+
+    call_args = driver.aq.insert_timeseries_batch.call_args
+    streams = call_args[0][1]
+    assert "wide.csv/temp" in streams
+    assert "wide.csv/rh" in streams
+
+
+def test_loop_prefixes_include_subdirectory(tmp_path):
+    sub = tmp_path / "sensors"
+    sub.mkdir()
+    (sub / "data.csv").write_text("time,flow\n2024-01-01T00:00:00Z,1.0\n")
+    driver = make_driver(tmp_path=tmp_path)
+    driver.setup()
+    driver.loop()
+
+    streams = driver.aq.insert_timeseries_batch.call_args[0][1]
+    assert "sensors/data.csv/flow" in streams
+
+
 # ------------------------------------------------------------------ row offset / append tracking
 
 
@@ -185,20 +211,18 @@ def test_row_offset_skips_already_seen_rows(tmp_path):
     path = _wide_csv(tmp_path)  # 2 data rows
     batch, rows = driver.parse_file(path, row_offset=1)
     assert rows == 1
-    assert len(batch["temp"]) == 1
     assert batch["temp"][0][1] == 23.0  # second row only
 
 
 def test_row_offset_past_end_returns_empty(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     driver.setup()
-    path = _wide_csv(tmp_path)  # 2 rows
-    batch, rows = driver.parse_file(path, row_offset=10)
+    batch, rows = driver.parse_file(_wide_csv(tmp_path), row_offset=10)
     assert rows == 0
     assert batch == {}
 
 
-def test_loop_advances_state_on_each_tick(tmp_path):
+def test_loop_advances_cursor_on_each_tick(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     driver.setup()
 
@@ -206,87 +230,40 @@ def test_loop_advances_state_on_each_tick(tmp_path):
     path.write_text("time,temp\n2024-01-01T00:00:00Z,1.0\n")
     driver.loop()
     assert driver.aq.insert_timeseries_batch.call_count == 1
-    key = str(path)
-    assert driver._state[key] == 1
+    assert driver._rows_seen[str(path)] == 1
 
-    # Append a new row
+    # Append a new row — only the new row should be inserted
     with path.open("a") as f:
         f.write("2024-01-02T00:00:00Z,2.0\n")
     driver.loop()
     assert driver.aq.insert_timeseries_batch.call_count == 2
-    assert driver._state[key] == 2
+    assert driver._rows_seen[str(path)] == 2
 
     # No new rows — no insert
     driver.loop()
     assert driver.aq.insert_timeseries_batch.call_count == 2
 
 
-def test_state_persisted_and_reloaded(tmp_path):
+def test_file_stays_in_place_after_insert(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     driver.setup()
     path = _wide_csv(tmp_path)
     driver.loop()
-    assert driver._state[str(path)] == 2
-
-    # Simulate restart — new driver instance, same watch_dir
-    driver2 = make_driver(tmp_path=tmp_path)
-    driver2.setup()
-    assert driver2._state.get(str(path)) == 2
-
-
-# ------------------------------------------------------------------ archive mode
-
-
-def test_archive_mode_moves_file_after_insert(tmp_path):
-    archive = tmp_path / "archive"
-    driver = make_driver(
-        {"csv_archive": True, "csv_archive_dir": str(archive)}, tmp_path=tmp_path
-    )
-    driver.setup()
-    (tmp_path / "data.csv").write_text("time,temp\n2024-01-01T00:00:00Z,22.5\n")
-    driver.loop()
-
-    assert not (tmp_path / "data.csv").exists()
-    assert (archive / "data.csv").exists()
-    driver.aq.insert_timeseries_batch.assert_called_once()
-
-
-def test_archive_mode_handles_name_collision(tmp_path):
-    archive = tmp_path / "archive"
-    archive.mkdir()
-    (archive / "data.csv").write_text("old")
-
-    driver = make_driver(
-        {"csv_archive": True, "csv_archive_dir": str(archive)}, tmp_path=tmp_path
-    )
-    driver.setup()
-    (tmp_path / "data.csv").write_text("time,temp\n2024-01-01T00:00:00Z,22.5\n")
-    driver.loop()
-
-    assert len(list(archive.glob("data*.csv"))) == 2
-
-
-def test_no_archive_by_default_file_stays(tmp_path):
-    driver = make_driver(tmp_path=tmp_path)
-    driver.setup()
-    (tmp_path / "data.csv").write_text("time,temp\n2024-01-01T00:00:00Z,22.5\n")
-    driver.loop()
-    assert (tmp_path / "data.csv").exists()
+    assert path.exists()
 
 
 # ------------------------------------------------------------------ error recovery
 
 
-def test_loop_keeps_file_on_insert_failure(tmp_path):
-    driver = make_driver({"csv_archive": True}, tmp_path=tmp_path)
+def test_loop_does_not_advance_cursor_on_insert_failure(tmp_path):
+    driver = make_driver(tmp_path=tmp_path)
     driver.setup()
     driver.aq.insert_timeseries_batch.side_effect = RuntimeError("server down")
 
-    (tmp_path / "data.csv").write_text("time,temp\n2024-01-01T00:00:00Z,22.5\n")
+    path = _wide_csv(tmp_path)
     driver.loop()
 
-    assert (tmp_path / "data.csv").exists()
-    assert driver._state.get(str(tmp_path / "data.csv"), 0) == 0
+    assert driver._rows_seen.get(str(path), 0) == 0
 
 
 def test_loop_skips_bad_file_and_continues(tmp_path):

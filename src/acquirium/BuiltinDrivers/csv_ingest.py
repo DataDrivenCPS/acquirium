@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import json
 import logging
-import shutil
-import time
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -15,22 +12,21 @@ from acquirium.Driver import Driver
 logger = logging.getLogger("acquirium.csv_ingest")
 
 _GLOB_PATTERNS = ("*.csv", "*.tsv", "*.xlsx")
-_STATE_FILENAME = ".csv_ingest_state.json"
 
 
 class CSVIngestDriver(Driver):
     """Watches a directory for CSV, TSV, and Excel files and ingests new rows
     into Acquirium on each tick.
 
-    **Row-level tracking** — a state file (``{watch_dir}/.csv_ingest_state.json``)
-    records how many rows each file has contributed.  On every ``loop()`` call
-    only rows beyond that cursor are ingested, so both brand-new files *and*
-    files that are still being appended to are handled correctly.  The state
-    survives restarts.
+    Row positions are tracked in memory so only rows added since the last tick
+    are inserted.  Because the Acquirium API deduplicates on (timestamp, value),
+    a restart will at worst re-insert the full file — no data is duplicated in
+    the store.  Files are never moved or deleted.
 
-    Set ``csv_archive = true`` to move each file to ``csv_archive_dir`` after
-    ingestion instead of leaving it in place (useful for pure drop-box
-    workflows where files are never appended to).
+    Each stream is named ``"{rel_path}/{column}"`` (wide) or
+    ``"{rel_path}/{id_value}"`` (narrow), where *rel_path* is the file's path
+    relative to ``csv_watch_dir``.  This namespaces streams by file so two
+    files with the same column names produce distinct streams.
 
     Two formats are supported out of the box:
 
@@ -57,33 +53,24 @@ class CSVIngestDriver(Driver):
         interval          = 5.0
         csv_source_id     = "csv_files"
         csv_watch_dir     = "./data/incoming"
-        csv_format        = "auto"         # "auto" | "narrow" | "wide"
+        csv_format        = "auto"        # "auto" | "narrow" | "wide"
         csv_time_col      = "time"
-        csv_id_col        = "id"           # narrow only
-        csv_value_col     = "value"        # narrow only
-        csv_archive       = false          # move files to archive_dir after insert
-        csv_archive_dir   = "./data/processed"  # only used when csv_archive = true
-        csv_xlsx_sheets   = ["Sheet1"]     # xlsx only; omit to read the first sheet
+        csv_id_col        = "id"          # narrow only
+        csv_value_col     = "value"       # narrow only
+        csv_xlsx_sheets   = ["Sheet1"]    # xlsx only; omit to read the first sheet
 
     **Extending for custom formats**
 
-    Override ``parse_file()`` and call the protected helpers as needed::
+    Override ``parse_file()`` and call the protected helpers as needed.  The
+    returned batch keys should be bare stream names (without the file prefix) —
+    ``parse_file`` applies the prefix automatically::
 
         class MyDriver(CSVIngestDriver):
             def parse_file(self, path, row_offset=0):
                 import polars as pl
-                # skip a 3-row metadata header, then treat as wide
                 df = pl.read_csv(path, skip_rows=3,
                                  skip_rows_after_header=row_offset)
-                return self._parse_wide(df)
-
-        class MyDriver(CSVIngestDriver):
-            def parse_file(self, path, row_offset=0):
-                import polars as pl
-                df = pl.read_csv(path,
-                                 skip_rows_after_header=row_offset).rename(
-                    {"Timestamp": "time", "Tag": "id", "Val": "value"})
-                return self._parse_narrow(df)
+                return self._parse_wide(df), len(df)
     """
 
     # ------------------------------------------------------------------ setup
@@ -96,24 +83,15 @@ class CSVIngestDriver(Driver):
         self._time_col: str = cfg.get("csv_time_col", "time")
         self._id_col: str = cfg.get("csv_id_col", "id")
         self._value_col: str = cfg.get("csv_value_col", "value")
-        self._do_archive: bool = bool(cfg.get("csv_archive", False))
-        self._archive_dir = Path(
-            cfg.get("csv_archive_dir", self._watch_dir / "processed")
-        ).resolve()
         raw_sheets = cfg.get("csv_xlsx_sheets", None)
         self._xlsx_sheets: list[str] | None = list(raw_sheets) if raw_sheets else None
+
+        self._rows_seen: dict[str, int] = {}  # path → rows consumed so far
         self._registered: set[str] = set()
 
         self._watch_dir.mkdir(parents=True, exist_ok=True)
-        if self._do_archive:
-            self._archive_dir.mkdir(parents=True, exist_ok=True)
-
-        self._state: dict[str, int] = {}
-        self._state_file = self._watch_dir / _STATE_FILENAME
-        self._load_state()
-
         self.aq.register_datasource(self._source_id)
-        logger.info("csv_ingest watching %s (archive=%s)", self._watch_dir, self._do_archive)
+        logger.info("csv_ingest watching %s", self._watch_dir)
 
     # ------------------------------------------------------------------ loop
 
@@ -121,41 +99,36 @@ class CSVIngestDriver(Driver):
         paths = sorted(
             p
             for pattern in _GLOB_PATTERNS
-            for p in self._watch_dir.glob(pattern)
+            for p in self._watch_dir.rglob(pattern)
         )
         for path in paths:
             key = str(path)
-            offset = self._state.get(key, 0)
+            offset = self._rows_seen.get(key, 0)
             try:
-                batch, rows_read = self.parse_file(path, row_offset=offset)
+                raw_batch, rows_read = self.parse_file(path, row_offset=offset)
             except Exception:
                 logger.exception("csv_ingest: failed to parse %s", path.name)
                 continue
 
-            if not batch:
-                if rows_read == 0 and offset == 0:
-                    logger.warning("csv_ingest: %s produced no data", path.name)
-                if self._do_archive:
-                    self._archive(path, key)
+            if not raw_batch:
                 continue
+
+            rel = path.relative_to(self._watch_dir)
+            batch = {f"{rel}/{stream}": rows for stream, rows in raw_batch.items()}
 
             try:
                 self._ensure_streams(batch)
                 self.aq.insert_timeseries_batch(self._source_id, batch)
-                total_rows = sum(len(v) for v in batch.values())
+                total = sum(len(v) for v in batch.values())
                 logger.info(
-                    "csv_ingest: inserted %d row(s) across %d stream(s) from %s",
-                    total_rows, len(batch), path.name,
+                    "csv_ingest: %s — inserted %d row(s) across %d stream(s)",
+                    rel, total, len(batch),
                 )
             except Exception:
                 logger.exception("csv_ingest: failed to insert data from %s", path.name)
                 continue
 
-            self._state[key] = offset + rows_read
-            self._save_state()
-
-            if self._do_archive:
-                self._archive(path, key)
+            self._rows_seen[key] = offset + rows_read
 
     # ---------------------------------------------------------- public hook
 
@@ -164,9 +137,9 @@ class CSVIngestDriver(Driver):
     ) -> tuple[dict[str, list[tuple[datetime, Any]]], int]:
         """Parse new rows from *path* starting after *row_offset* already-seen rows.
 
-        Returns ``(batch, rows_read)`` where *rows_read* is the number of rows
-        actually parsed (excluding the header).  Override in subclasses for
-        custom layouts; call ``_parse_wide`` / ``_parse_narrow`` as needed.
+        Returns ``(batch, rows_read)`` where batch keys are bare stream names
+        (column names or id values — the file prefix is added by the caller).
+        Override in subclasses for custom layouts.
         """
         suffix = path.suffix.lower()
         if suffix == ".xlsx":
@@ -236,9 +209,8 @@ class CSVIngestDriver(Driver):
 
     def _read_excel(self, path: Path, row_offset: int) -> pl.DataFrame:
         """Read an Excel workbook, merging requested sheets into one DataFrame."""
-        sheets = self._xlsx_sheets
-        if sheets:
-            result = pl.read_excel(path, sheet_name=sheets, engine="calamine")
+        if self._xlsx_sheets:
+            result = pl.read_excel(path, sheet_name=self._xlsx_sheets, engine="calamine")
             if isinstance(result, dict):
                 frames = list(result.values())
                 df = pl.concat(frames, how="diagonal_relaxed") if len(frames) > 1 else frames[0]
@@ -249,16 +221,15 @@ class CSVIngestDriver(Driver):
 
         return df.slice(row_offset)
 
-    # ---------------------------------------------------------- internals
+    # ---------------------------------------------------------- stream reg
 
     def _ensure_streams(self, batch: dict[str, list[tuple[datetime, Any]]]) -> None:
         for ref_name in batch:
             if ref_name in self._registered:
                 continue
-            point_uri = f"urn:csv:{self._source_id}:{ref_name}"
             try:
                 self.aq.register_stream(
-                    point_uri,
+                    f"urn:csv:{self._source_id}:{ref_name}",
                     source_id=self._source_id,
                     ref_name=ref_name,
                 )
@@ -268,30 +239,6 @@ class CSVIngestDriver(Driver):
                     "csv_ingest: could not register stream %s; data will still be inserted",
                     ref_name,
                 )
-
-    def _archive(self, path: Path, state_key: str) -> None:
-        dest = self._archive_dir / path.name
-        if dest.exists():
-            dest = self._archive_dir / f"{path.stem}_{int(time.time() * 1000)}{path.suffix}"
-        shutil.move(str(path), dest)
-        self._state.pop(state_key, None)
-        self._save_state()
-        logger.debug("csv_ingest: archived %s → %s", path.name, dest.name)
-
-    def _load_state(self) -> None:
-        if self._state_file.exists():
-            try:
-                self._state = json.loads(self._state_file.read_text())
-                logger.debug("csv_ingest: loaded state (%d entries)", len(self._state))
-            except Exception:
-                logger.warning("csv_ingest: could not load state file, starting fresh")
-                self._state = {}
-
-    def _save_state(self) -> None:
-        try:
-            self._state_file.write_text(json.dumps(self._state, indent=2))
-        except Exception:
-            logger.warning("csv_ingest: could not save state file", exc_info=True)
 
 
 # ------------------------------------------------------------------ helpers
