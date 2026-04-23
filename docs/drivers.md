@@ -27,6 +27,25 @@ Rules:
 - `setup()` is called once before the first `loop()`. Register datasources and insert any RDF here.
 - Override `stop()` if you need to release resources on shutdown (close serial ports, flush buffers, etc.). The default is a no-op.
 
+### Reacting to graph changes
+
+Override `on_graph_change()` to run code when the knowledge graph is updated — for example, to discover newly-registered data streams without polling on every tick.
+
+```python
+class MQTTDriver(Driver):
+    def setup(self):
+        self.aq.register_datasource("mqtt")
+        self._subscribe()          # initial subscription from graph
+
+    def on_graph_change(self):
+        self._subscribe()          # pick up any new MQTTReference nodes
+
+    def loop(self):
+        self._flush_pending()      # just move buffered data, no graph queries
+```
+
+The CLI polls `GET /graph_version` before each `loop()` call and invokes `on_graph_change()` only when the version has advanced since `setup()` returned. The default is a no-op — drivers that don't need it pay only the cost of one cheap HTTP call per tick.
+
 ### Reading from config
 
 `self.config` is the complete TOML dict. Drivers conventionally read their own keys from `self.config["driver"]` (for `acquirium run`) or from a merged view that includes their `[[drivers]]` entry keys (for default drivers — see below).
@@ -120,6 +139,10 @@ acquirium server          acquirium run
    setup()                   setup()
       │                         │
       ▼                         ▼
+   ┌─ check graph version ──────┤
+   │  (if changed)              │
+   │  on_graph_change()         │
+   ▼                            ▼
    loop()  ◄─── interval ───► loop()
    loop()                     loop()
    loop()                     ...
@@ -127,4 +150,4 @@ acquirium server          acquirium run
    stop()  ◄── Ctrl-C/SIGTERM ► stop()
 ```
 
-A loop error is logged and the driver continues running. A setup error aborts that driver but does not stop the server.
+A loop or `on_graph_change` error is logged and the driver continues running. A setup error aborts that driver but does not stop the server.
