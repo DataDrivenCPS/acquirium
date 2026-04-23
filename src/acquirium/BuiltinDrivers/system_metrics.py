@@ -2,7 +2,7 @@
 Publish system metrics (CPU, RAM, disk, network) to an Acquirium backend.
 
 Usage:
-    acquirium run acquirium.Server.system_metrics:SystemMetricsDriver \\
+    acquirium run acquirium.BuiltinDrivers.system_metrics:SystemMetricsDriver \\
         --config acquirium.toml
 """
 
