@@ -157,10 +157,14 @@ def _check_graph_change(driver: "Driver", aq: "Acquirium", known_version: int) -
     """Call driver.on_graph_change() if graph version has advanced. Returns updated known version."""
     try:
         v = aq.graph_version()
-    except Exception:
+    except Exception as exc:
+        typer.echo(f"Warning: graph_version() failed: {exc}", err=True)
         return known_version
     if v != known_version:
-        driver.on_graph_change()
+        try:
+            driver.on_graph_change()
+        except Exception as exc:
+            typer.echo(f"Driver on_graph_change() error: {exc}", err=True)
         return v
     return known_version
 
@@ -328,7 +332,10 @@ def run_cmd(
 
     typer.echo("Running driver.setup()...")
     driver.setup()
-    known_version = aq.graph_version()
+    try:
+        known_version = aq.graph_version()
+    except Exception:
+        known_version = 0
     typer.echo(f"Setup complete. Starting loop (interval={effective_interval}s). Ctrl-C to stop.")
 
     try:
