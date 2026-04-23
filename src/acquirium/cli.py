@@ -30,7 +30,11 @@ import threading
 import time
 import tomllib
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import TYPE_CHECKING, Annotated, Optional
+
+if TYPE_CHECKING:
+    from acquirium.Driver import Driver
+    from acquirium.Client.acquirium import Acquirium
 
 import typer
 
@@ -149,6 +153,18 @@ def _driver_connect_cfg(
     return host, port, use_ssl, interval
 
 
+def _check_graph_change(driver: "Driver", aq: "Acquirium", known_version: int) -> int:
+    """Call driver.on_graph_change() if graph version has advanced. Returns updated known version."""
+    try:
+        v = aq.graph_version()
+    except Exception:
+        return known_version
+    if v != known_version:
+        driver.on_graph_change()
+        return v
+    return known_version
+
+
 def _wait_for_server(host: str, port: int, *, timeout: float = 30.0, stop: threading.Event) -> bool:
     """Poll GET /health until the server responds 200 or timeout/stop fires."""
     import requests
@@ -197,6 +213,7 @@ def _run_default_driver(
         aq = Acquirium(server_url=connect_host, server_port=connect_port, use_ssl=use_ssl)
         driver = driver_cls(aq, merged_cfg)
         driver.setup()
+        known_version = aq.graph_version()
         typer.echo(f"Default driver ready: {driver_cls.__name__}")
     except Exception as exc:
         typer.echo(f"Default driver {spec} setup failed: {exc}", err=True)
@@ -205,6 +222,7 @@ def _run_default_driver(
     try:
         while not stop.wait(timeout=interval):
             try:
+                known_version = _check_graph_change(driver, aq, known_version)
                 driver.loop()
             except Exception as exc:
                 typer.echo(f"Default driver {spec} loop error: {exc}", err=True)
@@ -310,10 +328,12 @@ def run_cmd(
 
     typer.echo("Running driver.setup()...")
     driver.setup()
+    known_version = aq.graph_version()
     typer.echo(f"Setup complete. Starting loop (interval={effective_interval}s). Ctrl-C to stop.")
 
     try:
         while True:
+            known_version = _check_graph_change(driver, aq, known_version)
             driver.loop()
             time.sleep(effective_interval)
     except KeyboardInterrupt:

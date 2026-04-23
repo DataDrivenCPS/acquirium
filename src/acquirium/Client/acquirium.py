@@ -195,6 +195,10 @@ class Acquirium:
 
         return None
 
+    def graph_version(self) -> int:
+        """Return the server's current graph mutation counter."""
+        return self.client.graph_version()
+
     def register_stream(
         self,
         point_uri: str | URIRef,

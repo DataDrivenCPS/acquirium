@@ -81,9 +81,10 @@ class MQTTIngestDriver(Driver):
         self.aq.register_datasource(self._source_id)
         self._sync_subscriptions()
 
-    def loop(self) -> None:
+    def on_graph_change(self) -> None:
         self._sync_subscriptions()
 
+    def loop(self) -> None:
         with self._pending_lock:
             if not self._pending:
                 return
