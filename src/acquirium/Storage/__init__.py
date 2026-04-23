@@ -32,7 +32,7 @@ def create_timeseries_store(
         if duckdb_path is None:
             raise ValueError("duckdb_path is required for the duckdb backend")
         return _DuckDBStore(db_path=duckdb_path, recreate=recreate)
-    elif backend in ("timescale", "postgres"):
+    elif backend == "timescale":
         if not pg_dsn:
             raise ValueError("pg_dsn is required for the timescale backend")
         return TimescaleStore(dsn=pg_dsn, recreate=recreate)
