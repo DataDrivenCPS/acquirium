@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +26,7 @@ class CSVIngestDriver(Driver):
     Each stream is named ``"{rel_path}/{column}"`` (wide) or
     ``"{rel_path}/{id_value}"`` (narrow), where *rel_path* is the file's path
     relative to ``csv_watch_dir``.  This namespaces streams by file so two
-    files with the same column names produce distinct streams.
+    files with the same column name produce distinct streams.
 
     Two formats are supported out of the box:
 
@@ -44,6 +44,11 @@ class CSVIngestDriver(Driver):
     Format is auto-detected: if the DataFrame has both the ``id`` and ``value``
     columns it is treated as narrow, otherwise wide.
 
+    The timestamp column is normalised to UTC via Polars before iteration, so
+    ``Date``, ``Datetime``, and string columns are all handled automatically.
+    Set ``csv_date_format`` to a ``strptime``-style format string if your dates
+    use a non-ISO format that Polars cannot infer (e.g. ``"%m/%d/%Y"``).
+
     Config keys (all optional, under ``self.config["driver"]``):
 
     .. code-block:: toml
@@ -58,6 +63,7 @@ class CSVIngestDriver(Driver):
         csv_id_col        = "id"          # narrow only
         csv_value_col     = "value"       # narrow only
         csv_xlsx_sheets   = ["Sheet1"]    # xlsx only; omit to read the first sheet
+        csv_date_format   = "%m/%d/%Y"    # optional; only needed for non-ISO date strings
 
     **Extending for custom formats**
 
@@ -83,10 +89,11 @@ class CSVIngestDriver(Driver):
         self._time_col: str = cfg.get("csv_time_col", "time")
         self._id_col: str = cfg.get("csv_id_col", "id")
         self._value_col: str = cfg.get("csv_value_col", "value")
+        self._date_fmt: str | None = cfg.get("csv_date_format", None)
         raw_sheets = cfg.get("csv_xlsx_sheets", None)
         self._xlsx_sheets: list[str] | None = list(raw_sheets) if raw_sheets else None
 
-        self._rows_seen: dict[str, int] = {}  # path → rows consumed so far
+        self._rows_seen: dict[str, int] = {}
         self._registered: set[str] = set()
 
         self._watch_dir.mkdir(parents=True, exist_ok=True)
@@ -174,15 +181,15 @@ class CSVIngestDriver(Driver):
         if self._time_col not in df.columns:
             raise ValueError(f"time column '{self._time_col}' not found in {df.columns}")
 
-        df = df.drop_nulls(subset=[self._time_col])
+        df = self._normalize_time_col(df.drop_nulls(subset=[self._time_col]))
         stream_cols = [c for c in df.columns if c != self._time_col]
 
         batch: dict[str, list[tuple[datetime, Any]]] = {}
-        ts_series = df[self._time_col]
+        ts_list = df[self._time_col].to_list()
         for col in stream_cols:
             rows = [
-                (_to_dt(ts), val)
-                for ts, val in zip(ts_series.to_list(), df[col].to_list())
+                (ts, val)
+                for ts, val in zip(ts_list, df[col].to_list())
                 if val is not None
             ]
             if rows:
@@ -195,15 +202,40 @@ class CSVIngestDriver(Driver):
             if col not in df.columns:
                 raise ValueError(f"column '{col}' not found in {df.columns}")
 
-        df = df.drop_nulls(subset=[self._time_col, self._id_col])
+        df = self._normalize_time_col(
+            df.drop_nulls(subset=[self._time_col, self._id_col])
+        )
 
         batch: dict[str, list[tuple[datetime, Any]]] = {}
         for row in df.select([self._time_col, self._id_col, self._value_col]).iter_rows():
-            ts_raw, stream_id, val = row
+            ts, stream_id, val = row
             if stream_id is None:
                 continue
-            batch.setdefault(str(stream_id), []).append((_to_dt(ts_raw), val))
+            batch.setdefault(str(stream_id), []).append((ts, val))
         return batch
+
+    # ---------------------------------------------------------- time normalisation
+
+    def _normalize_time_col(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Cast the time column to Datetime(us, UTC) regardless of its source type."""
+        col = df[self._time_col]
+        dtype = col.dtype
+
+        if dtype == pl.Date:
+            col = col.cast(pl.Datetime("us")).dt.replace_time_zone("UTC")
+        elif dtype in (pl.String, pl.Utf8):
+            col = col.str.to_datetime(format=self._date_fmt, strict=False)
+            tz = getattr(col.dtype, "time_zone", None)
+            col = col.dt.replace_time_zone("UTC") if tz is None else col.dt.convert_time_zone("UTC")
+        else:
+            # Datetime with some time_unit / time_zone combination
+            tz = getattr(dtype, "time_zone", None)
+            if tz is None:
+                col = col.dt.replace_time_zone("UTC")
+            elif tz != "UTC":
+                col = col.dt.convert_time_zone("UTC")
+
+        return df.with_columns(col.alias(self._time_col))
 
     # ---------------------------------------------------------- Excel
 
@@ -239,43 +271,3 @@ class CSVIngestDriver(Driver):
                     "csv_ingest: could not register stream %s; data will still be inserted",
                     ref_name,
                 )
-
-
-# ------------------------------------------------------------------ helpers
-
-def _to_dt(val: Any) -> datetime:
-    """Coerce a value from a Polars column to a UTC-aware datetime."""
-    if isinstance(val, datetime):
-        if val.tzinfo is None:
-            return val.replace(tzinfo=timezone.utc)
-        return val.astimezone(timezone.utc)
-
-    if isinstance(val, date):
-        return datetime(val.year, val.month, val.day, tzinfo=timezone.utc)
-
-    if isinstance(val, (int, float)):
-        ts = float(val)
-        if ts > 1e11:
-            ts /= 1000.0
-        return datetime.fromtimestamp(ts, tz=timezone.utc)
-
-    if isinstance(val, str):
-        text = val.strip()
-        try:
-            dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
-            if dt.tzinfo is None:
-                return dt.replace(tzinfo=timezone.utc)
-            return dt.astimezone(timezone.utc)
-        except ValueError:
-            pass
-        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d"):
-            try:
-                return datetime.strptime(text, fmt).replace(tzinfo=timezone.utc)
-            except ValueError:
-                pass
-        try:
-            return _to_dt(float(text))
-        except ValueError:
-            pass
-
-    raise ValueError(f"cannot coerce to datetime: {val!r}")
