@@ -104,7 +104,7 @@ Inside the driver:
 ```python
 def setup(self):
     cfg = self.config.get("driver", {})
-    self.source_id = cfg.get("mqtt_source_id", "mqtt")  # reads "mqtt" from the [[drivers]] entry
+    self.source_id = cfg.get("mqtt_source_id", "mytopic")  # reads "mqtt" from the [[drivers]] entry. Defaults to "mytopic" if not set.
 ```
 
 ## Lifecycle
