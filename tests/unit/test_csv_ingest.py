@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import polars as pl
 import pytest
 
-from acquirium.BuiltinDrivers.csv_ingest import CSVIngestDriver, _to_dt
+from acquirium.BuiltinDrivers.csv_ingest import CSVIngestDriver
 
 
 # ------------------------------------------------------------------ fixtures
@@ -42,47 +42,52 @@ def _narrow_csv(tmp_path: Path) -> Path:
     return p
 
 
-# ------------------------------------------------------------------ _to_dt
+# ------------------------------------------------------------------ _normalize_time_col
 
 
-def test_to_dt_datetime_naive():
-    result = _to_dt(datetime(2024, 1, 1, 12, 0, 0))
-    assert result.tzinfo == timezone.utc
-    assert result.hour == 12
+def test_normalize_date_col(tmp_path):
+    """pl.Date column is cast to UTC Datetime at midnight."""
+    driver = make_driver(tmp_path=tmp_path)
+    driver.setup()
+    df = pl.DataFrame({"time": ["2024-01-01", "2024-01-02"], "val": [1.0, 2.0]}).with_columns(
+        pl.col("time").str.to_datetime("%Y-%m-%d").cast(pl.Date)
+    )
+    result = driver._normalize_time_col(df)
+    ts = result["time"].to_list()
+    assert ts[0] == datetime(2024, 1, 1, tzinfo=timezone.utc)
+    assert ts[1] == datetime(2024, 1, 2, tzinfo=timezone.utc)
 
 
-def test_to_dt_datetime_aware():
-    from datetime import timedelta, timezone as tz
-    eastern = tz(timedelta(hours=-5))
-    result = _to_dt(datetime(2024, 1, 1, 12, 0, 0, tzinfo=eastern))
-    assert result.tzinfo == timezone.utc
-    assert result.hour == 17
+def test_normalize_datetime_naive(tmp_path):
+    """Naive Datetime gets UTC attached."""
+    driver = make_driver(tmp_path=tmp_path)
+    driver.setup()
+    df = pl.DataFrame({"time": [datetime(2024, 1, 1, 12, 0)], "val": [1.0]})
+    result = driver._normalize_time_col(df)
+    ts = result["time"].to_list()[0]
+    assert ts.tzinfo is not None
+    assert ts.hour == 12
 
 
-def test_to_dt_iso_string():
-    assert _to_dt("2024-01-01T00:00:00Z") == datetime(2024, 1, 1, tzinfo=timezone.utc)
+def test_normalize_iso_string_col(tmp_path):
+    """ISO date strings are parsed automatically."""
+    driver = make_driver(tmp_path=tmp_path)
+    driver.setup()
+    df = pl.DataFrame({"time": ["2024-01-15", "2024-02-20"], "val": [1.0, 2.0]})
+    result = driver._normalize_time_col(df)
+    ts = result["time"].to_list()
+    assert ts[0] == datetime(2024, 1, 15, tzinfo=timezone.utc)
 
 
-def test_to_dt_iso_string_no_tz():
-    assert _to_dt("2024-01-01 12:00:00") == datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
-
-
-def test_to_dt_epoch_seconds():
-    assert _to_dt(0.0) == datetime(1970, 1, 1, tzinfo=timezone.utc)
-
-
-def test_to_dt_epoch_millis():
-    assert _to_dt(1_000_000_000_000).year == 2001
-
-
-def test_to_dt_date_object():
-    from datetime import date
-    assert _to_dt(date(2024, 6, 15)) == datetime(2024, 6, 15, tzinfo=timezone.utc)
-
-
-def test_to_dt_unrecognized_raises():
-    with pytest.raises(ValueError):
-        _to_dt(object())
+def test_normalize_string_with_explicit_format(tmp_path):
+    """Non-ISO date strings are parsed when csv_date_format is provided."""
+    driver = make_driver({"csv_date_format": "%m/%d/%Y"}, tmp_path=tmp_path)
+    driver.setup()
+    df = pl.DataFrame({"time": ["01/15/2024", "02/20/2024"], "val": [1.0, 2.0]})
+    result = driver._normalize_time_col(df)
+    ts = result["time"].to_list()
+    assert ts[0] == datetime(2024, 1, 15, tzinfo=timezone.utc)
+    assert ts[1] == datetime(2024, 2, 20, tzinfo=timezone.utc)
 
 
 # ------------------------------------------------------------------ _parse_wide
@@ -96,6 +101,31 @@ def test_parse_wide_basic(tmp_path):
     assert rows == 2
     assert batch["temp"][0] == (datetime(2024, 1, 1, tzinfo=timezone.utc), 22.5)
     assert batch["rh"][0][1] == 55.0
+
+
+def test_parse_wide_date_only_col(tmp_path):
+    """Date-only timestamps (no time component) work correctly."""
+    p = tmp_path / "dates.csv"
+    p.write_text("Date,temp\n2024-01-01,22.5\n2024-01-02,23.0\n")
+    driver = make_driver({"csv_time_col": "Date"}, tmp_path=tmp_path)
+    driver.setup()
+    batch, rows = driver.parse_file(p)
+    assert rows == 2
+    ts0 = batch["temp"][0][0]
+    assert ts0 == datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+
+def test_parse_wide_non_iso_date_with_format(tmp_path):
+    """Non-ISO date strings are handled when csv_date_format is set."""
+    p = tmp_path / "us_dates.csv"
+    p.write_text("Date,temp\n01/15/2024,22.5\n01/16/2024,23.0\n")
+    driver = make_driver(
+        {"csv_time_col": "Date", "csv_date_format": "%m/%d/%Y"}, tmp_path=tmp_path
+    )
+    driver.setup()
+    batch, rows = driver.parse_file(p)
+    assert rows == 2
+    assert batch["temp"][0][0] == datetime(2024, 1, 15, tzinfo=timezone.utc)
 
 
 def test_parse_wide_skips_null_values(tmp_path):
@@ -181,11 +211,9 @@ def test_tsv_parsed_correctly(tmp_path):
 def test_loop_prefixes_stream_names_with_filename(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     driver.setup()
-    _wide_csv(tmp_path)  # creates wide.csv
+    _wide_csv(tmp_path)
     driver.loop()
-
-    call_args = driver.aq.insert_timeseries_batch.call_args
-    streams = call_args[0][1]
+    streams = driver.aq.insert_timeseries_batch.call_args[0][1]
     assert "wide.csv/temp" in streams
     assert "wide.csv/rh" in streams
 
@@ -197,7 +225,6 @@ def test_loop_prefixes_include_subdirectory(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     driver.setup()
     driver.loop()
-
     streams = driver.aq.insert_timeseries_batch.call_args[0][1]
     assert "sensors/data.csv/flow" in streams
 
@@ -211,7 +238,7 @@ def test_row_offset_skips_already_seen_rows(tmp_path):
     path = _wide_csv(tmp_path)  # 2 data rows
     batch, rows = driver.parse_file(path, row_offset=1)
     assert rows == 1
-    assert batch["temp"][0][1] == 23.0  # second row only
+    assert batch["temp"][0][1] == 23.0
 
 
 def test_row_offset_past_end_returns_empty(tmp_path):
@@ -232,14 +259,12 @@ def test_loop_advances_cursor_on_each_tick(tmp_path):
     assert driver.aq.insert_timeseries_batch.call_count == 1
     assert driver._rows_seen[str(path)] == 1
 
-    # Append a new row — only the new row should be inserted
     with path.open("a") as f:
         f.write("2024-01-02T00:00:00Z,2.0\n")
     driver.loop()
     assert driver.aq.insert_timeseries_batch.call_count == 2
     assert driver._rows_seen[str(path)] == 2
 
-    # No new rows — no insert
     driver.loop()
     assert driver.aq.insert_timeseries_batch.call_count == 2
 
@@ -259,10 +284,8 @@ def test_loop_does_not_advance_cursor_on_insert_failure(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     driver.setup()
     driver.aq.insert_timeseries_batch.side_effect = RuntimeError("server down")
-
     path = _wide_csv(tmp_path)
     driver.loop()
-
     assert driver._rows_seen.get(str(path), 0) == 0
 
 
