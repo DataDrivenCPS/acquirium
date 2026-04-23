@@ -52,6 +52,14 @@ class Driver(ABC):
         Do *not* put a ``time.sleep`` or ``while True`` here.
         """
 
+    def on_graph_change(self) -> None:
+        """Called by the CLI when the server's graph version advances.
+
+        Override to react to graph mutations (e.g. re-query for new streams).
+        Default is a no-op. Never called during setup() — use setup() for
+        initial graph queries. Only fired on subsequent changes.
+        """
+
     def stop(self) -> None:
         """Optional cleanup called on shutdown (Ctrl-C or SIGTERM).
 
