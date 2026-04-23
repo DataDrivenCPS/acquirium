@@ -91,21 +91,17 @@ def _apply_server_env(cfg: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def _import_driver_class(driver_spec: str) -> type:
-    """Resolve a driver spec string to a Driver subclass.
-
-    Accepted formats
-    ----------------
-    path/to/file.py:ClassName   — load file, use named class
-    path/to/file.py             — load file, auto-discover first Driver subclass
-    my.module:ClassName         — standard import, use named class
-    my.module                   — standard import, auto-discover first Driver subclass
-    """
+    """Resolve a ``path/to/file.py:ClassName`` or ``my.module:ClassName`` spec to a Driver subclass."""
     from acquirium.Driver import Driver as _Driver
 
-    if ":" in driver_spec:
-        path_part, class_name = driver_spec.rsplit(":", 1)
-    else:
-        path_part, class_name = driver_spec, None
+    if ":" not in driver_spec:
+        typer.echo(
+            f"Error: driver spec must include a class name (e.g. my_driver.py:MyDriver), got {driver_spec!r}",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    path_part, class_name = driver_spec.rsplit(":", 1)
 
     is_file = "/" in path_part or path_part.endswith(".py") or Path(path_part).exists()
     if is_file:
@@ -129,32 +125,14 @@ def _import_driver_class(driver_spec: str) -> type:
             typer.echo(f"Error: could not import module '{path_part}': {exc}", err=True)
             raise typer.Exit(1)
 
-    if class_name:
-        cls = getattr(mod, class_name, None)
-        if cls is None:
-            typer.echo(f"Error: '{class_name}' not found in {path_part}", err=True)
-            raise typer.Exit(1)
-        if not (inspect.isclass(cls) and issubclass(cls, _Driver) and cls is not _Driver):
-            typer.echo(f"Error: '{class_name}' is not a Driver subclass", err=True)
-            raise typer.Exit(1)
-        return cls
-    else:
-        candidates = [
-            v for v in vars(mod).values()
-            if inspect.isclass(v)
-            and issubclass(v, _Driver)
-            and v is not _Driver
-            and not inspect.isabstract(v)
-        ]
-        if not candidates:
-            typer.echo(
-                f"Error: no concrete Driver subclass found in {path_part}.\n"
-                "Either subclass acquirium.Driver and implement setup()/loop(), "
-                "or specify the class name explicitly (e.g. myfile.py:MyDriver).",
-                err=True,
-            )
-            raise typer.Exit(1)
-        return candidates[0]
+    cls = getattr(mod, class_name, None)
+    if cls is None:
+        typer.echo(f"Error: '{class_name}' not found in {path_part}", err=True)
+        raise typer.Exit(1)
+    if not (inspect.isclass(cls) and issubclass(cls, _Driver) and cls is not _Driver):
+        typer.echo(f"Error: '{class_name}' is not a Driver subclass", err=True)
+        raise typer.Exit(1)
+    return cls
 
 
 def _driver_connect_cfg(
