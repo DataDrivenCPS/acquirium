@@ -55,7 +55,7 @@ interval = 10.0
 [[drivers]]
 spec           = "acquirium.BuiltinDrivers.mqtt_ingestion:MQTTIngestDriver"
 interval       = 5.0
-mqtt_source_id = "mqtt"   # datasource name used for all MQTT streams
+mqtt_source_id = "my_mqtt_data"   # datasource name used for all MQTT streams
 
 [[drivers]]
 spec     = "acquirium.BuiltinDrivers.system_metrics:SystemMetricsDriver"
@@ -72,12 +72,12 @@ id_col       = "id"          # narrow format: stream ID column
 value_col    = "value"       # narrow format: value column
 
 # Watch a directory for Excel (XLSX) files.
-[[drivers]]
-spec         = "acquirium.BuiltinDrivers.xlsx_ingest:XLSXIngestDriver"
-interval     = 5.0
-watch_dir    = "./data"
-format       = "wide"        # "auto" | "wide" | "narrow"
-time_col     = "Date"        # name of the timestamp column
-id_col       = "id"          # narrow format: stream ID column
-value_col    = "value"       # narrow format: value column
-sheets       = ["Sheet1"]    # omit to read the first sheet only
+# [[drivers]]
+# spec         = "acquirium.BuiltinDrivers.xlsx_ingest:XLSXIngestDriver"
+# interval     = 5.0
+# watch_dir    = "./data"
+# format       = "wide"        # "auto" | "wide" | "narrow"
+# time_col     = "Date"        # name of the timestamp column
+# id_col       = "id"          # narrow format: stream ID column
+# value_col    = "value"       # narrow format: value column
+# sheets       = ["Sheet1"]    # omit to read the first sheet only
