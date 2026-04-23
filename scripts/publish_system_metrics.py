@@ -5,15 +5,10 @@ On startup, inserts an RDF description of the host machine as an s223:Computer
 with s223:hasProperty links to each metric stream.  Each stream has an
 acquirium:hasExternalReference node pointing at the Acquirium TimescaleDB store.
 
-Usage via CLI (recommended):
+Usage via CLI:
     acquirium run scripts/publish_system_metrics.py --config acquirium.toml
     acquirium run scripts/publish_system_metrics.py:SystemMetricsDriver \\
         --config acquirium.toml --interval 5
-
-Usage as a standalone script (legacy):
-    uv run --with psutil scripts/publish_system_metrics.py
-    uv run --with psutil scripts/publish_system_metrics.py \\
-        --url http://myserver --port 8000 --interval 5
 """
 
 import platform
@@ -204,33 +199,3 @@ class SystemMetricsDriver(Driver):
         streams = {rn: [(ts, value)] for rn, value in sample.items()}
         result = self.aq.insert_timeseries_batch(self.src_id, streams)
         print(f"[{ts.isoformat()}] inserted {result.get('rows_inserted', '?')} rows")
-
-
-# ---------------------------------------------------------------------------
-# Standalone entry point (legacy / direct invocation)
-# ---------------------------------------------------------------------------
-
-def _main_standalone() -> None:
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Publish system metrics to Acquirium")
-    parser.add_argument("--url",      default="localhost", help="Acquirium server host")
-    parser.add_argument("--port",     default=8000, type=int, help="Acquirium server port")
-    parser.add_argument("--interval", default=10.0, type=float, help="Seconds between samples")
-    args = parser.parse_args()
-
-    aq = Acquirium(server_url=args.url, server_port=args.port)
-    driver = SystemMetricsDriver(aq, {})
-    driver.setup()
-
-    print(f"\nPublishing to {args.url}:{args.port} every {args.interval}s  (Ctrl-C to stop)\n")
-    try:
-        while True:
-            driver.loop()
-            time.sleep(args.interval)
-    except KeyboardInterrupt:
-        driver.stop()
-
-
-if __name__ == "__main__":
-    _main_standalone()
