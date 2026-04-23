@@ -2,7 +2,7 @@
 #
 # Usage:
 #   acquirium server --config acquirium.toml
-#   acquirium run scripts/publish_system_metrics.py:SystemMetricsDriver --config acquirium.toml
+#   acquirium run scripts/publish_system_metrics.py --config acquirium.toml
 
 [server]
 # Network
@@ -48,12 +48,15 @@ interval = 10.0
 
 # ---------------------------------------------------------------------------
 # Default drivers — started automatically alongside `acquirium server`.
-# Each [[drivers]] entry requires a 'spec' (module:ClassName) and may
-# override any [driver] key.
+# Each [[drivers]] entry requires a 'spec' and may override any [driver] key.
 # ---------------------------------------------------------------------------
-#
-# Example:
-#   [[drivers]]
-#   spec           = "acquirium.Server.mqtt_ingestion:MQTTIngestDriver"
-#   interval       = 5.0
-#   mqtt_source_id = "mqtt"
+
+# Uncomment to enable MQTT ingestion as a default driver:
+[[drivers]]
+spec           = "acquirium.Server.mqtt_ingestion:MQTTIngestDriver"
+interval       = 5.0
+mqtt_source_id = "mqtt"   # datasource name used for all MQTT streams
+
+[[drivers]]
+spec     = "scripts/publish_system_metrics.py"
+interval = 30.0
