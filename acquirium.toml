@@ -17,12 +17,12 @@ data_dir = ".acquirium"
 # The DuckDB file is created automatically if it does not exist.
 # NOTE: DuckDB does not support multiple server workers (uvicorn --workers N).
 #       Use timeseries_backend = "timescale" for multi-process deployments.
-timeseries_backend = "duckdb"
-duckdb_path = ".acquirium/timeseries.duckdb"
+# timeseries_backend = "duckdb"
+# duckdb_path = ".acquirium/timeseries.duckdb"
 
 # Uncomment to use TimescaleDB instead:
-# timeseries_backend = "timescale"
-# pg_dsn = "postgresql://acquirium:acquirium@localhost:5432/acquirium"
+timeseries_backend = "timescale"
+pg_dsn = "postgresql://acquirium:acquirium@localhost:5432/acquirium"
 
 # RDF graph store path (Oxigraph).  Defaults to {data_dir}/.oxigraph.
 # graph_path = ".acquirium/.oxigraph"

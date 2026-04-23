@@ -16,6 +16,10 @@ endif
 
 export ACQUIRIUM_RECREATE
 
+# Config file mounted into the acquirium container; override per-target for testing.
+ACQUIRIUM_CONFIG_FILE ?= acquirium.toml
+export ACQUIRIUM_CONFIG_FILE
+
 .PHONY: up rebuild down test watertap-up watertap-down logs ps
 
 up:
@@ -48,14 +52,16 @@ down:
 
 # Always enable for test; always tear down even on failure
 test: ACQUIRIUM_RECREATE := true
+test: ACQUIRIUM_CONFIG_FILE := acquirium.testing.toml
 test:
-	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile test up -d --build; \
+	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) ACQUIRIUM_CONFIG_FILE=$(ACQUIRIUM_CONFIG_FILE) $(COMPOSE) --profile test up -d --build; \
 	uv run pytest tests; \
 	$(MAKE) testing-down
 
 testing-up: ACQUIRIUM_RECREATE := true
+testing-up: ACQUIRIUM_CONFIG_FILE := acquirium.testing.toml
 testing-up:
-	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile test up -d --build	
+	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) ACQUIRIUM_CONFIG_FILE=$(ACQUIRIUM_CONFIG_FILE) $(COMPOSE) --profile test up -d --build
 
 
 testing-down:
