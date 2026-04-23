@@ -13,6 +13,19 @@ logger = logging.getLogger("acquirium.csv_ingest")
 
 _GLOB_PATTERNS = ("*.csv", "*.tsv", "*.xlsx")
 
+# Characters that are invalid or problematic in URIs / RDF IRIs
+_URI_UNSAFE = str.maketrans({
+    "\n": "_", "\r": "_", "\t": "_",
+    " ": "_", "(": "", ")": "",
+    "#": "", "?": "", "<": "", ">": "",
+    '"': "", "'": "", "\\": "", "`": "",
+})
+
+
+def _safe_name(s: str) -> str:
+    """Collapse whitespace and strip URI-unsafe characters from a stream name."""
+    return " ".join(s.split()).translate(_URI_UNSAFE)
+
 
 class CSVIngestDriver(Driver):
     """Watches a directory for CSV, TSV, and Excel files and ingests new rows
@@ -123,7 +136,7 @@ class CSVIngestDriver(Driver):
                 continue
 
             rel = path.relative_to(self._watch_dir)
-            batch = {f"{rel}/{stream}": rows for stream, rows in raw_batch.items()}
+            batch = {f"{rel}/{_safe_name(stream)}": rows for stream, rows in raw_batch.items()}
 
             try:
                 self._ensure_streams(batch)
@@ -214,7 +227,7 @@ class CSVIngestDriver(Driver):
             ts, stream_id, val = row
             if stream_id is None:
                 continue
-            batch.setdefault(str(stream_id), []).append((ts, val))
+            batch.setdefault(_safe_name(str(stream_id)), []).append((ts, val))
         return batch
 
     # ---------------------------------------------------------- time normalisation
