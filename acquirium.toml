@@ -58,5 +58,5 @@ interval       = 5.0
 mqtt_source_id = "mqtt"   # datasource name used for all MQTT streams
 
 [[drivers]]
-spec     = "scripts/publish_system_metrics.py:SystemMetricsDriver"
+spec     = "acquirium.Server.system_metrics:SystemMetricsDriver"
 interval = 30.0
