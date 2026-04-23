@@ -61,15 +61,18 @@ mqtt_source_id = "mqtt"   # datasource name used for all MQTT streams
 spec     = "acquirium.BuiltinDrivers.system_metrics:SystemMetricsDriver"
 interval = 30.0
 
-# Uncomment to watch a directory for CSV/TSV files and ingest them automatically.
-# Files are archived to csv_archive_dir after a successful insert.
+# Uncomment to watch a directory for CSV, TSV, and XLSX files.
+# New files and appends to existing files are picked up on each tick.
+# Row positions are tracked in watch_dir/.csv_ingest_state.json across restarts.
 # [[drivers]]
-# spec             = "acquirium.BuiltinDrivers.csv_ingest:CSVIngestDriver"
-# interval         = 5.0
-# csv_source_id    = "csv_files"
-# csv_watch_dir    = "./data/incoming"
-# csv_archive_dir  = "./data/processed"  # defaults to watch_dir/processed/ if omitted
-# csv_format       = "auto"              # "auto" | "wide" | "narrow"
-# csv_time_col     = "time"              # name of the timestamp column
-# csv_id_col       = "id"               # narrow format: stream ID column
-# csv_value_col    = "value"            # narrow format: value column
+# spec              = "acquirium.BuiltinDrivers.csv_ingest:CSVIngestDriver"
+# interval          = 5.0
+# csv_source_id     = "csv_files"
+# csv_watch_dir     = "./data/incoming"
+# csv_format        = "auto"              # "auto" | "wide" | "narrow"
+# csv_time_col      = "time"              # name of the timestamp column
+# csv_id_col        = "id"               # narrow format: stream ID column
+# csv_value_col     = "value"            # narrow format: value column
+# csv_archive       = false              # move files to archive_dir after insert
+# csv_archive_dir   = "./data/processed" # only used when csv_archive = true
+# csv_xlsx_sheets   = ["Sheet1"]         # xlsx only; omit to read the first sheet
