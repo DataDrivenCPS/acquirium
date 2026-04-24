@@ -19,12 +19,12 @@ ref:BACnetReferenceShape a sh:NodeShape ;
     sh:targetObjectsOf ref:hasExternalReference .
 
 ref:ExternalReferenceShape a sh:NodeShape ;
-    sh:property [ sh:message "All ExternalReference must have an skos:definition"^^xsd:string ;
+    sh:property [ sh:message "All ExternalReference must have an rdfs:label"^^xsd:string ;
             sh:minCount 1 ;
-            sh:path skos:definition ],
-        [ sh:message "All ExternalReference must have an rdfs:label"^^xsd:string ;
+            sh:path rdfs:label ],
+        [ sh:message "All ExternalReference must have an skos:definition"^^xsd:string ;
             sh:minCount 1 ;
-            sh:path rdfs:label ] ;
+            sh:path skos:definition ] ;
     sh:target [ a sh:SPARQLTarget ;
             sh:prefixes <https://brickschema.org/schema/Brick/ref> ;
             sh:select """\r
@@ -32,6 +32,15 @@ ref:ExternalReferenceShape a sh:NodeShape ;
      ?this rdfs:subClassOf+ ref:ExternalReference .\r
     }\r
     """^^xsd:string ] .
+
+ref:FileReferenceShape a sh:NodeShape ;
+    skos:definition "Infers a FileReference instance from the object of an hasExternalReference."^^xsd:string ;
+    sh:rule [ a sh:TripleRule ;
+            sh:condition ref:FileReference ;
+            sh:object ref:FileReference ;
+            sh:predicate rdf:type ;
+            sh:subject sh:this ] ;
+    sh:targetObjectsOf ref:hasExternalReference .
 
 ref:IFCReferenceShape a sh:NodeShape ;
     skos:definition "Infers a IFCReference instance from the object of an hasExternalReference."^^xsd:string ;
@@ -47,19 +56,19 @@ ref:InfluxDBReference a owl:Class,
     rdfs:label "InfluxDB Record Reference"^^xsd:string ;
     rdfs:subClassOf ref:TimeseriesReference ;
     skos:definition "Refers to an InfluxDB measurement within a bucket, stored on an InfluxDB server."^^xsd:string ;
-    sh:property [ sh:datatype xsd:string ;
+    sh:property [ sh:class ref:InfluxDBServer ;
+            sh:maxCount 1 ;
+            sh:minCount 1 ;
+            sh:nodeKind sh:IRI ;
+            sh:path ref:storedAt ],
+        [ sh:datatype xsd:string ;
             sh:maxCount 1 ;
             sh:minCount 1 ;
             sh:path ref:influxDBMeasurement ],
         [ sh:datatype xsd:string ;
             sh:maxCount 1 ;
             sh:minCount 1 ;
-            sh:path ref:influxDBBucket ],
-        [ sh:class ref:InfluxDBServer ;
-            sh:maxCount 1 ;
-            sh:minCount 1 ;
-            sh:nodeKind sh:IRI ;
-            sh:path ref:storedAt ] .
+            sh:path ref:influxDBBucket ] .
 
 ref:MQTTReferenceShape a sh:NodeShape ;
     skos:definition "Infers an MQTTReference instance from the object of an hasExternalReference."^^xsd:string ;
@@ -102,24 +111,15 @@ ref:csvReferenceShape a sh:NodeShape ;
             sh:subject sh:this ] ;
     sh:targetObjectsOf ref:hasExternalReference .
 
-ref:fileReferenceShape a sh:NodeShape ;
-    skos:definition "Infers a fileReference instance from the object of an hasExternalReference."^^xsd:string ;
-    sh:rule [ a sh:TripleRule ;
-            sh:condition ref:FileReference ;
-            sh:object ref:FileReference ;
-            sh:predicate rdf:type ;
-            sh:subject sh:this ] ;
-    sh:targetObjectsOf ref:hasExternalReference .
-
 ref:hasCsvReference a owl:ObjectProperty ;
     rdfs:label "hasCsvReference"^^xsd:string ;
     skos:definition "A reference to the CSV file that defines this entity"^^xsd:string .
 
 ref:hasFileReference a owl:ObjectProperty ;
     rdfs:label "hasFileReference"^^xsd:string ;
-    rdfs:range ref:fileReference ;
+    rdfs:range ref:FileReference ;
     rdfs:subPropertyOf ref:hasExternalReference ;
-    skos:definition "Relates an entity to a fileReference describing a tabular file (e.g. parquet, csv, tsv) that contains the data for this entity"^^xsd:string .
+    skos:definition "Relates an entity to a FileReference describing a tabular file (e.g. parquet, csv, tsv) that contains the data for this entity"^^xsd:string .
 
 ref:hasMQTTReference a owl:ObjectProperty ;
     rdfs:label "hasMQTTReference"^^xsd:string ;
@@ -186,17 +186,17 @@ bacnet:objectOf a owl:ObjectProperty ;
                 schemaorg:email "gtfierro@mines.edu"^^xsd:string ;
                 schemaorg:name "Gabe Fierro"^^xsd:string ] ) ;
     dcterms:title "Ref Schema"^^xsd:string ;
-    owl:versionInfo "git:ums-file-pg-addition@89cd28f1408a23f99e850fd6042ab44cc9564890 date:2026-04-25T01:41:59+03:00" ;
-    sh:declare [ sh:namespace "http://www.w3.org/2002/07/owl#"^^xsd:anyURI ;
-            sh:prefix "owl"^^xsd:string ],
-        [ sh:namespace "http://www.w3.org/2000/01/rdf-schema#"^^xsd:anyURI ;
-            sh:prefix "rdfs"^^xsd:string ],
+    owl:versionInfo "git:ums-file-pg-addition@d546b61a873153d0c9f0b21b88d462d691ba6794 date:2026-04-25T01:54:21+03:00" ;
+    sh:declare [ sh:namespace "https://brickschema.org/schema/Brick/ref#"^^xsd:anyURI ;
+            sh:prefix "ref"^^xsd:string ],
         [ sh:namespace "http://www.w3.org/ns/shacl#"^^xsd:anyURI ;
             sh:prefix "sh"^^xsd:string ],
-        [ sh:namespace "https://brickschema.org/schema/Brick/ref#"^^xsd:anyURI ;
-            sh:prefix "ref"^^xsd:string ],
+        [ sh:namespace "http://www.w3.org/2000/01/rdf-schema#"^^xsd:anyURI ;
+            sh:prefix "rdfs"^^xsd:string ],
         [ sh:namespace "http://www.w3.org/1999/02/22-rdf-syntax-ns#"^^xsd:anyURI ;
-            sh:prefix "rdf"^^xsd:string ] .
+            sh:prefix "rdf"^^xsd:string ],
+        [ sh:namespace "http://www.w3.org/2002/07/owl#"^^xsd:anyURI ;
+            sh:prefix "owl"^^xsd:string ] .
 
 ref:BACnetURI a owl:DatatypeProperty ;
     rdfs:label "BACnetURI"^^xsd:string ;
@@ -207,13 +207,13 @@ ref:InfluxDBServer a owl:Class,
     rdfs:label "InfluxDB Database Server Reference"^^xsd:string ;
     rdfs:comment "A reference to an InfluxDB database server."^^xsd:string ;
     skos:definition "Refers to an InfluxDB database server"^^xsd:string ;
-    sh:property [ sh:datatype xsd:anyURI ;
+    sh:property [ sh:datatype xsd:string ;
+            sh:minCount 1 ;
+            sh:path ref:influxDBAuthenticationMethod ],
+        [ sh:datatype xsd:anyURI ;
             sh:maxCount 1 ;
             sh:minCount 1 ;
             sh:path ref:influxDBUrl ],
-        [ sh:datatype xsd:string ;
-            sh:minCount 1 ;
-            sh:path ref:influxDBAuthenticationMethod ],
         [ sh:datatype xsd:string ;
             sh:maxCount 1 ;
             sh:minCount 1 ;
@@ -271,11 +271,11 @@ ref:ifcProject a owl:Class,
     sh:property [ sh:datatype xsd:string ;
             sh:maxCount 1 ;
             sh:minCount 1 ;
-            sh:path ref:ifcProjectID ],
+            sh:path ref:ifcFileLocation ],
         [ sh:datatype xsd:string ;
             sh:maxCount 1 ;
             sh:minCount 1 ;
-            sh:path ref:ifcFileLocation ] .
+            sh:path ref:ifcProjectID ] .
 
 ref:ifcProjectID a owl:DatatypeProperty ;
     rdfs:label "ifcProjectID"^^xsd:string ;
@@ -295,28 +295,28 @@ ref:BACnetReference a owl:Class,
     rdfs:subClassOf ref:ExternalReference ;
     skos:definition "A reference to the BACnet object represented by this entity."^^xsd:string ;
     sh:or ( [ sh:property [ a sh:PropertyShape ;
+                        sh:datatype bacnet:Property ;
+                        sh:defaultValue bacnet:Present_Value ;
+                        sh:path ref:read-property ],
+                    [ a sh:PropertyShape ;
+                        sh:datatype xsd:string ;
+                        sh:path bacnet:object-type ],
+                    [ a sh:PropertyShape ;
+                        sh:datatype xsd:string ;
+                        sh:minLength 1 ;
+                        sh:path bacnet:object-name ],
+                    [ a sh:PropertyShape ;
+                        sh:datatype xsd:string ;
+                        sh:minCount 1 ;
+                        sh:path bacnet:object-identifier ],
+                    [ a sh:PropertyShape ;
                         sh:datatype xsd:string ;
                         sh:path bacnet:description ],
                     [ a sh:PropertyShape ;
                         sh:class bacnet:EngineeringUnitsEnumerationValue ;
                         sh:maxCount 1 ;
                         sh:minCount 0 ;
-                        sh:path bacnet:units ],
-                    [ a sh:PropertyShape ;
-                        sh:datatype xsd:string ;
-                        sh:path bacnet:object-type ],
-                    [ a sh:PropertyShape ;
-                        sh:datatype xsd:string ;
-                        sh:minCount 1 ;
-                        sh:path bacnet:object-identifier ],
-                    [ a sh:PropertyShape ;
-                        sh:datatype bacnet:Property ;
-                        sh:defaultValue bacnet:Present_Value ;
-                        sh:path ref:read-property ],
-                    [ a sh:PropertyShape ;
-                        sh:datatype xsd:string ;
-                        sh:minLength 1 ;
-                        sh:path bacnet:object-name ] ] [ sh:property [ a sh:PropertyShape ;
+                        sh:path bacnet:units ] ] [ sh:property [ a sh:PropertyShape ;
                         skos:definition "Clause Q.8 BACnet URI scheme: bacnet:// <device> / <object> [ / <property> [ / <index> ]]"^^xsd:string ;
                         sh:datatype xsd:string ;
                         sh:path ref:BACnetURI ] ] ) ;
@@ -325,34 +325,20 @@ ref:BACnetReference a owl:Class,
             sh:minCount 1 ;
             sh:path bacnet:objectOf ] .
 
-ref:FileReference a owl:Class,
-        sh:NodeShape ;
-    rdfs:label "File Reference"^^xsd:string ;
-    rdfs:subClassOf ref:ExternalReference ;
-    skos:definition "Refers to a tabular file (e.g. parquet, csv, tsv) that contains the timestamped values for this entity, along with the column names holding the timestamps and values"^^xsd:string ;
-    sh:property [ sh:datatype xsd:string ;
-            sh:maxCount 1 ;
-            sh:minCount 1 ;
-            sh:path ref:valueColumnID ],
-        [ sh:datatype xsd:string ;
-            sh:maxCount 1 ;
-            sh:minCount 1 ;
-            sh:path ref:fileLocation ] .
-
 ref:IFCReference a owl:Class,
         sh:NodeShape ;
     rdfs:label "Industry Foundation Classes Reference"^^xsd:string ;
     rdfs:subClassOf ref:ExternalReference ;
     skos:definition "A reference to an entity in an IFC project which may contain additional metadata about this entity."^^xsd:string ;
     sh:property [ a sh:PropertyShape ;
+            skos:definition "Name of the entity in IFC"^^xsd:string ;
+            sh:datatype xsd:string ;
+            sh:path ref:ifcName ],
+        [ a sh:PropertyShape ;
             skos:definition "The global ID of the entity in the IFC project"^^xsd:string ;
             sh:datatype xsd:string ;
             sh:minCount 1 ;
             sh:path ref:ifcGlobalID ],
-        [ a sh:PropertyShape ;
-            skos:definition "Name of the entity in IFC"^^xsd:string ;
-            sh:datatype xsd:string ;
-            sh:path ref:ifcName ],
         [ a sh:PropertyShape ;
             skos:definition "Reference to an IFC Project object, containing the project ID"^^xsd:string ;
             sh:class ref:ifcProject ;
@@ -365,15 +351,29 @@ ref:csvReference a owl:Class,
     sh:property [ sh:datatype xsd:string ;
             sh:maxCount 1 ;
             sh:minCount 1 ;
-            sh:path ref:csvColumnID ],
+            sh:path ref:csvFileLocation ],
         [ sh:datatype xsd:string ;
             sh:maxCount 1 ;
             sh:minCount 1 ;
-            sh:path ref:csvFileLocation ] .
+            sh:path ref:csvColumnID ] .
 
 ref:storedAt a owl:DatatypeProperty ;
     rdfs:label "storedAt"^^xsd:string ;
     skos:definition "A reference to where the data for this TimeseriesReference is stored"@en .
+
+ref:FileReference a owl:Class,
+        sh:NodeShape ;
+    rdfs:label "File Reference"^^xsd:string ;
+    rdfs:subClassOf ref:ExternalReference ;
+    skos:definition "Refers to a tabular file (e.g. parquet, csv, tsv) that contains the timestamped values for this entity, along with the column names holding the timestamps and values"^^xsd:string ;
+    sh:property [ sh:datatype xsd:string ;
+            sh:maxCount 1 ;
+            sh:minCount 1 ;
+            sh:path ref:fileLocation ],
+        [ sh:datatype xsd:string ;
+            sh:maxCount 1 ;
+            sh:minCount 1 ;
+            sh:path ref:valueColumnID ] .
 
 ref:MQTTReference a owl:Class,
         sh:NodeShape ;
@@ -383,11 +383,11 @@ ref:MQTTReference a owl:Class,
     sh:property [ sh:datatype xsd:string ;
             sh:maxCount 1 ;
             sh:minCount 1 ;
-            sh:path ref:MQTTTopic ],
+            sh:path ref:MQTTBroker ],
         [ sh:datatype xsd:string ;
             sh:maxCount 1 ;
             sh:minCount 1 ;
-            sh:path ref:MQTTBroker ] .
+            sh:path ref:MQTTTopic ] .
 
 ref:TimeseriesReference a owl:Class,
         sh:NodeShape ;
