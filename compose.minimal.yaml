@@ -72,10 +72,18 @@ services:
     image: grafana/grafana:latest
     container_name: acquirium_grafana
     restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-acquirium}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-acquirium}
+      POSTGRES_DB: ${POSTGRES_DB:-acquirium_test}
     ports:
       - "${GRAFANA_PORT:-3000}:3000"
     volumes:
       - grafana_storage:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      timescaledb:
+        condition: service_healthy
     networks:
       - acquirium_net
 
