@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -15,6 +16,14 @@ from acquirium.internals.internals_namespaces import *
 from acquirium.internals.models import Point, PointCreateRequest
 from acquirium.internals.qudt_units import QUDTUnitConverter, UnitNotFound
 
+# QUDT vocab IRIs — loaded into isolated named graphs so they are queryable
+# via SPARQL without being merged into the union graph on every refresh.
+_QUDT_NAMED_GRAPHS = frozenset({
+    "http://qudt.org/vocab/unit",
+    "http://qudt.org/vocab/quantitykind",
+})
+
+_logger = logging.getLogger("acquirium.graph_store")
 
 
 def _literal_dt(value: datetime) -> Literal:
@@ -87,6 +96,8 @@ class OxigraphGraphStore:
             # First run or missing config; recreate to initialize metadata.
             self.env = OntoEnv(path=str(self.env_root), recreate=True)
 
+        self._ensure_qudt_named_graphs()
+
         self.main_graph_uri = main_graph_uri
         self.union_graph_uri = union_graph_uri
         self.include_dependency_graphs = include_dependency_graphs
@@ -149,9 +160,11 @@ class OxigraphGraphStore:
                 else self.env.list()
             )
             for ont in ontology_names:
+                if ont in _QUDT_NAMED_GRAPHS:
+                    continue  # populated once at startup; kept out of union graph
                 try:
                     closure_graph, _ = self.env.get_closure(ont)
-                except ValueError:
+                except (TypeError, ValueError):
                     closure_graph = self.env.get_closure(ont)
                 ctx = self.dataset.graph(URIRef(ont))
                 ctx.remove((None, None, None))
@@ -168,6 +181,59 @@ class OxigraphGraphStore:
 
         self._commit()
         return {"main_triples": len(main_graph), "union_triples": len(union_graph)}
+
+    def _ensure_qudt_named_graphs(self) -> None:
+        """Populate dedicated named graphs for QUDT unit and quantitykind vocabs.
+
+        Called once in __init__. Skips graphs that already have triples (persisted
+        from a previous run). Tries ontoenv first, then rdflib HTTP, then local file.
+        """
+        from acquirium.TextMatch.qudt_store import _LOCAL_UNIT_PATH, _LOCAL_QK_PATH
+        _local_map = {
+            "http://qudt.org/vocab/unit":        _LOCAL_UNIT_PATH,
+            "http://qudt.org/vocab/quantitykind": _LOCAL_QK_PATH,
+        }
+        for iri in _QUDT_NAMED_GRAPHS:
+            named_graph = self.dataset.graph(URIRef(iri))
+            if named_graph:
+                continue
+
+            loaded = False
+            try:
+                self.env.add(iri, fetch_imports=False)
+                try:
+                    closure_graph, _ = self.env.get_closure(iri)
+                except (TypeError, ValueError):
+                    closure_graph = self.env.get_closure(iri)
+                if closure_graph:
+                    for triple in closure_graph:
+                        named_graph.add(triple)
+                    _logger.info("Loaded QUDT <%s> via ontoenv (%d triples)", iri, len(named_graph))
+                    loaded = True
+            except Exception as exc:
+                _logger.warning("ontoenv load failed for <%s>: %s; falling back to rdflib", iri, exc)
+
+            if not loaded:
+                g = Graph()
+                try:
+                    g.parse(iri, format="turtle")
+                    _logger.info("Loaded QUDT <%s> via HTTP (%d triples)", iri, len(g))
+                except Exception:
+                    local = _local_map.get(iri)
+                    if local is not None:
+                        try:
+                            g.parse(str(local), format="turtle")
+                            _logger.info("Loaded QUDT <%s> from local file (%d triples)", iri, len(g))
+                        except OSError:
+                            _logger.warning("No source available for QUDT <%s>; named graph will be empty", iri)
+                            continue
+                    else:
+                        _logger.warning("No source available for QUDT <%s>; named graph will be empty", iri)
+                        continue
+                for triple in g:
+                    named_graph.add(triple)
+
+        self._commit()
 
     # -------------------- SPARQL surface --------------------
     def sparql_query(self, query: str, use_union: bool = False) -> dict:
