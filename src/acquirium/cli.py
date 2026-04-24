@@ -59,6 +59,7 @@ _SERVER_ENV_MAP: dict[str, str] = {
     "ontology_dependencies":  "ACQUIRIUM_ONTOLOGY_DEPENDENCIES",
     "embedding_model":        "ACQUIRIUM_EMBEDDING_MODEL",
     "recreate":               "ACQUIRIUM_RECREATE",
+    "workers":                "ACQUIRIUM_WORKERS",
 }
 
 
@@ -169,73 +170,6 @@ def _check_graph_change(driver: "Driver", aq: "Acquirium", known_version: int) -
     return known_version
 
 
-def _wait_for_server(host: str, port: int, *, timeout: float = 30.0, stop: threading.Event) -> bool:
-    """Poll GET /health until the server responds 200 or timeout/stop fires."""
-    import requests
-
-    deadline = time.monotonic() + timeout
-    url = f"http://{host}:{port}/health"
-    while time.monotonic() < deadline and not stop.is_set():
-        try:
-            if requests.get(url, timeout=2).status_code == 200:
-                return True
-        except Exception:
-            pass
-        stop.wait(timeout=1.0)
-    return False
-
-
-def _run_default_driver(
-    driver_entry: dict,
-    server_host: str,
-    server_port: int,
-    cfg: dict,
-    stop: threading.Event,
-) -> None:
-    """Thread target: wait for server, then run a driver from a [[drivers]] entry."""
-    from acquirium.Client.acquirium import Acquirium
-
-    spec = driver_entry["spec"]
-    driver_overrides = {k: v for k, v in driver_entry.items() if k != "spec"}
-    merged_cfg = {**cfg, "driver": {**cfg.get("driver", {}), **driver_overrides}}
-
-    driver_cfg = merged_cfg.get("driver", {})
-    connect_host, connect_port, use_ssl, interval = _driver_connect_cfg(
-        driver_cfg, fallback_host=server_host, fallback_port=server_port
-    )
-
-    # Wait for server to be ready before setup()
-    if not _wait_for_server(connect_host, connect_port, stop=stop):
-        typer.echo(f"Default driver {spec}: server did not become ready in time, aborting.", err=True)
-        return
-
-    if stop.is_set():
-        return
-
-    try:
-        driver_cls = _import_driver_class(spec)
-        aq = Acquirium(server_url=connect_host, server_port=connect_port, use_ssl=use_ssl)
-        driver = driver_cls(aq, merged_cfg)
-        driver.setup()
-        known_version = aq.graph_version()
-        typer.echo(f"Default driver ready: {driver_cls.__name__}")
-    except Exception as exc:
-        typer.echo(f"Default driver {spec} setup failed: {exc}", err=True)
-        return
-
-    try:
-        while not stop.wait(timeout=interval):
-            try:
-                known_version = _check_graph_change(driver, aq, known_version)
-                driver.loop()
-            except Exception as exc:
-                typer.echo(f"Default driver {spec} loop error: {exc}", err=True)
-    finally:
-        try:
-            driver.stop()
-        except Exception:
-            pass
-
 
 # ---------------------------------------------------------------------------
 # server subcommand
@@ -247,6 +181,7 @@ def server_cmd(
     host: Annotated[Optional[str], typer.Option("--host", help="Bind host")] = None,
     port: Annotated[Optional[int], typer.Option("--port", "-p", help="Bind port")] = None,
     reload: Annotated[bool, typer.Option("--reload", help="Enable uvicorn auto-reload (development)")] = False,
+    workers: Annotated[Optional[int], typer.Option("--workers", "-w", help="Uvicorn worker processes (timescale backend only; incompatible with --reload)")] = None,
 ) -> None:
     """Start the Acquirium FastAPI server, plus any [[drivers]] listed in the config."""
     import uvicorn
@@ -254,42 +189,36 @@ def server_cmd(
     cfg = _load_config(config)
     _apply_server_env(cfg)
 
+    # Propagate the config path so the lifespan can start [[drivers]] in-process.
+    if config:
+        os.environ.setdefault("ACQUIRIUM_CONFIG", str(config.resolve()))
+    elif Path("acquirium.toml").exists():
+        os.environ.setdefault("ACQUIRIUM_CONFIG", str(Path("acquirium.toml").resolve()))
+
     server_cfg = cfg.get("server", {})
     effective_host = host or server_cfg.get("host", "0.0.0.0")
     effective_port = port or server_cfg.get("port", 8000)
-
-    driver_entries: list[dict] = cfg.get("drivers", [])
-    stop_event = threading.Event()
+    effective_workers = (
+        workers
+        or int(os.environ.get("ACQUIRIUM_WORKERS", 0))
+        or server_cfg.get("workers", 1)
+    )
+    if reload:
+        effective_workers = 1  # uvicorn forbids workers > 1 with reload
 
     def _sigterm_handler(signum, frame):  # noqa: ANN001
-        stop_event.set()
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, _sigterm_handler)
 
-    for entry in driver_entries:
-        spec = entry.get("spec")
-        if not spec:
-            typer.echo("Warning: [[drivers]] entry missing 'spec', skipping.", err=True)
-            continue
-        t = threading.Thread(
-            target=_run_default_driver,
-            args=(entry, effective_host, effective_port, cfg, stop_event),
-            daemon=True,
-        )
-        t.start()
-        typer.echo(f"Starting default driver: {spec}")
-
     typer.echo(f"Starting Acquirium server on {effective_host}:{effective_port}")
-    try:
-        uvicorn.run(
-            "acquirium.Server.app:app",
-            host=effective_host,
-            port=effective_port,
-            reload=reload,
-        )
-    finally:
-        stop_event.set()
+    uvicorn.run(
+        "acquirium.Server.app:app",
+        host=effective_host,
+        port=effective_port,
+        reload=reload,
+        workers=effective_workers,
+    )
 
 
 # ---------------------------------------------------------------------------

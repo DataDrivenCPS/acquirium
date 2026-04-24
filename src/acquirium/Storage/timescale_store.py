@@ -47,68 +47,68 @@ class TimescaleStore(TimeseriesStore):
 
     # -------------------- table management --------------------
     def ensure_table(self) -> str:
-        with self.conn.transaction():
-            with self.conn.cursor() as cur:
-                cur.execute(
-                    f"""
-                    CREATE TABLE IF NOT EXISTS {TIMESERIES_TABLE} (
-                        point_uri TEXT NOT NULL,
-                        ts TIMESTAMPTZ NOT NULL,
-                        value TEXT
-                    );
-                    """
-                )
-                # create hypertable if not already
-                cur.execute(
-                    sql.SQL(
-                        "SELECT create_hypertable(%s, %s, if_not_exists => TRUE, migrate_data => TRUE);"
-                    ),
-                    (TIMESERIES_TABLE, "ts"),
-                )
-                # index to support lookups by id + time
-                cur.execute(
-                    f"CREATE INDEX IF NOT EXISTS idx_timeseries_point_ts ON {TIMESERIES_TABLE} (point_uri, ts);"
-                )
-                # enable compression, segment by point_uri and order by ts for efficient scans
-                cur.execute(
-                    f"ALTER TABLE {TIMESERIES_TABLE} SET (timescaledb.compress, timescaledb.compress_segmentby = 'point_uri', timescaledb.compress_orderby = 'ts');"
-                )
-                cur.execute(
-                    "SELECT add_compression_policy('timeseries', INTERVAL '7 days', if_not_exists => TRUE);"
-                )
-
-                # add unique constraint on (point_uri, ts) pairs
-                cur.execute(
-                    f"CREATE UNIQUE INDEX IF NOT EXISTS idx_timeseries_point_ts_unique ON {TIMESERIES_TABLE} (point_uri, ts);"
-                )
-                cur.execute(
-                    f"""
-                    CREATE TABLE IF NOT EXISTS {STREAMS_TABLE} (
-                        handle TEXT PRIMARY KEY,
-                        point_uri TEXT UNIQUE NOT NULL,
-                        source_id TEXT NOT NULL,
-                        ref_name TEXT NOT NULL
-                    );
-                    """
-                )
-                cur.execute(
-                    f"""
-                    CREATE TABLE IF NOT EXISTS {LOGS_TABLE} (
-                        point_uri TEXT NOT NULL,
-                        timestamp TIMESTAMPTZ NOT NULL,
-                        observed tstzrange,
-                        message TEXT NOT NULL
-                    );
-                    """
-                )
-                # index to support lookups by point_uri, timestamp
-                cur.execute(
-                    f"CREATE UNIQUE INDEX IF NOT EXISTS idx_logs_point_time ON {LOGS_TABLE} (point_uri, timestamp);"
-                )
-                # index to support lookups by observed time range
-                cur.execute(
-                    f"CREATE INDEX IF NOT EXISTS idx_logs_observed ON {LOGS_TABLE} USING GIST (observed);"
-                )
+        with self.conn.cursor() as cur:
+            cur.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {TIMESERIES_TABLE} (
+                    point_uri TEXT NOT NULL,
+                    ts TIMESTAMPTZ NOT NULL,
+                    value TEXT
+                );
+                """
+            )
+            # create hypertable if not already
+            cur.execute(
+                sql.SQL(
+                    "SELECT create_hypertable(%s, %s, if_not_exists => TRUE, migrate_data => TRUE);"
+                ),
+                (TIMESERIES_TABLE, "ts"),
+            )
+            # index to support lookups by id + time
+            cur.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_timeseries_point_ts ON {TIMESERIES_TABLE} (point_uri, ts);"
+            )
+            # enable compression, segment by point_uri and order by ts for efficient scans
+            cur.execute(
+                f"ALTER TABLE {TIMESERIES_TABLE} SET (timescaledb.compress, timescaledb.compress_segmentby = 'point_uri', timescaledb.compress_orderby = 'ts');"
+            )
+            cur.execute(
+                "SELECT add_compression_policy('timeseries', INTERVAL '7 days', if_not_exists => TRUE);"
+            )
+            # add unique constraint on (point_uri, ts) pairs
+            cur.execute(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS idx_timeseries_point_ts_unique ON {TIMESERIES_TABLE} (point_uri, ts);"
+            )
+            cur.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {STREAMS_TABLE} (
+                    handle TEXT PRIMARY KEY,
+                    point_uri TEXT UNIQUE NOT NULL,
+                    source_id TEXT NOT NULL,
+                    ref_name TEXT NOT NULL
+                );
+                """
+            )
+            cur.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {LOGS_TABLE} (
+                    point_uri TEXT NOT NULL,
+                    timestamp TIMESTAMPTZ NOT NULL,
+                    observed tstzrange,
+                    message TEXT NOT NULL
+                );
+                """
+            )
+            # index to support lookups by point_uri, timestamp
+            cur.execute(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS idx_logs_point_time ON {LOGS_TABLE} (point_uri, timestamp);"
+            )
+            # index to support lookups by observed time range
+            cur.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_logs_observed ON {LOGS_TABLE} USING GIST (observed);"
+            )
+        if not self._in_tx:
+            self.conn.commit()
         return TIMESERIES_TABLE
 
     # -------------------- mutations --------------------
