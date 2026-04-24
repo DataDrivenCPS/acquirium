@@ -162,10 +162,7 @@ class OxigraphGraphStore:
             for ont in ontology_names:
                 if ont in _QUDT_NAMED_GRAPHS:
                     continue  # populated once at startup; kept out of union graph
-                try:
-                    closure_graph, _ = self.env.get_closure(ont)
-                except (TypeError, ValueError):
-                    closure_graph = self.env.get_closure(ont)
+                closure_graph, _ = self.env.get_closure(ont)
                 ctx = self.dataset.graph(URIRef(ont))
                 ctx.remove((None, None, None))
                 for triple in closure_graph:
@@ -183,56 +180,19 @@ class OxigraphGraphStore:
         return {"main_triples": len(main_graph), "union_triples": len(union_graph)}
 
     def _ensure_qudt_named_graphs(self) -> None:
-        """Populate dedicated named graphs for QUDT unit and quantitykind vocabs.
-
-        Called once in __init__. Skips graphs that already have triples (persisted
-        from a previous run). Tries ontoenv first, then rdflib HTTP, then local file.
-        """
-        from acquirium.TextMatch.qudt_store import _LOCAL_UNIT_PATH, _LOCAL_QK_PATH
-        _local_map = {
-            "http://qudt.org/vocab/unit":        _LOCAL_UNIT_PATH,
-            "http://qudt.org/vocab/quantitykind": _LOCAL_QK_PATH,
-        }
+        """Populate dedicated named graphs for QUDT unit/quantitykind vocabs on first run."""
         for iri in _QUDT_NAMED_GRAPHS:
             named_graph = self.dataset.graph(URIRef(iri))
             if named_graph:
                 continue
-
-            loaded = False
             try:
-                self.env.add(iri, fetch_imports=False)
-                try:
-                    closure_graph, _ = self.env.get_closure(iri)
-                except (TypeError, ValueError):
-                    closure_graph = self.env.get_closure(iri)
-                if closure_graph:
-                    for triple in closure_graph:
-                        named_graph.add(triple)
-                    _logger.info("Loaded QUDT <%s> via ontoenv (%d triples)", iri, len(named_graph))
-                    loaded = True
-            except Exception as exc:
-                _logger.warning("ontoenv load failed for <%s>: %s; falling back to rdflib", iri, exc)
-
-            if not loaded:
-                g = Graph()
-                try:
-                    g.parse(iri, format="turtle")
-                    _logger.info("Loaded QUDT <%s> via HTTP (%d triples)", iri, len(g))
-                except Exception:
-                    local = _local_map.get(iri)
-                    if local is not None:
-                        try:
-                            g.parse(str(local), format="turtle")
-                            _logger.info("Loaded QUDT <%s> from local file (%d triples)", iri, len(g))
-                        except OSError:
-                            _logger.warning("No source available for QUDT <%s>; named graph will be empty", iri)
-                            continue
-                    else:
-                        _logger.warning("No source available for QUDT <%s>; named graph will be empty", iri)
-                        continue
-                for triple in g:
+                self.env.add(iri)
+                graph, _ = self.env.get_closure(iri)
+                for triple in graph:
                     named_graph.add(triple)
-
+                _logger.info("Loaded QUDT <%s> (%d triples)", iri, len(named_graph))
+            except Exception as exc:
+                _logger.warning("Could not load QUDT <%s>: %s", iri, exc)
         self._commit()
 
     # -------------------- SPARQL surface --------------------
