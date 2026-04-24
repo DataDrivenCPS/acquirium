@@ -8,6 +8,7 @@ data_dir = ".acquirium"
 
 timeseries_backend = "timescale"
 pg_dsn = "postgresql://acquirium:acquirium@localhost:5432/acquirium"
+workers = 1
 
 # RDF graph store path (Oxigraph).  Defaults to {data_dir}/.oxigraph.
 # graph_path = ".acquirium/.oxigraph"

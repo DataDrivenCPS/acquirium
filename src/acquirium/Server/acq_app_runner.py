@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -57,6 +59,12 @@ class AppRunner:
         self._refresh_pending = False
         self._refresh_active = False
 
+        _workers = int(os.getenv("ACQUIRIUM_APP_WORKERS", "4"))
+        self._app_executor = ThreadPoolExecutor(
+            max_workers=_workers,
+            thread_name_prefix="acquirium-app",
+        )
+
         # Subscribe to graph mutations from the Manager.
         self.manager.add_graph_change_listener(self._on_graph_change)
 
@@ -86,6 +94,7 @@ class AppRunner:
             self.manager.remove_graph_change_listener(self._on_graph_change)
         except Exception:
             pass
+        self._app_executor.shutdown(wait=True)
 
     # ─────────────────────── query caching ───────────────────────
 
@@ -161,7 +170,16 @@ class AppRunner:
         start=None,
         end=None,
         params: dict[str, Any] | None = None,
-    ) -> list[Output]:
+    ) -> "Future[list[Output]]":
+        """Submit an app execution to the thread pool and return a Future.
+
+        Blocks until any in-progress query refresh completes (so the app
+        always sees queries built from the latest graph), then submits to
+        the executor.  Multiple concurrent calls execute in parallel.
+
+        Call ``.result()`` on the returned Future to wait for completion
+        and retrieve outputs.
+        """
         if app_id not in self._apps:
             raise KeyError(f"Unknown app_id={app_id}")
 
@@ -189,6 +207,9 @@ class AppRunner:
             queries=cached.queries,
         )
 
+        return self._app_executor.submit(self._run_and_persist, app, ctx)
+
+    def _run_and_persist(self, app: App, ctx: AppContext) -> list[Output]:
         outputs = app.run(ctx)
         self._persist(outputs)
         return outputs

@@ -44,7 +44,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - acquirium_data:/app/.acquirium
-      - ./acquirium.toml:/app/acquirium.toml:ro
+      - ./acquirium.docker.toml:/app/acquirium.toml:ro
     ports:
       - "${ACQUIRIUM_PORT:-8000}:8000"
     environment:

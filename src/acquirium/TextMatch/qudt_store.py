@@ -10,7 +10,9 @@ from __future__ import annotations
 import gzip
 import json
 import logging
+import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -166,8 +168,16 @@ class QUDTStore:
 
     @staticmethod
     def _save_gz(path: Path, data: list[dict[str, Any]]) -> None:
-        with gzip.open(path, "wt", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=True, sort_keys=True)
+        fd, tmp_str = tempfile.mkstemp(dir=path.parent, suffix=".gz.tmp")
+        tmp = Path(tmp_str)
+        try:
+            os.close(fd)
+            with gzip.open(tmp, "wt", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=True, sort_keys=True)
+            tmp.rename(path)
+        except Exception:
+            tmp.unlink(missing_ok=True)
+            raise
 
     @staticmethod
     def _load_gz(path: Path) -> list[dict[str, Any]]:
