@@ -157,10 +157,17 @@ services:
     environment:
       - TERM=linux
       - GF_PLUGINS_PREINSTALL=grafana-clock-panel,grafana-polystat-panel
+      - POSTGRES_USER=acquirium
+      - POSTGRES_PASSWORD=acquirium
+      - POSTGRES_DB=acquirium_test
     ports:
       - '3000:3000'
     volumes:
       - 'grafana_storage:/var/lib/grafana'
+      - './docker/grafana/provisioning:/etc/grafana/provisioning:ro'
+    depends_on:
+      timescaledb:
+        condition: service_healthy
     networks:
       - acquirium_net
     profiles:
