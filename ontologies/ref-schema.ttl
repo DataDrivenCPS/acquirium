@@ -27,57 +27,11 @@ ref:ExternalReferenceShape a sh:NodeShape ;
             sh:path rdfs:label ] ;
     sh:target [ a sh:SPARQLTarget ;
             sh:prefixes <https://brickschema.org/schema/Brick/ref> ;
-            sh:select """
-    SELECT ?this WHERE {
-     ?this rdfs:subClassOf+ ref:ExternalReference .
-    }
+            sh:select """\r
+    SELECT ?this WHERE {\r
+     ?this rdfs:subClassOf+ ref:ExternalReference .\r
+    }\r
     """^^xsd:string ] .
-
-ref:HTTPHeaderShape a sh:NodeShape ;
-    skos:definition "Shape for validating HTTP headers."^^xsd:string ;
-    sh:property [ sh:datatype xsd:string ;
-            sh:maxCount 1 ;
-            sh:minCount 1 ;
-            sh:path ref:httpHeaderName ],
-        [ sh:datatype xsd:string ;
-            sh:maxCount 1 ;
-            sh:minCount 1 ;
-            sh:path ref:httpHeaderValue ] ;
-    sh:targetClass ref:HTTPHeader .
-
-ref:HTTPQueryParameterShape a sh:NodeShape ;
-    skos:definition "Shape for validating HTTP query parameters."^^xsd:string ;
-    sh:property [ sh:datatype xsd:string ;
-            sh:maxCount 1 ;
-            sh:minCount 1 ;
-            sh:path ref:httpParamName ],
-        [ sh:datatype xsd:string ;
-            sh:maxCount 1 ;
-            sh:minCount 1 ;
-            sh:path ref:httpParamValue ] ;
-    sh:targetClass ref:HTTPQueryParameter .
-
-ref:HTTPReferenceShape a sh:NodeShape ;
-    skos:definition "Infers an HTTPReference instance from the object of an hasExternalReference when httpBaseUrl is present."^^xsd:string ;
-    sh:rule [ a sh:TripleRule ;
-            sh:condition [ sh:property [ sh:minCount 1 ;
-                            sh:path ref:httpBaseUrl ] ] ;
-            sh:object ref:HTTPReference ;
-            sh:predicate rdf:type ;
-            sh:subject sh:this ] ;
-    sh:targetObjectsOf ref:hasExternalReference .
-
-ref:HTTPTimeseriesReferenceShape a sh:NodeShape ;
-    skos:definition "Infers an HTTPTimeseriesReference instance from the object of an hasExternalReference when httpBaseUrl and hasTimeseriesId are present."^^xsd:string ;
-    sh:rule [ a sh:TripleRule ;
-            sh:condition [ sh:property [ sh:minCount 1 ;
-                            sh:path ref:httpBaseUrl ],
-                        [ sh:minCount 1 ;
-                            sh:path ref:hasTimeseriesId ] ] ;
-            sh:object ref:HTTPTimeseriesReference ;
-            sh:predicate rdf:type ;
-            sh:subject sh:this ] ;
-    sh:targetObjectsOf ref:hasExternalReference .
 
 ref:IFCReferenceShape a sh:NodeShape ;
     skos:definition "Infers a IFCReference instance from the object of an hasExternalReference."^^xsd:string ;
@@ -106,6 +60,15 @@ ref:InfluxDBReference a owl:Class,
             sh:minCount 1 ;
             sh:nodeKind sh:IRI ;
             sh:path ref:storedAt ] .
+
+ref:MQTTReferenceShape a sh:NodeShape ;
+    skos:definition "Infers an MQTTReference instance from the object of an hasExternalReference."^^xsd:string ;
+    sh:rule [ a sh:TripleRule ;
+            sh:condition ref:MQTTReference ;
+            sh:object ref:MQTTReference ;
+            sh:predicate rdf:type ;
+            sh:subject sh:this ] ;
+    sh:targetObjectsOf ref:hasExternalReference .
 
 ref:PreferredShape a sh:NodeShape ;
     sh:property [ sh:message "An entity can only have one 'preferred' External Reference"^^xsd:string ;
@@ -139,19 +102,41 @@ ref:csvReferenceShape a sh:NodeShape ;
             sh:subject sh:this ] ;
     sh:targetObjectsOf ref:hasExternalReference .
 
+ref:fileReferenceShape a sh:NodeShape ;
+    skos:definition "Infers a fileReference instance from the object of an hasExternalReference."^^xsd:string ;
+    sh:rule [ a sh:TripleRule ;
+            sh:condition ref:FileReference ;
+            sh:object ref:FileReference ;
+            sh:predicate rdf:type ;
+            sh:subject sh:this ] ;
+    sh:targetObjectsOf ref:hasExternalReference .
+
 ref:hasCsvReference a owl:ObjectProperty ;
     rdfs:label "hasCsvReference"^^xsd:string ;
     skos:definition "A reference to the CSV file that defines this entity"^^xsd:string .
 
-ref:hasHTTPReference a owl:ObjectProperty ;
-    rdfs:label "hasHTTPReference"^^xsd:string ;
+ref:hasFileReference a owl:ObjectProperty ;
+    rdfs:label "hasFileReference"^^xsd:string ;
+    rdfs:range ref:fileReference ;
     rdfs:subPropertyOf ref:hasExternalReference ;
-    skos:definition "A reference to data accessible via an HTTP API endpoint."^^xsd:string .
+    skos:definition "Relates an entity to a fileReference describing a tabular file (e.g. parquet, csv, tsv) that contains the data for this entity"^^xsd:string .
 
-ref:hasHTTPTimeseriesReference a owl:ObjectProperty ;
-    rdfs:label "hasHTTPTimeseriesReference"^^xsd:string ;
-    rdfs:subPropertyOf ref:hasTimeseriesReference ;
-    skos:definition "A reference to timeseries data accessible via an HTTP API endpoint."^^xsd:string .
+ref:hasMQTTReference a owl:ObjectProperty ;
+    rdfs:label "hasMQTTReference"^^xsd:string ;
+    rdfs:range ref:MQTTReference ;
+    rdfs:subPropertyOf ref:hasExternalReference ;
+    skos:definition "Relates an entity to an MQTTReference describing the broker and topic where data for this entity is published"^^xsd:string .
+
+ref:hasTimeseriesReference a owl:ObjectProperty ;
+    rdfs:label "hasTimeseriesReference"^^xsd:string ;
+    rdfs:range ref:TimeseriesReference ;
+    rdfs:subPropertyOf ref:hasExternalReference ;
+    skos:definition "Metadata for accessing related timeseries data: Relates a data source (such as a Brick Point or 223 Property) to the TimeseriesReference that indicates where and how the data for this point is stored"@en .
+
+ref:timeColumnID a owl:DatatypeProperty ;
+    rdfs:label "timeColumnID"^^xsd:string ;
+    rdfs:range xsd:string ;
+    skos:definition "Name of the column in the referenced file that contains the timestamps"^^xsd:string .
 
 bacnet:description a bacnet:StandardProperty,
         owl:DatatypeProperty ;
@@ -201,31 +186,21 @@ bacnet:objectOf a owl:ObjectProperty ;
                 schemaorg:email "gtfierro@mines.edu"^^xsd:string ;
                 schemaorg:name "Gabe Fierro"^^xsd:string ] ) ;
     dcterms:title "Ref Schema"^^xsd:string ;
-    owl:versionInfo "git:HEAD@8af7aed29087cfe95bc3983c02b3f3e9bd684f2a date:2026-02-02T09:23:05-07:00" ;
-    sh:declare [ sh:namespace "http://www.w3.org/ns/shacl#"^^xsd:anyURI ;
-            sh:prefix "sh"^^xsd:string ],
-        [ sh:namespace "http://www.w3.org/1999/02/22-rdf-syntax-ns#"^^xsd:anyURI ;
-            sh:prefix "rdf"^^xsd:string ],
+    owl:versionInfo "git:ums-file-pg-addition@89cd28f1408a23f99e850fd6042ab44cc9564890 date:2026-04-25T01:41:59+03:00" ;
+    sh:declare [ sh:namespace "http://www.w3.org/2002/07/owl#"^^xsd:anyURI ;
+            sh:prefix "owl"^^xsd:string ],
         [ sh:namespace "http://www.w3.org/2000/01/rdf-schema#"^^xsd:anyURI ;
             sh:prefix "rdfs"^^xsd:string ],
-        [ sh:namespace "http://www.w3.org/2002/07/owl#"^^xsd:anyURI ;
-            sh:prefix "owl"^^xsd:string ],
+        [ sh:namespace "http://www.w3.org/ns/shacl#"^^xsd:anyURI ;
+            sh:prefix "sh"^^xsd:string ],
         [ sh:namespace "https://brickschema.org/schema/Brick/ref#"^^xsd:anyURI ;
-            sh:prefix "ref"^^xsd:string ] .
+            sh:prefix "ref"^^xsd:string ],
+        [ sh:namespace "http://www.w3.org/1999/02/22-rdf-syntax-ns#"^^xsd:anyURI ;
+            sh:prefix "rdf"^^xsd:string ] .
 
 ref:BACnetURI a owl:DatatypeProperty ;
     rdfs:label "BACnetURI"^^xsd:string ;
     rdfs:comment "Clause Q.8 BACnet URI scheme: bacnet:// <device> / <object> [ / <property> [ / <index> ]]"^^xsd:string .
-
-ref:HTTPTimeseriesReference a owl:Class,
-        sh:NodeShape ;
-    rdfs:label "HTTP Timeseries Reference"^^xsd:string ;
-    rdfs:subClassOf ref:HTTPReference,
-        ref:TimeseriesReference ;
-    skos:definition "A reference to timeseries data accessible via an HTTP API endpoint."^^xsd:string ;
-    sh:property [ sh:datatype xsd:string ;
-            sh:maxCount 1 ;
-            sh:path ref:httpResponsePath ] .
 
 ref:InfluxDBServer a owl:Class,
         sh:NodeShape ;
@@ -238,14 +213,24 @@ ref:InfluxDBServer a owl:Class,
             sh:path ref:influxDBUrl ],
         [ sh:datatype xsd:string ;
             sh:minCount 1 ;
-            sh:path ref:influxDBTokenLocation ],
+            sh:path ref:influxDBAuthenticationMethod ],
         [ sh:datatype xsd:string ;
             sh:maxCount 1 ;
             sh:minCount 1 ;
             sh:path ref:influxDBOrg ],
         [ sh:datatype xsd:string ;
             sh:minCount 1 ;
-            sh:path ref:influxDBAuthenticationMethod ] .
+            sh:path ref:influxDBTokenLocation ] .
+
+ref:MQTTBroker a owl:DatatypeProperty ;
+    rdfs:label "MQTTBroker"^^xsd:string ;
+    rdfs:range xsd:string ;
+    skos:definition "Address of the MQTT broker (e.g. host, host:port, or mqtt(s):// URI) that hosts the topic for this reference"^^xsd:string .
+
+ref:MQTTTopic a owl:DatatypeProperty ;
+    rdfs:label "MQTTTopic"^^xsd:string ;
+    rdfs:range xsd:string ;
+    skos:definition "Topic string on the MQTT broker that carries the messages for this entity"^^xsd:string .
 
 ref:csvColumnID a owl:DatatypeProperty ;
     rdfs:label "The column name of the CSV reference as defined in the file"^^xsd:string ;
@@ -255,60 +240,18 @@ ref:csvFileLocation a owl:DatatypeProperty ;
     rdfs:label "The Location of the CSV file"^^xsd:string ;
     rdfs:range xsd:string .
 
-ref:hasHTTPHeader a owl:ObjectProperty ;
-    rdfs:label "has HTTP Header"^^xsd:string ;
-    rdfs:range ref:HTTPHeader ;
-    skos:definition "Links to an HTTP header key-value pair."^^xsd:string .
-
-ref:hasHTTPQueryParam a owl:ObjectProperty ;
-    rdfs:label "has HTTP Query Parameter"^^xsd:string ;
-    rdfs:range ref:HTTPQueryParameter ;
-    skos:definition "Links to an HTTP query parameter key-value pair."^^xsd:string .
+ref:fileLocation a owl:DatatypeProperty ;
+    rdfs:label "fileLocation"^^xsd:string ;
+    rdfs:range xsd:string ;
+    skos:definition "Path or URI identifying the location of the referenced file"^^xsd:string .
 
 ref:hasIfcProjectReference a owl:ObjectProperty ;
     rdfs:label "hasIfcProjectReference"^^xsd:string ;
     skos:definition "A reference to the IFC Project that defines this entity"^^xsd:string .
 
-ref:hasTimeseriesReference a owl:ObjectProperty ;
-    rdfs:label "hasTimeseriesReference"^^xsd:string ;
-    rdfs:range ref:TimeseriesReference ;
-    rdfs:subPropertyOf ref:hasExternalReference ;
-    skos:definition "Metadata for accessing related timeseries data: Relates a data source (such as a Brick Point or 223 Property) to the TimeseriesReference that indicates where and how the data for this point is stored"@en .
-
-ref:httpContentType a owl:DatatypeProperty ;
-    rdfs:label "HTTP Content Type"^^xsd:string ;
-    rdfs:range xsd:string ;
-    skos:definition "The expected content type of the response (e.g., application/json, text/csv)."^^xsd:string .
-
-ref:httpHeaderName a owl:DatatypeProperty ;
-    rdfs:label "HTTP Header Name"^^xsd:string ;
-    rdfs:range xsd:string ;
-    skos:definition "The name of an HTTP header."^^xsd:string .
-
-ref:httpHeaderValue a owl:DatatypeProperty ;
-    rdfs:label "HTTP Header Value"^^xsd:string ;
-    rdfs:range xsd:string ;
-    skos:definition "The value of an HTTP header. Use env: or $ prefix to reference environment variables. Never store secrets in plaintext."^^xsd:string .
-
-ref:httpMethod a owl:DatatypeProperty ;
-    rdfs:label "HTTP Method"^^xsd:string ;
-    rdfs:range xsd:string ;
-    skos:definition "The HTTP method to use for the request (GET, POST, PUT, DELETE, etc.). Defaults to GET if not specified."^^xsd:string .
-
-ref:httpParamName a owl:DatatypeProperty ;
-    rdfs:label "HTTP Parameter Name"^^xsd:string ;
-    rdfs:range xsd:string ;
-    skos:definition "The name (key) of an HTTP query parameter."^^xsd:string .
-
-ref:httpParamValue a owl:DatatypeProperty ;
-    rdfs:label "HTTP Parameter Value"^^xsd:string ;
-    rdfs:range xsd:string ;
-    skos:definition "The value of an HTTP query parameter. Use env: or $ prefix to reference environment variables."^^xsd:string .
-
-ref:httpResponsePath a owl:DatatypeProperty ;
-    rdfs:label "HTTP Response Path"^^xsd:string ;
-    rdfs:range xsd:string ;
-    skos:definition "A JSONPath or similar expression for extracting data from the HTTP response."^^xsd:string .
+ref:hasTimeseriesId a owl:DatatypeProperty ;
+    rdfs:label "hasTimeseriesId"^^xsd:string ;
+    skos:definition "The unique identifier (primary key) for this TimeseriesReference in some database"@en .
 
 ref:ifcFileLocation a owl:DatatypeProperty ;
     rdfs:label "The location of the IFC file defining a project"^^xsd:string ;
@@ -341,30 +284,35 @@ ref:ifcProjectID a owl:DatatypeProperty ;
 ref:preferred a owl:DatatypeProperty ;
     skos:definition "An entity can have one 'preferred' External Reference. Consumers of the model should prioritize any external reference with the 'preferred' property"^^xsd:string .
 
+ref:valueColumnID a owl:DatatypeProperty ;
+    rdfs:label "valueColumnID"^^xsd:string ;
+    rdfs:range xsd:string ;
+    skos:definition "Name of the column in the referenced file that contains the values"^^xsd:string .
+
 ref:BACnetReference a owl:Class,
         sh:NodeShape ;
     rdfs:label "BACnet Reference"^^xsd:string ;
     rdfs:subClassOf ref:ExternalReference ;
     skos:definition "A reference to the BACnet object represented by this entity."^^xsd:string ;
     sh:or ( [ sh:property [ a sh:PropertyShape ;
+                        sh:datatype xsd:string ;
+                        sh:path bacnet:description ],
+                    [ a sh:PropertyShape ;
                         sh:class bacnet:EngineeringUnitsEnumerationValue ;
                         sh:maxCount 1 ;
                         sh:minCount 0 ;
                         sh:path bacnet:units ],
                     [ a sh:PropertyShape ;
                         sh:datatype xsd:string ;
-                        sh:minCount 1 ;
-                        sh:path bacnet:object-identifier ],
+                        sh:path bacnet:object-type ],
                     [ a sh:PropertyShape ;
                         sh:datatype xsd:string ;
-                        sh:path bacnet:object-type ],
+                        sh:minCount 1 ;
+                        sh:path bacnet:object-identifier ],
                     [ a sh:PropertyShape ;
                         sh:datatype bacnet:Property ;
                         sh:defaultValue bacnet:Present_Value ;
                         sh:path ref:read-property ],
-                    [ a sh:PropertyShape ;
-                        sh:datatype xsd:string ;
-                        sh:path bacnet:description ],
                     [ a sh:PropertyShape ;
                         sh:datatype xsd:string ;
                         sh:minLength 1 ;
@@ -377,26 +325,19 @@ ref:BACnetReference a owl:Class,
             sh:minCount 1 ;
             sh:path bacnet:objectOf ] .
 
-ref:HTTPReference a owl:Class,
+ref:FileReference a owl:Class,
         sh:NodeShape ;
-    rdfs:label "HTTP Reference"^^xsd:string ;
+    rdfs:label "File Reference"^^xsd:string ;
     rdfs:subClassOf ref:ExternalReference ;
-    skos:definition "A reference to data accessible via an HTTP API endpoint."^^xsd:string ;
+    skos:definition "Refers to a tabular file (e.g. parquet, csv, tsv) that contains the timestamped values for this entity, along with the column names holding the timestamps and values"^^xsd:string ;
     sh:property [ sh:datatype xsd:string ;
-            sh:in ( "GET"^^xsd:string "POST"^^xsd:string "PUT"^^xsd:string ) ;
-            sh:maxCount 1 ;
-            sh:path ref:httpMethod ],
-        [ sh:datatype xsd:anyURI ;
             sh:maxCount 1 ;
             sh:minCount 1 ;
-            sh:path ref:httpBaseUrl ],
+            sh:path ref:valueColumnID ],
         [ sh:datatype xsd:string ;
             sh:maxCount 1 ;
-            sh:path ref:httpContentType ],
-        [ sh:class ref:HTTPQueryParameter ;
-            sh:path ref:hasHTTPQueryParam ],
-        [ sh:class ref:HTTPHeader ;
-            sh:path ref:hasHTTPHeader ] .
+            sh:minCount 1 ;
+            sh:path ref:fileLocation ] .
 
 ref:IFCReference a owl:Class,
         sh:NodeShape ;
@@ -404,11 +345,6 @@ ref:IFCReference a owl:Class,
     rdfs:subClassOf ref:ExternalReference ;
     skos:definition "A reference to an entity in an IFC project which may contain additional metadata about this entity."^^xsd:string ;
     sh:property [ a sh:PropertyShape ;
-            skos:definition "Reference to an IFC Project object, containing the project ID"^^xsd:string ;
-            sh:class ref:ifcProject ;
-            sh:minCount 1 ;
-            sh:path ref:hasIfcProjectReference ],
-        [ a sh:PropertyShape ;
             skos:definition "The global ID of the entity in the IFC project"^^xsd:string ;
             sh:datatype xsd:string ;
             sh:minCount 1 ;
@@ -416,7 +352,12 @@ ref:IFCReference a owl:Class,
         [ a sh:PropertyShape ;
             skos:definition "Name of the entity in IFC"^^xsd:string ;
             sh:datatype xsd:string ;
-            sh:path ref:ifcName ] .
+            sh:path ref:ifcName ],
+        [ a sh:PropertyShape ;
+            skos:definition "Reference to an IFC Project object, containing the project ID"^^xsd:string ;
+            sh:class ref:ifcProject ;
+            sh:minCount 1 ;
+            sh:path ref:hasIfcProjectReference ] .
 
 ref:csvReference a owl:Class,
         sh:NodeShape ;
@@ -430,32 +371,23 @@ ref:csvReference a owl:Class,
             sh:minCount 1 ;
             sh:path ref:csvFileLocation ] .
 
-ref:hasTimeseriesId a owl:DatatypeProperty ;
-    rdfs:label "hasTimeseriesId"^^xsd:string ;
-    skos:definition "The unique identifier (primary key) for this TimeseriesReference in some database"@en .
-
 ref:storedAt a owl:DatatypeProperty ;
     rdfs:label "storedAt"^^xsd:string ;
     skos:definition "A reference to where the data for this TimeseriesReference is stored"@en .
 
-ref:HTTPHeader a owl:Class ;
-    rdfs:label "HTTP Header"^^xsd:string ;
-    skos:definition "A key-value pair representing an HTTP header."^^xsd:string .
-
-ref:HTTPQueryParameter a owl:Class ;
-    rdfs:label "HTTP Query Parameter"^^xsd:string ;
-    skos:definition "A key-value pair representing an HTTP query parameter."^^xsd:string .
-
-ref:httpBaseUrl a owl:DatatypeProperty ;
-    rdfs:label "HTTP Base URL"^^xsd:string ;
-    rdfs:range xsd:anyURI ;
-    skos:definition "The base URL of the HTTP API endpoint, excluding query parameters."^^xsd:string .
-
-ref:ExternalReference a owl:Class,
+ref:MQTTReference a owl:Class,
         sh:NodeShape ;
-    rdfs:label "External reference"^^xsd:string ;
-    rdfs:subClassOf <http://data.ashrae.org/standard223#ExternalReference> ;
-    skos:definition "The parent class of all external reference types"^^xsd:string .
+    rdfs:label "MQTT Reference"^^xsd:string ;
+    rdfs:subClassOf ref:ExternalReference ;
+    skos:definition "Refers to an MQTT stream identified by a broker and topic that this entity publishes to or consumes from"^^xsd:string ;
+    sh:property [ sh:datatype xsd:string ;
+            sh:maxCount 1 ;
+            sh:minCount 1 ;
+            sh:path ref:MQTTTopic ],
+        [ sh:datatype xsd:string ;
+            sh:maxCount 1 ;
+            sh:minCount 1 ;
+            sh:path ref:MQTTBroker ] .
 
 ref:TimeseriesReference a owl:Class,
         sh:NodeShape ;
@@ -471,6 +403,12 @@ ref:TimeseriesReference a owl:Class,
             sh:datatype xsd:string ;
             sh:minCount 1 ;
             sh:path ref:hasTimeseriesId ] .
+
+ref:ExternalReference a owl:Class,
+        sh:NodeShape ;
+    rdfs:label "External reference"^^xsd:string ;
+    rdfs:subClassOf <http://data.ashrae.org/standard223#ExternalReference> ;
+    skos:definition "The parent class of all external reference types"^^xsd:string .
 
 ref:hasExternalReference a owl:ObjectProperty ;
     rdfs:label "hasExternalReference"^^xsd:string ;
