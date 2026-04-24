@@ -182,7 +182,7 @@ class Manager:
             model_name=_emb_model,
             cache_dir=base / "embedding_cache" / "qudt",
         )
-        self._qudt_store = QUDTStore(data_dir=base)
+        self._qudt_store = QUDTStore(data_dir=base, dataset=graph.dataset)
 
         # Kept for backward compat — points to graph matcher
         self.embedding_matcher = self._graph_matcher
@@ -194,10 +194,9 @@ class Manager:
             "qudt":  {"state": "idle", "concepts": 0, "surfaces": 0, "error": None, "last_built": None, "duration_s": None},
         }
 
-        # Startup: graph index (sync if cache hit, background if miss)
+        # Startup: both indexes run synchronously so drivers see a ready matcher.
         self._startup_graph_index()
-        # Startup: QUDT index (always background)
-        self._executor.submit(self._startup_qudt_task)
+        self._startup_qudt_task()
 
     
     @classmethod
