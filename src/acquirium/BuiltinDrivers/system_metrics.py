@@ -67,10 +67,9 @@ class SystemMetricsDriver(Driver):
             "net_bytes_sent":    net.bytes_sent,
             "net_bytes_recv":    net.bytes_recv,
         }
-        result = self.aq.insert_timeseries_batch(self.src_id, {
+        self.aq.insert_timeseries_batch(self.src_id, {
             ref: [(ts, val)] for ref, val in sample.items()
         })
-        print(f"[{ts.isoformat()}] inserted {result.get('rows_inserted', '?')} rows")
 
     def _insert_host_graph(self, hostname: str) -> None:
         try:

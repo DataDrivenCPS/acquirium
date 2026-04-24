@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-import asyncio
 import io
 import logging
+import os
+import threading
+import time
+import tomllib
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated, Any, Optional, Iterator
 
 from fastapi import Body, FastAPI, HTTPException, Request, UploadFile, File, Form
@@ -31,7 +35,108 @@ from acquirium.internals.internals_namespaces import PLANT_URI
 import pyarrow.ipc as ipc
 import pyarrow as pa
 
+from acquirium.Server.insert_stats import insert_stats, start_insert_summary_thread
+
 log = logging.getLogger("acquirium.api")
+
+# ---------------------------------------------------------------------------
+# Insert-timeseries stats aggregation (suppresses per-request access logs)
+# ---------------------------------------------------------------------------
+
+
+class _SuppressInsertTimeseriesFilter(logging.Filter):
+    """Drop uvicorn access-log lines for POST /insert_timeseries."""
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return not ("POST /insert_timeseries" in msg and "HTTP/1" in msg)
+
+
+def _start_insert_summary_thread(stop_event: threading.Event, interval: float = 30.0) -> threading.Thread:
+    return start_insert_summary_thread(stop_event, interval)
+
+
+# ---------------------------------------------------------------------------
+# In-process driver helpers
+# ---------------------------------------------------------------------------
+
+def _run_inprocess_driver(
+    entry: dict,
+    manager: Manager,
+    cfg: dict,
+    stop_event: threading.Event,
+) -> None:
+    """Thread target: run a single [[drivers]] entry using DirectAcquirium."""
+    from acquirium.Server.direct_client import DirectAcquirium
+    from acquirium.cli import _import_driver_class
+
+    spec = entry["spec"]
+    driver_overrides = {k: v for k, v in entry.items() if k != "spec"}
+    merged_cfg = {**cfg, "driver": {**cfg.get("driver", {}), **driver_overrides}}
+    interval = float(driver_overrides.get("interval", cfg.get("driver", {}).get("interval", 10.0)))
+
+    try:
+        driver_cls = _import_driver_class(spec)
+        direct_aq = DirectAcquirium(manager, origin=spec)
+        driver = driver_cls(direct_aq, merged_cfg)
+        driver.setup()
+        known_version = manager.graph_version()
+        log.info("In-process driver ready: %s", driver_cls.__name__)
+    except Exception:
+        log.exception("In-process driver %s setup failed; thread exiting", spec)
+        return
+
+    try:
+        while not stop_event.wait(timeout=interval):
+            try:
+                v = manager.graph_version()
+                if v != known_version:
+                    known_version = v
+                    try:
+                        driver.on_graph_change()
+                    except Exception:
+                        log.exception("In-process driver %s on_graph_change error", spec)
+                driver.loop()
+            except Exception:
+                log.exception("In-process driver %s loop error", spec)
+    finally:
+        try:
+            driver.stop()
+        except Exception:
+            log.exception("In-process driver %s stop error", spec)
+
+
+def _start_inprocess_drivers(
+    manager: Manager,
+    stop_event: threading.Event,
+) -> list[threading.Thread]:
+    """Read [[drivers]] from ACQUIRIUM_CONFIG and start each as a daemon thread."""
+    config_path = os.environ.get("ACQUIRIUM_CONFIG")
+    if not config_path:
+        return []
+
+    try:
+        with open(config_path, "rb") as fh:
+            cfg = tomllib.load(fh)
+    except Exception:
+        log.warning("Could not load config from ACQUIRIUM_CONFIG=%s; skipping in-process drivers", config_path)
+        return []
+
+    threads: list[threading.Thread] = []
+    for entry in cfg.get("drivers", []):
+        spec = entry.get("spec")
+        if not spec:
+            log.warning("[[drivers]] entry missing 'spec'; skipping")
+            continue
+        t = threading.Thread(
+            target=_run_inprocess_driver,
+            args=(entry, manager, cfg, stop_event),
+            daemon=True,
+            name=f"acquirium-driver-{spec.rsplit(':', 1)[-1]}",
+        )
+        t.start()
+        threads.append(t)
+        log.info("Started in-process driver: %s", spec)
+    return threads
 
 
 class Health(BaseModel):
@@ -88,6 +193,7 @@ async def lifespan(app: FastAPI):
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    logging.getLogger("uvicorn.access").addFilter(_SuppressInsertTimeseriesFilter())
 
     m = Manager.from_env()
     app.state.manager = m
@@ -101,10 +207,14 @@ async def lifespan(app: FastAPI):
         finally:
             raise
 
+    driver_stop = threading.Event()
+    _start_inprocess_drivers(m, driver_stop)
+    _start_insert_summary_thread(driver_stop, interval=10.0)
+
     try:
         yield
     finally:
-        # FastAPI shutdown
+        driver_stop.set()
         try:
             m.close()
         except Exception:
@@ -274,6 +384,11 @@ def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[st
                 point_uri=s.point_uri,
                 replace=s.replace,
             )
+        insert_stats.record(
+            origin="http",
+            rows=sum(len(s.values) for s in streams),
+            streams=[s.ref_name or str(s.point_uri) for s in streams],
+        )
         return {"ok": True, "rows_inserted": total}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
