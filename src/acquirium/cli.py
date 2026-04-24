@@ -26,7 +26,6 @@ import inspect
 import os
 import signal
 import sys
-import threading
 import time
 import tomllib
 from pathlib import Path
