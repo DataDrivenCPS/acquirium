@@ -1,4 +1,5 @@
 @prefix acq: <urn:acquirium#> .
+@prefix ref: <https://brickschema.org/schema/Brick/ref#> .
 @prefix nawi: <urn:nawi-water-ontology#> .
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix qudt: <http://qudt.org/schema/qudt/> .
@@ -15,14 +16,13 @@ wbs:AS_Aeration_Basin-mlss-concentration a s223:QuantifiableObservableProperty ;
     s223:ofSubstance s223:Solids-SuspendedSolids ;
     qudt:hasQuantityKind qudtqk:Density ;
     qudt:hasUnit unit:MilliGM-PER-L ;
-    acq:hasExternalReference wbs:AS_Aeration_Basin-mlss-concentration_mqtt_ref .
+    ref:hasExternalReference wbs:AS_Aeration_Basin-mlss-concentration_mqtt_ref .
 
-wbs:AS_Aeration_Basin-mlss-concentration_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/AS_Aeration_Basin-mlss-concentration" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:AS_Aeration_Basin-mlss-concentration_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/AS_Aeration_Basin-mlss-concentration" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:AS_Aeration_Basin-ph a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Acidity ;

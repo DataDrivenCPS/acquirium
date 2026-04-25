@@ -1,5 +1,6 @@
 @prefix nawi: <urn:nawi-water-ontology#> .
 @prefix ns1: <urn:acquirium#> .
+@prefix ref: <https://brickschema.org/schema/Brick/ref#> .
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix qudt: <http://qudt.org/schema/qudt/> .
 @prefix qudtqk: <http://qudt.org/vocab/quantitykind/> .
@@ -27,61 +28,56 @@ wbs:Pump1-in-flow-mass-seawater a s223:QuantifiableObservableProperty ;
     s223:ofMedium nawi:Water-Seawater ;
     qudt:hasQuantityKind qudtqk:MassFlowRate ;
     qudt:hasUnit unit:KiloGM-PER-SEC ;
-    ns1:hasExternalReference wbs:pump_inlet_flow_mass_seawater_mqtt_ref .
+    ref:hasExternalReference wbs:pump_inlet_flow_mass_seawater_mqtt_ref .
 
 wbs:Pump1-in-flow-mass-water a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     qudt:hasQuantityKind qudtqk:MassFlowRate ;
     qudt:hasUnit unit:KiloGM-PER-SEC ;
-    ns1:hasExternalReference wbs:pump_inlet_flow_mass_water_mqtt_ref .
+    ref:hasExternalReference wbs:pump_inlet_flow_mass_water_mqtt_ref .
 
 wbs:Pump1-in-pressure a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Pressure ;
-    ns1:hasExternalReference wbs:pump_inlet_pressure_mqtt_ref .
+    ref:hasExternalReference wbs:pump_inlet_pressure_mqtt_ref .
 
 wbs:Pump1-in-temperature a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Temperature ;
-    ns1:hasExternalReference wbs:pump_inlet_temperature_mqtt_ref .
+    ref:hasExternalReference wbs:pump_inlet_temperature_mqtt_ref .
 
 wbs:Pump1-out a s223:OutletConnectionPoint ;
     s223:hasMedium s223:Medium-Water .
 
 wbs:PumpWork a s223:QuantifiableObservableProperty ;
     rdfs:comment "SOFT SENSOR" ;
-    ns1:hasExternalReference wbs:pump_work_mqtt_ref .
+    ref:hasExternalReference wbs:pump_work_mqtt_ref .
 
-wbs:pump_inlet_flow_mass_seawater_mqtt_ref a ns1:MQTTReference ;
-    ns1:Broker "mosquitto" ;
-    ns1:Port "1883" ;
-    ns1:Topic "saltwater_flow_mass_rate" ;
-    ns1:time_key "Timestamp" ;
-    ns1:value_key "Value" .
+wbs:pump_inlet_flow_mass_seawater_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "saltwater_flow_mass_rate" ;
+    ns1:timeKey "Timestamp" ;
+    ns1:valueKey "Value" .
 
-wbs:pump_inlet_flow_mass_water_mqtt_ref a ns1:MQTTReference ;
-    ns1:Broker "mosquitto" ;
-    ns1:Port "1883" ;
-    ns1:Topic "water_flow_mass_rate" ;
-    ns1:time_key "Timestamp" ;
-    ns1:value_key "Value" .
+wbs:pump_inlet_flow_mass_water_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "water_flow_mass_rate" ;
+    ns1:timeKey "Timestamp" ;
+    ns1:valueKey "Value" .
 
-wbs:pump_inlet_pressure_mqtt_ref a ns1:MQTTReference ;
-    ns1:Broker "mosquitto" ;
-    ns1:Port "1883" ;
-    ns1:Topic "pump_inlet_pressure" ;
-    ns1:time_key "Timestamp" ;
-    ns1:value_key "Value" .
+wbs:pump_inlet_pressure_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "pump_inlet_pressure" ;
+    ns1:timeKey "Timestamp" ;
+    ns1:valueKey "Value" .
 
-wbs:pump_inlet_temperature_mqtt_ref a ns1:MQTTReference ;
-    ns1:Broker "mosquitto" ;
-    ns1:Port "1883" ;
-    ns1:Topic "pump_inlet_temperature" ;
-    ns1:time_key "Timestamp" ;
-    ns1:value_key "Value" .
+wbs:pump_inlet_temperature_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "pump_inlet_temperature" ;
+    ns1:timeKey "Timestamp" ;
+    ns1:valueKey "Value" .
 
-wbs:pump_work_mqtt_ref a ns1:MQTTReference ;
-    ns1:Broker "mosquitto" ;
-    ns1:Port "1883" ;
-    ns1:Topic "pump_work" ;
-    ns1:time_key "Timestamp" ;
-    ns1:value_key "Value" .
+wbs:pump_work_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "pump_work" ;
+    ns1:timeKey "Timestamp" ;
+    ns1:valueKey "Value" .
 

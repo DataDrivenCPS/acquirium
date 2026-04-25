@@ -289,9 +289,8 @@ def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[st
 async def ingest_external_reference(
     data_uri: str = Form(...),
     ref_uri: str = Form(...),
-    ref_type: str = Form(...),          # PARQUET_REF or CSV_REF URI as string
-    time_column_no: int = Form(0),
-    value_column_no: int = Form(1),
+    time_column: str | None = Form(None),
+    value_column: str | None = Form(None),
     file: UploadFile = File(...),
 ) -> dict[str, Any]:
     try:
@@ -299,10 +298,9 @@ async def ingest_external_reference(
         n = app.state.manager.ingest_reference_bytes(
             data_uri=data_uri,
             ref_uri=ref_uri,
-            ref_type=ref_type,
             content=content,
-            time_column_no=time_column_no,
-            value_column_no=value_column_no,
+            time_column=time_column,
+            value_column=value_column,
             filename=file.filename or "upload",
         )
         return {"ok": True, "rows_ingested": n}
