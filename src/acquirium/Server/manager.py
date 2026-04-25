@@ -42,6 +42,50 @@ def _wipe_dir_contents(base: Path) -> None:
         else:
             p.unlink()
 
+
+def _resolve_column(columns: list[str], identifier: str | None, default_index: int) -> str:
+    """Resolve a ref:timeColumnID / ref:valueColumnID literal to an actual column.
+
+    Tries the literal as a column name first. If it parses as an int and is
+    not present as a name, falls back to a positional index. Allows older
+    fixtures that hard-coded numeric column indices to keep working.
+    """
+    if identifier is None or identifier == "":
+        if default_index >= len(columns):
+            raise ValueError(f"File has only {len(columns)} columns; default index {default_index} out of range")
+        return columns[default_index]
+    if identifier in columns:
+        return identifier
+    try:
+        idx = int(identifier)
+    except ValueError as exc:
+        raise ValueError(f"Column {identifier!r} not found in file (columns={columns!r})") from exc
+    if idx < 0 or idx >= len(columns):
+        raise ValueError(f"Column index {idx} out of range (file has {len(columns)} columns)")
+    return columns[idx]
+
+
+def _parse_mqtt_broker(raw: str) -> tuple[str, int]:
+    """Split a ref:MQTTBroker literal into (host, port).
+
+    Accepts ``"host"``, ``"host:port"``, or ``"mqtt(s)://host[:port]"``.
+    Defaults to port 1883 (8883 for ``mqtts://``) when no port is given.
+    """
+    s = raw.strip()
+    default_port = 1883
+    if "://" in s:
+        scheme, _, rest = s.partition("://")
+        if scheme.lower() == "mqtts":
+            default_port = 8883
+        s = rest.split("/", 1)[0]
+    if ":" in s:
+        host, _, port_str = s.rpartition(":")
+        try:
+            return host or "localhost", int(port_str)
+        except ValueError:
+            return s, default_port
+    return s or "localhost", default_port
+
 @dataclass
 class Manager:
     timescale: TimescaleStore
@@ -216,18 +260,22 @@ class Manager:
 
     def _connect_mqtt_streams_from_graph(self) -> int:
         """
-        Scan graph for MQTTReference nodes attached to data nodes by hasExternalReference
-        and start background subscribers.
+        Scan graph for ref:MQTTReference nodes attached to data nodes by
+        ref:hasExternalReference and start background subscribers.
+
+        Per ref-schema.ttl, ref:MQTTBroker is a single string that may be
+        ``"host"``, ``"host:port"``, or a ``mqtt(s)://...`` URI; the port is
+        parsed out here rather than carried as a separate predicate.
+
         Returns number of subscriptions ensured.
         """
         q = f"""
-        SELECT ?data ?ref ?broker ?port ?topic ?tkey ?vkey
+        SELECT ?data ?ref ?broker ?topic ?tkey ?vkey
         WHERE {{
           ?data <{HAS_EXTERNAL_REFERENCE}> ?ref .
           ?ref a <{MQTT_REFERENCE}> .
-          OPTIONAL {{ ?ref <{BROKER}> ?broker . }}
-          OPTIONAL {{ ?ref <{PORT}> ?port . }}
-          OPTIONAL {{ ?ref <{TOPIC}> ?topic . }}
+          OPTIONAL {{ ?ref <{MQTT_BROKER}> ?broker . }}
+          OPTIONAL {{ ?ref <{MQTT_TOPIC}> ?topic . }}
           OPTIONAL {{ ?ref <{TIME_KEY}> ?tkey . }}
           OPTIONAL {{ ?ref <{VALUE_KEY}> ?vkey . }}
         }}
@@ -236,20 +284,21 @@ class Manager:
         rows = res.get("rows", [])
 
         count = 0
-        for data_uri, ref_uri, broker, port, topic, tkey, vkey in rows:
-            logger.info("Found MQTT reference: %s %s %s %s %s %s %s",
-                        data_uri, ref_uri, broker, port, topic, tkey, vkey)
-            broker_s = (broker or "localhost").strip('"')
-            port_s = (port or "1883").strip('"')
+        for data_uri, ref_uri, broker, topic, tkey, vkey in rows:
+            logger.info("Found MQTT reference: %s %s broker=%s topic=%s tkey=%s vkey=%s",
+                        data_uri, ref_uri, broker, topic, tkey, vkey)
+            broker_raw = (broker or "localhost").strip('"')
             topic_s = (topic or "").strip('"')
             if not topic_s:
                 continue
 
+            host, port_s = _parse_mqtt_broker(broker_raw)
+
             spec = MQTTStreamSpec(
                 point_uri=str(data_uri),
                 ref_uri=str(ref_uri),
-                broker=broker_s,
-                port=int(port_s),
+                broker=host,
+                port=port_s,
                 topic=topic_s,
                 time_key=(tkey or "Timestamp").strip('"'),
                 value_key=(vkey or "Value").strip('"'),
@@ -260,23 +309,28 @@ class Manager:
         return count
 
     def _scan_pg_references_from_graph(self) -> int:
-        """Scan graph for PGReference nodes and register them in the registry."""
+        """Scan graph for external Postgres timeseries references.
+
+        ref:TimeseriesReference is dual-purpose: Acquirium-managed streams use
+        it with ``acq:sourceId``/``acq:refName`` (handled by
+        ``_sync_stream_handles_from_graph``); external Postgres historians use
+        it with ``ref:storedAt`` as a literal DSN. We disambiguate by
+        requiring storedAt to be a Literal that begins with ``postgresql://``
+        or ``postgres://``.
+        """
         q = f"""
-        SELECT ?data ?ref ?dsn ?host ?port ?db ?user ?pass ?table ?query ?tcol ?vcol ?pfilter
+        SELECT ?data ?ref ?dsn ?table ?query ?tcol ?vcol ?pfilter
         WHERE {{
           ?data <{HAS_EXTERNAL_REFERENCE}> ?ref .
-          ?ref a <{PG_REFERENCE}> .
-          OPTIONAL {{ ?ref <{PG_DSN}> ?dsn . }}
-          OPTIONAL {{ ?ref <{PG_HOST}> ?host . }}
-          OPTIONAL {{ ?ref <{PG_PORT}> ?port . }}
-          OPTIONAL {{ ?ref <{PG_DB}> ?db . }}
-          OPTIONAL {{ ?ref <{PG_USER}> ?user . }}
-          OPTIONAL {{ ?ref <{PG_PASS}> ?pass . }}
-          OPTIONAL {{ ?ref <{PG_TABLE}> ?table . }}
-          OPTIONAL {{ ?ref <{PG_QUERY}> ?query . }}
-          OPTIONAL {{ ?ref <{PG_TIME_COL}> ?tcol . }}
-          OPTIONAL {{ ?ref <{PG_VALUE_COL}> ?vcol . }}
-          OPTIONAL {{ ?ref <{PG_POINT_FILTER}> ?pfilter . }}
+          ?ref a <{TIMESERIES_REFERENCE}> .
+          ?ref <{STORED_AT}> ?dsn .
+          FILTER(isLiteral(?dsn))
+          FILTER(STRSTARTS(STR(?dsn), "postgresql://") || STRSTARTS(STR(?dsn), "postgres://"))
+          OPTIONAL {{ ?ref <{TIMESERIES_TABLE}> ?table . }}
+          OPTIONAL {{ ?ref <{TIMESERIES_QUERY}> ?query . }}
+          OPTIONAL {{ ?ref <{TIMESERIES_TIME_COLUMN}> ?tcol . }}
+          OPTIONAL {{ ?ref <{TIMESERIES_VALUE_COLUMN}> ?vcol . }}
+          OPTIONAL {{ ?ref <{TIMESERIES_POINT_FILTER}> ?pfilter . }}
         }}
         """
         res = self.graph_store.sparql_query(q, use_union=True)
@@ -284,16 +338,11 @@ class Manager:
 
         count = 0
         for row in rows:
-            (data_uri, ref_uri, dsn, host, port, db, user, passwd,
-             table, custom_query, tcol, vcol, pfilter) = row
+            (data_uri, ref_uri, dsn, table, custom_query, tcol, vcol, pfilter) = row
             try:
                 s = lambda v: str(v).strip().strip('"') if v else None
-                resolved = resolve_dsn(
-                    dsn=s(dsn), host=s(host), port=s(port),
-                    db=s(db), user=s(user), password=s(passwd),
-                )
                 info = PGReferenceInfo(
-                    dsn=resolved,
+                    dsn=s(dsn) or "",
                     table=s(table),
                     custom_query=s(custom_query),
                     time_col=s(tcol) or "time",
@@ -303,22 +352,24 @@ class Manager:
                 self.pg_registry.register(str(ref_uri), info)
                 count += 1
             except Exception:
-                logger.warning("Failed to register PGReference %s", ref_uri, exc_info=True)
+                logger.warning("Failed to register external Postgres reference %s", ref_uri, exc_info=True)
 
         if count:
-            logger.info("Registered %d PGReference(s) from graph", count)
+            logger.info("Registered %d external Postgres reference(s) from graph", count)
         return count
 
     def _sync_stream_handles_from_graph(self) -> int:
-        """Scan the graph for Brick-style timeseries references and sync the streams handle table.
+        """Sync the streams handle table from Acquirium-managed timeseries refs.
 
-        Finds every pattern of the form:
+        Matches every pattern of the form:
             ?point  ref:hasExternalReference  ?ref_node .
             ?ref_node  a  ref:TimeseriesReference ;
-                       acquirium:sourceId  ?source_id ;
-                       acquirium:refName   ?ref_name .
+                       acq:sourceId  ?source_id ;
+                       acq:refName   ?ref_name .
         Recomputes the handle from (source_id, ref_name) and upserts into the
-        streams table.
+        streams table. External PG references (which have storedAt as a literal
+        DSN and no sourceId/refName) are skipped here and handled by
+        ``_scan_pg_references_from_graph``.
         """
         q = f"""
         SELECT ?point ?source_id ?ref_name
@@ -1125,12 +1176,20 @@ class Manager:
             *,
             data_uri: str,
             ref_uri: str,
-            ref_type: str,
             content: bytes,
-            time_column_no: int = 0,
-            value_column_no: int = 1,
+            time_column: str | None = None,
+            value_column: str | None = None,
             filename: str = "upload",
         ) -> int:
+        """Ingest the contents of a ref:FileReference upload into Timescale.
+
+        ``time_column`` / ``value_column`` are column identifiers as written
+        on the reference node (``ref:timeColumnID`` / ``ref:valueColumnID``).
+        Each is first tried as a column name; a numeric string falls back to
+        a positional index. ``time_column`` defaults to the first column,
+        ``value_column`` to the second. The file format (parquet vs csv) is
+        inferred from the ``filename`` extension.
+        """
         import polars as pl
         from io import BytesIO
         import time
@@ -1152,17 +1211,18 @@ class Manager:
 
         try:
             bio = BytesIO(content)
-
-            if ref_type == str(PARQUET_REF):
-                df = pl.read_parquet(bio, columns=[time_column_no, value_column_no])
-            elif ref_type == str(CSV_REF):
-                df = pl.read_csv(bio, columns=[time_column_no, value_column_no])
+            ext = Path(filename).suffix.lower()
+            if ext in {".parquet", ".pq"}:
+                full = pl.read_parquet(bio)
+            elif ext in {".csv", ".tsv", ".txt"}:
+                full = pl.read_csv(bio, separator="\t" if ext == ".tsv" else ",")
             else:
-                raise ValueError(f"Unsupported reference type: {ref_type}")
+                raise ValueError(f"Unsupported file extension for {filename!r}; expected parquet or csv/tsv")
 
-            # Rename selected columns to ts/value regardless of original names
-            if df.width != 2:
-                raise ValueError(f"Expected 2 columns after selection, got {df.width}")
+            cols = full.columns
+            t_col = _resolve_column(cols, time_column, default_index=0)
+            v_col = _resolve_column(cols, value_column, default_index=1)
+            df = full.select([t_col, v_col])
 
             df = df.rename({df.columns[0]: "ts", df.columns[1]: "value"})
 

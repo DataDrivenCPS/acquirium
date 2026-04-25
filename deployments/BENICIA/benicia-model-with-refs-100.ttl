@@ -1,4 +1,5 @@
 @prefix acq: <urn:acquirium#> .
+@prefix ref: <https://brickschema.org/schema/Brick/ref#> .
 @prefix nawi: <urn:nawi-water-ontology#> .
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix qudt: <http://qudt.org/schema/qudt/> .
@@ -15,741 +16,681 @@ wbs:AS_Aeration_Basin-mlss-concentration a s223:QuantifiableObservableProperty ;
     s223:ofSubstance s223:Solids-SuspendedSolids ;
     qudt:hasQuantityKind qudtqk:Density ;
     qudt:hasUnit unit:MilliGM-PER-L ;
-    acq:hasExternalReference wbs:AS_Aeration_Basin-mlss-concentration_mqtt_ref .
+    ref:hasExternalReference wbs:AS_Aeration_Basin-mlss-concentration_mqtt_ref .
 
-wbs:AS_Aeration_Basin-mlss-concentration_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/AS_Aeration_Basin-mlss-concentration" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:AS_Aeration_Basin-mlss-concentration_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/AS_Aeration_Basin-mlss-concentration" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:AS_Aeration_Basin-ph a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Acidity ;
     qudt:hasUnit unit:PH ;
-    acq:hasExternalReference wbs:AS_Aeration_Basin-ph_mqtt_ref .
+    ref:hasExternalReference wbs:AS_Aeration_Basin-ph_mqtt_ref .
 
-wbs:AS_Aeration_Basin-ph_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/AS_Aeration_Basin-ph" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:AS_Aeration_Basin-ph_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/AS_Aeration_Basin-ph" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:AS_Aeration_Basin-tss-concentration a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance s223:Solids-SuspendedSolids ;
     qudt:hasQuantityKind qudtqk:Density ;
     qudt:hasUnit unit:MilliGM-PER-L ;
-    acq:hasExternalReference wbs:AS_Aeration_Basin-tss-concentration_mqtt_ref .
+    ref:hasExternalReference wbs:AS_Aeration_Basin-tss-concentration_mqtt_ref .
 
-wbs:AS_Aeration_Basin-tss-concentration_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/AS_Aeration_Basin-tss-concentration" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:AS_Aeration_Basin-tss-concentration_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/AS_Aeration_Basin-tss-concentration" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:AS_Aeration_Basin-turbidity a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Turbidity ;
     qudt:hasUnit unit:NTU ;
-    acq:hasExternalReference wbs:AS_Aeration_Basin-turbidity_mqtt_ref .
+    ref:hasExternalReference wbs:AS_Aeration_Basin-turbidity_mqtt_ref .
 
-wbs:AS_Aeration_Basin-turbidity_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/AS_Aeration_Basin-turbidity" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:AS_Aeration_Basin-turbidity_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/AS_Aeration_Basin-turbidity" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:AS_Aeration_Basin-volume a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Volume ;
     qudt:hasUnit unit:GAL_US ;
-    acq:hasExternalReference wbs:AS_Aeration_Basin-volume_mqtt_ref .
+    ref:hasExternalReference wbs:AS_Aeration_Basin-volume_mqtt_ref .
 
-wbs:AS_Aeration_Basin-volume_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/AS_Aeration_Basin-volume" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:AS_Aeration_Basin-volume_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/AS_Aeration_Basin-volume" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:AS_Secondary_Sedimentation-ph a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Acidity ;
     qudt:hasUnit unit:PH ;
-    acq:hasExternalReference wbs:AS_Secondary_Sedimentation-ph_mqtt_ref .
+    ref:hasExternalReference wbs:AS_Secondary_Sedimentation-ph_mqtt_ref .
 
-wbs:AS_Secondary_Sedimentation-ph_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/AS_Secondary_Sedimentation-ph" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:AS_Secondary_Sedimentation-ph_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/AS_Secondary_Sedimentation-ph" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:AS_Secondary_Sedimentation-temperature a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Temperature ;
-    acq:hasExternalReference wbs:AS_Secondary_Sedimentation-temperature_mqtt_ref .
+    ref:hasExternalReference wbs:AS_Secondary_Sedimentation-temperature_mqtt_ref .
 
-wbs:AS_Secondary_Sedimentation-temperature_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/AS_Secondary_Sedimentation-temperature" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:AS_Secondary_Sedimentation-temperature_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/AS_Secondary_Sedimentation-temperature" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:AS_Secondary_Sedimentation-tss-concentration a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance s223:Solids-SuspendedSolids ;
     qudt:hasQuantityKind qudtqk:Density ;
     qudt:hasUnit unit:MilliGM-PER-L ;
-    acq:hasExternalReference wbs:AS_Secondary_Sedimentation-tss-concentration_mqtt_ref .
+    ref:hasExternalReference wbs:AS_Secondary_Sedimentation-tss-concentration_mqtt_ref .
 
-wbs:AS_Secondary_Sedimentation-tss-concentration_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/AS_Secondary_Sedimentation-tss-concentration" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:AS_Secondary_Sedimentation-tss-concentration_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/AS_Secondary_Sedimentation-tss-concentration" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:AS_Secondary_Sedimentation-turbidity a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Turbidity ;
     qudt:hasUnit unit:NTU ;
-    acq:hasExternalReference wbs:AS_Secondary_Sedimentation-turbidity_mqtt_ref .
+    ref:hasExternalReference wbs:AS_Secondary_Sedimentation-turbidity_mqtt_ref .
 
-wbs:AS_Secondary_Sedimentation-turbidity_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/AS_Secondary_Sedimentation-turbidity" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:AS_Secondary_Sedimentation-turbidity_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/AS_Secondary_Sedimentation-turbidity" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:AS_Secondary_Sedimentation-volume a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Volume ;
     qudt:hasUnit unit:GAL_US ;
-    acq:hasExternalReference wbs:AS_Secondary_Sedimentation-volume_mqtt_ref .
+    ref:hasExternalReference wbs:AS_Secondary_Sedimentation-volume_mqtt_ref .
 
-wbs:AS_Secondary_Sedimentation-volume_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/AS_Secondary_Sedimentation-volume" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:AS_Secondary_Sedimentation-volume_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/AS_Secondary_Sedimentation-volume" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Chlorination_Basin-cl2-mgL a s223:QuantifiableObservableProperty ;
     s223:ofSubstance nawi:Chlorine ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:MilliGM-PER-L ;
-    acq:hasExternalReference wbs:Chlorination_Basin-cl2-mgL_mqtt_ref .
+    ref:hasExternalReference wbs:Chlorination_Basin-cl2-mgL_mqtt_ref .
 
-wbs:Chlorination_Basin-cl2-mgL_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Chlorination_Basin-cl2-mgL" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Chlorination_Basin-cl2-mgL_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Chlorination_Basin-cl2-mgL" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Chlorination_Basin-ph a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Acidity ;
     qudt:hasUnit unit:PH ;
-    acq:hasExternalReference wbs:Chlorination_Basin-ph_mqtt_ref .
+    ref:hasExternalReference wbs:Chlorination_Basin-ph_mqtt_ref .
 
-wbs:Chlorination_Basin-ph_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Chlorination_Basin-ph" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Chlorination_Basin-ph_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Chlorination_Basin-ph" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Chlorination_Basin-temperature a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Temperature ;
-    acq:hasExternalReference wbs:Chlorination_Basin-temperature_mqtt_ref .
+    ref:hasExternalReference wbs:Chlorination_Basin-temperature_mqtt_ref .
 
-wbs:Chlorination_Basin-temperature_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Chlorination_Basin-temperature" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Chlorination_Basin-temperature_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Chlorination_Basin-temperature" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Chlorination_Basin-turbidity a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Turbidity ;
     qudt:hasUnit unit:NTU ;
-    acq:hasExternalReference wbs:Chlorination_Basin-turbidity_mqtt_ref .
+    ref:hasExternalReference wbs:Chlorination_Basin-turbidity_mqtt_ref .
 
-wbs:Chlorination_Basin-turbidity_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Chlorination_Basin-turbidity" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Chlorination_Basin-turbidity_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Chlorination_Basin-turbidity" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Chlorination_Basin-volume a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Volume ;
     qudt:hasUnit unit:GAL_US ;
-    acq:hasExternalReference wbs:Chlorination_Basin-volume_mqtt_ref .
+    ref:hasExternalReference wbs:Chlorination_Basin-volume_mqtt_ref .
 
-wbs:Chlorination_Basin-volume_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Chlorination_Basin-volume" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Chlorination_Basin-volume_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Chlorination_Basin-volume" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Diurnal_Flow_Box-ph a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Acidity ;
     qudt:hasUnit unit:PH ;
-    acq:hasExternalReference wbs:Diurnal_Flow_Box-ph_mqtt_ref .
+    ref:hasExternalReference wbs:Diurnal_Flow_Box-ph_mqtt_ref .
 
-wbs:Diurnal_Flow_Box-ph_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Diurnal_Flow_Box-ph" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Diurnal_Flow_Box-ph_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Diurnal_Flow_Box-ph" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Diurnal_Flow_Box-temperature a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Temperature ;
-    acq:hasExternalReference wbs:Diurnal_Flow_Box-temperature_mqtt_ref .
+    ref:hasExternalReference wbs:Diurnal_Flow_Box-temperature_mqtt_ref .
 
-wbs:Diurnal_Flow_Box-temperature_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Diurnal_Flow_Box-temperature" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Diurnal_Flow_Box-temperature_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Diurnal_Flow_Box-temperature" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Diurnal_Flow_Box-turbidity a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Turbidity ;
     qudt:hasUnit unit:NTU ;
-    acq:hasExternalReference wbs:Diurnal_Flow_Box-turbidity_mqtt_ref .
+    ref:hasExternalReference wbs:Diurnal_Flow_Box-turbidity_mqtt_ref .
 
-wbs:Diurnal_Flow_Box-turbidity_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Diurnal_Flow_Box-turbidity" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Diurnal_Flow_Box-turbidity_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Diurnal_Flow_Box-turbidity" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Diurnal_Flow_Box-volume a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Volume ;
     qudt:hasUnit unit:GAL_US ;
-    acq:hasExternalReference wbs:Diurnal_Flow_Box-volume_mqtt_ref .
+    ref:hasExternalReference wbs:Diurnal_Flow_Box-volume_mqtt_ref .
 
-wbs:Diurnal_Flow_Box-volume_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Diurnal_Flow_Box-volume" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Diurnal_Flow_Box-volume_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Diurnal_Flow_Box-volume" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Effluent_Pump-in-cl2-mgL a s223:QuantifiableObservableProperty ;
     s223:ofSubstance nawi:Chlorine ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:MilliGM-PER-L ;
-    acq:hasExternalReference wbs:Effluent_Pump-in-cl2-mgL_mqtt_ref .
+    ref:hasExternalReference wbs:Effluent_Pump-in-cl2-mgL_mqtt_ref .
 
-wbs:Effluent_Pump-in-cl2-mgL_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Effluent_Pump-in-cl2-mgL" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Effluent_Pump-in-cl2-mgL_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Effluent_Pump-in-cl2-mgL" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Effluent_Pump-in-cyanide a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance nawi:Constituent-Cyanide ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:MicroGM-PER-L ;
-    acq:hasExternalReference wbs:Effluent_Pump-in-cyanide_mqtt_ref .
+    ref:hasExternalReference wbs:Effluent_Pump-in-cyanide_mqtt_ref .
 
-wbs:Effluent_Pump-in-cyanide_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Effluent_Pump-in-cyanide" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Effluent_Pump-in-cyanide_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Effluent_Pump-in-cyanide" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Effluent_Pump-in-flow-rate a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:VolumeFlowRate ;
-    acq:hasExternalReference wbs:Effluent_Pump-in-flow-rate_mqtt_ref .
+    ref:hasExternalReference wbs:Effluent_Pump-in-flow-rate_mqtt_ref .
 
-wbs:Effluent_Pump-in-flow-rate_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Effluent_Pump-in-flow-rate" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Effluent_Pump-in-flow-rate_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Effluent_Pump-in-flow-rate" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Effluent_Pump-in-pressure a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Pressure ;
-    acq:hasExternalReference wbs:Effluent_Pump-in-pressure_mqtt_ref .
+    ref:hasExternalReference wbs:Effluent_Pump-in-pressure_mqtt_ref .
 
-wbs:Effluent_Pump-in-pressure_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Effluent_Pump-in-pressure" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Effluent_Pump-in-pressure_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Effluent_Pump-in-pressure" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Effluent_Pump-in-tss-concentration a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance s223:Solids-SuspendedSolids ;
     qudt:hasQuantityKind qudtqk:Density ;
     qudt:hasUnit unit:MilliGM-PER-L ;
-    acq:hasExternalReference wbs:Effluent_Pump-in-tss-concentration_mqtt_ref .
+    ref:hasExternalReference wbs:Effluent_Pump-in-tss-concentration_mqtt_ref .
 
-wbs:Effluent_Pump-in-tss-concentration_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Effluent_Pump-in-tss-concentration" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Effluent_Pump-in-tss-concentration_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Effluent_Pump-in-tss-concentration" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Effluent_Pump-out-bacteria-enterococcus a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance nawi:Constituent-Bacteria ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:CFU-PER-100ML ;
-    acq:hasExternalReference wbs:Effluent_Pump-out-bacteria-enterococcus_mqtt_ref .
+    ref:hasExternalReference wbs:Effluent_Pump-out-bacteria-enterococcus_mqtt_ref .
 
-wbs:Effluent_Pump-out-bacteria-enterococcus_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Effluent_Pump-out-bacteria-enterococcus" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Effluent_Pump-out-bacteria-enterococcus_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Effluent_Pump-out-bacteria-enterococcus" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Effluent_Pump-out-biochemical-oxygen-demand a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance nawi:Oxygen ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:MilliGM-PER-L ;
-    acq:hasExternalReference wbs:Effluent_Pump-out-biochemical-oxygen-demand_mqtt_ref .
+    ref:hasExternalReference wbs:Effluent_Pump-out-biochemical-oxygen-demand_mqtt_ref .
 
-wbs:Effluent_Pump-out-biochemical-oxygen-demand_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Effluent_Pump-out-biochemical-oxygen-demand" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Effluent_Pump-out-biochemical-oxygen-demand_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Effluent_Pump-out-biochemical-oxygen-demand" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Effluent_Pump-out-cl2-mgL a s223:QuantifiableObservableProperty ;
     s223:ofSubstance nawi:Chlorine ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:MilliGM-PER-L ;
-    acq:hasExternalReference wbs:Effluent_Pump-out-cl2-mgL_mqtt_ref .
+    ref:hasExternalReference wbs:Effluent_Pump-out-cl2-mgL_mqtt_ref .
 
-wbs:Effluent_Pump-out-cl2-mgL_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Effluent_Pump-out-cl2-mgL" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Effluent_Pump-out-cl2-mgL_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Effluent_Pump-out-cl2-mgL" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Effluent_Pump-out-copper a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance nawi:Constituent-Metals ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:MicroGM-PER-L ;
-    acq:hasExternalReference wbs:Effluent_Pump-out-copper_mqtt_ref .
+    ref:hasExternalReference wbs:Effluent_Pump-out-copper_mqtt_ref .
 
-wbs:Effluent_Pump-out-copper_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Effluent_Pump-out-copper" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Effluent_Pump-out-copper_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Effluent_Pump-out-copper" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Effluent_Pump-out-cyanide a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance nawi:Constituent-Cyanide ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:MicroGM-PER-L ;
-    acq:hasExternalReference wbs:Effluent_Pump-out-cyanide_mqtt_ref .
+    ref:hasExternalReference wbs:Effluent_Pump-out-cyanide_mqtt_ref .
 
-wbs:Effluent_Pump-out-cyanide_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Effluent_Pump-out-cyanide" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Effluent_Pump-out-cyanide_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Effluent_Pump-out-cyanide" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Effluent_Pump-out-flow-rate a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:VolumeFlowRate ;
-    acq:hasExternalReference wbs:Effluent_Pump-out-flow-rate_mqtt_ref .
+    ref:hasExternalReference wbs:Effluent_Pump-out-flow-rate_mqtt_ref .
 
-wbs:Effluent_Pump-out-flow-rate_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Effluent_Pump-out-flow-rate" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Effluent_Pump-out-flow-rate_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Effluent_Pump-out-flow-rate" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Effluent_Pump-out-nh4-mgL a s223:QuantifiableObservableProperty ;
     s223:ofSubstance nawi:Ammonia ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:MilliGM-PER-L ;
-    acq:hasExternalReference wbs:Effluent_Pump-out-nh4-mgL_mqtt_ref .
+    ref:hasExternalReference wbs:Effluent_Pump-out-nh4-mgL_mqtt_ref .
 
-wbs:Effluent_Pump-out-nh4-mgL_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Effluent_Pump-out-nh4-mgL" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Effluent_Pump-out-nh4-mgL_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Effluent_Pump-out-nh4-mgL" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Effluent_Pump-out-ph a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Acidity ;
     qudt:hasUnit unit:PH ;
-    acq:hasExternalReference wbs:Effluent_Pump-out-ph_mqtt_ref .
+    ref:hasExternalReference wbs:Effluent_Pump-out-ph_mqtt_ref .
 
-wbs:Effluent_Pump-out-ph_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Effluent_Pump-out-ph" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Effluent_Pump-out-ph_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Effluent_Pump-out-ph" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Effluent_Pump-out-pressure a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Pressure ;
-    acq:hasExternalReference wbs:Effluent_Pump-out-pressure_mqtt_ref .
+    ref:hasExternalReference wbs:Effluent_Pump-out-pressure_mqtt_ref .
 
-wbs:Effluent_Pump-out-pressure_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Effluent_Pump-out-pressure" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Effluent_Pump-out-pressure_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Effluent_Pump-out-pressure" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Effluent_Pump-out-teq-dioxin a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance nawi:Constituent-Organics ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:MicroGM-PER-L ;
-    acq:hasExternalReference wbs:Effluent_Pump-out-teq-dioxin_mqtt_ref .
+    ref:hasExternalReference wbs:Effluent_Pump-out-teq-dioxin_mqtt_ref .
 
-wbs:Effluent_Pump-out-teq-dioxin_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Effluent_Pump-out-teq-dioxin" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Effluent_Pump-out-teq-dioxin_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Effluent_Pump-out-teq-dioxin" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Effluent_Pump-out-tss-concentration a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance s223:Solids-SuspendedSolids ;
     qudt:hasQuantityKind qudtqk:Density ;
     qudt:hasUnit unit:MilliGM-PER-L ;
-    acq:hasExternalReference wbs:Effluent_Pump-out-tss-concentration_mqtt_ref .
+    ref:hasExternalReference wbs:Effluent_Pump-out-tss-concentration_mqtt_ref .
 
-wbs:Effluent_Pump-out-tss-concentration_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Effluent_Pump-out-tss-concentration" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Effluent_Pump-out-tss-concentration_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Effluent_Pump-out-tss-concentration" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Effluent_Pump-speed-command a s223:QuantifiableActuatableProperty ;
     qudt:hasQuantityKind qudtqk:SpeedRatio ;
     qudt:hasUnit unit:PERCENT ;
-    acq:hasExternalReference wbs:Effluent_Pump-speed-command_mqtt_ref .
+    ref:hasExternalReference wbs:Effluent_Pump-speed-command_mqtt_ref .
 
-wbs:Effluent_Pump-speed-command_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Effluent_Pump-speed-command" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Effluent_Pump-speed-command_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Effluent_Pump-speed-command" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Effluent_Pump-status a s223:QuantifiableObservableProperty ;
     qudt:hasEnumerationKind s223:EnumerationKind-Status ;
-    acq:hasExternalReference wbs:Effluent_Pump-status_mqtt_ref .
+    ref:hasExternalReference wbs:Effluent_Pump-status_mqtt_ref .
 
-wbs:Effluent_Pump-status_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Effluent_Pump-status" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Effluent_Pump-status_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Effluent_Pump-status" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Flow_Return_Pump1-in-bacteria-enterococcus a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance nawi:Constituent-Bacteria ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:CFU-PER-100ML ;
-    acq:hasExternalReference wbs:Flow_Return_Pump1-in-bacteria-enterococcus_mqtt_ref .
+    ref:hasExternalReference wbs:Flow_Return_Pump1-in-bacteria-enterococcus_mqtt_ref .
 
-wbs:Flow_Return_Pump1-in-bacteria-enterococcus_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Flow_Return_Pump1-in-bacteria-enterococcus" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Flow_Return_Pump1-in-bacteria-enterococcus_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Flow_Return_Pump1-in-bacteria-enterococcus" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Flow_Return_Pump1-in-biochemical-oxygen-demand a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance nawi:Oxygen ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:MilliGM-PER-L ;
-    acq:hasExternalReference wbs:Flow_Return_Pump1-in-biochemical-oxygen-demand_mqtt_ref .
+    ref:hasExternalReference wbs:Flow_Return_Pump1-in-biochemical-oxygen-demand_mqtt_ref .
 
-wbs:Flow_Return_Pump1-in-biochemical-oxygen-demand_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Flow_Return_Pump1-in-biochemical-oxygen-demand" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Flow_Return_Pump1-in-biochemical-oxygen-demand_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Flow_Return_Pump1-in-biochemical-oxygen-demand" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Flow_Return_Pump1-in-cl2-mgL a s223:QuantifiableObservableProperty ;
     s223:ofSubstance nawi:Chlorine ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:MilliGM-PER-L ;
-    acq:hasExternalReference wbs:Flow_Return_Pump1-in-cl2-mgL_mqtt_ref .
+    ref:hasExternalReference wbs:Flow_Return_Pump1-in-cl2-mgL_mqtt_ref .
 
-wbs:Flow_Return_Pump1-in-cl2-mgL_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Flow_Return_Pump1-in-cl2-mgL" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Flow_Return_Pump1-in-cl2-mgL_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Flow_Return_Pump1-in-cl2-mgL" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Flow_Return_Pump1-in-copper a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance nawi:Constituent-Metals ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:MicroGM-PER-L ;
-    acq:hasExternalReference wbs:Flow_Return_Pump1-in-copper_mqtt_ref .
+    ref:hasExternalReference wbs:Flow_Return_Pump1-in-copper_mqtt_ref .
 
-wbs:Flow_Return_Pump1-in-copper_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Flow_Return_Pump1-in-copper" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Flow_Return_Pump1-in-copper_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Flow_Return_Pump1-in-copper" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Flow_Return_Pump1-in-cyanide a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance nawi:Constituent-Cyanide ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:MicroGM-PER-L ;
-    acq:hasExternalReference wbs:Flow_Return_Pump1-in-cyanide_mqtt_ref .
+    ref:hasExternalReference wbs:Flow_Return_Pump1-in-cyanide_mqtt_ref .
 
-wbs:Flow_Return_Pump1-in-cyanide_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Flow_Return_Pump1-in-cyanide" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Flow_Return_Pump1-in-cyanide_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Flow_Return_Pump1-in-cyanide" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Flow_Return_Pump1-in-flow-rate a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:VolumeFlowRate ;
-    acq:hasExternalReference wbs:Flow_Return_Pump1-in-flow-rate_mqtt_ref .
+    ref:hasExternalReference wbs:Flow_Return_Pump1-in-flow-rate_mqtt_ref .
 
-wbs:Flow_Return_Pump1-in-flow-rate_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Flow_Return_Pump1-in-flow-rate" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Flow_Return_Pump1-in-flow-rate_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Flow_Return_Pump1-in-flow-rate" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Flow_Return_Pump1-in-nh4-mgL a s223:QuantifiableObservableProperty ;
     s223:ofSubstance nawi:Ammonia ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:MilliGM-PER-L ;
-    acq:hasExternalReference wbs:Flow_Return_Pump1-in-nh4-mgL_mqtt_ref .
+    ref:hasExternalReference wbs:Flow_Return_Pump1-in-nh4-mgL_mqtt_ref .
 
-wbs:Flow_Return_Pump1-in-nh4-mgL_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Flow_Return_Pump1-in-nh4-mgL" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Flow_Return_Pump1-in-nh4-mgL_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Flow_Return_Pump1-in-nh4-mgL" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Flow_Return_Pump1-in-ph a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Acidity ;
     qudt:hasUnit unit:PH ;
-    acq:hasExternalReference wbs:Flow_Return_Pump1-in-ph_mqtt_ref .
+    ref:hasExternalReference wbs:Flow_Return_Pump1-in-ph_mqtt_ref .
 
-wbs:Flow_Return_Pump1-in-ph_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Flow_Return_Pump1-in-ph" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Flow_Return_Pump1-in-ph_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Flow_Return_Pump1-in-ph" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Flow_Return_Pump1-in-pressure a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Pressure ;
-    acq:hasExternalReference wbs:Flow_Return_Pump1-in-pressure_mqtt_ref .
+    ref:hasExternalReference wbs:Flow_Return_Pump1-in-pressure_mqtt_ref .
 
-wbs:Flow_Return_Pump1-in-pressure_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Flow_Return_Pump1-in-pressure" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Flow_Return_Pump1-in-pressure_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Flow_Return_Pump1-in-pressure" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Flow_Return_Pump1-in-teq-dioxin a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance nawi:Constituent-Organics ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:MicroGM-PER-L ;
-    acq:hasExternalReference wbs:Flow_Return_Pump1-in-teq-dioxin_mqtt_ref .
+    ref:hasExternalReference wbs:Flow_Return_Pump1-in-teq-dioxin_mqtt_ref .
 
-wbs:Flow_Return_Pump1-in-teq-dioxin_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Flow_Return_Pump1-in-teq-dioxin" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Flow_Return_Pump1-in-teq-dioxin_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Flow_Return_Pump1-in-teq-dioxin" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Flow_Return_Pump1-in-tss-concentration a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance s223:Solids-SuspendedSolids ;
     qudt:hasQuantityKind qudtqk:Density ;
     qudt:hasUnit unit:MilliGM-PER-L ;
-    acq:hasExternalReference wbs:Flow_Return_Pump1-in-tss-concentration_mqtt_ref .
+    ref:hasExternalReference wbs:Flow_Return_Pump1-in-tss-concentration_mqtt_ref .
 
-wbs:Flow_Return_Pump1-in-tss-concentration_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Flow_Return_Pump1-in-tss-concentration" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Flow_Return_Pump1-in-tss-concentration_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Flow_Return_Pump1-in-tss-concentration" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Flow_Return_Pump1-out-flow-rate a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:VolumeFlowRate ;
-    acq:hasExternalReference wbs:Flow_Return_Pump1-out-flow-rate_mqtt_ref .
+    ref:hasExternalReference wbs:Flow_Return_Pump1-out-flow-rate_mqtt_ref .
 
-wbs:Flow_Return_Pump1-out-flow-rate_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Flow_Return_Pump1-out-flow-rate" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Flow_Return_Pump1-out-flow-rate_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Flow_Return_Pump1-out-flow-rate" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Flow_Return_Pump1-out-pressure a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Pressure ;
-    acq:hasExternalReference wbs:Flow_Return_Pump1-out-pressure_mqtt_ref .
+    ref:hasExternalReference wbs:Flow_Return_Pump1-out-pressure_mqtt_ref .
 
-wbs:Flow_Return_Pump1-out-pressure_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Flow_Return_Pump1-out-pressure" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Flow_Return_Pump1-out-pressure_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Flow_Return_Pump1-out-pressure" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Flow_Return_Pump1-speed-command a s223:QuantifiableActuatableProperty ;
     qudt:hasQuantityKind qudtqk:SpeedRatio ;
     qudt:hasUnit unit:PERCENT ;
-    acq:hasExternalReference wbs:Flow_Return_Pump1-speed-command_mqtt_ref .
+    ref:hasExternalReference wbs:Flow_Return_Pump1-speed-command_mqtt_ref .
 
-wbs:Flow_Return_Pump1-speed-command_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Flow_Return_Pump1-speed-command" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Flow_Return_Pump1-speed-command_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Flow_Return_Pump1-speed-command" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Flow_Return_Pump1-status a s223:QuantifiableObservableProperty ;
     qudt:hasEnumerationKind s223:EnumerationKind-Status ;
-    acq:hasExternalReference wbs:Flow_Return_Pump1-status_mqtt_ref .
+    ref:hasExternalReference wbs:Flow_Return_Pump1-status_mqtt_ref .
 
-wbs:Flow_Return_Pump1-status_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Flow_Return_Pump1-status" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Flow_Return_Pump1-status_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Flow_Return_Pump1-status" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Flow_Return_Pump2-in-flow-rate a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:VolumeFlowRate ;
-    acq:hasExternalReference wbs:Flow_Return_Pump2-in-flow-rate_mqtt_ref .
+    ref:hasExternalReference wbs:Flow_Return_Pump2-in-flow-rate_mqtt_ref .
 
-wbs:Flow_Return_Pump2-in-flow-rate_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Flow_Return_Pump2-in-flow-rate" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Flow_Return_Pump2-in-flow-rate_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Flow_Return_Pump2-in-flow-rate" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Flow_Return_Pump2-in-pressure a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Pressure ;
-    acq:hasExternalReference wbs:Flow_Return_Pump2-in-pressure_mqtt_ref .
+    ref:hasExternalReference wbs:Flow_Return_Pump2-in-pressure_mqtt_ref .
 
-wbs:Flow_Return_Pump2-in-pressure_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Flow_Return_Pump2-in-pressure" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Flow_Return_Pump2-in-pressure_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Flow_Return_Pump2-in-pressure" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Flow_Return_Pump2-out-flow-rate a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:VolumeFlowRate ;
-    acq:hasExternalReference wbs:Flow_Return_Pump2-out-flow-rate_mqtt_ref .
+    ref:hasExternalReference wbs:Flow_Return_Pump2-out-flow-rate_mqtt_ref .
 
-wbs:Flow_Return_Pump2-out-flow-rate_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Flow_Return_Pump2-out-flow-rate" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Flow_Return_Pump2-out-flow-rate_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Flow_Return_Pump2-out-flow-rate" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Flow_Return_Pump2-out-pressure a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Pressure ;
-    acq:hasExternalReference wbs:Flow_Return_Pump2-out-pressure_mqtt_ref .
+    ref:hasExternalReference wbs:Flow_Return_Pump2-out-pressure_mqtt_ref .
 
-wbs:Flow_Return_Pump2-out-pressure_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Flow_Return_Pump2-out-pressure" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Flow_Return_Pump2-out-pressure_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Flow_Return_Pump2-out-pressure" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Flow_Return_Pump2-speed-command a s223:QuantifiableActuatableProperty ;
     qudt:hasQuantityKind qudtqk:SpeedRatio ;
     qudt:hasUnit unit:PERCENT ;
-    acq:hasExternalReference wbs:Flow_Return_Pump2-speed-command_mqtt_ref .
+    ref:hasExternalReference wbs:Flow_Return_Pump2-speed-command_mqtt_ref .
 
-wbs:Flow_Return_Pump2-speed-command_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Flow_Return_Pump2-speed-command" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Flow_Return_Pump2-speed-command_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Flow_Return_Pump2-speed-command" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Flow_Return_Pump2-status a s223:QuantifiableObservableProperty ;
     qudt:hasEnumerationKind s223:EnumerationKind-Status ;
-    acq:hasExternalReference wbs:Flow_Return_Pump2-status_mqtt_ref .
+    ref:hasExternalReference wbs:Flow_Return_Pump2-status_mqtt_ref .
 
-wbs:Flow_Return_Pump2-status_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Flow_Return_Pump2-status" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Flow_Return_Pump2-status_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Flow_Return_Pump2-status" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Grinder-electric-current a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:ElectricCurrent ;
     qudt:hasUnit unit:A ;
-    acq:hasExternalReference wbs:Grinder-electric-current_mqtt_ref .
+    ref:hasExternalReference wbs:Grinder-electric-current_mqtt_ref .
 
-wbs:Grinder-electric-current_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Grinder-electric-current" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Grinder-electric-current_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Grinder-electric-current" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Grinder-status a s223:QuantifiableObservableProperty ;
     qudt:hasEnumerationKind s223:EnumerationKind-Status ;
-    acq:hasExternalReference wbs:Grinder-status_mqtt_ref .
+    ref:hasExternalReference wbs:Grinder-status_mqtt_ref .
 
-wbs:Grinder-status_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Grinder-status" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Grinder-status_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Grinder-status" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Influent_Pump a nawi:Pump ;
     s223:cnx wbs:Influent_Pump-out ;
@@ -780,502 +721,462 @@ wbs:Influent_Pump-in-bacteria-enterococcus a s223:QuantifiableObservableProperty
     s223:ofSubstance nawi:Constituent-Bacteria ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:CFU-PER-100ML ;
-    acq:hasExternalReference wbs:Influent_Pump-in-bacteria-enterococcus_mqtt_ref .
+    ref:hasExternalReference wbs:Influent_Pump-in-bacteria-enterococcus_mqtt_ref .
 
-wbs:Influent_Pump-in-bacteria-enterococcus_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Influent_Pump-in-bacteria-enterococcus" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Influent_Pump-in-bacteria-enterococcus_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Influent_Pump-in-bacteria-enterococcus" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Influent_Pump-in-biochemical-oxygen-demand a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance nawi:Oxygen ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:MilliGM-PER-L ;
-    acq:hasExternalReference wbs:Influent_Pump-in-biochemical-oxygen-demand_mqtt_ref .
+    ref:hasExternalReference wbs:Influent_Pump-in-biochemical-oxygen-demand_mqtt_ref .
 
-wbs:Influent_Pump-in-biochemical-oxygen-demand_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Influent_Pump-in-biochemical-oxygen-demand" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Influent_Pump-in-biochemical-oxygen-demand_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Influent_Pump-in-biochemical-oxygen-demand" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Influent_Pump-in-cl2-mgL a s223:QuantifiableObservableProperty ;
     s223:ofSubstance nawi:Chlorine ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:MilliGM-PER-L ;
-    acq:hasExternalReference wbs:Influent_Pump-in-cl2-mgL_mqtt_ref .
+    ref:hasExternalReference wbs:Influent_Pump-in-cl2-mgL_mqtt_ref .
 
-wbs:Influent_Pump-in-cl2-mgL_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Influent_Pump-in-cl2-mgL" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Influent_Pump-in-cl2-mgL_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Influent_Pump-in-cl2-mgL" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Influent_Pump-in-copper a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance nawi:Constituent-Metals ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:MicroGM-PER-L ;
-    acq:hasExternalReference wbs:Influent_Pump-in-copper_mqtt_ref .
+    ref:hasExternalReference wbs:Influent_Pump-in-copper_mqtt_ref .
 
-wbs:Influent_Pump-in-copper_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Influent_Pump-in-copper" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Influent_Pump-in-copper_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Influent_Pump-in-copper" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Influent_Pump-in-cyanide a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance nawi:Constituent-Cyanide ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:MicroGM-PER-L ;
-    acq:hasExternalReference wbs:Influent_Pump-in-cyanide_mqtt_ref .
+    ref:hasExternalReference wbs:Influent_Pump-in-cyanide_mqtt_ref .
 
-wbs:Influent_Pump-in-cyanide_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Influent_Pump-in-cyanide" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Influent_Pump-in-cyanide_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Influent_Pump-in-cyanide" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Influent_Pump-in-flow-rate a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:VolumeFlowRate ;
-    acq:hasExternalReference wbs:Influent_Pump-in-flow-rate_mqtt_ref .
+    ref:hasExternalReference wbs:Influent_Pump-in-flow-rate_mqtt_ref .
 
-wbs:Influent_Pump-in-flow-rate_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Influent_Pump-in-flow-rate" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Influent_Pump-in-flow-rate_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Influent_Pump-in-flow-rate" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Influent_Pump-in-nh4-mgL a s223:QuantifiableObservableProperty ;
     s223:ofSubstance nawi:Ammonia ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:MilliGM-PER-L ;
-    acq:hasExternalReference wbs:Influent_Pump-in-nh4-mgL_mqtt_ref .
+    ref:hasExternalReference wbs:Influent_Pump-in-nh4-mgL_mqtt_ref .
 
-wbs:Influent_Pump-in-nh4-mgL_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Influent_Pump-in-nh4-mgL" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Influent_Pump-in-nh4-mgL_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Influent_Pump-in-nh4-mgL" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Influent_Pump-in-ph a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Acidity ;
     qudt:hasUnit unit:PH ;
-    acq:hasExternalReference wbs:Influent_Pump-in-ph_mqtt_ref .
+    ref:hasExternalReference wbs:Influent_Pump-in-ph_mqtt_ref .
 
-wbs:Influent_Pump-in-ph_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Influent_Pump-in-ph" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Influent_Pump-in-ph_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Influent_Pump-in-ph" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Influent_Pump-in-pressure a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Pressure ;
-    acq:hasExternalReference wbs:Influent_Pump-in-pressure_mqtt_ref .
+    ref:hasExternalReference wbs:Influent_Pump-in-pressure_mqtt_ref .
 
-wbs:Influent_Pump-in-pressure_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Influent_Pump-in-pressure" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Influent_Pump-in-pressure_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Influent_Pump-in-pressure" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Influent_Pump-in-teq-dioxin a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance nawi:Constituent-Organics ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:MicroGM-PER-L ;
-    acq:hasExternalReference wbs:Influent_Pump-in-teq-dioxin_mqtt_ref .
+    ref:hasExternalReference wbs:Influent_Pump-in-teq-dioxin_mqtt_ref .
 
-wbs:Influent_Pump-in-teq-dioxin_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Influent_Pump-in-teq-dioxin" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Influent_Pump-in-teq-dioxin_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Influent_Pump-in-teq-dioxin" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Influent_Pump-in-tss-concentration a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance s223:Solids-SuspendedSolids ;
     qudt:hasQuantityKind qudtqk:Density ;
     qudt:hasUnit unit:MilliGM-PER-L ;
-    acq:hasExternalReference wbs:Influent_Pump-in-tss-concentration_mqtt_ref .
+    ref:hasExternalReference wbs:Influent_Pump-in-tss-concentration_mqtt_ref .
 
-wbs:Influent_Pump-in-tss-concentration_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Influent_Pump-in-tss-concentration" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Influent_Pump-in-tss-concentration_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Influent_Pump-in-tss-concentration" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Influent_Pump-out-bacteria-enterococcus a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance nawi:Constituent-Bacteria ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:CFU-PER-100ML ;
-    acq:hasExternalReference wbs:Influent_Pump-out-bacteria-enterococcus_mqtt_ref .
+    ref:hasExternalReference wbs:Influent_Pump-out-bacteria-enterococcus_mqtt_ref .
 
-wbs:Influent_Pump-out-bacteria-enterococcus_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Influent_Pump-out-bacteria-enterococcus" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Influent_Pump-out-bacteria-enterococcus_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Influent_Pump-out-bacteria-enterococcus" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Influent_Pump-out-biochemical-oxygen-demand a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance nawi:Oxygen ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:MilliGM-PER-L ;
-    acq:hasExternalReference wbs:Influent_Pump-out-biochemical-oxygen-demand_mqtt_ref .
+    ref:hasExternalReference wbs:Influent_Pump-out-biochemical-oxygen-demand_mqtt_ref .
 
-wbs:Influent_Pump-out-biochemical-oxygen-demand_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Influent_Pump-out-biochemical-oxygen-demand" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Influent_Pump-out-biochemical-oxygen-demand_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Influent_Pump-out-biochemical-oxygen-demand" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Influent_Pump-out-cl2-mgL a s223:QuantifiableObservableProperty ;
     s223:ofSubstance nawi:Chlorine ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:MilliGM-PER-L ;
-    acq:hasExternalReference wbs:Influent_Pump-out-cl2-mgL_mqtt_ref .
+    ref:hasExternalReference wbs:Influent_Pump-out-cl2-mgL_mqtt_ref .
 
-wbs:Influent_Pump-out-cl2-mgL_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Influent_Pump-out-cl2-mgL" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Influent_Pump-out-cl2-mgL_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Influent_Pump-out-cl2-mgL" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Influent_Pump-out-copper a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance nawi:Constituent-Metals ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:MicroGM-PER-L ;
-    acq:hasExternalReference wbs:Influent_Pump-out-copper_mqtt_ref .
+    ref:hasExternalReference wbs:Influent_Pump-out-copper_mqtt_ref .
 
-wbs:Influent_Pump-out-copper_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Influent_Pump-out-copper" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Influent_Pump-out-copper_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Influent_Pump-out-copper" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Influent_Pump-out-cyanide a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance nawi:Constituent-Cyanide ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:MicroGM-PER-L ;
-    acq:hasExternalReference wbs:Influent_Pump-out-cyanide_mqtt_ref .
+    ref:hasExternalReference wbs:Influent_Pump-out-cyanide_mqtt_ref .
 
-wbs:Influent_Pump-out-cyanide_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Influent_Pump-out-cyanide" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Influent_Pump-out-cyanide_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Influent_Pump-out-cyanide" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Influent_Pump-out-flow-rate a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:VolumeFlowRate ;
-    acq:hasExternalReference wbs:Influent_Pump-out-flow-rate_mqtt_ref .
+    ref:hasExternalReference wbs:Influent_Pump-out-flow-rate_mqtt_ref .
 
-wbs:Influent_Pump-out-flow-rate_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Influent_Pump-out-flow-rate" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Influent_Pump-out-flow-rate_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Influent_Pump-out-flow-rate" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Influent_Pump-out-nh4-mgL a s223:QuantifiableObservableProperty ;
     s223:ofSubstance nawi:Ammonia ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:MilliGM-PER-L ;
-    acq:hasExternalReference wbs:Influent_Pump-out-nh4-mgL_mqtt_ref .
+    ref:hasExternalReference wbs:Influent_Pump-out-nh4-mgL_mqtt_ref .
 
-wbs:Influent_Pump-out-nh4-mgL_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Influent_Pump-out-nh4-mgL" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Influent_Pump-out-nh4-mgL_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Influent_Pump-out-nh4-mgL" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Influent_Pump-out-ph a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Acidity ;
     qudt:hasUnit unit:PH ;
-    acq:hasExternalReference wbs:Influent_Pump-out-ph_mqtt_ref .
+    ref:hasExternalReference wbs:Influent_Pump-out-ph_mqtt_ref .
 
-wbs:Influent_Pump-out-ph_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Influent_Pump-out-ph" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Influent_Pump-out-ph_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Influent_Pump-out-ph" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Influent_Pump-out-pressure a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Pressure ;
-    acq:hasExternalReference wbs:Influent_Pump-out-pressure_mqtt_ref .
+    ref:hasExternalReference wbs:Influent_Pump-out-pressure_mqtt_ref .
 
-wbs:Influent_Pump-out-pressure_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Influent_Pump-out-pressure" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Influent_Pump-out-pressure_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Influent_Pump-out-pressure" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Influent_Pump-out-teq-dioxin a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance nawi:Constituent-Organics ;
     qudt:hasQuantityKind qudtqk:Concentration ;
     qudt:hasUnit unit:MicroGM-PER-L ;
-    acq:hasExternalReference wbs:Influent_Pump-out-teq-dioxin_mqtt_ref .
+    ref:hasExternalReference wbs:Influent_Pump-out-teq-dioxin_mqtt_ref .
 
-wbs:Influent_Pump-out-teq-dioxin_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Influent_Pump-out-teq-dioxin" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Influent_Pump-out-teq-dioxin_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Influent_Pump-out-teq-dioxin" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Influent_Pump-out-tss-concentration a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance s223:Solids-SuspendedSolids ;
     qudt:hasQuantityKind qudtqk:Density ;
     qudt:hasUnit unit:MilliGM-PER-L ;
-    acq:hasExternalReference wbs:Influent_Pump-out-tss-concentration_mqtt_ref .
+    ref:hasExternalReference wbs:Influent_Pump-out-tss-concentration_mqtt_ref .
 
-wbs:Influent_Pump-out-tss-concentration_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Influent_Pump-out-tss-concentration" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Influent_Pump-out-tss-concentration_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Influent_Pump-out-tss-concentration" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Influent_Pump-speed-command a s223:QuantifiableActuatableProperty ;
     qudt:hasQuantityKind qudtqk:SpeedRatio ;
     qudt:hasUnit unit:PERCENT ;
-    acq:hasExternalReference wbs:Influent_Pump-speed-command_mqtt_ref .
+    ref:hasExternalReference wbs:Influent_Pump-speed-command_mqtt_ref .
 
-wbs:Influent_Pump-speed-command_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Influent_Pump-speed-command" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Influent_Pump-speed-command_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Influent_Pump-speed-command" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Influent_Pump-status a s223:QuantifiableObservableProperty ;
     qudt:hasEnumerationKind s223:EnumerationKind-Status ;
-    acq:hasExternalReference wbs:Influent_Pump-status_mqtt_ref .
+    ref:hasExternalReference wbs:Influent_Pump-status_mqtt_ref .
 
-wbs:Influent_Pump-status_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Influent_Pump-status" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Influent_Pump-status_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Influent_Pump-status" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Primary_Sedimentation-ph a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Acidity ;
     qudt:hasUnit unit:PH ;
-    acq:hasExternalReference wbs:Primary_Sedimentation-ph_mqtt_ref .
+    ref:hasExternalReference wbs:Primary_Sedimentation-ph_mqtt_ref .
 
-wbs:Primary_Sedimentation-ph_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Primary_Sedimentation-ph" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Primary_Sedimentation-ph_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Primary_Sedimentation-ph" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Primary_Sedimentation-temperature a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Temperature ;
-    acq:hasExternalReference wbs:Primary_Sedimentation-temperature_mqtt_ref .
+    ref:hasExternalReference wbs:Primary_Sedimentation-temperature_mqtt_ref .
 
-wbs:Primary_Sedimentation-temperature_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Primary_Sedimentation-temperature" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Primary_Sedimentation-temperature_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Primary_Sedimentation-temperature" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Primary_Sedimentation-tss-concentration a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance s223:Solids-SuspendedSolids ;
     qudt:hasQuantityKind qudtqk:Density ;
     qudt:hasUnit unit:MilliGM-PER-L ;
-    acq:hasExternalReference wbs:Primary_Sedimentation-tss-concentration_mqtt_ref .
+    ref:hasExternalReference wbs:Primary_Sedimentation-tss-concentration_mqtt_ref .
 
-wbs:Primary_Sedimentation-tss-concentration_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Primary_Sedimentation-tss-concentration" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Primary_Sedimentation-tss-concentration_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Primary_Sedimentation-tss-concentration" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Primary_Sedimentation-turbidity a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Turbidity ;
     qudt:hasUnit unit:NTU ;
-    acq:hasExternalReference wbs:Primary_Sedimentation-turbidity_mqtt_ref .
+    ref:hasExternalReference wbs:Primary_Sedimentation-turbidity_mqtt_ref .
 
-wbs:Primary_Sedimentation-turbidity_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Primary_Sedimentation-turbidity" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Primary_Sedimentation-turbidity_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Primary_Sedimentation-turbidity" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Primary_Sedimentation-volume a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Volume ;
     qudt:hasUnit unit:GAL_US ;
-    acq:hasExternalReference wbs:Primary_Sedimentation-volume_mqtt_ref .
+    ref:hasExternalReference wbs:Primary_Sedimentation-volume_mqtt_ref .
 
-wbs:Primary_Sedimentation-volume_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Primary_Sedimentation-volume" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Primary_Sedimentation-volume_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Primary_Sedimentation-volume" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:RBC_Secondary_Sedimentation-ph a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Acidity ;
     qudt:hasUnit unit:PH ;
-    acq:hasExternalReference wbs:RBC_Secondary_Sedimentation-ph_mqtt_ref .
+    ref:hasExternalReference wbs:RBC_Secondary_Sedimentation-ph_mqtt_ref .
 
-wbs:RBC_Secondary_Sedimentation-ph_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/RBC_Secondary_Sedimentation-ph" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:RBC_Secondary_Sedimentation-ph_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/RBC_Secondary_Sedimentation-ph" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:RBC_Secondary_Sedimentation-temperature a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Temperature ;
-    acq:hasExternalReference wbs:RBC_Secondary_Sedimentation-temperature_mqtt_ref .
+    ref:hasExternalReference wbs:RBC_Secondary_Sedimentation-temperature_mqtt_ref .
 
-wbs:RBC_Secondary_Sedimentation-temperature_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/RBC_Secondary_Sedimentation-temperature" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:RBC_Secondary_Sedimentation-temperature_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/RBC_Secondary_Sedimentation-temperature" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:RBC_Secondary_Sedimentation-tss-concentration a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance s223:Solids-SuspendedSolids ;
     qudt:hasQuantityKind qudtqk:Density ;
     qudt:hasUnit unit:MilliGM-PER-L ;
-    acq:hasExternalReference wbs:RBC_Secondary_Sedimentation-tss-concentration_mqtt_ref .
+    ref:hasExternalReference wbs:RBC_Secondary_Sedimentation-tss-concentration_mqtt_ref .
 
-wbs:RBC_Secondary_Sedimentation-tss-concentration_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/RBC_Secondary_Sedimentation-tss-concentration" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:RBC_Secondary_Sedimentation-tss-concentration_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/RBC_Secondary_Sedimentation-tss-concentration" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:RBC_Secondary_Sedimentation-turbidity a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Turbidity ;
     qudt:hasUnit unit:NTU ;
-    acq:hasExternalReference wbs:RBC_Secondary_Sedimentation-turbidity_mqtt_ref .
+    ref:hasExternalReference wbs:RBC_Secondary_Sedimentation-turbidity_mqtt_ref .
 
-wbs:RBC_Secondary_Sedimentation-turbidity_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/RBC_Secondary_Sedimentation-turbidity" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:RBC_Secondary_Sedimentation-turbidity_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/RBC_Secondary_Sedimentation-turbidity" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:RBC_Secondary_Sedimentation-volume a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Volume ;
     qudt:hasUnit unit:GAL_US ;
-    acq:hasExternalReference wbs:RBC_Secondary_Sedimentation-volume_mqtt_ref .
+    ref:hasExternalReference wbs:RBC_Secondary_Sedimentation-volume_mqtt_ref .
 
-wbs:RBC_Secondary_Sedimentation-volume_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/RBC_Secondary_Sedimentation-volume" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:RBC_Secondary_Sedimentation-volume_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/RBC_Secondary_Sedimentation-volume" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Sluice_Gate-opening-command a s223:QuantifiableActuatableProperty ;
     qudt:hasQuantityKind qudtqk:OpeningRatio ;
-    acq:hasExternalReference wbs:Sluice_Gate-opening-command_mqtt_ref .
+    ref:hasExternalReference wbs:Sluice_Gate-opening-command_mqtt_ref .
 
-wbs:Sluice_Gate-opening-command_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Sluice_Gate-opening-command" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Sluice_Gate-opening-command_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Sluice_Gate-opening-command" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Sluice_Gate-status a s223:QuantifiableObservableProperty ;
     qudt:hasEnumerationKind s223:EnumerationKind-Status ;
-    acq:hasExternalReference wbs:Sluice_Gate-status_mqtt_ref .
+    ref:hasExternalReference wbs:Sluice_Gate-status_mqtt_ref .
 
-wbs:Sluice_Gate-status_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Sluice_Gate-status" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Sluice_Gate-status_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Sluice_Gate-status" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Storage_Basin-ph a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Acidity ;
     qudt:hasUnit unit:PH ;
-    acq:hasExternalReference wbs:Storage_Basin-ph_mqtt_ref .
+    ref:hasExternalReference wbs:Storage_Basin-ph_mqtt_ref .
 
-wbs:Storage_Basin-ph_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Storage_Basin-ph" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Storage_Basin-ph_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Storage_Basin-ph" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Storage_Basin-temperature a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Temperature ;
-    acq:hasExternalReference wbs:Storage_Basin-temperature_mqtt_ref .
+    ref:hasExternalReference wbs:Storage_Basin-temperature_mqtt_ref .
 
-wbs:Storage_Basin-temperature_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Storage_Basin-temperature" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Storage_Basin-temperature_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Storage_Basin-temperature" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Storage_Basin-turbidity a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Turbidity ;
     qudt:hasUnit unit:NTU ;
-    acq:hasExternalReference wbs:Storage_Basin-turbidity_mqtt_ref .
+    ref:hasExternalReference wbs:Storage_Basin-turbidity_mqtt_ref .
 
-wbs:Storage_Basin-turbidity_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Storage_Basin-turbidity" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Storage_Basin-turbidity_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Storage_Basin-turbidity" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Storage_Basin-volume a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Volume ;
     qudt:hasUnit unit:GAL_US ;
-    acq:hasExternalReference wbs:Storage_Basin-volume_mqtt_ref .
+    ref:hasExternalReference wbs:Storage_Basin-volume_mqtt_ref .
 
-wbs:Storage_Basin-volume_mqtt_ref a acq:MQTTReference ;
-    acq:Broker "mosquitto" ;
-    acq:Port 1883 ;
-    acq:Topic "benicia/Storage_Basin-volume" ;
-    acq:time_key "Timestamp" ;
-    acq:value_key "Value" .
+wbs:Storage_Basin-volume_mqtt_ref a ref:MQTTReference ;
+    ref:MQTTBroker "mosquitto:1883" ;
+    ref:MQTTTopic "benicia/Storage_Basin-volume" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 
 wbs:Wet_Weather_Screen a nawi:Screen ;
     s223:cnx wbs:Wet_Weather_Screen-in,

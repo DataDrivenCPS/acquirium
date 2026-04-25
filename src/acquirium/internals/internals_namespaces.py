@@ -57,14 +57,19 @@ LAST_RUN = ACQUIRIUM_NS.lastRun
 LAST_INPUT_CHANGE = ACQUIRIUM_NS.lastInputChange
 
 
-# Acquirium-internal external reference (used for MQTT, CSV, PG sources)
+# External-reference vocabulary follows ontologies/ref-schema.ttl
+# (https://brickschema.org/schema/Brick/ref#). Predicates that the schema
+# does not define live under ACQUIRIUM_NS and are Acquirium-specific.
 HAS_EXTERNAL_REFERENCE = BRICK_REF.hasExternalReference
+EXTERNAL_REFERENCE = BRICK_REF.ExternalReference
 TIMESERIES_REFERENCE = BRICK_REF.TimeseriesReference
 HAS_TIMESERIES_ID = BRICK_REF.hasTimeseriesId
 STORED_AT = BRICK_REF.storedAt
 
 
-# Predicates stored on Brick ref nodes to allow handle reconstruction from graph
+# Predicates stored on TimeseriesReference nodes to distinguish
+# Acquirium-managed streams (these two are present) from external PG
+# references (storedAt is a literal DSN).
 ACQUIRIUM_SOURCE_ID  = ACQUIRIUM_NS.sourceId   # the registered datasource name
 ACQUIRIUM_REF_NAME   = ACQUIRIUM_NS.refName    # the source-local stream identifier
 
@@ -82,35 +87,35 @@ LOGBOOK = ACQUIRIUM_NS.Logbook
 PLANT_URI = str(ACQUIRIUM_NS.Plant)  # Generic URI representing the entire plant
 
 
-# File-based Reference predicates
-PARQUET_REF = ACQUIRIUM_NS.ParquetReference
-CSV_REF = BRICK_REF.csvReference
-CSV_LOCATION = BRICK_REF.csvFileLocation
-REF_PATH = ACQUIRIUM_NS.hasFilePath
-REF_TIME_COL = ACQUIRIUM_NS.hasTimeColumn
-REF_VALUE_COL = ACQUIRIUM_NS.hasValueColumn
+# Origin tag literal on a reference node (e.g. "Lab", "SCADA").
+DATA_SOURCE = ACQUIRIUM_NS.dataSource
 
-# MQTT Reference predicates
-MQTT_REFERENCE = ACQUIRIUM_NS.MQTTReference
-BROKER = ACQUIRIUM_NS.mqttBroker
-PORT = ACQUIRIUM_NS.mqttPort
-TOPIC = ACQUIRIUM_NS.mqttTopic
-VALUE_KEY = ACQUIRIUM_NS.mqttValueKey
-TIME_KEY = ACQUIRIUM_NS.mqttTimeKey
+# Tabular file references (parquet/csv/tsv). File type is inferred from
+# the fileLocation extension; ref:csvReference is intentionally not used.
+FILE_REFERENCE = BRICK_REF.FileReference
+HAS_FILE_REFERENCE = BRICK_REF.hasFileReference
+FILE_LOCATION = BRICK_REF.fileLocation
+TIME_COLUMN_ID = BRICK_REF.timeColumnID
+VALUE_COLUMN_ID = BRICK_REF.valueColumnID
 
-# Postgres Reference predicates
-PG_REFERENCE = TIMESERIES_REFERENCE
-PG_DSN = ACQUIRIUM_NS.postgresDSN
-PG_HOST = ACQUIRIUM_NS.postgresHost
-PG_PORT = ACQUIRIUM_NS.postgresPort
-PG_DB = ACQUIRIUM_NS.postgresDB
-PG_USER = ACQUIRIUM_NS.postgresUser
-PG_PASS = ACQUIRIUM_NS.postgresPass
-PG_TABLE = ACQUIRIUM_NS.postgresTable
-PG_QUERY = ACQUIRIUM_NS.postgresQuery
-PG_TIME_COL = ACQUIRIUM_NS.postgresTimeColumn
-PG_VALUE_COL = ACQUIRIUM_NS.postgresValueColumn
-PG_POINT_FILTER = ACQUIRIUM_NS.postgresPointFilter
+# MQTT Reference predicates. timeKey/valueKey are Acquirium-specific (they
+# describe how to decode a JSON payload) and live under ACQUIRIUM_NS.
+MQTT_REFERENCE = BRICK_REF.MQTTReference
+HAS_MQTT_REFERENCE = BRICK_REF.hasMQTTReference
+MQTT_BROKER = BRICK_REF.MQTTBroker  # accepts "host", "host:port", or "mqtt(s)://..."
+MQTT_TOPIC = BRICK_REF.MQTTTopic
+TIME_KEY = ACQUIRIUM_NS.timeKey
+VALUE_KEY = ACQUIRIUM_NS.valueKey
+
+# External Postgres / generic-DSN timeseries.  These reuse ref:TimeseriesReference
+# and ref:storedAt (with storedAt as a literal DSN) but the column/table/query
+# predicates are Acquirium-specific.
+HAS_TIMESERIES_REFERENCE = BRICK_REF.hasTimeseriesReference
+TIMESERIES_TABLE        = ACQUIRIUM_NS.timeseriesTable
+TIMESERIES_QUERY        = ACQUIRIUM_NS.timeseriesQuery
+TIMESERIES_TIME_COLUMN  = ACQUIRIUM_NS.timeseriesTimeColumn
+TIMESERIES_VALUE_COLUMN = ACQUIRIUM_NS.timeseriesValueColumn
+TIMESERIES_POINT_FILTER = ACQUIRIUM_NS.timeseriesPointFilter
 
 OWL_CLASS = URIRef("http://www.w3.org/2002/07/owl#Class")
 OWL_OBJ_PROP = URIRef("http://www.w3.org/2002/07/owl#ObjectProperty")
