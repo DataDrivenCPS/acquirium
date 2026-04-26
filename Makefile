@@ -54,6 +54,7 @@ down:
 test: ACQUIRIUM_RECREATE := true
 test: ACQUIRIUM_CONFIG_FILE := acquirium.testing.toml
 test:
+	uv sync --all-extras
 	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) ACQUIRIUM_CONFIG_FILE=$(ACQUIRIUM_CONFIG_FILE) $(COMPOSE) --profile test up -d --build; \
 	uv run pytest tests; \
 	$(MAKE) testing-down
