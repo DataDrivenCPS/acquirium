@@ -20,31 +20,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Optional
 
-from rdflib import Graph as RDFGraph, URIRef, Literal
-from rdflib.namespace import RDF, RDFS
-
 from acquirium.Client.acquirium import Acquirium
 from acquirium.Server.insert_stats import insert_stats
-from acquirium.internals.app_utils import make_stream_ref_uri
-from acquirium.internals.models import compute_handle
-from acquirium.internals.internals_namespaces import (
-    ACQUIRIUM_DB_URI,
-    ACQUIRIUM_DATASOURCE,
-    ACQUIRIUM_NS,
-    ACQUIRIUM_REF_NAME,
-    ACQUIRIUM_SOURCE_ID,
-    BRICK_REF_DATABASE,
-    BRICK_REF_HAS_EXTERNAL_REFERENCE,
-    BRICK_REF_HAS_TIMESERIES_ID,
-    BRICK_REF_STORED_AT,
-    BRICK_REF_TIMESERIES_REFERENCE,
-    HAS_MEDIUM,
-    HAS_QUANTITY_KIND,
-    HAS_UNIT,
-    OF_SUBSTANCE,
-    VIRTUAL_POINT,
-    DATA_SOURCE,
-)
 
 import warnings
 

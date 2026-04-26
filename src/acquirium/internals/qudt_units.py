@@ -29,11 +29,8 @@ from decimal import Decimal, getcontext
 from rdflib import Graph, Literal, URIRef
 from rdflib.namespace import RDF, RDFS, SKOS, XSD
 
-from acquirium.internals.internals_namespaces import QUDT, UNIT
+from acquirium.internals.internals_namespaces import QUDT, UNIT, QUDT_QUANTITY_KIND
 
-# QUDT also defines a quantity kind vocabulary; we keep the namespace local to
-# avoid coupling other parts of the codebase to it.
-QUDT_QUANTITY_KIND_PROP = URIRef("http://qudt.org/schema/qudt/quantityKind")
 
 COMMON_ALIASES: dict[str, URIRef] = {
     "gallon": UNIT.GAL_US,
@@ -101,7 +98,7 @@ class UnitDefinition:
                     return lit
             return None
 
-        quantity_kinds = list(graph.objects(uri, QUDT_QUANTITY_KIND_PROP))
+        quantity_kinds = list(graph.objects(uri, QUDT.QuantityKind))
         quantity_kinds += list(graph.objects(uri, QUDT.hasQuantityKind))
         # Deduplicate while preserving order
         seen_qk: set[URIRef] = set()
@@ -112,7 +109,7 @@ class UnitDefinition:
                 unique_qks.append(qk)
 
         # Prefer the canonical Length quantity kind when multiple exist (common in QUDT dumps)
-        preferred = URIRef("http://qudt.org/vocab/quantitykind/Length")
+        preferred = QUDT_QUANTITY_KIND.Length
         if preferred in unique_qks:
             quantity_kind = preferred
         else:

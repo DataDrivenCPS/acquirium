@@ -65,21 +65,22 @@ def _iso_now() -> str:
 def load_mappings_from_ttl(ttl_path: str) -> Dict[str, str]:
     """
     Reads TTL and extracts { pyomo_var_name -> point_uri } using:
-      ?s acquirium:hasExternalReference ?point_uri .
-      ?s acquirium:hasPyomoVar ?pyomo_var .
+      ?s ref:hasExternalReference ?point_uri .
+      ?s acquirium:hasPyomoVar  ?pyomo_var .
     """
     g = rdflib.Graph().parse(ttl_path, format="turtle")
     acq = rdflib.Namespace("urn:acquirium#")
+    ref = rdflib.Namespace("https://brickschema.org/schema/Brick/ref#")
 
     mappings: Dict[str, str] = {}
-    for s, _, point_uri in g.triples((None, acq.hasExternalReference, None)):
+    for s, _, point_uri in g.triples((None, ref.hasExternalReference, None)):
         for _, _, pyomo_var in g.triples((s, acq.hasPyomoVar, None)):
             mappings[str(pyomo_var)] = str(point_uri)
 
     if not mappings:
         raise ValueError(
             "No mappings found in TTL. Expected triples using "
-            "urn:acquirium#hasExternalReference and urn:acquirium#hasPyomoVar."
+            "ref:hasExternalReference and urn:acquirium#hasPyomoVar."
         )
 
     return mappings

@@ -13,19 +13,18 @@ import paho.mqtt.client as mqtt
 
 from acquirium.Driver import Driver
 from acquirium.internals.internals_namespaces import (
-    BROKER, HAS_EXTERNAL_REFERENCE, MQTT_REFERENCE, PORT, TIME_KEY, TOPIC, VALUE_KEY,
+    HAS_EXTERNAL_REFERENCE, MQTT_BROKER, MQTT_REFERENCE, MQTT_TOPIC, TIME_KEY, VALUE_KEY,
 )
 
 logger = logging.getLogger("acquirium.mqtt")
 
 MQTT_SPARQL_QUERY = f"""
-SELECT ?data ?ref ?broker ?port ?topic ?tkey ?vkey
+SELECT ?data ?ref ?broker ?topic ?tkey ?vkey
 WHERE {{
   ?data <{HAS_EXTERNAL_REFERENCE}> ?ref .
   ?ref a <{MQTT_REFERENCE}> .
-  OPTIONAL {{ ?ref <{BROKER}> ?broker . }}
-  OPTIONAL {{ ?ref <{PORT}> ?port . }}
-  OPTIONAL {{ ?ref <{TOPIC}> ?topic . }}
+  OPTIONAL {{ ?ref <{MQTT_BROKER}> ?broker . }}
+  OPTIONAL {{ ?ref <{MQTT_TOPIC}> ?topic . }}
   OPTIONAL {{ ?ref <{TIME_KEY}> ?tkey . }}
   OPTIONAL {{ ?ref <{VALUE_KEY}> ?vkey . }}
 }}
@@ -122,15 +121,16 @@ class MQTTIngestDriver(Driver):
             return
 
         for row in result.get("rows", []):
-            data_uri, ref_uri, broker, port, topic, tkey, vkey = row
+            data_uri, ref_uri, broker, topic, tkey, vkey = row
             topic_s = (topic or "").strip('"')
             if not topic_s:
                 continue
+            host, port = _parse_mqtt_broker((broker or "localhost").strip('"'))
             spec = MQTTStreamSpec(
                 point_uri=str(data_uri),
                 ref_uri=str(ref_uri),
-                broker=(broker or "localhost").strip('"'),
-                port=int((port or "1883").strip('"')),
+                broker=host,
+                port=port,
                 topic=topic_s,
                 time_key=(tkey or "Timestamp").strip('"'),
                 value_key=(vkey or "Value").strip('"'),
@@ -219,6 +219,27 @@ class MQTTIngestDriver(Driver):
             except Exception as exc:
                 logger.warning("mqtt decode failed client=%s topic=%s err=%s", client_key, topic, exc)
         return on_message
+
+
+def _parse_mqtt_broker(raw: str) -> tuple[str, int]:
+    """Split a ref:MQTTBroker literal into (host, port).
+
+    Accepts ``"host"``, ``"host:port"``, or ``"mqtt(s)://host[:port]"``.
+    """
+    s = raw.strip()
+    default_port = 1883
+    if "://" in s:
+        scheme, _, rest = s.partition("://")
+        if scheme.lower() == "mqtts":
+            default_port = 8883
+        s = rest.split("/", 1)[0]
+    if ":" in s:
+        host, _, port_str = s.rpartition(":")
+        try:
+            return host or "localhost", int(port_str)
+        except ValueError:
+            return s, default_port
+    return s or "localhost", default_port
 
 
 def _decode_payload(payload: str) -> dict[str, Any]:

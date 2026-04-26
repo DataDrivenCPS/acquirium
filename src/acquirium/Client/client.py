@@ -283,19 +283,19 @@ class AcquiriumClient:
 
     def ingest_external_references_from_graph(self) -> dict:
         """
-        Query the server graph for CSV/Parquet external references.
-        Read those files locally (host filesystem) and upload bytes to server for ingestion.
-        Returns counts.
+        Query the server graph for ref:FileReference nodes (parquet/csv/tsv).
+        Read those files locally (host filesystem) and upload bytes to the
+        server for ingestion. The server infers the file format from the
+        filename extension.
         """
         q = f"""
-            SELECT ?data ?ref ?type ?path ?timeCol ?valueCol
+            SELECT ?data ?ref ?path ?timeCol ?valueCol
             WHERE {{
               ?data <{HAS_EXTERNAL_REFERENCE}> ?ref .
-              ?ref a ?type .
-              OPTIONAL {{ ?ref <{REF_PATH}> ?path . }}
-              OPTIONAL {{ ?ref <{REF_TIME_COL}> ?timeCol . }}
-              OPTIONAL {{ ?ref <{REF_VALUE_COL}> ?valueCol . }}
-              FILTER(?type IN (<{PARQUET_REF}>, <{CSV_REF}>))
+              ?ref a <{FILE_REFERENCE}> .
+              OPTIONAL {{ ?ref <{FILE_LOCATION}> ?path . }}
+              OPTIONAL {{ ?ref <{TIME_COLUMN_ID}> ?timeCol . }}
+              OPTIONAL {{ ?ref <{VALUE_COLUMN_ID}> ?valueCol . }}
             }}
         """
 
@@ -308,7 +308,7 @@ class AcquiriumClient:
 
         url = f"{self.base_url}/ingest_external_reference"
 
-        for data_uri, ref_uri, ref_type, path, time_col, value_col in rows:
+        for data_uri, ref_uri, path, time_col, value_col in rows:
             if not path:
                 skipped += 1
                 continue
@@ -326,21 +326,19 @@ class AcquiriumClient:
                 failed += 1
                 continue
 
-            time_column_no = int(str(time_col).strip('"')) if time_col else 0
-            value_column_no = int(str(value_col).strip('"')) if value_col else 1
-
             try:
                 with open(p, "rb") as f:
                     content = f.read()
 
                 files = {"file": (p.name, content, "application/octet-stream")}
-                data = {
+                data: dict[str, str] = {
                     "data_uri": str(data_uri),
                     "ref_uri": str(ref_uri),
-                    "ref_type": str(ref_type),
-                    "time_column_no": str(time_column_no),
-                    "value_column_no": str(value_column_no),
                 }
+                if time_col:
+                    data["time_column"] = str(time_col).strip('"')
+                if value_col:
+                    data["value_column"] = str(value_col).strip('"')
 
                 r = requests.post(url, data=data, files=files)
                 r.raise_for_status()

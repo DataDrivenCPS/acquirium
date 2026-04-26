@@ -19,12 +19,12 @@ from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_DB_URI,
     ACQUIRIUM_REF_NAME,
     ACQUIRIUM_SOURCE_ID,
-    BRICK_REF_DATABASE,
-    BRICK_REF_HAS_EXTERNAL_REFERENCE,
-    BRICK_REF_HAS_TIMESERIES_ID,
-    BRICK_REF_STORED_AT,
-    BRICK_REF_TIMESERIES_REFERENCE,
+    DATABASE,
+    HAS_EXTERNAL_REFERENCE,
+    HAS_TIMESERIES_ID,
     S223,
+    STORED_AT,
+    TIMESERIES_REFERENCE,
     VIRTUAL_POINT,
 )
 from acquirium.internals.models import compute_handle
@@ -78,7 +78,7 @@ class SystemMetricsDriver(Driver):
             ip = "127.0.0.1"
 
         g = Graph()
-        g.add((ACQUIRIUM_DB_URI, RDF.type,   BRICK_REF_DATABASE))
+        g.add((ACQUIRIUM_DB_URI, RDF.type,   DATABASE))
         g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
         g.add((self._host_uri, RDF.type,                   S223.Computer))
         g.add((self._host_uri, RDFS.label,                 Literal(hostname)))
@@ -95,12 +95,12 @@ class SystemMetricsDriver(Driver):
             g.add((s, RDF.type,   S223.Property))
             g.add((s, RDF.type,   VIRTUAL_POINT))
             g.add((s, RDFS.label, Literal(label)))
-            g.add((s,        BRICK_REF_HAS_EXTERNAL_REFERENCE, ref_node))
-            g.add((ref_node, RDF.type,                         BRICK_REF_TIMESERIES_REFERENCE))
-            g.add((ref_node, BRICK_REF_HAS_TIMESERIES_ID,      Literal(compute_handle(self.src_id, ref))))
-            g.add((ref_node, ACQUIRIUM_SOURCE_ID,               Literal(self.src_id)))
-            g.add((ref_node, ACQUIRIUM_REF_NAME,                Literal(ref)))
-            g.add((ref_node, BRICK_REF_STORED_AT,               ACQUIRIUM_DB_URI))
+            g.add((s,        HAS_EXTERNAL_REFERENCE, ref_node))
+            g.add((ref_node, RDF.type,               TIMESERIES_REFERENCE))
+            g.add((ref_node, HAS_TIMESERIES_ID,      Literal(compute_handle(self.src_id, ref))))
+            g.add((ref_node, ACQUIRIUM_SOURCE_ID,    Literal(self.src_id)))
+            g.add((ref_node, ACQUIRIUM_REF_NAME,     Literal(ref)))
+            g.add((ref_node, STORED_AT,              ACQUIRIUM_DB_URI))
 
         self.aq.insert_graph(g.serialize(format="turtle"), format="turtle", replace=False)
 

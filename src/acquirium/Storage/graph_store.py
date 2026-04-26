@@ -16,8 +16,8 @@ from acquirium.internals.internals_namespaces import *
 from acquirium.internals.models import Point, PointCreateRequest
 from acquirium.internals.qudt_units import QUDTUnitConverter, UnitNotFound
 
-# QUDT vocab IRIs — loaded into isolated named graphs so they are queryable
-# via SPARQL without being merged into the union graph on every refresh.
+# QUDT vocab IRIs — excluded from union graph rebuilds to prevent hundreds of
+# thousands of QUDT triples from polluting user SPARQL queries.
 _QUDT_NAMED_GRAPHS = frozenset({
     "http://qudt.org/vocab/unit",
     "http://qudt.org/vocab/quantitykind",
@@ -96,8 +96,6 @@ class OxigraphGraphStore:
             # First run or missing config; recreate to initialize metadata.
             self.env = OntoEnv(path=str(self.env_root), recreate=True)
 
-        self._ensure_qudt_named_graphs()
-
         self.main_graph_uri = main_graph_uri
         self.union_graph_uri = union_graph_uri
         self.include_dependency_graphs = include_dependency_graphs
@@ -161,7 +159,7 @@ class OxigraphGraphStore:
             )
             for ont in ontology_names:
                 if ont in _QUDT_NAMED_GRAPHS:
-                    continue  # populated once at startup; kept out of union graph
+                    continue  # guard: prevent QUDT from flooding the union graph
                 closure_graph, _ = self.env.get_closure(ont)
                 ctx = self.dataset.graph(URIRef(ont))
                 ctx.remove((None, None, None))
@@ -178,22 +176,6 @@ class OxigraphGraphStore:
 
         self._commit()
         return {"main_triples": len(main_graph), "union_triples": len(union_graph)}
-
-    def _ensure_qudt_named_graphs(self) -> None:
-        """Populate dedicated named graphs for QUDT unit/quantitykind vocabs on first run."""
-        for iri in _QUDT_NAMED_GRAPHS:
-            named_graph = self.dataset.graph(URIRef(iri))
-            if named_graph:
-                continue
-            try:
-                self.env.add(iri)
-                graph, _ = self.env.get_closure(iri)
-                for triple in graph:
-                    named_graph.add(triple)
-                _logger.info("Loaded QUDT <%s> (%d triples)", iri, len(named_graph))
-            except Exception as exc:
-                _logger.warning("Could not load QUDT <%s>: %s", iri, exc)
-        self._commit()
 
     # -------------------- SPARQL surface --------------------
     def sparql_query(self, query: str, use_union: bool = False) -> dict:
