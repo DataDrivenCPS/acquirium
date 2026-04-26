@@ -38,7 +38,7 @@ jobs:
             uv-${{ runner.os }}-py3.12-
 
       - name: Install dependencies
-        run: uv sync --python 3.12
+        run: uv sync --python 3.12 --all-extras
 
       - name: Run unit tests with coverage
         run: |
@@ -87,7 +87,7 @@ jobs:
             uv-${{ runner.os }}-py3.12-
 
       - name: Install dependencies
-        run: uv sync --python 3.12
+        run: uv sync --python 3.12 --all-extras
 
       - name: Start services
         run: make testing-up
