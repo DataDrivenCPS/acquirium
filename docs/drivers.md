@@ -127,6 +127,49 @@ def setup(self):
     self.source_id = cfg.get("mqtt_source_id", "mytopic")  # reads "mqtt" from the [[drivers]] entry. Defaults to "mytopic" if not set.
 ```
 
+## Built-in WaterTAP driver
+
+`acquirium.BuiltinDrivers.watertap:WaterTAPDriver` runs a configurable WaterTAP build/solve callable and ingests values mapped in an RDF model. The graph file must contain both:
+
+- `ref:hasExternalReference` from each point to its reference URI
+- `acquirium:hasPyomoVar` on the same point with the Pyomo component path to read after solve
+
+Install the optional dependencies with:
+
+```bash
+uv run --extra watertap acquirium run acquirium.BuiltinDrivers.watertap:WaterTAPDriver --config acquirium.toml
+```
+
+The `watertap` extra only installs the Python packages declared in `pyproject.toml`. Some WaterTAP/Pyomo environments also require separate native extension setup for PyNumero and IDAES. That build step is not handled by `pyproject.toml` extras alone. If your model requires it, run the relevant Pyomo/IDAES extension install commands after enabling the extra.
+
+Typical setup commands are:
+
+```bash
+uv sync --extra watertap
+uv run pyomo download-extensions
+uv run --with setuptools pyomo build-extensions
+uv run idaes get-extensions
+```
+
+Example:
+
+```toml
+[[drivers]]
+spec = "acquirium.BuiltinDrivers.watertap:WaterTAPDriver"
+interval = 30.0
+watertap_source_id = "watertap"
+watertap_graph_path = "deployments/WATERTAP2/models/test-model.ttl"
+watertap_build_spec = "deployments/WATERTAP2/scripts/example_watertap.py:build_and_solve"
+watertap_insert_graph = true
+watertap_build_kwargs = { flow_vol = 0.001, salt_mass_conc = 0.035, operating_pressure = 5000000.0, flow_mass_liq = 0.985, flow_mass_salt = 0.015 }
+```
+
+Optional keys:
+
+- `watertap_insert_graph_replace` replaces the main graph when inserting it
+- `watertap_register_streams` defaults to `true` and registers each mapped point/ref pair
+- `watertap_result_attr` extracts the model from an attribute when the build function returns a wrapper object instead of the model directly or as the first tuple item
+
 ## Lifecycle
 
 ```

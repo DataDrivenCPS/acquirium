@@ -106,6 +106,7 @@ MQTT_BROKER = BRICK_REF.MQTTBroker  # accepts "host", "host:port", or "mqtt(s):/
 MQTT_TOPIC = BRICK_REF.MQTTTopic
 TIME_KEY = ACQUIRIUM_NS.timeKey
 VALUE_KEY = ACQUIRIUM_NS.valueKey
+HAS_PYOMO_VAR = ACQUIRIUM_NS.hasPyomoVar
 
 # External Postgres / generic-DSN timeseries.  These reuse ref:TimeseriesReference
 # and ref:storedAt (with storedAt as a literal DSN) but the column/table/query
