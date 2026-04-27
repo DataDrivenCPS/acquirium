@@ -10,7 +10,7 @@ and queried in Acquirium.
 | `point_uri` | RDF graph (Oxigraph) | Semantic identity of the measurement. Typed, labelled, linked to equipment in your ontology. |
 | `source_id` | TimescaleDB `streams` table + RDF graph | Identifies the datasource (e.g. `"mybox-system-metrics"`). Scopes `ref_name` so two sources with the same stream name don't collide. |
 | `ref_name` | TimescaleDB `streams` table + RDF graph | Source-local stream identifier (e.g. `"cpu_percent"`). Unique within a `source_id`. |
-| `handle` | TimescaleDB `timeseries` table (storage key) | Deterministic UUID: `uuid5(namespace, f"{source_id}:{ref_name}")`. Globally unique, stable, never user-visible. |
+| `handle` | TimescaleDB `timeseries` table (storage key) | Deterministic UUID: `acq:{uuid5(namespace, f"{source_id}:{ref_name}")}` in URI format using Acquirium Namespace. Globally unique, stable, never user-visible. |
 | Brick ref node | RDF graph | An anonymous node typed as `ref:TimeseriesReference` hanging off `point_uri` via `ref:hasExternalReference`. Carries `ref:hasTimeseriesId` (the handle), `acquirium:sourceId`, `acquirium:refName`, and `ref:storedAt`. |
 
 `point_uri` and (`source_id`, `ref_name`) are intentionally separate. The
@@ -43,7 +43,7 @@ aq.insert_timeseries_batch(
 
 The handle is computed internally to Acquirium:
 ```
-handle = uuid5(namespace, "mybox-system-metrics:cpu_percent")
+handle = acq:{uuid5(namespace, "mybox-system-metrics:cpu_percent")}
 ```
 
 Rows are written to TimescaleDB keyed by this handle. The data exists in
@@ -70,11 +70,11 @@ This inserts RDF triples into Oxigraph following the
     a acquirium:VirtualPoint ;
     rdfs:label "CPU usage" ;
     qudt:hasUnit qudt-unit:PERCENT ;
-    ref:hasExternalReference <urn:host:mybox:cpu_percent#ref> .
+    ref:hasExternalReference <handle> .
 
-<urn:host:mybox:cpu_percent#ref>
+<handle>
     a ref:TimeseriesReference ;
-    ref:hasTimeseriesId  "<uuid>" ;        # = handle
+    ref:hasTimeseriesId  <handle> ;        # = handle
     acquirium:sourceId   "mybox-system-metrics" ;
     acquirium:refName    "cpu_percent" ;
     ref:storedAt         <urn:acquirium#timescaledb> .
@@ -119,7 +119,7 @@ The `scripts/publish_system_metrics.py` script follows this pattern:
 source_id  =  "mybox-system-metrics"
 ref_name   =  "cpu_percent"
 point_uri  =  "urn:host:mybox:cpu_percent"   (s223:Property in the graph)
-handle     =  uuid5(ns, "mybox-system-metrics:cpu_percent")  (TimescaleDB key)
+handle     =  acq:uuid5(ns, "mybox-system-metrics:cpu_percent")  (TimescaleDB key)
 ```
 
 1. `register_datasource()` registers the datasource node in the graph.

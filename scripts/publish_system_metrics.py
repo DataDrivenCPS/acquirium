@@ -135,7 +135,6 @@ def register_host_graph(aq: Acquirium, host: dict, src_id: str) -> None:
     for key, label, _unit, _qk in _METRIC_DEFS:
         s = stream_uri(hostname, key)
         handle = compute_handle(src_id, key)
-        ref_node = URIRef(str(s) + "#ref")
 
         # Link host → stream
         g.add((h, S223.hasProperty, s))
@@ -147,12 +146,12 @@ def register_host_graph(aq: Acquirium, host: dict, src_id: str) -> None:
 
         # Brick-style external reference → Acquirium TimescaleDB
         # ref:hasTimeseriesId holds the globally-unique handle (actual DB key)
-        g.add((s,        HAS_EXTERNAL_REFERENCE, ref_node))
-        g.add((ref_node, RDF.type, TIMESERIES_REFERENCE))
-        g.add((ref_node, HAS_TIMESERIES_ID,      Literal(handle)))
-        g.add((ref_node, ACQUIRIUM_SOURCE_ID,               Literal(src_id)))
-        g.add((ref_node, ACQUIRIUM_REF_NAME,                Literal(key)))
-        g.add((ref_node, STORED_AT,               ACQUIRIUM_DB_URI))
+        g.add((s,        HAS_EXTERNAL_REFERENCE, handle))
+        g.add((handle, RDF.type, TIMESERIES_REFERENCE))
+        g.add((handle, HAS_TIMESERIES_ID,     handle))
+        g.add((handle, ACQUIRIUM_SOURCE_ID,               Literal(src_id)))
+        g.add((handle, ACQUIRIUM_REF_NAME,                Literal(key)))
+        g.add((handle, STORED_AT,               ACQUIRIUM_DB_URI))
 
     turtle = g.serialize(format="turtle")
     aq.client.insert_graph(turtle, format="turtle", replace=False)
