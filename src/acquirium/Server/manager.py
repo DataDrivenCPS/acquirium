@@ -846,11 +846,23 @@ class Manager:
         """Register a named datasource in the knowledge graph.
 
         Writes a graph node typed as acquirium:DataSourceRegistry so the
-        datasource is discoverable via SPARQL.  Idempotent — safe to call
-        on every startup.  Returns source_id.
+        datasource is discoverable via SPARQL.  Returns source_id.
+
+        Raises ``ValueError`` if a datasource with the same source_id is
+        already registered.
         """
-        g = Graph()
         node = URIRef(f"urn:acquirium:datasource:{source_id}")
+
+        check_query = f"""
+        ASK {{
+            <{node}> a <{ACQUIRIUM_DATASOURCE}> .
+        }}
+        """
+        exists = self.graph_store.sparql_query(check_query, use_union=True).get("boolean", False)
+        if exists:
+            raise ValueError(f"datasource '{source_id}' is already registered")
+
+        g = Graph()
         g.add((node, RDF.type,   ACQUIRIUM_DATASOURCE))
         g.add((node, RDFS.label, Literal(source_id)))
         self.graph_store.insert_graph(g, format="turtle", replace=False)
