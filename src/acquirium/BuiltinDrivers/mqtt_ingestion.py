@@ -47,7 +47,7 @@ class _Sample:
     point_uri: str
     ref_uri: str
     ts: datetime
-    value: str | None
+    value: Any
 
 
 class MQTTIngestDriver(Driver):
@@ -197,23 +197,46 @@ class MQTTIngestDriver(Driver):
             logger.info("mqtt connected client=%s topics=%d", client_key, len(topics))
         return on_connect
 
+    def decode_payload(self, payload: bytes, spec: MQTTStreamSpec) -> tuple[datetime, Any]:
+        """Decode a raw MQTT message into a (timestamp, value) pair for *spec*.
+
+        Override in a subclass to support any wire format (MessagePack,
+        Protobuf, binary frames, CSV lines, etc.).  The stream identity is
+        already known via ``spec.ref_uri`` — only the observation itself needs
+        to be returned.
+
+        Args:
+            payload: raw bytes from the broker
+            spec:    the MQTTStreamSpec for the stream this message belongs to;
+                     use ``spec.time_key`` / ``spec.value_key`` to select fields
+                     from the decoded object when the format is dict-shaped
+
+        Returns:
+            ``(ts, value)`` where *ts* is a timezone-aware UTC datetime and
+            *value* is any type accepted by ``insert_timeseries_batch``
+
+        Raises:
+            ValueError: if the payload cannot be decoded
+        """
+        text = payload.decode("utf-8", errors="replace")
+        payload_dict = _decode_payload(text)
+        raw_ts = payload_dict.get(spec.time_key)
+        raw_val = payload_dict.get(spec.value_key)
+        ts = _parse_ts(raw_ts) if raw_ts is not None else datetime.now(timezone.utc)
+        return ts, raw_val
+
     def _on_message(self, client_key: str):
         def on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage):
             topic = msg.topic
             try:
-                payload = msg.payload.decode("utf-8", errors="replace")
-                payload_dict = _decode_payload(payload)
                 logger.debug("mqtt message client=%s topic=%s", client_key, topic)
                 with self._clients_lock:
                     specs = list(self._topic_specs.get(client_key, {}).get(topic, []))
                 if not specs:
                     return
                 for spec in specs:
-                    raw_ts = payload_dict.get(spec.time_key)
-                    raw_val = payload_dict.get(spec.value_key)
-                    ts = _parse_ts(raw_ts) if raw_ts is not None else datetime.now(timezone.utc)
-                    val = None if raw_val is None else str(raw_val)
-                    sample = _Sample(point_uri=spec.point_uri, ref_uri=spec.ref_uri, ts=ts, value=val)
+                    ts, value = self.decode_payload(msg.payload, spec)
+                    sample = _Sample(point_uri=spec.point_uri, ref_uri=spec.ref_uri, ts=ts, value=value)
                     with self._pending_lock:
                         self._pending.setdefault(spec.ref_uri, []).append(sample)
             except Exception as exc:
