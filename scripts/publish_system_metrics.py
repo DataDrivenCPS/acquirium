@@ -145,10 +145,9 @@ def register_host_graph(aq: Acquirium, host: dict, src_id: str) -> None:
         g.add((s, RDFS.label, Literal(label)))
 
         # Brick-style external reference → Acquirium TimescaleDB
-        # ref:hasTimeseriesId holds the globally-unique handle (actual DB key)
+        # the external reference node holds the globally-unique handle (actual DB key)
         g.add((s,        HAS_EXTERNAL_REFERENCE, handle))
         g.add((handle, RDF.type, TIMESERIES_REFERENCE))
-        g.add((handle, HAS_TIMESERIES_ID,     handle))
         g.add((handle, ACQUIRIUM_SOURCE_ID,               Literal(src_id)))
         g.add((handle, ACQUIRIUM_REF_NAME,                Literal(key)))
         g.add((handle, STORED_AT,               ACQUIRIUM_DB_URI))
