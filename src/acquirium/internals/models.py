@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Literal, Any, TYPE_CHECKING
 from dataclasses import dataclass
-from pydantic import BaseModel, Field, RootModel
+from pydantic import BaseModel, ConfigDict, Field, RootModel
 from acquirium.internals.internals_namespaces import ACQUIRIUM_NS
 from rdflib import URIRef
 # Fixed UUID namespace for deterministic handle generation.
@@ -37,9 +37,11 @@ class TimeseriesInfo(BaseModel):
 
 
 class Point(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     uri: str
     handle: str | URIRef | list[str] | list[URIRef] | None = None
-    types: list[str] = Field(default_factory=list)  
+    types: list[str] = Field(default_factory=list)
     unit: str | None = None
     last_reported: datetime | None = None
     stream: TimeseriesInfo | None = None
@@ -151,7 +153,6 @@ class AppContext:
 class AppOutputSpec(BaseModel):
     kind: Literal["timeseries", "event", "trigger"]
     point_uri: str
-    ref_uri: str | None = None
     quantity_kind: str | None = None
     unit: str | None = None
     data_source: str | None = None

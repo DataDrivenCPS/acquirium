@@ -17,7 +17,6 @@ import warnings
 from acquirium.Client.query import Query
 from acquirium.Client.client import AcquiriumClient
 from acquirium.Apps.base import App
-from acquirium.internals.app_utils import make_stream_ref_uri
 from acquirium.internals.models import AppOutputSpec, AppSpec, compute_handle
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_DB_URI,
@@ -344,8 +343,6 @@ class Acquirium:
                 spec_item = AppOutputSpec(**item)
             else:
                 raise TypeError("outputs must be AppOutputSpec or dict")
-            if spec_item.ref_uri is None:
-                spec_item.ref_uri = make_stream_ref_uri(spec_item.point_uri)
             output_specs.append(spec_item)
 
         code = source_code or getattr(app, "source_code", None)
