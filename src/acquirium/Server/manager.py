@@ -12,7 +12,7 @@ from acquirium.Storage import OxigraphGraphStore, TimescaleStore, PGReferenceReg
 from acquirium.internals.qudt_units import QUDTUnitConverter
 from acquirium.internals.models import LogEntry, Order, TimeIntervalModel, AppSpec, AppRunRequest, compute_handle
 from acquirium.internals.internals_namespaces import *
-from acquirium.internals.app_utils import app_uri_for, make_stream_ref_uri
+from acquirium.internals.app_utils import app_uri_for
 
 import json
 import hashlib
@@ -846,22 +846,10 @@ class Manager:
         """Register a named datasource in the knowledge graph.
 
         Writes a graph node typed as acquirium:DataSourceRegistry so the
-        datasource is discoverable via SPARQL.  Returns source_id.
-
-        Raises ``ValueError`` if a datasource with the same source_id is
-        already registered.
+        datasource is discoverable via SPARQL.  Idempotent — safe to call
+        on every startup.  Returns source_id.
         """
         node = URIRef(f"urn:acquirium:datasource:{source_id}")
-
-        check_query = f"""
-        ASK {{
-            <{node}> a <{ACQUIRIUM_DATASOURCE}> .
-        }}
-        """
-        exists = self.graph_store.sparql_query(check_query, use_union=True).get("boolean", False)
-        if exists:
-            raise ValueError(f"datasource '{source_id}' is already registered")
-
         g = Graph()
         g.add((node, RDF.type,   ACQUIRIUM_DATASOURCE))
         g.add((node, RDFS.label, Literal(source_id)))
@@ -955,18 +943,18 @@ class Manager:
 
         for out in spec.outputs:
             point_uri = URIRef(out.point_uri)
-            ref_uri = URIRef(out.ref_uri or make_stream_ref_uri(out.point_uri))
+            handle = compute_handle(spec.name, out.point_uri)
 
             graph.add((app_uri, PRODUCES, point_uri))
             graph.add((point_uri, RDF.type, VIRTUAL_POINT))
-            graph.add((point_uri, HAS_EXTERNAL_REFERENCE, ref_uri))
-            graph.add((ref_uri, RDF.type, STREAM))
+            graph.add((point_uri, HAS_EXTERNAL_REFERENCE, handle))
+            graph.add((handle, RDF.type, STREAM))
             if out.kind in {"event", "trigger"}:
-                graph.add((ref_uri, RDF.type, EVENT_STREAM))
+                graph.add((handle, RDF.type, EVENT_STREAM))
             else:
-                graph.add((ref_uri, RDF.type, TIMESERIES_STREAM))
+                graph.add((handle, RDF.type, TIMESERIES_STREAM))
 
-            graph.add((ref_uri, STORAGE_BACKEND, Literal(out.storage_backend or "timescale")))
+            graph.add((handle, STORAGE_BACKEND, Literal(out.storage_backend or "timescale")))
 
             self._add_literal_or_uri(graph, point_uri, HAS_QUANTITY_KIND, out.quantity_kind)
             self._add_literal_or_uri(graph, point_uri, HAS_UNIT, out.unit)

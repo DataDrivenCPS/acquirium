@@ -257,8 +257,6 @@ def register_datasource(req: RegisterDatasourceRequest) -> dict[str, Any]:
     try:
         source_id = app.state.manager.register_datasource(req.source_id)
         return {"ok": True, "source_id": source_id}
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
