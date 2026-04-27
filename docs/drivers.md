@@ -127,6 +127,41 @@ def setup(self):
     self.source_id = cfg.get("mqtt_source_id", "mytopic")  # reads "mqtt" from the [[drivers]] entry. Defaults to "mytopic" if not set.
 ```
 
+## Built-in MQTT driver
+
+`acquirium.BuiltinDrivers.mqtt_ingestion:MQTTIngestDriver` subscribes to MQTT topics declared in the knowledge graph and ingests samples via the timeseries API.
+
+```toml
+[[drivers]]
+spec           = "acquirium.BuiltinDrivers.mqtt_ingestion:MQTTIngestDriver"
+interval       = 5.0
+mqtt_source_id = "mqtt"
+mqtt_qos       = 0
+```
+
+Each stream is discovered by querying for `ref:MQTTReference` nodes in the graph. The reference must declare a broker and topic; `ref:timeKey` and `ref:valueKey` identify which fields in the payload carry the timestamp and value (defaulting to `"Timestamp"` and `"Value"`).
+
+### Custom payload encoding
+
+Override `decode_payload()` to handle any wire format without touching subscription or batching logic. The stream identity is already known from `spec.ref_uri` — only the observation needs to be returned. The base implementation decodes JSON or Python-literal dicts and extracts fields by `spec.time_key` / `spec.value_key`.
+
+`scripts/custom_mqtt_driver.py` provides a MessagePack example:
+
+```python
+import msgpack
+from acquirium.BuiltinDrivers.mqtt_ingestion import MQTTIngestDriver, MQTTStreamSpec
+
+class MyCustomMQTTIngestDriver(MQTTIngestDriver):
+    def decode_payload(self, payload: bytes, spec: MQTTStreamSpec) -> tuple[datetime, Any]:
+        obj = msgpack.unpackb(payload, raw=False)
+        if not isinstance(obj, dict):
+            raise ValueError(f"msgpack payload is not a map: {type(obj)}")
+        raw_ts = obj.get(spec.time_key)
+        raw_val = obj.get(spec.value_key)
+        ts = _parse_ts(raw_ts) if raw_ts is not None else datetime.now(timezone.utc)
+        return ts, raw_val
+```
+
 ## Built-in WaterTAP driver
 
 `acquirium.BuiltinDrivers.watertap:WaterTAPDriver` runs a configurable WaterTAP build/solve callable and ingests values mapped in an RDF model. The graph file must contain both:
