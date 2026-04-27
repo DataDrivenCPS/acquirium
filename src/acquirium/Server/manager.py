@@ -867,9 +867,9 @@ class Manager:
     ) -> int:
         handle = compute_handle(source_id, ref_name)
         if replace:
-            n = self.timescale.replace_rows(handle, rows)
+            n = self.timescale.replace_rows(str(handle), rows)
         else:
-            n = self.timescale.upsert_rows(handle, rows)
+            n = self.timescale.upsert_rows(str(handle), rows)
         if point_uri:
             self.timescale.ensure_stream_handle(point_uri, source_id, ref_name, handle=handle)
         return n
