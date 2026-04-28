@@ -23,7 +23,6 @@ from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_REF_NAME,
     ACQUIRIUM_SOURCE_ID,
     STORED_AT,
-    TIMESERIES_REFERENCE,
     HAS_EXTERNAL_REFERENCE,
     HAS_MEDIUM,
     HAS_QUANTITY_KIND,
@@ -197,6 +196,10 @@ class Acquirium:
         """Return the server's current graph mutation counter."""
         return self.client.graph_version()
 
+    def reference_uri(self, source_id: str, ref_name: str) -> URIRef:
+        """Return the canonical Acquirium reference URI for ``(source_id, ref_name)``."""
+        return compute_handle(source_id, ref_name)
+
     def register_stream(
         self,
         point_uri: str | URIRef,
@@ -217,18 +220,11 @@ class Acquirium:
         any supplied metadata predicates. Call this once (or when metadata
         changes); it does not affect stored timeseries values.
 
-        When ``ref_name`` is provided, a Brick-style external reference is
-        written following the pattern from the Brick timeseries storage spec
-        (https://docs.brickschema.org/metadata/timeseries-storage.html)::
-
-            <point_uri>  ref:hasExternalReference  <point_uri#ref> .
-            <point_uri#ref>  a  ref:TimeseriesReference ;
-                             ref:hasTimeseriesId  "{ref_name}" ;
-                             ref:storedAt  <urn:acquirium#timescaledb> .
-            <urn:acquirium#timescaledb>  a <urn:acquirium#Database> .
-
-        The ``ref_name`` value is what ``_sync_stream_handles_from_graph``
-        reads back to populate the streams handle table.
+        When ``ref_name`` is provided, Acquirium computes a stable external
+        reference URI from ``(source_id, ref_name)`` and writes it directly as
+        the object of ``ref:hasExternalReference``. That same node is the
+        canonical stream identity in the graph and may also carry driver- or
+        app-specific provenance metadata.
 
         Plain strings for ``unit``, ``quantity_kind``, ``medium``, and
         ``substance`` are resolved against the QUDT vocabulary via the server
@@ -240,7 +236,7 @@ class Acquirium:
             label: Human-readable name (rdfs:label).
             ref_name: Source-native identifier for this stream (sensor tag,
                 MQTT topic, database column, etc.). Written as
-                ``ref:hasTimeseriesId`` on the external reference node.
+                ``acq:refName`` on the external reference node.
             unit: Unit of measurement — URIRef, URI string, or plain text.
             quantity_kind: Physical quantity — URIRef, URI string, or plain text.
             medium: Medium the measurement applies to (S223 hasMedium).
@@ -288,15 +284,10 @@ class Acquirium:
 
         if ref_name is not None and source_id is not None:
             handle = compute_handle(source_id, ref_name)
-            # Stable named URI for the reference node — idempotent across calls
             g.add((subj,        HAS_EXTERNAL_REFERENCE, handle))
-            g.add((handle,    RDF.type,               TIMESERIES_REFERENCE))
-            # Store source_id and ref_name so the handle can be reconstructed
-            # by _sync_stream_handles_from_graph without re-deriving it
             g.add((handle,    ACQUIRIUM_SOURCE_ID,    Literal(source_id)))
             g.add((handle,    ACQUIRIUM_REF_NAME,     Literal(ref_name)))
             g.add((handle,    STORED_AT,              ACQUIRIUM_DB_URI))
-            # Declare the Acquirium DB node (idempotent)
             g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
 
         for pred, value in (properties or {}).items():

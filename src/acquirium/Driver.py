@@ -3,6 +3,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
+from rdflib import URIRef
+
+from acquirium.internals.models import compute_handle
+
 if TYPE_CHECKING:
     from acquirium.Client.acquirium import Acquirium
 
@@ -35,6 +39,28 @@ class Driver(ABC):
         self.aq = aq
         # Full parsed TOML dict so drivers can read their own config sections.
         self.config = config
+
+    def source_id(self) -> str:
+        """Return this driver's configured datasource id.
+
+        By convention built-in drivers store this on one of ``_source_id``,
+        ``source_id``, or ``src_id`` during ``setup()``. Override this method
+        if your driver keeps the datasource id somewhere else.
+        """
+        for attr in ("_source_id", "source_id", "src_id"):
+            value = getattr(self, attr, None)
+            if callable(value):
+                continue
+            if value:
+                return str(value)
+        raise AttributeError(
+            "Driver source id is not set. Assign self._source_id (or self.source_id / self.src_id) "
+            "during setup(), or override source_id()."
+        )
+
+    def reference_uri(self, ref_name: str) -> URIRef:
+        """Return the canonical Acquirium reference URI for ``ref_name``."""
+        return compute_handle(self.source_id(), ref_name)
 
     @abstractmethod
     def setup(self) -> None:

@@ -13,16 +13,23 @@ import paho.mqtt.client as mqtt
 
 from acquirium.Driver import Driver
 from acquirium.internals.internals_namespaces import (
-    HAS_EXTERNAL_REFERENCE, MQTT_BROKER, MQTT_REFERENCE, MQTT_TOPIC, TIME_KEY, VALUE_KEY,
+    ACQUIRIUM_REF_NAME,
+    HAS_EXTERNAL_REFERENCE,
+    MQTT_BROKER,
+    MQTT_REFERENCE,
+    MQTT_TOPIC,
+    TIME_KEY,
+    VALUE_KEY,
 )
 
 logger = logging.getLogger("acquirium.mqtt")
 
 MQTT_SPARQL_QUERY = f"""
-SELECT ?data ?ref ?broker ?topic ?tkey ?vkey
+SELECT ?data ?ref ?ref_name ?broker ?topic ?tkey ?vkey
 WHERE {{
   ?data <{HAS_EXTERNAL_REFERENCE}> ?ref .
   ?ref a <{MQTT_REFERENCE}> .
+  ?ref <{ACQUIRIUM_REF_NAME}> ?ref_name .
   OPTIONAL {{ ?ref <{MQTT_BROKER}> ?broker . }}
   OPTIONAL {{ ?ref <{MQTT_TOPIC}> ?topic . }}
   OPTIONAL {{ ?ref <{TIME_KEY}> ?tkey . }}
@@ -35,6 +42,7 @@ WHERE {{
 class MQTTStreamSpec:
     point_uri: str
     ref_uri: str
+    ref_name: str
     broker: str
     port: int
     topic: str
@@ -90,8 +98,8 @@ class MQTTIngestDriver(Driver):
             batch, self._pending = self._pending, {}
 
         streams: dict[str, list[tuple[datetime, Any]]] = {
-            ref_uri: [(s.ts, s.value) for s in samples]
-            for ref_uri, samples in batch.items()
+            ref_name: [(s.ts, s.value) for s in samples]
+            for ref_name, samples in batch.items()
         }
         self.aq.insert_timeseries_batch(self._source_id, streams)
 
@@ -121,14 +129,30 @@ class MQTTIngestDriver(Driver):
             return
 
         for row in result.get("rows", []):
-            data_uri, ref_uri, broker, topic, tkey, vkey = row
+            data_uri, ref_uri, ref_name, broker, topic, tkey, vkey = row
             topic_s = (topic or "").strip('"')
             if not topic_s:
+                continue
+            ref_name_s = (ref_name or "").strip('"')
+            if not ref_name_s:
+                logger.warning("mqtt: skipping ref %s with no acq:refName", ref_uri)
+                continue
+            expected_ref_uri = str(self.reference_uri(ref_name_s))
+            actual_ref_uri = str(ref_uri)
+            if actual_ref_uri != expected_ref_uri:
+                logger.warning(
+                    "mqtt: skipping point=%s ref=%s because canonical ref URI for %s is %s",
+                    data_uri,
+                    actual_ref_uri,
+                    ref_name_s,
+                    expected_ref_uri,
+                )
                 continue
             host, port = _parse_mqtt_broker((broker or "localhost").strip('"'))
             spec = MQTTStreamSpec(
                 point_uri=str(data_uri),
-                ref_uri=str(ref_uri),
+                ref_uri=actual_ref_uri,
+                ref_name=ref_name_s,
                 broker=host,
                 port=port,
                 topic=topic_s,
@@ -141,7 +165,7 @@ class MQTTIngestDriver(Driver):
                 self.aq.register_stream(
                     str(data_uri),
                     source_id=self._source_id,
-                    ref_name=str(ref_uri),
+                    ref_name=ref_name_s,
                 )
             except Exception:
                 logger.warning("mqtt: failed to register stream %s", ref_uri, exc_info=True)
@@ -183,7 +207,7 @@ class MQTTIngestDriver(Driver):
         return f"{broker}|{port}"
 
     def _spec_key(self, spec: MQTTStreamSpec) -> str:
-        return f"{spec.point_uri}|{spec.ref_uri}|{spec.broker}|{spec.port}|{spec.topic}|{spec.time_key}|{spec.value_key}"
+        return f"{spec.point_uri}|{spec.ref_uri}|{spec.ref_name}|{spec.broker}|{spec.port}|{spec.topic}|{spec.time_key}|{spec.value_key}"
 
     def _on_connect(self, client_key: str):
         def on_connect(client: mqtt.Client, userdata, flags, rc):
@@ -238,7 +262,7 @@ class MQTTIngestDriver(Driver):
                     ts, value = self.decode_payload(msg.payload, spec)
                     sample = _Sample(point_uri=spec.point_uri, ref_uri=spec.ref_uri, ts=ts, value=value)
                     with self._pending_lock:
-                        self._pending.setdefault(spec.ref_uri, []).append(sample)
+                        self._pending.setdefault(spec.ref_name, []).append(sample)
             except Exception as exc:
                 logger.warning("mqtt decode failed client=%s topic=%s err=%s", client_key, topic, exc)
         return on_message
