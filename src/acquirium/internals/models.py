@@ -2,11 +2,28 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+import uuid
+from datetime import datetime, timedelta
 from typing import Literal, Any, TYPE_CHECKING
 from dataclasses import dataclass
-from pydantic import BaseModel, Field, RootModel
-from datetime import timedelta
+from pydantic import BaseModel, ConfigDict, Field, RootModel
+from acquirium.internals.internals_namespaces import ACQUIRIUM_NS
+from rdflib import URIRef
+# Fixed UUID namespace for deterministic handle generation.
+# All (source_id, ref_name) pairs are hashed within this namespace so handles
+# are globally unique and reproducible without any state.
+_HANDLE_NAMESPACE = uuid.UUID("6a8f3c2e-4b1d-5e7f-9012-3a4b5c6d7e8f")
+
+
+def compute_handle(source_id: str, ref_name: str) -> URIRef:
+    """Return a deterministic UUID5 handle for a (source_id, ref_name) pair.
+
+    The handle is used as the TimescaleDB storage key and stored as
+    ``ref:hasTimeseriesId`` in the RDF graph.  It is stable across restarts
+    and can be recomputed at any time from the same inputs.
+    """
+    handle_str = str(uuid.uuid5(_HANDLE_NAMESPACE, f"{source_id}:{ref_name}"))
+    return ACQUIRIUM_NS[handle_str]
 
 if TYPE_CHECKING:
     from acquirium.Client.query import Query
@@ -20,8 +37,10 @@ class TimeseriesInfo(BaseModel):
 
 
 class Point(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     uri: str
-    handle: str | None = None
+    handle: str | URIRef | list[str] | list[URIRef] | None = None
     types: list[str] = Field(default_factory=list)
     unit: str | None = None
     last_reported: datetime | None = None
@@ -34,16 +53,26 @@ class PointCreateRequest(BaseModel):
     unit: str | None = None
 
 
-class InsertTimeseriesRequest(BaseModel):
+class RegisterDatasourceRequest(BaseModel):
+    """Request to register a named datasource."""
+    source_id: str
+
+
+class StreamInsert(BaseModel):
+    """A single stream's data payload for the unified insert endpoint.
+
+    ``source_id`` identifies the registered datasource (e.g. ``"mybox-metrics"``).
+    ``ref_name`` is the source-local stream identifier (e.g. ``"cpu_percent"``).
+    The TimescaleDB storage key (handle) is computed deterministically from
+    both via :func:`compute_handle` — so two sources with the same ``ref_name``
+    never collide.
+    """
+
+    source_id: str
+    ref_name: str
+    point_uri: str | None = None
+    replace: bool = False
     values: list[tuple[datetime, float | int | str | None]]
-
-
-class InsertBatchRequest(RootModel[dict[str, list[tuple[datetime, float | int | str | None]]]]):
-    """Batch insert where keys are point URIs and values are lists of (ts, value)."""
-
-    @property
-    def streams(self) -> dict[str, list[tuple[datetime, float | int | str]]]:
-        return self.root
 
 
 Order = Literal["asc", "desc"]
@@ -124,7 +153,6 @@ class AppContext:
 class AppOutputSpec(BaseModel):
     kind: Literal["timeseries", "event", "trigger"]
     point_uri: str
-    ref_uri: str | None = None
     quantity_kind: str | None = None
     unit: str | None = None
     data_source: str | None = None

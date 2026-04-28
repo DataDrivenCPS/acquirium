@@ -2,17 +2,21 @@ FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
 WORKDIR /app
 
-#RUN apt-get update \
-#  && apt-get install -y --no-install-recommends docker.io ca-certificates \
-#  && rm -rf /var/lib/apt/lists/*
+# Copy dependency manifest first — this layer is only invalidated when
+# pyproject.toml changes, so source edits don't trigger a full dep reinstall.
+COPY pyproject.toml README.md .python-version ./
 
-COPY pyproject.toml /app/pyproject.toml
-COPY src /app/src
-COPY README.md /app/README.md
-COPY .python-version /app/.python-version
-COPY ontologies /app/ontologies
-RUN uv sync
+# Install dependencies but not the project itself.
+RUN uv sync --no-dev --no-install-project
 
+# Now copy source and ontologies; changes here only re-run the steps below.
+COPY src ./src
+COPY ontologies ./ontologies
+
+# Install the project itself into the already-populated venv.
+RUN uv sync --no-dev
+
+# Pre-warm the embedding model so the first request isn't slow.
 ENV FASTEMBED_CACHE_PATH=/app/.fastembed_cache
 RUN uv run python -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5')"
 

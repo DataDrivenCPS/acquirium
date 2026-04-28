@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
-from acquirium.internals.app_utils import make_stream_ref_uri
 from acquirium.internals.models import AppContext
 from acquirium.Client.query import Query
 
@@ -25,7 +24,6 @@ class Output:
         rows: Iterable[tuple[datetime, Any]] | None = None,
         series: Any | None = None,
         time_index: Iterable[datetime] | None = None,
-        ref_uri: str | None = None,
     ) -> "Output":
         if rows is None:
             if series is None:
@@ -44,8 +42,7 @@ class Output:
                 if len(times) != len(values):
                     raise ValueError("time_index length must match series length")
                 rows = list(zip(times, values))
-        ref_uri = ref_uri or make_stream_ref_uri(point_uri)
-        return Output(kind="timeseries", payload={"point_uri": point_uri, "ref_uri": ref_uri, "rows": list(rows)})
+        return Output(kind="timeseries", payload={"point_uri": point_uri, "rows": list(rows)})
 
     @staticmethod
     def event(
@@ -55,17 +52,14 @@ class Output:
         message: str,
         ts: datetime | None = None,
         data: dict[str, Any] | None = None,
-        ref_uri: str | None = None,
     ) -> "Output":
         if point_uri is None:
             raise ValueError("event output requires point_uri")
-        ref_uri = ref_uri or make_stream_ref_uri(point_uri)
         ts = ts or datetime.now(timezone.utc)
         return Output(
             kind="event",
             payload={
                 "point_uri": point_uri,
-                "ref_uri": ref_uri,
                 "severity": severity,
                 "message": message,
                 "ts": ts,
