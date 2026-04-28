@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rdflib import URIRef
@@ -61,6 +62,10 @@ class Driver(ABC):
     def reference_uri(self, ref_name: str) -> URIRef:
         """Return the canonical Acquirium reference URI for ``ref_name``."""
         return compute_handle(self.source_id(), ref_name)
+
+    def config_dir(self) -> Path:
+        """Return the directory containing the loaded config file, if known."""
+        return Path(self.config.get("__config_dir", Path.cwd()))
 
     @abstractmethod
     def setup(self) -> None:

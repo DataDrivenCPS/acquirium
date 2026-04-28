@@ -79,13 +79,7 @@ class _DirectClient:
         source_id: str,
         streams: dict[str, list[tuple[datetime, Any]]],
     ) -> dict[str, Any]:
-        total = 0
-        for ref_name, rows in streams.items():
-            total += self._manager.insert_timeseries(
-                source_id=source_id,
-                ref_name=ref_name,
-                rows=rows,
-            )
+        total = self._manager.insert_timeseries_batch(source_id, streams)
         insert_stats.record(
             origin=self._origin,
             rows=sum(len(rows) for rows in streams.values()),
@@ -120,10 +114,18 @@ class DirectAcquirium(Acquirium):
         manager: The running Manager instance to dispatch calls to.
     """
 
-    def __init__(self, manager: "Manager", origin: str = "inprocess") -> None:
+    def __init__(
+        self,
+        manager: "Manager",
+        origin: str = "inprocess",
+        insert_batch_rows: int = 50_000,
+    ) -> None:
         object.__init__(self)          # bypass Acquirium.__init__ / AcquiriumClient
         self._manager = manager
         self.client = _DirectClient(manager, origin=origin)
+        self.insert_batch_rows = int(insert_batch_rows)
+        if self.insert_batch_rows <= 0:
+            raise ValueError("insert_batch_rows must be greater than zero")
 
     # Override graph_version to avoid the HTTP path inherited from Acquirium
     def graph_version(self) -> int:

@@ -7,10 +7,20 @@ from abc import abstractmethod
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import polars as pl
+from rdflib import Literal
+from rdflib.namespace import RDF
 
 from acquirium.Driver import Driver
+from acquirium.internals.internals_namespaces import (
+    DATA_SOURCE,
+    FILE_LOCATION,
+    FILE_REFERENCE,
+    TIME_COLUMN_ID,
+    VALUE_COLUMN_ID,
+)
 
 logger = logging.getLogger("acquirium.tabular_ingest")
 
@@ -25,6 +35,10 @@ _URI_UNSAFE = str.maketrans({
 
 def _safe_name(s: str) -> str:
     return " ".join(s.split()).translate(_URI_UNSAFE)
+
+
+def _uri_component(s: str) -> str:
+    return quote(s, safe="._~-")
 
 
 class _TabularIngestBase(Driver):
@@ -52,6 +66,7 @@ class _TabularIngestBase(Driver):
         id_col       = "id"            # narrow only
         value_col    = "value"         # narrow only
         date_format  = "%m/%d/%Y"      # optional; only needed for non-ISO date strings
+        skip_rows    = [1, 3, 1337]    # or { "subdir/data.csv" = [2, 5] }
     """
 
     _glob_patterns: tuple[str, ...] = ()
@@ -60,12 +75,16 @@ class _TabularIngestBase(Driver):
 
     def _setup_common(self) -> None:
         cfg = self.config.get("driver", {})
-        self._watch_dir = Path(cfg.get("watch_dir", ".")).resolve()
+        watch_dir = Path(cfg.get("watch_dir", "."))
+        if not watch_dir.is_absolute():
+            watch_dir = (self.config_dir() / watch_dir).resolve()
+        self._watch_dir = watch_dir
         self._format: str = cfg.get("format", "auto")
         self._time_col: str = cfg.get("time_col", "time")
         self._id_col: str = cfg.get("id_col", "id")
         self._value_col: str = cfg.get("value_col", "value")
         self._date_fmt: str | None = cfg.get("date_format", None)
+        self._skip_rows = cfg.get("skip_rows", [])
 
         self._rows_seen: dict[str, int] = {}
         self._registered: dict[str, set[str]] = {}  # source_id → registered ref_names
@@ -99,12 +118,13 @@ class _TabularIngestBase(Driver):
             try:
                 if source_id not in self._registered:
                     self.aq.register_datasource(source_id)
-                self._ensure_streams(batch, source_id)
-                self.aq.insert_timeseries_batch(source_id, batch)
+                self._ensure_streams(batch, source_id, path)
                 total = sum(len(v) for v in batch.values())
+                result = self.aq.insert_timeseries_batch(source_id, batch)
+                chunks = int(result.get("batches", 1)) if isinstance(result, dict) else 1
                 logger.info(
-                    "tabular_ingest: %s — inserted %d row(s) across %d stream(s)",
-                    rel, total, len(batch),
+                    "tabular_ingest: %s — inserted %d row(s) across %d stream(s) in %d batch(es)",
+                    rel, total, len(batch), chunks,
                 )
             except Exception:
                 logger.exception("tabular_ingest: failed to insert data from %s", path.name)
@@ -133,6 +153,23 @@ class _TabularIngestBase(Driver):
         if self._id_col in cols and self._value_col in cols:
             return "narrow"
         return "wide"
+
+    def _skip_rows_for(self, path: Path) -> tuple[int, ...]:
+        skip_rows = self._skip_rows
+        if isinstance(skip_rows, int):
+            skip_rows = [skip_rows]
+
+        if isinstance(skip_rows, dict):
+            rel = path.relative_to(self._watch_dir).as_posix()
+            skip_rows = skip_rows.get(rel, [])
+
+        if not isinstance(skip_rows, (list, tuple, set)):
+            raise TypeError(
+                "driver.skip_rows must be a list of 1-indexed row numbers "
+                "or a dict keyed by paths relative to watch_dir"
+            )
+
+        return tuple(sorted({int(row) for row in skip_rows if int(row) > 0}))
 
     def _parse_wide(self, df: pl.DataFrame) -> dict[str, list[tuple[datetime, Any]]]:
         if self._time_col not in df.columns:
@@ -233,20 +270,48 @@ class _TabularIngestBase(Driver):
 
     # ---------------------------------------------------------- stream reg
 
-    def _ensure_streams(self, batch: dict[str, list[tuple[datetime, Any]]], source_id: str) -> None:
+    def _stream_registration_properties(self, path: Path, ref_name: str) -> dict[Any, Any]:
+        rel = path.resolve().relative_to(self._watch_dir).as_posix()
+        return {
+            RDF.type: FILE_REFERENCE,
+            DATA_SOURCE: Literal("CSV"),
+            FILE_LOCATION: Literal(rel),
+            TIME_COLUMN_ID: Literal(self._time_column_reference_id()),
+            VALUE_COLUMN_ID: Literal(ref_name),
+        }
+
+    def _time_column_reference_id(self) -> str:
+        return self._time_col
+
+    def _ensure_streams(
+        self,
+        batch: dict[str, list[tuple[datetime, Any]]],
+        source_id: str,
+        path: Path,
+    ) -> None:
         registered = self._registered.setdefault(source_id, set())
-        for ref_name in batch:
-            if ref_name in registered:
-                continue
-            try:
-                self.aq.register_stream(
-                    f"urn:tabular:{source_id}:{ref_name}",
-                    source_id=source_id,
-                    ref_name=ref_name,
-                )
-                registered.add(ref_name)
-            except Exception:
-                logger.warning(
-                    "tabular_ingest: could not register stream %s; data will still be inserted",
-                    ref_name,
-                )
+        new_ref_names = [ref_name for ref_name in batch if ref_name not in registered]
+        if not new_ref_names:
+            return
+
+        try:
+            self.aq.register_streams(
+                [
+                    {
+                        "point_uri": f"urn:tabular:{_uri_component(source_id)}:{_uri_component(ref_name)}",
+                        "source_id": source_id,
+                        "ref_name": ref_name,
+                        "data_source": "CSV",
+                        "properties": self._stream_registration_properties(path, ref_name),
+                    }
+                    for ref_name in new_ref_names
+                ]
+            )
+            registered.update(new_ref_names)
+        except Exception:
+            logger.warning(
+                "tabular_ingest: could not register %d stream(s); data will still be inserted",
+                len(new_ref_names),
+                exc_info=True,
+            )
+            return
