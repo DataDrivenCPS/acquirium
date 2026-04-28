@@ -17,13 +17,11 @@ import warnings
 from acquirium.Client.query import Query
 from acquirium.Client.client import AcquiriumClient
 from acquirium.Apps.base import App
-from acquirium.internals.app_utils import make_stream_ref_uri
 from acquirium.internals.models import AppOutputSpec, AppSpec, compute_handle
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_DB_URI,
     ACQUIRIUM_REF_NAME,
     ACQUIRIUM_SOURCE_ID,
-    HAS_TIMESERIES_ID,
     STORED_AT,
     TIMESERIES_REFERENCE,
     HAS_EXTERNAL_REFERENCE,
@@ -291,16 +289,13 @@ class Acquirium:
         if ref_name is not None and source_id is not None:
             handle = compute_handle(source_id, ref_name)
             # Stable named URI for the reference node — idempotent across calls
-            ref_node = URIRef(str(point_uri) + "#ref")
-            g.add((subj,        HAS_EXTERNAL_REFERENCE, ref_node))
-            g.add((ref_node,    RDF.type,               TIMESERIES_REFERENCE))
-            # ref:hasTimeseriesId holds the globally-unique handle (the actual DB key)
-            g.add((ref_node,    HAS_TIMESERIES_ID,      Literal(handle)))
+            g.add((subj,        HAS_EXTERNAL_REFERENCE, handle))
+            g.add((handle,    RDF.type,               TIMESERIES_REFERENCE))
             # Store source_id and ref_name so the handle can be reconstructed
             # by _sync_stream_handles_from_graph without re-deriving it
-            g.add((ref_node,    ACQUIRIUM_SOURCE_ID,    Literal(source_id)))
-            g.add((ref_node,    ACQUIRIUM_REF_NAME,     Literal(ref_name)))
-            g.add((ref_node,    STORED_AT,              ACQUIRIUM_DB_URI))
+            g.add((handle,    ACQUIRIUM_SOURCE_ID,    Literal(source_id)))
+            g.add((handle,    ACQUIRIUM_REF_NAME,     Literal(ref_name)))
+            g.add((handle,    STORED_AT,              ACQUIRIUM_DB_URI))
             # Declare the Acquirium DB node (idempotent)
             g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
 
@@ -352,8 +347,6 @@ class Acquirium:
                 spec_item = AppOutputSpec(**item)
             else:
                 raise TypeError("outputs must be AppOutputSpec or dict")
-            if spec_item.ref_uri is None:
-                spec_item.ref_uri = make_stream_ref_uri(spec_item.point_uri)
             output_specs.append(spec_item)
 
         code = source_code or getattr(app, "source_code", None)

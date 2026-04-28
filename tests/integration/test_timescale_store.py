@@ -11,7 +11,7 @@ import polars as pl
 
 from acquirium.Storage.timescale_store import TimescaleStore
 from acquirium.internals.models import LogEntry, TimeIntervalModel
-
+from rdflib import URIRef
 
 TEST_POINT = "urn:test:integration_point"
 TEST_REF = "urn:test:integration_ref"
@@ -118,8 +118,8 @@ class TestStreamHandles:
 
     def test_handle_is_uuid(self, ts_store, clean_point):
         handle = ts_store.ensure_stream_handle(clean_point, self.TEST_SOURCE, self.TEST_REF_NAME)
-        assert isinstance(handle, str)
-        assert len(handle) == 36  # UUID5 string form
+        assert isinstance(handle, URIRef)
+        assert len(handle) == len("urn:acquirium#") + 36  # UUID5 string form
 
     def test_deterministic(self, ts_store, clean_point):
         # Same source_id + ref_name always yields the same handle.
