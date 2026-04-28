@@ -15,7 +15,7 @@ from acquirium.Storage.base import TimeseriesStore
 import logging
 import pyarrow as pa
 import polars as pl
-
+from rdflib import URIRef
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -83,7 +83,7 @@ class TimescaleStore(TimeseriesStore):
                 f"""
                 CREATE TABLE IF NOT EXISTS {STREAMS_TABLE} (
                     handle TEXT PRIMARY KEY,
-                    point_uri TEXT UNIQUE NOT NULL,
+                    point_uri TEXT NOT NULL,
                     source_id TEXT NOT NULL,
                     ref_name TEXT NOT NULL
                 );
@@ -168,7 +168,7 @@ class TimescaleStore(TimeseriesStore):
             return -1
 
     # -------------------- stream handles --------------------
-    def ensure_stream_handle(self, point_uri: str, source_id: str, ref_name: str, handle: str | None = None) -> str:
+    def ensure_stream_handle(self, point_uri: str, source_id: str, ref_name: str, handle: URIRef | None = None) -> URIRef:
         """Register a (point_uri, source_id, ref_name) mapping in the streams table.
 
         The handle is computed deterministically from (source_id, ref_name) via
@@ -186,16 +186,17 @@ class TimescaleStore(TimeseriesStore):
                 f"""
                 INSERT INTO {STREAMS_TABLE} (handle, point_uri, source_id, ref_name)
                 VALUES (%s, %s, %s, %s)
-                ON CONFLICT (point_uri) DO UPDATE
-                    SET handle = EXCLUDED.handle,
+                ON CONFLICT (handle) DO UPDATE
+                    SET 
+                        point_uri = EXCLUDED.point_uri,
                         source_id = EXCLUDED.source_id,
                         ref_name = EXCLUDED.ref_name
                 """,
-                (handle, point_uri, source_id, ref_name),
+                (str(handle), point_uri, source_id, ref_name),
             )
         return handle
 
-    def resolve_handle(self, handle: str) -> tuple[str | None, str | None, str | None]:
+    def resolve_handle(self, handle: URIRef) -> tuple[str | None, str | None, str | None]:
         """Resolve a handle to its (point_uri, source_id, ref_name) triple.
 
         Returns (None, None, None) if the handle is not found.
@@ -203,7 +204,7 @@ class TimescaleStore(TimeseriesStore):
         with self.conn.cursor() as cur:
             cur.execute(
                 f"SELECT point_uri, source_id, ref_name FROM {STREAMS_TABLE} WHERE handle = %s",
-                (handle,),
+                (str(handle),),
             )
             row = cur.fetchone()
             return (row[0], row[1], row[2]) if row else (None, None, None)
