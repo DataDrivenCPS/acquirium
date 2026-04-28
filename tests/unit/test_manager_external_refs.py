@@ -67,4 +67,3 @@ def test_sync_stream_handles_rejects_noncanonical_reference_uri():
         mgr._sync_stream_handles_from_graph()
 
     assert ts.calls == []
-

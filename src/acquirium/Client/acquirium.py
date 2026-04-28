@@ -49,6 +49,7 @@ class Acquirium:
             server_port: int = 8000,
             use_ssl: bool = False,
             lexicon_path: Optional[Path] = None,
+            insert_batch_rows: int = 50_000,
         ):
         if lexicon_path is not None:
             warnings.warn(
@@ -62,6 +63,9 @@ class Acquirium:
             server_port=server_port,
             use_ssl=use_ssl,
         )
+        self.insert_batch_rows = int(insert_batch_rows)
+        if self.insert_batch_rows <= 0:
+            raise ValueError("insert_batch_rows must be greater than zero")
 
     # ------------------------------------------------------------------
     # GRAPH API
@@ -153,7 +157,11 @@ class Acquirium:
         source_id: str,
         streams: dict[str, list[tuple[datetime, Any]]],
     ) -> dict[str, Any]:
-        """Insert timeseries data for multiple streams in one HTTP request.
+        """Insert timeseries data for multiple streams.
+
+        Large inputs are split into bounded requests according to
+        ``insert_batch_rows``. Drivers can call this method with their natural
+        batch size; the Acquirium facade handles transport/storage chunking.
 
         Args:
             source_id: The registered datasource identifier.
@@ -162,7 +170,38 @@ class Acquirium:
         Returns:
             dict with ``{"ok": True, "rows_inserted": N}``.
         """
-        return self.client.insert_timeseries_batch(source_id, streams)
+        total = 0
+        chunk_count = 0
+        for chunk in self._iter_insert_batches(streams):
+            result = self.client.insert_timeseries_batch(source_id, chunk)
+            total += int(result.get("rows_inserted", 0))
+            chunk_count += 1
+        return {"ok": True, "rows_inserted": total, "batches": chunk_count}
+
+    def _iter_insert_batches(
+        self,
+        streams: dict[str, list[tuple[datetime, Any]]],
+    ) -> Iterable[dict[str, list[tuple[datetime, Any]]]]:
+        chunk: dict[str, list[tuple[datetime, Any]]] = {}
+        chunk_rows = 0
+
+        for stream, rows in streams.items():
+            start = 0
+            while start < len(rows):
+                capacity = self.insert_batch_rows - chunk_rows
+                end = min(start + capacity, len(rows))
+                if end > start:
+                    chunk[stream] = rows[start:end]
+                    chunk_rows += end - start
+                    start = end
+
+                if chunk_rows >= self.insert_batch_rows:
+                    yield chunk
+                    chunk = {}
+                    chunk_rows = 0
+
+        if chunk:
+            yield chunk
 
     def _resolve_qudt_uri(self, text: str, kind: str) -> URIRef | None:
         """Try to resolve a plain string to a QUDT URI via the server.
@@ -295,6 +334,61 @@ class Acquirium:
 
         turtle = g.serialize(format="turtle")
         self.client.insert_graph(turtle, format="turtle", replace=False)
+
+    def register_streams(
+        self,
+        streams: Iterable[dict[str, Any]],
+    ) -> None:
+        """Declare multiple stream metadata records in one graph insert.
+
+        Each item accepts the same keys as ``register_stream``. This avoids one
+        graph insert per stream for wide tabular sources.
+        """
+        g = RDFGraph()
+
+        for stream in streams:
+            subj = URIRef(str(stream["point_uri"]))
+            label = stream.get("label")
+            source_id = stream.get("source_id")
+            ref_name = stream.get("ref_name")
+
+            g.add((subj, RDF.type, VIRTUAL_POINT))
+            if label is not None:
+                g.add((subj, RDFS.label, Literal(label)))
+
+            def _add_to_subject(pred: URIRef, value: str | URIRef | None) -> None:
+                if value is None:
+                    return
+                if isinstance(value, URIRef):
+                    g.add((subj, pred, value))
+                elif "://" in value or value.startswith("urn:"):
+                    g.add((subj, pred, URIRef(value)))
+                else:
+                    g.add((subj, pred, Literal(value)))
+
+            _add_to_subject(DATA_SOURCE, stream.get("data_source"))
+
+            handle = None
+            if ref_name is not None and source_id is not None:
+                handle = compute_handle(source_id, ref_name)
+                g.add((subj, HAS_EXTERNAL_REFERENCE, handle))
+                g.add((handle, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
+                g.add((handle, ACQUIRIUM_REF_NAME, Literal(ref_name)))
+                g.add((handle, STORED_AT, ACQUIRIUM_DB_URI))
+                g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
+
+            properties = stream.get("properties") or {}
+            target = handle or subj
+            for pred, value in properties.items():
+                if isinstance(value, URIRef):
+                    g.add((target, pred, value))
+                elif "://" in str(value) or str(value).startswith("urn:"):
+                    g.add((target, pred, URIRef(str(value))))
+                else:
+                    g.add((target, pred, Literal(value)))
+
+        if len(g):
+            self.client.insert_graph(g.serialize(format="turtle"), format="turtle", replace=False)
 
     # ------------------------------------------------------------------
     # ACQUIRIUM APPS API

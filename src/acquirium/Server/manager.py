@@ -985,6 +985,35 @@ class Manager:
             self.timescale.ensure_stream_handle(point_uri, source_id, ref_name, handle=handle)
         return n
 
+    def insert_timeseries_batch(
+        self,
+        source_id: str,
+        streams: dict[str, list[tuple[datetime, Any]]],
+    ) -> int:
+        """Insert multiple source-local streams in one storage operation."""
+        import polars as pl
+
+        rows: list[tuple[str, datetime, str | None]] = []
+        for ref_name, values in streams.items():
+            handle = str(compute_handle(source_id, ref_name))
+            rows.extend(
+                (handle, ts, None if value is None else str(value))
+                for ts, value in values
+            )
+        if not rows:
+            return 0
+
+        df = pl.DataFrame(
+            rows,
+            schema={
+                "point_uri": pl.Utf8,
+                "ts": pl.Datetime("us", "UTC"),
+                "value": pl.Utf8,
+            },
+            orient="row",
+        )
+        return self.timescale.bulk_insert_polars(df)
+
     def _app_type_uri(self, app_type: str) -> URIRef:
         norm = (app_type or "").strip().lower()
         if norm in {"soft_sensor", "softsensor"}:

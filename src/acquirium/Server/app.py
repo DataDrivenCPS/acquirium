@@ -74,10 +74,15 @@ def _run_inprocess_driver(
     driver_overrides = {k: v for k, v in entry.items() if k != "spec"}
     merged_cfg = {**cfg, "driver": {**cfg.get("driver", {}), **driver_overrides}}
     interval = float(driver_overrides.get("interval", cfg.get("driver", {}).get("interval", 10.0)))
+    config_dir = Path(cfg.get("__config_dir", Path.cwd()))
 
     try:
-        driver_cls = _import_driver_class(spec)
-        direct_aq = DirectAcquirium(manager, origin=spec)
+        driver_cls = _import_driver_class(spec, base_dir=config_dir)
+        direct_aq = DirectAcquirium(
+            manager,
+            origin=spec,
+            insert_batch_rows=int(merged_cfg.get("driver", {}).get("insert_batch_rows", 50_000)),
+        )
         driver = driver_cls(direct_aq, merged_cfg)
         driver.setup()
         known_version = manager.graph_version()
@@ -111,13 +116,14 @@ def _start_inprocess_drivers(
     stop_event: threading.Event,
 ) -> list[threading.Thread]:
     """Read [[drivers]] from ACQUIRIUM_CONFIG and start each as a daemon thread."""
+    from acquirium.cli import _load_config
+
     config_path = os.environ.get("ACQUIRIUM_CONFIG")
     if not config_path:
         return []
 
     try:
-        with open(config_path, "rb") as fh:
-            cfg = tomllib.load(fh)
+        cfg = _load_config(Path(config_path))
     except Exception:
         log.warning("Could not load config from ACQUIRIUM_CONFIG=%s; skipping in-process drivers", config_path)
         return []
@@ -377,7 +383,17 @@ def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[st
     """
     try:
         total = 0
+        bulk_streams: dict[str, dict[str, list[tuple[datetime, Any]]]] = {}
+        individual_streams: list[StreamInsert] = []
         for s in streams:
+            if s.point_uri is None and not s.replace:
+                bulk_streams.setdefault(s.source_id, {})[s.ref_name] = s.values
+            else:
+                individual_streams.append(s)
+
+        for source_id, source_streams in bulk_streams.items():
+            total += app.state.manager.insert_timeseries_batch(source_id, source_streams)
+        for s in individual_streams:
             total += app.state.manager.insert_timeseries(
                 source_id=s.source_id,
                 ref_name=s.ref_name,

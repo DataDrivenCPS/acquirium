@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from io import StringIO
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -44,6 +45,7 @@ class CSVIngestDriver(_TabularIngestBase):
         id_col       = "id"          # narrow only
         value_col    = "value"       # narrow only
         date_format  = "%m/%d/%Y"    # optional; only needed for non-ISO date strings
+        skip_rows    = [1, 3]        # or { "subdir/data.csv" = [2, 5] }
         encoding     = "utf8-lossy"  # "utf8", "utf8-lossy", "latin1", etc.
 
     Override ``parse_file()`` to handle custom layouts::
@@ -66,8 +68,9 @@ class CSVIngestDriver(_TabularIngestBase):
         self, path: Path, row_offset: int = 0
     ) -> tuple[dict[str, list[tuple[datetime, Any]]], int]:
         sep = "\t" if path.suffix.lower() == ".tsv" else ","
+        text = self._filtered_csv_text(path)
         df = pl.read_csv(
-            path, separator=sep, try_parse_dates=True,
+            StringIO(text), separator=sep, try_parse_dates=True,
             skip_rows_after_header=row_offset,
             encoding=self._encoding,
         )
@@ -77,3 +80,18 @@ class CSVIngestDriver(_TabularIngestBase):
         fmt = self._detect_format(df)
         batch = self._parse_narrow(df) if fmt == "narrow" else self._parse_wide(df)
         return batch, rows_read
+
+    def _filtered_csv_text(self, path: Path) -> str:
+        skip_rows = set(self._skip_rows_for(path))
+        raw = path.read_bytes()
+
+        if self._encoding == "utf8-lossy":
+            text = raw.decode("utf-8", errors="replace")
+        else:
+            text = raw.decode(self._encoding)
+
+        return "".join(
+            line
+            for lineno, line in enumerate(text.splitlines(keepends=True), start=1)
+            if lineno not in skip_rows
+        )

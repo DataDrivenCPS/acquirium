@@ -71,16 +71,21 @@ def _load_config(path: Path | None) -> dict:
         else:
             return {}
     with open(path, "rb") as f:
-        return tomllib.load(f)
+        cfg = tomllib.load(f)
+    cfg["__config_dir"] = str(path.resolve().parent)
+    return cfg
 
 
 def _apply_server_env(cfg: dict) -> None:
     """Set env var defaults from cfg['server'].  Existing env vars are never overwritten."""
     server = cfg.get("server", {})
+    config_dir = Path(cfg.get("__config_dir", Path.cwd()))
     for key, env_var in _SERVER_ENV_MAP.items():
         if key not in server:
             continue
         value = server[key]
+        if key in {"data_dir", "duckdb_path", "graph_path"}:
+            value = str((config_dir / value).resolve()) if not Path(value).is_absolute() else str(value)
         if isinstance(value, list):
             str_value = ",".join(str(v) for v in value)
         elif isinstance(value, bool):
@@ -94,7 +99,7 @@ def _apply_server_env(cfg: dict) -> None:
 # Driver import helpers
 # ---------------------------------------------------------------------------
 
-def _import_driver_class(driver_spec: str) -> type:
+def _import_driver_class(driver_spec: str, *, base_dir: Path | None = None) -> type:
     """Resolve a ``path/to/file.py:ClassName`` or ``my.module:ClassName`` spec to a Driver subclass.
 
     Raises ``ValueError`` on any resolution failure so callers in background
@@ -111,7 +116,9 @@ def _import_driver_class(driver_spec: str) -> type:
 
     is_file = "/" in path_part or path_part.endswith(".py") or Path(path_part).exists()
     if is_file:
-        file_path = Path(path_part).resolve()
+        file_path = Path(path_part)
+        if not file_path.is_absolute():
+            file_path = ((base_dir or Path.cwd()) / file_path).resolve()
         if not file_path.exists():
             raise ValueError(f"driver file not found: {path_part}")
         spec = importlib.util.spec_from_file_location("_acquirium_driver_module", file_path)
@@ -244,13 +251,18 @@ def run_cmd(
     effective_interval: float = interval if interval is not None else cfg_interval
 
     try:
-        driver_cls = _import_driver_class(driver_spec)
+        driver_cls = _import_driver_class(driver_spec, base_dir=Path(cfg.get("__config_dir", Path.cwd())))
     except ValueError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1)
     typer.echo(f"Loaded driver: {driver_cls.__name__} from {driver_spec}")
 
-    aq = Acquirium(server_url=server_url, server_port=server_port, use_ssl=use_ssl)
+    aq = Acquirium(
+        server_url=server_url,
+        server_port=server_port,
+        use_ssl=use_ssl,
+        insert_batch_rows=int(driver_cfg.get("insert_batch_rows", 50_000)),
+    )
     driver = driver_cls(aq, cfg)
 
     def _sigterm_handler(signum, frame):  # noqa: ANN001

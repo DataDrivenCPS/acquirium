@@ -127,7 +127,13 @@ server_url  = "localhost"
 server_port = 8000
 use_ssl     = false
 interval    = 10.0
+insert_batch_rows = 50000
 ```
+
+`insert_batch_rows` caps the number of samples sent in one timeseries insert
+request. Drivers should still call `self.aq.insert_timeseries_batch()` with the
+batch they naturally produce; the Acquirium driver client splits large inserts
+automatically. `[[drivers]]` entries can override this value per driver.
 
 ## Default drivers (auto-start with the server)
 
@@ -250,6 +256,105 @@ Optional keys:
 - `watertap_insert_graph_replace` replaces the main graph when inserting it
 - `watertap_register_streams` defaults to `true` and registers each mapped point/ref pair
 - `watertap_result_attr` extracts the model from an attribute when the build function returns a wrapper object instead of the model directly or as the first tuple item
+
+## Built-in CSV driver
+
+`acquirium.BuiltinDrivers.csv_ingest:CSVIngestDriver` watches a directory for
+CSV and TSV files and ingests newly appended rows.
+
+```toml
+[[drivers]]
+spec         = "acquirium.BuiltinDrivers.csv_ingest:CSVIngestDriver"
+interval     = 5.0
+watch_dir    = "./data/incoming"
+format       = "auto"        # "auto" | "wide" | "narrow"
+time_col     = "time"
+id_col       = "id"          # narrow only
+value_col    = "value"       # narrow only
+date_format  = "%m/%d/%Y"    # optional
+skip_rows    = [1, 3, 1337]  # or { "subdir/data.csv" = [2, 5] }
+insert_batch_rows = 50000    # max samples per insert request
+encoding     = "utf8-lossy"  # "utf8", "utf8-lossy", "latin1", etc.
+```
+
+Supported file layouts:
+
+- Wide format:
+
+```csv
+time,temp,rh,flow
+2024-01-01T00:00Z,22.5,55.0,1.2
+```
+
+- Narrow format:
+
+```csv
+time,id,value
+2024-01-01T00:00Z,sensor/temp,22.5
+2024-01-01T00:00Z,sensor/rh,55.0
+```
+
+Behavior:
+
+- `watch_dir` is scanned recursively for `*.csv` and `*.tsv`
+- row offsets are tracked in memory, so each loop only ingests rows added since
+  the previous tick
+- files are not moved or deleted
+- each file gets its own datasource
+- the datasource id is derived from the file's absolute path
+- stream `ref_name`s are derived from column names (wide) or `id` values (narrow)
+- large inserts are chunked by the Acquirium driver client according to
+  `insert_batch_rows`
+
+Naming:
+
+- datasource ids and stream names are sanitized before registration
+- the point URI for each stream is:
+
+```text
+urn:tabular:{source_id}:{ref_name}
+```
+
+Format detection:
+
+- `format = "wide"` forces wide parsing
+- `format = "narrow"` forces narrow parsing
+- `format = "auto"` uses narrow mode if both `id_col` and `value_col` are
+  present; otherwise it uses wide mode
+- `skip_rows` can be either:
+  - a list of 1-indexed file row numbers to skip for every file
+  - a dict from paths relative to `watch_dir` to 1-indexed file row numbers
+
+Timestamp parsing:
+
+- ISO timestamps are parsed automatically
+- if `date_format` is set, it is tried first
+- several common fallback date formats are also tried
+- unparseable rows are skipped with a warning
+
+Encoding:
+
+- `encoding` is passed to Polars `read_csv()`
+- useful values include `utf8`, `utf8-lossy`, and `latin1`
+
+Custom parsing:
+
+Subclass `CSVIngestDriver` and override `parse_file()` if the file layout does
+not match the built-in wide/narrow parser.
+
+```python
+import polars as pl
+from acquirium.BuiltinDrivers.csv_ingest import CSVIngestDriver
+
+class MyCSVDriver(CSVIngestDriver):
+    def parse_file(self, path, row_offset=0):
+        df = pl.read_csv(
+            path,
+            skip_rows=3,
+            skip_rows_after_header=row_offset,
+        )
+        return self._parse_wide(df), len(df)
+```
 
 ## Lifecycle
 
