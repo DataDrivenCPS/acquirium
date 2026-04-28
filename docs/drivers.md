@@ -58,6 +58,52 @@ def setup(self):
     self.aq.register_datasource(self.source_id)
 ```
 
+### Canonical external reference URIs
+
+Drivers should mint external-reference URIs with the helper on `Driver` instead
+of inventing their own node names:
+
+```python
+from rdflib import Graph, Literal, URIRef
+from rdflib.namespace import RDF
+from acquirium import Driver
+from acquirium.internals.internals_namespaces import (
+    ACQUIRIUM_REF_NAME,
+    ACQUIRIUM_SOURCE_ID,
+    HAS_EXTERNAL_REFERENCE,
+    MQTT_BROKER,
+    MQTT_REFERENCE,
+    MQTT_TOPIC,
+)
+
+class MQTTDriver(Driver):
+    def setup(self):
+        self._source_id = "mqtt"
+        self.aq.register_datasource(self._source_id)
+
+        point_uri = URIRef("urn:point:temp")
+        ref_name = "temp-room-1"
+        ref_uri = self.reference_uri(ref_name)
+
+        g = Graph()
+        g.add((point_uri, HAS_EXTERNAL_REFERENCE, ref_uri))
+        g.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(self.source_id())))
+        g.add((ref_uri, ACQUIRIUM_REF_NAME, Literal(ref_name)))
+        g.add((ref_uri, MQTT_BROKER, Literal("broker.local:1883")))
+        g.add((ref_uri, MQTT_TOPIC, Literal("plant/temp/room1")))
+        g.add((ref_uri, RDF.type, MQTT_REFERENCE))
+        self.aq.insert_graph(g.serialize(format="turtle"), format="turtle", replace=False)
+```
+
+Rules:
+- Use `self.reference_uri(ref_name)` to compute the canonical `acq:uuid...` URI.
+- Use that URI as the object of `ref:hasExternalReference` in the graph.
+- Write `acq:sourceId` and `acq:refName` on the same node.
+- Attach driver- or app-specific provenance metadata to that same node.
+- When inserting data, continue to use the source-local `ref_name` with `insert_timeseries_batch()`. Acquirium derives the same canonical URI internally from `(source_id, ref_name)`.
+
+If you are not inside a `Driver` subclass, the equivalent helper is `aq.reference_uri(source_id, ref_name)`.
+
 ## Running a driver manually
 
 ```

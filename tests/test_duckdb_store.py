@@ -144,6 +144,17 @@ def test_timeseries_limit(store):
     assert len(vals) == 2
 
 
+@pytest.mark.unit
+def test_timeseries_iterator_survives_other_queries(store):
+    uri = "urn:test:duck:ts_lifecycle"
+    store.upsert_rows(uri, [(_utc(2024, 6, 1), "1"), (_utc(2024, 6, 2), "2")])
+    batches_iter = store.timeseries(uri)
+    info = store.timeseries_info(uri)
+    assert info.row_count == 2
+    vals = [v for b in batches_iter for v in b.to_pydict()["value"]]
+    assert vals == ["1", "2"]
+
+
 # ---- timeseries_info ----
 
 @pytest.mark.unit

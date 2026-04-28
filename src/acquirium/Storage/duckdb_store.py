@@ -168,6 +168,7 @@ class DuckDBStore:
         """Register a (point_uri, source_id, ref_name) mapping and return the handle."""
         if handle is None:
             handle = compute_handle(source_id, ref_name)
+        handle_str = str(handle)
         with self._lock:
             self._conn.execute(
                 f"""
@@ -178,9 +179,9 @@ class DuckDBStore:
                     source_id = excluded.source_id,
                     ref_name  = excluded.ref_name
                 """,
-                [handle, point_uri, source_id, ref_name],
+                [handle_str, point_uri, source_id, ref_name],
             )
-        return handle
+        return handle_str
 
     def resolve_handle(self, handle: str) -> tuple[str | None, str | None, str | None]:
         """Resolve a handle to (point_uri, source_id, ref_name), or (None,None,None)."""
@@ -254,8 +255,8 @@ class DuckDBStore:
             pa.field("value", pa.string()),
             pa.field("uri", pa.string()),
         ])
-        cursor = self._conn.execute(query, params)
-        for batch in cursor.to_arrow_reader(batch_size):
+        table = self._conn.execute(query, params).to_arrow_table()
+        for batch in table.to_batches(max_chunksize=batch_size):
             ts_col = pc.assume_timezone(batch.column("ts"), timezone="UTC")
             val_col = batch.column("value").cast(pa.string())
             uri_col = pa.array([point_uri] * len(batch), type=pa.string())

@@ -17,17 +17,10 @@ from rdflib.namespace import RDF, RDFS
 from acquirium import Acquirium, Driver
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_DB_URI,
-    ACQUIRIUM_REF_NAME,
-    ACQUIRIUM_SOURCE_ID,
     DATABASE,
-    HAS_EXTERNAL_REFERENCE,
-    HAS_TIMESERIES_ID,
     S223,
-    STORED_AT,
-    TIMESERIES_REFERENCE,
     VIRTUAL_POINT,
 )
-from acquirium.internals.models import compute_handle
 
 HOST_NS = Namespace("urn:acquirium:host#")
 
@@ -45,11 +38,11 @@ _METRICS: list[tuple[str, str, str, str]] = [
 class SystemMetricsDriver(Driver):
     def setup(self) -> None:
         hostname = socket.gethostname()
-        self.src_id = f"{hostname}-system-metrics"
+        self._source_id = f"{hostname}-system-metrics"
         self._host_uri = URIRef(f"urn:host:{hostname}")
         self._stream_uri = lambda key: URIRef(f"urn:host:{hostname}:{key}")
 
-        self.aq.register_datasource(self.src_id)
+        self.aq.register_datasource(self._source_id)
         self._insert_host_graph(hostname)
         self._register_stream_metadata()
         psutil.cpu_percent(interval=None)  # first call always returns 0.0; discard it
@@ -67,7 +60,7 @@ class SystemMetricsDriver(Driver):
             "net_bytes_sent":    net.bytes_sent,
             "net_bytes_recv":    net.bytes_recv,
         }
-        self.aq.insert_timeseries_batch(self.src_id, {
+        self.aq.insert_timeseries_batch(self._source_id, {
             ref: [(ts, val)] for ref, val in sample.items()
         })
 
@@ -90,17 +83,10 @@ class SystemMetricsDriver(Driver):
 
         for ref, label, _, _ in _METRICS:
             s = self._stream_uri(ref)
-            ref_node = URIRef(str(s) + "#ref")
             g.add((self._host_uri, S223.hasProperty, s))
             g.add((s, RDF.type,   S223.Property))
             g.add((s, RDF.type,   VIRTUAL_POINT))
             g.add((s, RDFS.label, Literal(label)))
-            g.add((s,        HAS_EXTERNAL_REFERENCE, ref_node))
-            g.add((ref_node, RDF.type,               TIMESERIES_REFERENCE))
-            g.add((ref_node, HAS_TIMESERIES_ID,      Literal(compute_handle(self.src_id, ref))))
-            g.add((ref_node, ACQUIRIUM_SOURCE_ID,    Literal(self.src_id)))
-            g.add((ref_node, ACQUIRIUM_REF_NAME,     Literal(ref)))
-            g.add((ref_node, STORED_AT,              ACQUIRIUM_DB_URI))
 
         self.aq.insert_graph(g.serialize(format="turtle"), format="turtle", replace=False)
 
@@ -110,6 +96,6 @@ class SystemMetricsDriver(Driver):
                 self._stream_uri(ref),
                 unit=unit,
                 quantity_kind=quantity_kind,
-                source_id=self.src_id,
+                source_id=self._source_id,
                 ref_name=ref,
             )

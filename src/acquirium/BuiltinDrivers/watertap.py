@@ -11,9 +11,12 @@ from rdflib import Graph
 
 from acquirium.Driver import Driver
 from acquirium.internals.internals_namespaces import (
+    ACQUIRIUM_REF_NAME,
+    ACQUIRIUM_SOURCE_ID,
     HAS_EXTERNAL_REFERENCE,
     HAS_PYOMO_VAR,
 )
+from acquirium.internals.models import compute_handle
 
 logger = logging.getLogger("acquirium.watertap")
 
@@ -22,6 +25,7 @@ logger = logging.getLogger("acquirium.watertap")
 class WaterTAPPointSpec:
     point_uri: str
     ref_uri: str
+    ref_name: str
     pyomo_var: str
 
 
@@ -70,7 +74,7 @@ class WaterTAPDriver(Driver):
                 self.aq.register_stream(
                     spec.point_uri,
                     source_id=self._source_id,
-                    ref_name=spec.ref_uri,
+                    ref_name=spec.ref_name,
                 )
 
     def loop(self) -> None:
@@ -87,7 +91,7 @@ class WaterTAPDriver(Driver):
             if numeric_value is None:
                 missing += 1
                 continue
-            batch[spec.ref_uri] = [(ts, numeric_value)]
+            batch[spec.ref_name] = [(ts, numeric_value)]
 
         if missing:
             logger.warning("watertap: skipped %d unmapped or non-numeric model values", missing)
@@ -155,14 +159,31 @@ def _load_point_specs(graph_path: Path) -> list[WaterTAPPointSpec]:
     # A single point can advertise its ingestion reference and its model lookup
     # path independently; the driver joins them here into executable specs.
     for point_uri, _, ref_uri in graph.triples((None, HAS_EXTERNAL_REFERENCE, None)):
+        ref_name_obj = graph.value(ref_uri, ACQUIRIUM_REF_NAME)
+        if ref_name_obj is None:
+            raise ValueError(
+                f"WaterTAP reference {ref_uri} is missing acq:refName. "
+                "Canonical external references must declare the source-local ref name."
+            )
+        ref_name = str(ref_name_obj)
+        source_id_obj = graph.value(ref_uri, ACQUIRIUM_SOURCE_ID)
+        source_id = str(source_id_obj) if source_id_obj is not None else None
         for _, _, pyomo_var in graph.triples((point_uri, HAS_PYOMO_VAR, None)):
             point_specs.append(
                 WaterTAPPointSpec(
                     point_uri=str(point_uri),
                     ref_uri=str(ref_uri),
+                    ref_name=ref_name,
                     pyomo_var=str(pyomo_var),
                 )
             )
+        if source_id is not None:
+            expected = str(compute_handle(source_id, ref_name))
+            if str(ref_uri) != expected:
+                raise ValueError(
+                    f"WaterTAP reference {ref_uri} does not match canonical URI {expected} "
+                    f"for source_id={source_id!r} ref_name={ref_name!r}"
+                )
 
     if not point_specs:
         raise ValueError(

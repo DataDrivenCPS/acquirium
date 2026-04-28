@@ -249,18 +249,16 @@ class Manager:
     def _scan_pg_references_from_graph(self) -> int:
         """Scan graph for external Postgres timeseries references.
 
-        ref:TimeseriesReference is dual-purpose: Acquirium-managed streams use
-        it with ``acq:sourceId``/``acq:refName`` (handled by
-        ``_sync_stream_handles_from_graph``); external Postgres historians use
-        it with ``ref:storedAt`` as a literal DSN. We disambiguate by
-        requiring storedAt to be a Literal that begins with ``postgresql://``
-        or ``postgres://``.
+        External Postgres historians use a ``ref:hasExternalReference`` node
+        whose ``ref:storedAt`` is a literal DSN. Acquirium-managed streams are
+        handled separately by ``_sync_stream_handles_from_graph`` and are
+        identified by ``acq:sourceId``/``acq:refName`` on the same reference
+        node.
         """
         q = f"""
         SELECT ?data ?ref ?dsn ?table ?query ?tcol ?vcol ?pfilter
         WHERE {{
           ?data <{HAS_EXTERNAL_REFERENCE}> ?ref .
-          ?ref a <{TIMESERIES_REFERENCE}> .
           ?ref <{STORED_AT}> ?dsn .
           FILTER(isLiteral(?dsn))
           FILTER(STRSTARTS(STR(?dsn), "postgresql://") || STRSTARTS(STR(?dsn), "postgres://"))
@@ -301,33 +299,41 @@ class Manager:
 
         Matches every pattern of the form:
             ?point  ref:hasExternalReference  ?ref_node .
-            ?ref_node  a  ref:TimeseriesReference ;
-                       acq:sourceId  ?source_id ;
+            ?ref_node  acq:sourceId  ?source_id ;
                        acq:refName   ?ref_name .
-        Recomputes the handle from (source_id, ref_name) and upserts into the
-        streams table. External PG references (which have storedAt as a literal
-        DSN and no sourceId/refName) are skipped here and handled by
-        ``_scan_pg_references_from_graph``.
+        The reference-node URI is the canonical stream identity and should be
+        equal to ``compute_handle(source_id, ref_name)``. We upsert into the
+        streams table using the graph's actual reference URI as the storage key.
+        External PG references (which have no sourceId/refName) are skipped
+        here and handled by ``_scan_pg_references_from_graph``.
         """
         q = f"""
-        SELECT ?point ?source_id ?ref_name
+        SELECT ?point ?ref_node ?source_id ?ref_name
         WHERE {{
           ?point <{HAS_EXTERNAL_REFERENCE}> ?ref_node .
-          ?ref_node a <{TIMESERIES_REFERENCE}> .
           ?ref_node <{ACQUIRIUM_SOURCE_ID}> ?source_id .
           ?ref_node <{ACQUIRIUM_REF_NAME}> ?ref_name .
         }}
         """
         res = self.graph_store.sparql_query(q, use_union=True)
         count = 0
-        for point_uri, source_id, ref_name in res.get("rows", []):
+        for point_uri, ref_node, source_id, ref_name in res.get("rows", []):
             try:
                 sid = str(source_id).strip('"')
                 rn  = str(ref_name).strip('"')
-                self.timescale.ensure_stream_handle(str(point_uri), sid, rn)
+                expected = compute_handle(sid, rn)
+                actual = URIRef(str(ref_node))
+                if actual != expected:
+                    raise ValueError(
+                        f"Managed reference URI mismatch for point {point_uri}: "
+                        f"graph has {actual}, expected {expected} from "
+                        f"source_id={sid!r}, ref_name={rn!r}"
+                    )
+                self.timescale.ensure_stream_handle(str(point_uri), sid, rn, handle=actual)
                 count += 1
             except Exception:
                 logger.warning("Failed to ensure stream handle %s / %s → %s", point_uri, source_id, ref_name, exc_info=True)
+                raise
         if count:
             logger.info("Synced %d stream handle(s) from graph", count)
         return count
@@ -779,6 +785,174 @@ class Manager:
             result.update({key_to_uri[k]: v for k, v in raw.items()})
         return result
 
+    @staticmethod
+    def _sparql_value(value: Any) -> str | None:
+        if value is None:
+            return None
+        return str(value).strip('"')
+
+    def _graph_metadata(self, uri: str) -> dict[str, Any]:
+        q = f"""
+        SELECT ?p ?o
+        WHERE {{
+          <{uri}> ?p ?o .
+        }}
+        ORDER BY ?p ?o
+        """
+        rows = self.graph_store.sparql_query(q, use_union=True).get("rows", [])
+        metadata: dict[str, list[str]] = {}
+        for pred, obj in rows:
+            pred_s = str(pred)
+            obj_s = self._sparql_value(obj)
+            if obj_s is None:
+                continue
+            metadata.setdefault(pred_s, []).append(obj_s)
+        return {"uri": uri, "triples": metadata}
+
+    def list_source_streams(self, source_id: str) -> list[dict[str, Any]]:
+        q = f"""
+        SELECT ?point ?ref ?ref_name ?label ?stored_at
+        WHERE {{
+          ?point <{HAS_EXTERNAL_REFERENCE}> ?ref .
+          ?ref <{ACQUIRIUM_SOURCE_ID}> "{source_id}" ;
+               <{ACQUIRIUM_REF_NAME}> ?ref_name .
+          OPTIONAL {{ ?point <{RDFS.label}> ?label . }}
+          OPTIONAL {{ ?ref <{STORED_AT}> ?stored_at . }}
+        }}
+        ORDER BY ?ref_name ?point
+        """
+        rows = self.graph_store.sparql_query(q, use_union=True).get("rows", [])
+        point_uris = [str(point) for point, *_ in rows]
+        infos = self.timeseries_info_batch(point_uris) if point_uris else {}
+
+        streams: list[dict[str, Any]] = []
+        for point_uri, ref_uri, ref_name, label, stored_at in rows:
+            point_uri_s = str(point_uri)
+            info = infos.get(point_uri_s)
+            streams.append(
+                {
+                    "source_id": source_id,
+                    "ref_name": self._sparql_value(ref_name),
+                    "point_uri": point_uri_s,
+                    "reference_uri": str(ref_uri),
+                    "label": self._sparql_value(label),
+                    "stored_at": self._sparql_value(stored_at),
+                    "row_count": int(info.row_count) if info else 0,
+                    "earliest": info.earliest if info else None,
+                    "latest": info.latest if info else None,
+                }
+            )
+        return streams
+
+    def list_sources(self) -> list[dict[str, Any]]:
+        q = f"""
+        SELECT ?source ?label
+        WHERE {{
+          ?source a <{ACQUIRIUM_DATASOURCE}> .
+          OPTIONAL {{ ?source <{RDFS.label}> ?label . }}
+        }}
+        ORDER BY ?label ?source
+        """
+        rows = self.graph_store.sparql_query(q, use_union=True).get("rows", [])
+        sources: dict[str, dict[str, Any]] = {}
+        for source_uri, label in rows:
+            sid = self._sparql_value(label) or str(source_uri).rsplit(":", 1)[-1]
+            sources[sid] = {
+                "source_id": sid,
+                "uri": str(source_uri),
+                "label": self._sparql_value(label) or sid,
+            }
+
+        stream_q = f"""
+        SELECT ?source_id
+        WHERE {{
+          ?point <{HAS_EXTERNAL_REFERENCE}> ?ref .
+          ?ref <{ACQUIRIUM_SOURCE_ID}> ?source_id ;
+               <{ACQUIRIUM_REF_NAME}> ?ref_name .
+        }}
+        """
+        for (source_id_raw,) in self.graph_store.sparql_query(stream_q, use_union=True).get("rows", []):
+            sid = self._sparql_value(source_id_raw)
+            if sid and sid not in sources:
+                sources[sid] = {
+                    "source_id": sid,
+                    "uri": f"urn:acquirium:datasource:{sid}",
+                    "label": sid,
+                }
+
+        out: list[dict[str, Any]] = []
+        for sid in sorted(sources):
+            streams = self.list_source_streams(sid)
+            row_count = sum(stream["row_count"] for stream in streams)
+            earliest = min((stream["earliest"] for stream in streams if stream["earliest"] is not None), default=None)
+            latest = max((stream["latest"] for stream in streams if stream["latest"] is not None), default=None)
+            out.append(
+                {
+                    **sources[sid],
+                    "stream_count": len(streams),
+                    "row_count": row_count,
+                    "earliest": earliest,
+                    "latest": latest,
+                }
+            )
+        return out
+
+    def get_source(self, source_id: str) -> dict[str, Any] | None:
+        sources = {source["source_id"]: source for source in self.list_sources()}
+        source = sources.get(source_id)
+        if source is None:
+            return None
+        source["metadata"] = self._graph_metadata(source["uri"])
+        return source
+
+    def get_source_stream(self, source_id: str, ref_name: str) -> dict[str, Any] | None:
+        for stream in self.list_source_streams(source_id):
+            if stream["ref_name"] != ref_name:
+                continue
+            stream["point_metadata"] = self._graph_metadata(stream["point_uri"])
+            stream["reference_metadata"] = self._graph_metadata(stream["reference_uri"])
+            return stream
+        return None
+
+    def get_stream_by_reference_uri(self, ref_uri: str) -> dict[str, Any] | None:
+        q = f"""
+        SELECT ?point ?source_id ?ref_name ?label ?stored_at
+        WHERE {{
+          ?point <{HAS_EXTERNAL_REFERENCE}> <{ref_uri}> .
+          <{ref_uri}> <{ACQUIRIUM_SOURCE_ID}> ?source_id ;
+                      <{ACQUIRIUM_REF_NAME}> ?ref_name .
+          OPTIONAL {{ ?point <{RDFS.label}> ?label . }}
+          OPTIONAL {{ <{ref_uri}> <{STORED_AT}> ?stored_at . }}
+        }}
+        LIMIT 1
+        """
+        rows = self.graph_store.sparql_query(q, use_union=True).get("rows", [])
+        if not rows:
+            return None
+        point_uri, source_id, ref_name, label, stored_at = rows[0]
+        point_uri_s = str(point_uri)
+        info = self.timeseries_info_batch([point_uri_s]).get(point_uri_s)
+        stream = {
+            "source_id": self._sparql_value(source_id),
+            "ref_name": self._sparql_value(ref_name),
+            "point_uri": point_uri_s,
+            "reference_uri": ref_uri,
+            "label": self._sparql_value(label),
+            "stored_at": self._sparql_value(stored_at),
+            "row_count": int(info.row_count) if info else 0,
+            "earliest": info.earliest if info else None,
+            "latest": info.latest if info else None,
+        }
+        stream["point_metadata"] = self._graph_metadata(stream["point_uri"])
+        stream["reference_metadata"] = self._graph_metadata(stream["reference_uri"])
+        return stream
+
+    def get_source_stream_by_reference_uri(self, source_id: str, ref_uri: str) -> dict[str, Any] | None:
+        stream = self.get_stream_by_reference_uri(ref_uri)
+        if stream is None or stream["source_id"] != source_id:
+            return None
+        return stream
+
     def register_datasource(self, source_id: str) -> str:
         """Register a named datasource in the knowledge graph.
 
@@ -885,6 +1059,8 @@ class Manager:
             graph.add((app_uri, PRODUCES, point_uri))
             graph.add((point_uri, RDF.type, VIRTUAL_POINT))
             graph.add((point_uri, HAS_EXTERNAL_REFERENCE, handle))
+            graph.add((handle, ACQUIRIUM_SOURCE_ID, Literal(spec.name)))
+            graph.add((handle, ACQUIRIUM_REF_NAME, Literal(out.point_uri)))
             graph.add((handle, RDF.type, STREAM))
             if out.kind in {"event", "trigger"}:
                 graph.add((handle, RDF.type, EVENT_STREAM))

@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 import pyarrow.ipc as ipc
 import pyarrow as pa
 
+from acquirium.internals.models import compute_handle
+
 
 BASE_URL = "http://localhost:8000"
 
@@ -213,6 +215,70 @@ class TestTimeseriesEndpoints:
         reader = ipc.open_stream(resp.content)
         table = reader.read_all()
         assert table.num_rows == 0
+
+    def test_canonical_reference_uri_browse_flow(self):
+        source_id = "test-canonical-ref"
+        ref_name = "api_ref_name"
+        point_uri = "urn:test:canonical_ref_point"
+        ref_uri = str(compute_handle(source_id, ref_name))
+
+        resp = requests.post(f"{BASE_URL}/register_datasource", json={"source_id": source_id})
+        assert resp.status_code == 200
+
+        graph = f"""\
+@prefix acq: <urn:acquirium#> .
+@prefix ref: <https://brickschema.org/schema/Brick/ref#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+<{point_uri}>
+    rdfs:label "Canonical Ref Test Point" ;
+    ref:hasExternalReference <{ref_uri}> .
+
+<{ref_uri}>
+    acq:sourceId "{source_id}" ;
+    acq:refName "{ref_name}" ;
+    ref:storedAt <urn:acquirium#TimescaleDB> .
+"""
+        resp = requests.post(
+            f"{BASE_URL}/insert_graph",
+            json={"rdf_graph": graph, "format": "turtle", "replace": False},
+        )
+        assert resp.status_code == 200
+
+        values = [
+            [datetime(2025, 2, 1, 0, 0, tzinfo=timezone.utc).isoformat(), 10.0],
+            [datetime(2025, 2, 1, 1, 0, tzinfo=timezone.utc).isoformat(), 11.0],
+        ]
+        resp = requests.post(
+            f"{BASE_URL}/insert_timeseries",
+            json=[{
+                "source_id": source_id,
+                "ref_name": ref_name,
+                "point_uri": point_uri,
+                "replace": True,
+                "values": values,
+            }],
+        )
+        assert resp.status_code == 200
+
+        resp = requests.get(f"{BASE_URL}/streams/by-ref", params={"ref_uri": ref_uri})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["reference_uri"] == ref_uri
+        assert body["source_id"] == source_id
+        assert body["ref_name"] == ref_name
+        assert body["point_uri"] == point_uri
+
+        resp = requests.get(
+            f"{BASE_URL}/streams/data",
+            params={"ref_uri": ref_uri, "order": "asc", "limit": 2},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["reference_uri"] == ref_uri
+        assert body["encoding"] == "columns"
+        assert body["columns"] == ["ts", "value"]
+        assert body["data"]["value"] == ["10.0", "11.0"]
 
 
 # ── Log Endpoints ──────────────────────────────────────────

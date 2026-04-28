@@ -210,7 +210,7 @@ class AppRunner:
 
     def _run_and_persist(self, app: App, ctx: AppContext) -> list[Output]:
         outputs = app.run(ctx)
-        self._persist(app_id, outputs)
+        self._persist(ctx.app_id, outputs)
         return outputs
 
     # ─────────────────────── persistence ───────────────────────
