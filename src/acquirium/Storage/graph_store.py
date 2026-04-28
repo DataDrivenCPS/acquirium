@@ -16,13 +16,6 @@ from acquirium.internals.internals_namespaces import *
 from acquirium.internals.models import Point, PointCreateRequest
 from acquirium.internals.qudt_units import QUDTUnitConverter, UnitNotFound
 
-# QUDT vocab IRIs — excluded from union graph rebuilds to prevent hundreds of
-# thousands of QUDT triples from polluting user SPARQL queries.
-_QUDT_NAMED_GRAPHS = frozenset({
-    "http://qudt.org/vocab/unit",
-    "http://qudt.org/vocab/quantitykind",
-})
-
 _logger = logging.getLogger("acquirium.graph_store")
 
 
@@ -158,8 +151,6 @@ class OxigraphGraphStore:
                 else self.env.list()
             )
             for ont in ontology_names:
-                if ont in _QUDT_NAMED_GRAPHS:
-                    continue  # guard: prevent QUDT from flooding the union graph
                 closure_graph, _ = self.env.get_closure(ont)
                 ctx = self.dataset.graph(URIRef(ont))
                 ctx.remove((None, None, None))
