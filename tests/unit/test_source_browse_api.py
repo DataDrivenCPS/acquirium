@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Iterator
+from base64 import urlsafe_b64encode
 from urllib.parse import quote
 
 import pyarrow as pa
@@ -130,6 +131,7 @@ def test_source_browse_endpoints(monkeypatch):
         with TestClient(app) as client:
             resp = client.get("/source")
             assert resp.status_code == 200
+            assert b'\n  "kind": "source-index"' in resp.content
             body = resp.json()
             assert body["kind"] == "source-index"
             assert body["count"] == 1
@@ -142,13 +144,17 @@ def test_source_browse_endpoints(monkeypatch):
             assert body["kind"] == "source"
             assert body["metadata"]["triples"]["http://www.w3.org/2000/01/rdf-schema#label"] == ["demo"]
 
-            resp = client.get("/source/demo/streams")
+            resp = client.get("/source/demo/streams", params={"limit": 5, "start": "-5min"})
             assert resp.status_code == 200
             body = resp.json()
             assert body["kind"] == "stream-index"
+            assert body["data_url_defaults"]["limit"] == "5"
+            assert body["data_url_defaults"]["start"] == "-5min"
             assert body["streams"][0]["ref_name"] == "temp"
             assert body["streams"][0]["url"].endswith(f"/streams/by-ref?ref_uri={quote('urn:ref:temp', safe='')}")
-            assert body["streams"][0]["data_url"].endswith(f"/streams/data?ref_uri={quote('urn:ref:temp', safe='')}")
+            assert f"/streams/data?ref_uri={quote('urn:ref:temp', safe='')}" in body["streams"][0]["data_url"]
+            assert "limit=5" in body["streams"][0]["data_url"]
+            assert "start=-5min" in body["streams"][0]["data_url"]
 
             resp = client.get("/streams/by-ref", params={"ref_uri": "urn:ref:temp"})
             assert resp.status_code == 200
@@ -180,6 +186,12 @@ def test_source_browse_endpoints(monkeypatch):
                 "value": ["72.4"],
             }
 
+            resp = client.get("/streams/data", params={"ref_uri": "urn:ref:temp", "start": "-5min", "limit": 1})
+            assert resp.status_code == 200
+            body = resp.json()
+            assert body["start"] == "-5min"
+            assert body["start_resolved"].endswith(("Z", "+00:00"))
+
             resp = client.get(
                 "/source/demo/streams/data",
                 params={"ref_uri": "urn:ref:temp", "limit": 1, "order": "desc", "format": "rows"},
@@ -209,5 +221,157 @@ def test_source_browse_endpoints(monkeypatch):
                     "uri": "urn:point:temp",
                 }
             ]
+    finally:
+        app.router.lifespan_context = old_lifespan
+
+
+class StubBrowseManagerWithPathSource(StubBrowseManager):
+    def list_sources(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "source_id": "dpr-trailer-data/raw/sample.csv",
+                "uri": "urn:acquirium:datasource:dpr-trailer-data/raw/sample.csv",
+                "label": "dpr-trailer-data/raw/sample.csv",
+                "stream_count": 1,
+                "row_count": 2,
+                "earliest": datetime(2026, 4, 28, 10, 0, tzinfo=timezone.utc),
+                "latest": datetime(2026, 4, 28, 10, 5, tzinfo=timezone.utc),
+            }
+        ]
+
+    def get_source(self, source_id: str) -> dict[str, Any] | None:
+        if source_id != "dpr-trailer-data/raw/sample.csv":
+            return None
+        return {
+            **self.list_sources()[0],
+            "metadata": {
+                "uri": "urn:acquirium:datasource:dpr-trailer-data/raw/sample.csv",
+                "triples": {
+                    "http://www.w3.org/2000/01/rdf-schema#label": ["dpr-trailer-data/raw/sample.csv"],
+                },
+            },
+        }
+
+
+def test_source_browse_endpoints_allow_slashes_in_source_id():
+    old_lifespan = app.router.lifespan_context
+    app.router.lifespan_context = _noop_lifespan
+    app.state.manager = StubBrowseManagerWithPathSource()
+
+    try:
+        with TestClient(app) as client:
+            resp = client.get("/source")
+            assert resp.status_code == 200
+            body = resp.json()
+            assert body["sources"][0]["source_id"] == "dpr-trailer-data/raw/sample.csv"
+            encoded = "~b64~" + urlsafe_b64encode(
+                "dpr-trailer-data/raw/sample.csv".encode("utf-8")
+            ).decode("ascii").rstrip("=")
+            assert body["sources"][0]["url"].endswith(f"/source/{encoded}")
+            assert body["sources"][0]["streams_url"].endswith(f"/source/{encoded}/streams")
+
+            resp = client.get(f"/source/{encoded}")
+            assert resp.status_code == 200
+            body = resp.json()
+            assert body["source_id"] == "dpr-trailer-data/raw/sample.csv"
+    finally:
+        app.router.lifespan_context = old_lifespan
+
+
+class StubInsertManager:
+    def __init__(self) -> None:
+        self.batch_calls = []
+        self.single_calls = []
+
+    def insert_timeseries_batch(self, source_id: str, streams: dict[str, list[tuple[datetime, Any]]]) -> int:
+        self.batch_calls.append((source_id, streams))
+        return sum(len(rows) for rows in streams.values())
+
+    def insert_timeseries(
+        self,
+        *,
+        source_id: str,
+        ref_name: str,
+        rows: list[tuple[datetime, Any]],
+        point_uri: str | None = None,
+        replace: bool = False,
+    ) -> int:
+        self.single_calls.append(
+            {
+                "source_id": source_id,
+                "ref_name": ref_name,
+                "rows": rows,
+                "point_uri": point_uri,
+                "replace": replace,
+            }
+        )
+        return len(rows)
+
+
+def test_insert_timeseries_endpoint_bulk_inserts_plain_batches():
+    old_lifespan = app.router.lifespan_context
+    app.router.lifespan_context = _noop_lifespan
+    manager = StubInsertManager()
+    app.state.manager = manager
+
+    try:
+        with TestClient(app) as client:
+            resp = client.post(
+                "/insert_timeseries",
+                json=[
+                    {
+                        "source_id": "source-a",
+                        "ref_name": "temp",
+                        "values": [["2026-04-28T10:00:00Z", 1.0]],
+                    },
+                    {
+                        "source_id": "source-a",
+                        "ref_name": "pressure",
+                        "values": [["2026-04-28T10:00:00Z", 2.0]],
+                    },
+                    {
+                        "source_id": "source-b",
+                        "ref_name": "flow",
+                        "values": [["2026-04-28T10:00:00Z", 3.0]],
+                    },
+                ],
+            )
+
+            assert resp.status_code == 200
+            assert resp.json() == {"ok": True, "rows_inserted": 3}
+            assert len(manager.batch_calls) == 2
+            assert manager.batch_calls[0][0] == "source-a"
+            assert set(manager.batch_calls[0][1]) == {"temp", "pressure"}
+            assert manager.batch_calls[1][0] == "source-b"
+            assert set(manager.batch_calls[1][1]) == {"flow"}
+            assert manager.single_calls == []
+    finally:
+        app.router.lifespan_context = old_lifespan
+
+
+def test_insert_timeseries_endpoint_keeps_explicit_point_uri_on_single_path():
+    old_lifespan = app.router.lifespan_context
+    app.router.lifespan_context = _noop_lifespan
+    manager = StubInsertManager()
+    app.state.manager = manager
+
+    try:
+        with TestClient(app) as client:
+            resp = client.post(
+                "/insert_timeseries",
+                json=[
+                    {
+                        "source_id": "source-a",
+                        "ref_name": "temp",
+                        "point_uri": "urn:point:temp",
+                        "values": [["2026-04-28T10:00:00Z", 1.0]],
+                    }
+                ],
+            )
+
+            assert resp.status_code == 200
+            assert resp.json() == {"ok": True, "rows_inserted": 1}
+            assert manager.batch_calls == []
+            assert manager.single_calls[0]["point_uri"] == "urn:point:temp"
     finally:
         app.router.lifespan_context = old_lifespan

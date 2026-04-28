@@ -898,10 +898,56 @@ class Manager:
         return out
 
     def get_source(self, source_id: str) -> dict[str, Any] | None:
-        sources = {source["source_id"]: source for source in self.list_sources()}
-        source = sources.get(source_id)
-        if source is None:
-            return None
+        q = f"""
+        SELECT ?source ?label
+        WHERE {{
+          ?source a <{ACQUIRIUM_DATASOURCE}> .
+          OPTIONAL {{ ?source <{RDFS.label}> ?label . }}
+          FILTER(?label = "{source_id}" || STR(?source) = "urn:acquirium:datasource:{source_id}")
+        }}
+        LIMIT 1
+        """
+        rows = self.graph_store.sparql_query(q, use_union=True).get("rows", [])
+        if rows:
+            source_uri, label = rows[0]
+            source = {
+                "source_id": source_id,
+                "uri": str(source_uri),
+                "label": self._sparql_value(label) or source_id,
+            }
+        else:
+            stream_q = f"""
+            SELECT ?source_id
+            WHERE {{
+              ?point <{HAS_EXTERNAL_REFERENCE}> ?ref .
+              ?ref <{ACQUIRIUM_SOURCE_ID}> "{source_id}" ;
+                   <{ACQUIRIUM_REF_NAME}> ?ref_name .
+            }}
+            LIMIT 1
+            """
+            if not self.graph_store.sparql_query(stream_q, use_union=True).get("rows", []):
+                return None
+            source = {
+                "source_id": source_id,
+                "uri": f"urn:acquirium:datasource:{source_id}",
+                "label": source_id,
+            }
+
+        streams = self.list_source_streams(source_id)
+        source.update(
+            {
+                "stream_count": len(streams),
+                "row_count": sum(stream["row_count"] for stream in streams),
+                "earliest": min(
+                    (stream["earliest"] for stream in streams if stream["earliest"] is not None),
+                    default=None,
+                ),
+                "latest": max(
+                    (stream["latest"] for stream in streams if stream["latest"] is not None),
+                    default=None,
+                ),
+            }
+        )
         source["metadata"] = self._graph_metadata(source["uri"])
         return source
 
