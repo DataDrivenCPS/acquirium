@@ -3,18 +3,35 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable, Sequence, Callable, Optional
+from typing import Any, Iterable, Sequence, Callable, Optional, TYPE_CHECKING
 import inspect
 
-from rdflib import Graph as RDFGraph, URIRef
+if TYPE_CHECKING:
+    import polars as pl
+
+from rdflib import Graph as RDFGraph, URIRef, Literal
+from rdflib.namespace import RDF, RDFS
 
 import warnings
 
 from acquirium.Client.query import Query
 from acquirium.Client.client import AcquiriumClient
 from acquirium.Apps.base import App
-from acquirium.internals.app_utils import make_stream_ref_uri
-from acquirium.internals.models import AppOutputSpec, AppSpec
+from acquirium.internals.models import AppOutputSpec, AppSpec, compute_handle
+from acquirium.internals.internals_namespaces import (
+    ACQUIRIUM_DB_URI,
+    ACQUIRIUM_REF_NAME,
+    ACQUIRIUM_SOURCE_ID,
+    STORED_AT,
+    TIMESERIES_REFERENCE,
+    HAS_EXTERNAL_REFERENCE,
+    HAS_MEDIUM,
+    HAS_QUANTITY_KIND,
+    HAS_UNIT,
+    OF_SUBSTANCE,
+    VIRTUAL_POINT,
+    DATA_SOURCE,
+)
 @dataclass
 class Acquirium:
     """
@@ -33,7 +50,7 @@ class Acquirium:
             server_port: int = 8000,
             use_ssl: bool = False,
             lexicon_path: Optional[Path] = None,
-        ) -> Acquirium:
+        ):
         if lexicon_path is not None:
             warnings.warn(
                 "lexicon_path is deprecated and ignored. "
@@ -89,6 +106,200 @@ class Acquirium:
     # TIMESERIES API
     # ------------------------------------------------------------------
 
+    def register_datasource(self, source_id: str) -> str:
+        """Register a named datasource in the knowledge graph.
+
+        The ``source_id`` is a user-provided string that scopes stream
+        ``ref_name`` values so two sources with the same ``ref_name`` never
+        produce colliding TimescaleDB keys.  Safe to call on every startup —
+        the graph write is idempotent.
+
+        Returns ``source_id``.
+        """
+        return self.client.register_datasource(source_id)
+
+    def insert_timeseries(
+        self,
+        source_id: str,
+        ref_name: str,
+        rows: list[tuple[datetime, Any]],
+        *,
+        point_uri: Optional[str] = None,
+        replace: bool = False,
+    ) -> dict[str, Any]:
+        """Insert timeseries data for a single stream.
+
+        Args:
+            source_id: The registered datasource identifier.
+            ref_name: The source-local stream identifier. Combined with
+                ``source_id`` to derive the unique TimescaleDB storage key.
+            rows: List of (timestamp, value) tuples.
+            point_uri: Semantic URI of the measurement point. When provided,
+                a handle mapping is registered in the streams table.
+            replace: If True, replaces any existing data for this stream.
+
+        Returns:
+            dict with ``{"ok": True, "rows_inserted": N}``.
+        """
+        return self.client.insert_timeseries(
+            source_id=source_id,
+            ref_name=ref_name,
+            rows=rows,
+            point_uri=point_uri,
+            replace=replace,
+        )
+
+    def insert_timeseries_batch(
+        self,
+        source_id: str,
+        streams: dict[str, list[tuple[datetime, Any]]],
+    ) -> dict[str, Any]:
+        """Insert timeseries data for multiple streams in one HTTP request.
+
+        Args:
+            source_id: The registered datasource identifier.
+            streams: Mapping of ref_name → list of (timestamp, value) tuples.
+
+        Returns:
+            dict with ``{"ok": True, "rows_inserted": N}``.
+        """
+        return self.client.insert_timeseries_batch(source_id, streams)
+
+    def _resolve_qudt_uri(self, text: str, kind: str) -> URIRef | None:
+        """Try to resolve a plain string to a QUDT URI via the server.
+
+        For ``kind="unit"`` the deterministic unit resolver is tried first
+        (handles symbols, UCUM codes, and ratio notation like "mg/L"), then
+        the embedding matcher as a fallback.  For other kinds (``"quantity_kind"``,
+        ``"class"``) only the embedding matcher is used.
+
+        Returns a URIRef on success, or None if no confident match is found.
+        """
+        if kind == "unit":
+            try:
+                result = self.client.resolve_unit(text)
+                uri = result.get("uri")
+                if uri:
+                    return URIRef(uri)
+            except Exception:
+                pass  # fall through to embedding matcher
+
+        try:
+            matches = self.client.resolve_text(text, kind=kind, top_k=1, min_score=0.6)
+            if matches:
+                return URIRef(matches[0]["uri"])
+        except Exception:
+            pass
+
+        return None
+
+    def register_stream(
+        self,
+        point_uri: str | URIRef,
+        label: str | None = None,
+        *,
+        source_id: str | None = None,
+        ref_name: str | None = None,
+        unit: str | URIRef | None = None,
+        quantity_kind: str | URIRef | None = None,
+        medium: str | URIRef | None = None,
+        substance: str | URIRef | None = None,
+        data_source: str | URIRef | None = None,
+        properties: dict[URIRef, str | URIRef] | None = None,
+    ) -> None:
+        """Declare a stream's semantic metadata in the RDF graph.
+
+        Registers a point URI as a timeseries stream and annotates it with
+        any supplied metadata predicates. Call this once (or when metadata
+        changes); it does not affect stored timeseries values.
+
+        When ``ref_name`` is provided, a Brick-style external reference is
+        written following the pattern from the Brick timeseries storage spec
+        (https://docs.brickschema.org/metadata/timeseries-storage.html)::
+
+            <point_uri>  ref:hasExternalReference  <point_uri#ref> .
+            <point_uri#ref>  a  ref:TimeseriesReference ;
+                             ref:hasTimeseriesId  "{ref_name}" ;
+                             ref:storedAt  <urn:acquirium#timescaledb> .
+            <urn:acquirium#timescaledb>  a <urn:acquirium#Database> .
+
+        The ``ref_name`` value is what ``_sync_stream_handles_from_graph``
+        reads back to populate the streams handle table.
+
+        Plain strings for ``unit``, ``quantity_kind``, ``medium``, and
+        ``substance`` are resolved against the QUDT vocabulary via the server
+        (unit resolver + embedding matcher). Falls back to a plain literal with
+        a warning if no confident match is found.
+
+        Args:
+            point_uri: The URI identifying this stream in the knowledge graph.
+            label: Human-readable name (rdfs:label).
+            ref_name: Source-native identifier for this stream (sensor tag,
+                MQTT topic, database column, etc.). Written as
+                ``ref:hasTimeseriesId`` on the external reference node.
+            unit: Unit of measurement — URIRef, URI string, or plain text.
+            quantity_kind: Physical quantity — URIRef, URI string, or plain text.
+            medium: Medium the measurement applies to (S223 hasMedium).
+            substance: Substance being measured (S223 ofSubstance).
+            data_source: Origin of the data — written as a literal string.
+            properties: Arbitrary extra triples as ``{predicate_uri: value}``.
+        """
+        g = RDFGraph()
+        subj = URIRef(str(point_uri))
+
+        g.add((subj, RDF.type, VIRTUAL_POINT))
+        if label is not None:
+            g.add((subj, RDFS.label, Literal(label)))
+
+        def _coerce(value: str | URIRef | None, qudt_kind: str) -> str | URIRef | None:
+            """Resolve a plain string to a QUDT URIRef, falling back to literal."""
+            if value is None or isinstance(value, URIRef):
+                return value
+            if "://" in value or value.startswith("urn:"):
+                return URIRef(value)
+            resolved = self._resolve_qudt_uri(value, qudt_kind)
+            if resolved is None:
+                warnings.warn(
+                    f"Could not resolve {qudt_kind!r} value {value!r} to a QUDT URI; "
+                    "storing as a plain literal.",
+                    stacklevel=3,
+                )
+            return resolved or value
+
+        def _add(pred: URIRef, value: str | URIRef | None) -> None:
+            if value is None:
+                return
+            if isinstance(value, URIRef):
+                g.add((subj, pred, value))
+            elif "://" in value or value.startswith("urn:"):
+                g.add((subj, pred, URIRef(value)))
+            else:
+                g.add((subj, pred, Literal(value)))
+
+        _add(HAS_UNIT,          _coerce(unit,          "unit"))
+        _add(HAS_QUANTITY_KIND, _coerce(quantity_kind, "quantity_kind"))
+        _add(HAS_MEDIUM,        _coerce(medium,        "class"))
+        _add(OF_SUBSTANCE,      _coerce(substance,     "class"))
+        _add(DATA_SOURCE, data_source)
+
+        if ref_name is not None and source_id is not None:
+            handle = compute_handle(source_id, ref_name)
+            # Stable named URI for the reference node — idempotent across calls
+            g.add((subj,        HAS_EXTERNAL_REFERENCE, handle))
+            g.add((handle,    RDF.type,               TIMESERIES_REFERENCE))
+            # Store source_id and ref_name so the handle can be reconstructed
+            # by _sync_stream_handles_from_graph without re-deriving it
+            g.add((handle,    ACQUIRIUM_SOURCE_ID,    Literal(source_id)))
+            g.add((handle,    ACQUIRIUM_REF_NAME,     Literal(ref_name)))
+            g.add((handle,    STORED_AT,              ACQUIRIUM_DB_URI))
+            # Declare the Acquirium DB node (idempotent)
+            g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
+
+        for pred, value in (properties or {}).items():
+            _add(pred, value)
+
+        turtle = g.serialize(format="turtle")
+        self.client.insert_graph(turtle, format="turtle", replace=False)
 
     # ------------------------------------------------------------------
     # ACQUIRIUM APPS API
@@ -132,8 +343,6 @@ class Acquirium:
                 spec_item = AppOutputSpec(**item)
             else:
                 raise TypeError("outputs must be AppOutputSpec or dict")
-            if spec_item.ref_uri is None:
-                spec_item.ref_uri = make_stream_ref_uri(spec_item.point_uri)
             output_specs.append(spec_item)
 
         code = source_code or getattr(app, "source_code", None)
@@ -243,7 +452,7 @@ class Acquirium:
         log_time_end: str | datetime | None = None,
         observation_start: str | datetime | None = None,
         observation_end: str | datetime | None = None,
-    ) -> list:
+    ) -> "pl.DataFrame":
         """Read plant-level log entries (no query/object needed).
 
         Returns a list of LogEntry objects for the generic plant URI.

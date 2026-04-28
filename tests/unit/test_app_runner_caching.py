@@ -45,9 +45,22 @@ class StubManager:
         for cb in listeners:
             cb()
 
-    def insert_timeseries(self, *, ref_uri: str, rows: Any, point_uri: str | None = None, replace: bool = False) -> int:
+    def insert_timeseries(
+        self,
+        *,
+        source_id: str,
+        ref_name: str,
+        rows: Any,
+        point_uri: str | None = None,
+        replace: bool = False,
+    ) -> int:
         self.timeseries_inserts.append(
-            {"ref_uri": ref_uri, "rows": list(rows), "point_uri": point_uri}
+            {
+                "source_id": source_id,
+                "ref_name": ref_name,
+                "rows": list(rows),
+                "point_uri": point_uri,
+            }
         )
         return len(rows)
 
