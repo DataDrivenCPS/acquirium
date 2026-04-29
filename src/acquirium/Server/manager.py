@@ -17,7 +17,7 @@ from acquirium.Storage import (
     create_timeseries_store,
 )
 from acquirium.internals.qudt_units import QUDTUnitConverter
-from acquirium.internals.models import LogEntry, Order, TimeIntervalModel, AppSpec, AppRunRequest, compute_handle
+from acquirium.internals.models import LogEntry, Order, TimeIntervalModel, AppSpec, AppRunRequest, compute_ref_uri
 from acquirium.internals.internals_namespaces import *
 from acquirium.internals.app_utils import app_uri_for
 
@@ -39,6 +39,10 @@ logger.setLevel(logging.INFO)
 
 DEFAULT_DATA_DIR = Path(".acquirium")
 DEFAULT_DB_NAME = "acquirium"
+RECREATE_WARNING = (
+    "SERVER STARTED WITH recreate=True. Existing Acquirium data will be erased now. "
+    "Restarting this server with recreate=True will erase data again."
+)
 
 
 def _aggregate_uri_label_rows(
@@ -140,7 +144,7 @@ class Manager:
 
         base = Path(data_dir) if data_dir is not None else DEFAULT_DATA_DIR
         if recreate:
-            logging.info("acquirium: recreating data directory and database")
+            logger.warning(RECREATE_WARNING)
             if base.exists():
                 _wipe_dir_contents(base)
                 print(f"Deleted data directory contents: {base}")
@@ -289,7 +293,7 @@ class Manager:
 
         External Postgres historians use a ``ref:hasExternalReference`` node
         whose ``ref:storedAt`` is a literal DSN. Acquirium-managed streams are
-        handled separately by ``_sync_stream_handles_from_graph`` and are
+        handled separately by ``_sync_stream_refs_from_graph`` and are
         identified by ``acq:sourceId``/``acq:refName`` on the same reference
         node.
         """
@@ -331,15 +335,17 @@ class Manager:
             logger.info("Registered %d external Postgres reference(s) from graph", count)
         return count
 
-    def _sync_stream_handles_from_graph(self) -> int:
-        """Sync the streams handle table from Acquirium-managed timeseries refs.
+    def _sync_stream_refs_from_graph(self) -> int:
+        """Sync the streams reference table from Acquirium-managed timeseries refs.
 
-        Matches every pattern of the form:
-            ?point  ref:hasExternalReference  ?ref_node .
+        Matches every Acquirium-managed reference node:
             ?ref_node  acq:sourceId  ?source_id ;
                        acq:refName   ?ref_name .
+        If a semantic point links to the reference with ``ref:hasExternalReference``,
+        ``point_uri`` is stored too. Standalone source-local references are
+        recorded with a null ``point_uri``.
         The reference-node URI is the canonical stream identity and should be
-        equal to ``compute_handle(source_id, ref_name)``. We upsert into the
+        equal to ``compute_ref_uri(source_id, ref_name)``. We upsert into the
         streams table using the graph's actual reference URI as the storage key.
         External PG references (which have no sourceId/refName) are skipped
         here and handled by ``_scan_pg_references_from_graph``.
@@ -347,9 +353,9 @@ class Manager:
         q = f"""
         SELECT ?point ?ref_node ?source_id ?ref_name
         WHERE {{
-          ?point <{HAS_EXTERNAL_REFERENCE}> ?ref_node .
           ?ref_node <{ACQUIRIUM_SOURCE_ID}> ?source_id .
           ?ref_node <{ACQUIRIUM_REF_NAME}> ?ref_name .
+          OPTIONAL {{ ?point <{HAS_EXTERNAL_REFERENCE}> ?ref_node . }}
         }}
         """
         res = self.graph_store.sparql_query(q, use_union=True)
@@ -358,7 +364,7 @@ class Manager:
             try:
                 sid = str(source_id).strip('"')
                 rn  = str(ref_name).strip('"')
-                expected = compute_handle(sid, rn)
+                expected = compute_ref_uri(sid, rn)
                 actual = URIRef(str(ref_node))
                 if actual != expected:
                     raise ValueError(
@@ -366,13 +372,14 @@ class Manager:
                         f"graph has {actual}, expected {expected} from "
                         f"source_id={sid!r}, ref_name={rn!r}"
                     )
-                self.timescale.ensure_stream_handle(str(point_uri), sid, rn, handle=actual)
+                point = str(point_uri) if point_uri is not None else None
+                self.timescale.ensure_stream_ref(point, sid, rn, ref_uri=actual)
                 count += 1
             except Exception:
-                logger.warning("Failed to ensure stream handle %s / %s → %s", point_uri, source_id, ref_name, exc_info=True)
+                logger.warning("Failed to ensure stream ref %s / %s → %s", point_uri, source_id, ref_name, exc_info=True)
                 raise
         if count:
-            logger.info("Synced %d stream handle(s) from graph", count)
+            logger.info("Synced %d stream ref(s) from graph", count)
         return count
 
     def _save_ingest_cache(self, cache: dict[str, Any]) -> None:
@@ -684,7 +691,7 @@ class Manager:
             self.graph_store.insert_graph(rdf_graph, format=format, replace=replace)
             logging.info("acquirium: inserted graph into store, now ingesting data")
             self._scan_pg_references_from_graph()
-            self._sync_stream_handles_from_graph()
+            self._sync_stream_refs_from_graph()
 
             if wait_for_embedding:
                 logger.info("acquirium: rebuilding embedding index (synchronous)...")
@@ -728,7 +735,7 @@ class Manager:
             )
         storage_key = self.timescale.resolve_storage_key(uri)
         return self.timescale.timeseries(
-            point_uri=storage_key,
+            ref_uri=storage_key,
             start=start,
             end=end,
             limit=limit,
@@ -745,7 +752,7 @@ class Manager:
         if pg_uris:
             result.update(self.pg_registry.timeseries_info_batch(pg_uris))
         if ts_uris:
-            # Resolve URIs to storage keys (handles) in one batch query, then
+            # Resolve URIs to storage keys (ref_uris) in one batch query, then
             # remap results back to the original URIs.
             uri_to_key = self.timescale.resolve_storage_keys(ts_uris)
             key_to_uri = {v: k for k, v in uri_to_key.items()}
@@ -944,13 +951,12 @@ class Manager:
         point_uri: str | None = None,
         replace: bool = False,
     ) -> int:
-        handle = compute_handle(source_id, ref_name)
+        ref_uri = compute_ref_uri(source_id, ref_name)
         if replace:
-            n = self.timescale.replace_rows(str(handle), rows)
+            n = self.timescale.replace_rows(str(ref_uri), rows)
         else:
-            n = self.timescale.upsert_rows(str(handle), rows)
-        if point_uri:
-            self.timescale.ensure_stream_handle(point_uri, source_id, ref_name, handle=handle)
+            n = self.timescale.upsert_rows(str(ref_uri), rows)
+        self.timescale.ensure_stream_ref(point_uri, source_id, ref_name, ref_uri=ref_uri)
         return n
 
     def insert_timeseries_batch(
@@ -961,36 +967,41 @@ class Manager:
         """Insert multiple source-local streams in one storage operation."""
         import polars as pl
 
-        handles: list[str] = []
+        ref_uris: list[str] = []
         timestamps: list[datetime] = []
         values: list[str | None] = []
         for ref_name, stream_rows in streams.items():
-            handle = str(compute_handle(source_id, ref_name))
+            ref_uri = str(compute_ref_uri(source_id, ref_name))
+            self.timescale.ensure_stream_ref(None, source_id, ref_name, ref_uri=ref_uri)
             for ts, value in stream_rows:
-                handles.append(handle)
+                ref_uris.append(ref_uri)
                 timestamps.append(ts)
                 values.append(None if value is None else str(value))
-        if not handles:
+        if not ref_uris:
             return 0
 
         df = pl.DataFrame(
-            {"point_uri": handles, "ts": timestamps, "value": values},
-            schema={"point_uri": pl.Utf8, "ts": pl.Datetime("us", "UTC"), "value": pl.Utf8},
+            {"ref_uri": ref_uris, "ts": timestamps, "value": values},
+            schema={"ref_uri": pl.Utf8, "ts": pl.Datetime("us", "UTC"), "value": pl.Utf8},
         )
         return self.timescale.bulk_insert_polars(df)
 
     def insert_timeseries_polars(self, source_id: str, df: "pl.DataFrame") -> int:
-        """Insert a melted (ts, ref_name, value) DataFrame, computing handles vectorized."""
+        """Insert a melted (ts, ref_name, value) DataFrame, computing ref_uris vectorized."""
+        import polars as pl
+
         if df.is_empty():
             return 0
-        handle_map = {
-            name: str(compute_handle(source_id, name))
+        ref_uri_map = {
+            name: str(compute_ref_uri(source_id, name))
             for name in df["ref_name"].unique().to_list()
         }
+        for ref_name, ref_uri in ref_uri_map.items():
+            self.timescale.ensure_stream_ref(None, source_id, ref_name, ref_uri=ref_uri)
         df = (
-            df.with_columns(pl.col("ref_name").replace(handle_map).alias("point_uri"))
+            df.with_columns(pl.col("ref_name").replace(ref_uri_map).alias("ref_uri"))
             .drop("ref_name")
-            .select(["point_uri", "ts", "value"])
+            .select(["ref_uri", "ts", "value"])
         )
         return self.timescale.bulk_insert_polars(df)
 
@@ -1063,20 +1074,20 @@ class Manager:
 
         for out in spec.outputs:
             point_uri = URIRef(out.point_uri)
-            handle = compute_handle(spec.name, out.point_uri)
+            ref_uri = compute_ref_uri(spec.name, out.point_uri)
 
             graph.add((app_uri, PRODUCES, point_uri))
             graph.add((point_uri, RDF.type, VIRTUAL_POINT))
-            graph.add((point_uri, HAS_EXTERNAL_REFERENCE, handle))
-            graph.add((handle, ACQUIRIUM_SOURCE_ID, Literal(spec.name)))
-            graph.add((handle, ACQUIRIUM_REF_NAME, Literal(out.point_uri)))
-            graph.add((handle, RDF.type, STREAM))
+            graph.add((point_uri, HAS_EXTERNAL_REFERENCE, ref_uri))
+            graph.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(spec.name)))
+            graph.add((ref_uri, ACQUIRIUM_REF_NAME, Literal(out.point_uri)))
+            graph.add((ref_uri, RDF.type, STREAM))
             if out.kind in {"event", "trigger"}:
-                graph.add((handle, RDF.type, EVENT_STREAM))
+                graph.add((ref_uri, RDF.type, EVENT_STREAM))
             else:
-                graph.add((handle, RDF.type, TIMESERIES_STREAM))
+                graph.add((ref_uri, RDF.type, TIMESERIES_STREAM))
 
-            graph.add((handle, STORAGE_BACKEND, Literal(out.storage_backend or "timescale")))
+            graph.add((ref_uri, STORAGE_BACKEND, Literal(out.storage_backend or "timescale")))
 
             self._add_literal_or_uri(graph, point_uri, HAS_QUANTITY_KIND, out.quantity_kind)
             self._add_literal_or_uri(graph, point_uri, HAS_UNIT, out.unit)
@@ -1348,11 +1359,11 @@ class Manager:
 
             df = df.rename({df.columns[0]: "ts", df.columns[1]: "value"})
 
-            df = df.with_columns(pl.lit(ref_uri).alias("point_uri"))
-            df = df.select(["point_uri", "ts", "value"])
+            df = df.with_columns(pl.lit(ref_uri).alias("ref_uri"))
+            df = df.select(["ref_uri", "ts", "value"])
 
             if df.schema.get("ts") == pl.Utf8:
-                # Try with UTC timezone first (handles tz-aware strings like
+                # Try with UTC timezone first (ref_uris tz-aware strings like
                 # "2026-01-27T23:30:16.668982+00:00"), fall back to naive parse.
                 try:
                     df = df.with_columns(

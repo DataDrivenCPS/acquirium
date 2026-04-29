@@ -2,13 +2,11 @@ from __future__ import annotations
 
 from io import StringIO
 import logging
-from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 import polars as pl
 
-from acquirium.BuiltinDrivers._tabular_base import _TabularIngestBase, _safe_name
+from acquirium.BuiltinDrivers._tabular_base import _TabularIngestBase
 
 logger = logging.getLogger("acquirium.csv_ingest")
 
@@ -48,13 +46,13 @@ class CSVIngestDriver(_TabularIngestBase):
         skip_rows    = [1, 3]        # or { "subdir/data.csv" = [2, 5] }
         encoding     = "utf8-lossy"  # "utf8", "utf8-lossy", "latin1", etc.
 
-    Override ``parse_file()`` to handle custom layouts::
+    Override ``read_frame()`` to handle custom layouts::
 
         class MyDriver(CSVIngestDriver):
-            def parse_file(self, path, row_offset=0):
+            def read_frame(self, path, row_offset=0):
                 df = pl.read_csv(path, skip_rows=3,
                                  skip_rows_after_header=row_offset)
-                return self._parse_wide(df), len(df)
+                return df, len(df)
     """
 
     _glob_patterns = ("*.csv", "*.tsv")
@@ -64,52 +62,9 @@ class CSVIngestDriver(_TabularIngestBase):
         self._encoding: str = self.config.get("driver", {}).get("encoding", "utf8-lossy")
         logger.info("csv_ingest watching %s", self._watch_dir)
 
-    def parse_file(
-        self, path: Path, row_offset: int = 0
-    ) -> tuple[dict[str, list[tuple[datetime, Any]]], int]:
+    def read_frame(self, path: Path, row_offset: int = 0) -> tuple[pl.DataFrame, int]:
         df = self._read_df(path, row_offset)
-        rows_read = len(df)
-        if rows_read == 0:
-            return {}, 0
-        fmt = self._detect_format(df)
-        batch = self._parse_narrow(df) if fmt == "narrow" else self._parse_wide(df)
-        return batch, rows_read
-
-    def parse_polars(
-        self, path: Path, row_offset: int = 0
-    ) -> tuple["pl.DataFrame | None", int]:
-        df = self._read_df(path, row_offset)
-        rows_read = len(df)
-        if rows_read == 0:
-            return None, 0
-
-        fmt = self._detect_format(df)
-        if fmt == "wide":
-            if self._time_col not in df.columns:
-                raise ValueError(f"time column '{self._time_col}' not found in {df.columns}")
-            df = self._normalize_time_col(df.drop_nulls(subset=[self._time_col]))
-            value_cols = [c for c in df.columns if c != self._time_col]
-            df = (
-                df.with_columns([pl.col(c).cast(pl.Utf8) for c in value_cols])
-                .unpivot(index=[self._time_col], variable_name="ref_name", value_name="value")
-                .drop_nulls(subset=["value"])
-                .rename({self._time_col: "ts"})
-            )
-        else:
-            for col in (self._time_col, self._id_col, self._value_col):
-                if col not in df.columns:
-                    raise ValueError(f"column '{col}' not found in {df.columns}")
-            df = self._normalize_time_col(df.drop_nulls(subset=[self._time_col, self._id_col]))
-            df = df.select([
-                pl.col(self._time_col).alias("ts"),
-                pl.col(self._id_col).cast(pl.Utf8).alias("ref_name"),
-                pl.col(self._value_col).cast(pl.Utf8).alias("value"),
-            ])
-
-        df = df.with_columns(
-            pl.col("ref_name").map_elements(_safe_name, return_dtype=pl.Utf8)
-        )
-        return df, rows_read
+        return df, len(df)
 
     def _read_df(self, path: Path, row_offset: int) -> pl.DataFrame:
         sep = "\t" if path.suffix.lower() == ".tsv" else ","

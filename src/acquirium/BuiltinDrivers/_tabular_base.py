@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from abc import abstractmethod
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -43,7 +42,7 @@ def _safe_name(s: str) -> str:
 class _TabularIngestBase(Driver):
     """Base class for drivers that watch a directory for tabular data files.
 
-    Subclasses must set ``_glob_patterns`` and implement ``parse_file()``.
+    Subclasses must set ``_glob_patterns`` and implement ``read_frame()``.
 
     Each file gets its own datasource whose ID is the file's full absolute path
     (sanitised for use in a URI).  Stream ref_names are the bare column names,
@@ -104,52 +103,25 @@ class _TabularIngestBase(Driver):
             source_id = _safe_name(key)
             rel = path.relative_to(self._watch_dir)
 
-            df, rows_read = None, 0
             try:
                 df, rows_read = self.parse_polars(path, row_offset=offset)
             except Exception:
                 logger.exception("tabular_ingest: failed to parse %s", path.name)
                 continue
 
-            if df is not None:
-                try:
-                    if source_id not in self._registered:
-                        self.aq.register_datasource(source_id)
-                    stream_names = df["ref_name"].unique().to_list()
-                    self._ensure_streams(dict.fromkeys(stream_names), source_id, path)
-                    result = self.aq.insert_timeseries_polars(source_id, df)
-                    total = int(result.get("rows_inserted", len(df))) if isinstance(result, dict) else len(df)
-                    logger.info(
-                        "tabular_ingest: %s — inserted %d row(s) across %d stream(s)",
-                        rel, total, len(stream_names),
-                    )
-                    self._rows_seen[key] = offset + rows_read
-                except Exception:
-                    logger.exception("tabular_ingest: failed to insert data from %s", path.name)
+            if df.is_empty():
                 continue
 
-            # Fallback: subclasses that only override parse_file (e.g. XLSX, custom drivers)
-            raw_batch = {}
-            try:
-                raw_batch, rows_read = self.parse_file(path, row_offset=offset)
-            except Exception:
-                logger.exception("tabular_ingest: failed to parse %s", path.name)
-                continue
-
-            if not raw_batch:
-                continue
-
-            batch = {_safe_name(stream): rows for stream, rows in raw_batch.items()}
             try:
                 if source_id not in self._registered:
                     self.aq.register_datasource(source_id)
-                self._ensure_streams(batch, source_id, path)
-                total = sum(len(v) for v in batch.values())
-                result = self.aq.insert_timeseries_batch(source_id, batch)
-                chunks = int(result.get("batches", 1)) if isinstance(result, dict) else 1
+                stream_names = df["ref_name"].unique().to_list()
+                self._ensure_streams(dict.fromkeys(stream_names), source_id, path)
+                result = self.aq.insert_timeseries_polars(source_id, df)
+                total = int(result.get("rows_inserted", len(df))) if isinstance(result, dict) else len(df)
                 logger.info(
-                    "tabular_ingest: %s — inserted %d row(s) across %d stream(s) in %d batch(es)",
-                    rel, total, len(batch), chunks,
+                    "tabular_ingest: %s — inserted %d row(s) across %d stream(s)",
+                    rel, total, len(stream_names),
                 )
                 self._rows_seen[key] = offset + rows_read
             except Exception:
@@ -157,27 +129,39 @@ class _TabularIngestBase(Driver):
 
     # ---------------------------------------------------------- public hook
 
-    @abstractmethod
+    def read_frame(self, path: Path, row_offset: int = 0) -> tuple["pl.DataFrame", int]:
+        """Read new file rows into a tabular DataFrame.
+
+        Subclasses can normalize custom layouts here, for example by combining
+        split date/time columns into the configured time column. The returned
+        frame should still be wide or narrow according to the standard tabular
+        ingest config.
+        """
+        raise NotImplementedError
+
     def parse_file(
         self, path: Path, row_offset: int = 0
     ) -> tuple[dict[str, list[tuple[datetime, Any]]], int]:
-        """Parse new rows from *path* starting after *row_offset* already-seen rows.
+        """Compatibility wrapper returning Python rows grouped by stream."""
+        df, rows_read = self.read_frame(path, row_offset)
+        if rows_read == 0:
+            return {}, 0
 
-        Returns ``(batch, rows_read)`` where batch keys are bare stream names.
-        Override in subclasses for custom layouts.
-        """
+        fmt = self._detect_format(df)
+        batch = self._parse_narrow(df) if fmt == "narrow" else self._parse_wide(df)
+        return batch, rows_read
 
     def parse_polars(
         self, path: Path, row_offset: int = 0
-    ) -> tuple["pl.DataFrame | None", int]:
+    ) -> tuple["pl.DataFrame", int]:
         """Return a melted ``(ts, ref_name, value)`` DataFrame and rows_read.
 
-        Returns ``(None, 0)`` by default; subclasses override to enable the
-        zero-copy Polars insert path (bypassing Python list conversion).
-        When a non-None DataFrame is returned, ``loop()`` calls
-        ``aq.insert_timeseries_polars`` instead of ``insert_timeseries_batch``.
+        Subclasses usually override ``read_frame()`` rather than this method.
         """
-        return None, 0
+        df, rows_read = self.read_frame(path, row_offset)
+        if rows_read == 0:
+            return pl.DataFrame({"ts": [], "ref_name": [], "value": []}), 0
+        return self._to_timeseries_frame(df), rows_read
 
     # ---------------------------------------------------------- format helpers
 
@@ -241,6 +225,41 @@ class _TabularIngestBase(Driver):
                 continue
             batch.setdefault(_safe_name(str(stream_id)), []).append((ts, val))
         return batch
+
+    def _to_timeseries_frame(self, df: pl.DataFrame) -> pl.DataFrame:
+        fmt = self._detect_format(df)
+        if fmt == "narrow":
+            out = self._narrow_to_timeseries_frame(df)
+        else:
+            out = self._wide_to_timeseries_frame(df)
+        return out.with_columns(
+            pl.col("ref_name").map_elements(_safe_name, return_dtype=pl.Utf8)
+        )
+
+    def _wide_to_timeseries_frame(self, df: pl.DataFrame) -> pl.DataFrame:
+        if self._time_col not in df.columns:
+            raise ValueError(f"time column '{self._time_col}' not found in {df.columns}")
+
+        df = self._normalize_time_col(df.drop_nulls(subset=[self._time_col]))
+        value_cols = [c for c in df.columns if c != self._time_col]
+        return (
+            df.with_columns([pl.col(c).cast(pl.Utf8) for c in value_cols])
+            .unpivot(index=[self._time_col], variable_name="ref_name", value_name="value")
+            .drop_nulls(subset=["value"])
+            .rename({self._time_col: "ts"})
+        )
+
+    def _narrow_to_timeseries_frame(self, df: pl.DataFrame) -> pl.DataFrame:
+        for col in (self._time_col, self._id_col, self._value_col):
+            if col not in df.columns:
+                raise ValueError(f"column '{col}' not found in {df.columns}")
+
+        df = self._normalize_time_col(df.drop_nulls(subset=[self._time_col, self._id_col]))
+        return df.select([
+            pl.col(self._time_col).alias("ts"),
+            pl.col(self._id_col).cast(pl.Utf8).alias("ref_name"),
+            pl.col(self._value_col).cast(pl.Utf8).alias("value"),
+        ])
 
     # ---------------------------------------------------------- time normalisation
 

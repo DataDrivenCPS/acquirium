@@ -7,7 +7,7 @@ from rdflib import Graph, Literal, URIRef
 from rdflib.namespace import RDF
 
 from acquirium.Client.acquirium import Acquirium
-from acquirium.internals.models import compute_handle
+from acquirium.internals.models import compute_ref_uri
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_DB_URI,
     ACQUIRIUM_REF_NAME,
@@ -49,7 +49,7 @@ def test_register_streams_inserts_one_graph_for_multiple_streams():
 
     for ref_name in ("temp", "rh"):
         point_uri = URIRef(f"urn:test:point:{ref_name}")
-        ref_uri = compute_handle("demo-source", ref_name)
+        ref_uri = compute_ref_uri("demo-source", ref_name)
         assert (point_uri, RDF.type, VIRTUAL_POINT) in g
         assert (point_uri, HAS_EXTERNAL_REFERENCE, ref_uri) in g
         assert (point_uri, DATA_SOURCE, Literal("CSV")) in g
@@ -68,7 +68,7 @@ def test_register_stream_without_point_uri_writes_only_ref_node():
     aq.client.insert_graph.assert_called_once()
     graph_text = aq.client.insert_graph.call_args[0][0]
     g = Graph().parse(data=graph_text, format="turtle")
-    ref_uri = compute_handle("demo-source", "cpu_percent")
+    ref_uri = compute_ref_uri("demo-source", "cpu_percent")
 
     assert (ref_uri, ACQUIRIUM_SOURCE_ID, Literal("demo-source")) in g
     assert (ref_uri, ACQUIRIUM_REF_NAME, Literal("cpu_percent")) in g
@@ -91,7 +91,7 @@ def test_register_streams_without_point_uri_writes_only_ref_nodes():
     g = Graph().parse(data=graph_text, format="turtle")
 
     for ref_name in ("temp", "rh"):
-        ref_uri = compute_handle("demo-source", ref_name)
+        ref_uri = compute_ref_uri("demo-source", ref_name)
         assert (ref_uri, ACQUIRIUM_SOURCE_ID, Literal("demo-source")) in g
         assert (ref_uri, ACQUIRIUM_REF_NAME, Literal(ref_name)) in g
         assert (ref_uri, STORED_AT, ACQUIRIUM_DB_URI) in g

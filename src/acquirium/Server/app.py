@@ -197,7 +197,7 @@ async def lifespan(app: FastAPI):
     app.state.read_batch_size = int(_cfg.get("server", {}).get("read_batch_size", 50_000))
 
     try:
-        m._sync_stream_handles_from_graph()
+        m._sync_stream_refs_from_graph()
     except Exception as e:
         log.exception("Startup failed: %s", e)
         try:

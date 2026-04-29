@@ -14,7 +14,7 @@ from rdflib.namespace import RDF
 from acquirium.BuiltinDrivers._tabular_base import _safe_name
 from acquirium.BuiltinDrivers.csv_ingest import CSVIngestDriver
 from acquirium.Client.acquirium import Acquirium
-from acquirium.internals.models import compute_handle
+from acquirium.internals.models import compute_ref_uri
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_DB_URI,
     ACQUIRIUM_REF_NAME,
@@ -268,7 +268,7 @@ def test_loop_registers_csv_external_reference_metadata(tmp_path):
     graph_text = driver.aq.client.insert_graph.call_args[0][0]
     g = Graph().parse(data=graph_text, format="turtle")
     source_id = _safe_name(str(path))
-    ref_uri = compute_handle(source_id, "temp")
+    ref_uri = compute_ref_uri(source_id, "temp")
     assert (ref_uri, RDF.type, FILE_REFERENCE) in g
     assert (ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)) in g
     assert (ref_uri, ACQUIRIUM_REF_NAME, Literal("temp")) in g
@@ -290,7 +290,7 @@ def test_loop_registers_no_synthetic_point_uri(tmp_path):
     g = Graph().parse(data=graph_text, format="turtle")
     source_id = _safe_name(str(p))
     ref_name = _safe_name("UV-Ultraviolet Intensity (mW/cm^2)")
-    ref_uri = compute_handle(source_id, ref_name)
+    ref_uri = compute_ref_uri(source_id, ref_name)
     assert (ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)) in g
     assert (ref_uri, ACQUIRIUM_REF_NAME, Literal(ref_name)) in g
     # No point_uri → ref_uri link should exist

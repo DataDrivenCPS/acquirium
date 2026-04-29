@@ -34,7 +34,7 @@ def _add_triple(g: "RDFGraph", subj: "URIRef", pred: "URIRef", value: "str | URI
         g.add((subj, pred, Literal(value)))
 from acquirium.Client.client import AcquiriumClient
 from acquirium.Apps.base import App
-from acquirium.internals.models import AppOutputSpec, AppSpec, compute_handle
+from acquirium.internals.models import AppOutputSpec, AppSpec, compute_ref_uri
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_DB_URI,
     ACQUIRIUM_REF_NAME,
@@ -155,7 +155,7 @@ class Acquirium:
                 ``source_id`` to derive the unique TimescaleDB storage key.
             rows: List of (timestamp, value) tuples.
             point_uri: Semantic URI of the measurement point. When provided,
-                a handle mapping is registered in the streams table.
+                a ref_uri mapping is registered in the streams table.
             replace: If True, replaces any existing data for this stream.
 
         Returns:
@@ -178,7 +178,7 @@ class Acquirium:
 
         Large inputs are split into bounded requests according to
         ``insert_batch_rows``. Drivers can call this method with their natural
-        batch size; the Acquirium facade handles transport/storage chunking.
+        batch size; the Acquirium facade ref_uris transport/storage chunking.
 
         Args:
             source_id: The registered datasource identifier.
@@ -203,7 +203,7 @@ class Acquirium:
         ``insert_timeseries_batch``.
         """
         batch: dict[str, list] = {}
-        for ref_name, ts, value in df.iter_rows():
+        for ts, ref_name, value in df.select(["ts", "ref_name", "value"]).iter_rows():
             batch.setdefault(ref_name, []).append((ts, value))
         return self.insert_timeseries_batch(source_id, batch)
 
@@ -236,7 +236,7 @@ class Acquirium:
         """Try to resolve a plain string to a QUDT URI via the server.
 
         For ``kind="unit"`` the deterministic unit resolver is tried first
-        (handles symbols, UCUM codes, and ratio notation like "mg/L"), then
+        (ref_uris symbols, UCUM codes, and ratio notation like "mg/L"), then
         the embedding matcher as a fallback.  For other kinds (``"quantity_kind"``,
         ``"class"``) only the embedding matcher is used.
 
@@ -266,7 +266,7 @@ class Acquirium:
 
     def reference_uri(self, source_id: str, ref_name: str) -> URIRef:
         """Return the canonical Acquirium reference URI for ``(source_id, ref_name)``."""
-        return compute_handle(source_id, ref_name)
+        return compute_ref_uri(source_id, ref_name)
 
     def register_stream(
         self,
@@ -325,12 +325,12 @@ class Acquirium:
                 )
             return resolved or value
 
-        handle = None
+        ref_uri = None
         if ref_name is not None and source_id is not None:
-            handle = compute_handle(source_id, ref_name)
-            g.add((handle, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
-            g.add((handle, ACQUIRIUM_REF_NAME,  Literal(ref_name)))
-            g.add((handle, STORED_AT,           ACQUIRIUM_DB_URI))
+            ref_uri = compute_ref_uri(source_id, ref_name)
+            g.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
+            g.add((ref_uri, ACQUIRIUM_REF_NAME,  Literal(ref_name)))
+            g.add((ref_uri, STORED_AT,           ACQUIRIUM_DB_URI))
             g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
 
         if point_uri is not None:
@@ -343,10 +343,10 @@ class Acquirium:
             _add_triple(g, subj, HAS_MEDIUM,        _coerce(medium,        "class"))
             _add_triple(g, subj, OF_SUBSTANCE,      _coerce(substance,     "class"))
             _add_triple(g, subj, DATA_SOURCE,       data_source)
-            if handle is not None:
-                g.add((subj, HAS_EXTERNAL_REFERENCE, handle))
+            if ref_uri is not None:
+                g.add((subj, HAS_EXTERNAL_REFERENCE, ref_uri))
 
-        target = handle if handle is not None else (URIRef(str(point_uri)) if point_uri is not None else None)
+        target = ref_uri if ref_uri is not None else (URIRef(str(point_uri)) if point_uri is not None else None)
         if target is not None:
             for pred, value in (properties or {}).items():
                 _add_triple(g, target, pred, value)
@@ -389,12 +389,12 @@ class Acquirium:
             source_id = stream.get("source_id")
             ref_name = stream.get("ref_name")
 
-            handle = None
+            ref_uri = None
             if ref_name is not None and source_id is not None:
-                handle = compute_handle(source_id, ref_name)
-                g.add((handle, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
-                g.add((handle, ACQUIRIUM_REF_NAME,  Literal(ref_name)))
-                g.add((handle, STORED_AT,           ACQUIRIUM_DB_URI))
+                ref_uri = compute_ref_uri(source_id, ref_name)
+                g.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
+                g.add((ref_uri, ACQUIRIUM_REF_NAME,  Literal(ref_name)))
+                g.add((ref_uri, STORED_AT,           ACQUIRIUM_DB_URI))
                 g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
 
             if point_uri_raw is not None:
@@ -403,10 +403,10 @@ class Acquirium:
                 if label is not None:
                     g.add((subj, RDFS.label, Literal(label)))
                 _add_triple(g, subj, DATA_SOURCE, stream.get("data_source"))
-                if handle is not None:
-                    g.add((subj, HAS_EXTERNAL_REFERENCE, handle))
+                if ref_uri is not None:
+                    g.add((subj, HAS_EXTERNAL_REFERENCE, ref_uri))
 
-            target = handle if handle is not None else (URIRef(str(point_uri_raw)) if point_uri_raw is not None else None)
+            target = ref_uri if ref_uri is not None else (URIRef(str(point_uri_raw)) if point_uri_raw is not None else None)
             if target is not None:
                 for pred, value in (stream.get("properties") or {}).items():
                     _add_triple(g, target, pred, value)
