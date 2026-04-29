@@ -38,10 +38,16 @@ class DPRTrailerCSVDriver(CSVIngestDriver):
             if col not in df.columns:
                 raise ValueError(f"column '{col}' not found in {df.columns}")
 
+        date_expr = pl.col(self._date_col)
+        if df[self._date_col].dtype == pl.Date:
+            date_expr = date_expr.dt.strftime("%m/%d/%Y")
+        else:
+            date_expr = date_expr.cast(pl.String)
+
         df = df.with_columns(
             pl.concat_str(
                 [
-                    pl.col(self._date_col).cast(pl.String),
+                    date_expr,
                     pl.lit(" "),
                     pl.col(self._clock_col).cast(pl.String),
                 ]

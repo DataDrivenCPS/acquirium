@@ -309,15 +309,23 @@ class _TabularIngestBase(Driver):
             ([self._date_fmt] if self._date_fmt else []) + [None] + list(self._FALLBACK_DATE_FORMATS)
         )
 
-        best = col.str.to_datetime(format=candidates[0], strict=False)
-        best_nulls = best.null_count()
-        for fmt in candidates[1:]:
-            if best_nulls == 0:
-                break
-            parsed = col.str.to_datetime(format=fmt, strict=False)
-            nulls = parsed.null_count()
-            if nulls < best_nulls:
-                best, best_nulls = parsed, nulls
+        best: pl.Series | None = None
+        best_nulls = non_null + 1
+
+        for fmt in candidates:
+            try:
+                parsed = col.str.to_datetime(format=fmt, strict=False)
+                nulls = parsed.null_count()
+                if nulls < best_nulls:
+                    best, best_nulls = parsed, nulls
+                if best_nulls == 0:
+                    break
+            except Exception:
+                continue
+
+        if best is None:
+            # Fallback to a null column if nothing worked
+            best = col.str.to_datetime(format=None, strict=False)
 
         tz = getattr(best.dtype, "time_zone", None)
         return best.dt.replace_time_zone("UTC") if tz is None else best.dt.convert_time_zone("UTC")
