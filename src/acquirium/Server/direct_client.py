@@ -26,6 +26,7 @@ from acquirium.Server.insert_stats import insert_stats
 import warnings
 
 if TYPE_CHECKING:
+    import polars as pl
     from acquirium.Server.manager import Manager
 
 
@@ -85,6 +86,12 @@ class _DirectClient:
             rows=sum(len(rows) for rows in streams.values()),
             streams=list(streams.keys()),
         )
+        return {"ok": True, "rows_inserted": total}
+
+    def insert_timeseries_polars(self, source_id: str, df: "pl.DataFrame") -> dict[str, Any]:
+        streams = df["ref_name"].unique().to_list()
+        total = self._manager.insert_timeseries_polars(source_id, df)
+        insert_stats.record(origin=self._origin, rows=total, streams=streams)
         return {"ok": True, "rows_inserted": total}
 
     def graph_version(self) -> int:
