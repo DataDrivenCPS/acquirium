@@ -13,6 +13,8 @@ For Acquirium-managed streams:
 - timeseries rows are stored under that reference URI
 
 Acquirium does not require the node to be typed as `ref:TimeseriesReference`.
+Acquirium also does not maintain a separate `handle`; the old handle idea is now
+just `ref_uri`.
 
 ## Terms
 
@@ -27,14 +29,19 @@ Acquirium does not require the node to be typed as `ref:TimeseriesReference`.
 : Datasource namespace. Examples: `mqtt`, `watertap`, `host-a-system-metrics`.
 
 `ref_uri`
-: Canonical external-reference URI computed from `(source_id, ref_name)`.
+: Canonical external-reference URI computed from `(source_id, ref_name)`. This
+  is the value stored in `timeseries.ref_uri` and `streams.ref_uri`.
+
+`handle`
+: Obsolete name for `ref_uri`. Do not add new APIs, tables, or docs that treat
+  it as a separate identifier.
 
 ## Canonical URI
 
 Canonical reference URIs are computed deterministically:
 
 ```python
-ref_uri = compute_handle(source_id, ref_name)
+ref_uri = compute_ref_uri(source_id, ref_name)
 ```
 
 Equivalent helpers:
@@ -79,7 +86,7 @@ Recommended managed-stream shape:
 For Acquirium-managed streams, the following are expected to hold:
 
 - `point_uri -> ref:hasExternalReference -> ref_uri`
-- `ref_uri == compute_handle(source_id, ref_name)`
+- `ref_uri == compute_ref_uri(source_id, ref_name)`
 - `ref_uri` has `acq:sourceId`
 - `ref_uri` has `acq:refName`
 - inserts for `(source_id, ref_name)` resolve to the same `ref_uri`
@@ -94,21 +101,23 @@ aq.insert_timeseries_batch(source_id, {
 })
 ```
 
-Acquirium computes `compute_handle(source_id, ref_name)` internally and stores
-the rows under that URI.
+Acquirium computes `compute_ref_uri(source_id, ref_name)` internally and stores
+the rows under that URI in the `timeseries.ref_uri` column.
 
 Implications:
 
 - the graph uses `ref_uri`
 - inserts use `ref_name`
 - the deterministic mapping keeps graph identity and storage identity aligned
+- the `streams` table is upserted on insert, even if there is no semantic
+  `point_uri` yet; those rows have `point_uri = NULL`
 
 ## Driver responsibilities
 
 Drivers are responsible for:
 
 - choosing `ref_name`
-- computing `ref_uri`
+- computing `ref_uri` when they need to write RDF graph references
 - writing `ref:hasExternalReference`
 - writing `acq:sourceId`
 - writing `acq:refName`
@@ -166,6 +175,19 @@ Acquirium uses one node per managed stream for:
 - provenance/configuration metadata
 
 This is the intended model for built-in drivers and apps.
+
+## Timeseries vs logs
+
+Timeseries samples and logs intentionally use different identifiers:
+
+- managed timeseries samples are stored by `ref_uri`
+- `streams.ref_uri` maps the storage key back to `(source_id, ref_name)` and,
+  when known, `point_uri`
+- logs are stored by `point_uri`
+
+Logs use `point_uri` because they describe the semantic point, equipment,
+alarm, or app output in the ontology. A point may have multiple external
+references over time, but the log remains about the point.
 
 ## Recognition rules used by Acquirium
 

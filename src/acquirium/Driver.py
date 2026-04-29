@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from rdflib import URIRef
 
-from acquirium.internals.models import compute_handle
+from acquirium.internals.models import compute_ref_uri
 
 if TYPE_CHECKING:
     from acquirium.Client.acquirium import Acquirium
@@ -61,7 +61,7 @@ class Driver(ABC):
 
     def reference_uri(self, ref_name: str) -> URIRef:
         """Return the canonical Acquirium reference URI for ``ref_name``."""
-        return compute_handle(self.source_id(), ref_name)
+        return compute_ref_uri(self.source_id(), ref_name)
 
     def config_dir(self) -> Path:
         """Return the directory containing the loaded config file, if known."""
@@ -94,5 +94,5 @@ class Driver(ABC):
     def stop(self) -> None:
         """Optional cleanup called on shutdown (Ctrl-C or SIGTERM).
 
-        Default is a no-op.  Override to close file handles, flush buffers, etc.
+        Default is a no-op.  Override to close file ref URIs, flush buffers, etc.
         """

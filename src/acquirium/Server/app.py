@@ -44,22 +44,6 @@ from acquirium.Server.insert_stats import insert_stats, start_insert_summary_thr
 log = logging.getLogger("acquirium.api")
 
 # ---------------------------------------------------------------------------
-# Insert-timeseries stats aggregation (suppresses per-request access logs)
-# ---------------------------------------------------------------------------
-
-
-class _SuppressInsertTimeseriesFilter(logging.Filter):
-    """Drop uvicorn access-log lines for POST /insert_timeseries."""
-    def filter(self, record: logging.LogRecord) -> bool:
-        msg = record.getMessage()
-        return not ("POST /insert_timeseries" in msg and "HTTP/1" in msg)
-
-
-def _start_insert_summary_thread(stop_event: threading.Event, interval: float = 30.0) -> threading.Thread:
-    return start_insert_summary_thread(stop_event, interval)
-
-
-# ---------------------------------------------------------------------------
 # In-process driver helpers
 # ---------------------------------------------------------------------------
 
@@ -95,6 +79,10 @@ def _run_inprocess_driver(
         return
 
     try:
+        try:
+            driver.loop()
+        except Exception:
+            log.exception("In-process driver %s loop error", spec)
         while not stop_event.wait(timeout=interval):
             try:
                 v = manager.graph_version()
@@ -203,13 +191,17 @@ async def lifespan(app: FastAPI):
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    logging.getLogger("uvicorn.access").addFilter(_SuppressInsertTimeseriesFilter())
+
+    from acquirium.cli import _load_config
+    _config_path = os.environ.get("ACQUIRIUM_CONFIG")
+    _cfg = _load_config(Path(_config_path) if _config_path else None)
 
     m = Manager.from_env()
     app.state.manager = m
+    app.state.read_batch_size = int(_cfg.get("server", {}).get("read_batch_size", 50_000))
 
     try:
-        m._sync_stream_handles_from_graph()
+        m._sync_stream_refs_from_graph()
     except Exception as e:
         log.exception("Startup failed: %s", e)
         try:
@@ -217,13 +209,22 @@ async def lifespan(app: FastAPI):
         finally:
             raise
 
+    # Shared shutdown signal for all server-owned background threads.
+    # In-process drivers listed in [[drivers]] run alongside the API server,
+    # and the insert summary logger also runs in a background thread. They both
+    # poll this event so FastAPI lifespan shutdown can stop them before closing
+    # the Manager and its storage connections.
     driver_stop = threading.Event()
     _start_inprocess_drivers(m, driver_stop)
-    _start_insert_summary_thread(driver_stop, interval=10.0)
+    start_insert_summary_thread(driver_stop, interval=10.0)
 
     try:
         yield
     finally:
+        # Tell background driver/summary threads to exit, then close the manager.
+        # Driver threads are daemons, so shutdown should not block indefinitely;
+        # the event mainly prevents them from continuing to use Manager after it
+        # starts closing.
         driver_stop.set()
         try:
             m.close()
@@ -609,7 +610,6 @@ class PrettyJSONResponse(JSONResponse):
             default=str,
         ).encode("utf-8")
 
-
 #### TIMESERIES API ENDPOINTS ####
 @app.get("/timeseries")
 def get_timeseries(
@@ -633,7 +633,7 @@ def get_timeseries(
             end=end_dt,
             limit=limit,
             order=order,        # type: ignore[arg-type]
-            batch_size=50_000,
+            batch_size=request.app.state.read_batch_size,
         )
 
         accept = request.headers.get("accept", "")
@@ -750,8 +750,12 @@ def _stream_data_response(
     _validate_stream_data_options(limit=limit, order=order, format=format, ts_format=ts_format)
     parsed_start = _parse_dt(start)
     parsed_end = _parse_dt(end)
+    
+    # Use point_uri if available, otherwise reference_uri
+    uri = stream["point_uri"] or stream["reference_uri"]
+    
     batches = app.state.manager.timeseries_batch(
-        uri=stream["point_uri"],
+        uri=uri,
         start=parsed_start,
         end=parsed_end,
         limit=limit,
@@ -912,7 +916,6 @@ def browse_source(request: Request, source_id: str) -> dict[str, Any]:
         **source,
         "streams_url": _source_streams_url(request, source_id),
     }
-
 
 @app.post("/timeseries_info")
 def timeseries_info(req: TimeseriesInfoRequest) -> dict[str, Any]:

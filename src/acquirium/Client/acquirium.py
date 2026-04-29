@@ -15,9 +15,26 @@ from rdflib.namespace import RDF, RDFS
 import warnings
 
 from acquirium.Client.query import Query
+
+
+def _dt_to_iso(v: "str | datetime | None") -> "str | None":
+    if v is None:
+        return None
+    return v.isoformat() if isinstance(v, datetime) else v
+
+
+def _add_triple(g: "RDFGraph", subj: "URIRef", pred: "URIRef", value: "str | URIRef | None") -> None:
+    if value is None:
+        return
+    if isinstance(value, URIRef):
+        g.add((subj, pred, value))
+    elif "://" in str(value) or str(value).startswith("urn:"):
+        g.add((subj, pred, URIRef(str(value))))
+    else:
+        g.add((subj, pred, Literal(value)))
 from acquirium.Client.client import AcquiriumClient
 from acquirium.Apps.base import App
-from acquirium.internals.models import AppOutputSpec, AppSpec, compute_handle
+from acquirium.internals.models import AppOutputSpec, AppSpec, compute_ref_uri
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_DB_URI,
     ACQUIRIUM_REF_NAME,
@@ -138,7 +155,7 @@ class Acquirium:
                 ``source_id`` to derive the unique TimescaleDB storage key.
             rows: List of (timestamp, value) tuples.
             point_uri: Semantic URI of the measurement point. When provided,
-                a handle mapping is registered in the streams table.
+                a ref_uri mapping is registered in the streams table.
             replace: If True, replaces any existing data for this stream.
 
         Returns:
@@ -161,7 +178,7 @@ class Acquirium:
 
         Large inputs are split into bounded requests according to
         ``insert_batch_rows``. Drivers can call this method with their natural
-        batch size; the Acquirium facade handles transport/storage chunking.
+        batch size; the Acquirium facade ref_uris transport/storage chunking.
 
         Args:
             source_id: The registered datasource identifier.
@@ -177,6 +194,18 @@ class Acquirium:
             total += int(result.get("rows_inserted", 0))
             chunk_count += 1
         return {"ok": True, "rows_inserted": total, "batches": chunk_count}
+
+    def insert_timeseries_polars(self, source_id: str, df: "pl.DataFrame") -> dict[str, Any]:
+        """Insert a melted (ts, ref_name, value) DataFrame.
+
+        Subclasses backed by a Manager can override this to skip the Python
+        round-trip.  The default converts to the dict format and delegates to
+        ``insert_timeseries_batch``.
+        """
+        batch: dict[str, list] = {}
+        for ts, ref_name, value in df.select(["ts", "ref_name", "value"]).iter_rows():
+            batch.setdefault(ref_name, []).append((ts, value))
+        return self.insert_timeseries_batch(source_id, batch)
 
     def _iter_insert_batches(
         self,
@@ -207,7 +236,7 @@ class Acquirium:
         """Try to resolve a plain string to a QUDT URI via the server.
 
         For ``kind="unit"`` the deterministic unit resolver is tried first
-        (handles symbols, UCUM codes, and ratio notation like "mg/L"), then
+        (ref_uris symbols, UCUM codes, and ratio notation like "mg/L"), then
         the embedding matcher as a fallback.  For other kinds (``"quantity_kind"``,
         ``"class"``) only the embedding matcher is used.
 
@@ -237,11 +266,11 @@ class Acquirium:
 
     def reference_uri(self, source_id: str, ref_name: str) -> URIRef:
         """Return the canonical Acquirium reference URI for ``(source_id, ref_name)``."""
-        return compute_handle(source_id, ref_name)
+        return compute_ref_uri(source_id, ref_name)
 
     def register_stream(
         self,
-        point_uri: str | URIRef,
+        point_uri: str | URIRef | None = None,
         label: str | None = None,
         *,
         source_id: str | None = None,
@@ -255,15 +284,10 @@ class Acquirium:
     ) -> None:
         """Declare a stream's semantic metadata in the RDF graph.
 
-        Registers a point URI as a timeseries stream and annotates it with
-        any supplied metadata predicates. Call this once (or when metadata
-        changes); it does not affect stored timeseries values.
-
-        When ``ref_name`` is provided, Acquirium computes a stable external
-        reference URI from ``(source_id, ref_name)`` and writes it directly as
-        the object of ``ref:hasExternalReference``. That same node is the
-        canonical stream identity in the graph and may also carry driver- or
-        app-specific provenance metadata.
+        ``point_uri`` is optional. When provided, a semantic point node is
+        created and linked to the external reference. When omitted, only the
+        external reference node is written; semantic linkage can be added later
+        by inserting an RDF graph that connects a point to the same ref URI.
 
         Plain strings for ``unit``, ``quantity_kind``, ``medium``, and
         ``substance`` are resolved against the QUDT vocabulary via the server
@@ -271,27 +295,23 @@ class Acquirium:
         a warning if no confident match is found.
 
         Args:
-            point_uri: The URI identifying this stream in the knowledge graph.
-            label: Human-readable name (rdfs:label).
-            ref_name: Source-native identifier for this stream (sensor tag,
-                MQTT topic, database column, etc.). Written as
-                ``acq:refName`` on the external reference node.
+            point_uri: Optional URI identifying this stream in the knowledge
+                graph. If omitted, only the external reference node is written.
+            label: Human-readable name (rdfs:label) written on ``point_uri``.
+            source_id: Registered datasource identifier.
+            ref_name: Source-native stream identifier (sensor tag, column name,
+                MQTT topic, etc.). Written as ``acq:refName`` on the reference node.
             unit: Unit of measurement — URIRef, URI string, or plain text.
             quantity_kind: Physical quantity — URIRef, URI string, or plain text.
             medium: Medium the measurement applies to (S223 hasMedium).
             substance: Substance being measured (S223 ofSubstance).
             data_source: Origin of the data — written as a literal string.
-            properties: Arbitrary extra triples as ``{predicate_uri: value}``.
+            properties: Arbitrary extra triples written on the reference node
+                (or on ``point_uri`` when no reference node exists).
         """
         g = RDFGraph()
-        subj = URIRef(str(point_uri))
-
-        g.add((subj, RDF.type, VIRTUAL_POINT))
-        if label is not None:
-            g.add((subj, RDFS.label, Literal(label)))
 
         def _coerce(value: str | URIRef | None, qudt_kind: str) -> str | URIRef | None:
-            """Resolve a plain string to a QUDT URIRef, falling back to literal."""
             if value is None or isinstance(value, URIRef):
                 return value
             if "://" in value or value.startswith("urn:"):
@@ -305,35 +325,34 @@ class Acquirium:
                 )
             return resolved or value
 
-        def _add(pred: URIRef, value: str | URIRef | None) -> None:
-            if value is None:
-                return
-            if isinstance(value, URIRef):
-                g.add((subj, pred, value))
-            elif "://" in value or value.startswith("urn:"):
-                g.add((subj, pred, URIRef(value)))
-            else:
-                g.add((subj, pred, Literal(value)))
-
-        _add(HAS_UNIT,          _coerce(unit,          "unit"))
-        _add(HAS_QUANTITY_KIND, _coerce(quantity_kind, "quantity_kind"))
-        _add(HAS_MEDIUM,        _coerce(medium,        "class"))
-        _add(OF_SUBSTANCE,      _coerce(substance,     "class"))
-        _add(DATA_SOURCE, data_source)
-
+        ref_uri = None
         if ref_name is not None and source_id is not None:
-            handle = compute_handle(source_id, ref_name)
-            g.add((subj,        HAS_EXTERNAL_REFERENCE, handle))
-            g.add((handle,    ACQUIRIUM_SOURCE_ID,    Literal(source_id)))
-            g.add((handle,    ACQUIRIUM_REF_NAME,     Literal(ref_name)))
-            g.add((handle,    STORED_AT,              ACQUIRIUM_DB_URI))
+            ref_uri = compute_ref_uri(source_id, ref_name)
+            g.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
+            g.add((ref_uri, ACQUIRIUM_REF_NAME,  Literal(ref_name)))
+            g.add((ref_uri, STORED_AT,           ACQUIRIUM_DB_URI))
             g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
 
-        for pred, value in (properties or {}).items():
-            _add(pred, value)
+        if point_uri is not None:
+            subj = URIRef(str(point_uri))
+            g.add((subj, RDF.type, VIRTUAL_POINT))
+            if label is not None:
+                g.add((subj, RDFS.label, Literal(label)))
+            _add_triple(g, subj, HAS_UNIT,          _coerce(unit,          "unit"))
+            _add_triple(g, subj, HAS_QUANTITY_KIND, _coerce(quantity_kind, "quantity_kind"))
+            _add_triple(g, subj, HAS_MEDIUM,        _coerce(medium,        "class"))
+            _add_triple(g, subj, OF_SUBSTANCE,      _coerce(substance,     "class"))
+            _add_triple(g, subj, DATA_SOURCE,       data_source)
+            if ref_uri is not None:
+                g.add((subj, HAS_EXTERNAL_REFERENCE, ref_uri))
 
-        turtle = g.serialize(format="turtle")
-        self.client.insert_graph(turtle, format="turtle", replace=False)
+        target = ref_uri if ref_uri is not None else (URIRef(str(point_uri)) if point_uri is not None else None)
+        if target is not None:
+            for pred, value in (properties or {}).items():
+                _add_triple(g, target, pred, value)
+
+        if len(g):
+            self.client.insert_graph(g.serialize(format="turtle"), format="turtle", replace=False)
 
     def register_streams(
         self,
@@ -341,51 +360,56 @@ class Acquirium:
     ) -> None:
         """Declare multiple stream metadata records in one graph insert.
 
-        Each item accepts the same keys as ``register_stream``. This avoids one
-        graph insert per stream for wide tabular sources.
+        This is the batch form of :meth:`register_stream`. Use it when a driver
+        discovers many streams at once, such as a wide CSV file with one column
+        per stream. Batching avoids one graph insert and graph resync per stream.
+
+        Each stream item is a dictionary with these commonly used keys:
+
+        - ``point_uri``: optional semantic URI. When provided, a point node is
+          created and linked to the external reference. When omitted, only the
+          external reference node is written.
+        - ``source_id`` and ``ref_name``: source-local stream identity. When
+          both are present, Acquirium mints the canonical reference URI and
+          writes ``acq:sourceId``, ``acq:refName``, and ``ref:storedAt`` on it.
+        - ``label``: optional ``rdfs:label`` written on ``point_uri``.
+        - ``data_source``: optional datasource marker written on the point.
+        - ``properties``: optional mapping of predicate URIRefs to values,
+          written on the reference node (or ``point_uri`` when no ref node exists).
+
+        Drivers should still insert rows with ``insert_timeseries_batch`` using
+        the same ``source_id`` and source-local ``ref_name``. Acquirium resolves
+        those inserts to the same canonical reference URI internally.
         """
         g = RDFGraph()
 
         for stream in streams:
-            subj = URIRef(str(stream["point_uri"]))
+            point_uri_raw = stream.get("point_uri")
             label = stream.get("label")
             source_id = stream.get("source_id")
             ref_name = stream.get("ref_name")
 
-            g.add((subj, RDF.type, VIRTUAL_POINT))
-            if label is not None:
-                g.add((subj, RDFS.label, Literal(label)))
-
-            def _add_to_subject(pred: URIRef, value: str | URIRef | None) -> None:
-                if value is None:
-                    return
-                if isinstance(value, URIRef):
-                    g.add((subj, pred, value))
-                elif "://" in value or value.startswith("urn:"):
-                    g.add((subj, pred, URIRef(value)))
-                else:
-                    g.add((subj, pred, Literal(value)))
-
-            _add_to_subject(DATA_SOURCE, stream.get("data_source"))
-
-            handle = None
+            ref_uri = None
             if ref_name is not None and source_id is not None:
-                handle = compute_handle(source_id, ref_name)
-                g.add((subj, HAS_EXTERNAL_REFERENCE, handle))
-                g.add((handle, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
-                g.add((handle, ACQUIRIUM_REF_NAME, Literal(ref_name)))
-                g.add((handle, STORED_AT, ACQUIRIUM_DB_URI))
+                ref_uri = compute_ref_uri(source_id, ref_name)
+                g.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
+                g.add((ref_uri, ACQUIRIUM_REF_NAME,  Literal(ref_name)))
+                g.add((ref_uri, STORED_AT,           ACQUIRIUM_DB_URI))
                 g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
 
-            properties = stream.get("properties") or {}
-            target = handle or subj
-            for pred, value in properties.items():
-                if isinstance(value, URIRef):
-                    g.add((target, pred, value))
-                elif "://" in str(value) or str(value).startswith("urn:"):
-                    g.add((target, pred, URIRef(str(value))))
-                else:
-                    g.add((target, pred, Literal(value)))
+            if point_uri_raw is not None:
+                subj = URIRef(str(point_uri_raw))
+                g.add((subj, RDF.type, VIRTUAL_POINT))
+                if label is not None:
+                    g.add((subj, RDFS.label, Literal(label)))
+                _add_triple(g, subj, DATA_SOURCE, stream.get("data_source"))
+                if ref_uri is not None:
+                    g.add((subj, HAS_EXTERNAL_REFERENCE, ref_uri))
+
+            target = ref_uri if ref_uri is not None else (URIRef(str(point_uri_raw)) if point_uri_raw is not None else None)
+            if target is not None:
+                for pred, value in (stream.get("properties") or {}).items():
+                    _add_triple(g, target, pred, value)
 
         if len(g):
             self.client.insert_graph(g.serialize(format="turtle"), format="turtle", replace=False)
@@ -523,16 +547,11 @@ class Acquirium:
             observation_start: Optional observation period start.
             observation_end: Optional observation period end.
         """
-        def _to_iso(v: str | datetime | None) -> str | None:
-            if v is None:
-                return None
-            return v.isoformat() if isinstance(v, datetime) else v
-
         return self.client.insert_log(
-            log_time=_to_iso(log_time),
+            log_time=_dt_to_iso(log_time),
             log_message=message,
-            observation_start=_to_iso(observation_start),
-            observation_end=_to_iso(observation_end),
+            observation_start=_dt_to_iso(observation_start),
+            observation_end=_dt_to_iso(observation_end),
         )
 
     def read_logs(
@@ -548,16 +567,11 @@ class Acquirium:
         """
         import polars as pl
 
-        def _to_iso(v: str | datetime | None) -> str | None:
-            if v is None:
-                return None
-            return v.isoformat() if isinstance(v, datetime) else v
-
         logs = self.client.query_logs(
-            log_time_start=_to_iso(log_time_start),
-            log_time_end=_to_iso(log_time_end),
-            observation_start=_to_iso(observation_start),
-            observation_end=_to_iso(observation_end),
+            log_time_start=_dt_to_iso(log_time_start),
+            log_time_end=_dt_to_iso(log_time_end),
+            observation_start=_dt_to_iso(observation_start),
+            observation_end=_dt_to_iso(observation_end),
         )
         if not logs:
             return pl.DataFrame({"point_uri": [], "message": [], "log_time": [], "observation_start": [], "observation_end": []})

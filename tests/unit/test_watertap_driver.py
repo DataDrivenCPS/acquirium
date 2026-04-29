@@ -6,12 +6,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from acquirium.BuiltinDrivers.watertap import WaterTAPDriver, get_value_from_model
-from acquirium.internals.models import compute_handle
+from acquirium.internals.models import compute_ref_uri
 
 
 def _graph_text() -> str:
-    ref_one = compute_handle("watertap", "value_a")
-    ref_two = compute_handle("watertap", "value_b")
+    ref_one = compute_ref_uri("watertap", "value_a")
+    ref_two = compute_ref_uri("watertap", "value_b")
     return f"""@prefix ref: <https://brickschema.org/schema/Brick/ref#> .
 @prefix acq: <urn:acquirium#> .
 
@@ -96,8 +96,9 @@ def test_setup_registers_datasource_and_streams(tmp_path):
 
     driver.aq.register_datasource.assert_called_once_with("watertap")
     assert driver.aq.register_stream.call_count == 2
-    assert driver.aq.register_stream.call_args_list[0].args[0] == "urn:point:one"
-    assert driver.aq.register_stream.call_args_list[0].kwargs["ref_name"] == "value_a"
+    first_call = driver.aq.register_stream.call_args_list[0]
+    assert first_call.args == ()
+    assert first_call.kwargs == {"source_id": "watertap", "ref_name": "value_a"}
 
 
 def test_setup_can_insert_graph(tmp_path):

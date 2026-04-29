@@ -16,7 +16,7 @@ from acquirium.internals.internals_namespaces import (
     HAS_EXTERNAL_REFERENCE,
     HAS_PYOMO_VAR,
 )
-from acquirium.internals.models import compute_handle
+from acquirium.internals.models import compute_ref_uri
 
 logger = logging.getLogger("acquirium.watertap")
 
@@ -72,7 +72,6 @@ class WaterTAPDriver(Driver):
         if self._register_streams:
             for spec in self._point_specs:
                 self.aq.register_stream(
-                    spec.point_uri,
                     source_id=self._source_id,
                     ref_name=spec.ref_name,
                 )
@@ -178,7 +177,7 @@ def _load_point_specs(graph_path: Path) -> list[WaterTAPPointSpec]:
                 )
             )
         if source_id is not None:
-            expected = str(compute_handle(source_id, ref_name))
+            expected = str(compute_ref_uri(source_id, ref_name))
             if str(ref_uri) != expected:
                 raise ValueError(
                     f"WaterTAP reference {ref_uri} does not match canonical URI {expected} "

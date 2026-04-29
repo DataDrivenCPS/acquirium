@@ -39,8 +39,8 @@ class SystemMetricsDriver(Driver):
     def setup(self) -> None:
         hostname = socket.gethostname()
         self._source_id = f"{hostname}-system-metrics"
+        self._hostname = hostname
         self._host_uri = URIRef(f"urn:host:{hostname}")
-        self._stream_uri = lambda key: URIRef(f"urn:host:{hostname}:{key}")
 
         self.aq.register_datasource(self._source_id)
         self._insert_host_graph(hostname)
@@ -63,6 +63,9 @@ class SystemMetricsDriver(Driver):
         self.aq.insert_timeseries_batch(self._source_id, {
             ref: [(ts, val)] for ref, val in sample.items()
         })
+
+    def _stream_uri(self, key: str) -> URIRef:
+        return URIRef(f"urn:host:{self._hostname}:{key}")
 
     def _insert_host_graph(self, hostname: str) -> None:
         try:

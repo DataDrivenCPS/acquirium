@@ -2,13 +2,11 @@ from __future__ import annotations
 
 from io import StringIO
 import logging
-from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 import polars as pl
 
-from acquirium.BuiltinDrivers._tabular_base import _TabularIngestBase, _safe_name
+from acquirium.BuiltinDrivers._tabular_base import _TabularIngestBase
 
 logger = logging.getLogger("acquirium.csv_ingest")
 
@@ -48,13 +46,13 @@ class CSVIngestDriver(_TabularIngestBase):
         skip_rows    = [1, 3]        # or { "subdir/data.csv" = [2, 5] }
         encoding     = "utf8-lossy"  # "utf8", "utf8-lossy", "latin1", etc.
 
-    Override ``parse_file()`` to handle custom layouts::
+    Override ``read_frame()`` to handle custom layouts::
 
         class MyDriver(CSVIngestDriver):
-            def parse_file(self, path, row_offset=0):
+            def read_frame(self, path, row_offset=0):
                 df = pl.read_csv(path, skip_rows=3,
                                  skip_rows_after_header=row_offset)
-                return self._parse_wide(df), len(df)
+                return df, len(df)
     """
 
     _glob_patterns = ("*.csv", "*.tsv")
@@ -64,22 +62,24 @@ class CSVIngestDriver(_TabularIngestBase):
         self._encoding: str = self.config.get("driver", {}).get("encoding", "utf8-lossy")
         logger.info("csv_ingest watching %s", self._watch_dir)
 
-    def parse_file(
-        self, path: Path, row_offset: int = 0
-    ) -> tuple[dict[str, list[tuple[datetime, Any]]], int]:
+    def read_frame(self, path: Path, row_offset: int = 0) -> tuple[pl.DataFrame, int]:
+        df = self._read_df(path, row_offset)
+        return df, len(df)
+
+    def _read_df(self, path: Path, row_offset: int) -> pl.DataFrame:
         sep = "\t" if path.suffix.lower() == ".tsv" else ","
-        text = self._filtered_csv_text(path)
-        df = pl.read_csv(
-            StringIO(text), separator=sep, try_parse_dates=True,
-            skip_rows_after_header=row_offset,
-            encoding=self._encoding,
-        )
-        rows_read = len(df)
-        if rows_read == 0:
-            return {}, 0
-        fmt = self._detect_format(df)
-        batch = self._parse_narrow(df) if fmt == "narrow" else self._parse_wide(df)
-        return batch, rows_read
+        skip = self._skip_rows_for(path)
+        if skip:
+            return pl.read_csv(
+                StringIO(self._filtered_csv_text(path)),
+                separator=sep, try_parse_dates=True,
+                skip_rows_after_header=row_offset,
+                encoding=self._encoding,
+            )
+        lf = pl.scan_csv(path, separator=sep, try_parse_dates=True, encoding=self._encoding)
+        if row_offset:
+            lf = lf.slice(row_offset)
+        return lf.collect()
 
     def _filtered_csv_text(self, path: Path) -> str:
         skip_rows = set(self._skip_rows_for(path))

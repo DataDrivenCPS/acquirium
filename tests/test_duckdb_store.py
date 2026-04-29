@@ -83,7 +83,7 @@ def test_replace_rows(store):
 def test_bulk_insert_polars(store):
     uri = "urn:test:duck:bulk"
     df = pl.DataFrame({
-        "point_uri": [uri, uri, uri],
+        "ref_uri": [uri, uri, uri],
         "ts": [_utc(2024, 2, 1), _utc(2024, 2, 2), _utc(2024, 2, 3)],
         "value": ["a", "b", "c"],
     })
@@ -187,42 +187,26 @@ def test_timeseries_info_batch(store):
     assert result[uris[1]].row_count == 2
 
 
-# ---- stream handles ----
+# ---- stream refs ----
 
 @pytest.mark.unit
-def test_ensure_stream_handle_returns_handle(store):
-    h = store.ensure_stream_handle("urn:test:duck:sh1", "src1", "ref1")
-    assert isinstance(h, str) and len(h) > 0
-
-
-@pytest.mark.unit
-def test_ensure_stream_handle_deterministic(store):
-    h1 = store.ensure_stream_handle("urn:test:duck:sh2", "src2", "ref2")
-    h2 = store.ensure_stream_handle("urn:test:duck:sh2", "src2", "ref2")
-    assert h1 == h2
+def test_ensure_stream_ref_returns_ref_uri(store):
+    ref_uri = store.ensure_stream_ref("urn:test:duck:sh1", "src1", "ref1")
+    assert isinstance(ref_uri, str) and len(ref_uri) > 0
 
 
 @pytest.mark.unit
-def test_resolve_handle(store):
-    uri = "urn:test:duck:resolve_handle"
-    h = store.ensure_stream_handle(uri, "srcX", "refX")
-    point, src, ref = store.resolve_handle(h)
-    assert point == uri
-    assert src == "srcX"
-    assert ref == "refX"
-
-
-@pytest.mark.unit
-def test_resolve_handle_missing(store):
-    point, src, ref = store.resolve_handle("no-such-handle")
-    assert (point, src, ref) == (None, None, None)
+def test_ensure_stream_ref_deterministic(store):
+    ref_uri1 = store.ensure_stream_ref("urn:test:duck:sh2", "src2", "ref2")
+    ref_uri2 = store.ensure_stream_ref("urn:test:duck:sh2", "src2", "ref2")
+    assert ref_uri1 == ref_uri2
 
 
 @pytest.mark.unit
 def test_resolve_storage_key(store):
     uri = "urn:test:duck:rsk"
-    h = store.ensure_stream_handle(uri, "s", "r")
-    assert store.resolve_storage_key(uri) == h
+    ref_uri = store.ensure_stream_ref(uri, "s", "r")
+    assert store.resolve_storage_key(uri) == ref_uri
 
 
 @pytest.mark.unit
@@ -234,11 +218,11 @@ def test_resolve_storage_key_unregistered(store):
 @pytest.mark.unit
 def test_resolve_storage_keys_batch(store):
     uris = ["urn:test:duck:rsk_batch_a", "urn:test:duck:rsk_batch_b"]
-    ha = store.ensure_stream_handle(uris[0], "sa", "ra")
-    hb = store.ensure_stream_handle(uris[1], "sb", "rb")
+    ref_uri_a = store.ensure_stream_ref(uris[0], "sa", "ra")
+    ref_uri_b = store.ensure_stream_ref(uris[1], "sb", "rb")
     result = store.resolve_storage_keys(uris)
-    assert result[uris[0]] == ha
-    assert result[uris[1]] == hb
+    assert result[uris[0]] == ref_uri_a
+    assert result[uris[1]] == ref_uri_b
 
 
 # ---- logs ----
