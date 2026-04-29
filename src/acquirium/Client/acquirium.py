@@ -15,6 +15,23 @@ from rdflib.namespace import RDF, RDFS
 import warnings
 
 from acquirium.Client.query import Query
+
+
+def _dt_to_iso(v: "str | datetime | None") -> "str | None":
+    if v is None:
+        return None
+    return v.isoformat() if isinstance(v, datetime) else v
+
+
+def _add_triple(g: "RDFGraph", subj: "URIRef", pred: "URIRef", value: "str | URIRef | None") -> None:
+    if value is None:
+        return
+    if isinstance(value, URIRef):
+        g.add((subj, pred, value))
+    elif "://" in str(value) or str(value).startswith("urn:"):
+        g.add((subj, pred, URIRef(str(value))))
+    else:
+        g.add((subj, pred, Literal(value)))
 from acquirium.Client.client import AcquiriumClient
 from acquirium.Apps.base import App
 from acquirium.internals.models import AppOutputSpec, AppSpec, compute_handle
@@ -291,7 +308,6 @@ class Acquirium:
             g.add((subj, RDFS.label, Literal(label)))
 
         def _coerce(value: str | URIRef | None, qudt_kind: str) -> str | URIRef | None:
-            """Resolve a plain string to a QUDT URIRef, falling back to literal."""
             if value is None or isinstance(value, URIRef):
                 return value
             if "://" in value or value.startswith("urn:"):
@@ -305,21 +321,11 @@ class Acquirium:
                 )
             return resolved or value
 
-        def _add(pred: URIRef, value: str | URIRef | None) -> None:
-            if value is None:
-                return
-            if isinstance(value, URIRef):
-                g.add((subj, pred, value))
-            elif "://" in value or value.startswith("urn:"):
-                g.add((subj, pred, URIRef(value)))
-            else:
-                g.add((subj, pred, Literal(value)))
-
-        _add(HAS_UNIT,          _coerce(unit,          "unit"))
-        _add(HAS_QUANTITY_KIND, _coerce(quantity_kind, "quantity_kind"))
-        _add(HAS_MEDIUM,        _coerce(medium,        "class"))
-        _add(OF_SUBSTANCE,      _coerce(substance,     "class"))
-        _add(DATA_SOURCE, data_source)
+        _add_triple(g, subj, HAS_UNIT,          _coerce(unit,          "unit"))
+        _add_triple(g, subj, HAS_QUANTITY_KIND, _coerce(quantity_kind, "quantity_kind"))
+        _add_triple(g, subj, HAS_MEDIUM,        _coerce(medium,        "class"))
+        _add_triple(g, subj, OF_SUBSTANCE,      _coerce(substance,     "class"))
+        _add_triple(g, subj, DATA_SOURCE,       data_source)
 
         if ref_name is not None and source_id is not None:
             handle = compute_handle(source_id, ref_name)
@@ -376,17 +382,7 @@ class Acquirium:
             if label is not None:
                 g.add((subj, RDFS.label, Literal(label)))
 
-            def _add_to_subject(pred: URIRef, value: str | URIRef | None) -> None:
-                if value is None:
-                    return
-                if isinstance(value, URIRef):
-                    g.add((subj, pred, value))
-                elif "://" in value or value.startswith("urn:"):
-                    g.add((subj, pred, URIRef(value)))
-                else:
-                    g.add((subj, pred, Literal(value)))
-
-            _add_to_subject(DATA_SOURCE, stream.get("data_source"))
+            _add_triple(g, subj, DATA_SOURCE, stream.get("data_source"))
 
             handle = None
             if ref_name is not None and source_id is not None:
@@ -400,12 +396,7 @@ class Acquirium:
             properties = stream.get("properties") or {}
             target = handle or subj
             for pred, value in properties.items():
-                if isinstance(value, URIRef):
-                    g.add((target, pred, value))
-                elif "://" in str(value) or str(value).startswith("urn:"):
-                    g.add((target, pred, URIRef(str(value))))
-                else:
-                    g.add((target, pred, Literal(value)))
+                _add_triple(g, target, pred, value)
 
         if len(g):
             self.client.insert_graph(g.serialize(format="turtle"), format="turtle", replace=False)
@@ -543,16 +534,11 @@ class Acquirium:
             observation_start: Optional observation period start.
             observation_end: Optional observation period end.
         """
-        def _to_iso(v: str | datetime | None) -> str | None:
-            if v is None:
-                return None
-            return v.isoformat() if isinstance(v, datetime) else v
-
         return self.client.insert_log(
-            log_time=_to_iso(log_time),
+            log_time=_dt_to_iso(log_time),
             log_message=message,
-            observation_start=_to_iso(observation_start),
-            observation_end=_to_iso(observation_end),
+            observation_start=_dt_to_iso(observation_start),
+            observation_end=_dt_to_iso(observation_end),
         )
 
     def read_logs(
@@ -568,16 +554,11 @@ class Acquirium:
         """
         import polars as pl
 
-        def _to_iso(v: str | datetime | None) -> str | None:
-            if v is None:
-                return None
-            return v.isoformat() if isinstance(v, datetime) else v
-
         logs = self.client.query_logs(
-            log_time_start=_to_iso(log_time_start),
-            log_time_end=_to_iso(log_time_end),
-            observation_start=_to_iso(observation_start),
-            observation_end=_to_iso(observation_end),
+            log_time_start=_dt_to_iso(log_time_start),
+            log_time_end=_dt_to_iso(log_time_end),
+            observation_start=_dt_to_iso(observation_start),
+            observation_end=_dt_to_iso(observation_end),
         )
         if not logs:
             return pl.DataFrame({"point_uri": [], "message": [], "log_time": [], "observation_start": [], "observation_end": []})

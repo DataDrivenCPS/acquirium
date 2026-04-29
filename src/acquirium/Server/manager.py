@@ -40,6 +40,44 @@ logger.setLevel(logging.INFO)
 DEFAULT_DATA_DIR = Path(".acquirium")
 DEFAULT_DB_NAME = "acquirium"
 
+
+def _aggregate_uri_label_rows(
+    rows: list,
+    seen: set[str],
+    kind: str,
+    concepts: list[dict[str, Any]],
+) -> None:
+    """Aggregate SPARQL (uri, label) rows into *concepts*, skipping already-seen URIs."""
+    uri_labels: dict[str, list[str]] = {}
+    uri_first_label: dict[str, str | None] = {}
+    for row in rows:
+        uri = str(row[0]) if row[0] else None
+        label = str(row[1]).strip('"') if row[1] else None
+        if not uri:
+            continue
+        if uri not in uri_labels:
+            uri_labels[uri] = []
+            uri_first_label[uri] = label
+        if label and label not in uri_labels[uri]:
+            uri_labels[uri].append(label)
+
+    for uri, labels in uri_labels.items():
+        if uri in seen:
+            continue
+        seen.add(uri)
+        surfaces = []
+        for lbl in labels:
+            lbl_lower = lbl.lower()
+            if lbl_lower not in surfaces:
+                surfaces.append(lbl_lower)
+        tokens = _split_local_name(uri)
+        if tokens:
+            joined = " ".join(tokens)
+            if joined not in surfaces:
+                surfaces.append(joined)
+        display_label = uri_first_label[uri] or (" ".join(tokens) if tokens else uri)
+        concepts.append({"uri": uri, "kind": kind, "label": display_label, "surfaces": surfaces})
+
 def _wipe_dir_contents(base: Path) -> None:
     base.mkdir(parents=True, exist_ok=True)
     for p in base.iterdir():
@@ -276,14 +314,13 @@ class Manager:
         for row in rows:
             (data_uri, ref_uri, dsn, table, custom_query, tcol, vcol, pfilter) = row
             try:
-                s = lambda v: str(v).strip().strip('"') if v else None
                 info = PGReferenceInfo(
-                    dsn=s(dsn) or "",
-                    table=s(table),
-                    custom_query=s(custom_query),
-                    time_col=s(tcol) or "time",
-                    value_col=s(vcol) or "value",
-                    point_filter=s(pfilter),
+                    dsn=self._sparql_value(dsn) or "",
+                    table=self._sparql_value(table),
+                    custom_query=self._sparql_value(custom_query),
+                    time_col=self._sparql_value(tcol) or "time",
+                    value_col=self._sparql_value(vcol) or "value",
+                    point_filter=self._sparql_value(pfilter),
                 )
                 self.pg_registry.register(str(ref_uri), info)
                 count += 1
@@ -403,42 +440,7 @@ class Manager:
         """
         try:
             res = self.graph_store.sparql_query(class_query, use_union=True)
-            # Aggregate all labels per URI
-            uri_labels: dict[str, list[str]] = {}
-            uri_first_label: dict[str, str | None] = {}
-            for row in res.get("rows", []):
-                uri = str(row[0]) if row[0] else None
-                label = str(row[1]).strip('"') if row[1] else None
-                if not uri:
-                    continue
-                if uri not in uri_labels:
-                    uri_labels[uri] = []
-                    uri_first_label[uri] = label
-                if label and label not in uri_labels[uri]:
-                    uri_labels[uri].append(label)
-
-            for uri, labels in uri_labels.items():
-                if uri in seen_class:
-                    continue
-                seen_class.add(uri)
-                surfaces = []
-                for lbl in labels:
-                    lbl_lower = lbl.lower()
-                    if lbl_lower not in surfaces:
-                        surfaces.append(lbl_lower)
-                # Always add tokenized local name as a surface
-                tokens = _split_local_name(uri)
-                if tokens:
-                    joined = " ".join(tokens)
-                    if joined not in surfaces:
-                        surfaces.append(joined)
-                display_label = uri_first_label[uri] or (joined if tokens else uri)
-                concepts.append({
-                    "uri": uri,
-                    "kind": "class",
-                    "label": display_label,
-                    "surfaces": surfaces,
-                })
+            _aggregate_uri_label_rows(res.get("rows", []), seen_class, "class", concepts)
         except Exception:
             logger.warning("Failed to extract class concepts", exc_info=True)
 
@@ -471,41 +473,7 @@ class Manager:
         """
         try:
             res = self.graph_store.sparql_query(pred_query, use_union=True)
-            # Aggregate all labels per URI
-            uri_labels: dict[str, list[str]] = {}
-            uri_first_label: dict[str, str | None] = {}
-            for row in res.get("rows", []):
-                uri = str(row[0]) if row[0] else None
-                label = str(row[1]).strip('"') if row[1] else None
-                if not uri:
-                    continue
-                if uri not in uri_labels:
-                    uri_labels[uri] = []
-                    uri_first_label[uri] = label
-                if label and label not in uri_labels[uri]:
-                    uri_labels[uri].append(label)
-
-            for uri, labels in uri_labels.items():
-                if uri in seen_pred:
-                    continue
-                seen_pred.add(uri)
-                surfaces = []
-                for lbl in labels:
-                    lbl_lower = lbl.lower()
-                    if lbl_lower not in surfaces:
-                        surfaces.append(lbl_lower)
-                tokens = _split_local_name(uri)
-                if tokens:
-                    joined = " ".join(tokens)
-                    if joined not in surfaces:
-                        surfaces.append(joined)
-                display_label = uri_first_label[uri] or (joined if tokens else uri)
-                concepts.append({
-                    "uri": uri,
-                    "kind": "predicate",
-                    "label": display_label,
-                    "surfaces": surfaces,
-                })
+            _aggregate_uri_label_rows(res.get("rows", []), seen_pred, "predicate", concepts)
         except Exception:
             logger.warning("Failed to extract predicate concepts", exc_info=True)
 
@@ -1217,7 +1185,7 @@ class Manager:
 
         # Build the command to run inside the container
         run_cmd = runtime.get("command") or "python -m acquirium.Apps.worker"
-        shell_cmd = f"/app/.venv/bin/{run_cmd}" if run_cmd.startswith("python ") else f"/app/.venv/bin/python -m acquirium.Apps.worker"
+        shell_cmd = f"/app/.venv/bin/{run_cmd}" if run_cmd.startswith("python ") else run_cmd
 
         # Optional custom entrypoint
         entrypoint = runtime.get("entrypoint")
@@ -1388,12 +1356,8 @@ class Manager:
 
             with self._ingest_cache_lock:
                 cache = self._load_ingest_cache()
-                entry = cache.get(cache_key, {})
-                entry["status"] = "done"
-                entry["ingested_at"] = time.time()
-                entry["rows_ingested"] = result
-                entry["filename"] = filename
-                cache[cache_key] = entry
+                entry = cache.setdefault(cache_key, {})
+                entry.update({"status": "done", "ingested_at": time.time(), "rows_ingested": result, "filename": filename})
                 self._save_ingest_cache(cache)
 
             return int(result)
@@ -1401,31 +1365,21 @@ class Manager:
         except Exception as exc:
             with self._ingest_cache_lock:
                 cache = self._load_ingest_cache()
-                entry = cache.get(cache_key, {})
-                entry["status"] = "error"
-                entry["error"] = str(exc)
-                entry["filename"] = filename
-                cache[cache_key] = entry
+                entry = cache.setdefault(cache_key, {})
+                entry.update({"status": "error", "error": str(exc), "filename": filename})
                 self._save_ingest_cache(cache)
             raise
 
     def insert_log(self, log_message: LogEntry):
-        """
-        Insert a log entry into timescale store.
-
-        Add external reference to the graph. 
-        This is for associating log metadata with points.
-        If we want to associate metadata with the logs of a point, we can do so here.
-        """
         self.timescale.insert_log(log_message)
-        logger.info("Inserted log entry for point %s at %s to database", log_message.point_uri, log_message.timestamp)
         G = Graph()
         log_uri = URIRef(f"{str(log_message.point_uri)}_log")
         G.add((URIRef(log_message.point_uri), HAS_LOG, log_uri))
         G.add((log_uri, RDF.type, LOGBOOK))
+        # Write bookkeeping triples but skip _notify_graph_change — log inserts
+        # don't affect the ontology/concept space and would otherwise continuously
+        # invalidate the embedding cache.
         self.graph_store.insert_graph(G, format="turtle", replace=False)
-        logger.info("Inserted log entry for point %s at %s to graph", log_message.point_uri, log_message.timestamp)
-        self._notify_graph_change()
 
 
     def query_logs(

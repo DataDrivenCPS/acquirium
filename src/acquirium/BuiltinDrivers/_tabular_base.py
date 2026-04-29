@@ -94,11 +94,11 @@ class _TabularIngestBase(Driver):
     # ------------------------------------------------------------------ loop
 
     def loop(self) -> None:
-        paths = sorted(
+        paths = sorted({
             p
             for pattern in self._glob_patterns
             for p in self._watch_dir.rglob(pattern)
-        )
+        })
         for path in paths:
             key = str(path)
             offset = self._rows_seen.get(key, 0)

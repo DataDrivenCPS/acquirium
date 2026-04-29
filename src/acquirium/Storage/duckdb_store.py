@@ -205,14 +205,11 @@ class DuckDBStore:
         if not point_uris:
             return {}
         placeholders = ", ".join("?" * len(point_uris))
-        tbl = self._conn.execute(
+        d = self._conn.execute(
             f"SELECT point_uri, handle FROM {STREAMS_TABLE} WHERE point_uri IN ({placeholders})",
             point_uris,
-        ).to_arrow_table()
-        registered = {
-            tbl.column("point_uri")[i].as_py(): tbl.column("handle")[i].as_py()
-            for i in range(len(tbl))
-        }
+        ).to_arrow_table().to_pydict()
+        registered = dict(zip(d["point_uri"], d["handle"]))
         return {uri: registered.get(uri, uri) for uri in point_uris}
 
     # ---- timeseries reads ----
@@ -279,7 +276,7 @@ class DuckDBStore:
         if not point_uris:
             return {}
         placeholders = ", ".join("?" * len(point_uris))
-        tbl = self._conn.execute(
+        d = self._conn.execute(
             f"""
             SELECT point_uri,
                    COUNT(*)   AS row_count,
@@ -290,15 +287,16 @@ class DuckDBStore:
             GROUP BY point_uri
             """,
             point_uris,
-        ).to_arrow_table()
+        ).to_arrow_table().to_pydict()
         result: dict[str, TimeseriesInfo] = {}
-        for i in range(len(tbl)):
-            uri = tbl.column("point_uri")[i].as_py()
-            cnt = tbl.column("row_count")[i].as_py() or 0
-            earliest = self._add_utc(tbl.column("earliest")[i].as_py())
-            latest = self._add_utc(tbl.column("latest")[i].as_py())
+        for uri, cnt, earliest_raw, latest_raw in zip(
+            d["point_uri"], d["row_count"], d["earliest"], d["latest"]
+        ):
             result[uri] = TimeseriesInfo(
-                table=TIMESERIES_TABLE, row_count=cnt, earliest=earliest, latest=latest
+                table=TIMESERIES_TABLE,
+                row_count=cnt or 0,
+                earliest=self._add_utc(earliest_raw),
+                latest=self._add_utc(latest_raw),
             )
         for uri in point_uris:
             if uri not in result:
@@ -368,15 +366,13 @@ class DuckDBStore:
             logger.error("query_logs failed: %s", exc)
             return []
 
+        d = tbl.to_pydict()
         result: list[LogEntry] = []
-        for i in range(len(tbl)):
-            uri_val = tbl.column("point_uri")[i].as_py()
-            ts_val = self._add_utc(tbl.column("timestamp")[i].as_py())
-            o_start = self._add_utc(tbl.column("observed_start")[i].as_py())
-            o_end = self._add_utc(tbl.column("observed_end")[i].as_py())
-            msg = tbl.column("message")[i].as_py()
-            period = TimeIntervalModel(start=o_start, end=o_end)
-            result.append(LogEntry(point_uri=uri_val, timestamp=ts_val, period=period, message=msg))
+        for uri_val, ts_raw, o_start_raw, o_end_raw, msg in zip(
+            d["point_uri"], d["timestamp"], d["observed_start"], d["observed_end"], d["message"]
+        ):
+            period = TimeIntervalModel(start=self._add_utc(o_start_raw), end=self._add_utc(o_end_raw))
+            result.append(LogEntry(point_uri=uri_val, timestamp=self._add_utc(ts_raw), period=period, message=msg))
         return result
 
     def delete_logs(self, point_uri: str) -> bool:
@@ -410,12 +406,11 @@ class DuckDBStore:
 
     def sql_query(self, query: str) -> dict[str, Any]:
         tbl = self._conn.execute(query).to_arrow_table()
+        d = tbl.to_pydict()
+        cols = tbl.schema.names
         return {
-            "columns": tbl.schema.names,
-            "rows": [
-                [tbl.column(col)[i].as_py() for col in tbl.schema.names]
-                for i in range(len(tbl))
-            ],
+            "columns": cols,
+            "rows": [list(row) for row in zip(*[d[c] for c in cols])] if cols else [],
         }
 
     def close(self) -> None:
