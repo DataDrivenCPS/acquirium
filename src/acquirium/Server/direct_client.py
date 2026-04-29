@@ -138,6 +138,9 @@ class DirectAcquirium(Acquirium):
     def graph_version(self) -> int:
         return self._manager.graph_version()
 
+    def insert_timeseries_polars(self, source_id: str, df: "pl.DataFrame") -> dict:
+        return self.client.insert_timeseries_polars(source_id, df)
+
     # Override insert_graph so drivers calling aq.insert_graph() also work
     def insert_graph(
         self,
