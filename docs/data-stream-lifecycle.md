@@ -3,7 +3,7 @@
 Acquirium stores two kinds of things in two different stores:
 
 - **The RDF graph** holds semantics: what a measurement point *is*, what it measures, where it lives in the physical topology, and how it connects to raw data.
-- **The timeseries store** (TimescaleDB or DuckDB) holds the raw observations: a table of `(storage_key, timestamp, value)` triples.
+- **The timeseries store** (TimescaleDB or DuckDB) holds the raw observations: a table of `(ref_uri, timestamp, value)` triples.
 
 These two stores are linked through an *external reference* pattern.
 
@@ -44,16 +44,17 @@ A deterministic UUID5 URI minted by Acquirium from `(source_id, ref_name)`:
 
 ```python
 # from acquirium/internals/models.py
-handle = uuid.uuid5(_HANDLE_NAMESPACE, f"{source_id}:{ref_name}")
-ref_uri = URIRef(f"urn:acquirium#{handle}")
+ref_uri = compute_ref_uri(source_id, ref_name)
 ```
 
 This URI serves double duty:
 
 1. **Graph node**: it is the object of `ref:hasExternalReference` on the `point_uri`, and carries `acq:sourceId` and `acq:refName` predicates so the mapping can be reconstructed from the graph alone.
-2. **Storage key**: it is the value stored in the `point_uri` column of the timeseries table. All writes and reads go through this key.
+2. **Storage key**: it is the value stored in the `ref_uri` column of the timeseries table. All writes and reads go through this key.
 
 Because `ref_uri` is derived deterministically from `(source_id, ref_name)`, drivers, the server, and the graph all agree on the same value without any coordination. A driver that computes `ref_uri` offline will get the same key as the server. A graph that was inserted before the first data row arrives will already contain the correct `ref_uri`. The UUID5 construction means two sources with the same `ref_name` can never produce the same `ref_uri`.
+
+There is no separate `handle` concept. Older notes and code used `handle` for this same value; the current model calls it `ref_uri` everywhere because it is both the external-reference URI and the physical timeseries storage key.
 
 ---
 
@@ -62,15 +63,18 @@ Because `ref_uri` is derived deterministically from `(source_id, ref_name)`, dri
 The timeseries store maintains a `streams` table that records the mapping:
 
 ```
-handle (= ref_uri)  →  (point_uri, source_id, ref_name)
+ref_uri  →  (point_uri, source_id, ref_name)
 ```
 
-This table is populated two ways:
+This table is populated three ways:
 
-- **On stream registration** (`register_stream` / `register_streams`): the client writes the graph triple `point_uri → ref:hasExternalReference → ref_uri` and the server's `_sync_stream_handles_from_graph` method scans for these triples and upserts them into the streams table.
+- **On stream registration** (`register_stream` / `register_streams`): the client writes the graph triple `point_uri → ref:hasExternalReference → ref_uri` when `point_uri` is known, and the server's `_sync_stream_refs_from_graph` method scans for these triples and upserts them into the streams table.
+- **On data insert** (`insert_timeseries`, `insert_timeseries_batch`, `insert_timeseries_polars`): the server computes `ref_uri` from `(source_id, ref_name)` and upserts a streams row even when no `point_uri` is known yet. In that case `streams.point_uri` is `NULL`.
 - **On graph insert**: any time RDF is inserted, the server re-scans the graph for managed reference patterns.
 
 The streams table lets the server answer: *given a `point_uri`, what storage key should I read from?* Without it, reading by `point_uri` would require a SPARQL query on every data request.
+
+The table also records streams discovered only from data insertion. Those rows have a `ref_uri`, `source_id`, and `ref_name`, with `point_uri = NULL` until a semantic graph link is inserted later.
 
 ---
 
@@ -159,7 +163,7 @@ Registration:
 - writes the external reference node with `acq:sourceId`, `acq:refName`, and `ref:storedAt`
 - if `point_uri` is provided, also creates the point node and links it to the ref node
 - resolves plain-text unit/quantity_kind strings to QUDT URIs via the server's embedding matcher
-- triggers `_sync_stream_handles_from_graph`, which upserts the mapping into the streams table
+- triggers `_sync_stream_refs_from_graph`, which upserts the mapping into the streams table
 
 Stream registration is purely a metadata operation. No timeseries rows are written.
 
@@ -177,9 +181,10 @@ aq.insert_timeseries_batch(
 ```
 
 The server:
-1. computes `ref_uri = compute_handle(source_id, ref_name)` for each `ref_name` key
+1. computes `ref_uri = compute_ref_uri(source_id, ref_name)` for each `ref_name` key
 2. builds a Polars DataFrame with `(ref_uri, timestamp, value)` rows
 3. bulk-inserts into the timeseries store via the Arrow bridge
+4. upserts each stream into the `streams` table with `point_uri = NULL` if no semantic point has been registered yet
 
 The driver never touches `ref_uri` directly. The mapping from `ref_name` to storage key is entirely internal.
 
@@ -191,11 +196,25 @@ For large batches, the `Acquirium` client facade splits the input into `insert_b
 
 Reads go by either `point_uri` or `ref_uri`:
 
-**By `point_uri`**: the server looks up `ref_uri` in the streams table, then queries the timeseries store for rows where `storage_key = ref_uri`.
+**By `point_uri`**: the server looks up `ref_uri` in the streams table, then queries the timeseries store for rows where `timeseries.ref_uri = ref_uri`.
 
 **By `ref_uri`** (direct): used internally and by API consumers that already know the canonical reference URI.
 
 For external Postgres historians, the lookup takes a different path: the server checks whether the `point_uri` is registered as a `PGReferenceInfo` and, if so, queries the external database directly using the DSN and table/query stored on the reference node.
+
+---
+
+## Logs use `point_uri`
+
+Logs are intentionally different from managed timeseries rows.
+
+The `logs` table is keyed by `point_uri`, not `ref_uri`, because logs describe semantic equipment, points, alarms, observations, and app outputs. A log entry is about the physical or modeled thing in the ontology, not about a particular storage stream. That means:
+
+- timeseries samples are stored by `ref_uri`
+- logs are stored by `point_uri`
+- the graph links a `point_uri` to one or more `ref_uri` values with `ref:hasExternalReference`
+
+This keeps logs stable even if a point gets multiple external references over time.
 
 ---
 
@@ -266,10 +285,10 @@ They serve different roles:
 |---|---|---|
 | **Purpose** | semantic description and discovery | fast lookup for data reads and writes |
 | **Query interface** | SPARQL | SQL key lookup |
-| **Updated by** | `register_stream`, `insert_graph` | `_sync_stream_handles_from_graph` (triggered by graph inserts) |
+| **Updated by** | `register_stream`, `insert_graph` | `_sync_stream_refs_from_graph` and data insertion |
 | **Authoritative for** | meaning, metadata, topology | storage key resolution |
 
-The graph is authoritative. The streams table is a derived cache. If they disagree, the graph wins — `_sync_stream_handles_from_graph` re-derives the table from the graph on every graph mutation, and the server rejects any managed reference node whose URI does not match the canonical `compute_handle` value for its `(source_id, ref_name)` pair.
+The graph is authoritative for semantic meaning. The streams table is a fast lookup table and can also contain source-local streams that do not have a semantic `point_uri` yet. When the graph does contain a managed reference, `_sync_stream_refs_from_graph` re-derives that row from the graph, and the server rejects any managed reference node whose URI does not match the canonical `compute_ref_uri` value for its `(source_id, ref_name)` pair.
 
 ---
 
