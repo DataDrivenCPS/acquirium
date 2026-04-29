@@ -75,6 +75,10 @@ def _run_inprocess_driver(
         return
 
     try:
+        try:
+            driver.loop()
+        except Exception:
+            log.exception("In-process driver %s loop error", spec)
         while not stop_event.wait(timeout=interval):
             try:
                 v = manager.graph_version()
