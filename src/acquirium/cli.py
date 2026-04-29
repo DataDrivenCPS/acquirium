@@ -59,6 +59,7 @@ _SERVER_ENV_MAP: dict[str, str] = {
     "embedding_model":        "ACQUIRIUM_EMBEDDING_MODEL",
     "recreate":               "ACQUIRIUM_RECREATE",
     "workers":                "ACQUIRIUM_WORKERS",
+    "read_batch_size":        "ACQUIRIUM_READ_BATCH_SIZE",
 }
 
 

@@ -190,6 +190,7 @@ async def lifespan(app: FastAPI):
 
     m = Manager.from_env()
     app.state.manager = m
+    app.state.read_batch_size = int(os.getenv("ACQUIRIUM_READ_BATCH_SIZE", "50000"))
 
     try:
         m._sync_stream_handles_from_graph()
@@ -460,7 +461,7 @@ def get_timeseries(
             end=end_dt,
             limit=limit,
             order=order,        # type: ignore[arg-type]
-            batch_size=50_000,
+            batch_size=request.app.state.read_batch_size,
         )
 
         accept = request.headers.get("accept", "")
