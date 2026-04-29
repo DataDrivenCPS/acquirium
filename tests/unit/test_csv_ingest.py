@@ -16,6 +16,7 @@ from acquirium.BuiltinDrivers.csv_ingest import CSVIngestDriver
 from acquirium.Client.acquirium import Acquirium
 from acquirium.internals.models import compute_handle
 from acquirium.internals.internals_namespaces import (
+    ACQUIRIUM_DB_URI,
     ACQUIRIUM_REF_NAME,
     ACQUIRIUM_SOURCE_ID,
     FILE_LOCATION,
@@ -193,7 +194,7 @@ def test_parse_wide_missing_time_col_raises(tmp_path):
     p.write_text("ts,temp\n2024-01-01T00:00:00Z,22.5\n")
     driver = make_driver(tmp_path=tmp_path)
     driver.setup()
-    with pytest.raises(ValueError, match="time"):
+    with pytest.raises(ValueError, match="time column"):
         driver.parse_file(p)
 
 
@@ -221,7 +222,7 @@ def test_parse_narrow_missing_id_col_raises(tmp_path):
     p.write_text("time,value\n2024-01-01T00:00:00Z,1.0\n")
     driver = make_driver({"format": "narrow"}, tmp_path=tmp_path)
     driver.setup()
-    with pytest.raises(ValueError, match="id"):
+    with pytest.raises(ValueError, match="column 'id'"):
         driver.parse_file(p)
 
 
@@ -278,11 +279,10 @@ def test_loop_registers_csv_external_reference_metadata(tmp_path):
     g = Graph().parse(data=graph_text, format="turtle")
     source_id = _safe_name(str(path))
     ref_uri = compute_handle(source_id, "temp")
-    # Tabular drivers register only the external reference node — no synthetic point_uri.
     assert (ref_uri, RDF.type, FILE_REFERENCE) in g
     assert (ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)) in g
     assert (ref_uri, ACQUIRIUM_REF_NAME, Literal("temp")) in g
-    assert (ref_uri, STORED_AT, None) in g
+    assert (ref_uri, STORED_AT, ACQUIRIUM_DB_URI) in g
     assert (ref_uri, FILE_LOCATION, Literal(path.relative_to(tmp_path).as_posix())) in g
     assert (ref_uri, TIME_COLUMN_ID, Literal("time")) in g
     assert (ref_uri, VALUE_COLUMN_ID, Literal("temp")) in g
