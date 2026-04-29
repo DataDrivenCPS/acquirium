@@ -68,9 +68,13 @@ class CSVIngestDriver(_TabularIngestBase):
         self, path: Path, row_offset: int = 0
     ) -> tuple[dict[str, list[tuple[datetime, Any]]], int]:
         sep = "\t" if path.suffix.lower() == ".tsv" else ","
-        text = self._filtered_csv_text(path)
+        skip = self._skip_rows_for(path)
+        if skip:
+            source = StringIO(self._filtered_csv_text(path))
+        else:
+            source = path  # type: ignore[assignment]
         df = pl.read_csv(
-            StringIO(text), separator=sep, try_parse_dates=True,
+            source, separator=sep, try_parse_dates=True,
             skip_rows_after_header=row_offset,
             encoding=self._encoding,
         )
