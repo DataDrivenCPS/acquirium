@@ -201,20 +201,14 @@ def test_parse_wide_missing_time_col_raises(tmp_path):
 # ------------------------------------------------------------------ _parse_narrow
 
 
-def test_parse_narrow_basic(tmp_path):
-    driver = make_driver(tmp_path=tmp_path)
+@pytest.mark.parametrize("cfg", [{}, {"format": "narrow"}])
+def test_parse_narrow_basic(tmp_path, cfg):
+    driver = make_driver(cfg, tmp_path=tmp_path)
     driver.setup()
     batch, rows = driver.parse_file(_narrow_csv(tmp_path))
     assert set(batch.keys()) == {"sensor/temp", "sensor/rh"}
     assert rows == 3
     assert len(batch["sensor/temp"]) == 2
-
-
-def test_parse_narrow_explicit_format(tmp_path):
-    driver = make_driver({"format": "narrow"}, tmp_path=tmp_path)
-    driver.setup()
-    batch, _ = driver.parse_file(_narrow_csv(tmp_path))
-    assert "sensor/temp" in batch
 
 
 def test_parse_narrow_missing_id_col_raises(tmp_path):
@@ -229,18 +223,14 @@ def test_parse_narrow_missing_id_col_raises(tmp_path):
 # ------------------------------------------------------------------ auto-detection
 
 
-def test_auto_detects_wide(tmp_path):
+@pytest.mark.parametrize("cols,expected", [
+    ({"time": ["2024-01-01T00:00:00Z"], "sensor_a": [1.0]}, "wide"),
+    ({"time": ["2024-01-01T00:00:00Z"], "id": ["s1"], "value": [1.0]}, "narrow"),
+])
+def test_auto_detects_format(tmp_path, cols, expected):
     driver = make_driver(tmp_path=tmp_path)
     driver.setup()
-    df = pl.DataFrame({"time": ["2024-01-01T00:00:00Z"], "sensor_a": [1.0]})
-    assert driver._detect_format(df) == "wide"
-
-
-def test_auto_detects_narrow(tmp_path):
-    driver = make_driver(tmp_path=tmp_path)
-    driver.setup()
-    df = pl.DataFrame({"time": ["2024-01-01T00:00:00Z"], "id": ["s1"], "value": [1.0]})
-    assert driver._detect_format(df) == "narrow"
+    assert driver._detect_format(pl.DataFrame(cols)) == expected
 
 
 # ------------------------------------------------------------------ TSV support
