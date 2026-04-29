@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from abc import abstractmethod
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -57,14 +56,13 @@ class _TabularIngestBase(Driver):
 
     .. code-block:: toml
 
-        watch_dir      = "./data/incoming"
-        format         = "auto"          # "auto" | "wide" | "narrow"
-        time_col       = "time"
-        id_col         = "id"            # narrow only
-        value_col      = "value"         # narrow only
-        date_format    = "%m/%d/%Y"      # optional; only needed for non-ISO date strings
-        skip_rows      = [1, 3, 1337]    # or { "subdir/data.csv" = [2, 5] }
-        parallel_files = 4               # threads for parallel file parsing (default: auto)
+        watch_dir    = "./data/incoming"
+        format       = "auto"          # "auto" | "wide" | "narrow"
+        time_col     = "time"
+        id_col       = "id"            # narrow only
+        value_col    = "value"         # narrow only
+        date_format  = "%m/%d/%Y"      # optional; only needed for non-ISO date strings
+        skip_rows    = [1, 3, 1337]    # or { "subdir/data.csv" = [2, 5] }
     """
 
     _glob_patterns: tuple[str, ...] = ()
@@ -83,8 +81,6 @@ class _TabularIngestBase(Driver):
         self._value_col: str = cfg.get("value_col", "value")
         self._date_fmt: str | None = cfg.get("date_format", None)
         self._skip_rows = cfg.get("skip_rows", [])
-        _pw = cfg.get("parallel_files", None)
-        self._parse_workers: int | None = int(_pw) if _pw is not None else None
 
         self._rows_seen: dict[str, int] = {}
         self._registered: dict[str, set[str]] = {}  # source_id → registered ref_names
@@ -99,55 +95,38 @@ class _TabularIngestBase(Driver):
             for pattern in self._glob_patterns
             for p in self._watch_dir.rglob(pattern)
         })
-        if not paths:
-            return
-
-        # Parse phase — runs in parallel when multiple files are present.
-        # parse_file() is pure IO + CPU with no shared mutable state, so it is
-        # safe to run concurrently. Inserts are kept sequential below.
-        if len(paths) > 1:
-            with ThreadPoolExecutor(max_workers=self._parse_workers) as ex:
-                parsed = list(ex.map(self._parse_one, paths))
-        else:
-            parsed = [self._parse_one(paths[0])]
-
-        # Insert phase — sequential to avoid concurrent DB writes.
-        for result in parsed:
-            if result is None:
+        for path in paths:
+            key = str(path)
+            offset = self._rows_seen.get(key, 0)
+            try:
+                raw_batch, rows_read = self.parse_file(path, row_offset=offset)
+            except Exception:
+                logger.exception("tabular_ingest: failed to parse %s", path.name)
                 continue
-            path, offset, batch, rows_read = result
-            source_id = _safe_name(str(path))
+
+            if not raw_batch:
+                continue
+
             rel = path.relative_to(self._watch_dir)
+            source_id = _safe_name(key)
+            batch = {_safe_name(stream): rows for stream, rows in raw_batch.items()}
+
             try:
                 if source_id not in self._registered:
                     self.aq.register_datasource(source_id)
                 self._ensure_streams(batch, source_id, path)
                 total = sum(len(v) for v in batch.values())
-                result_dict = self.aq.insert_timeseries_batch(source_id, batch)
-                chunks = int(result_dict.get("batches", 1)) if isinstance(result_dict, dict) else 1
+                result = self.aq.insert_timeseries_batch(source_id, batch)
+                chunks = int(result.get("batches", 1)) if isinstance(result, dict) else 1
                 logger.info(
                     "tabular_ingest: %s — inserted %d row(s) across %d stream(s) in %d batch(es)",
                     rel, total, len(batch), chunks,
                 )
-                self._rows_seen[str(path)] = offset + rows_read
             except Exception:
                 logger.exception("tabular_ingest: failed to insert data from %s", path.name)
+                continue
 
-    def _parse_one(
-        self, path: Path
-    ) -> tuple[Path, int, dict[str, list[tuple[datetime, Any]]], int] | None:
-        """Parse one file and return (path, offset, batch, rows_read), or None on failure."""
-        key = str(path)
-        offset = self._rows_seen.get(key, 0)
-        try:
-            raw_batch, rows_read = self.parse_file(path, row_offset=offset)
-        except Exception:
-            logger.exception("tabular_ingest: failed to parse %s", path.name)
-            return None
-        if not raw_batch:
-            return None
-        batch = {_safe_name(stream): rows for stream, rows in raw_batch.items()}
-        return path, offset, batch, rows_read
+            self._rows_seen[key] = offset + rows_read
 
     # ---------------------------------------------------------- public hook
 
