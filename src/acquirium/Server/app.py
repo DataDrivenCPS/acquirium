@@ -188,9 +188,13 @@ async def lifespan(app: FastAPI):
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
 
+    from acquirium.cli import _load_config
+    _config_path = os.environ.get("ACQUIRIUM_CONFIG")
+    _cfg = _load_config(Path(_config_path) if _config_path else None)
+
     m = Manager.from_env()
     app.state.manager = m
-    app.state.read_batch_size = int(os.getenv("ACQUIRIUM_READ_BATCH_SIZE", "50000"))
+    app.state.read_batch_size = int(_cfg.get("server", {}).get("read_batch_size", 50_000))
 
     try:
         m._sync_stream_handles_from_graph()
