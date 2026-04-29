@@ -341,8 +341,28 @@ class Acquirium:
     ) -> None:
         """Declare multiple stream metadata records in one graph insert.
 
-        Each item accepts the same keys as ``register_stream``. This avoids one
-        graph insert per stream for wide tabular sources.
+        This is the batch form of :meth:`register_stream`. Use it when a driver
+        discovers many streams at once, such as a wide CSV file with one column
+        per stream. Batching avoids one graph insert and graph resync per stream.
+
+        Each stream item is a dictionary with these commonly used keys:
+
+        - ``point_uri``: required semantic point/output URI to register.
+        - ``source_id`` and ``ref_name``: source-local stream identity. When
+          both are present, Acquirium mints the canonical reference URI for that
+          pair, links ``point_uri`` to it with ``ref:hasExternalReference``, and
+          writes ``acq:sourceId``, ``acq:refName``, and ``ref:storedAt`` on the
+          reference node.
+        - ``label``: optional ``rdfs:label`` for the point.
+        - ``data_source``: optional datasource marker written on the point.
+        - ``properties``: optional mapping of predicate URIRefs to values.
+          These properties are written on the canonical reference node when
+          ``source_id`` and ``ref_name`` are present; otherwise they are written
+          on ``point_uri``.
+
+        Drivers should still insert rows with ``insert_timeseries_batch`` using
+        the same ``source_id`` and source-local ``ref_name``. Acquirium resolves
+        those inserts to the same canonical reference URI internally.
         """
         g = RDFGraph()
 

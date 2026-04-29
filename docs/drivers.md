@@ -139,6 +139,13 @@ automatically. `[[drivers]]` entries can override this value per driver.
 
 Add `[[drivers]]` entries to `acquirium.toml` to have drivers start automatically alongside `acquirium server`. Each entry requires a `spec` and can override any `[driver]` key.
 
+These auto-started drivers are in-process drivers: they run in background
+threads inside the Acquirium server process. They receive the same `self.aq`
+interface as a driver launched with `acquirium run`, but calls are dispatched
+directly to the server manager instead of going over HTTP. This keeps startup
+simple for local deployments, but it also means driver CPU work, blocking I/O,
+or large writes share resources with the API server.
+
 ```toml
 [[drivers]]
 spec     = "scripts/temp_driver.py:TemperatureDriver"
