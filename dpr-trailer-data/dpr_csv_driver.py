@@ -28,48 +28,31 @@ class DPRTrailerCSVDriver(CSVIngestDriver):
         if not self._skip_rows:
             self._skip_rows = [1]
 
-    def parse_file(
-        self, path: Path, row_offset: int = 0
-    ) -> tuple[dict[str, list[tuple[Any, Any]]], int]:
-        text = self._filtered_csv_text(path)
-        df = pl.read_csv(
-            StringIO(text),
-            try_parse_dates=False,
-            skip_rows_after_header=row_offset,
-            encoding=self._encoding,
-        )
+    def read_frame(self, path: Path, row_offset: int = 0) -> tuple[pl.DataFrame, int]:
+        df = self._read_df(path, row_offset)
         rows_read = len(df)
         if rows_read == 0:
-            return {}, 0
+            return df, 0
 
         for col in (self._date_col, self._clock_col):
             if col not in df.columns:
                 raise ValueError(f"column '{col}' not found in {df.columns}")
 
-        df = (
-            df.with_columns(
-                pl.concat_str(
-                    [
-                        pl.col(self._date_col).cast(pl.String),
-                        pl.lit(" "),
-                        pl.col(self._clock_col).cast(pl.String),
-                    ]
-                ).alias(self._combined_time_col)
-            )
-            .drop([self._date_col, self._clock_col])
-        )
+        df = df.with_columns(
+            pl.concat_str(
+                [
+                    pl.col(self._date_col).cast(pl.String),
+                    pl.lit(" "),
+                    pl.col(self._clock_col).cast(pl.String),
+                ]
+            ).alias(self._combined_time_col)
+        ).drop([self._date_col, self._clock_col])
 
-        old_time_col = self._time_col
-        old_date_fmt = self._date_fmt
+        # Configure the base class to use our combined time column and its format
         self._time_col = self._combined_time_col
         self._date_fmt = "%m/%d/%Y %I:%M:%S %p"
-        try:
-            batch = self._parse_wide(df)
-        finally:
-            self._time_col = old_time_col
-            self._date_fmt = old_date_fmt
 
-        return batch, rows_read
+        return df, rows_read
 
     def _time_column_reference_id(self) -> str:
         return f"{self._date_col},{self._clock_col}"
