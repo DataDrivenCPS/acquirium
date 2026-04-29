@@ -72,7 +72,6 @@ class WaterTAPDriver(Driver):
         if self._register_streams:
             for spec in self._point_specs:
                 self.aq.register_stream(
-                    spec.point_uri,
                     source_id=self._source_id,
                     ref_name=spec.ref_name,
                 )
