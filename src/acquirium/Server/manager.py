@@ -961,24 +961,21 @@ class Manager:
         """Insert multiple source-local streams in one storage operation."""
         import polars as pl
 
-        rows: list[tuple[str, datetime, str | None]] = []
-        for ref_name, values in streams.items():
+        handles: list[str] = []
+        timestamps: list[datetime] = []
+        values: list[str | None] = []
+        for ref_name, stream_rows in streams.items():
             handle = str(compute_handle(source_id, ref_name))
-            rows.extend(
-                (handle, ts, None if value is None else str(value))
-                for ts, value in values
-            )
-        if not rows:
+            for ts, value in stream_rows:
+                handles.append(handle)
+                timestamps.append(ts)
+                values.append(None if value is None else str(value))
+        if not handles:
             return 0
 
         df = pl.DataFrame(
-            rows,
-            schema={
-                "point_uri": pl.Utf8,
-                "ts": pl.Datetime("us", "UTC"),
-                "value": pl.Utf8,
-            },
-            orient="row",
+            {"point_uri": handles, "ts": timestamps, "value": values},
+            schema={"point_uri": pl.Utf8, "ts": pl.Datetime("us", "UTC"), "value": pl.Utf8},
         )
         return self.timescale.bulk_insert_polars(df)
 
