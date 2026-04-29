@@ -6,7 +6,10 @@ import logging
 from abc import abstractmethod
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import polars as pl
 
 import polars as pl
 from rdflib import Literal
@@ -98,6 +101,35 @@ class _TabularIngestBase(Driver):
         for path in paths:
             key = str(path)
             offset = self._rows_seen.get(key, 0)
+            source_id = _safe_name(key)
+            rel = path.relative_to(self._watch_dir)
+
+            df, rows_read = None, 0
+            try:
+                df, rows_read = self.parse_polars(path, row_offset=offset)
+            except Exception:
+                logger.exception("tabular_ingest: failed to parse %s", path.name)
+                continue
+
+            if df is not None:
+                try:
+                    if source_id not in self._registered:
+                        self.aq.register_datasource(source_id)
+                    stream_names = df["ref_name"].unique().to_list()
+                    self._ensure_streams(dict.fromkeys(stream_names), source_id, path)
+                    result = self.aq.insert_timeseries_polars(source_id, df)
+                    total = int(result.get("rows_inserted", len(df))) if isinstance(result, dict) else len(df)
+                    logger.info(
+                        "tabular_ingest: %s — inserted %d row(s) across %d stream(s)",
+                        rel, total, len(stream_names),
+                    )
+                    self._rows_seen[key] = offset + rows_read
+                except Exception:
+                    logger.exception("tabular_ingest: failed to insert data from %s", path.name)
+                continue
+
+            # Fallback: subclasses that only override parse_file (e.g. XLSX, custom drivers)
+            raw_batch = {}
             try:
                 raw_batch, rows_read = self.parse_file(path, row_offset=offset)
             except Exception:
@@ -107,10 +139,7 @@ class _TabularIngestBase(Driver):
             if not raw_batch:
                 continue
 
-            rel = path.relative_to(self._watch_dir)
-            source_id = _safe_name(key)
             batch = {_safe_name(stream): rows for stream, rows in raw_batch.items()}
-
             try:
                 if source_id not in self._registered:
                     self.aq.register_datasource(source_id)
@@ -122,11 +151,9 @@ class _TabularIngestBase(Driver):
                     "tabular_ingest: %s — inserted %d row(s) across %d stream(s) in %d batch(es)",
                     rel, total, len(batch), chunks,
                 )
+                self._rows_seen[key] = offset + rows_read
             except Exception:
                 logger.exception("tabular_ingest: failed to insert data from %s", path.name)
-                continue
-
-            self._rows_seen[key] = offset + rows_read
 
     # ---------------------------------------------------------- public hook
 
@@ -139,6 +166,18 @@ class _TabularIngestBase(Driver):
         Returns ``(batch, rows_read)`` where batch keys are bare stream names.
         Override in subclasses for custom layouts.
         """
+
+    def parse_polars(
+        self, path: Path, row_offset: int = 0
+    ) -> tuple["pl.DataFrame | None", int]:
+        """Return a melted ``(ts, ref_name, value)`` DataFrame and rows_read.
+
+        Returns ``(None, 0)`` by default; subclasses override to enable the
+        zero-copy Polars insert path (bypassing Python list conversion).
+        When a non-None DataFrame is returned, ``loop()`` calls
+        ``aq.insert_timeseries_polars`` instead of ``insert_timeseries_batch``.
+        """
+        return None, 0
 
     # ---------------------------------------------------------- format helpers
 

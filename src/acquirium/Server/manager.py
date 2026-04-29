@@ -979,6 +979,21 @@ class Manager:
         )
         return self.timescale.bulk_insert_polars(df)
 
+    def insert_timeseries_polars(self, source_id: str, df: "pl.DataFrame") -> int:
+        """Insert a melted (ts, ref_name, value) DataFrame, computing handles vectorized."""
+        if df.is_empty():
+            return 0
+        handle_map = {
+            name: str(compute_handle(source_id, name))
+            for name in df["ref_name"].unique().to_list()
+        }
+        df = (
+            df.with_columns(pl.col("ref_name").replace(handle_map).alias("point_uri"))
+            .drop("ref_name")
+            .select(["point_uri", "ts", "value"])
+        )
+        return self.timescale.bulk_insert_polars(df)
+
     def _app_type_uri(self, app_type: str) -> URIRef:
         norm = (app_type or "").strip().lower()
         if norm in {"soft_sensor", "softsensor"}:

@@ -195,6 +195,18 @@ class Acquirium:
             chunk_count += 1
         return {"ok": True, "rows_inserted": total, "batches": chunk_count}
 
+    def insert_timeseries_polars(self, source_id: str, df: "pl.DataFrame") -> dict[str, Any]:
+        """Insert a melted (ts, ref_name, value) DataFrame.
+
+        Subclasses backed by a Manager can override this to skip the Python
+        round-trip.  The default converts to the dict format and delegates to
+        ``insert_timeseries_batch``.
+        """
+        batch: dict[str, list] = {}
+        for ref_name, ts, value in df.iter_rows():
+            batch.setdefault(ref_name, []).append((ts, value))
+        return self.insert_timeseries_batch(source_id, batch)
+
     def _iter_insert_batches(
         self,
         streams: dict[str, list[tuple[datetime, Any]]],

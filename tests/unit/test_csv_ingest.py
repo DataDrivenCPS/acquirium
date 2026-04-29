@@ -38,6 +38,7 @@ def make_driver(cfg_overrides: dict | None = None, tmp_path: Path | None = None)
     aq.register_stream.return_value = None
     aq.register_streams.side_effect = lambda streams: Acquirium.register_streams(aq, streams)
     aq.insert_timeseries_batch.return_value = {"ok": True, "rows_inserted": 0}
+    aq.insert_timeseries_polars.return_value = {"ok": True, "rows_inserted": 0}
     watch = str(tmp_path) if tmp_path else "/tmp/csv_test_watch"
     config = {"driver": {"watch_dir": watch, **(cfg_overrides or {})}}
     return CSVIngestDriver(aq, config)
@@ -254,10 +255,9 @@ def test_loop_uses_full_path_as_source_id(tmp_path):
     driver.setup()
     path = _wide_csv(tmp_path)
     driver.loop()
-    source_id, streams = driver.aq.insert_timeseries_batch.call_args[0]
+    source_id, df = driver.aq.insert_timeseries_polars.call_args[0]
     assert source_id == _safe_name(str(path))
-    assert "temp" in streams
-    assert "rh" in streams
+    assert set(df["ref_name"].unique().to_list()) == {"temp", "rh"}
 
 
 def test_loop_registers_csv_external_reference_metadata(tmp_path):
@@ -305,9 +305,9 @@ def test_loop_full_path_source_id_includes_subdirectory(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     driver.setup()
     driver.loop()
-    source_id, streams = driver.aq.insert_timeseries_batch.call_args[0]
+    source_id, df = driver.aq.insert_timeseries_polars.call_args[0]
     assert source_id == _safe_name(str(path))
-    assert "flow" in streams
+    assert "flow" in df["ref_name"].to_list()
 
 
 # ------------------------------------------------------------------ row offset / append tracking
@@ -337,17 +337,17 @@ def test_loop_advances_cursor_on_each_tick(tmp_path):
     path = tmp_path / "growing.csv"
     path.write_text("time,temp\n2024-01-01T00:00:00Z,1.0\n")
     driver.loop()
-    assert driver.aq.insert_timeseries_batch.call_count == 1
+    assert driver.aq.insert_timeseries_polars.call_count == 1
     assert driver._rows_seen[str(path)] == 1
 
     with path.open("a") as f:
         f.write("2024-01-02T00:00:00Z,2.0\n")
     driver.loop()
-    assert driver.aq.insert_timeseries_batch.call_count == 2
+    assert driver.aq.insert_timeseries_polars.call_count == 2
     assert driver._rows_seen[str(path)] == 2
 
     driver.loop()
-    assert driver.aq.insert_timeseries_batch.call_count == 2
+    assert driver.aq.insert_timeseries_polars.call_count == 2
 
 
 def test_file_stays_in_place_after_insert(tmp_path):
@@ -364,7 +364,7 @@ def test_file_stays_in_place_after_insert(tmp_path):
 def test_loop_does_not_advance_cursor_on_insert_failure(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     driver.setup()
-    driver.aq.insert_timeseries_batch.side_effect = RuntimeError("server down")
+    driver.aq.insert_timeseries_polars.side_effect = RuntimeError("server down")
     path = _wide_csv(tmp_path)
     driver.loop()
     assert driver._rows_seen.get(str(path), 0) == 0
@@ -376,4 +376,4 @@ def test_loop_skips_bad_file_and_continues(tmp_path):
     (tmp_path / "bad.csv").write_text("not,valid\ncsvgarbagehere\n")
     (tmp_path / "good.csv").write_text("time,temp\n2024-01-01T00:00:00Z,22.5\n")
     driver.loop()
-    driver.aq.insert_timeseries_batch.assert_called_once()
+    driver.aq.insert_timeseries_polars.assert_called_once()
