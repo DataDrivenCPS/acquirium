@@ -33,7 +33,7 @@ from docker.errors import DockerException, NotFound as ContainerNotFound
 from acquirium.TextMatch.embedding_matcher import EmbeddingMatcher, _split_local_name
 from acquirium.TextMatch.qudt_store import QUDTStore
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("acquirium.manager")
 logger.setLevel(logging.INFO)
 

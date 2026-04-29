@@ -12,7 +12,7 @@ from acquirium.Client.query_graph import QueryGraph, QueryNode, QueryEdge, DataN
 from acquirium.Client.client import AcquiriumClient
 import logging
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
