@@ -5,7 +5,7 @@ Acquirium stores two kinds of things in two different stores:
 - **The RDF graph** holds semantics: what a measurement point *is*, what it measures, where it lives in the physical topology, and how it connects to raw data.
 - **The timeseries store** (TimescaleDB or DuckDB) holds the raw observations: a table of `(storage_key, timestamp, value)` triples.
 
-These two stores are linked through an *external reference* pattern borrowed from the Brick Schema vocabulary. Understanding that link — what the identifiers are, who mints them, and why they're designed the way they are — is the key to understanding the whole system.
+These two stores are linked through an *external reference* pattern.
 
 ---
 
@@ -23,11 +23,11 @@ urn:host:mybox:cpu_percent
 urn:watertap:pump_1:outlet_pressure
 ```
 
-`point_uri` lives in the RDF graph. It carries physical meaning: type, unit, quantity kind, medium, connections to other equipment. Applications and SPARQL queries operate on `point_uri` values.
+`point_uri` lives in the RDF graph. It carries physical meaning: type, unit, quantity kind, medium, connections to other equipment. Applications and SPARQL queries operate on `point_uri` values. It also participates in the ontology, be that [ASHRAE 223](https://open223.info), [WaTr Ontology](https://watermetadata.org) or [Brick](https://brickschema.org).
 
 ### `(source_id, ref_name)`
 
-The driver's natural name for a stream. `source_id` identifies the data source (e.g. a sensor network, a file, an MQTT broker, a simulation model). `ref_name` is the source-local stream identifier — a column name, sensor tag, MQTT topic, or variable path. Together they form a globally unique, human-readable address for the stream.
+The driver's natural name for a stream. `source_id` identifies the data source (e.g. a sensor network, a file, an MQTT broker, a simulation model) presented through a software process which delivers that data to Acquirium. `ref_name` is the source-local stream identifier: a column name, sensor tag, MQTT topic, etc. Together they form a globally unique, human-readable address for the stream. `source_id`s are unique to an Acquirium instance, but `ref_name`s only need to be unique with respect to the `source_id`.
 
 Examples:
 ```
@@ -36,7 +36,7 @@ source_id = "plant-historian",       ref_name = "TI-101"
 source_id = "watertap",              ref_name = "pump_1.outlet.pressure"
 ```
 
-This is what drivers work with. Drivers do not need to know `point_uri` values to insert data — they only need to know their `source_id` and their source-local `ref_name`.
+This is what drivers work with. Drivers do not need to know `point_uri` values to insert data. They only need to know their `source_id` and their source-local `ref_name`.
 
 ### `ref_uri` (the canonical reference URI)
 
@@ -120,9 +120,13 @@ Writes the `acq:DataSourceRegistry` node to the graph. This is a discovery mecha
 
 ### Step 2 — declare stream metadata
 
+`point_uri` is **optional**. Drivers that have a meaningful semantic URI for the stream should provide it; drivers that only know their source-local identity can omit it.
+
+**With a `point_uri`** — creates the semantic point node, links it to the ref node, and writes any metadata (unit, quantity kind, label) on the point:
+
 ```python
 aq.register_stream(
-    "urn:host:mybox:cpu_percent",
+    "urn:host:mybox:cpu_percent",       # optional — omit if unknown
     label="CPU usage",
     unit="%",                           # resolved to a QUDT URI via server
     quantity_kind="dimensionless ratio", # resolved to a QUDT URI via server
@@ -131,20 +135,31 @@ aq.register_stream(
 )
 ```
 
-Or in bulk for wide files or large driver setups:
+**Without a `point_uri`** — writes only the external reference node. The stream is immediately usable for data insertion; a semantic point URI can be linked later by inserting an RDF graph that declares `<point_uri> ref:hasExternalReference <ref_uri>`:
+
+```python
+aq.register_stream(
+    source_id="mybox-system-metrics",
+    ref_name="cpu_percent",
+)
+```
+
+Or in bulk, which is preferred when a driver discovers many streams at once (e.g. columns in a CSV file):
 
 ```python
 aq.register_streams([
-    {"point_uri": "...", "source_id": "...", "ref_name": "...", "properties": {...}},
-    ...
+    {"source_id": "mybox-system-metrics", "ref_name": "cpu_percent"},
+    {"source_id": "mybox-system-metrics", "ref_name": "memory_percent"},
+    # point_uri is optional per entry
+    {"point_uri": "urn:host:mybox:disk", "source_id": "mybox-system-metrics", "ref_name": "disk_percent"},
 ])
 ```
 
-This call:
-- assembles the RDF graph fragment (point node + ref node + datasource link)
-- resolves plain-text unit/quantity_kind strings to QUDT URIs via the server's embedding matcher and unit resolver
-- inserts the fragment into the graph with `replace=False` (append-only)
-- triggers `_sync_stream_handles_from_graph`, which upserts the `(point_uri, source_id, ref_name, ref_uri)` row into the streams table
+Registration:
+- writes the external reference node with `acq:sourceId`, `acq:refName`, and `ref:storedAt`
+- if `point_uri` is provided, also creates the point node and links it to the ref node
+- resolves plain-text unit/quantity_kind strings to QUDT URIs via the server's embedding matcher
+- triggers `_sync_stream_handles_from_graph`, which upserts the mapping into the streams table
 
 Stream registration is purely a metadata operation. No timeseries rows are written.
 

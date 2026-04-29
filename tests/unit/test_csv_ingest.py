@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
-from urllib.parse import quote
 
 import polars as pl
 import pytest
@@ -19,7 +18,6 @@ from acquirium.internals.models import compute_handle
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_REF_NAME,
     ACQUIRIUM_SOURCE_ID,
-    DATA_SOURCE,
     FILE_LOCATION,
     FILE_REFERENCE,
     HAS_EXTERNAL_REFERENCE,
@@ -280,20 +278,18 @@ def test_loop_registers_csv_external_reference_metadata(tmp_path):
     g = Graph().parse(data=graph_text, format="turtle")
     source_id = _safe_name(str(path))
     ref_uri = compute_handle(source_id, "temp")
-    point_uri = URIRef(f"urn:tabular:{quote(source_id, safe='._~-')}:temp")
-    assert (point_uri, HAS_EXTERNAL_REFERENCE, ref_uri) in g
-    assert (point_uri, DATA_SOURCE, Literal("CSV")) in g
+    # Tabular drivers register only the external reference node — no synthetic point_uri.
     assert (ref_uri, RDF.type, FILE_REFERENCE) in g
     assert (ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)) in g
     assert (ref_uri, ACQUIRIUM_REF_NAME, Literal("temp")) in g
     assert (ref_uri, STORED_AT, None) in g
-    assert (ref_uri, DATA_SOURCE, Literal("CSV")) in g
     assert (ref_uri, FILE_LOCATION, Literal(path.relative_to(tmp_path).as_posix())) in g
     assert (ref_uri, TIME_COLUMN_ID, Literal("time")) in g
     assert (ref_uri, VALUE_COLUMN_ID, Literal("temp")) in g
 
 
-def test_loop_registers_valid_point_uri_for_path_and_symbol_heavy_names(tmp_path):
+def test_loop_registers_no_synthetic_point_uri(tmp_path):
+    """Tabular drivers must not mint synthetic point URIs — only the ref node."""
     p = tmp_path / "bad_uri.csv"
     p.write_text("time,UV-Ultraviolet Intensity (mW/cm^2)\n2024-01-01T00:00:00Z,1.0\n")
     driver = make_driver(tmp_path=tmp_path)
@@ -304,10 +300,11 @@ def test_loop_registers_valid_point_uri_for_path_and_symbol_heavy_names(tmp_path
     g = Graph().parse(data=graph_text, format="turtle")
     source_id = _safe_name(str(p))
     ref_name = _safe_name("UV-Ultraviolet Intensity (mW/cm^2)")
-    point_uri = URIRef(
-        f"urn:tabular:{quote(source_id, safe='._~-')}:{quote(ref_name, safe='._~-')}"
-    )
-    assert (point_uri, HAS_EXTERNAL_REFERENCE, compute_handle(source_id, ref_name)) in g
+    ref_uri = compute_handle(source_id, ref_name)
+    assert (ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)) in g
+    assert (ref_uri, ACQUIRIUM_REF_NAME, Literal(ref_name)) in g
+    # No point_uri → ref_uri link should exist
+    assert list(g.subjects(HAS_EXTERNAL_REFERENCE, ref_uri)) == []
 
 
 def test_loop_full_path_source_id_includes_subdirectory(tmp_path):
