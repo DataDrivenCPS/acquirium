@@ -6,12 +6,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from acquirium.BuiltinDrivers.watertap import WaterTAPDriver, get_value_from_model
-from acquirium.internals.models import compute_handle
+from acquirium.internals.models import compute_ref_uri
 
 
 def _graph_text() -> str:
-    ref_one = compute_handle("watertap", "value_a")
-    ref_two = compute_handle("watertap", "value_b")
+    ref_one = compute_ref_uri("watertap", "value_a")
+    ref_two = compute_ref_uri("watertap", "value_b")
     return f"""@prefix ref: <https://brickschema.org/schema/Brick/ref#> .
 @prefix acq: <urn:acquirium#> .
 

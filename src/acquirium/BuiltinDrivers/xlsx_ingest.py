@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 import polars as pl
 
@@ -36,13 +34,13 @@ class XLSXIngestDriver(_TabularIngestBase):
         date_format  = "%m/%d/%Y"    # optional; only needed for non-ISO date strings
         sheets       = ["Sheet1"]    # omit to read the first sheet only
 
-    Override ``parse_file()`` to handle custom layouts::
+    Override ``read_frame()`` to handle custom layouts::
 
         class MyDriver(XLSXIngestDriver):
-            def parse_file(self, path, row_offset=0):
+            def read_frame(self, path, row_offset=0):
                 df = pl.read_excel(path, sheet_name="Data", engine="calamine")
                 df = df.slice(row_offset).rename({"Timestamp": "time"})
-                return self._parse_wide(df), len(df)
+                return df, len(df)
     """
 
     _glob_patterns = ("*.xlsx",)
@@ -53,16 +51,9 @@ class XLSXIngestDriver(_TabularIngestBase):
         self._sheets: list[str] | None = list(raw_sheets) if raw_sheets else None
         logger.info("xlsx_ingest watching %s", self._watch_dir)
 
-    def parse_file(
-        self, path: Path, row_offset: int = 0
-    ) -> tuple[dict[str, list[tuple[datetime, Any]]], int]:
+    def read_frame(self, path: Path, row_offset: int = 0) -> tuple[pl.DataFrame, int]:
         df = self._read_excel(path, row_offset)
-        rows_read = len(df)
-        if rows_read == 0:
-            return {}, 0
-        fmt = self._detect_format(df)
-        batch = self._parse_narrow(df) if fmt == "narrow" else self._parse_wide(df)
-        return batch, rows_read
+        return df, len(df)
 
     def _read_excel(self, path: Path, row_offset: int) -> pl.DataFrame:
         """Read an Excel workbook, merging requested sheets into one DataFrame."""

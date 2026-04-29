@@ -5,7 +5,7 @@ from rdflib import URIRef
 import pytest
 
 from acquirium.Server.manager import Manager
-from acquirium.internals.models import compute_handle
+from acquirium.internals.models import compute_ref_uri
 
 
 class _StubGraphStore:
@@ -20,16 +20,16 @@ class _StubTimescale:
     def __init__(self) -> None:
         self.calls = []
 
-    def ensure_stream_handle(self, point_uri: str, source_id: str, ref_name: str, handle=None):
+    def ensure_stream_ref(self, point_uri: str | None, source_id: str, ref_name: str, ref_uri=None):
         self.calls.append(
             {
                 "point_uri": point_uri,
                 "source_id": source_id,
                 "ref_name": ref_name,
-                "handle": handle,
+                "ref_uri": ref_uri,
             }
         )
-        return str(handle) if handle is not None else ""
+        return str(ref_uri) if ref_uri is not None else ""
 
 
 def _bare_manager(rows) -> tuple[Manager, _StubTimescale]:
@@ -40,30 +40,51 @@ def _bare_manager(rows) -> tuple[Manager, _StubTimescale]:
     return mgr, ts
 
 
-def test_sync_stream_handles_accepts_canonical_reference_uri():
+def test_sync_stream_refs_accepts_canonical_reference_uri():
     point_uri = "urn:test:point"
     source_id = "demo-source"
     ref_name = "cpu_percent"
-    ref_uri = compute_handle(source_id, ref_name)
+    ref_uri = compute_ref_uri(source_id, ref_name)
 
     mgr, ts = _bare_manager([(point_uri, ref_uri, source_id, ref_name)])
 
-    count = mgr._sync_stream_handles_from_graph()
+    count = mgr._sync_stream_refs_from_graph()
 
     assert count == 1
     assert len(ts.calls) == 1
-    assert ts.calls[0]["handle"] == URIRef(str(ref_uri))
+    assert ts.calls[0]["ref_uri"] == URIRef(str(ref_uri))
+    assert ts.calls[0]["point_uri"] == point_uri
 
 
-def test_sync_stream_handles_rejects_noncanonical_reference_uri():
+def test_sync_stream_refs_accepts_standalone_reference_without_point_uri():
+    source_id = "demo-source"
+    ref_name = "cpu_percent"
+    ref_uri = compute_ref_uri(source_id, ref_name)
+
+    mgr, ts = _bare_manager([(None, ref_uri, source_id, ref_name)])
+
+    count = mgr._sync_stream_refs_from_graph()
+
+    assert count == 1
+    assert ts.calls == [
+        {
+            "point_uri": None,
+            "source_id": source_id,
+            "ref_name": ref_name,
+            "ref_uri": URIRef(str(ref_uri)),
+        }
+    ]
+
+
+def test_sync_stream_refs_rejects_noncanonical_reference_uri():
     point_uri = "urn:test:point"
     source_id = "demo-source"
     ref_name = "cpu_percent"
-    bad_ref_uri = URIRef("urn:acquirium#not-the-canonical-handle")
+    bad_ref_uri = URIRef("urn:acquirium#not-the-canonical-ref_uri")
 
     mgr, ts = _bare_manager([(point_uri, bad_ref_uri, source_id, ref_name)])
 
     with pytest.raises(ValueError, match="Managed reference URI mismatch"):
-        mgr._sync_stream_handles_from_graph()
+        mgr._sync_stream_refs_from_graph()
 
     assert ts.calls == []

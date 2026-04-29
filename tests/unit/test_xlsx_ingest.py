@@ -20,6 +20,7 @@ def make_driver(cfg_overrides: dict | None = None, tmp_path: Path | None = None)
     aq.register_datasource.return_value = None
     aq.register_stream.return_value = None
     aq.insert_timeseries_batch.return_value = {"ok": True, "rows_inserted": 0}
+    aq.insert_timeseries_polars.return_value = {"ok": True, "rows_inserted": 0}
     watch = str(tmp_path) if tmp_path else "/tmp/xlsx_test_watch"
     config = {"driver": {"watch_dir": watch, **(cfg_overrides or {})}}
     return XLSXIngestDriver(aq, config)
@@ -76,9 +77,9 @@ def test_loop_uses_full_path_as_source_id(tmp_path):
     driver.setup()
     path = _wide_xlsx(tmp_path)
     driver.loop()
-    source_id, streams = driver.aq.insert_timeseries_batch.call_args[0]
+    source_id, df = driver.aq.insert_timeseries_polars.call_args[0]
     assert source_id == _safe_name(str(path))
-    assert "temp" in streams
+    assert "temp" in df["ref_name"].to_list()
 
 
 def test_loop_does_not_pick_up_csv_files(tmp_path):
@@ -94,12 +95,12 @@ def test_loop_advances_cursor_on_each_tick(tmp_path):
     driver.setup()
     path = _wide_xlsx(tmp_path)
     driver.loop()
-    assert driver.aq.insert_timeseries_batch.call_count == 1
+    assert driver.aq.insert_timeseries_polars.call_count == 1
     assert driver._rows_seen[str(path)] == 2
 
     # No new rows — second tick should be a no-op.
     driver.loop()
-    assert driver.aq.insert_timeseries_batch.call_count == 1
+    assert driver.aq.insert_timeseries_polars.call_count == 1
 
 
 # ------------------------------------------------------------------ config
