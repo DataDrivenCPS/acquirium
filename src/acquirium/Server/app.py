@@ -39,10 +39,6 @@ from acquirium.Server.insert_stats import insert_stats, start_insert_summary_thr
 
 log = logging.getLogger("acquirium.api")
 
-def _start_insert_summary_thread(stop_event: threading.Event, interval: float = 30.0) -> threading.Thread:
-    return start_insert_summary_thread(stop_event, interval)
-
-
 # ---------------------------------------------------------------------------
 # In-process driver helpers
 # ---------------------------------------------------------------------------
@@ -207,7 +203,7 @@ async def lifespan(app: FastAPI):
     # the Manager and its storage connections.
     driver_stop = threading.Event()
     _start_inprocess_drivers(m, driver_stop)
-    _start_insert_summary_thread(driver_stop, interval=10.0)
+    start_insert_summary_thread(driver_stop, interval=10.0)
 
     try:
         yield

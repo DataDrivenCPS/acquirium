@@ -131,10 +131,6 @@ class DirectAcquirium(Acquirium):
     def graph_version(self) -> int:
         return self._manager.graph_version()
 
-    # Override register_stream to call _resolve_qudt_uri via manager directly
-    # (the inherited version works via self.client, which already dispatches to
-    # manager — so the inherited implementation is fine as-is.  No override needed.)
-
     # Override insert_graph so drivers calling aq.insert_graph() also work
     def insert_graph(
         self,
