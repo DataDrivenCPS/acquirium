@@ -10,13 +10,13 @@ import psycopg
 from psycopg import sql
 from psycopg.types.json import Json
 
-from acquirium.internals.models import Order, TimeseriesInfo, TimeInterval, LogEntry, TimeIntervalModel, compute_handle
+from acquirium.internals.models import Order, TimeseriesInfo, TimeInterval, LogEntry, TimeIntervalModel, compute_ref_uri
 from acquirium.Storage.base import TimeseriesStore
 import logging
 import pyarrow as pa
 import polars as pl
 from rdflib import URIRef
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger(__name__)
 
 TIMESERIES_TABLE = "timeseries"
@@ -51,7 +51,7 @@ class TimescaleStore(TimeseriesStore):
             cur.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {TIMESERIES_TABLE} (
-                    point_uri TEXT NOT NULL,
+                    ref_uri TEXT NOT NULL,
                     ts TIMESTAMPTZ NOT NULL,
                     value TEXT
                 );
@@ -66,28 +66,31 @@ class TimescaleStore(TimeseriesStore):
             )
             # index to support lookups by id + time
             cur.execute(
-                f"CREATE INDEX IF NOT EXISTS idx_timeseries_point_ts ON {TIMESERIES_TABLE} (point_uri, ts);"
+                f"CREATE INDEX IF NOT EXISTS idx_timeseries_ref_ts ON {TIMESERIES_TABLE} (ref_uri, ts);"
             )
-            # enable compression, segment by point_uri and order by ts for efficient scans
+            # enable compression, segment by ref_uri and order by ts for efficient scans
             cur.execute(
-                f"ALTER TABLE {TIMESERIES_TABLE} SET (timescaledb.compress, timescaledb.compress_segmentby = 'point_uri', timescaledb.compress_orderby = 'ts');"
+                f"ALTER TABLE {TIMESERIES_TABLE} SET (timescaledb.compress, timescaledb.compress_segmentby = 'ref_uri', timescaledb.compress_orderby = 'ts');"
             )
             cur.execute(
                 "SELECT add_compression_policy('timeseries', INTERVAL '7 days', if_not_exists => TRUE);"
             )
-            # add unique constraint on (point_uri, ts) pairs
+            # add unique constraint on (ref_uri, ts) pairs
             cur.execute(
-                f"CREATE UNIQUE INDEX IF NOT EXISTS idx_timeseries_point_ts_unique ON {TIMESERIES_TABLE} (point_uri, ts);"
+                f"CREATE UNIQUE INDEX IF NOT EXISTS idx_timeseries_ref_ts_unique ON {TIMESERIES_TABLE} (ref_uri, ts);"
             )
             cur.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {STREAMS_TABLE} (
-                    handle TEXT PRIMARY KEY,
-                    point_uri TEXT NOT NULL,
+                    ref_uri TEXT PRIMARY KEY,
+                    point_uri TEXT,
                     source_id TEXT NOT NULL,
                     ref_name TEXT NOT NULL
                 );
                 """
+            )
+            cur.execute(
+                f"ALTER TABLE {STREAMS_TABLE} ALTER COLUMN point_uri DROP NOT NULL;"
             )
             cur.execute(
                 f"""
@@ -112,27 +115,27 @@ class TimescaleStore(TimeseriesStore):
         return TIMESERIES_TABLE
 
     # -------------------- mutations --------------------
-    def upsert_rows(self, point_uri: str, rows: Iterable[tuple[datetime, Any]]) -> int:
+    def upsert_rows(self, ref_uri: str, rows: Iterable[tuple[datetime, Any]]) -> int:
         rows_list = list(rows)
         if not rows_list:
             return 0
-        payload = [(point_uri, self._to_utc(ts), self._to_str(val)) for ts, val in rows_list]
+        payload = [(ref_uri, self._to_utc(ts), self._to_str(val)) for ts, val in rows_list]
         with self.conn.cursor() as cur:
             cur.executemany(
-                f"INSERT INTO {TIMESERIES_TABLE} (point_uri, ts, value) VALUES (%s, %s, %s) ON CONFLICT (point_uri, ts) DO UPDATE SET value = EXCLUDED.value",
+                f"INSERT INTO {TIMESERIES_TABLE} (ref_uri, ts, value) VALUES (%s, %s, %s) ON CONFLICT (ref_uri, ts) DO UPDATE SET value = EXCLUDED.value",
                 payload,
             )
         logger.debug("acquirium: upserted %d rows into %s", len(rows_list), TIMESERIES_TABLE)
         return len(rows_list)
 
-    def replace_rows(self, point_uri: str, rows: Iterable[tuple[datetime, Any]]) -> int:
+    def replace_rows(self, ref_uri: str, rows: Iterable[tuple[datetime, Any]]) -> int:
         with self.conn.cursor() as cur:
-            cur.execute(sql.SQL("DELETE FROM {} WHERE point_uri=%s").format(sql.Identifier(TIMESERIES_TABLE)), [point_uri])
-        return self.upsert_rows(point_uri, rows)
+            cur.execute(sql.SQL("DELETE FROM {} WHERE ref_uri=%s").format(sql.Identifier(TIMESERIES_TABLE)), [ref_uri])
+        return self.upsert_rows(ref_uri, rows)
 
     def bulk_insert_polars(self, df: pl.DataFrame) -> int:
         # Using polars to write to database via ADBC
-        # df format: columns: ["point_uri", "time", "value"]
+        # df format: columns: ["ref_uri", "time", "value"]
         random_string = ''.join(random.choice(string.ascii_lowercase) for _ in range(15))
         with self.conn.cursor() as cur:
             cur.execute(
@@ -141,7 +144,7 @@ class TimescaleStore(TimeseriesStore):
             cur.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {random_string} (
-                point_uri TEXT NOT NULL,
+                ref_uri TEXT NOT NULL,
                 ts TIMESTAMPTZ NOT NULL,
                 value TEXT
             );""")
@@ -155,9 +158,9 @@ class TimescaleStore(TimeseriesStore):
             with self.conn.cursor() as cur:
                 cur.execute(
                     f"""
-                    INSERT INTO {TIMESERIES_TABLE} (point_uri, ts, value)
-                    SELECT point_uri, ts, value FROM {random_string}
-                    ON CONFLICT (point_uri, ts) DO UPDATE SET value = EXCLUDED.value;
+                    INSERT INTO {TIMESERIES_TABLE} (ref_uri, ts, value)
+                    SELECT ref_uri, ts, value FROM {random_string}
+                    ON CONFLICT (ref_uri, ts) DO UPDATE SET value = EXCLUDED.value;
                     """
                 )
                 cur.execute(f"DROP TABLE IF EXISTS {random_string};")
@@ -167,58 +170,45 @@ class TimescaleStore(TimeseriesStore):
             logger.error(f"An error occurred: {e}")
             return -1
 
-    # -------------------- stream handles --------------------
-    def ensure_stream_handle(self, point_uri: str, source_id: str, ref_name: str, handle: URIRef | None = None) -> URIRef:
-        """Register a (point_uri, source_id, ref_name) mapping in the streams table.
+    # -------------------- stream references --------------------
+    def ensure_stream_ref(self, point_uri: str | None, source_id: str, ref_name: str, ref_uri: URIRef | None = None) -> URIRef:
+        """Register a stream reference in the streams table.
 
-        The handle is computed deterministically from (source_id, ref_name) via
-        :func:`compute_handle`, so two sources with the same ref_name never
-        produce the same storage key.  The handle is also used as the
-        TimescaleDB row key for the stream's data.  Pass a precomputed handle
+        The ref URI is computed deterministically from (source_id, ref_name) via
+        :func:`compute_ref_uri`, so two sources with the same ref_name never
+        produce the same storage key. The ref URI is also used as the
+        TimescaleDB row key for the stream's data. Pass a precomputed ref_uri
         to avoid recomputing it when already available.
 
-        Returns the handle.
+        Returns the ref URI.
         """
-        if handle is None:
-            handle = compute_handle(source_id, ref_name)
+        if ref_uri is None:
+            ref_uri = compute_ref_uri(source_id, ref_name)
         with self.conn.cursor() as cur:
             cur.execute(
                 f"""
-                INSERT INTO {STREAMS_TABLE} (handle, point_uri, source_id, ref_name)
+                INSERT INTO {STREAMS_TABLE} (ref_uri, point_uri, source_id, ref_name)
                 VALUES (%s, %s, %s, %s)
-                ON CONFLICT (handle) DO UPDATE
+                ON CONFLICT (ref_uri) DO UPDATE
                     SET 
-                        point_uri = EXCLUDED.point_uri,
+                        point_uri = COALESCE(EXCLUDED.point_uri, {STREAMS_TABLE}.point_uri),
                         source_id = EXCLUDED.source_id,
                         ref_name = EXCLUDED.ref_name
                 """,
-                (str(handle), point_uri, source_id, ref_name),
+                (str(ref_uri), point_uri, source_id, ref_name),
             )
-        return handle
-
-    def resolve_handle(self, handle: URIRef) -> tuple[str | None, str | None, str | None]:
-        """Resolve a handle to its (point_uri, source_id, ref_name) triple.
-
-        Returns (None, None, None) if the handle is not found.
-        """
-        with self.conn.cursor() as cur:
-            cur.execute(
-                f"SELECT point_uri, source_id, ref_name FROM {STREAMS_TABLE} WHERE handle = %s",
-                (str(handle),),
-            )
-            row = cur.fetchone()
-            return (row[0], row[1], row[2]) if row else (None, None, None)
+        return ref_uri
 
     def resolve_storage_key(self, point_uri: str) -> str:
-        """Return the storage key (handle) for a point_uri, or point_uri itself if not registered.
+        """Return the storage key (ref URI) for a point_uri, or point_uri itself if not registered.
 
-        Streams inserted via insert_timeseries are stored under their handle (UUID).
-        This resolves the semantic URI → handle so reads find the right rows.
+        Streams inserted via insert_timeseries are stored under their ref URI.
+        This resolves the semantic URI → ref URI so reads find the right rows.
         Falls back to the URI itself for data inserted directly (e.g. bulk CSV ingest).
         """
         with self.conn.cursor() as cur:
             cur.execute(
-                f"SELECT handle FROM {STREAMS_TABLE} WHERE point_uri = %s",
+                f"SELECT ref_uri FROM {STREAMS_TABLE} WHERE point_uri = %s",
                 (point_uri,),
             )
             row = cur.fetchone()
@@ -227,14 +217,14 @@ class TimescaleStore(TimeseriesStore):
     def resolve_storage_keys(self, point_uris: list[str]) -> dict[str, str]:
         """Batch-resolve point_uris to storage keys in a single query.
 
-        Returns a mapping of point_uri → handle (or point_uri itself for
+        Returns a mapping of point_uri → ref_uri (or point_uri itself for
         unregistered URIs, preserving the single-URI fallback behaviour).
         """
         if not point_uris:
             return {}
         with self.conn.cursor() as cur:
             cur.execute(
-                f"SELECT point_uri, handle FROM {STREAMS_TABLE} WHERE point_uri = ANY(%s)",
+                f"SELECT point_uri, ref_uri FROM {STREAMS_TABLE} WHERE point_uri = ANY(%s)",
                 (point_uris,),
             )
             rows = cur.fetchall()
@@ -244,7 +234,7 @@ class TimescaleStore(TimeseriesStore):
     # -------------------- queries --------------------
     def timeseries(
         self,
-        point_uri: str,
+        ref_uri: str,
         *,
         start: datetime | None = None,
         end: datetime | None = None,
@@ -253,10 +243,10 @@ class TimescaleStore(TimeseriesStore):
         batch_size: int = 50_000,
     ) -> Iterator[pa.RecordBatch]:
         '''
-        Returns an iterator over the time series data for the given point URI.
+        Returns an iterator over the time series data for the given ref URI.
         '''
-        clauses = ["point_uri = %s"]
-        params: list[Any] = [point_uri]
+        clauses = ["ref_uri = %s"]
+        params: list[Any] = [ref_uri]
 
         if start:
             clauses.append("ts >= %s")
@@ -288,43 +278,43 @@ class TimescaleStore(TimeseriesStore):
 
                 ts_col = [r[0] for r in rows]
                 val_col = [r[1] for r in rows]
-                point_uri_col = [point_uri] * len(ts_col)
-                if not ts_col or not val_col or not point_uri_col:
+                ref_uri_col = [ref_uri] * len(ts_col)
+                if not ts_col or not val_col or not ref_uri_col:
                     break
 
                 batch = pa.record_batch(
                     [
                         pa.array(ts_col, type=pa.timestamp("us", tz="UTC")),
                         pa.array(val_col, type=pa.string()),
-                        pa.array(point_uri_col, type=pa.string()),
+                        pa.array(ref_uri_col, type=pa.string()),
                     ],
                     names=["ts", "value", "uri"],
                 )
                 yield batch
 
-    def timeseries_info(self, point_uri: str) -> TimeseriesInfo:
+    def timeseries_info(self, ref_uri: str) -> TimeseriesInfo:
         with self.conn.cursor() as cur:
             cur.execute(
-                f"SELECT COUNT(*), MIN(ts), MAX(ts) FROM {TIMESERIES_TABLE} WHERE point_uri=%s",
-                (point_uri,),
+                f"SELECT COUNT(*), MIN(ts), MAX(ts) FROM {TIMESERIES_TABLE} WHERE ref_uri=%s",
+                (ref_uri,),
             )
             cnt, earliest, latest = cur.fetchone()
         return TimeseriesInfo(table=TIMESERIES_TABLE, row_count=cnt, earliest=earliest, latest=latest)
 
-    def timeseries_info_batch(self, point_uris: list[str]) -> dict[str, TimeseriesInfo]:
-        """Return stats (row_count, earliest, latest) for multiple point URIs in one query."""
-        if not point_uris:
+    def timeseries_info_batch(self, ref_uris: list[str]) -> dict[str, TimeseriesInfo]:
+        """Return stats (row_count, earliest, latest) for multiple ref URIs in one query."""
+        if not ref_uris:
             return {}
         with self.conn.cursor() as cur:
             cur.execute(
-                f"SELECT point_uri, COUNT(*), MIN(ts), MAX(ts) FROM {TIMESERIES_TABLE} WHERE point_uri = ANY(%s) GROUP BY point_uri",
-                (point_uris,),
+                f"SELECT ref_uri, COUNT(*), MIN(ts), MAX(ts) FROM {TIMESERIES_TABLE} WHERE ref_uri = ANY(%s) GROUP BY ref_uri",
+                (ref_uris,),
             )
             rows = cur.fetchall()
         result: dict[str, TimeseriesInfo] = {}
         for uri, cnt, earliest, latest in rows:
             result[uri] = TimeseriesInfo(table=TIMESERIES_TABLE, row_count=cnt, earliest=earliest, latest=latest)
-        for uri in point_uris:
+        for uri in ref_uris:
             if uri not in result:
                 result[uri] = TimeseriesInfo(table=TIMESERIES_TABLE, row_count=0)
         return result

@@ -26,6 +26,7 @@ from acquirium.Server.insert_stats import insert_stats
 import warnings
 
 if TYPE_CHECKING:
+    import polars as pl
     from acquirium.Server.manager import Manager
 
 
@@ -87,6 +88,12 @@ class _DirectClient:
         )
         return {"ok": True, "rows_inserted": total}
 
+    def insert_timeseries_polars(self, source_id: str, df: "pl.DataFrame") -> dict[str, Any]:
+        streams = df["ref_name"].unique().to_list()
+        total = self._manager.insert_timeseries_polars(source_id, df)
+        insert_stats.record(origin=self._origin, rows=total, streams=streams)
+        return {"ok": True, "rows_inserted": total}
+
     def graph_version(self) -> int:
         return self._manager.graph_version()
 
@@ -131,9 +138,8 @@ class DirectAcquirium(Acquirium):
     def graph_version(self) -> int:
         return self._manager.graph_version()
 
-    # Override register_stream to call _resolve_qudt_uri via manager directly
-    # (the inherited version works via self.client, which already dispatches to
-    # manager — so the inherited implementation is fine as-is.  No override needed.)
+    def insert_timeseries_polars(self, source_id: str, df: "pl.DataFrame") -> dict:
+        return self.client.insert_timeseries_polars(source_id, df)
 
     # Override insert_graph so drivers calling aq.insert_graph() also work
     def insert_graph(

@@ -96,13 +96,20 @@ class MQTTDriver(Driver):
 ```
 
 Rules:
-- Use `self.reference_uri(ref_name)` to compute the canonical `acq:uuid...` URI.
+- Use `self.reference_uri(ref_name)` to compute the canonical `urn:acquirium#...` URI.
 - Use that URI as the object of `ref:hasExternalReference` in the graph.
 - Write `acq:sourceId` and `acq:refName` on the same node.
 - Attach driver- or app-specific provenance metadata to that same node.
 - When inserting data, continue to use the source-local `ref_name` with `insert_timeseries_batch()`. Acquirium derives the same canonical URI internally from `(source_id, ref_name)`.
 
 If you are not inside a `Driver` subclass, the equivalent helper is `aq.reference_uri(source_id, ref_name)`.
+
+The canonical URI is called `ref_uri` everywhere. It is also the physical
+storage key in the timeseries table. There is no separate `handle` identifier.
+Drivers should still insert samples by `(source_id, ref_name)`; Acquirium
+computes `ref_uri` internally and records the stream in the `streams` table. If
+the driver has no semantic `point_uri`, the `streams` row is still created with
+`point_uri = NULL` and can be linked to ontology metadata later.
 
 ## Running a driver manually
 
@@ -138,6 +145,13 @@ automatically. `[[drivers]]` entries can override this value per driver.
 ## Default drivers (auto-start with the server)
 
 Add `[[drivers]]` entries to `acquirium.toml` to have drivers start automatically alongside `acquirium server`. Each entry requires a `spec` and can override any `[driver]` key.
+
+These auto-started drivers are in-process drivers: they run in background
+threads inside the Acquirium server process. They receive the same `self.aq`
+interface as a driver launched with `acquirium run`, but calls are dispatched
+directly to the server manager instead of going over HTTP. This keeps startup
+simple for local deployments, but it also means driver CPU work, blocking I/O,
+or large writes share resources with the API server.
 
 ```toml
 [[drivers]]

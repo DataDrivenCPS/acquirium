@@ -163,7 +163,6 @@ class MQTTIngestDriver(Driver):
                 continue
             try:
                 self.aq.register_stream(
-                    str(data_uri),
                     source_id=self._source_id,
                     ref_name=ref_name_s,
                 )

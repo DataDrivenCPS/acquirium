@@ -216,4 +216,5 @@ scripts/benchmark/chain/*.parquet
 scripts/benchmark/chain/memo
 scripts/benchmark/scalability/*.csv
 
-# dpr*
+# Local DPR trailer data exports and generated databases.
+dpr-trailer-data/

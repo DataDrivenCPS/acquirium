@@ -37,6 +37,9 @@ duckdb_path = ".acquirium/timeseries.duckdb"
 # Set to true to wipe all data on server startup (useful for development).
 recreate = false
 
+# Number of rows per Arrow RecordBatch in timeseries read responses.
+# read_batch_size = 50000
+
 [driver]
 # Defaults applied to all drivers — used by `acquirium run` and [[drivers]] entries.
 server_url  = "localhost"
