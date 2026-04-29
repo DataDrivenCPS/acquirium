@@ -8,7 +8,7 @@ Managed streams use:
 
 - `point_uri` as the semantic point in the RDF graph
 - `(source_id, ref_name)` as the source-local stream name
-- `compute_handle(source_id, ref_name)` as the canonical external-reference URI
+- an Acquirium-minted canonical external-reference URI derived from `(source_id, ref_name)`
 - that canonical external-reference URI as the timeseries storage key
 
 The graph-visible external-reference URI and the storage key are the same.
@@ -20,20 +20,21 @@ The graph-visible external-reference URI and the storage key are the same.
 | `point_uri` | RDF graph | Semantic identity of the measurement or output |
 | `source_id` | RDF graph, streams table | Datasource namespace |
 | `ref_name` | RDF graph, streams table | Source-local stream identifier |
-| `ref_uri` | RDF graph, streams table, timeseries table | Canonical external-reference URI computed from `(source_id, ref_name)` |
+| `ref_uri` | RDF graph, streams table, timeseries table | Canonical external-reference URI minted by Acquirium from `(source_id, ref_name)` |
 
 ## Canonical reference URI
 
-For managed streams:
+Drivers should not construct the reference URI directly. Use the helper exposed
+by the driver or client API:
 
 ```python
-ref_uri = compute_handle(source_id, ref_name)
+ref_uri = self.reference_uri(ref_name)          # inside a Driver subclass
+ref_uri = aq.reference_uri(source_id, ref_name) # outside a Driver subclass
 ```
 
-Equivalent helpers:
-
-- in a driver: `self.reference_uri(ref_name)`
-- on the client: `aq.reference_uri(source_id, ref_name)`
+The exact URI form is an Acquirium implementation detail. Treat it as stable
+for a given `(source_id, ref_name)`, but do not duplicate the minting algorithm
+in driver code.
 
 ## Managed graph shape
 
@@ -96,7 +97,7 @@ aq.register_stream(
 
 Effects:
 
-- computes `ref_uri = compute_handle("mybox-system-metrics", "cpu_percent")`
+- mints the canonical reference URI for `("mybox-system-metrics", "cpu_percent")`
 - writes `point_uri -> ref:hasExternalReference -> ref_uri`
 - writes `acq:sourceId` and `acq:refName` on `ref_uri`
 - writes stream metadata on `point_uri`
@@ -112,7 +113,7 @@ aq.insert_timeseries_batch(
 
 Effects:
 
-- computes the same `ref_uri`
+- resolves the same canonical reference URI internally
 - writes rows to the timeseries store under `ref_uri`
 
 ### 4. Sync point-to-stream mapping
@@ -126,7 +127,7 @@ When graph data is inserted, the server scans for:
 
 For each such row, the server:
 
-- recomputes `compute_handle(source_id, ref_name)`
+- recomputes the canonical reference URI for `(source_id, ref_name)`
 - requires it to equal `ref_uri`
 - records `(point_uri, source_id, ref_name, ref_uri)` in the streams table
 
@@ -148,7 +149,7 @@ Ref-based reads:
 
 For managed streams:
 
-- `ref_uri == compute_handle(source_id, ref_name)`
+- `ref_uri` is the canonical Acquirium URI for `(source_id, ref_name)`
 - graph identity and storage identity are the same
 - inserts use `ref_name`
 - graph links use `ref_uri`
@@ -156,13 +157,13 @@ For managed streams:
 
 ## Example: system metrics
 
-Example values:
+Example driver code:
 
-```text
-source_id = "mybox-system-metrics"
-ref_name  = "cpu_percent"
+```python
+self._source_id = "mybox-system-metrics"
+ref_name = "cpu_percent"
 point_uri = "urn:host:mybox:cpu_percent"
-ref_uri   = compute_handle(source_id, ref_name)
+ref_uri = self.reference_uri(ref_name)
 ```
 
 The driver:

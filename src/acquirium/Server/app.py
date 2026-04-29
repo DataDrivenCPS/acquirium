@@ -9,7 +9,6 @@ import tomllib
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any, Optional, Iterator
-from urllib.parse import urlencode
 
 from fastapi import Body, FastAPI, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import StreamingResponse, Response
@@ -39,18 +38,6 @@ import pyarrow as pa
 from acquirium.Server.insert_stats import insert_stats, start_insert_summary_thread
 
 log = logging.getLogger("acquirium.api")
-
-# ---------------------------------------------------------------------------
-# Insert-timeseries stats aggregation (suppresses per-request access logs)
-# ---------------------------------------------------------------------------
-
-
-class _SuppressInsertTimeseriesFilter(logging.Filter):
-    """Drop uvicorn access-log lines for POST /insert_timeseries."""
-    def filter(self, record: logging.LogRecord) -> bool:
-        msg = record.getMessage()
-        return not ("POST /insert_timeseries" in msg and "HTTP/1" in msg)
-
 
 def _start_insert_summary_thread(stop_event: threading.Event, interval: float = 30.0) -> threading.Thread:
     return start_insert_summary_thread(stop_event, interval)
@@ -200,7 +187,6 @@ async def lifespan(app: FastAPI):
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    logging.getLogger("uvicorn.access").addFilter(_SuppressInsertTimeseriesFilter())
 
     m = Manager.from_env()
     app.state.manager = m
@@ -214,6 +200,11 @@ async def lifespan(app: FastAPI):
         finally:
             raise
 
+    # Shared shutdown signal for all server-owned background threads.
+    # In-process drivers listed in [[drivers]] run alongside the API server,
+    # and the insert summary logger also runs in a background thread. They both
+    # poll this event so FastAPI lifespan shutdown can stop them before closing
+    # the Manager and its storage connections.
     driver_stop = threading.Event()
     _start_inprocess_drivers(m, driver_stop)
     _start_insert_summary_thread(driver_stop, interval=10.0)
@@ -221,6 +212,10 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        # Tell background driver/summary threads to exit, then close the manager.
+        # Driver threads are daemons, so shutdown should not block indefinitely;
+        # the event mainly prevents them from continuing to use Manager after it
+        # starts closing.
         driver_stop.set()
         try:
             m.close()
@@ -442,53 +437,6 @@ def _parse_dt(s: Optional[str]) -> Optional[datetime]:
     return dtparser.isoparse(s)
 
 
-def _json_timeseries_rows(batches: Iterator[pa.RecordBatch]) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for batch in batches:
-        table = pa.Table.from_batches([batch])
-        ts_col = table.column("ts")
-        value_col = table.column("value")
-        uri_col = table.column("uri")
-        for i in range(len(table)):
-            ts = ts_col[i].as_py()
-            rows.append(
-                {
-                    "ts": ts.isoformat() if ts is not None else None,
-                    "value": value_col[i].as_py(),
-                    "uri": uri_col[i].as_py(),
-                }
-            )
-    return rows
-
-
-def _json_timeseries_columns(
-    batches: Iterator[pa.RecordBatch],
-    *,
-    ts_format: str = "unix_ms",
-) -> dict[str, list[Any]]:
-    ts_values: list[Any] = []
-    value_values: list[Any] = []
-    for batch in batches:
-        table = pa.Table.from_batches([batch])
-        ts_col = table.column("ts")
-        value_col = table.column("value")
-        for i in range(len(table)):
-            ts = ts_col[i].as_py()
-            if ts_format == "iso":
-                ts_values.append(ts.isoformat() if ts is not None else None)
-            else:
-                ts_values.append(int(ts.timestamp() * 1000) if ts is not None else None)
-            value_values.append(value_col[i].as_py())
-    return {
-        "ts": ts_values,
-        "value": value_values,
-    }
-
-
-def _with_query(url: str, **params: str) -> str:
-    return f"{url}?{urlencode(params)}"
-
-
 #### TIMESERIES API ENDPOINTS ####
 @app.get("/timeseries")
 def get_timeseries(
@@ -547,224 +495,6 @@ def get_timeseries(
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-
-
-#### SOURCE BROWSE API ####
-
-
-@app.get("/source")
-def browse_sources(request: Request) -> dict[str, Any]:
-    sources = app.state.manager.list_sources()
-    return {
-        "kind": "source-index",
-        "count": len(sources),
-        "sources": [
-            {
-                **source,
-                "url": str(request.url_for("browse_source", source_id=source["source_id"])),
-                "streams_url": str(request.url_for("browse_source_streams", source_id=source["source_id"])),
-            }
-            for source in sources
-        ],
-    }
-
-
-@app.get("/source/{source_id}", name="browse_source")
-def browse_source(request: Request, source_id: str) -> dict[str, Any]:
-    source = app.state.manager.get_source(source_id)
-    if source is None:
-        raise HTTPException(status_code=404, detail=f"Unknown source_id: {source_id}")
-    return {
-        "kind": "source",
-        **source,
-        "streams_url": str(request.url_for("browse_source_streams", source_id=source_id)),
-    }
-
-
-@app.get("/source/{source_id}/streams", name="browse_source_streams")
-def browse_source_streams(request: Request, source_id: str) -> dict[str, Any]:
-    source = app.state.manager.get_source(source_id)
-    if source is None:
-        raise HTTPException(status_code=404, detail=f"Unknown source_id: {source_id}")
-    streams = app.state.manager.list_source_streams(source_id)
-    return {
-        "kind": "stream-index",
-        "source_id": source_id,
-        "count": len(streams),
-        "streams": [
-            {
-                **stream,
-                "url": _with_query(
-                    str(request.url_for("browse_stream_by_ref")),
-                    ref_uri=stream["reference_uri"],
-                ),
-                "data_url": _with_query(
-                    str(request.url_for("browse_stream_data_by_ref")),
-                    ref_uri=stream["reference_uri"],
-                ),
-            }
-            for stream in streams
-        ],
-    }
-
-
-def _stream_data_response(
-    stream: dict[str, Any],
-    *,
-    start: Optional[str] = None,
-    end: Optional[str] = None,
-    limit: int = 1000,
-    order: str = "desc",
-    format: str = "columns",
-    ts_format: str = "unix_ms",
-) -> dict[str, Any]:
-    if order not in ("asc", "desc"):
-        raise HTTPException(status_code=400, detail="order must be 'asc' or 'desc'")
-    if format not in ("columns", "rows"):
-        raise HTTPException(status_code=400, detail="format must be 'columns' or 'rows'")
-    if ts_format not in ("unix_ms", "iso"):
-        raise HTTPException(status_code=400, detail="ts_format must be 'unix_ms' or 'iso'")
-    batches = app.state.manager.timeseries_batch(
-        uri=stream["point_uri"],
-        start=_parse_dt(start),
-        end=_parse_dt(end),
-        limit=limit,
-        order=order,  # type: ignore[arg-type]
-        batch_size=min(limit, 50_000),
-    )
-    payload: dict[str, Any]
-    if format == "rows":
-        payload = {"encoding": "rows", "rows": _json_timeseries_rows(batches)}
-    else:
-        payload = {
-            "encoding": "columns",
-            "ts_format": ts_format,
-            "columns": ["ts", "value"],
-            "data": _json_timeseries_columns(batches, ts_format=ts_format),
-        }
-    return {
-        "kind": "stream-data",
-        "source_id": stream["source_id"],
-        "ref_name": stream["ref_name"],
-        "reference_uri": stream["reference_uri"],
-        "point_uri": stream["point_uri"],
-        "limit": limit,
-        "order": order,
-        **payload,
-    }
-
-
-def _stream_detail_response(request: Request, stream: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "kind": "stream",
-        **stream,
-        "url": _with_query(
-            str(request.url_for("browse_stream_by_ref")),
-            ref_uri=stream["reference_uri"],
-        ),
-        "data_url": _with_query(
-            str(request.url_for("browse_stream_data_by_ref")),
-            ref_uri=stream["reference_uri"],
-        ),
-    }
-
-
-@app.get("/streams/by-ref", name="browse_stream_by_ref")
-def browse_stream_by_ref(request: Request, ref_uri: str) -> dict[str, Any]:
-    stream = app.state.manager.get_stream_by_reference_uri(ref_uri)
-    if stream is None:
-        raise HTTPException(status_code=404, detail=f"Unknown stream reference: {ref_uri}")
-    return _stream_detail_response(request, stream)
-
-
-@app.get("/streams/data", name="browse_stream_data_by_ref")
-def browse_stream_data_by_ref(
-    ref_uri: str,
-    start: Optional[str] = None,
-    end: Optional[str] = None,
-    limit: int = 1000,
-    order: str = "desc",
-    format: str = "columns",
-    ts_format: str = "unix_ms",
-) -> dict[str, Any]:
-    stream = app.state.manager.get_stream_by_reference_uri(ref_uri)
-    if stream is None:
-        raise HTTPException(status_code=404, detail=f"Unknown stream reference: {ref_uri}")
-    return _stream_data_response(
-        stream,
-        start=start,
-        end=end,
-        limit=limit,
-        order=order,
-        format=format,
-        ts_format=ts_format,
-    )
-
-
-@app.get("/source/{source_id}/streams/by-ref")
-def browse_source_stream_by_ref(request: Request, source_id: str, ref_uri: str) -> dict[str, Any]:
-    stream = app.state.manager.get_source_stream_by_reference_uri(source_id, ref_uri)
-    if stream is None:
-        raise HTTPException(status_code=404, detail=f"Unknown stream reference for source {source_id}: {ref_uri}")
-    return _stream_detail_response(request, stream)
-
-
-@app.get("/source/{source_id}/streams/data")
-def browse_source_stream_data_by_ref(
-    source_id: str,
-    ref_uri: str,
-    start: Optional[str] = None,
-    end: Optional[str] = None,
-    limit: int = 1000,
-    order: str = "desc",
-    format: str = "columns",
-    ts_format: str = "unix_ms",
-) -> dict[str, Any]:
-    stream = app.state.manager.get_source_stream_by_reference_uri(source_id, ref_uri)
-    if stream is None:
-        raise HTTPException(status_code=404, detail=f"Unknown stream reference for source {source_id}: {ref_uri}")
-    return _stream_data_response(
-        stream,
-        start=start,
-        end=end,
-        limit=limit,
-        order=order,
-        format=format,
-        ts_format=ts_format,
-    )
-
-
-@app.get("/source/{source_id}/streams/{ref_name:path}/data", name="browse_source_stream_data")
-def browse_source_stream_data(
-    source_id: str,
-    ref_name: str,
-    start: Optional[str] = None,
-    end: Optional[str] = None,
-    limit: int = 1000,
-    order: str = "desc",
-    format: str = "columns",
-    ts_format: str = "unix_ms",
-) -> dict[str, Any]:
-    stream = app.state.manager.get_source_stream(source_id, ref_name)
-    if stream is None:
-        raise HTTPException(status_code=404, detail=f"Unknown stream: {source_id}/{ref_name}")
-    return _stream_data_response(
-        stream,
-        start=start,
-        end=end,
-        limit=limit,
-        order=order,
-        format=format,
-        ts_format=ts_format,
-    )
-
-
-@app.get("/source/{source_id}/streams/{ref_name:path}", name="browse_source_stream")
-def browse_source_stream(request: Request, source_id: str, ref_name: str) -> dict[str, Any]:
-    stream = app.state.manager.get_source_stream(source_id, ref_name)
-    if stream is None:
-        raise HTTPException(status_code=404, detail=f"Unknown stream: {source_id}/{ref_name}")
-    return _stream_detail_response(request, stream)
 
 
 @app.post("/timeseries_info")
