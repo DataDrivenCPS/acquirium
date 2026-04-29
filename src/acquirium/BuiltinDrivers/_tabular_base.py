@@ -7,7 +7,6 @@ from abc import abstractmethod
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 
 import polars as pl
 from rdflib import Literal
@@ -36,9 +35,6 @@ _URI_UNSAFE = str.maketrans({
 def _safe_name(s: str) -> str:
     return " ".join(s.split()).translate(_URI_UNSAFE)
 
-
-def _uri_component(s: str) -> str:
-    return quote(s, safe="._~-")
 
 
 class _TabularIngestBase(Driver):
@@ -298,7 +294,6 @@ class _TabularIngestBase(Driver):
             self.aq.register_streams(
                 [
                     {
-                        "point_uri": f"urn:tabular:{_uri_component(source_id)}:{_uri_component(ref_name)}",
                         "source_id": source_id,
                         "ref_name": ref_name,
                         "data_source": "CSV",

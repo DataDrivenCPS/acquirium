@@ -258,7 +258,7 @@ class Acquirium:
 
     def register_stream(
         self,
-        point_uri: str | URIRef,
+        point_uri: str | URIRef | None = None,
         label: str | None = None,
         *,
         source_id: str | None = None,
@@ -272,15 +272,10 @@ class Acquirium:
     ) -> None:
         """Declare a stream's semantic metadata in the RDF graph.
 
-        Registers a point URI as a timeseries stream and annotates it with
-        any supplied metadata predicates. Call this once (or when metadata
-        changes); it does not affect stored timeseries values.
-
-        When ``ref_name`` is provided, Acquirium computes a stable external
-        reference URI from ``(source_id, ref_name)`` and writes it directly as
-        the object of ``ref:hasExternalReference``. That same node is the
-        canonical stream identity in the graph and may also carry driver- or
-        app-specific provenance metadata.
+        ``point_uri`` is optional. When provided, a semantic point node is
+        created and linked to the external reference. When omitted, only the
+        external reference node is written; semantic linkage can be added later
+        by inserting an RDF graph that connects a point to the same ref URI.
 
         Plain strings for ``unit``, ``quantity_kind``, ``medium``, and
         ``substance`` are resolved against the QUDT vocabulary via the server
@@ -288,24 +283,21 @@ class Acquirium:
         a warning if no confident match is found.
 
         Args:
-            point_uri: The URI identifying this stream in the knowledge graph.
-            label: Human-readable name (rdfs:label).
-            ref_name: Source-native identifier for this stream (sensor tag,
-                MQTT topic, database column, etc.). Written as
-                ``acq:refName`` on the external reference node.
+            point_uri: Optional URI identifying this stream in the knowledge
+                graph. If omitted, only the external reference node is written.
+            label: Human-readable name (rdfs:label) written on ``point_uri``.
+            source_id: Registered datasource identifier.
+            ref_name: Source-native stream identifier (sensor tag, column name,
+                MQTT topic, etc.). Written as ``acq:refName`` on the reference node.
             unit: Unit of measurement — URIRef, URI string, or plain text.
             quantity_kind: Physical quantity — URIRef, URI string, or plain text.
             medium: Medium the measurement applies to (S223 hasMedium).
             substance: Substance being measured (S223 ofSubstance).
             data_source: Origin of the data — written as a literal string.
-            properties: Arbitrary extra triples as ``{predicate_uri: value}``.
+            properties: Arbitrary extra triples written on the reference node
+                (or on ``point_uri`` when no reference node exists).
         """
         g = RDFGraph()
-        subj = URIRef(str(point_uri))
-
-        g.add((subj, RDF.type, VIRTUAL_POINT))
-        if label is not None:
-            g.add((subj, RDFS.label, Literal(label)))
 
         def _coerce(value: str | URIRef | None, qudt_kind: str) -> str | URIRef | None:
             if value is None or isinstance(value, URIRef):
@@ -321,25 +313,34 @@ class Acquirium:
                 )
             return resolved or value
 
-        _add_triple(g, subj, HAS_UNIT,          _coerce(unit,          "unit"))
-        _add_triple(g, subj, HAS_QUANTITY_KIND, _coerce(quantity_kind, "quantity_kind"))
-        _add_triple(g, subj, HAS_MEDIUM,        _coerce(medium,        "class"))
-        _add_triple(g, subj, OF_SUBSTANCE,      _coerce(substance,     "class"))
-        _add_triple(g, subj, DATA_SOURCE,       data_source)
-
+        handle = None
         if ref_name is not None and source_id is not None:
             handle = compute_handle(source_id, ref_name)
-            g.add((subj,        HAS_EXTERNAL_REFERENCE, handle))
-            g.add((handle,    ACQUIRIUM_SOURCE_ID,    Literal(source_id)))
-            g.add((handle,    ACQUIRIUM_REF_NAME,     Literal(ref_name)))
-            g.add((handle,    STORED_AT,              ACQUIRIUM_DB_URI))
+            g.add((handle, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
+            g.add((handle, ACQUIRIUM_REF_NAME,  Literal(ref_name)))
+            g.add((handle, STORED_AT,           ACQUIRIUM_DB_URI))
             g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
 
-        for pred, value in (properties or {}).items():
-            _add(pred, value)
+        if point_uri is not None:
+            subj = URIRef(str(point_uri))
+            g.add((subj, RDF.type, VIRTUAL_POINT))
+            if label is not None:
+                g.add((subj, RDFS.label, Literal(label)))
+            _add_triple(g, subj, HAS_UNIT,          _coerce(unit,          "unit"))
+            _add_triple(g, subj, HAS_QUANTITY_KIND, _coerce(quantity_kind, "quantity_kind"))
+            _add_triple(g, subj, HAS_MEDIUM,        _coerce(medium,        "class"))
+            _add_triple(g, subj, OF_SUBSTANCE,      _coerce(substance,     "class"))
+            _add_triple(g, subj, DATA_SOURCE,       data_source)
+            if handle is not None:
+                g.add((subj, HAS_EXTERNAL_REFERENCE, handle))
 
-        turtle = g.serialize(format="turtle")
-        self.client.insert_graph(turtle, format="turtle", replace=False)
+        target = handle if handle is not None else (URIRef(str(point_uri)) if point_uri is not None else None)
+        if target is not None:
+            for pred, value in (properties or {}).items():
+                _add_triple(g, target, pred, value)
+
+        if len(g):
+            self.client.insert_graph(g.serialize(format="turtle"), format="turtle", replace=False)
 
     def register_streams(
         self,
@@ -353,18 +354,16 @@ class Acquirium:
 
         Each stream item is a dictionary with these commonly used keys:
 
-        - ``point_uri``: required semantic point/output URI to register.
+        - ``point_uri``: optional semantic URI. When provided, a point node is
+          created and linked to the external reference. When omitted, only the
+          external reference node is written.
         - ``source_id`` and ``ref_name``: source-local stream identity. When
-          both are present, Acquirium mints the canonical reference URI for that
-          pair, links ``point_uri`` to it with ``ref:hasExternalReference``, and
-          writes ``acq:sourceId``, ``acq:refName``, and ``ref:storedAt`` on the
-          reference node.
-        - ``label``: optional ``rdfs:label`` for the point.
+          both are present, Acquirium mints the canonical reference URI and
+          writes ``acq:sourceId``, ``acq:refName``, and ``ref:storedAt`` on it.
+        - ``label``: optional ``rdfs:label`` written on ``point_uri``.
         - ``data_source``: optional datasource marker written on the point.
-        - ``properties``: optional mapping of predicate URIRefs to values.
-          These properties are written on the canonical reference node when
-          ``source_id`` and ``ref_name`` are present; otherwise they are written
-          on ``point_uri``.
+        - ``properties``: optional mapping of predicate URIRefs to values,
+          written on the reference node (or ``point_uri`` when no ref node exists).
 
         Drivers should still insert rows with ``insert_timeseries_batch`` using
         the same ``source_id`` and source-local ``ref_name``. Acquirium resolves
@@ -373,30 +372,32 @@ class Acquirium:
         g = RDFGraph()
 
         for stream in streams:
-            subj = URIRef(str(stream["point_uri"]))
+            point_uri_raw = stream.get("point_uri")
             label = stream.get("label")
             source_id = stream.get("source_id")
             ref_name = stream.get("ref_name")
 
-            g.add((subj, RDF.type, VIRTUAL_POINT))
-            if label is not None:
-                g.add((subj, RDFS.label, Literal(label)))
-
-            _add_triple(g, subj, DATA_SOURCE, stream.get("data_source"))
-
             handle = None
             if ref_name is not None and source_id is not None:
                 handle = compute_handle(source_id, ref_name)
-                g.add((subj, HAS_EXTERNAL_REFERENCE, handle))
                 g.add((handle, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
-                g.add((handle, ACQUIRIUM_REF_NAME, Literal(ref_name)))
-                g.add((handle, STORED_AT, ACQUIRIUM_DB_URI))
+                g.add((handle, ACQUIRIUM_REF_NAME,  Literal(ref_name)))
+                g.add((handle, STORED_AT,           ACQUIRIUM_DB_URI))
                 g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
 
-            properties = stream.get("properties") or {}
-            target = handle or subj
-            for pred, value in properties.items():
-                _add_triple(g, target, pred, value)
+            if point_uri_raw is not None:
+                subj = URIRef(str(point_uri_raw))
+                g.add((subj, RDF.type, VIRTUAL_POINT))
+                if label is not None:
+                    g.add((subj, RDFS.label, Literal(label)))
+                _add_triple(g, subj, DATA_SOURCE, stream.get("data_source"))
+                if handle is not None:
+                    g.add((subj, HAS_EXTERNAL_REFERENCE, handle))
+
+            target = handle if handle is not None else (URIRef(str(point_uri_raw)) if point_uri_raw is not None else None)
+            if target is not None:
+                for pred, value in (stream.get("properties") or {}).items():
+                    _add_triple(g, target, pred, value)
 
         if len(g):
             self.client.insert_graph(g.serialize(format="turtle"), format="turtle", replace=False)
