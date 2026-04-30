@@ -19,6 +19,28 @@ ts | ref_name | value
 An optional `source_id` column may be included when one driver emits rows for
 multiple datasources. If omitted, `self.source_id` is used.
 
+## Which Method Do I Implement?
+
+In most drivers, you do **not** implement `tick()` directly.
+
+Use this rule:
+
+- Polling source: subclass `PollingIngestDriver` and implement `collect()`.
+- Event source: subclass `EventIngestDriver` and call `insert_observations()`
+  from callbacks or subscription handlers.
+- Special lifecycle source: subclass `Driver` or `IngestDriver` and implement
+  `tick()` directly only when neither built-in lifecycle fits.
+
+`tick()` is the runner hook. The framework calls it on each interval. For
+polling drivers, `PollingIngestDriver.tick()` is already implemented as:
+
+```python
+def tick(self):
+    self.insert_observations(self.collect())
+```
+
+So a polling driver author writes `collect()`, not `tick()`.
+
 ## Polling Drivers
 
 Use `PollingIngestDriver` when the source is sampled on each tick, such as a
@@ -345,17 +367,49 @@ class MyCSVDriver(CSVIngestDriver):
 setup()
   |
   v
-check graph version -> on_graph_change() if changed
+repeat until stopped:
   |
-  v
-tick()  <---- interval ----
-tick()
-tick()
+  +--> check graph version
+  |      |
+  |      +--> on_graph_change() if changed
+  |
+  +--> tick()
+  |
+  +--> sleep interval
   |
   v
 stop()
 ```
 
 For polling ingest drivers, `tick()` calls `collect()` and inserts the returned
-observations. For event ingest drivers, `tick()` is intentionally empty and
-callbacks call `insert_observations()` as data arrives.
+observations.
+
+Event-based drivers do not implement `collect()`. They connect to an external
+event source in `setup()` and push observations from callbacks, background
+client threads, or subscription handlers:
+
+```python
+class MyEventDriver(EventIngestDriver):
+    def setup(self):
+        self.source_id = "events"
+        self.aq.register_datasource(self.source_id)
+        self.client.on_message = self.on_message
+        self.client.start()
+
+    def on_message(self, ts, ref_name, value):
+        self.aq.register_stream(source_id=self.source_id, ref_name=ref_name)
+        self.insert_observations(pl.DataFrame({
+            "ts": [ts],
+            "ref_name": [ref_name],
+            "value": [value],
+        }))
+```
+
+For these drivers, `tick()` is intentionally empty. The runner still calls it
+on the configured interval so graph-change checks and shutdown behavior stay
+uniform, but data flow is driven by the external event source rather than by
+the tick loop.
+
+The graph-change hook is runner-driven, not pushed by the server into the
+driver. Before each tick, the runner polls the graph version and calls
+`on_graph_change()` only if that version has advanced.
