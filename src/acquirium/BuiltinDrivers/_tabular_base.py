@@ -14,7 +14,7 @@ import polars as pl
 from rdflib import Literal
 from rdflib.namespace import RDF
 
-from acquirium.Driver import Driver
+from acquirium.Driver import PollingIngestDriver
 from acquirium.internals.internals_namespaces import (
     DATA_SOURCE,
     FILE_LOCATION,
@@ -39,7 +39,7 @@ def _safe_name(s: str) -> str:
 
 
 
-class _TabularIngestBase(Driver):
+class _TabularIngestBase(PollingIngestDriver):
     """Base class for drivers that watch a directory for tabular data files.
 
     Subclasses must set ``_glob_patterns`` and implement ``read_frame()``.
@@ -91,7 +91,8 @@ class _TabularIngestBase(Driver):
 
     # ------------------------------------------------------------------ loop
 
-    def loop(self) -> None:
+    def collect(self) -> pl.DataFrame:
+        frames: list[pl.DataFrame] = []
         paths = sorted({
             p
             for pattern in self._glob_patterns
@@ -117,25 +118,28 @@ class _TabularIngestBase(Driver):
                     self.aq.register_datasource(source_id)
                 stream_names = df["ref_name"].unique().to_list()
                 self._ensure_streams(dict.fromkeys(stream_names), source_id, path)
-                result = self.aq.insert_timeseries_polars(source_id, df)
-                total = int(result.get("rows_inserted", len(df))) if isinstance(result, dict) else len(df)
                 logger.info(
-                    "tabular_ingest: %s — inserted %d row(s) across %d stream(s)",
-                    rel, total, len(stream_names),
+                    "tabular_ingest: %s — collected %d row(s) across %d stream(s)",
+                    rel, len(df), len(stream_names),
                 )
                 self._rows_seen[key] = offset + rows_read
+                frames.append(df.with_columns(pl.lit(source_id).alias("source_id")))
             except Exception:
-                logger.exception("tabular_ingest: failed to insert data from %s", path.name)
+                logger.exception("tabular_ingest: failed to prepare data from %s", path.name)
+
+        if not frames:
+            return pl.DataFrame({"source_id": [], "ts": [], "ref_name": [], "value": []})
+        return pl.concat(frames, how="diagonal_relaxed")
 
     # ---------------------------------------------------------- public hook
 
     def read_frame(self, path: Path, row_offset: int = 0) -> tuple["pl.DataFrame", int]:
         """Read new file rows into a tabular DataFrame.
 
-        Subclasses can normalize custom layouts here, for example by combining
-        split date/time columns into the configured time column. The returned
-        frame should still be wide or narrow according to the standard tabular
-        ingest config.
+        Subclasses can normalize custom layouts here. The returned frame can be
+        either wide/narrow according to the standard tabular ingest config, or
+        an already-normalized timeseries frame with ``ts``, ``ref_name``, and
+        ``value`` columns.
         """
         raise NotImplementedError
 
@@ -146,6 +150,9 @@ class _TabularIngestBase(Driver):
         df, rows_read = self.read_frame(path, row_offset)
         if rows_read == 0:
             return {}, 0
+
+        if self._is_timeseries_frame(df):
+            return self._timeseries_frame_to_batch(df), rows_read
 
         fmt = self._detect_format(df)
         batch = self._parse_narrow(df) if fmt == "narrow" else self._parse_wide(df)
@@ -161,6 +168,8 @@ class _TabularIngestBase(Driver):
         df, rows_read = self.read_frame(path, row_offset)
         if rows_read == 0:
             return pl.DataFrame({"ts": [], "ref_name": [], "value": []}), 0
+        if self._is_timeseries_frame(df):
+            return self._normalize_timeseries_frame(df), rows_read
         return self._to_timeseries_frame(df), rows_read
 
     # ---------------------------------------------------------- format helpers
@@ -227,6 +236,9 @@ class _TabularIngestBase(Driver):
         return batch
 
     def _to_timeseries_frame(self, df: pl.DataFrame) -> pl.DataFrame:
+        if self._is_timeseries_frame(df):
+            return self._normalize_timeseries_frame(df)
+
         fmt = self._detect_format(df)
         if fmt == "narrow":
             out = self._narrow_to_timeseries_frame(df)
@@ -261,6 +273,28 @@ class _TabularIngestBase(Driver):
             pl.col(self._value_col).cast(pl.Utf8).alias("value"),
         ])
 
+    def _is_timeseries_frame(self, df: pl.DataFrame) -> bool:
+        return {"ts", "ref_name", "value"}.issubset(df.columns)
+
+    def _normalize_timeseries_frame(self, df: pl.DataFrame) -> pl.DataFrame:
+        df = df.select([
+            pl.col("ts"),
+            pl.col("ref_name").cast(pl.Utf8),
+            pl.col("value").cast(pl.Utf8),
+        ]).drop_nulls(subset=["ts", "ref_name"])
+        df = df.with_columns(self.normalize_timestamps(df["ts"]).alias("ts"))
+        df = df.drop_nulls(subset=["ts"])
+        return df.with_columns(
+            pl.col("ref_name").map_elements(_safe_name, return_dtype=pl.Utf8)
+        )
+
+    def _timeseries_frame_to_batch(self, df: pl.DataFrame) -> dict[str, list[tuple[datetime, Any]]]:
+        df = self._normalize_timeseries_frame(df)
+        batch: dict[str, list[tuple[datetime, Any]]] = {}
+        for ts, ref_name, val in df.iter_rows():
+            batch.setdefault(ref_name, []).append((ts, val))
+        return batch
+
     # ---------------------------------------------------------- time normalisation
 
     _FALLBACK_DATE_FORMATS = (
@@ -273,21 +307,11 @@ class _TabularIngestBase(Driver):
     )
 
     def _normalize_time_col(self, df: pl.DataFrame) -> pl.DataFrame:
-        col = df[self._time_col]
-        dtype = col.dtype
-
-        if dtype == pl.Date:
-            col = col.cast(pl.Datetime("us")).dt.replace_time_zone("UTC")
-        elif dtype in (pl.String, pl.Utf8):
-            col = self._parse_string_timestamps(col)
-        else:
-            tz = getattr(dtype, "time_zone", None)
-            if tz is None:
-                col = col.dt.replace_time_zone("UTC")
-            elif tz != "UTC":
-                col = col.dt.convert_time_zone("UTC")
-
-        df = df.with_columns(col.alias(self._time_col))
+        df = df.with_columns(
+            self.normalize_timestamps(
+                df[self._time_col], date_format=self._date_fmt
+            ).alias(self._time_col)
+        )
 
         null_count = df[self._time_col].null_count()
         if null_count:
@@ -299,14 +323,31 @@ class _TabularIngestBase(Driver):
             df = df.drop_nulls(subset=[self._time_col])
         return df
 
-    def _parse_string_timestamps(self, col: pl.Series) -> pl.Series:
+    def normalize_timestamps(self, col: pl.Series, date_format: str | None = None) -> pl.Series:
+        dtype = col.dtype
+
+        if dtype == pl.Date:
+            return col.cast(pl.Datetime("us")).dt.replace_time_zone("UTC")
+        if dtype in (pl.String, pl.Utf8):
+            return self._parse_string_timestamps(col, date_format=date_format)
+
+        tz = getattr(dtype, "time_zone", None)
+        if tz is None:
+            return col.dt.replace_time_zone("UTC")
+        if tz != "UTC":
+            return col.dt.convert_time_zone("UTC")
+        return col
+
+    def _parse_string_timestamps(
+        self, col: pl.Series, date_format: str | None = None
+    ) -> pl.Series:
         non_null = col.drop_nulls().len()
         if non_null == 0:
             return col.cast(pl.Datetime("us")).dt.replace_time_zone("UTC")
 
         # Configured format takes priority; None triggers Polars auto-detect (ISO 8601 / RFC 3339)
         candidates: list[str | None] = (
-            ([self._date_fmt] if self._date_fmt else []) + [None] + list(self._FALLBACK_DATE_FORMATS)
+            ([date_format] if date_format else []) + [None] + list(self._FALLBACK_DATE_FORMATS)
         )
 
         best: pl.Series | None = None

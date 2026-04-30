@@ -9,9 +9,10 @@ import ast
 import json
 import logging
 
+import polars as pl
 import paho.mqtt.client as mqtt
 
-from acquirium.Driver import Driver
+from acquirium.Driver import EventIngestDriver
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_REF_NAME,
     HAS_EXTERNAL_REFERENCE,
@@ -50,15 +51,7 @@ class MQTTStreamSpec:
     value_key: str
 
 
-@dataclass(frozen=True)
-class _Sample:
-    point_uri: str
-    ref_uri: str
-    ts: datetime
-    value: Any
-
-
-class MQTTIngestDriver(Driver):
+class MQTTIngestDriver(EventIngestDriver):
     """Subscribes to MQTT topics declared in the knowledge graph and ingests
     samples via the standard Acquirium timeseries API.
 
@@ -75,33 +68,19 @@ class MQTTIngestDriver(Driver):
 
     def setup(self) -> None:
         driver_cfg = self.config.get("driver", {})
-        self._source_id: str = driver_cfg.get("mqtt_source_id", "mqtt")
+        self.source_id: str = driver_cfg.get("mqtt_source_id", "mqtt")
         self.qos: int = int(driver_cfg.get("mqtt_qos", 0))
 
-        self._pending: dict[str, list[_Sample]] = {}
-        self._pending_lock = Lock()
         self._clients: dict[str, mqtt.Client] = {}
         self._topic_specs: dict[str, dict[str, list[MQTTStreamSpec]]] = {}
         self._spec_keys: set[str] = set()
         self._clients_lock = Lock()
 
-        self.aq.register_datasource(self._source_id)
+        self.aq.register_datasource(self.source_id)
         self._sync_subscriptions()
 
     def on_graph_change(self) -> None:
         self._sync_subscriptions()
-
-    def loop(self) -> None:
-        with self._pending_lock:
-            if not self._pending:
-                return
-            batch, self._pending = self._pending, {}
-
-        streams: dict[str, list[tuple[datetime, Any]]] = {
-            ref_name: [(s.ts, s.value) for s in samples]
-            for ref_name, samples in batch.items()
-        }
-        self.aq.insert_timeseries_batch(self._source_id, streams)
 
     def stop(self) -> None:
         with self._clients_lock:
@@ -163,7 +142,7 @@ class MQTTIngestDriver(Driver):
                 continue
             try:
                 self.aq.register_stream(
-                    source_id=self._source_id,
+                    source_id=self.source_id,
                     ref_name=ref_name_s,
                 )
             except Exception:
@@ -236,7 +215,7 @@ class MQTTIngestDriver(Driver):
 
         Returns:
             ``(ts, value)`` where *ts* is a timezone-aware UTC datetime and
-            *value* is any type accepted by ``insert_timeseries_batch``
+            *value* is any type accepted by Acquirium observation insertion.
 
         Raises:
             ValueError: if the payload cannot be decoded
@@ -259,9 +238,13 @@ class MQTTIngestDriver(Driver):
                     return
                 for spec in specs:
                     ts, value = self.decode_payload(msg.payload, spec)
-                    sample = _Sample(point_uri=spec.point_uri, ref_uri=spec.ref_uri, ts=ts, value=value)
-                    with self._pending_lock:
-                        self._pending.setdefault(spec.ref_name, []).append(sample)
+                    self.insert_observations(
+                        pl.DataFrame({
+                            "ts": [ts],
+                            "ref_name": [spec.ref_name],
+                            "value": [value],
+                        })
+                    )
             except Exception as exc:
                 logger.warning("mqtt decode failed client=%s topic=%s err=%s", client_key, topic, exc)
         return on_message

@@ -12,23 +12,23 @@ from acquirium.internals.models import compute_ref_uri
 
 class DummyDriver(Driver):
     def setup(self) -> None:
-        self._source_id = "demo-source"
+        self.source_id = "demo-source"
 
-    def loop(self) -> None:
+    def tick(self) -> None:
         return None
 
 
 def test_reference_uri_uses_driver_source_id():
     driver = DummyDriver(aq=object(), config={})
     driver.setup()
-    assert driver.source_id() == "demo-source"
+    assert driver.source_id == "demo-source"
     assert driver.reference_uri("cpu_percent") == compute_ref_uri("demo-source", "cpu_percent")
 
 
 def test_source_id_requires_driver_to_set_one():
     driver = DummyDriver(aq=object(), config={})
     with pytest.raises(AttributeError):
-        driver.source_id()
+        driver.source_id
 
 
 def test_config_relative_driver_spec_import(tmp_path: Path):
@@ -37,8 +37,8 @@ def test_config_relative_driver_spec_import(tmp_path: Path):
         "from acquirium.Driver import Driver\n"
         "class TempDriver(Driver):\n"
         "    def setup(self):\n"
-        "        self._source_id = 'tmp'\n"
-        "    def loop(self):\n"
+        "        self.source_id = 'tmp'\n"
+        "    def tick(self):\n"
         "        return None\n"
     )
     cls = _import_driver_class("./custom_driver.py:TempDriver", base_dir=tmp_path)

@@ -76,9 +76,9 @@ def _run_inprocess_driver(
 
     try:
         try:
-            driver.loop()
+            driver.tick()
         except Exception:
-            log.exception("In-process driver %s loop error", spec)
+            log.exception("In-process driver %s tick error", spec)
         while not stop_event.wait(timeout=interval):
             try:
                 v = manager.graph_version()
@@ -88,9 +88,9 @@ def _run_inprocess_driver(
                         driver.on_graph_change()
                     except Exception:
                         log.exception("In-process driver %s on_graph_change error", spec)
-                driver.loop()
+                driver.tick()
             except Exception:
-                log.exception("In-process driver %s loop error", spec)
+                log.exception("In-process driver %s tick error", spec)
     finally:
         try:
             driver.stop()

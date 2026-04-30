@@ -76,7 +76,7 @@ def test_loop_uses_full_path_as_source_id(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     driver.setup()
     path = _wide_xlsx(tmp_path)
-    driver.loop()
+    driver.tick()
     source_id, df = driver.aq.insert_timeseries_polars.call_args[0]
     assert source_id == _safe_name(str(path))
     assert "temp" in df["ref_name"].to_list()
@@ -86,7 +86,7 @@ def test_loop_does_not_pick_up_csv_files(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     driver.setup()
     (tmp_path / "data.csv").write_text("time,temp\n2024-01-01T00:00:00Z,1.0\n")
-    driver.loop()
+    driver.tick()
     driver.aq.insert_timeseries_batch.assert_not_called()
 
 
@@ -94,12 +94,12 @@ def test_loop_advances_cursor_on_each_tick(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     driver.setup()
     path = _wide_xlsx(tmp_path)
-    driver.loop()
+    driver.tick()
     assert driver.aq.insert_timeseries_polars.call_count == 1
     assert driver._rows_seen[str(path)] == 2
 
     # No new rows — second tick should be a no-op.
-    driver.loop()
+    driver.tick()
     assert driver.aq.insert_timeseries_polars.call_count == 1
 
 
@@ -115,5 +115,5 @@ def test_driver_does_not_glob_xlsx_when_using_csv_driver(tmp_path):
     driver = CSVIngestDriver(aq, {"driver": {"watch_dir": str(tmp_path)}})
     driver.setup()
     _wide_xlsx(tmp_path)
-    driver.loop()
+    driver.tick()
     aq.insert_timeseries_batch.assert_not_called()

@@ -2,7 +2,7 @@
 
 Subclasses MQTTIngestDriver and overrides decode_payload() to handle any wire
 format (MessagePack, binary frames, CSV lines, etc.) without touching the
-subscription or batching logic.
+subscription or insertion logic.
 
 Usage in acquirium.toml:
     [[drivers]]
