@@ -146,6 +146,66 @@ def _deduplicate_contexts(contexts: list[dict[str, str]]) -> list[dict[str, str]
     return result
 
 
+def _is_numeric_dtype(dtype: pl.DataType) -> bool:
+    return bool(getattr(dtype, "is_numeric", lambda: False)())
+
+
+def _split_value_column(df: pl.DataFrame) -> pl.DataFrame:
+    if "value" not in df.columns:
+        return df
+    if _is_numeric_dtype(df.schema["value"]):
+        return df.with_columns([
+            pl.col("value").cast(pl.Float64).alias("value_numeric"),
+            pl.lit(None, dtype=pl.Utf8).alias("value_text"),
+        ]).drop("value")
+    return df.with_columns([
+        pl.lit(None, dtype=pl.Float64).alias("value_numeric"),
+        pl.col("value").cast(pl.Utf8).alias("value_text"),
+    ]).drop("value")
+
+
+def _restore_single_value_column(df: pl.DataFrame) -> pl.DataFrame:
+    if "value_numeric" not in df.columns or "value_text" not in df.columns:
+        return df
+    if df.is_empty() or df["value_numeric"].null_count() < df.height:
+        return df.with_columns(pl.col("value_numeric").alias("value"))
+    return df.with_columns(pl.col("value_text").alias("value"))
+
+
+def _pivot_split_values(tall: pl.DataFrame, pivot_key: str) -> pl.DataFrame:
+    parts: list[pl.DataFrame] = []
+    numeric_rows = tall.filter(pl.col("value_numeric").is_not_null())
+    if not numeric_rows.is_empty():
+        parts.append(
+            numeric_rows.pivot(
+                values="value_numeric",
+                index="time",
+                on=pivot_key,
+                aggregate_function="first",
+            )
+        )
+    text_rows = tall.filter(pl.col("value_text").is_not_null())
+    if not text_rows.is_empty():
+        text_wide = text_rows.pivot(
+            values="value_text",
+            index="time",
+            on=pivot_key,
+            aggregate_function="first",
+        )
+        if parts:
+            existing = set(parts[0].columns)
+            text_wide = text_wide.rename({
+                c: f"{c}_text" for c in text_wide.columns if c != "time" and c in existing
+            })
+        parts.append(text_wide)
+    if not parts:
+        return pl.DataFrame(schema={"time": pl.Datetime(time_zone="UTC")})
+    wide = parts[0]
+    for part in parts[1:]:
+        wide = wide.join(part, on="time", how="full", coalesce=True)
+    return wide.sort("time")
+
+
 @dataclass(frozen=True)
 class BindingInfo:
     """Lightweight metadata for a single (nid, point_uri, ref_uri) data binding."""
@@ -208,7 +268,8 @@ class DataObject:
                     "point_uri": pl.Utf8,
                     "ref_uri": pl.Utf8,
                     "time": pl.Datetime(time_zone="UTC"),
-                    "value": pl.Float64 if cast_value == "float" else pl.Utf8,
+                    "value_numeric": pl.Float64,
+                    "value_text": pl.Utf8,
                 }
             ),
             _materialized=True,
@@ -295,8 +356,9 @@ class DataObject:
         src_off = factors["from_offset"]
         tgt_mult = factors["to_multiplier"]
         tgt_off = factors["to_offset"]
+        value_col = "value_numeric" if "value_numeric" in df.columns else "value"
         return df.with_columns(
-            ((pl.col("value") + src_off) * src_mult / tgt_mult - tgt_off).alias("value")
+            ((pl.col(value_col) + src_off) * src_mult / tgt_mult - tgt_off).alias(value_col)
         )
 
     def _resolve_effective_units(self) -> dict[str, str | None]:
@@ -331,7 +393,8 @@ class DataObject:
                     "point_uri": pl.Utf8,
                     "ref_uri": pl.Utf8,
                     "time": pl.Datetime(time_zone="UTC"),
-                    "value": pl.Float64 if cast_value == "float" else pl.Utf8,
+                    "value_numeric": pl.Float64,
+                    "value_text": pl.Utf8,
                 }
             )
             self._materialized = True
@@ -416,7 +479,8 @@ class DataObject:
                 "point_uri": pl.Utf8,
                 "ref_uri": pl.Utf8,
                 "time": pl.Datetime(time_zone="UTC"),
-                "value": pl.Float64 if cast_value == "float" else pl.Utf8,
+                "value_numeric": pl.Float64,
+                "value_text": pl.Utf8,
             }
             for ec in self._entity_columns:
                 schema[ec] = pl.Utf8
@@ -424,15 +488,15 @@ class DataObject:
             self._materialized = True
             return
 
-        tall = pl.concat(frames, how="vertical")
+        tall = pl.concat([_split_value_column(df) for df in frames], how="vertical")
 
         # Cast value column
-        if cast_value == "float":
+        if cast_value == "float" and "value" in tall.columns:
             try:
                 tall = tall.with_columns(pl.col("value").cast(pl.Float64, strict=True))
             except Exception:
                 logger.warning("DataObject: casting value to float failed")
-        elif cast_value == "int":
+        elif cast_value == "int" and "value" in tall.columns:
             try:
                 tall = tall.with_columns(pl.col("value").cast(pl.Int64, strict=True))
             except Exception:
@@ -462,7 +526,7 @@ class DataObject:
                 )
 
         # Reorder columns for consistency
-        base_cols = ["data_alias", "point_uri", "ref_uri"] + self._entity_columns + ["time", "value"]
+        base_cols = ["data_alias", "point_uri", "ref_uri"] + self._entity_columns + ["time", "value_numeric", "value_text"]
         existing = [c for c in base_cols if c in tall.columns]
         self._tall = tall.select(existing)
         self._materialized = True
@@ -483,6 +547,7 @@ class DataObject:
         if subset.is_empty():
             return pl.DataFrame(schema={"time": pl.Datetime(time_zone="UTC"), "value": pl.Float64})
 
+        subset = _restore_single_value_column(subset)
         n_refs = subset["ref_uri"].n_unique()
         if n_refs <= 1:
             return subset.select("time", "value").sort("time")
@@ -608,13 +673,7 @@ class DataObject:
         else:
             tall = tall.with_columns(pl.col("data_alias").alias("_pivot_key"))
 
-        wide = tall.pivot(
-            values="value",
-            index="time",
-            on="_pivot_key",
-            aggregate_function="first",
-        )
-        return wide.sort("time")
+        return _pivot_split_values(tall, "_pivot_key")
 
     # ------------------------------------------------------------------
     # Iteration (triggers materialization)
@@ -626,6 +685,7 @@ class DataObject:
         subset = self._tall.filter(pl.col("data_alias") == alias)
         for point_uri in subset["point_uri"].unique().sort().to_list():
             point_df = subset.filter(pl.col("point_uri") == point_uri)
+            point_df = _restore_single_value_column(point_df)
             yield point_uri, point_df.select("time", "value").sort("time")
 
     # ------------------------------------------------------------------
@@ -681,6 +741,7 @@ class DataObject:
         subset = self._tall.filter(pl.col("data_alias") == alias)
         if subset.is_empty():
             return pl.DataFrame(schema={"time": pl.Datetime(time_zone="UTC"), "value": pl.Float64})
+        subset = _restore_single_value_column(subset)
         return subset.sort("time", descending=True).head(1).select("time", "value")
 
     def is_empty(self) -> bool:

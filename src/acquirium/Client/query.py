@@ -10,9 +10,10 @@ from datetime import datetime
 from acquirium.TextMatch.decorators import flex_query_rdf_inputs, FlexSpec
 from acquirium.Client.query_graph import QueryGraph, QueryNode, QueryEdge, DataNodeInfo
 from acquirium.Client.client import AcquiriumClient
+from acquirium.Client.data_object import _pivot_split_values, _split_value_column
 import logging
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
@@ -174,7 +175,7 @@ class Query:
             return uri
         raise ValueError(f"{param} must be a URI (urn:..., http://..., or https://...)")
 
-    def _find_all_nodes(self, id_val=None) -> list[URIRef]:
+    def _find_all_nodes(self, id_val=None) -> set[URIRef]:
         '''
         Finds all nodes in the query result, except literals.
         If alias is provided, only nodes with that alias are returned.
@@ -192,7 +193,7 @@ class Query:
                 cell = row[col_index]
                 if isinstance(cell, str) and (cell.startswith("urn:")):
                     nodes.add(URIRef(cell))
-            return list(nodes)
+            return nodes
         else:
             for row in query_result.get("rows", []):
                 for cell in row:
@@ -696,22 +697,23 @@ class Query:
                 continue
 
             df = df.rename({"value": "value", "ts": "time","uri": "ref"})
+            df = _split_value_column(df)
             df = df.with_columns(pl.lit(point_uri).alias("point_id"))
             frames.append(df)
 
         if not frames:
-            return pl.DataFrame({"point_id": [], "ref": [], "time": [], "value": []})
+            return pl.DataFrame({"point_id": [], "ref": [], "time": [], "value_numeric": [], "value_text": []})
 
         tall = pl.concat(frames, how="vertical")
 
         # optional casting
-        if cast_value == "float":
+        if cast_value == "float" and "value" in tall.columns:
             try:
                 tall = tall.with_columns(pl.col("value").cast(pl.Float64, strict=True))
             except Exception:
                 logging.warning("casting to float failed")
                 pass
-        elif cast_value == "int":
+        elif cast_value == "int" and "value" in tall.columns:
             try:
                 tall = tall.with_columns(pl.col("value").cast(pl.Int64, strict=True))
             except Exception:
@@ -721,10 +723,10 @@ class Query:
         tall = tall.with_columns(pl.col("ref").map_elements(lambda x: self._remove_prefixes(x),return_dtype=pl.Utf8).alias("ref"))
         # else: keep as string
         if shape == "narrow":
-            return tall.select("point_id","ref","time", "value").sort("time")
+            return tall.select("point_id", "ref", "time", "value_numeric", "value_text").sort("time")
 
         # wide
-        wide = tall.pivot(values="value", index="time", on=["ref"], aggregate_function="first")
+        wide = _pivot_split_values(tall.rename({"ref": "_pivot_key"}), "_pivot_key")
         wide.columns = [self._clean_column_name(c) for c in wide.columns]
         # wide.columns = ["time"] + [self._remove_prefixes(c) for c in wide.columns[1:]]
         return wide.sort("time")

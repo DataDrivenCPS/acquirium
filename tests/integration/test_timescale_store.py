@@ -11,7 +11,7 @@ import polars as pl
 
 from acquirium.Storage.timescale_store import TimescaleStore
 from acquirium.internals.models import LogEntry, TimeIntervalModel
-
+from rdflib import URIRef
 
 TEST_POINT = "urn:test:integration_point"
 TEST_REF = "urn:test:integration_ref"
@@ -40,7 +40,7 @@ class TestUpsertRows:
 
         batches = list(ts_store.timeseries(clean_point))
         assert len(batches) == 1
-        assert batches[0].column("value")[0].as_py() == "999.0"
+        assert batches[0].column("value")[0].as_py() == 999.0
 
     def test_none_value(self, ts_store, clean_point):
         ts = datetime(2025, 6, 1, 0, 0, tzinfo=timezone.utc)
@@ -62,7 +62,7 @@ class TestUpsertRows:
         ts_store.upsert_rows(clean_point, [
             (naive_ts, "naive"),
             (aware_ts, "aware"),
-        ])
+        ], value_kind="text")
         info = ts_store.timeseries_info(clean_point)
         assert info.row_count == 2
 
@@ -86,7 +86,7 @@ class TestReplaceRows:
 class TestBulkInsertPolars:
     def test_basic(self, ts_store, clean_point):
         df = pl.DataFrame({
-            "point_uri": [clean_point, clean_point],
+            "ref_uri": [clean_point, clean_point],
             "ts": [
                 datetime(2025, 1, 1, tzinfo=timezone.utc),
                 datetime(2025, 1, 2, tzinfo=timezone.utc),
@@ -101,42 +101,51 @@ class TestBulkInsertPolars:
 
     def test_empty_dataframe(self, ts_store, clean_point):
         df = pl.DataFrame({
-            "point_uri": [],
+            "ref_uri": [],
             "ts": [],
             "value": [],
-        }).cast({"point_uri": pl.Utf8, "ts": pl.Datetime("us", "UTC"), "value": pl.Utf8})
+        }).cast({"ref_uri": pl.Utf8, "ts": pl.Datetime("us", "UTC"), "value": pl.Utf8})
         result = ts_store.bulk_insert_polars(df)
         assert result >= 0 or result == -1  # empty df may return 0 or -1
+
+    def test_duplicate_keys_keep_last_value(self, ts_store, clean_point):
+        ts = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        df = pl.DataFrame({
+            "ref_uri": [clean_point, clean_point],
+            "ts": [ts, ts],
+            "value": ["10.0", "20.0"],
+        })
+
+        result = ts_store.bulk_insert_polars(df)
+
+        assert result == 1
+        batches = list(ts_store.timeseries(clean_point))
+        values = [b.column("value")[i].as_py() for b in batches for i in range(b.num_rows)]
+        assert values == [20.0]
 
 
 # ── Stream Handle Tests ────────────────────────────────────
 
 
 class TestStreamHandles:
-    def test_auto_handle(self, ts_store, clean_point):
-        handle = ts_store.ensure_stream_handle(clean_point, TEST_REF)
-        assert isinstance(handle, str)
-        assert len(handle) == 10
+    TEST_SOURCE = "test_source"
+    TEST_REF_NAME = "test_ref"
 
-    def test_custom_handle(self, ts_store, clean_point):
-        handle = ts_store.ensure_stream_handle(clean_point, TEST_REF, handle="custom123")
-        assert handle == "custom123"
+    def test_ref_uri_is_uuid(self, ts_store, clean_point):
+        ref_uri = ts_store.ensure_stream_ref(clean_point, self.TEST_SOURCE, self.TEST_REF_NAME)
+        assert isinstance(ref_uri, URIRef)
+        assert len(ref_uri) == len("urn:acquirium#") + 36  # UUID5 string form
 
-    def test_idempotent(self, ts_store, clean_point):
-        h1 = ts_store.ensure_stream_handle(clean_point, TEST_REF)
-        h2 = ts_store.ensure_stream_handle(clean_point, TEST_REF)
-        assert h1 == h2
+    def test_deterministic(self, ts_store, clean_point):
+        # Same source_id + ref_name always yields the same ref_uri.
+        ref_uri1 = ts_store.ensure_stream_ref(clean_point, self.TEST_SOURCE, self.TEST_REF_NAME)
+        ref_uri2 = ts_store.ensure_stream_ref(clean_point, self.TEST_SOURCE, self.TEST_REF_NAME)
+        assert ref_uri1 == ref_uri2
 
-    def test_resolve_handle(self, ts_store, clean_point):
-        handle = ts_store.ensure_stream_handle(clean_point, TEST_REF)
-        point, ref = ts_store.resolve_handle(handle)
-        assert point == clean_point
-        assert ref == TEST_REF
-
-    def test_resolve_unknown_handle(self, ts_store):
-        point, ref = ts_store.resolve_handle("nonexistent_handle")
-        assert point is None
-        assert ref is None
+    def test_different_sources_different_ref_uris(self, ts_store, clean_point):
+        ref_uri1 = ts_store.ensure_stream_ref(clean_point, "source_a", self.TEST_REF_NAME)
+        ref_uri2 = ts_store.ensure_stream_ref(clean_point, "source_b", self.TEST_REF_NAME)
+        assert ref_uri1 != ref_uri2
 
 
 # ── Query Tests ────────────────────────────────────────────
@@ -146,8 +155,8 @@ class TestTimeseries:
     @pytest.fixture(autouse=True)
     def _insert_data(self, ts_store, clean_point):
         rows = [
-            (datetime(2025, 1, 1, h, 0, tzinfo=timezone.utc), float(h))
-            for h in range(24)
+            (datetime(2025, 1, 1, ref_uri, 0, tzinfo=timezone.utc), float(ref_uri))
+            for ref_uri in range(24)
         ]
         ts_store.upsert_rows(clean_point, rows)
 
@@ -156,6 +165,7 @@ class TestTimeseries:
         total_rows = sum(b.num_rows for b in batches)
         assert total_rows == 24
         assert batches[0].schema.names == ["ts", "value", "uri"]
+        assert batches[0].schema.field("value").type == pa.float64()
 
     def test_time_range(self, ts_store, clean_point):
         start = datetime(2025, 1, 1, 5, 0, tzinfo=timezone.utc)
@@ -172,12 +182,12 @@ class TestTimeseries:
     def test_order_asc(self, ts_store, clean_point):
         batches = list(ts_store.timeseries(clean_point, order="asc", limit=3))
         values = [b.column("value")[i].as_py() for b in batches for i in range(b.num_rows)]
-        assert values == ["0.0", "1.0", "2.0"]
+        assert values == [0.0, 1.0, 2.0]
 
     def test_order_desc(self, ts_store, clean_point):
         batches = list(ts_store.timeseries(clean_point, order="desc", limit=3))
         values = [b.column("value")[i].as_py() for b in batches for i in range(b.num_rows)]
-        assert values == ["23.0", "22.0", "21.0"]
+        assert values == [23.0, 22.0, 21.0]
 
     def test_empty_point(self, ts_store):
         batches = list(ts_store.timeseries("urn:test:nonexistent_point"))
