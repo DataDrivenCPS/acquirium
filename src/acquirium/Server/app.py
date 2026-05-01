@@ -4,9 +4,9 @@ import asyncio
 import io
 import logging
 from contextlib import asynccontextmanager
-from typing import Any, Optional, Iterator
+from typing import Annotated, Any, Optional, Iterator
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
+from fastapi import Body, FastAPI, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import StreamingResponse, Response
 from dateutil import parser as dtparser
 from pydantic import BaseModel, Field
@@ -23,7 +23,8 @@ from acquirium.internals.models import (
     AppSpec,
     AppRunRequest,
     AppStopRequest,
-    InsertTimeseriesRequest,
+    StreamInsert,
+    RegisterDatasourceRequest,
 )
 from acquirium.internals.internals_namespaces import PLANT_URI
 
@@ -97,6 +98,7 @@ async def lifespan(app: FastAPI):
         n = m._connect_mqtt_streams_from_graph()
         app.state.mqtt_subscriptions = n
         log.info("Started %d MQTT subscriptions from graph", n)
+        m._sync_stream_handles_from_graph()
     except Exception as e:
         log.exception("Startup failed: %s", e)
         # If startup fails, ensure we close and crash so Docker restart policy can help
@@ -245,22 +247,40 @@ def list_app_runs(app_id: Optional[str] = None) -> dict[str, Any]:
 ##### TIMESERIES INGESTION API ENDPOINTS ####
 
 
-@app.post("/insert_timeseries")
-def insert_timeseries(
-    ref_uri: str,
-    req: InsertTimeseriesRequest,
-    point_uri: Optional[str] = None,
-    replace: bool = False,
-) -> dict[str, Any]:
+@app.post("/register_datasource")
+def register_datasource(req: RegisterDatasourceRequest) -> dict[str, Any]:
+    """Register a named datasource in the knowledge graph.
+
+    The source_id is a user-provided string that scopes stream ref_names so
+    two sources with the same ref_name never collide in the timeseries store.
+    """
     try:
-        rows = req.values
-        n = app.state.manager.insert_timeseries(
-            ref_uri=ref_uri,
-            rows=rows,
-            point_uri=point_uri,
-            replace=replace,
-        )
-        return {"ok": True, "rows_inserted": n}
+        source_id = app.state.manager.register_datasource(req.source_id)
+        return {"ok": True, "source_id": source_id}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/insert_timeseries")
+def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[str, Any]:
+    """Insert timeseries data for one or more streams.
+
+    Each element specifies a ``ref_uri``, an optional ``point_uri`` (defaults
+    to ``ref_uri``), an optional ``replace`` flag, and a list of
+    ``[timestamp, value]`` pairs.  A single-stream insert is just a
+    one-element list.
+    """
+    try:
+        total = 0
+        for s in streams:
+            total += app.state.manager.insert_timeseries(
+                source_id=s.source_id,
+                ref_name=s.ref_name,
+                rows=s.values,
+                point_uri=s.point_uri,
+                replace=s.replace,
+            )
+        return {"ok": True, "rows_inserted": total}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -269,9 +289,8 @@ def insert_timeseries(
 async def ingest_external_reference(
     data_uri: str = Form(...),
     ref_uri: str = Form(...),
-    ref_type: str = Form(...),          # PARQUET_REF or CSV_REF URI as string
-    time_column_no: int = Form(0),
-    value_column_no: int = Form(1),
+    time_column: str | None = Form(None),
+    value_column: str | None = Form(None),
     file: UploadFile = File(...),
 ) -> dict[str, Any]:
     try:
@@ -279,10 +298,9 @@ async def ingest_external_reference(
         n = app.state.manager.ingest_reference_bytes(
             data_uri=data_uri,
             ref_uri=ref_uri,
-            ref_type=ref_type,
             content=content,
-            time_column_no=time_column_no,
-            value_column_no=value_column_no,
+            time_column=time_column,
+            value_column=value_column,
             filename=file.filename or "upload",
         )
         return {"ok": True, "rows_ingested": n}
