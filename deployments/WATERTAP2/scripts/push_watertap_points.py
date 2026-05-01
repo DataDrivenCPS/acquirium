@@ -117,7 +117,8 @@ def main() -> None:
     G = rdflib.Graph().parse("deployments/WATERTAP2/models/test-model.ttl", format="turtle")
     mappings = {}
     ACQUIRIUM_NS = rdflib.Namespace("urn:acquirium#")
-    for s,p,o in G.triples((None, ACQUIRIUM_NS.hasExternalReference, None)):
+    REF_NS = rdflib.Namespace("https://brickschema.org/schema/Brick/ref#")
+    for s,p,o in G.triples((None, REF_NS.hasExternalReference, None)):
         for s2,p2,o2 in G.triples((s, ACQUIRIUM_NS.hasPyomoVar, None)):
             mappings[str(o2)] = str(o)
     

@@ -62,12 +62,14 @@ This is especially useful when moving between simulated data and real deployment
 
 Each external reference node should correspond to a single access pattern.
 
+The external reference schema is borrowed from [Brick Ref]().
+
 Existing external reference types (open an issue or contact us for other!):
 
-- "urn:acquirium#CSVReference"      : for connecting CSV files
-- "urn:acquirium#ParquetReference"  : for connecting Parquet files
-- "urn:acquirium#MQTTReference"     : for connecting MQTT streams
-- "urn:acquirium#PGReference"       : for connection a Postgres database
+- "https://brickschema.org/schema/Brick/ref#FileReference"          : for connecting Parquet or CSV files
+- "https://brickschema.org/schema/Brick/ref#MQTTReference"          : for connecting MQTT streams
+- "https://brickschema.org/schema/Brick/ref#TimeseriesReference"    : for connection a database server
+
 
 ---
 ### 5. Reference Specific Triples
@@ -78,90 +80,75 @@ This section describes the minimum triples required for each external reference 
 
 `acq = urn:acquirium#`
 
+`ref = https://brickschema.org/schema/Brick/ref#`
+
 Every external reference assignment should include:
 
 - A link from the data node to the reference node  
-  `data_node acq:hasExternalReference ref_node`
+  `data_node ref:hasExternalReference ref_node`
+  `data_node ref:hasFileReference ref_node`
+  `data_node ref:hasMQTTReference ref_node`
+  `data_node ref:hasTimeseriesReference ref_node`
 
 - A type assertion for the reference node (pick the data format)
-  `ref_node a acq:CSVReference`  
-  `ref_node a acq:MQTTReference`  
-  `ref_node a acq:ParquetReference`
+  `ref_node a ref:FileReference`
+  `ref_node a ref:MQTTReference`  
+  `ref_node a ref:TimeseriesReference`  
 
 ---
 
-#### 5.2 CSVReference
+#### 5.2 FileReference
 
-Use a CSV reference when data is stored in a local or mounted CSV file.
+Use a File reference when data is stored in a local or mounted CSV or Parquet file. Acquirium will infer the type of the file.
 
-Required triples for `acq:CSVReference`:
+Required triples for `ref:FileReference`:
 
-- `ref_node a acq:CSVReference`
-- `ref_node acq:DataSource "..."`           Path in string format as rdflib.Literal
-- `ref_node acq:hasFilePath "..."`          Path in string format as rdflib.Literal
-- `ref_node acq:hasTimeColumn <integer>`
-- `ref_node acq:hasValueColumn <integer>`
-
----
-
-#### 5.2 ParquetReference
-
-Use a Parquet reference when data is stored in a local or mounted Parquet file.
-
-Required triples for `acq:ParquetReference`:
-
-- `ref_node a acq:ParquetReference`
-- `ref_node acq:DataSource "..."`           Path in string format as rdflib.Literal
-- `ref_node acq:hasFilePath "..."`          Path in string format as rdflib.Literal
-- `ref_node acq:hasTimeColumn <integer>`
-- `ref_node acq:hasValueColumn <integer>`
+- `ref_node a ref:FileReference`
+- `ref_node acq:DataSource "..."`            In string format as rdflib.Literal (e.g. "Lab", "SCADA", ...)
+- `ref_node ref:fileLocation "..."`          Path in string format as rdflib.Literal
+- `ref_node ref:timeColumnID "..."`          Time column name or id (optional, Acquirium infers time column automatically, however if there's ambiguity it will raise an error)
+- `ref_node ref:valueColumnID "..."`         Value column name or id (required)
 
 ---
 
 #### 5.4 MQTTReference
 
-Use an MQTT reference for live or replayed streaming data.
+Use an MQTT reference for live or replayed streaming data. (right now we assume all payload is a dictionary, this will be changed to Sparkplug Schema)
 
-Required triples for `acq:MQTTReference`:
+Required triples for `ref:MQTTReference`:
 
-- `ref_node a acq:MQTTReference`
-- `ref_node acq:Broker "..."`           (e.g. `localhost`)
-- `ref_node acq:Port <integer>`      
-- `ref_node acq:Topic "..."`
-- `ref_node acq:time_key "Timestamp"`
-- `ref_node acq:value_key "Value"`
+- `ref_node a ref:MQTTReference`
+- `ref_node ref:MQTTBroker "..."`         Required. Accepts `host`, `host:port`, or a `mqtt(s)://...` URI (e.g. `localhost:1883`). Defaults to port 1883 when no port is given.
+- `ref_node ref:MQTTTopic "..."`          Required
+- `ref_node acq:timeKey "Timestamp"`      Acquirium-specific: name of the JSON key carrying the timestamp.
+- `ref_node acq:valueKey "Value"`         Acquirium-specific: name of the JSON key carrying the value.
 
 **Important Note:** We currently assume that the incoming message is in json format. If your MQTT stream sends data in other format, please open an issue or contact us!
 
 ---
 
-#### 5.5 PGReference
+#### 5.5 TimeseriesReference
 
-Use an existing Postgres Database to retrieve data (e.g. a historian)
+Use an existing Postgres database to retrieve data (e.g. a historian).
 
-Required triples for `acq:PGReference`:
+Required triples for `ref:TimeseriesReference`:
 
-- `ref_node a acq:PGReference`
-
-
-CHOOSE EITHER:
-- `ref_node acq:PG_DSN "postgresql://user:pass@localhost:5432/dpr" `
-OR
-- `ref_node acq:PG_HOST "localhost"`
-- `ref_node acq:PG_PORT "5432"`           (default: `5432`)
-- `ref_node acq:PG_DB "dpr"`
-- `ref_node acq:PG_USER "user"`
-- `ref_node acq:PG_PASS "pass"`
+- `ref_node a ref:TimeseriesReference`
+- `ref_node ref:storedAt "postgresql://user:pass@localhost:5432/dpr"`   The DSN as a literal string. Acquirium recognises `postgresql://` and `postgres://` literals as external Postgres references.
 
 THEN CHOOSE EITHER:
-- `ref_node acq:PG_Query "SELECT time, value FROM data WHERE point_uri = 'sensor1' ORDER BY time"`
-OR
-- `ref_node acq:PG_Table "data"`
-- `ref_node acq:PG_TimeColumn "time"`     (default: `time`)
-- `ref_node acq:PG_ValueColumn "value"`   (default: `value`)
-- `ref_node acq:PG_PointFilter "sensor1"` (optional — filters by `point_uri` column in the external table)
+- `ref_node acq:timeseriesQuery "SELECT time, value FROM data WHERE point_uri = 'sensor1' ORDER BY time"`
 
-**Important Note:** When using `PG_Query`, the query must return exactly two columns: the first for timestamps and the second for values. When using `PG_Table`, the table is expected to have a `point_uri` column if `PG_PointFilter` is provided.
+OR:
+- `ref_node acq:timeseriesTable "data"`
+- `ref_node acq:timeseriesTimeColumn "time"`     (default: `time`)
+- `ref_node acq:timeseriesValueColumn "value"`   (default: `value`)
+- `ref_node acq:timeseriesPointFilter "point_uri"` (optional — filters by `point_uri` column in the external table)
+
+**Important Note:**
+- The `acq:timeseries*` predicates are Acquirium-specific (not part of the Brick `ref:` schema), since they describe how Acquirium reads the external table.
+- When using `acq:timeseriesQuery`, the query must return exactly two columns: the first for timestamps and the second for values.
+- When using `acq:timeseriesTable`, the table is expected to have a `point_uri` column if `acq:timeseriesPointFilter` is provided.
 
 ---
 
@@ -170,56 +157,58 @@ OR
 The following example illustrates the full pattern using a pump work stream. It links a data node to an MQTT reference node and describes how to extract the timestamp and value from JSON payload fields.
 
 ```
-@PREFIX ns1: <urn:acquirium#>
-@PREFIX wbs: <urn:ex/> 
+@prefix acq: <urn:acquirium#> .
+@prefix ref: <https://brickschema.org/schema/Brick/ref#> .
+@prefix wbs: <urn:ex/> .
+
 wbs:Pump1-in-flow-mass-seawater a s223:QuantifiableObservableProperty ;
     s223:ofMedium nawi:Water-Seawater ;
     qudt:hasQuantityKind qudtqk:MassFlowRate ;
     qudt:hasUnit unit:KiloGM-PER-SEC ;
-    ns1:hasExternalReference wbs:pump_inlet_flow_mass_seawater_mqtt_ref .
+    ref:hasExternalReference wbs:pump_inlet_flow_mass_seawater_mqtt_ref .
 
-wbs:pump_inlet_flow_mass_seawater_mqtt_ref a ns1:MQTTReference ;
-    ns1:Broker "localhost" ;
-    ns1:Port "1883" ;
-    ns1:Topic "saltwater_flow_mass_rate" ;
-    ns1:time_key "Timestamp" ;
-    ns1:value_key "Value" .
+wbs:pump_inlet_flow_mass_seawater_mqtt_ref a ref:MQTTReference ;
+    acq:dataSource "SCADA" ;
+    ref:MQTTBroker "localhost:1883" ;
+    ref:MQTTTopic "saltwater_flow_mass_rate" ;
+    acq:timeKey "Timestamp" ;
+    acq:valueKey "Value" .
 ```
 ---
 
-### 7. Example: Assigning a PGReference (External Postgres Historian)
+### 7. Example: Assigning an External Timeseries Reference (Postgres Historian)
 
-The following example links a data node to a PGReference using a full DSN connection string. The external database table `data` stores rows in `(point_uri, time, value)` format, and `PG_PointFilter` selects only the rows matching this sensor.
+The following example links a data node to a `ref:TimeseriesReference` whose `ref:storedAt` is a literal Postgres DSN — Acquirium uses the `postgresql://` prefix to recognise it as an external historian rather than an Acquirium-managed stream. The external table `data` stores rows in `(point_uri, time, value)` format, and `acq:timeseriesPointFilter` selects only the rows matching this sensor.
 
 ```
-@PREFIX ns1: <urn:acquirium#>
-@PREFIX wbs: <urn:ex/>
+@prefix acq: <urn:acquirium#> .
+@prefix ref: <https://brickschema.org/schema/Brick/ref#> .
+@prefix wbs: <urn:ex/> .
+
 wbs:Pump1-in-flow-mass-seawater a s223:QuantifiableObservableProperty ;
     s223:ofMedium nawi:Water-Seawater ;
     qudt:hasQuantityKind qudtqk:MassFlowRate ;
     qudt:hasUnit unit:KiloGM-PER-SEC ;
-    ns1:hasExternalReference wbs:pump_inlet_flow_mass_seawater_pg_ref .
+    ref:hasExternalReference wbs:pump_inlet_flow_mass_seawater_pg_ref .
 
-wbs:pump_inlet_flow_mass_seawater_pg_ref a ns1:PGReference ;
-    ns1:PG_DSN "postgresql://user:pass@localhost:5432/dpr" ;
-    ns1:PG_Table "data" ;
-    ns1:PG_TimeColumn "time" ;
-    ns1:PG_ValueColumn "value" ;
-    ns1:PG_PointFilter "saltwater_flow_mass_rate" .
+wbs:pump_inlet_flow_mass_seawater_pg_ref a ref:TimeseriesReference ;
+    ref:storedAt "postgresql://user:pass@localhost:5432/dpr" ;
+    acq:timeseriesTable "data" ;
+    acq:timeseriesTimeColumn "time" ;
+    acq:timeseriesValueColumn "value" ;
+    acq:timeseriesPointFilter "saltwater_flow_mass_rate" .
 ```
 
-Alternatively, using individual connection parameters and a custom query:
+Alternatively, supply a full SQL query (which must return exactly two columns: timestamp first, then value):
 
 ```
-@PREFIX ns1: <urn:acquirium#>
-@PREFIX wbs: <urn:ex/>
-wbs:pump_inlet_flow_mass_seawater_pg_ref a ns1:PGReference ;
-    ns1:PG_HOST "localhost" ;
-    ns1:PG_PORT "5432" ;
-    ns1:PG_DB "dpr" ;
-    ns1:PG_USER "user" ;
-    ns1:PG_PASS "pass" ;
-    ns1:PG_Query "SELECT time, value FROM data WHERE point_uri = 'saltwater_flow_mass_rate' ORDER BY time" .
+@prefix acq: <urn:acquirium#> .
+@prefix ref: <https://brickschema.org/schema/Brick/ref#> .
+@prefix wbs: <urn:ex/> .
+
+wbs:pump_inlet_flow_mass_seawater_pg_ref a ref:TimeseriesReference ;
+    ref:storedAt "postgresql://user:pass@localhost:5432/dpr" ;
+    acq:timeseriesQuery "SELECT time, value FROM data WHERE point_uri = 'saltwater_flow_mass_rate' ORDER BY time" .
 ```
 ---
 

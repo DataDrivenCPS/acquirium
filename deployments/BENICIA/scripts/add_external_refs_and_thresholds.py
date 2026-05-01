@@ -5,7 +5,23 @@ import rdflib
 from rdflib import Literal
 from rdflib.namespace import RDF, XSD
 
-from acquirium.internals.internals_namespaces import ACQUIRIUM_NS, QUDT_UNIT, S223
+from acquirium.internals.internals_namespaces import (
+    ACQUIRIUM_NS,
+    BRICK_REF,
+    DATA_SOURCE,
+    FILE_LOCATION,
+    FILE_REFERENCE,
+    HAS_EXTERNAL_REFERENCE,
+    MQTT_BROKER,
+    MQTT_REFERENCE,
+    MQTT_TOPIC,
+    QUDT_UNIT,
+    S223,
+    TIME_COLUMN_ID,
+    TIME_KEY,
+    VALUE_COLUMN_ID,
+    VALUE_KEY,
+)
 
 
 PROPERTY_TYPES = {
@@ -309,33 +325,34 @@ def add_external_references(
     broker: str,
     port: int,
     topic_prefix: str,
-    time_col: int,
-    value_col: int,
+    time_col: str,
+    value_col: str,
 ) -> None:
     wbs = rdflib.Namespace("urn:ex/")
+    broker_literal = f"{broker}:{port}" if port else broker
 
     for prop in properties:
         name = local_name(prop)
-        parquet_ref = wbs[f"{name}_parquet_ref"]
+        file_ref = wbs[f"{name}_file_ref"]
         mqtt_ref = wbs[f"{name}_mqtt_ref"]
 
-        graph.add((prop, ACQUIRIUM_NS.hasExternalReference, parquet_ref))
-        graph.add((prop, ACQUIRIUM_NS.hasExternalReference, mqtt_ref))
+        graph.add((prop, HAS_EXTERNAL_REFERENCE, file_ref))
+        graph.add((prop, HAS_EXTERNAL_REFERENCE, mqtt_ref))
 
         file_path = str(parquet_dir / f"{name}.parquet")
 
-        graph.add((parquet_ref, RDF.type, ACQUIRIUM_NS.ParquetReference))
-        graph.add((parquet_ref, ACQUIRIUM_NS.DataSource, Literal(file_path)))
-        graph.add((parquet_ref, ACQUIRIUM_NS.hasFilePath, Literal(file_path)))
-        graph.add((parquet_ref, ACQUIRIUM_NS.hasTimeColumn, Literal(time_col)))
-        graph.add((parquet_ref, ACQUIRIUM_NS.hasValueColumn, Literal(value_col)))
+        graph.add((file_ref, RDF.type, FILE_REFERENCE))
+        graph.add((file_ref, DATA_SOURCE, Literal("Lab")))
+        graph.add((file_ref, FILE_LOCATION, Literal(file_path)))
+        graph.add((file_ref, TIME_COLUMN_ID, Literal(time_col)))
+        graph.add((file_ref, VALUE_COLUMN_ID, Literal(value_col)))
 
-        graph.add((mqtt_ref, RDF.type, ACQUIRIUM_NS.MQTTReference))
-        graph.add((mqtt_ref, ACQUIRIUM_NS.Broker, Literal(broker)))
-        graph.add((mqtt_ref, ACQUIRIUM_NS.Port, Literal(port)))
-        graph.add((mqtt_ref, ACQUIRIUM_NS.Topic, Literal(f"{topic_prefix}/{name}")))
-        graph.add((mqtt_ref, ACQUIRIUM_NS.time_key, Literal("Timestamp")))
-        graph.add((mqtt_ref, ACQUIRIUM_NS.value_key, Literal("Value")))
+        graph.add((mqtt_ref, RDF.type, MQTT_REFERENCE))
+        graph.add((mqtt_ref, DATA_SOURCE, Literal("SCADA")))
+        graph.add((mqtt_ref, MQTT_BROKER, Literal(broker_literal)))
+        graph.add((mqtt_ref, MQTT_TOPIC, Literal(f"{topic_prefix}/{name}")))
+        graph.add((mqtt_ref, TIME_KEY, Literal("Timestamp")))
+        graph.add((mqtt_ref, VALUE_KEY, Literal("Value")))
 
 
 def add_thresholds(graph: rdflib.Graph) -> None:
@@ -434,15 +451,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--time-column",
-        type=int,
-        default=0,
-        help="Time column index for parquet references.",
+        default="0",
+        help="Time column name (or numeric index as a string) for ref:FileReference.",
     )
     parser.add_argument(
         "--value-column",
-        type=int,
-        default=1,
-        help="Value column index for parquet references.",
+        default="1",
+        help="Value column name (or numeric index as a string) for ref:FileReference.",
     )
     args = parser.parse_args()
 
@@ -462,6 +477,7 @@ def main() -> None:
     add_thresholds(graph)
 
     graph.bind("acq", ACQUIRIUM_NS)
+    graph.bind("ref", BRICK_REF)
     graph.bind("unit", QUDT_UNIT)
     graph.bind("s223", S223)
     graph.bind("xsd", XSD)

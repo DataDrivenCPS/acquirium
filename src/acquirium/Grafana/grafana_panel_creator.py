@@ -27,7 +27,7 @@ def create_gauge(prop_dict,height=3,width=2,x=0,y=0):
             SqlTarget(rawSql=f'''
                 SELECT CAST(value as DECIMAL) 
                 FROM timeseries 
-                WHERE point_uri='{str(prop_dict["ref_uri"]).strip("<>")}' ORDER BY ts DESC LIMIT 1;
+                WHERE ref_uri='{str(prop_dict["ref_uri"]).strip("<>")}' ORDER BY ts DESC LIMIT 1;
                       ''', format="table")
             ],
         gridPos=GridPos(h=height, w=width, x=x, y=y),
@@ -52,7 +52,7 @@ def create_time_series(prop_dicts:list[dict],title:str,height=4,width=12,x=0,y=0
         title=title,
         dataSource="grafana-postgresql-datasource-1",
         targets=[
-            SqlTarget(rawSql=f"SELECT date_trunc('minute',ts) as time, REPLACE(point_uri, 'urn:acquirium#','') as label, AVG(CAST(value AS decimal )) AS value FROM timeseries WHERE point_uri IN ( {','.join(ref_uris)} ) GROUP BY time, label ORDER BY time DESC LIMIT 1000;", format="table")
+            SqlTarget(rawSql=f"SELECT date_trunc('minute',ts) as time, REPLACE(ref_uri, 'urn:acquirium#','') as label, AVG(CAST(value AS decimal )) AS value FROM timeseries WHERE ref_uri IN ( {','.join(ref_uris)} ) GROUP BY time, label ORDER BY time DESC LIMIT 1000;", format="table")
         ],
         gridPos=GridPos(h=height, w=width, x=x, y=y),
         transformations=[{

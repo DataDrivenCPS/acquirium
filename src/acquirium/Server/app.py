@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-import asyncio
 import io
 import logging
+import os
+import threading
+import time
+import tomllib
 from contextlib import asynccontextmanager
-from typing import Any, Optional, Iterator
+from pathlib import Path
+from typing import Annotated, Any, Optional, Iterator
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
+from fastapi import Body, FastAPI, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import StreamingResponse, Response
 from dateutil import parser as dtparser
 from pydantic import BaseModel, Field
@@ -23,14 +27,110 @@ from acquirium.internals.models import (
     AppSpec,
     AppRunRequest,
     AppStopRequest,
-    InsertTimeseriesRequest,
+    StreamInsert,
+    RegisterDatasourceRequest,
 )
 from acquirium.internals.internals_namespaces import PLANT_URI
 
 import pyarrow.ipc as ipc
 import pyarrow as pa
 
+from acquirium.Server.insert_stats import insert_stats, start_insert_summary_thread
+
 log = logging.getLogger("acquirium.api")
+
+# ---------------------------------------------------------------------------
+# In-process driver helpers
+# ---------------------------------------------------------------------------
+
+def _run_inprocess_driver(
+    entry: dict,
+    manager: Manager,
+    cfg: dict,
+    stop_event: threading.Event,
+) -> None:
+    """Thread target: run a single [[drivers]] entry using DirectAcquirium."""
+    from acquirium.Server.direct_client import DirectAcquirium
+    from acquirium.cli import _import_driver_class
+
+    spec = entry["spec"]
+    driver_overrides = {k: v for k, v in entry.items() if k != "spec"}
+    merged_cfg = {**cfg, "driver": {**cfg.get("driver", {}), **driver_overrides}}
+    interval = float(driver_overrides.get("interval", cfg.get("driver", {}).get("interval", 10.0)))
+    config_dir = Path(cfg.get("__config_dir", Path.cwd()))
+
+    try:
+        driver_cls = _import_driver_class(spec, base_dir=config_dir)
+        direct_aq = DirectAcquirium(
+            manager,
+            origin=spec,
+            insert_batch_rows=int(merged_cfg.get("driver", {}).get("insert_batch_rows", 50_000)),
+        )
+        driver = driver_cls(direct_aq, merged_cfg)
+        driver.setup()
+        known_version = manager.graph_version()
+        log.info("In-process driver ready: %s", driver_cls.__name__)
+    except Exception:
+        log.exception("In-process driver %s setup failed; thread exiting", spec)
+        return
+
+    try:
+        try:
+            driver.tick()
+        except Exception:
+            log.exception("In-process driver %s tick error", spec)
+        while not stop_event.wait(timeout=interval):
+            try:
+                v = manager.graph_version()
+                if v != known_version:
+                    known_version = v
+                    try:
+                        driver.on_graph_change()
+                    except Exception:
+                        log.exception("In-process driver %s on_graph_change error", spec)
+                driver.tick()
+            except Exception:
+                log.exception("In-process driver %s tick error", spec)
+    finally:
+        try:
+            driver.stop()
+        except Exception:
+            log.exception("In-process driver %s stop error", spec)
+
+
+def _start_inprocess_drivers(
+    manager: Manager,
+    stop_event: threading.Event,
+) -> list[threading.Thread]:
+    """Read [[drivers]] from ACQUIRIUM_CONFIG and start each as a daemon thread."""
+    from acquirium.cli import _load_config
+
+    config_path = os.environ.get("ACQUIRIUM_CONFIG")
+    if not config_path:
+        return []
+
+    try:
+        cfg = _load_config(Path(config_path))
+    except Exception:
+        log.warning("Could not load config from ACQUIRIUM_CONFIG=%s; skipping in-process drivers", config_path)
+        return []
+
+    threads: list[threading.Thread] = []
+    for entry in cfg.get("drivers", []):
+        spec = entry.get("spec")
+        if not spec:
+            log.warning("[[drivers]] entry missing 'spec'; skipping")
+            continue
+        t = threading.Thread(
+            target=_run_inprocess_driver,
+            args=(entry, manager, cfg, stop_event),
+            daemon=True,
+            name=f"acquirium-driver-{spec.rsplit(':', 1)[-1]}",
+        )
+        t.start()
+        threads.append(t)
+        log.info("Started in-process driver: %s", spec)
+    return threads
 
 
 class Health(BaseModel):
@@ -88,27 +188,40 @@ async def lifespan(app: FastAPI):
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
 
+    from acquirium.cli import _load_config
+    _config_path = os.environ.get("ACQUIRIUM_CONFIG")
+    _cfg = _load_config(Path(_config_path) if _config_path else None)
+
     m = Manager.from_env()
     app.state.manager = m
+    app.state.read_batch_size = int(_cfg.get("server", {}).get("read_batch_size", 50_000))
 
-    # Start ingestion services at startup
     try:
-        # start mqtt subscribers from graph
-        n = m._connect_mqtt_streams_from_graph()
-        app.state.mqtt_subscriptions = n
-        log.info("Started %d MQTT subscriptions from graph", n)
+        m._sync_stream_refs_from_graph()
     except Exception as e:
         log.exception("Startup failed: %s", e)
-        # If startup fails, ensure we close and crash so Docker restart policy can help
         try:
             m.close()
         finally:
             raise
 
+    # Shared shutdown signal for all server-owned background threads.
+    # In-process drivers listed in [[drivers]] run alongside the API server,
+    # and the insert summary logger also runs in a background thread. They both
+    # poll this event so FastAPI lifespan shutdown can stop them before closing
+    # the Manager and its storage connections.
+    driver_stop = threading.Event()
+    _start_inprocess_drivers(m, driver_stop)
+    start_insert_summary_thread(driver_stop, interval=10.0)
+
     try:
         yield
     finally:
-        # FastAPI shutdown
+        # Tell background driver/summary threads to exit, then close the manager.
+        # Driver threads are daemons, so shutdown should not block indefinitely;
+        # the event mainly prevents them from continuing to use Manager after it
+        # starts closing.
+        driver_stop.set()
         try:
             m.close()
         except Exception:
@@ -245,22 +358,62 @@ def list_app_runs(app_id: Optional[str] = None) -> dict[str, Any]:
 ##### TIMESERIES INGESTION API ENDPOINTS ####
 
 
-@app.post("/insert_timeseries")
-def insert_timeseries(
-    ref_uri: str,
-    req: InsertTimeseriesRequest,
-    point_uri: Optional[str] = None,
-    replace: bool = False,
-) -> dict[str, Any]:
+@app.post("/register_datasource")
+def register_datasource(req: RegisterDatasourceRequest) -> dict[str, Any]:
+    """Register a named datasource in the knowledge graph.
+
+    The source_id is a user-provided string that scopes stream ref_names so
+    two sources with the same ref_name never collide in the timeseries store.
+    """
     try:
-        rows = req.values
-        n = app.state.manager.insert_timeseries(
-            ref_uri=ref_uri,
-            rows=rows,
-            point_uri=point_uri,
-            replace=replace,
+        source_id = app.state.manager.register_datasource(req.source_id)
+        return {"ok": True, "source_id": source_id}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/insert_timeseries")
+def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[str, Any]:
+    """Insert timeseries data for one or more streams.
+
+    Each element specifies a ``ref_uri``, an optional ``point_uri`` (defaults
+    to ``ref_uri``), an optional ``replace`` flag, and a list of
+    ``[timestamp, value]`` pairs.  A single-stream insert is just a
+    one-element list.
+    """
+    try:
+        total = 0
+        bulk_streams: dict[str, dict[str, list[tuple[datetime, Any]]]] = {}
+        bulk_value_kinds: dict[str, dict[str, str]] = {}
+        individual_streams: list[StreamInsert] = []
+        for s in streams:
+            if s.point_uri is None and not s.replace:
+                bulk_streams.setdefault(s.source_id, {})[s.ref_name] = s.values
+                bulk_value_kinds.setdefault(s.source_id, {})[s.ref_name] = s.value_kind
+            else:
+                individual_streams.append(s)
+
+        for source_id, source_streams in bulk_streams.items():
+            total += app.state.manager.insert_timeseries_batch(
+                source_id,
+                source_streams,
+                stream_value_kinds=bulk_value_kinds.get(source_id),
+            )
+        for s in individual_streams:
+            total += app.state.manager.insert_timeseries(
+                source_id=s.source_id,
+                ref_name=s.ref_name,
+                rows=s.values,
+                point_uri=s.point_uri,
+                replace=s.replace,
+                value_kind=s.value_kind,
+            )
+        insert_stats.record(
+            origin="http",
+            rows=sum(len(s.values) for s in streams),
+            streams=[s.ref_name or str(s.point_uri) for s in streams],
         )
-        return {"ok": True, "rows_inserted": n}
+        return {"ok": True, "rows_inserted": total}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -269,9 +422,9 @@ def insert_timeseries(
 async def ingest_external_reference(
     data_uri: str = Form(...),
     ref_uri: str = Form(...),
-    ref_type: str = Form(...),          # PARQUET_REF or CSV_REF URI as string
-    time_column_no: int = Form(0),
-    value_column_no: int = Form(1),
+    time_column: str | None = Form(None),
+    value_column: str | None = Form(None),
+    value_kind: str | None = Form(None),
     file: UploadFile = File(...),
 ) -> dict[str, Any]:
     try:
@@ -279,10 +432,10 @@ async def ingest_external_reference(
         n = app.state.manager.ingest_reference_bytes(
             data_uri=data_uri,
             ref_uri=ref_uri,
-            ref_type=ref_type,
             content=content,
-            time_column_no=time_column_no,
-            value_column_no=value_column_no,
+            time_column=time_column,
+            value_column=value_column,
+            value_kind=value_kind,
             filename=file.filename or "upload",
         )
         return {"ok": True, "rows_ingested": n}
@@ -321,7 +474,7 @@ def get_timeseries(
             end=end_dt,
             limit=limit,
             order=order,        # type: ignore[arg-type]
-            batch_size=50_000,
+            batch_size=request.app.state.read_batch_size,
         )
 
         accept = request.headers.get("accept", "")
@@ -329,23 +482,26 @@ def get_timeseries(
         def arrow_stream() -> Iterator[bytes]:
             buf = io.BytesIO()
             writer: ipc.RecordBatchStreamWriter | None = None
-            for batch in batches:
+            try:
+                for batch in batches:
+                    if writer is None:
+                        writer = ipc.new_stream(buf, batch.schema)
+                    writer.write_batch(batch)
+                    data = buf.getvalue()
+                    if data:
+                        yield data
+                        buf.seek(0)
+                        buf.truncate(0)
                 if writer is None:
-                    writer = ipc.new_stream(buf, batch.schema)
-                writer.write_batch(batch)
-                data = buf.getvalue()
-                if data:
-                    yield data
-                    buf.seek(0)
-                    buf.truncate(0)
-            if writer is None:
-                empty_schema = pa.schema([
-                    ("ts", pa.timestamp("us", tz="UTC")),
-                    ("value", pa.float64()),
-                    ("uri", pa.string()),
-                ])
-                writer = ipc.new_stream(buf, empty_schema)
-            writer.close()
+                    empty_schema = pa.schema([
+                        ("ts", pa.timestamp("us", tz="UTC")),
+                        ("value", pa.float64()),
+                        ("uri", pa.string()),
+                    ])
+                    writer = ipc.new_stream(buf, empty_schema)
+            finally:
+                if writer is not None:
+                    writer.close()
             data = buf.getvalue()
             if data:
                 yield data
