@@ -26,6 +26,7 @@ def build_test_graph_csv() -> Graph:
     g = Graph()
     g.bind("ex", ex)
     g.bind("acq", ACQUIRIUM_NS)
+    g.bind("ref", BRICK_REF)
     g.bind("s223", S223)
     g.bind("qudt", QUDT)
 
@@ -104,13 +105,13 @@ def build_test_graph_csv() -> Graph:
             g.add((point, HAS_ENUMERATION_KIND, ACQUIRIUM_NS[f"EnumerationKind{1}"]))
         g.add((point, HAS_UNIT, ACQUIRIUM_NS[f"Unit{i//4}"]))
 
-        # CSV reference node
+        # CSV reference node — ref:FileReference (file format inferred from extension)
         g.add((ref, RDF.type, FILE_REFERENCE))
         g.add((ref, DATA_SOURCE, Literal("LAB")))
         g.add((ref, FILE_LOCATION, Literal(csv_path)))
-        g.add((ref, TIME_COLUMN_ID, Literal(0)))
+        g.add((ref, TIME_COLUMN_ID, Literal("0")))
         # Value column: 1..10 (assumes time is col 0)
-        g.add((ref, VALUE_COLUMN_ID, Literal(i)))
+        g.add((ref, VALUE_COLUMN_ID, Literal(str(i))))
 
     return g
 
@@ -122,6 +123,7 @@ def build_test_graph_stream() -> Graph:
     g = Graph()
     g.bind("ex", ex)
     g.bind("acq", ACQUIRIUM_NS)
+    g.bind("ref", BRICK_REF)
     g.bind("s223", S223)
     g.bind("qudt", QUDT)
 
@@ -164,14 +166,13 @@ def build_test_graph_stream() -> Graph:
         g.add((point, HAS_QUANTITY_KIND, ACQUIRIUM_NS[f"QuantityKind{i//2}"]))
         g.add((point, HAS_UNIT, ACQUIRIUM_NS[f"Unit{i}"]))
 
-        # CSV reference node
+        # MQTT reference node — port encoded in the broker literal per ref-schema
         g.add((ref, RDF.type, MQTT_REFERENCE))
         g.add((ref, DATA_SOURCE, Literal("SCADA")))
-        g.add((ref, MQTT_BROKER, Literal("mosquitto")))
-        g.add((ref, MQTT_PORT, Literal("1883")))
+        g.add((ref, MQTT_BROKER, Literal("mosquitto:1883")))
+        g.add((ref, MQTT_TOPIC, Literal(f"topic{i-10}")))
         g.add((ref, TIME_KEY, Literal("Timestamp")))
         g.add((ref, VALUE_KEY, Literal("Value")))
-        g.add((ref, MQTT_TOPIC, Literal(f"topic{i-10}")))
 
     return g
 

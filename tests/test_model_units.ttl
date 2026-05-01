@@ -1,8 +1,8 @@
 @prefix acq: <urn:acquirium#> .
 @prefix ex: <urn:ex/> .
 @prefix qudt: <http://qudt.org/schema/qudt/> .
-@prefix ref: <https://brickschema.org/schema/Brick/ref#> .
 @prefix qudtqk: <http://qudt.org/vocab/quantitykind/> .
+@prefix ref: <https://brickschema.org/schema/Brick/ref#> .
 @prefix unit: <http://qudt.org/vocab/unit/> .
 @prefix s223: <http://data.ashrae.org/standard223#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
@@ -25,8 +25,8 @@ ex:flow_rate_1 a s223:QuantifiableObservableProperty ;
 
 ex:flow_rate_1_csv_ref a ref:FileReference ;
     ref:fileLocation "tests/sample_data.csv" ;
-    ref:timeColumnID 0 ;
-    ref:valueColumnID 1 .
+    ref:timeColumnID "0" ;
+    ref:valueColumnID "1" .
 
 # Property WITH unit (volume)
 ex:volume_1 a s223:QuantifiableObservableProperty ;
@@ -36,8 +36,8 @@ ex:volume_1 a s223:QuantifiableObservableProperty ;
 
 ex:volume_1_csv_ref a ref:FileReference ;
     ref:fileLocation "tests/sample_data.csv" ;
-    ref:timeColumnID 0 ;
-    ref:valueColumnID 2 .
+    ref:timeColumnID "0" ;
+    ref:valueColumnID "2" .
 
 # Property WITHOUT unit (Case 1: user must provide from_unit and to_unit)
 ex:temp_no_unit a s223:QuantifiableObservableProperty ;
@@ -45,5 +45,5 @@ ex:temp_no_unit a s223:QuantifiableObservableProperty ;
 
 ex:temp_no_unit_csv_ref a ref:FileReference ;
     ref:fileLocation "tests/sample_data.csv" ;
-    ref:timeColumnID 0 ;
-    ref:valueColumnID 3 .
+    ref:timeColumnID "0" ;
+    ref:valueColumnID "3" .

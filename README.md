@@ -47,6 +47,23 @@ uv run scripts/api_example.py
 or the notebook examples
 [Example notebook](./notebooks/watertap-single-pump.ipynb)
 
+If you are running the built-in WaterTAP driver directly, enable the optional dependency set with:
+
+```bash
+uv run --extra watertap acquirium run acquirium.BuiltinDrivers.watertap:WaterTAPDriver --config acquirium.toml
+```
+
+Note that the `watertap` extra only installs the Python packages from `pyproject.toml`. Some WaterTAP setups also require separate PyNumero or IDAES extension installation steps; those native builds are not performed automatically by package extras.
+
+Typical setup commands are:
+
+```bash
+uv sync --extra watertap
+uv run pyomo download-extensions
+uv run --with setuptools pyomo build-extensions
+uv run idaes get-extensions
+```
+
 After you're done, run this to stop containers:
 
 ```

@@ -2,7 +2,7 @@
 
 import pytest
 
-from acquirium.internals.app_utils import _safe_fragment, app_uri_for, make_stream_ref_uri
+from acquirium.internals.app_utils import _safe_fragment, app_uri_for
 
 
 class TestSafeFragment:
@@ -30,23 +30,3 @@ class TestAppUriFor:
         uri = app_uri_for("my app")
         assert "urn:acquirium#app/" in uri
         assert " " not in uri
-
-
-class TestMakeStreamRefUri:
-    def test_deterministic(self):
-        uri1 = make_stream_ref_uri("urn:test:point1")
-        uri2 = make_stream_ref_uri("urn:test:point1")
-        assert uri1 == uri2
-
-    def test_different_inputs_differ(self):
-        uri1 = make_stream_ref_uri("urn:test:point1")
-        uri2 = make_stream_ref_uri("urn:test:point2")
-        assert uri1 != uri2
-
-    def test_format(self):
-        uri = make_stream_ref_uri("urn:test:point1")
-        assert uri.startswith("urn:acquirium#stream/")
-        # 12 hex chars after prefix
-        suffix = uri.split("stream/")[1]
-        assert len(suffix) == 12
-        int(suffix, 16)  # should not raise

@@ -12,13 +12,14 @@ requires-python = ">=3.12"
 dependencies = [
     "adbc-driver-postgresql>=1.9.0",
     "docker>=7.1.0",
+    "duckdb>=0.10.0",
+    "typer>=0.12.0",
     "fastembed>=0.4.0",
     "fastapi>=0.125.0",
     "grafanalib>=0.7.1",
     "ipykernel==7.0.1",
     "matplotlib>=3.10.8",
     "numpy==2.3.5",
-    "paho-mqtt>=2.1.0",
     "polars>=1.36.1",
     "psycopg[binary]>=3.3.1",
     "pyarrow>=22.0.0",
@@ -33,6 +34,23 @@ dependencies = [
     "uvicorn>=0.38.0",
 ]
 
+[project.optional-dependencies]
+# these provide support for different drivers, which
+# often require external dependencies.
+mqtt = [
+    "paho-mqtt>=2.1.0",
+]
+xlsx = [
+    "fastexcel>=0.11.0",
+]
+watertap = [
+    "pyomo>=6",
+    "watertap",
+]
+
+
+[project.scripts]
+acquirium = "acquirium.cli:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -42,6 +60,7 @@ build-backend = "hatchling.build"
 dev-dependencies = [
     "q>=2.7",
     "pytest-cov>=6.0",
+    "openpyxl>=3.1",
 ]
 no-build-isolation-package = ["pygit2"]
 
