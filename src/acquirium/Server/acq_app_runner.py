@@ -12,7 +12,6 @@ import requests
 from acquirium.Apps.base import App, AppContext, Output
 from acquirium.Client.acquirium import Acquirium
 from acquirium.Client.query import Query
-from acquirium.internals.app_utils import make_stream_ref_uri
 from acquirium.Server.manager import Manager
 
 logger = logging.getLogger("acquirium.app_runner")
@@ -190,21 +189,19 @@ class AppRunner:
         )
 
         outputs = app.run(ctx)
-        self._persist(outputs)
+        self._persist(app_id, outputs)
         return outputs
 
     # ─────────────────────── persistence ───────────────────────
 
-    def _persist(self, outputs: list[Output]) -> None:
+    def _persist(self, app_id: str, outputs: list[Output]) -> None:
         for out in outputs:
             if out.kind == "timeseries":
                 point_uri = out.payload["point_uri"]
-                ref_uri = out.payload.get("ref_uri") or make_stream_ref_uri(point_uri)
                 rows = out.payload["rows"]
-                self.manager.insert_timeseries(ref_uri=ref_uri, rows=rows, point_uri=point_uri)
+                self.manager.insert_timeseries(source_id=app_id, ref_name=point_uri, rows=rows, point_uri=point_uri)
             elif out.kind == "event":
                 point_uri = out.payload["point_uri"]
-                ref_uri = out.payload.get("ref_uri") or make_stream_ref_uri(point_uri)
                 ts = out.payload.get("ts") or datetime.now(timezone.utc)
                 value = json.dumps(
                     {
@@ -214,7 +211,7 @@ class AppRunner:
                     },
                     ensure_ascii=True,
                 )
-                self.manager.insert_timeseries(ref_uri=ref_uri, rows=[(ts, value)], point_uri=point_uri)
+                self.manager.insert_timeseries(source_id=app_id, ref_name=point_uri, rows=[(ts, value)], point_uri=point_uri)
             elif out.kind == "trigger":
                 url = out.payload.get("url")
                 if not url:

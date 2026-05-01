@@ -10,12 +10,12 @@ import psycopg
 from psycopg import sql
 from psycopg.types.json import Json
 
-from acquirium.internals.models import Order, TimeseriesInfo, TimeInterval, LogEntry, TimeIntervalModel
+from acquirium.internals.models import Order, TimeseriesInfo, TimeInterval, LogEntry, TimeIntervalModel, compute_handle
 from acquirium.Storage.base import TimeseriesStore
 import logging
 import pyarrow as pa
 import polars as pl
-
+from rdflib import URIRef
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -72,6 +72,10 @@ class TimescaleStore(TimeseriesStore):
             cur.execute(
                 f"ALTER TABLE {TIMESERIES_TABLE} SET (timescaledb.compress, timescaledb.compress_segmentby = 'point_uri', timescaledb.compress_orderby = 'ts');"
             )
+            cur.execute(
+                "SELECT add_compression_policy('timeseries', INTERVAL '7 days', if_not_exists => TRUE);"
+            )
+
             # add unique constraint on (point_uri, ts) pairs
             cur.execute(
                 f"CREATE UNIQUE INDEX IF NOT EXISTS idx_timeseries_point_ts_unique ON {TIMESERIES_TABLE} (point_uri, ts);"
@@ -80,8 +84,9 @@ class TimescaleStore(TimeseriesStore):
                 f"""
                 CREATE TABLE IF NOT EXISTS {STREAMS_TABLE} (
                     handle TEXT PRIMARY KEY,
-                    point_uri TEXT UNIQUE NOT NULL,
-                    ref_uri TEXT NOT NULL
+                    point_uri TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    ref_name TEXT NOT NULL
                 );
                 """
             )
@@ -165,29 +170,78 @@ class TimescaleStore(TimeseriesStore):
             return -1
 
     # -------------------- stream handles --------------------
-    def ensure_stream_handle(self, point_uri, ref_uri: str, handle: str | None = None) -> str:
+    def ensure_stream_handle(self, point_uri: str, source_id: str, ref_name: str, handle: URIRef | None = None) -> URIRef:
+        """Register a (point_uri, source_id, ref_name) mapping in the streams table.
+
+        The handle is computed deterministically from (source_id, ref_name) via
+        :func:`compute_handle`, so two sources with the same ref_name never
+        produce the same storage key.  The handle is also used as the
+        TimescaleDB row key for the stream's data.  Pass a precomputed handle
+        to avoid recomputing it when already available.
+
+        Returns the handle.
+        """
         if handle is None:
-            handle = hashlib.sha1(ref_uri.encode("utf-8")).hexdigest()[:10]
+            handle = compute_handle(source_id, ref_name)
         with self.conn.cursor() as cur:
             cur.execute(
                 f"""
-                INSERT INTO {STREAMS_TABLE} (handle, point_uri, ref_uri)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (point_uri) DO UPDATE SET handle = EXCLUDED.handle
+                INSERT INTO {STREAMS_TABLE} (handle, point_uri, source_id, ref_name)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (handle) DO UPDATE
+                    SET 
+                        point_uri = EXCLUDED.point_uri,
+                        source_id = EXCLUDED.source_id,
+                        ref_name = EXCLUDED.ref_name
                 """,
-                (handle, point_uri, ref_uri),
+                (str(handle), point_uri, source_id, ref_name),
             )
         return handle
 
-    def resolve_handle(self, handle: str) -> str:
-        '''
-        Resolves a stream handle to its corresponding point URI and ref URI.
-        Returns a tuple of (point_uri, ref_uri) or (None, None) if not found.
-        '''
+    def resolve_handle(self, handle: URIRef) -> tuple[str | None, str | None, str | None]:
+        """Resolve a handle to its (point_uri, source_id, ref_name) triple.
+
+        Returns (None, None, None) if the handle is not found.
+        """
         with self.conn.cursor() as cur:
-            cur.execute(f"SELECT point_uri, ref_uri FROM {STREAMS_TABLE} WHERE handle = %s", (handle,))
+            cur.execute(
+                f"SELECT point_uri, source_id, ref_name FROM {STREAMS_TABLE} WHERE handle = %s",
+                (str(handle),),
+            )
             row = cur.fetchone()
-            return (row[0], row[1]) if row else (None, None)
+            return (row[0], row[1], row[2]) if row else (None, None, None)
+
+    def resolve_storage_key(self, point_uri: str) -> str:
+        """Return the storage key (handle) for a point_uri, or point_uri itself if not registered.
+
+        Streams inserted via insert_timeseries are stored under their handle (UUID).
+        This resolves the semantic URI → handle so reads find the right rows.
+        Falls back to the URI itself for data inserted directly (e.g. bulk CSV ingest).
+        """
+        with self.conn.cursor() as cur:
+            cur.execute(
+                f"SELECT handle FROM {STREAMS_TABLE} WHERE point_uri = %s",
+                (point_uri,),
+            )
+            row = cur.fetchone()
+            return row[0] if row else point_uri
+
+    def resolve_storage_keys(self, point_uris: list[str]) -> dict[str, str]:
+        """Batch-resolve point_uris to storage keys in a single query.
+
+        Returns a mapping of point_uri → handle (or point_uri itself for
+        unregistered URIs, preserving the single-URI fallback behaviour).
+        """
+        if not point_uris:
+            return {}
+        with self.conn.cursor() as cur:
+            cur.execute(
+                f"SELECT point_uri, handle FROM {STREAMS_TABLE} WHERE point_uri = ANY(%s)",
+                (point_uris,),
+            )
+            rows = cur.fetchall()
+        registered = {row[0]: row[1] for row in rows}
+        return {uri: registered.get(uri, uri) for uri in point_uris}
 
     # -------------------- queries --------------------
     def timeseries(

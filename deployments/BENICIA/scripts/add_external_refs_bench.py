@@ -5,7 +5,19 @@ import rdflib
 from rdflib import Literal
 from rdflib.namespace import RDF, XSD
 
-from acquirium.internals.internals_namespaces import ACQUIRIUM_NS, QUDT_UNIT, S223
+from acquirium.internals.internals_namespaces import (
+    ACQUIRIUM_NS,
+    BRICK_REF,
+    DATA_SOURCE,
+    HAS_EXTERNAL_REFERENCE,
+    MQTT_BROKER,
+    MQTT_REFERENCE,
+    MQTT_TOPIC,
+    QUDT_UNIT,
+    S223,
+    TIME_KEY,
+    VALUE_KEY,
+)
 
 
 PROPERTY_TYPES = {
@@ -54,6 +66,7 @@ def add_external_references(
     count_refs: int,
 ) -> None:
     wbs = rdflib.Namespace("urn:ex/")
+    broker_literal = f"{broker}:{port}" if port else broker
 
     i = 0
     for prop in properties:
@@ -63,14 +76,14 @@ def add_external_references(
         name = local_name(prop)
         mqtt_ref = wbs[f"{name}_mqtt_ref"]
 
-        graph.add((prop, ACQUIRIUM_NS.hasExternalReference, mqtt_ref))
+        graph.add((prop, HAS_EXTERNAL_REFERENCE, mqtt_ref))
 
-        graph.add((mqtt_ref, RDF.type, ACQUIRIUM_NS.MQTTReference))
-        graph.add((mqtt_ref, ACQUIRIUM_NS.Broker, Literal(broker)))
-        graph.add((mqtt_ref, ACQUIRIUM_NS.Port, Literal(port)))
-        graph.add((mqtt_ref, ACQUIRIUM_NS.Topic, Literal(f"{topic_prefix}/{name}")))
-        graph.add((mqtt_ref, ACQUIRIUM_NS.time_key, Literal("Timestamp")))
-        graph.add((mqtt_ref, ACQUIRIUM_NS.value_key, Literal("Value")))
+        graph.add((mqtt_ref, RDF.type, MQTT_REFERENCE))
+        graph.add((mqtt_ref, DATA_SOURCE, Literal("SCADA")))
+        graph.add((mqtt_ref, MQTT_BROKER, Literal(broker_literal)))
+        graph.add((mqtt_ref, MQTT_TOPIC, Literal(f"{topic_prefix}/{name}")))
+        graph.add((mqtt_ref, TIME_KEY, Literal("Timestamp")))
+        graph.add((mqtt_ref, VALUE_KEY, Literal("Value")))
 
 
 
@@ -117,6 +130,7 @@ def main() -> None:
     )
 
     graph.bind("acq", ACQUIRIUM_NS)
+    graph.bind("ref", BRICK_REF)
     graph.bind("unit", QUDT_UNIT)
     graph.bind("s223", S223)
     graph.bind("xsd", XSD)
