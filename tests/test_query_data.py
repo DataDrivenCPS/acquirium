@@ -161,7 +161,3 @@ def test_find_data_1(acquirium_client_csv):
     meta = entity_BE_data2.metadata()
     assert len(meta) == 8
     assert "data_of_b" in meta.columns
-<<<<<<< HEAD
-
-=======
->>>>>>> 366c934 (Add typed timeseries storage)

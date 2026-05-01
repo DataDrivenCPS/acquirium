@@ -12,10 +12,9 @@ ex:point_11 a acq:QuantifiableObservableProperty ;
     ref:hasExternalReference ex:point_11_mqtt_ref .
 
 ex:point_11_mqtt_ref a ref:MQTTReference ;
-    ref:MQTTBroker "mosquitto" ;
-    acq:DataSource "SCADA" ;
-    acq:mqttPort "1883" ;
+    ref:MQTTBroker "mosquitto:1883" ;
     ref:MQTTTopic "topic1" ;
+    acq:dataSource "SCADA" ;
     acq:timeKey "Timestamp" ;
     acq:valueKey "Value" .
 
@@ -27,10 +26,9 @@ ex:point_12 a acq:QuantifiableObservableProperty ;
     ref:hasExternalReference ex:point_12_mqtt_ref .
 
 ex:point_12_mqtt_ref a ref:MQTTReference ;
-    ref:MQTTBroker "mosquitto" ;
-    acq:DataSource "SCADA" ;
-    acq:mqttPort "1883" ;
+    ref:MQTTBroker "mosquitto:1883" ;
     ref:MQTTTopic "topic2" ;
+    acq:dataSource "SCADA" ;
     acq:timeKey "Timestamp" ;
     acq:valueKey "Value" .
 
@@ -42,10 +40,9 @@ ex:point_13 a acq:QuantifiableObservableProperty ;
     ref:hasExternalReference ex:point_13_mqtt_ref .
 
 ex:point_13_mqtt_ref a ref:MQTTReference ;
-    ref:MQTTBroker "mosquitto" ;
-    acq:DataSource "SCADA" ;
-    acq:mqttPort "1883" ;
+    ref:MQTTBroker "mosquitto:1883" ;
     ref:MQTTTopic "topic3" ;
+    acq:dataSource "SCADA" ;
     acq:timeKey "Timestamp" ;
     acq:valueKey "Value" .
 
@@ -57,10 +54,9 @@ ex:point_14 a acq:QuantifiableObservableProperty ;
     ref:hasExternalReference ex:point_14_mqtt_ref .
 
 ex:point_14_mqtt_ref a ref:MQTTReference ;
-    ref:MQTTBroker "mosquitto" ;
-    acq:DataSource "SCADA" ;
-    acq:mqttPort "1883" ;
+    ref:MQTTBroker "mosquitto:1883" ;
     ref:MQTTTopic "topic4" ;
+    acq:dataSource "SCADA" ;
     acq:timeKey "Timestamp" ;
     acq:valueKey "Value" .
 

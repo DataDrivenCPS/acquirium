@@ -10,37 +10,11 @@ from __future__ import annotations
 import gzip
 import json
 import logging
-import re
 from pathlib import Path
 from typing import Any
-
+from acquirium.internals.internals_namespaces import *
+from acquirium.TextMatch.embedding_matcher import _split_local_name
 logger = logging.getLogger("acquirium.qudt_store")
-
-# RDF predicates we care about
-_RDFS_LABEL = "http://www.w3.org/2000/01/rdf-schema#label"
-_RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
-_QUDT_UNIT = "http://qudt.org/schema/qudt/Unit"
-_QUDT_QK = "http://qudt.org/schema/qudt/QuantityKind"
-_QUDT_SYMBOL = "http://qudt.org/schema/qudt/symbol"
-_QUDT_UCUM = "http://qudt.org/schema/qudt/ucumCode"
-
-# HTTP sources
-_UNIT_HTTP = "http://qudt.org/vocab/unit"
-_QK_HTTP = "http://qudt.org/vocab/quantitykind"
-
-
-def _split_local_name(uri: str) -> list[str]:
-    """Split a URI local name on CamelCase, underscores, hyphens into lowercase tokens."""
-    for sep in ("#", "/"):
-        if sep in uri:
-            local = uri.rsplit(sep, 1)[-1]
-            break
-    else:
-        local = uri
-    tokens = re.sub(r"([a-z])([A-Z])", r"\1 \2", local)
-    tokens = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", tokens)
-    parts = re.split(r"[_\-\s]+", tokens)
-    return [p.lower() for p in parts if p]
 
 
 def _build_surfaces(uri: str, labels: list[str], symbol: str | None, ucum: str | None) -> list[str]:
@@ -89,10 +63,6 @@ class QUDTStore:
         """Parse a QUDT ontology, HTTP-first with local fallback. Returns concept dicts."""
         from rdflib import Graph, URIRef, Namespace
         from rdflib.namespace import SKOS
-
-        QUDT = Namespace("http://qudt.org/schema/qudt/")
-        RDFS = Namespace("http://www.w3.org/2000/01/rdf-schema#")
-        RDF = Namespace("http://www.w3.org/1999/02/22-rdf-syntax-ns#")
 
         g = Graph()
         loaded = False
@@ -150,7 +120,7 @@ class QUDTStore:
             if not surfaces:
                 continue
 
-            kind = "unit" if rdf_type == _QUDT_UNIT else "quantity_kind"
+            kind = "unit" if rdf_type == str(QUDT.Unit) else "quantity_kind"
             concepts.append({
                 "uri": uri,
                 "kind": kind,
@@ -206,8 +176,8 @@ class QUDTStore:
             local_qk_path = Path("ontologies/qudt_qk.ttl")
 
         # Parse fresh
-        units = self._parse_ontology(_UNIT_HTTP, local_unit_path, _QUDT_UNIT)
-        qks = self._parse_ontology(_QK_HTTP, local_qk_path, _QUDT_QK)
+        units = self._parse_ontology(str(QUDT_UNIT), local_unit_path, str(QUDT.Unit))
+        qks = self._parse_ontology(str(QUDT_QUANTITY_KIND), local_qk_path, str(QUDT.QuantityKind))
         fresh_concepts = units + qks
         fresh_uris = {c["uri"] for c in fresh_concepts}
 
