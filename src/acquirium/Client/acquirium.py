@@ -34,12 +34,9 @@ def _add_triple(g: "RDFGraph", subj: "URIRef", pred: "URIRef", value: "str | URI
         g.add((subj, pred, Literal(value)))
 from acquirium.Client.client import AcquiriumClient
 from acquirium.Apps.base import App
-from acquirium.internals.app_utils import make_stream_ref_uri
 from acquirium.internals.models import AppOutputSpec, AppSpec, compute_ref_uri
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_DB_URI,
-    ACQUIRIUM_DATASOURCE,
-    ACQUIRIUM_NS,
     ACQUIRIUM_REF_NAME,
     ACQUIRIUM_SOURCE_ID,
     ACQUIRIUM_VALUE_KIND,
@@ -141,13 +138,7 @@ class Acquirium:
 
         Returns ``source_id``.
         """
-        source_uri = ACQUIRIUM_NS[f"datasource/{source_id}"]
-        g = RDFGraph()
-        g.add((source_uri, RDF.type, ACQUIRIUM_DATASOURCE))
-        g.add((source_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
-        g.add((source_uri, RDFS.label, Literal(source_id)))
-        self.client.insert_graph(g.serialize(format="turtle"), format="turtle", replace=False)
-        return source_id
+        return self.client.register_datasource(source_id)
 
     def insert_timeseries(
         self,
@@ -173,18 +164,13 @@ class Acquirium:
         Returns:
             dict with ``{"ok": True, "rows_inserted": N}``.
         """
-        if point_uri is not None:
-            self.register_stream(
-                point_uri=point_uri,
-                source_id=source_id,
-                ref_name=ref_name,
-                value_kind=value_kind,
-            )
         return self.client.insert_timeseries(
-            ref_uri=str(compute_ref_uri(source_id, ref_name)),
+            source_id=source_id,
+            ref_name=ref_name,
             rows=rows,
             point_uri=point_uri,
             replace=replace,
+            value_kind=normalize_value_kind(value_kind),
         )
 
     def insert_timeseries_batch(
@@ -214,14 +200,12 @@ class Acquirium:
                 ref_name: normalize_value_kind((value_kinds or {}).get(ref_name))
                 for ref_name in chunk
             }
-            for ref_name, rows in chunk.items():
-                result = self.insert_timeseries(
-                    source_id,
-                    ref_name,
-                    rows,
-                    value_kind=chunk_value_kinds[ref_name],
-                )
-                total += int(result.get("rows_inserted", 0))
+            result = self.client.insert_timeseries_batch(
+                source_id,
+                chunk,
+                value_kinds=chunk_value_kinds,
+            )
+            total += int(result.get("rows_inserted", 0))
             chunk_count += 1
         return {"ok": True, "rows_inserted": total, "batches": chunk_count}
 
@@ -508,8 +492,6 @@ class Acquirium:
                 spec_item = AppOutputSpec(**item)
             else:
                 raise TypeError("outputs must be AppOutputSpec or dict")
-            if spec_item.ref_uri is None:
-                spec_item.ref_uri = make_stream_ref_uri(spec_item.point_uri)
             output_specs.append(spec_item)
 
         code = source_code or getattr(app, "source_code", None)

@@ -1,5 +1,6 @@
 @prefix nawi: <urn:nawi-water-ontology#> .
 @prefix ns1: <urn:acquirium#> .
+@prefix ref: <https://brickschema.org/schema/Brick/ref#> .
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix qudt: <http://qudt.org/schema/qudt/> .
 @prefix qudtqk: <http://qudt.org/vocab/quantitykind/> .
@@ -34,19 +35,19 @@ wbs:P1-in a s223:InletConnectionPoint ;
 
 wbs:P1-in-pressure a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Pressure ;
-    ns1:hasExternalReference ns1:P1-in-pressure_watertap_ref ;
+    ref:hasExternalReference ns1:P1-in-pressure_watertap_ref ;
     ns1:hasPyomoVar "fs.P1.control_volume.properties_in[0.0].pressure" .
 
 wbs:P1-in-temperature a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Temperature ;
-    ns1:hasExternalReference ns1:P1-in-temperature_watertap_ref ;
+    ref:hasExternalReference ns1:P1-in-temperature_watertap_ref ;
     ns1:hasPyomoVar "fs.P1.control_volume.properties_in[0.0].temperature" .
 
 wbs:P1-in-watertap-mass-flow a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     qudt:hasQuantityKind qudtqk:MassFlowRate ;
     qudt:hasUnit unit:KiloGM-PER-SEC ;
-    ns1:hasExternalReference ns1:P1-in-watertap-mass-flow_watertap_ref ;
+    ref:hasExternalReference ns1:P1-in-watertap-mass-flow_watertap_ref ;
     ns1:hasPyomoVar "fs.P1.control_volume.properties_in[0.0].flow_mass_phase_comp[Liq,H2O]" .
 
 wbs:P1-in-watertap-mass-flow-nacl a s223:QuantifiableObservableProperty ;
@@ -54,53 +55,53 @@ wbs:P1-in-watertap-mass-flow-nacl a s223:QuantifiableObservableProperty ;
     s223:ofSubstance nawi:Salt-NaCl ;
     qudt:hasQuantityKind qudtqk:MassFlowRate ;
     qudt:hasUnit unit:KiloGM-PER-SEC ;
-    ns1:hasExternalReference ns1:P1-in-watertap-mass-flow-nacl_watertap_ref ;
+    ref:hasExternalReference ns1:P1-in-watertap-mass-flow-nacl_watertap_ref ;
     ns1:hasPyomoVar "fs.P1.control_volume.properties_in[0.0].flow_mass_phase_comp[Liq,NaCl]" .
 
 wbs:P1-in-watertap-mass-frac-h2o a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
-    ns1:hasExternalReference ns1:P1-in-watertap-mass-frac-h2o_watertap_ref ;
+    ref:hasExternalReference ns1:P1-in-watertap-mass-frac-h2o_watertap_ref ;
     ns1:hasPyomoVar "fs.P1.control_volume.properties_in[0.0].mass_frac_phase_comp[Liq,H2O]" .
 
 wbs:P1-in-watertap-mass-frac-nacl a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance nawi:Salt-NaCl ;
-    ns1:hasExternalReference ns1:P1-in-watertap-mass-frac-nacl_watertap_ref ;
+    ref:hasExternalReference ns1:P1-in-watertap-mass-frac-nacl_watertap_ref ;
     ns1:hasPyomoVar "fs.P1.control_volume.properties_in[0.0].mass_frac_phase_comp[Liq,NaCl]" .
 
 wbs:P1-in-watertap-specific-enthalpy a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:SpecificEnthalpy ;
     qudt:hasUnit unit:J-PER-KiloGM ;
-    ns1:hasExternalReference ns1:P1-in-watertap-specific-enthalpy_watertap_ref ;
+    ref:hasExternalReference ns1:P1-in-watertap-specific-enthalpy_watertap_ref ;
     ns1:hasPyomoVar "fs.P1.control_volume.properties_in[0.0].enth_mass_phase[Liq]" .
 
 wbs:P1-out-pressure a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Pressure ;
-    ns1:hasExternalReference ns1:P1-out-pressure_watertap_ref ;
+    ref:hasExternalReference ns1:P1-out-pressure_watertap_ref ;
     ns1:hasPyomoVar "fs.P1.control_volume.properties_out[0.0].pressure" .
 
 wbs:P1-out-temperature a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Temperature ;
-    ns1:hasExternalReference ns1:P1-out-temperature_watertap_ref ;
+    ref:hasExternalReference ns1:P1-out-temperature_watertap_ref ;
     ns1:hasPyomoVar "fs.P1.control_volume.properties_out[0.0].temperature" .
 
 wbs:P1-out-watertap-density-phase a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Density ;
     qudt:hasUnit unit:KiloGM-PER-M3 ;
-    ns1:hasExternalReference ns1:P1-out-watertap-density-phase_watertap_ref ;
+    ref:hasExternalReference ns1:P1-out-watertap-density-phase_watertap_ref ;
     ns1:hasPyomoVar "fs.P1.control_volume.properties_out[0.0].dens_mass_phase[Liq]" .
 
 wbs:P1-out-watertap-flow-rate a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:VolumeFlowRate ;
     qudt:hasUnit unit:M3-PER-SEC ;
-    ns1:hasExternalReference ns1:P1-out-watertap-flow-rate_watertap_ref ;
+    ref:hasExternalReference ns1:P1-out-watertap-flow-rate_watertap_ref ;
     ns1:hasPyomoVar "fs.P1.control_volume.properties_out[0.0].flow_vol_phase[Liq]" .
 
 wbs:P1-out-watertap-mass-flow a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     qudt:hasQuantityKind qudtqk:MassFlowRate ;
     qudt:hasUnit unit:KiloGM-PER-SEC ;
-    ns1:hasExternalReference ns1:P1-out-watertap-mass-flow_watertap_ref ;
+    ref:hasExternalReference ns1:P1-out-watertap-mass-flow_watertap_ref ;
     ns1:hasPyomoVar "fs.P1.control_volume.properties_out[0.0].flow_mass_phase_comp[Liq,H2O]" .
 
 wbs:P1-out-watertap-mass-flow-nacl a s223:QuantifiableObservableProperty ;
@@ -108,68 +109,68 @@ wbs:P1-out-watertap-mass-flow-nacl a s223:QuantifiableObservableProperty ;
     s223:ofSubstance nawi:Salt-NaCl ;
     qudt:hasQuantityKind qudtqk:MassFlowRate ;
     qudt:hasUnit unit:KiloGM-PER-SEC ;
-    ns1:hasExternalReference ns1:P1-out-watertap-mass-flow-nacl_watertap_ref ;
+    ref:hasExternalReference ns1:P1-out-watertap-mass-flow-nacl_watertap_ref ;
     ns1:hasPyomoVar "fs.P1.control_volume.properties_out[0.0].flow_mass_phase_comp[Liq,NaCl]" .
 
 wbs:P1-out-watertap-mass-frac-h2o a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
-    ns1:hasExternalReference ns1:P1-out-watertap-mass-frac-h2o_watertap_ref ;
+    ref:hasExternalReference ns1:P1-out-watertap-mass-frac-h2o_watertap_ref ;
     ns1:hasPyomoVar "fs.P1.control_volume.properties_out[0.0].mass_frac_phase_comp[Liq,H2O]" .
 
 wbs:P1-out-watertap-mass-frac-nacl a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance nawi:Salt-NaCl ;
-    ns1:hasExternalReference ns1:P1-out-watertap-mass-frac-nacl_watertap_ref ;
+    ref:hasExternalReference ns1:P1-out-watertap-mass-frac-nacl_watertap_ref ;
     ns1:hasPyomoVar "fs.P1.control_volume.properties_out[0.0].mass_frac_phase_comp[Liq,NaCl]" .
 
 wbs:P1-out-watertap-specific-enthalpy a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:SpecificEnthalpy ;
     qudt:hasUnit unit:J-PER-KiloGM ;
-    ns1:hasExternalReference ns1:P1-out-watertap-specific-enthalpy_watertap_ref ;
+    ref:hasExternalReference ns1:P1-out-watertap-specific-enthalpy_watertap_ref ;
     ns1:hasPyomoVar "fs.P1.control_volume.properties_out[0.0].enth_mass_phase[Liq]" .
 
 wbs:P1-watertap-delta-P a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Pressure ;
     qudt:hasUnit unit:PSI ;
-    ns1:hasExternalReference ns1:P1-watertap-delta-P_watertap_ref ;
+    ref:hasExternalReference ns1:P1-watertap-delta-P_watertap_ref ;
     ns1:hasPyomoVar "fs.P1.control_volume.deltaP[0.0]" .
 
 wbs:P1-watertap-efficiency a s223:QuantifiableObservableProperty ;
-    ns1:hasExternalReference ns1:P1-watertap-efficiency_watertap_ref ;
+    ref:hasExternalReference ns1:P1-watertap-efficiency_watertap_ref ;
     ns1:hasPyomoVar "fs.P1.efficiency_pump[0.0]" .
 
 wbs:P1-watertap-ratio a s223:QuantifiableObservableProperty ;
-    ns1:hasExternalReference ns1:P1-watertap-ratio_watertap_ref ;
+    ref:hasExternalReference ns1:P1-watertap-ratio_watertap_ref ;
     ns1:hasPyomoVar "fs.P1.ratioP[0.0]" .
 
 wbs:P1-watertap-work a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Power ;
     qudt:hasUnit unit:W ;
-    ns1:hasExternalReference ns1:P1-watertap-work_watertap_ref ;
+    ref:hasExternalReference ns1:P1-watertap-work_watertap_ref ;
     ns1:hasPyomoVar "fs.P1.control_volume.work[0.0]" .
 
 wbs:P1-watertap-work-fluid a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Mix-Fluid ;
     qudt:hasQuantityKind qudtqk:Power ;
     qudt:hasUnit unit:W ;
-    ns1:hasExternalReference ns1:P1-watertap-work-fluid_watertap_ref ;
+    ref:hasExternalReference ns1:P1-watertap-work-fluid_watertap_ref ;
     ns1:hasPyomoVar "fs.P1.work_fluid[0.0]" .
 
 wbs:P2-in-pressure a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Pressure ;
-    ns1:hasExternalReference ns1:P2-in-pressure_watertap_ref ;
+    ref:hasExternalReference ns1:P2-in-pressure_watertap_ref ;
     ns1:hasPyomoVar "fs.P2.control_volume.properties_in[0.0].pressure" .
 
 wbs:P2-in-temperature a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Temperature ;
-    ns1:hasExternalReference ns1:P2-in-temperature_watertap_ref ;
+    ref:hasExternalReference ns1:P2-in-temperature_watertap_ref ;
     ns1:hasPyomoVar "fs.P2.control_volume.properties_in[0.0].temperature" .
 
 wbs:P2-in-watertap-mass-flow a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     qudt:hasQuantityKind qudtqk:MassFlowRate ;
     qudt:hasUnit unit:KiloGM-PER-SEC ;
-    ns1:hasExternalReference ns1:P2-in-watertap-mass-flow_watertap_ref ;
+    ref:hasExternalReference ns1:P2-in-watertap-mass-flow_watertap_ref ;
     ns1:hasPyomoVar "fs.P2.control_volume.properties_in[0.0].flow_mass_phase_comp[Liq,H2O]" .
 
 wbs:P2-in-watertap-mass-flow-nacl a s223:QuantifiableObservableProperty ;
@@ -177,24 +178,24 @@ wbs:P2-in-watertap-mass-flow-nacl a s223:QuantifiableObservableProperty ;
     s223:ofSubstance nawi:Salt-NaCl ;
     qudt:hasQuantityKind qudtqk:MassFlowRate ;
     qudt:hasUnit unit:KiloGM-PER-SEC ;
-    ns1:hasExternalReference ns1:P2-in-watertap-mass-flow-nacl_watertap_ref ;
+    ref:hasExternalReference ns1:P2-in-watertap-mass-flow-nacl_watertap_ref ;
     ns1:hasPyomoVar "fs.P2.control_volume.properties_in[0.0].flow_mass_phase_comp[Liq,NaCl]" .
 
 wbs:P2-in-watertap-mass-frac-h2o a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
-    ns1:hasExternalReference ns1:P2-in-watertap-mass-frac-h2o_watertap_ref ;
+    ref:hasExternalReference ns1:P2-in-watertap-mass-frac-h2o_watertap_ref ;
     ns1:hasPyomoVar "fs.P2.control_volume.properties_in[0.0].mass_frac_phase_comp[Liq,H2O]" .
 
 wbs:P2-in-watertap-mass-frac-nacl a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance nawi:Salt-NaCl ;
-    ns1:hasExternalReference ns1:P2-in-watertap-mass-frac-nacl_watertap_ref ;
+    ref:hasExternalReference ns1:P2-in-watertap-mass-frac-nacl_watertap_ref ;
     ns1:hasPyomoVar "fs.P2.control_volume.properties_in[0.0].mass_frac_phase_comp[Liq,NaCl]" .
 
 wbs:P2-in-watertap-specific-enthalpy a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:SpecificEnthalpy ;
     qudt:hasUnit unit:J-PER-KiloGM ;
-    ns1:hasExternalReference ns1:P2-in-watertap-specific-enthalpy_watertap_ref ;
+    ref:hasExternalReference ns1:P2-in-watertap-specific-enthalpy_watertap_ref ;
     ns1:hasPyomoVar "fs.P2.control_volume.properties_in[0.0].enth_mass_phase[Liq]" .
 
 wbs:P2-out a s223:OutletConnectionPoint ;
@@ -211,31 +212,31 @@ wbs:P2-out a s223:OutletConnectionPoint ;
 
 wbs:P2-out-pressure a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Pressure ;
-    ns1:hasExternalReference ns1:P2-out-pressure_watertap_ref ;
+    ref:hasExternalReference ns1:P2-out-pressure_watertap_ref ;
     ns1:hasPyomoVar "fs.P2.control_volume.properties_out[0.0].pressure" .
 
 wbs:P2-out-temperature a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Temperature ;
-    ns1:hasExternalReference ns1:P2-out-temperature_watertap_ref ;
+    ref:hasExternalReference ns1:P2-out-temperature_watertap_ref ;
     ns1:hasPyomoVar "fs.P2.control_volume.properties_out[0.0].temperature" .
 
 wbs:P2-out-watertap-density-phase a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Density ;
     qudt:hasUnit unit:KiloGM-PER-M3 ;
-    ns1:hasExternalReference ns1:P2-out-watertap-density-phase_watertap_ref ;
+    ref:hasExternalReference ns1:P2-out-watertap-density-phase_watertap_ref ;
     ns1:hasPyomoVar "fs.P2.control_volume.properties_out[0.0].dens_mass_phase[Liq]" .
 
 wbs:P2-out-watertap-flow-rate a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:VolumeFlowRate ;
     qudt:hasUnit unit:M3-PER-SEC ;
-    ns1:hasExternalReference ns1:P2-out-watertap-flow-rate_watertap_ref ;
+    ref:hasExternalReference ns1:P2-out-watertap-flow-rate_watertap_ref ;
     ns1:hasPyomoVar "fs.P2.control_volume.properties_out[0.0].flow_vol_phase[Liq]" .
 
 wbs:P2-out-watertap-mass-flow a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     qudt:hasQuantityKind qudtqk:MassFlowRate ;
     qudt:hasUnit unit:KiloGM-PER-SEC ;
-    ns1:hasExternalReference ns1:P2-out-watertap-mass-flow_watertap_ref ;
+    ref:hasExternalReference ns1:P2-out-watertap-mass-flow_watertap_ref ;
     ns1:hasPyomoVar "fs.P2.control_volume.properties_out[0.0].flow_mass_phase_comp[Liq,H2O]" .
 
 wbs:P2-out-watertap-mass-flow-nacl a s223:QuantifiableObservableProperty ;
@@ -243,81 +244,81 @@ wbs:P2-out-watertap-mass-flow-nacl a s223:QuantifiableObservableProperty ;
     s223:ofSubstance nawi:Salt-NaCl ;
     qudt:hasQuantityKind qudtqk:MassFlowRate ;
     qudt:hasUnit unit:KiloGM-PER-SEC ;
-    ns1:hasExternalReference ns1:P2-out-watertap-mass-flow-nacl_watertap_ref ;
+    ref:hasExternalReference ns1:P2-out-watertap-mass-flow-nacl_watertap_ref ;
     ns1:hasPyomoVar "fs.P2.control_volume.properties_out[0.0].flow_mass_phase_comp[Liq,NaCl]" .
 
 wbs:P2-out-watertap-mass-frac-h2o a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
-    ns1:hasExternalReference ns1:P2-out-watertap-mass-frac-h2o_watertap_ref ;
+    ref:hasExternalReference ns1:P2-out-watertap-mass-frac-h2o_watertap_ref ;
     ns1:hasPyomoVar "fs.P2.control_volume.properties_out[0.0].mass_frac_phase_comp[Liq,H2O]" .
 
 wbs:P2-out-watertap-mass-frac-nacl a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance nawi:Salt-NaCl ;
-    ns1:hasExternalReference ns1:P2-out-watertap-mass-frac-nacl_watertap_ref ;
+    ref:hasExternalReference ns1:P2-out-watertap-mass-frac-nacl_watertap_ref ;
     ns1:hasPyomoVar "fs.P2.control_volume.properties_out[0.0].mass_frac_phase_comp[Liq,NaCl]" .
 
 wbs:P2-out-watertap-specific-enthalpy a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:SpecificEnthalpy ;
     qudt:hasUnit unit:J-PER-KiloGM ;
-    ns1:hasExternalReference ns1:P2-out-watertap-specific-enthalpy_watertap_ref ;
+    ref:hasExternalReference ns1:P2-out-watertap-specific-enthalpy_watertap_ref ;
     ns1:hasPyomoVar "fs.P2.control_volume.properties_out[0.0].enth_mass_phase[Liq]" .
 
 wbs:P2-watertap-delta-P a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Pressure ;
     qudt:hasUnit unit:PSI ;
-    ns1:hasExternalReference ns1:P2-watertap-delta-P_watertap_ref ;
+    ref:hasExternalReference ns1:P2-watertap-delta-P_watertap_ref ;
     ns1:hasPyomoVar "fs.P2.control_volume.deltaP[0.0]" .
 
 wbs:P2-watertap-efficiency a s223:QuantifiableObservableProperty ;
-    ns1:hasExternalReference ns1:P2-watertap-efficiency_watertap_ref ;
+    ref:hasExternalReference ns1:P2-watertap-efficiency_watertap_ref ;
     ns1:hasPyomoVar "fs.P2.efficiency_pump[0.0]" .
 
 wbs:P2-watertap-ratio a s223:QuantifiableObservableProperty ;
-    ns1:hasExternalReference ns1:P2-watertap-ratio_watertap_ref ;
+    ref:hasExternalReference ns1:P2-watertap-ratio_watertap_ref ;
     ns1:hasPyomoVar "fs.P2.ratioP[0.0]" .
 
 wbs:P2-watertap-work a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Power ;
     qudt:hasUnit unit:W ;
-    ns1:hasExternalReference ns1:P2-watertap-work_watertap_ref ;
+    ref:hasExternalReference ns1:P2-watertap-work_watertap_ref ;
     ns1:hasPyomoVar "fs.P2.control_volume.work[0.0]" .
 
 wbs:P2-watertap-work-fluid a s223:QuantifiableObservableProperty ;
     s223:ofMedium s223:Mix-Fluid ;
     qudt:hasQuantityKind qudtqk:Power ;
     qudt:hasUnit unit:W ;
-    ns1:hasExternalReference ns1:P2-watertap-work-fluid_watertap_ref ;
+    ref:hasExternalReference ns1:P2-watertap-work-fluid_watertap_ref ;
     ns1:hasPyomoVar "fs.P2.work_fluid[0.0]" .
 
 wbs:RO-watertap-area a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Area ;
     qudt:hasUnit unit:M2 ;
-    ns1:hasExternalReference ns1:RO-watertap-area_watertap_ref ;
+    ref:hasExternalReference ns1:RO-watertap-area_watertap_ref ;
     ns1:hasPyomoVar "fs.RO.area" .
 
 wbs:RO-watertap-height a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Length ;
     qudt:hasUnit unit:M ;
-    ns1:hasExternalReference ns1:RO-watertap-height_watertap_ref ;
+    ref:hasExternalReference ns1:RO-watertap-height_watertap_ref ;
     ns1:hasPyomoVar "fs.RO.feed_side.channel_height" .
 
 wbs:RO-watertap-permeability-coef-solute a s223:QuantifiableObservableProperty ;
-    ns1:hasExternalReference ns1:RO-watertap-permeability-coef-solute_watertap_ref ;
+    ref:hasExternalReference ns1:RO-watertap-permeability-coef-solute_watertap_ref ;
     ns1:hasPyomoVar "fs.RO.B_comp[0.0,NaCl]" .
 
 wbs:RO-watertap-permeability-coef-solvent a s223:QuantifiableObservableProperty ;
-    ns1:hasExternalReference ns1:RO-watertap-permeability-coef-solvent_watertap_ref ;
+    ref:hasExternalReference ns1:RO-watertap-permeability-coef-solvent_watertap_ref ;
     ns1:hasPyomoVar "fs.RO.A_comp[0.0,H2O]" .
 
 wbs:RO-watertap-spacer-porosity a s223:QuantifiableObservableProperty ;
-    ns1:hasExternalReference ns1:RO-watertap-spacer-porosity_watertap_ref ;
+    ref:hasExternalReference ns1:RO-watertap-spacer-porosity_watertap_ref ;
     ns1:hasPyomoVar "fs.RO.feed_side.spacer_porosity" .
 
 wbs:RO-watertap-width a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Length ;
     qudt:hasUnit unit:M ;
-    ns1:hasExternalReference ns1:RO-watertap-width_watertap_ref ;
+    ref:hasExternalReference ns1:RO-watertap-width_watertap_ref ;
     ns1:hasPyomoVar "fs.RO.width" .
 
 wbs:P1-out a s223:OutletConnectionPoint ;

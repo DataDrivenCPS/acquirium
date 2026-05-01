@@ -77,18 +77,6 @@ class StreamInsert(BaseModel):
     values: list[tuple[datetime, float | int | str | None]]
 
 
-class InsertTimeseriesRequest(BaseModel):
-    values: list[tuple[datetime, float | int | str | None]]
-
-
-class InsertBatchRequest(RootModel[dict[str, list[tuple[datetime, float | int | str | None]]]]):
-    """Batch insert where keys are point URIs and values are lists of (ts, value)."""
-
-    @property
-    def streams(self) -> dict[str, list[tuple[datetime, float | int | str | None]]]:
-        return self.root
-
-
 Order = Literal["asc", "desc"]
 
 @dataclass(frozen=True)

@@ -6,13 +6,21 @@ from pathlib import Path
 import os
 import logging
 from time import perf_counter
-from rdflib import Graph, URIRef, Node, Literal, RDF, RDFS
+from rdflib import Graph, URIRef, Node, Literal, RDF, RDFS, SKOS
 
-from acquirium.Storage import OxigraphGraphStore, TimescaleStore, PGReferenceRegistry, PGReferenceInfo, resolve_dsn
+from acquirium.Storage import (
+    OxigraphGraphStore,
+    TimeseriesStore,
+    PGReferenceRegistry,
+    PGReferenceInfo,
+    resolve_dsn,
+    create_timeseries_store,
+)
+from acquirium.Storage.values import infer_value_kind, normalize_value_kind
 from acquirium.internals.qudt_units import QUDTUnitConverter
-from acquirium.internals.models import LogEntry, TimeIntervalModel, AppSpec, AppRunRequest
+from acquirium.internals.models import LogEntry, Order, TimeIntervalModel, AppSpec, AppRunRequest, compute_ref_uri
 from acquirium.internals.internals_namespaces import *
-from acquirium.internals.app_utils import app_uri_for, make_stream_ref_uri
+from acquirium.internals.app_utils import app_uri_for
 
 import json
 import hashlib
@@ -23,16 +31,57 @@ from typing import Any, Callable
 import shutil
 import docker
 from docker.errors import DockerException, NotFound as ContainerNotFound
-from acquirium.Server.mqtt_ingestion import MQTTIngestService, MQTTStreamSpec
 from acquirium.TextMatch.embedding_matcher import EmbeddingMatcher, _split_local_name
 from acquirium.TextMatch.qudt_store import QUDTStore
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("acquirium.manager")
 logger.setLevel(logging.INFO)
 
 DEFAULT_DATA_DIR = Path(".acquirium")
 DEFAULT_DB_NAME = "acquirium"
+RECREATE_WARNING = (
+    "SERVER STARTED WITH recreate=True. Existing Acquirium data will be erased now. "
+    "Restarting this server with recreate=True will erase data again."
+)
+
+
+def _aggregate_uri_label_rows(
+    rows: list,
+    seen: set[str],
+    kind: str,
+    concepts: list[dict[str, Any]],
+) -> None:
+    """Aggregate SPARQL (uri, label) rows into *concepts*, skipping already-seen URIs."""
+    uri_labels: dict[str, list[str]] = {}
+    uri_first_label: dict[str, str | None] = {}
+    for row in rows:
+        uri = str(row[0]) if row[0] else None
+        label = str(row[1]).strip('"') if row[1] else None
+        if not uri:
+            continue
+        if uri not in uri_labels:
+            uri_labels[uri] = []
+            uri_first_label[uri] = label
+        if label and label not in uri_labels[uri]:
+            uri_labels[uri].append(label)
+
+    for uri, labels in uri_labels.items():
+        if uri in seen:
+            continue
+        seen.add(uri)
+        surfaces = []
+        for lbl in labels:
+            lbl_lower = lbl.lower()
+            if lbl_lower not in surfaces:
+                surfaces.append(lbl_lower)
+        tokens = _split_local_name(uri)
+        if tokens:
+            joined = " ".join(tokens)
+            if joined not in surfaces:
+                surfaces.append(joined)
+        display_label = uri_first_label[uri] or (" ".join(tokens) if tokens else uri)
+        concepts.append({"uri": uri, "kind": kind, "label": display_label, "surfaces": surfaces})
 
 def _wipe_dir_contents(base: Path) -> None:
     base.mkdir(parents=True, exist_ok=True)
@@ -42,9 +91,32 @@ def _wipe_dir_contents(base: Path) -> None:
         else:
             p.unlink()
 
+
+def _resolve_column(columns: list[str], identifier: str | None, default_index: int) -> str:
+    """Resolve a ref:timeColumnID / ref:valueColumnID literal to an actual column.
+
+    Tries the literal as a column name first. If it parses as an int and is
+    not present as a name, falls back to a positional index. Allows older
+    fixtures that hard-coded numeric column indices to keep working.
+    """
+    if identifier is None or identifier == "":
+        if default_index >= len(columns):
+            raise ValueError(f"File has only {len(columns)} columns; default index {default_index} out of range")
+        return columns[default_index]
+    if identifier in columns:
+        return identifier
+    try:
+        idx = int(identifier)
+    except ValueError as exc:
+        raise ValueError(f"Column {identifier!r} not found in file (columns={columns!r})") from exc
+    if idx < 0 or idx >= len(columns):
+        raise ValueError(f"Column index {idx} out of range (file has {len(columns)} columns)")
+    return columns[idx]
+
+
 @dataclass
 class Manager:
-    timescale: TimescaleStore
+    timescale: TimeseriesStore
     graph_store: OxigraphGraphStore
     qudt_converter: QUDTUnitConverter | None = None
     backend: str = "timescale"
@@ -54,6 +126,8 @@ class Manager:
         data_dir: str | Path | None = None,
         *,
         pg_dsn: str | None = None,
+        duckdb_path: str | Path | None = None,
+        timeseries_backend: str = "timescale",
         graph_path: str | Path | None = None,
         ontoenv_root: str | Path | None = None,
         graph_name: str | None = None,
@@ -62,16 +136,6 @@ class Manager:
         qudt_converter: QUDTUnitConverter | None = None,
         recreate: bool = False,
     ):
-        if recreate:
-            logging.info("acquirium: recreating data directory and database")
-            if data_dir is not None:
-                base = Path(data_dir)
-            else:
-                base = DEFAULT_DATA_DIR
-            if base.exists():
-                _wipe_dir_contents(base)
-                print(f"Deleted data directory contents: {base}")
-            
         if not logging.getLogger().handlers:
             logging.basicConfig(
                 level=logging.INFO,
@@ -79,20 +143,30 @@ class Manager:
             )
         start = perf_counter()
 
-        # Determine data directory and graph database paths
         base = Path(data_dir) if data_dir is not None else DEFAULT_DATA_DIR
+        if recreate:
+            logger.warning(RECREATE_WARNING)
+            if base.exists():
+                _wipe_dir_contents(base)
+                print(f"Deleted data directory contents: {base}")
         base.mkdir(parents=True, exist_ok=True)
         graph_path = Path(graph_path) if graph_path is not None else base / ".oxigraph"
         ontoenv_root = Path(ontoenv_root) if ontoenv_root is not None else base
 
-        # Setup Timescale/Postgres connection
-        effective_dsn = pg_dsn or os.getenv("PG_DSN")
-        if not effective_dsn:
-            raise ValueError("Timescale/Postgres DSN not provided. Set pg_dsn or PG_DSN.")
-        timescale: TimescaleStore = TimescaleStore(
-            dsn=effective_dsn,
-            recreate=recreate,
-        )
+        _backend = timeseries_backend.lower()
+        if _backend == "duckdb":
+            _effective_dsn = None
+            _effective_duckdb_path = duckdb_path or (base / "timeseries.duckdb")
+            timescale: TimeseriesStore = create_timeseries_store(
+                "duckdb", duckdb_path=_effective_duckdb_path, recreate=recreate
+            )
+        else:
+            _effective_dsn = pg_dsn or os.getenv("PG_DSN")
+            if not _effective_dsn:
+                raise ValueError("PG_DSN required for timescale backend. Set pg_dsn or PG_DSN env var.")
+            timescale = create_timeseries_store(
+                "timescale", pg_dsn=_effective_dsn, recreate=recreate
+            )
 
         converter = qudt_converter
         if converter is None and qudt_graph is not None:
@@ -129,20 +203,17 @@ class Manager:
             logging.info("acquirium: refreshed union graph after imports")
 
 
-        # Assign dataclass fields
         self.timescale = timescale
         self.graph_store = graph
         self.qudt_converter = converter
-        self.backend = "timescale"
+        self.backend = _backend
 
         self.data_dir = base
         self._ingest_cache_path = base / "ingest_cache.json"
         self._ingest_cache_lock = threading.Lock()
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="acquirium-ingest")
         self._pending_ingests: list[Future] = []
-        self.pg_dsn = effective_dsn
-        self.mqtt_ingest = MQTTIngestService(pg_dsn=effective_dsn)
-        self._connect_mqtt_streams_from_graph()
+        self.pg_dsn = _effective_dsn
         self.pg_registry = PGReferenceRegistry()
         self._scan_pg_references_from_graph()
         self.app_storage_root = Path(
@@ -188,21 +259,25 @@ class Manager:
             "qudt":  {"state": "idle", "concepts": 0, "surfaces": 0, "error": None, "last_built": None, "duration_s": None},
         }
 
-        # Startup: graph index (sync if cache hit, background if miss)
+        # Startup: both indexes run synchronously so drivers see a ready matcher.
         self._startup_graph_index()
-        # Startup: QUDT index (always background)
-        self._executor.submit(self._startup_qudt_task)
+        self._startup_qudt_task()
 
     
     @classmethod
     def from_env(cls) -> Manager:
+        _backend = os.getenv("ACQUIRIUM_TIMESERIES_BACKEND", "timescale").lower()
+        _data_dir = os.getenv("ACQUIRIUM_DATA_DIR")
+        _ontology_deps_raw = os.getenv("ACQUIRIUM_ONTOLOGY_DEPENDENCIES")
         return cls(
-            data_dir=os.getenv("ACQUIRIUM_DATA_DIR"),
+            data_dir=_data_dir,
             pg_dsn=os.getenv("PG_DSN"),
+            duckdb_path=os.getenv("ACQUIRIUM_DUCKDB_PATH"),
+            timeseries_backend=_backend,
             graph_path=os.getenv("ACQUIRIUM_GRAPH_PATH"),
             ontoenv_root=os.getenv("ACQUIRIUM_ONTOENV_ROOT"),
             graph_name=os.getenv("ACQUIRIUM_GRAPH_NAME"),
-            ontology_dependencies=os.getenv("ACQUIRIUM_ONTOLOGY_DEPENDENCIES", "").split(",") if os.getenv("ACQUIRIUM_ONTOLOGY_DEPENDENCIES") else None,
+            ontology_dependencies=_ontology_deps_raw.split(",") if _ontology_deps_raw else None,
             recreate=os.getenv("ACQUIRIUM_RECREATE", "false").lower() == "true",
         )
 
@@ -214,69 +289,27 @@ class Manager:
         except Exception:
             return {}
 
-    def _connect_mqtt_streams_from_graph(self) -> int:
-        """
-        Scan graph for MQTTReference nodes attached to data nodes by hasExternalReference
-        and start background subscribers.
-        Returns number of subscriptions ensured.
-        """
-        q = f"""
-        SELECT ?data ?ref ?broker ?port ?topic ?tkey ?vkey
-        WHERE {{
-          ?data <{HAS_EXTERNAL_REFERENCE}> ?ref .
-          ?ref a <{MQTT_REFERENCE}> .
-          OPTIONAL {{ ?ref <{MQTT_BROKER}> ?broker . }}
-          OPTIONAL {{ ?ref <{MQTT_PORT}> ?port . }}
-          OPTIONAL {{ ?ref <{MQTT_TOPIC}> ?topic . }}
-          OPTIONAL {{ ?ref <{TIME_KEY}> ?tkey . }}
-          OPTIONAL {{ ?ref <{VALUE_KEY}> ?vkey . }}
-        }}
-        """
-        res = self.graph_store.sparql_query(q, use_union=True)
-        rows = res.get("rows", [])
-
-        count = 0
-        for data_uri, ref_uri, broker, port, topic, tkey, vkey in rows:
-            logger.info("Found MQTT reference: %s %s %s %s %s %s %s",
-                        data_uri, ref_uri, broker, port, topic, tkey, vkey)
-            broker_s = (broker or "localhost").strip('"')
-            port_s = (port or "1883").strip('"')
-            topic_s = (topic or "").strip('"')
-            if not topic_s:
-                continue
-
-            spec = MQTTStreamSpec(
-                point_uri=str(data_uri),
-                ref_uri=str(ref_uri),
-                broker=broker_s,
-                port=int(port_s),
-                topic=topic_s,
-                time_key=(tkey or "Timestamp").strip('"'),
-                value_key=(vkey or "Value").strip('"'),
-            )
-            self.mqtt_ingest.ensure_subscribed(spec)
-            count += 1
-
-        return count
-
     def _scan_pg_references_from_graph(self) -> int:
-        """Scan graph for PGReference nodes and register them in the registry."""
+        """Scan graph for external Postgres timeseries references.
+
+        External Postgres historians use a ``ref:hasExternalReference`` node
+        whose ``ref:storedAt`` is a literal DSN. Acquirium-managed streams are
+        handled separately by ``_sync_stream_refs_from_graph`` and are
+        identified by ``acq:sourceId``/``acq:refName`` on the same reference
+        node.
+        """
         q = f"""
-        SELECT ?data ?ref ?dsn ?host ?port ?db ?user ?pass ?table ?query ?tcol ?vcol ?pfilter
+        SELECT ?data ?ref ?dsn ?table ?query ?tcol ?vcol ?pfilter
         WHERE {{
           ?data <{HAS_EXTERNAL_REFERENCE}> ?ref .
-          ?ref a <{PG_REFERENCE}> .
-          OPTIONAL {{ ?ref <{PG_DSN}> ?dsn . }}
-          OPTIONAL {{ ?ref <{PG_HOST}> ?host . }}
-          OPTIONAL {{ ?ref <{PG_PORT}> ?port . }}
-          OPTIONAL {{ ?ref <{PG_DB}> ?db . }}
-          OPTIONAL {{ ?ref <{PG_USER}> ?user . }}
-          OPTIONAL {{ ?ref <{PG_PASS}> ?pass . }}
-          OPTIONAL {{ ?ref <{PG_TABLE}> ?table . }}
-          OPTIONAL {{ ?ref <{PG_QUERY}> ?query . }}
-          OPTIONAL {{ ?ref <{PG_TIME_COL}> ?tcol . }}
-          OPTIONAL {{ ?ref <{PG_VALUE_COL}> ?vcol . }}
-          OPTIONAL {{ ?ref <{PG_POINT_FILTER}> ?pfilter . }}
+          ?ref <{STORED_AT}> ?dsn .
+          FILTER(isLiteral(?dsn))
+          FILTER(STRSTARTS(STR(?dsn), "postgresql://") || STRSTARTS(STR(?dsn), "postgres://"))
+          OPTIONAL {{ ?ref <{TIMESERIES_TABLE}> ?table . }}
+          OPTIONAL {{ ?ref <{TIMESERIES_QUERY}> ?query . }}
+          OPTIONAL {{ ?ref <{TIMESERIES_TIME_COLUMN}> ?tcol . }}
+          OPTIONAL {{ ?ref <{TIMESERIES_VALUE_COLUMN}> ?vcol . }}
+          OPTIONAL {{ ?ref <{TIMESERIES_POINT_FILTER}> ?pfilter . }}
         }}
         """
         res = self.graph_store.sparql_query(q, use_union=True)
@@ -284,29 +317,79 @@ class Manager:
 
         count = 0
         for row in rows:
-            (data_uri, ref_uri, dsn, host, port, db, user, passwd,
-             table, custom_query, tcol, vcol, pfilter) = row
+            (data_uri, ref_uri, dsn, table, custom_query, tcol, vcol, pfilter) = row
             try:
-                s = lambda v: str(v).strip().strip('"') if v else None
-                resolved = resolve_dsn(
-                    dsn=s(dsn), host=s(host), port=s(port),
-                    db=s(db), user=s(user), password=s(passwd),
-                )
                 info = PGReferenceInfo(
-                    dsn=resolved,
-                    table=s(table),
-                    custom_query=s(custom_query),
-                    time_col=s(tcol) or "time",
-                    value_col=s(vcol) or "value",
-                    point_filter=s(pfilter),
+                    dsn=self._sparql_value(dsn) or "",
+                    table=self._sparql_value(table),
+                    custom_query=self._sparql_value(custom_query),
+                    time_col=self._sparql_value(tcol) or "time",
+                    value_col=self._sparql_value(vcol) or "value",
+                    point_filter=self._sparql_value(pfilter),
                 )
                 self.pg_registry.register(str(ref_uri), info)
                 count += 1
             except Exception:
-                logger.warning("Failed to register PGReference %s", ref_uri, exc_info=True)
+                logger.warning("Failed to register external Postgres reference %s", ref_uri, exc_info=True)
 
         if count:
-            logger.info("Registered %d PGReference(s) from graph", count)
+            logger.info("Registered %d external Postgres reference(s) from graph", count)
+        return count
+
+    def _sync_stream_refs_from_graph(self) -> int:
+        """Sync the streams reference table from Acquirium-managed timeseries refs.
+
+        Matches every Acquirium-managed reference node:
+            ?ref_node  acq:sourceId  ?source_id ;
+                       acq:refName   ?ref_name .
+        If a semantic point links to the reference with ``ref:hasExternalReference``,
+        ``point_uri`` is stored too. Standalone source-local references are
+        recorded with a null ``point_uri``.
+        The reference-node URI is the canonical stream identity and should be
+        equal to ``compute_ref_uri(source_id, ref_name)``. We upsert into the
+        streams table using the graph's actual reference URI as the storage key.
+        External PG references (which have no sourceId/refName) are skipped
+        here and handled by ``_scan_pg_references_from_graph``.
+        """
+        q = f"""
+        SELECT ?point ?ref_node ?source_id ?ref_name ?value_kind
+        WHERE {{
+          ?ref_node <{ACQUIRIUM_SOURCE_ID}> ?source_id .
+          ?ref_node <{ACQUIRIUM_REF_NAME}> ?ref_name .
+          OPTIONAL {{ ?ref_node <{ACQUIRIUM_VALUE_KIND}> ?value_kind . }}
+          OPTIONAL {{ ?point <{HAS_EXTERNAL_REFERENCE}> ?ref_node . }}
+        }}
+        """
+        res = self.graph_store.sparql_query(q, use_union=True)
+        count = 0
+        for point_uri, ref_node, source_id, ref_name, value_kind in res.get("rows", []):
+            try:
+                sid = str(source_id).strip('"')
+                rn  = str(ref_name).strip('"')
+                expected = compute_ref_uri(sid, rn)
+                actual = URIRef(str(ref_node))
+                if actual != expected:
+                    raise ValueError(
+                        f"Managed reference URI mismatch for point {point_uri}: "
+                        f"graph has {actual}, expected {expected} from "
+                        f"source_id={sid!r}, ref_name={rn!r}"
+                    )
+                point = str(point_uri) if point_uri is not None else None
+                self.timescale.ensure_stream_ref(
+                    point,
+                    sid,
+                    rn,
+                    ref_uri=actual,
+                    value_kind=normalize_value_kind(
+                        str(value_kind).strip('"') if value_kind is not None else None
+                    ),
+                )
+                count += 1
+            except Exception:
+                logger.warning("Failed to ensure stream ref %s / %s → %s", point_uri, source_id, ref_name, exc_info=True)
+                raise
+        if count:
+            logger.info("Synced %d stream ref(s) from graph", count)
         return count
 
     def _save_ingest_cache(self, cache: dict[str, Any]) -> None:
@@ -338,145 +421,76 @@ class Manager:
         # NOTE: QUDT Unit/QuantityKind removed — handled by _qudt_matcher
         # Labels: rdfs:label, skos:prefLabel, skos:altLabel
         # Language filter: keep English-tagged or untagged labels only
-        class_query = """
-        SELECT DISTINCT ?uri ?label WHERE {
-          {
-            ?uri a <http://www.w3.org/2000/01/rdf-schema#Class> .
-          } UNION {
-            ?uri a <http://www.w3.org/2002/07/owl#Class> .
-          } UNION {
-            ?x <http://www.w3.org/2000/01/rdf-schema#subClassOf> ?uri .
-          } UNION {
+        class_query = f"""
+        SELECT DISTINCT ?uri ?label WHERE {{
+          {{
+            ?uri a <{RDFS.Class}> .
+          }} UNION {{
+            ?uri a <{OWL_CLASS}> .
+          }} UNION {{
+            ?x <{RDFS.subClassOf}> ?uri .
+          }} UNION {{
             ?x a ?uri .
-          } UNION {
-            ?uri a <urn:nawi-water-ontology#Class> .
-          } UNION {
-            ?uri <http://www.w3.org/2000/01/rdf-schema#subClassOf> ?x .
-          } UNION {
-            ?x <http://qudt.org/schema/qudt/hasEnumerationKind> ?uri .
-          } UNION {
-            ?x <http://data.ashrae.org/standard223#ofSubstance> ?uri .
-          } UNION {
-            ?x <http://data.ashrae.org/standard223#hasMedium> ?uri .
-          }
-          OPTIONAL {
-            {
-              ?uri <http://www.w3.org/2000/01/rdf-schema#label> ?label .
-            } UNION {
-              ?uri <http://www.w3.org/2004/02/skos/core#prefLabel> ?label .
-            } UNION {
-              ?uri <http://www.w3.org/2004/02/skos/core#altLabel> ?label .
-            }
+          }} UNION {{
+            ?uri a <{WATR.Class}> .
+          }} UNION {{
+            ?uri <{RDFS.subClassOf}> ?x .
+          }} UNION {{
+            ?x <{HAS_ENUMERATION_KIND}> ?uri .
+          }} UNION {{
+            ?x <{OF_SUBSTANCE}> ?uri .
+          }} UNION {{
+            ?x <{HAS_MEDIUM}> ?uri .
+          }}
+          OPTIONAL {{
+            {{
+              ?uri <{RDFS.label}> ?label .
+            }} UNION {{
+              ?uri <{SKOS.prefLabel}> ?label .
+            }} UNION {{
+              ?uri <{SKOS.altLabel}> ?label .
+            }}
             FILTER(LANG(?label) = "" || LANGMATCHES(LANG(?label), "en"))
-          }
+          }}
           FILTER(isIRI(?uri))
-        }
+        }}
         """
         try:
             res = self.graph_store.sparql_query(class_query, use_union=True)
-            # Aggregate all labels per URI
-            uri_labels: dict[str, list[str]] = {}
-            uri_first_label: dict[str, str | None] = {}
-            for row in res.get("rows", []):
-                uri = str(row[0]) if row[0] else None
-                label = str(row[1]).strip('"') if row[1] else None
-                if not uri:
-                    continue
-                if uri not in uri_labels:
-                    uri_labels[uri] = []
-                    uri_first_label[uri] = label
-                if label and label not in uri_labels[uri]:
-                    uri_labels[uri].append(label)
-
-            for uri, labels in uri_labels.items():
-                if uri in seen_class:
-                    continue
-                seen_class.add(uri)
-                surfaces = []
-                for lbl in labels:
-                    lbl_lower = lbl.lower()
-                    if lbl_lower not in surfaces:
-                        surfaces.append(lbl_lower)
-                # Always add tokenized local name as a surface
-                tokens = _split_local_name(uri)
-                if tokens:
-                    joined = " ".join(tokens)
-                    if joined not in surfaces:
-                        surfaces.append(joined)
-                display_label = uri_first_label[uri] or (joined if tokens else uri)
-                concepts.append({
-                    "uri": uri,
-                    "kind": "class",
-                    "label": display_label,
-                    "surfaces": surfaces,
-                })
+            _aggregate_uri_label_rows(res.get("rows", []), seen_class, "class", concepts)
         except Exception:
             logger.warning("Failed to extract class concepts", exc_info=True)
 
         # Query 2: Predicates (declared properties + any IRI used as a predicate)
         # Labels: rdfs:label, skos:prefLabel, skos:altLabel
         # Language filter: keep English-tagged or untagged labels only
-        pred_query = """
-        SELECT DISTINCT ?uri ?label WHERE {
-          {
-            ?uri a <http://www.w3.org/1999/02/22-rdf-syntax-ns#Property> .
-          } UNION {
-            ?uri a <http://www.w3.org/2002/07/owl#ObjectProperty> .
-          } UNION {
-            ?uri a <http://www.w3.org/2002/07/owl#DatatypeProperty> .
-          } UNION {
+        pred_query = f"""
+        SELECT DISTINCT ?uri ?label WHERE {{
+          {{
+            ?uri a <{RDF_PROP}> .
+          }} UNION {{
+            ?uri a <{OWL_OBJ_PROP}> .
+          }} UNION {{
+            ?uri a <{OWL_DATA_PROP}> .
+          }} UNION {{
             ?s ?uri ?o .
-          }
-          OPTIONAL {
-            {
-              ?uri <http://www.w3.org/2000/01/rdf-schema#label> ?label .
-            } UNION {
-              ?uri <http://www.w3.org/2004/02/skos/core#prefLabel> ?label .
-            } UNION {
-              ?uri <http://www.w3.org/2004/02/skos/core#altLabel> ?label .
-            }
+          }}
+          OPTIONAL {{
+            {{
+              ?uri <{RDFS.label}> ?label .
+            }} UNION {{
+              ?uri <{SKOS.prefLabel}> ?label .
+            }} UNION {{
+              ?uri <{SKOS.altLabel}> ?label .
+            }}
             FILTER(LANG(?label) = "" || LANGMATCHES(LANG(?label), "en"))
-          }
+          }}
           FILTER(isIRI(?uri))
-        }
+        }}
         """
         try:
             res = self.graph_store.sparql_query(pred_query, use_union=True)
-            # Aggregate all labels per URI
-            uri_labels: dict[str, list[str]] = {}
-            uri_first_label: dict[str, str | None] = {}
-            for row in res.get("rows", []):
-                uri = str(row[0]) if row[0] else None
-                label = str(row[1]).strip('"') if row[1] else None
-                if not uri:
-                    continue
-                if uri not in uri_labels:
-                    uri_labels[uri] = []
-                    uri_first_label[uri] = label
-                if label and label not in uri_labels[uri]:
-                    uri_labels[uri].append(label)
-
-            for uri, labels in uri_labels.items():
-                if uri in seen_pred:
-                    continue
-                seen_pred.add(uri)
-                surfaces = []
-                for lbl in labels:
-                    lbl_lower = lbl.lower()
-                    if lbl_lower not in surfaces:
-                        surfaces.append(lbl_lower)
-                tokens = _split_local_name(uri)
-                if tokens:
-                    joined = " ".join(tokens)
-                    if joined not in surfaces:
-                        surfaces.append(joined)
-                display_label = uri_first_label[uri] or (joined if tokens else uri)
-                concepts.append({
-                    "uri": uri,
-                    "kind": "predicate",
-                    "label": display_label,
-                    "surfaces": surfaces,
-                })
+            _aggregate_uri_label_rows(res.get("rows", []), seen_pred, "predicate", concepts)
         except Exception:
             logger.warning("Failed to extract predicate concepts", exc_info=True)
 
@@ -686,8 +700,8 @@ class Manager:
         try:
             self.graph_store.insert_graph(rdf_graph, format=format, replace=replace)
             logging.info("acquirium: inserted graph into store, now ingesting data")
-            self._connect_mqtt_streams_from_graph()
             self._scan_pg_references_from_graph()
+            self._sync_stream_refs_from_graph()
 
             if wait_for_embedding:
                 logger.info("acquirium: rebuilding embedding index (synchronous)...")
@@ -705,10 +719,10 @@ class Manager:
     def timeseries_batch(
         self,
         uri: str,
-        start: str | None = None,
-        end: str | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
         limit: int | None = None,
-        order: str = "asc",
+        order: Order = "asc",
         batch_size: int = 50_000,
     ) :
         """
@@ -729,9 +743,9 @@ class Manager:
                 order=order,
                 batch_size=batch_size,
             )
-        ref_uri = self.timescale.resolve_storage_key(uri)
+        storage_key = self.timescale.resolve_storage_key(uri)
         return self.timescale.timeseries(
-            ref_uri=ref_uri,
+            ref_uri=storage_key,
             start=start,
             end=end,
             limit=limit,
@@ -748,32 +762,313 @@ class Manager:
         if pg_uris:
             result.update(self.pg_registry.timeseries_info_batch(pg_uris))
         if ts_uris:
-            storage_keys = self.timescale.resolve_storage_keys(ts_uris)
-            storage_result = self.timescale.timeseries_info_batch(list(storage_keys.values()))
-            for uri, ref_uri in storage_keys.items():
-                result[uri] = storage_result[ref_uri]
+            # Resolve URIs to storage keys (ref_uris) in one batch query, then
+            # remap results back to the original URIs.
+            uri_to_key = self.timescale.resolve_storage_keys(ts_uris)
+            key_to_uri = {v: k for k, v in uri_to_key.items()}
+            raw = self.timescale.timeseries_info_batch(list(key_to_uri.keys()))
+            result.update({key_to_uri[k]: v for k, v in raw.items()})
         return result
+
+    @staticmethod
+    def _sparql_value(value: Any) -> str | None:
+        if value is None:
+            return None
+        return str(value).strip('"')
+
+    def _graph_metadata(self, uri: str) -> dict[str, Any]:
+        q = f"""
+        SELECT ?p ?o
+        WHERE {{
+          <{uri}> ?p ?o .
+        }}
+        ORDER BY ?p ?o
+        """
+        rows = self.graph_store.sparql_query(q, use_union=True).get("rows", [])
+        metadata: dict[str, list[str]] = {}
+        for pred, obj in rows:
+            pred_s = str(pred)
+            obj_s = self._sparql_value(obj)
+            if obj_s is None:
+                continue
+            metadata.setdefault(pred_s, []).append(obj_s)
+        return {"uri": uri, "triples": metadata}
+
+    def list_source_streams(self, source_id: str) -> list[dict[str, Any]]:
+        q = f"""
+        SELECT ?point ?ref ?ref_name ?label ?stored_at
+        WHERE {{
+          ?point <{HAS_EXTERNAL_REFERENCE}> ?ref .
+          ?ref <{ACQUIRIUM_SOURCE_ID}> "{source_id}" ;
+               <{ACQUIRIUM_REF_NAME}> ?ref_name .
+          OPTIONAL {{ ?point <{RDFS.label}> ?label . }}
+          OPTIONAL {{ ?ref <{STORED_AT}> ?stored_at . }}
+        }}
+        ORDER BY ?ref_name ?point
+        """
+        rows = self.graph_store.sparql_query(q, use_union=True).get("rows", [])
+        point_uris = [str(point) for point, *_ in rows]
+        infos = self.timeseries_info_batch(point_uris) if point_uris else {}
+
+        streams: list[dict[str, Any]] = []
+        for point_uri, ref_uri, ref_name, label, stored_at in rows:
+            point_uri_s = str(point_uri)
+            info = infos.get(point_uri_s)
+            streams.append(
+                {
+                    "source_id": source_id,
+                    "ref_name": self._sparql_value(ref_name),
+                    "point_uri": point_uri_s,
+                    "reference_uri": str(ref_uri),
+                    "label": self._sparql_value(label),
+                    "stored_at": self._sparql_value(stored_at),
+                    "row_count": int(info.row_count) if info else 0,
+                    "earliest": info.earliest if info else None,
+                    "latest": info.latest if info else None,
+                }
+            )
+        return streams
+
+    def list_sources(self) -> list[dict[str, Any]]:
+        q = f"""
+        SELECT ?source ?label
+        WHERE {{
+          ?source a <{ACQUIRIUM_DATASOURCE}> .
+          OPTIONAL {{ ?source <{RDFS.label}> ?label . }}
+        }}
+        ORDER BY ?label ?source
+        """
+        rows = self.graph_store.sparql_query(q, use_union=True).get("rows", [])
+        sources: dict[str, dict[str, Any]] = {}
+        for source_uri, label in rows:
+            sid = self._sparql_value(label) or str(source_uri).rsplit(":", 1)[-1]
+            sources[sid] = {
+                "source_id": sid,
+                "uri": str(source_uri),
+                "label": self._sparql_value(label) or sid,
+            }
+
+        stream_q = f"""
+        SELECT ?source_id
+        WHERE {{
+          ?point <{HAS_EXTERNAL_REFERENCE}> ?ref .
+          ?ref <{ACQUIRIUM_SOURCE_ID}> ?source_id ;
+               <{ACQUIRIUM_REF_NAME}> ?ref_name .
+        }}
+        """
+        for (source_id_raw,) in self.graph_store.sparql_query(stream_q, use_union=True).get("rows", []):
+            sid = self._sparql_value(source_id_raw)
+            if sid and sid not in sources:
+                sources[sid] = {
+                    "source_id": sid,
+                    "uri": f"urn:acquirium:datasource:{sid}",
+                    "label": sid,
+                }
+
+        out: list[dict[str, Any]] = []
+        for sid in sorted(sources):
+            streams = self.list_source_streams(sid)
+            row_count = sum(stream["row_count"] for stream in streams)
+            earliest = min((stream["earliest"] for stream in streams if stream["earliest"] is not None), default=None)
+            latest = max((stream["latest"] for stream in streams if stream["latest"] is not None), default=None)
+            out.append(
+                {
+                    **sources[sid],
+                    "stream_count": len(streams),
+                    "row_count": row_count,
+                    "earliest": earliest,
+                    "latest": latest,
+                }
+            )
+        return out
+
+    def get_source(self, source_id: str) -> dict[str, Any] | None:
+        sources = {source["source_id"]: source for source in self.list_sources()}
+        source = sources.get(source_id)
+        if source is None:
+            return None
+        source["metadata"] = self._graph_metadata(source["uri"])
+        return source
+
+    def get_source_stream(self, source_id: str, ref_name: str) -> dict[str, Any] | None:
+        for stream in self.list_source_streams(source_id):
+            if stream["ref_name"] != ref_name:
+                continue
+            stream["point_metadata"] = self._graph_metadata(stream["point_uri"])
+            stream["reference_metadata"] = self._graph_metadata(stream["reference_uri"])
+            return stream
+        return None
+
+    def get_stream_by_reference_uri(self, ref_uri: str) -> dict[str, Any] | None:
+        q = f"""
+        SELECT ?point ?source_id ?ref_name ?label ?stored_at
+        WHERE {{
+          ?point <{HAS_EXTERNAL_REFERENCE}> <{ref_uri}> .
+          <{ref_uri}> <{ACQUIRIUM_SOURCE_ID}> ?source_id ;
+                      <{ACQUIRIUM_REF_NAME}> ?ref_name .
+          OPTIONAL {{ ?point <{RDFS.label}> ?label . }}
+          OPTIONAL {{ <{ref_uri}> <{STORED_AT}> ?stored_at . }}
+        }}
+        LIMIT 1
+        """
+        rows = self.graph_store.sparql_query(q, use_union=True).get("rows", [])
+        if not rows:
+            return None
+        point_uri, source_id, ref_name, label, stored_at = rows[0]
+        point_uri_s = str(point_uri)
+        info = self.timeseries_info_batch([point_uri_s]).get(point_uri_s)
+        stream = {
+            "source_id": self._sparql_value(source_id),
+            "ref_name": self._sparql_value(ref_name),
+            "point_uri": point_uri_s,
+            "reference_uri": ref_uri,
+            "label": self._sparql_value(label),
+            "stored_at": self._sparql_value(stored_at),
+            "row_count": int(info.row_count) if info else 0,
+            "earliest": info.earliest if info else None,
+            "latest": info.latest if info else None,
+        }
+        stream["point_metadata"] = self._graph_metadata(stream["point_uri"])
+        stream["reference_metadata"] = self._graph_metadata(stream["reference_uri"])
+        return stream
+
+    def get_source_stream_by_reference_uri(self, source_id: str, ref_uri: str) -> dict[str, Any] | None:
+        stream = self.get_stream_by_reference_uri(ref_uri)
+        if stream is None or stream["source_id"] != source_id:
+            return None
+        return stream
+
+    def register_datasource(self, source_id: str) -> str:
+        """Register a named datasource in the knowledge graph.
+
+        Writes a graph node typed as acquirium:DataSourceRegistry so the
+        datasource is discoverable via SPARQL.  Idempotent — safe to call
+        on every startup.  Returns source_id.
+        """
+        node = URIRef(f"urn:acquirium:datasource:{source_id}")
+        g = Graph()
+        g.add((node, RDF.type,   ACQUIRIUM_DATASOURCE))
+        g.add((node, RDFS.label, Literal(source_id)))
+        self.graph_store.insert_graph(g, format="turtle", replace=False)
+        return source_id
 
     def insert_timeseries(
         self,
         *,
-        ref_uri: str,
+        source_id: str,
+        ref_name: str,
         rows: list[tuple[datetime, Any]],
         point_uri: str | None = None,
         replace: bool = False,
+        value_kind: str = "numeric",
     ) -> int:
+        ref_uri = compute_ref_uri(source_id, ref_name)
+        value_kind = normalize_value_kind(value_kind)
         if replace:
-            n = self.timescale.replace_rows(ref_uri, rows)
+            n = self.timescale.replace_rows(str(ref_uri), rows, value_kind=value_kind)
         else:
-            n = self.timescale.upsert_rows(ref_uri, rows)
-        if point_uri:
-            self.timescale.ensure_stream_ref(
-                point_uri=point_uri,
-                source_id="api",
-                ref_name=ref_uri,
-                ref_uri=URIRef(ref_uri),
-            )
+            n = self.timescale.upsert_rows(str(ref_uri), rows, value_kind=value_kind)
+        self.timescale.ensure_stream_ref(
+            point_uri, source_id, ref_name, ref_uri=ref_uri, value_kind=value_kind
+        )
         return n
+
+    def insert_timeseries_batch(
+        self,
+        source_id: str,
+        streams: dict[str, list[tuple[datetime, Any]]],
+        *,
+        stream_value_kinds: dict[str, str] | None = None,
+    ) -> int:
+        """Insert multiple source-local streams in one storage operation."""
+        import polars as pl
+
+        ref_uris: list[str] = []
+        timestamps: list[datetime] = []
+        values: list[Any] = []
+        value_kinds: list[str] = []
+        stream_refs: list[tuple[str, str, str]] = []
+        for ref_name, stream_rows in streams.items():
+            ref_uri = str(compute_ref_uri(source_id, ref_name))
+            value_kind = normalize_value_kind((stream_value_kinds or {}).get(ref_name))
+            stream_refs.append((ref_name, ref_uri, value_kind))
+            for ts, value in stream_rows:
+                ref_uris.append(ref_uri)
+                timestamps.append(ts)
+                values.append(value)
+                value_kinds.append(value_kind)
+        if not ref_uris:
+            return 0
+
+        df = pl.DataFrame(
+            {"ref_uri": ref_uris, "ts": timestamps, "value": values, "value_kind": value_kinds},
+            schema={
+                "ref_uri": pl.Utf8,
+                "ts": pl.Datetime("us", "UTC"),
+                "value": pl.Object,
+                "value_kind": pl.Utf8,
+            },
+        )
+        inserted = self.timescale.bulk_insert_polars(df)
+        for ref_name, ref_uri, value_kind in stream_refs:
+            self.timescale.ensure_stream_ref(
+                None,
+                source_id,
+                ref_name,
+                ref_uri=ref_uri,
+                value_kind=value_kind,
+            )
+        return inserted
+
+    def insert_timeseries_polars(self, source_id: str, df: "pl.DataFrame") -> int:
+        """Insert a melted (ts, ref_name, value) DataFrame, computing ref_uris vectorized."""
+        import polars as pl
+
+        if df.is_empty():
+            return 0
+        ref_uri_map = {
+            name: str(compute_ref_uri(source_id, name))
+            for name in df["ref_name"].unique().to_list()
+        }
+        value_kind_map: dict[str, str] = {}
+        stream_refs: list[tuple[str, str, str]] = []
+        for ref_name, ref_uri in ref_uri_map.items():
+            value_kind = "numeric"
+            if "value_kind" in df.columns:
+                kinds = (
+                    df.filter(pl.col("ref_name") == ref_name)
+                    .get_column("value_kind")
+                    .drop_nulls()
+                    .map_elements(normalize_value_kind, return_dtype=pl.Utf8)
+                    .unique()
+                    .to_list()
+                )
+                if kinds:
+                    if len(kinds) > 1:
+                        raise ValueError(
+                            f"stream {ref_name!r} has mixed value_kind values: {sorted(kinds)!r}"
+                        )
+                    value_kind = normalize_value_kind(kinds[0])
+            value_kind_map[ref_name] = value_kind
+            stream_refs.append((ref_name, ref_uri, value_kind))
+        df = (
+            df.with_columns([
+                pl.col("ref_name").replace(ref_uri_map).alias("ref_uri"),
+                pl.col("ref_name").replace(value_kind_map).alias("value_kind"),
+            ])
+            .drop("ref_name")
+            .select(["ref_uri", "ts", "value", "value_kind"])
+        )
+        inserted = self.timescale.bulk_insert_polars(df)
+        for ref_name, ref_uri, value_kind in stream_refs:
+            self.timescale.ensure_stream_ref(
+                None,
+                source_id,
+                ref_name,
+                ref_uri=ref_uri,
+                value_kind=value_kind,
+            )
+        return inserted
 
     def _app_type_uri(self, app_type: str) -> URIRef:
         norm = (app_type or "").strip().lower()
@@ -844,11 +1139,13 @@ class Manager:
 
         for out in spec.outputs:
             point_uri = URIRef(out.point_uri)
-            ref_uri = URIRef(out.ref_uri or make_stream_ref_uri(out.point_uri))
+            ref_uri = compute_ref_uri(spec.name, out.point_uri)
 
             graph.add((app_uri, PRODUCES, point_uri))
             graph.add((point_uri, RDF.type, VIRTUAL_POINT))
             graph.add((point_uri, HAS_EXTERNAL_REFERENCE, ref_uri))
+            graph.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(spec.name)))
+            graph.add((ref_uri, ACQUIRIUM_REF_NAME, Literal(out.point_uri)))
             graph.add((ref_uri, RDF.type, STREAM))
             if out.kind in {"event", "trigger"}:
                 graph.add((ref_uri, RDF.type, EVENT_STREAM))
@@ -918,7 +1215,7 @@ class Manager:
             "command": pick("cmd"),
         }
 
-    def _run_app_once(self, req: AppRunRequest, *, keep_alive: bool = False, interval: float | None = None) -> str:
+    def _run_app_once(self, req: AppRunRequest, *, keep_alive: bool = False, interval: float | None = None) -> str | None :
         if self._docker is None:
             raise ValueError("Docker is not available - cannot run apps")
 
@@ -976,7 +1273,7 @@ class Manager:
 
         # Build the command to run inside the container
         run_cmd = runtime.get("command") or "python -m acquirium.Apps.worker"
-        shell_cmd = f"/app/.venv/bin/{run_cmd}" if run_cmd.startswith("python ") else f"/app/.venv/bin/python -m acquirium.Apps.worker"
+        shell_cmd = f"/app/.venv/bin/{run_cmd}" if run_cmd.startswith("python ") else run_cmd
 
         # Optional custom entrypoint
         entrypoint = runtime.get("entrypoint")
@@ -1008,16 +1305,22 @@ class Manager:
             raise ValueError(f"Failed to run app {req.app_id}: {e}") from e
 
         cid = container.id
-        logger.info("Started docker container for app %s: %s", req.app_id, cid[:12])
+        if isinstance(cid,str):
+            logger.info("Started docker container for app %s: %s", req.app_id, cid[:12])
+        else: 
+            logger.warning("Container ID is not a string for app %s: %s", req.app_id, cid)
         return cid
 
-    def run_app(self, req: AppRunRequest) -> str:
+    def run_app(self, req: AppRunRequest) -> str | None:
         if not req.keep_alive:
             return self._run_app_once(req)
 
         cid = self._run_app_once(req, keep_alive=True, interval=req.interval)
         with self._app_runs_lock:
-            self._app_runs[cid] = {"app_id": req.app_id, "cid": cid}
+            if isinstance(cid, str):
+                self._app_runs[cid] = {"app_id": req.app_id, "cid": cid}
+            else:
+                logger.warning("Received non-string container ID for app %s: %s", req.app_id, cid)
         return cid
 
     def _stop_container(self, cid: str) -> None:
@@ -1071,12 +1374,21 @@ class Manager:
             *,
             data_uri: str,
             ref_uri: str,
-            ref_type: str,
             content: bytes,
-            time_column_no: int = 0,
-            value_column_no: int = 1,
+            time_column: str | None = None,
+            value_column: str | None = None,
+            value_kind: str | None = None,
             filename: str = "upload",
         ) -> int:
+        """Ingest the contents of a ref:FileReference upload into Timescale.
+
+        ``time_column`` / ``value_column`` are column identifiers as written
+        on the reference node (``ref:timeColumnID`` / ``ref:valueColumnID``).
+        Each is first tried as a column name; a numeric string falls back to
+        a positional index. ``time_column`` defaults to the first column,
+        ``value_column`` to the second. The file format (parquet vs csv) is
+        inferred from the ``filename`` extension.
+        """
         import polars as pl
         from io import BytesIO
         import time
@@ -1098,25 +1410,33 @@ class Manager:
 
         try:
             bio = BytesIO(content)
-
-            if ref_type == str(PARQUET_REF):
-                df = pl.read_parquet(bio, columns=[time_column_no, value_column_no])
-            elif ref_type == str(CSV_REF):
-                df = pl.read_csv(bio, columns=[time_column_no, value_column_no])
+            ext = Path(filename).suffix.lower()
+            if ext in {".parquet", ".pq"}:
+                full = pl.read_parquet(bio)
+            elif ext in {".csv", ".tsv", ".txt"}:
+                full = pl.read_csv(bio, separator="\t" if ext == ".tsv" else ",")
             else:
-                raise ValueError(f"Unsupported reference type: {ref_type}")
+                raise ValueError(f"Unsupported file extension for {filename!r}; expected parquet or csv/tsv")
 
-            # Rename selected columns to ts/value regardless of original names
-            if df.width != 2:
-                raise ValueError(f"Expected 2 columns after selection, got {df.width}")
+            cols = full.columns
+            t_col = _resolve_column(cols, time_column, default_index=0)
+            v_col = _resolve_column(cols, value_column, default_index=1)
+            df = full.select([t_col, v_col])
 
             df = df.rename({df.columns[0]: "ts", df.columns[1]: "value"})
+            stream_value_kind = normalize_value_kind(value_kind)
+            if value_kind is None:
+                inferred = infer_value_kind(df["value"].to_list())
+                stream_value_kind = "text" if inferred == "text" else "numeric"
 
             df = df.with_columns(pl.lit(ref_uri).alias("ref_uri"))
-            df = df.select(["ref_uri", "ts", "value"])
+            df = df.with_columns(
+                pl.lit(stream_value_kind).alias("value_kind")
+            )
+            df = df.select(["ref_uri", "ts", "value", "value_kind"])
 
             if df.schema.get("ts") == pl.Utf8:
-                # Try with UTC timezone first (handles tz-aware strings like
+                # Try with UTC timezone first (ref_uris tz-aware strings like
                 # "2026-01-27T23:30:16.668982+00:00"), fall back to naive parse.
                 try:
                     df = df.with_columns(
@@ -1125,30 +1445,12 @@ class Manager:
                 except Exception:
                     df = df.with_columns(pl.col("ts").str.to_datetime())
 
-            probe = df.select(
-                pl.when(pl.col("value").is_not_null())
-                .then(pl.col("value").cast(pl.Float64, strict=False).is_null())
-                .otherwise(False)
-                .sum()
-                .alias("invalid_numeric")
-            )
-            value_kind = "text" if probe["invalid_numeric"][0] else "numeric"
-            if value_kind == "text":
-                df = df.with_columns(
-                    pl.col("value").cast(pl.Utf8),
-                    pl.lit("text").alias("value_kind"),
-                )
-
             result = self.timescale.bulk_insert_polars(df)
 
             with self._ingest_cache_lock:
                 cache = self._load_ingest_cache()
-                entry = cache.get(cache_key, {})
-                entry["status"] = "done"
-                entry["ingested_at"] = time.time()
-                entry["rows_ingested"] = result
-                entry["filename"] = filename
-                cache[cache_key] = entry
+                entry = cache.setdefault(cache_key, {})
+                entry.update({"status": "done", "ingested_at": time.time(), "rows_ingested": result, "filename": filename})
                 self._save_ingest_cache(cache)
 
             return int(result)
@@ -1156,31 +1458,21 @@ class Manager:
         except Exception as exc:
             with self._ingest_cache_lock:
                 cache = self._load_ingest_cache()
-                entry = cache.get(cache_key, {})
-                entry["status"] = "error"
-                entry["error"] = str(exc)
-                entry["filename"] = filename
-                cache[cache_key] = entry
+                entry = cache.setdefault(cache_key, {})
+                entry.update({"status": "error", "error": str(exc), "filename": filename})
                 self._save_ingest_cache(cache)
             raise
 
     def insert_log(self, log_message: LogEntry):
-        """
-        Insert a log entry into timescale store.
-
-        Add external reference to the graph. 
-        This is for associating log metadata with points.
-        If we want to associate metadata with the logs of a point, we can do so here.
-        """
         self.timescale.insert_log(log_message)
-        logger.info("Inserted log entry for point %s at %s to database", log_message.point_uri, log_message.timestamp)
         G = Graph()
         log_uri = URIRef(f"{str(log_message.point_uri)}_log")
         G.add((URIRef(log_message.point_uri), HAS_LOG, log_uri))
         G.add((log_uri, RDF.type, LOGBOOK))
+        # Write bookkeeping triples but skip _notify_graph_change — log inserts
+        # don't affect the ontology/concept space and would otherwise continuously
+        # invalidate the embedding cache.
         self.graph_store.insert_graph(G, format="turtle", replace=False)
-        logger.info("Inserted log entry for point %s at %s to graph", log_message.point_uri, log_message.timestamp)
-        self._notify_graph_change()
 
 
     def query_logs(
@@ -1206,7 +1498,7 @@ class Manager:
             obs_time_interval=obs_time_interval
         )
 
-    def delete_logs(self, point_uri: str) -> None:
+    def delete_logs(self, point_uri: str) -> bool:
         """
         Delete all log entries for a given point URI.
 
@@ -1322,10 +1614,6 @@ class Manager:
             pass
         try:
             self._executor.shutdown(wait=False, cancel_futures=False)
-        except Exception:
-            pass
-        try:
-            self.mqtt_ingest.stop()
         except Exception:
             pass
         try:

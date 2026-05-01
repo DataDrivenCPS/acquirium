@@ -14,7 +14,6 @@ import time
 
 from acquirium import Acquirium
 from acquirium.Apps.base import Output, App
-from acquirium.internals.app_utils import make_stream_ref_uri
 from acquirium.internals.models import AppContext
 
 # Configure logging for container output
@@ -145,7 +144,7 @@ def _run_once(app: App, ctx: AppContext, aq: Acquirium, run_count: int = 0) -> i
         outputs = app.run(ctx)
         elapsed = time.time() - start_time
         logger.info("Run #%d completed in %.3fs, produced %d outputs", run_count, elapsed, len(outputs))
-        _persist_outputs(aq, outputs)
+        _persist_outputs(aq, ctx.app_id, outputs)
         return run_count
     except Exception as e:
         elapsed = time.time() - start_time
@@ -182,7 +181,7 @@ def _maybe_refresh_query(
     worker keeps using its current query.
     """
     try:
-        current_version = aq.client.graph_version()
+        current_version = aq.graph_version()
     except Exception as exc:
         logger.warning("graph_version poll failed: %s; keeping cached query", exc)
         return last_version
@@ -259,18 +258,16 @@ def _load_app(module: str, class_name: str, params: dict[str, Any]) -> App:
     return app
 
 
-def _persist_outputs(aq: Acquirium, outputs: list[Output]) -> None:
+def _persist_outputs(aq: Acquirium, app_id: str, outputs: list[Output]) -> None:
     for i, out in enumerate(outputs):
         if out.kind == "timeseries":
             point_uri = out.payload["point_uri"]
-            ref_uri = out.payload.get("ref_uri") or make_stream_ref_uri(point_uri)
             rows = out.payload["rows"]
             logger.debug("Output %d: persisting %d timeseries rows to %s", i + 1, len(rows), point_uri)
-            aq.client.insert_timeseries(ref_uri=ref_uri, rows=rows, point_uri=point_uri)
+            aq.client.insert_timeseries(source_id=app_id, ref_name=point_uri, rows=rows, point_uri=point_uri)
             logger.info("Output %d: wrote %d timeseries rows to %s", i + 1, len(rows), point_uri)
         elif out.kind == "event":
             point_uri = out.payload["point_uri"]
-            ref_uri = out.payload.get("ref_uri") or make_stream_ref_uri(point_uri)
             ts = out.payload.get("ts") or datetime.now(timezone.utc)
             severity = out.payload.get("severity", "INFO")
             value = json.dumps(
@@ -281,7 +278,13 @@ def _persist_outputs(aq: Acquirium, outputs: list[Output]) -> None:
                 },
                 ensure_ascii=True,
             )
-            aq.client.insert_timeseries(ref_uri=ref_uri, rows=[(ts, value)], point_uri=point_uri)
+            aq.client.insert_timeseries(
+                source_id=app_id,
+                ref_name=point_uri,
+                rows=[(ts, value)],
+                point_uri=point_uri,
+                value_kind="text",
+            )
             logger.info("Output %d: emitted %s event to %s", i + 1, severity, point_uri)
         elif out.kind == "trigger":
             url = out.payload.get("url")
@@ -391,7 +394,7 @@ def main() -> None:
     # Capture the graph version this query was built against. Between runs we
     # poll /graph_version and rebuild the query if it has advanced.
     try:
-        graph_version = aq.client.graph_version()
+        graph_version = aq.graph_version()
         logger.info("Initial graph version: %d", graph_version)
     except Exception as exc:
         logger.warning("Failed to fetch initial graph_version: %s", exc)

@@ -95,9 +95,14 @@ class TestConvert:
 def acquirium_client():
     """Fixture to create an Acquirium client for unit conversion integration tests."""
     from acquirium import Acquirium
+    from conftest import ACQUIRIUM_TEST_SERVER_HOST, ACQUIRIUM_TEST_SERVER_PORT
     import time
 
-    acq = Acquirium(server_url="localhost", server_port=8000, use_ssl=False)
+    acq = Acquirium(
+        server_url=ACQUIRIUM_TEST_SERVER_HOST,
+        server_port=ACQUIRIUM_TEST_SERVER_PORT,
+        use_ssl=False,
+    )
     acq.insert_graph("tests/test_model_units.ttl")
     time.sleep(1)
     status = acq.client.ingest_status()

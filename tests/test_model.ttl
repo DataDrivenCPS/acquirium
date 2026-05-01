@@ -3,7 +3,6 @@
 @prefix qudt: <http://qudt.org/schema/qudt/> .
 @prefix ref: <https://brickschema.org/schema/Brick/ref#> .
 @prefix s223: <http://data.ashrae.org/standard223#> .
-@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
 ex:point_10 a acq:QuantifiableObservableProperty ;
     s223:hasMedium acq:Medium4 ;
@@ -39,10 +38,10 @@ ex:point_1 a acq:QuantifiableObservableProperty ;
     ref:hasExternalReference ex:point_1_csv_ref .
 
 ex:point_10_csv_ref a ref:FileReference ;
-    acq:DataSource "LAB" ;
     ref:fileLocation "tests/sample_data.csv" ;
-    ref:timeColumnID 0 ;
-    ref:valueColumnID 10 .
+    ref:timeColumnID "0" ;
+    ref:valueColumnID "10" ;
+    acq:dataSource "LAB" .
 
 ex:point_11 a acq:QuantifiableObservableProperty ;
     s223:hasMedium acq:Medium3 ;
@@ -52,10 +51,9 @@ ex:point_11 a acq:QuantifiableObservableProperty ;
     ref:hasExternalReference ex:point_11_mqtt_ref .
 
 ex:point_11_mqtt_ref a ref:MQTTReference ;
-    ref:MQTTBroker "mosquitto" ;
-    acq:DataSource "SCADA" ;
-    acq:mqttPort "1883" ;
+    ref:MQTTBroker "mosquitto:1883" ;
     ref:MQTTTopic "topic1" ;
+    acq:dataSource "SCADA" ;
     acq:timeKey "Timestamp" ;
     acq:valueKey "Value" .
 
@@ -67,10 +65,9 @@ ex:point_12 a acq:QuantifiableObservableProperty ;
     ref:hasExternalReference ex:point_12_mqtt_ref .
 
 ex:point_12_mqtt_ref a ref:MQTTReference ;
-    ref:MQTTBroker "mosquitto" ;
-    acq:DataSource "SCADA" ;
-    acq:mqttPort "1883" ;
+    ref:MQTTBroker "mosquitto:1883" ;
     ref:MQTTTopic "topic2" ;
+    acq:dataSource "SCADA" ;
     acq:timeKey "Timestamp" ;
     acq:valueKey "Value" .
 
@@ -82,10 +79,9 @@ ex:point_13 a acq:QuantifiableObservableProperty ;
     ref:hasExternalReference ex:point_13_mqtt_ref .
 
 ex:point_13_mqtt_ref a ref:MQTTReference ;
-    ref:MQTTBroker "mosquitto" ;
-    acq:DataSource "SCADA" ;
-    acq:mqttPort "1883" ;
+    ref:MQTTBroker "mosquitto:1883" ;
     ref:MQTTTopic "topic3" ;
+    acq:dataSource "SCADA" ;
     acq:timeKey "Timestamp" ;
     acq:valueKey "Value" .
 
@@ -97,18 +93,17 @@ ex:point_14 a acq:QuantifiableObservableProperty ;
     ref:hasExternalReference ex:point_14_mqtt_ref .
 
 ex:point_14_mqtt_ref a ref:MQTTReference ;
-    ref:MQTTBroker "mosquitto" ;
-    acq:DataSource "SCADA" ;
-    acq:mqttPort "1883" ;
+    ref:MQTTBroker "mosquitto:1883" ;
     ref:MQTTTopic "topic4" ;
+    acq:dataSource "SCADA" ;
     acq:timeKey "Timestamp" ;
     acq:valueKey "Value" .
 
 ex:point_1_csv_ref a ref:FileReference ;
-    acq:DataSource "LAB" ;
     ref:fileLocation "tests/sample_data.csv" ;
-    ref:timeColumnID 0 ;
-    ref:valueColumnID 1 .
+    ref:timeColumnID "0" ;
+    ref:valueColumnID "1" ;
+    acq:dataSource "LAB" .
 
 ex:point_2 a acq:QuantifiableObservableProperty ;
     s223:hasMedium acq:Medium1 ;
@@ -118,10 +113,10 @@ ex:point_2 a acq:QuantifiableObservableProperty ;
     ref:hasExternalReference ex:point_2_csv_ref .
 
 ex:point_2_csv_ref a ref:FileReference ;
-    acq:DataSource "LAB" ;
     ref:fileLocation "tests/sample_data.csv" ;
-    ref:timeColumnID 0 ;
-    ref:valueColumnID 2 .
+    ref:timeColumnID "0" ;
+    ref:valueColumnID "2" ;
+    acq:dataSource "LAB" .
 
 ex:point_3 a acq:QuantifiableObservableProperty ;
     s223:hasMedium acq:Medium2 ;
@@ -131,16 +126,16 @@ ex:point_3 a acq:QuantifiableObservableProperty ;
     ref:hasExternalReference ex:point_3_csv_ref .
 
 ex:point_3_csv_ref a ref:FileReference ;
-    acq:DataSource "LAB" ;
     ref:fileLocation "tests/sample_data.csv" ;
-    ref:timeColumnID 0 ;
-    ref:valueColumnID 3 .
+    ref:timeColumnID "0" ;
+    ref:valueColumnID "3" ;
+    acq:dataSource "LAB" .
 
 ex:point_4_csv_ref a ref:FileReference ;
-    acq:DataSource "LAB" ;
     ref:fileLocation "tests/sample_data.csv" ;
-    ref:timeColumnID 0 ;
-    ref:valueColumnID 4 .
+    ref:timeColumnID "0" ;
+    ref:valueColumnID "4" ;
+    acq:dataSource "LAB" .
 
 ex:point_5 a acq:QuantifiableObservableProperty ;
     s223:hasMedium acq:Medium2 ;
@@ -150,10 +145,10 @@ ex:point_5 a acq:QuantifiableObservableProperty ;
     ref:hasExternalReference ex:point_5_csv_ref .
 
 ex:point_5_csv_ref a ref:FileReference ;
-    acq:DataSource "LAB" ;
     ref:fileLocation "tests/sample_data.csv" ;
-    ref:timeColumnID 0 ;
-    ref:valueColumnID 5 .
+    ref:timeColumnID "0" ;
+    ref:valueColumnID "5" ;
+    acq:dataSource "LAB" .
 
 ex:point_6 a acq:QuantifiableObservableProperty ;
     s223:hasMedium acq:Medium3 ;
@@ -163,10 +158,10 @@ ex:point_6 a acq:QuantifiableObservableProperty ;
     ref:hasExternalReference ex:point_6_csv_ref .
 
 ex:point_6_csv_ref a ref:FileReference ;
-    acq:DataSource "LAB" ;
     ref:fileLocation "tests/sample_data.csv" ;
-    ref:timeColumnID 0 ;
-    ref:valueColumnID 6 .
+    ref:timeColumnID "0" ;
+    ref:valueColumnID "6" ;
+    acq:dataSource "LAB" .
 
 ex:point_7 a acq:QuantifiableObservableProperty ;
     s223:hasMedium acq:Medium3 ;
@@ -176,10 +171,10 @@ ex:point_7 a acq:QuantifiableObservableProperty ;
     ref:hasExternalReference ex:point_7_csv_ref .
 
 ex:point_7_csv_ref a ref:FileReference ;
-    acq:DataSource "LAB" ;
     ref:fileLocation "tests/sample_data.csv" ;
-    ref:timeColumnID 0 ;
-    ref:valueColumnID 7 .
+    ref:timeColumnID "0" ;
+    ref:valueColumnID "7" ;
+    acq:dataSource "LAB" .
 
 ex:point_8 a acq:QuantifiableObservableProperty ;
     s223:hasMedium acq:Medium3 ;
@@ -189,10 +184,10 @@ ex:point_8 a acq:QuantifiableObservableProperty ;
     ref:hasExternalReference ex:point_8_csv_ref .
 
 ex:point_8_csv_ref a ref:FileReference ;
-    acq:DataSource "LAB" ;
     ref:fileLocation "tests/sample_data.csv" ;
-    ref:timeColumnID 0 ;
-    ref:valueColumnID 8 .
+    ref:timeColumnID "0" ;
+    ref:valueColumnID "8" ;
+    acq:dataSource "LAB" .
 
 ex:point_9 a acq:QuantifiableObservableProperty ;
     s223:hasMedium acq:Medium4 ;
@@ -202,10 +197,10 @@ ex:point_9 a acq:QuantifiableObservableProperty ;
     ref:hasExternalReference ex:point_9_csv_ref .
 
 ex:point_9_csv_ref a ref:FileReference ;
-    acq:DataSource "LAB" ;
     ref:fileLocation "tests/sample_data.csv" ;
-    ref:timeColumnID 0 ;
-    ref:valueColumnID 9 .
+    ref:timeColumnID "0" ;
+    ref:valueColumnID "9" ;
+    acq:dataSource "LAB" .
 
 ex:eq_11 a acq:A ;
     acq:x ex:eq_12 ;
