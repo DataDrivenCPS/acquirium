@@ -326,24 +326,25 @@ def get_timeseries(
 
         accept = request.headers.get("accept", "")
 
-        # Default: Arrow IPC stream (best for Polars)
-        schema = pa.schema([
-            ("ts", pa.timestamp("us", tz="UTC")),
-            # set value type explicitly if you know it; string shown as safe default
-            ("value", pa.string()),
-            ("uri", pa.string()),
-        ])
-
         def arrow_stream() -> Iterator[bytes]:
             buf = io.BytesIO()
-            writer = ipc.new_stream(buf, schema)
+            writer: ipc.RecordBatchStreamWriter | None = None
             for batch in batches:
+                if writer is None:
+                    writer = ipc.new_stream(buf, batch.schema)
                 writer.write_batch(batch)
                 data = buf.getvalue()
                 if data:
                     yield data
                     buf.seek(0)
                     buf.truncate(0)
+            if writer is None:
+                empty_schema = pa.schema([
+                    ("ts", pa.timestamp("us", tz="UTC")),
+                    ("value", pa.float64()),
+                    ("uri", pa.string()),
+                ])
+                writer = ipc.new_stream(buf, empty_schema)
             writer.close()
             data = buf.getvalue()
             if data:
