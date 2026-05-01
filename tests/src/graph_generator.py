@@ -105,12 +105,12 @@ def build_test_graph_csv() -> Graph:
         g.add((point, HAS_UNIT, ACQUIRIUM_NS[f"Unit{i//4}"]))
 
         # CSV reference node
-        g.add((ref, RDF.type, ACQUIRIUM_NS.CSVReference))
+        g.add((ref, RDF.type, FILE_REFERENCE))
         g.add((ref, DATA_SOURCE, Literal("LAB")))
-        g.add((ref, REF_PATH, Literal(csv_path)))
-        g.add((ref, REF_TIME_COL, Literal(0)))
+        g.add((ref, FILE_LOCATION, Literal(csv_path)))
+        g.add((ref, TIME_COLUMN_ID, Literal(0)))
         # Value column: 1..10 (assumes time is col 0)
-        g.add((ref, REF_VALUE_COL, Literal(i)))
+        g.add((ref, VALUE_COLUMN_ID, Literal(i)))
 
     return g
 
@@ -165,13 +165,13 @@ def build_test_graph_stream() -> Graph:
         g.add((point, HAS_UNIT, ACQUIRIUM_NS[f"Unit{i}"]))
 
         # CSV reference node
-        g.add((ref, RDF.type, ACQUIRIUM_NS.MQTTReference))
+        g.add((ref, RDF.type, MQTT_REFERENCE))
         g.add((ref, DATA_SOURCE, Literal("SCADA")))
-        g.add((ref, BROKER, Literal("mosquitto")))
-        g.add((ref, PORT, Literal("1883")))
+        g.add((ref, MQTT_BROKER, Literal("mosquitto")))
+        g.add((ref, MQTT_PORT, Literal("1883")))
         g.add((ref, TIME_KEY, Literal("Timestamp")))
         g.add((ref, VALUE_KEY, Literal("Value")))
-        g.add((ref, TOPIC, Literal(f"topic{i-10}")))
+        g.add((ref, MQTT_TOPIC, Literal(f"topic{i-10}")))
 
     return g
 

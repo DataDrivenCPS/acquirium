@@ -225,9 +225,9 @@ class Manager:
         WHERE {{
           ?data <{HAS_EXTERNAL_REFERENCE}> ?ref .
           ?ref a <{MQTT_REFERENCE}> .
-          OPTIONAL {{ ?ref <{BROKER}> ?broker . }}
-          OPTIONAL {{ ?ref <{PORT}> ?port . }}
-          OPTIONAL {{ ?ref <{TOPIC}> ?topic . }}
+          OPTIONAL {{ ?ref <{MQTT_BROKER}> ?broker . }}
+          OPTIONAL {{ ?ref <{MQTT_PORT}> ?port . }}
+          OPTIONAL {{ ?ref <{MQTT_TOPIC}> ?topic . }}
           OPTIONAL {{ ?ref <{TIME_KEY}> ?tkey . }}
           OPTIONAL {{ ?ref <{VALUE_KEY}> ?vkey . }}
         }}

@@ -287,14 +287,13 @@ class AcquiriumClient:
         Returns counts.
         """
         q = f"""
-            SELECT ?data ?ref ?type ?path ?timeCol ?valueCol
+            SELECT ?data ?ref ?path ?timeCol ?valueCol
             WHERE {{
               ?data <{HAS_EXTERNAL_REFERENCE}> ?ref .
-              ?ref a ?type .
-              OPTIONAL {{ ?ref <{REF_PATH}> ?path . }}
-              OPTIONAL {{ ?ref <{REF_TIME_COL}> ?timeCol . }}
-              OPTIONAL {{ ?ref <{REF_VALUE_COL}> ?valueCol . }}
-              FILTER(?type IN (<{PARQUET_REF}>, <{CSV_REF}>))
+              ?ref a <{FILE_REFERENCE}> .
+              OPTIONAL {{ ?ref <{FILE_LOCATION}> ?path . }}
+              OPTIONAL {{ ?ref <{TIME_COLUMN_ID}> ?timeCol . }}
+              OPTIONAL {{ ?ref <{VALUE_COLUMN_ID}> ?valueCol . }}
             }}
         """
 
@@ -307,7 +306,7 @@ class AcquiriumClient:
 
         url = f"{self.base_url}/ingest_external_reference"
 
-        for data_uri, ref_uri, ref_type, path, time_col, value_col in rows:
+        for data_uri, ref_uri, path, time_col, value_col in rows:
             if not path:
                 skipped += 1
                 continue
@@ -323,6 +322,16 @@ class AcquiriumClient:
             if not p.exists():
                 print(f"External reference file not found: {p} (skipping)")
                 failed += 1
+                continue
+
+            suffix = p.suffix.lower()
+            if suffix == ".parquet":
+                ref_type = str(PARQUET_REF)
+            elif suffix in {".csv", ".tsv"}:
+                ref_type = str(CSV_REF)
+            else:
+                logger.warning("Unsupported external reference file type: %s", p)
+                skipped += 1
                 continue
 
             time_column_no = int(str(time_col).strip('"')) if time_col else 0
