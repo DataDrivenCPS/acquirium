@@ -1,5 +1,4 @@
 import pytest
-from conftest import ACQUIRIUM_TEST_SERVER_HOST, ACQUIRIUM_TEST_SERVER_PORT
 from acquirium import Acquirium
 from acquirium.Client.data_object import DataObject
 from acquirium.internals.internals_namespaces import *
@@ -13,8 +12,8 @@ from zoneinfo import ZoneInfo
 def acquirium_client_csv():
     """Fixture to create an Acquirium client for testing."""
     acq = Acquirium(
-        server_url=ACQUIRIUM_TEST_SERVER_HOST,
-        server_port=ACQUIRIUM_TEST_SERVER_PORT,
+        server_url="localhost",
+        server_port=8000,
         use_ssl=False,
     )
 
