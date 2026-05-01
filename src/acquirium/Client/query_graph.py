@@ -18,7 +18,7 @@ class QueryNode:
     - constraints: future extension (labels, numeric filters, instance_uri, etc.)
     """
     id: int
-    rdf_class: str = None
+    rdf_class: str | None = None
     alias: Optional[str] = None
     constraints: Dict[str, Any] = field(default_factory=dict)
 

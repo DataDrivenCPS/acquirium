@@ -1,9 +1,10 @@
 """Integration tests for FastAPI endpoints — talks to the running server.
 
 Requires: All services running via `make testing-up`.
-Server at localhost:8000, TimescaleDB at localhost:5432, Mosquitto at localhost:1883.
+Server at localhost:8000, TimescaleDB at localhost:5432, Mosquitto at localhost:1883 by default.
 """
 
+import os
 import time
 import pytest
 import requests
@@ -13,7 +14,10 @@ import pyarrow.ipc as ipc
 import pyarrow as pa
 
 
-BASE_URL = "http://localhost:8000"
+BASE_URL = (
+    f"http://{os.getenv('ACQUIRIUM_TEST_SERVER_HOST', 'localhost')}:"
+    f"{os.getenv('ACQUIRIUM_TEST_SERVER_PORT', '8000')}"
+)
 
 MINIMAL_TURTLE = """\
 @prefix ex: <http://example.org/api_test/> .
@@ -119,27 +123,22 @@ class TestGraphEndpoints:
 
 
 class TestTimeseriesEndpoints:
-    TEST_SOURCE = "api-endpoint-test"
-    TEST_REF = "api_ts_ref"
+    TEST_SOURCE = "test"
+    TEST_REF_NAME = "api_ts_ref"
     TEST_POINT = "urn:test:api_ts_point"
 
-    def _insert_data(self, n=5, *, replace=False):
+    def _insert_data(self, n=5):
         values = [
             [datetime(2025, 1, 1, h, 0, tzinfo=timezone.utc).isoformat(), float(h)]
             for h in range(n)
         ]
-        requests.post(
-            f"{BASE_URL}/register_datasource",
-            json={"source_id": self.TEST_SOURCE},
-        )
         resp = requests.post(
             f"{BASE_URL}/insert_timeseries",
             json=[{
                 "source_id": self.TEST_SOURCE,
-                "ref_name": self.TEST_REF,
+                "ref_name": self.TEST_REF_NAME,
                 "point_uri": self.TEST_POINT,
-                "replace": replace,
-                "value_kind": "numeric",
+                "replace": False,
                 "values": values,
             }],
         )
@@ -195,7 +194,19 @@ class TestTimeseriesEndpoints:
 
     def test_replace(self):
         self._insert_data(10)
-        resp = self._insert_data(1, replace=True)
+        values = [
+            [datetime(2025, 6, 1, tzinfo=timezone.utc).isoformat(), 999.0],
+        ]
+        resp = requests.post(
+            f"{BASE_URL}/insert_timeseries",
+            json=[{
+                "source_id": self.TEST_SOURCE,
+                "ref_name": self.TEST_REF_NAME,
+                "point_uri": self.TEST_POINT,
+                "replace": True,
+                "values": values,
+            }],
+        )
         assert resp.status_code == 200
 
     def test_empty_uri(self):
@@ -206,7 +217,6 @@ class TestTimeseriesEndpoints:
         reader = ipc.open_stream(resp.content)
         table = reader.read_all()
         assert table.num_rows == 0
-
 
 # ── Log Endpoints ──────────────────────────────────────────
 
