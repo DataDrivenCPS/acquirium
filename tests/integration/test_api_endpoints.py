@@ -119,18 +119,29 @@ class TestGraphEndpoints:
 
 
 class TestTimeseriesEndpoints:
-    TEST_REF = "urn:test:api_ts_ref"
+    TEST_SOURCE = "api-endpoint-test"
+    TEST_REF = "api_ts_ref"
     TEST_POINT = "urn:test:api_ts_point"
 
-    def _insert_data(self, n=5):
+    def _insert_data(self, n=5, *, replace=False):
         values = [
             [datetime(2025, 1, 1, h, 0, tzinfo=timezone.utc).isoformat(), float(h)]
             for h in range(n)
         ]
+        requests.post(
+            f"{BASE_URL}/register_datasource",
+            json={"source_id": self.TEST_SOURCE},
+        )
         resp = requests.post(
             f"{BASE_URL}/insert_timeseries",
-            params={"ref_uri": self.TEST_REF, "point_uri": self.TEST_POINT},
-            json={"values": values},
+            json=[{
+                "source_id": self.TEST_SOURCE,
+                "ref_name": self.TEST_REF,
+                "point_uri": self.TEST_POINT,
+                "replace": replace,
+                "value_kind": "numeric",
+                "values": values,
+            }],
         )
         return resp
 
@@ -139,7 +150,7 @@ class TestTimeseriesEndpoints:
         assert resp.status_code == 200
 
         resp = requests.get(f"{BASE_URL}/timeseries", params={
-            "uri": self.TEST_REF,
+            "uri": self.TEST_POINT,
         })
         assert resp.status_code == 200
         # Response is Arrow IPC
@@ -175,23 +186,16 @@ class TestTimeseriesEndpoints:
     def test_timeseries_info(self):
         self._insert_data(3)
         resp = requests.post(f"{BASE_URL}/timeseries_info", json={
-            "uris": [self.TEST_REF],
+            "uris": [self.TEST_POINT],
         })
         assert resp.status_code == 200
         data = resp.json()
-        assert self.TEST_REF in data
-        assert data[self.TEST_REF]["row_count"] >= 3
+        assert self.TEST_POINT in data
+        assert data[self.TEST_POINT]["row_count"] >= 3
 
     def test_replace(self):
         self._insert_data(10)
-        values = [
-            [datetime(2025, 6, 1, tzinfo=timezone.utc).isoformat(), 999.0],
-        ]
-        resp = requests.post(
-            f"{BASE_URL}/insert_timeseries",
-            params={"ref_uri": self.TEST_REF, "point_uri": self.TEST_POINT, "replace": True},
-            json={"values": values},
-        )
+        resp = self._insert_data(1, replace=True)
         assert resp.status_code == 200
 
     def test_empty_uri(self):
