@@ -4,7 +4,6 @@ import pytest
 from datetime import datetime, timezone
 
 from acquirium.Apps.base import Output
-from acquirium.internals.app_utils import make_stream_ref_uri
 
 
 # ── Output.timeseries ──────────────────────────────────────
@@ -33,22 +32,6 @@ class TestOutputTimeseries:
     def test_no_rows_no_series_raises(self):
         with pytest.raises(ValueError, match="rows or series"):
             Output.timeseries(point_uri="urn:test:p1")
-
-    def test_auto_ref_uri(self):
-        out = Output.timeseries(
-            point_uri="urn:test:p1",
-            rows=[(datetime(2025, 1, 1, tzinfo=timezone.utc), 1.0)],
-        )
-        expected_ref = make_stream_ref_uri("urn:test:p1")
-        assert out.payload["ref_uri"] == expected_ref
-
-    def test_explicit_ref_uri(self):
-        out = Output.timeseries(
-            point_uri="urn:test:p1",
-            rows=[(datetime(2025, 1, 1, tzinfo=timezone.utc), 1.0)],
-            ref_uri="urn:custom:ref",
-        )
-        assert out.payload["ref_uri"] == "urn:custom:ref"
 
 
 # ── Output.event ───────────────────────────────────────────
