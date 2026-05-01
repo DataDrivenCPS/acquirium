@@ -1,0 +1,98 @@
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg17
+    container_name: acquirium_timescaledb
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-acquirium}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-acquirium}
+      POSTGRES_DB: ${POSTGRES_DB:-acquirium}
+    ports:
+      - "${TIMESCALEDB_PORT:-5432}:5432"
+    volumes:
+      - tsdb_data:/var/lib/postgresql/data
+      - ./src/acquirium/internals/init-timescaledb.sql:/docker-entrypoint-initdb.d/init-timescaledb.sql:ro
+    networks:
+      - acquirium_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-acquirium} -d ${POSTGRES_DB:-acquirium}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: acquirium_mosquitto
+    ports:
+      - "${MOSQUITTO_PORT:-1883}:1883"
+    volumes:
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+      - ./src/acquirium/internals/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    networks:
+      - acquirium_net
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -h localhost -p 1883 -t '$$SYS/broker/version' -C 1 >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  acquirium:
+    build:
+      context: .
+      dockerfile: ./src/acquirium/Dockerfile
+    container_name: acquirium_server
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - acquirium_data:/app/.acquirium
+      - ./acquirium.docker.toml:/app/acquirium.toml:ro
+    ports:
+      - "${ACQUIRIUM_PORT:-8000}:8000"
+    environment:
+      ACQUIRIUM_DATA_DIR: ${ACQUIRIUM_DATA_DIR:-/app/.acquirium}
+      PG_DSN: ${PG_DSN:-postgresql://acquirium:acquirium@timescaledb:5432/acquirium}
+      FASTEMBED_CACHE_PATH: ${FASTEMBED_CACHE_PATH:-/app/.fastembed_cache}
+      ACQUIRIUM_RECREATE: ${ACQUIRIUM_RECREATE:-false}
+      ACQUIRIUM_APP_NETWORK: ${ACQUIRIUM_APP_NETWORK:-acquirium_acquirium_net}
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - acquirium_net
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()\""]
+      interval: 3s
+      timeout: 2s
+      retries: 40
+      start_period: 20s
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: acquirium_grafana
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-acquirium}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-acquirium}
+      POSTGRES_DB: ${POSTGRES_DB:-acquirium}
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - grafana_storage:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    networks:
+      - acquirium_net
+
+volumes:
+  tsdb_data:
+  mosquitto_data:
+  mosquitto_log:
+  acquirium_data:
+  grafana_storage:
+
+networks:
+  acquirium_net:

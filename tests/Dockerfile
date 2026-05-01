@@ -1,11 +1,11 @@
-FROM python:3.14-slim
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
 WORKDIR /app
 
-COPY pyproject.toml /app/pyproject.toml
-COPY tests /app/tests
-COPY README.md /app/README.md
-COPY .python-version /app/.python-version
-RUN pip install -r /app/tests/src/requirements.txt
+COPY pyproject.toml uv.lock ./
+RUN uv sync --all-extras --no-install-project
 
-CMD ["python", "/app/tests/src/stream_simulation.py"]
+COPY . .
+RUN uv sync --all-extras
+
+CMD ["uv", "run", "python", "/app/tests/src/stream_simulation.py"]
