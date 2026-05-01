@@ -130,7 +130,7 @@ def test_data_filters(acquirium_client_csv):
     assert len(meta_6) == 2
     assert "point_10" in meta_6["0"].to_list()
 
-    filt_random = query.filter_data_nodes(predicate=ACQUIRIUM_NS.hasExternalReference, value="urn:ex/point_10_csv_ref")
+    filt_random = query.filter_data_nodes(predicate=HAS_EXTERNAL_REFERENCE, value="urn:ex/point_10_csv_ref")
     meta_7 = filt_random.metadata()
     assert len(meta_7) == 1
     assert "point_10" in meta_7["0"].to_list()
@@ -160,5 +160,4 @@ def test_find_data_1(acquirium_client_csv):
     meta = entity_BE_data2.metadata()
     assert len(meta) == 8
     assert "data_of_b" in meta.columns
-
 

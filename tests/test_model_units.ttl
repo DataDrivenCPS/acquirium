@@ -1,6 +1,7 @@
 @prefix acq: <urn:acquirium#> .
 @prefix ex: <urn:ex/> .
 @prefix qudt: <http://qudt.org/schema/qudt/> .
+@prefix ref: <https://brickschema.org/schema/Brick/ref#> .
 @prefix qudtqk: <http://qudt.org/vocab/quantitykind/> .
 @prefix unit: <http://qudt.org/vocab/unit/> .
 @prefix s223: <http://data.ashrae.org/standard223#> .
@@ -20,29 +21,29 @@ ex:sensor_1 a acq:A ;
 ex:flow_rate_1 a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:VolumeFlowRate ;
     qudt:hasUnit unit:MilliL-PER-MIN ;
-    acq:hasExternalReference ex:flow_rate_1_csv_ref .
+    ref:hasExternalReference ex:flow_rate_1_csv_ref .
 
-ex:flow_rate_1_csv_ref a acq:CSVReference ;
-    acq:hasFilePath "tests/sample_data.csv" ;
-    acq:hasTimeColumn 0 ;
-    acq:hasValueColumn 1 .
+ex:flow_rate_1_csv_ref a ref:FileReference ;
+    ref:fileLocation "tests/sample_data.csv" ;
+    ref:timeColumnID 0 ;
+    ref:valueColumnID 1 .
 
 # Property WITH unit (volume)
 ex:volume_1 a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Volume ;
     qudt:hasUnit unit:GAL_US ;
-    acq:hasExternalReference ex:volume_1_csv_ref .
+    ref:hasExternalReference ex:volume_1_csv_ref .
 
-ex:volume_1_csv_ref a acq:CSVReference ;
-    acq:hasFilePath "tests/sample_data.csv" ;
-    acq:hasTimeColumn 0 ;
-    acq:hasValueColumn 2 .
+ex:volume_1_csv_ref a ref:FileReference ;
+    ref:fileLocation "tests/sample_data.csv" ;
+    ref:timeColumnID 0 ;
+    ref:valueColumnID 2 .
 
 # Property WITHOUT unit (Case 1: user must provide from_unit and to_unit)
 ex:temp_no_unit a s223:QuantifiableObservableProperty ;
-    acq:hasExternalReference ex:temp_no_unit_csv_ref .
+    ref:hasExternalReference ex:temp_no_unit_csv_ref .
 
-ex:temp_no_unit_csv_ref a acq:CSVReference ;
-    acq:hasFilePath "tests/sample_data.csv" ;
-    acq:hasTimeColumn 0 ;
-    acq:hasValueColumn 3 .
+ex:temp_no_unit_csv_ref a ref:FileReference ;
+    ref:fileLocation "tests/sample_data.csv" ;
+    ref:timeColumnID 0 ;
+    ref:valueColumnID 3 .
