@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from acquirium.internals.internals_namespaces import *
 from acquirium.internals.models import Point, PointCreateRequest
 from acquirium.internals.qudt_units import QUDTUnitConverter, UnitNotFound
 
+_logger = logging.getLogger("acquirium.graph_store")
 
 
 def _literal_dt(value: datetime) -> Literal:
@@ -149,10 +151,7 @@ class OxigraphGraphStore:
                 else self.env.list()
             )
             for ont in ontology_names:
-                try:
-                    closure_graph, _ = self.env.get_closure(ont)
-                except ValueError:
-                    closure_graph = self.env.get_closure(ont)
+                closure_graph, _ = self.env.get_closure(ont)
                 ctx = self.dataset.graph(URIRef(ont))
                 ctx.remove((None, None, None))
                 for triple in closure_graph:
