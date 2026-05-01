@@ -174,7 +174,7 @@ class Query:
             return uri
         raise ValueError(f"{param} must be a URI (urn:..., http://..., or https://...)")
 
-    def _find_all_nodes(self, id_val=None) -> list[URIRef]:
+    def _find_all_nodes(self, id_val=None) -> set[URIRef]:
         '''
         Finds all nodes in the query result, except literals.
         If alias is provided, only nodes with that alias are returned.
@@ -192,7 +192,7 @@ class Query:
                 cell = row[col_index]
                 if isinstance(cell, str) and (cell.startswith("urn:")):
                     nodes.add(URIRef(cell))
-            return list(nodes)
+            return nodes
         else:
             for row in query_result.get("rows", []):
                 for cell in row:

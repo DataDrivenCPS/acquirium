@@ -25,6 +25,10 @@ def compute_ref_uri(source_id: str, ref_name: str) -> URIRef:
     ref_uri_str = str(uuid.uuid5(_REF_URI_NAMESPACE, f"{source_id}:{ref_name}"))
     return ACQUIRIUM_NS[ref_uri_str]
 
+
+compute_handle = compute_ref_uri
+
+
 if TYPE_CHECKING:
     from acquirium.Client.query import Query
 
@@ -75,18 +79,6 @@ class StreamInsert(BaseModel):
     replace: bool = False
     value_kind: Literal["numeric", "text"] = "numeric"
     values: list[tuple[datetime, float | int | str | None]]
-
-
-class InsertTimeseriesRequest(BaseModel):
-    values: list[tuple[datetime, float | int | str | None]]
-
-
-class InsertBatchRequest(RootModel[dict[str, list[tuple[datetime, float | int | str | None]]]]):
-    """Batch insert where keys are point URIs and values are lists of (ts, value)."""
-
-    @property
-    def streams(self) -> dict[str, list[tuple[datetime, float | int | str | None]]]:
-        return self.root
 
 
 Order = Literal["asc", "desc"]

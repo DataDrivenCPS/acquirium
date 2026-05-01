@@ -6,13 +6,13 @@ from pathlib import Path
 import os
 import logging
 from time import perf_counter
-from rdflib import Graph, URIRef, Node, Literal, RDF, RDFS
+from rdflib import Graph, URIRef, Node, Literal, RDF, RDFS, SKOS
 
 from acquirium.Storage import OxigraphGraphStore, TimescaleStore, PGReferenceRegistry, PGReferenceInfo, resolve_dsn
 from acquirium.internals.qudt_units import QUDTUnitConverter
-from acquirium.internals.models import LogEntry, TimeIntervalModel, AppSpec, AppRunRequest
+from acquirium.internals.models import LogEntry, Order, TimeIntervalModel, AppSpec, AppRunRequest, compute_handle
 from acquirium.internals.internals_namespaces import *
-from acquirium.internals.app_utils import app_uri_for, make_stream_ref_uri
+from acquirium.internals.app_utils import app_uri_for
 
 import json
 import hashlib
@@ -41,6 +41,50 @@ def _wipe_dir_contents(base: Path) -> None:
             shutil.rmtree(p)
         else:
             p.unlink()
+
+
+def _resolve_column(columns: list[str], identifier: str | None, default_index: int) -> str:
+    """Resolve a ref:timeColumnID / ref:valueColumnID literal to an actual column.
+
+    Tries the literal as a column name first. If it parses as an int and is
+    not present as a name, falls back to a positional index. Allows older
+    fixtures that hard-coded numeric column indices to keep working.
+    """
+    if identifier is None or identifier == "":
+        if default_index >= len(columns):
+            raise ValueError(f"File has only {len(columns)} columns; default index {default_index} out of range")
+        return columns[default_index]
+    if identifier in columns:
+        return identifier
+    try:
+        idx = int(identifier)
+    except ValueError as exc:
+        raise ValueError(f"Column {identifier!r} not found in file (columns={columns!r})") from exc
+    if idx < 0 or idx >= len(columns):
+        raise ValueError(f"Column index {idx} out of range (file has {len(columns)} columns)")
+    return columns[idx]
+
+
+def _parse_mqtt_broker(raw: str) -> tuple[str, int]:
+    """Split a ref:MQTTBroker literal into (host, port).
+
+    Accepts ``"host"``, ``"host:port"``, or ``"mqtt(s)://host[:port]"``.
+    Defaults to port 1883 (8883 for ``mqtts://``) when no port is given.
+    """
+    s = raw.strip()
+    default_port = 1883
+    if "://" in s:
+        scheme, _, rest = s.partition("://")
+        if scheme.lower() == "mqtts":
+            default_port = 8883
+        s = rest.split("/", 1)[0]
+    if ":" in s:
+        host, _, port_str = s.rpartition(":")
+        try:
+            return host or "localhost", int(port_str)
+        except ValueError:
+            return s, default_port
+    return s or "localhost", default_port
 
 @dataclass
 class Manager:
@@ -216,17 +260,21 @@ class Manager:
 
     def _connect_mqtt_streams_from_graph(self) -> int:
         """
-        Scan graph for MQTTReference nodes attached to data nodes by hasExternalReference
-        and start background subscribers.
+        Scan graph for ref:MQTTReference nodes attached to data nodes by
+        ref:hasExternalReference and start background subscribers.
+
+        Per ref-schema.ttl, ref:MQTTBroker is a single string that may be
+        ``"host"``, ``"host:port"``, or a ``mqtt(s)://...`` URI; the port is
+        parsed out here rather than carried as a separate predicate.
+
         Returns number of subscriptions ensured.
         """
         q = f"""
-        SELECT ?data ?ref ?broker ?port ?topic ?tkey ?vkey
+        SELECT ?data ?ref ?broker ?topic ?tkey ?vkey
         WHERE {{
           ?data <{HAS_EXTERNAL_REFERENCE}> ?ref .
           ?ref a <{MQTT_REFERENCE}> .
           OPTIONAL {{ ?ref <{MQTT_BROKER}> ?broker . }}
-          OPTIONAL {{ ?ref <{MQTT_PORT}> ?port . }}
           OPTIONAL {{ ?ref <{MQTT_TOPIC}> ?topic . }}
           OPTIONAL {{ ?ref <{TIME_KEY}> ?tkey . }}
           OPTIONAL {{ ?ref <{VALUE_KEY}> ?vkey . }}
@@ -236,20 +284,21 @@ class Manager:
         rows = res.get("rows", [])
 
         count = 0
-        for data_uri, ref_uri, broker, port, topic, tkey, vkey in rows:
-            logger.info("Found MQTT reference: %s %s %s %s %s %s %s",
-                        data_uri, ref_uri, broker, port, topic, tkey, vkey)
-            broker_s = (broker or "localhost").strip('"')
-            port_s = (port or "1883").strip('"')
+        for data_uri, ref_uri, broker, topic, tkey, vkey in rows:
+            logger.info("Found MQTT reference: %s %s broker=%s topic=%s tkey=%s vkey=%s",
+                        data_uri, ref_uri, broker, topic, tkey, vkey)
+            broker_raw = (broker or "localhost").strip('"')
             topic_s = (topic or "").strip('"')
             if not topic_s:
                 continue
 
+            host, port_s = _parse_mqtt_broker(broker_raw)
+
             spec = MQTTStreamSpec(
                 point_uri=str(data_uri),
                 ref_uri=str(ref_uri),
-                broker=broker_s,
-                port=int(port_s),
+                broker=host,
+                port=port_s,
                 topic=topic_s,
                 time_key=(tkey or "Timestamp").strip('"'),
                 value_key=(vkey or "Value").strip('"'),
@@ -260,23 +309,28 @@ class Manager:
         return count
 
     def _scan_pg_references_from_graph(self) -> int:
-        """Scan graph for PGReference nodes and register them in the registry."""
+        """Scan graph for external Postgres timeseries references.
+
+        ref:TimeseriesReference is dual-purpose: Acquirium-managed streams use
+        it with ``acq:sourceId``/``acq:refName`` (handled by
+        ``_sync_stream_handles_from_graph``); external Postgres historians use
+        it with ``ref:storedAt`` as a literal DSN. We disambiguate by
+        requiring storedAt to be a Literal that begins with ``postgresql://``
+        or ``postgres://``.
+        """
         q = f"""
-        SELECT ?data ?ref ?dsn ?host ?port ?db ?user ?pass ?table ?query ?tcol ?vcol ?pfilter
+        SELECT ?data ?ref ?dsn ?table ?query ?tcol ?vcol ?pfilter
         WHERE {{
           ?data <{HAS_EXTERNAL_REFERENCE}> ?ref .
-          ?ref a <{PG_REFERENCE}> .
-          OPTIONAL {{ ?ref <{PG_DSN}> ?dsn . }}
-          OPTIONAL {{ ?ref <{PG_HOST}> ?host . }}
-          OPTIONAL {{ ?ref <{PG_PORT}> ?port . }}
-          OPTIONAL {{ ?ref <{PG_DB}> ?db . }}
-          OPTIONAL {{ ?ref <{PG_USER}> ?user . }}
-          OPTIONAL {{ ?ref <{PG_PASS}> ?pass . }}
-          OPTIONAL {{ ?ref <{PG_TABLE}> ?table . }}
-          OPTIONAL {{ ?ref <{PG_QUERY}> ?query . }}
-          OPTIONAL {{ ?ref <{PG_TIME_COL}> ?tcol . }}
-          OPTIONAL {{ ?ref <{PG_VALUE_COL}> ?vcol . }}
-          OPTIONAL {{ ?ref <{PG_POINT_FILTER}> ?pfilter . }}
+          ?ref a <{TIMESERIES_REFERENCE}> .
+          ?ref <{STORED_AT}> ?dsn .
+          FILTER(isLiteral(?dsn))
+          FILTER(STRSTARTS(STR(?dsn), "postgresql://") || STRSTARTS(STR(?dsn), "postgres://"))
+          OPTIONAL {{ ?ref <{TIMESERIES_TABLE}> ?table . }}
+          OPTIONAL {{ ?ref <{TIMESERIES_QUERY}> ?query . }}
+          OPTIONAL {{ ?ref <{TIMESERIES_TIME_COLUMN}> ?tcol . }}
+          OPTIONAL {{ ?ref <{TIMESERIES_VALUE_COLUMN}> ?vcol . }}
+          OPTIONAL {{ ?ref <{TIMESERIES_POINT_FILTER}> ?pfilter . }}
         }}
         """
         res = self.graph_store.sparql_query(q, use_union=True)
@@ -284,16 +338,11 @@ class Manager:
 
         count = 0
         for row in rows:
-            (data_uri, ref_uri, dsn, host, port, db, user, passwd,
-             table, custom_query, tcol, vcol, pfilter) = row
+            (data_uri, ref_uri, dsn, table, custom_query, tcol, vcol, pfilter) = row
             try:
                 s = lambda v: str(v).strip().strip('"') if v else None
-                resolved = resolve_dsn(
-                    dsn=s(dsn), host=s(host), port=s(port),
-                    db=s(db), user=s(user), password=s(passwd),
-                )
                 info = PGReferenceInfo(
-                    dsn=resolved,
+                    dsn=s(dsn) or "",
                     table=s(table),
                     custom_query=s(custom_query),
                     time_col=s(tcol) or "time",
@@ -303,10 +352,46 @@ class Manager:
                 self.pg_registry.register(str(ref_uri), info)
                 count += 1
             except Exception:
-                logger.warning("Failed to register PGReference %s", ref_uri, exc_info=True)
+                logger.warning("Failed to register external Postgres reference %s", ref_uri, exc_info=True)
 
         if count:
-            logger.info("Registered %d PGReference(s) from graph", count)
+            logger.info("Registered %d external Postgres reference(s) from graph", count)
+        return count
+
+    def _sync_stream_handles_from_graph(self) -> int:
+        """Sync the streams handle table from Acquirium-managed timeseries refs.
+
+        Matches every pattern of the form:
+            ?point  ref:hasExternalReference  ?ref_node .
+            ?ref_node  a  ref:TimeseriesReference ;
+                       acq:sourceId  ?source_id ;
+                       acq:refName   ?ref_name .
+        Recomputes the handle from (source_id, ref_name) and upserts into the
+        streams table. External PG references (which have storedAt as a literal
+        DSN and no sourceId/refName) are skipped here and handled by
+        ``_scan_pg_references_from_graph``.
+        """
+        q = f"""
+        SELECT ?point ?source_id ?ref_name
+        WHERE {{
+          ?point <{HAS_EXTERNAL_REFERENCE}> ?ref_node .
+          ?ref_node a <{TIMESERIES_REFERENCE}> .
+          ?ref_node <{ACQUIRIUM_SOURCE_ID}> ?source_id .
+          ?ref_node <{ACQUIRIUM_REF_NAME}> ?ref_name .
+        }}
+        """
+        res = self.graph_store.sparql_query(q, use_union=True)
+        count = 0
+        for point_uri, source_id, ref_name in res.get("rows", []):
+            try:
+                sid = str(source_id).strip('"')
+                rn  = str(ref_name).strip('"')
+                self.timescale.ensure_stream_handle(str(point_uri), sid, rn)
+                count += 1
+            except Exception:
+                logger.warning("Failed to ensure stream handle %s / %s → %s", point_uri, source_id, ref_name, exc_info=True)
+        if count:
+            logger.info("Synced %d stream handle(s) from graph", count)
         return count
 
     def _save_ingest_cache(self, cache: dict[str, Any]) -> None:
@@ -338,39 +423,39 @@ class Manager:
         # NOTE: QUDT Unit/QuantityKind removed — handled by _qudt_matcher
         # Labels: rdfs:label, skos:prefLabel, skos:altLabel
         # Language filter: keep English-tagged or untagged labels only
-        class_query = """
-        SELECT DISTINCT ?uri ?label WHERE {
-          {
-            ?uri a <http://www.w3.org/2000/01/rdf-schema#Class> .
-          } UNION {
-            ?uri a <http://www.w3.org/2002/07/owl#Class> .
-          } UNION {
-            ?x <http://www.w3.org/2000/01/rdf-schema#subClassOf> ?uri .
-          } UNION {
+        class_query = f"""
+        SELECT DISTINCT ?uri ?label WHERE {{
+          {{
+            ?uri a <{RDFS.Class}> .
+          }} UNION {{
+            ?uri a <{OWL_CLASS}> .
+          }} UNION {{
+            ?x <{RDFS.subClassOf}> ?uri .
+          }} UNION {{
             ?x a ?uri .
-          } UNION {
-            ?uri a <urn:nawi-water-ontology#Class> .
-          } UNION {
-            ?uri <http://www.w3.org/2000/01/rdf-schema#subClassOf> ?x .
-          } UNION {
-            ?x <http://qudt.org/schema/qudt/hasEnumerationKind> ?uri .
-          } UNION {
-            ?x <http://data.ashrae.org/standard223#ofSubstance> ?uri .
-          } UNION {
-            ?x <http://data.ashrae.org/standard223#hasMedium> ?uri .
-          }
-          OPTIONAL {
-            {
-              ?uri <http://www.w3.org/2000/01/rdf-schema#label> ?label .
-            } UNION {
-              ?uri <http://www.w3.org/2004/02/skos/core#prefLabel> ?label .
-            } UNION {
-              ?uri <http://www.w3.org/2004/02/skos/core#altLabel> ?label .
-            }
+          }} UNION {{
+            ?uri a <{WATR.Class}> .
+          }} UNION {{
+            ?uri <{RDFS.subClassOf}> ?x .
+          }} UNION {{
+            ?x <{HAS_ENUMERATION_KIND}> ?uri .
+          }} UNION {{
+            ?x <{OF_SUBSTANCE}> ?uri .
+          }} UNION {{
+            ?x <{HAS_MEDIUM}> ?uri .
+          }}
+          OPTIONAL {{
+            {{
+              ?uri <{RDFS.label}> ?label .
+            }} UNION {{
+              ?uri <{SKOS.prefLabel}> ?label .
+            }} UNION {{
+              ?uri <{SKOS.altLabel}> ?label .
+            }}
             FILTER(LANG(?label) = "" || LANGMATCHES(LANG(?label), "en"))
-          }
+          }}
           FILTER(isIRI(?uri))
-        }
+        }}
         """
         try:
             res = self.graph_store.sparql_query(class_query, use_union=True)
@@ -416,29 +501,29 @@ class Manager:
         # Query 2: Predicates (declared properties + any IRI used as a predicate)
         # Labels: rdfs:label, skos:prefLabel, skos:altLabel
         # Language filter: keep English-tagged or untagged labels only
-        pred_query = """
-        SELECT DISTINCT ?uri ?label WHERE {
-          {
-            ?uri a <http://www.w3.org/1999/02/22-rdf-syntax-ns#Property> .
-          } UNION {
-            ?uri a <http://www.w3.org/2002/07/owl#ObjectProperty> .
-          } UNION {
-            ?uri a <http://www.w3.org/2002/07/owl#DatatypeProperty> .
-          } UNION {
+        pred_query = f"""
+        SELECT DISTINCT ?uri ?label WHERE {{
+          {{
+            ?uri a <{RDF_PROP}> .
+          }} UNION {{
+            ?uri a <{OWL_OBJ_PROP}> .
+          }} UNION {{
+            ?uri a <{OWL_DATA_PROP}> .
+          }} UNION {{
             ?s ?uri ?o .
-          }
-          OPTIONAL {
-            {
-              ?uri <http://www.w3.org/2000/01/rdf-schema#label> ?label .
-            } UNION {
-              ?uri <http://www.w3.org/2004/02/skos/core#prefLabel> ?label .
-            } UNION {
-              ?uri <http://www.w3.org/2004/02/skos/core#altLabel> ?label .
-            }
+          }}
+          OPTIONAL {{
+            {{
+              ?uri <{RDFS.label}> ?label .
+            }} UNION {{
+              ?uri <{SKOS.prefLabel}> ?label .
+            }} UNION {{
+              ?uri <{SKOS.altLabel}> ?label .
+            }}
             FILTER(LANG(?label) = "" || LANGMATCHES(LANG(?label), "en"))
-          }
+          }}
           FILTER(isIRI(?uri))
-        }
+        }}
         """
         try:
             res = self.graph_store.sparql_query(pred_query, use_union=True)
@@ -688,6 +773,7 @@ class Manager:
             logging.info("acquirium: inserted graph into store, now ingesting data")
             self._connect_mqtt_streams_from_graph()
             self._scan_pg_references_from_graph()
+            self._sync_stream_handles_from_graph()
 
             if wait_for_embedding:
                 logger.info("acquirium: rebuilding embedding index (synchronous)...")
@@ -705,10 +791,10 @@ class Manager:
     def timeseries_batch(
         self,
         uri: str,
-        start: str | None = None,
-        end: str | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
         limit: int | None = None,
-        order: str = "asc",
+        order: Order = "asc",
         batch_size: int = 50_000,
     ) :
         """
@@ -729,8 +815,9 @@ class Manager:
                 order=order,
                 batch_size=batch_size,
             )
+        storage_key = self.timescale.resolve_storage_key(uri)
         return self.timescale.timeseries(
-            point_uri=uri,
+            point_uri=storage_key,
             start=start,
             end=end,
             limit=limit,
@@ -747,23 +834,44 @@ class Manager:
         if pg_uris:
             result.update(self.pg_registry.timeseries_info_batch(pg_uris))
         if ts_uris:
-            result.update(self.timescale.timeseries_info_batch(ts_uris))
+            # Resolve URIs to storage keys (handles) in one batch query, then
+            # remap results back to the original URIs.
+            uri_to_key = self.timescale.resolve_storage_keys(ts_uris)
+            key_to_uri = {v: k for k, v in uri_to_key.items()}
+            raw = self.timescale.timeseries_info_batch(list(key_to_uri.keys()))
+            result.update({key_to_uri[k]: v for k, v in raw.items()})
         return result
+
+    def register_datasource(self, source_id: str) -> str:
+        """Register a named datasource in the knowledge graph.
+
+        Writes a graph node typed as acquirium:DataSourceRegistry so the
+        datasource is discoverable via SPARQL.  Idempotent — safe to call
+        on every startup.  Returns source_id.
+        """
+        node = URIRef(f"urn:acquirium:datasource:{source_id}")
+        g = Graph()
+        g.add((node, RDF.type,   ACQUIRIUM_DATASOURCE))
+        g.add((node, RDFS.label, Literal(source_id)))
+        self.graph_store.insert_graph(g, format="turtle", replace=False)
+        return source_id
 
     def insert_timeseries(
         self,
         *,
-        ref_uri: str,
+        source_id: str,
+        ref_name: str,
         rows: list[tuple[datetime, Any]],
         point_uri: str | None = None,
         replace: bool = False,
     ) -> int:
+        handle = compute_handle(source_id, ref_name)
         if replace:
-            n = self.timescale.replace_rows(ref_uri, rows)
+            n = self.timescale.replace_rows(str(handle), rows)
         else:
-            n = self.timescale.upsert_rows(ref_uri, rows)
+            n = self.timescale.upsert_rows(str(handle), rows)
         if point_uri:
-            self.timescale.ensure_stream_handle(point_uri, ref_uri)
+            self.timescale.ensure_stream_handle(point_uri, source_id, ref_name, handle=handle)
         return n
 
     def _app_type_uri(self, app_type: str) -> URIRef:
@@ -835,18 +943,18 @@ class Manager:
 
         for out in spec.outputs:
             point_uri = URIRef(out.point_uri)
-            ref_uri = URIRef(out.ref_uri or make_stream_ref_uri(out.point_uri))
+            handle = compute_handle(spec.name, out.point_uri)
 
             graph.add((app_uri, PRODUCES, point_uri))
             graph.add((point_uri, RDF.type, VIRTUAL_POINT))
-            graph.add((point_uri, HAS_EXTERNAL_REFERENCE, ref_uri))
-            graph.add((ref_uri, RDF.type, STREAM))
+            graph.add((point_uri, HAS_EXTERNAL_REFERENCE, handle))
+            graph.add((handle, RDF.type, STREAM))
             if out.kind in {"event", "trigger"}:
-                graph.add((ref_uri, RDF.type, EVENT_STREAM))
+                graph.add((handle, RDF.type, EVENT_STREAM))
             else:
-                graph.add((ref_uri, RDF.type, TIMESERIES_STREAM))
+                graph.add((handle, RDF.type, TIMESERIES_STREAM))
 
-            graph.add((ref_uri, STORAGE_BACKEND, Literal(out.storage_backend or "timescale")))
+            graph.add((handle, STORAGE_BACKEND, Literal(out.storage_backend or "timescale")))
 
             self._add_literal_or_uri(graph, point_uri, HAS_QUANTITY_KIND, out.quantity_kind)
             self._add_literal_or_uri(graph, point_uri, HAS_UNIT, out.unit)
@@ -909,7 +1017,7 @@ class Manager:
             "command": pick("cmd"),
         }
 
-    def _run_app_once(self, req: AppRunRequest, *, keep_alive: bool = False, interval: float | None = None) -> str:
+    def _run_app_once(self, req: AppRunRequest, *, keep_alive: bool = False, interval: float | None = None) -> str | None :
         if self._docker is None:
             raise ValueError("Docker is not available - cannot run apps")
 
@@ -999,16 +1107,22 @@ class Manager:
             raise ValueError(f"Failed to run app {req.app_id}: {e}") from e
 
         cid = container.id
-        logger.info("Started docker container for app %s: %s", req.app_id, cid[:12])
+        if isinstance(cid,str):
+            logger.info("Started docker container for app %s: %s", req.app_id, cid[:12])
+        else:
+            logger.warning("Container ID is not a string for app %s: %s", req.app_id, cid)
         return cid
 
-    def run_app(self, req: AppRunRequest) -> str:
+    def run_app(self, req: AppRunRequest) -> str | None:
         if not req.keep_alive:
             return self._run_app_once(req)
 
         cid = self._run_app_once(req, keep_alive=True, interval=req.interval)
         with self._app_runs_lock:
-            self._app_runs[cid] = {"app_id": req.app_id, "cid": cid}
+            if isinstance(cid, str):
+                self._app_runs[cid] = {"app_id": req.app_id, "cid": cid}
+            else:
+                logger.warning("Received non-string container ID for app %s: %s", req.app_id, cid)
         return cid
 
     def _stop_container(self, cid: str) -> None:
@@ -1062,12 +1176,20 @@ class Manager:
             *,
             data_uri: str,
             ref_uri: str,
-            ref_type: str,
             content: bytes,
-            time_column_no: int = 0,
-            value_column_no: int = 1,
+            time_column: str | None = None,
+            value_column: str | None = None,
             filename: str = "upload",
         ) -> int:
+        """Ingest the contents of a ref:FileReference upload into Timescale.
+
+        ``time_column`` / ``value_column`` are column identifiers as written
+        on the reference node (``ref:timeColumnID`` / ``ref:valueColumnID``).
+        Each is first tried as a column name; a numeric string falls back to
+        a positional index. ``time_column`` defaults to the first column,
+        ``value_column`` to the second. The file format (parquet vs csv) is
+        inferred from the ``filename`` extension.
+        """
         import polars as pl
         from io import BytesIO
         import time
@@ -1089,17 +1211,18 @@ class Manager:
 
         try:
             bio = BytesIO(content)
-
-            if ref_type == str(PARQUET_REF):
-                df = pl.read_parquet(bio, columns=[time_column_no, value_column_no])
-            elif ref_type == str(CSV_REF):
-                df = pl.read_csv(bio, columns=[time_column_no, value_column_no])
+            ext = Path(filename).suffix.lower()
+            if ext in {".parquet", ".pq"}:
+                full = pl.read_parquet(bio)
+            elif ext in {".csv", ".tsv", ".txt"}:
+                full = pl.read_csv(bio, separator="\t" if ext == ".tsv" else ",")
             else:
-                raise ValueError(f"Unsupported reference type: {ref_type}")
+                raise ValueError(f"Unsupported file extension for {filename!r}; expected parquet or csv/tsv")
 
-            # Rename selected columns to ts/value regardless of original names
-            if df.width != 2:
-                raise ValueError(f"Expected 2 columns after selection, got {df.width}")
+            cols = full.columns
+            t_col = _resolve_column(cols, time_column, default_index=0)
+            v_col = _resolve_column(cols, value_column, default_index=1)
+            df = full.select([t_col, v_col])
 
             df = df.rename({df.columns[0]: "ts", df.columns[1]: "value"})
 
@@ -1186,7 +1309,7 @@ class Manager:
             obs_time_interval=obs_time_interval
         )
 
-    def delete_logs(self, point_uri: str) -> None:
+    def delete_logs(self, point_uri: str) -> bool:
         """
         Delete all log entries for a given point URI.
 
