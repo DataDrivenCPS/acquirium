@@ -218,7 +218,6 @@ class MQTTIngestService:
                         for ref_uri, samples in pending.items():
                             for sample in samples:
                                 rows = [(sample.ts, sample.value)]
-                                ts_store.ensure_stream_handle(sample.point_uri, ref_uri)
                                 ts_store.upsert_rows(ref_uri, rows)
                 except Exception as exc:
                     logger.error("mqtt db flush failed err=%s", exc)
@@ -231,7 +230,6 @@ class MQTTIngestService:
                     for ref_uri, samples in pending.items():
                         for sample in samples:
                             rows = [(sample.ts, sample.value)]
-                            ts_store.ensure_stream_handle(sample.point_uri, ref_uri)
                             ts_store.upsert_rows(ref_uri, rows)
             except Exception:
                 logger.error("mqtt db final flush failed")
