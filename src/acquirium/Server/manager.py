@@ -729,8 +729,9 @@ class Manager:
                 order=order,
                 batch_size=batch_size,
             )
+        ref_uri = self.timescale.resolve_storage_key(uri)
         return self.timescale.timeseries(
-            point_uri=uri,
+            ref_uri=ref_uri,
             start=start,
             end=end,
             limit=limit,
@@ -747,7 +748,10 @@ class Manager:
         if pg_uris:
             result.update(self.pg_registry.timeseries_info_batch(pg_uris))
         if ts_uris:
-            result.update(self.timescale.timeseries_info_batch(ts_uris))
+            storage_keys = self.timescale.resolve_storage_keys(ts_uris)
+            storage_result = self.timescale.timeseries_info_batch(list(storage_keys.values()))
+            for uri, ref_uri in storage_keys.items():
+                result[uri] = storage_result[ref_uri]
         return result
 
     def insert_timeseries(
@@ -763,7 +767,12 @@ class Manager:
         else:
             n = self.timescale.upsert_rows(ref_uri, rows)
         if point_uri:
-            self.timescale.ensure_stream_handle(point_uri, ref_uri)
+            self.timescale.ensure_stream_ref(
+                point_uri=point_uri,
+                source_id="api",
+                ref_name=ref_uri,
+                ref_uri=URIRef(ref_uri),
+            )
         return n
 
     def _app_type_uri(self, app_type: str) -> URIRef:
@@ -1103,8 +1112,8 @@ class Manager:
 
             df = df.rename({df.columns[0]: "ts", df.columns[1]: "value"})
 
-            df = df.with_columns(pl.lit(ref_uri).alias("point_uri"))
-            df = df.select(["point_uri", "ts", "value"])
+            df = df.with_columns(pl.lit(ref_uri).alias("ref_uri"))
+            df = df.select(["ref_uri", "ts", "value"])
 
             if df.schema.get("ts") == pl.Utf8:
                 # Try with UTC timezone first (handles tz-aware strings like
@@ -1116,8 +1125,19 @@ class Manager:
                 except Exception:
                     df = df.with_columns(pl.col("ts").str.to_datetime())
 
-            if df.schema.get("value") != pl.Utf8:
-                df = df.with_columns(pl.col("value").cast(pl.Utf8))
+            probe = df.select(
+                pl.when(pl.col("value").is_not_null())
+                .then(pl.col("value").cast(pl.Float64, strict=False).is_null())
+                .otherwise(False)
+                .sum()
+                .alias("invalid_numeric")
+            )
+            value_kind = "text" if probe["invalid_numeric"][0] else "numeric"
+            if value_kind == "text":
+                df = df.with_columns(
+                    pl.col("value").cast(pl.Utf8),
+                    pl.lit("text").alias("value_kind"),
+                )
 
             result = self.timescale.bulk_insert_polars(df)
 
