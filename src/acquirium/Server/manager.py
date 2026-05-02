@@ -990,7 +990,10 @@ class Manager:
         stream_refs: list[tuple[str, str, str]] = []
         for ref_name, stream_rows in streams.items():
             ref_uri = str(compute_ref_uri(source_id, ref_name))
-            value_kind = normalize_value_kind((stream_value_kinds or {}).get(ref_name))
+            value_kind = normalize_value_kind(
+                (stream_value_kinds or {}).get(ref_name)
+                or self.timescale.stream_value_kind(ref_uri)
+            )
             stream_refs.append((ref_name, ref_uri, value_kind))
             for ts, value in stream_rows:
                 ref_uris.append(ref_uri)
@@ -1033,7 +1036,7 @@ class Manager:
         value_kind_map: dict[str, str] = {}
         stream_refs: list[tuple[str, str, str]] = []
         for ref_name, ref_uri in ref_uri_map.items():
-            value_kind = "numeric"
+            value_kind = normalize_value_kind(self.timescale.stream_value_kind(ref_uri))
             if "value_kind" in df.columns:
                 kinds = (
                     df.filter(pl.col("ref_name") == ref_name)
