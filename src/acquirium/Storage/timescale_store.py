@@ -364,7 +364,7 @@ class TimescaleStore(TimeseriesStore):
             ORDER BY ts {order_sql}{limit_sql}
         """
 
-        value_kind = self._stream_value_kind(str(ref_uri))
+        value_kind = self.stream_value_kind(str(ref_uri))
         with self.conn.cursor() as cur:
             cur.execute(query, params)
 
@@ -591,7 +591,7 @@ class TimescaleStore(TimeseriesStore):
             return None
         return str(val)
 
-    def _stream_value_kind(self, ref_uri: str) -> str | None:
+    def stream_value_kind(self, ref_uri: str) -> str | None:
         with self.conn.cursor() as cur:
             cur.execute(
                 f"SELECT value_kind FROM {STREAMS_TABLE} WHERE ref_uri = %s",

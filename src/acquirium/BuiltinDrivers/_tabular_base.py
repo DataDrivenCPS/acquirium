@@ -121,6 +121,7 @@ class _TabularIngestBase(PollingIngestDriver):
             stream_names = df["ref_name"].unique().to_list()
             if source_id not in self._registered:
                 self.aq.register_datasource(source_id)
+            self._ensure_streams(dict.fromkeys(stream_names), source_id, path, value_kinds)
 
             result = self.aq.insert_timeseries_polars(source_id, df)
             rows_inserted = (
@@ -129,7 +130,6 @@ class _TabularIngestBase(PollingIngestDriver):
                 else int(result)
             )
 
-            self._ensure_streams(dict.fromkeys(stream_names), source_id, path, value_kinds)
             self._rows_seen[key] = offset + rows_read
             logger.info(
                 "tabular_ingest: %s — inserted %d row(s) across %d stream(s)",
@@ -199,14 +199,7 @@ class _TabularIngestBase(PollingIngestDriver):
         else:
             kinds = self._infer_value_kinds(df)
 
-        return (
-            df.with_columns(
-                pl.col("ref_name")
-                .map_elements(lambda ref_name: kinds.get(ref_name, "numeric"), return_dtype=pl.Utf8)
-                .alias("value_kind")
-            ),
-            kinds,
-        )
+        return df.drop("value_kind") if "value_kind" in df.columns else df, kinds
 
     def _infer_value_kinds(self, df: pl.DataFrame) -> dict[str, str]:
         kinds: dict[str, str] = {}

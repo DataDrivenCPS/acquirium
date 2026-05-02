@@ -252,7 +252,6 @@ class MQTTIngestDriver(EventIngestDriver):
                             "ts": [ts],
                             "ref_name": [spec.ref_name],
                             "value": [value],
-                            "value_kind": [spec.value_kind],
                         })
                     )
             except Exception as exc:
