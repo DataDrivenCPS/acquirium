@@ -320,6 +320,20 @@ def test_loop_registers_csv_external_reference_metadata(tmp_path):
     assert (ref_uri, VALUE_COLUMN_ID, Literal("temp")) in g
 
 
+def test_loop_registers_streams_before_insert(tmp_path):
+    driver = make_driver(tmp_path=tmp_path)
+    driver.setup()
+    _wide_csv(tmp_path)
+
+    def assert_registered_first(source_id, df):
+        assert driver.aq.client.insert_graph.called
+        assert "value_kind" not in df.columns
+        return {"ok": True, "rows_inserted": len(df)}
+
+    driver.aq.insert_timeseries_polars.side_effect = assert_registered_first
+    driver.tick()
+
+
 def test_loop_marks_non_numeric_csv_streams_as_text(tmp_path):
     p = tmp_path / "mixed.csv"
     p.write_text("time,temp,state\n2024-01-01T00:00:00Z,22.5,ON\n")
@@ -328,8 +342,7 @@ def test_loop_marks_non_numeric_csv_streams_as_text(tmp_path):
     driver.tick()
 
     _, df = driver.aq.insert_timeseries_polars.call_args[0]
-    value_kinds = dict(zip(df["ref_name"].to_list(), df["value_kind"].to_list()))
-    assert value_kinds == {"temp": "numeric", "state": "text"}
+    assert "value_kind" not in df.columns
 
     graph_text = driver.aq.client.insert_graph.call_args[0][0]
     g = Graph().parse(data=graph_text, format="turtle")
@@ -430,7 +443,7 @@ def test_tick_propagates_insert_failure(tmp_path):
     with pytest.raises(RuntimeError, match="server down"):
         driver.tick()
     assert str(path) not in driver._rows_seen
-    driver.aq.client.insert_graph.assert_not_called()
+    driver.aq.client.insert_graph.assert_called_once()
 
 
 def test_loop_skips_bad_file_and_continues(tmp_path):
