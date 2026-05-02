@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any
 from rdflib import URIRef
 
 from acquirium.internals.models import compute_ref_uri
-from acquirium.Storage.values import normalize_value_kind
 
 if TYPE_CHECKING:
     import polars as pl
@@ -96,7 +95,8 @@ class IngestDriver(Driver):
 
     Observations are represented as a Polars DataFrame with required columns
     ``ts``, ``ref_name``, and ``value``. A ``source_id`` column is optional; if
-    absent, ``self.source_id`` is used for the whole frame.
+    absent, ``self.source_id`` is used for the whole frame. Drivers must
+    register each stream, including its value kind, before inserting rows.
     """
 
     def insert_observations(self, observations: "pl.DataFrame | None") -> dict[str, Any]:
@@ -125,7 +125,6 @@ class IngestDriver(Driver):
             "ts": pl.Datetime("us", "UTC"),
             "ref_name": pl.Utf8,
             "value": pl.Utf8,
-            "value_kind": pl.Utf8,
         }
         if observations is None:
             return pl.DataFrame(schema=schema)
@@ -144,23 +143,12 @@ class IngestDriver(Driver):
         columns = ["ts", "ref_name", "value"]
         if "source_id" in observations.columns:
             columns.insert(0, "source_id")
-        if "value_kind" in observations.columns:
-            columns.append("value_kind")
         df = observations.select(columns).drop_nulls(subset=["ts", "ref_name"])
 
         exprs = [
             self.normalize_timestamps(df["ts"]).alias("ts"),
             pl.col("ref_name").cast(pl.Utf8),
         ]
-        if "value_kind" in df.columns:
-            exprs.append(
-                pl.col("value_kind").map_elements(
-                    normalize_value_kind,
-                    return_dtype=pl.Utf8,
-                )
-            )
-        else:
-            exprs.append(pl.lit("numeric").alias("value_kind"))
         if "source_id" in df.columns:
             exprs.insert(0, pl.col("source_id").cast(pl.Utf8))
         return df.with_columns(exprs).drop_nulls(subset=["ts"])
