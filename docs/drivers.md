@@ -13,21 +13,22 @@ base classes:
 Both ingest bases use the same canonical observation frame:
 
 ```text
-ts | ref_name | value | value_kind
+ts | ref_name | value
 ```
 
 An optional `source_id` column may be included when one driver emits rows for
 multiple datasources. If omitted, `self.source_id` is used.
 
-`value_kind` is optional and defaults to `"numeric"`. Use `"text"` for status,
-state, enum, JSON/event, or other non-numeric streams. A stream has one storage
-type: numeric samples are written to `numeric_value`; text samples are written
-to `text_value`.
+Drivers must register each stream before reporting observations for it. Stream
+registration declares `value_kind`: use `"numeric"` for numeric streams and
+`"text"` for status, state, enum, JSON/event, or other non-numeric streams. A
+stream has one storage type: numeric samples are written to `numeric_value`;
+text samples are written to `text_value`.
 
 Keep `value` in its native Python/Polars type when possible. CSV-like drivers
-may emit numeric values as strings, but they must still set `value_kind =
-"numeric"` for numeric streams so storage parses those strings into numeric
-columns.
+may emit numeric values as strings, but they must still register those streams
+with `value_kind="numeric"` so storage parses those strings into numeric
+columns. `value_kind` should not be included in observation dataframes.
 
 ## Which Method Do I Implement?
 
@@ -79,7 +80,6 @@ class TemperatureDriver(PollingIngestDriver):
             "ts": [datetime.now(timezone.utc)],
             "ref_name": ["temp/room1"],
             "value": [read_sensor()],
-            "value_kind": ["numeric"],
         })
 ```
 
@@ -90,7 +90,7 @@ Rules:
 
 - Do not put `while True` or `time.sleep` in a driver; the runner owns timing.
 - Set `self.source_id` in `setup()` for single-source drivers.
-- Register datasources and streams where they are discovered.
+- Register datasources and streams before reporting observations for them.
 - Use `stop()` to release resources on shutdown.
 
 ## Event Drivers
@@ -122,7 +122,6 @@ class CallbackDriver(EventIngestDriver):
             "ts": [ts],
             "ref_name": [name],
             "value": [value],
-            "value_kind": ["text"],
         }))
 
     def stop(self):
@@ -385,7 +384,6 @@ class MyCSVDriver(CSVIngestDriver):
             ),
             "ref_name": ["Temperature"] * len(df),
             "value": df["Temperature"],
-            "value_kind": ["numeric"] * len(df),
         })
         return out, len(df)
 ```
@@ -431,7 +429,6 @@ class MyEventDriver(EventIngestDriver):
             "ts": [ts],
             "ref_name": [ref_name],
             "value": [value],
-            "value_kind": ["text"],
         }))
 ```
 
