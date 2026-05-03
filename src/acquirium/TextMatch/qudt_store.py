@@ -10,24 +10,11 @@ from __future__ import annotations
 import gzip
 import json
 import logging
-import re
 from pathlib import Path
 from typing import Any
 from acquirium.internals.internals_namespaces import *
+from acquirium.TextMatch.embedding_matcher import _split_local_name
 logger = logging.getLogger("acquirium.qudt_store")
-
-def _split_local_name(uri: str) -> list[str]:
-    """Split a URI local name on CamelCase, underscores, hyphens into lowercase tokens."""
-    for sep in ("#", "/"):
-        if sep in uri:
-            local = uri.rsplit(sep, 1)[-1]
-            break
-    else:
-        local = uri
-    tokens = re.sub(r"([a-z])([A-Z])", r"\1 \2", local)
-    tokens = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", tokens)
-    parts = re.split(r"[_\-\s]+", tokens)
-    return [p.lower() for p in parts if p]
 
 
 def _build_surfaces(uri: str, labels: list[str], symbol: str | None, ucum: str | None) -> list[str]:

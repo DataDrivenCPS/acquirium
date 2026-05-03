@@ -58,9 +58,9 @@ def make_aq(version_value: int | Exception = 0) -> Any:
     """Build a stub Acquirium client whose graph_version() returns/raises the given value."""
     aq = MagicMock()
     if isinstance(version_value, Exception):
-        aq.client.graph_version.side_effect = version_value
+        aq.graph_version.side_effect = version_value
     else:
-        aq.client.graph_version.return_value = version_value
+        aq.graph_version.return_value = version_value
     return aq
 
 
