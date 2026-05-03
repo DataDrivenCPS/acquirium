@@ -64,7 +64,6 @@ class _DirectClient:
         rows: list[tuple[datetime, Any]],
         point_uri: Optional[str] = None,
         replace: bool = False,
-        value_kind: str = "numeric",
     ) -> dict[str, Any]:
         n = self._manager.insert_timeseries(
             source_id=source_id,
@@ -72,7 +71,6 @@ class _DirectClient:
             rows=rows,
             point_uri=point_uri,
             replace=replace,
-            value_kind=value_kind,
         )
         insert_stats.record(origin=self._origin, rows=len(rows), streams=[ref_name])
         return {"ok": True, "rows_inserted": n}
@@ -81,14 +79,8 @@ class _DirectClient:
         self,
         source_id: str,
         streams: dict[str, list[tuple[datetime, Any]]],
-        *,
-        value_kinds: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        total = self._manager.insert_timeseries_batch(
-            source_id,
-            streams,
-            stream_value_kinds=value_kinds,
-        )
+        total = self._manager.insert_timeseries_batch(source_id, streams)
         insert_stats.record(
             origin=self._origin,
             rows=sum(len(rows) for rows in streams.values()),

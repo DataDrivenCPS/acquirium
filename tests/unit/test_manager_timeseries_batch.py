@@ -30,6 +30,11 @@ class _BulkStore:
         self.frames.append(df)
         return len(df)
 
+    def stream_value_kind(self, ref_uri):
+        if ref_uri == str(compute_ref_uri("source/file.csv", "state/value")):
+            return "text"
+        return "numeric"
+
 
 class _FailingBulkStore(_BulkStore):
     def bulk_insert_polars(self, df):
@@ -49,7 +54,6 @@ def test_insert_timeseries_batch_uses_computed_ref_uris_in_one_bulk_insert():
             "temp": [(ts, 72.4)],
             "state/value": [(ts, "OK"), (ts.replace(hour=1), None)],
         },
-        stream_value_kinds={"state/value": "text"},
     )
 
     assert count == 3
@@ -61,13 +65,8 @@ def test_insert_timeseries_batch_uses_computed_ref_uris_in_one_bulk_insert():
         str(compute_ref_uri("source/file.csv", "state/value")),
     }
     assert {row["value"] for row in rows} == {72.4, "OK", None}
-    assert {
-        (ref_uri["point_uri"], ref_uri["source_id"], ref_uri["ref_name"], ref_uri["ref_uri"], ref_uri["value_kind"])
-        for ref_uri in store.refs
-    } == {
-        (None, "source/file.csv", "temp", str(compute_ref_uri("source/file.csv", "temp")), "numeric"),
-        (None, "source/file.csv", "state/value", str(compute_ref_uri("source/file.csv", "state/value")), "text"),
-    }
+    assert store.frames[0].get_column("value_kind").to_list() == ["numeric", "text", "text"]
+    assert store.refs == []
 
 
 def test_insert_timeseries_polars_uses_computed_ref_uris_in_one_bulk_insert():
@@ -102,18 +101,14 @@ def test_insert_timeseries_polars_uses_computed_ref_uris_in_one_bulk_insert():
         str(compute_ref_uri("source/file.csv", "state/value")),
     }
     assert {row["value"] for row in rows} == {"72.4", "73.1", "OK"}
-    assert {
-        (ref_uri["point_uri"], ref_uri["source_id"], ref_uri["ref_name"], ref_uri["ref_uri"], ref_uri["value_kind"])
-        for ref_uri in store.refs
-    } == {
-        (None, "source/file.csv", "temp", str(compute_ref_uri("source/file.csv", "temp")), "numeric"),
-        (None, "source/file.csv", "state/value", str(compute_ref_uri("source/file.csv", "state/value")), "text"),
-    }
+    assert store.frames[0].sort(["ref_uri", "ts"]).get_column("value_kind").to_list() == ["text", "numeric", "numeric"]
+    assert store.refs == []
 
 
-def test_insert_timeseries_polars_rejects_mixed_stream_value_kinds():
+def test_insert_timeseries_polars_ignores_input_value_kind_column():
     mgr = Manager.__new__(Manager)
-    mgr.timescale = _BulkStore()
+    store = _BulkStore()
+    mgr.timescale = store
 
     ts = datetime(2026, 4, 28, tzinfo=timezone.utc)
     df = pl.DataFrame(
@@ -131,8 +126,8 @@ def test_insert_timeseries_polars_rejects_mixed_stream_value_kinds():
         },
     )
 
-    with pytest.raises(ValueError, match="mixed value_kind"):
-        mgr.insert_timeseries_polars("source/file.csv", df)
+    assert mgr.insert_timeseries_polars("source/file.csv", df) == 2
+    assert store.frames[0].get_column("value_kind").to_list() == ["numeric", "numeric"]
 
 
 def test_insert_timeseries_batch_does_not_register_streams_when_bulk_insert_fails():

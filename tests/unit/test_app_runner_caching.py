@@ -53,7 +53,6 @@ class StubManager:
         rows: Any,
         point_uri: str | None = None,
         replace: bool = False,
-        value_kind: str = "numeric",
     ) -> int:
         self.timeseries_inserts.append(
             {
@@ -61,7 +60,6 @@ class StubManager:
                 "ref_name": ref_name,
                 "rows": list(rows),
                 "point_uri": point_uri,
-                "value_kind": value_kind,
             }
         )
         return len(rows)
