@@ -35,8 +35,8 @@ class TestUpsertRows:
 
     def test_duplicate_timestamp_updates(self, ts_store, clean_point):
         ts = datetime(2025, 6, 1, 0, 0, tzinfo=timezone.utc)
-        ts_store.upsert_rows(clean_point, [(ts, 100.0)])
-        ts_store.upsert_rows(clean_point, [(ts, 999.0)])
+        ts_store.upsert_rows(clean_point, [(ts, 100.0)], value_kind="numeric")
+        ts_store.upsert_rows(clean_point, [(ts, 999.0)], value_kind="numeric")
 
         batches = list(ts_store.timeseries(clean_point))
         assert len(batches) == 1
@@ -114,6 +114,7 @@ class TestBulkInsertPolars:
             "ref_uri": [clean_point, clean_point],
             "ts": [ts, ts],
             "value": ["10.0", "20.0"],
+            "value_kind": ["numeric", "numeric"],
         })
 
         result = ts_store.bulk_insert_polars(df)
@@ -158,7 +159,7 @@ class TestTimeseries:
             (datetime(2025, 1, 1, ref_uri, 0, tzinfo=timezone.utc), float(ref_uri))
             for ref_uri in range(24)
         ]
-        ts_store.upsert_rows(clean_point, rows)
+        ts_store.upsert_rows(clean_point, rows, value_kind="numeric")
 
     def test_basic_query(self, ts_store, clean_point):
         batches = list(ts_store.timeseries(clean_point))
