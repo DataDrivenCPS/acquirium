@@ -99,7 +99,7 @@ class DuckDBStore:
                 point_uri VARCHAR UNIQUE,
                 source_id VARCHAR NOT NULL,
                 ref_name  VARCHAR NOT NULL,
-                value_kind VARCHAR NOT NULL DEFAULT 'numeric'
+                value_kind VARCHAR NOT NULL DEFAULT 'text'
             )
             """,
             f"CREATE UNIQUE INDEX IF NOT EXISTS idx_streams_source_ref_name ON {STREAMS_TABLE} (source_id, ref_name)",
@@ -111,7 +111,7 @@ class DuckDBStore:
                 s.point_uri,
                 s.source_id,
                 s.ref_name,
-                COALESCE(s.value_kind, 'numeric') AS value_kind,
+                COALESCE(s.value_kind, 'text') AS value_kind,
                 t.ts,
                 t.numeric_value AS value_numeric,
                 t.text_value AS value_text
@@ -144,7 +144,7 @@ class DuckDBStore:
         ref_uri: str,
         rows: Iterable[tuple[datetime, Any]],
         *,
-        value_kind: str = "numeric",
+        value_kind: str = "text",
     ) -> int:
         rows_list = [
             (ref_uri, self._to_utc_naive(ts), *split_value(v, value_kind))
@@ -170,7 +170,7 @@ class DuckDBStore:
         ref_uri: str,
         rows: Iterable[tuple[datetime, Any]],
         *,
-        value_kind: str = "numeric",
+        value_kind: str = "text",
     ) -> int:
         rows_list = list(rows)
         with self._lock:
@@ -211,7 +211,7 @@ class DuckDBStore:
         source_id: str,
         ref_name: str,
         ref_uri: str | None = None,
-        value_kind: str = "numeric",
+        value_kind: str = "text",
     ) -> str:
         """Register a stream reference and return its canonical ref URI."""
         if ref_uri is None:
