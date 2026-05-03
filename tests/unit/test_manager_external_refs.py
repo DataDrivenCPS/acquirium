@@ -26,7 +26,7 @@ class _StubTimescale:
         source_id: str,
         ref_name: str,
         ref_uri=None,
-        value_kind: str = "numeric",
+        value_kind: str = "text",
     ):
         self.calls.append(
             {
@@ -80,7 +80,7 @@ def test_sync_stream_refs_accepts_standalone_reference_without_point_uri():
             "source_id": source_id,
             "ref_name": ref_name,
             "ref_uri": URIRef(str(ref_uri)),
-            "value_kind": "numeric",
+            "value_kind": "text",
         }
     ]
 
