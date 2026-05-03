@@ -89,7 +89,7 @@ For Acquirium-managed streams, the following are expected to hold:
 - `ref_uri == compute_ref_uri(source_id, ref_name)`
 - `ref_uri` has `acq:sourceId`
 - `ref_uri` has `acq:refName`
-- `ref_uri` has `acq:valueKind` (`"numeric"` or `"text"`, default `"numeric"`)
+- `ref_uri` has `acq:valueKind` (`"numeric"` or `"text"`, default `"text"`)
 - inserts for `(source_id, ref_name)` resolve to the same `ref_uri`
 
 ## Storage semantics
