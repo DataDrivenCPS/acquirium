@@ -16,8 +16,11 @@ Both ingest bases use the same canonical observation frame:
 ts | ref_name | value
 ```
 
-An optional `source_id` column may be included when one driver emits rows for
-multiple datasources. If omitted, `self.source_id` is used.
+Every stream is identified by `(source_id, ref_name)`. `source_id` scopes
+source-local stream names, so two sources can both report `ref_name="temp"`
+without colliding. Single-source drivers usually set `self.source_id` in
+`setup()`. Multi-source drivers can omit `self.source_id` if every observation
+row includes a `source_id` column.
 
 Drivers must register each stream before reporting observations for it. Stream
 registration declares `value_kind`: use `"numeric"` for numeric streams and
@@ -88,7 +91,8 @@ The base `tick()` implementation calls `collect()` and passes its frame to
 Rules:
 
 - Do not put `while True` or `time.sleep` in a driver; the runner owns timing.
-- Set `self.source_id` in `setup()` for single-source drivers.
+- Set `self.source_id` in `setup()` for single-source drivers, or include a
+  `source_id` column in every observation frame for multi-source drivers.
 - Register datasources and streams before reporting observations for them.
 - Use `stop()` to release resources on shutdown.
 
