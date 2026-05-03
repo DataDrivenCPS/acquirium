@@ -23,7 +23,6 @@ from typing import Any, Callable
 import shutil
 import docker
 from docker.errors import DockerException, NotFound as ContainerNotFound
-from acquirium.Server.mqtt_ingestion import MQTTIngestService, MQTTStreamSpec
 from acquirium.TextMatch.embedding_matcher import EmbeddingMatcher, _split_local_name
 from acquirium.TextMatch.qudt_store import QUDTStore
 
@@ -64,27 +63,6 @@ def _resolve_column(columns: list[str], identifier: str | None, default_index: i
         raise ValueError(f"Column index {idx} out of range (file has {len(columns)} columns)")
     return columns[idx]
 
-
-def _parse_mqtt_broker(raw: str) -> tuple[str, int]:
-    """Split a ref:MQTTBroker literal into (host, port).
-
-    Accepts ``"host"``, ``"host:port"``, or ``"mqtt(s)://host[:port]"``.
-    Defaults to port 1883 (8883 for ``mqtts://``) when no port is given.
-    """
-    s = raw.strip()
-    default_port = 1883
-    if "://" in s:
-        scheme, _, rest = s.partition("://")
-        if scheme.lower() == "mqtts":
-            default_port = 8883
-        s = rest.split("/", 1)[0]
-    if ":" in s:
-        host, _, port_str = s.rpartition(":")
-        try:
-            return host or "localhost", int(port_str)
-        except ValueError:
-            return s, default_port
-    return s or "localhost", default_port
 
 @dataclass
 class Manager:
@@ -185,8 +163,6 @@ class Manager:
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="acquirium-ingest")
         self._pending_ingests: list[Future] = []
         self.pg_dsn = effective_dsn
-        self.mqtt_ingest = MQTTIngestService(pg_dsn=effective_dsn)
-        self._connect_mqtt_streams_from_graph()
         self.pg_registry = PGReferenceRegistry()
         self._scan_pg_references_from_graph()
         self.app_storage_root = Path(
@@ -257,56 +233,6 @@ class Manager:
             return json.loads(self._ingest_cache_path.read_text())
         except Exception:
             return {}
-
-    def _connect_mqtt_streams_from_graph(self) -> int:
-        """
-        Scan graph for ref:MQTTReference nodes attached to data nodes by
-        ref:hasExternalReference and start background subscribers.
-
-        Per ref-schema.ttl, ref:MQTTBroker is a single string that may be
-        ``"host"``, ``"host:port"``, or a ``mqtt(s)://...`` URI; the port is
-        parsed out here rather than carried as a separate predicate.
-
-        Returns number of subscriptions ensured.
-        """
-        q = f"""
-        SELECT ?data ?ref ?broker ?topic ?tkey ?vkey
-        WHERE {{
-          ?data <{HAS_EXTERNAL_REFERENCE}> ?ref .
-          ?ref a <{MQTT_REFERENCE}> .
-          OPTIONAL {{ ?ref <{MQTT_BROKER}> ?broker . }}
-          OPTIONAL {{ ?ref <{MQTT_TOPIC}> ?topic . }}
-          OPTIONAL {{ ?ref <{TIME_KEY}> ?tkey . }}
-          OPTIONAL {{ ?ref <{VALUE_KEY}> ?vkey . }}
-        }}
-        """
-        res = self.graph_store.sparql_query(q, use_union=True)
-        rows = res.get("rows", [])
-
-        count = 0
-        for data_uri, ref_uri, broker, topic, tkey, vkey in rows:
-            logger.info("Found MQTT reference: %s %s broker=%s topic=%s tkey=%s vkey=%s",
-                        data_uri, ref_uri, broker, topic, tkey, vkey)
-            broker_raw = (broker or "localhost").strip('"')
-            topic_s = (topic or "").strip('"')
-            if not topic_s:
-                continue
-
-            host, port_s = _parse_mqtt_broker(broker_raw)
-
-            spec = MQTTStreamSpec(
-                point_uri=str(data_uri),
-                ref_uri=str(ref_uri),
-                broker=host,
-                port=port_s,
-                topic=topic_s,
-                time_key=(tkey or "Timestamp").strip('"'),
-                value_key=(vkey or "Value").strip('"'),
-            )
-            self.mqtt_ingest.ensure_subscribed(spec)
-            count += 1
-
-        return count
 
     def _scan_pg_references_from_graph(self) -> int:
         """Scan graph for external Postgres timeseries references.
@@ -771,7 +697,6 @@ class Manager:
         try:
             self.graph_store.insert_graph(rdf_graph, format=format, replace=replace)
             logging.info("acquirium: inserted graph into store, now ingesting data")
-            self._connect_mqtt_streams_from_graph()
             self._scan_pg_references_from_graph()
             self._sync_stream_handles_from_graph()
 
@@ -1425,10 +1350,6 @@ class Manager:
             pass
         try:
             self._executor.shutdown(wait=False, cancel_futures=False)
-        except Exception:
-            pass
-        try:
-            self.mqtt_ingest.stop()
         except Exception:
             pass
         try:
