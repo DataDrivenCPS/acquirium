@@ -289,13 +289,14 @@ class AcquiriumClient:
         filename extension.
         """
         q = f"""
-            SELECT ?data ?ref ?path ?timeCol ?valueCol
+            SELECT ?data ?ref ?path ?timeCol ?valueCol ?valueKind
             WHERE {{
               ?data <{HAS_EXTERNAL_REFERENCE}> ?ref .
               ?ref a <{FILE_REFERENCE}> .
               OPTIONAL {{ ?ref <{FILE_LOCATION}> ?path . }}
               OPTIONAL {{ ?ref <{TIME_COLUMN_ID}> ?timeCol . }}
               OPTIONAL {{ ?ref <{VALUE_COLUMN_ID}> ?valueCol . }}
+              OPTIONAL {{ ?ref <{ACQUIRIUM_VALUE_KIND}> ?valueKind . }}
             }}
         """
 
@@ -308,7 +309,7 @@ class AcquiriumClient:
 
         url = f"{self.base_url}/ingest_external_reference"
 
-        for data_uri, ref_uri, path, time_col, value_col in rows:
+        for data_uri, ref_uri, path, time_col, value_col, value_kind in rows:
             if not path:
                 skipped += 1
                 continue
@@ -339,6 +340,8 @@ class AcquiriumClient:
                     data["time_column"] = str(time_col).strip('"')
                 if value_col:
                     data["value_column"] = str(value_col).strip('"')
+                if value_kind:
+                    data["value_kind"] = str(value_kind).strip('"')
 
                 r = requests.post(url, data=data, files=files)
                 r.raise_for_status()
@@ -450,7 +453,13 @@ class AcquiriumClient:
         replace: bool = False,
     ) -> dict:
         url = f"{self.base_url}/insert_timeseries"
-        body = StreamInsert(source_id=source_id, ref_name=ref_name, point_uri=point_uri, replace=replace, values=rows)
+        body = StreamInsert(
+            source_id=source_id,
+            ref_name=ref_name,
+            point_uri=point_uri,
+            replace=replace,
+            values=rows,
+        )
         response = requests.post(url, json=[body.model_dump(mode="json")])
         response.raise_for_status()
         return response.json()
@@ -467,7 +476,14 @@ class AcquiriumClient:
             streams: Mapping of ref_name → list of (timestamp, value) tuples.
         """
         url = f"{self.base_url}/insert_timeseries"
-        payload = [StreamInsert(source_id=source_id, ref_name=rn, values=rows) for rn, rows in streams.items()]
+        payload = [
+            StreamInsert(
+                source_id=source_id,
+                ref_name=rn,
+                values=rows,
+            )
+            for rn, rows in streams.items()
+        ]
         response = requests.post(url, json=[s.model_dump(mode="json") for s in payload])
         response.raise_for_status()
         return response.json()

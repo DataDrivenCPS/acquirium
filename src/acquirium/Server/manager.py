@@ -1109,7 +1109,7 @@ class Manager:
         cid = container.id
         if isinstance(cid,str):
             logger.info("Started docker container for app %s: %s", req.app_id, cid[:12])
-        else: 
+        else:
             logger.warning("Container ID is not a string for app %s: %s", req.app_id, cid)
         return cid
 
