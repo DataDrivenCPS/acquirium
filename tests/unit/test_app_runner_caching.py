@@ -124,9 +124,9 @@ def test_build_query_called_once_on_register(runner):
 def test_run_app_does_not_rebuild_query(runner):
     app = CountingApp()
     runner.register(app)
-    runner.run_app(app.name)
-    runner.run_app(app.name)
-    runner.run_app(app.name)
+    runner.run_app(app.name).result()
+    runner.run_app(app.name).result()
+    runner.run_app(app.name).result()
     assert app.build_count == 1
     assert app.run_count == 3
 
@@ -144,7 +144,7 @@ def test_run_app_uses_cached_query(runner):
         return []
 
     app.run = capture  # type: ignore[assignment]
-    runner.run_app(app.name)
+    runner.run_app(app.name).result()
     assert captured["query"] is cached_q
     assert captured["queries"]["default"] is cached_q
 
@@ -182,7 +182,7 @@ def test_run_app_blocks_during_refresh(runner, stub_manager):
 
     def call_run():
         run_started.set()
-        runner.run_app(app.name)
+        runner.run_app(app.name).result()
         run_finished.set()
 
     t = threading.Thread(target=call_run)

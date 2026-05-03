@@ -1,9 +1,10 @@
 """Integration tests for FastAPI endpoints — talks to the running server.
 
 Requires: All services running via `make testing-up`.
-Server at localhost:8000, TimescaleDB at localhost:5432, Mosquitto at localhost:1883.
+Server at localhost:8000, TimescaleDB at localhost:5432, Mosquitto at localhost:1883 by default.
 """
 
+import os
 import time
 import pytest
 import requests
@@ -15,7 +16,10 @@ import pyarrow as pa
 from acquirium.internals.models import compute_ref_uri
 
 
-BASE_URL = "http://localhost:8000"
+BASE_URL = (
+    f"http://{os.getenv('ACQUIRIUM_TEST_SERVER_HOST', 'localhost')}:"
+    f"{os.getenv('ACQUIRIUM_TEST_SERVER_PORT', '8000')}"
+)
 
 MINIMAL_TURTLE = """\
 @prefix ex: <http://example.org/api_test/> .
@@ -237,7 +241,6 @@ class TestTimeseriesEndpoints:
         reader = ipc.open_stream(resp.content)
         table = reader.read_all()
         assert table.num_rows == 0
-
 
 # ── Log Endpoints ──────────────────────────────────────────
 

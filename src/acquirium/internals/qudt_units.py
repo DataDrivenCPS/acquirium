@@ -284,7 +284,7 @@ class QUDTUnitConverter:
         """Best-effort unit inference from an arbitrary string.
 
         Heuristics (ordered):
-        - direct :meth:`resolve_unit` call (handles URIs, labels, symbols, UCUM codes).
+        - direct :meth:`resolve_unit` call (handles symbols, UCUM codes, and ratio notation like "mg/L").
         - if the string looks like a URI, try its fragment or last path segment.
         - try the last path segment even when not a URI (value-part of a URL).
 

@@ -10,6 +10,8 @@ from acquirium.Storage.timescale_store import TimescaleStore
 
 
 PG_DSN = "postgresql://acquirium:acquirium@localhost:5432/acquirium_test"
+ACQUIRIUM_TEST_SERVER_HOST = "localhost"
+ACQUIRIUM_TEST_SERVER_PORT = 8000
 TEST_POINT_URI = "urn:test:integration_point"
 TEST_REF_URI = "urn:test:integration_ref"
 

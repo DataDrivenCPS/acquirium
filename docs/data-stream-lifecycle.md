@@ -279,6 +279,19 @@ App outputs get the same managed-stream treatment, but the reference node also c
 
 The `acq:produces` and `acq:isCalculatedFrom` triples on the output point URI record the app that generated the stream and the inputs it depended on.
 
+At runtime, app outputs are emitted through a single shared output sink used by
+both server-side `AppRunner` execution and external app workers:
+
+- `Output.timeseries(...)` inserts the returned `(timestamp, value)` rows into
+  the output stream.
+- `Output.event(...)` is serialized as one JSON text value in the event stream.
+- `Output.trigger(...)` sends the configured HTTP webhook and does not write a
+  timeseries row unless the app also returns a timeseries or event output.
+
+The two execution modes provide different insertion transports (`Manager`
+directly in the server, `AcquiriumClient` in the worker), but the output
+serialization and trigger rules are intentionally shared.
+
 ---
 
 ## The streams table vs the graph

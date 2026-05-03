@@ -257,6 +257,8 @@ mqtt_source_id = "mqtt"
 
 In-process drivers receive the same `self.aq` interface as `acquirium run`, but
 calls are dispatched directly to the server manager instead of over HTTP.
+MQTT ingestion is configured this way too: the server does not start MQTT
+subscribers implicitly from the graph.
 
 ## Built-In MQTT Driver
 
@@ -288,7 +290,11 @@ from typing import Any
 
 import msgpack
 
-from acquirium.BuiltinDrivers.mqtt_ingestion import MQTTIngestDriver, MQTTStreamSpec
+from acquirium.BuiltinDrivers.mqtt_ingestion import (
+    MQTTIngestDriver,
+    MQTTStreamSpec,
+    parse_mqtt_timestamp,
+)
 
 
 class MyCustomMQTTIngestDriver(MQTTIngestDriver):
@@ -298,7 +304,7 @@ class MyCustomMQTTIngestDriver(MQTTIngestDriver):
             raise ValueError(f"msgpack payload is not a map: {type(obj)}")
         raw_ts = obj.get(spec.time_key)
         raw_val = obj.get(spec.value_key)
-        ts = parse_ts(raw_ts) if raw_ts is not None else datetime.now(timezone.utc)
+        ts = parse_mqtt_timestamp(raw_ts) if raw_ts is not None else datetime.now(timezone.utc)
         return ts, raw_val
 ```
 
