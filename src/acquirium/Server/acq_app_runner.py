@@ -237,7 +237,6 @@ class AppRunner:
                     ref_name=point_uri,
                     rows=[(ts, value)],
                     point_uri=point_uri,
-                    value_kind="text",
                 )
             elif out.kind == "trigger":
                 url = out.payload.get("url")

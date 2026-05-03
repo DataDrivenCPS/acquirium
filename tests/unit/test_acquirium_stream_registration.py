@@ -108,7 +108,7 @@ def test_insert_timeseries_batch_chunks_at_acquirium_facade():
     aq = Acquirium.__new__(Acquirium)
     aq.client = MagicMock()
     aq.insert_batch_rows = 3
-    aq.client.insert_timeseries_batch.side_effect = lambda source_id, streams, value_kinds=None: {
+    aq.client.insert_timeseries_batch.side_effect = lambda source_id, streams: {
         "ok": True,
         "rows_inserted": sum(len(rows) for rows in streams.values()),
     }
