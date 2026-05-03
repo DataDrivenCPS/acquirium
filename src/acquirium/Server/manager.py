@@ -960,25 +960,19 @@ class Manager:
         rows: list[tuple[datetime, Any]],
         point_uri: str | None = None,
         replace: bool = False,
-        value_kind: str = "numeric",
     ) -> int:
         ref_uri = compute_ref_uri(source_id, ref_name)
-        value_kind = normalize_value_kind(value_kind)
+        value_kind = self._registered_value_kind(str(ref_uri))
         if replace:
             n = self.timescale.replace_rows(str(ref_uri), rows, value_kind=value_kind)
         else:
             n = self.timescale.upsert_rows(str(ref_uri), rows, value_kind=value_kind)
-        self.timescale.ensure_stream_ref(
-            point_uri, source_id, ref_name, ref_uri=ref_uri, value_kind=value_kind
-        )
         return n
 
     def insert_timeseries_batch(
         self,
         source_id: str,
         streams: dict[str, list[tuple[datetime, Any]]],
-        *,
-        stream_value_kinds: dict[str, str] | None = None,
     ) -> int:
         """Insert multiple source-local streams in one storage operation."""
         import polars as pl
@@ -987,14 +981,9 @@ class Manager:
         timestamps: list[datetime] = []
         values: list[Any] = []
         value_kinds: list[str] = []
-        stream_refs: list[tuple[str, str, str]] = []
         for ref_name, stream_rows in streams.items():
             ref_uri = str(compute_ref_uri(source_id, ref_name))
-            value_kind = normalize_value_kind(
-                (stream_value_kinds or {}).get(ref_name)
-                or self.timescale.stream_value_kind(ref_uri)
-            )
-            stream_refs.append((ref_name, ref_uri, value_kind))
+            value_kind = self._registered_value_kind(ref_uri)
             for ts, value in stream_rows:
                 ref_uris.append(ref_uri)
                 timestamps.append(ts)
@@ -1012,16 +1001,7 @@ class Manager:
                 "value_kind": pl.Utf8,
             },
         )
-        inserted = self.timescale.bulk_insert_polars(df)
-        for ref_name, ref_uri, value_kind in stream_refs:
-            self.timescale.ensure_stream_ref(
-                None,
-                source_id,
-                ref_name,
-                ref_uri=ref_uri,
-                value_kind=value_kind,
-            )
-        return inserted
+        return self.timescale.bulk_insert_polars(df)
 
     def insert_timeseries_polars(self, source_id: str, df: "pl.DataFrame") -> int:
         """Insert a melted (ts, ref_name, value) DataFrame, computing ref_uris vectorized."""
@@ -1034,26 +1014,8 @@ class Manager:
             for name in df["ref_name"].unique().to_list()
         }
         value_kind_map: dict[str, str] = {}
-        stream_refs: list[tuple[str, str, str]] = []
         for ref_name, ref_uri in ref_uri_map.items():
-            value_kind = normalize_value_kind(self.timescale.stream_value_kind(ref_uri))
-            if "value_kind" in df.columns:
-                kinds = (
-                    df.filter(pl.col("ref_name") == ref_name)
-                    .get_column("value_kind")
-                    .drop_nulls()
-                    .map_elements(normalize_value_kind, return_dtype=pl.Utf8)
-                    .unique()
-                    .to_list()
-                )
-                if kinds:
-                    if len(kinds) > 1:
-                        raise ValueError(
-                            f"stream {ref_name!r} has mixed value_kind values: {sorted(kinds)!r}"
-                        )
-                    value_kind = normalize_value_kind(kinds[0])
-            value_kind_map[ref_name] = value_kind
-            stream_refs.append((ref_name, ref_uri, value_kind))
+            value_kind_map[ref_name] = self._registered_value_kind(ref_uri)
         df = (
             df.with_columns([
                 pl.col("ref_name").replace(ref_uri_map).alias("ref_uri"),
@@ -1062,16 +1024,13 @@ class Manager:
             .drop("ref_name")
             .select(["ref_uri", "ts", "value", "value_kind"])
         )
-        inserted = self.timescale.bulk_insert_polars(df)
-        for ref_name, ref_uri, value_kind in stream_refs:
-            self.timescale.ensure_stream_ref(
-                None,
-                source_id,
-                ref_name,
-                ref_uri=ref_uri,
-                value_kind=value_kind,
-            )
-        return inserted
+        return self.timescale.bulk_insert_polars(df)
+
+    def _registered_value_kind(self, ref_uri: str) -> str:
+        value_kind = self.timescale.stream_value_kind(ref_uri)
+        if value_kind is None:
+            raise ValueError(f"stream {ref_uri} is not registered")
+        return normalize_value_kind(value_kind)
 
     def _app_type_uri(self, app_type: str) -> URIRef:
         norm = (app_type or "").strip().lower()
