@@ -14,6 +14,7 @@ dependencies = [
     "docker>=7.1.0",
     "fastembed>=0.4.0",
     "fastapi>=0.125.0",
+    "fastexcel>=0.17.2",
     "grafanalib>=0.7.1",
     "ipykernel==7.0.1",
     "matplotlib>=3.10.8",
@@ -40,6 +41,7 @@ build-backend = "hatchling.build"
 
 [tool.uv]
 dev-dependencies = [
+    "openpyxl>=3.1.5",
     "q>=2.7",
     "pytest-cov>=6.0",
 ]

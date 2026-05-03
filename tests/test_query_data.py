@@ -161,4 +161,3 @@ def test_find_data_1(acquirium_client_csv):
     assert len(meta) == 8
     assert "data_of_b" in meta.columns
 
-
