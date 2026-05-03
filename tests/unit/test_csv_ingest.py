@@ -446,6 +446,19 @@ def test_tick_propagates_insert_failure(tmp_path):
     driver.aq.client.insert_graph.assert_called_once()
 
 
+def test_tick_propagates_registration_failure(tmp_path):
+    driver = make_driver(tmp_path=tmp_path)
+    driver.setup()
+    driver.aq.register_streams.side_effect = RuntimeError("graph down")
+    path = _wide_csv(tmp_path)
+
+    with pytest.raises(RuntimeError, match="graph down"):
+        driver.tick()
+
+    assert str(path) not in driver._rows_seen
+    driver.aq.insert_timeseries_polars.assert_not_called()
+
+
 def test_loop_skips_bad_file_and_continues(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     driver.setup()
