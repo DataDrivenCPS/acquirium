@@ -49,9 +49,11 @@ down:
 # Always enable for test; always tear down even on failure
 test: ACQUIRIUM_RECREATE := true
 test:
-	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile test up -d --build; \
-	uv run pytest tests; \
-	$(MAKE) testing-down
+	status=0; \
+	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile test up -d --build || status=$$?; \
+	if [ $$status -eq 0 ]; then uv run pytest tests || status=$$?; fi; \
+	$(MAKE) testing-down; \
+	exit $$status
 
 testing-up: ACQUIRIUM_RECREATE := true
 testing-up:
