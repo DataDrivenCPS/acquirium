@@ -50,8 +50,6 @@ def tick(self):
     self.insert_observations(self.collect())
 ```
 
-So a polling driver author writes `collect()`, not `tick()`.
-
 ## Polling Drivers
 
 Use `PollingIngestDriver` when the source is sampled on each tick, such as a
@@ -83,7 +81,8 @@ class TemperatureDriver(PollingIngestDriver):
         })
 ```
 
-The base `tick()` implementation normalizes the frame and calls
+The base `tick()` implementation calls `collect()` and passes its frame to
+`insert_observations()`. `insert_observations()` normalizes the frame and calls
 `insert_timeseries_polars()`.
 
 Rules:
