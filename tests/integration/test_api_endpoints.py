@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 import pyarrow.ipc as ipc
 import pyarrow as pa
 
+from acquirium.internals.models import compute_ref_uri
+
 
 BASE_URL = (
     f"http://{os.getenv('ACQUIRIUM_TEST_SERVER_HOST', 'localhost')}:"
@@ -127,7 +129,28 @@ class TestTimeseriesEndpoints:
     TEST_REF_NAME = "api_ts_ref"
     TEST_POINT = "urn:test:api_ts_point"
 
+    def _register_stream(self):
+        ref_uri = compute_ref_uri(self.TEST_SOURCE, self.TEST_REF_NAME)
+        graph = f"""\
+@prefix acq: <urn:acquirium#> .
+@prefix ref: <https://brickschema.org/schema/Brick/ref#> .
+
+<{self.TEST_POINT}> ref:hasExternalReference <{ref_uri}> .
+<{ref_uri}> a acq:Stream ;
+    acq:sourceId "{self.TEST_SOURCE}" ;
+    acq:refName "{self.TEST_REF_NAME}" ;
+    acq:valueKind "numeric" .
+"""
+        resp = requests.post(f"{BASE_URL}/insert_graph", json={
+            "rdf_graph": graph,
+            "format": "turtle",
+            "replace": False,
+            "wait_for_embedding": False,
+        })
+        assert resp.status_code == 200
+
     def _insert_data(self, n=5):
+        self._register_stream()
         values = [
             [datetime(2025, 1, 1, h, 0, tzinfo=timezone.utc).isoformat(), float(h)]
             for h in range(n)
@@ -194,6 +217,7 @@ class TestTimeseriesEndpoints:
 
     def test_replace(self):
         self._insert_data(10)
+        self._register_stream()
         values = [
             [datetime(2025, 6, 1, tzinfo=timezone.utc).isoformat(), 999.0],
         ]

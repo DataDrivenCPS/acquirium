@@ -76,7 +76,7 @@ The streams table lets the server answer: *given a `point_uri`, what storage key
 
 The table also records streams discovered only from data insertion. Those rows have a `ref_uri`, `source_id`, and `ref_name`, with `point_uri = NULL` until a semantic graph link is inserted later.
 
-`value_kind` records the stream-level storage type. Drivers declare it as `"numeric"` or `"text"` when registering streams or inserting observations. It defaults to `"numeric"`. A `ref_uri` is expected to be numeric or text, not both. Numeric telemetry is stored in `timeseries.numeric_value`; text/log-like samples are stored in `timeseries.text_value`; the other value column is normally `NULL`.
+`value_kind` records the stream-level storage type. Drivers declare it as `"numeric"` or `"text"` when registering streams or inserting observations. It defaults to `"text"` when omitted. A `ref_uri` is expected to be numeric or text, not both. Numeric telemetry is stored in `timeseries.numeric_value`; text/log-like samples are stored in `timeseries.text_value`; the other value column is normally `NULL`.
 
 ---
 
@@ -187,7 +187,7 @@ aq.insert_timeseries_batch(
 
 The server:
 1. computes `ref_uri = compute_ref_uri(source_id, ref_name)` for each `ref_name` key
-2. uses the explicit stream-level `value_kind`, defaulting to `"numeric"`
+2. uses the explicit stream-level `value_kind`, defaulting to `"text"`
 3. builds a Polars DataFrame with `(ref_uri, timestamp, value, value_kind)` rows
 4. bulk-inserts into typed timeseries columns via the Arrow bridge
 5. upserts each stream into the `streams` table with `point_uri = NULL` if no semantic point has been registered yet
@@ -278,6 +278,19 @@ App outputs get the same managed-stream treatment, but the reference node also c
 ```
 
 The `acq:produces` and `acq:isCalculatedFrom` triples on the output point URI record the app that generated the stream and the inputs it depended on.
+
+At runtime, app outputs are emitted through a single shared output sink used by
+both server-side `AppRunner` execution and external app workers:
+
+- `Output.timeseries(...)` inserts the returned `(timestamp, value)` rows into
+  the output stream.
+- `Output.event(...)` is serialized as one JSON text value in the event stream.
+- `Output.trigger(...)` sends the configured HTTP webhook and does not write a
+  timeseries row unless the app also returns a timeseries or event output.
+
+The two execution modes provide different insertion transports (`Manager`
+directly in the server, `AcquiriumClient` in the worker), but the output
+serialization and trigger rules are intentionally shared.
 
 ---
 

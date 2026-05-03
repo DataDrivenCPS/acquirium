@@ -31,6 +31,7 @@ def test_register_streams_inserts_one_graph_for_multiple_streams():
                 "point_uri": "urn:test:point:temp",
                 "source_id": "demo-source",
                 "ref_name": "temp",
+                "value_kind": "numeric",
                 "data_source": "CSV",
                 "properties": {FILE_LOCATION: Literal("demo.csv")},
             },
@@ -38,6 +39,7 @@ def test_register_streams_inserts_one_graph_for_multiple_streams():
                 "point_uri": "urn:test:point:rh",
                 "source_id": "demo-source",
                 "ref_name": "rh",
+                "value_kind": "numeric",
                 "data_source": "CSV",
                 "properties": {FILE_LOCATION: Literal("demo.csv")},
             },
@@ -65,7 +67,7 @@ def test_register_stream_without_point_uri_writes_only_ref_node():
     aq = Acquirium.__new__(Acquirium)
     aq.client = MagicMock()
 
-    aq.register_stream(source_id="demo-source", ref_name="cpu_percent")
+    aq.register_stream(source_id="demo-source", ref_name="cpu_percent", value_kind="numeric")
 
     aq.client.insert_graph.assert_called_once()
     graph_text = aq.client.insert_graph.call_args[0][0]
@@ -85,8 +87,8 @@ def test_register_streams_without_point_uri_writes_only_ref_nodes():
     aq.client = MagicMock()
 
     aq.register_streams([
-        {"source_id": "demo-source", "ref_name": "temp"},
-        {"source_id": "demo-source", "ref_name": "rh"},
+        {"source_id": "demo-source", "ref_name": "temp", "value_kind": "numeric"},
+        {"source_id": "demo-source", "ref_name": "rh", "value_kind": "numeric"},
     ])
 
     aq.client.insert_graph.assert_called_once()
