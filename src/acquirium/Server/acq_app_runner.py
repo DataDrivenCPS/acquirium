@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import os
 import threading
@@ -9,9 +8,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-import requests
-
 from acquirium.Apps.base import App, AppContext, Output
+from acquirium.Apps.output_emission import emit_outputs
 from acquirium.Client.acquirium import Acquirium
 from acquirium.Client.query import Query
 from acquirium.Server.manager import Manager
@@ -206,54 +204,9 @@ class AppRunner:
             queries=cached.queries,
         )
 
-        return self._app_executor.submit(self._run_and_persist, app, ctx)
+        return self._app_executor.submit(self._run_and_emit_outputs, app, ctx)
 
-    def _run_and_persist(self, app: App, ctx: AppContext) -> list[Output]:
+    def _run_and_emit_outputs(self, app: App, ctx: AppContext) -> list[Output]:
         outputs = app.run(ctx)
-        self._persist(ctx.app_id, outputs)
+        emit_outputs(ctx.app_id, outputs, insert_timeseries=self.manager.insert_timeseries, logger=logger)
         return outputs
-
-    # ─────────────────────── persistence ───────────────────────
-
-    def _persist(self, app_id: str, outputs: list[Output]) -> None:
-        for out in outputs:
-            if out.kind == "timeseries":
-                point_uri = out.payload["point_uri"]
-                rows = out.payload["rows"]
-                self.manager.insert_timeseries(source_id=app_id, ref_name=point_uri, rows=rows, point_uri=point_uri)
-            elif out.kind == "event":
-                point_uri = out.payload["point_uri"]
-                ts = out.payload.get("ts") or datetime.now(timezone.utc)
-                value = json.dumps(
-                    {
-                        "severity": out.payload.get("severity"),
-                        "message": out.payload.get("message"),
-                        "data": out.payload.get("data") or {},
-                    },
-                    ensure_ascii=True,
-                )
-                self.manager.insert_timeseries(
-                    source_id=app_id,
-                    ref_name=point_uri,
-                    rows=[(ts, value)],
-                    point_uri=point_uri,
-                )
-            elif out.kind == "trigger":
-                url = out.payload.get("url")
-                if not url:
-                    raise ValueError("trigger output requires url")
-                if "://" not in url:
-                    url = f"http://{url}"
-                message = out.payload.get("message")
-                headers = out.payload.get("headers") or {}
-                timeout = out.payload.get("timeout") or 5
-                ts = out.payload.get("ts") or datetime.now(timezone.utc)
-                payload = {
-                    "message": message,
-                    "ts": ts.isoformat(),
-                }
-                point_uri = out.payload.get("point_uri")
-                if point_uri:
-                    payload["point_uri"] = point_uri
-                response = requests.post(url, json=payload, headers=headers, timeout=timeout)
-                response.raise_for_status()

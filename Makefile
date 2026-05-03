@@ -86,7 +86,7 @@ test: POSTGRES_DB := acquirium_test
 test: PG_DSN := postgresql://acquirium:acquirium@timescaledb:5432/acquirium_test
 test: TSDB_VOLUME := acquirium_tsdb_test_data
 test:
-	uv sync --all-extras
+	uv sync --locked --all-extras
 	status=0; \
 	$(TEST_COMPOSE_ENV) $(COMPOSE) --profile server --profile test rm -sf timescaledb acquirium mosquitto testing_service >/dev/null 2>&1 || true; \
 	$(TEST_COMPOSE_ENV) ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) ACQUIRIUM_CONFIG_FILE=$(ACQUIRIUM_CONFIG_FILE) $(COMPOSE) --profile server --profile test up -d --build || status=$$?; \

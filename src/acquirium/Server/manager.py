@@ -83,6 +83,7 @@ def _aggregate_uri_label_rows(
         display_label = uri_first_label[uri] or (" ".join(tokens) if tokens else uri)
         concepts.append({"uri": uri, "kind": kind, "label": display_label, "surfaces": surfaces})
 
+
 def _wipe_dir_contents(base: Path) -> None:
     base.mkdir(parents=True, exist_ok=True)
     for p in base.iterdir():

@@ -14,7 +14,7 @@ class _BulkStore:
         self.frames = []
         self.refs = []
 
-    def ensure_stream_ref(self, point_uri, source_id, ref_name, ref_uri=None, value_kind="numeric"):
+    def ensure_stream_ref(self, point_uri, source_id, ref_name, ref_uri=None, value_kind="text"):
         self.refs.append(
             {
                 "point_uri": point_uri,

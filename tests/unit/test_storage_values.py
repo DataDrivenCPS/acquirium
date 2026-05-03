@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from acquirium.Storage.values import infer_value_kind
+from acquirium.Storage.values import infer_value_kind, normalize_value_kind
+
+
+def test_normalize_value_kind_defaults_to_text():
+    assert normalize_value_kind(None) == "text"
+    assert normalize_value_kind("") == "text"
+    assert normalize_value_kind("unknown") == "text"
 
 
 def test_infer_value_kind_numeric_native_values():

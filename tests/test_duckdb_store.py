@@ -56,7 +56,7 @@ def test_upsert_rows_conflict_updates(store):
     store.upsert_rows(uri, [(_utc(2024, 1, 1), "2.0")])  # conflict → update
     batches = list(store.timeseries(uri))
     rows = [r for b in batches for r in b.to_pydict()["value"]]
-    assert rows == [2.0]
+    assert rows == ["2.0"]
 
 
 @pytest.mark.unit
@@ -144,10 +144,10 @@ def test_timeseries_basic(store):
     assert len(batches) >= 1
     batch = batches[0]
     assert batch.schema.field("ts").type == pa.timestamp("us", tz="UTC")
-    assert batch.schema.field("value").type == pa.float64()
+    assert batch.schema.field("value").type == pa.string()
     assert batch.schema.field("uri").type == pa.string()
     vals = [v for b in batches for v in b.to_pydict()["value"]]
-    assert vals == [1.0, 2.0, 3.0]
+    assert vals == ["1", "2", "3"]
 
 
 @pytest.mark.unit
@@ -193,7 +193,7 @@ def test_timeseries_order_desc(store):
     store.upsert_rows(uri, [(_utc(2024, 5, i), str(i)) for i in range(1, 4)])
     batches = list(store.timeseries(uri, order="desc"))
     vals = [v for b in batches for v in b.to_pydict()["value"]]
-    assert vals == [3.0, 2.0, 1.0]
+    assert vals == ["3", "2", "1"]
 
 
 @pytest.mark.unit
@@ -213,7 +213,7 @@ def test_timeseries_iterator_survives_other_queries(store):
     info = store.timeseries_info(uri)
     assert info.row_count == 2
     vals = [v for b in batches_iter for v in b.to_pydict()["value"]]
-    assert vals == [1.0, 2.0]
+    assert vals == ["1", "2"]
 
 
 # ---- timeseries_info ----
@@ -254,6 +254,15 @@ def test_timeseries_info_batch(store):
 def test_ensure_stream_ref_returns_ref_uri(store):
     ref_uri = store.ensure_stream_ref("urn:test:duck:sh1", "src1", "ref1")
     assert isinstance(ref_uri, str) and len(ref_uri) > 0
+
+
+@pytest.mark.unit
+def test_ensure_stream_ref_defaults_value_kind_to_text(store):
+    ref_uri = store.ensure_stream_ref("urn:test:duck:sh_text_default", "src-text-default", "ref")
+    rows = store.sql_query(
+        f"SELECT value_kind FROM streams WHERE ref_uri = '{ref_uri}'"
+    )["rows"]
+    assert rows == [["text"]]
 
 
 @pytest.mark.unit

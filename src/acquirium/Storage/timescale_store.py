@@ -115,7 +115,7 @@ class TimescaleStore(TimeseriesStore):
                     point_uri TEXT,
                     source_id TEXT NOT NULL,
                     ref_name TEXT NOT NULL,
-                    value_kind TEXT NOT NULL DEFAULT 'numeric'
+                    value_kind TEXT NOT NULL DEFAULT 'text'
                 );
                 """
             )
@@ -136,7 +136,7 @@ class TimescaleStore(TimeseriesStore):
                     s.point_uri,
                     s.source_id,
                     s.ref_name,
-                    COALESCE(s.value_kind, 'numeric') AS value_kind,
+                    COALESCE(s.value_kind, 'text') AS value_kind,
                     t.ts,
                     t.numeric_value AS value_numeric,
                     t.text_value AS value_text
@@ -173,7 +173,7 @@ class TimescaleStore(TimeseriesStore):
         ref_uri: str,
         rows: Iterable[tuple[datetime, Any]],
         *,
-        value_kind: str = "numeric",
+        value_kind: str = "text",
     ) -> int:
         rows_list = list(rows)
         if not rows_list:
@@ -201,7 +201,7 @@ class TimescaleStore(TimeseriesStore):
         ref_uri: str,
         rows: Iterable[tuple[datetime, Any]],
         *,
-        value_kind: str = "numeric",
+        value_kind: str = "text",
     ) -> int:
         with self.conn.cursor() as cur:
             cur.execute(sql.SQL("DELETE FROM {} WHERE ref_uri=%s").format(sql.Identifier(TIMESERIES_TABLE)), [ref_uri])
@@ -261,7 +261,7 @@ class TimescaleStore(TimeseriesStore):
         source_id: str,
         ref_name: str,
         ref_uri: URIRef | None = None,
-        value_kind: str = "numeric",
+        value_kind: str = "text",
     ) -> URIRef:
         """Register a stream reference in the streams table.
 
