@@ -11,9 +11,11 @@ ValueKind = Literal["unknown", "numeric", "text"]
 
 def normalize_value_kind(value_kind: Any = None) -> Literal["numeric", "text"]:
     if value_kind is None:
-        return "numeric"
+        return "text"
     value = str(value_kind).strip().lower()
-    if value in {"", "unknown", "numeric", "number", "float", "int", "integer"}:
+    if value in {"", "unknown"}:
+        return "text"
+    if value in {"numeric", "number", "float", "int", "integer"}:
         return "numeric"
     if value in {"text", "string", "str", "status", "state"}:
         return "text"
