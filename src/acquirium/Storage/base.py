@@ -30,14 +30,14 @@ class TimeseriesStore(Protocol):
         ref_uri: str,
         rows: Iterable[tuple[datetime, Any]],
         *,
-        value_kind: str = "numeric",
+        value_kind: str = "text",
     ) -> int: ...
     def replace_rows(
         self,
         ref_uri: str,
         rows: Iterable[tuple[datetime, Any]],
         *,
-        value_kind: str = "numeric",
+        value_kind: str = "text",
     ) -> int: ...
     def bulk_insert_polars(self, df: pl.DataFrame) -> int: ...
 
@@ -48,7 +48,7 @@ class TimeseriesStore(Protocol):
         source_id: str,
         ref_name: str,
         ref_uri: str | None = None,
-        value_kind: str = "numeric",
+        value_kind: str = "text",
     ) -> str: ...
     def resolve_storage_key(self, point_uri: str) -> str: ...
     def resolve_storage_keys(self, point_uris: list[str]) -> dict[str, str]: ...

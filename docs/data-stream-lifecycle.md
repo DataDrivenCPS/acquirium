@@ -76,7 +76,7 @@ The streams table lets the server answer: *given a `point_uri`, what storage key
 
 The table also records streams discovered only from data insertion. Those rows have a `ref_uri`, `source_id`, and `ref_name`, with `point_uri = NULL` until a semantic graph link is inserted later.
 
-`value_kind` records the stream-level storage type. Drivers declare it as `"numeric"` or `"text"` when registering streams or inserting observations. It defaults to `"numeric"`. A `ref_uri` is expected to be numeric or text, not both. Numeric telemetry is stored in `timeseries.numeric_value`; text/log-like samples are stored in `timeseries.text_value`; the other value column is normally `NULL`.
+`value_kind` records the stream-level storage type. Drivers declare it as `"numeric"` or `"text"` when registering streams or inserting observations. It defaults to `"text"` when omitted. A `ref_uri` is expected to be numeric or text, not both. Numeric telemetry is stored in `timeseries.numeric_value`; text/log-like samples are stored in `timeseries.text_value`; the other value column is normally `NULL`.
 
 ---
 
@@ -187,7 +187,7 @@ aq.insert_timeseries_batch(
 
 The server:
 1. computes `ref_uri = compute_ref_uri(source_id, ref_name)` for each `ref_name` key
-2. uses the explicit stream-level `value_kind`, defaulting to `"numeric"`
+2. uses the explicit stream-level `value_kind`, defaulting to `"text"`
 3. builds a Polars DataFrame with `(ref_uri, timestamp, value, value_kind)` rows
 4. bulk-inserts into typed timeseries columns via the Arrow bridge
 5. upserts each stream into the `streams` table with `point_uri = NULL` if no semantic point has been registered yet
