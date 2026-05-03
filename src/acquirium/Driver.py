@@ -43,6 +43,8 @@ class Driver(ABC):
         acquirium run my_module:MyDriver --config acquirium.toml
     """
 
+    # Default datasource for single-source ingest drivers. Multi-source drivers
+    # may omit this if every observation row carries a source_id column.
     source_id: str
 
     def __init__(self, aq: "Acquirium", config: dict) -> None:
@@ -51,7 +53,7 @@ class Driver(ABC):
         self.config = config
 
     def reference_uri(self, ref_name: str) -> URIRef:
-        """Return the canonical Acquirium reference URI for ``ref_name``."""
+        """Return the canonical reference URI for ``self.source_id``/``ref_name``."""
         return compute_ref_uri(self.source_id, ref_name)
 
     def config_dir(self) -> Path:
@@ -94,8 +96,9 @@ class IngestDriver(Driver):
     """Driver base for sources that emit canonical timeseries observations.
 
     Observations are represented as a Polars DataFrame with required columns
-    ``ts``, ``ref_name``, and ``value``. A ``source_id`` column is optional; if
-    absent, ``self.source_id`` is used for the whole frame. Drivers must
+    ``ts``, ``ref_name``, and ``value``. Each stream must have a ``source_id``:
+    either include a ``source_id`` column for multi-source frames or set
+    ``self.source_id`` as the default for single-source drivers. Drivers must
     register each stream, including its value kind, before inserting rows.
     """
 
