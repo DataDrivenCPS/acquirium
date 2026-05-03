@@ -25,7 +25,7 @@ def test_reference_uri_uses_driver_source_id():
     assert driver.reference_uri("cpu_percent") == compute_ref_uri("demo-source", "cpu_percent")
 
 
-def test_source_id_requires_driver_to_set_one():
+def test_source_id_attribute_exists_only_when_driver_sets_default():
     driver = DummyDriver(aq=object(), config={})
     with pytest.raises(AttributeError):
         driver.source_id
