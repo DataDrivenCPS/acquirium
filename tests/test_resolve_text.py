@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 from acquirium import Acquirium
+from conftest import ACQUIRIUM_TEST_SERVER_HOST, ACQUIRIUM_TEST_SERVER_PORT
 
 # Output paths
 _OUTPUT_DIR = Path(__file__).parent / "text_match_results"
@@ -241,8 +242,8 @@ def acq():
     _results["start_time"] = time.time()
 
     client = Acquirium(
-        server_url="localhost",
-        server_port=8000,
+        server_url=ACQUIRIUM_TEST_SERVER_HOST,
+        server_port=ACQUIRIUM_TEST_SERVER_PORT,
         use_ssl=False,
     )
     client.insert_graph(
@@ -408,4 +409,3 @@ def test_kind_filtering_unit_qk(acq):
     # quantity_kind filter should not return predicates
     for m in acq.client.resolve_text("has unit", kind="quantity_kind", top_k=5, min_score=0.3):
         assert m["kind"] == "quantity_kind", f"Expected kind='quantity_kind', got '{m['kind']}' for uri={m['uri']}"
-
