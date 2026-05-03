@@ -287,7 +287,7 @@ class Acquirium:
         substance: str | URIRef | None = None,
         data_source: str | URIRef | None = None,
         properties: dict[URIRef, str | URIRef] | None = None,
-        value_kind: str = "numeric",
+        value_kind: str = "text",
     ) -> None:
         """Declare a stream's semantic metadata in the RDF graph.
 
