@@ -132,7 +132,7 @@ class MQTTIngestDriver(EventIngestDriver):
                     expected_ref_uri,
                 )
                 continue
-            host, port = _parse_mqtt_broker((broker or "localhost").strip('"'))
+            host, port = parse_mqtt_broker((broker or "localhost").strip('"'))
             spec = MQTTStreamSpec(
                 point_uri=str(data_uri),
                 ref_uri=actual_ref_uri,
@@ -230,10 +230,10 @@ class MQTTIngestDriver(EventIngestDriver):
             ValueError: if the payload cannot be decoded
         """
         text = payload.decode("utf-8", errors="replace")
-        payload_dict = _decode_payload(text)
+        payload_dict = decode_mqtt_payload(text)
         raw_ts = payload_dict.get(spec.time_key)
         raw_val = payload_dict.get(spec.value_key)
-        ts = _parse_ts(raw_ts) if raw_ts is not None else datetime.now(timezone.utc)
+        ts = parse_mqtt_timestamp(raw_ts) if raw_ts is not None else datetime.now(timezone.utc)
         return ts, raw_val
 
     def _on_message(self, client_key: str):
@@ -259,7 +259,7 @@ class MQTTIngestDriver(EventIngestDriver):
         return on_message
 
 
-def _parse_mqtt_broker(raw: str) -> tuple[str, int]:
+def parse_mqtt_broker(raw: str) -> tuple[str, int]:
     """Split a ref:MQTTBroker literal into (host, port).
 
     Accepts ``"host"``, ``"host:port"``, or ``"mqtt(s)://host[:port]"``.
@@ -280,7 +280,12 @@ def _parse_mqtt_broker(raw: str) -> tuple[str, int]:
     return s or "localhost", default_port
 
 
-def _decode_payload(payload: str) -> dict[str, Any]:
+def decode_mqtt_payload(payload: str) -> dict[str, Any]:
+    """Decode an MQTT payload as a dict.
+
+    Strict JSON is preferred. Python literal dicts are accepted as a fallback
+    for older integrations that publish single-quoted payloads.
+    """
     payload = payload.strip()
     try:
         obj = json.loads(payload)
@@ -289,17 +294,18 @@ def _decode_payload(payload: str) -> dict[str, Any]:
         raise ValueError("not a JSON object")
     except Exception:
         pass
+
     try:
         obj = ast.literal_eval(payload)
         if isinstance(obj, dict):
             return obj
         raise ValueError("not a dict literal")
-    except Exception as e:
-        logger.warning("mqtt payload decode failed payload=%r error=%s", payload, e)
+    except Exception as exc:
+        logger.warning("mqtt payload decode failed payload=%r error=%s", payload, exc)
         return {}
 
 
-def _parse_ts(raw: Any) -> datetime:
+def parse_mqtt_timestamp(raw: Any) -> datetime:
     """Parse a timestamp into a timezone-aware UTC datetime."""
     if isinstance(raw, datetime):
         if raw.tzinfo is None:
@@ -323,13 +329,15 @@ def _parse_ts(raw: Any) -> datetime:
             return dt.astimezone(timezone.utc)
         except Exception:
             pass
+
         for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d"):
             try:
                 return datetime.strptime(text, fmt).replace(tzinfo=timezone.utc)
             except Exception:
                 pass
+
         try:
-            return _parse_ts(float(text))
+            return parse_mqtt_timestamp(float(text))
         except Exception:
             pass
 

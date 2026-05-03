@@ -197,10 +197,6 @@ async def lifespan(app: FastAPI):
     app.state.read_batch_size = int(_cfg.get("server", {}).get("read_batch_size", 50_000))
 
     try:
-        # start mqtt subscribers from graph
-        n = m._connect_mqtt_streams_from_graph()
-        app.state.mqtt_subscriptions = n
-        log.info("Started %d MQTT subscriptions from graph", n)
         m._sync_stream_refs_from_graph()
     except Exception as e:
         log.exception("Startup failed: %s", e)
