@@ -31,7 +31,6 @@ from typing import Any, Callable
 import shutil
 import docker
 from docker.errors import DockerException, NotFound as ContainerNotFound
-from acquirium.Server.mqtt_ingestion import MQTTIngestService, MQTTStreamSpec
 from acquirium.TextMatch.embedding_matcher import EmbeddingMatcher, _split_local_name
 from acquirium.TextMatch.qudt_store import QUDTStore
 
@@ -233,7 +232,16 @@ class Manager:
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="acquirium-ingest")
         self._pending_ingests: list[Future] = []
         self.pg_dsn = _effective_dsn
-        self.mqtt_ingest = MQTTIngestService(pg_dsn=_effective_dsn) if _effective_dsn else None
+        self.mqtt_ingest = None
+        if _effective_dsn:
+            try:
+                from acquirium.Server.mqtt_ingestion import MQTTIngestService
+
+                self.mqtt_ingest = MQTTIngestService(pg_dsn=_effective_dsn)
+            except ModuleNotFoundError as exc:
+                if exc.name != "paho":
+                    raise
+                logger.warning("MQTT ingestion disabled; install acquirium[mqtt] to enable it")
         self.pg_registry = PGReferenceRegistry()
         self._scan_pg_references_from_graph()
         self.app_storage_root = Path(
@@ -316,6 +324,8 @@ class Manager:
         """
         if self.mqtt_ingest is None:
             return 0
+        from acquirium.Server.mqtt_ingestion import MQTTStreamSpec
+
         q = f"""
         SELECT ?data ?ref ?broker ?topic ?tkey ?vkey
         WHERE {{
