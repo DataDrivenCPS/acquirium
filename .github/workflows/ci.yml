@@ -38,7 +38,7 @@ jobs:
             uv-${{ runner.os }}-py3.12-
 
       - name: Install dependencies
-        run: uv sync --python 3.12
+        run: uv sync --python 3.12 --locked --extra mqtt
 
       - name: Run unit tests with coverage
         run: |
@@ -87,7 +87,10 @@ jobs:
             uv-${{ runner.os }}-py3.12-
 
       - name: Install dependencies
-        run: uv sync --python 3.12
+        run: uv sync --python 3.12 --locked --extra mqtt
+
+      - name: Check Docker Compose
+        run: docker compose version
 
       - name: Start services
         run: make testing-up
@@ -108,6 +111,10 @@ jobs:
       - name: Collect service logs
         if: failure()
         run: docker compose --profile test logs --tail=200 > service-logs.txt 2>&1
+
+      - name: Show service status
+        if: failure()
+        run: docker compose --profile test ps
 
       - name: Upload results
         if: always()
