@@ -91,6 +91,21 @@ streams: handle → (point_uri, source_id, ref_name)
 
 This is the bridge that lets reads resolve a semantic URI back to data.
 
+At runtime, app outputs are emitted through a single shared output sink used by
+both server-side `AppRunner` execution and external app workers:
+
+- `Output.timeseries(...)` inserts the returned `(timestamp, value)` rows into
+  the output stream.
+- `Output.event(...)` is serialized as one JSON text value in the event stream.
+- `Output.trigger(...)` sends the configured HTTP webhook and does not write a
+  timeseries row unless the app also returns a timeseries or event output.
+
+The two execution modes provide different insertion transports (`Manager`
+directly in the server, `AcquiriumClient` in the worker), but the output
+serialization and trigger rules are intentionally shared.
+
+---
+
 ### 4. Query → point_uri resolves to handle, then to rows
 
 When `.data()` is called on a query that resolves to
