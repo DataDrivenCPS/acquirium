@@ -1111,8 +1111,10 @@ class Manager:
             graph.add((ref_uri, RDF.type, STREAM))
             if out.kind in {"event", "trigger"}:
                 graph.add((ref_uri, RDF.type, EVENT_STREAM))
+                graph.add((ref_uri, ACQUIRIUM_VALUE_KIND, Literal("text")))
             else:
                 graph.add((ref_uri, RDF.type, TIMESERIES_STREAM))
+                graph.add((ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")))
 
             graph.add((ref_uri, STORAGE_BACKEND, Literal(out.storage_backend or "timescale")))
 

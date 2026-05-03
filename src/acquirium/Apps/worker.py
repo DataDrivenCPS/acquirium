@@ -283,7 +283,6 @@ def _persist_outputs(aq: Acquirium, app_id: str, outputs: list[Output]) -> None:
                 ref_name=point_uri,
                 rows=[(ts, value)],
                 point_uri=point_uri,
-                value_kind="text",
             )
             logger.info("Output %d: emitted %s event to %s", i + 1, severity, point_uri)
         elif out.kind == "trigger":

@@ -3,8 +3,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import polars as pl
-import pytest
-
 from acquirium.Client.acquirium import Acquirium
 from acquirium.Server.direct_client import DirectAcquirium
 
@@ -13,10 +11,9 @@ def test_insert_timeseries_polars_default_delegates_with_correct_column_order():
     aq = Acquirium.__new__(Acquirium)
     captured: dict[str, object] = {}
 
-    def insert_timeseries_batch(source_id, streams, *, value_kinds=None):
+    def insert_timeseries_batch(source_id, streams):
         captured["source_id"] = source_id
         captured["streams"] = streams
-        captured["value_kinds"] = value_kinds
         return {"ok": True, "rows_inserted": sum(len(rows) for rows in streams.values())}
 
     aq.insert_timeseries_batch = insert_timeseries_batch
@@ -45,13 +42,16 @@ def test_insert_timeseries_polars_default_delegates_with_correct_column_order():
             "temp": [(ts, "72.4")],
             "state/value": [(ts.replace(hour=1), "OK")],
         },
-        "value_kinds": {"temp": "numeric", "state/value": "text"},
     }
 
 
-def test_insert_timeseries_polars_rejects_mixed_stream_value_kinds():
+def test_insert_timeseries_polars_ignores_value_kind_column():
     aq = Acquirium.__new__(Acquirium)
-    aq.insert_timeseries_batch = lambda *args, **kwargs: {"ok": True, "rows_inserted": 0}
+    captured: dict[str, object] = {}
+    aq.insert_timeseries_batch = lambda source_id, streams: captured.update(streams=streams) or {
+        "ok": True,
+        "rows_inserted": sum(len(rows) for rows in streams.values()),
+    }
     ts = datetime(2026, 4, 28, tzinfo=timezone.utc)
     df = pl.DataFrame(
         {
@@ -68,8 +68,8 @@ def test_insert_timeseries_polars_rejects_mixed_stream_value_kinds():
         },
     )
 
-    with pytest.raises(ValueError, match="mixed value_kind"):
-        aq.insert_timeseries_polars("source/file.csv", df)
+    assert aq.insert_timeseries_polars("source/file.csv", df) == {"ok": True, "rows_inserted": 2}
+    assert captured["streams"] == {"state": [(ts, "1"), (ts.replace(hour=1), "ON")]}
 
 
 def test_direct_acquirium_polars_insert_uses_configured_batching():
@@ -77,7 +77,7 @@ def test_direct_acquirium_polars_insert_uses_configured_batching():
         def __init__(self):
             self.batches = []
 
-        def insert_timeseries_batch(self, source_id, streams, *, stream_value_kinds=None):
+        def insert_timeseries_batch(self, source_id, streams):
             self.batches.append((source_id, streams))
             return sum(len(rows) for rows in streams.values())
 
