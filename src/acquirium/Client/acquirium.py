@@ -148,7 +148,6 @@ class Acquirium:
         *,
         point_uri: Optional[str] = None,
         replace: bool = False,
-        value_kind: str = "numeric",
     ) -> dict[str, Any]:
         """Insert timeseries data for a single stream.
 
@@ -170,15 +169,12 @@ class Acquirium:
             rows=rows,
             point_uri=point_uri,
             replace=replace,
-            value_kind=normalize_value_kind(value_kind),
         )
 
     def insert_timeseries_batch(
         self,
         source_id: str,
         streams: dict[str, list[tuple[datetime, Any]]],
-        *,
-        value_kinds: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Insert timeseries data for multiple streams.
 
@@ -196,14 +192,9 @@ class Acquirium:
         total = 0
         chunk_count = 0
         for chunk in self._iter_insert_batches(streams):
-            chunk_value_kinds = {
-                ref_name: normalize_value_kind((value_kinds or {}).get(ref_name))
-                for ref_name in chunk
-            }
             result = self.client.insert_timeseries_batch(
                 source_id,
                 chunk,
-                value_kinds=chunk_value_kinds,
             )
             total += int(result.get("rows_inserted", 0))
             chunk_count += 1
@@ -217,27 +208,10 @@ class Acquirium:
         ``insert_timeseries_batch``.
         """
         columns = ["ts", "ref_name", "value"]
-        has_value_kind = "value_kind" in df.columns
-        if has_value_kind:
-            columns.append("value_kind")
         batch: dict[str, list] = {}
-        value_kinds: dict[str, str] = {}
-        for row in df.select(columns).iter_rows():
-            if has_value_kind:
-                ts, ref_name, value, value_kind = row
-                normalized_kind = normalize_value_kind(value_kind)
-            else:
-                ts, ref_name, value = row
-                normalized_kind = "numeric"
-            existing_kind = value_kinds.get(ref_name)
-            if existing_kind is not None and existing_kind != normalized_kind:
-                raise ValueError(
-                    f"stream {ref_name!r} has mixed value_kind values: "
-                    f"{existing_kind!r} and {normalized_kind!r}"
-                )
-            value_kinds[ref_name] = normalized_kind
+        for ts, ref_name, value in df.select(columns).iter_rows():
             batch.setdefault(ref_name, []).append((ts, value))
-        return self.insert_timeseries_batch(source_id, batch, value_kinds=value_kinds)
+        return self.insert_timeseries_batch(source_id, batch)
 
     def _iter_insert_batches(
         self,
