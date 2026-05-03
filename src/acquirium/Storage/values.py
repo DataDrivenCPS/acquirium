@@ -20,31 +20,47 @@ def normalize_value_kind(value_kind: Any = None) -> Literal["numeric", "text"]:
     raise ValueError(f"value_kind must be 'numeric' or 'text', got {value_kind!r}")
 
 
-def classify_value(value: Any) -> ValueKind:
+def classify_value(value: Any, *, parse_numeric_strings: bool = False) -> ValueKind:
     if value is None:
         return "unknown"
     if isinstance(value, bool):
         return "text"
     if isinstance(value, (Real, Decimal)):
         return "numeric"
+    if parse_numeric_strings and isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return "unknown"
+        try:
+            float(text)
+            return "numeric"
+        except ValueError:
+            return "text"
     return "text"
 
 
-def infer_value_kind(values: Iterable[Any]) -> ValueKind:
+def infer_value_kind(
+    values: Iterable[Any],
+    *,
+    parse_numeric_strings: bool = False,
+    unknown_default: Literal["numeric", "text", "unknown"] = "unknown",
+) -> ValueKind:
     """Infer a stream-level value kind from observed values.
 
     A stream has a single storage type. If any non-null value is non-numeric,
     the stream is treated as text so every row for that ref_uri lands in the
-    same value column.
+    same value column. Set ``parse_numeric_strings`` for CSV/XLSX-style sources
+    where numeric values may arrive as strings. ``unknown_default`` is used when
+    every observed value is null or blank.
     """
     observed_numeric = False
     for value in values:
-        kind = classify_value(value)
+        kind = classify_value(value, parse_numeric_strings=parse_numeric_strings)
         if kind == "text":
             return "text"
         if kind == "numeric":
             observed_numeric = True
-    return "numeric" if observed_numeric else "unknown"
+    return "numeric" if observed_numeric else unknown_default
 
 
 def split_value(value: Any, value_kind: str | None = None) -> tuple[float | None, str | None]:

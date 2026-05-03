@@ -22,7 +22,7 @@ from acquirium.internals.internals_namespaces import (
     TIME_COLUMN_ID,
     VALUE_COLUMN_ID,
 )
-from acquirium.Storage.values import normalize_value_kind
+from acquirium.Storage.values import infer_value_kind, normalize_value_kind
 
 logger = logging.getLogger("acquirium.tabular_ingest")
 
@@ -209,7 +209,13 @@ class _TabularIngestBase(PollingIngestDriver):
                 .get_column("value")
                 .to_list()
             )
-            kinds[ref_name] = "numeric" if all(_looks_numeric(v) for v in values if v is not None) else "text"
+            kinds[ref_name] = normalize_value_kind(
+                infer_value_kind(
+                    values,
+                    parse_numeric_strings=True,
+                    unknown_default="numeric",
+                )
+            )
         return kinds
 
     # ---------------------------------------------------------- public hook
@@ -503,28 +509,9 @@ class _TabularIngestBase(PollingIngestDriver):
             )
             registered.update(new_ref_names)
         except Exception:
-            logger.warning(
-                "tabular_ingest: could not register %d stream(s); data will still be inserted",
+            logger.error(
+                "tabular_ingest: could not register %d stream(s)",
                 len(new_ref_names),
                 exc_info=True,
             )
-            return
-
-
-def _looks_numeric(value: Any) -> bool:
-    if value is None:
-        return True
-    if isinstance(value, bool):
-        return False
-    if isinstance(value, (int, float)):
-        return True
-    if isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return True
-        try:
-            float(text)
-            return True
-        except ValueError:
-            return False
-    return False
+            raise
