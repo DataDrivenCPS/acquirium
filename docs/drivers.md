@@ -270,7 +270,7 @@ spec = "acquirium.BuiltinDrivers.mqtt_ingestion:MQTTIngestDriver"
 interval = 5.0
 mqtt_source_id = "mqtt"
 mqtt_qos = 0
-mqtt_value_kind = "numeric"  # default for graph refs without acq:valueKind
+mqtt_value_kind = "text"     # default for graph refs without acq:valueKind
 ```
 
 Each stream is discovered from `ref:MQTTReference` nodes. The reference declares
