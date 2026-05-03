@@ -212,7 +212,6 @@ class _TabularIngestBase(PollingIngestDriver):
             kinds[ref_name] = normalize_value_kind(
                 infer_value_kind(
                     values,
-                    parse_numeric_strings=True,
                     unknown_default="numeric",
                 )
             )
