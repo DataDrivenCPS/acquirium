@@ -451,7 +451,6 @@ class AcquiriumClient:
         rows: list[tuple[datetime, Any]],
         point_uri: Optional[str] = None,
         replace: bool = False,
-        value_kind: str = "numeric",
     ) -> dict:
         url = f"{self.base_url}/insert_timeseries"
         body = StreamInsert(
@@ -459,7 +458,6 @@ class AcquiriumClient:
             ref_name=ref_name,
             point_uri=point_uri,
             replace=replace,
-            value_kind=value_kind,
             values=rows,
         )
         response = requests.post(url, json=[body.model_dump(mode="json")])
@@ -470,8 +468,6 @@ class AcquiriumClient:
         self,
         source_id: str,
         streams: dict[str, list[tuple[datetime, Any]]],
-        *,
-        value_kinds: dict[str, str] | None = None,
     ) -> dict:
         """Insert timeseries data for multiple streams in one HTTP request.
 
@@ -480,12 +476,10 @@ class AcquiriumClient:
             streams: Mapping of ref_name → list of (timestamp, value) tuples.
         """
         url = f"{self.base_url}/insert_timeseries"
-        value_kinds = value_kinds or {}
         payload = [
             StreamInsert(
                 source_id=source_id,
                 ref_name=rn,
-                value_kind=value_kinds.get(rn, "numeric"),
                 values=rows,
             )
             for rn, rows in streams.items()
