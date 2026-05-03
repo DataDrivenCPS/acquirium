@@ -1,4 +1,5 @@
 import pytest
+from conftest import ACQUIRIUM_TEST_SERVER_HOST, ACQUIRIUM_TEST_SERVER_PORT
 from acquirium import Acquirium
 from acquirium.internals.internals_namespaces import *
 from acquirium.Client.query import Query
@@ -8,8 +9,8 @@ import shutil
 def acquirium_client():
     """Fixture to create an Acquirium client for testing."""
     acq = Acquirium(
-        server_url="localhost",
-        server_port=8000,
+        server_url=ACQUIRIUM_TEST_SERVER_HOST,
+        server_port=ACQUIRIUM_TEST_SERVER_PORT,
         use_ssl=False,
     )
 
@@ -430,6 +431,3 @@ def test_relate_to_2(acquirium_client:Acquirium):
     assert len(result) == 5
     assert 'a' in result.columns and 'c' in result.columns and 'b' in result.columns
     assert len(result.columns) == 3
-
-
-    
