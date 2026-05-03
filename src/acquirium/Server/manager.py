@@ -84,23 +84,6 @@ def _aggregate_uri_label_rows(
         concepts.append({"uri": uri, "kind": kind, "label": display_label, "surfaces": surfaces})
 
 
-def _parse_mqtt_broker(raw: str) -> tuple[str, int]:
-    """Split a ref:MQTTBroker literal into (host, port)."""
-    s = raw.strip()
-    default_port = 1883
-    if "://" in s:
-        scheme, _, rest = s.partition("://")
-        if scheme.lower() == "mqtts":
-            default_port = 8883
-        s = rest.split("/", 1)[0]
-    if ":" in s:
-        host, _, port_str = s.rpartition(":")
-        try:
-            return host or "localhost", int(port_str)
-        except ValueError:
-            return s, default_port
-    return s or "localhost", default_port
-
 def _wipe_dir_contents(base: Path) -> None:
     base.mkdir(parents=True, exist_ok=True)
     for p in base.iterdir():
@@ -232,16 +215,6 @@ class Manager:
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="acquirium-ingest")
         self._pending_ingests: list[Future] = []
         self.pg_dsn = _effective_dsn
-        self.mqtt_ingest = None
-        if _effective_dsn:
-            try:
-                from acquirium.Server.mqtt_ingestion import MQTTIngestService
-
-                self.mqtt_ingest = MQTTIngestService(pg_dsn=_effective_dsn)
-            except ModuleNotFoundError as exc:
-                if exc.name != "paho":
-                    raise
-                logger.warning("MQTT ingestion disabled; install acquirium[mqtt] to enable it")
         self.pg_registry = PGReferenceRegistry()
         self._scan_pg_references_from_graph()
         self.app_storage_root = Path(
@@ -316,50 +289,6 @@ class Manager:
             return json.loads(self._ingest_cache_path.read_text())
         except Exception:
             return {}
-
-    def _connect_mqtt_streams_from_graph(self) -> int:
-        """
-        Scan graph for ref:MQTTReference nodes attached to data nodes by
-        ref:hasExternalReference and start background subscribers.
-        """
-        if self.mqtt_ingest is None:
-            return 0
-        from acquirium.Server.mqtt_ingestion import MQTTStreamSpec
-
-        q = f"""
-        SELECT ?data ?ref ?broker ?topic ?tkey ?vkey
-        WHERE {{
-          ?data <{HAS_EXTERNAL_REFERENCE}> ?ref .
-          ?ref a <{MQTT_REFERENCE}> .
-          OPTIONAL {{ ?ref <{MQTT_BROKER}> ?broker . }}
-          OPTIONAL {{ ?ref <{MQTT_TOPIC}> ?topic . }}
-          OPTIONAL {{ ?ref <{TIME_KEY}> ?tkey . }}
-          OPTIONAL {{ ?ref <{VALUE_KEY}> ?vkey . }}
-        }}
-        """
-        res = self.graph_store.sparql_query(q, use_union=True)
-
-        count = 0
-        for data_uri, ref_uri, broker, topic, tkey, vkey in res.get("rows", []):
-            broker_raw = self._sparql_value(broker) or "localhost"
-            topic_s = self._sparql_value(topic) or ""
-            if not topic_s:
-                continue
-
-            host, port = _parse_mqtt_broker(broker_raw)
-            spec = MQTTStreamSpec(
-                point_uri=str(data_uri),
-                ref_uri=str(ref_uri),
-                broker=host,
-                port=port,
-                topic=topic_s,
-                time_key=self._sparql_value(tkey) or "Timestamp",
-                value_key=self._sparql_value(vkey) or "Value",
-            )
-            self.mqtt_ingest.ensure_subscribed(spec)
-            count += 1
-
-        return count
 
     def _scan_pg_references_from_graph(self) -> int:
         """Scan graph for external Postgres timeseries references.
@@ -772,7 +701,6 @@ class Manager:
         try:
             self.graph_store.insert_graph(rdf_graph, format=format, replace=replace)
             logging.info("acquirium: inserted graph into store, now ingesting data")
-            self._connect_mqtt_streams_from_graph()
             self._scan_pg_references_from_graph()
             self._sync_stream_refs_from_graph()
 
@@ -1651,11 +1579,6 @@ class Manager:
             pass
         try:
             self._executor.shutdown(wait=False, cancel_futures=False)
-        except Exception:
-            pass
-        try:
-            if self.mqtt_ingest is not None:
-                self.mqtt_ingest.stop()
         except Exception:
             pass
         try:
