@@ -20,7 +20,7 @@ def normalize_value_kind(value_kind: Any = None) -> Literal["numeric", "text"]:
     raise ValueError(f"value_kind must be 'numeric' or 'text', got {value_kind!r}")
 
 
-def classify_value(value: Any, *, parse_numeric_strings: bool = False) -> ValueKind:
+def classify_value(value: Any, *, parse_numeric_strings: bool = True) -> ValueKind:
     if value is None:
         return "unknown"
     if isinstance(value, bool):
@@ -42,16 +42,18 @@ def classify_value(value: Any, *, parse_numeric_strings: bool = False) -> ValueK
 def infer_value_kind(
     values: Iterable[Any],
     *,
-    parse_numeric_strings: bool = False,
+    parse_numeric_strings: bool = True,
     unknown_default: Literal["numeric", "text", "unknown"] = "unknown",
 ) -> ValueKind:
     """Infer a stream-level value kind from observed values.
 
     A stream has a single storage type. If any non-null value is non-numeric,
     the stream is treated as text so every row for that ref_uri lands in the
-    same value column. Set ``parse_numeric_strings`` for CSV/XLSX-style sources
-    where numeric values may arrive as strings. ``unknown_default`` is used when
-    every observed value is null or blank.
+    same value column. Numeric strings count as numeric by default because
+    ingestion commonly receives CSV/XLSX values as strings and numeric storage
+    accepts parseable strings. Set ``parse_numeric_strings=False`` for callers
+    that need all strings to be classified as text. ``unknown_default`` is used
+    when every observed value is null or blank.
     """
     observed_numeric = False
     for value in values:
