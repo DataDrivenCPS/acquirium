@@ -485,6 +485,10 @@ class DuckDBStore:
     def _to_str(val: Any) -> str | None:
         return None if val is None else str(val)
 
+    def stream_value_kind(self, ref_uri: str) -> str | None:
+        with self._lock:
+            return self._stream_value_kind(ref_uri)
+
     def _stream_value_kind(self, ref_uri: str) -> str | None:
         row = self._conn.execute(
             f"SELECT value_kind FROM {STREAMS_TABLE} WHERE ref_uri = ?",
