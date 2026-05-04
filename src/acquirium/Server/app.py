@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-import asyncio
 import io
 import logging
+import os
+import threading
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated, Any, Optional, Iterator
 
 from fastapi import Body, FastAPI, HTTPException, Request, UploadFile, File, Form
@@ -31,7 +33,99 @@ from acquirium.internals.internals_namespaces import PLANT_URI
 import pyarrow.ipc as ipc
 import pyarrow as pa
 
+from acquirium.Server.insert_stats import insert_stats, start_insert_summary_thread
+
 log = logging.getLogger("acquirium.api")
+
+
+def _run_inprocess_driver(
+    entry: dict,
+    manager: Manager,
+    cfg: dict,
+    stop_event: threading.Event,
+) -> None:
+    """Thread target: run a single [[drivers]] entry through DirectAcquirium."""
+    from acquirium.Server.direct_client import DirectAcquirium
+    from acquirium.cli import _import_driver_class
+
+    spec = entry["spec"]
+    driver_overrides = {k: v for k, v in entry.items() if k != "spec"}
+    merged_cfg = {**cfg, "driver": {**cfg.get("driver", {}), **driver_overrides}}
+    interval = float(driver_overrides.get("interval", cfg.get("driver", {}).get("interval", 10.0)))
+    config_dir = Path(cfg.get("__config_dir", Path.cwd()))
+
+    try:
+        driver_cls = _import_driver_class(spec, base_dir=config_dir)
+        direct_aq = DirectAcquirium(
+            manager,
+            origin=spec,
+            insert_batch_rows=int(merged_cfg.get("driver", {}).get("insert_batch_rows", 50_000)),
+        )
+        driver = driver_cls(direct_aq, merged_cfg)
+        driver.setup()
+        known_version = manager.graph_version()
+        log.info("In-process driver ready: %s", driver_cls.__name__)
+    except Exception:
+        log.exception("In-process driver %s setup failed; thread exiting", spec)
+        return
+
+    try:
+        try:
+            driver.tick()
+        except Exception:
+            log.exception("In-process driver %s tick error", spec)
+        while not stop_event.wait(timeout=interval):
+            try:
+                version = manager.graph_version()
+                if version != known_version:
+                    known_version = version
+                    try:
+                        driver.on_graph_change()
+                    except Exception:
+                        log.exception("In-process driver %s on_graph_change error", spec)
+                driver.tick()
+            except Exception:
+                log.exception("In-process driver %s tick error", spec)
+    finally:
+        try:
+            driver.stop()
+        except Exception:
+            log.exception("In-process driver %s stop error", spec)
+
+
+def _start_inprocess_drivers(
+    manager: Manager,
+    stop_event: threading.Event,
+) -> list[threading.Thread]:
+    """Start [[drivers]] entries from ACQUIRIUM_CONFIG as daemon threads."""
+    from acquirium.cli import _load_config
+
+    config_path = os.environ.get("ACQUIRIUM_CONFIG")
+    if not config_path:
+        return []
+
+    try:
+        cfg = _load_config(Path(config_path))
+    except Exception:
+        log.warning("Could not load config from ACQUIRIUM_CONFIG=%s; skipping in-process drivers", config_path)
+        return []
+
+    threads: list[threading.Thread] = []
+    for entry in cfg.get("drivers", []):
+        spec = entry.get("spec")
+        if not spec:
+            log.warning("[[drivers]] entry missing 'spec'; skipping")
+            continue
+        thread = threading.Thread(
+            target=_run_inprocess_driver,
+            args=(entry, manager, cfg, stop_event),
+            daemon=True,
+            name=f"acquirium-driver-{spec.rsplit(':', 1)[-1]}",
+        )
+        thread.start()
+        threads.append(thread)
+        log.info("Started in-process driver: %s", spec)
+    return threads
 
 
 class Health(BaseModel):
@@ -92,25 +186,23 @@ async def lifespan(app: FastAPI):
     m = Manager.from_env()
     app.state.manager = m
 
-    # Start ingestion services at startup
     try:
-        # start mqtt subscribers from graph
-        n = m._connect_mqtt_streams_from_graph()
-        app.state.mqtt_subscriptions = n
-        log.info("Started %d MQTT subscriptions from graph", n)
         m._sync_stream_handles_from_graph()
     except Exception as e:
         log.exception("Startup failed: %s", e)
-        # If startup fails, ensure we close and crash so Docker restart policy can help
         try:
             m.close()
         finally:
             raise
 
+    driver_stop = threading.Event()
+    _start_inprocess_drivers(m, driver_stop)
+    start_insert_summary_thread(driver_stop, interval=10.0)
+
     try:
         yield
     finally:
-        # FastAPI shutdown
+        driver_stop.set()
         try:
             m.close()
         except Exception:
@@ -280,6 +372,11 @@ def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[st
                 point_uri=s.point_uri,
                 replace=s.replace,
             )
+        insert_stats.record(
+            origin="http",
+            rows=sum(len(s.values) for s in streams),
+            streams=[s.ref_name or str(s.point_uri) for s in streams],
+        )
         return {"ok": True, "rows_inserted": total}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
