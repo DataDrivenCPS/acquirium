@@ -171,6 +171,24 @@ def _validate_stream_data_options(*, limit: int, order: str, format: str, ts_for
         raise HTTPException(status_code=400, detail="ts_format must be 'unix_ms' or 'iso'")
 
 
+def _deduplicate_streams(streams: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for stream in streams:
+        key = str(stream["ref_uri"])
+        existing = deduped.get(key)
+        if existing is None:
+            deduped[key] = dict(stream)
+            order.append(key)
+            continue
+
+        for field in ("point_uri", "label", "stored_at", "earliest", "latest"):
+            if existing.get(field) is None and stream.get(field) is not None:
+                existing[field] = stream[field]
+        existing["row_count"] = max(int(existing.get("row_count") or 0), int(stream.get("row_count") or 0))
+    return [deduped[key] for key in order]
+
+
 class PrettyJSONResponse(JSONResponse):
     def render(self, content: Any) -> bytes:
         return json.dumps(
@@ -213,7 +231,7 @@ def browse_source_streams(
 ) -> dict[str, Any]:
     source_id = _decoded_source_id(source_id)
     _validate_stream_data_options(limit=limit, order=order, format=format, ts_format=ts_format)
-    streams = app.state.manager.list_source_streams(source_id)
+    streams = _deduplicate_streams(app.state.manager.list_source_streams(source_id))
     if not streams and app.state.manager.get_source(source_id) is None:
         raise HTTPException(status_code=404, detail=f"Unknown source_id: {source_id}")
     data_params = _data_url_params(
