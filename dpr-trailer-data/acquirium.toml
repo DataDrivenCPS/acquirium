@@ -47,6 +47,7 @@ interval = 10.0
 insert_batch_rows = 5000
 
 # DPR trailer CSV driver defaults for standalone `acquirium run`.
+source_id = "dpr-trailer"
 watch_dir = "./raw"
 format = "wide"
 date_col = "Date"
