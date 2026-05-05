@@ -55,3 +55,32 @@ def test_dpr_trailer_driver_uses_one_source_id_for_all_csv_files(tmp_path):
     ]
     assert source_ids == ["dpr-trailer", "dpr-trailer"]
     aq.register_datasource.assert_called_once_with("dpr-trailer")
+
+
+def test_dpr_trailer_driver_does_not_auto_infer_date_column_as_dmy(tmp_path):
+    driver_cls = _load_dpr_driver()
+    aq = MagicMock()
+    config = {
+        "driver": {
+            "watch_dir": str(tmp_path),
+            "format": "wide",
+            "date_col": "Date",
+            "clock_col": "Time",
+            "skip_rows": [1],
+        }
+    }
+    driver = driver_cls(aq, config)
+    driver.setup()
+    path = tmp_path / "ambiguous_dates.csv"
+    path.write_text(
+        "metadata banner\n"
+        "Date,Time,Runtime hr\n"
+        "12/12/2024,05:32:00 PM,1.0\n"
+        "12/13/2024,05:33:00 PM,2.0\n"
+    )
+
+    df, rows_read = driver.parse_polars(path)
+
+    assert rows_read == 2
+    assert df.height == 2
+    assert df["ref_name"].to_list() == ["Runtime_hr", "Runtime_hr"]

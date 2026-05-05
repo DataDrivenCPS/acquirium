@@ -32,6 +32,33 @@ class DPRTrailerCSVDriver(CSVIngestDriver):
     def _source_id_for_path(self, path: Path) -> str:
         return self.source_id
 
+    def _read_df(self, path: Path, row_offset: int) -> pl.DataFrame:
+        sep = "\t" if path.suffix.lower() == ".tsv" else ","
+        schema_overrides = {
+            self._date_col: pl.Utf8,
+            self._clock_col: pl.Utf8,
+        }
+        skip = self._skip_rows_for(path)
+        if skip:
+            return pl.read_csv(
+                StringIO(self._filtered_csv_text(path)),
+                separator=sep,
+                try_parse_dates=False,
+                skip_rows_after_header=row_offset,
+                encoding=self._encoding,
+                schema_overrides=schema_overrides,
+            )
+        lf = pl.scan_csv(
+            path,
+            separator=sep,
+            try_parse_dates=False,
+            encoding=self._encoding,
+            schema_overrides=schema_overrides,
+        )
+        if row_offset:
+            lf = lf.slice(row_offset)
+        return lf.collect()
+
     def read_frame(self, path: Path, row_offset: int = 0) -> tuple[pl.DataFrame, int]:
         df = self._read_df(path, row_offset)
         rows_read = len(df)
