@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+import math
 from numbers import Real
 from typing import Any, Iterable, Literal
 
@@ -74,7 +75,13 @@ def split_value(value: Any, value_kind: str | None = None) -> tuple[float | None
     if kind == "numeric":
         if isinstance(value, str) and not value.strip():
             return None, None
-        return float(value), None
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError):
+            return None, str(value)
+        if not math.isfinite(numeric_value):
+            return None, None
+        return numeric_value, None
     return None, str(value)
 
 
