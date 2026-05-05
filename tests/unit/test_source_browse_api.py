@@ -278,6 +278,35 @@ def test_source_browse_endpoints_allow_slashes_in_source_id():
         app.router.lifespan_context = old_lifespan
 
 
+class StubBrowseManagerWithDuplicateStreams(StubBrowseManager):
+    def list_source_streams(self, source_id: str) -> list[dict[str, Any]]:
+        stream = super().list_source_streams(source_id)[0]
+        return [
+            {**stream, "point_uri": None, "label": None, "row_count": 1},
+            stream,
+        ]
+
+
+def test_source_stream_index_deduplicates_by_ref_uri():
+    old_lifespan = app.router.lifespan_context
+    app.router.lifespan_context = _noop_lifespan
+    app.state.manager = StubBrowseManagerWithDuplicateStreams()
+
+    try:
+        with TestClient(app) as client:
+            resp = client.get("/source/demo/streams")
+            assert resp.status_code == 200
+            body = resp.json()
+            assert body["count"] == 1
+            assert len(body["streams"]) == 1
+            assert body["streams"][0]["ref_uri"] == "urn:ref:temp"
+            assert body["streams"][0]["point_uri"] == "urn:point:temp"
+            assert body["streams"][0]["label"] == "Temperature"
+            assert body["streams"][0]["row_count"] == 2
+    finally:
+        app.router.lifespan_context = old_lifespan
+
+
 class StubInsertManager:
     def __init__(self) -> None:
         self.batch_calls = []
