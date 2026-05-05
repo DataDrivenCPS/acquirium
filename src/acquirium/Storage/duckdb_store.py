@@ -37,12 +37,14 @@ from acquirium.internals.models import (
     TimeseriesInfo,
     compute_ref_uri,
 )
+from acquirium.Storage.values import normalize_value_kind, prepare_value_columns, split_value
 
 logger = logging.getLogger(__name__)
 
 TIMESERIES_TABLE = "timeseries"
 STREAMS_TABLE = "streams"
 LOGS_TABLE = "logs"
+TIMESERIES_STREAMS_VIEW = "timeseries_streams"
 
 
 class DuckDBStore:
@@ -64,6 +66,7 @@ class DuckDBStore:
         self._in_tx = False
 
         if recreate:
+            self._conn.execute(f"DROP VIEW IF EXISTS {TIMESERIES_STREAMS_VIEW}")
             for tbl in (TIMESERIES_TABLE, STREAMS_TABLE, LOGS_TABLE):
                 self._conn.execute(f"DROP TABLE IF EXISTS {tbl}")
         self.ensure_table()
@@ -79,18 +82,42 @@ class DuckDBStore:
             CREATE TABLE IF NOT EXISTS {TIMESERIES_TABLE} (
                 ref_uri VARCHAR NOT NULL,
                 ts      TIMESTAMP NOT NULL,
-                value   VARCHAR,
+                numeric_value DOUBLE,
+                text_value    VARCHAR,
+                CHECK (numeric_value IS NULL OR text_value IS NULL),
                 UNIQUE (ref_uri, ts)
             )
             """,
             f"CREATE INDEX IF NOT EXISTS idx_ts_ref ON {TIMESERIES_TABLE} (ref_uri, ts)",
+            f"CREATE INDEX IF NOT EXISTS idx_ts_numeric_ref ON {TIMESERIES_TABLE} (ref_uri, ts, numeric_value)",
+            f"CREATE INDEX IF NOT EXISTS idx_ts_text_ref ON {TIMESERIES_TABLE} (ref_uri, ts, text_value)",
+            f"CREATE INDEX IF NOT EXISTS idx_ts_numeric_value ON {TIMESERIES_TABLE} (ref_uri, numeric_value)",
+            f"CREATE INDEX IF NOT EXISTS idx_ts_text_value ON {TIMESERIES_TABLE} (ref_uri, text_value)",
             f"""
             CREATE TABLE IF NOT EXISTS {STREAMS_TABLE} (
                 ref_uri   VARCHAR PRIMARY KEY,
                 point_uri VARCHAR UNIQUE,
                 source_id VARCHAR NOT NULL,
-                ref_name  VARCHAR NOT NULL
+                ref_name  VARCHAR NOT NULL,
+                value_kind VARCHAR NOT NULL DEFAULT 'text'
             )
+            """,
+            f"CREATE UNIQUE INDEX IF NOT EXISTS idx_streams_source_ref_name ON {STREAMS_TABLE} (source_id, ref_name)",
+            f"CREATE INDEX IF NOT EXISTS idx_streams_point_uri ON {STREAMS_TABLE} (point_uri)",
+            f"""
+            CREATE OR REPLACE VIEW {TIMESERIES_STREAMS_VIEW} AS
+            SELECT
+                t.ref_uri,
+                s.point_uri,
+                s.source_id,
+                s.ref_name,
+                COALESCE(s.value_kind, 'text') AS value_kind,
+                t.ts,
+                t.numeric_value AS value_numeric,
+                t.text_value AS value_text
+            FROM {TIMESERIES_TABLE} AS t
+            LEFT JOIN {STREAMS_TABLE} AS s
+                ON t.ref_uri = s.ref_uri
             """,
             f"""
             CREATE TABLE IF NOT EXISTS {LOGS_TABLE} (
@@ -108,53 +135,70 @@ class DuckDBStore:
         with self._lock:
             for stmt in stmts:
                 self._conn.execute(stmt)
-            self._conn.execute(
-                f"ALTER TABLE {STREAMS_TABLE} ALTER COLUMN point_uri DROP NOT NULL"
-            )
         return "ok"
 
     # ---- timeseries mutations ----
 
-    def upsert_rows(self, ref_uri: str, rows: Iterable[tuple[datetime, Any]]) -> int:
-        rows_list = [(ref_uri, self._to_utc_naive(ts), self._to_str(v)) for ts, v in rows]
+    def upsert_rows(
+        self,
+        ref_uri: str,
+        rows: Iterable[tuple[datetime, Any]],
+        *,
+        value_kind: str = "text",
+    ) -> int:
+        rows_list = [
+            (ref_uri, self._to_utc_naive(ts), *split_value(v, value_kind))
+            for ts, v in rows
+        ]
         if not rows_list:
             return 0
         with self._lock:
             self._conn.executemany(
                 f"""
-                INSERT INTO {TIMESERIES_TABLE} (ref_uri, ts, value)
-                VALUES (?, ?, ?)
-                ON CONFLICT (ref_uri, ts) DO UPDATE SET value = excluded.value
+                INSERT INTO {TIMESERIES_TABLE} (ref_uri, ts, numeric_value, text_value)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT (ref_uri, ts) DO UPDATE SET
+                    numeric_value = excluded.numeric_value,
+                    text_value = excluded.text_value
                 """,
                 rows_list,
             )
         return len(rows_list)
 
-    def replace_rows(self, ref_uri: str, rows: Iterable[tuple[datetime, Any]]) -> int:
+    def replace_rows(
+        self,
+        ref_uri: str,
+        rows: Iterable[tuple[datetime, Any]],
+        *,
+        value_kind: str = "text",
+    ) -> int:
         rows_list = list(rows)
         with self._lock:
             self._conn.execute(
                 f"DELETE FROM {TIMESERIES_TABLE} WHERE ref_uri = ?", [ref_uri]
             )
-        return self.upsert_rows(ref_uri, rows_list)
+        return self.upsert_rows(ref_uri, rows_list, value_kind=value_kind)
 
     def bulk_insert_polars(self, df: pl.DataFrame) -> int:
-        """Bulk-insert a Polars DataFrame with columns (ref_uri, ts, value).
+        """Bulk-insert a Polars DataFrame with canonical or split value columns.
 
         Uses DuckDB's native Polars bridge — no ADBC required.
         """
         if df.is_empty():
             return 0
-        df = df.with_columns(
+        df = prepare_value_columns(df).with_columns(
             pl.col("ts").dt.convert_time_zone("UTC").dt.replace_time_zone(None)
         )
+        df = df.unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
         with self._lock:
             # DuckDB resolves the local name 'df' via its Arrow bridge
             self._conn.execute(
                 f"""
-                INSERT INTO {TIMESERIES_TABLE} (ref_uri, ts, value)
-                SELECT ref_uri, ts, value FROM df
-                ON CONFLICT (ref_uri, ts) DO UPDATE SET value = excluded.value
+                INSERT INTO {TIMESERIES_TABLE} (ref_uri, ts, numeric_value, text_value)
+                SELECT ref_uri, ts, numeric_value, text_value FROM df
+                ON CONFLICT (ref_uri, ts) DO UPDATE SET
+                    numeric_value = excluded.numeric_value,
+                    text_value = excluded.text_value
                 """
             )
         return len(df)
@@ -167,22 +211,25 @@ class DuckDBStore:
         source_id: str,
         ref_name: str,
         ref_uri: str | None = None,
+        value_kind: str = "text",
     ) -> str:
         """Register a stream reference and return its canonical ref URI."""
         if ref_uri is None:
             ref_uri = compute_ref_uri(source_id, ref_name)
         ref_uri_str = str(ref_uri)
+        value_kind = normalize_value_kind(value_kind)
         with self._lock:
             self._conn.execute(
                 f"""
-                INSERT INTO {STREAMS_TABLE} (ref_uri, point_uri, source_id, ref_name)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO {STREAMS_TABLE} (ref_uri, point_uri, source_id, ref_name, value_kind)
+                VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT (ref_uri) DO UPDATE SET
                     source_id = excluded.source_id,
                     ref_name  = excluded.ref_name,
-                    point_uri = COALESCE(excluded.point_uri, {STREAMS_TABLE}.point_uri)
+                    point_uri = COALESCE(excluded.point_uri, {STREAMS_TABLE}.point_uri),
+                    value_kind = excluded.value_kind
                 """,
-                [ref_uri_str, point_uri, source_id, ref_name],
+                [ref_uri_str, point_uri, source_id, ref_name, value_kind],
             )
         return ref_uri_str
 
@@ -233,24 +280,31 @@ class DuckDBStore:
         limit_sql = f" LIMIT {int(limit)}" if limit else ""
 
         query = f"""
-            SELECT ts, value
+            SELECT
+                ts,
+                numeric_value,
+                text_value
             FROM {TIMESERIES_TABLE}
             WHERE {where}
             ORDER BY ts {order_sql}{limit_sql}
         """
 
-        # DuckDB returns TIMESTAMP as timestamp[us] (no tz). Cast to timestamp[us, UTC].
-        out_schema = pa.schema([
-            pa.field("ts", pa.timestamp("us", tz="UTC")),
-            pa.field("value", pa.string()),
-            pa.field("uri", pa.string()),
-        ])
+        value_kind = self._stream_value_kind(ref_uri)
         table = self._conn.execute(query, params).to_arrow_table()
         for batch in table.to_batches(max_chunksize=batch_size):
+            numeric_col = batch.column("numeric_value")
+            text_col = batch.column("text_value")
+            if value_kind == "text":
+                val_col = text_col.cast(pa.string())
+            elif value_kind == "numeric":
+                val_col = numeric_col.cast(pa.float64())
+            elif numeric_col.null_count < len(numeric_col):
+                val_col = numeric_col.cast(pa.float64())
+            else:
+                val_col = text_col.cast(pa.string())
             ts_col = pc.assume_timezone(batch.column("ts"), timezone="UTC")
-            val_col = batch.column("value").cast(pa.string())
             uri_col = pa.array([ref_uri] * len(batch), type=pa.string())
-            yield pa.record_batch([ts_col, val_col, uri_col], schema=out_schema)
+            yield pa.record_batch([ts_col, val_col, uri_col], names=["ts", "value", "uri"])
 
     def timeseries_info(self, ref_uri: str) -> TimeseriesInfo:
         row = self._conn.execute(
@@ -430,3 +484,14 @@ class DuckDBStore:
     @staticmethod
     def _to_str(val: Any) -> str | None:
         return None if val is None else str(val)
+
+    def stream_value_kind(self, ref_uri: str) -> str | None:
+        with self._lock:
+            return self._stream_value_kind(ref_uri)
+
+    def _stream_value_kind(self, ref_uri: str) -> str | None:
+        row = self._conn.execute(
+            f"SELECT value_kind FROM {STREAMS_TABLE} WHERE ref_uri = ?",
+            [ref_uri],
+        ).fetchone()
+        return row[0] if row else None

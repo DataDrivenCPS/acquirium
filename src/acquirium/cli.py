@@ -15,9 +15,7 @@ Two subcommands:
   acquirium run DRIVER [--config FILE] [--interval SECONDS]
       Load and run a Driver subclass.  DRIVER can be:
         - path/to/file.py:ClassName   (file path + explicit class)
-        - path/to/file.py             (file path, auto-discovers first Driver subclass)
         - my.module:ClassName         (dotted import path + explicit class)
-        - my.module                   (dotted import, auto-discovers first Driver subclass)
 """
 
 import importlib
@@ -236,13 +234,12 @@ def run_cmd(
     driver_spec: Annotated[str, typer.Argument(help=(
         "Driver to run.  Examples: "
         "scripts/my_driver.py:MyDriver  |  "
-        "my.module:MyDriver  |  "
-        "scripts/my_driver.py  (auto-discover)"
+        "my.module:MyDriver"
     ))],
     config: Annotated[Optional[Path], typer.Option("--config", "-c", help="Path to acquirium.toml")] = None,
-    interval: Annotated[Optional[float], typer.Option("--interval", "-i", help="Seconds between loop() calls")] = None,
+    interval: Annotated[Optional[float], typer.Option("--interval", "-i", help="Seconds between tick() calls")] = None,
 ) -> None:
-    """Load and run a Driver subclass in a managed loop."""
+    """Load and run a Driver subclass in a managed tick loop."""
     from acquirium.Client.acquirium import Acquirium
 
     cfg = _load_config(config)
@@ -276,12 +273,12 @@ def run_cmd(
         known_version = aq.graph_version()
     except Exception:
         known_version = 0
-    typer.echo(f"Setup complete. Starting loop (interval={effective_interval}s). Ctrl-C to stop.")
+    typer.echo(f"Setup complete. Starting tick loop (interval={effective_interval}s). Ctrl-C to stop.")
 
     try:
         while True:
             known_version = _check_graph_change(driver, aq, known_version)
-            driver.loop()
+            driver.tick()
             time.sleep(effective_interval)
     except KeyboardInterrupt:
         typer.echo("\nShutting down...")

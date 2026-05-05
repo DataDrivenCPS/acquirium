@@ -4,17 +4,20 @@ WORKDIR /app
 
 # Copy dependency manifest first — this layer is only invalidated when
 # pyproject.toml changes, so source edits don't trigger a full dep reinstall.
-COPY pyproject.toml README.md .python-version ./
+COPY pyproject.toml uv.lock README.md .python-version ./
 
 # Install dependencies but not the project itself.
-RUN uv sync --no-dev --no-install-project
+RUN uv sync --locked --no-dev --no-install-project
 
 # Now copy source and ontologies; changes here only re-run the steps below.
 COPY src ./src
 COPY ontologies ./ontologies
 
 # Install the project itself into the already-populated venv.
-RUN uv sync --no-dev
+RUN uv sync --locked --no-dev
+
+# Copy config last so edits don't invalidate the layers above.
+COPY acquirium.docker.toml ./acquirium.toml
 
 # Copy config last so edits don't invalidate the layers above.
 COPY acquirium.docker.toml ./acquirium.toml

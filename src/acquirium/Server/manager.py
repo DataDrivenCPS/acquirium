@@ -16,6 +16,7 @@ from acquirium.Storage import (
     resolve_dsn,
     create_timeseries_store,
 )
+from acquirium.Storage.values import infer_value_kind, normalize_value_kind
 from acquirium.internals.qudt_units import QUDTUnitConverter
 from acquirium.internals.models import LogEntry, Order, TimeIntervalModel, AppSpec, AppRunRequest, compute_ref_uri
 from acquirium.internals.internals_namespaces import *
@@ -81,6 +82,7 @@ def _aggregate_uri_label_rows(
                 surfaces.append(joined)
         display_label = uri_first_label[uri] or (" ".join(tokens) if tokens else uri)
         concepts.append({"uri": uri, "kind": kind, "label": display_label, "surfaces": surfaces})
+
 
 def _wipe_dir_contents(base: Path) -> None:
     base.mkdir(parents=True, exist_ok=True)
@@ -351,16 +353,17 @@ class Manager:
         here and handled by ``_scan_pg_references_from_graph``.
         """
         q = f"""
-        SELECT ?point ?ref_node ?source_id ?ref_name
+        SELECT ?point ?ref_node ?source_id ?ref_name ?value_kind
         WHERE {{
           ?ref_node <{ACQUIRIUM_SOURCE_ID}> ?source_id .
           ?ref_node <{ACQUIRIUM_REF_NAME}> ?ref_name .
+          OPTIONAL {{ ?ref_node <{ACQUIRIUM_VALUE_KIND}> ?value_kind . }}
           OPTIONAL {{ ?point <{HAS_EXTERNAL_REFERENCE}> ?ref_node . }}
         }}
         """
         res = self.graph_store.sparql_query(q, use_union=True)
         count = 0
-        for point_uri, ref_node, source_id, ref_name in res.get("rows", []):
+        for point_uri, ref_node, source_id, ref_name, value_kind in res.get("rows", []):
             try:
                 sid = str(source_id).strip('"')
                 rn  = str(ref_name).strip('"')
@@ -373,7 +376,15 @@ class Manager:
                         f"source_id={sid!r}, ref_name={rn!r}"
                     )
                 point = str(point_uri) if point_uri is not None else None
-                self.timescale.ensure_stream_ref(point, sid, rn, ref_uri=actual)
+                self.timescale.ensure_stream_ref(
+                    point,
+                    sid,
+                    rn,
+                    ref_uri=actual,
+                    value_kind=normalize_value_kind(
+                        str(value_kind).strip('"') if value_kind is not None else None
+                    ),
+                )
                 count += 1
             except Exception:
                 logger.warning("Failed to ensure stream ref %s / %s → %s", point_uri, source_id, ref_name, exc_info=True)
@@ -799,29 +810,23 @@ class Manager:
         ORDER BY ?ref_name ?point
         """
         rows = self.graph_store.sparql_query(q, use_union=True).get("rows", [])
-        
-        # We need to resolve info for all streams. We prefer point_uri for lookup
-        # but fallback to ref_uri if no semantic point is linked yet.
-        lookup_uris = []
-        for point_uri, ref_uri, *_ in rows:
-            if point_uri:
-                lookup_uris.append(str(point_uri))
-            else:
-                lookup_uris.append(str(ref_uri))
-                
+        lookup_uris = [
+            str(point_uri) if point_uri is not None else str(ref_uri)
+            for point_uri, ref_uri, *_ in rows
+        ]
         infos = self.timeseries_info_batch(lookup_uris) if lookup_uris else {}
 
         streams: list[dict[str, Any]] = []
         for point_uri, ref_uri, ref_name, label, stored_at in rows:
-            p_uri_s = str(point_uri) if point_uri is not None else None
-            r_uri_s = str(ref_uri)
-            info = infos.get(p_uri_s or r_uri_s)
+            point_uri_s = str(point_uri) if point_uri is not None else None
+            ref_uri_s = str(ref_uri)
+            info = infos.get(point_uri_s or ref_uri_s)
             streams.append(
                 {
                     "source_id": source_id,
                     "ref_name": self._sparql_value(ref_name),
-                    "point_uri": p_uri_s,
-                    "reference_uri": r_uri_s,
+                    "point_uri": point_uri_s,
+                    "ref_uri": ref_uri_s,
                     "label": self._sparql_value(label),
                     "stored_at": self._sparql_value(stored_at),
                     "row_count": int(info.row_count) if info else 0,
@@ -853,7 +858,6 @@ class Manager:
         stream_q = f"""
         SELECT ?source_id
         WHERE {{
-          ?point <{HAS_EXTERNAL_REFERENCE}> ?ref .
           ?ref <{ACQUIRIUM_SOURCE_ID}> ?source_id ;
                <{ACQUIRIUM_REF_NAME}> ?ref_name .
         }}
@@ -885,56 +889,10 @@ class Manager:
         return out
 
     def get_source(self, source_id: str) -> dict[str, Any] | None:
-        q = f"""
-        SELECT ?source ?label
-        WHERE {{
-          ?source a <{ACQUIRIUM_DATASOURCE}> .
-          OPTIONAL {{ ?source <{RDFS.label}> ?label . }}
-          FILTER(?label = "{source_id}" || STR(?source) = "urn:acquirium:datasource:{source_id}")
-        }}
-        LIMIT 1
-        """
-        rows = self.graph_store.sparql_query(q, use_union=True).get("rows", [])
-        if rows:
-            source_uri, label = rows[0]
-            source = {
-                "source_id": source_id,
-                "uri": str(source_uri),
-                "label": self._sparql_value(label) or source_id,
-            }
-        else:
-            stream_q = f"""
-            SELECT ?source_id
-            WHERE {{
-              ?point <{HAS_EXTERNAL_REFERENCE}> ?ref .
-              ?ref <{ACQUIRIUM_SOURCE_ID}> "{source_id}" ;
-                   <{ACQUIRIUM_REF_NAME}> ?ref_name .
-            }}
-            LIMIT 1
-            """
-            if not self.graph_store.sparql_query(stream_q, use_union=True).get("rows", []):
-                return None
-            source = {
-                "source_id": source_id,
-                "uri": f"urn:acquirium:datasource:{source_id}",
-                "label": source_id,
-            }
-
-        streams = self.list_source_streams(source_id)
-        source.update(
-            {
-                "stream_count": len(streams),
-                "row_count": sum(stream["row_count"] for stream in streams),
-                "earliest": min(
-                    (stream["earliest"] for stream in streams if stream["earliest"] is not None),
-                    default=None,
-                ),
-                "latest": max(
-                    (stream["latest"] for stream in streams if stream["latest"] is not None),
-                    default=None,
-                ),
-            }
-        )
+        sources = {source["source_id"]: source for source in self.list_sources()}
+        source = sources.get(source_id)
+        if source is None:
+            return None
         source["metadata"] = self._graph_metadata(source["uri"])
         return source
 
@@ -942,16 +900,12 @@ class Manager:
         for stream in self.list_source_streams(source_id):
             if stream["ref_name"] != ref_name:
                 continue
-            p_uri = stream["point_uri"]
-            if p_uri:
-                stream["point_metadata"] = self._graph_metadata(p_uri)
-            else:
-                stream["point_metadata"] = None
-            stream["reference_metadata"] = self._graph_metadata(stream["reference_uri"])
+            stream["point_metadata"] = self._graph_metadata(stream["point_uri"])
+            stream["reference_metadata"] = self._graph_metadata(stream["ref_uri"])
             return stream
         return None
 
-    def get_stream_by_reference_uri(self, ref_uri: str) -> dict[str, Any] | None:
+    def get_stream_by_ref_uri(self, ref_uri: str) -> dict[str, Any] | None:
         q = f"""
         SELECT ?point ?source_id ?ref_name ?label ?stored_at
         WHERE {{
@@ -967,32 +921,26 @@ class Manager:
         if not rows:
             return None
         point_uri, source_id, ref_name, label, stored_at = rows[0]
-        p_uri_s = str(point_uri) if point_uri is not None else None
-        
-        # Prefer point_uri for lookup info
-        lookup_uri = p_uri_s or ref_uri
+        point_uri_s = str(point_uri) if point_uri is not None else None
+        lookup_uri = point_uri_s or ref_uri
         info = self.timeseries_info_batch([lookup_uri]).get(lookup_uri)
-        
         stream = {
             "source_id": self._sparql_value(source_id),
             "ref_name": self._sparql_value(ref_name),
-            "point_uri": p_uri_s,
-            "reference_uri": ref_uri,
+            "point_uri": point_uri_s,
+            "ref_uri": ref_uri,
             "label": self._sparql_value(label),
             "stored_at": self._sparql_value(stored_at),
             "row_count": int(info.row_count) if info else 0,
             "earliest": info.earliest if info else None,
             "latest": info.latest if info else None,
         }
-        if p_uri_s:
-            stream["point_metadata"] = self._graph_metadata(p_uri_s)
-        else:
-            stream["point_metadata"] = None
-        stream["reference_metadata"] = self._graph_metadata(ref_uri)
+        stream["point_metadata"] = self._graph_metadata(stream["point_uri"])
+        stream["reference_metadata"] = self._graph_metadata(stream["ref_uri"])
         return stream
 
-    def get_source_stream_by_reference_uri(self, source_id: str, ref_uri: str) -> dict[str, Any] | None:
-        stream = self.get_stream_by_reference_uri(ref_uri)
+    def get_source_stream_by_ref_uri(self, source_id: str, ref_uri: str) -> dict[str, Any] | None:
+        stream = self.get_stream_by_ref_uri(ref_uri)
         if stream is None or stream["source_id"] != source_id:
             return None
         return stream
@@ -1021,11 +969,11 @@ class Manager:
         replace: bool = False,
     ) -> int:
         ref_uri = compute_ref_uri(source_id, ref_name)
+        value_kind = self._registered_value_kind(str(ref_uri))
         if replace:
-            n = self.timescale.replace_rows(str(ref_uri), rows)
+            n = self.timescale.replace_rows(str(ref_uri), rows, value_kind=value_kind)
         else:
-            n = self.timescale.upsert_rows(str(ref_uri), rows)
-        self.timescale.ensure_stream_ref(point_uri, source_id, ref_name, ref_uri=ref_uri)
+            n = self.timescale.upsert_rows(str(ref_uri), rows, value_kind=value_kind)
         return n
 
     def insert_timeseries_batch(
@@ -1038,20 +986,27 @@ class Manager:
 
         ref_uris: list[str] = []
         timestamps: list[datetime] = []
-        values: list[str | None] = []
+        values: list[Any] = []
+        value_kinds: list[str] = []
         for ref_name, stream_rows in streams.items():
             ref_uri = str(compute_ref_uri(source_id, ref_name))
-            self.timescale.ensure_stream_ref(None, source_id, ref_name, ref_uri=ref_uri)
+            value_kind = self._registered_value_kind(ref_uri)
             for ts, value in stream_rows:
                 ref_uris.append(ref_uri)
                 timestamps.append(ts)
-                values.append(None if value is None else str(value))
+                values.append(value)
+                value_kinds.append(value_kind)
         if not ref_uris:
             return 0
 
         df = pl.DataFrame(
-            {"ref_uri": ref_uris, "ts": timestamps, "value": values},
-            schema={"ref_uri": pl.Utf8, "ts": pl.Datetime("us", "UTC"), "value": pl.Utf8},
+            {"ref_uri": ref_uris, "ts": timestamps, "value": values, "value_kind": value_kinds},
+            schema={
+                "ref_uri": pl.Utf8,
+                "ts": pl.Datetime("us", "UTC"),
+                "value": pl.Object,
+                "value_kind": pl.Utf8,
+            },
         )
         return self.timescale.bulk_insert_polars(df)
 
@@ -1065,14 +1020,24 @@ class Manager:
             name: str(compute_ref_uri(source_id, name))
             for name in df["ref_name"].unique().to_list()
         }
+        value_kind_map: dict[str, str] = {}
         for ref_name, ref_uri in ref_uri_map.items():
-            self.timescale.ensure_stream_ref(None, source_id, ref_name, ref_uri=ref_uri)
+            value_kind_map[ref_name] = self._registered_value_kind(ref_uri)
         df = (
-            df.with_columns(pl.col("ref_name").replace(ref_uri_map).alias("ref_uri"))
+            df.with_columns([
+                pl.col("ref_name").replace(ref_uri_map).alias("ref_uri"),
+                pl.col("ref_name").replace(value_kind_map).alias("value_kind"),
+            ])
             .drop("ref_name")
-            .select(["ref_uri", "ts", "value"])
+            .select(["ref_uri", "ts", "value", "value_kind"])
         )
         return self.timescale.bulk_insert_polars(df)
+
+    def _registered_value_kind(self, ref_uri: str) -> str:
+        value_kind = self.timescale.stream_value_kind(ref_uri)
+        if value_kind is None:
+            raise ValueError(f"stream {ref_uri} is not registered")
+        return normalize_value_kind(value_kind)
 
     def _app_type_uri(self, app_type: str) -> URIRef:
         norm = (app_type or "").strip().lower()
@@ -1153,8 +1118,10 @@ class Manager:
             graph.add((ref_uri, RDF.type, STREAM))
             if out.kind in {"event", "trigger"}:
                 graph.add((ref_uri, RDF.type, EVENT_STREAM))
+                graph.add((ref_uri, ACQUIRIUM_VALUE_KIND, Literal("text")))
             else:
                 graph.add((ref_uri, RDF.type, TIMESERIES_STREAM))
+                graph.add((ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")))
 
             graph.add((ref_uri, STORAGE_BACKEND, Literal(out.storage_backend or "timescale")))
 
@@ -1381,6 +1348,7 @@ class Manager:
             content: bytes,
             time_column: str | None = None,
             value_column: str | None = None,
+            value_kind: str | None = None,
             filename: str = "upload",
         ) -> int:
         """Ingest the contents of a ref:FileReference upload into Timescale.
@@ -1427,9 +1395,16 @@ class Manager:
             df = full.select([t_col, v_col])
 
             df = df.rename({df.columns[0]: "ts", df.columns[1]: "value"})
+            stream_value_kind = normalize_value_kind(value_kind)
+            if value_kind is None:
+                inferred = infer_value_kind(df["value"].to_list())
+                stream_value_kind = "text" if inferred == "text" else "numeric"
 
             df = df.with_columns(pl.lit(ref_uri).alias("ref_uri"))
-            df = df.select(["ref_uri", "ts", "value"])
+            df = df.with_columns(
+                pl.lit(stream_value_kind).alias("value_kind")
+            )
+            df = df.select(["ref_uri", "ts", "value", "value_kind"])
 
             if df.schema.get("ts") == pl.Utf8:
                 # Try with UTC timezone first (ref_uris tz-aware strings like
@@ -1440,9 +1415,6 @@ class Manager:
                     )
                 except Exception:
                     df = df.with_columns(pl.col("ts").str.to_datetime())
-
-            if df.schema.get("value") != pl.Utf8:
-                df = df.with_columns(pl.col("value").cast(pl.Utf8))
 
             result = self.timescale.bulk_insert_polars(df)
 

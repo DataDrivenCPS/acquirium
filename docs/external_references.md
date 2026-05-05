@@ -89,6 +89,7 @@ For Acquirium-managed streams, the following are expected to hold:
 - `ref_uri == compute_ref_uri(source_id, ref_name)`
 - `ref_uri` has `acq:sourceId`
 - `ref_uri` has `acq:refName`
+- `ref_uri` has `acq:valueKind` (`"numeric"` or `"text"`, default `"text"`)
 - inserts for `(source_id, ref_name)` resolve to the same `ref_uri`
 
 ## Storage semantics
@@ -98,7 +99,7 @@ Writers insert rows by `ref_name`, not by `ref_uri`:
 ```python
 aq.insert_timeseries_batch(source_id, {
     ref_name: rows,
-})
+}, value_kinds={ref_name: "numeric"})
 ```
 
 Acquirium computes `compute_ref_uri(source_id, ref_name)` internally and stores
@@ -109,6 +110,7 @@ Implications:
 - the graph uses `ref_uri`
 - inserts use `ref_name`
 - the deterministic mapping keeps graph identity and storage identity aligned
+- `value_kind` determines whether rows land in `numeric_value` or `text_value`
 - the `streams` table is upserted on insert, even if there is no semantic
   `point_uri` yet; those rows have `point_uri = NULL`
 
@@ -231,6 +233,7 @@ class ExampleDriver(Driver):
         g.add((point_uri, HAS_EXTERNAL_REFERENCE, ref_uri))
         g.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(self.source_id())))
         g.add((ref_uri, ACQUIRIUM_REF_NAME, Literal(ref_name)))
+        g.add((ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")))
         g.add((ref_uri, RDF.type, MQTT_REFERENCE))
         g.add((ref_uri, MQTT_BROKER, Literal("broker.local:1883")))
         g.add((ref_uri, MQTT_TOPIC, Literal("plant/temp/room1")))
@@ -240,7 +243,7 @@ class ExampleDriver(Driver):
         rows = [...]
         self.aq.insert_timeseries_batch(self.source_id(), {
             "temp-room-1": rows,
-        })
+        }, value_kinds={"temp-room-1": "numeric"})
 ```
 
 ## Notes

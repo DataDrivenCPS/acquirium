@@ -9,11 +9,14 @@ import ast
 import json
 import logging
 
+import polars as pl
 import paho.mqtt.client as mqtt
 
-from acquirium.Driver import Driver
+from acquirium.Driver import EventIngestDriver
+from acquirium.Storage.values import normalize_value_kind
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_REF_NAME,
+    ACQUIRIUM_VALUE_KIND,
     HAS_EXTERNAL_REFERENCE,
     MQTT_BROKER,
     MQTT_REFERENCE,
@@ -25,11 +28,12 @@ from acquirium.internals.internals_namespaces import (
 logger = logging.getLogger("acquirium.mqtt")
 
 MQTT_SPARQL_QUERY = f"""
-SELECT ?data ?ref ?ref_name ?broker ?topic ?tkey ?vkey
+SELECT ?data ?ref ?ref_name ?value_kind ?broker ?topic ?tkey ?vkey
 WHERE {{
   ?data <{HAS_EXTERNAL_REFERENCE}> ?ref .
   ?ref a <{MQTT_REFERENCE}> .
   ?ref <{ACQUIRIUM_REF_NAME}> ?ref_name .
+  OPTIONAL {{ ?ref <{ACQUIRIUM_VALUE_KIND}> ?value_kind . }}
   OPTIONAL {{ ?ref <{MQTT_BROKER}> ?broker . }}
   OPTIONAL {{ ?ref <{MQTT_TOPIC}> ?topic . }}
   OPTIONAL {{ ?ref <{TIME_KEY}> ?tkey . }}
@@ -48,17 +52,10 @@ class MQTTStreamSpec:
     topic: str
     time_key: str
     value_key: str
+    value_kind: str
 
 
-@dataclass(frozen=True)
-class _Sample:
-    point_uri: str
-    ref_uri: str
-    ts: datetime
-    value: Any
-
-
-class MQTTIngestDriver(Driver):
+class MQTTIngestDriver(EventIngestDriver):
     """Subscribes to MQTT topics declared in the knowledge graph and ingests
     samples via the standard Acquirium timeseries API.
 
@@ -75,33 +72,20 @@ class MQTTIngestDriver(Driver):
 
     def setup(self) -> None:
         driver_cfg = self.config.get("driver", {})
-        self._source_id: str = driver_cfg.get("mqtt_source_id", "mqtt")
+        self.source_id: str = driver_cfg.get("mqtt_source_id", "mqtt")
         self.qos: int = int(driver_cfg.get("mqtt_qos", 0))
+        self.default_value_kind: str = normalize_value_kind(driver_cfg.get("mqtt_value_kind"))
 
-        self._pending: dict[str, list[_Sample]] = {}
-        self._pending_lock = Lock()
         self._clients: dict[str, mqtt.Client] = {}
         self._topic_specs: dict[str, dict[str, list[MQTTStreamSpec]]] = {}
         self._spec_keys: set[str] = set()
         self._clients_lock = Lock()
 
-        self.aq.register_datasource(self._source_id)
+        self.aq.register_datasource(self.source_id)
         self._sync_subscriptions()
 
     def on_graph_change(self) -> None:
         self._sync_subscriptions()
-
-    def loop(self) -> None:
-        with self._pending_lock:
-            if not self._pending:
-                return
-            batch, self._pending = self._pending, {}
-
-        streams: dict[str, list[tuple[datetime, Any]]] = {
-            ref_name: [(s.ts, s.value) for s in samples]
-            for ref_name, samples in batch.items()
-        }
-        self.aq.insert_timeseries_batch(self._source_id, streams)
 
     def stop(self) -> None:
         with self._clients_lock:
@@ -129,7 +113,7 @@ class MQTTIngestDriver(Driver):
             return
 
         for row in result.get("rows", []):
-            data_uri, ref_uri, ref_name, broker, topic, tkey, vkey = row
+            data_uri, ref_uri, ref_name, value_kind, broker, topic, tkey, vkey = row
             topic_s = (topic or "").strip('"')
             if not topic_s:
                 continue
@@ -148,7 +132,7 @@ class MQTTIngestDriver(Driver):
                     expected_ref_uri,
                 )
                 continue
-            host, port = _parse_mqtt_broker((broker or "localhost").strip('"'))
+            host, port = parse_mqtt_broker((broker or "localhost").strip('"'))
             spec = MQTTStreamSpec(
                 point_uri=str(data_uri),
                 ref_uri=actual_ref_uri,
@@ -158,13 +142,17 @@ class MQTTIngestDriver(Driver):
                 topic=topic_s,
                 time_key=(tkey or "Timestamp").strip('"'),
                 value_key=(vkey or "Value").strip('"'),
+                value_kind=normalize_value_kind(
+                    str(value_kind).strip('"') if value_kind is not None else self.default_value_kind
+                ),
             )
             if self._spec_key(spec) in self._spec_keys:
                 continue
             try:
                 self.aq.register_stream(
-                    source_id=self._source_id,
+                    source_id=self.source_id,
                     ref_name=ref_name_s,
+                    value_kind=spec.value_kind,
                 )
             except Exception:
                 logger.warning("mqtt: failed to register stream %s", ref_uri, exc_info=True)
@@ -206,7 +194,7 @@ class MQTTIngestDriver(Driver):
         return f"{broker}|{port}"
 
     def _spec_key(self, spec: MQTTStreamSpec) -> str:
-        return f"{spec.point_uri}|{spec.ref_uri}|{spec.ref_name}|{spec.broker}|{spec.port}|{spec.topic}|{spec.time_key}|{spec.value_key}"
+        return f"{spec.point_uri}|{spec.ref_uri}|{spec.ref_name}|{spec.broker}|{spec.port}|{spec.topic}|{spec.time_key}|{spec.value_key}|{spec.value_kind}"
 
     def _on_connect(self, client_key: str):
         def on_connect(client: mqtt.Client, userdata, flags, rc):
@@ -236,16 +224,16 @@ class MQTTIngestDriver(Driver):
 
         Returns:
             ``(ts, value)`` where *ts* is a timezone-aware UTC datetime and
-            *value* is any type accepted by ``insert_timeseries_batch``
+            *value* is any type accepted by Acquirium observation insertion.
 
         Raises:
             ValueError: if the payload cannot be decoded
         """
         text = payload.decode("utf-8", errors="replace")
-        payload_dict = _decode_payload(text)
+        payload_dict = decode_mqtt_payload(text)
         raw_ts = payload_dict.get(spec.time_key)
         raw_val = payload_dict.get(spec.value_key)
-        ts = _parse_ts(raw_ts) if raw_ts is not None else datetime.now(timezone.utc)
+        ts = parse_mqtt_timestamp(raw_ts) if raw_ts is not None else datetime.now(timezone.utc)
         return ts, raw_val
 
     def _on_message(self, client_key: str):
@@ -259,15 +247,19 @@ class MQTTIngestDriver(Driver):
                     return
                 for spec in specs:
                     ts, value = self.decode_payload(msg.payload, spec)
-                    sample = _Sample(point_uri=spec.point_uri, ref_uri=spec.ref_uri, ts=ts, value=value)
-                    with self._pending_lock:
-                        self._pending.setdefault(spec.ref_name, []).append(sample)
+                    self.insert_observations(
+                        pl.DataFrame({
+                            "ts": [ts],
+                            "ref_name": [spec.ref_name],
+                            "value": [value],
+                        })
+                    )
             except Exception as exc:
                 logger.warning("mqtt decode failed client=%s topic=%s err=%s", client_key, topic, exc)
         return on_message
 
 
-def _parse_mqtt_broker(raw: str) -> tuple[str, int]:
+def parse_mqtt_broker(raw: str) -> tuple[str, int]:
     """Split a ref:MQTTBroker literal into (host, port).
 
     Accepts ``"host"``, ``"host:port"``, or ``"mqtt(s)://host[:port]"``.
@@ -288,7 +280,12 @@ def _parse_mqtt_broker(raw: str) -> tuple[str, int]:
     return s or "localhost", default_port
 
 
-def _decode_payload(payload: str) -> dict[str, Any]:
+def decode_mqtt_payload(payload: str) -> dict[str, Any]:
+    """Decode an MQTT payload as a dict.
+
+    Strict JSON is preferred. Python literal dicts are accepted as a fallback
+    for older integrations that publish single-quoted payloads.
+    """
     payload = payload.strip()
     try:
         obj = json.loads(payload)
@@ -297,17 +294,18 @@ def _decode_payload(payload: str) -> dict[str, Any]:
         raise ValueError("not a JSON object")
     except Exception:
         pass
+
     try:
         obj = ast.literal_eval(payload)
         if isinstance(obj, dict):
             return obj
         raise ValueError("not a dict literal")
-    except Exception as e:
-        logger.warning("mqtt payload decode failed payload=%r error=%s", payload, e)
+    except Exception as exc:
+        logger.warning("mqtt payload decode failed payload=%r error=%s", payload, exc)
         return {}
 
 
-def _parse_ts(raw: Any) -> datetime:
+def parse_mqtt_timestamp(raw: Any) -> datetime:
     """Parse a timestamp into a timezone-aware UTC datetime."""
     if isinstance(raw, datetime):
         if raw.tzinfo is None:
@@ -331,13 +329,15 @@ def _parse_ts(raw: Any) -> datetime:
             return dt.astimezone(timezone.utc)
         except Exception:
             pass
+
         for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d"):
             try:
                 return datetime.strptime(text, fmt).replace(tzinfo=timezone.utc)
             except Exception:
                 pass
+
         try:
-            return _parse_ts(float(text))
+            return parse_mqtt_timestamp(float(text))
         except Exception:
             pass
 

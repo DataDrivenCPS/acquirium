@@ -10,11 +10,12 @@ import platform
 import socket
 from datetime import datetime, timezone
 
+import polars as pl
 import psutil
 from rdflib import Graph, Literal, URIRef, Namespace
 from rdflib.namespace import RDF, RDFS
 
-from acquirium import Acquirium, Driver
+from acquirium.Driver import PollingIngestDriver
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_DB_URI,
     DATABASE,
@@ -35,19 +36,19 @@ _METRICS: list[tuple[str, str, str, str]] = [
 ]
 
 
-class SystemMetricsDriver(Driver):
+class SystemMetricsDriver(PollingIngestDriver):
     def setup(self) -> None:
         hostname = socket.gethostname()
-        self._source_id = f"{hostname}-system-metrics"
+        self.source_id = f"{hostname}-system-metrics"
         self._hostname = hostname
         self._host_uri = URIRef(f"urn:host:{hostname}")
 
-        self.aq.register_datasource(self._source_id)
+        self.aq.register_datasource(self.source_id)
         self._insert_host_graph(hostname)
         self._register_stream_metadata()
         psutil.cpu_percent(interval=None)  # first call always returns 0.0; discard it
 
-    def loop(self) -> None:
+    def collect(self) -> pl.DataFrame:
         ts = datetime.now(tz=timezone.utc)
         mem  = psutil.virtual_memory()
         disk = psutil.disk_usage("/")
@@ -60,8 +61,10 @@ class SystemMetricsDriver(Driver):
             "net_bytes_sent":    net.bytes_sent,
             "net_bytes_recv":    net.bytes_recv,
         }
-        self.aq.insert_timeseries_batch(self._source_id, {
-            ref: [(ts, val)] for ref, val in sample.items()
+        return pl.DataFrame({
+            "ts": [ts] * len(sample),
+            "ref_name": list(sample.keys()),
+            "value": list(sample.values()),
         })
 
     def _stream_uri(self, key: str) -> URIRef:
@@ -99,6 +102,7 @@ class SystemMetricsDriver(Driver):
                 self._stream_uri(ref),
                 unit=unit,
                 quantity_kind=quantity_kind,
-                source_id=self._source_id,
+                source_id=self.source_id,
                 ref_name=ref,
+                value_kind="numeric",
             )

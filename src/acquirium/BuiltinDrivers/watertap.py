@@ -7,9 +7,10 @@ from pathlib import Path
 from typing import Any, Callable
 import logging
 
+import polars as pl
 from rdflib import Graph
 
-from acquirium.Driver import Driver
+from acquirium.Driver import PollingIngestDriver
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_REF_NAME,
     ACQUIRIUM_SOURCE_ID,
@@ -29,7 +30,7 @@ class WaterTAPPointSpec:
     pyomo_var: str
 
 
-class WaterTAPDriver(Driver):
+class WaterTAPDriver(PollingIngestDriver):
     """Run a configurable WaterTAP build/solve function and ingest mapped outputs.
 
     Required config keys under ``[driver]`` or ``[[drivers]]``:
@@ -48,7 +49,7 @@ class WaterTAPDriver(Driver):
 
     def setup(self) -> None:
         cfg = self.config.get("driver", {})
-        self._source_id = str(cfg.get("watertap_source_id", "watertap"))
+        self.source_id = str(cfg.get("watertap_source_id", "watertap"))
         self._graph_path = _resolve_path(cfg.get("watertap_graph_path"), "watertap_graph_path")
         self._build_spec = str(_require_config(cfg.get("watertap_build_spec"), "watertap_build_spec"))
         self._build_kwargs = dict(cfg.get("watertap_build_kwargs", {}))
@@ -62,7 +63,7 @@ class WaterTAPDriver(Driver):
         # external reference to ingest under and the Pyomo path to read.
         self._point_specs = _load_point_specs(self._graph_path)
 
-        self.aq.register_datasource(self._source_id)
+        self.aq.register_datasource(self.source_id)
         if self._insert_graph:
             self.aq.insert_graph(
                 self._graph_path.read_text(),
@@ -72,16 +73,17 @@ class WaterTAPDriver(Driver):
         if self._register_streams:
             for spec in self._point_specs:
                 self.aq.register_stream(
-                    source_id=self._source_id,
+                    source_id=self.source_id,
                     ref_name=spec.ref_name,
+                    value_kind="numeric",
                 )
 
-    def loop(self) -> None:
+    def collect(self) -> pl.DataFrame:
         result = self._build_fn(**self._build_kwargs)
         model = self._extract_model(result)
         ts = datetime.now(timezone.utc)
 
-        batch: dict[str, list[tuple[datetime, float]]] = {}
+        rows: list[tuple[datetime, str, float]] = []
         missing = 0
         for spec in self._point_specs:
             # Read whatever the graph mapped this point to instead of baking
@@ -90,12 +92,15 @@ class WaterTAPDriver(Driver):
             if numeric_value is None:
                 missing += 1
                 continue
-            batch[spec.ref_name] = [(ts, numeric_value)]
+            rows.append((ts, spec.ref_name, numeric_value))
 
         if missing:
             logger.warning("watertap: skipped %d unmapped or non-numeric model values", missing)
-        if batch:
-            self.aq.insert_timeseries_batch(self._source_id, batch)
+        return pl.DataFrame(
+            rows,
+            schema=["ts", "ref_name", "value"],
+            orient="row",
+        )
 
     def _extract_model(self, result: Any) -> Any:
         if self._result_attr:

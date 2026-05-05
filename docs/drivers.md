@@ -1,55 +1,181 @@
 # Drivers
 
-A **Driver** is a Python class that periodically collects data and writes it to Acquirium. The CLI calls `setup()` once at startup, then calls `loop()` on a fixed interval until the process is stopped.
+A **Driver** connects an external source to Acquirium. The runner calls
+`setup()` once, then calls `tick()` on a fixed interval until shutdown.
 
-## Writing a driver
+Most drivers should not implement insertion themselves. Use one of the ingest
+base classes:
 
-Subclass `acquirium.Driver` and implement `setup()` and `loop()`. You get `self.aq` (an `Acquirium` client) and `self.config` (the full parsed TOML dict) for free.
+- `PollingIngestDriver`: the runner pulls observations by calling `collect()`
+- `EventIngestDriver`: callbacks push observations by calling
+  `insert_observations()`
+
+Both ingest bases use the same canonical observation frame:
+
+```text
+ts | ref_name | value
+```
+
+## Stream Identity
+
+Every stream is identified by `(source_id, ref_name)`. `source_id` scopes
+source-local stream names, so two sources can both report `ref_name="temp"`
+without colliding. Single-source drivers usually set `self.source_id` in
+`setup()`. Multi-source drivers can omit `self.source_id` if every observation
+row includes a `source_id` column.
+
+This identity rule applies to all drivers, regardless of lifecycle. Polling
+drivers, event drivers, graph-configured drivers, and custom `Driver`
+subclasses must all register and insert streams with the same `(source_id,
+ref_name)` pair. If a driver bypasses `insert_observations()` and calls the
+client directly, it must still pass `source_id` explicitly.
+
+Drivers must register each stream before reporting observations for it. Stream
+registration declares `value_kind`: use `"numeric"` for numeric streams and
+`"text"` for status, state, enum, JSON/event, or other non-numeric streams. A
+stream has one storage type: numeric samples are written to `numeric_value`;
+text samples are written to `text_value`.
+
+Keep `value` in its native Python/Polars type when possible. CSV-like drivers
+may emit numeric values as strings, but they must still register those streams
+with `value_kind="numeric"` so storage parses those strings into numeric
+columns. `value_kind` should not be included in observation dataframes.
+
+## Which Method Do I Implement?
+
+In most drivers, you do **not** implement `tick()` directly.
+
+Use this rule:
+
+- Polling source: subclass `PollingIngestDriver` and implement `collect()`.
+- Event source: subclass `EventIngestDriver` and call `insert_observations()`
+  from callbacks or subscription handlers.
+- Special lifecycle source: subclass `Driver` or `IngestDriver` and implement
+  `tick()` directly only when neither built-in lifecycle fits.
+
+`tick()` is the runner hook. The framework calls it on each interval. For
+polling drivers, `PollingIngestDriver.tick()` is already implemented as:
+
+```python
+def tick(self):
+    self.insert_observations(self.collect())
+```
+
+## Polling Drivers
+
+Use `PollingIngestDriver` when the source is sampled on each tick, such as a
+file directory, system metrics, an HTTP API, or a model solve.
 
 ```python
 from datetime import datetime, timezone
-from acquirium import Driver
 
-class TemperatureDriver(Driver):
+import polars as pl
+
+from acquirium import PollingIngestDriver
+
+
+class TemperatureDriver(PollingIngestDriver):
     def setup(self):
-        self.aq.register_datasource("sensors")
+        self.source_id = "sensors"
+        self.aq.register_datasource(self.source_id)
+        self.aq.register_stream(
+            source_id=self.source_id,
+            ref_name="temp/room1",
+            value_kind="numeric",
+        )
 
-    def loop(self):
-        ts = datetime.now(timezone.utc)
-        temp = read_sensor()          # your code here
-        self.aq.insert_timeseries_batch("sensors", {
-            "temp/room1": [(ts, temp)],
+    def collect(self):
+        return pl.DataFrame({
+            "ts": [datetime.now(timezone.utc)],
+            "ref_name": ["temp/room1"],
+            "value": [read_sensor()],
         })
 ```
 
+The base `tick()` implementation calls `collect()` and passes its frame to
+`insert_observations()`. `insert_observations()` normalizes the frame and calls
+`insert_timeseries_polars()`.
+
 Rules:
-- **No `while True` or `time.sleep` in `loop()`** — the CLI handles the sleep between calls.
-- `setup()` is called once before the first `loop()`. Register datasources and insert any RDF here.
-- Override `stop()` if you need to release resources on shutdown (close serial ports, flush buffers, etc.). The default is a no-op.
 
-### Reacting to graph changes
+- Do not put `while True` or `time.sleep` in a driver; the runner owns timing.
+- Register datasources and streams before reporting observations for them.
+- Use `stop()` to release resources on shutdown.
 
-Override `on_graph_change()` to run code when the knowledge graph is updated — for example, to discover newly-registered data streams without polling on every tick.
+## Event Drivers
+
+Use `EventIngestDriver` when data arrives asynchronously, such as MQTT messages
+or serial callbacks. `tick()` is a no-op; the driver pushes observations when
+events arrive.
 
 ```python
-class MQTTDriver(Driver):
+import polars as pl
+
+from acquirium import EventIngestDriver
+
+
+class CallbackDriver(EventIngestDriver):
     def setup(self):
-        self.aq.register_datasource("mqtt")
-        self._subscribe()          # initial subscription from graph
+        self.source_id = "events"
+        self.aq.register_datasource(self.source_id)
+        self.client.on_message = self.on_message
+        self.client.start()
 
-    def on_graph_change(self):
-        # run queries to find new MQTT topics to subscribe to, update self._subscribe()'s internal state, etc.
-        self._subscribe()          # pick up any new MQTTReference nodes
+    def on_message(self, ts, name, value):
+        self.aq.register_stream(
+            source_id=self.source_id,
+            ref_name=name,
+            value_kind="text",
+        )
+        self.insert_observations(pl.DataFrame({
+            "ts": [ts],
+            "ref_name": [name],
+            "value": [value],
+        }))
 
-    def loop(self):
-        self._flush_pending()      # just move buffered data, no graph queries
+    def stop(self):
+        self.client.stop()
 ```
 
-The CLI polls `GET /graph_version` before each `loop()` call and invokes `on_graph_change()` only when the version has advanced since `setup()` returned. The default is a no-op — drivers that don't need it pay only the cost of one cheap HTTP call per tick.
+`register_stream()` is expected to be idempotent, so drivers can call it when a
+stream is discovered instead of coordinating stream declarations through a
+separate framework callback.
 
-### Reading from config
+## Graph Changes
 
-`self.config` is the complete TOML dict. Drivers conventionally read their own keys from `self.config["driver"]` (for `acquirium run`) or from a merged view that includes their `[[drivers]]` entry keys (for default drivers — see below).
+Override `on_graph_change()` when the driver depends on graph-declared
+configuration. The runner polls `GET /graph_version` before each tick and calls
+`on_graph_change()` only when the version changes after `setup()`.
+
+MQTT is the main example: it queries the graph for new `ref:MQTTReference`
+nodes, registers the associated streams, and subscribes to newly discovered
+topics.
+
+```python
+class GraphConfiguredDriver(EventIngestDriver):
+    def setup(self):
+        self.source_id = "mqtt"
+        self.aq.register_datasource(self.source_id)
+        self.on_graph_change()
+
+    def on_graph_change(self):
+        for spec in self.query_graph_for_specs():
+            if spec.key in self.known:
+                continue
+            self.aq.register_stream(
+                source_id=self.source_id,
+                ref_name=spec.ref_name,
+                value_kind=spec.value_kind,
+            )
+            self.subscribe(spec)
+            self.known.add(spec.key)
+```
+
+## Config
+
+`self.config` is the complete parsed TOML dict. Drivers conventionally read
+their keys from `self.config["driver"]`. When a driver is started from a
+`[[drivers]]` entry, that entry is merged over `[driver]` before construction.
 
 ```python
 def setup(self):
@@ -58,164 +184,118 @@ def setup(self):
     self.aq.register_datasource(self.source_id)
 ```
 
-### Canonical external reference URIs
+## Reference URIs
 
-Drivers should mint external-reference URIs with the helper on `Driver` instead
-of inventing their own node names:
+Drivers should use the canonical reference helper instead of inventing their
+own node names:
 
 ```python
-from rdflib import Graph, Literal, URIRef
-from rdflib.namespace import RDF
-from acquirium import Driver
-from acquirium.internals.internals_namespaces import (
-    ACQUIRIUM_REF_NAME,
-    ACQUIRIUM_SOURCE_ID,
-    HAS_EXTERNAL_REFERENCE,
-    MQTT_BROKER,
-    MQTT_REFERENCE,
-    MQTT_TOPIC,
-)
-
-class MQTTDriver(Driver):
-    def setup(self):
-        self._source_id = "mqtt"
-        self.aq.register_datasource(self._source_id)
-
-        point_uri = URIRef("urn:point:temp")
-        ref_name = "temp-room-1"
-        ref_uri = self.reference_uri(ref_name)
-
-        g = Graph()
-        g.add((point_uri, HAS_EXTERNAL_REFERENCE, ref_uri))
-        g.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(self.source_id())))
-        g.add((ref_uri, ACQUIRIUM_REF_NAME, Literal(ref_name)))
-        g.add((ref_uri, MQTT_BROKER, Literal("broker.local:1883")))
-        g.add((ref_uri, MQTT_TOPIC, Literal("plant/temp/room1")))
-        g.add((ref_uri, RDF.type, MQTT_REFERENCE))
-        self.aq.insert_graph(g.serialize(format="turtle"), format="turtle", replace=False)
+ref_uri = self.reference_uri(ref_name)
 ```
 
 Rules:
-- Use `self.reference_uri(ref_name)` to compute the canonical `urn:acquirium#...` URI.
+
+- Use `self.reference_uri(ref_name)` to compute the canonical reference URI.
 - Use that URI as the object of `ref:hasExternalReference` in the graph.
-- Write `acq:sourceId` and `acq:refName` on the same node.
-- Attach driver- or app-specific provenance metadata to that same node.
-- When inserting data, continue to use the source-local `ref_name` with `insert_timeseries_batch()`. Acquirium derives the same canonical URI internally from `(source_id, ref_name)`.
+- Write `acq:sourceId` and `acq:refName` on the same reference node.
+- Attach driver-specific provenance metadata to that node.
+- Insert samples by source-local `ref_name`; Acquirium computes the storage
+  `ref_uri` internally from `(source_id, ref_name)`.
 
-If you are not inside a `Driver` subclass, the equivalent helper is `aq.reference_uri(source_id, ref_name)`.
+If you are not inside a driver, use `aq.reference_uri(source_id, ref_name)`.
 
-The canonical URI is called `ref_uri` everywhere. It is also the physical
-storage key in the timeseries table. There is no separate `handle` identifier.
-Drivers should still insert samples by `(source_id, ref_name)`; Acquirium
-computes `ref_uri` internally and records the stream in the `streams` table. If
-the driver has no semantic `point_uri`, the `streams` row is still created with
-`point_uri = NULL` and can be linked to ontology metadata later.
+## Running Drivers
 
-## Running a driver manually
-
-```
-acquirium run path/to/driver.py:ClassName [--config acquirium.toml] [--interval SECONDS]
+```bash
+acquirium run path/to/driver.py:ClassName --config acquirium.toml --interval 5
 ```
 
-The driver spec must always include the class name after a colon. Both file paths and dotted module paths are accepted:
+Driver specs must include the class name after a colon. File paths and dotted
+module paths are accepted:
 
-```
+```bash
 acquirium run scripts/temp_driver.py:TemperatureDriver --config acquirium.toml
-acquirium run mypackage.drivers:TemperatureDriver --config acquirium.toml --interval 5
+acquirium run mypackage.drivers:TemperatureDriver --config acquirium.toml
 ```
 
-`--interval` overrides the `interval` key in `[driver]` in the config file. If neither is given, the default is 10 seconds.
-
-The `[driver]` section of `acquirium.toml` sets connection defaults:
+The `[driver]` section sets connection defaults:
 
 ```toml
 [driver]
-server_url  = "localhost"
+server_url = "localhost"
 server_port = 8000
-use_ssl     = false
-interval    = 10.0
+use_ssl = false
+interval = 10.0
 insert_batch_rows = 50000
 ```
 
-`insert_batch_rows` caps the number of samples sent in one timeseries insert
-request. Drivers should still call `self.aq.insert_timeseries_batch()` with the
-batch they naturally produce; the Acquirium driver client splits large inserts
-automatically. `[[drivers]]` entries can override this value per driver.
+`insert_batch_rows` caps samples sent in one insert request. The Acquirium
+client splits large Polars inserts automatically.
 
-## Default drivers (auto-start with the server)
+## Auto-Started Drivers
 
-Add `[[drivers]]` entries to `acquirium.toml` to have drivers start automatically alongside `acquirium server`. Each entry requires a `spec` and can override any `[driver]` key.
-
-These auto-started drivers are in-process drivers: they run in background
-threads inside the Acquirium server process. They receive the same `self.aq`
-interface as a driver launched with `acquirium run`, but calls are dispatched
-directly to the server manager instead of going over HTTP. This keeps startup
-simple for local deployments, but it also means driver CPU work, blocking I/O,
-or large writes share resources with the API server.
+Add `[[drivers]]` entries to `acquirium.toml` to start drivers inside the
+server process.
 
 ```toml
 [[drivers]]
-spec     = "scripts/temp_driver.py:TemperatureDriver"
+spec = "scripts/temp_driver.py:TemperatureDriver"
 interval = 5.0
 ```
 
-Multiple drivers:
-
-```toml
-[[drivers]]
-spec     = "scripts/temp_driver.py:TemperatureDriver"
-interval = 5.0
-
-[[drivers]]
-spec     = "scripts/pressure_driver.py:PressureDriver"
-interval = 30.0
-```
-
-When the server starts, each `[[drivers]]` entry is launched in a background thread. The thread waits up to 30 seconds for the server's `/health` endpoint to respond before calling `setup()`, so drivers can safely use `self.aq` from the moment `setup()` runs.
-
-Keys in a `[[drivers]]` entry (other than `spec`) are merged on top of `[driver]` defaults before the driver instance is created. This means a driver can read its own custom keys from `self.config["driver"]`:
+Each entry requires `spec` and may override any `[driver]` key:
 
 ```toml
 [driver]
 interval = 10.0
 
 [[drivers]]
-spec           = "acquirium.BuiltinDrivers.mqtt_ingestion:MQTTIngestDriver"
-interval       = 5.0
+spec = "acquirium.BuiltinDrivers.mqtt_ingestion:MQTTIngestDriver"
+interval = 5.0
 mqtt_source_id = "mqtt"
 ```
 
-Inside the driver:
+In-process drivers receive the same `self.aq` interface as `acquirium run`, but
+calls are dispatched directly to the server manager instead of over HTTP.
+MQTT ingestion is configured this way too: the server does not start MQTT
+subscribers implicitly from the graph.
 
-```python
-def setup(self):
-    cfg = self.config.get("driver", {})
-    self.source_id = cfg.get("mqtt_source_id", "mytopic")  # reads "mqtt" from the [[drivers]] entry. Defaults to "mytopic" if not set.
-```
+## Built-In MQTT Driver
 
-## Built-in MQTT driver
-
-`acquirium.BuiltinDrivers.mqtt_ingestion:MQTTIngestDriver` subscribes to MQTT topics declared in the knowledge graph and ingests samples via the timeseries API.
+`acquirium.BuiltinDrivers.mqtt_ingestion:MQTTIngestDriver` is an event driver.
+It subscribes to MQTT topics declared in the graph and pushes observations from
+the MQTT message callback.
 
 ```toml
 [[drivers]]
-spec           = "acquirium.BuiltinDrivers.mqtt_ingestion:MQTTIngestDriver"
-interval       = 5.0
+spec = "acquirium.BuiltinDrivers.mqtt_ingestion:MQTTIngestDriver"
+interval = 5.0
 mqtt_source_id = "mqtt"
-mqtt_qos       = 0
+mqtt_qos = 0
+mqtt_value_kind = "text"     # default for graph refs without acq:valueKind
 ```
 
-Each stream is discovered by querying for `ref:MQTTReference` nodes in the graph. The reference must declare a broker and topic; `ref:timeKey` and `ref:valueKey` identify which fields in the payload carry the timestamp and value (defaulting to `"Timestamp"` and `"Value"`).
+Each stream is discovered from `ref:MQTTReference` nodes. The reference declares
+the broker and topic; optional `ref:timeKey` and `ref:valueKey` fields identify
+payload keys, defaulting to `"Timestamp"` and `"Value"`. Optional
+`acq:valueKind` declares `"numeric"` or `"text"` for that stream.
 
-### Custom payload encoding
-
-Override `decode_payload()` to handle any wire format without touching subscription or batching logic. The stream identity is already known from `spec.ref_uri` — only the observation needs to be returned. The base implementation decodes JSON or Python-literal dicts and extracts fields by `spec.time_key` / `spec.value_key`.
-
-`scripts/custom_mqtt_driver.py` provides a MessagePack example:
+Override `decode_payload()` to support another wire format. The stream identity
+is already known from `MQTTStreamSpec`; the method returns only timestamp and
+value.
 
 ```python
+from datetime import datetime, timezone
+from typing import Any
+
 import msgpack
-from acquirium.BuiltinDrivers.mqtt_ingestion import MQTTIngestDriver, MQTTStreamSpec
+
+from acquirium.BuiltinDrivers.mqtt_ingestion import (
+    MQTTIngestDriver,
+    MQTTStreamSpec,
+    parse_mqtt_timestamp,
+)
+
 
 class MyCustomMQTTIngestDriver(MQTTIngestDriver):
     def decode_payload(self, payload: bytes, spec: MQTTStreamSpec) -> tuple[datetime, Any]:
@@ -224,35 +304,15 @@ class MyCustomMQTTIngestDriver(MQTTIngestDriver):
             raise ValueError(f"msgpack payload is not a map: {type(obj)}")
         raw_ts = obj.get(spec.time_key)
         raw_val = obj.get(spec.value_key)
-        ts = _parse_ts(raw_ts) if raw_ts is not None else datetime.now(timezone.utc)
+        ts = parse_mqtt_timestamp(raw_ts) if raw_ts is not None else datetime.now(timezone.utc)
         return ts, raw_val
 ```
 
-## Built-in WaterTAP driver
+## Built-In WaterTAP Driver
 
-`acquirium.BuiltinDrivers.watertap:WaterTAPDriver` runs a configurable WaterTAP build/solve callable and ingests values mapped in an RDF model. The graph file must contain both:
-
-- `ref:hasExternalReference` from each point to its reference URI
-- `acquirium:hasPyomoVar` on the same point with the Pyomo component path to read after solve
-
-Install the optional dependencies with:
-
-```bash
-uv run --extra watertap acquirium run acquirium.BuiltinDrivers.watertap:WaterTAPDriver --config acquirium.toml
-```
-
-The `watertap` extra only installs the Python packages declared in `pyproject.toml`. Some WaterTAP/Pyomo environments also require separate native extension setup for PyNumero and IDAES. That build step is not handled by `pyproject.toml` extras alone. If your model requires it, run the relevant Pyomo/IDAES extension install commands after enabling the extra.
-
-Typical setup commands are:
-
-```bash
-uv sync --extra watertap
-uv run pyomo download-extensions
-uv run --with setuptools pyomo build-extensions
-uv run idaes get-extensions
-```
-
-Example:
+`acquirium.BuiltinDrivers.watertap:WaterTAPDriver` is a polling driver. Each
+tick runs a configured WaterTAP build/solve callable and returns observations
+for RDF-mapped Pyomo variables.
 
 ```toml
 [[drivers]]
@@ -262,45 +322,44 @@ watertap_source_id = "watertap"
 watertap_graph_path = "deployments/WATERTAP2/models/test-model.ttl"
 watertap_build_spec = "deployments/WATERTAP2/scripts/example_watertap.py:build_and_solve"
 watertap_insert_graph = true
-watertap_build_kwargs = { flow_vol = 0.001, salt_mass_conc = 0.035, operating_pressure = 5000000.0, flow_mass_liq = 0.985, flow_mass_salt = 0.015 }
+watertap_build_kwargs = { flow_vol = 0.001, salt_mass_conc = 0.035 }
 ```
 
 Optional keys:
 
 - `watertap_insert_graph_replace` replaces the main graph when inserting it
-- `watertap_register_streams` defaults to `true` and registers each mapped point/ref pair
-- `watertap_result_attr` extracts the model from an attribute when the build function returns a wrapper object instead of the model directly or as the first tuple item
+- `watertap_register_streams` defaults to `true`
+- `watertap_result_attr` extracts the model from an attribute when the build
+  function returns a wrapper object
 
-## Built-in CSV driver
+## Built-In CSV/XLSX Drivers
 
-`acquirium.BuiltinDrivers.csv_ingest:CSVIngestDriver` watches a directory for
-CSV and TSV files and ingests newly appended rows.
+CSV and XLSX drivers are polling tabular drivers. They watch a directory,
+normalize file rows to canonical observations, register streams as columns or
+IDs are discovered, and return rows for insertion by the common ingest base.
 
 ```toml
 [[drivers]]
-spec         = "acquirium.BuiltinDrivers.csv_ingest:CSVIngestDriver"
-interval     = 5.0
-watch_dir    = "./data/incoming"
-format       = "auto"        # "auto" | "wide" | "narrow"
-time_col     = "time"
-id_col       = "id"          # narrow only
-value_col    = "value"       # narrow only
-date_format  = "%m/%d/%Y"    # optional
-skip_rows    = [1, 3, 1337]  # or { "subdir/data.csv" = [2, 5] }
-insert_batch_rows = 50000    # max samples per insert request
-encoding     = "utf8-lossy"  # "utf8", "utf8-lossy", "latin1", etc.
+spec = "acquirium.BuiltinDrivers.csv_ingest:CSVIngestDriver"
+interval = 5.0
+watch_dir = "./data/incoming"
+format = "auto"        # "auto" | "wide" | "narrow"
+time_col = "time"
+id_col = "id"          # narrow only
+value_col = "value"    # narrow only
+date_format = "%m/%d/%Y"
+skip_rows = [1, 3]     # or { "subdir/data.csv" = [2, 5] }
+encoding = "utf8-lossy"
 ```
 
-Supported file layouts:
-
-- Wide format:
+Wide format:
 
 ```csv
 time,temp,rh,flow
 2024-01-01T00:00Z,22.5,55.0,1.2
 ```
 
-- Narrow format:
+Narrow format:
 
 ```csv
 time,id,value
@@ -310,88 +369,89 @@ time,id,value
 
 Behavior:
 
-- `watch_dir` is scanned recursively for `*.csv` and `*.tsv`
-- row offsets are tracked in memory, so each loop only ingests rows added since
-  the previous tick
+- `watch_dir` is scanned recursively
+- row offsets are tracked in memory
 - files are not moved or deleted
 - each file gets its own datasource
-- the datasource id is derived from the file's absolute path
-- stream `ref_name`s are derived from column names (wide) or `id` values (narrow)
-- large inserts are chunked by the Acquirium driver client according to
-  `insert_batch_rows`
+- datasource ids are derived from absolute file paths
+- stream `ref_name`s come from wide column names or narrow `id` values
+- stream `value_kind`s are inferred per stream: all parseable numeric values
+  means `"numeric"`; any non-numeric value means `"text"`
 
-Naming:
-
-- datasource ids and stream names are sanitized before registration
-- the point URI for each stream is:
-
-```text
-urn:tabular:{source_id}:{ref_name}
-```
-
-Format detection:
-
-- `format = "wide"` forces wide parsing
-- `format = "narrow"` forces narrow parsing
-- `format = "auto"` uses narrow mode if both `id_col` and `value_col` are
-  present; otherwise it uses wide mode
-- `skip_rows` can be either:
-  - a list of 1-indexed file row numbers to skip for every file
-  - a dict from paths relative to `watch_dir` to 1-indexed file row numbers
-
-Timestamp parsing:
-
-- ISO timestamps are parsed automatically
-- if `date_format` is set, it is tried first
-- several common fallback date formats are also tried
-- unparseable rows are skipped with a warning
-
-Encoding:
-
-- `encoding` is passed to Polars `read_csv()`
-- useful values include `utf8`, `utf8-lossy`, and `latin1`
-
-Custom parsing:
-
-Subclass `CSVIngestDriver` and override `parse_file()` if the file layout does
-not match the built-in wide/narrow parser.
+Custom tabular parsing should return normalized observations from
+`read_frame()` when the built-in wide/narrow formats do not fit:
 
 ```python
 import polars as pl
+
 from acquirium.BuiltinDrivers.csv_ingest import CSVIngestDriver
 
+
 class MyCSVDriver(CSVIngestDriver):
-    def parse_file(self, path, row_offset=0):
-        df = pl.read_csv(
-            path,
-            skip_rows=3,
-            skip_rows_after_header=row_offset,
-        )
-        return self._parse_wide(df), len(df)
+    def read_frame(self, path, row_offset=0):
+        df = self._read_df(path, row_offset)
+        raw_ts = df.select(
+            (pl.col("Date") + pl.lit(" ") + pl.col("Time")).alias("ts")
+        )["ts"]
+        out = pl.DataFrame({
+            "ts": self.normalize_timestamps(
+                raw_ts, date_format="%m/%d/%Y %I:%M:%S %p"
+            ),
+            "ref_name": ["Temperature"] * len(df),
+            "value": df["Temperature"],
+        })
+        return out, len(df)
 ```
 
 ## Lifecycle
 
-```
-acquirium server          acquirium run
-      │                         │
-      │  (server starts)        │
-      │                         │
-      ├── wait for /health      │
-      │                         │
-      ▼                         ▼
-   setup()                   setup()
-      │                         │
-      ▼                         ▼
-   ┌─ check graph version ──────┤
-   │  (if changed)              │
-   │  on_graph_change()         │
-   ▼                            ▼
-   loop()  ◄─── interval ───► loop()
-   loop()                     loop()
-   loop()                     ...
-      │                         │
-   stop()  ◄── Ctrl-C/SIGTERM ► stop()
+```text
+setup()
+  |
+  v
+repeat until stopped:
+  |
+  +--> check graph version
+  |      |
+  |      +--> on_graph_change() if changed
+  |
+  +--> tick()
+  |
+  +--> sleep interval
+  |
+  v
+stop()
 ```
 
-A loop or `on_graph_change` error is logged and the driver continues running. A setup error aborts that driver but does not stop the server.
+For polling ingest drivers, `tick()` calls `collect()` and inserts the returned
+observations.
+
+Event-based drivers do not implement `collect()`. They connect to an external
+event source in `setup()` and push observations from callbacks, background
+client threads, or subscription handlers:
+
+```python
+class MyEventDriver(EventIngestDriver):
+    def setup(self):
+        self.source_id = "events"
+        self.aq.register_datasource(self.source_id)
+        self.client.on_message = self.on_message
+        self.client.start()
+
+    def on_message(self, ts, ref_name, value):
+        self.aq.register_stream(source_id=self.source_id, ref_name=ref_name, value_kind="text")
+        self.insert_observations(pl.DataFrame({
+            "ts": [ts],
+            "ref_name": [ref_name],
+            "value": [value],
+        }))
+```
+
+For these drivers, `tick()` is intentionally empty. The runner still calls it
+on the configured interval so graph-change checks and shutdown behavior stay
+uniform, but data flow is driven by the external event source rather than by
+the tick loop.
+
+The graph-change hook is runner-driven, not pushed by the server into the
+driver. Before each tick, the runner polls the graph version and calls
+`on_graph_change()` only if that version has advanced.

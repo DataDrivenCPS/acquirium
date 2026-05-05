@@ -139,7 +139,10 @@ class DirectAcquirium(Acquirium):
         return self._manager.graph_version()
 
     def insert_timeseries_polars(self, source_id: str, df: "pl.DataFrame") -> dict:
-        return self.client.insert_timeseries_polars(source_id, df)
+        # Keep in-process drivers on the same batching path as remote drivers.
+        # Large file drivers can emit hundreds of thousands of melted rows per
+        # tick; sending that as one direct bulk insert bypasses insert_batch_rows.
+        return Acquirium.insert_timeseries_polars(self, source_id, df)
 
     # Override insert_graph so drivers calling aq.insert_graph() also work
     def insert_graph(
