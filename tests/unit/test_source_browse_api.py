@@ -185,6 +185,10 @@ def test_source_browse_endpoints(monkeypatch):
                 "ts": [1777370700000],
                 "value": ["72.4"],
             }
+            assert "start" not in body
+            assert "end" not in body
+            assert "start_resolved" not in body
+            assert "end_resolved" not in body
 
             resp = client.get("/streams/data", params={"ref_uri": "urn:ref:temp", "start": "-5min", "limit": 1})
             assert resp.status_code == 200
