@@ -22,11 +22,15 @@ class DPRTrailerCSVDriver(CSVIngestDriver):
     def setup(self) -> None:
         super().setup()
         cfg = self.config.get("driver", {})
+        self.source_id = str(cfg.get("source_id", "dpr-trailer"))
         self._date_col = cfg.get("date_col", "Date")
         self._clock_col = cfg.get("clock_col", "Time")
         self._combined_time_col = "__acquirium_timestamp"
         if not self._skip_rows:
             self._skip_rows = [1]
+
+    def _source_id_for_path(self, path: Path) -> str:
+        return self.source_id
 
     def read_frame(self, path: Path, row_offset: int = 0) -> tuple[pl.DataFrame, int]:
         df = self._read_df(path, row_offset)
