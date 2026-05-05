@@ -102,9 +102,6 @@ class AcquiriumClient:
         }
         response = requests.post(url, json=data)
         _raise_for_status(response)
-        ingestion_result = self.ingest_external_references_from_graph()
-        if ingestion_result:
-            logger.info(f"acquirium client: external references ingested: {ingestion_result}")
 
         if wait_for_embedding:
             logger.info("acquirium client: server embedding index rebuild complete")
