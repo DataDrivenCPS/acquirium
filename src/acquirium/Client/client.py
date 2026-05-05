@@ -1,6 +1,7 @@
 from typing import Optional, Iterator, Any
 from datetime import datetime
 import requests
+from requests import HTTPError
 import os
 from pathlib import Path
 import polars as pl
@@ -19,6 +20,24 @@ from acquirium.Grafana.grafana_dashboard_creator import GrafanaDashboardCreator
 
 import logging
 logger = logging.getLogger(__name__)
+
+
+def _raise_for_status(response: requests.Response) -> None:
+    try:
+        response.raise_for_status()
+    except HTTPError as exc:
+        detail = response.text
+        try:
+            parsed = response.json()
+            detail = str(parsed.get("detail", parsed))
+        except ValueError:
+            pass
+        raise HTTPError(
+            f"{exc}; response body: {detail}",
+            response=response,
+            request=response.request,
+        ) from exc
+
 
 class AcquiriumClient:
     def __init__(self,
@@ -82,7 +101,7 @@ class AcquiriumClient:
             "wait_for_embedding": wait_for_embedding,
         }
         response = requests.post(url, json=data)
-        response.raise_for_status()
+        _raise_for_status(response)
         ingestion_result = self.ingest_external_references_from_graph()
         if ingestion_result:
             logger.info(f"acquirium client: external references ingested: {ingestion_result}")
@@ -173,7 +192,7 @@ class AcquiriumClient:
         from acquirium.internals.models import TimeseriesInfo
         url = f"{self.base_url}/timeseries_info"
         response = requests.post(url, json={"uris": uris})
-        response.raise_for_status()
+        _raise_for_status(response)
         data = response.json()
         return {uri: TimeseriesInfo.model_validate(info) for uri, info in data.items()}
 
@@ -194,7 +213,7 @@ class AcquiriumClient:
             "use_union": use_union,
         }
         response = requests.get(url, params=data)
-        response.raise_for_status()
+        _raise_for_status(response)
         return response.json()
 
     def resolve_text(
@@ -210,7 +229,7 @@ class AcquiriumClient:
         if kind:
             params["kind"] = kind
         response = requests.get(url, params=params)
-        response.raise_for_status()
+        _raise_for_status(response)
         return response.json().get("matches", [])
 
     def ingest_status(self) -> dict:
@@ -461,7 +480,7 @@ class AcquiriumClient:
             values=rows,
         )
         response = requests.post(url, json=[body.model_dump(mode="json")])
-        response.raise_for_status()
+        _raise_for_status(response)
         return response.json()
 
     def insert_timeseries_batch(
@@ -485,7 +504,7 @@ class AcquiriumClient:
             for rn, rows in streams.items()
         ]
         response = requests.post(url, json=[s.model_dump(mode="json") for s in payload])
-        response.raise_for_status()
+        _raise_for_status(response)
         return response.json()
 
     def query_logs(

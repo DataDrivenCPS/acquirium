@@ -72,6 +72,31 @@ def test_insert_timeseries_polars_ignores_value_kind_column():
     assert captured["streams"] == {"state": [(ts, "1"), (ts.replace(hour=1), "ON")]}
 
 
+def test_insert_timeseries_polars_converts_nan_for_json_transport():
+    aq = Acquirium.__new__(Acquirium)
+    captured: dict[str, object] = {}
+    aq.insert_timeseries_batch = lambda source_id, streams: captured.update(streams=streams) or {
+        "ok": True,
+        "rows_inserted": sum(len(rows) for rows in streams.values()),
+    }
+    ts = datetime(2026, 4, 28, tzinfo=timezone.utc)
+    df = pl.DataFrame(
+        {
+            "ts": [ts],
+            "ref_name": ["temp"],
+            "value": [float("nan")],
+        },
+        schema={
+            "ts": pl.Datetime("us", "UTC"),
+            "ref_name": pl.Utf8,
+            "value": pl.Float64,
+        },
+    )
+
+    assert aq.insert_timeseries_polars("source/file.csv", df) == {"ok": True, "rows_inserted": 1}
+    assert captured["streams"] == {"temp": [(ts, None)]}
+
+
 def test_direct_acquirium_polars_insert_uses_configured_batching():
     class _Manager:
         def __init__(self):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -210,8 +211,14 @@ class Acquirium:
         columns = ["ts", "ref_name", "value"]
         batch: dict[str, list] = {}
         for ts, ref_name, value in df.select(columns).iter_rows():
-            batch.setdefault(ref_name, []).append((ts, value))
+            batch.setdefault(ref_name, []).append((ts, self._json_safe_value(value)))
         return self.insert_timeseries_batch(source_id, batch)
+
+    @staticmethod
+    def _json_safe_value(value: Any) -> Any:
+        if isinstance(value, float) and not math.isfinite(value):
+            return None
+        return value
 
     def _iter_insert_batches(
         self,
