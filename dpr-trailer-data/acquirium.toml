@@ -44,6 +44,14 @@ use_ssl     = false
 
 # Seconds between successive loop() calls.
 interval = 10.0
+insert_batch_rows = 5000
+
+# DPR trailer CSV driver defaults for standalone `acquirium run`.
+watch_dir = "./raw"
+format = "wide"
+date_col = "Date"
+clock_col = "Time"
+skip_rows = [1]
 
 # ---------------------------------------------------------------------------
 # Default drivers — started automatically alongside `acquirium server`.
@@ -55,12 +63,12 @@ spec     = "acquirium.BuiltinDrivers.system_metrics:SystemMetricsDriver"
 interval = 30.0
 
 # Watch a directory for CSV and TSV files.
-[[drivers]]
-spec         = "./dpr_csv_driver.py:DPRTrailerCSVDriver"
-interval     = 600.0
-insert_batch_rows = 5000
-watch_dir    = "./raw"
-format       = "wide"        # "auto" | "wide" | "narrow"
-date_col     = "Date"
-clock_col    = "Time"
-skip_rows    = [1]
+# [[drivers]]
+# spec         = "./dpr_csv_driver.py:DPRTrailerCSVDriver"
+# interval     = 600.0
+# insert_batch_rows = 5000
+# watch_dir    = "./raw"
+# format       = "wide"        # "auto" | "wide" | "narrow"
+# date_col     = "Date"
+# clock_col    = "Time"
+# skip_rows    = [1]

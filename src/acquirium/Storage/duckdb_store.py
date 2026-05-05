@@ -235,9 +235,10 @@ class DuckDBStore:
 
     def resolve_storage_key(self, point_uri: str) -> str:
         """Return the storage ref URI for point_uri, or point_uri itself if unregistered."""
-        row = self._conn.execute(
-            f"SELECT ref_uri FROM {STREAMS_TABLE} WHERE point_uri = ?", [point_uri]
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                f"SELECT ref_uri FROM {STREAMS_TABLE} WHERE point_uri = ?", [point_uri]
+            ).fetchone()
         return point_uri if row is None else row[0]
 
     def resolve_storage_keys(self, point_uris: list[str]) -> dict[str, str]:
@@ -245,10 +246,11 @@ class DuckDBStore:
         if not point_uris:
             return {}
         placeholders = ", ".join("?" * len(point_uris))
-        d = self._conn.execute(
-            f"SELECT point_uri, ref_uri FROM {STREAMS_TABLE} WHERE point_uri IN ({placeholders})",
-            point_uris,
-        ).to_arrow_table().to_pydict()
+        with self._lock:
+            d = self._conn.execute(
+                f"SELECT point_uri, ref_uri FROM {STREAMS_TABLE} WHERE point_uri IN ({placeholders})",
+                point_uris,
+            ).to_arrow_table().to_pydict()
         registered = dict(zip(d["point_uri"], d["ref_uri"]))
         return {uri: registered.get(uri, uri) for uri in point_uris}
 
@@ -289,8 +291,9 @@ class DuckDBStore:
             ORDER BY ts {order_sql}{limit_sql}
         """
 
-        value_kind = self._stream_value_kind(ref_uri)
-        table = self._conn.execute(query, params).to_arrow_table()
+        with self._lock:
+            value_kind = self._stream_value_kind(ref_uri)
+            table = self._conn.execute(query, params).to_arrow_table()
         for batch in table.to_batches(max_chunksize=batch_size):
             numeric_col = batch.column("numeric_value")
             text_col = batch.column("text_value")
@@ -307,10 +310,11 @@ class DuckDBStore:
             yield pa.record_batch([ts_col, val_col, uri_col], names=["ts", "value", "uri"])
 
     def timeseries_info(self, ref_uri: str) -> TimeseriesInfo:
-        row = self._conn.execute(
-            f"SELECT COUNT(*), MIN(ts), MAX(ts) FROM {TIMESERIES_TABLE} WHERE ref_uri = ?",
-            [ref_uri],
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                f"SELECT COUNT(*), MIN(ts), MAX(ts) FROM {TIMESERIES_TABLE} WHERE ref_uri = ?",
+                [ref_uri],
+            ).fetchone()
         cnt, earliest_raw, latest_raw = (row[0] or 0, row[1], row[2]) if row else (0, None, None)
         return TimeseriesInfo(
             table=TIMESERIES_TABLE,
@@ -323,18 +327,19 @@ class DuckDBStore:
         if not ref_uris:
             return {}
         placeholders = ", ".join("?" * len(ref_uris))
-        d = self._conn.execute(
-            f"""
-            SELECT ref_uri,
-                   COUNT(*)   AS row_count,
-                   MIN(ts)    AS earliest,
-                   MAX(ts)    AS latest
-            FROM {TIMESERIES_TABLE}
-            WHERE ref_uri IN ({placeholders})
-            GROUP BY ref_uri
-            """,
-            ref_uris,
-        ).to_arrow_table().to_pydict()
+        with self._lock:
+            d = self._conn.execute(
+                f"""
+                SELECT ref_uri,
+                       COUNT(*)   AS row_count,
+                       MIN(ts)    AS earliest,
+                       MAX(ts)    AS latest
+                FROM {TIMESERIES_TABLE}
+                WHERE ref_uri IN ({placeholders})
+                GROUP BY ref_uri
+                """,
+                ref_uris,
+            ).to_arrow_table().to_pydict()
         result: dict[str, TimeseriesInfo] = {}
         for uri, cnt, earliest_raw, latest_raw in zip(
             d["ref_uri"], d["row_count"], d["earliest"], d["latest"]
