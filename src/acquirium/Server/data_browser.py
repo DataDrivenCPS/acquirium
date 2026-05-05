@@ -294,7 +294,7 @@ def _stream_data_response(
             "columns": ["ts", "value"],
             "data": _json_timeseries_columns(batches, ts_format=ts_format),
         }
-    return {
+    response = {
         "kind": "stream-data",
         "source_id": stream["source_id"],
         "ref_name": stream["ref_name"],
@@ -302,12 +302,15 @@ def _stream_data_response(
         "point_uri": stream["point_uri"],
         "limit": limit,
         "order": order,
-        "start": start,
-        "end": end,
-        "start_resolved": parsed_start,
-        "end_resolved": parsed_end,
         **payload,
     }
+    if start is not None:
+        response["start"] = start
+        response["start_resolved"] = parsed_start
+    if end is not None:
+        response["end"] = end
+        response["end_resolved"] = parsed_end
+    return response
 
 
 def _stream_detail_response(request: Request, stream: dict[str, Any]) -> dict[str, Any]:
