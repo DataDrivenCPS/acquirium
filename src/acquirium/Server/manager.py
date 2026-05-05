@@ -810,17 +810,14 @@ class Manager:
         ORDER BY ?ref_name ?point
         """
         rows = self.graph_store.sparql_query(q, use_union=True).get("rows", [])
-        lookup_uris = [
-            str(point_uri) if point_uri is not None else str(ref_uri)
-            for point_uri, ref_uri, *_ in rows
-        ]
-        infos = self.timeseries_info_batch(lookup_uris) if lookup_uris else {}
+        ref_uris = sorted({str(ref_uri) for _, ref_uri, *_ in rows})
+        infos = self.timeseries_info_batch(ref_uris) if ref_uris else {}
 
         streams: list[dict[str, Any]] = []
         for point_uri, ref_uri, ref_name, label, stored_at in rows:
             point_uri_s = str(point_uri) if point_uri is not None else None
             ref_uri_s = str(ref_uri)
-            info = infos.get(point_uri_s or ref_uri_s)
+            info = infos.get(ref_uri_s)
             streams.append(
                 {
                     "source_id": source_id,
