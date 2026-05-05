@@ -32,6 +32,19 @@ class TestClientInit:
         assert c.base_url == "http://myhost:9999"
 
 
+class TestInsertGraph:
+    @patch("acquirium.Client.client.requests")
+    def test_insert_graph_does_not_scan_external_references(self, mock_requests, client):
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_requests.post.return_value = mock_resp
+
+        client.insert_graph("@prefix ex: <urn:ex/> .", replace=False)
+
+        mock_requests.post.assert_called_once()
+        assert mock_requests.post.call_args.args[0] == "http://localhost:8000/insert_graph"
+
+
 # ── sparql_query ───────────────────────────────────────────
 
 
