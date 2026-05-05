@@ -9,11 +9,11 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 import sys
-import requests
 import time
 
 from acquirium import Acquirium
 from acquirium.Apps.base import Output, App
+from acquirium.Apps.output_emission import emit_outputs
 from acquirium.internals.models import AppContext
 
 # Configure logging for container output
@@ -30,12 +30,6 @@ def _parse_dt(value: str | None) -> datetime | None:
         return None
     value = value.replace("Z", "+00:00")
     return datetime.fromisoformat(value)
-
-
-def _normalize_url(url: str) -> str:
-    if "://" not in url:
-        return f"http://{url}"
-    return url
 
 
 def _filter_params_for_signature(sig: inspect.Signature, params: dict[str, Any]) -> tuple[dict[str, Any], list[str], bool]:
@@ -144,7 +138,7 @@ def _run_once(app: App, ctx: AppContext, aq: Acquirium, run_count: int = 0) -> i
         outputs = app.run(ctx)
         elapsed = time.time() - start_time
         logger.info("Run #%d completed in %.3fs, produced %d outputs", run_count, elapsed, len(outputs))
-        _persist_outputs(aq, ctx.app_id, outputs)
+        emit_outputs(ctx.app_id, outputs, insert_timeseries=aq.client.insert_timeseries, logger=logger)
         return run_count
     except Exception as e:
         elapsed = time.time() - start_time
@@ -256,50 +250,6 @@ def _load_app(module: str, class_name: str, params: dict[str, Any]) -> App:
     app = _instantiate_app_class(cls, params)
     logger.info("Loaded app '%s' v%s", getattr(app, 'name', class_name), getattr(app, 'version', '?'))
     return app
-
-
-def _persist_outputs(aq: Acquirium, app_id: str, outputs: list[Output]) -> None:
-    for i, out in enumerate(outputs):
-        if out.kind == "timeseries":
-            point_uri = out.payload["point_uri"]
-            rows = out.payload["rows"]
-            logger.debug("Output %d: persisting %d timeseries rows to %s", i + 1, len(rows), point_uri)
-            aq.client.insert_timeseries(source_id=app_id, ref_name=point_uri, rows=rows, point_uri=point_uri)
-            logger.info("Output %d: wrote %d timeseries rows to %s", i + 1, len(rows), point_uri)
-        elif out.kind == "event":
-            point_uri = out.payload["point_uri"]
-            ts = out.payload.get("ts") or datetime.now(timezone.utc)
-            severity = out.payload.get("severity", "INFO")
-            value = json.dumps(
-                {
-                    "severity": severity,
-                    "message": out.payload.get("message"),
-                    "data": out.payload.get("data") or {},
-                },
-                ensure_ascii=True,
-            )
-            aq.client.insert_timeseries(source_id=app_id, ref_name=point_uri, rows=[(ts, value)], point_uri=point_uri)
-            logger.info("Output %d: emitted %s event to %s", i + 1, severity, point_uri)
-        elif out.kind == "trigger":
-            url = out.payload.get("url")
-            if not url:
-                raise ValueError("trigger output requires url")
-            url = _normalize_url(url)
-            message = out.payload.get("message")
-            headers = out.payload.get("headers") or {}
-            timeout = out.payload.get("timeout") or 5
-            ts = out.payload.get("ts") or datetime.now(timezone.utc)
-            payload = {
-                "message": message,
-                "ts": ts.isoformat(),
-            }
-            point_uri = out.payload.get("point_uri")
-            if point_uri:
-                payload["point_uri"] = point_uri
-            logger.debug("Output %d: triggering webhook %s", i + 1, url)
-            response = requests.post(url, json=payload, headers=headers, timeout=timeout)
-            response.raise_for_status()
-            logger.info("Output %d: triggered webhook %s (status %d)", i + 1, url, response.status_code)
 
 
 def main() -> None:

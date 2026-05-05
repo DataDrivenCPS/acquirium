@@ -4,12 +4,19 @@ These fixtures require running services (TimescaleDB, Mosquitto, acquirium serve
 Start services with `make testing-up` before running integration tests.
 """
 
+import os
+
 import pytest
 
 from acquirium.Storage.timescale_store import TimescaleStore
 
 
-PG_DSN = "postgresql://acquirium:acquirium@localhost:5432/acquirium_test"
+PG_DSN = os.getenv(
+    "ACQUIRIUM_TEST_PG_DSN",
+    "postgresql://acquirium:acquirium@localhost:5432/acquirium_test",
+)
+ACQUIRIUM_TEST_SERVER_HOST = os.getenv("ACQUIRIUM_TEST_SERVER_HOST", "localhost")
+ACQUIRIUM_TEST_SERVER_PORT = int(os.getenv("ACQUIRIUM_TEST_SERVER_PORT", "8000"))
 TEST_POINT_URI = "urn:test:integration_point"
 TEST_REF_URI = "urn:test:integration_ref"
 
@@ -21,7 +28,16 @@ def pg_dsn():
 
 @pytest.fixture(scope="session")
 def acquirium_server_url():
-    return "http://localhost:8000"
+    return f"http://{ACQUIRIUM_TEST_SERVER_HOST}:{ACQUIRIUM_TEST_SERVER_PORT}"
+
+
+@pytest.fixture(scope="session")
+def acquirium_client_kwargs():
+    return {
+        "server_url": ACQUIRIUM_TEST_SERVER_HOST,
+        "server_port": ACQUIRIUM_TEST_SERVER_PORT,
+        "use_ssl": False,
+    }
 
 
 @pytest.fixture(scope="module")

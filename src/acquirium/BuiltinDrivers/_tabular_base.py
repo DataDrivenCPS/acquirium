@@ -14,7 +14,7 @@ import polars as pl
 from rdflib import Literal
 from rdflib.namespace import RDF
 
-from acquirium.Driver import Driver
+from acquirium.Driver import PollingIngestDriver
 from acquirium.internals.internals_namespaces import (
     DATA_SOURCE,
     FILE_LOCATION,
@@ -22,6 +22,7 @@ from acquirium.internals.internals_namespaces import (
     TIME_COLUMN_ID,
     VALUE_COLUMN_ID,
 )
+from acquirium.Storage.values import infer_value_kind, normalize_value_kind
 
 logger = logging.getLogger("acquirium.tabular_ingest")
 
@@ -39,7 +40,7 @@ def _safe_name(s: str) -> str:
 
 
 
-class _TabularIngestBase(Driver):
+class _TabularIngestBase(PollingIngestDriver):
     """Base class for drivers that watch a directory for tabular data files.
 
     Subclasses must set ``_glob_patterns`` and implement ``read_frame()``.
@@ -91,12 +92,53 @@ class _TabularIngestBase(Driver):
 
     # ------------------------------------------------------------------ loop
 
-    def loop(self) -> None:
-        paths = sorted({
-            p
-            for pattern in self._glob_patterns
-            for p in self._watch_dir.rglob(pattern)
-        })
+    def tick(self) -> None:
+        """Parse pending file rows and advance offsets only after insertion.
+
+        Tabular file drivers have a small checkpointing concern that the generic
+        polling loop cannot see: a file offset is only durable once the
+        corresponding rows have been accepted by Acquirium. Keep the parse,
+        insert, stream metadata registration, and offset update ordered here so
+        failed inserts are retried on the next tick.
+        """
+        paths = self._pending_paths()
+        for path in paths:
+            key = str(path)
+            offset = self._rows_seen.get(key, 0)
+            source_id = _safe_name(key)
+            rel = path.relative_to(self._watch_dir)
+
+            try:
+                df, rows_read = self.parse_polars(path, row_offset=offset)
+            except Exception:
+                logger.exception("tabular_ingest: failed to parse %s", path.name)
+                continue
+
+            if df.is_empty():
+                continue
+
+            df, value_kinds = self._with_value_kinds(df)
+            stream_names = df["ref_name"].unique().to_list()
+            if source_id not in self._registered:
+                self.aq.register_datasource(source_id)
+            self._ensure_streams(dict.fromkeys(stream_names), source_id, path, value_kinds)
+
+            result = self.aq.insert_timeseries_polars(source_id, df)
+            rows_inserted = (
+                int(result.get("rows_inserted", len(df)))
+                if isinstance(result, dict)
+                else int(result)
+            )
+
+            self._rows_seen[key] = offset + rows_read
+            logger.info(
+                "tabular_ingest: %s — inserted %d row(s) across %d stream(s)",
+                rel, rows_inserted, len(stream_names),
+            )
+
+    def collect(self) -> pl.DataFrame:
+        frames: list[pl.DataFrame] = []
+        paths = self._pending_paths()
         for path in paths:
             key = str(path)
             offset = self._rows_seen.get(key, 0)
@@ -115,27 +157,75 @@ class _TabularIngestBase(Driver):
             try:
                 if source_id not in self._registered:
                     self.aq.register_datasource(source_id)
+                df, value_kinds = self._with_value_kinds(df)
                 stream_names = df["ref_name"].unique().to_list()
-                self._ensure_streams(dict.fromkeys(stream_names), source_id, path)
-                result = self.aq.insert_timeseries_polars(source_id, df)
-                total = int(result.get("rows_inserted", len(df))) if isinstance(result, dict) else len(df)
+                self._ensure_streams(dict.fromkeys(stream_names), source_id, path, value_kinds)
                 logger.info(
-                    "tabular_ingest: %s — inserted %d row(s) across %d stream(s)",
-                    rel, total, len(stream_names),
+                    "tabular_ingest: %s — collected %d row(s) across %d stream(s)",
+                    rel, len(df), len(stream_names),
                 )
                 self._rows_seen[key] = offset + rows_read
+                frames.append(df.with_columns(pl.lit(source_id).alias("source_id")))
             except Exception:
-                logger.exception("tabular_ingest: failed to insert data from %s", path.name)
+                logger.exception("tabular_ingest: failed to prepare data from %s", path.name)
+
+        if not frames:
+            return pl.DataFrame({"source_id": [], "ts": [], "ref_name": [], "value": []})
+        return pl.concat(frames, how="diagonal_relaxed")
+
+    def _pending_paths(self) -> list[Path]:
+        return sorted({
+            p
+            for pattern in self._glob_patterns
+            for p in self._watch_dir.rglob(pattern)
+        })
+
+    def _with_value_kinds(self, df: pl.DataFrame) -> tuple[pl.DataFrame, dict[str, str]]:
+        if "value_kind" in df.columns:
+            kinds: dict[str, str] = {}
+            for ref_name in df["ref_name"].unique().to_list():
+                raw_kinds = (
+                    df.filter(pl.col("ref_name") == ref_name)
+                    .get_column("value_kind")
+                    .drop_nulls()
+                    .to_list()
+                )
+                normalized = {normalize_value_kind(value_kind) for value_kind in raw_kinds}
+                if len(normalized) > 1:
+                    raise ValueError(
+                        f"stream {ref_name!r} has mixed value_kind values: {sorted(normalized)!r}"
+                    )
+                kinds[ref_name] = next(iter(normalized), "numeric")
+        else:
+            kinds = self._infer_value_kinds(df)
+
+        return df.drop("value_kind") if "value_kind" in df.columns else df, kinds
+
+    def _infer_value_kinds(self, df: pl.DataFrame) -> dict[str, str]:
+        kinds: dict[str, str] = {}
+        for ref_name in df["ref_name"].unique().to_list():
+            values = (
+                df.filter(pl.col("ref_name") == ref_name)
+                .get_column("value")
+                .to_list()
+            )
+            kinds[ref_name] = normalize_value_kind(
+                infer_value_kind(
+                    values,
+                    unknown_default="numeric",
+                )
+            )
+        return kinds
 
     # ---------------------------------------------------------- public hook
 
     def read_frame(self, path: Path, row_offset: int = 0) -> tuple["pl.DataFrame", int]:
         """Read new file rows into a tabular DataFrame.
 
-        Subclasses can normalize custom layouts here, for example by combining
-        split date/time columns into the configured time column. The returned
-        frame should still be wide or narrow according to the standard tabular
-        ingest config.
+        Subclasses can normalize custom layouts here. The returned frame can be
+        either wide/narrow according to the standard tabular ingest config, or
+        an already-normalized timeseries frame with ``ts``, ``ref_name``, and
+        ``value`` columns.
         """
         raise NotImplementedError
 
@@ -146,6 +236,9 @@ class _TabularIngestBase(Driver):
         df, rows_read = self.read_frame(path, row_offset)
         if rows_read == 0:
             return {}, 0
+
+        if self._is_timeseries_frame(df):
+            return self._timeseries_frame_to_batch(df), rows_read
 
         fmt = self._detect_format(df)
         batch = self._parse_narrow(df) if fmt == "narrow" else self._parse_wide(df)
@@ -161,6 +254,8 @@ class _TabularIngestBase(Driver):
         df, rows_read = self.read_frame(path, row_offset)
         if rows_read == 0:
             return pl.DataFrame({"ts": [], "ref_name": [], "value": []}), 0
+        if self._is_timeseries_frame(df):
+            return self._normalize_timeseries_frame(df), rows_read
         return self._to_timeseries_frame(df), rows_read
 
     # ---------------------------------------------------------- format helpers
@@ -227,6 +322,9 @@ class _TabularIngestBase(Driver):
         return batch
 
     def _to_timeseries_frame(self, df: pl.DataFrame) -> pl.DataFrame:
+        if self._is_timeseries_frame(df):
+            return self._normalize_timeseries_frame(df)
+
         fmt = self._detect_format(df)
         if fmt == "narrow":
             out = self._narrow_to_timeseries_frame(df)
@@ -242,11 +340,15 @@ class _TabularIngestBase(Driver):
 
         df = self._normalize_time_col(df.drop_nulls(subset=[self._time_col]))
         value_cols = [c for c in df.columns if c != self._time_col]
-        return (
-            df.with_columns([pl.col(c).cast(pl.Utf8) for c in value_cols])
-            .unpivot(index=[self._time_col], variable_name="ref_name", value_name="value")
-            .drop_nulls(subset=["value"])
-            .rename({self._time_col: "ts"})
+        rows: list[tuple[Any, str, Any]] = []
+        for col in value_cols:
+            for ts, value in df.select([self._time_col, col]).iter_rows():
+                if value is not None:
+                    rows.append((ts, col, value))
+        return pl.DataFrame(
+            rows,
+            schema={"ts": df[self._time_col].dtype, "ref_name": pl.Utf8, "value": pl.Object},
+            orient="row",
         )
 
     def _narrow_to_timeseries_frame(self, df: pl.DataFrame) -> pl.DataFrame:
@@ -255,11 +357,38 @@ class _TabularIngestBase(Driver):
                 raise ValueError(f"column '{col}' not found in {df.columns}")
 
         df = self._normalize_time_col(df.drop_nulls(subset=[self._time_col, self._id_col]))
-        return df.select([
-            pl.col(self._time_col).alias("ts"),
-            pl.col(self._id_col).cast(pl.Utf8).alias("ref_name"),
-            pl.col(self._value_col).cast(pl.Utf8).alias("value"),
-        ])
+        rows = [
+            (ts, str(stream_id), value)
+            for ts, stream_id, value in df.select([self._time_col, self._id_col, self._value_col]).iter_rows()
+            if stream_id is not None
+        ]
+        return pl.DataFrame(
+            rows,
+            schema={"ts": df[self._time_col].dtype, "ref_name": pl.Utf8, "value": pl.Object},
+            orient="row",
+        )
+
+    def _is_timeseries_frame(self, df: pl.DataFrame) -> bool:
+        return {"ts", "ref_name", "value"}.issubset(df.columns)
+
+    def _normalize_timeseries_frame(self, df: pl.DataFrame) -> pl.DataFrame:
+        df = df.select([
+            pl.col("ts"),
+            pl.col("ref_name").cast(pl.Utf8),
+            pl.col("value"),
+        ]).drop_nulls(subset=["ts", "ref_name"])
+        df = df.with_columns(self.normalize_timestamps(df["ts"]).alias("ts"))
+        df = df.drop_nulls(subset=["ts"])
+        return df.with_columns(
+            pl.col("ref_name").map_elements(_safe_name, return_dtype=pl.Utf8)
+        )
+
+    def _timeseries_frame_to_batch(self, df: pl.DataFrame) -> dict[str, list[tuple[datetime, Any]]]:
+        df = self._normalize_timeseries_frame(df)
+        batch: dict[str, list[tuple[datetime, Any]]] = {}
+        for ts, ref_name, val in df.iter_rows():
+            batch.setdefault(ref_name, []).append((ts, val))
+        return batch
 
     # ---------------------------------------------------------- time normalisation
 
@@ -273,21 +402,11 @@ class _TabularIngestBase(Driver):
     )
 
     def _normalize_time_col(self, df: pl.DataFrame) -> pl.DataFrame:
-        col = df[self._time_col]
-        dtype = col.dtype
-
-        if dtype == pl.Date:
-            col = col.cast(pl.Datetime("us")).dt.replace_time_zone("UTC")
-        elif dtype in (pl.String, pl.Utf8):
-            col = self._parse_string_timestamps(col)
-        else:
-            tz = getattr(dtype, "time_zone", None)
-            if tz is None:
-                col = col.dt.replace_time_zone("UTC")
-            elif tz != "UTC":
-                col = col.dt.convert_time_zone("UTC")
-
-        df = df.with_columns(col.alias(self._time_col))
+        df = df.with_columns(
+            self.normalize_timestamps(
+                df[self._time_col], date_format=self._date_fmt
+            ).alias(self._time_col)
+        )
 
         null_count = df[self._time_col].null_count()
         if null_count:
@@ -299,14 +418,31 @@ class _TabularIngestBase(Driver):
             df = df.drop_nulls(subset=[self._time_col])
         return df
 
-    def _parse_string_timestamps(self, col: pl.Series) -> pl.Series:
+    def normalize_timestamps(self, col: pl.Series, date_format: str | None = None) -> pl.Series:
+        dtype = col.dtype
+
+        if dtype == pl.Date:
+            return col.cast(pl.Datetime("us")).dt.replace_time_zone("UTC")
+        if dtype in (pl.String, pl.Utf8):
+            return self._parse_string_timestamps(col, date_format=date_format)
+
+        tz = getattr(dtype, "time_zone", None)
+        if tz is None:
+            return col.dt.replace_time_zone("UTC")
+        if tz != "UTC":
+            return col.dt.convert_time_zone("UTC")
+        return col
+
+    def _parse_string_timestamps(
+        self, col: pl.Series, date_format: str | None = None
+    ) -> pl.Series:
         non_null = col.drop_nulls().len()
         if non_null == 0:
             return col.cast(pl.Datetime("us")).dt.replace_time_zone("UTC")
 
         # Configured format takes priority; None triggers Polars auto-detect (ISO 8601 / RFC 3339)
         candidates: list[str | None] = (
-            ([self._date_fmt] if self._date_fmt else []) + [None] + list(self._FALLBACK_DATE_FORMATS)
+            ([date_format] if date_format else []) + [None] + list(self._FALLBACK_DATE_FORMATS)
         )
 
         best: pl.Series | None = None
@@ -350,6 +486,7 @@ class _TabularIngestBase(Driver):
         batch: dict[str, list[tuple[datetime, Any]]],
         source_id: str,
         path: Path,
+        value_kinds: dict[str, str] | None = None,
     ) -> None:
         registered = self._registered.setdefault(source_id, set())
         new_ref_names = [ref_name for ref_name in batch if ref_name not in registered]
@@ -362,6 +499,7 @@ class _TabularIngestBase(Driver):
                     {
                         "source_id": source_id,
                         "ref_name": ref_name,
+                        "value_kind": normalize_value_kind((value_kinds or {}).get(ref_name)),
                         "data_source": "CSV",
                         "properties": self._stream_registration_properties(path, ref_name),
                     }
@@ -370,9 +508,9 @@ class _TabularIngestBase(Driver):
             )
             registered.update(new_ref_names)
         except Exception:
-            logger.warning(
-                "tabular_ingest: could not register %d stream(s); data will still be inserted",
+            logger.error(
+                "tabular_ingest: could not register %d stream(s)",
                 len(new_ref_names),
                 exc_info=True,
             )
-            return
+            raise

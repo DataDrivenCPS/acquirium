@@ -19,6 +19,7 @@ from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_DB_URI,
     ACQUIRIUM_REF_NAME,
     ACQUIRIUM_SOURCE_ID,
+    ACQUIRIUM_VALUE_KIND,
     FILE_LOCATION,
     FILE_REFERENCE,
     HAS_EXTERNAL_REFERENCE,
@@ -180,6 +181,46 @@ def test_parse_wide_non_iso_date_with_format(tmp_path):
     assert batch["temp"][0][0] == datetime(2024, 1, 15, tzinfo=timezone.utc)
 
 
+def test_read_frame_can_return_normalized_timeseries_frame(tmp_path):
+    p = tmp_path / "combined_time.csv"
+    p.write_text(
+        "Date,Time,temp\n"
+        "01/15/2024,01:02:03 PM,22.5\n"
+        "01/16/2024,02:03:04 AM,23.0\n"
+    )
+
+    class CombinedTimeDriver(CSVIngestDriver):
+        def read_frame(self, path: Path, row_offset: int = 0) -> tuple[pl.DataFrame, int]:
+            df = self._read_df(path, row_offset)
+            raw_ts = df.select(
+                (pl.col("Date") + pl.lit(" ") + pl.col("Time")).alias("ts")
+            )["ts"]
+            out = pl.DataFrame({
+                "ts": self.normalize_timestamps(
+                    raw_ts, date_format="%m/%d/%Y %I:%M:%S %p"
+                ),
+                "ref_name": "temp",
+                "value": df["temp"],
+            })
+            return out, len(df)
+
+    driver = CombinedTimeDriver(
+        MagicMock(insert_timeseries_polars=MagicMock(return_value={"ok": True})),
+        {"driver": {"watch_dir": str(tmp_path)}},
+    )
+    driver.setup()
+
+    normalized, rows = driver.parse_polars(p)
+    assert rows == 2
+    assert normalized.columns == ["ts", "ref_name", "value"]
+    assert normalized["ts"].to_list()[0] == datetime(2024, 1, 15, 13, 2, 3, tzinfo=timezone.utc)
+    assert normalized["value"].to_list() == [22.5, 23.0]
+
+    batch, rows = driver.parse_file(p)
+    assert rows == 2
+    assert batch["temp"][0] == (datetime(2024, 1, 15, 13, 2, 3, tzinfo=timezone.utc), 22.5)
+
+
 def test_parse_wide_skips_null_values(tmp_path):
     p = tmp_path / "nulls.csv"
     p.write_text("time,temp\n2024-01-01T00:00:00Z,\n2024-01-02T00:00:00Z,23.0\n")
@@ -254,7 +295,7 @@ def test_loop_uses_full_path_as_source_id(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     driver.setup()
     path = _wide_csv(tmp_path)
-    driver.loop()
+    driver.tick()
     source_id, df = driver.aq.insert_timeseries_polars.call_args[0]
     assert source_id == _safe_name(str(path))
     assert set(df["ref_name"].unique().to_list()) == {"temp", "rh"}
@@ -264,7 +305,7 @@ def test_loop_registers_csv_external_reference_metadata(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     driver.setup()
     path = _wide_csv(tmp_path)
-    driver.loop()
+    driver.tick()
     graph_text = driver.aq.client.insert_graph.call_args[0][0]
     g = Graph().parse(data=graph_text, format="turtle")
     source_id = _safe_name(str(path))
@@ -272,10 +313,42 @@ def test_loop_registers_csv_external_reference_metadata(tmp_path):
     assert (ref_uri, RDF.type, FILE_REFERENCE) in g
     assert (ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)) in g
     assert (ref_uri, ACQUIRIUM_REF_NAME, Literal("temp")) in g
+    assert (ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
     assert (ref_uri, STORED_AT, ACQUIRIUM_DB_URI) in g
     assert (ref_uri, FILE_LOCATION, Literal(path.relative_to(tmp_path).as_posix())) in g
     assert (ref_uri, TIME_COLUMN_ID, Literal("time")) in g
     assert (ref_uri, VALUE_COLUMN_ID, Literal("temp")) in g
+
+
+def test_loop_registers_streams_before_insert(tmp_path):
+    driver = make_driver(tmp_path=tmp_path)
+    driver.setup()
+    _wide_csv(tmp_path)
+
+    def assert_registered_first(source_id, df):
+        assert driver.aq.client.insert_graph.called
+        assert "value_kind" not in df.columns
+        return {"ok": True, "rows_inserted": len(df)}
+
+    driver.aq.insert_timeseries_polars.side_effect = assert_registered_first
+    driver.tick()
+
+
+def test_loop_marks_non_numeric_csv_streams_as_text(tmp_path):
+    p = tmp_path / "mixed.csv"
+    p.write_text("time,temp,state\n2024-01-01T00:00:00Z,22.5,ON\n")
+    driver = make_driver(tmp_path=tmp_path)
+    driver.setup()
+    driver.tick()
+
+    _, df = driver.aq.insert_timeseries_polars.call_args[0]
+    assert "value_kind" not in df.columns
+
+    graph_text = driver.aq.client.insert_graph.call_args[0][0]
+    g = Graph().parse(data=graph_text, format="turtle")
+    source_id = _safe_name(str(p))
+    assert (compute_ref_uri(source_id, "temp"), ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
+    assert (compute_ref_uri(source_id, "state"), ACQUIRIUM_VALUE_KIND, Literal("text")) in g
 
 
 def test_loop_registers_no_synthetic_point_uri(tmp_path):
@@ -284,7 +357,7 @@ def test_loop_registers_no_synthetic_point_uri(tmp_path):
     p.write_text("time,UV-Ultraviolet Intensity (mW/cm^2)\n2024-01-01T00:00:00Z,1.0\n")
     driver = make_driver(tmp_path=tmp_path)
     driver.setup()
-    driver.loop()
+    driver.tick()
 
     graph_text = driver.aq.client.insert_graph.call_args[0][0]
     g = Graph().parse(data=graph_text, format="turtle")
@@ -293,6 +366,7 @@ def test_loop_registers_no_synthetic_point_uri(tmp_path):
     ref_uri = compute_ref_uri(source_id, ref_name)
     assert (ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)) in g
     assert (ref_uri, ACQUIRIUM_REF_NAME, Literal(ref_name)) in g
+    assert (ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
     # No point_uri → ref_uri link should exist
     assert list(g.subjects(HAS_EXTERNAL_REFERENCE, ref_uri)) == []
 
@@ -304,7 +378,7 @@ def test_loop_full_path_source_id_includes_subdirectory(tmp_path):
     path.write_text("time,flow\n2024-01-01T00:00:00Z,1.0\n")
     driver = make_driver(tmp_path=tmp_path)
     driver.setup()
-    driver.loop()
+    driver.tick()
     source_id, df = driver.aq.insert_timeseries_polars.call_args[0]
     assert source_id == _safe_name(str(path))
     assert "flow" in df["ref_name"].to_list()
@@ -336,17 +410,17 @@ def test_loop_advances_cursor_on_each_tick(tmp_path):
 
     path = tmp_path / "growing.csv"
     path.write_text("time,temp\n2024-01-01T00:00:00Z,1.0\n")
-    driver.loop()
+    driver.tick()
     assert driver.aq.insert_timeseries_polars.call_count == 1
     assert driver._rows_seen[str(path)] == 1
 
     with path.open("a") as f:
         f.write("2024-01-02T00:00:00Z,2.0\n")
-    driver.loop()
+    driver.tick()
     assert driver.aq.insert_timeseries_polars.call_count == 2
     assert driver._rows_seen[str(path)] == 2
 
-    driver.loop()
+    driver.tick()
     assert driver.aq.insert_timeseries_polars.call_count == 2
 
 
@@ -354,20 +428,35 @@ def test_file_stays_in_place_after_insert(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     driver.setup()
     path = _wide_csv(tmp_path)
-    driver.loop()
+    driver.tick()
     assert path.exists()
 
 
 # ------------------------------------------------------------------ error recovery
 
 
-def test_loop_does_not_advance_cursor_on_insert_failure(tmp_path):
+def test_tick_propagates_insert_failure(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     driver.setup()
     driver.aq.insert_timeseries_polars.side_effect = RuntimeError("server down")
     path = _wide_csv(tmp_path)
-    driver.loop()
-    assert driver._rows_seen.get(str(path), 0) == 0
+    with pytest.raises(RuntimeError, match="server down"):
+        driver.tick()
+    assert str(path) not in driver._rows_seen
+    driver.aq.client.insert_graph.assert_called_once()
+
+
+def test_tick_propagates_registration_failure(tmp_path):
+    driver = make_driver(tmp_path=tmp_path)
+    driver.setup()
+    driver.aq.register_streams.side_effect = RuntimeError("graph down")
+    path = _wide_csv(tmp_path)
+
+    with pytest.raises(RuntimeError, match="graph down"):
+        driver.tick()
+
+    assert str(path) not in driver._rows_seen
+    driver.aq.insert_timeseries_polars.assert_not_called()
 
 
 def test_loop_skips_bad_file_and_continues(tmp_path):
@@ -375,5 +464,5 @@ def test_loop_skips_bad_file_and_continues(tmp_path):
     driver.setup()
     (tmp_path / "bad.csv").write_text("not,valid\ncsvgarbagehere\n")
     (tmp_path / "good.csv").write_text("time,temp\n2024-01-01T00:00:00Z,22.5\n")
-    driver.loop()
+    driver.tick()
     driver.aq.insert_timeseries_polars.assert_called_once()

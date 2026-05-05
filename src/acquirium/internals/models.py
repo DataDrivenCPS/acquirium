@@ -25,6 +25,10 @@ def compute_ref_uri(source_id: str, ref_name: str) -> URIRef:
     ref_uri_str = str(uuid.uuid5(_REF_URI_NAMESPACE, f"{source_id}:{ref_name}"))
     return ACQUIRIUM_NS[ref_uri_str]
 
+
+compute_handle = compute_ref_uri
+
+
 if TYPE_CHECKING:
     from acquirium.Client.query import Query
 
@@ -40,6 +44,7 @@ class Point(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     uri: str
+    handle: str | None = None
     ref_uri: str | URIRef | list[str] | list[URIRef] | None = None
     types: list[str] = Field(default_factory=list)
     unit: str | None = None
@@ -153,6 +158,7 @@ class AppContext:
 class AppOutputSpec(BaseModel):
     kind: Literal["timeseries", "event", "trigger"]
     point_uri: str
+    ref_uri: str | None = None
     quantity_kind: str | None = None
     unit: str | None = None
     data_source: str | None = None

@@ -72,6 +72,7 @@ STORED_AT = BRICK_REF.storedAt
 # references (storedAt is a literal DSN).
 ACQUIRIUM_SOURCE_ID  = ACQUIRIUM_NS.sourceId   # the registered datasource name
 ACQUIRIUM_REF_NAME   = ACQUIRIUM_NS.refName    # the source-local stream identifier
+ACQUIRIUM_VALUE_KIND = ACQUIRIUM_NS.valueKind  # "numeric" or "text"
 
 # Class for registered datasource nodes
 ACQUIRIUM_DATASOURCE = ACQUIRIUM_NS.DataSourceRegistry
@@ -98,12 +99,16 @@ FILE_LOCATION = BRICK_REF.fileLocation
 TIME_COLUMN_ID = BRICK_REF.timeColumnID
 VALUE_COLUMN_ID = BRICK_REF.valueColumnID
 
+PARQUET_REF = ACQUIRIUM_NS.ParquetReference
+CSV_REF = ACQUIRIUM_NS.CSVReference
+
 # MQTT Reference predicates. timeKey/valueKey are Acquirium-specific (they
 # describe how to decode a JSON payload) and live under ACQUIRIUM_NS.
 MQTT_REFERENCE = BRICK_REF.MQTTReference
 HAS_MQTT_REFERENCE = BRICK_REF.hasMQTTReference
 MQTT_BROKER = BRICK_REF.MQTTBroker  # accepts "host", "host:port", or "mqtt(s)://..."
 MQTT_TOPIC = BRICK_REF.MQTTTopic
+MQTT_PORT = ACQUIRIUM_NS.mqttPort
 TIME_KEY = ACQUIRIUM_NS.timeKey
 VALUE_KEY = ACQUIRIUM_NS.valueKey
 HAS_PYOMO_VAR = ACQUIRIUM_NS.hasPyomoVar
@@ -117,6 +122,19 @@ TIMESERIES_QUERY        = ACQUIRIUM_NS.timeseriesQuery
 TIMESERIES_TIME_COLUMN  = ACQUIRIUM_NS.timeseriesTimeColumn
 TIMESERIES_VALUE_COLUMN = ACQUIRIUM_NS.timeseriesValueColumn
 TIMESERIES_POINT_FILTER = ACQUIRIUM_NS.timeseriesPointFilter
+
+PG_REFERENCE = ACQUIRIUM_NS.PGReference
+PG_DSN = ACQUIRIUM_NS.PG_DSN
+PG_HOST = ACQUIRIUM_NS.PG_HOST
+PG_PORT = ACQUIRIUM_NS.PG_PORT
+PG_DB = ACQUIRIUM_NS.PG_DB
+PG_USER = ACQUIRIUM_NS.PG_USER
+PG_PASS = ACQUIRIUM_NS.PG_PASS
+PG_TABLE = ACQUIRIUM_NS.PG_Table
+PG_QUERY = ACQUIRIUM_NS.PG_Query
+PG_TIME_COL = ACQUIRIUM_NS.PG_TimeColumn
+PG_VALUE_COL = ACQUIRIUM_NS.PG_ValueColumn
+PG_POINT_FILTER = ACQUIRIUM_NS.PG_PointFilter
 
 OWL_CLASS = URIRef("http://www.w3.org/2002/07/owl#Class")
 OWL_OBJ_PROP = URIRef("http://www.w3.org/2002/07/owl#ObjectProperty")

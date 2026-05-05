@@ -35,12 +35,12 @@ class TestUpsertRows:
 
     def test_duplicate_timestamp_updates(self, ts_store, clean_point):
         ts = datetime(2025, 6, 1, 0, 0, tzinfo=timezone.utc)
-        ts_store.upsert_rows(clean_point, [(ts, 100.0)])
-        ts_store.upsert_rows(clean_point, [(ts, 999.0)])
+        ts_store.upsert_rows(clean_point, [(ts, 100.0)], value_kind="numeric")
+        ts_store.upsert_rows(clean_point, [(ts, 999.0)], value_kind="numeric")
 
         batches = list(ts_store.timeseries(clean_point))
         assert len(batches) == 1
-        assert batches[0].column("value")[0].as_py() == "999.0"
+        assert batches[0].column("value")[0].as_py() == 999.0
 
     def test_none_value(self, ts_store, clean_point):
         ts = datetime(2025, 6, 1, 0, 0, tzinfo=timezone.utc)
@@ -62,7 +62,7 @@ class TestUpsertRows:
         ts_store.upsert_rows(clean_point, [
             (naive_ts, "naive"),
             (aware_ts, "aware"),
-        ])
+        ], value_kind="text")
         info = ts_store.timeseries_info(clean_point)
         assert info.row_count == 2
 
@@ -108,6 +108,22 @@ class TestBulkInsertPolars:
         result = ts_store.bulk_insert_polars(df)
         assert result >= 0 or result == -1  # empty df may return 0 or -1
 
+    def test_duplicate_keys_keep_last_value(self, ts_store, clean_point):
+        ts = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        df = pl.DataFrame({
+            "ref_uri": [clean_point, clean_point],
+            "ts": [ts, ts],
+            "value": ["10.0", "20.0"],
+            "value_kind": ["numeric", "numeric"],
+        })
+
+        result = ts_store.bulk_insert_polars(df)
+
+        assert result == 1
+        batches = list(ts_store.timeseries(clean_point))
+        values = [b.column("value")[i].as_py() for b in batches for i in range(b.num_rows)]
+        assert values == [20.0]
+
 
 # ── Stream Handle Tests ────────────────────────────────────
 
@@ -143,13 +159,14 @@ class TestTimeseries:
             (datetime(2025, 1, 1, ref_uri, 0, tzinfo=timezone.utc), float(ref_uri))
             for ref_uri in range(24)
         ]
-        ts_store.upsert_rows(clean_point, rows)
+        ts_store.upsert_rows(clean_point, rows, value_kind="numeric")
 
     def test_basic_query(self, ts_store, clean_point):
         batches = list(ts_store.timeseries(clean_point))
         total_rows = sum(b.num_rows for b in batches)
         assert total_rows == 24
         assert batches[0].schema.names == ["ts", "value", "uri"]
+        assert batches[0].schema.field("value").type == pa.float64()
 
     def test_time_range(self, ts_store, clean_point):
         start = datetime(2025, 1, 1, 5, 0, tzinfo=timezone.utc)
@@ -166,12 +183,12 @@ class TestTimeseries:
     def test_order_asc(self, ts_store, clean_point):
         batches = list(ts_store.timeseries(clean_point, order="asc", limit=3))
         values = [b.column("value")[i].as_py() for b in batches for i in range(b.num_rows)]
-        assert values == ["0.0", "1.0", "2.0"]
+        assert values == [0.0, 1.0, 2.0]
 
     def test_order_desc(self, ts_store, clean_point):
         batches = list(ts_store.timeseries(clean_point, order="desc", limit=3))
         values = [b.column("value")[i].as_py() for b in batches for i in range(b.num_rows)]
-        assert values == ["23.0", "22.0", "21.0"]
+        assert values == [23.0, 22.0, 21.0]
 
     def test_empty_point(self, ts_store):
         batches = list(ts_store.timeseries("urn:test:nonexistent_point"))

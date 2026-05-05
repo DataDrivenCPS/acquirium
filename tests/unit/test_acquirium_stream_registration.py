@@ -12,6 +12,7 @@ from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_DB_URI,
     ACQUIRIUM_REF_NAME,
     ACQUIRIUM_SOURCE_ID,
+    ACQUIRIUM_VALUE_KIND,
     DATA_SOURCE,
     FILE_LOCATION,
     HAS_EXTERNAL_REFERENCE,
@@ -30,6 +31,7 @@ def test_register_streams_inserts_one_graph_for_multiple_streams():
                 "point_uri": "urn:test:point:temp",
                 "source_id": "demo-source",
                 "ref_name": "temp",
+                "value_kind": "numeric",
                 "data_source": "CSV",
                 "properties": {FILE_LOCATION: Literal("demo.csv")},
             },
@@ -37,6 +39,7 @@ def test_register_streams_inserts_one_graph_for_multiple_streams():
                 "point_uri": "urn:test:point:rh",
                 "source_id": "demo-source",
                 "ref_name": "rh",
+                "value_kind": "numeric",
                 "data_source": "CSV",
                 "properties": {FILE_LOCATION: Literal("demo.csv")},
             },
@@ -55,6 +58,7 @@ def test_register_streams_inserts_one_graph_for_multiple_streams():
         assert (point_uri, DATA_SOURCE, Literal("CSV")) in g
         assert (ref_uri, ACQUIRIUM_SOURCE_ID, Literal("demo-source")) in g
         assert (ref_uri, ACQUIRIUM_REF_NAME, Literal(ref_name)) in g
+        assert (ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
         assert (ref_uri, STORED_AT, ACQUIRIUM_DB_URI) in g
         assert (ref_uri, FILE_LOCATION, Literal("demo.csv")) in g
 
@@ -63,7 +67,7 @@ def test_register_stream_without_point_uri_writes_only_ref_node():
     aq = Acquirium.__new__(Acquirium)
     aq.client = MagicMock()
 
-    aq.register_stream(source_id="demo-source", ref_name="cpu_percent")
+    aq.register_stream(source_id="demo-source", ref_name="cpu_percent", value_kind="numeric")
 
     aq.client.insert_graph.assert_called_once()
     graph_text = aq.client.insert_graph.call_args[0][0]
@@ -72,6 +76,7 @@ def test_register_stream_without_point_uri_writes_only_ref_node():
 
     assert (ref_uri, ACQUIRIUM_SOURCE_ID, Literal("demo-source")) in g
     assert (ref_uri, ACQUIRIUM_REF_NAME, Literal("cpu_percent")) in g
+    assert (ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
     assert (ref_uri, STORED_AT, ACQUIRIUM_DB_URI) in g
     assert list(g.subjects(RDF.type, VIRTUAL_POINT)) == []
     assert list(g.subjects(HAS_EXTERNAL_REFERENCE, ref_uri)) == []
@@ -82,8 +87,8 @@ def test_register_streams_without_point_uri_writes_only_ref_nodes():
     aq.client = MagicMock()
 
     aq.register_streams([
-        {"source_id": "demo-source", "ref_name": "temp"},
-        {"source_id": "demo-source", "ref_name": "rh"},
+        {"source_id": "demo-source", "ref_name": "temp", "value_kind": "numeric"},
+        {"source_id": "demo-source", "ref_name": "rh", "value_kind": "numeric"},
     ])
 
     aq.client.insert_graph.assert_called_once()
@@ -94,6 +99,7 @@ def test_register_streams_without_point_uri_writes_only_ref_nodes():
         ref_uri = compute_ref_uri("demo-source", ref_name)
         assert (ref_uri, ACQUIRIUM_SOURCE_ID, Literal("demo-source")) in g
         assert (ref_uri, ACQUIRIUM_REF_NAME, Literal(ref_name)) in g
+        assert (ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
         assert (ref_uri, STORED_AT, ACQUIRIUM_DB_URI) in g
 
     assert list(g.subjects(RDF.type, VIRTUAL_POINT)) == []

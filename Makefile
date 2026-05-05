@@ -6,6 +6,7 @@ COMPOSE ?= docker compose
 ACQUIRIUM_RECREATE ?= false
 ACQUIRIUM_HOST ?= localhost
 ACQUIRIUM_PORT ?= 8000
+ACQUIRIUM_HOST_PORT ?= $(ACQUIRIUM_PORT)
 ACQUIRIUM_HEALTH_URL := http://$(ACQUIRIUM_HOST):$(ACQUIRIUM_PORT)/health
 ACQUIRIUM_HEALTH_TIMEOUT_SEC ?= 180
 ACQUIRIUM_HEALTH_SLEEP_SEC ?= 2
@@ -20,10 +21,30 @@ export ACQUIRIUM_RECREATE
 ACQUIRIUM_CONFIG_FILE ?= acquirium.toml
 export ACQUIRIUM_CONFIG_FILE
 
-.PHONY: up rebuild down test watertap-up watertap-down logs ps
+POSTGRES_DB ?= acquirium
+POSTGRES_HOST_PORT ?= 5432
+PG_DSN ?= postgresql://acquirium:acquirium@timescaledb:5432/$(POSTGRES_DB)
+TSDB_VOLUME ?= acquirium_tsdb_data
+MQTT_HOST_PORT ?= 1883
+ACQUIRIUM_CONTAINER_PREFIX ?= acquirium
+ACQUIRIUM_APP_NETWORK ?= acquirium_acquirium_net
+
+export POSTGRES_DB
+export POSTGRES_HOST_PORT
+export PG_DSN
+export TSDB_VOLUME
+export MQTT_HOST_PORT
+export ACQUIRIUM_HOST_PORT
+export ACQUIRIUM_CONTAINER_PREFIX
+export ACQUIRIUM_APP_NETWORK
+
+TEST_COMPOSE_ENV := COMPOSE_PROJECT_NAME=acquirium_test ACQUIRIUM_CONTAINER_PREFIX=acquirium_test ACQUIRIUM_APP_NETWORK=acquirium_test_acquirium_net ACQUIRIUM_HOST_PORT=8010 POSTGRES_HOST_PORT=55432 MQTT_HOST_PORT=11883
+TEST_PYTEST_ENV := ACQUIRIUM_TEST_SERVER_HOST=localhost ACQUIRIUM_TEST_SERVER_PORT=8010 ACQUIRIUM_TEST_PG_DSN=postgresql://acquirium:acquirium@localhost:55432/acquirium_test
+
+.PHONY: up rebuild down no-server-up no-server-down test watertap-up watertap-down logs ps
 
 up:
-	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) up -d --build
+	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile server up -d --build
 	@$(MAKE) wait-health
 
 wait-health:
@@ -44,42 +65,63 @@ wait-health:
 # Always enable for rebuild
 rebuild: ACQUIRIUM_RECREATE := true
 rebuild:
-	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) build --no-cache
-	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) up -d --force-recreate
+	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile server build --no-cache
+	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile server up -d --force-recreate
 
 down:
 	$(COMPOSE) down --remove-orphans
 
+# Infrastructure-only mode for running Acquirium externally on the host.
+# Starts TimescaleDB and Grafana, but not the Acquirium server container.
+no-server-up:
+	$(COMPOSE) --profile no-server up -d timescaledb grafana
+
+no-server-down:
+	$(COMPOSE) --profile no-server rm -sf grafana timescaledb
+
 # Always enable for test; always tear down even on failure
 test: ACQUIRIUM_RECREATE := true
 test: ACQUIRIUM_CONFIG_FILE := acquirium.testing.toml
+test: POSTGRES_DB := acquirium_test
+test: PG_DSN := postgresql://acquirium:acquirium@timescaledb:5432/acquirium_test
+test: TSDB_VOLUME := acquirium_tsdb_test_data
 test:
-	uv sync --all-extras
-	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) ACQUIRIUM_CONFIG_FILE=$(ACQUIRIUM_CONFIG_FILE) $(COMPOSE) --profile test up -d --build; \
-	uv run pytest tests; \
-	$(MAKE) testing-down
+	uv sync --locked --all-extras
+	status=0; \
+	$(TEST_COMPOSE_ENV) $(COMPOSE) --profile server --profile test rm -sf timescaledb acquirium mosquitto testing_service >/dev/null 2>&1 || true; \
+	$(TEST_COMPOSE_ENV) ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) ACQUIRIUM_CONFIG_FILE=$(ACQUIRIUM_CONFIG_FILE) $(COMPOSE) --profile server --profile test up -d --build || status=$$?; \
+	if [ $$status -eq 0 ]; then $(TEST_PYTEST_ENV) uv run pytest tests || status=$$?; fi; \
+	$(MAKE) testing-down; \
+	exit $$status
 
 testing-up: ACQUIRIUM_RECREATE := true
 testing-up: ACQUIRIUM_CONFIG_FILE := acquirium.testing.toml
+testing-up: POSTGRES_DB := acquirium_test
+testing-up: PG_DSN := postgresql://acquirium:acquirium@timescaledb:5432/acquirium_test
+testing-up: TSDB_VOLUME := acquirium_tsdb_test_data
 testing-up:
-	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) ACQUIRIUM_CONFIG_FILE=$(ACQUIRIUM_CONFIG_FILE) $(COMPOSE) --profile test up -d --build
+	$(TEST_COMPOSE_ENV) $(COMPOSE) --profile server --profile test rm -sf timescaledb acquirium mosquitto testing_service >/dev/null 2>&1 || true
+	$(TEST_COMPOSE_ENV) ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) ACQUIRIUM_CONFIG_FILE=$(ACQUIRIUM_CONFIG_FILE) $(COMPOSE) --profile server --profile test up -d --build
 
 
+testing-down: POSTGRES_DB := acquirium_test
+testing-down: PG_DSN := postgresql://acquirium:acquirium@timescaledb:5432/acquirium_test
+testing-down: TSDB_VOLUME := acquirium_tsdb_test_data
 testing-down:
-	$(COMPOSE) --profile test down --remove-orphans
+	$(TEST_COMPOSE_ENV) $(COMPOSE) --profile server --profile test down --remove-orphans
 
 watertap-up: ACQUIRIUM_RECREATE := true
 watertap-up:
-	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile watertap_simulation up -d --build
+	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile server --profile watertap_simulation up -d --build
 
 watertap-down:
-	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile watertap_simulation down --remove-orphans
+	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile server --profile watertap_simulation down --remove-orphans
 
 benicia-up:
-	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile benicia_simulation up -d --build
+	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile server --profile benicia_simulation up -d --build
 
 benicia-down:
-	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile benicia_simulation down --remove-orphans
+	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile server --profile benicia_simulation down --remove-orphans
 
 unit-test:
 	uv run pytest tests/unit/ -v --tb=short
@@ -89,12 +131,14 @@ unit-test-cov:
 
 integration-test:
 	$(MAKE) testing-up
-	$(MAKE) wait-health
-	uv run pytest tests/ -v --tb=short --ignore=tests/unit; \
-	$(MAKE) testing-down
+	$(MAKE) wait-health ACQUIRIUM_PORT=8010
+	status=0; \
+	$(TEST_PYTEST_ENV) uv run pytest tests/ -v --tb=short --ignore=tests/unit || status=$$?; \
+	$(MAKE) testing-down; \
+	exit $$status
 
 watertap-gui-up:
-	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile watertap_gui up -d --build
+	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile server --profile watertap_gui up -d --build
 
 watertap-gui-down:
-	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile watertap_gui down --remove-orphans
+	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile server --profile watertap_gui down --remove-orphans

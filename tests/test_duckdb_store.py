@@ -70,8 +70,8 @@ def test_upsert_rows_empty(store):
 @pytest.mark.unit
 def test_replace_rows(store):
     uri = "urn:test:duck:replace"
-    store.upsert_rows(uri, [(_utc(2024, 1, 1), "old"), (_utc(2024, 1, 2), "old2")])
-    store.replace_rows(uri, [(_utc(2024, 1, 3), "new")])
+    store.upsert_rows(uri, [(_utc(2024, 1, 1), "old"), (_utc(2024, 1, 2), "old2")], value_kind="text")
+    store.replace_rows(uri, [(_utc(2024, 1, 3), "new")], value_kind="text")
     batches = list(store.timeseries(uri))
     all_vals = [v for b in batches for v in b.to_pydict()["value"]]
     assert all_vals == ["new"]
@@ -86,11 +86,48 @@ def test_bulk_insert_polars(store):
         "ref_uri": [uri, uri, uri],
         "ts": [_utc(2024, 2, 1), _utc(2024, 2, 2), _utc(2024, 2, 3)],
         "value": ["a", "b", "c"],
+        "value_kind": ["text", "text", "text"],
     })
     n = store.bulk_insert_polars(df)
     assert n == 3
     info = store.timeseries_info(uri)
     assert info.row_count == 3
+
+
+@pytest.mark.unit
+def test_bulk_insert_polars_splits_numeric_and_text_values(store):
+    numeric_uri = "urn:test:duck:bulk_numeric"
+    text_uri = "urn:test:duck:bulk_text"
+    df = pl.DataFrame(
+        {
+            "ref_uri": [numeric_uri, numeric_uri, text_uri, text_uri],
+            "ts": [_utc(2024, 2, 4), _utc(2024, 2, 5), _utc(2024, 2, 4), _utc(2024, 2, 5)],
+            "value": [1.5, 2.5, "1.5", "ok"],
+            "value_kind": ["numeric", "numeric", "text", "text"],
+        },
+        schema={
+            "ref_uri": pl.Utf8,
+            "ts": pl.Datetime("us", "UTC"),
+            "value": pl.Object,
+            "value_kind": pl.Utf8,
+        },
+    )
+
+    assert store.bulk_insert_polars(df) == 4
+    stored = store.sql_query(
+        f"""
+        SELECT ref_uri, numeric_value, text_value
+        FROM timeseries
+        WHERE ref_uri IN ('{numeric_uri}', '{text_uri}')
+        ORDER BY ref_uri, ts
+        """
+    )["rows"]
+    assert stored == [
+        [numeric_uri, 1.5, None],
+        [numeric_uri, 2.5, None],
+        [text_uri, None, "1.5"],
+        [text_uri, None, "ok"],
+    ]
 
 
 # ---- timeseries query ----
@@ -114,13 +151,37 @@ def test_timeseries_basic(store):
 
 
 @pytest.mark.unit
+def test_timeseries_uses_registered_numeric_kind_for_all_null_values(store):
+    uri = "urn:test:duck:ts_null_numeric"
+    store.ensure_stream_ref(None, "src-null", "numeric-null", ref_uri=uri, value_kind="numeric")
+    store.upsert_rows(uri, [(_utc(2024, 3, 4), None)], value_kind="numeric")
+
+    batch = list(store.timeseries(uri))[0]
+
+    assert batch.schema.field("value").type == pa.float64()
+    assert batch.to_pydict()["value"] == [None]
+
+
+@pytest.mark.unit
+def test_timeseries_uses_registered_text_kind_for_parseable_text(store):
+    uri = "urn:test:duck:ts_parseable_text"
+    store.ensure_stream_ref(None, "src-text", "text-number", ref_uri=uri, value_kind="text")
+    store.upsert_rows(uri, [(_utc(2024, 3, 5), "1.5")], value_kind="text")
+
+    batch = list(store.timeseries(uri))[0]
+
+    assert batch.schema.field("value").type == pa.string()
+    assert batch.to_pydict()["value"] == ["1.5"]
+
+
+@pytest.mark.unit
 def test_timeseries_with_start_end(store):
     uri = "urn:test:duck:ts_range"
     store.upsert_rows(uri, [
         (_utc(2024, 4, 1), "A"),
         (_utc(2024, 4, 5), "B"),
         (_utc(2024, 4, 10), "C"),
-    ])
+    ], value_kind="text")
     batches = list(store.timeseries(uri, start=_utc(2024, 4, 4), end=_utc(2024, 4, 6)))
     vals = [v for b in batches for v in b.to_pydict()["value"]]
     assert vals == ["B"]
@@ -163,7 +224,7 @@ def test_timeseries_info(store):
     store.upsert_rows(uri, [
         (_utc(2024, 7, 1), "x"),
         (_utc(2024, 7, 31), "y"),
-    ])
+    ], value_kind="text")
     info = store.timeseries_info(uri)
     assert info.row_count == 2
     assert info.earliest is not None
@@ -193,6 +254,15 @@ def test_timeseries_info_batch(store):
 def test_ensure_stream_ref_returns_ref_uri(store):
     ref_uri = store.ensure_stream_ref("urn:test:duck:sh1", "src1", "ref1")
     assert isinstance(ref_uri, str) and len(ref_uri) > 0
+
+
+@pytest.mark.unit
+def test_ensure_stream_ref_defaults_value_kind_to_text(store):
+    ref_uri = store.ensure_stream_ref("urn:test:duck:sh_text_default", "src-text-default", "ref")
+    rows = store.sql_query(
+        f"SELECT value_kind FROM streams WHERE ref_uri = '{ref_uri}'"
+    )["rows"]
+    assert rows == [["text"]]
 
 
 @pytest.mark.unit
@@ -306,7 +376,7 @@ def test_commit(tmp_path):
     s = DuckDBStore(db_path=tmp_path / "tx_commit.duckdb")
     uri = "urn:test:duck:tx_commit"
     s.begin()
-    s.upsert_rows(uri, [(_utc(2024, 1, 1), "committed")])
+    s.upsert_rows(uri, [(_utc(2024, 1, 1), "committed")], value_kind="text")
     s.commit()
     info = s.timeseries_info(uri)
     assert info.row_count == 1
@@ -318,7 +388,7 @@ def test_rollback(tmp_path):
     s = DuckDBStore(db_path=tmp_path / "tx_rollback.duckdb")
     uri = "urn:test:duck:tx_rollback"
     s.begin()
-    s.upsert_rows(uri, [(_utc(2024, 1, 1), "should_vanish")])
+    s.upsert_rows(uri, [(_utc(2024, 1, 1), "should_vanish")], value_kind="text")
     s.rollback()
     info = s.timeseries_info(uri)
     assert info.row_count == 0
@@ -340,7 +410,7 @@ def test_sql_query(store):
 def test_recreate_wipes_data(tmp_path):
     p = tmp_path / "recreate.duckdb"
     s = DuckDBStore(db_path=p)
-    s.upsert_rows("urn:x", [(_utc(2024, 1, 1), "v")])
+    s.upsert_rows("urn:x", [(_utc(2024, 1, 1), "v")], value_kind="text")
     s.close()
 
     s2 = DuckDBStore(db_path=p, recreate=True)

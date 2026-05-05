@@ -20,13 +20,21 @@ class _StubTimescale:
     def __init__(self) -> None:
         self.calls = []
 
-    def ensure_stream_ref(self, point_uri: str | None, source_id: str, ref_name: str, ref_uri=None):
+    def ensure_stream_ref(
+        self,
+        point_uri: str | None,
+        source_id: str,
+        ref_name: str,
+        ref_uri=None,
+        value_kind: str = "text",
+    ):
         self.calls.append(
             {
                 "point_uri": point_uri,
                 "source_id": source_id,
                 "ref_name": ref_name,
                 "ref_uri": ref_uri,
+                "value_kind": value_kind,
             }
         )
         return str(ref_uri) if ref_uri is not None else ""
@@ -46,7 +54,7 @@ def test_sync_stream_refs_accepts_canonical_reference_uri():
     ref_name = "cpu_percent"
     ref_uri = compute_ref_uri(source_id, ref_name)
 
-    mgr, ts = _bare_manager([(point_uri, ref_uri, source_id, ref_name)])
+    mgr, ts = _bare_manager([(point_uri, ref_uri, source_id, ref_name, "numeric")])
 
     count = mgr._sync_stream_refs_from_graph()
 
@@ -61,7 +69,7 @@ def test_sync_stream_refs_accepts_standalone_reference_without_point_uri():
     ref_name = "cpu_percent"
     ref_uri = compute_ref_uri(source_id, ref_name)
 
-    mgr, ts = _bare_manager([(None, ref_uri, source_id, ref_name)])
+    mgr, ts = _bare_manager([(None, ref_uri, source_id, ref_name, None)])
 
     count = mgr._sync_stream_refs_from_graph()
 
@@ -72,6 +80,7 @@ def test_sync_stream_refs_accepts_standalone_reference_without_point_uri():
             "source_id": source_id,
             "ref_name": ref_name,
             "ref_uri": URIRef(str(ref_uri)),
+            "value_kind": "text",
         }
     ]
 
@@ -82,7 +91,7 @@ def test_sync_stream_refs_rejects_noncanonical_reference_uri():
     ref_name = "cpu_percent"
     bad_ref_uri = URIRef("urn:acquirium#not-the-canonical-ref_uri")
 
-    mgr, ts = _bare_manager([(point_uri, bad_ref_uri, source_id, ref_name)])
+    mgr, ts = _bare_manager([(point_uri, bad_ref_uri, source_id, ref_name, "numeric")])
 
     with pytest.raises(ValueError, match="Managed reference URI mismatch"):
         mgr._sync_stream_refs_from_graph()

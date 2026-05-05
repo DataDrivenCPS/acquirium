@@ -47,7 +47,7 @@ class StubBrowseManager:
                 "source_id": "demo",
                 "ref_name": "temp",
                 "point_uri": "urn:point:temp",
-                "reference_uri": "urn:ref:temp",
+                "ref_uri": "urn:ref:temp",
                 "label": "Temperature",
                 "stored_at": "urn:acquirium#TimescaleDB",
                 "row_count": 2,
@@ -76,15 +76,15 @@ class StubBrowseManager:
             },
         }
 
-    def get_stream_by_reference_uri(self, ref_uri: str) -> dict[str, Any] | None:
+    def get_stream_by_ref_uri(self, ref_uri: str) -> dict[str, Any] | None:
         if ref_uri != "urn:ref:temp":
             return None
         return self.get_source_stream("demo", "temp")
 
-    def get_source_stream_by_reference_uri(self, source_id: str, ref_uri: str) -> dict[str, Any] | None:
+    def get_source_stream_by_ref_uri(self, source_id: str, ref_uri: str) -> dict[str, Any] | None:
         if source_id != "demo":
             return None
-        return self.get_stream_by_reference_uri(ref_uri)
+        return self.get_stream_by_ref_uri(ref_uri)
 
     def timeseries_batch(
         self,
@@ -95,7 +95,7 @@ class StubBrowseManager:
         order: str = "asc",
         batch_size: int = 50_000,
     ) -> Iterator[pa.RecordBatch]:
-        assert uri == "urn:point:temp"
+        assert uri == "urn:ref:temp"
         rows = [
             datetime(2026, 4, 28, 10, 0, tzinfo=timezone.utc),
             datetime(2026, 4, 28, 10, 5, tzinfo=timezone.utc),
@@ -160,13 +160,13 @@ def test_source_browse_endpoints(monkeypatch):
             assert resp.status_code == 200
             body = resp.json()
             assert body["kind"] == "stream"
-            assert body["reference_uri"] == "urn:ref:temp"
+            assert body["ref_uri"] == "urn:ref:temp"
 
             resp = client.get("/source/demo/streams/by-ref", params={"ref_uri": "urn:ref:temp"})
             assert resp.status_code == 200
             body = resp.json()
             assert body["kind"] == "stream"
-            assert body["reference_uri"] == "urn:ref:temp"
+            assert body["ref_uri"] == "urn:ref:temp"
 
             resp = client.get("/source/demo/streams/temp")
             assert resp.status_code == 200
@@ -203,7 +203,7 @@ def test_source_browse_endpoints(monkeypatch):
                 {
                     "ts": "2026-04-28T10:05:00+00:00",
                     "value": "72.4",
-                    "uri": "urn:point:temp",
+                    "uri": "urn:ref:temp",
                 }
             ]
 
@@ -218,7 +218,7 @@ def test_source_browse_endpoints(monkeypatch):
                 {
                     "ts": "2026-04-28T10:05:00+00:00",
                     "value": "72.4",
-                    "uri": "urn:point:temp",
+                    "uri": "urn:ref:temp",
                 }
             ]
     finally:

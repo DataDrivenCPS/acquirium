@@ -46,7 +46,7 @@ server_url  = "localhost"
 server_port = 8000
 use_ssl     = false
 
-# Seconds between successive loop() calls.
+# Seconds between successive tick() calls.
 interval = 10.0
 
 # ---------------------------------------------------------------------------
@@ -55,10 +55,10 @@ interval = 10.0
 # ---------------------------------------------------------------------------
 
 # Uncomment to enable MQTT ingestion as a default driver:
-[[drivers]]
-spec           = "acquirium.BuiltinDrivers.mqtt_ingestion:MQTTIngestDriver"
-interval       = 5.0
-mqtt_source_id = "my_mqtt_data"   # datasource name used for all MQTT streams
+# [[drivers]]
+# spec           = "acquirium.BuiltinDrivers.mqtt_ingestion:MQTTIngestDriver"
+# interval       = 5.0
+# mqtt_source_id = "my_mqtt_data"   # datasource name used for all MQTT streams
 
 [[drivers]]
 spec     = "acquirium.BuiltinDrivers.system_metrics:SystemMetricsDriver"

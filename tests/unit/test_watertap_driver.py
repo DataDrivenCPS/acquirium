@@ -98,7 +98,11 @@ def test_setup_registers_datasource_and_streams(tmp_path):
     assert driver.aq.register_stream.call_count == 2
     first_call = driver.aq.register_stream.call_args_list[0]
     assert first_call.args == ()
-    assert first_call.kwargs == {"source_id": "watertap", "ref_name": "value_a"}
+    assert first_call.kwargs == {
+        "source_id": "watertap",
+        "ref_name": "value_a",
+        "value_kind": "numeric",
+    }
 
 
 def test_setup_can_insert_graph(tmp_path):
@@ -124,12 +128,13 @@ def test_loop_builds_model_and_ingests_batch(tmp_path):
     driver = _make_driver(tmp_path, watertap_build_kwargs={"flow": 2.5})
     driver.setup()
 
-    driver.loop()
+    driver.tick()
 
-    source_id, batch = driver.aq.insert_timeseries_batch.call_args.args
+    source_id, df = driver.aq.insert_timeseries_polars.call_args.args
     assert source_id == "watertap"
-    assert batch["value_a"][0][1] == 2.5
-    assert batch["value_b"][0][1] == 5.0
+    values = dict(zip(df["ref_name"].to_list(), df["value"].to_list()))
+    assert values["value_a"] == 2.5
+    assert values["value_b"] == 5.0
 
 
 def test_loop_can_extract_model_via_result_attr(tmp_path):
@@ -141,11 +146,12 @@ def test_loop_can_extract_model_via_result_attr(tmp_path):
     )
     driver.setup()
 
-    driver.loop()
+    driver.tick()
 
-    _, batch = driver.aq.insert_timeseries_batch.call_args.args
-    assert batch["value_a"][0][1] == 3.0
-    assert batch["value_b"][0][1] == 6.0
+    _, df = driver.aq.insert_timeseries_polars.call_args.args
+    values = dict(zip(df["ref_name"].to_list(), df["value"].to_list()))
+    assert values["value_a"] == 3.0
+    assert values["value_b"] == 6.0
 
 
 def test_missing_required_config_raises(tmp_path):

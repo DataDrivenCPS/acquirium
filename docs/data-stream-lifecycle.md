@@ -3,7 +3,7 @@
 Acquirium stores two kinds of things in two different stores:
 
 - **The RDF graph** holds semantics: what a measurement point *is*, what it measures, where it lives in the physical topology, and how it connects to raw data.
-- **The timeseries store** (TimescaleDB or DuckDB) holds the raw observations: a table of `(ref_uri, timestamp, value)` triples.
+- **The timeseries store** (TimescaleDB or DuckDB) holds the raw observations keyed by `ref_uri` and timestamp. Logically this is `(ref_uri, timestamp, value)`, but physically Acquirium stores typed value columns such as `numeric_value` and `text_value`.
 
 These two stores are linked through an *external reference* pattern.
 
@@ -63,7 +63,7 @@ There is no separate `handle` concept. Older notes and code used `handle` for th
 The timeseries store maintains a `streams` table that records the mapping:
 
 ```
-ref_uri  →  (point_uri, source_id, ref_name)
+ref_uri  →  (point_uri, source_id, ref_name, value_kind)
 ```
 
 This table is populated three ways:
@@ -75,6 +75,8 @@ This table is populated three ways:
 The streams table lets the server answer: *given a `point_uri`, what storage key should I read from?* Without it, reading by `point_uri` would require a SPARQL query on every data request.
 
 The table also records streams discovered only from data insertion. Those rows have a `ref_uri`, `source_id`, and `ref_name`, with `point_uri = NULL` until a semantic graph link is inserted later.
+
+`value_kind` records the stream-level storage type. Drivers declare it as `"numeric"` or `"text"` when registering streams or inserting observations. It defaults to `"text"` when omitted. A `ref_uri` is expected to be numeric or text, not both. Numeric telemetry is stored in `timeseries.numeric_value`; text/log-like samples are stored in `timeseries.text_value`; the other value column is normally `NULL`.
 
 ---
 
@@ -100,6 +102,7 @@ The RDF graph for a managed stream looks like this:
 <urn:acquirium#01234567-89ab-cdef-0123-456789abcdef>
     acq:sourceId "mybox-system-metrics" ;
     acq:refName  "cpu_percent" ;
+    acq:valueKind "numeric" ;
     ref:storedAt <urn:acquirium#TimescaleDB> .
 
 # The datasource node — makes the source discoverable
@@ -136,6 +139,7 @@ aq.register_stream(
     quantity_kind="dimensionless ratio", # resolved to a QUDT URI via server
     source_id="mybox-system-metrics",
     ref_name="cpu_percent",
+    value_kind="numeric",
 )
 ```
 
@@ -145,6 +149,7 @@ aq.register_stream(
 aq.register_stream(
     source_id="mybox-system-metrics",
     ref_name="cpu_percent",
+    value_kind="numeric",
 )
 ```
 
@@ -152,15 +157,15 @@ Or in bulk, which is preferred when a driver discovers many streams at once (e.g
 
 ```python
 aq.register_streams([
-    {"source_id": "mybox-system-metrics", "ref_name": "cpu_percent"},
-    {"source_id": "mybox-system-metrics", "ref_name": "memory_percent"},
+    {"source_id": "mybox-system-metrics", "ref_name": "cpu_percent", "value_kind": "numeric"},
+    {"source_id": "mybox-system-metrics", "ref_name": "memory_percent", "value_kind": "numeric"},
     # point_uri is optional per entry
-    {"point_uri": "urn:host:mybox:disk", "source_id": "mybox-system-metrics", "ref_name": "disk_percent"},
+    {"point_uri": "urn:host:mybox:disk", "source_id": "mybox-system-metrics", "ref_name": "disk_percent", "value_kind": "numeric"},
 ])
 ```
 
 Registration:
-- writes the external reference node with `acq:sourceId`, `acq:refName`, and `ref:storedAt`
+- writes the external reference node with `acq:sourceId`, `acq:refName`, `acq:valueKind`, and `ref:storedAt`
 - if `point_uri` is provided, also creates the point node and links it to the ref node
 - resolves plain-text unit/quantity_kind strings to QUDT URIs via the server's embedding matcher
 - triggers `_sync_stream_refs_from_graph`, which upserts the mapping into the streams table
@@ -182,9 +187,10 @@ aq.insert_timeseries_batch(
 
 The server:
 1. computes `ref_uri = compute_ref_uri(source_id, ref_name)` for each `ref_name` key
-2. builds a Polars DataFrame with `(ref_uri, timestamp, value)` rows
-3. bulk-inserts into the timeseries store via the Arrow bridge
-4. upserts each stream into the `streams` table with `point_uri = NULL` if no semantic point has been registered yet
+2. uses the explicit stream-level `value_kind`, defaulting to `"text"`
+3. builds a Polars DataFrame with `(ref_uri, timestamp, value, value_kind)` rows
+4. bulk-inserts into typed timeseries columns via the Arrow bridge
+5. upserts each stream into the `streams` table with `point_uri = NULL` if no semantic point has been registered yet
 
 The driver never touches `ref_uri` directly. The mapping from `ref_name` to storage key is entirely internal.
 
@@ -272,6 +278,19 @@ App outputs get the same managed-stream treatment, but the reference node also c
 ```
 
 The `acq:produces` and `acq:isCalculatedFrom` triples on the output point URI record the app that generated the stream and the inputs it depended on.
+
+At runtime, app outputs are emitted through a single shared output sink used by
+both server-side `AppRunner` execution and external app workers:
+
+- `Output.timeseries(...)` inserts the returned `(timestamp, value)` rows into
+  the output stream.
+- `Output.event(...)` is serialized as one JSON text value in the event stream.
+- `Output.trigger(...)` sends the configured HTTP webhook and does not write a
+  timeseries row unless the app also returns a timeseries or event output.
+
+The two execution modes provide different insertion transports (`Manager`
+directly in the server, `AcquiriumClient` in the worker), but the output
+serialization and trigger rules are intentionally shared.
 
 ---
 

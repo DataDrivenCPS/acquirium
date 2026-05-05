@@ -39,6 +39,7 @@ from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_DB_URI,
     ACQUIRIUM_REF_NAME,
     ACQUIRIUM_SOURCE_ID,
+    ACQUIRIUM_VALUE_KIND,
     STORED_AT,
     HAS_EXTERNAL_REFERENCE,
     HAS_MEDIUM,
@@ -48,6 +49,7 @@ from acquirium.internals.internals_namespaces import (
     VIRTUAL_POINT,
     DATA_SOURCE,
 )
+from acquirium.Storage.values import normalize_value_kind
 @dataclass
 class Acquirium:
     """
@@ -190,7 +192,10 @@ class Acquirium:
         total = 0
         chunk_count = 0
         for chunk in self._iter_insert_batches(streams):
-            result = self.client.insert_timeseries_batch(source_id, chunk)
+            result = self.client.insert_timeseries_batch(
+                source_id,
+                chunk,
+            )
             total += int(result.get("rows_inserted", 0))
             chunk_count += 1
         return {"ok": True, "rows_inserted": total, "batches": chunk_count}
@@ -202,8 +207,9 @@ class Acquirium:
         round-trip.  The default converts to the dict format and delegates to
         ``insert_timeseries_batch``.
         """
+        columns = ["ts", "ref_name", "value"]
         batch: dict[str, list] = {}
-        for ts, ref_name, value in df.select(["ts", "ref_name", "value"]).iter_rows():
+        for ts, ref_name, value in df.select(columns).iter_rows():
             batch.setdefault(ref_name, []).append((ts, value))
         return self.insert_timeseries_batch(source_id, batch)
 
@@ -281,6 +287,7 @@ class Acquirium:
         substance: str | URIRef | None = None,
         data_source: str | URIRef | None = None,
         properties: dict[URIRef, str | URIRef] | None = None,
+        value_kind: str = "text",
     ) -> None:
         """Declare a stream's semantic metadata in the RDF graph.
 
@@ -330,6 +337,7 @@ class Acquirium:
             ref_uri = compute_ref_uri(source_id, ref_name)
             g.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
             g.add((ref_uri, ACQUIRIUM_REF_NAME,  Literal(ref_name)))
+            g.add((ref_uri, ACQUIRIUM_VALUE_KIND, Literal(normalize_value_kind(value_kind))))
             g.add((ref_uri, STORED_AT,           ACQUIRIUM_DB_URI))
             g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
 
@@ -388,12 +396,14 @@ class Acquirium:
             label = stream.get("label")
             source_id = stream.get("source_id")
             ref_name = stream.get("ref_name")
+            value_kind = normalize_value_kind(stream.get("value_kind"))
 
             ref_uri = None
             if ref_name is not None and source_id is not None:
                 ref_uri = compute_ref_uri(source_id, ref_name)
                 g.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
                 g.add((ref_uri, ACQUIRIUM_REF_NAME,  Literal(ref_name)))
+                g.add((ref_uri, ACQUIRIUM_VALUE_KIND, Literal(value_kind)))
                 g.add((ref_uri, STORED_AT,           ACQUIRIUM_DB_URI))
                 g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
 

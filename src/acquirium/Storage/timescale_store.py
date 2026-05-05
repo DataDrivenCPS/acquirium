@@ -16,12 +16,14 @@ import logging
 import pyarrow as pa
 import polars as pl
 from rdflib import URIRef
+from acquirium.Storage.values import normalize_value_kind, prepare_value_columns, split_value
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger(__name__)
 
 TIMESERIES_TABLE = "timeseries"
 STREAMS_TABLE = "streams"
 LOGS_TABLE = "logs"
+TIMESERIES_STREAMS_VIEW = "timeseries_streams"
 
 
 class TimescaleStore(TimeseriesStore):
@@ -40,6 +42,7 @@ class TimescaleStore(TimeseriesStore):
         self._in_tx = False
         if recreate:
             with self.conn.cursor() as cur:
+                cur.execute(sql.SQL("DROP VIEW IF EXISTS {} CASCADE").format(sql.Identifier(TIMESERIES_STREAMS_VIEW)))
                 cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(TIMESERIES_TABLE)))
                 cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(STREAMS_TABLE)))
                 cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(LOGS_TABLE)))
@@ -48,36 +51,62 @@ class TimescaleStore(TimeseriesStore):
     # -------------------- table management --------------------
     def ensure_table(self) -> str:
         with self.conn.cursor() as cur:
+            cur.execute("CREATE EXTENSION IF NOT EXISTS timescaledb;")
             cur.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {TIMESERIES_TABLE} (
                     ref_uri TEXT NOT NULL,
                     ts TIMESTAMPTZ NOT NULL,
-                    value TEXT
+                    numeric_value DOUBLE PRECISION,
+                    text_value TEXT,
+                    CHECK (numeric_value IS NULL OR text_value IS NULL)
                 );
                 """
             )
-            # create hypertable if not already
+            # Create hypertable before enabling Timescale features. We target
+            # new Acquirium-managed stores here; older point_uri/handle schemas
+            # should be recreated rather than migrated in-place.
             cur.execute(
                 sql.SQL(
-                    "SELECT create_hypertable(%s, %s, if_not_exists => TRUE, migrate_data => TRUE);"
+                    "SELECT create_hypertable(%s, %s, if_not_exists => TRUE);"
                 ),
                 (TIMESERIES_TABLE, "ts"),
             )
-            # index to support lookups by id + time
-            cur.execute(
-                f"CREATE INDEX IF NOT EXISTS idx_timeseries_ref_ts ON {TIMESERIES_TABLE} (ref_uri, ts);"
-            )
-            # enable compression, segment by ref_uri and order by ts for efficient scans
-            cur.execute(
-                f"ALTER TABLE {TIMESERIES_TABLE} SET (timescaledb.compress, timescaledb.compress_segmentby = 'ref_uri', timescaledb.compress_orderby = 'ts');"
-            )
-            cur.execute(
-                "SELECT add_compression_policy('timeseries', INTERVAL '7 days', if_not_exists => TRUE);"
-            )
-            # add unique constraint on (ref_uri, ts) pairs
+            # Unique index supports idempotent upserts and scans by stream/time.
+            # Timescale unique indexes on hypertables must include the time
+            # partition column; (ref_uri, ts) satisfies that requirement.
             cur.execute(
                 f"CREATE UNIQUE INDEX IF NOT EXISTS idx_timeseries_ref_ts_unique ON {TIMESERIES_TABLE} (ref_uri, ts);"
+            )
+            cur.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_timeseries_numeric_ref_ts ON {TIMESERIES_TABLE} (ref_uri, ts) WHERE numeric_value IS NOT NULL;"
+            )
+            cur.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_timeseries_text_ref_ts ON {TIMESERIES_TABLE} (ref_uri, ts) WHERE text_value IS NOT NULL;"
+            )
+            cur.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_timeseries_numeric_value ON {TIMESERIES_TABLE} (ref_uri, numeric_value) WHERE numeric_value IS NOT NULL;"
+            )
+            cur.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_timeseries_text_value ON {TIMESERIES_TABLE} (ref_uri, text_value) WHERE text_value IS NOT NULL;"
+            )
+            # Segment compressed chunks by stream and order newest-first within
+            # each stream. This matches the common "latest values" read path
+            # while still supporting ascending scans via reverse index scans.
+            cur.execute(
+                f"""
+                ALTER TABLE {TIMESERIES_TABLE}
+                SET (
+                    timescaledb.compress,
+                    timescaledb.compress_segmentby = 'ref_uri',
+                    timescaledb.compress_orderby = 'ts DESC'
+                );
+                """
+            )
+            cur.execute(
+                sql.SQL("SELECT add_compression_policy({}, INTERVAL '7 days', if_not_exists => TRUE);").format(
+                    sql.Literal(TIMESERIES_TABLE)
+                )
             )
             cur.execute(
                 f"""
@@ -85,12 +114,36 @@ class TimescaleStore(TimeseriesStore):
                     ref_uri TEXT PRIMARY KEY,
                     point_uri TEXT,
                     source_id TEXT NOT NULL,
-                    ref_name TEXT NOT NULL
+                    ref_name TEXT NOT NULL,
+                    value_kind TEXT NOT NULL DEFAULT 'text'
                 );
                 """
             )
             cur.execute(
                 f"ALTER TABLE {STREAMS_TABLE} ALTER COLUMN point_uri DROP NOT NULL;"
+            )
+            cur.execute(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS idx_streams_source_ref_name ON {STREAMS_TABLE} (source_id, ref_name);"
+            )
+            cur.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_streams_point_uri ON {STREAMS_TABLE} (point_uri) WHERE point_uri IS NOT NULL;"
+            )
+            cur.execute(
+                f"""
+                CREATE OR REPLACE VIEW {TIMESERIES_STREAMS_VIEW} AS
+                SELECT
+                    t.ref_uri,
+                    s.point_uri,
+                    s.source_id,
+                    s.ref_name,
+                    COALESCE(s.value_kind, 'text') AS value_kind,
+                    t.ts,
+                    t.numeric_value AS value_numeric,
+                    t.text_value AS value_text
+                FROM {TIMESERIES_TABLE} AS t
+                LEFT JOIN {STREAMS_TABLE} AS s
+                    ON t.ref_uri = s.ref_uri;
+                """
             )
             cur.execute(
                 f"""
@@ -115,27 +168,53 @@ class TimescaleStore(TimeseriesStore):
         return TIMESERIES_TABLE
 
     # -------------------- mutations --------------------
-    def upsert_rows(self, ref_uri: str, rows: Iterable[tuple[datetime, Any]]) -> int:
+    def upsert_rows(
+        self,
+        ref_uri: str,
+        rows: Iterable[tuple[datetime, Any]],
+        *,
+        value_kind: str = "text",
+    ) -> int:
         rows_list = list(rows)
         if not rows_list:
             return 0
-        payload = [(ref_uri, self._to_utc(ts), self._to_str(val)) for ts, val in rows_list]
+        payload = [
+            (ref_uri, self._to_utc(ts), *split_value(val, value_kind))
+            for ts, val in rows_list
+        ]
         with self.conn.cursor() as cur:
             cur.executemany(
-                f"INSERT INTO {TIMESERIES_TABLE} (ref_uri, ts, value) VALUES (%s, %s, %s) ON CONFLICT (ref_uri, ts) DO UPDATE SET value = EXCLUDED.value",
+                f"""
+                INSERT INTO {TIMESERIES_TABLE} (ref_uri, ts, numeric_value, text_value)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (ref_uri, ts) DO UPDATE SET
+                    numeric_value = EXCLUDED.numeric_value,
+                    text_value = EXCLUDED.text_value
+                """,
                 payload,
             )
         logger.debug("acquirium: upserted %d rows into %s", len(rows_list), TIMESERIES_TABLE)
         return len(rows_list)
 
-    def replace_rows(self, ref_uri: str, rows: Iterable[tuple[datetime, Any]]) -> int:
+    def replace_rows(
+        self,
+        ref_uri: str,
+        rows: Iterable[tuple[datetime, Any]],
+        *,
+        value_kind: str = "text",
+    ) -> int:
         with self.conn.cursor() as cur:
             cur.execute(sql.SQL("DELETE FROM {} WHERE ref_uri=%s").format(sql.Identifier(TIMESERIES_TABLE)), [ref_uri])
-        return self.upsert_rows(ref_uri, rows)
+        return self.upsert_rows(ref_uri, rows, value_kind=value_kind)
 
     def bulk_insert_polars(self, df: pl.DataFrame) -> int:
         # Using polars to write to database via ADBC
-        # df format: columns: ["ref_uri", "time", "value"]
+        # Input df format: columns ["ref_uri", "ts", "value"] or already split
+        # columns ["ref_uri", "ts", "numeric_value", "text_value"].
+        if df.is_empty():
+            return 0
+        df = prepare_value_columns(df)
+        df = df.unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
         random_string = ''.join(random.choice(string.ascii_lowercase) for _ in range(15))
         with self.conn.cursor() as cur:
             cur.execute(
@@ -146,7 +225,8 @@ class TimescaleStore(TimeseriesStore):
                 CREATE TABLE IF NOT EXISTS {random_string} (
                 ref_uri TEXT NOT NULL,
                 ts TIMESTAMPTZ NOT NULL,
-                value TEXT
+                numeric_value DOUBLE PRECISION,
+                text_value TEXT
             );""")
         try:
             rows_affected = df.write_database(
@@ -158,20 +238,31 @@ class TimescaleStore(TimeseriesStore):
             with self.conn.cursor() as cur:
                 cur.execute(
                     f"""
-                    INSERT INTO {TIMESERIES_TABLE} (ref_uri, ts, value)
-                    SELECT ref_uri, ts, value FROM {random_string}
-                    ON CONFLICT (ref_uri, ts) DO UPDATE SET value = EXCLUDED.value;
+                    INSERT INTO {TIMESERIES_TABLE} (ref_uri, ts, numeric_value, text_value)
+                    SELECT ref_uri, ts, numeric_value, text_value FROM {random_string}
+                    ON CONFLICT (ref_uri, ts) DO UPDATE SET
+                        numeric_value = EXCLUDED.numeric_value,
+                        text_value = EXCLUDED.text_value;
                     """
                 )
-                cur.execute(f"DROP TABLE IF EXISTS {random_string};")
             logger.info(f"acquirium: bulk inserted {rows_affected} rows into {TIMESERIES_TABLE}")
             return rows_affected
-        except Exception as e:
-            logger.error(f"An error occurred: {e}")
-            return -1
+        except Exception:
+            logger.exception("acquirium: bulk insert into %s failed", TIMESERIES_TABLE)
+            raise
+        finally:
+            with self.conn.cursor() as cur:
+                cur.execute(f"DROP TABLE IF EXISTS {random_string};")
 
     # -------------------- stream references --------------------
-    def ensure_stream_ref(self, point_uri: str | None, source_id: str, ref_name: str, ref_uri: URIRef | None = None) -> URIRef:
+    def ensure_stream_ref(
+        self,
+        point_uri: str | None,
+        source_id: str,
+        ref_name: str,
+        ref_uri: URIRef | None = None,
+        value_kind: str = "text",
+    ) -> URIRef:
         """Register a stream reference in the streams table.
 
         The ref URI is computed deterministically from (source_id, ref_name) via
@@ -184,18 +275,20 @@ class TimescaleStore(TimeseriesStore):
         """
         if ref_uri is None:
             ref_uri = compute_ref_uri(source_id, ref_name)
+        value_kind = normalize_value_kind(value_kind)
         with self.conn.cursor() as cur:
             cur.execute(
                 f"""
-                INSERT INTO {STREAMS_TABLE} (ref_uri, point_uri, source_id, ref_name)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO {STREAMS_TABLE} (ref_uri, point_uri, source_id, ref_name, value_kind)
+                VALUES (%s, %s, %s, %s, %s)
                 ON CONFLICT (ref_uri) DO UPDATE
                     SET 
                         point_uri = COALESCE(EXCLUDED.point_uri, {STREAMS_TABLE}.point_uri),
                         source_id = EXCLUDED.source_id,
-                        ref_name = EXCLUDED.ref_name
+                        ref_name = EXCLUDED.ref_name,
+                        value_kind = EXCLUDED.value_kind
                 """,
-                (str(ref_uri), point_uri, source_id, ref_name),
+                (str(ref_uri), point_uri, source_id, ref_name, value_kind),
             )
         return ref_uri
 
@@ -262,12 +355,16 @@ class TimescaleStore(TimeseriesStore):
             params.append(limit)
 
         query = f"""
-            SELECT ts, value
+            SELECT
+                ts,
+                numeric_value,
+                text_value
             FROM {TIMESERIES_TABLE}
             WHERE {where}
             ORDER BY ts {order_sql}{limit_sql}
         """
 
+        value_kind = self.stream_value_kind(str(ref_uri))
         with self.conn.cursor() as cur:
             cur.execute(query, params)
 
@@ -277,15 +374,24 @@ class TimescaleStore(TimeseriesStore):
                     break
 
                 ts_col = [r[0] for r in rows]
-                val_col = [r[1] for r in rows]
+                numeric_col = [r[1] for r in rows]
+                text_col = [r[2] for r in rows]
                 ref_uri_col = [ref_uri] * len(ts_col)
-                if not ts_col or not val_col or not ref_uri_col:
+                if not ts_col or not ref_uri_col:
                     break
+                if value_kind == "text":
+                    val_array = pa.array(text_col, type=pa.string())
+                elif value_kind == "numeric":
+                    val_array = pa.array(numeric_col, type=pa.float64())
+                elif any(v is not None for v in numeric_col):
+                    val_array = pa.array(numeric_col, type=pa.float64())
+                else:
+                    val_array = pa.array(text_col, type=pa.string())
 
                 batch = pa.record_batch(
                     [
                         pa.array(ts_col, type=pa.timestamp("us", tz="UTC")),
-                        pa.array(val_col, type=pa.string()),
+                        val_array,
                         pa.array(ref_uri_col, type=pa.string()),
                     ],
                     names=["ts", "value", "uri"],
@@ -484,3 +590,12 @@ class TimescaleStore(TimeseriesStore):
         if val is None:
             return None
         return str(val)
+
+    def stream_value_kind(self, ref_uri: str) -> str | None:
+        with self.conn.cursor() as cur:
+            cur.execute(
+                f"SELECT value_kind FROM {STREAMS_TABLE} WHERE ref_uri = %s",
+                (ref_uri,),
+            )
+            row = cur.fetchone()
+        return row[0] if row else None
