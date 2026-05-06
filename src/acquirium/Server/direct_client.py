@@ -1,4 +1,19 @@
-"""In-process Acquirium adapter backed directly by a Manager instance."""
+"""In-process Acquirium adapter backed directly by a Manager instance.
+
+Drivers and other in-process consumers receive an ``Acquirium`` object and
+make calls like ``aq.insert_timeseries_batch()``.  In the normal remote case
+those calls go over HTTP.  ``DirectAcquirium`` satisfies the same interface
+but dispatches to ``Manager`` methods in the same process — no network round-
+trip, no requirement that the HTTP server be up before the driver can start.
+
+Usage::
+
+    from acquirium.Server.direct_client import DirectAcquirium
+
+    direct = DirectAcquirium(manager)
+    driver = MyDriver(direct, cfg)
+    driver.setup()
+"""
 
 from __future__ import annotations
 
@@ -7,6 +22,8 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from acquirium.Client.acquirium import Acquirium
 from acquirium.Server.insert_stats import insert_stats
+
+import warnings
 
 if TYPE_CHECKING:
     import polars as pl
@@ -48,7 +65,7 @@ class _DirectClient:
         point_uri: Optional[str] = None,
         replace: bool = False,
     ) -> dict[str, Any]:
-        count = self._manager.insert_timeseries(
+        n = self._manager.insert_timeseries(
             source_id=source_id,
             ref_name=ref_name,
             rows=rows,
@@ -56,20 +73,14 @@ class _DirectClient:
             replace=replace,
         )
         insert_stats.record(origin=self._origin, rows=len(rows), streams=[ref_name])
-        return {"ok": True, "rows_inserted": count}
+        return {"ok": True, "rows_inserted": n}
 
     def insert_timeseries_batch(
         self,
         source_id: str,
         streams: dict[str, list[tuple[datetime, Any]]],
     ) -> dict[str, Any]:
-        total = 0
-        for ref_name, rows in streams.items():
-            total += self._manager.insert_timeseries(
-                source_id=source_id,
-                ref_name=ref_name,
-                rows=rows,
-            )
+        total = self._manager.insert_timeseries_batch(source_id, streams)
         insert_stats.record(
             origin=self._origin,
             rows=sum(len(rows) for rows in streams.values()),
@@ -78,10 +89,10 @@ class _DirectClient:
         return {"ok": True, "rows_inserted": total}
 
     def insert_timeseries_polars(self, source_id: str, df: "pl.DataFrame") -> dict[str, Any]:
-        batch: dict[str, list[tuple[datetime, Any]]] = {}
-        for ts, ref_name, value in df.select(["ts", "ref_name", "value"]).iter_rows():
-            batch.setdefault(ref_name, []).append((ts, value))
-        return self.insert_timeseries_batch(source_id, batch)
+        streams = df["ref_name"].unique().to_list()
+        total = self._manager.insert_timeseries_polars(source_id, df)
+        insert_stats.record(origin=self._origin, rows=total, streams=streams)
+        return {"ok": True, "rows_inserted": total}
 
     def graph_version(self) -> int:
         return self._manager.graph_version()
@@ -100,7 +111,15 @@ class _DirectClient:
 
 
 class DirectAcquirium(Acquirium):
-    """Acquirium adapter that dispatches to a Manager in the same process."""
+    """Acquirium adapter that dispatches to a Manager in the same process.
+
+    Accepts the same interface as ``Acquirium`` so any Driver subclass works
+    without modification.  Skips the ``Acquirium.__init__`` (which would open
+    an HTTP connection) and replaces ``self.client`` with a ``_DirectClient``.
+
+    Args:
+        manager: The running Manager instance to dispatch calls to.
+    """
 
     def __init__(
         self,
@@ -108,19 +127,24 @@ class DirectAcquirium(Acquirium):
         origin: str = "inprocess",
         insert_batch_rows: int = 50_000,
     ) -> None:
-        object.__init__(self)
+        object.__init__(self)          # bypass Acquirium.__init__ / AcquiriumClient
         self._manager = manager
         self.client = _DirectClient(manager, origin=origin)
         self.insert_batch_rows = int(insert_batch_rows)
         if self.insert_batch_rows <= 0:
             raise ValueError("insert_batch_rows must be greater than zero")
 
+    # Override graph_version to avoid the HTTP path inherited from Acquirium
     def graph_version(self) -> int:
         return self._manager.graph_version()
 
     def insert_timeseries_polars(self, source_id: str, df: "pl.DataFrame") -> dict:
+        # Keep in-process drivers on the same batching path as remote drivers.
+        # Large file drivers can emit hundreds of thousands of melted rows per
+        # tick; sending that as one direct bulk insert bypasses insert_batch_rows.
         return Acquirium.insert_timeseries_polars(self, source_id, df)
 
+    # Override insert_graph so drivers calling aq.insert_graph() also work
     def insert_graph(
         self,
         rdf_graph: str,

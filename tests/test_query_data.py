@@ -58,10 +58,10 @@ def test_find_all_data_1(acquirium_client_csv):
     assert len(meta) == 10
 
     df_long = query.dataframe(shape="narrow")
-    assert df_long.shape == (10*365*24, 4)
+    assert df_long.shape == (10*365*24, 5)
 
     df_long_6months = query.dataframe(shape="narrow", start="2023-01-01", end="2023-06-30 23:00:00")
-    assert df_long_6months.shape == (10*24*181, 4)
+    assert df_long_6months.shape == (10*24*181, 5)
 
     df_wide = query.dataframe(shape="wide")
     assert df_wide.shape == (365*24, 11)
@@ -91,7 +91,7 @@ def test_find_all_data_2(acquirium_client_csv):
     assert len(meta.columns) == 10
 
     df_long = all_data_query.dataframe(shape="narrow")
-    assert df_long.shape == (6*365*24, 4)
+    assert df_long.shape == (6*365*24, 5)
     df_wide = all_data_query.dataframe(shape="wide")
     assert df_wide.shape == (365*24, 7)
 
@@ -160,4 +160,3 @@ def test_find_data_1(acquirium_client_csv):
     meta = entity_BE_data2.metadata()
     assert len(meta) == 8
     assert "data_of_b" in meta.columns
-
