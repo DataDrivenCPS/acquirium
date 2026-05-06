@@ -175,7 +175,7 @@ def _maybe_refresh_query(
     worker keeps using its current query.
     """
     try:
-        current_version = aq.client.graph_version()
+        current_version = aq.graph_version()
     except Exception as exc:
         logger.warning("graph_version poll failed: %s; keeping cached query", exc)
         return last_version
@@ -250,6 +250,7 @@ def _load_app(module: str, class_name: str, params: dict[str, Any]) -> App:
     app = _instantiate_app_class(cls, params)
     logger.info("Loaded app '%s' v%s", getattr(app, 'name', class_name), getattr(app, 'version', '?'))
     return app
+
 
 def main() -> None:
     logger.info("=" * 60)
@@ -337,7 +338,7 @@ def main() -> None:
     # Capture the graph version this query was built against. Between runs we
     # poll /graph_version and rebuild the query if it has advanced.
     try:
-        graph_version = aq.client.graph_version()
+        graph_version = aq.graph_version()
         logger.info("Initial graph version: %d", graph_version)
     except Exception as exc:
         logger.warning("Failed to fetch initial graph_version: %s", exc)

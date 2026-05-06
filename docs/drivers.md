@@ -293,7 +293,7 @@ import msgpack
 from acquirium.BuiltinDrivers.mqtt_ingestion import (
     MQTTIngestDriver,
     MQTTStreamSpec,
-    _parse_ts,
+    parse_mqtt_timestamp,
 )
 
 
@@ -304,7 +304,7 @@ class MyCustomMQTTIngestDriver(MQTTIngestDriver):
             raise ValueError(f"msgpack payload is not a map: {type(obj)}")
         raw_ts = obj.get(spec.time_key)
         raw_val = obj.get(spec.value_key)
-        ts = _parse_ts(raw_ts) if raw_ts is not None else datetime.now(timezone.utc)
+        ts = parse_mqtt_timestamp(raw_ts) if raw_ts is not None else datetime.now(timezone.utc)
         return ts, raw_val
 ```
 

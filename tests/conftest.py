@@ -10,6 +10,8 @@ from acquirium.Storage.timescale_store import TimescaleStore
 
 
 PG_DSN = "postgresql://acquirium:acquirium@localhost:5432/acquirium_test"
+ACQUIRIUM_TEST_SERVER_HOST = "localhost"
+ACQUIRIUM_TEST_SERVER_PORT = 8000
 TEST_POINT_URI = "urn:test:integration_point"
 TEST_REF_URI = "urn:test:integration_ref"
 
@@ -37,6 +39,6 @@ def clean_point(ts_store):
     """Provides a test point URI and cleans up its data after each test."""
     yield TEST_POINT_URI
     with ts_store.conn.cursor() as cur:
-        cur.execute("DELETE FROM timeseries WHERE point_uri = %s", [TEST_POINT_URI])
+        cur.execute("DELETE FROM timeseries WHERE ref_uri = %s", [TEST_POINT_URI])
         cur.execute("DELETE FROM streams WHERE point_uri = %s", [TEST_POINT_URI])
         cur.execute("DELETE FROM logs WHERE point_uri = %s", [TEST_POINT_URI])

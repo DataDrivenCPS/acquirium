@@ -122,7 +122,8 @@ def test_dataframe_narrow(acquirium_client_csv):
     assert "point_uri" in df.columns
     assert "ref_uri" in df.columns
     assert "time" in df.columns
-    assert "value" in df.columns
+    assert "value_numeric" in df.columns
+    assert "value_text" in df.columns
 
 
 # ---- iter() ----
