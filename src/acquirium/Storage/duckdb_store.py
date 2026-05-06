@@ -37,7 +37,7 @@ from acquirium.internals.models import (
     TimeseriesInfo,
     compute_ref_uri,
 )
-from acquirium.Storage.values import normalize_value_kind, prepare_value_columns, split_value
+from acquirium.Storage.values import normalize_value_kind, prepare_value_columns
 
 logger = logging.getLogger(__name__)
 
@@ -146,24 +146,24 @@ class DuckDBStore:
         *,
         value_kind: str = "text",
     ) -> int:
-        rows_list = [
-            (ref_uri, self._to_utc_naive(ts), *split_value(v, value_kind))
-            for ts, v in rows
-        ]
+        rows_list = list(rows)
         if not rows_list:
             return 0
-        with self._lock:
-            self._conn.executemany(
-                f"""
-                INSERT INTO {TIMESERIES_TABLE} (ref_uri, ts, numeric_value, text_value)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT (ref_uri, ts) DO UPDATE SET
-                    numeric_value = excluded.numeric_value,
-                    text_value = excluded.text_value
-                """,
-                rows_list,
-            )
-        return len(rows_list)
+        df = pl.DataFrame(
+            {
+                "ref_uri": [ref_uri] * len(rows_list),
+                "ts": [ts for ts, _ in rows_list],
+                "value": [value for _, value in rows_list],
+                "value_kind": [value_kind] * len(rows_list),
+            },
+            schema={
+                "ref_uri": pl.Utf8,
+                "ts": pl.Datetime("us", "UTC"),
+                "value": pl.Object,
+                "value_kind": pl.Utf8,
+            },
+        )
+        return self.bulk_insert_polars(df)
 
     def replace_rows(
         self,
@@ -191,16 +191,34 @@ class DuckDBStore:
         )
         df = df.unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
         with self._lock:
-            # DuckDB resolves the local name 'df' via its Arrow bridge
-            self._conn.execute(
-                f"""
-                INSERT INTO {TIMESERIES_TABLE} (ref_uri, ts, numeric_value, text_value)
-                SELECT ref_uri, ts, numeric_value, text_value FROM df
-                ON CONFLICT (ref_uri, ts) DO UPDATE SET
-                    numeric_value = excluded.numeric_value,
-                    text_value = excluded.text_value
-                """
-            )
+            self._conn.register("_acquirium_incoming_timeseries", df)
+            owns_transaction = not self._in_tx
+            try:
+                if owns_transaction:
+                    self._conn.execute("BEGIN TRANSACTION")
+                self._conn.execute(
+                    f"""
+                    DELETE FROM {TIMESERIES_TABLE}
+                    USING _acquirium_incoming_timeseries AS incoming
+                    WHERE {TIMESERIES_TABLE}.ref_uri = incoming.ref_uri
+                      AND {TIMESERIES_TABLE}.ts = incoming.ts
+                    """
+                )
+                self._conn.execute(
+                    f"""
+                    INSERT INTO {TIMESERIES_TABLE} (ref_uri, ts, numeric_value, text_value)
+                    SELECT ref_uri, ts, numeric_value, text_value
+                    FROM _acquirium_incoming_timeseries
+                    """
+                )
+                if owns_transaction:
+                    self._conn.execute("COMMIT")
+            except Exception:
+                if owns_transaction:
+                    self._conn.execute("ROLLBACK")
+                raise
+            finally:
+                self._conn.unregister("_acquirium_incoming_timeseries")
         return len(df)
 
     # ---- stream reference registry ----
