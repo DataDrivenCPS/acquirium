@@ -5,7 +5,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from acquirium.BuiltinDrivers.watertap import WaterTAPDriver, get_value_from_model
+from acquirium.BuiltinDrivers.watertap import (
+    WaterTAPDriver,
+    get_observation_from_model,
+    get_value_from_model,
+)
 from acquirium.internals.models import compute_ref_uri
 
 
@@ -60,6 +64,10 @@ class ResultWrapper:
 
 def build_wrapped_model():
     return ResultWrapper(DummyModel({"fs.unit.value_a": 3.0, "fs.unit.value_b": 6.0}))
+
+
+def build_status_model():
+    return DummyModel({"fs.unit.value_a": "Manual Control", "fs.unit.value_b": 6.0})
 """
 
 
@@ -154,6 +162,22 @@ def test_loop_can_extract_model_via_result_attr(tmp_path):
     assert values["value_b"] == 6.0
 
 
+def test_loop_preserves_nonnumeric_component_values_for_numeric_streams(tmp_path):
+    module_path = _write_module(tmp_path)
+    driver = _make_driver(
+        tmp_path,
+        watertap_build_spec=f"{module_path}:build_status_model",
+    )
+    driver.setup()
+
+    driver.tick()
+
+    _, df = driver.aq.insert_timeseries_polars.call_args.args
+    values = dict(zip(df["ref_name"].to_list(), df["value"].to_list()))
+    assert values["value_a"] == "Manual Control"
+    assert values["value_b"] == 6.0
+
+
 def test_missing_required_config_raises(tmp_path):
     aq = MagicMock()
     driver = WaterTAPDriver(aq, {"driver": {"watertap_graph_path": str(_write_graph(tmp_path))}})
@@ -169,3 +193,13 @@ def test_get_value_from_model_falls_back_to_component_value():
             return type("Component", (), {"value": 4.5})()
 
     assert get_value_from_model(Model(), "x") == 4.5
+
+
+def test_get_observation_from_model_preserves_nonnumeric_component_value():
+    class Model:
+        def find_component(self, name):
+            assert name == "x"
+            return type("Component", (), {"value": "Manual Control"})()
+
+    assert get_observation_from_model(Model(), "x") == (True, "Manual Control")
+    assert get_value_from_model(Model(), "x") is None

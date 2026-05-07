@@ -334,7 +334,7 @@ def test_loop_registers_streams_before_insert(tmp_path):
     driver.tick()
 
 
-def test_loop_marks_non_numeric_csv_streams_as_text(tmp_path):
+def test_loop_marks_text_only_csv_streams_as_text(tmp_path):
     p = tmp_path / "mixed.csv"
     p.write_text("time,temp,state\n2024-01-01T00:00:00Z,22.5,ON\n")
     driver = make_driver(tmp_path=tmp_path)
@@ -349,6 +349,23 @@ def test_loop_marks_non_numeric_csv_streams_as_text(tmp_path):
     source_id = _safe_name(str(p))
     assert (compute_ref_uri(source_id, "temp"), ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
     assert (compute_ref_uri(source_id, "state"), ACQUIRIUM_VALUE_KIND, Literal("text")) in g
+
+
+def test_loop_registers_mixed_csv_streams_as_numeric_with_text_fallback(tmp_path):
+    p = tmp_path / "mixed_numeric.csv"
+    p.write_text(
+        "time,mode\n"
+        "2024-01-01T00:00:00Z,1.0\n"
+        "2024-01-02T00:00:00Z,Manual Control\n"
+    )
+    driver = make_driver(tmp_path=tmp_path)
+    driver.setup()
+    driver.tick()
+
+    graph_text = driver.aq.client.insert_graph.call_args[0][0]
+    g = Graph().parse(data=graph_text, format="turtle")
+    source_id = _safe_name(str(p))
+    assert (compute_ref_uri(source_id, "mode"), ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
 
 
 def test_loop_registers_no_synthetic_point_uri(tmp_path):
