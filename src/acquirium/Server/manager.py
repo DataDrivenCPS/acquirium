@@ -16,7 +16,7 @@ from acquirium.Storage import (
     resolve_dsn,
     create_timeseries_store,
 )
-from acquirium.Storage.values import infer_value_kind, normalize_value_kind
+from acquirium.Storage.values import assign_stream_value_kind, normalize_value_kind
 from acquirium.internals.qudt_units import QUDTUnitConverter
 from acquirium.internals.models import LogEntry, Order, TimeIntervalModel, AppSpec, AppRunRequest, compute_ref_uri
 from acquirium.internals.internals_namespaces import *
@@ -725,6 +725,7 @@ class Manager:
         limit: int | None = None,
         order: Order = "asc",
         batch_size: int = 50_000,
+        value_mode: str = "default",
     ) :
         """
         Retrieve time series data for a given point URI within an optional time range.
@@ -743,6 +744,7 @@ class Manager:
                 limit=limit,
                 order=order,
                 batch_size=batch_size,
+                value_mode=value_mode,
             )
         storage_key = self.timescale.resolve_storage_key(uri)
         return self.timescale.timeseries(
@@ -752,6 +754,7 @@ class Manager:
             limit=limit,
             order=order,
             batch_size=batch_size,
+            value_mode=value_mode,
         )
 
     def timeseries_info_batch(self, uris: list[str]) -> dict:
@@ -1391,8 +1394,7 @@ class Manager:
             df = df.rename({df.columns[0]: "ts", df.columns[1]: "value"})
             stream_value_kind = normalize_value_kind(value_kind)
             if value_kind is None:
-                inferred = infer_value_kind(df["value"].to_list())
-                stream_value_kind = "text" if inferred == "text" else "numeric"
+                stream_value_kind = assign_stream_value_kind(df["value"].to_list())
 
             df = df.with_columns(pl.lit(ref_uri).alias("ref_uri"))
             df = df.with_columns(

@@ -453,6 +453,7 @@ def get_timeseries(
     end: Optional[str] = None,
     limit: Optional[int] = None,
     order: str = "asc",
+    value_mode: str = "default",
     ):
     try:
         if order not in ("asc", "desc"):
@@ -468,6 +469,7 @@ def get_timeseries(
             limit=limit,
             order=order,        # type: ignore[arg-type]
             batch_size=request.app.state.read_batch_size,
+            value_mode=value_mode,
         )
 
         accept = request.headers.get("accept", "")

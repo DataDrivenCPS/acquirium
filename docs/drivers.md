@@ -32,14 +32,42 @@ client directly, it must still pass `source_id` explicitly.
 
 Drivers must register each stream before reporting observations for it. Stream
 registration declares `value_kind`: use `"numeric"` for numeric streams and
-`"text"` for status, state, enum, JSON/event, or other non-numeric streams. A
-stream has one storage type: numeric samples are written to `numeric_value`;
-text samples are written to `text_value`.
+`"text"` for status, state, enum, JSON/event, or other non-numeric streams.
+Numeric samples are written to `numeric_value`; text samples are written to
+`text_value`.
+
+If a numeric stream receives a value that cannot be converted to float,
+Acquirium stores that row in `text_value` instead of failing the insert. This
+is intended for exceptional status values in otherwise numeric streams. Query
+callers can use `value_mode` to read numeric-only rows, text-only rows, or a
+coalesced mixed stream; see [`data-api.md`](data-api.md).
 
 Keep `value` in its native Python/Polars type when possible. CSV-like drivers
 may emit numeric values as strings, but they must still register those streams
 with `value_kind="numeric"` so storage parses those strings into numeric
 columns. `value_kind` should not be included in observation dataframes.
+
+When a driver infers stream metadata from observed data, use
+`assign_stream_value_kind()` so its behavior matches built-in ingestion:
+
+```python
+from acquirium.Storage.values import assign_stream_value_kind
+
+value_kind = assign_stream_value_kind(
+    observed_values,
+)
+
+aq.register_stream(
+    source_id=source_id,
+    ref_name=ref_name,
+    value_kind=value_kind,
+)
+```
+
+The helper treats `value_kind` as the stream's preferred/default storage
+column. If any numeric value is observed, the stream is assigned `"numeric"`;
+otherwise it is assigned `"text"`. Unparseable rows in numeric streams are
+still preserved in `text_value`.
 
 ## Which Method Do I Implement?
 
@@ -375,8 +403,10 @@ Behavior:
 - each file gets its own datasource
 - datasource ids are derived from absolute file paths
 - stream `ref_name`s come from wide column names or narrow `id` values
-- stream `value_kind`s are inferred per stream: all parseable numeric values
-  means `"numeric"`; any non-numeric value means `"text"`
+- stream `value_kind`s are inferred per stream: any observed numeric value
+  means `"numeric"`; text-only streams are `"text"`
+- value-kind inference uses `assign_stream_value_kind()` from
+  `acquirium.Storage.values`, which custom drivers can call too
 
 Custom tabular parsing should return normalized observations from
 `read_frame()` when the built-in wide/narrow formats do not fit:
