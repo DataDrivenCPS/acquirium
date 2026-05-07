@@ -109,6 +109,7 @@ class PGReferenceRegistry:
         limit: int | None = None,
         order: str = "asc",
         batch_size: int = 50_000,
+        value_mode: str = "default",
     ) -> Iterator[pa.RecordBatch]:
         """Query the external Postgres and yield RecordBatches.
 
