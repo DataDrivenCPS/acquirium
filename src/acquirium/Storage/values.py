@@ -4,14 +4,14 @@ from collections import defaultdict
 from decimal import Decimal
 import logging
 from numbers import Real
-from typing import Any, Iterable, Literal
+from typing import Any, Iterable, Literal, cast
 
 import polars as pl
 
 logger = logging.getLogger(__name__)
 
-ValueKind = Literal["unknown", "numeric", "text"]
 ValueMode = Literal["default", "coalesce", "numeric", "text"]
+VALUE_MODES = {"default", "coalesce", "numeric", "text"}
 
 
 def normalize_value_kind(value_kind: Any = None) -> Literal["numeric", "text"]:
@@ -31,37 +31,29 @@ def normalize_value_mode(value_mode: Any = None) -> ValueMode:
     if value_mode is None:
         return "default"
     value = str(value_mode).strip().lower()
-    if value == "default":
-        return "default"
-    if value == "coalesce":
-        return "coalesce"
-    if value == "numeric":
-        return "numeric"
-    if value == "text":
-        return "text"
+    if value in VALUE_MODES:
+        return cast(ValueMode, value)
     raise ValueError(
         "value_mode must be 'default', 'coalesce', 'numeric', or 'text', "
         f"got {value_mode!r}"
     )
 
 
-def classify_value(value: Any, *, parse_numeric_strings: bool = True) -> ValueKind:
-    if value is None:
-        return "unknown"
-    if isinstance(value, bool):
-        return "text"
+def _is_numeric_value(value: Any, *, parse_numeric_strings: bool = True) -> bool:
+    if value is None or isinstance(value, bool):
+        return False
     if isinstance(value, (Real, Decimal)):
-        return "numeric"
-    if parse_numeric_strings and isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return "unknown"
-        try:
-            float(text)
-            return "numeric"
-        except ValueError:
-            return "text"
-    return "text"
+        return True
+    if not parse_numeric_strings or not isinstance(value, str):
+        return False
+    text = value.strip()
+    if not text:
+        return False
+    try:
+        float(text)
+    except ValueError:
+        return False
+    return True
 
 
 def assign_stream_value_kind(
@@ -78,10 +70,10 @@ def assign_stream_value_kind(
     Unparseable rows in numeric streams are still stored in ``text_value`` by
     the storage fallback path.
     """
-    for value in values:
-        if classify_value(value, parse_numeric_strings=parse_numeric_strings) == "numeric":
-            return "numeric"
-    return "text"
+    return "numeric" if any(
+        _is_numeric_value(value, parse_numeric_strings=parse_numeric_strings)
+        for value in values
+    ) else "text"
 
 
 def split_value(value: Any, value_kind: str | None = None) -> tuple[float | None, str | None]:
@@ -114,8 +106,9 @@ def prepare_value_columns(df: pl.DataFrame) -> pl.DataFrame:
     for row in df.select(selected).iter_rows():
         if has_value_kind:
             ref_uri, ts, value, value_kind = row
-            numeric_value, text_value = split_value(value, value_kind)
-            if normalize_value_kind(value_kind) == "numeric" and text_value is not None:
+            kind = normalize_value_kind(value_kind)
+            numeric_value, text_value = split_value(value, kind)
+            if kind == "numeric" and text_value is not None:
                 fallback_counts[str(ref_uri)] += 1
         else:
             ref_uri, ts, value = row
