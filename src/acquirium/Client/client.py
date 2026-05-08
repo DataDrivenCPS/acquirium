@@ -2,7 +2,6 @@ from typing import Optional, Iterator, Any
 from datetime import datetime
 import requests
 from requests import HTTPError
-import os
 from pathlib import Path
 import polars as pl
 import pyarrow.ipc as ipc
@@ -301,83 +300,6 @@ class AcquiriumClient:
         """
         status = self.ingest_status()
         return status.get("scheduled_tasks", 0) > 0
-
-    def ingest_external_references_from_graph(self) -> dict:
-        """
-        Query the server graph for ref:FileReference nodes (parquet/csv/tsv).
-        Read those files locally (host filesystem) and upload bytes to the
-        server for ingestion. The server infers the file format from the
-        filename extension.
-        """
-        q = f"""
-            SELECT ?data ?ref ?path ?timeCol ?valueCol ?valueKind
-            WHERE {{
-              ?data <{HAS_EXTERNAL_REFERENCE}> ?ref .
-              ?ref a <{FILE_REFERENCE}> .
-              OPTIONAL {{ ?ref <{FILE_LOCATION}> ?path . }}
-              OPTIONAL {{ ?ref <{TIME_COLUMN_ID}> ?timeCol . }}
-              OPTIONAL {{ ?ref <{VALUE_COLUMN_ID}> ?valueCol . }}
-              OPTIONAL {{ ?ref <{ACQUIRIUM_VALUE_KIND}> ?valueKind . }}
-            }}
-        """
-
-        res = self.sparql_query(q, use_union=True)
-        rows = res.get("rows", [])
-
-        ok = 0
-        skipped = 0
-        failed = 0
-
-        url = f"{self.base_url}/ingest_external_reference"
-
-        for data_uri, ref_uri, path, time_col, value_col, value_kind in rows:
-            if not path:
-                skipped += 1
-                continue
-
-            # path is likely a quoted literal from SPARQL JSON results
-            p_str = str(path).strip().strip('"').strip("'")
-            p = Path(p_str)
-
-            if not p.is_absolute():
-                # Interpret relative paths relative to the client's current working directory
-                p = (Path.cwd() / p).resolve()
-
-            if not p.exists():
-                print(f"External reference file not found: {p} (skipping)")
-                failed += 1
-                continue
-
-            try:
-                with open(p, "rb") as f:
-                    content = f.read()
-
-                files = {"file": (p.name, content, "application/octet-stream")}
-                data: dict[str, str] = {
-                    "data_uri": str(data_uri),
-                    "ref_uri": str(ref_uri),
-                }
-                if time_col:
-                    data["time_column"] = str(time_col).strip('"')
-                if value_col:
-                    data["value_column"] = str(value_col).strip('"')
-                if value_kind:
-                    data["value_kind"] = str(value_kind).strip('"')
-
-                r = requests.post(url, data=data, files=files)
-                r.raise_for_status()
-                ok += 1
-            except Exception as exc:
-                detail = ""
-                if hasattr(exc, "response") and exc.response is not None:
-                    try:
-                        detail = exc.response.json().get("detail", "")
-                    except Exception:
-                        detail = exc.response.text[:200]
-                logger.warning("Failed to ingest %s: %s %s", p.name, exc, detail)
-                failed += 1
-
-        return {"ok": ok, "skipped": skipped, "failed": failed, "total": len(rows)}
 
     def insert_log(
         self,
