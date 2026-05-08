@@ -94,8 +94,10 @@ class StubBrowseManager:
         limit: int | None = None,
         order: str = "asc",
         batch_size: int = 50_000,
+        value_mode: str = "default",
     ) -> Iterator[pa.RecordBatch]:
         assert uri == "urn:ref:temp"
+        assert value_mode in ("default", "numeric", "text", "coalesce")
         rows = [
             datetime(2026, 4, 28, 10, 0, tzinfo=timezone.utc),
             datetime(2026, 4, 28, 10, 5, tzinfo=timezone.utc),
@@ -150,6 +152,7 @@ def test_source_browse_endpoints(monkeypatch):
             assert body["kind"] == "stream-index"
             assert body["data_url_defaults"]["limit"] == "5"
             assert body["data_url_defaults"]["start"] == "-5min"
+            assert body["data_url_defaults"]["value_mode"] == "default"
             assert body["streams"][0]["ref_name"] == "temp"
             assert body["streams"][0]["url"].endswith(f"/streams/by-ref?ref_uri={quote('urn:ref:temp', safe='')}")
             assert f"/streams/data?ref_uri={quote('urn:ref:temp', safe='')}" in body["streams"][0]["data_url"]
@@ -181,6 +184,7 @@ def test_source_browse_endpoints(monkeypatch):
             assert body["encoding"] == "columns"
             assert body["ts_format"] == "unix_ms"
             assert body["columns"] == ["ts", "value"]
+            assert body["value_mode"] == "default"
             assert body["data"] == {
                 "ts": [1777370700000],
                 "value": ["72.4"],
@@ -225,6 +229,18 @@ def test_source_browse_endpoints(monkeypatch):
                     "uri": "urn:ref:temp",
                 }
             ]
+
+            resp = client.get(
+                "/streams/data",
+                params={"ref_uri": "urn:ref:temp", "limit": 1, "value_mode": "coalesce"},
+            )
+            assert resp.status_code == 200
+            assert resp.json()["value_mode"] == "coalesce"
+
+            resp = client.get("/browser")
+            assert resp.status_code == 200
+            assert "Acquirium Browser" in resp.text
+            assert "Download CSV" in resp.text
     finally:
         app.router.lifespan_context = old_lifespan
 
