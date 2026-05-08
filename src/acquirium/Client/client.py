@@ -233,18 +233,6 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json().get("matches", [])
 
-    def ingest_status(self) -> dict:
-        """
-        Get the current status of data ingestion tasks.
-
-        Returns:
-            A dictionary with ingestion status details.
-        """
-        url = f"{self.base_url}/ingest_status"
-        response = requests.get(url)
-        response.raise_for_status()
-        return response.json()
-
     def embedding_status(self) -> dict:
         """
         Get the current status of embedding index builds.
@@ -290,16 +278,6 @@ class AcquiriumClient:
             detail = response.json().get("detail", response.text) if response.headers.get("content-type", "").startswith("application/json") else response.text
             raise ValueError(f"conversion_factors failed: {detail}")
         return response.json()
-
-    def is_ongoing_ingest(self) -> bool:
-        """
-        Check if there are ongoing ingestion tasks.
-
-        Returns:
-            True if there are ongoing ingestion tasks, False otherwise.
-        """
-        status = self.ingest_status()
-        return status.get("scheduled_tasks", 0) > 0
 
     def insert_log(
         self,

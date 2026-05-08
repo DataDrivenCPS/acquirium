@@ -108,40 +108,6 @@ class TestResolveText:
         assert "class" in str(call_kwargs)
 
 
-# ── ingest_status / is_ongoing_ingest ──────────────────────
-
-
-class TestIngestStatus:
-    @patch("acquirium.Client.client.requests")
-    def test_ingest_status(self, mock_requests, client):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {"scheduled": 0, "done": 5, "error": 0, "total": 5}
-        mock_resp.raise_for_status = MagicMock()
-        mock_requests.get.return_value = mock_resp
-
-        result = client.ingest_status()
-        assert result["done"] == 5
-
-    @patch("acquirium.Client.client.requests")
-    def test_is_ongoing_true(self, mock_requests, client):
-        mock_resp = MagicMock()
-        # is_ongoing_ingest checks status.get("scheduled_tasks", 0) > 0
-        mock_resp.json.return_value = {"scheduled_tasks": 3, "done": 0, "error": 0, "total": 3}
-        mock_resp.raise_for_status = MagicMock()
-        mock_requests.get.return_value = mock_resp
-
-        assert client.is_ongoing_ingest() is True
-
-    @patch("acquirium.Client.client.requests")
-    def test_is_ongoing_false(self, mock_requests, client):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {"scheduled_tasks": 0, "done": 5, "error": 0, "total": 5}
-        mock_resp.raise_for_status = MagicMock()
-        mock_requests.get.return_value = mock_resp
-
-        assert client.is_ongoing_ingest() is False
-
-
 # ── register_app / run_app / stop_app / list_app_runs ──────
 
 

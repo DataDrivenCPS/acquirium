@@ -9,6 +9,7 @@ import os
 import pytest
 
 from acquirium.Storage.timescale_store import TimescaleStore
+from acquirium.Storage.values import assign_stream_value_kind
 
 
 PG_DSN = os.getenv(
@@ -56,3 +57,26 @@ def clean_point(ts_store):
         cur.execute("DELETE FROM timeseries WHERE ref_uri = %s", [TEST_POINT_URI])
         cur.execute("DELETE FROM streams WHERE point_uri = %s", [TEST_POINT_URI])
         cur.execute("DELETE FROM logs WHERE point_uri = %s", [TEST_POINT_URI])
+
+
+def insert_sample_csv_streams(acq, *, source_id: str = "LAB") -> None:
+    """Insert the sample CSV rows through the public timeseries API."""
+    import polars as pl
+
+    df = pl.read_csv("tests/sample_data.csv", try_parse_dates=True)
+    for i in range(1, 11):
+        ref_name = f"point_{i}"
+        rows = list(df.select("Timestamp", ref_name).iter_rows())
+        acq.register_stream(
+            source_id=source_id,
+            ref_name=ref_name,
+            point_uri=f"urn:ex/point_{i}_csv_ref",
+            value_kind=assign_stream_value_kind(value for _, value in rows),
+        )
+        acq.insert_timeseries(
+            source_id=source_id,
+            ref_name=ref_name,
+            point_uri=f"urn:ex/point_{i}_csv_ref",
+            rows=list(rows),
+            replace=True,
+        )

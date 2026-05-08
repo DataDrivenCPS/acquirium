@@ -149,13 +149,6 @@ class EmbeddingStatus(BaseModel):
     graph: EmbeddingIndexStatus
     qudt: EmbeddingIndexStatus
 
-class IngestStatus(BaseModel):
-    scheduled: int
-    done: int
-    error: int
-    total: int
-
-
 class InsertGraphRequest(BaseModel):
     rdf_graph: str = Field(..., description="File path or RDF text")
     format: str = "turtle"
@@ -235,17 +228,6 @@ app = FastAPI(title="Acquirium API", version="0.1", lifespan=lifespan)
 def health():
     # If we got here, the app is up
     return Health(ok=True)
-
-@app.get("/ingest_status", response_model=IngestStatus)
-def ingest_status():
-    manager = app.state.manager
-    status = manager.ingest_status()
-    return IngestStatus(
-        scheduled=status["scheduled_tasks"],
-        done=status["done_tasks"],
-        error=status["error_tasks"],
-        total=status["total_tasks"],
-    )
 
 @app.get("/embedding_status", response_model=EmbeddingStatus)
 def embedding_status():
@@ -376,10 +358,9 @@ def register_datasource(req: RegisterDatasourceRequest) -> dict[str, Any]:
 def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[str, Any]:
     """Insert timeseries data for one or more streams.
 
-    Each element specifies a ``ref_uri``, an optional ``point_uri`` (defaults
-    to ``ref_uri``), an optional ``replace`` flag, and a list of
-    ``[timestamp, value]`` pairs.  A single-stream insert is just a
-    one-element list.
+    Each element specifies ``source_id``/``ref_name``, an optional semantic
+    ``point_uri``, an optional ``replace`` flag, and a list of
+    ``[timestamp, value]`` pairs. A single-stream insert is a one-element list.
     """
     try:
         total = 0
