@@ -1,3 +1,6 @@
+# default data location
+.acquirium
+
 scripts/dev_examples
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -212,4 +215,5 @@ scripts/benchmark/chain/*.parquet
 scripts/benchmark/chain/memo
 scripts/benchmark/scalability/*.csv
 
-# dpr*
+# Local DPR trailer data exports and generated databases.
+dpr-trailer-data/

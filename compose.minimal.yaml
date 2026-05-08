@@ -5,7 +5,7 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-acquirium}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-acquirium}
-      POSTGRES_DB: ${POSTGRES_DB:-acquirium_test}
+      POSTGRES_DB: ${POSTGRES_DB:-acquirium}
     ports:
       - "${TIMESCALEDB_PORT:-5432}:5432"
     volumes:
@@ -14,7 +14,7 @@ services:
     networks:
       - acquirium_net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-acquirium} -d ${POSTGRES_DB:-acquirium_test}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-acquirium} -d ${POSTGRES_DB:-acquirium}"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -44,11 +44,12 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - acquirium_data:/app/.acquirium
+      - ./acquirium.docker.toml:/app/acquirium.toml:ro
     ports:
       - "${ACQUIRIUM_PORT:-8000}:8000"
     environment:
       ACQUIRIUM_DATA_DIR: ${ACQUIRIUM_DATA_DIR:-/app/.acquirium}
-      PG_DSN: ${PG_DSN:-postgresql://acquirium:acquirium@timescaledb:5432/acquirium_test}
+      PG_DSN: ${PG_DSN:-postgresql://acquirium:acquirium@timescaledb:5432/acquirium}
       FASTEMBED_CACHE_PATH: ${FASTEMBED_CACHE_PATH:-/app/.fastembed_cache}
       ACQUIRIUM_RECREATE: ${ACQUIRIUM_RECREATE:-false}
       ACQUIRIUM_APP_NETWORK: ${ACQUIRIUM_APP_NETWORK:-acquirium_acquirium_net}
@@ -71,10 +72,18 @@ services:
     image: grafana/grafana:latest
     container_name: acquirium_grafana
     restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-acquirium}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-acquirium}
+      POSTGRES_DB: ${POSTGRES_DB:-acquirium}
     ports:
       - "${GRAFANA_PORT:-3000}:3000"
     volumes:
       - grafana_storage:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      timescaledb:
+        condition: service_healthy
     networks:
       - acquirium_net
 

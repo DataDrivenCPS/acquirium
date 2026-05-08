@@ -1,0 +1,99 @@
+# acquirium.toml — example configuration using the DuckDB timeseries backend
+#
+# Usage:
+#   acquirium server --config acquirium.toml
+#   acquirium run scripts/publish_system_metrics.py --config acquirium.toml
+
+[server]
+# Network
+host = "0.0.0.0"
+port = 8000
+
+# Data directory: Oxigraph graph store, embedding cache, and app storage
+# all live under this path.
+data_dir = ".acquirium"
+
+# Use DuckDB for timeseries storage instead of TimescaleDB.
+# The DuckDB file is created automatically if it does not exist.
+# NOTE: DuckDB does not support multiple server workers (uvicorn --workers N).
+#       Use timeseries_backend = "timescale" for multi-process deployments.
+timeseries_backend = "duckdb"
+duckdb_path = ".acquirium/timeseries.duckdb"
+
+# Uncomment to use TimescaleDB instead:
+# timeseries_backend = "timescale"
+# pg_dsn = "postgresql://acquirium:acquirium@localhost:5432/acquirium"
+
+# RDF graph store path (Oxigraph).  Defaults to {data_dir}/.oxigraph.
+# graph_path = ".acquirium/.oxigraph"
+
+# Optional: declare a root ontology IRI and any imported dependencies.
+# graph_name = "urn:my:ontology"
+# ontology_dependencies = ["urn:dep:brick", "urn:dep:s223"]
+
+# Embedding model for text → URI resolution.
+# embedding_model = "BAAI/bge-small-en-v1.5"
+
+# Set to true to wipe all data on server startup (useful for development).
+recreate = false
+
+# Number of rows per Arrow RecordBatch in timeseries read responses.
+# read_batch_size = 50000
+
+[driver]
+# Defaults applied to all drivers — used by `acquirium run` and [[drivers]] entries.
+server_url  = "localhost"
+server_port = 8000
+use_ssl     = false
+
+# Seconds between successive tick() calls.
+interval = 10.0
+
+# ---------------------------------------------------------------------------
+# Default drivers — started automatically alongside `acquirium server`.
+# Each [[drivers]] entry requires a 'spec' and may override any [driver] key.
+# ---------------------------------------------------------------------------
+
+# Uncomment to enable MQTT ingestion as a default driver:
+# [[drivers]]
+# spec           = "acquirium.BuiltinDrivers.mqtt_ingestion:MQTTIngestDriver"
+# interval       = 5.0
+# mqtt_source_id = "my_mqtt_data"   # datasource name used for all MQTT streams
+
+[[drivers]]
+spec     = "acquirium.BuiltinDrivers.system_metrics:SystemMetricsDriver"
+interval = 30.0
+
+# Watch a directory for CSV and TSV files.
+# [[drivers]]
+# spec         = "acquirium.BuiltinDrivers.csv_ingest:CSVIngestDriver"
+# interval     = 5.0
+# watch_dir    = "./data"
+# format       = "wide"        # "auto" | "wide" | "narrow"
+# time_col     = "Date"        # name of the timestamp column
+# id_col       = "id"          # narrow format: stream ID column
+# value_col    = "value"       # narrow format: value column
+
+# Watch a directory for Excel (XLSX) files.
+# [[drivers]]
+# spec         = "acquirium.BuiltinDrivers.xlsx_ingest:XLSXIngestDriver"
+# interval     = 5.0
+# watch_dir    = "./data"
+# format       = "wide"        # "auto" | "wide" | "narrow"
+# time_col     = "Date"        # name of the timestamp column
+# id_col       = "id"          # narrow format: stream ID column
+# value_col    = "value"       # narrow format: value column
+# sheets       = ["Sheet1"]    # omit to read the first sheet only
+
+# Run a WaterTAP build/solve function and ingest mapped outputs.
+# The graph file must contain ref:hasExternalReference and acquirium:hasPyomoVar
+# triples for each point to ingest.
+# [[drivers]]
+# spec                      = "acquirium.BuiltinDrivers.watertap:WaterTAPDriver"
+# interval                  = 30.0
+# watertap_source_id        = "watertap"
+# watertap_graph_path       = "deployments/WATERTAP2/models/test-model.ttl"
+# watertap_build_spec       = "deployments/WATERTAP2/scripts/example_watertap.py:build_and_solve"
+# watertap_insert_graph     = true
+# watertap_register_streams = true
+# watertap_build_kwargs     = { flow_vol = 0.001, salt_mass_conc = 0.035, operating_pressure = 5000000.0, flow_mass_liq = 0.985, flow_mass_salt = 0.015 }
