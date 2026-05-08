@@ -16,7 +16,7 @@ from acquirium.Storage import (
     resolve_dsn,
     create_timeseries_store,
 )
-from acquirium.Storage.values import assign_stream_value_kind, normalize_value_kind
+from acquirium.Storage.values import normalize_value_kind
 from acquirium.internals.qudt_units import QUDTUnitConverter
 from acquirium.internals.models import LogEntry, Order, TimeIntervalModel, AppSpec, AppRunRequest, compute_ref_uri
 from acquirium.internals.internals_namespaces import *
@@ -91,28 +91,6 @@ def _wipe_dir_contents(base: Path) -> None:
             shutil.rmtree(p)
         else:
             p.unlink()
-
-
-def _resolve_column(columns: list[str], identifier: str | None, default_index: int) -> str:
-    """Resolve a ref:timeColumnID / ref:valueColumnID literal to an actual column.
-
-    Tries the literal as a column name first. If it parses as an int and is
-    not present as a name, falls back to a positional index. Allows older
-    fixtures that hard-coded numeric column indices to keep working.
-    """
-    if identifier is None or identifier == "":
-        if default_index >= len(columns):
-            raise ValueError(f"File has only {len(columns)} columns; default index {default_index} out of range")
-        return columns[default_index]
-    if identifier in columns:
-        return identifier
-    try:
-        idx = int(identifier)
-    except ValueError as exc:
-        raise ValueError(f"Column {identifier!r} not found in file (columns={columns!r})") from exc
-    if idx < 0 or idx >= len(columns):
-        raise ValueError(f"Column index {idx} out of range (file has {len(columns)} columns)")
-    return columns[idx]
 
 
 @dataclass
@@ -1338,100 +1316,6 @@ class Manager:
         if app_id:
             runs = [r for r in runs if r.get("app_id") == app_id]
         return [{"run_id": r.get("cid"), "app_id": r.get("app_id")} for r in runs]
-
-    
-    def ingest_reference_bytes(
-            self,
-            *,
-            data_uri: str,
-            ref_uri: str,
-            content: bytes,
-            time_column: str | None = None,
-            value_column: str | None = None,
-            value_kind: str | None = None,
-            filename: str = "upload",
-        ) -> int:
-        """Ingest the contents of a ref:FileReference upload into Timescale.
-
-        ``time_column`` / ``value_column`` are column identifiers as written
-        on the reference node (``ref:timeColumnID`` / ``ref:valueColumnID``).
-        Each is first tried as a column name; a numeric string falls back to
-        a positional index. ``time_column`` defaults to the first column,
-        ``value_column`` to the second. The file format (parquet vs csv) is
-        inferred from the ``filename`` extension.
-        """
-        import polars as pl
-        from io import BytesIO
-        import time
-
-        # Optional: cache using sha256 of bytes to avoid re-ingesting same ref
-        digest = hashlib.sha256(content).hexdigest()
-        cache_key = ref_uri
-        with self._ingest_cache_lock:
-            cache = self._load_ingest_cache()
-            prev: dict = cache.get(cache_key, {})
-            if prev.get("sha256") == digest and prev.get("status") == "done":
-                return int(prev.get("rows_ingested", 0) or 0)
-            cache[cache_key] = {
-                "sha256": digest,
-                "status": "scheduled",
-                "filename": filename,
-            }
-            self._save_ingest_cache(cache)
-
-        try:
-            bio = BytesIO(content)
-            ext = Path(filename).suffix.lower()
-            if ext in {".parquet", ".pq"}:
-                full = pl.read_parquet(bio)
-            elif ext in {".csv", ".tsv", ".txt"}:
-                full = pl.read_csv(bio, separator="\t" if ext == ".tsv" else ",")
-            else:
-                raise ValueError(f"Unsupported file extension for {filename!r}; expected parquet or csv/tsv")
-
-            cols = full.columns
-            t_col = _resolve_column(cols, time_column, default_index=0)
-            v_col = _resolve_column(cols, value_column, default_index=1)
-            df = full.select([t_col, v_col])
-
-            df = df.rename({df.columns[0]: "ts", df.columns[1]: "value"})
-            stream_value_kind = normalize_value_kind(value_kind)
-            if value_kind is None:
-                stream_value_kind = assign_stream_value_kind(df["value"].to_list())
-
-            df = df.with_columns(pl.lit(ref_uri).alias("ref_uri"))
-            df = df.with_columns(
-                pl.lit(stream_value_kind).alias("value_kind")
-            )
-            df = df.select(["ref_uri", "ts", "value", "value_kind"])
-
-            if df.schema.get("ts") == pl.Utf8:
-                # Try with UTC timezone first (ref_uris tz-aware strings like
-                # "2026-01-27T23:30:16.668982+00:00"), fall back to naive parse.
-                try:
-                    df = df.with_columns(
-                        pl.col("ts").str.to_datetime(time_zone="UTC")
-                    )
-                except Exception:
-                    df = df.with_columns(pl.col("ts").str.to_datetime())
-
-            result = self.timescale.bulk_insert_polars(df)
-
-            with self._ingest_cache_lock:
-                cache = self._load_ingest_cache()
-                entry = cache.setdefault(cache_key, {})
-                entry.update({"status": "done", "ingested_at": time.time(), "rows_ingested": result, "filename": filename})
-                self._save_ingest_cache(cache)
-
-            return int(result)
-
-        except Exception as exc:
-            with self._ingest_cache_lock:
-                cache = self._load_ingest_cache()
-                entry = cache.setdefault(cache_key, {})
-                entry.update({"status": "error", "error": str(exc), "filename": filename})
-                self._save_ingest_cache(cache)
-            raise
 
     def insert_log(self, log_message: LogEntry):
         self.timescale.insert_log(log_message)

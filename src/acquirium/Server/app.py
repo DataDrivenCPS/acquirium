@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any, Optional, Iterator
 
-from fastapi import Body, FastAPI, HTTPException, Request, UploadFile, File, Form
+from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, Response
 from dateutil import parser as dtparser
 from pydantic import BaseModel, Field
@@ -409,32 +409,6 @@ def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[st
         return {"ok": True, "rows_inserted": total}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-
-
-@app.post("/ingest_external_reference")
-async def ingest_external_reference(
-    data_uri: str = Form(...),
-    ref_uri: str = Form(...),
-    time_column: str | None = Form(None),
-    value_column: str | None = Form(None),
-    value_kind: str | None = Form(None),
-    file: UploadFile = File(...),
-) -> dict[str, Any]:
-    try:
-        content = await file.read()
-        n = app.state.manager.ingest_reference_bytes(
-            data_uri=data_uri,
-            ref_uri=ref_uri,
-            content=content,
-            time_column=time_column,
-            value_column=value_column,
-            value_kind=value_kind,
-            filename=file.filename or "upload",
-        )
-        return {"ok": True, "rows_ingested": n}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
 
 
 def _parse_dt(s: Optional[str]) -> Optional[datetime]:
