@@ -1,7 +1,7 @@
 services:
   timescaledb:
     image: timescale/timescaledb:latest-pg17
-    container_name: ${ACQUIRIUM_CONTAINER_PREFIX:-acquirium}_timescaledb
+    container_name: acquirium_timescaledb
     environment:
       POSTGRES_USER: acquirium
       POSTGRES_PASSWORD: acquirium
@@ -23,7 +23,7 @@ services:
 
   mosquitto:
     image: eclipse-mosquitto:2
-    container_name: ${ACQUIRIUM_CONTAINER_PREFIX:-acquirium}_mosquitto
+    container_name: acquirium_mosquitto
     ports:
       - "${MQTT_HOST_PORT:-1883}:1883"   # MQTT
       # - "9001:9001" # WebSockets (optional; enable in config if you want it)
@@ -45,7 +45,7 @@ services:
     build: 
       context: .
       dockerfile: ./src/acquirium/Dockerfile
-    container_name: ${ACQUIRIUM_CONTAINER_PREFIX:-acquirium}_server
+    container_name: acquirium_server
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - acquirium_data:/app/.acquirium
@@ -81,7 +81,7 @@ services:
     build:
       context: ./deployments/WATERTAP/scripts
       dockerfile: Dockerfile
-    container_name: ${ACQUIRIUM_CONTAINER_PREFIX:-acquirium}_watertap_sim
+    container_name: acquirium_watertap_sim
     depends_on:
       mosquitto:
         condition: service_healthy
@@ -99,7 +99,7 @@ services:
     build:
       context: ./deployments/WATERTAP2/
       dockerfile: scripts/Dockerfile
-    container_name: ${ACQUIRIUM_CONTAINER_PREFIX:-acquirium}_watertap_w_gui
+    container_name: acquirium_watertap_w_gui
     ports:
       - "8501:8501"
     depends_on:
@@ -120,7 +120,7 @@ services:
     build:
       context: .
       dockerfile: ./tests/Dockerfile
-    container_name: ${ACQUIRIUM_CONTAINER_PREFIX:-acquirium}_testing_service
+    container_name: acquirium_testing_service
     depends_on:
       mosquitto:
         condition: service_healthy
@@ -138,7 +138,7 @@ services:
     build:
       context: ./deployments/BENICIA/
       dockerfile: scripts/Dockerfile
-    container_name: ${ACQUIRIUM_CONTAINER_PREFIX:-acquirium}_benicia_sim
+    container_name: acquirium_benicia_sim
     depends_on:
       mosquitto:
         condition: service_healthy
@@ -156,7 +156,7 @@ services:
 
   grafana:
     image: grafana/grafana:latest
-    container_name: ${ACQUIRIUM_CONTAINER_PREFIX:-acquirium}_grafana
+    container_name: acquirium_grafana
     restart: unless-stopped
     environment:
       - TERM=linux
