@@ -7,13 +7,14 @@ import polars as pl
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from conftest import ACQUIRIUM_TEST_SERVER_HOST, ACQUIRIUM_TEST_SERVER_PORT
 
 @pytest.fixture
 def acquirium_client_csv():
     """Fixture to create an Acquirium client for testing."""
     acq = Acquirium(
-        server_url="localhost",
-        server_port=8000,
+        server_url=ACQUIRIUM_TEST_SERVER_HOST,
+        server_port=ACQUIRIUM_TEST_SERVER_PORT,
         use_ssl=False,
     )
 
@@ -37,8 +38,8 @@ def acquirium_client_csv():
 def acquirium_client_stream():
     """Fixture to create an Acquirium client for testing."""
     acq = Acquirium(
-        server_url="localhost",
-        server_port=8000,
+        server_url=ACQUIRIUM_TEST_SERVER_HOST,
+        server_port=ACQUIRIUM_TEST_SERVER_PORT,
         use_ssl=False,
     )
 
