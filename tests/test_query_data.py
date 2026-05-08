@@ -1,6 +1,7 @@
 import pytest
 from acquirium import Acquirium
 from acquirium.internals.internals_namespaces import *
+from acquirium.internals.models import compute_ref_uri
 from acquirium.Client.query import Query
 import shutil
 import polars as pl
@@ -118,7 +119,7 @@ def test_data_filters(acquirium_client_csv):
     assert len(meta_6) == 2
     assert "point_10" in meta_6["0"].to_list()
 
-    filt_random = query.filter_data_nodes(predicate=HAS_EXTERNAL_REFERENCE, value="urn:ex/point_10_csv_ref")
+    filt_random = query.filter_data_nodes(predicate=HAS_EXTERNAL_REFERENCE, value=str(compute_ref_uri("LAB", "point_10")))
     meta_7 = filt_random.metadata()
     assert len(meta_7) == 1
     assert "point_10" in meta_7["0"].to_list()

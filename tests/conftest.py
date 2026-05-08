@@ -70,13 +70,12 @@ def insert_sample_csv_streams(acq, *, source_id: str = "LAB") -> None:
         acq.register_stream(
             source_id=source_id,
             ref_name=ref_name,
-            point_uri=f"urn:ex/point_{i}_csv_ref",
+            point_uri=f"urn:ex/point_{i}",
             value_kind=assign_stream_value_kind(value for _, value in rows),
         )
         acq.insert_timeseries(
             source_id=source_id,
             ref_name=ref_name,
-            point_uri=f"urn:ex/point_{i}_csv_ref",
             rows=list(rows),
             replace=True,
         )
