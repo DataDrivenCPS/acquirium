@@ -1,0 +1,103 @@
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg17
+    container_name: acquirium_test_timescaledb
+    environment:
+      POSTGRES_USER: acquirium
+      POSTGRES_PASSWORD: acquirium
+      POSTGRES_DB: acquirium_test
+    ports:
+      - "55432:5432"
+    volumes:
+      - tsdb_test_data:/var/lib/postgresql/data
+      - ./src/acquirium/internals/init-timescaledb.sql:/docker-entrypoint-initdb.d/init-timescaledb.sql:ro
+    networks:
+      - acquirium_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U acquirium -d acquirium_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: acquirium_test_mosquitto
+    ports:
+      - "11883:1883"
+    volumes:
+      - mosquitto_test_data:/mosquitto/data
+      - mosquitto_test_log:/mosquitto/log
+      - ./src/acquirium/internals/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    networks:
+      - acquirium_net
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -h localhost -p 1883 -t '$$SYS/broker/version' -C 1 >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    profiles:
+      - server
+
+  acquirium:
+    build:
+      context: .
+      dockerfile: ./src/acquirium/Dockerfile
+    container_name: acquirium_test_server
+    volumes:
+      - acquirium_test_data:/app/.acquirium
+      - ./acquirium.testing.toml:/app/acquirium.toml:ro
+    ports:
+      - "8010:8000"
+    environment:
+      ACQUIRIUM_DATA_DIR: /app/.acquirium
+      PG_DSN: postgresql://acquirium:acquirium@timescaledb:5432/acquirium_test
+      FASTEMBED_CACHE_PATH: /app/.fastembed_cache
+      ACQUIRIUM_RECREATE: "true"
+      ACQUIRIUM_APP_NETWORK: acquirium_test_acquirium_net
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - acquirium_net
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()\""]
+      interval: 5s
+      timeout: 2s
+      retries: 60
+      start_period: 20s
+    profiles:
+      - server
+
+  testing_service:
+    build:
+      context: .
+      dockerfile: ./tests/Dockerfile
+    container_name: acquirium_test_testing_service
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+      acquirium:
+        condition: service_healthy
+    networks:
+      - acquirium_net
+    profiles:
+      - test
+
+volumes:
+  tsdb_test_data:
+    name: acquirium_tsdb_test_data
+  mosquitto_test_data:
+    name: acquirium_mosquitto_test_data
+  mosquitto_test_log:
+    name: acquirium_mosquitto_test_log
+  acquirium_test_data:
+    name: acquirium_acquirium_test_data
+
+networks:
+  acquirium_net:
+    name: acquirium_test_acquirium_net
