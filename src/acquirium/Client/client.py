@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 
 
 def _raise_for_status(response: requests.Response) -> None:
+    """Like response.raise_for_status(), but enriches the HTTPError message with the
+    response body. For FastAPI servers this extracts the 'detail' field so the caller
+    sees the server-side error message rather than just the status code."""
     try:
         response.raise_for_status()
     except HTTPError as exc:
