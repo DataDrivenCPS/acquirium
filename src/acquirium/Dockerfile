@@ -16,10 +16,13 @@ COPY ontologies ./ontologies
 # Install the project itself into the already-populated venv.
 RUN uv sync --locked --no-dev
 
+# Copy config last so edits don't invalidate the layers above.
+COPY acquirium.docker.toml ./acquirium.toml
+
 # Pre-warm the embedding model so the first request isn't slow.
 ENV FASTEMBED_CACHE_PATH=/app/.fastembed_cache
 RUN uv run python -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5')"
 
 EXPOSE 8000
 
-CMD ["uv", "run", "uvicorn", "acquirium.Server.app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uv", "run", "acquirium", "server", "--host", "0.0.0.0", "--port", "8000"]

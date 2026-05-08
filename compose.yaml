@@ -5,9 +5,9 @@ services:
     environment:
       POSTGRES_USER: acquirium
       POSTGRES_PASSWORD: acquirium
-      POSTGRES_DB: acquirium_test
+      POSTGRES_DB: ${POSTGRES_DB:-acquirium}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
 
     volumes:
       - tsdb_data:/var/lib/postgresql/data
@@ -16,7 +16,7 @@ services:
     networks:
       - acquirium_net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U acquirium -d acquirium_test"]
+      test: ["CMD-SHELL", "pg_isready -U acquirium -d $${POSTGRES_DB:-acquirium}"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -25,7 +25,7 @@ services:
     image: eclipse-mosquitto:2
     container_name: acquirium_mosquitto
     ports:
-      - "1883:1883"   # MQTT
+      - "${MQTT_HOST_PORT:-1883}:1883"   # MQTT
       # - "9001:9001" # WebSockets (optional; enable in config if you want it)
     volumes:
       - mosquitto_data:/mosquitto/data
@@ -38,6 +38,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+    profiles:
+      - server
 
   acquirium:
     build: 
@@ -47,15 +49,16 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - acquirium_data:/app/.acquirium
+      - ./${ACQUIRIUM_CONFIG_FILE:-acquirium.toml}:/app/acquirium.toml:ro
     ports:
-      - "8000:8000"
+      - "${ACQUIRIUM_HOST_PORT:-8000}:8000"
     environment:
       # Use service names as hostnames inside the docker network
       ACQUIRIUM_DATA_DIR: /app/.acquirium
-      PG_DSN: "postgresql://acquirium:acquirium@timescaledb:5432/acquirium_test"
+      PG_DSN: ${PG_DSN:-postgresql://acquirium:acquirium@timescaledb:5432/acquirium}
       FASTEMBED_CACHE_PATH: /app/.fastembed_cache
       ACQUIRIUM_RECREATE: ${ACQUIRIUM_RECREATE:-false}
-      ACQUIRIUM_APP_NETWORK: "acquirium_acquirium_net"
+      ACQUIRIUM_APP_NETWORK: ${ACQUIRIUM_APP_NETWORK:-acquirium_acquirium_net}
     depends_on:
       mosquitto:
         condition: service_healthy
@@ -70,6 +73,8 @@ services:
       timeout: 2s
       retries: 60
       start_period: 20s
+    profiles:
+      - server
 
   watertap_sim:
     platform: linux/arm64
@@ -151,23 +156,32 @@ services:
 
   grafana:
     image: grafana/grafana:latest
-    container_name: grafana
+    container_name: acquirium_grafana
     restart: unless-stopped
     environment:
       - TERM=linux
       - GF_PLUGINS_PREINSTALL=grafana-clock-panel,grafana-polystat-panel
+      - POSTGRES_USER=acquirium
+      - POSTGRES_PASSWORD=acquirium
+      - POSTGRES_DB=${POSTGRES_DB:-acquirium}
     ports:
       - '3000:3000'
     volumes:
       - 'grafana_storage:/var/lib/grafana'
+      - './docker/grafana/provisioning:/etc/grafana/provisioning:ro'
+    depends_on:
+      timescaledb:
+        condition: service_healthy
     networks:
       - acquirium_net
     profiles:
       - grafana
+      - no-server
       - watertap_gui
 
 volumes:
   tsdb_data:
+    name: ${TSDB_VOLUME:-acquirium_tsdb_data}
   mosquitto_data:
   mosquitto_log:
   acquirium_data:
