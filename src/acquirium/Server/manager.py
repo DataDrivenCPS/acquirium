@@ -11,9 +11,6 @@ from rdflib import Graph, URIRef, Node, Literal, RDF, RDFS, SKOS
 from acquirium.Storage import (
     OxigraphGraphStore,
     TimeseriesStore,
-    PGReferenceRegistry,
-    PGReferenceInfo,
-    resolve_dsn,
     create_timeseries_store,
 )
 from acquirium.Storage.values import normalize_value_kind
@@ -23,10 +20,9 @@ from acquirium.internals.internals_namespaces import *
 from acquirium.internals.app_utils import app_uri_for
 
 import json
-import hashlib
 import re
 import threading
-from concurrent.futures import ThreadPoolExecutor, Future
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable
 import shutil
 import docker
@@ -188,13 +184,7 @@ class Manager:
         self.backend = _backend
 
         self.data_dir = base
-        self._ingest_cache_path = base / "ingest_cache.json"
-        self._ingest_cache_lock = threading.Lock()
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="acquirium-ingest")
-        self._pending_ingests: list[Future] = []
-        self.pg_dsn = _effective_dsn
-        self.pg_registry = PGReferenceRegistry()
-        self._scan_pg_references_from_graph()
         self.app_storage_root = Path(
             os.getenv("ACQUIRIUM_APP_STORAGE_ROOT", str(self.data_dir / "apps"))
         )
@@ -260,61 +250,6 @@ class Manager:
             recreate=os.getenv("ACQUIRIUM_RECREATE", "false").lower() == "true",
         )
 
-    def _load_ingest_cache(self) -> dict[str, Any]:
-        if not self._ingest_cache_path.exists():
-            return {}
-        try:
-            return json.loads(self._ingest_cache_path.read_text())
-        except Exception:
-            return {}
-
-    def _scan_pg_references_from_graph(self) -> int:
-        """Scan graph for external Postgres timeseries references.
-
-        External Postgres historians use a ``ref:hasExternalReference`` node
-        whose ``ref:storedAt`` is a literal DSN. Acquirium-managed streams are
-        handled separately by ``_sync_stream_refs_from_graph`` and are
-        identified by ``acq:sourceId``/``acq:refName`` on the same reference
-        node.
-        """
-        q = f"""
-        SELECT ?data ?ref ?dsn ?table ?query ?tcol ?vcol ?pfilter
-        WHERE {{
-          ?data <{HAS_EXTERNAL_REFERENCE}> ?ref .
-          ?ref <{STORED_AT}> ?dsn .
-          FILTER(isLiteral(?dsn))
-          FILTER(STRSTARTS(STR(?dsn), "postgresql://") || STRSTARTS(STR(?dsn), "postgres://"))
-          OPTIONAL {{ ?ref <{TIMESERIES_TABLE}> ?table . }}
-          OPTIONAL {{ ?ref <{TIMESERIES_QUERY}> ?query . }}
-          OPTIONAL {{ ?ref <{TIMESERIES_TIME_COLUMN}> ?tcol . }}
-          OPTIONAL {{ ?ref <{TIMESERIES_VALUE_COLUMN}> ?vcol . }}
-          OPTIONAL {{ ?ref <{TIMESERIES_POINT_FILTER}> ?pfilter . }}
-        }}
-        """
-        res = self.graph_store.sparql_query(q, use_union=True)
-        rows = res.get("rows", [])
-
-        count = 0
-        for row in rows:
-            (data_uri, ref_uri, dsn, table, custom_query, tcol, vcol, pfilter) = row
-            try:
-                info = PGReferenceInfo(
-                    dsn=self._sparql_value(dsn) or "",
-                    table=self._sparql_value(table),
-                    custom_query=self._sparql_value(custom_query),
-                    time_col=self._sparql_value(tcol) or "time",
-                    value_col=self._sparql_value(vcol) or "value",
-                    point_filter=self._sparql_value(pfilter),
-                )
-                self.pg_registry.register(str(ref_uri), info)
-                count += 1
-            except Exception:
-                logger.warning("Failed to register external Postgres reference %s", ref_uri, exc_info=True)
-
-        if count:
-            logger.info("Registered %d external Postgres reference(s) from graph", count)
-        return count
-
     def _sync_stream_refs_from_graph(self) -> int:
         """Sync the streams reference table from Acquirium-managed timeseries refs.
 
@@ -327,8 +262,8 @@ class Manager:
         The reference-node URI is the canonical stream identity and should be
         equal to ``compute_ref_uri(source_id, ref_name)``. We upsert into the
         streams table using the graph's actual reference URI as the storage key.
-        External PG references (which have no sourceId/refName) are skipped
-        here and handled by ``_scan_pg_references_from_graph``.
+        References without sourceId/refName are skipped; drivers are responsible
+        for ingesting external data into managed streams.
         """
         q = f"""
         SELECT ?point ?ref_node ?source_id ?ref_name ?value_kind
@@ -371,19 +306,6 @@ class Manager:
             logger.info("Synced %d stream ref(s) from graph", count)
         return count
 
-    def _save_ingest_cache(self, cache: dict[str, Any]) -> None:
-        tmp = self._ingest_cache_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(cache, indent=2, sort_keys=True, default=str))
-        tmp.replace(self._ingest_cache_path)
-
-    def _file_sha256(self, path: Path) -> str:
-        h = hashlib.sha256()
-        with path.open("rb") as f:
-            for chunk in iter(lambda: f.read(1024 * 1024), b""):
-                h.update(chunk)
-        return h.hexdigest()
-
-    
     # ----- Embedding index methods -----
 
     def _extract_concepts_for_embedding(self) -> list[dict[str, Any]]:
@@ -678,8 +600,7 @@ class Manager:
 
         try:
             self.graph_store.insert_graph(rdf_graph, format=format, replace=replace)
-            logging.info("acquirium: inserted graph into store, now ingesting data")
-            self._scan_pg_references_from_graph()
+            logging.info("acquirium: inserted graph into store")
             self._sync_stream_refs_from_graph()
 
             if wait_for_embedding:
@@ -708,22 +629,9 @@ class Manager:
         """
         Retrieve time series data for a given point URI within an optional time range.
 
-        If the URI is a registered PGReference, data is fetched directly from
-        the external Postgres database.  Otherwise the internal TimescaleDB is used.
-
         Returns:
             An iterator that yields batches of time series data as Arrow RecordBatches.
         """
-        if self.pg_registry.is_pg_reference(uri):
-            return self.pg_registry.timeseries(
-                point_uri=uri,
-                start=start,
-                end=end,
-                limit=limit,
-                order=order,
-                batch_size=batch_size,
-                value_mode=value_mode,
-            )
         storage_key = self.timescale.resolve_storage_key(uri)
         return self.timescale.timeseries(
             ref_uri=storage_key,
@@ -736,21 +644,13 @@ class Manager:
         )
 
     def timeseries_info_batch(self, uris: list[str]) -> dict:
-        """Fetch stats for multiple URIs, dispatching to PGRegistry or TimescaleDB."""
-        from acquirium.internals.models import TimeseriesInfo
-        pg_uris = [u for u in uris if self.pg_registry.is_pg_reference(u)]
-        ts_uris = [u for u in uris if not self.pg_registry.is_pg_reference(u)]
-        result: dict[str, TimeseriesInfo] = {}
-        if pg_uris:
-            result.update(self.pg_registry.timeseries_info_batch(pg_uris))
-        if ts_uris:
-            # Resolve URIs to storage keys (ref_uris) in one batch query, then
-            # remap results back to the original URIs.
-            uri_to_key = self.timescale.resolve_storage_keys(ts_uris)
-            key_to_uri = {v: k for k, v in uri_to_key.items()}
-            raw = self.timescale.timeseries_info_batch(list(key_to_uri.keys()))
-            result.update({key_to_uri[k]: v for k, v in raw.items()})
-        return result
+        """Fetch stats for multiple stream or point URIs."""
+        if not uris:
+            return {}
+        uri_to_key = self.timescale.resolve_storage_keys(uris)
+        key_to_uri = {v: k for k, v in uri_to_key.items()}
+        raw = self.timescale.timeseries_info_batch(list(key_to_uri.keys()))
+        return {key_to_uri[k]: v for k, v in raw.items()}
 
     @staticmethod
     def _sparql_value(value: Any) -> str | None:
@@ -946,12 +846,12 @@ class Manager:
         point_uri: str | None = None,
         replace: bool = False,
     ) -> int:
-        ref_uri = compute_ref_uri(source_id, ref_name)
-        value_kind = self._registered_value_kind(str(ref_uri))
+        ref_uri = str(compute_ref_uri(source_id, ref_name))
+        value_kind = self._registered_value_kind(ref_uri)
         if replace:
-            n = self.timescale.replace_rows(str(ref_uri), rows, value_kind=value_kind)
+            n = self.timescale.replace_rows(ref_uri, rows, value_kind=value_kind)
         else:
-            n = self.timescale.upsert_rows(str(ref_uri), rows, value_kind=value_kind)
+            n = self.timescale.upsert_rows(ref_uri, rows, value_kind=value_kind)
         return n
 
     def insert_timeseries_batch(
@@ -1394,25 +1294,6 @@ class Manager:
         with self._embedding_status_lock:
             return {k: dict(v) for k, v in self._embedding_status.items()}
 
-    def ingest_status(self) -> dict[str, Any]:
-        """
-        Get the status of ongoing and past ingestion tasks.
-
-        Returns:
-            A dictionary containing the ingestion status.
-        """
-        with self._ingest_cache_lock:
-            cache = self._load_ingest_cache()
-        
-        errors = {k: v for k, v in cache.items() if v.get("status") == "error"}
-        done = {k: v for k, v in cache.items() if v.get("status") == "done"}
-        scheduled = {k: v for k, v in cache.items() if v.get("status") == "scheduled"}
-        return {
-            "total_tasks": len(cache),
-            "done_tasks": len(done),
-            "scheduled_tasks": len(scheduled),
-            "error_tasks": len(errors),
-        }
     # -------------------- Unit conversion --------------------
 
     def _ensure_qudt_converter(self) -> QUDTUnitConverter:
