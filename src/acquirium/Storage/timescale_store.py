@@ -16,7 +16,12 @@ import logging
 import pyarrow as pa
 import polars as pl
 from rdflib import URIRef
-from acquirium.Storage.values import normalize_value_kind, prepare_value_columns, split_value
+from acquirium.Storage.values import (
+    normalize_value_kind,
+    normalize_value_mode,
+    prepare_value_columns,
+    split_value,
+)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -334,10 +339,12 @@ class TimescaleStore(TimeseriesStore):
         limit: int | None = None,
         order: Order = "asc",
         batch_size: int = 50_000,
+        value_mode: str = "default",
     ) -> Iterator[pa.RecordBatch]:
         '''
         Returns an iterator over the time series data for the given ref URI.
         '''
+        mode = normalize_value_mode(value_mode)
         clauses = ["ref_uri = %s"]
         params: list[Any] = [ref_uri]
 
@@ -347,6 +354,10 @@ class TimescaleStore(TimeseriesStore):
         if end:
             clauses.append("ts <= %s")
             params.append(self._to_utc(end))
+        if mode == "numeric":
+            clauses.append("numeric_value IS NOT NULL")
+        elif mode == "text":
+            clauses.append("text_value IS NOT NULL")
 
         where = " AND ".join(clauses)
         order_sql = "ASC" if order == "asc" else "DESC"
@@ -379,9 +390,15 @@ class TimescaleStore(TimeseriesStore):
                 ref_uri_col = [ref_uri] * len(ts_col)
                 if not ts_col or not ref_uri_col:
                     break
-                if value_kind == "text":
+                if mode == "coalesce":
+                    values = [
+                        text if text is not None else (str(numeric) if numeric is not None else None)
+                        for numeric, text in zip(numeric_col, text_col)
+                    ]
+                    val_array = pa.array(values, type=pa.string())
+                elif mode == "text" or value_kind == "text":
                     val_array = pa.array(text_col, type=pa.string())
-                elif value_kind == "numeric":
+                elif mode == "numeric" or value_kind == "numeric":
                     val_array = pa.array(numeric_col, type=pa.float64())
                 elif any(v is not None for v in numeric_col):
                     val_array = pa.array(numeric_col, type=pa.float64())

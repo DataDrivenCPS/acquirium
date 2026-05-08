@@ -22,7 +22,7 @@ from acquirium.internals.internals_namespaces import (
     TIME_COLUMN_ID,
     VALUE_COLUMN_ID,
 )
-from acquirium.Storage.values import infer_value_kind, normalize_value_kind
+from acquirium.Storage.values import assign_stream_value_kind, normalize_value_kind
 
 logger = logging.getLogger("acquirium.tabular_ingest")
 
@@ -212,11 +212,8 @@ class _TabularIngestBase(PollingIngestDriver):
                 .get_column("value")
                 .to_list()
             )
-            kinds[ref_name] = normalize_value_kind(
-                infer_value_kind(
-                    values,
-                    unknown_default="numeric",
-                )
+            kinds[ref_name] = assign_stream_value_kind(
+                values,
             )
         return kinds
 

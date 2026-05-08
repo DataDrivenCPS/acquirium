@@ -37,7 +37,11 @@ from acquirium.internals.models import (
     TimeseriesInfo,
     compute_ref_uri,
 )
-from acquirium.Storage.values import normalize_value_kind, prepare_value_columns, split_value
+from acquirium.Storage.values import (
+    normalize_value_kind,
+    normalize_value_mode,
+    prepare_value_columns,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -146,24 +150,24 @@ class DuckDBStore:
         *,
         value_kind: str = "text",
     ) -> int:
-        rows_list = [
-            (ref_uri, self._to_utc_naive(ts), *split_value(v, value_kind))
-            for ts, v in rows
-        ]
+        rows_list = list(rows)
         if not rows_list:
             return 0
-        with self._lock:
-            self._conn.executemany(
-                f"""
-                INSERT INTO {TIMESERIES_TABLE} (ref_uri, ts, numeric_value, text_value)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT (ref_uri, ts) DO UPDATE SET
-                    numeric_value = excluded.numeric_value,
-                    text_value = excluded.text_value
-                """,
-                rows_list,
-            )
-        return len(rows_list)
+        df = pl.DataFrame(
+            {
+                "ref_uri": [ref_uri] * len(rows_list),
+                "ts": [ts for ts, _ in rows_list],
+                "value": [value for _, value in rows_list],
+                "value_kind": [value_kind] * len(rows_list),
+            },
+            schema={
+                "ref_uri": pl.Utf8,
+                "ts": pl.Datetime("us", "UTC"),
+                "value": pl.Object,
+                "value_kind": pl.Utf8,
+            },
+        )
+        return self.bulk_insert_polars(df)
 
     def replace_rows(
         self,
@@ -191,16 +195,34 @@ class DuckDBStore:
         )
         df = df.unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
         with self._lock:
-            # DuckDB resolves the local name 'df' via its Arrow bridge
-            self._conn.execute(
-                f"""
-                INSERT INTO {TIMESERIES_TABLE} (ref_uri, ts, numeric_value, text_value)
-                SELECT ref_uri, ts, numeric_value, text_value FROM df
-                ON CONFLICT (ref_uri, ts) DO UPDATE SET
-                    numeric_value = excluded.numeric_value,
-                    text_value = excluded.text_value
-                """
-            )
+            self._conn.register("_acquirium_incoming_timeseries", df)
+            owns_transaction = not self._in_tx
+            try:
+                if owns_transaction:
+                    self._conn.execute("BEGIN TRANSACTION")
+                self._conn.execute(
+                    f"""
+                    DELETE FROM {TIMESERIES_TABLE}
+                    USING _acquirium_incoming_timeseries AS incoming
+                    WHERE {TIMESERIES_TABLE}.ref_uri = incoming.ref_uri
+                      AND {TIMESERIES_TABLE}.ts = incoming.ts
+                    """
+                )
+                self._conn.execute(
+                    f"""
+                    INSERT INTO {TIMESERIES_TABLE} (ref_uri, ts, numeric_value, text_value)
+                    SELECT ref_uri, ts, numeric_value, text_value
+                    FROM _acquirium_incoming_timeseries
+                    """
+                )
+                if owns_transaction:
+                    self._conn.execute("COMMIT")
+            except Exception:
+                if owns_transaction:
+                    self._conn.execute("ROLLBACK")
+                raise
+            finally:
+                self._conn.unregister("_acquirium_incoming_timeseries")
         return len(df)
 
     # ---- stream reference registry ----
@@ -265,8 +287,10 @@ class DuckDBStore:
         limit: int | None = None,
         order: Order = "asc",
         batch_size: int = 50_000,
+        value_mode: str = "default",
     ) -> Iterator[pa.RecordBatch]:
         """Yield PyArrow RecordBatches with schema [ts: timestamp[us,UTC], value, uri]."""
+        mode = normalize_value_mode(value_mode)
         clauses = ["ref_uri = ?"]
         params: list[Any] = [ref_uri]
 
@@ -276,6 +300,10 @@ class DuckDBStore:
         if end:
             clauses.append("ts <= ?")
             params.append(self._to_utc_naive(end))
+        if mode == "numeric":
+            clauses.append("numeric_value IS NOT NULL")
+        elif mode == "text":
+            clauses.append("text_value IS NOT NULL")
 
         where = " AND ".join(clauses)
         order_sql = "ASC" if order == "asc" else "DESC"
@@ -297,9 +325,17 @@ class DuckDBStore:
         for batch in table.to_batches(max_chunksize=batch_size):
             numeric_col = batch.column("numeric_value")
             text_col = batch.column("text_value")
-            if value_kind == "text":
+            if mode == "coalesce":
+                numeric_values = numeric_col.to_pylist()
+                text_values = text_col.to_pylist()
+                values = [
+                    text if text is not None else (str(numeric) if numeric is not None else None)
+                    for numeric, text in zip(numeric_values, text_values)
+                ]
+                val_col = pa.array(values, type=pa.string())
+            elif mode == "text" or value_kind == "text":
                 val_col = text_col.cast(pa.string())
-            elif value_kind == "numeric":
+            elif mode == "numeric" or value_kind == "numeric":
                 val_col = numeric_col.cast(pa.float64())
             elif numeric_col.null_count < len(numeric_col):
                 val_col = numeric_col.cast(pa.float64())

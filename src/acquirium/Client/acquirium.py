@@ -91,7 +91,14 @@ class Acquirium:
     # GRAPH API
     # ------------------------------------------------------------------
 
-    def insert_graph(self, rdf_graph: str, format: str = "turtle", replace = True, wait_for_embedding: bool = False) -> None:
+    def insert_graph(
+        self,
+        rdf_graph: str,
+        format: str = "turtle",
+        replace=True,
+        wait_for_embedding: bool = False,
+        ingest_external_references: bool = True,
+    ) -> None:
         """
         Insert RDF graph into the graph store to the main graph
 
@@ -104,8 +111,12 @@ class Acquirium:
             replace: If True, replaces the existing main graph. If False, appends to it.
             wait_for_embedding: If True, blocks until the server finishes rebuilding
                 the embedding index. Default False (background rebuild).
+            ingest_external_references: If True, uploads locally accessible
+                ref:FileReference files from the graph for ingestion.
         """
         self.client.insert_graph(rdf_graph, format=format, replace=replace, wait_for_embedding=wait_for_embedding)
+        if ingest_external_references:
+            self.client.ingest_external_references_from_graph()
 
     def query(self) -> Query:
         """Create a new empty Query bound to this Acquirium instance."""
