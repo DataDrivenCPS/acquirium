@@ -65,14 +65,14 @@ spec     = "acquirium.BuiltinDrivers.system_metrics:SystemMetricsDriver"
 interval = 30.0
 
 # Watch a directory for CSV and TSV files.
-[[drivers]]
-spec         = "acquirium.BuiltinDrivers.csv_ingest:CSVIngestDriver"
-interval     = 5.0
-watch_dir    = "./data"
-format       = "wide"        # "auto" | "wide" | "narrow"
-time_col     = "Date"        # name of the timestamp column
-id_col       = "id"          # narrow format: stream ID column
-value_col    = "value"       # narrow format: value column
+# [[drivers]]
+# spec         = "acquirium.BuiltinDrivers.csv_ingest:CSVIngestDriver"
+# interval     = 5.0
+# watch_dir    = "./data"
+# format       = "wide"        # "auto" | "wide" | "narrow"
+# time_col     = "Date"        # name of the timestamp column
+# id_col       = "id"          # narrow format: stream ID column
+# value_col    = "value"       # narrow format: value column
 
 # Watch a directory for Excel (XLSX) files.
 # [[drivers]]
@@ -88,12 +88,12 @@ value_col    = "value"       # narrow format: value column
 # Run a WaterTAP build/solve function and ingest mapped outputs.
 # The graph file must contain ref:hasExternalReference and acquirium:hasPyomoVar
 # triples for each point to ingest.
-[[drivers]]
-spec                      = "acquirium.BuiltinDrivers.watertap:WaterTAPDriver"
-interval                  = 30.0
-watertap_source_id        = "watertap"
-watertap_graph_path       = "deployments/WATERTAP2/models/test-model.ttl"
-watertap_build_spec       = "deployments/WATERTAP2/scripts/example_watertap.py:build_and_solve"
-watertap_insert_graph     = true
-watertap_register_streams = true
-watertap_build_kwargs     = { flow_vol = 0.001, salt_mass_conc = 0.035, operating_pressure = 5000000.0, flow_mass_liq = 0.985, flow_mass_salt = 0.015 }
+# [[drivers]]
+# spec                      = "acquirium.BuiltinDrivers.watertap:WaterTAPDriver"
+# interval                  = 30.0
+# watertap_source_id        = "watertap"
+# watertap_graph_path       = "deployments/WATERTAP2/models/test-model.ttl"
+# watertap_build_spec       = "deployments/WATERTAP2/scripts/example_watertap.py:build_and_solve"
+# watertap_insert_graph     = true
+# watertap_register_streams = true
+# watertap_build_kwargs     = { flow_vol = 0.001, salt_mass_conc = 0.035, operating_pressure = 5000000.0, flow_mass_liq = 0.985, flow_mass_salt = 0.015 }

@@ -76,7 +76,9 @@ The streams table lets the server answer: *given a `point_uri`, what storage key
 
 The table also records streams discovered only from data insertion. Those rows have a `ref_uri`, `source_id`, and `ref_name`, with `point_uri = NULL` until a semantic graph link is inserted later.
 
-`value_kind` records the stream-level storage type. Drivers declare it as `"numeric"` or `"text"` when registering streams or inserting observations. It defaults to `"text"` when omitted. A `ref_uri` is expected to be numeric or text, not both. Numeric telemetry is stored in `timeseries.numeric_value`; text/log-like samples are stored in `timeseries.text_value`; the other value column is normally `NULL`.
+`value_kind` records the stream-level storage type. Drivers declare it as `"numeric"` or `"text"` when registering streams or inserting observations. It defaults to `"text"` when omitted. Numeric telemetry is stored in `timeseries.numeric_value`; text/log-like samples are stored in `timeseries.text_value`; the other value column is normally `NULL`.
+
+Numeric streams can still contain occasional nonnumeric rows. If a value in a numeric stream cannot be converted to a float, Acquirium stores that row in `timeseries.text_value` rather than rejecting the whole insert. Read APIs expose `value_mode` to choose default behavior, numeric-only rows, text-only rows, or a coalesced mixed stream. See [`data-api.md`](data-api.md) for the read modes and examples.
 
 ---
 

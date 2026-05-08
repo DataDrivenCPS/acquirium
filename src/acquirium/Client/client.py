@@ -115,6 +115,8 @@ class AcquiriumClient:
         limit: Optional[int] = None,
         order: Order = "asc",
         timeout: float = 60.0,
+        *,
+        value_mode: str = "default",
     ) -> pl.DataFrame:
         """
         Fetch the full timeseries payload and return a single Polars DataFrame.
@@ -127,6 +129,7 @@ class AcquiriumClient:
             "end": end,
             "limit": limit,
             "order": order,
+            "value_mode": value_mode,
         }
         headers = {"Accept": "application/vnd.apache.arrow.stream"}
 
@@ -155,6 +158,7 @@ class AcquiriumClient:
         limit: Optional[int] = None,
         order: Order = "asc",
         *,
+        value_mode: str = "default",
         timeout: float = 60.0,
     ) -> Iterator[pl.DataFrame]:
         """
@@ -170,6 +174,7 @@ class AcquiriumClient:
             "end": end,
             "limit": limit,
             "order": order,
+            "value_mode": value_mode,
         }
         headers = {"Accept": "application/vnd.apache.arrow.stream"}
 
