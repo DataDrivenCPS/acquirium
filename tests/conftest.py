@@ -20,6 +20,7 @@ ACQUIRIUM_TEST_SERVER_HOST = os.getenv("ACQUIRIUM_TEST_SERVER_HOST", "localhost"
 ACQUIRIUM_TEST_SERVER_PORT = int(os.getenv("ACQUIRIUM_TEST_SERVER_PORT", "8000"))
 TEST_POINT_URI = "urn:test:integration_point"
 TEST_REF_URI = "urn:test:integration_ref"
+SAMPLE_SOURCE_ID = "LAB"
 
 
 @pytest.fixture(scope="session")
@@ -59,23 +60,22 @@ def clean_point(ts_store):
         cur.execute("DELETE FROM logs WHERE point_uri = %s", [TEST_POINT_URI])
 
 
-def insert_sample_csv_streams(acq, *, source_id: str = "LAB") -> None:
+def insert_sample_csv_streams(acq, *, source_id: str = SAMPLE_SOURCE_ID) -> None:
     """Insert the sample CSV rows through the public timeseries API."""
     import polars as pl
 
     df = pl.read_csv("tests/sample_data.csv", try_parse_dates=True)
+    stream_specs = []
+    stream_rows: dict = {}
     for i in range(1, 11):
         ref_name = f"point_{i}"
         rows = list(df.select("Timestamp", ref_name).iter_rows())
-        acq.register_stream(
-            source_id=source_id,
-            ref_name=ref_name,
-            point_uri=f"urn:ex/point_{i}",
-            value_kind=assign_stream_value_kind(value for _, value in rows),
-        )
-        acq.insert_timeseries(
-            source_id=source_id,
-            ref_name=ref_name,
-            rows=list(rows),
-            replace=True,
-        )
+        stream_specs.append({
+            "source_id": source_id,
+            "ref_name": ref_name,
+            "point_uri": f"urn:ex/point_{i}",
+            "value_kind": assign_stream_value_kind(value for _, value in rows),
+        })
+        stream_rows[ref_name] = rows
+    acq.register_streams(stream_specs)
+    acq.insert_timeseries_batch(source_id, stream_rows)
