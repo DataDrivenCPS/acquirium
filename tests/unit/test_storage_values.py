@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from decimal import Decimal
-
 import polars as pl
 
 from acquirium.Storage.values import (
     assign_stream_value_kind,
-    infer_value_kind,
     normalize_value_kind,
+    normalize_value_mode,
     prepare_value_columns,
     split_value,
 )
@@ -19,24 +17,21 @@ def test_normalize_value_kind_defaults_to_text():
     assert normalize_value_kind("unknown") == "text"
 
 
-def test_infer_value_kind_numeric_native_values():
-    assert infer_value_kind([1, 2.5, Decimal("3.0")]) == "numeric"
+def test_normalize_value_mode_accepts_documented_modes():
+    assert normalize_value_mode(None) == "default"
+    assert normalize_value_mode("default") == "default"
+    assert normalize_value_mode("coalesce") == "coalesce"
+    assert normalize_value_mode("numeric") == "numeric"
+    assert normalize_value_mode("text") == "text"
 
 
-def test_infer_value_kind_text_wins_over_numeric():
-    assert infer_value_kind([1, "ON"]) == "text"
-
-
-def test_infer_value_kind_numeric_strings_by_default():
-    assert infer_value_kind(["1", "2.5", " "]) == "numeric"
-
-
-def test_infer_value_kind_can_treat_strings_as_text():
-    assert infer_value_kind(["1", "2.5"], parse_numeric_strings=False) == "text"
-
-
-def test_infer_value_kind_defaults_blank_streams_to_text():
-    assert infer_value_kind([None, " "]) == "text"
+def test_normalize_value_mode_rejects_legacy_aliases():
+    for value_mode in ("registered", "stream", "value", "float", ""):
+        try:
+            normalize_value_mode(value_mode)
+        except ValueError:
+            continue
+        raise AssertionError(f"expected {value_mode!r} to be rejected")
 
 
 def test_assign_stream_value_kind_uses_numeric_when_any_numeric_value_is_observed():
