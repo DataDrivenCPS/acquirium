@@ -1,6 +1,7 @@
 SHELL := /bin/bash
 
 COMPOSE ?= docker compose
+TEST_COMPOSE ?= COMPOSE_PROJECT_NAME=acquirium_test $(COMPOSE) -f compose.testing.yaml
 
 # Default; user can override: make up ACQUIRIUM_RECREATE=true
 ACQUIRIUM_RECREATE ?= false
@@ -26,7 +27,6 @@ POSTGRES_HOST_PORT ?= 5432
 PG_DSN ?= postgresql://acquirium:acquirium@timescaledb:5432/$(POSTGRES_DB)
 TSDB_VOLUME ?= acquirium_tsdb_data
 MQTT_HOST_PORT ?= 1883
-ACQUIRIUM_CONTAINER_PREFIX ?= acquirium
 ACQUIRIUM_APP_NETWORK ?= acquirium_acquirium_net
 
 export POSTGRES_DB
@@ -35,13 +35,11 @@ export PG_DSN
 export TSDB_VOLUME
 export MQTT_HOST_PORT
 export ACQUIRIUM_HOST_PORT
-export ACQUIRIUM_CONTAINER_PREFIX
 export ACQUIRIUM_APP_NETWORK
 
-TEST_COMPOSE_ENV := COMPOSE_PROJECT_NAME=acquirium_test ACQUIRIUM_CONTAINER_PREFIX=acquirium_test ACQUIRIUM_APP_NETWORK=acquirium_test_acquirium_net ACQUIRIUM_HOST_PORT=8010 POSTGRES_HOST_PORT=55432 MQTT_HOST_PORT=11883
 TEST_PYTEST_ENV := ACQUIRIUM_TEST_SERVER_HOST=localhost ACQUIRIUM_TEST_SERVER_PORT=8010 ACQUIRIUM_TEST_PG_DSN=postgresql://acquirium:acquirium@localhost:55432/acquirium_test
 
-.PHONY: up rebuild down no-server-up no-server-down test watertap-up watertap-down logs ps
+.PHONY: up rebuild down no-server-up no-server-down test testing-up testing-down watertap-up watertap-down logs ps
 
 up:
 	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile server up -d --build
@@ -79,36 +77,23 @@ no-server-up:
 no-server-down:
 	$(COMPOSE) --profile no-server rm -sf grafana timescaledb
 
-# Always enable for test; always tear down even on failure
-test: ACQUIRIUM_RECREATE := true
-test: ACQUIRIUM_CONFIG_FILE := acquirium.testing.toml
-test: POSTGRES_DB := acquirium_test
-test: PG_DSN := postgresql://acquirium:acquirium@timescaledb:5432/acquirium_test
-test: TSDB_VOLUME := acquirium_tsdb_test_data
+# Always tear down even on failure
 test:
 	uv sync --locked --all-extras
 	status=0; \
-	$(TEST_COMPOSE_ENV) $(COMPOSE) --profile server --profile test rm -sf timescaledb acquirium mosquitto testing_service >/dev/null 2>&1 || true; \
-	$(TEST_COMPOSE_ENV) ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) ACQUIRIUM_CONFIG_FILE=$(ACQUIRIUM_CONFIG_FILE) $(COMPOSE) --profile server --profile test up -d --build || status=$$?; \
+	$(TEST_COMPOSE) --profile server --profile test rm -sf timescaledb acquirium mosquitto testing_service >/dev/null 2>&1 || true; \
+	$(TEST_COMPOSE) --profile server --profile test up -d --build || status=$$?; \
 	if [ $$status -eq 0 ]; then $(TEST_PYTEST_ENV) uv run pytest tests || status=$$?; fi; \
 	$(MAKE) testing-down; \
 	exit $$status
 
-testing-up: ACQUIRIUM_RECREATE := true
-testing-up: ACQUIRIUM_CONFIG_FILE := acquirium.testing.toml
-testing-up: POSTGRES_DB := acquirium_test
-testing-up: PG_DSN := postgresql://acquirium:acquirium@timescaledb:5432/acquirium_test
-testing-up: TSDB_VOLUME := acquirium_tsdb_test_data
 testing-up:
-	$(TEST_COMPOSE_ENV) $(COMPOSE) --profile server --profile test rm -sf timescaledb acquirium mosquitto testing_service >/dev/null 2>&1 || true
-	$(TEST_COMPOSE_ENV) ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) ACQUIRIUM_CONFIG_FILE=$(ACQUIRIUM_CONFIG_FILE) $(COMPOSE) --profile server --profile test up -d --build
+	$(TEST_COMPOSE) --profile server --profile test rm -sf timescaledb acquirium mosquitto testing_service >/dev/null 2>&1 || true
+	$(TEST_COMPOSE) --profile server --profile test up -d --build
 
 
-testing-down: POSTGRES_DB := acquirium_test
-testing-down: PG_DSN := postgresql://acquirium:acquirium@timescaledb:5432/acquirium_test
-testing-down: TSDB_VOLUME := acquirium_tsdb_test_data
 testing-down:
-	$(TEST_COMPOSE_ENV) $(COMPOSE) --profile server --profile test down --remove-orphans
+	$(TEST_COMPOSE) --profile server --profile test down --remove-orphans
 
 watertap-up: ACQUIRIUM_RECREATE := true
 watertap-up:
