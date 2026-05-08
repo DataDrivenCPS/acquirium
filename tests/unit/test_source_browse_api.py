@@ -249,9 +249,9 @@ class StubBrowseManagerWithPathSource(StubBrowseManager):
     def list_sources(self) -> list[dict[str, Any]]:
         return [
             {
-                "source_id": "dpr-trailer-data/raw/sample.csv",
-                "uri": "urn:acquirium:datasource:dpr-trailer-data/raw/sample.csv",
-                "label": "dpr-trailer-data/raw/sample.csv",
+                "source_id": "site-data/raw/sample.csv",
+                "uri": "urn:acquirium:datasource:site-data/raw/sample.csv",
+                "label": "site-data/raw/sample.csv",
                 "stream_count": 1,
                 "row_count": 2,
                 "earliest": datetime(2026, 4, 28, 10, 0, tzinfo=timezone.utc),
@@ -260,14 +260,14 @@ class StubBrowseManagerWithPathSource(StubBrowseManager):
         ]
 
     def get_source(self, source_id: str) -> dict[str, Any] | None:
-        if source_id != "dpr-trailer-data/raw/sample.csv":
+        if source_id != "site-data/raw/sample.csv":
             return None
         return {
             **self.list_sources()[0],
             "metadata": {
-                "uri": "urn:acquirium:datasource:dpr-trailer-data/raw/sample.csv",
+                "uri": "urn:acquirium:datasource:site-data/raw/sample.csv",
                 "triples": {
-                    "http://www.w3.org/2000/01/rdf-schema#label": ["dpr-trailer-data/raw/sample.csv"],
+                    "http://www.w3.org/2000/01/rdf-schema#label": ["site-data/raw/sample.csv"],
                 },
             },
         }
@@ -283,9 +283,9 @@ def test_source_browse_endpoints_allow_slashes_in_source_id():
             resp = client.get("/source")
             assert resp.status_code == 200
             body = resp.json()
-            assert body["sources"][0]["source_id"] == "dpr-trailer-data/raw/sample.csv"
+            assert body["sources"][0]["source_id"] == "site-data/raw/sample.csv"
             encoded = "~b64~" + urlsafe_b64encode(
-                "dpr-trailer-data/raw/sample.csv".encode("utf-8")
+                "site-data/raw/sample.csv".encode("utf-8")
             ).decode("ascii").rstrip("=")
             assert body["sources"][0]["url"].endswith(f"/source/{encoded}")
             assert body["sources"][0]["streams_url"].endswith(f"/source/{encoded}/streams")
@@ -293,7 +293,7 @@ def test_source_browse_endpoints_allow_slashes_in_source_id():
             resp = client.get(f"/source/{encoded}")
             assert resp.status_code == 200
             body = resp.json()
-            assert body["source_id"] == "dpr-trailer-data/raw/sample.csv"
+            assert body["source_id"] == "site-data/raw/sample.csv"
     finally:
         app.router.lifespan_context = old_lifespan
 
