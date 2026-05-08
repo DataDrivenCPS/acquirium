@@ -18,6 +18,7 @@ from psycopg import sql
 import pyarrow as pa
 
 from acquirium.internals.models import TimeseriesInfo
+from acquirium.Storage.values import normalize_value_mode
 
 logger = logging.getLogger("acquirium.pg_reference")
 
@@ -116,6 +117,13 @@ class PGReferenceRegistry:
         The output schema matches ``TimescaleStore.timeseries()`` exactly:
         ``[ts: timestamp[us, tz=UTC], value: string, uri: string]``.
         """
+        mode = normalize_value_mode(value_mode)
+        if mode in {"numeric", "text"}:
+            raise ValueError(
+                "PGReference timeseries does not support value_mode "
+                f"{mode!r}; use 'default' or 'coalesce'"
+            )
+
         info = self._refs[point_uri]
         conn = _get_conn(info.dsn)
         try:
