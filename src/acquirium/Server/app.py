@@ -66,6 +66,7 @@ def _run_inprocess_driver(
             origin=spec,
             insert_batch_rows=int(merged_cfg.get("driver", {}).get("insert_batch_rows", 50_000)),
         )
+        merged_cfg = {**merged_cfg, "__driver_id": spec}
         driver = driver_cls(direct_aq, merged_cfg)
         driver.setup()
         known_version = manager.graph_version()
