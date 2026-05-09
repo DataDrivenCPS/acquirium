@@ -83,22 +83,26 @@ class WaterTAPDriver(PollingIngestDriver):
         model = self._extract_model(result)
         ts = datetime.now(timezone.utc)
 
-        rows: list[tuple[datetime, str, float]] = []
+        rows: list[tuple[datetime, str, Any]] = []
         missing = 0
         for spec in self._point_specs:
             # Read whatever the graph mapped this point to instead of baking
             # WaterTAP model structure into the driver.
-            numeric_value = get_value_from_model(model, spec.pyomo_var)
-            if numeric_value is None:
+            found, value = get_observation_from_model(model, spec.pyomo_var)
+            if not found:
                 missing += 1
                 continue
-            rows.append((ts, spec.ref_name, numeric_value))
+            rows.append((ts, spec.ref_name, value))
 
         if missing:
-            logger.warning("watertap: skipped %d unmapped or non-numeric model values", missing)
+            logger.warning("watertap: skipped %d unmapped model values", missing)
         return pl.DataFrame(
             rows,
-            schema=["ts", "ref_name", "value"],
+            schema={
+                "ts": pl.Datetime("us", "UTC"),
+                "ref_name": pl.Utf8,
+                "value": pl.Object,
+            },
             orient="row",
         )
 
@@ -119,6 +123,17 @@ class WaterTAPDriver(PollingIngestDriver):
 
 def get_value_from_model(model: Any, component_name: str) -> float | None:
     """Best-effort extraction of a numeric value from a Pyomo-like model."""
+    found, value = get_observation_from_model(model, component_name)
+    if not found or value is None:
+        return None
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+def get_observation_from_model(model: Any, component_name: str) -> tuple[bool, Any]:
+    """Best-effort extraction of an observed value from a Pyomo-like model."""
     comp = None
     try:
         comp = model.find_component(component_name)
@@ -133,27 +148,24 @@ def get_value_from_model(model: Any, component_name: str) -> float | None:
             comp = None
 
     if comp is None:
-        return None
+        return False, None
 
     pyomo_value = _load_pyomo_value()
     if pyomo_value is not None:
         try:
             value = pyomo_value(comp)
             if value is not None:
-                return float(value)
+                return True, value
         except Exception:
             pass
 
     try:
         raw = comp.value
     except Exception:
-        return None
+        return False, None
     if raw is None:
-        return None
-    try:
-        return float(raw)
-    except Exception:
-        return None
+        return False, None
+    return True, raw
 
 
 def _load_point_specs(graph_path: Path) -> list[WaterTAPPointSpec]:

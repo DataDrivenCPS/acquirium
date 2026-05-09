@@ -82,6 +82,31 @@ def test_timeseries_mutation_and_query_contract(contract_store, contract_uri_pre
     assert _values(store, ref_uri) == [3.0]
 
 
+def test_numeric_stream_can_store_and_query_text_fallback_rows(contract_store, contract_uri_prefix):
+    store = contract_store
+    ref_uri = f"{contract_uri_prefix}:mixed"
+    store.ensure_stream_ref(None, contract_uri_prefix, "mixed", ref_uri=ref_uri, value_kind="numeric")
+
+    assert store.upsert_rows(
+        ref_uri,
+        [
+            (_utc(2026, 2, 1), "1.0"),
+            (_utc(2026, 2, 2), "Manual Control"),
+            (_utc(2026, 2, 3), 2.5),
+        ],
+        value_kind="numeric",
+    ) == 3
+
+    assert _values(store, ref_uri, order="asc") == [1.0, None, 2.5]
+    assert _values(store, ref_uri, order="asc", value_mode="numeric") == [1.0, 2.5]
+    assert _values(store, ref_uri, order="asc", value_mode="text") == ["Manual Control"]
+    assert _values(store, ref_uri, order="asc", value_mode="coalesce") == [
+        "1.0",
+        "Manual Control",
+        "2.5",
+    ]
+
+
 def test_bulk_insert_polars_contract(contract_store, contract_uri_prefix):
     store = contract_store
     ref_uri = f"{contract_uri_prefix}:bulk"
