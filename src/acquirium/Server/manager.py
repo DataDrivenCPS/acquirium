@@ -6,7 +6,7 @@ from pathlib import Path
 import os
 import logging
 from time import perf_counter
-from rdflib import Graph, URIRef, Node, Literal, RDF, RDFS, SKOS
+from rdflib import Graph, URIRef, Literal, RDF, RDFS, SKOS
 
 from acquirium.Storage import (
     OxigraphGraphStore,
@@ -657,26 +657,6 @@ class Manager:
         if value is None:
             return None
         return str(value).strip('"')
-
-    def _graph_metadata(self, uri: str | None) -> dict[str, Any] | None:
-        if uri is None:
-            return None
-        q = f"""
-        SELECT ?p ?o
-        WHERE {{
-          <{uri}> ?p ?o .
-        }}
-        ORDER BY ?p ?o
-        """
-        rows = self.graph_store.sparql_query(q, use_union=True).get("rows", [])
-        metadata: dict[str, list[str]] = {}
-        for pred, obj in rows:
-            pred_s = str(pred)
-            obj_s = self._sparql_value(obj)
-            if obj_s is None:
-                continue
-            metadata.setdefault(pred_s, []).append(obj_s)
-        return {"uri": uri, "triples": metadata}
 
     def register_datasource(self, source_id: str) -> str:
         """Register a named datasource in the knowledge graph.
