@@ -260,6 +260,7 @@ def run_cmd(
         use_ssl=use_ssl,
         insert_batch_rows=int(driver_cfg.get("insert_batch_rows", 50_000)),
     )
+    cfg = {**cfg, "__driver_id": driver_spec}
     driver = driver_cls(aq, cfg)
 
     def _sigterm_handler(signum, frame):  # noqa: ANN001
