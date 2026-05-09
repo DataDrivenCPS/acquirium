@@ -589,7 +589,3 @@ def conversion_factors(req: ConversionFactorsRequest) -> dict[str, Any]:
         return app.state.manager.get_conversion_factors(req.from_unit, req.to_unit)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-
-
-# Registers source/data browser routes on this FastAPI app instance.
-from acquirium.Server import data_browser as _data_browser  # noqa: E402,F401
