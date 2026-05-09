@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import re
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +15,27 @@ if TYPE_CHECKING:
     import polars as pl
 
     from acquirium.Client.acquirium import Acquirium
+    from acquirium.DriverState import DriverState, WriteAheadLog, ExponentialBackoff
+
+log = logging.getLogger(__name__)
+
+# Connection errors from the requests library that indicate the server is
+# unreachable (as opposed to a bad-data or auth error).
+_CONNECTION_EXC_NAMES = frozenset({"ConnectionError", "Timeout", "ConnectTimeout", "ReadTimeout"})
+
+
+def _is_connection_error(exc: BaseException) -> bool:
+    """Return True if *exc* looks like a transient network/connection failure."""
+    type_name = type(exc).__name__
+    if type_name in _CONNECTION_EXC_NAMES:
+        return True
+    # requests exceptions live in requests.exceptions; check the MRO names
+    return any(c.__name__ in _CONNECTION_EXC_NAMES for c in type(exc).__mro__)
+
+
+def _sanitise_driver_id(spec: str) -> str:
+    """Turn a driver spec or class name into a filesystem-safe identifier."""
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", spec).strip("_") or "driver"
 
 
 def _cast_value_to_utf8(col: "pl.Series") -> "pl.Expr":
@@ -36,6 +59,10 @@ class Driver(ABC):
     The ``acquirium run`` CLI calls :meth:`setup` once at startup, then calls
     :meth:`tick` repeatedly, sleeping for ``interval`` seconds between calls.
     Override :meth:`stop` for cleanup on Ctrl-C or SIGTERM.
+
+    Each driver instance gets a local **state directory** at
+    ``<state_dir>/<driver_id>/``.  The directory and a :class:`DriverState`
+    key-value store are available immediately via ``self.state``.
 
     Example::
 
@@ -66,6 +93,27 @@ class Driver(ABC):
         self.aq = aq
         # Full parsed TOML dict so drivers can read their own config sections.
         self.config = config
+
+        # ------------------------------------------------------------------
+        # Resolve state directory
+        # ------------------------------------------------------------------
+        driver_cfg = config.get("driver", {})
+
+        # driver_id: user-explicit > injected by CLI/server > class name
+        driver_id = (
+            driver_cfg.get("driver_id")
+            or _sanitise_driver_id(config.get("__driver_id", ""))
+            or self.__class__.__name__
+        )
+
+        state_base = Path(driver_cfg.get("state_dir", "driver_state"))
+        if not state_base.is_absolute():
+            state_base = Path(config.get("__config_dir", Path.cwd())) / state_base
+        self._driver_state_dir = state_base / driver_id
+        self._driver_state_dir.mkdir(parents=True, exist_ok=True)
+
+        from acquirium.DriverState import DriverState as _DriverState
+        self.state: "DriverState" = _DriverState(self._driver_state_dir)
 
     def reference_uri(self, ref_name: str) -> URIRef:
         """Return the canonical reference URI for ``self.source_id``/``ref_name``."""
@@ -115,15 +163,82 @@ class IngestDriver(Driver):
     either include a ``source_id`` column for multi-source frames or set
     ``self.source_id`` as the default for single-source drivers. Drivers must
     register each stream, including its value kind, before inserting rows.
+
+    **Reliable delivery**: when the server is unreachable, observations are
+    buffered to a local write-ahead log (``<state_dir>/wal/``) and retransmitted
+    automatically once the connection is restored.  Retransmission uses
+    exponential backoff so that a prolonged outage does not result in a storm
+    of reconnect attempts.
     """
 
+    def __init__(self, aq: "Acquirium", config: dict) -> None:
+        super().__init__(aq, config)
+        driver_cfg = config.get("driver", {})
+
+        from acquirium.DriverState import WriteAheadLog as _WAL, ExponentialBackoff as _Backoff
+        self._wal: "WriteAheadLog" = _WAL(self._driver_state_dir / "wal")
+        self._backoff: "ExponentialBackoff" = _Backoff(
+            base=float(driver_cfg.get("backoff_base", 2.0)),
+            max_delay=float(driver_cfg.get("backoff_max_delay", 300.0)),
+        )
+        self._log = logging.getLogger(f"acquirium.driver.{self.__class__.__name__}")
+
+    # ------------------------------------------------------------------
+    # Public insertion API
+    # ------------------------------------------------------------------
+
     def insert_observations(self, observations: "pl.DataFrame | None") -> dict[str, Any]:
+        """Normalise and insert *observations*, buffering to WAL on failure.
+
+        Returns a dict with at least ``{"ok": bool, "rows_inserted": int}``.
+        When data is buffered instead of inserted, the response also contains
+        ``"buffered": <row_count>``.
+        """
         import polars as pl
 
         df = self.normalize_observations(observations)
+
+        # --- drain WAL before attempting a live insert ---
+        if not self._wal.is_empty():
+            if self._backoff.ready():
+                drained = self._drain_wal()
+            else:
+                drained = False
+
+            if not drained:
+                # Server still unreachable; buffer new data too.
+                if not df.is_empty():
+                    self._wal.append(self._to_wal_df(df))
+                    self._log.debug("WAL: buffered %d rows (backoff %.1fs)", len(df), self._backoff.next_delay())
+                return {"ok": True, "rows_inserted": 0, "buffered": len(df)}
+
         if df.is_empty():
             return {"ok": True, "rows_inserted": 0}
 
+        # --- attempt live insert ---
+        try:
+            result = self._insert_df(df)
+            self._backoff.record_success()
+            return result
+        except Exception as exc:
+            if _is_connection_error(exc):
+                self._backoff.record_failure()
+                self._wal.append(self._to_wal_df(df))
+                self._log.warning(
+                    "Server unreachable (%s); buffered %d rows to WAL. Next retry in %.1fs.",
+                    exc,
+                    len(df),
+                    self._backoff.next_delay(),
+                )
+                return {"ok": True, "rows_inserted": 0, "buffered": len(df)}
+            raise
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _insert_df(self, df: "pl.DataFrame") -> dict[str, Any]:
+        """Insert a normalised observation DataFrame, partitioning by source_id."""
         if "source_id" not in df.columns:
             result = self.aq.insert_timeseries_arrow(self.source_id, df.to_arrow())
             return self._coerce_insert_result(result, len(df))
@@ -135,6 +250,48 @@ class IngestDriver(Driver):
             result = self.aq.insert_timeseries_arrow(str(source), payload.to_arrow())
             total += self._coerce_insert_result(result, len(payload))["rows_inserted"]
         return {"ok": True, "rows_inserted": total}
+
+    def _to_wal_df(self, df: "pl.DataFrame") -> "pl.DataFrame":
+        """Ensure the DataFrame has a materialised ``source_id`` column for WAL storage."""
+        import polars as pl
+
+        if "source_id" not in df.columns:
+            sid = getattr(self, "source_id", "unknown")
+            return df.with_columns(pl.lit(sid).alias("source_id")).select(
+                ["source_id", "ts", "ref_name", "value"]
+            )
+        return df.select(["source_id", "ts", "ref_name", "value"])
+
+    def _drain_wal(self) -> bool:
+        """Flush all pending WAL entries.
+
+        Returns True if the WAL is now empty, False if a connection error
+        prevented full delivery (backoff will have been updated).
+        Non-connection errors on individual entries are logged and discarded to
+        avoid an infinite retry loop.
+        """
+        for seq, wal_df in self._wal.pending():
+            try:
+                for key, source_df in wal_df.partition_by("source_id", as_dict=True).items():
+                    source = key[0] if isinstance(key, tuple) else key
+                    payload = source_df.select(["ts", "ref_name", "value"])
+                    self.aq.insert_timeseries_polars(str(source), payload)
+                self._wal.ack(seq)
+                self._backoff.record_success()
+                self._log.info("WAL: flushed entry %d", seq)
+            except Exception as exc:
+                if _is_connection_error(exc):
+                    self._backoff.record_failure()
+                    self._log.warning(
+                        "WAL: flush failed (%s); will retry in %.1fs.", exc, self._backoff.next_delay()
+                    )
+                    return False
+                # Non-connection error: discard entry to avoid infinite retry.
+                self._log.warning(
+                    "WAL: entry %d failed with non-connection error (%s); discarding.", seq, exc
+                )
+                self._wal.ack(seq)
+        return True
 
     def normalize_observations(self, observations: "pl.DataFrame | None") -> "pl.DataFrame":
         import polars as pl
