@@ -37,7 +37,11 @@ from acquirium.internals.models import (
     TimeseriesInfo,
     compute_ref_uri,
 )
-from acquirium.Storage.values import normalize_value_kind, prepare_value_columns
+from acquirium.Storage.values import (
+    normalize_value_kind,
+    normalize_value_mode,
+    prepare_value_columns,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -281,8 +285,10 @@ class DuckDBStore:
         limit: int | None = None,
         order: Order = "asc",
         batch_size: int = 50_000,
+        value_mode: str = "default",
     ) -> Iterator[pa.RecordBatch]:
         """Yield PyArrow RecordBatches with schema [ts: timestamp[us,UTC], value, uri]."""
+        mode = normalize_value_mode(value_mode)
         clauses = ["ref_uri = ?"]
         params: list[Any] = [ref_uri]
 
@@ -292,6 +298,10 @@ class DuckDBStore:
         if end:
             clauses.append("ts <= ?")
             params.append(self._to_utc_naive(end))
+        if mode == "numeric":
+            clauses.append("numeric_value IS NOT NULL")
+        elif mode == "text":
+            clauses.append("text_value IS NOT NULL")
 
         where = " AND ".join(clauses)
         order_sql = "ASC" if order == "asc" else "DESC"
@@ -312,9 +322,17 @@ class DuckDBStore:
         for batch in table.to_batches(max_chunksize=batch_size):
             numeric_col = batch.column("numeric_value")
             text_col = batch.column("text_value")
-            if value_kind == "text":
+            if mode == "coalesce":
+                numeric_values = numeric_col.to_pylist()
+                text_values = text_col.to_pylist()
+                values = [
+                    text if text is not None else (str(numeric) if numeric is not None else None)
+                    for numeric, text in zip(numeric_values, text_values)
+                ]
+                val_col = pa.array(values, type=pa.string())
+            elif mode == "text" or value_kind == "text":
                 val_col = text_col.cast(pa.string())
-            elif value_kind == "numeric":
+            elif mode == "numeric" or value_kind == "numeric":
                 val_col = numeric_col.cast(pa.float64())
             elif numeric_col.null_count < len(numeric_col):
                 val_col = numeric_col.cast(pa.float64())

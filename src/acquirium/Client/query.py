@@ -617,6 +617,7 @@ class Query:
         use_union: bool = True,
         shape: str = "narrow",          # "wide" or "narrow"
         cast_value: str | None = "str",  # "float", "int", or None to keep string
+        value_mode: str = "default",
     ) -> pl.DataFrame:
         """
         Fetch time series for all bound data nodes in this query result.
@@ -692,6 +693,7 @@ class Query:
                 end=end,
                 limit=limit,
                 order=order,
+                value_mode=value_mode,
             )
             if df.is_empty():
                 continue
@@ -761,6 +763,7 @@ class Query:
         limit: int = 1,
         shape: str = "wide",          # "wide" or "narrow"
         cast_value: str | None = "str",  # "float", "int", or None to keep string
+        value_mode: str = "default",
     ) -> pl.DataFrame:
         """Fetch latest data point for all bound data nodes in this query result."""
         return self.dataframe(
@@ -771,6 +774,7 @@ class Query:
             use_union=use_union,
             shape=shape,
             cast_value=cast_value,
+            value_mode=value_mode,
         )
 
     def data(
@@ -782,6 +786,7 @@ class Query:
         order: str = "asc",
         use_union: bool = True,
         cast_value: str | None = "float",
+        value_mode: str = "default",
     ) -> "DataObject":
         """Return a DataObject with alias-driven, structured access to sensor data.
 
@@ -802,6 +807,7 @@ class Query:
             order=order,
             use_union=use_union,
             cast_value=cast_value,
+            value_mode=value_mode,
         )
 
 

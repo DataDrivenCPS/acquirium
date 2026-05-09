@@ -286,6 +286,7 @@ class DataObject:
         order: str = "asc",
         use_union: bool = True,
         cast_value: str | None = "float",
+        value_mode: str = "default",
     ) -> DataObject:
         qg = query.query_graph
 
@@ -340,6 +341,7 @@ class DataObject:
                 "limit": limit,
                 "order": order,
                 "cast_value": cast_value,
+                "value_mode": value_mode,
             },
             _tall=None,
             _materialized=False,
@@ -404,6 +406,7 @@ class DataObject:
         end = self._query_params.get("end")
         limit = self._query_params.get("limit")
         order = self._query_params.get("order", "asc")
+        value_mode = self._query_params.get("value_mode", "default")
 
         # Pre-compute effective units per alias for Case 3.2/3.2.1
         effective_units = self._resolve_effective_units()
@@ -425,6 +428,7 @@ class DataObject:
                 end=end,
                 limit=limit,
                 order=order,
+                value_mode=value_mode,
             )
             if df.is_empty():
                 continue
