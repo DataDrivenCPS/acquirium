@@ -93,19 +93,10 @@ class _TabularIngestBase(PollingIngestDriver):
     # ------------------------------------------------------------------ loop
 
     def tick(self) -> None:
-        """Parse pending file rows and advance offsets only after insertion.
-
-        Tabular file drivers have a small checkpointing concern that the generic
-        polling loop cannot see: a file offset is only durable once the
-        corresponding rows have been accepted by Acquirium. Keep the parse,
-        insert, stream metadata registration, and offset update ordered here so
-        failed inserts are retried on the next tick.
-        """
-        paths = self._pending_paths()
-        for path in paths:
+        for path in self._pending_paths():
             key = str(path)
             offset = self._rows_seen.get(key, 0)
-            source_id = _safe_name(key)
+            source_id = self._source_id_for_path(path)
             rel = path.relative_to(self._watch_dir)
 
             try:
@@ -119,59 +110,46 @@ class _TabularIngestBase(PollingIngestDriver):
 
             df, value_kinds = self._with_value_kinds(df)
             stream_names = df["ref_name"].unique().to_list()
+
+            # Metadata registration — if the server is down these raise and
+            # the file is skipped; the offset stays put so we retry next tick.
             if source_id not in self._registered:
                 self.aq.register_datasource(source_id)
-            self._ensure_streams(dict.fromkeys(stream_names), source_id, path, value_kinds)
+            self._ensure_streams(stream_names, source_id, path, value_kinds)
 
-            result = self.aq.insert_timeseries_polars(source_id, df)
-            rows_inserted = (
-                int(result.get("rows_inserted", len(df)))
-                if isinstance(result, dict)
-                else int(result)
+            result = self.insert_observations(
+                df.with_columns(pl.lit(source_id).alias("source_id"))
             )
 
-            self._rows_seen[key] = offset + rows_read
-            logger.info(
-                "tabular_ingest: %s — inserted %d row(s) across %d stream(s)",
-                rel, rows_inserted, len(stream_names),
-            )
+            # Advance the offset once data is durably captured — either
+            # delivered to the server or written to the local WAL.
+            if result.get("ok"):
+                self._rows_seen[key] = offset + rows_read
+                n_buffered = result.get("buffered", 0)
+                n_inserted = result.get("rows_inserted", 0)
+                if n_buffered:
+                    logger.info(
+                        "tabular_ingest: %s — buffered %d row(s) to WAL across %d stream(s)",
+                        rel, n_buffered, len(stream_names),
+                    )
+                else:
+                    logger.info(
+                        "tabular_ingest: %s — inserted %d row(s) across %d stream(s)",
+                        rel, n_inserted, len(stream_names),
+                    )
 
     def collect(self) -> pl.DataFrame:
-        frames: list[pl.DataFrame] = []
-        paths = self._pending_paths()
-        for path in paths:
-            key = str(path)
-            offset = self._rows_seen.get(key, 0)
-            source_id = _safe_name(key)
-            rel = path.relative_to(self._watch_dir)
+        # Required by PollingIngestDriver but unused — tick() handles the
+        # file-at-a-time loop so offsets can be advanced per file.
+        return pl.DataFrame({"source_id": [], "ts": [], "ref_name": [], "value": []})
 
-            try:
-                df, rows_read = self.parse_polars(path, row_offset=offset)
-            except Exception:
-                logger.exception("tabular_ingest: failed to parse %s", path.name)
-                continue
+    def _source_id_for_path(self, path: Path) -> str:
+        """Return the datasource ID to use for rows from *path*.
 
-            if df.is_empty():
-                continue
-
-            try:
-                if source_id not in self._registered:
-                    self.aq.register_datasource(source_id)
-                df, value_kinds = self._with_value_kinds(df)
-                stream_names = df["ref_name"].unique().to_list()
-                self._ensure_streams(dict.fromkeys(stream_names), source_id, path, value_kinds)
-                logger.info(
-                    "tabular_ingest: %s — collected %d row(s) across %d stream(s)",
-                    rel, len(df), len(stream_names),
-                )
-                self._rows_seen[key] = offset + rows_read
-                frames.append(df.with_columns(pl.lit(source_id).alias("source_id")))
-            except Exception:
-                logger.exception("tabular_ingest: failed to prepare data from %s", path.name)
-
-        if not frames:
-            return pl.DataFrame({"source_id": [], "ts": [], "ref_name": [], "value": []})
-        return pl.concat(frames, how="diagonal_relaxed")
+        Default: the sanitised absolute path, giving each file its own stream
+        namespace.  Override to consolidate multiple files under one datasource.
+        """
+        return _safe_name(str(path))
 
     def _pending_paths(self) -> list[Path]:
         return sorted({
@@ -480,13 +458,13 @@ class _TabularIngestBase(PollingIngestDriver):
 
     def _ensure_streams(
         self,
-        batch: dict[str, list[tuple[datetime, Any]]],
+        ref_names: list[str],
         source_id: str,
         path: Path,
         value_kinds: dict[str, str] | None = None,
     ) -> None:
         registered = self._registered.setdefault(source_id, set())
-        new_ref_names = [ref_name for ref_name in batch if ref_name not in registered]
+        new_ref_names = [ref_name for ref_name in ref_names if ref_name not in registered]
         if not new_ref_names:
             return
 
