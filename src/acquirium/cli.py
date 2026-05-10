@@ -173,20 +173,47 @@ def _run_driver_loop(
     subsequent ticks.  Polls graph version before each tick and calls
     ``on_graph_change()`` when the version advances.  Calls ``driver.stop()``
     on exit regardless of how the loop ends.
+
+    Connection errors cause the wait to follow exponential backoff (2 s →
+    300 s) instead of the fixed *interval*, so the driver recovers quickly
+    after a short outage without hammering on a prolonged one.  Non-connection
+    errors (bugs in the driver) always log a full traceback.
     """
+    from acquirium.Driver import _is_connection_error
+    from acquirium.DriverState import ExponentialBackoff
+
     _log = logging.getLogger(f"acquirium.driver.{driver.__class__.__name__}")
+    backoff = ExponentialBackoff(base=2.0, max_delay=300.0)
     known_version = 0
     try:
         known_version = aq.graph_version()
     except Exception:
         pass
 
-    try:
-        driver.tick()
-    except Exception:
-        _log.exception("tick error")
+    def _tick() -> float:
+        """Run one tick; return the wait time to use before the next tick."""
+        try:
+            driver.tick()
+            if backoff._failures:
+                _log.info("Server connection restored.")
+            backoff.record_success()
+            return interval
+        except Exception as exc:
+            if _is_connection_error(exc):
+                backoff.record_failure()
+                wait = backoff.next_delay()
+                _log.warning(
+                    "Server unreachable (%s); next tick in %.1fs.",
+                    type(exc).__name__,
+                    wait,
+                )
+                return wait
+            _log.exception("tick error")
+            return interval
 
-    while not stop_event.wait(timeout=interval):
+    wait = _tick()
+
+    while not stop_event.wait(timeout=wait):
         try:
             v = aq.graph_version()
             if v != known_version:
@@ -197,10 +224,7 @@ def _run_driver_loop(
                     _log.exception("on_graph_change error")
         except Exception:
             pass
-        try:
-            driver.tick()
-        except Exception:
-            _log.exception("tick error")
+        wait = _tick()
 
     try:
         driver.stop()
