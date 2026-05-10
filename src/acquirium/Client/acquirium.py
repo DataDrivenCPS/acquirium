@@ -207,6 +207,7 @@ class Acquirium:
         round-trip.  The default converts to the dict format and delegates to
         ``insert_timeseries_batch``.
         """
+        import math
         import polars as pl
         columns = ["ts", "ref_name", "value"]
         df = df.select(columns)
@@ -214,6 +215,8 @@ class Acquirium:
             df = df.with_columns(pl.col("value").fill_nan(None))
         batch: dict[str, list] = {}
         for ts, ref_name, value in df.iter_rows():
+            if isinstance(value, float) and math.isnan(value):
+                value = None
             batch.setdefault(ref_name, []).append((ts, value))
         return self.insert_timeseries_batch(source_id, batch)
 
