@@ -51,11 +51,11 @@ def _run_inprocess_driver(
 ) -> None:
     """Thread target: run a single [[drivers]] entry using DirectAcquirium."""
     from acquirium.Server.direct_client import DirectAcquirium
-    from acquirium.cli import _import_driver_class
+    from acquirium.cli import _import_driver_class, _run_driver_loop
 
     spec = entry["spec"]
     driver_overrides = {k: v for k, v in entry.items() if k != "spec"}
-    merged_cfg = {**cfg, "driver": {**cfg.get("driver", {}), **driver_overrides}}
+    merged_cfg = {**cfg, "driver": {**cfg.get("driver", {}), **driver_overrides}, "__driver_id": spec}
     interval = float(driver_overrides.get("interval", cfg.get("driver", {}).get("interval", 10.0)))
     config_dir = Path(cfg.get("__config_dir", Path.cwd()))
 
@@ -66,37 +66,14 @@ def _run_inprocess_driver(
             origin=spec,
             insert_batch_rows=int(merged_cfg.get("driver", {}).get("insert_batch_rows", 50_000)),
         )
-        merged_cfg = {**merged_cfg, "__driver_id": spec}
         driver = driver_cls(direct_aq, merged_cfg)
         driver.setup()
-        known_version = manager.graph_version()
         log.info("In-process driver ready: %s", driver_cls.__name__)
     except Exception:
         log.exception("In-process driver %s setup failed; thread exiting", spec)
         return
 
-    try:
-        try:
-            driver.tick()
-        except Exception:
-            log.exception("In-process driver %s tick error", spec)
-        while not stop_event.wait(timeout=interval):
-            try:
-                v = manager.graph_version()
-                if v != known_version:
-                    known_version = v
-                    try:
-                        driver.on_graph_change()
-                    except Exception:
-                        log.exception("In-process driver %s on_graph_change error", spec)
-                driver.tick()
-            except Exception:
-                log.exception("In-process driver %s tick error", spec)
-    finally:
-        try:
-            driver.stop()
-        except Exception:
-            log.exception("In-process driver %s stop error", spec)
+    _run_driver_loop(driver, direct_aq, interval, stop_event)
 
 
 def _start_inprocess_drivers(
