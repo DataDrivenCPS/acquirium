@@ -163,9 +163,11 @@ self.state.set("tick_count", ticks)
 
 ## Write-Ahead Log
 
-`IngestDriver` (and its subclasses `PollingIngestDriver` and
-`EventIngestDriver`) automatically buffer observation data when the server is
-unreachable. This requires no changes to the driver code.
+`IngestDriver` (and its subclasses `PollingIngestDriver`, `EventIngestDriver`,
+and the built-in tabular drivers like `CSVIngestDriver`) automatically buffer
+observation data when the server is unreachable. This requires no changes to
+the driver code — any driver that routes inserts through `insert_observations()`
+gets WAL protection for free.
 
 ### What happens during a server outage
 
@@ -254,10 +256,16 @@ retry storms when multiple drivers are running.
 
 The backoff resets to zero as soon as one successful insertion is made.
 
-**Important**: the driver's tick loop continues to run at its normal interval
-during an outage. The backoff only controls how frequently a retransmission
-attempt is made, not the tick rate. New data continues to be buffered on every
-tick regardless of the backoff state.
+**Tick loop backoff**: when a connection error propagates out of `tick()` itself
+(e.g. a registration call fails before data is even collected), the tick loop
+also backs off — the wait between ticks grows with the same schedule instead of
+staying at the fixed `interval`. This prevents hammering the server with rapid
+reconnect attempts. Once a tick succeeds the loop returns to the normal
+`interval`.
+
+**WAL retransmission backoff**: inside `insert_observations()`, the backoff
+controls how frequently WAL drain is attempted. When the backoff timer has not
+elapsed, new data is buffered immediately without attempting a connection.
 
 ### Configuration
 
