@@ -32,6 +32,12 @@ class AcquiriumClient:
         )
 
 
+    def export_graph(self) -> str:
+        """Fetch the server's full RDF graph as Turtle text."""
+        response = requests.get(f"{self.base_url}/export_graph")
+        response.raise_for_status()
+        return response.text
+
     def insert_graph(self, rdf_graph: str, format: str = "turtle", replace: bool = True, wait_for_embedding: bool = False) -> None:
         """
         Insert RDF graph into the graph store to the main graph
