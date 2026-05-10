@@ -234,19 +234,27 @@ If you are not inside a driver, use `aq.reference_uri(source_id, ref_name)`.
 
 ## Running Drivers
 
-```bash
-acquirium run path/to/driver.py:ClassName --config acquirium.toml --interval 5
-```
-
-Driver specs must include the class name after a colon. File paths and dotted
-module paths are accepted:
+All drivers are declared in `acquirium.toml` and started with a single command:
 
 ```bash
-acquirium run scripts/temp_driver.py:TemperatureDriver --config acquirium.toml
-acquirium run mypackage.drivers:TemperatureDriver --config acquirium.toml
+acquirium server --config acquirium.toml
 ```
 
-The `[driver]` section sets connection defaults:
+Driver specs belong in `[[drivers]]` entries in the config file. The spec
+format is the same as always — a file path or dotted module path, followed by
+a colon and the class name:
+
+```toml
+[[drivers]]
+spec = "scripts/temp_driver.py:TemperatureDriver"
+interval = 5.0
+
+[[drivers]]
+spec = "mypackage.drivers:AnotherDriver"
+interval = 30.0
+```
+
+The `[driver]` section sets connection defaults shared by all drivers:
 
 ```toml
 [driver]
@@ -260,16 +268,34 @@ insert_batch_rows = 50000
 `insert_batch_rows` caps samples sent in one insert request. The Acquirium
 client splits large Polars inserts automatically.
 
-## Auto-Started Drivers
+## Driver-Only Mode
 
-Add `[[drivers]]` entries to `acquirium.toml` to start drivers inside the
-server process.
+Set `[server] enabled = false` to run drivers without starting a local FastAPI
+server. Drivers connect to the remote Acquirium instance declared in the
+`[driver]` section.
 
 ```toml
+[server]
+enabled = false
+
+[driver]
+server_url = "acquirium.example.com"
+server_port = 8000
+
 [[drivers]]
-spec = "scripts/temp_driver.py:TemperatureDriver"
-interval = 5.0
+spec = "scripts/my_driver.py:MyDriver"
+interval = 10.0
 ```
+
+This is useful for edge nodes or separate data-collection processes that report
+to a central Acquirium server.
+
+## In-Process Drivers (Server Mode)
+
+When `[server] enabled = true` (the default), `[[drivers]]` entries start as
+threads inside the server process. These drivers use `DirectAcquirium`, which
+dispatches calls directly to the server manager without HTTP. The `self.aq`
+interface is identical from the driver's perspective.
 
 Each entry requires `spec` and may override any `[driver]` key:
 
@@ -283,9 +309,7 @@ interval = 5.0
 mqtt_source_id = "mqtt"
 ```
 
-In-process drivers receive the same `self.aq` interface as `acquirium run`, but
-calls are dispatched directly to the server manager instead of over HTTP.
-MQTT ingestion is configured this way too: the server does not start MQTT
+MQTT ingestion is configured this way: the server does not start MQTT
 subscribers implicitly from the graph.
 
 ## Built-In MQTT Driver
@@ -432,6 +456,41 @@ class MyCSVDriver(CSVIngestDriver):
         })
         return out, len(df)
 ```
+
+## Built-In Backup Driver
+
+`acquirium.BuiltinDrivers.backup:BackupDriver` mirrors a source Acquirium
+instance onto the destination (`self.aq`). It copies the source RDF graph
+verbatim and replicates all timeseries rows using the original `source_id` and
+`ref_name`, so the destination's storage keys are identical to the source's.
+
+Watermarks are stored in the driver's local state directory so only new rows
+are fetched on each tick. The WAL and exponential backoff inherited from
+`IngestDriver` handle destination outages automatically.
+
+```toml
+# Edge node — driver-only mode, mirroring to central server
+[server]
+enabled = false
+
+[driver]
+server_url = "central.example.com"
+server_port = 8000
+
+[[drivers]]
+spec = "acquirium.BuiltinDrivers.backup:BackupDriver"
+source_url = "http://localhost:8000"
+interval   = 30.0
+```
+
+Configuration keys:
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `source_url` | yes | — | URL of the source Acquirium server |
+| `source_port` | no | from URL or 8000 | Port override |
+| `source_ssl` | no | auto-detected | Use HTTPS for source |
+| `batch_size` | no | 50000 | Max rows fetched per stream per tick |
 
 ## Lifecycle
 
