@@ -57,6 +57,26 @@ state_dir = "./data/driver_state"   # default: "driver_state"
 
 Relative paths are resolved against the directory containing `acquirium.toml`.
 
+### In-process drivers
+
+Drivers started via `[[drivers]]` entries run as threads inside the server
+process and use `DirectAcquirium`, which dispatches directly to the server's
+`Manager` instead of making HTTP requests. The state directory and key-value
+store work identically for these drivers.
+
+The WAL and backoff do **not** activate for in-process drivers. Because
+`DirectAcquirium` never makes HTTP requests, it never raises the connection
+errors (`requests.ConnectionError`, `Timeout`) that trigger buffering. If the
+underlying storage fails (e.g. TimescaleDB is unreachable), the Manager raises
+a database-level exception. That propagates through `tick()`, is caught by the
+thread's top-level error handler, logged, and dropped. The data for that tick
+is lost.
+
+This is intentional: a driver and server in the same process cannot be
+"disconnected" from each other. The WAL protects against network outages
+between a remote driver and the server, a scenario that does not exist for
+in-process drivers.
+
 ---
 
 ## Key-Value Store
