@@ -11,17 +11,8 @@ if TYPE_CHECKING:
     import polars as pl
 
 import polars as pl
-from rdflib import Literal
-from rdflib.namespace import RDF
 
 from acquirium.Driver import IngestDriver
-from acquirium.internals.internals_namespaces import (
-    DATA_SOURCE,
-    FILE_LOCATION,
-    FILE_REFERENCE,
-    TIME_COLUMN_ID,
-    VALUE_COLUMN_ID,
-)
 from acquirium.Storage.values import assign_stream_value_kind, normalize_value_kind
 
 logger = logging.getLogger("acquirium.tabular_ingest")
@@ -78,17 +69,55 @@ class _TabularIngestBase(IngestDriver):
         if not watch_dir.is_absolute():
             watch_dir = (self.config_dir() / watch_dir).resolve()
         self._watch_dir = watch_dir
-        self._format: str = cfg.get("format", "auto")
-        self._time_col: str = cfg.get("time_col", "time")
-        self._id_col: str = cfg.get("id_col", "id")
-        self._value_col: str = cfg.get("value_col", "value")
-        self._date_fmt: str | None = cfg.get("date_format", None)
-        self._skip_rows = cfg.get("skip_rows", [])
-
         self._rows_seen: dict[str, int] = {}
         self._registered: dict[str, set[str]] = {}  # source_id → registered ref_names
 
         self._watch_dir.mkdir(parents=True, exist_ok=True)
+
+    # ---------------------------------------------------------- config hooks
+    # Override any of these methods to customise behaviour without touching
+    # private attributes.  Default implementations read from the driver config.
+
+    def time_col(self) -> str:
+        """Name of the column that holds timestamps."""
+        return self.config.get("driver", {}).get("time_col", "time")
+
+    def id_col(self) -> str:
+        """Name of the stream-ID column (narrow format only)."""
+        return self.config.get("driver", {}).get("id_col", "id")
+
+    def value_col(self) -> str:
+        """Name of the value column (narrow format only)."""
+        return self.config.get("driver", {}).get("value_col", "value")
+
+    def ingest_format(self) -> str:
+        """Row layout: ``"wide"``, ``"narrow"``, or ``"auto"`` (default)."""
+        return self.config.get("driver", {}).get("format", "auto")
+
+    def date_format(self) -> str | None:
+        """strptime format string for non-ISO timestamp strings, or ``None`` to auto-detect."""
+        return self.config.get("driver", {}).get("date_format", None)
+
+    def skip_rows_for(self, path: Path) -> tuple[int, ...]:
+        """1-indexed row numbers to skip when reading *path*.
+
+        Override to hard-code skip rows without touching config, e.g.::
+
+            def skip_rows_for(self, path):
+                return (1,)   # always skip the first row
+        """
+        skip_rows = self.config.get("driver", {}).get("skip_rows", [])
+        if isinstance(skip_rows, int):
+            skip_rows = [skip_rows]
+        if isinstance(skip_rows, dict):
+            rel = path.relative_to(self._watch_dir).as_posix()
+            skip_rows = skip_rows.get(rel, [])
+        if not isinstance(skip_rows, (list, tuple, set)):
+            raise TypeError(
+                "driver.skip_rows must be a list of 1-indexed row numbers "
+                "or a dict keyed by paths relative to watch_dir"
+            )
+        return tuple(sorted({int(row) for row in skip_rows if int(row) > 0}))
 
     # ------------------------------------------------------------------ loop
 
@@ -115,7 +144,7 @@ class _TabularIngestBase(IngestDriver):
             # the file is skipped; the offset stays put so we retry next tick.
             if source_id not in self._registered:
                 self.aq.register_datasource(source_id)
-            self._ensure_streams(stream_names, source_id, path, value_kinds)
+            self._ensure_streams(stream_names, source_id, value_kinds)
 
             result = self.insert_observations(
                 df.with_columns(pl.lit(source_id).alias("source_id"))
@@ -221,39 +250,24 @@ class _TabularIngestBase(IngestDriver):
     # ---------------------------------------------------------- format helpers
 
     def _detect_format(self, df: pl.DataFrame) -> str:
-        if self._format != "auto":
-            return self._format
+        fmt = self.ingest_format()
+        if fmt != "auto":
+            return fmt
         cols = set(df.columns)
-        if self._id_col in cols and self._value_col in cols:
+        if self.id_col() in cols and self.value_col() in cols:
             return "narrow"
         return "wide"
 
-    def _skip_rows_for(self, path: Path) -> tuple[int, ...]:
-        skip_rows = self._skip_rows
-        if isinstance(skip_rows, int):
-            skip_rows = [skip_rows]
-
-        if isinstance(skip_rows, dict):
-            rel = path.relative_to(self._watch_dir).as_posix()
-            skip_rows = skip_rows.get(rel, [])
-
-        if not isinstance(skip_rows, (list, tuple, set)):
-            raise TypeError(
-                "driver.skip_rows must be a list of 1-indexed row numbers "
-                "or a dict keyed by paths relative to watch_dir"
-            )
-
-        return tuple(sorted({int(row) for row in skip_rows if int(row) > 0}))
-
     def _parse_wide(self, df: pl.DataFrame) -> dict[str, list[tuple[datetime, Any]]]:
-        if self._time_col not in df.columns:
-            raise ValueError(f"time column '{self._time_col}' not found in {df.columns}")
+        tc = self.time_col()
+        if tc not in df.columns:
+            raise ValueError(f"time column '{tc}' not found in {df.columns}")
 
-        df = self._normalize_time_col(df.drop_nulls(subset=[self._time_col]))
-        stream_cols = [c for c in df.columns if c != self._time_col]
+        df = self._normalize_time_col(df.drop_nulls(subset=[tc]))
+        stream_cols = [c for c in df.columns if c != tc]
 
         batch: dict[str, list[tuple[datetime, Any]]] = {}
-        ts_list = df[self._time_col].to_list()
+        ts_list = df[tc].to_list()
         for col in stream_cols:
             rows = [
                 (ts, val)
@@ -265,16 +279,15 @@ class _TabularIngestBase(IngestDriver):
         return batch
 
     def _parse_narrow(self, df: pl.DataFrame) -> dict[str, list[tuple[datetime, Any]]]:
-        for col in (self._time_col, self._id_col, self._value_col):
+        tc, ic, vc = self.time_col(), self.id_col(), self.value_col()
+        for col in (tc, ic, vc):
             if col not in df.columns:
                 raise ValueError(f"column '{col}' not found in {df.columns}")
 
-        df = self._normalize_time_col(
-            df.drop_nulls(subset=[self._time_col, self._id_col])
-        )
+        df = self._normalize_time_col(df.drop_nulls(subset=[tc, ic]))
 
         batch: dict[str, list[tuple[datetime, Any]]] = {}
-        for row in df.select([self._time_col, self._id_col, self._value_col]).iter_rows():
+        for row in df.select([tc, ic, vc]).iter_rows():
             ts, stream_id, val = row
             if stream_id is None:
                 continue
@@ -295,36 +308,38 @@ class _TabularIngestBase(IngestDriver):
         )
 
     def _wide_to_timeseries_frame(self, df: pl.DataFrame) -> pl.DataFrame:
-        if self._time_col not in df.columns:
-            raise ValueError(f"time column '{self._time_col}' not found in {df.columns}")
+        tc = self.time_col()
+        if tc not in df.columns:
+            raise ValueError(f"time column '{tc}' not found in {df.columns}")
 
-        df = self._normalize_time_col(df.drop_nulls(subset=[self._time_col]))
-        value_cols = [c for c in df.columns if c != self._time_col]
+        df = self._normalize_time_col(df.drop_nulls(subset=[tc]))
+        value_cols = [c for c in df.columns if c != tc]
         rows: list[tuple[Any, str, Any]] = []
         for col in value_cols:
-            for ts, value in df.select([self._time_col, col]).iter_rows():
+            for ts, value in df.select([tc, col]).iter_rows():
                 if value is not None:
                     rows.append((ts, col, value))
         return pl.DataFrame(
             rows,
-            schema={"ts": df[self._time_col].dtype, "ref_name": pl.Utf8, "value": pl.Object},
+            schema={"ts": df[tc].dtype, "ref_name": pl.Utf8, "value": pl.Object},
             orient="row",
         )
 
     def _narrow_to_timeseries_frame(self, df: pl.DataFrame) -> pl.DataFrame:
-        for col in (self._time_col, self._id_col, self._value_col):
+        tc, ic, vc = self.time_col(), self.id_col(), self.value_col()
+        for col in (tc, ic, vc):
             if col not in df.columns:
                 raise ValueError(f"column '{col}' not found in {df.columns}")
 
-        df = self._normalize_time_col(df.drop_nulls(subset=[self._time_col, self._id_col]))
+        df = self._normalize_time_col(df.drop_nulls(subset=[tc, ic]))
         rows = [
             (ts, str(stream_id), value)
-            for ts, stream_id, value in df.select([self._time_col, self._id_col, self._value_col]).iter_rows()
+            for ts, stream_id, value in df.select([tc, ic, vc]).iter_rows()
             if stream_id is not None
         ]
         return pl.DataFrame(
             rows,
-            schema={"ts": df[self._time_col].dtype, "ref_name": pl.Utf8, "value": pl.Object},
+            schema={"ts": df[tc].dtype, "ref_name": pl.Utf8, "value": pl.Object},
             orient="row",
         )
 
@@ -362,20 +377,19 @@ class _TabularIngestBase(IngestDriver):
     )
 
     def _normalize_time_col(self, df: pl.DataFrame) -> pl.DataFrame:
+        tc = self.time_col()
         df = df.with_columns(
-            self.normalize_timestamps(
-                df[self._time_col], date_format=self._date_fmt
-            ).alias(self._time_col)
+            self.normalize_timestamps(df[tc], date_format=self.date_format()).alias(tc)
         )
 
-        null_count = df[self._time_col].null_count()
+        null_count = df[tc].null_count()
         if null_count:
             logger.warning(
                 "tabular_ingest: %d row(s) with unparseable timestamps skipped "
                 "(hint: set date_format, e.g. date_format = \"%%m/%%d/%%Y\")",
                 null_count,
             )
-            df = df.drop_nulls(subset=[self._time_col])
+            df = df.drop_nulls(subset=[tc])
         return df
 
     def normalize_timestamps(self, col: pl.Series, date_format: str | None = None) -> pl.Series:
@@ -428,24 +442,10 @@ class _TabularIngestBase(IngestDriver):
 
     # ---------------------------------------------------------- stream reg
 
-    def _stream_registration_properties(self, path: Path, ref_name: str) -> dict[Any, Any]:
-        rel = path.resolve().relative_to(self._watch_dir).as_posix()
-        return {
-            RDF.type: FILE_REFERENCE,
-            DATA_SOURCE: Literal("CSV"),
-            FILE_LOCATION: Literal(rel),
-            TIME_COLUMN_ID: Literal(self.time_column_reference_id()),
-            VALUE_COLUMN_ID: Literal(ref_name),
-        }
-
-    def time_column_reference_id(self) -> str:
-        return self._time_col
-
     def _ensure_streams(
         self,
         ref_names: list[str],
         source_id: str,
-        path: Path,
         value_kinds: dict[str, str] | None = None,
     ) -> None:
         registered = self._registered.setdefault(source_id, set())
@@ -460,8 +460,6 @@ class _TabularIngestBase(IngestDriver):
                         "source_id": source_id,
                         "ref_name": ref_name,
                         "value_kind": normalize_value_kind((value_kinds or {}).get(ref_name)),
-                        "data_source": "CSV",
-                        "properties": self._stream_registration_properties(path, ref_name),
                     }
                     for ref_name in new_ref_names
                 ]

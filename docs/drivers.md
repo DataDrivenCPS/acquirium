@@ -434,37 +434,90 @@ Behavior:
 - `watch_dir` is scanned recursively
 - row offsets are tracked in memory
 - files are not moved or deleted
-- each file gets its own datasource
-- datasource ids are derived from absolute file paths
+- each file gets its own datasource; datasource IDs are derived from absolute file paths
 - stream `ref_name`s come from wide column names or narrow `id` values
 - stream `value_kind`s are inferred per stream: any observed numeric value
   means `"numeric"`; text-only streams are `"text"`
 - value-kind inference uses `assign_stream_value_kind()` from
   `acquirium.Storage.values`, which custom drivers can call too
 
-Custom tabular parsing should return normalized observations from
-`read_frame()` when the built-in wide/narrow formats do not fit:
+### Customising the tabular base
+
+The base class exposes a set of overridable methods for the common knobs.
+Override any of them to hard-code behaviour without touching config:
+
+**Config hooks** — override to hard-code behaviour without touching TOML:
+
+| Method | Default (from config) | Purpose |
+|---|---|---|
+| `time_col()` | `"time"` | Timestamp column name |
+| `id_col()` | `"id"` | Stream-ID column (narrow only) |
+| `value_col()` | `"value"` | Value column (narrow only) |
+| `ingest_format()` | `"auto"` | `"wide"`, `"narrow"`, or `"auto"` |
+| `date_format()` | `None` | strptime format for non-ISO timestamps |
+| `skip_rows_for(path)` | from config | 1-indexed row numbers to skip |
+| `source_id_for(path)` | sanitised absolute path | Datasource ID for a file |
+
+**`read_frame(path, row_offset)`** is the main override point for custom file
+layouts. It receives the current row offset (rows already ingested from this
+file) and returns `(df, rows_read)`. Two return shapes are accepted:
+
+- **Wide or narrow** — the base class melts it using `time_col()`,
+  `ingest_format()`, etc.
+- **Already normalized** — a frame with `ts`, `ref_name`, and `value` columns
+  is detected automatically and passed through without further melting.
+
+**`read_df(path, row_offset, schema_overrides=None)`** is the CSV I/O helper
+(defined on `CSVIngestDriver`). Call it from `read_frame` to get the raw
+frame with offset slicing, skip-row filtering, and encoding already handled.
 
 ```python
 import polars as pl
+from pathlib import Path
 
 from acquirium.BuiltinDrivers.csv_ingest import CSVIngestDriver
 
+DATE_COL = "Date"
+TIME_COL = "Time"
+DATE_FMT = "%m/%d/%Y %I:%M:%S %p"
+
 
 class MyCSVDriver(CSVIngestDriver):
-    def read_frame(self, path, row_offset=0):
-        df = self._read_df(path, row_offset)
-        raw_ts = df.select(
-            (pl.col("Date") + pl.lit(" ") + pl.col("Time")).alias("ts")
-        )["ts"]
-        out = pl.DataFrame({
-            "ts": self.normalize_timestamps(
-                raw_ts, date_format="%m/%d/%Y %I:%M:%S %p"
-            ),
-            "ref_name": ["Temperature"] * len(df),
-            "value": df["Temperature"],
-        })
-        return out, len(df)
+    def setup(self):
+        super().setup()
+        self.source_id = "my-source"
+
+    def skip_rows_for(self, path: Path) -> tuple[int, ...]:
+        return (1,)  # row 1 is a header banner, not data
+
+    def source_id_for(self, path: Path) -> str:
+        return self.source_id  # all files share one datasource
+
+    def read_frame(self, path: Path, row_offset: int = 0):
+        df = self.read_df(path, row_offset,
+                          schema_overrides={DATE_COL: pl.Utf8, TIME_COL: pl.Utf8})
+        rows_read = len(df)
+        if rows_read == 0:
+            return df, 0
+
+        combined_ts = self.normalize_timestamps(
+            df.with_columns(
+                pl.concat_str([pl.col(DATE_COL), pl.lit(" "), pl.col(TIME_COL)]).alias("__ts")
+            )["__ts"],
+            date_format=DATE_FMT,
+        )
+        stream_cols = [c for c in df.columns if c not in (DATE_COL, TIME_COL)]
+        rows = [
+            (ts, col, val)
+            for col in stream_cols
+            for ts, val in zip(combined_ts.to_list(), df[col].to_list())
+            if val is not None and ts is not None
+        ]
+        return pl.DataFrame(
+            rows,
+            schema={"ts": pl.Datetime("us", "UTC"), "ref_name": pl.Utf8, "value": pl.Object},
+            orient="row",
+        ), rows_read
 ```
 
 ## Lifecycle

@@ -46,12 +46,13 @@ class CSVIngestDriver(_TabularIngestBase):
         skip_rows    = [1, 3]        # or { "subdir/data.csv" = [2, 5] }
         encoding     = "utf8-lossy"  # "utf8", "utf8-lossy", "latin1", etc.
 
-    Override ``read_frame()`` to handle custom layouts::
+    Override ``read_frame()`` to handle custom layouts.  Call ``read_df()``
+    inside it to get the raw CSV frame with offset and skip-row handling
+    already applied::
 
         class MyDriver(CSVIngestDriver):
             def read_frame(self, path, row_offset=0):
-                df = pl.read_csv(path, skip_rows=3,
-                                 skip_rows_after_header=row_offset)
+                df = self.read_df(path, row_offset)
                 return df, len(df)
     """
 
@@ -63,17 +64,17 @@ class CSVIngestDriver(_TabularIngestBase):
         logger.info("csv_ingest watching %s", self._watch_dir)
 
     def read_frame(self, path: Path, row_offset: int = 0) -> tuple[pl.DataFrame, int]:
-        df = self._read_df(path, row_offset)
+        df = self.read_df(path, row_offset)
         return df, len(df)
 
-    def _read_df(
+    def read_df(
         self,
         path: Path,
         row_offset: int,
         schema_overrides: dict | None = None,
     ) -> pl.DataFrame:
         sep = "\t" if path.suffix.lower() == ".tsv" else ","
-        skip = self._skip_rows_for(path)
+        skip = self.skip_rows_for(path)
         if skip:
             return pl.read_csv(
                 StringIO(self._filtered_csv_text(path)),
@@ -91,7 +92,7 @@ class CSVIngestDriver(_TabularIngestBase):
         return lf.collect()
 
     def _filtered_csv_text(self, path: Path) -> str:
-        skip_rows = set(self._skip_rows_for(path))
+        skip_rows = set(self.skip_rows_for(path))
         raw = path.read_bytes()
 
         if self._encoding == "utf8-lossy":
