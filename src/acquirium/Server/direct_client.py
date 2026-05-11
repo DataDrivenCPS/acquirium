@@ -91,7 +91,7 @@ class _DirectClient:
 
     def insert_timeseries_arrow(self, source_id: str, table: "pa.Table") -> dict[str, Any]:
         streams = table.column("ref_name").unique().to_pylist()
-        total = self._manager.insert_timeseries(source_id, table)
+        total = self._manager.insert_timeseries_arrow(source_id, table)
         insert_stats.record(origin=self._origin, rows=total, streams=streams)
         return {"ok": True, "rows_inserted": total}
 

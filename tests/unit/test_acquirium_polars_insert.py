@@ -39,7 +39,7 @@ def test_direct_acquirium_insert_timeseries_arrow_reaches_manager():
         def __init__(self):
             self.calls: list = []
 
-        def insert_timeseries(self, source_id, table):
+        def insert_timeseries_arrow(self, source_id, table):
             self.calls.append((source_id, table))
             return len(table)
 

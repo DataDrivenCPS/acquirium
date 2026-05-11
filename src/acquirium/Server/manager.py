@@ -1010,20 +1010,19 @@ class Manager:
         )
         return self.timescale.bulk_insert_polars(df)
 
-    def insert_timeseries(self, source_id: str, table: "pa.Table") -> int:
+    def insert_timeseries_arrow(self, source_id: str, table: "pa.Table") -> int:
         """Insert a melted (ts, ref_name, value) Arrow table, computing ref_uris vectorized."""
         import polars as pl
 
         if len(table) == 0:
             return 0
         df = pl.from_arrow(table)
-        ref_uri_map = {
-            name: str(compute_ref_uri(source_id, name))
-            for name in df["ref_name"].unique().to_list()
-        }
+        ref_uri_map: dict[str, str] = {}
         value_kind_map: dict[str, str] = {}
-        for ref_name, ref_uri in ref_uri_map.items():
-            value_kind_map[ref_name] = self._registered_value_kind(ref_uri)
+        for name in df["ref_name"].unique().to_list():
+            ref_uri = str(compute_ref_uri(source_id, name))
+            ref_uri_map[name] = ref_uri
+            value_kind_map[name] = self._registered_value_kind(ref_uri)
         df = (
             df.with_columns([
                 pl.col("ref_name").replace(ref_uri_map).alias("ref_uri"),
