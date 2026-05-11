@@ -86,7 +86,7 @@ def _write_module(tmp_path: Path) -> Path:
 def _make_driver(tmp_path: Path, **driver_cfg) -> WaterTAPDriver:
     aq = MagicMock()
     aq.register_datasource.return_value = "watertap"
-    aq.insert_timeseries_batch.return_value = {"ok": True, "rows_inserted": 2}
+    aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 2}
     config = {
         "driver": {
             "watertap_graph_path": str(_write_graph(tmp_path)),
