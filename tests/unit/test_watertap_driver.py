@@ -175,7 +175,7 @@ def test_loop_preserves_nonnumeric_component_values_for_numeric_streams(tmp_path
     _, df = driver.aq.insert_timeseries_arrow.call_args.args
     values = dict(zip(df["ref_name"].to_pylist(), df["value"].to_pylist()))
     assert values["value_a"] == "Manual Control"
-    assert values["value_b"] == 6.0
+    assert values["value_b"] == "6.0"
 
 
 def test_missing_required_config_raises(tmp_path):
