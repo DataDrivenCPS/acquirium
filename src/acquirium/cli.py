@@ -162,12 +162,11 @@ def _driver_connect_cfg(
 # ---------------------------------------------------------------------------
 
 class _Backoff:
-    def __init__(self, base: float = 2.0, max_delay: float = 300.0) -> None:
-        self._base, self._max, self._failures = base, max_delay, 0
+    def __init__(self) -> None:
+        self._failures = 0
     def record_success(self) -> None: self._failures = 0
     def record_failure(self) -> None: self._failures += 1
     def is_in_backoff(self) -> bool: return self._failures > 0
-    def next_delay(self) -> float: return min(self._base ** self._failures, self._max)
 
 
 def _run_driver_loop(
@@ -178,8 +177,10 @@ def _run_driver_loop(
 ) -> None:
     """Tick loop shared by in-process and driver-only threads.
 
-    Connection errors use exponential backoff (2 s → 300 s) instead of the
-    fixed interval.  Non-connection errors always log a full traceback.
+    tick() always fires on the fixed *interval* regardless of server state
+    (isochronous collection).  Backoff tracks server reachability to gate
+    graph-version polls and suppress repeated log noise; it does not slow
+    down the tick cadence.  Non-connection errors always log a full traceback.
     """
     from acquirium.Driver import _is_connection_error
 
@@ -191,30 +192,24 @@ def _run_driver_loop(
     except Exception:
         pass
 
-    def _tick() -> float:
-        """Run one tick; return the wait time to use before the next tick."""
+    def _tick() -> None:
         try:
             driver.tick()
             if backoff.is_in_backoff():
                 _log.info("Server connection restored.")
             backoff.record_success()
-            return interval
         except Exception as exc:
             if _is_connection_error(exc):
+                first = not backoff.is_in_backoff()
                 backoff.record_failure()
-                wait = backoff.next_delay()
-                _log.warning(
-                    "Server unreachable (%s); next tick in %.1fs.",
-                    type(exc).__name__,
-                    wait,
-                )
-                return wait
-            _log.exception("tick error")
-            return interval
+                if first:
+                    _log.warning("Server unreachable (%s).", type(exc).__name__)
+            else:
+                _log.exception("tick error")
 
-    wait = _tick()
+    _tick()
 
-    while not stop_event.wait(timeout=wait):
+    while not stop_event.wait(timeout=interval):
         if not backoff.is_in_backoff():
             try:
                 v = aq.graph_version()
@@ -226,7 +221,7 @@ def _run_driver_loop(
                         _log.exception("on_graph_change error")
             except Exception:
                 pass
-        wait = _tick()
+        _tick()
 
     try:
         driver.stop()
