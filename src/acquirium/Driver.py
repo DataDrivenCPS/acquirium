@@ -19,14 +19,15 @@ def _cast_value_to_utf8(col: "pl.Series") -> "pl.Expr":
     import math
     import polars as pl
 
+    name = col.name
     if col.dtype == pl.Object:
-        return pl.col("value").map_elements(
+        return pl.col(name).map_elements(
             lambda v: None if (v is None or (isinstance(v, float) and math.isnan(v))) else str(v),
             return_dtype=pl.Utf8,
         )
     if col.dtype in (pl.Float32, pl.Float64):
-        return pl.col("value").fill_nan(None).cast(pl.Utf8)
-    return pl.col("value").cast(pl.Utf8)
+        return pl.col(name).fill_nan(None).cast(pl.Utf8)
+    return pl.col(name).cast(pl.Utf8)
 
 
 class Driver(ABC):
