@@ -30,6 +30,17 @@ def _cast_value_to_utf8(col: "pl.Series") -> "pl.Expr":
     return pl.col(name).cast(pl.Utf8)
 
 
+def _is_connection_error(exc: BaseException) -> bool:
+    """Return True if *exc* looks like a transient network/connection error."""
+    name = type(exc).__name__
+    return name in {
+        "ConnectionError", "ConnectionRefusedError", "ConnectionResetError",
+        "ConnectTimeout", "ReadTimeout", "Timeout",
+        "MaxRetryError", "NewConnectionError", "ProtocolError",
+        "RemoteDisconnected",
+    }
+
+
 class Driver(ABC):
     """Base class for data-collection / processing drivers.
 

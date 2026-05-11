@@ -180,10 +180,17 @@ def _run_driver_loop(
     errors (bugs in the driver) always log a full traceback.
     """
     from acquirium.Driver import _is_connection_error
-    from acquirium.DriverState import ExponentialBackoff
+
+    class _Backoff:
+        def __init__(self, base: float = 2.0, max_delay: float = 300.0) -> None:
+            self._base, self._max, self._failures = base, max_delay, 0
+        def record_success(self) -> None: self._failures = 0
+        def record_failure(self) -> None: self._failures += 1
+        def is_in_backoff(self) -> bool: return self._failures > 0
+        def next_delay(self) -> float: return min(self._base ** self._failures, self._max)
 
     _log = logging.getLogger(f"acquirium.driver.{driver.__class__.__name__}")
-    backoff = ExponentialBackoff(base=2.0, max_delay=300.0)
+    backoff = _Backoff()
     known_version = 0
     try:
         known_version = aq.graph_version()
@@ -194,7 +201,7 @@ def _run_driver_loop(
         """Run one tick; return the wait time to use before the next tick."""
         try:
             driver.tick()
-            if backoff._failures:
+            if backoff.is_in_backoff():
                 _log.info("Server connection restored.")
             backoff.record_success()
             return interval
