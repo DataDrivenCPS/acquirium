@@ -123,7 +123,7 @@ class _TabularIngestBase(PollingIngestDriver):
                 self.aq.register_datasource(source_id)
             self._ensure_streams(dict.fromkeys(stream_names), source_id, path, value_kinds)
 
-            result = self.aq.insert_timeseries_polars(source_id, df)
+            result = self.aq.insert_timeseries_arrow(source_id, df.to_arrow())
             rows_inserted = (
                 int(result.get("rows_inserted", len(df)))
                 if isinstance(result, dict)

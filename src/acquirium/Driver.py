@@ -15,6 +15,20 @@ if TYPE_CHECKING:
     from acquirium.Client.acquirium import Acquirium
 
 
+def _cast_value_to_utf8(col: "pl.Series") -> "pl.Expr":
+    import math
+    import polars as pl
+
+    if col.dtype == pl.Object:
+        return pl.col("value").map_elements(
+            lambda v: None if (v is None or (isinstance(v, float) and math.isnan(v))) else str(v),
+            return_dtype=pl.Utf8,
+        )
+    if col.dtype in (pl.Float32, pl.Float64):
+        return pl.col("value").fill_nan(None).cast(pl.Utf8)
+    return pl.col("value").cast(pl.Utf8)
+
+
 class Driver(ABC):
     """Base class for data-collection / processing drivers.
 
@@ -151,6 +165,7 @@ class IngestDriver(Driver):
         exprs = [
             self.normalize_timestamps(df["ts"]).alias("ts"),
             pl.col("ref_name").cast(pl.Utf8),
+            _cast_value_to_utf8(df["value"]),
         ]
         if "source_id" in df.columns:
             exprs.insert(0, pl.col("source_id").cast(pl.Utf8))
