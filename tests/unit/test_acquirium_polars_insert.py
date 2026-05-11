@@ -39,9 +39,9 @@ def test_direct_acquirium_insert_timeseries_arrow_reaches_manager():
         def __init__(self):
             self.calls: list = []
 
-        def insert_timeseries_polars(self, source_id, df):
-            self.calls.append((source_id, df))
-            return len(df)
+        def insert_timeseries(self, source_id, table):
+            self.calls.append((source_id, table))
+            return len(table)
 
     manager = _Manager()
     aq = DirectAcquirium(manager)

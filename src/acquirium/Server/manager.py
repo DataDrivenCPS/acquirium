@@ -27,7 +27,10 @@ import hashlib
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, Future
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    import pyarrow as pa
 import shutil
 import docker
 from docker.errors import DockerException, NotFound as ContainerNotFound
@@ -1007,12 +1010,13 @@ class Manager:
         )
         return self.timescale.bulk_insert_polars(df)
 
-    def insert_timeseries_polars(self, source_id: str, df: "pl.DataFrame") -> int:
-        """Insert a melted (ts, ref_name, value) DataFrame, computing ref_uris vectorized."""
+    def insert_timeseries(self, source_id: str, table: "pa.Table") -> int:
+        """Insert a melted (ts, ref_name, value) Arrow table, computing ref_uris vectorized."""
         import polars as pl
 
-        if df.is_empty():
+        if len(table) == 0:
             return 0
+        df = pl.from_arrow(table)
         ref_uri_map = {
             name: str(compute_ref_uri(source_id, name))
             for name in df["ref_name"].unique().to_list()
