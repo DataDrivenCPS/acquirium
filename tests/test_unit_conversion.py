@@ -104,15 +104,6 @@ def acquirium_client():
         use_ssl=False,
     )
     acq.insert_graph("tests/test_model_units.ttl")
-    time.sleep(1)
-    status = acq.client.ingest_status()
-    done = status["done"]
-    total = status["total"]
-    error = status["error"]
-    while done < total - error:
-        time.sleep(2)
-        status = acq.client.ingest_status()
-        done = status["done"]
     return acq
 
 
