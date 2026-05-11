@@ -32,7 +32,6 @@ from acquirium.internals.models import (
 )
 from acquirium.internals.internals_namespaces import PLANT_URI
 
-import pyarrow.compute as pc
 import pyarrow.ipc as ipc
 import pyarrow as pa
 import polars as pl
@@ -418,14 +417,12 @@ async def insert_timeseries_arrow(request: Request):
     try:
         body = await request.body()
         reader = ipc.RecordBatchStreamReader(pa.BufferReader(body))
-        table = reader.read_all()
+        df = pl.from_arrow(reader.read_all())
 
         total = 0
-        source_ids = table.column("source_id").unique().to_pylist()
-        for sid in source_ids:
-            mask = pc.equal(table.column("source_id"), sid)
-            payload = table.filter(mask).drop(["source_id"])
-            total += app.state.manager.insert_timeseries(str(sid), payload)
+        for key, source_df in df.partition_by("source_id", as_dict=True).items():
+            sid = key[0] if isinstance(key, tuple) else key
+            total += app.state.manager.insert_timeseries_arrow(str(sid), source_df.drop("source_id").to_arrow())
 
         return {"ok": True, "rows_inserted": total}
     except Exception as e:

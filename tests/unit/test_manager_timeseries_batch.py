@@ -90,7 +90,7 @@ def test_insert_timeseries_uses_computed_ref_uris_in_one_bulk_insert():
         },
     )
 
-    count = mgr.insert_timeseries("source/file.csv", df.to_arrow())
+    count = mgr.insert_timeseries_arrow("source/file.csv", df.to_arrow())
 
     assert count == 3
     assert len(store.frames) == 1
@@ -126,7 +126,7 @@ def test_insert_timeseries_ignores_input_value_kind_column():
         },
     )
 
-    assert mgr.insert_timeseries("source/file.csv", df.to_arrow()) == 2
+    assert mgr.insert_timeseries_arrow("source/file.csv", df.to_arrow()) == 2
     assert store.frames[0].get_column("value_kind").to_list() == ["numeric", "numeric"]
 
 
