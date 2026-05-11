@@ -39,7 +39,7 @@ def make_driver(cfg_overrides: dict | None = None, tmp_path: Path | None = None)
     aq.register_stream.return_value = None
     aq.register_streams.side_effect = lambda streams: Acquirium.register_streams(aq, streams)
     aq.insert_timeseries_batch.return_value = {"ok": True, "rows_inserted": 0}
-    aq.insert_timeseries_polars.return_value = {"ok": True, "rows_inserted": 0}
+    aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 0}
     watch = str(tmp_path) if tmp_path else "/tmp/csv_test_watch"
     config = {"driver": {"watch_dir": watch, **(cfg_overrides or {})}}
     return CSVIngestDriver(aq, config)
@@ -205,7 +205,7 @@ def test_read_frame_can_return_normalized_timeseries_frame(tmp_path):
             return out, len(df)
 
     driver = CombinedTimeDriver(
-        MagicMock(insert_timeseries_polars=MagicMock(return_value={"ok": True})),
+        MagicMock(insert_timeseries_arrow=MagicMock(return_value={"ok": True})),
         {"driver": {"watch_dir": str(tmp_path)}},
     )
     driver.setup()
@@ -296,9 +296,9 @@ def test_loop_uses_full_path_as_source_id(tmp_path):
     driver.setup()
     path = _wide_csv(tmp_path)
     driver.tick()
-    source_id, df = driver.aq.insert_timeseries_polars.call_args[0]
+    source_id, df = driver.aq.insert_timeseries_arrow.call_args[0]
     assert source_id == _safe_name(str(path))
-    assert set(df["ref_name"].unique().to_list()) == {"temp", "rh"}
+    assert set(df["ref_name"].to_pylist()) == {"temp", "rh"}
 
 
 def test_loop_registers_csv_external_reference_metadata(tmp_path):
@@ -330,7 +330,7 @@ def test_loop_registers_streams_before_insert(tmp_path):
         assert "value_kind" not in df.columns
         return {"ok": True, "rows_inserted": len(df)}
 
-    driver.aq.insert_timeseries_polars.side_effect = assert_registered_first
+    driver.aq.insert_timeseries_arrow.side_effect = assert_registered_first
     driver.tick()
 
 
@@ -341,7 +341,7 @@ def test_loop_marks_text_only_csv_streams_as_text(tmp_path):
     driver.setup()
     driver.tick()
 
-    _, df = driver.aq.insert_timeseries_polars.call_args[0]
+    _, df = driver.aq.insert_timeseries_arrow.call_args[0]
     assert "value_kind" not in df.columns
 
     graph_text = driver.aq.client.insert_graph.call_args[0][0]
@@ -396,9 +396,9 @@ def test_loop_full_path_source_id_includes_subdirectory(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     driver.setup()
     driver.tick()
-    source_id, df = driver.aq.insert_timeseries_polars.call_args[0]
+    source_id, df = driver.aq.insert_timeseries_arrow.call_args[0]
     assert source_id == _safe_name(str(path))
-    assert "flow" in df["ref_name"].to_list()
+    assert "flow" in df["ref_name"].to_pylist()
 
 
 # ------------------------------------------------------------------ row offset / append tracking
@@ -428,17 +428,17 @@ def test_loop_advances_cursor_on_each_tick(tmp_path):
     path = tmp_path / "growing.csv"
     path.write_text("time,temp\n2024-01-01T00:00:00Z,1.0\n")
     driver.tick()
-    assert driver.aq.insert_timeseries_polars.call_count == 1
+    assert driver.aq.insert_timeseries_arrow.call_count == 1
     assert driver._rows_seen[str(path)] == 1
 
     with path.open("a") as f:
         f.write("2024-01-02T00:00:00Z,2.0\n")
     driver.tick()
-    assert driver.aq.insert_timeseries_polars.call_count == 2
+    assert driver.aq.insert_timeseries_arrow.call_count == 2
     assert driver._rows_seen[str(path)] == 2
 
     driver.tick()
-    assert driver.aq.insert_timeseries_polars.call_count == 2
+    assert driver.aq.insert_timeseries_arrow.call_count == 2
 
 
 def test_file_stays_in_place_after_insert(tmp_path):
@@ -455,7 +455,7 @@ def test_file_stays_in_place_after_insert(tmp_path):
 def test_tick_propagates_insert_failure(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     driver.setup()
-    driver.aq.insert_timeseries_polars.side_effect = RuntimeError("server down")
+    driver.aq.insert_timeseries_arrow.side_effect = RuntimeError("server down")
     path = _wide_csv(tmp_path)
     with pytest.raises(RuntimeError, match="server down"):
         driver.tick()
@@ -473,7 +473,7 @@ def test_tick_propagates_registration_failure(tmp_path):
         driver.tick()
 
     assert str(path) not in driver._rows_seen
-    driver.aq.insert_timeseries_polars.assert_not_called()
+    driver.aq.insert_timeseries_arrow.assert_not_called()
 
 
 def test_loop_skips_bad_file_and_continues(tmp_path):
@@ -482,4 +482,4 @@ def test_loop_skips_bad_file_and_continues(tmp_path):
     (tmp_path / "bad.csv").write_text("not,valid\ncsvgarbagehere\n")
     (tmp_path / "good.csv").write_text("time,temp\n2024-01-01T00:00:00Z,22.5\n")
     driver.tick()
-    driver.aq.insert_timeseries_polars.assert_called_once()
+    driver.aq.insert_timeseries_arrow.assert_called_once()

@@ -8,6 +8,7 @@ import inspect
 
 if TYPE_CHECKING:
     import polars as pl
+    import pyarrow as pa
 
 from rdflib import Graph as RDFGraph, URIRef, Literal
 from rdflib.namespace import RDF, RDFS
@@ -200,18 +201,9 @@ class Acquirium:
             chunk_count += 1
         return {"ok": True, "rows_inserted": total, "batches": chunk_count}
 
-    def insert_timeseries_polars(self, source_id: str, df: "pl.DataFrame") -> dict[str, Any]:
-        """Insert a melted (ts, ref_name, value) DataFrame.
-
-        Subclasses backed by a Manager can override this to skip the Python
-        round-trip.  The default converts to the dict format and delegates to
-        ``insert_timeseries_batch``.
-        """
-        columns = ["ts", "ref_name", "value"]
-        batch: dict[str, list] = {}
-        for ts, ref_name, value in df.select(columns).iter_rows():
-            batch.setdefault(ref_name, []).append((ts, value))
-        return self.insert_timeseries_batch(source_id, batch)
+    def insert_timeseries_arrow(self, source_id: str, table: "pa.Table") -> dict[str, Any]:
+        """Insert a (ts, ref_name, value) Arrow table."""
+        return self.client.insert_timeseries_arrow(source_id, table)
 
     def _iter_insert_batches(
         self,
