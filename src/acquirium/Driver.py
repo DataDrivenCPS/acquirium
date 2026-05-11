@@ -33,6 +33,21 @@ def _is_connection_error(exc: BaseException) -> bool:
     return any(c.__name__ in _CONNECTION_EXC_NAMES for c in type(exc).__mro__)
 
 
+def _cast_value_to_utf8(col: "pl.Series") -> "pl.Expr":
+    """Return an expression that casts *col* to Utf8, handling pl.Object and NaN."""
+    import math
+    import polars as pl
+
+    if col.dtype == pl.Object:
+        return pl.col("value").map_elements(
+            lambda v: None if (v is None or (isinstance(v, float) and math.isnan(v))) else str(v),
+            return_dtype=pl.Utf8,
+        )
+    if col.dtype in (pl.Float32, pl.Float64):
+        return pl.col("value").fill_nan(None).cast(pl.Utf8)
+    return pl.col("value").cast(pl.Utf8)
+
+
 def _sanitise_driver_id(spec: str) -> str:
     """Turn a driver spec or class name into a filesystem-safe identifier."""
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", spec).strip("_") or "driver"
