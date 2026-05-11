@@ -161,31 +161,14 @@ def _driver_connect_cfg(
 # Shared driver tick loop
 # ---------------------------------------------------------------------------
 
-class _Backoff:
-    def __init__(self) -> None:
-        self._failures = 0
-    def record_success(self) -> None: self._failures = 0
-    def record_failure(self) -> None: self._failures += 1
-    def is_in_backoff(self) -> bool: return self._failures > 0
-
-
 def _run_driver_loop(
     driver: "Driver",
     aq: "Acquirium",
     interval: float,
     stop_event: threading.Event,
 ) -> None:
-    """Tick loop shared by in-process and driver-only threads.
-
-    tick() always fires on the fixed *interval* regardless of server state
-    (isochronous collection).  Backoff tracks server reachability to gate
-    graph-version polls and suppress repeated log noise; it does not slow
-    down the tick cadence.  Non-connection errors always log a full traceback.
-    """
-    from acquirium.Driver import _is_connection_error
-
+    """Tick loop shared by in-process and driver-only threads."""
     _log = logging.getLogger(f"acquirium.driver.{driver.__class__.__name__}")
-    backoff = _Backoff()
     known_version = 0
     try:
         known_version = aq.graph_version()
@@ -195,32 +178,22 @@ def _run_driver_loop(
     def _tick() -> None:
         try:
             driver.tick()
-            if backoff.is_in_backoff():
-                _log.info("Server connection restored.")
-            backoff.record_success()
-        except Exception as exc:
-            if _is_connection_error(exc):
-                first = not backoff.is_in_backoff()
-                backoff.record_failure()
-                if first:
-                    _log.warning("Server unreachable (%s).", type(exc).__name__)
-            else:
-                _log.exception("tick error")
+        except Exception:
+            _log.exception("tick error")
 
     _tick()
 
     while not stop_event.wait(timeout=interval):
-        if not backoff.is_in_backoff():
-            try:
-                v = aq.graph_version()
-                if v != known_version:
-                    known_version = v
-                    try:
-                        driver.on_graph_change()
-                    except Exception:
-                        _log.exception("on_graph_change error")
-            except Exception:
-                pass
+        try:
+            v = aq.graph_version()
+            if v != known_version:
+                known_version = v
+                try:
+                    driver.on_graph_change()
+                except Exception:
+                    _log.exception("on_graph_change error")
+        except Exception:
+            pass
         _tick()
 
     try:
