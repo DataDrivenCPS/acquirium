@@ -199,7 +199,7 @@ class IngestDriver(Driver):
         df = self.normalize_observations(observations)
 
         # --- drain WAL before attempting a live insert ---
-        if not self._wal.is_empty():
+        if self._wal.pending():
             if self._backoff.ready():
                 drained = self._drain_wal()
             else:

@@ -169,7 +169,7 @@ class BackupDriver(PollingIngestDriver):
 
             # Advance watermark to the latest timestamp in this batch.
             new_wm = df["ts"].max()
-            self.state.set(wm_key, str(new_wm))
+            self.state.set(wm_key, new_wm.isoformat())
 
             frames.append(
                 df.with_columns([

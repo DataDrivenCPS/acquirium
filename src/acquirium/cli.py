@@ -194,7 +194,7 @@ def _run_driver_loop(
         """Run one tick; return the wait time to use before the next tick."""
         try:
             driver.tick()
-            if backoff._failures:
+            if backoff.is_in_backoff():
                 _log.info("Server connection restored.")
             backoff.record_success()
             return interval
@@ -340,6 +340,8 @@ def server_cmd(
     if reload:
         effective_workers = 1  # uvicorn forbids workers > 1 with reload
 
+    # Raise KeyboardInterrupt on SIGTERM so uvicorn's existing Ctrl-C handler
+    # runs the same graceful shutdown path for both signals.
     signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
 
     typer.echo(f"Starting Acquirium server on {effective_host}:{effective_port}")

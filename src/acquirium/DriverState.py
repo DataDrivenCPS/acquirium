@@ -171,6 +171,10 @@ class ExponentialBackoff:
         jitter = delay * self._jitter * random.uniform(-1.0, 1.0)
         self._next_attempt = time.monotonic() + delay + jitter
 
+    def is_in_backoff(self) -> bool:
+        """Return True if there have been failures since the last success."""
+        return self._failures > 0
+
     def ready(self) -> bool:
         """Return True if enough time has passed to attempt another call."""
         return time.monotonic() >= self._next_attempt
