@@ -2,107 +2,61 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-import polars as pl
+import pyarrow as pa
 from acquirium.Client.acquirium import Acquirium
 from acquirium.Server.direct_client import DirectAcquirium
 
 
-def test_insert_timeseries_polars_default_delegates_with_correct_column_order():
+def test_insert_timeseries_arrow_delegates_to_client():
     aq = Acquirium.__new__(Acquirium)
-    captured: dict[str, object] = {}
+    captured: dict = {}
 
-    def insert_timeseries_batch(source_id, streams):
-        captured["source_id"] = source_id
-        captured["streams"] = streams
-        return {"ok": True, "rows_inserted": sum(len(rows) for rows in streams.values())}
+    class _FakeClient:
+        def insert_timeseries_arrow(self, source_id, table):
+            captured["source_id"] = source_id
+            captured["table"] = table
+            return {"ok": True, "rows_inserted": len(table)}
 
-    aq.insert_timeseries_batch = insert_timeseries_batch
+    aq.client = _FakeClient()
     ts = datetime(2026, 4, 28, tzinfo=timezone.utc)
-    df = pl.DataFrame(
+    table = pa.table(
         {
-            "ts": [ts, ts.replace(hour=1)],
+            "ts": pa.array([ts, ts.replace(hour=1)], type=pa.timestamp("us", tz="UTC")),
             "ref_name": ["temp", "state/value"],
             "value": ["72.4", "OK"],
-            "value_kind": ["numeric", "text"],
-        },
-        schema={
-            "ts": pl.Datetime("us", "UTC"),
-            "ref_name": pl.Utf8,
-            "value": pl.Utf8,
-            "value_kind": pl.Utf8,
-        },
+        }
     )
 
-    result = aq.insert_timeseries_polars("source/file.csv", df)
+    result = aq.insert_timeseries_arrow("source/file.csv", table)
 
     assert result == {"ok": True, "rows_inserted": 2}
-    assert captured == {
-        "source_id": "source/file.csv",
-        "streams": {
-            "temp": [(ts, "72.4")],
-            "state/value": [(ts.replace(hour=1), "OK")],
-        },
-    }
+    assert captured["source_id"] == "source/file.csv"
+    assert captured["table"].equals(table)
 
 
-def test_insert_timeseries_polars_ignores_value_kind_column():
-    aq = Acquirium.__new__(Acquirium)
-    captured: dict[str, object] = {}
-    aq.insert_timeseries_batch = lambda source_id, streams: captured.update(streams=streams) or {
-        "ok": True,
-        "rows_inserted": sum(len(rows) for rows in streams.values()),
-    }
-    ts = datetime(2026, 4, 28, tzinfo=timezone.utc)
-    df = pl.DataFrame(
-        {
-            "ts": [ts, ts.replace(hour=1)],
-            "ref_name": ["state", "state"],
-            "value": ["1", "ON"],
-            "value_kind": ["numeric", "text"],
-        },
-        schema={
-            "ts": pl.Datetime("us", "UTC"),
-            "ref_name": pl.Utf8,
-            "value": pl.Utf8,
-            "value_kind": pl.Utf8,
-        },
-    )
-
-    assert aq.insert_timeseries_polars("source/file.csv", df) == {"ok": True, "rows_inserted": 2}
-    assert captured["streams"] == {"state": [(ts, "1"), (ts.replace(hour=1), "ON")]}
-
-
-def test_direct_acquirium_polars_insert_uses_configured_batching():
+def test_direct_acquirium_insert_timeseries_arrow_reaches_manager():
     class _Manager:
         def __init__(self):
-            self.batches = []
+            self.calls: list = []
 
-        def insert_timeseries_batch(self, source_id, streams):
-            self.batches.append((source_id, streams))
-            return sum(len(rows) for rows in streams.values())
+        def insert_timeseries_polars(self, source_id, df):
+            self.calls.append((source_id, df))
+            return len(df)
 
     manager = _Manager()
-    aq = DirectAcquirium(manager, insert_batch_rows=2)
+    aq = DirectAcquirium(manager)
     ts = datetime(2026, 4, 28, tzinfo=timezone.utc)
-    df = pl.DataFrame(
+    table = pa.table(
         {
-            "ts": [ts, ts.replace(hour=1), ts.replace(hour=2)],
+            "ts": pa.array([ts, ts.replace(hour=1), ts.replace(hour=2)], type=pa.timestamp("us", tz="UTC")),
             "ref_name": ["temp", "temp", "state"],
-            "value": [1.0, 2.0, "OK"],
-        },
-        schema={
-            "ts": pl.Datetime("us", "UTC"),
-            "ref_name": pl.Utf8,
-            "value": pl.Object,
-        },
+            "value": ["1.0", "2.0", "OK"],
+        }
     )
 
-    result = aq.insert_timeseries_polars("source/file.csv", df)
+    result = aq.insert_timeseries_arrow("source/file.csv", table)
 
-    assert result == {"ok": True, "rows_inserted": 3, "batches": 2}
-    assert len(manager.batches) == 2
-    assert sum(
-        len(rows)
-        for _, streams in manager.batches
-        for rows in streams.values()
-    ) == 3
+    assert result == {"ok": True, "rows_inserted": 3}
+    assert len(manager.calls) == 1
+    assert manager.calls[0][0] == "source/file.csv"
+    assert len(manager.calls[0][1]) == 3

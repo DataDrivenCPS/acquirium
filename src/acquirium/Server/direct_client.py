@@ -27,6 +27,7 @@ import warnings
 
 if TYPE_CHECKING:
     import polars as pl
+    import pyarrow as pa
     from acquirium.Server.manager import Manager
 
 
@@ -94,6 +95,14 @@ class _DirectClient:
         insert_stats.record(origin=self._origin, rows=total, streams=streams)
         return {"ok": True, "rows_inserted": total}
 
+    def insert_timeseries_arrow(self, source_id: str, table: "pa.Table") -> dict[str, Any]:
+        import polars as pl
+        df = pl.from_arrow(table)
+        streams = df["ref_name"].unique().to_list()
+        total = self._manager.insert_timeseries_polars(source_id, df)
+        insert_stats.record(origin=self._origin, rows=total, streams=streams)
+        return {"ok": True, "rows_inserted": total}
+
     def graph_version(self) -> int:
         return self._manager.graph_version()
 
@@ -137,12 +146,6 @@ class DirectAcquirium(Acquirium):
     # Override graph_version to avoid the HTTP path inherited from Acquirium
     def graph_version(self) -> int:
         return self._manager.graph_version()
-
-    def insert_timeseries_polars(self, source_id: str, df: "pl.DataFrame") -> dict:
-        # Keep in-process drivers on the same batching path as remote drivers.
-        # Large file drivers can emit hundreds of thousands of melted rows per
-        # tick; sending that as one direct bulk insert bypasses insert_batch_rows.
-        return Acquirium.insert_timeseries_polars(self, source_id, df)
 
     # Override insert_graph so drivers calling aq.insert_graph() also work
     def insert_graph(
