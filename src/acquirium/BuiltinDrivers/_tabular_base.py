@@ -14,7 +14,7 @@ import polars as pl
 from rdflib import Literal
 from rdflib.namespace import RDF
 
-from acquirium.Driver import PollingIngestDriver
+from acquirium.Driver import IngestDriver
 from acquirium.internals.internals_namespaces import (
     DATA_SOURCE,
     FILE_LOCATION,
@@ -40,7 +40,7 @@ def _safe_name(s: str) -> str:
 
 
 
-class _TabularIngestBase(PollingIngestDriver):
+class _TabularIngestBase(IngestDriver):
     """Base class for drivers that watch a directory for tabular data files.
 
     Subclasses must set ``_glob_patterns`` and implement ``read_frame()``.
@@ -127,10 +127,6 @@ class _TabularIngestBase(PollingIngestDriver):
                     "tabular_ingest: %s — inserted %d row(s) across %d stream(s)",
                     rel, result.get("rows_inserted", 0), len(stream_names),
                 )
-
-    def collect(self) -> pl.DataFrame:
-        # tick() advances offsets per-file; this stub satisfies the base-class contract.
-        return pl.DataFrame({"source_id": [], "ts": [], "ref_name": [], "value": []})
 
     def source_id_for(self, path: Path) -> str:
         """Return the datasource ID to use for rows from *path*.
