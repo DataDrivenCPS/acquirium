@@ -482,10 +482,12 @@ class _TabularIngestBase(PollingIngestDriver):
                 ]
             )
             registered.update(new_ref_names)
-        except Exception:
-            logger.error(
-                "tabular_ingest: could not register %d stream(s)",
-                len(new_ref_names),
-                exc_info=True,
-            )
+        except Exception as exc:
+            from acquirium.Driver import _is_connection_error
+            if not _is_connection_error(exc):
+                logger.error(
+                    "tabular_ingest: could not register %d stream(s)",
+                    len(new_ref_names),
+                    exc_info=True,
+                )
             raise
