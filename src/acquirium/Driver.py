@@ -110,14 +110,14 @@ class IngestDriver(Driver):
             return {"ok": True, "rows_inserted": 0}
 
         if "source_id" not in df.columns:
-            result = self.aq.insert_timeseries_polars(self.source_id, df)
+            result = self.aq.insert_timeseries_arrow(self.source_id, df.to_arrow())
             return self._coerce_insert_result(result, len(df))
 
         total = 0
         for source_id, source_df in df.partition_by("source_id", as_dict=True).items():
             source = source_id[0] if isinstance(source_id, tuple) else source_id
             payload = source_df.drop("source_id")
-            result = self.aq.insert_timeseries_polars(str(source), payload)
+            result = self.aq.insert_timeseries_arrow(str(source), payload.to_arrow())
             total += self._coerce_insert_result(result, len(payload))["rows_inserted"]
         return {"ok": True, "rows_inserted": total}
 
