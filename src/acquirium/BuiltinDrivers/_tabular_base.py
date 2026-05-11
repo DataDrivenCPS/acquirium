@@ -109,7 +109,7 @@ class _TabularIngestBase(PollingIngestDriver):
                 continue
 
             df, value_kinds = self._with_value_kinds(df)
-            stream_names = df["ref_name"].unique().to_list()
+            stream_names = list(value_kinds.keys())
 
             # Metadata registration — if the server is down these raise and
             # the file is skipped; the offset stays put so we retry next tick.
@@ -121,26 +121,15 @@ class _TabularIngestBase(PollingIngestDriver):
                 df.with_columns(pl.lit(source_id).alias("source_id"))
             )
 
-            # Advance the offset once data is durably captured — either
-            # delivered to the server or written to the local WAL.
             if result.get("ok"):
                 self._rows_seen[key] = offset + rows_read
-                n_buffered = result.get("buffered", 0)
-                n_inserted = result.get("rows_inserted", 0)
-                if n_buffered:
-                    logger.info(
-                        "tabular_ingest: %s — buffered %d row(s) to WAL across %d stream(s)",
-                        rel, n_buffered, len(stream_names),
-                    )
-                else:
-                    logger.info(
-                        "tabular_ingest: %s — inserted %d row(s) across %d stream(s)",
-                        rel, n_inserted, len(stream_names),
-                    )
+                logger.info(
+                    "tabular_ingest: %s — inserted %d row(s) across %d stream(s)",
+                    rel, result.get("rows_inserted", 0), len(stream_names),
+                )
 
     def collect(self) -> pl.DataFrame:
-        # Required by PollingIngestDriver but unused — tick() handles the
-        # file-at-a-time loop so offsets can be advanced per file.
+        # tick() advances offsets per-file; this stub satisfies the base-class contract.
         return pl.DataFrame({"source_id": [], "ts": [], "ref_name": [], "value": []})
 
     def _source_id_for_path(self, path: Path) -> str:

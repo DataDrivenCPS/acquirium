@@ -161,6 +161,15 @@ def _driver_connect_cfg(
 # Shared driver tick loop
 # ---------------------------------------------------------------------------
 
+class _Backoff:
+    def __init__(self, base: float = 2.0, max_delay: float = 300.0) -> None:
+        self._base, self._max, self._failures = base, max_delay, 0
+    def record_success(self) -> None: self._failures = 0
+    def record_failure(self) -> None: self._failures += 1
+    def is_in_backoff(self) -> bool: return self._failures > 0
+    def next_delay(self) -> float: return min(self._base ** self._failures, self._max)
+
+
 def _run_driver_loop(
     driver: "Driver",
     aq: "Acquirium",
@@ -169,25 +178,10 @@ def _run_driver_loop(
 ) -> None:
     """Tick loop shared by in-process and driver-only threads.
 
-    Runs an initial tick immediately, then waits *interval* seconds between
-    subsequent ticks.  Polls graph version before each tick and calls
-    ``on_graph_change()`` when the version advances.  Calls ``driver.stop()``
-    on exit regardless of how the loop ends.
-
-    Connection errors cause the wait to follow exponential backoff (2 s →
-    300 s) instead of the fixed *interval*, so the driver recovers quickly
-    after a short outage without hammering on a prolonged one.  Non-connection
-    errors (bugs in the driver) always log a full traceback.
+    Connection errors use exponential backoff (2 s → 300 s) instead of the
+    fixed interval.  Non-connection errors always log a full traceback.
     """
     from acquirium.Driver import _is_connection_error
-
-    class _Backoff:
-        def __init__(self, base: float = 2.0, max_delay: float = 300.0) -> None:
-            self._base, self._max, self._failures = base, max_delay, 0
-        def record_success(self) -> None: self._failures = 0
-        def record_failure(self) -> None: self._failures += 1
-        def is_in_backoff(self) -> bool: return self._failures > 0
-        def next_delay(self) -> float: return min(self._base ** self._failures, self._max)
 
     _log = logging.getLogger(f"acquirium.driver.{driver.__class__.__name__}")
     backoff = _Backoff()
@@ -221,16 +215,17 @@ def _run_driver_loop(
     wait = _tick()
 
     while not stop_event.wait(timeout=wait):
-        try:
-            v = aq.graph_version()
-            if v != known_version:
-                known_version = v
-                try:
-                    driver.on_graph_change()
-                except Exception:
-                    _log.exception("on_graph_change error")
-        except Exception:
-            pass
+        if not backoff.is_in_backoff():
+            try:
+                v = aq.graph_version()
+                if v != known_version:
+                    known_version = v
+                    try:
+                        driver.on_graph_change()
+                    except Exception:
+                        _log.exception("on_graph_change error")
+            except Exception:
+                pass
         wait = _tick()
 
     try:
@@ -260,7 +255,7 @@ def _run_driver_only_mode(cfg: dict) -> None:
             typer.echo("Warning: [[drivers]] entry missing 'spec'; skipping", err=True)
             continue
         overrides = {k: v for k, v in entry.items() if k != "spec"}
-        merged = {**cfg, "driver": {**driver_cfg, **overrides}, "__driver_id": spec}
+        merged = {**cfg, "driver": {**driver_cfg, **overrides}}
         interval = float(overrides.get("interval", driver_cfg.get("interval", default_interval)))
 
         try:
