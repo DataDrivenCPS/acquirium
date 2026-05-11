@@ -199,7 +199,7 @@ def _make_ingest_driver(tmp_path: Path, aq=None):
 
     if aq is None:
         aq = MagicMock()
-        aq.insert_timeseries_polars.return_value = {"ok": True, "rows_inserted": 3}
+        aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 3}
 
     cfg = {"__config_dir": str(tmp_path), "driver": {"state_dir": str(tmp_path / "state")}}
 
@@ -221,7 +221,7 @@ def _make_ingest_driver(tmp_path: Path, aq=None):
 
 def test_insert_observations_live_success(tmp_path):
     aq = MagicMock()
-    aq.insert_timeseries_polars.return_value = {"ok": True, "rows_inserted": 1}
+    aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 1}
     driver = _make_ingest_driver(tmp_path, aq)
     driver.setup()
 
@@ -236,7 +236,7 @@ def test_insert_observations_live_success(tmp_path):
 
 def test_insert_observations_buffers_on_connection_error(tmp_path):
     aq = MagicMock()
-    aq.insert_timeseries_polars.side_effect = requests.exceptions.ConnectionError("refused")
+    aq.insert_timeseries_arrow.side_effect = requests.exceptions.ConnectionError("refused")
     driver = _make_ingest_driver(tmp_path, aq)
     driver.setup()
 
@@ -254,7 +254,7 @@ def test_wal_drains_on_next_tick(tmp_path):
     aq = MagicMock()
 
     # First call fails; subsequent calls succeed.
-    aq.insert_timeseries_polars.side_effect = [
+    aq.insert_timeseries_arrow.side_effect = [
         requests.exceptions.ConnectionError("refused"),
         {"ok": True, "rows_inserted": 1},
         {"ok": True, "rows_inserted": 1},
@@ -280,7 +280,7 @@ def test_wal_drains_on_next_tick(tmp_path):
 
 def test_wal_buffers_new_data_while_server_down(tmp_path):
     aq = MagicMock()
-    aq.insert_timeseries_polars.side_effect = requests.exceptions.ConnectionError("refused")
+    aq.insert_timeseries_arrow.side_effect = requests.exceptions.ConnectionError("refused")
     driver = _make_ingest_driver(tmp_path, aq)
     driver.setup()
 
@@ -301,7 +301,7 @@ def test_wal_buffers_new_data_while_server_down(tmp_path):
 def test_wal_persists_across_driver_restart(tmp_path):
     """WAL entries survive a driver restart (new instance, same state dir)."""
     aq_down = MagicMock()
-    aq_down.insert_timeseries_polars.side_effect = requests.exceptions.ConnectionError("refused")
+    aq_down.insert_timeseries_arrow.side_effect = requests.exceptions.ConnectionError("refused")
 
     driver1 = _make_ingest_driver(tmp_path, aq_down)
     driver1.setup()
@@ -314,7 +314,7 @@ def test_wal_persists_across_driver_restart(tmp_path):
 
     # New driver instance pointed at same state dir; server is back.
     aq_up = MagicMock()
-    aq_up.insert_timeseries_polars.return_value = {"ok": True, "rows_inserted": 1}
+    aq_up.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 1}
 
     driver2 = _make_ingest_driver(tmp_path, aq_up)
     driver2.setup()
