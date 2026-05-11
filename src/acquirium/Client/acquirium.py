@@ -377,7 +377,7 @@ class Acquirium:
         - ``properties``: optional mapping of predicate URIRefs to values,
           written on the reference node (or ``point_uri`` when no ref node exists).
 
-        Drivers should still insert rows with ``insert_timeseries_batch`` using
+        Drivers should still insert rows with ``insert_timeseries_arrow`` using
         the same ``source_id`` and source-local ``ref_name``. Acquirium resolves
         those inserts to the same canonical reference URI internally.
         """
