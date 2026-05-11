@@ -66,7 +66,12 @@ class CSVIngestDriver(_TabularIngestBase):
         df = self._read_df(path, row_offset)
         return df, len(df)
 
-    def _read_df(self, path: Path, row_offset: int) -> pl.DataFrame:
+    def _read_df(
+        self,
+        path: Path,
+        row_offset: int,
+        schema_overrides: dict | None = None,
+    ) -> pl.DataFrame:
         sep = "\t" if path.suffix.lower() == ".tsv" else ","
         skip = self._skip_rows_for(path)
         if skip:
@@ -75,8 +80,12 @@ class CSVIngestDriver(_TabularIngestBase):
                 separator=sep, try_parse_dates=True,
                 skip_rows_after_header=row_offset,
                 encoding=self._encoding,
+                schema_overrides=schema_overrides,
             )
-        lf = pl.scan_csv(path, separator=sep, try_parse_dates=True, encoding=self._encoding)
+        lf = pl.scan_csv(
+            path, separator=sep, try_parse_dates=True,
+            encoding=self._encoding, schema_overrides=schema_overrides,
+        )
         if row_offset:
             lf = lf.slice(row_offset)
         return lf.collect()

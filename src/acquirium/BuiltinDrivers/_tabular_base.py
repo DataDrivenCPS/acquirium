@@ -96,7 +96,7 @@ class _TabularIngestBase(PollingIngestDriver):
         for path in self._pending_paths():
             key = str(path)
             offset = self._rows_seen.get(key, 0)
-            source_id = self._source_id_for_path(path)
+            source_id = self.source_id_for(path)
             rel = path.relative_to(self._watch_dir)
 
             try:
@@ -132,7 +132,7 @@ class _TabularIngestBase(PollingIngestDriver):
         # tick() advances offsets per-file; this stub satisfies the base-class contract.
         return pl.DataFrame({"source_id": [], "ts": [], "ref_name": [], "value": []})
 
-    def _source_id_for_path(self, path: Path) -> str:
+    def source_id_for(self, path: Path) -> str:
         """Return the datasource ID to use for rows from *path*.
 
         Default: the sanitised absolute path, giving each file its own stream
@@ -438,11 +438,11 @@ class _TabularIngestBase(PollingIngestDriver):
             RDF.type: FILE_REFERENCE,
             DATA_SOURCE: Literal("CSV"),
             FILE_LOCATION: Literal(rel),
-            TIME_COLUMN_ID: Literal(self._time_column_reference_id()),
+            TIME_COLUMN_ID: Literal(self.time_column_reference_id()),
             VALUE_COLUMN_ID: Literal(ref_name),
         }
 
-    def _time_column_reference_id(self) -> str:
+    def time_column_reference_id(self) -> str:
         return self._time_col
 
     def _ensure_streams(
