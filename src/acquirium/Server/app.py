@@ -414,16 +414,19 @@ def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[st
 
 @app.post("/insert_timeseries_arrow")
 async def insert_timeseries_arrow(request: Request):
-    body = await request.body()
-    reader = ipc.RecordBatchStreamReader(pa.BufferReader(body))
-    df = pl.from_arrow(reader.read_all())
+    try:
+        body = await request.body()
+        reader = ipc.RecordBatchStreamReader(pa.BufferReader(body))
+        df = pl.from_arrow(reader.read_all())
 
-    total = 0
-    for key, source_df in df.partition_by("source_id", as_dict=True).items():
-        sid = key[0] if isinstance(key, tuple) else key
-        total += app.state.manager.insert_timeseries_polars(str(sid), source_df.drop("source_id"))
+        total = 0
+        for key, source_df in df.partition_by("source_id", as_dict=True).items():
+            sid = key[0] if isinstance(key, tuple) else key
+            total += app.state.manager.insert_timeseries_polars(str(sid), source_df.drop("source_id"))
 
-    return {"ok": True, "rows_inserted": total}
+        return {"ok": True, "rows_inserted": total}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/ingest_external_reference")

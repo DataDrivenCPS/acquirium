@@ -496,14 +496,14 @@ class AcquiriumClient:
     def insert_timeseries_arrow(self, source_id: str, table: "pa.Table") -> dict[str, Any]:
         import io
         import pyarrow as pa
-        sid_col = pa.array([source_id] * len(table), type=pa.utf8())
-        table_with_sid = table.append_column("source_id", sid_col)
+        table_with_sid = table.append_column("source_id", pa.repeat(source_id, len(table)))
         buf = io.BytesIO()
         with ipc.new_stream(buf, table_with_sid.schema) as writer:
             writer.write_table(table_with_sid)
+        buf.seek(0)
         response = requests.post(
             f"{self.base_url}/insert_timeseries_arrow",
-            data=buf.getvalue(),
+            data=buf,
             headers={"Content-Type": "application/vnd.apache.arrow.stream"},
         )
         response.raise_for_status()
