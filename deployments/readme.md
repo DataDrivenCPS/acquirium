@@ -66,7 +66,6 @@ The external reference schema is borrowed from [Brick Ref]().
 
 Existing external reference types (open an issue or contact us for other!):
 
-- "https://brickschema.org/schema/Brick/ref#FileReference"          : for connecting Parquet or CSV files
 - "https://brickschema.org/schema/Brick/ref#MQTTReference"          : for connecting MQTT streams
 - "https://brickschema.org/schema/Brick/ref#TimeseriesReference"    : for connection a database server
 
@@ -97,21 +96,7 @@ Every external reference assignment should include:
 
 ---
 
-#### 5.2 FileReference
-
-Use a File reference when data is stored in a local or mounted CSV or Parquet file. Acquirium will infer the type of the file.
-
-Required triples for `ref:FileReference`:
-
-- `ref_node a ref:FileReference`
-- `ref_node acq:DataSource "..."`            In string format as rdflib.Literal (e.g. "Lab", "SCADA", ...)
-- `ref_node ref:fileLocation "..."`          Path in string format as rdflib.Literal
-- `ref_node ref:timeColumnID "..."`          Time column name or id (optional, Acquirium infers time column automatically, however if there's ambiguity it will raise an error)
-- `ref_node ref:valueColumnID "..."`         Value column name or id (required)
-
----
-
-#### 5.4 MQTTReference
+#### 5.2 MQTTReference
 
 Use an MQTT reference for live or replayed streaming data. (right now we assume all payload is a dictionary, this will be changed to Sparkplug Schema)
 
@@ -127,7 +112,7 @@ Required triples for `ref:MQTTReference`:
 
 ---
 
-#### 5.5 TimeseriesReference
+#### 5.3 TimeseriesReference
 
 Use an existing Postgres database to retrieve data (e.g. a historian).
 

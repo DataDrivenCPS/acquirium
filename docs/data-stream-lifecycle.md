@@ -318,7 +318,6 @@ The graph is authoritative for semantic meaning. The streams table is a fast loo
 Not all streams are managed by Acquirium. The `ref:hasExternalReference` pattern also covers:
 
 - **External Postgres historians**: `ref:storedAt` is a literal DSN string (`postgresql://...`). The server detects this and routes reads to `PGReferenceRegistry`.
-- **File references**: `a ref:FileReference` with `ref:fileLocation`, used by the file-upload ingestion endpoint.
 - **MQTT references**: `a ref:MQTTReference` with `ref:MQTTBroker` and `ref:MQTTTopic`, queried by the MQTT driver.
 
 The distinction between a managed stream and an external reference is structural: managed streams have `acq:sourceId` and `acq:refName` on the reference node; external references do not.

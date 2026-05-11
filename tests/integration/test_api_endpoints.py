@@ -34,17 +34,6 @@ ex:point1 a ex:DataPoint ;
 """
 
 
-def _wait_ingest_done(timeout=30):
-    """Poll ingest_status until all tasks are done."""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        resp = requests.get(f"{BASE_URL}/ingest_status")
-        status = resp.json()
-        if status["done"] >= status["total"] - status.get("error", 0):
-            return
-        time.sleep(1)
-
-
 # ── Health & Status ────────────────────────────────────────
 
 
@@ -53,14 +42,6 @@ class TestHealthStatus:
         resp = requests.get(f"{BASE_URL}/health")
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
-
-    def test_ingest_status(self):
-        resp = requests.get(f"{BASE_URL}/ingest_status")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "done" in data
-        assert "total" in data
-        assert "scheduled" in data
 
     def test_embedding_status(self):
         resp = requests.get(f"{BASE_URL}/embedding_status")
@@ -83,7 +64,6 @@ class TestGraphEndpoints:
         })
         assert resp.status_code == 200
 
-        _wait_ingest_done()
 
         resp = requests.get(f"{BASE_URL}/sparql_json", params={
             "query": "SELECT ?s WHERE { ?s a <http://example.org/api_test/Pump> }",
@@ -106,7 +86,6 @@ class TestGraphEndpoints:
             "format": "turtle",
             "replace": True,
         })
-        _wait_ingest_done()
 
         resp = requests.get(f"{BASE_URL}/export_graph", params={"format": "turtle"})
         assert resp.status_code == 200
@@ -316,7 +295,6 @@ class TestSparqlEndpoints:
             "format": "turtle",
             "replace": True,
         })
-        _wait_ingest_done()
 
         resp = requests.get(f"{BASE_URL}/sparql_json", params={
             "query": "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10",

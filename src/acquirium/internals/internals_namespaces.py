@@ -91,16 +91,6 @@ PLANT_URI = str(ACQUIRIUM_NS.Plant)  # Generic URI representing the entire plant
 # Origin tag literal on a reference node (e.g. "Lab", "SCADA").
 DATA_SOURCE = ACQUIRIUM_NS.dataSource
 
-# Tabular file references (parquet/csv/tsv). File type is inferred from
-# the fileLocation extension; ref:csvReference is intentionally not used.
-FILE_REFERENCE = BRICK_REF.FileReference
-HAS_FILE_REFERENCE = BRICK_REF.hasFileReference
-FILE_LOCATION = BRICK_REF.fileLocation
-TIME_COLUMN_ID = BRICK_REF.timeColumnID
-VALUE_COLUMN_ID = BRICK_REF.valueColumnID
-
-PARQUET_REF = ACQUIRIUM_NS.ParquetReference
-CSV_REF = ACQUIRIUM_NS.CSVReference
 
 # MQTT Reference predicates. timeKey/valueKey are Acquirium-specific (they
 # describe how to decode a JSON payload) and live under ACQUIRIUM_NS.
