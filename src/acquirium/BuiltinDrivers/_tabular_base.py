@@ -109,7 +109,7 @@ class _TabularIngestBase(PollingIngestDriver):
                 continue
 
             df, value_kinds = self._with_value_kinds(df)
-            stream_names = list(value_kinds.keys())
+            stream_names = value_kinds.keys()
 
             # Metadata registration — if the server is down these raise and
             # the file is skipped; the offset stays put so we retry next tick.

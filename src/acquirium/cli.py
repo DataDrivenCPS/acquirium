@@ -21,7 +21,6 @@ import os
 import signal
 import sys
 import threading
-import time
 import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Optional
@@ -37,8 +36,6 @@ app = typer.Typer(
     help="Acquirium CLI — start the server or run drivers from a config file.",
     add_completion=False,
 )
-
-log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Config helpers
@@ -157,6 +154,10 @@ def _driver_connect_cfg(
     return host, port, use_ssl, interval
 
 
+def _sigterm_as_keyboard_interrupt(*_) -> None:
+    raise KeyboardInterrupt
+
+
 # ---------------------------------------------------------------------------
 # Shared driver tick loop
 # ---------------------------------------------------------------------------
@@ -169,6 +170,8 @@ def _run_driver_loop(
 ) -> None:
     """Tick loop shared by in-process and driver-only threads."""
     _log = logging.getLogger(f"acquirium.driver.{driver.__class__.__name__}")
+    # Seed known_version before the loop so the first iteration doesn't fire
+    # on_graph_change() spuriously against a pre-existing graph version.
     known_version = 0
     try:
         known_version = aq.graph_version()
@@ -224,7 +227,7 @@ def _run_driver_only_mode(cfg: dict) -> None:
             continue
         overrides = {k: v for k, v in entry.items() if k != "spec"}
         merged = {**cfg, "driver": {**driver_cfg, **overrides}}
-        interval = float(overrides.get("interval", driver_cfg.get("interval", default_interval)))
+        driver_interval = float(overrides.get("interval", default_interval))
 
         try:
             driver_cls = _import_driver_class(
@@ -244,9 +247,9 @@ def _run_driver_only_mode(cfg: dict) -> None:
 
         t = threading.Thread(
             target=_run_driver_loop,
-            args=(driver, aq, interval, stop_event),
+            args=(driver, aq, driver_interval, stop_event),
             daemon=True,
-            name=f"acquirium-driver-{spec.rsplit(':', 1)[-1]}",
+            name=f"acquirium-driver-{driver_cls.__name__}",
         )
         t.start()
         threads.append(t)
@@ -310,7 +313,7 @@ def server_cmd(
     if reload:
         effective_workers = 1  # uvicorn forbids workers > 1 with reload
 
-    signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
+    signal.signal(signal.SIGTERM, _sigterm_as_keyboard_interrupt)
 
     typer.echo(f"Starting Acquirium server on {effective_host}:{effective_port}")
     uvicorn.run(

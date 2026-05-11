@@ -30,7 +30,6 @@ def _cast_value_to_utf8(col: "pl.Series") -> "pl.Expr":
     return pl.col(name).cast(pl.Utf8)
 
 
-
 class Driver(ABC):
     """Base class for data-collection / processing drivers.
 
