@@ -56,7 +56,7 @@ def _run_inprocess_driver(
 
     spec = entry["spec"]
     driver_overrides = {k: v for k, v in entry.items() if k != "spec"}
-    merged_cfg = {**cfg, "driver": {**cfg.get("driver", {}), **driver_overrides}, "__driver_id": spec}
+    merged_cfg = {**cfg, "driver": {**cfg.get("driver", {}), **driver_overrides}}
     interval = float(driver_overrides.get("interval", cfg.get("driver", {}).get("interval", 10.0)))
     config_dir = Path(cfg.get("__config_dir", Path.cwd()))
 

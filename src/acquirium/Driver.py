@@ -32,13 +32,15 @@ def _cast_value_to_utf8(col: "pl.Series") -> "pl.Expr":
 
 def _is_connection_error(exc: BaseException) -> bool:
     """Return True if *exc* looks like a transient network/connection error."""
-    name = type(exc).__name__
-    return name in {
-        "ConnectionError", "ConnectionRefusedError", "ConnectionResetError",
-        "ConnectTimeout", "ReadTimeout", "Timeout",
-        "MaxRetryError", "NewConnectionError", "ProtocolError",
-        "RemoteDisconnected",
-    }
+    import requests.exceptions
+    import urllib3.exceptions
+    return isinstance(exc, (
+        requests.exceptions.ConnectionError,
+        requests.exceptions.Timeout,
+        urllib3.exceptions.MaxRetryError,
+        ConnectionRefusedError,
+        ConnectionResetError,
+    ))
 
 
 class Driver(ABC):
