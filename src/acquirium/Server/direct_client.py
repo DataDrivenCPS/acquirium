@@ -89,17 +89,9 @@ class _DirectClient:
         )
         return {"ok": True, "rows_inserted": total}
 
-    def insert_timeseries_polars(self, source_id: str, df: "pl.DataFrame") -> dict[str, Any]:
-        streams = df["ref_name"].unique().to_list()
-        total = self._manager.insert_timeseries_polars(source_id, df)
-        insert_stats.record(origin=self._origin, rows=total, streams=streams)
-        return {"ok": True, "rows_inserted": total}
-
     def insert_timeseries_arrow(self, source_id: str, table: "pa.Table") -> dict[str, Any]:
-        import polars as pl
-        df = pl.from_arrow(table)
-        streams = df["ref_name"].unique().to_list()
-        total = self._manager.insert_timeseries_polars(source_id, df)
+        streams = table.column("ref_name").unique().to_pylist()
+        total = self._manager.insert_timeseries(source_id, table)
         insert_stats.record(origin=self._origin, rows=total, streams=streams)
         return {"ok": True, "rows_inserted": total}
 
