@@ -235,59 +235,92 @@ If you are not inside a driver, use `aq.reference_uri(source_id, ref_name)`.
 
 ## Running Drivers
 
+Drivers are declared in `acquirium.toml` under `[[drivers]]` and started by the
+CLI. There are two deployment modes.
+
+### Server + drivers (default)
+
+Start the FastAPI server with drivers running in the same process:
+
 ```bash
-acquirium run path/to/driver.py:ClassName --config acquirium.toml --interval 5
+acquirium server --config acquirium.toml
 ```
-
-Driver specs must include the class name after a colon. File paths and dotted
-module paths are accepted:
-
-```bash
-acquirium run scripts/temp_driver.py:TemperatureDriver --config acquirium.toml
-acquirium run mypackage.drivers:TemperatureDriver --config acquirium.toml
-```
-
-The `[driver]` section sets connection defaults:
 
 ```toml
+[server]
+host = "0.0.0.0"
+port = 8000
+
+[[drivers]]
+spec = "scripts/temp_driver.py:TemperatureDriver"
+interval = 5.0
+
+[[drivers]]
+spec = "acquirium.BuiltinDrivers.mqtt_ingestion:MQTTIngestDriver"
+interval = 10.0
+mqtt_source_id = "mqtt"
+```
+
+In-process drivers call the server manager directly — no HTTP round-trip. This
+is the default for single-host deployments.
+
+### Driver-only mode
+
+Set `enabled = false` under `[server]` to run drivers against a remote Acquirium
+instance without starting a local server:
+
+```bash
+acquirium server --config driver.toml
+```
+
+```toml
+[server]
+enabled = false
+
 [driver]
-server_url = "localhost"
+server_url = "acquirium.example.com"
 server_port = 8000
-use_ssl = false
+use_ssl = true
 interval = 10.0
 insert_batch_rows = 50000
-```
 
-`insert_batch_rows` caps samples sent in one insert request. The Acquirium
-client splits large Polars inserts automatically.
-
-## Auto-Started Drivers
-
-Add `[[drivers]]` entries to `acquirium.toml` to start drivers inside the
-server process.
-
-```toml
 [[drivers]]
 spec = "scripts/temp_driver.py:TemperatureDriver"
 interval = 5.0
 ```
 
-Each entry requires `spec` and may override any `[driver]` key:
+Drivers connect to the server declared in `[driver]` and communicate over HTTP.
+Use this when drivers run on a separate machine from the server, or when you
+want to scale out data collection independently.
+
+### Driver spec format
+
+`spec` is `path/to/file.py:ClassName` or `my.module:ClassName`:
+
+```toml
+[[drivers]]
+spec = "scripts/temp_driver.py:TemperatureDriver"
+
+[[drivers]]
+spec = "mypackage.drivers:TemperatureDriver"
+```
+
+Each `[[drivers]]` entry requires `spec` and may override any `[driver]` key:
 
 ```toml
 [driver]
 interval = 10.0
+server_url = "localhost"
+server_port = 8000
+use_ssl = false
+insert_batch_rows = 50000
 
 [[drivers]]
-spec = "acquirium.BuiltinDrivers.mqtt_ingestion:MQTTIngestDriver"
-interval = 5.0
-mqtt_source_id = "mqtt"
+spec = "scripts/fast_driver.py:FastDriver"
+interval = 2.0            # overrides [driver].interval for this entry only
 ```
 
-In-process drivers receive the same `self.aq` interface as `acquirium run`, but
-calls are dispatched directly to the server manager instead of over HTTP.
-MQTT ingestion is configured this way too: the server does not start MQTT
-subscribers implicitly from the graph.
+`insert_batch_rows` caps the number of rows sent in one insert request.
 
 ## Built-In MQTT Driver
 
