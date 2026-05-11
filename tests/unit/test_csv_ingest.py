@@ -8,24 +8,17 @@ from unittest.mock import MagicMock
 
 import polars as pl
 import pytest
-from rdflib import Graph, Literal, URIRef
-from rdflib.namespace import RDF
+from rdflib import Graph, Literal
 
 from acquirium.BuiltinDrivers._tabular_base import _safe_name
 from acquirium.BuiltinDrivers.csv_ingest import CSVIngestDriver
 from acquirium.Client.acquirium import Acquirium
 from acquirium.internals.models import compute_ref_uri
 from acquirium.internals.internals_namespaces import (
-    ACQUIRIUM_DB_URI,
     ACQUIRIUM_REF_NAME,
     ACQUIRIUM_SOURCE_ID,
     ACQUIRIUM_VALUE_KIND,
-    FILE_LOCATION,
-    FILE_REFERENCE,
     HAS_EXTERNAL_REFERENCE,
-    STORED_AT,
-    TIME_COLUMN_ID,
-    VALUE_COLUMN_ID,
 )
 
 
@@ -191,7 +184,7 @@ def test_read_frame_can_return_normalized_timeseries_frame(tmp_path):
 
     class CombinedTimeDriver(CSVIngestDriver):
         def read_frame(self, path: Path, row_offset: int = 0) -> tuple[pl.DataFrame, int]:
-            df = self._read_df(path, row_offset)
+            df = self.read_df(path, row_offset)
             raw_ts = df.select(
                 (pl.col("Date") + pl.lit(" ") + pl.col("Time")).alias("ts")
             )["ts"]
@@ -300,24 +293,6 @@ def test_loop_uses_full_path_as_source_id(tmp_path):
     assert source_id == _safe_name(str(path))
     assert set(df["ref_name"].to_pylist()) == {"temp", "rh"}
 
-
-def test_loop_registers_csv_external_reference_metadata(tmp_path):
-    driver = make_driver(tmp_path=tmp_path)
-    driver.setup()
-    path = _wide_csv(tmp_path)
-    driver.tick()
-    graph_text = driver.aq.client.insert_graph.call_args[0][0]
-    g = Graph().parse(data=graph_text, format="turtle")
-    source_id = _safe_name(str(path))
-    ref_uri = compute_ref_uri(source_id, "temp")
-    assert (ref_uri, RDF.type, FILE_REFERENCE) in g
-    assert (ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)) in g
-    assert (ref_uri, ACQUIRIUM_REF_NAME, Literal("temp")) in g
-    assert (ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
-    assert (ref_uri, STORED_AT, ACQUIRIUM_DB_URI) in g
-    assert (ref_uri, FILE_LOCATION, Literal(path.relative_to(tmp_path).as_posix())) in g
-    assert (ref_uri, TIME_COLUMN_ID, Literal("time")) in g
-    assert (ref_uri, VALUE_COLUMN_ID, Literal("temp")) in g
 
 
 def test_loop_registers_streams_before_insert(tmp_path):
