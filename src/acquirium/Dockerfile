@@ -19,8 +19,6 @@ RUN uv sync --locked --no-dev
 # Copy config last so edits don't invalidate the layers above.
 COPY acquirium.docker.toml ./acquirium.toml
 
-# Copy config last so edits don't invalidate the layers above.
-COPY acquirium.docker.toml ./acquirium.toml
 
 # Pre-warm the embedding model so the first request isn't slow.
 ENV FASTEMBED_CACHE_PATH=/app/.fastembed_cache
