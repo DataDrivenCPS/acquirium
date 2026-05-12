@@ -654,8 +654,11 @@ class Manager:
             rdf_graph = rdf_graph.read_text()
         elif isinstance(rdf_graph, str):
             p = Path(rdf_graph)
-            if p.is_file():
-                rdf_graph = p.read_text()
+            try:
+                if p.is_file():
+                    rdf_graph = p.read_text()
+            except OSError:
+                pass
 
         try:
             self.graph_store.insert_graph(rdf_graph, format=format, replace=replace)
