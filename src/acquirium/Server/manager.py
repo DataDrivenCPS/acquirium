@@ -6,24 +6,20 @@ from pathlib import Path
 import os
 import logging
 from time import perf_counter
-from rdflib import Graph, URIRef, Node, Literal, RDF, RDFS, SKOS
+from rdflib import Graph, URIRef, Literal, RDF, RDFS, SKOS
 
 from acquirium.Storage import (
     OxigraphGraphStore,
     TimeseriesStore,
-    PGReferenceRegistry,
-    PGReferenceInfo,
-    resolve_dsn,
     create_timeseries_store,
 )
-from acquirium.Storage.values import assign_stream_value_kind, normalize_value_kind
+from acquirium.Storage.values import normalize_value_kind
 from acquirium.internals.qudt_units import QUDTUnitConverter
 from acquirium.internals.models import LogEntry, Order, TimeIntervalModel, AppSpec, AppRunRequest, compute_ref_uri
 from acquirium.internals.internals_namespaces import *
 from acquirium.internals.app_utils import app_uri_for
 
 import json
-import hashlib
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, Future
@@ -94,7 +90,6 @@ def _wipe_dir_contents(base: Path) -> None:
             shutil.rmtree(p)
         else:
             p.unlink()
-
 
 
 
@@ -194,10 +189,6 @@ class Manager:
 
         self.data_dir = base
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="acquirium-ingest")
-        self._pending_ingests: list[Future] = []
-        self.pg_dsn = _effective_dsn
-        self.pg_registry = PGReferenceRegistry()
-        self._scan_pg_references_from_graph()
         self.app_storage_root = Path(
             os.getenv("ACQUIRIUM_APP_STORAGE_ROOT", str(self.data_dir / "apps"))
         )
@@ -310,6 +301,7 @@ class Manager:
             logger.info("Registered %d external Postgres reference(s) from graph", count)
         return count
 
+
     def _sync_stream_refs_from_graph(self) -> int:
         """Sync the streams reference table from Acquirium-managed timeseries refs.
 
@@ -322,8 +314,8 @@ class Manager:
         The reference-node URI is the canonical stream identity and should be
         equal to ``compute_ref_uri(source_id, ref_name)``. We upsert into the
         streams table using the graph's actual reference URI as the storage key.
-        External PG references (which have no sourceId/refName) are skipped
-        here and handled by ``_scan_pg_references_from_graph``.
+        References without sourceId/refName are skipped; drivers are responsible
+        for ingesting external data into managed streams.
         """
         q = f"""
         SELECT ?point ?ref_node ?source_id ?ref_name ?value_kind
@@ -366,14 +358,6 @@ class Manager:
             logger.info("Synced %d stream ref(s) from graph", count)
         return count
 
-    def _file_sha256(self, path: Path) -> str:
-        h = hashlib.sha256()
-        with path.open("rb") as f:
-            for chunk in iter(lambda: f.read(1024 * 1024), b""):
-                h.update(chunk)
-        return h.hexdigest()
-
-    
     # ----- Embedding index methods -----
 
     def _extract_concepts_for_embedding(self) -> list[dict[str, Any]]:
@@ -668,8 +652,7 @@ class Manager:
 
         try:
             self.graph_store.insert_graph(rdf_graph, format=format, replace=replace)
-            logging.info("acquirium: inserted graph into store, now ingesting data")
-            self._scan_pg_references_from_graph()
+            logging.info("acquirium: inserted graph into store")
             self._sync_stream_refs_from_graph()
 
             if wait_for_embedding:
@@ -698,22 +681,9 @@ class Manager:
         """
         Retrieve time series data for a given point URI within an optional time range.
 
-        If the URI is a registered PGReference, data is fetched directly from
-        the external Postgres database.  Otherwise the internal TimescaleDB is used.
-
         Returns:
             An iterator that yields batches of time series data as Arrow RecordBatches.
         """
-        if self.pg_registry.is_pg_reference(uri):
-            return self.pg_registry.timeseries(
-                point_uri=uri,
-                start=start,
-                end=end,
-                limit=limit,
-                order=order,
-                batch_size=batch_size,
-                value_mode=value_mode,
-            )
         storage_key = self.timescale.resolve_storage_key(uri)
         return self.timescale.timeseries(
             ref_uri=storage_key,
@@ -726,189 +696,19 @@ class Manager:
         )
 
     def timeseries_info_batch(self, uris: list[str]) -> dict:
-        """Fetch stats for multiple URIs, dispatching to PGRegistry or TimescaleDB."""
-        from acquirium.internals.models import TimeseriesInfo
-        pg_uris = [u for u in uris if self.pg_registry.is_pg_reference(u)]
-        ts_uris = [u for u in uris if not self.pg_registry.is_pg_reference(u)]
-        result: dict[str, TimeseriesInfo] = {}
-        if pg_uris:
-            result.update(self.pg_registry.timeseries_info_batch(pg_uris))
-        if ts_uris:
-            # Resolve URIs to storage keys (ref_uris) in one batch query, then
-            # remap results back to the original URIs.
-            uri_to_key = self.timescale.resolve_storage_keys(ts_uris)
-            key_to_uri = {v: k for k, v in uri_to_key.items()}
-            raw = self.timescale.timeseries_info_batch(list(key_to_uri.keys()))
-            result.update({key_to_uri[k]: v for k, v in raw.items()})
-        return result
+        """Fetch stats for multiple stream or point URIs."""
+        if not uris:
+            return {}
+        uri_to_key = self.timescale.resolve_storage_keys(uris)
+        key_to_uri = {v: k for k, v in uri_to_key.items()}
+        raw = self.timescale.timeseries_info_batch(list(key_to_uri.keys()))
+        return {key_to_uri[k]: v for k, v in raw.items()}
 
     @staticmethod
     def _sparql_value(value: Any) -> str | None:
         if value is None:
             return None
         return str(value).strip('"')
-
-    def _graph_metadata(self, uri: str) -> dict[str, Any]:
-        q = f"""
-        SELECT ?p ?o
-        WHERE {{
-          <{uri}> ?p ?o .
-        }}
-        ORDER BY ?p ?o
-        """
-        rows = self.graph_store.sparql_query(q, use_union=True).get("rows", [])
-        metadata: dict[str, list[str]] = {}
-        for pred, obj in rows:
-            pred_s = str(pred)
-            obj_s = self._sparql_value(obj)
-            if obj_s is None:
-                continue
-            metadata.setdefault(pred_s, []).append(obj_s)
-        return {"uri": uri, "triples": metadata}
-
-    def list_source_streams(self, source_id: str) -> list[dict[str, Any]]:
-        q = f"""
-        SELECT ?point ?ref ?ref_name ?label ?stored_at
-        WHERE {{
-          ?point <{HAS_EXTERNAL_REFERENCE}> ?ref .
-          ?ref <{ACQUIRIUM_SOURCE_ID}> "{source_id}" ;
-               <{ACQUIRIUM_REF_NAME}> ?ref_name .
-          OPTIONAL {{ ?point <{RDFS.label}> ?label . }}
-          OPTIONAL {{ ?ref <{STORED_AT}> ?stored_at . }}
-        }}
-        ORDER BY ?ref_name ?point
-        """
-        rows = self.graph_store.sparql_query(q, use_union=True).get("rows", [])
-        point_uris = [str(point) for point, *_ in rows]
-        infos = self.timeseries_info_batch(point_uris) if point_uris else {}
-
-        streams: list[dict[str, Any]] = []
-        for point_uri, ref_uri, ref_name, label, stored_at in rows:
-            point_uri_s = str(point_uri)
-            info = infos.get(point_uri_s)
-            streams.append(
-                {
-                    "source_id": source_id,
-                    "ref_name": self._sparql_value(ref_name),
-                    "point_uri": point_uri_s,
-                    "reference_uri": str(ref_uri),
-                    "label": self._sparql_value(label),
-                    "stored_at": self._sparql_value(stored_at),
-                    "row_count": int(info.row_count) if info else 0,
-                    "earliest": info.earliest if info else None,
-                    "latest": info.latest if info else None,
-                }
-            )
-        return streams
-
-    def list_sources(self) -> list[dict[str, Any]]:
-        q = f"""
-        SELECT ?source ?label
-        WHERE {{
-          ?source a <{ACQUIRIUM_DATASOURCE}> .
-          OPTIONAL {{ ?source <{RDFS.label}> ?label . }}
-        }}
-        ORDER BY ?label ?source
-        """
-        rows = self.graph_store.sparql_query(q, use_union=True).get("rows", [])
-        sources: dict[str, dict[str, Any]] = {}
-        for source_uri, label in rows:
-            sid = self._sparql_value(label) or str(source_uri).rsplit(":", 1)[-1]
-            sources[sid] = {
-                "source_id": sid,
-                "uri": str(source_uri),
-                "label": self._sparql_value(label) or sid,
-            }
-
-        stream_q = f"""
-        SELECT ?source_id
-        WHERE {{
-          ?point <{HAS_EXTERNAL_REFERENCE}> ?ref .
-          ?ref <{ACQUIRIUM_SOURCE_ID}> ?source_id ;
-               <{ACQUIRIUM_REF_NAME}> ?ref_name .
-        }}
-        """
-        for (source_id_raw,) in self.graph_store.sparql_query(stream_q, use_union=True).get("rows", []):
-            sid = self._sparql_value(source_id_raw)
-            if sid and sid not in sources:
-                sources[sid] = {
-                    "source_id": sid,
-                    "uri": f"urn:acquirium:datasource:{sid}",
-                    "label": sid,
-                }
-
-        out: list[dict[str, Any]] = []
-        for sid in sorted(sources):
-            streams = self.list_source_streams(sid)
-            row_count = sum(stream["row_count"] for stream in streams)
-            earliest = min((stream["earliest"] for stream in streams if stream["earliest"] is not None), default=None)
-            latest = max((stream["latest"] for stream in streams if stream["latest"] is not None), default=None)
-            out.append(
-                {
-                    **sources[sid],
-                    "stream_count": len(streams),
-                    "row_count": row_count,
-                    "earliest": earliest,
-                    "latest": latest,
-                }
-            )
-        return out
-
-    def get_source(self, source_id: str) -> dict[str, Any] | None:
-        sources = {source["source_id"]: source for source in self.list_sources()}
-        source = sources.get(source_id)
-        if source is None:
-            return None
-        source["metadata"] = self._graph_metadata(source["uri"])
-        return source
-
-    def get_source_stream(self, source_id: str, ref_name: str) -> dict[str, Any] | None:
-        for stream in self.list_source_streams(source_id):
-            if stream["ref_name"] != ref_name:
-                continue
-            stream["point_metadata"] = self._graph_metadata(stream["point_uri"])
-            stream["reference_metadata"] = self._graph_metadata(stream["reference_uri"])
-            return stream
-        return None
-
-    def get_stream_by_reference_uri(self, ref_uri: str) -> dict[str, Any] | None:
-        q = f"""
-        SELECT ?point ?source_id ?ref_name ?label ?stored_at
-        WHERE {{
-          ?point <{HAS_EXTERNAL_REFERENCE}> <{ref_uri}> .
-          <{ref_uri}> <{ACQUIRIUM_SOURCE_ID}> ?source_id ;
-                      <{ACQUIRIUM_REF_NAME}> ?ref_name .
-          OPTIONAL {{ ?point <{RDFS.label}> ?label . }}
-          OPTIONAL {{ <{ref_uri}> <{STORED_AT}> ?stored_at . }}
-        }}
-        LIMIT 1
-        """
-        rows = self.graph_store.sparql_query(q, use_union=True).get("rows", [])
-        if not rows:
-            return None
-        point_uri, source_id, ref_name, label, stored_at = rows[0]
-        point_uri_s = str(point_uri)
-        info = self.timeseries_info_batch([point_uri_s]).get(point_uri_s)
-        stream = {
-            "source_id": self._sparql_value(source_id),
-            "ref_name": self._sparql_value(ref_name),
-            "point_uri": point_uri_s,
-            "reference_uri": ref_uri,
-            "label": self._sparql_value(label),
-            "stored_at": self._sparql_value(stored_at),
-            "row_count": int(info.row_count) if info else 0,
-            "earliest": info.earliest if info else None,
-            "latest": info.latest if info else None,
-        }
-        stream["point_metadata"] = self._graph_metadata(stream["point_uri"])
-        stream["reference_metadata"] = self._graph_metadata(stream["reference_uri"])
-        return stream
-
-    def get_source_stream_by_reference_uri(self, source_id: str, ref_uri: str) -> dict[str, Any] | None:
-        stream = self.get_stream_by_reference_uri(ref_uri)
-        if stream is None or stream["source_id"] != source_id:
-            return None
-        return stream
 
     def register_datasource(self, source_id: str) -> str:
         """Register a named datasource in the knowledge graph.
@@ -933,12 +733,12 @@ class Manager:
         point_uri: str | None = None,
         replace: bool = False,
     ) -> int:
-        ref_uri = compute_ref_uri(source_id, ref_name)
-        value_kind = self._registered_value_kind(str(ref_uri))
+        ref_uri = str(compute_ref_uri(source_id, ref_name))
+        value_kind = self._registered_value_kind(ref_uri)
         if replace:
-            n = self.timescale.replace_rows(str(ref_uri), rows, value_kind=value_kind)
+            n = self.timescale.replace_rows(ref_uri, rows, value_kind=value_kind)
         else:
-            n = self.timescale.upsert_rows(str(ref_uri), rows, value_kind=value_kind)
+            n = self.timescale.upsert_rows(ref_uri, rows, value_kind=value_kind)
         return n
 
     def insert_timeseries_batch(
@@ -1304,7 +1104,7 @@ class Manager:
             runs = [r for r in runs if r.get("app_id") == app_id]
         return [{"run_id": r.get("cid"), "app_id": r.get("app_id")} for r in runs]
 
-    
+
     def insert_log(self, log_message: LogEntry):
         self.timescale.insert_log(log_message)
         G = Graph()

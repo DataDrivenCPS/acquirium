@@ -172,6 +172,9 @@ class _TabularIngestBase(IngestDriver):
             for p in self._watch_dir.rglob(pattern)
         })
 
+    def _source_id_for_path(self, path: Path) -> str:
+        return _safe_name(str(path))
+
     def _with_value_kinds(self, df: pl.DataFrame) -> tuple[pl.DataFrame, dict[str, str]]:
         if "value_kind" in df.columns:
             kinds: dict[str, str] = {}

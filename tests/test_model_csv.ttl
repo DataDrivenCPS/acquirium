@@ -3,58 +3,6 @@
 @prefix qudt: <http://qudt.org/schema/qudt/> .
 @prefix s223: <http://data.ashrae.org/standard223#> .
 
-ex:eq_1 a acq:A ;
-    acq:hasProperty ex:point_9 ;
-    acq:x ex:eq_2,
-        ex:eq_6 .
-
-ex:eq_2 a acq:B ;
-    acq:hasProperty ex:point_1,
-        ex:point_2,
-        ex:point_3 ;
-    acq:w ex:eq_6 ;
-    acq:x ex:eq_3,
-        ex:eq_7 ;
-    acq:z ex:eq_1 .
-
-ex:eq_3 a acq:C ;
-    acq:w ex:eq_7 ;
-    acq:x ex:eq_4,
-        ex:eq_9 ;
-    acq:z ex:eq_2 .
-
-ex:eq_4 a acq:D ;
-    acq:w ex:eq_8 ;
-    acq:z ex:eq_3 .
-
-ex:eq_5 a acq:E ;
-    acq:hasProperty ex:point_4 ;
-    acq:x ex:eq_6 .
-
-ex:eq_6 a acq:A ;
-    acq:hasProperty ex:point_5,
-        ex:point_6 ;
-    acq:w ex:eq_5 ;
-    acq:x ex:eq_7 ;
-    acq:y ex:eq_2 .
-
-ex:eq_7 a acq:B ;
-    acq:hasProperty ex:point_7 ;
-    acq:x ex:eq_10,
-        ex:eq_8 ;
-    acq:y ex:eq_3 ;
-    acq:z ex:eq_6 .
-
-ex:eq_8 a acq:C ;
-    acq:y ex:eq_3 ;
-    acq:z ex:eq_7 .
-
-ex:eq_9 a acq:D ;
-    acq:hasProperty ex:point_4 .
-
-ex:eq_10 a acq:E ;
-    acq:hasProperty ex:point_8 .
-
 ex:point_1 a acq:QuantifiableObservableProperty ;
     s223:hasMedium acq:Medium1 ;
     s223:ofSubstance acq:Substance1 ;
@@ -114,3 +62,55 @@ ex:point_10 a acq:QuantifiableObservableProperty ;
     s223:ofSubstance acq:Substance4 ;
     qudt:hasEnumerationKind acq:EnumerationKind1 ;
     qudt:hasUnit acq:Unit2 .
+
+ex:eq_1 a acq:A ;
+    acq:hasProperty ex:point_9 ;
+    acq:x ex:eq_2,
+        ex:eq_6 .
+
+ex:eq_2 a acq:B ;
+    acq:hasProperty ex:point_1,
+        ex:point_2,
+        ex:point_3 ;
+    acq:w ex:eq_6 ;
+    acq:x ex:eq_3,
+        ex:eq_7 ;
+    acq:z ex:eq_1 .
+
+ex:eq_3 a acq:C ;
+    acq:w ex:eq_7 ;
+    acq:x ex:eq_4,
+        ex:eq_9 ;
+    acq:z ex:eq_2 .
+
+ex:eq_4 a acq:D ;
+    acq:w ex:eq_8 ;
+    acq:z ex:eq_3 .
+
+ex:eq_5 a acq:E ;
+    acq:hasProperty ex:point_4 ;
+    acq:x ex:eq_6 .
+
+ex:eq_6 a acq:A ;
+    acq:hasProperty ex:point_5,
+        ex:point_6 ;
+    acq:w ex:eq_5 ;
+    acq:x ex:eq_7 ;
+    acq:y ex:eq_2 .
+
+ex:eq_7 a acq:B ;
+    acq:hasProperty ex:point_7 ;
+    acq:x ex:eq_10,
+        ex:eq_8 ;
+    acq:y ex:eq_3 ;
+    acq:z ex:eq_6 .
+
+ex:eq_8 a acq:C ;
+    acq:y ex:eq_3 ;
+    acq:z ex:eq_7 .
+
+ex:eq_9 a acq:D ;
+    acq:hasProperty ex:point_4 .
+
+ex:eq_10 a acq:E ;
+    acq:hasProperty ex:point_8 .
