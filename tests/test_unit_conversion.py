@@ -96,7 +96,6 @@ def acquirium_client():
     """Fixture to create an Acquirium client for unit conversion integration tests."""
     from acquirium import Acquirium
     from conftest import ACQUIRIUM_TEST_SERVER_HOST, ACQUIRIUM_TEST_SERVER_PORT
-    import time
 
     acq = Acquirium(
         server_url=ACQUIRIUM_TEST_SERVER_HOST,

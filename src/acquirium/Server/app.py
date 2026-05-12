@@ -4,8 +4,6 @@ import io
 import logging
 import os
 import threading
-import time
-import tomllib
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any, Optional, Iterator
@@ -137,20 +135,6 @@ class InsertGraphRequest(BaseModel):
 
 class TimeseriesInfoRequest(BaseModel):
     uris: list[str]
-
-
-class FindDataRequest(BaseModel):
-    from_: Optional[str] = None
-    path: Optional[str] = None
-    class_: Optional[str] = None
-    quantity_kind: Optional[str] = None
-    enumeration_kind: Optional[str] = None
-    unit: Optional[str] = None
-    data_source: Optional[str] = None
-    substance: Optional[str] = None
-    medium: Optional[str] = None
-    alias: Optional[str] = None
-    hops: int = 3
 
 
 @asynccontextmanager
@@ -337,10 +321,9 @@ def register_datasource(req: RegisterDatasourceRequest) -> dict[str, Any]:
 def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[str, Any]:
     """Insert timeseries data for one or more streams.
 
-    Each element specifies a ``ref_uri``, an optional ``point_uri`` (defaults
-    to ``ref_uri``), an optional ``replace`` flag, and a list of
-    ``[timestamp, value]`` pairs.  A single-stream insert is just a
-    one-element list.
+    Each element specifies ``source_id``/``ref_name``, an optional semantic
+    ``point_uri``, an optional ``replace`` flag, and a list of
+    ``[timestamp, value]`` pairs. A single-stream insert is a one-element list.
     """
     try:
         total = 0

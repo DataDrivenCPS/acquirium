@@ -1,7 +1,7 @@
 from typing import Optional, Iterator, Any
 from datetime import datetime
 import requests
-import os
+from requests import HTTPError
 from pathlib import Path
 import polars as pl
 import pyarrow.ipc as ipc
@@ -19,6 +19,27 @@ from acquirium.Grafana.grafana_dashboard_creator import GrafanaDashboardCreator
 
 import logging
 logger = logging.getLogger(__name__)
+
+
+def _raise_for_status(response: requests.Response) -> None:
+    """Like response.raise_for_status(), but enriches the HTTPError message with the
+    response body. For FastAPI servers this extracts the 'detail' field so the caller
+    sees the server-side error message rather than just the status code."""
+    try:
+        response.raise_for_status()
+    except HTTPError as exc:
+        detail = response.text
+        try:
+            parsed = response.json()
+            detail = str(parsed.get("detail", parsed))
+        except ValueError:
+            pass
+        raise HTTPError(
+            f"{exc}; response body: {detail}",
+            response=response,
+            request=response.request,
+        ) from exc
+
 
 class AcquiriumClient:
     def __init__(self,
@@ -82,7 +103,7 @@ class AcquiriumClient:
             "wait_for_embedding": wait_for_embedding,
         }
         response = requests.post(url, json=data)
-        response.raise_for_status()
+        _raise_for_status(response)
 
         if wait_for_embedding:
             logger.info("acquirium client: server embedding index rebuild complete")
@@ -175,7 +196,7 @@ class AcquiriumClient:
         from acquirium.internals.models import TimeseriesInfo
         url = f"{self.base_url}/timeseries_info"
         response = requests.post(url, json={"uris": uris})
-        response.raise_for_status()
+        _raise_for_status(response)
         data = response.json()
         return {uri: TimeseriesInfo.model_validate(info) for uri, info in data.items()}
 
@@ -196,7 +217,7 @@ class AcquiriumClient:
             "use_union": use_union,
         }
         response = requests.get(url, params=data)
-        response.raise_for_status()
+        _raise_for_status(response)
         return response.json()
 
     def resolve_text(
@@ -212,7 +233,7 @@ class AcquiriumClient:
         if kind:
             params["kind"] = kind
         response = requests.get(url, params=params)
-        response.raise_for_status()
+        _raise_for_status(response)
         return response.json().get("matches", [])
 
     def embedding_status(self) -> dict:
@@ -364,7 +385,7 @@ class AcquiriumClient:
             values=rows,
         )
         response = requests.post(url, json=[body.model_dump(mode="json")])
-        response.raise_for_status()
+        _raise_for_status(response)
         return response.json()
 
     def insert_timeseries_batch(
@@ -388,7 +409,7 @@ class AcquiriumClient:
             for rn, rows in streams.items()
         ]
         response = requests.post(url, json=[s.model_dump(mode="json") for s in payload])
-        response.raise_for_status()
+        _raise_for_status(response)
         return response.json()
 
     def insert_timeseries_arrow(self, source_id: str, table: "pa.Table") -> dict[str, Any]:

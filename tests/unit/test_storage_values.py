@@ -53,6 +53,14 @@ def test_split_numeric_falls_back_to_text_when_float_conversion_fails():
     assert split_value("Manual Control", "numeric") == (None, "Manual Control")
 
 
+def test_split_value_numeric_stream_still_stores_parseable_values_as_numeric():
+    assert split_value("1.25", "numeric") == (1.25, None)
+
+
+def test_split_value_numeric_nan_is_null():
+    assert split_value(float("nan"), "numeric") == (None, None)
+
+
 def test_prepare_value_columns_allows_text_rows_in_numeric_stream():
     df = pl.DataFrame(
         {

@@ -5,7 +5,6 @@ Server at localhost:8000, TimescaleDB at localhost:5432, Mosquitto at localhost:
 """
 
 import os
-import time
 import pytest
 import requests
 from datetime import datetime, timezone
@@ -64,7 +63,6 @@ class TestGraphEndpoints:
         })
         assert resp.status_code == 200
 
-
         resp = requests.get(f"{BASE_URL}/sparql_json", params={
             "query": "SELECT ?s WHERE { ?s a <http://example.org/api_test/Pump> }",
         })
@@ -86,7 +84,6 @@ class TestGraphEndpoints:
             "format": "turtle",
             "replace": True,
         })
-
         resp = requests.get(f"{BASE_URL}/export_graph", params={"format": "turtle"})
         assert resp.status_code == 200
         assert len(resp.text) > 0
@@ -295,7 +292,6 @@ class TestSparqlEndpoints:
             "format": "turtle",
             "replace": True,
         })
-
         resp = requests.get(f"{BASE_URL}/sparql_json", params={
             "query": "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10",
         })
