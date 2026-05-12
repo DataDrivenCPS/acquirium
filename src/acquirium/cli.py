@@ -37,6 +37,12 @@ app = typer.Typer(
     add_completion=False,
 )
 
+
+@app.callback()
+def _root() -> None:
+    """Keep Typer in multi-command mode so `acquirium server ...` works
+    even when `server` is the only registered subcommand."""
+
 # ---------------------------------------------------------------------------
 # Config helpers
 # ---------------------------------------------------------------------------
