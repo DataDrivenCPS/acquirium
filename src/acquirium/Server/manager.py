@@ -650,6 +650,13 @@ class Manager:
                 complete and logs progress. If False (default), rebuilds in the background.
         """
 
+        if isinstance(rdf_graph, Path):
+            rdf_graph = rdf_graph.read_text()
+        elif isinstance(rdf_graph, str):
+            p = Path(rdf_graph)
+            if p.is_file():
+                rdf_graph = p.read_text()
+
         try:
             self.graph_store.insert_graph(rdf_graph, format=format, replace=replace)
             logging.info("acquirium: inserted graph into store")
