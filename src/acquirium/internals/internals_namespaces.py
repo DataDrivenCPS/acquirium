@@ -113,28 +113,9 @@ TIME_KEY = ACQUIRIUM_NS.timeKey
 VALUE_KEY = ACQUIRIUM_NS.valueKey
 HAS_PYOMO_VAR = ACQUIRIUM_NS.hasPyomoVar
 
-# External Postgres / generic-DSN timeseries.  These reuse ref:TimeseriesReference
-# and ref:storedAt (with storedAt as a literal DSN) but the column/table/query
-# predicates are Acquirium-specific.
+# Direct timeseries references are created by drivers. External databases
+# should be ingested through a driver rather than queried from graph metadata.
 HAS_TIMESERIES_REFERENCE = BRICK_REF.hasTimeseriesReference
-TIMESERIES_TABLE        = ACQUIRIUM_NS.timeseriesTable
-TIMESERIES_QUERY        = ACQUIRIUM_NS.timeseriesQuery
-TIMESERIES_TIME_COLUMN  = ACQUIRIUM_NS.timeseriesTimeColumn
-TIMESERIES_VALUE_COLUMN = ACQUIRIUM_NS.timeseriesValueColumn
-TIMESERIES_POINT_FILTER = ACQUIRIUM_NS.timeseriesPointFilter
-
-PG_REFERENCE = ACQUIRIUM_NS.PGReference
-PG_DSN = ACQUIRIUM_NS.PG_DSN
-PG_HOST = ACQUIRIUM_NS.PG_HOST
-PG_PORT = ACQUIRIUM_NS.PG_PORT
-PG_DB = ACQUIRIUM_NS.PG_DB
-PG_USER = ACQUIRIUM_NS.PG_USER
-PG_PASS = ACQUIRIUM_NS.PG_PASS
-PG_TABLE = ACQUIRIUM_NS.PG_Table
-PG_QUERY = ACQUIRIUM_NS.PG_Query
-PG_TIME_COL = ACQUIRIUM_NS.PG_TimeColumn
-PG_VALUE_COL = ACQUIRIUM_NS.PG_ValueColumn
-PG_POINT_FILTER = ACQUIRIUM_NS.PG_PointFilter
 
 OWL_CLASS = URIRef("http://www.w3.org/2002/07/owl#Class")
 OWL_OBJ_PROP = URIRef("http://www.w3.org/2002/07/owl#ObjectProperty")

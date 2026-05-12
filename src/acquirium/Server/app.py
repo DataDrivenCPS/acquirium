@@ -4,13 +4,11 @@ import io
 import logging
 import os
 import threading
-import time
-import tomllib
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any, Optional, Iterator
 
-from fastapi import Body, FastAPI, HTTPException, Request, UploadFile, File, Form
+from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, Response
 from dateutil import parser as dtparser
 from pydantic import BaseModel, Field
@@ -149,13 +147,6 @@ class EmbeddingStatus(BaseModel):
     graph: EmbeddingIndexStatus
     qudt: EmbeddingIndexStatus
 
-class IngestStatus(BaseModel):
-    scheduled: int
-    done: int
-    error: int
-    total: int
-
-
 class InsertGraphRequest(BaseModel):
     rdf_graph: str = Field(..., description="File path or RDF text")
     format: str = "turtle"
@@ -165,20 +156,6 @@ class InsertGraphRequest(BaseModel):
 
 class TimeseriesInfoRequest(BaseModel):
     uris: list[str]
-
-
-class FindDataRequest(BaseModel):
-    from_: Optional[str] = None
-    path: Optional[str] = None
-    class_: Optional[str] = None
-    quantity_kind: Optional[str] = None
-    enumeration_kind: Optional[str] = None
-    unit: Optional[str] = None
-    data_source: Optional[str] = None
-    substance: Optional[str] = None
-    medium: Optional[str] = None
-    alias: Optional[str] = None
-    hops: int = 3
 
 
 @asynccontextmanager
@@ -235,17 +212,6 @@ app = FastAPI(title="Acquirium API", version="0.1", lifespan=lifespan)
 def health():
     # If we got here, the app is up
     return Health(ok=True)
-
-@app.get("/ingest_status", response_model=IngestStatus)
-def ingest_status():
-    manager = app.state.manager
-    status = manager.ingest_status()
-    return IngestStatus(
-        scheduled=status["scheduled_tasks"],
-        done=status["done_tasks"],
-        error=status["error_tasks"],
-        total=status["total_tasks"],
-    )
 
 @app.get("/embedding_status", response_model=EmbeddingStatus)
 def embedding_status():
@@ -376,10 +342,9 @@ def register_datasource(req: RegisterDatasourceRequest) -> dict[str, Any]:
 def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[str, Any]:
     """Insert timeseries data for one or more streams.
 
-    Each element specifies a ``ref_uri``, an optional ``point_uri`` (defaults
-    to ``ref_uri``), an optional ``replace`` flag, and a list of
-    ``[timestamp, value]`` pairs.  A single-stream insert is just a
-    one-element list.
+    Each element specifies ``source_id``/``ref_name``, an optional semantic
+    ``point_uri``, an optional ``replace`` flag, and a list of
+    ``[timestamp, value]`` pairs. A single-stream insert is a one-element list.
     """
     try:
         total = 0
@@ -409,32 +374,6 @@ def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[st
         return {"ok": True, "rows_inserted": total}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-
-
-@app.post("/ingest_external_reference")
-async def ingest_external_reference(
-    data_uri: str = Form(...),
-    ref_uri: str = Form(...),
-    time_column: str | None = Form(None),
-    value_column: str | None = Form(None),
-    value_kind: str | None = Form(None),
-    file: UploadFile = File(...),
-) -> dict[str, Any]:
-    try:
-        content = await file.read()
-        n = app.state.manager.ingest_reference_bytes(
-            data_uri=data_uri,
-            ref_uri=ref_uri,
-            content=content,
-            time_column=time_column,
-            value_column=value_column,
-            value_kind=value_kind,
-            filename=file.filename or "upload",
-        )
-        return {"ok": True, "rows_ingested": n}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
 
 
 def _parse_dt(s: Optional[str]) -> Optional[datetime]:

@@ -105,7 +105,7 @@ class _TabularIngestBase(PollingIngestDriver):
         for path in paths:
             key = str(path)
             offset = self._rows_seen.get(key, 0)
-            source_id = _safe_name(key)
+            source_id = self._source_id_for_path(path)
             rel = path.relative_to(self._watch_dir)
 
             try:
@@ -142,7 +142,7 @@ class _TabularIngestBase(PollingIngestDriver):
         for path in paths:
             key = str(path)
             offset = self._rows_seen.get(key, 0)
-            source_id = _safe_name(key)
+            source_id = self._source_id_for_path(path)
             rel = path.relative_to(self._watch_dir)
 
             try:
@@ -179,6 +179,9 @@ class _TabularIngestBase(PollingIngestDriver):
             for pattern in self._glob_patterns
             for p in self._watch_dir.rglob(pattern)
         })
+
+    def _source_id_for_path(self, path: Path) -> str:
+        return _safe_name(str(path))
 
     def _with_value_kinds(self, df: pl.DataFrame) -> tuple[pl.DataFrame, dict[str, str]]:
         if "value_kind" in df.columns:

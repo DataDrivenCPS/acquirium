@@ -139,7 +139,7 @@ Typical examples:
   - `ref:MQTTTopic`
   - `acq:timeKey`
   - `acq:valueKey`
-- file-based ingestion:
+- file-based drivers:
   - `ref:fileLocation`
   - `ref:timeColumnID`
   - `ref:valueColumnID`
