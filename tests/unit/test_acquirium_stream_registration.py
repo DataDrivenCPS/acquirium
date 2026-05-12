@@ -14,11 +14,12 @@ from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_SOURCE_ID,
     ACQUIRIUM_VALUE_KIND,
     DATA_SOURCE,
-    FILE_LOCATION,
     HAS_EXTERNAL_REFERENCE,
     STORED_AT,
     VIRTUAL_POINT,
 )
+
+_TEST_PROP = URIRef("urn:test:prop:fileLocation")
 
 
 def test_register_streams_inserts_one_graph_for_multiple_streams():
@@ -33,7 +34,7 @@ def test_register_streams_inserts_one_graph_for_multiple_streams():
                 "ref_name": "temp",
                 "value_kind": "numeric",
                 "data_source": "CSV",
-                "properties": {FILE_LOCATION: Literal("demo.csv")},
+                "properties": {_TEST_PROP: Literal("demo.csv")},
             },
             {
                 "point_uri": "urn:test:point:rh",
@@ -41,7 +42,7 @@ def test_register_streams_inserts_one_graph_for_multiple_streams():
                 "ref_name": "rh",
                 "value_kind": "numeric",
                 "data_source": "CSV",
-                "properties": {FILE_LOCATION: Literal("demo.csv")},
+                "properties": {_TEST_PROP: Literal("demo.csv")},
             },
         ]
     )
@@ -60,7 +61,7 @@ def test_register_streams_inserts_one_graph_for_multiple_streams():
         assert (ref_uri, ACQUIRIUM_REF_NAME, Literal(ref_name)) in g
         assert (ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
         assert (ref_uri, STORED_AT, ACQUIRIUM_DB_URI) in g
-        assert (ref_uri, FILE_LOCATION, Literal("demo.csv")) in g
+        assert (ref_uri, _TEST_PROP, Literal("demo.csv")) in g
 
 
 def test_register_stream_without_point_uri_writes_only_ref_node():

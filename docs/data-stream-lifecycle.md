@@ -230,16 +230,7 @@ Each driver type adds its own provenance triples to the `ref_uri` node. This rec
 
 ### Tabular drivers (CSV, XLSX)
 
-Written by `_TabularIngestBase._stream_registration_properties`:
-
-```turtle
-<ref_uri>
-    a ref:FileReference ;
-    acq:dataSource "CSV" ;
-    ref:fileLocation "subdir/data.csv" ;   # relative to watch_dir
-    ref:timeColumnID "Date" ;
-    ref:valueColumnID "Temperature" .
-```
+Tabular drivers register streams with `source_id`, `ref_name`, and `value_kind` only — no additional provenance triples are written to the reference node. The datasource ID and stream names are enough for the standard managed-stream lookup.
 
 ### MQTT driver
 
@@ -315,7 +306,7 @@ The graph is authoritative for semantic meaning. The streams table is a fast loo
 
 Not all references are live read targets. The `ref:hasExternalReference` pattern can also record provenance for driver-managed streams:
 
-- **File references**: `a ref:FileReference` with `ref:fileLocation`, written by file-based drivers as stream provenance.
+- **External Postgres historians**: `ref:storedAt` is a literal DSN string (`postgresql://...`). The server detects this and routes reads to `PGReferenceRegistry`.
 - **MQTT references**: `a ref:MQTTReference` with `ref:MQTTBroker` and `ref:MQTTTopic`, queried by the MQTT driver.
 - **Database references**: connection/table/query metadata belongs in a driver configuration; the driver ingests rows into managed streams.
 

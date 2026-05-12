@@ -1,25 +1,6 @@
 import pytest
-from acquirium import Acquirium
 from acquirium.Client.data_object import DataObject
 from acquirium.internals.internals_namespaces import *
-import polars as pl
-from datetime import datetime
-from zoneinfo import ZoneInfo
-from conftest import ACQUIRIUM_TEST_SERVER_HOST, ACQUIRIUM_TEST_SERVER_PORT, insert_sample_csv_streams
-
-
-@pytest.fixture
-def acquirium_client_csv():
-    """Fixture to create an Acquirium client for testing."""
-    acq = Acquirium(
-        server_url=ACQUIRIUM_TEST_SERVER_HOST,
-        server_port=ACQUIRIUM_TEST_SERVER_PORT,
-        use_ssl=False,
-    )
-
-    acq.insert_graph("tests/test_model_csv.ttl")
-    insert_sample_csv_streams(acq)
-    return acq
 
 
 # ---- Alias-based access ----

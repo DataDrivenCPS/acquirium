@@ -9,19 +9,20 @@ from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_NS,
     BRICK_REF,
     DATA_SOURCE,
-    FILE_LOCATION,
-    FILE_REFERENCE,
     HAS_EXTERNAL_REFERENCE,
     MQTT_BROKER,
     MQTT_REFERENCE,
     MQTT_TOPIC,
     QUDT_UNIT,
     S223,
-    TIME_COLUMN_ID,
     TIME_KEY,
-    VALUE_COLUMN_ID,
     VALUE_KEY,
 )
+
+FILE_REFERENCE = BRICK_REF.FileReference
+FILE_LOCATION = BRICK_REF.fileLocation
+TIME_COLUMN_ID = BRICK_REF.timeColumnID
+VALUE_COLUMN_ID = BRICK_REF.valueColumnID
 
 
 PROPERTY_TYPES = {

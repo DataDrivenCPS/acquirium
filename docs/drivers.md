@@ -235,59 +235,92 @@ If you are not inside a driver, use `aq.reference_uri(source_id, ref_name)`.
 
 ## Running Drivers
 
+Drivers are declared in `acquirium.toml` under `[[drivers]]` and started by the
+CLI. There are two deployment modes.
+
+### Server + drivers (default)
+
+Start the FastAPI server with drivers running in the same process:
+
 ```bash
-acquirium run path/to/driver.py:ClassName --config acquirium.toml --interval 5
+acquirium server --config acquirium.toml
 ```
-
-Driver specs must include the class name after a colon. File paths and dotted
-module paths are accepted:
-
-```bash
-acquirium run scripts/temp_driver.py:TemperatureDriver --config acquirium.toml
-acquirium run mypackage.drivers:TemperatureDriver --config acquirium.toml
-```
-
-The `[driver]` section sets connection defaults:
 
 ```toml
+[server]
+host = "0.0.0.0"
+port = 8000
+
+[[drivers]]
+spec = "scripts/temp_driver.py:TemperatureDriver"
+interval = 5.0
+
+[[drivers]]
+spec = "acquirium.BuiltinDrivers.mqtt_ingestion:MQTTIngestDriver"
+interval = 10.0
+mqtt_source_id = "mqtt"
+```
+
+In-process drivers call the server manager directly — no HTTP round-trip. This
+is the default for single-host deployments.
+
+### Driver-only mode
+
+Set `enabled = false` under `[server]` to run drivers against a remote Acquirium
+instance without starting a local server:
+
+```bash
+acquirium server --config driver.toml
+```
+
+```toml
+[server]
+enabled = false
+
 [driver]
-server_url = "localhost"
+server_url = "acquirium.example.com"
 server_port = 8000
-use_ssl = false
+use_ssl = true
 interval = 10.0
 insert_batch_rows = 50000
-```
 
-`insert_batch_rows` caps samples sent in one insert request. The Acquirium
-client splits large Polars inserts automatically.
-
-## Auto-Started Drivers
-
-Add `[[drivers]]` entries to `acquirium.toml` to start drivers inside the
-server process.
-
-```toml
 [[drivers]]
 spec = "scripts/temp_driver.py:TemperatureDriver"
 interval = 5.0
 ```
 
-Each entry requires `spec` and may override any `[driver]` key:
+Drivers connect to the server declared in `[driver]` and communicate over HTTP.
+Use this when drivers run on a separate machine from the server, or when you
+want to scale out data collection independently.
+
+### Driver spec format
+
+`spec` is `path/to/file.py:ClassName` or `my.module:ClassName`:
+
+```toml
+[[drivers]]
+spec = "scripts/temp_driver.py:TemperatureDriver"
+
+[[drivers]]
+spec = "mypackage.drivers:TemperatureDriver"
+```
+
+Each `[[drivers]]` entry requires `spec` and may override any `[driver]` key:
 
 ```toml
 [driver]
 interval = 10.0
+server_url = "localhost"
+server_port = 8000
+use_ssl = false
+insert_batch_rows = 50000
 
 [[drivers]]
-spec = "acquirium.BuiltinDrivers.mqtt_ingestion:MQTTIngestDriver"
-interval = 5.0
-mqtt_source_id = "mqtt"
+spec = "scripts/fast_driver.py:FastDriver"
+interval = 2.0            # overrides [driver].interval for this entry only
 ```
 
-In-process drivers receive the same `self.aq` interface as `acquirium run`, but
-calls are dispatched directly to the server manager instead of over HTTP.
-MQTT ingestion is configured this way too: the server does not start MQTT
-subscribers implicitly from the graph.
+`insert_batch_rows` caps the number of rows sent in one insert request.
 
 ## Built-In MQTT Driver
 
@@ -401,37 +434,90 @@ Behavior:
 - `watch_dir` is scanned recursively
 - row offsets are tracked in memory
 - files are not moved or deleted
-- each file gets its own datasource
-- datasource ids are derived from absolute file paths
+- each file gets its own datasource; datasource IDs are derived from absolute file paths
 - stream `ref_name`s come from wide column names or narrow `id` values
 - stream `value_kind`s are inferred per stream: any observed numeric value
   means `"numeric"`; text-only streams are `"text"`
 - value-kind inference uses `assign_stream_value_kind()` from
   `acquirium.Storage.values`, which custom drivers can call too
 
-Custom tabular parsing should return normalized observations from
-`read_frame()` when the built-in wide/narrow formats do not fit:
+### Customising the tabular base
+
+The base class exposes a set of overridable methods for the common knobs.
+Override any of them to hard-code behaviour without touching config:
+
+**Config hooks** — override to hard-code behaviour without touching TOML:
+
+| Method | Default (from config) | Purpose |
+|---|---|---|
+| `time_col()` | `"time"` | Timestamp column name |
+| `id_col()` | `"id"` | Stream-ID column (narrow only) |
+| `value_col()` | `"value"` | Value column (narrow only) |
+| `ingest_format()` | `"auto"` | `"wide"`, `"narrow"`, or `"auto"` |
+| `date_format()` | `None` | strptime format for non-ISO timestamps |
+| `skip_rows_for(path)` | from config | 1-indexed row numbers to skip |
+| `source_id_for(path)` | sanitised absolute path | Datasource ID for a file |
+
+**`read_frame(path, row_offset)`** is the main override point for custom file
+layouts. It receives the current row offset (rows already ingested from this
+file) and returns `(df, rows_read)`. Two return shapes are accepted:
+
+- **Wide or narrow** — the base class melts it using `time_col()`,
+  `ingest_format()`, etc.
+- **Already normalized** — a frame with `ts`, `ref_name`, and `value` columns
+  is detected automatically and passed through without further melting.
+
+**`read_df(path, row_offset, schema_overrides=None)`** is the CSV I/O helper
+(defined on `CSVIngestDriver`). Call it from `read_frame` to get the raw
+frame with offset slicing, skip-row filtering, and encoding already handled.
 
 ```python
 import polars as pl
+from pathlib import Path
 
 from acquirium.BuiltinDrivers.csv_ingest import CSVIngestDriver
 
+DATE_COL = "Date"
+TIME_COL = "Time"
+DATE_FMT = "%m/%d/%Y %I:%M:%S %p"
+
 
 class MyCSVDriver(CSVIngestDriver):
-    def read_frame(self, path, row_offset=0):
-        df = self._read_df(path, row_offset)
-        raw_ts = df.select(
-            (pl.col("Date") + pl.lit(" ") + pl.col("Time")).alias("ts")
-        )["ts"]
-        out = pl.DataFrame({
-            "ts": self.normalize_timestamps(
-                raw_ts, date_format="%m/%d/%Y %I:%M:%S %p"
-            ),
-            "ref_name": ["Temperature"] * len(df),
-            "value": df["Temperature"],
-        })
-        return out, len(df)
+    def setup(self):
+        super().setup()
+        self.source_id = "my-source"
+
+    def skip_rows_for(self, path: Path) -> tuple[int, ...]:
+        return (1,)  # row 1 is a header banner, not data
+
+    def source_id_for(self, path: Path) -> str:
+        return self.source_id  # all files share one datasource
+
+    def read_frame(self, path: Path, row_offset: int = 0):
+        df = self.read_df(path, row_offset,
+                          schema_overrides={DATE_COL: pl.Utf8, TIME_COL: pl.Utf8})
+        rows_read = len(df)
+        if rows_read == 0:
+            return df, 0
+
+        combined_ts = self.normalize_timestamps(
+            df.with_columns(
+                pl.concat_str([pl.col(DATE_COL), pl.lit(" "), pl.col(TIME_COL)]).alias("__ts")
+            )["__ts"],
+            date_format=DATE_FMT,
+        )
+        stream_cols = [c for c in df.columns if c not in (DATE_COL, TIME_COL)]
+        rows = [
+            (ts, col, val)
+            for col in stream_cols
+            for ts, val in zip(combined_ts.to_list(), df[col].to_list())
+            if val is not None and ts is not None
+        ]
+        return pl.DataFrame(
+            rows,
+            schema={"ts": pl.Datetime("us", "UTC"), "ref_name": pl.Utf8, "value": pl.Object},
+            orient="row",
+        ), rows_read
 ```
 
 ## Lifecycle
