@@ -32,6 +32,7 @@ from acquirium.internals.internals_namespaces import PLANT_URI
 
 import pyarrow.ipc as ipc
 import pyarrow as pa
+import polars as pl
 
 from acquirium.Server.insert_stats import insert_stats, start_insert_summary_thread
 
@@ -374,6 +375,24 @@ def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[st
         return {"ok": True, "rows_inserted": total}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/insert_timeseries_arrow")
+async def insert_timeseries_arrow(request: Request):
+    try:
+        body = await request.body()
+        reader = ipc.RecordBatchStreamReader(pa.BufferReader(body))
+        df = pl.from_arrow(reader.read_all())
+
+        total = 0
+        for key, source_df in df.partition_by("source_id", as_dict=True).items():
+            sid = key[0] if isinstance(key, tuple) else key
+            total += app.state.manager.insert_timeseries_arrow(str(sid), source_df.drop("source_id").to_arrow())
+
+        return {"ok": True, "rows_inserted": total}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 
 
 def _parse_dt(s: Optional[str]) -> Optional[datetime]:

@@ -15,6 +15,21 @@ if TYPE_CHECKING:
     from acquirium.Client.acquirium import Acquirium
 
 
+def _cast_value_to_utf8(col: "pl.Series") -> "pl.Expr":
+    import math
+    import polars as pl
+
+    name = col.name
+    if col.dtype == pl.Object:
+        return pl.col(name).map_elements(
+            lambda v: None if (v is None or (isinstance(v, float) and math.isnan(v))) else str(v),
+            return_dtype=pl.Utf8,
+        )
+    if col.dtype in (pl.Float32, pl.Float64):
+        return pl.col(name).fill_nan(None).cast(pl.Utf8)
+    return pl.col(name).cast(pl.Utf8)
+
+
 class Driver(ABC):
     """Base class for data-collection / processing drivers.
 
@@ -110,14 +125,14 @@ class IngestDriver(Driver):
             return {"ok": True, "rows_inserted": 0}
 
         if "source_id" not in df.columns:
-            result = self.aq.insert_timeseries_polars(self.source_id, df)
+            result = self.aq.insert_timeseries_arrow(self.source_id, df.to_arrow())
             return self._coerce_insert_result(result, len(df))
 
         total = 0
         for source_id, source_df in df.partition_by("source_id", as_dict=True).items():
             source = source_id[0] if isinstance(source_id, tuple) else source_id
             payload = source_df.drop("source_id")
-            result = self.aq.insert_timeseries_polars(str(source), payload)
+            result = self.aq.insert_timeseries_arrow(str(source), payload.to_arrow())
             total += self._coerce_insert_result(result, len(payload))["rows_inserted"]
         return {"ok": True, "rows_inserted": total}
 
@@ -151,6 +166,7 @@ class IngestDriver(Driver):
         exprs = [
             self.normalize_timestamps(df["ts"]).alias("ts"),
             pl.col("ref_name").cast(pl.Utf8),
+            _cast_value_to_utf8(df["value"]),
         ]
         if "source_id" in df.columns:
             exprs.insert(0, pl.col("source_id").cast(pl.Utf8))
