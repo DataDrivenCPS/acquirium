@@ -6,8 +6,10 @@ Start services with `make testing-up` before running integration tests.
 
 import os
 
+import polars as pl
 import pytest
 
+from acquirium import Acquirium
 from acquirium.Storage.timescale_store import TimescaleStore
 from acquirium.Storage.values import assign_stream_value_kind
 
@@ -40,6 +42,37 @@ def acquirium_client_kwargs():
         "server_port": ACQUIRIUM_TEST_SERVER_PORT,
         "use_ssl": False,
     }
+
+
+_CSV_SOURCE_ID = "test-csv-data"
+
+
+@pytest.fixture(scope="module")
+def acquirium_client_csv(acquirium_client_kwargs):
+    acq = Acquirium(**acquirium_client_kwargs)
+    acq.insert_graph("tests/test_model_csv.ttl")
+    acq.register_datasource(_CSV_SOURCE_ID)
+    acq.register_streams([
+        {
+            "source_id": _CSV_SOURCE_ID,
+            "ref_name": f"point_{i}",
+            "point_uri": f"urn:ex/point_{i}",
+            "value_kind": "text" if i >= 9 else "numeric",
+        }
+        for i in range(1, 11)
+    ])
+    value_cols = [f"point_{i}" for i in range(1, 11)]
+    df = pl.read_csv("tests/sample_data.csv")
+    long = (
+        df.with_columns([
+            pl.col("Timestamp").str.to_datetime(time_zone="UTC"),
+            *[pl.col(c).cast(pl.String) for c in value_cols],
+        ])
+        .unpivot(on=value_cols, index="Timestamp", variable_name="ref_name", value_name="value")
+        .rename({"Timestamp": "ts"})
+    )
+    acq.insert_timeseries_arrow(_CSV_SOURCE_ID, long.to_arrow())
+    return acq
 
 
 @pytest.fixture(scope="module")

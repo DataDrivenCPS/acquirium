@@ -139,10 +139,6 @@ Typical examples:
   - `ref:MQTTTopic`
   - `acq:timeKey`
   - `acq:valueKey`
-- file-based drivers:
-  - `ref:fileLocation`
-  - `ref:timeColumnID`
-  - `ref:valueColumnID`
 - external Postgres:
   - `ref:storedAt` as a DSN literal
   - `acq:timeseriesTable`
@@ -239,11 +235,11 @@ class ExampleDriver(Driver):
         g.add((ref_uri, MQTT_TOPIC, Literal("plant/temp/room1")))
         self.aq.insert_graph(g.serialize(format="turtle"), format="turtle", replace=False)
 
-    def loop(self):
+    def tick(self):
         rows = [...]
-        self.aq.insert_timeseries_batch(self.source_id(), {
+        self.aq.insert_timeseries_batch(self.source_id, {
             "temp-room-1": rows,
-        }, value_kinds={"temp-room-1": "numeric"})
+        })
 ```
 
 ## Notes

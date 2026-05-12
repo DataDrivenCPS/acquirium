@@ -3,36 +3,9 @@ from acquirium import Acquirium
 from acquirium.internals.internals_namespaces import *
 from acquirium.internals.models import compute_ref_uri
 from acquirium.Client.query import Query
-import shutil
-import polars as pl
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from conftest import ACQUIRIUM_TEST_SERVER_HOST, ACQUIRIUM_TEST_SERVER_PORT, SAMPLE_SOURCE_ID, insert_sample_csv_streams
-
-@pytest.fixture
-def acquirium_client_csv():
-    """Fixture to create an Acquirium client for testing."""
-    acq = Acquirium(
-        server_url=ACQUIRIUM_TEST_SERVER_HOST,
-        server_port=ACQUIRIUM_TEST_SERVER_PORT,
-        use_ssl=False,
-    )
-
-    acq.insert_graph("tests/test_model_csv.ttl")
-    insert_sample_csv_streams(acq)
-    return acq
-
-
-def acquirium_client_stream():
-    """Fixture to create an Acquirium client for testing."""
-    acq = Acquirium(
-        server_url=ACQUIRIUM_TEST_SERVER_HOST,
-        server_port=ACQUIRIUM_TEST_SERVER_PORT,
-        use_ssl=False,
-    )
-
-    acq.insert_graph("tests/test_model_stream.ttl")
-    return acq
+from conftest import ACQUIRIUM_TEST_SERVER_HOST, ACQUIRIUM_TEST_SERVER_PORT, _CSV_SOURCE_ID
 
 ##### Find all data tests #####
 
@@ -119,7 +92,7 @@ def test_data_filters(acquirium_client_csv):
     assert len(meta_6) == 2
     assert "point_10" in meta_6["0"].to_list()
 
-    filt_random = query.filter_data_nodes(predicate=HAS_EXTERNAL_REFERENCE, value=str(compute_ref_uri(SAMPLE_SOURCE_ID, "point_10")))
+    filt_random = query.filter_data_nodes(predicate=HAS_EXTERNAL_REFERENCE, value=str(compute_ref_uri(_CSV_SOURCE_ID, "point_10")))
     meta_7 = filt_random.metadata()
     assert len(meta_7) == 1
     assert "point_10" in meta_7["0"].to_list()
