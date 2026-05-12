@@ -1,161 +1,72 @@
 @prefix acq: <urn:acquirium#> .
 @prefix ex: <urn:ex/> .
 @prefix qudt: <http://qudt.org/schema/qudt/> .
-@prefix ref: <https://brickschema.org/schema/Brick/ref#> .
 @prefix s223: <http://data.ashrae.org/standard223#> .
-
-ex:point_10 a acq:QuantifiableObservableProperty ;
-    s223:hasMedium acq:Medium4 ;
-    s223:ofSubstance acq:Substance4 ;
-    qudt:hasEnumerationKind acq:EnumerationKind1 ;
-    qudt:hasUnit acq:Unit2 ;
-    ref:hasExternalReference ex:point_10_csv_ref .
-
-ex:eq_1 a acq:A ;
-    acq:hasProperty ex:point_9 ;
-    acq:x ex:eq_2,
-        ex:eq_6 .
-
-ex:eq_10 a acq:E ;
-    acq:hasProperty ex:point_8 .
-
-ex:eq_4 a acq:D ;
-    acq:w ex:eq_8 ;
-    acq:z ex:eq_3 .
-
-ex:eq_5 a acq:E ;
-    acq:hasProperty ex:point_4 ;
-    acq:x ex:eq_6 .
-
-ex:eq_9 a acq:D ;
-    acq:hasProperty ex:point_4 .
 
 ex:point_1 a acq:QuantifiableObservableProperty ;
     s223:hasMedium acq:Medium1 ;
     s223:ofSubstance acq:Substance1 ;
     qudt:hasQuantityKind acq:QuantityKind0 ;
-    qudt:hasUnit acq:Unit0 ;
-    ref:hasExternalReference ex:point_1_csv_ref .
-
-ex:point_10_csv_ref a ref:FileReference ;
-    ref:fileLocation "tests/sample_data.csv" ;
-    ref:timeColumnID "0" ;
-    ref:valueColumnID "10" ;
-    acq:dataSource "LAB" .
-
-ex:point_1_csv_ref a ref:FileReference ;
-    ref:fileLocation "tests/sample_data.csv" ;
-    ref:timeColumnID "0" ;
-    ref:valueColumnID "1" ;
-    acq:dataSource "LAB" .
+    qudt:hasUnit acq:Unit0 .
 
 ex:point_2 a acq:QuantifiableObservableProperty ;
     s223:hasMedium acq:Medium1 ;
     s223:ofSubstance acq:Substance1 ;
     qudt:hasQuantityKind acq:QuantityKind0 ;
-    qudt:hasUnit acq:Unit0 ;
-    ref:hasExternalReference ex:point_2_csv_ref .
-
-ex:point_2_csv_ref a ref:FileReference ;
-    ref:fileLocation "tests/sample_data.csv" ;
-    ref:timeColumnID "0" ;
-    ref:valueColumnID "2" ;
-    acq:dataSource "LAB" .
+    qudt:hasUnit acq:Unit0 .
 
 ex:point_3 a acq:QuantifiableObservableProperty ;
     s223:hasMedium acq:Medium2 ;
     s223:ofSubstance acq:Substance2 ;
     qudt:hasQuantityKind acq:QuantityKind1 ;
-    qudt:hasUnit acq:Unit0 ;
-    ref:hasExternalReference ex:point_3_csv_ref .
-
-ex:point_3_csv_ref a ref:FileReference ;
-    ref:fileLocation "tests/sample_data.csv" ;
-    ref:timeColumnID "0" ;
-    ref:valueColumnID "3" ;
-    acq:dataSource "LAB" .
-
-ex:point_4_csv_ref a ref:FileReference ;
-    ref:fileLocation "tests/sample_data.csv" ;
-    ref:timeColumnID "0" ;
-    ref:valueColumnID "4" ;
-    acq:dataSource "LAB" .
-
-ex:point_5 a acq:QuantifiableObservableProperty ;
-    s223:hasMedium acq:Medium2 ;
-    s223:ofSubstance acq:Substance2 ;
-    qudt:hasQuantityKind acq:QuantityKind1 ;
-    qudt:hasUnit acq:Unit1 ;
-    ref:hasExternalReference ex:point_5_csv_ref .
-
-ex:point_5_csv_ref a ref:FileReference ;
-    ref:fileLocation "tests/sample_data.csv" ;
-    ref:timeColumnID "0" ;
-    ref:valueColumnID "5" ;
-    acq:dataSource "LAB" .
-
-ex:point_6 a acq:QuantifiableObservableProperty ;
-    s223:hasMedium acq:Medium3 ;
-    s223:ofSubstance acq:Substance3 ;
-    qudt:hasQuantityKind acq:QuantityKind2 ;
-    qudt:hasUnit acq:Unit1 ;
-    ref:hasExternalReference ex:point_6_csv_ref .
-
-ex:point_6_csv_ref a ref:FileReference ;
-    ref:fileLocation "tests/sample_data.csv" ;
-    ref:timeColumnID "0" ;
-    ref:valueColumnID "6" ;
-    acq:dataSource "LAB" .
-
-ex:point_7 a acq:QuantifiableObservableProperty ;
-    s223:hasMedium acq:Medium3 ;
-    s223:ofSubstance acq:Substance3 ;
-    qudt:hasQuantityKind acq:QuantityKind2 ;
-    qudt:hasUnit acq:Unit1 ;
-    ref:hasExternalReference ex:point_7_csv_ref .
-
-ex:point_7_csv_ref a ref:FileReference ;
-    ref:fileLocation "tests/sample_data.csv" ;
-    ref:timeColumnID "0" ;
-    ref:valueColumnID "7" ;
-    acq:dataSource "LAB" .
-
-ex:point_8 a acq:QuantifiableObservableProperty ;
-    s223:hasMedium acq:Medium3 ;
-    s223:ofSubstance acq:Substance3 ;
-    qudt:hasQuantityKind acq:QuantityKind2 ;
-    qudt:hasUnit acq:Unit2 ;
-    ref:hasExternalReference ex:point_8_csv_ref .
-
-ex:point_8_csv_ref a ref:FileReference ;
-    ref:fileLocation "tests/sample_data.csv" ;
-    ref:timeColumnID "0" ;
-    ref:valueColumnID "8" ;
-    acq:dataSource "LAB" .
-
-ex:point_9 a acq:QuantifiableObservableProperty ;
-    s223:hasMedium acq:Medium4 ;
-    s223:ofSubstance acq:Substance4 ;
-    qudt:hasEnumerationKind acq:EnumerationKind1 ;
-    qudt:hasUnit acq:Unit2 ;
-    ref:hasExternalReference ex:point_9_csv_ref .
-
-ex:point_9_csv_ref a ref:FileReference ;
-    ref:fileLocation "tests/sample_data.csv" ;
-    ref:timeColumnID "0" ;
-    ref:valueColumnID "9" ;
-    acq:dataSource "LAB" .
-
-ex:eq_8 a acq:C ;
-    acq:y ex:eq_3 ;
-    acq:z ex:eq_7 .
+    qudt:hasUnit acq:Unit0 .
 
 ex:point_4 a acq:QuantifiableObservableProperty ;
     s223:hasMedium acq:Medium2 ;
     s223:ofSubstance acq:Substance2 ;
     qudt:hasQuantityKind acq:QuantityKind1 ;
-    qudt:hasUnit acq:Unit1 ;
-    ref:hasExternalReference ex:point_4_csv_ref .
+    qudt:hasUnit acq:Unit1 .
+
+ex:point_5 a acq:QuantifiableObservableProperty ;
+    s223:hasMedium acq:Medium2 ;
+    s223:ofSubstance acq:Substance2 ;
+    qudt:hasQuantityKind acq:QuantityKind1 ;
+    qudt:hasUnit acq:Unit1 .
+
+ex:point_6 a acq:QuantifiableObservableProperty ;
+    s223:hasMedium acq:Medium3 ;
+    s223:ofSubstance acq:Substance3 ;
+    qudt:hasQuantityKind acq:QuantityKind2 ;
+    qudt:hasUnit acq:Unit1 .
+
+ex:point_7 a acq:QuantifiableObservableProperty ;
+    s223:hasMedium acq:Medium3 ;
+    s223:ofSubstance acq:Substance3 ;
+    qudt:hasQuantityKind acq:QuantityKind2 ;
+    qudt:hasUnit acq:Unit1 .
+
+ex:point_8 a acq:QuantifiableObservableProperty ;
+    s223:hasMedium acq:Medium3 ;
+    s223:ofSubstance acq:Substance3 ;
+    qudt:hasQuantityKind acq:QuantityKind2 ;
+    qudt:hasUnit acq:Unit2 .
+
+ex:point_9 a acq:QuantifiableObservableProperty ;
+    s223:hasMedium acq:Medium4 ;
+    s223:ofSubstance acq:Substance4 ;
+    qudt:hasEnumerationKind acq:EnumerationKind1 ;
+    qudt:hasUnit acq:Unit2 .
+
+ex:point_10 a acq:QuantifiableObservableProperty ;
+    s223:hasMedium acq:Medium4 ;
+    s223:ofSubstance acq:Substance4 ;
+    qudt:hasEnumerationKind acq:EnumerationKind1 ;
+    qudt:hasUnit acq:Unit2 .
+
+ex:eq_1 a acq:A ;
+    acq:hasProperty ex:point_9 ;
+    acq:x ex:eq_2,
+        ex:eq_6 .
 
 ex:eq_2 a acq:B ;
     acq:hasProperty ex:point_1,
@@ -172,6 +83,14 @@ ex:eq_3 a acq:C ;
         ex:eq_9 ;
     acq:z ex:eq_2 .
 
+ex:eq_4 a acq:D ;
+    acq:w ex:eq_8 ;
+    acq:z ex:eq_3 .
+
+ex:eq_5 a acq:E ;
+    acq:hasProperty ex:point_4 ;
+    acq:x ex:eq_6 .
+
 ex:eq_6 a acq:A ;
     acq:hasProperty ex:point_5,
         ex:point_6 ;
@@ -186,3 +105,12 @@ ex:eq_7 a acq:B ;
     acq:y ex:eq_3 ;
     acq:z ex:eq_6 .
 
+ex:eq_8 a acq:C ;
+    acq:y ex:eq_3 ;
+    acq:z ex:eq_7 .
+
+ex:eq_9 a acq:D ;
+    acq:hasProperty ex:point_4 .
+
+ex:eq_10 a acq:E ;
+    acq:hasProperty ex:point_8 .
