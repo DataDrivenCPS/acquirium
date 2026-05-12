@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -91,7 +92,13 @@ class Acquirium:
     # GRAPH API
     # ------------------------------------------------------------------
 
-    def insert_graph(self, rdf_graph: str, format: str = "turtle", replace = True, wait_for_embedding: bool = False) -> None:
+    def insert_graph(
+        self,
+        rdf_graph: str,
+        format: str = "turtle",
+        replace=True,
+        wait_for_embedding: bool = False,
+    ) -> None:
         """
         Insert RDF graph into the graph store to the main graph
 
@@ -204,6 +211,12 @@ class Acquirium:
     def insert_timeseries_arrow(self, source_id: str, table: "pa.Table") -> dict[str, Any]:
         """Insert a (ts, ref_name, value) Arrow table."""
         return self.client.insert_timeseries_arrow(source_id, table)
+
+    @staticmethod
+    def _json_safe_value(value: Any) -> Any:
+        if isinstance(value, float) and not math.isfinite(value):
+            return None
+        return value
 
     def _iter_insert_batches(
         self,
