@@ -92,7 +92,6 @@ def _wipe_dir_contents(base: Path) -> None:
             p.unlink()
 
 
-
 @dataclass
 class Manager:
     timescale: TimeseriesStore
@@ -253,54 +252,6 @@ class Manager:
             ontology_dependencies=_ontology_deps_raw.split(",") if _ontology_deps_raw else None,
             recreate=os.getenv("ACQUIRIUM_RECREATE", "false").lower() == "true",
         )
-
-    def _scan_pg_references_from_graph(self) -> int:
-        """Scan graph for external Postgres timeseries references.
-
-        External Postgres historians use a ``ref:hasExternalReference`` node
-        whose ``ref:storedAt`` is a literal DSN. Acquirium-managed streams are
-        handled separately by ``_sync_stream_refs_from_graph`` and are
-        identified by ``acq:sourceId``/``acq:refName`` on the same reference
-        node.
-        """
-        q = f"""
-        SELECT ?data ?ref ?dsn ?table ?query ?tcol ?vcol ?pfilter
-        WHERE {{
-          ?data <{HAS_EXTERNAL_REFERENCE}> ?ref .
-          ?ref <{STORED_AT}> ?dsn .
-          FILTER(isLiteral(?dsn))
-          FILTER(STRSTARTS(STR(?dsn), "postgresql://") || STRSTARTS(STR(?dsn), "postgres://"))
-          OPTIONAL {{ ?ref <{TIMESERIES_TABLE}> ?table . }}
-          OPTIONAL {{ ?ref <{TIMESERIES_QUERY}> ?query . }}
-          OPTIONAL {{ ?ref <{TIMESERIES_TIME_COLUMN}> ?tcol . }}
-          OPTIONAL {{ ?ref <{TIMESERIES_VALUE_COLUMN}> ?vcol . }}
-          OPTIONAL {{ ?ref <{TIMESERIES_POINT_FILTER}> ?pfilter . }}
-        }}
-        """
-        res = self.graph_store.sparql_query(q, use_union=True)
-        rows = res.get("rows", [])
-
-        count = 0
-        for row in rows:
-            (data_uri, ref_uri, dsn, table, custom_query, tcol, vcol, pfilter) = row
-            try:
-                info = PGReferenceInfo(
-                    dsn=self._sparql_value(dsn) or "",
-                    table=self._sparql_value(table),
-                    custom_query=self._sparql_value(custom_query),
-                    time_col=self._sparql_value(tcol) or "time",
-                    value_col=self._sparql_value(vcol) or "value",
-                    point_filter=self._sparql_value(pfilter),
-                )
-                self.pg_registry.register(str(ref_uri), info)
-                count += 1
-            except Exception:
-                logger.warning("Failed to register external Postgres reference %s", ref_uri, exc_info=True)
-
-        if count:
-            logger.info("Registered %d external Postgres reference(s) from graph", count)
-        return count
-
 
     def _sync_stream_refs_from_graph(self) -> int:
         """Sync the streams reference table from Acquirium-managed timeseries refs.
@@ -649,16 +600,6 @@ class Manager:
             wait_for_embedding: If True, blocks until the embedding index rebuild is
                 complete and logs progress. If False (default), rebuilds in the background.
         """
-
-        if isinstance(rdf_graph, Path):
-            rdf_graph = rdf_graph.read_text()
-        elif isinstance(rdf_graph, str):
-            p = Path(rdf_graph)
-            try:
-                if p.is_file():
-                    rdf_graph = p.read_text()
-            except OSError:
-                pass
 
         try:
             self.graph_store.insert_graph(rdf_graph, format=format, replace=replace)
@@ -1113,7 +1054,6 @@ class Manager:
         if app_id:
             runs = [r for r in runs if r.get("app_id") == app_id]
         return [{"run_id": r.get("cid"), "app_id": r.get("app_id")} for r in runs]
-
 
     def insert_log(self, log_message: LogEntry):
         self.timescale.insert_log(log_message)
