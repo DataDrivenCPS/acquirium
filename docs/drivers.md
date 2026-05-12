@@ -122,7 +122,8 @@ class TemperatureDriver(PollingIngestDriver):
 
 The base `tick()` implementation calls `collect()` and passes its frame to
 `insert_observations()`. `insert_observations()` normalizes the frame and calls
-`insert_timeseries_polars()`.
+`insert_timeseries_arrow()`, which serializes the data as Arrow IPC and sends it
+to the server in one round-trip.
 
 Rules:
 

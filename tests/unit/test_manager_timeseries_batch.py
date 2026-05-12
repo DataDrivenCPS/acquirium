@@ -69,7 +69,7 @@ def test_insert_timeseries_batch_uses_computed_ref_uris_in_one_bulk_insert():
     assert store.refs == []
 
 
-def test_insert_timeseries_polars_uses_computed_ref_uris_in_one_bulk_insert():
+def test_insert_timeseries_uses_computed_ref_uris_in_one_bulk_insert():
     mgr = Manager.__new__(Manager)
     store = _BulkStore()
     mgr.timescale = store
@@ -90,7 +90,7 @@ def test_insert_timeseries_polars_uses_computed_ref_uris_in_one_bulk_insert():
         },
     )
 
-    count = mgr.insert_timeseries_polars("source/file.csv", df)
+    count = mgr.insert_timeseries_arrow("source/file.csv", df.to_arrow())
 
     assert count == 3
     assert len(store.frames) == 1
@@ -105,7 +105,7 @@ def test_insert_timeseries_polars_uses_computed_ref_uris_in_one_bulk_insert():
     assert store.refs == []
 
 
-def test_insert_timeseries_polars_ignores_input_value_kind_column():
+def test_insert_timeseries_ignores_input_value_kind_column():
     mgr = Manager.__new__(Manager)
     store = _BulkStore()
     mgr.timescale = store
@@ -126,7 +126,7 @@ def test_insert_timeseries_polars_ignores_input_value_kind_column():
         },
     )
 
-    assert mgr.insert_timeseries_polars("source/file.csv", df) == 2
+    assert mgr.insert_timeseries_arrow("source/file.csv", df.to_arrow()) == 2
     assert store.frames[0].get_column("value_kind").to_list() == ["numeric", "numeric"]
 
 

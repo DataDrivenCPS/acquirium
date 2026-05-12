@@ -412,6 +412,22 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
+    def insert_timeseries_arrow(self, source_id: str, table: "pa.Table") -> dict[str, Any]:
+        import io
+        import pyarrow as pa
+        table_with_sid = table.append_column("source_id", pa.repeat(source_id, len(table)))
+        buf = io.BytesIO()
+        with ipc.new_stream(buf, table_with_sid.schema) as writer:
+            writer.write_table(table_with_sid)
+        buf.seek(0)
+        response = requests.post(
+            f"{self.base_url}/insert_timeseries_arrow",
+            data=buf,
+            headers={"Content-Type": "application/vnd.apache.arrow.stream"},
+        )
+        response.raise_for_status()
+        return response.json()
+
     def query_logs(
         self,
         point_uri: Optional[str] = None,

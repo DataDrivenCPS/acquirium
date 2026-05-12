@@ -86,7 +86,7 @@ def _write_module(tmp_path: Path) -> Path:
 def _make_driver(tmp_path: Path, **driver_cfg) -> WaterTAPDriver:
     aq = MagicMock()
     aq.register_datasource.return_value = "watertap"
-    aq.insert_timeseries_batch.return_value = {"ok": True, "rows_inserted": 2}
+    aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 2}
     config = {
         "driver": {
             "watertap_graph_path": str(_write_graph(tmp_path)),
@@ -138,11 +138,11 @@ def test_loop_builds_model_and_ingests_batch(tmp_path):
 
     driver.tick()
 
-    source_id, df = driver.aq.insert_timeseries_polars.call_args.args
+    source_id, df = driver.aq.insert_timeseries_arrow.call_args.args
     assert source_id == "watertap"
-    values = dict(zip(df["ref_name"].to_list(), df["value"].to_list()))
-    assert values["value_a"] == 2.5
-    assert values["value_b"] == 5.0
+    values = dict(zip(df["ref_name"].to_pylist(), df["value"].to_pylist()))
+    assert values["value_a"] == "2.5"
+    assert values["value_b"] == "5.0"
 
 
 def test_loop_can_extract_model_via_result_attr(tmp_path):
@@ -156,10 +156,10 @@ def test_loop_can_extract_model_via_result_attr(tmp_path):
 
     driver.tick()
 
-    _, df = driver.aq.insert_timeseries_polars.call_args.args
-    values = dict(zip(df["ref_name"].to_list(), df["value"].to_list()))
-    assert values["value_a"] == 3.0
-    assert values["value_b"] == 6.0
+    _, df = driver.aq.insert_timeseries_arrow.call_args.args
+    values = dict(zip(df["ref_name"].to_pylist(), df["value"].to_pylist()))
+    assert values["value_a"] == "3.0"
+    assert values["value_b"] == "6.0"
 
 
 def test_loop_preserves_nonnumeric_component_values_for_numeric_streams(tmp_path):
@@ -172,10 +172,10 @@ def test_loop_preserves_nonnumeric_component_values_for_numeric_streams(tmp_path
 
     driver.tick()
 
-    _, df = driver.aq.insert_timeseries_polars.call_args.args
-    values = dict(zip(df["ref_name"].to_list(), df["value"].to_list()))
+    _, df = driver.aq.insert_timeseries_arrow.call_args.args
+    values = dict(zip(df["ref_name"].to_pylist(), df["value"].to_pylist()))
     assert values["value_a"] == "Manual Control"
-    assert values["value_b"] == 6.0
+    assert values["value_b"] == "6.0"
 
 
 def test_missing_required_config_raises(tmp_path):

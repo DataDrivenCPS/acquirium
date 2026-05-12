@@ -69,7 +69,7 @@ ref_uri  →  (point_uri, source_id, ref_name, value_kind)
 This table is populated three ways:
 
 - **On stream registration** (`register_stream` / `register_streams`): the client writes the graph triple `point_uri → ref:hasExternalReference → ref_uri` when `point_uri` is known, and the server's `_sync_stream_refs_from_graph` method scans for these triples and upserts them into the streams table.
-- **On data insert** (`insert_timeseries`, `insert_timeseries_batch`, `insert_timeseries_polars`): the server computes `ref_uri` from `(source_id, ref_name)` and upserts a streams row even when no `point_uri` is known yet. In that case `streams.point_uri` is `NULL`.
+- **On data insert** (`insert_timeseries`, `insert_timeseries_batch`, `insert_timeseries_arrow`): the server computes `ref_uri` from `(source_id, ref_name)` and upserts a streams row even when no `point_uri` is known yet. In that case `streams.point_uri` is `NULL`.
 - **On graph insert**: any time RDF is inserted, the server re-scans the graph for managed reference patterns.
 
 The streams table lets the server answer: *given a `point_uri`, what storage key should I read from?* Without it, reading by `point_uri` would require a SPARQL query on every data request.
