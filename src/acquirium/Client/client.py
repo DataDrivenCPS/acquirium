@@ -1,7 +1,7 @@
 from typing import Optional, Iterator, Any
 from datetime import datetime
 import requests
-import os
+from requests import HTTPError
 from pathlib import Path
 import polars as pl
 import pyarrow.ipc as ipc
@@ -19,6 +19,27 @@ from acquirium.Grafana.grafana_dashboard_creator import GrafanaDashboardCreator
 
 import logging
 logger = logging.getLogger(__name__)
+
+
+def _raise_for_status(response: requests.Response) -> None:
+    """Like response.raise_for_status(), but enriches the HTTPError message with the
+    response body. For FastAPI servers this extracts the 'detail' field so the caller
+    sees the server-side error message rather than just the status code."""
+    try:
+        response.raise_for_status()
+    except HTTPError as exc:
+        detail = response.text
+        try:
+            parsed = response.json()
+            detail = str(parsed.get("detail", parsed))
+        except ValueError:
+            pass
+        raise HTTPError(
+            f"{exc}; response body: {detail}",
+            response=response,
+            request=response.request,
+        ) from exc
+
 
 class AcquiriumClient:
     def __init__(self,
@@ -82,10 +103,7 @@ class AcquiriumClient:
             "wait_for_embedding": wait_for_embedding,
         }
         response = requests.post(url, json=data)
-        response.raise_for_status()
-        ingestion_result = self.ingest_external_references_from_graph()
-        if ingestion_result:
-            logger.info(f"acquirium client: external references ingested: {ingestion_result}")
+        _raise_for_status(response)
 
         if wait_for_embedding:
             logger.info("acquirium client: server embedding index rebuild complete")
@@ -178,7 +196,7 @@ class AcquiriumClient:
         from acquirium.internals.models import TimeseriesInfo
         url = f"{self.base_url}/timeseries_info"
         response = requests.post(url, json={"uris": uris})
-        response.raise_for_status()
+        _raise_for_status(response)
         data = response.json()
         return {uri: TimeseriesInfo.model_validate(info) for uri, info in data.items()}
 
@@ -199,7 +217,7 @@ class AcquiriumClient:
             "use_union": use_union,
         }
         response = requests.get(url, params=data)
-        response.raise_for_status()
+        _raise_for_status(response)
         return response.json()
 
     def resolve_text(
@@ -215,20 +233,8 @@ class AcquiriumClient:
         if kind:
             params["kind"] = kind
         response = requests.get(url, params=params)
-        response.raise_for_status()
+        _raise_for_status(response)
         return response.json().get("matches", [])
-
-    def ingest_status(self) -> dict:
-        """
-        Get the current status of data ingestion tasks.
-
-        Returns:
-            A dictionary with ingestion status details.
-        """
-        url = f"{self.base_url}/ingest_status"
-        response = requests.get(url)
-        response.raise_for_status()
-        return response.json()
 
     def embedding_status(self) -> dict:
         """
@@ -275,93 +281,6 @@ class AcquiriumClient:
             detail = response.json().get("detail", response.text) if response.headers.get("content-type", "").startswith("application/json") else response.text
             raise ValueError(f"conversion_factors failed: {detail}")
         return response.json()
-
-    def is_ongoing_ingest(self) -> bool:
-        """
-        Check if there are ongoing ingestion tasks.
-
-        Returns:
-            True if there are ongoing ingestion tasks, False otherwise.
-        """
-        status = self.ingest_status()
-        return status.get("scheduled_tasks", 0) > 0
-
-    def ingest_external_references_from_graph(self) -> dict:
-        """
-        Query the server graph for ref:FileReference nodes (parquet/csv/tsv).
-        Read those files locally (host filesystem) and upload bytes to the
-        server for ingestion. The server infers the file format from the
-        filename extension.
-        """
-        q = f"""
-            SELECT ?data ?ref ?path ?timeCol ?valueCol ?valueKind
-            WHERE {{
-              ?data <{HAS_EXTERNAL_REFERENCE}> ?ref .
-              ?ref a <{FILE_REFERENCE}> .
-              OPTIONAL {{ ?ref <{FILE_LOCATION}> ?path . }}
-              OPTIONAL {{ ?ref <{TIME_COLUMN_ID}> ?timeCol . }}
-              OPTIONAL {{ ?ref <{VALUE_COLUMN_ID}> ?valueCol . }}
-              OPTIONAL {{ ?ref <{ACQUIRIUM_VALUE_KIND}> ?valueKind . }}
-            }}
-        """
-
-        res = self.sparql_query(q, use_union=True)
-        rows = res.get("rows", [])
-
-        ok = 0
-        skipped = 0
-        failed = 0
-
-        url = f"{self.base_url}/ingest_external_reference"
-
-        for data_uri, ref_uri, path, time_col, value_col, value_kind in rows:
-            if not path:
-                skipped += 1
-                continue
-
-            # path is likely a quoted literal from SPARQL JSON results
-            p_str = str(path).strip().strip('"').strip("'")
-            p = Path(p_str)
-
-            if not p.is_absolute():
-                # Interpret relative paths relative to the client's current working directory
-                p = (Path.cwd() / p).resolve()
-
-            if not p.exists():
-                print(f"External reference file not found: {p} (skipping)")
-                failed += 1
-                continue
-
-            try:
-                with open(p, "rb") as f:
-                    content = f.read()
-
-                files = {"file": (p.name, content, "application/octet-stream")}
-                data: dict[str, str] = {
-                    "data_uri": str(data_uri),
-                    "ref_uri": str(ref_uri),
-                }
-                if time_col:
-                    data["time_column"] = str(time_col).strip('"')
-                if value_col:
-                    data["value_column"] = str(value_col).strip('"')
-                if value_kind:
-                    data["value_kind"] = str(value_kind).strip('"')
-
-                r = requests.post(url, data=data, files=files)
-                r.raise_for_status()
-                ok += 1
-            except Exception as exc:
-                detail = ""
-                if hasattr(exc, "response") and exc.response is not None:
-                    try:
-                        detail = exc.response.json().get("detail", "")
-                    except Exception:
-                        detail = exc.response.text[:200]
-                logger.warning("Failed to ingest %s: %s %s", p.name, exc, detail)
-                failed += 1
-
-        return {"ok": ok, "skipped": skipped, "failed": failed, "total": len(rows)}
 
     def insert_log(
         self,
@@ -466,7 +385,7 @@ class AcquiriumClient:
             values=rows,
         )
         response = requests.post(url, json=[body.model_dump(mode="json")])
-        response.raise_for_status()
+        _raise_for_status(response)
         return response.json()
 
     def insert_timeseries_batch(
@@ -490,7 +409,7 @@ class AcquiriumClient:
             for rn, rows in streams.items()
         ]
         response = requests.post(url, json=[s.model_dump(mode="json") for s in payload])
-        response.raise_for_status()
+        _raise_for_status(response)
         return response.json()
 
     def insert_timeseries_arrow(self, source_id: str, table: "pa.Table") -> dict[str, Any]:

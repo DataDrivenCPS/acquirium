@@ -247,7 +247,7 @@ def acq():
         use_ssl=False,
     )
     client.insert_graph(
-        "deployments/BENICIA/benicia-model-with-refs-1.ttl",
+        "deployments/BENICIA/benicia-model.ttl",
         replace = True
     )
     client.insert_graph(

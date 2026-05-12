@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 from .base import TimeseriesStore
 from .graph_store import OxigraphGraphStore
 from .timescale_store import TimescaleStore
-from .pg_reference import PGReferenceRegistry, PGReferenceInfo, resolve_dsn
 
 if TYPE_CHECKING:
     from .duckdb_store import DuckDBStore
@@ -46,8 +45,5 @@ __all__ = [
     "TimeseriesStore",
     "TimescaleStore",
     "OxigraphGraphStore",
-    "PGReferenceRegistry",
-    "PGReferenceInfo",
-    "resolve_dsn",
     "create_timeseries_store",
 ]
