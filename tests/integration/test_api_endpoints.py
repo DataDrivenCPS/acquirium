@@ -346,3 +346,110 @@ class TestResolveText:
         assert resp.status_code == 200
         data = resp.json()
         assert len(data.get("matches", [])) == 0
+
+
+# ── Streams: list + bind ───────────────────────────────────
+
+
+class TestStreamsEndpoints:
+    SOURCE = "test_streams_api"
+    REF_NAME = "unassigned_signal"
+    POINT_A = "urn:test:streams_api/point_a"
+    POINT_B = "urn:test:streams_api/point_b"
+
+    def _ingest_unassigned(self):
+        ref_uri = str(compute_ref_uri(self.SOURCE, self.REF_NAME))
+        values = [
+            [datetime(2025, 7, 1, h, 0, tzinfo=timezone.utc).isoformat(), float(h)]
+            for h in range(3)
+        ]
+        resp = requests.post(
+            f"{BASE_URL}/insert_timeseries",
+            json=[{
+                "source_id": self.SOURCE,
+                "ref_name": self.REF_NAME,
+                "replace": False,
+                "values": values,
+            }],
+        )
+        assert resp.status_code == 200, resp.text
+        return ref_uri
+
+    def _list(self, bound=None):
+        params = {}
+        if bound is not None:
+            params["bound"] = "true" if bound else "false"
+        resp = requests.get(f"{BASE_URL}/streams", params=params)
+        assert resp.status_code == 200, resp.text
+        return resp.json()["streams"]
+
+    def _find(self, rows, ref_uri):
+        return next((r for r in rows if r["ref_uri"] == ref_uri), None)
+
+    def test_list_includes_unassigned_after_ingest(self):
+        ref_uri = self._ingest_unassigned()
+        unbound = self._list(bound=False)
+        row = self._find(unbound, ref_uri)
+        assert row is not None
+        assert row["point_uri"] is None
+        assert row["source_id"] == self.SOURCE
+        assert row["ref_name"] == self.REF_NAME
+
+    def test_bind_moves_row_from_unbound_to_bound(self):
+        ref_uri = self._ingest_unassigned()
+        resp = requests.post(f"{BASE_URL}/streams/bind", json={
+            "point_uri": self.POINT_A,
+            "source_id": self.SOURCE,
+            "ref_name": self.REF_NAME,
+        })
+        assert resp.status_code == 200, resp.text
+        bound_row = resp.json()
+        assert bound_row["ref_uri"] == ref_uri
+        assert bound_row["point_uri"] == self.POINT_A
+
+        assert self._find(self._list(bound=False), ref_uri) is None
+        bound = self._find(self._list(bound=True), ref_uri)
+        assert bound is not None
+        assert bound["point_uri"] == self.POINT_A
+
+    def test_rebind_overwrites_point_uri(self):
+        ref_uri = self._ingest_unassigned()
+        requests.post(f"{BASE_URL}/streams/bind", json={
+            "point_uri": self.POINT_A,
+            "ref_uri": ref_uri,
+        })
+        resp = requests.post(f"{BASE_URL}/streams/bind", json={
+            "point_uri": self.POINT_B,
+            "ref_uri": ref_uri,
+        })
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["point_uri"] == self.POINT_B
+        bound = self._find(self._list(bound=True), ref_uri)
+        assert bound is not None and bound["point_uri"] == self.POINT_B
+
+    def test_bind_writes_graph_triple(self):
+        ref_uri = self._ingest_unassigned()
+        requests.post(f"{BASE_URL}/streams/bind", json={
+            "point_uri": self.POINT_A,
+            "source_id": self.SOURCE,
+            "ref_name": self.REF_NAME,
+        })
+        resp = requests.get(f"{BASE_URL}/sparql_json", params={
+            "query": (
+                "PREFIX ref: <https://brickschema.org/schema/Brick/ref#> "
+                f"ASK {{ <{self.POINT_A}> ref:hasExternalReference <{ref_uri}> }}"
+            ),
+            "use_union": True,
+        })
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        # /sparql_json returns rows for SELECT and a boolean field for ASK; accept either shape.
+        assert data.get("boolean") is True or data.get("rows")
+
+    def test_bind_requires_identity(self):
+        resp = requests.post(f"{BASE_URL}/streams/bind", json={"point_uri": self.POINT_A})
+        assert resp.status_code >= 400
+
+    def test_invalid_bound_param(self):
+        resp = requests.get(f"{BASE_URL}/streams", params={"bound": "maybe"})
+        assert resp.status_code >= 400

@@ -12,6 +12,8 @@ from acquirium.internals.models import (
     AppRunRequest,
     AppStopRequest,
     StreamInsert,
+    StreamBindRequest,
+    StreamRow,
     RegisterDatasourceRequest,
 )
 from acquirium.internals.internals_namespaces import *
@@ -359,6 +361,50 @@ class AcquiriumClient:
         response = requests.get(url, params=params)
         response.raise_for_status()
         return response.json()
+
+    def list_streams(
+        self,
+        *,
+        bound: Optional[bool] = None,
+        limit: Optional[int] = None,
+        offset: int = 0,
+    ) -> list[StreamRow]:
+        """List rows from the ``streams`` table.
+
+        ``bound=True`` returns only rows already linked to a ``point_uri``,
+        ``bound=False`` only unassigned rows, ``None`` returns all.
+        """
+        params: dict[str, Any] = {"offset": offset}
+        if bound is not None:
+            params["bound"] = "true" if bound else "false"
+        if limit is not None:
+            params["limit"] = limit
+        response = requests.get(f"{self.base_url}/streams", params=params)
+        _raise_for_status(response)
+        return [StreamRow(**r) for r in response.json().get("streams", [])]
+
+    def bind_stream(
+        self,
+        *,
+        point_uri: str,
+        ref_uri: Optional[str] = None,
+        source_id: Optional[str] = None,
+        ref_name: Optional[str] = None,
+    ) -> StreamRow:
+        """Bind a stream to a ``point_uri``. Identify by ``ref_uri`` or by
+        ``(source_id, ref_name)``."""
+        body = StreamBindRequest(
+            point_uri=point_uri,
+            ref_uri=ref_uri,
+            source_id=source_id,
+            ref_name=ref_name,
+        )
+        response = requests.post(
+            f"{self.base_url}/streams/bind",
+            json=body.model_dump(mode="json"),
+        )
+        _raise_for_status(response)
+        return StreamRow(**response.json())
 
     def register_datasource(self, source_id: str) -> str:
         """Register a named datasource. Returns source_id."""

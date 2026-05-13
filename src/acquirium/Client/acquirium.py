@@ -36,7 +36,7 @@ def _add_triple(g: "RDFGraph", subj: "URIRef", pred: "URIRef", value: "str | URI
         g.add((subj, pred, Literal(value)))
 from acquirium.Client.client import AcquiriumClient
 from acquirium.Apps.base import App
-from acquirium.internals.models import AppOutputSpec, AppSpec, compute_ref_uri
+from acquirium.internals.models import AppOutputSpec, AppSpec, StreamRow, compute_ref_uri
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_DB_URI,
     ACQUIRIUM_REF_NAME,
@@ -278,6 +278,43 @@ class Acquirium:
     def reference_uri(self, source_id: str, ref_name: str) -> URIRef:
         """Return the canonical Acquirium reference URI for ``(source_id, ref_name)``."""
         return compute_ref_uri(source_id, ref_name)
+
+    def list_streams(
+        self,
+        *,
+        bound: bool | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[StreamRow]:
+        """List rows from the ``streams`` table.
+
+        Args:
+            bound: ``True`` returns only rows already linked to a ``point_uri``,
+                ``False`` only unassigned rows, ``None`` returns all.
+            limit: optional maximum number of rows.
+            offset: optional row offset.
+        """
+        return self.client.list_streams(bound=bound, limit=limit, offset=offset)
+
+    def bind_stream(
+        self,
+        point_uri: str | URIRef,
+        *,
+        ref_uri: str | URIRef | None = None,
+        source_id: str | None = None,
+        ref_name: str | None = None,
+    ) -> StreamRow:
+        """Bind a stream to a semantic ``point_uri``.
+
+        Identify the stream via either ``ref_uri`` *or* ``(source_id, ref_name)``.
+        Overwrites any existing ``point_uri`` on the row.
+        """
+        return self.client.bind_stream(
+            point_uri=str(point_uri),
+            ref_uri=str(ref_uri) if ref_uri is not None else None,
+            source_id=source_id,
+            ref_name=ref_name,
+        )
 
     def register_stream(
         self,

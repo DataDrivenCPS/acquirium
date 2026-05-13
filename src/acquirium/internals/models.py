@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Literal, Any, TYPE_CHECKING
 from dataclasses import dataclass
-from pydantic import BaseModel, ConfigDict, Field, RootModel
+from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 from acquirium.internals.internals_namespaces import ACQUIRIUM_NS
 from rdflib import URIRef
 # Fixed UUID namespace for deterministic reference URI generation.
@@ -78,6 +78,38 @@ class StreamInsert(BaseModel):
     point_uri: str | None = None
     replace: bool = False
     values: list[tuple[datetime, float | int | str | None]]
+
+
+class StreamRow(BaseModel):
+    """A single row from the ``streams`` table."""
+
+    ref_uri: str
+    point_uri: str | None = None
+    source_id: str
+    ref_name: str
+    value_kind: str
+
+
+class StreamBindRequest(BaseModel):
+    """Bind an existing stream to a semantic point URI.
+
+    Identify the stream via either ``ref_uri`` *or* ``(source_id, ref_name)`` —
+    not both required. When the row already has a ``point_uri``, the new one
+    overwrites it.
+    """
+
+    point_uri: str
+    ref_uri: str | None = None
+    source_id: str | None = None
+    ref_name: str | None = None
+
+    @model_validator(mode="after")
+    def _require_identity(self) -> "StreamBindRequest":
+        if not self.ref_uri and not (self.source_id and self.ref_name):
+            raise ValueError(
+                "Either ref_uri or both source_id and ref_name are required"
+            )
+        return self
 
 
 Order = Literal["asc", "desc"]

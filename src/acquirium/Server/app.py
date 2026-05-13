@@ -26,6 +26,8 @@ from acquirium.internals.models import (
     AppRunRequest,
     AppStopRequest,
     StreamInsert,
+    StreamBindRequest,
+    StreamRow,
     RegisterDatasourceRequest,
 )
 from acquirium.internals.internals_namespaces import PLANT_URI
@@ -353,6 +355,54 @@ def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[st
         return {"ok": True, "rows_inserted": total}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/streams")
+def list_streams(
+    bound: Optional[str] = None,
+    limit: Optional[int] = None,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """List rows in the ``streams`` table.
+
+    ``bound`` filters by whether each row carries a ``point_uri``:
+    ``"true"`` returns only bound rows, ``"false"`` only unassigned, omitted or
+    ``"any"`` returns everything.
+    """
+    if bound is None or bound.lower() in {"any", "all", ""}:
+        bound_filter: bool | None = None
+    elif bound.lower() in {"true", "1", "yes"}:
+        bound_filter = True
+    elif bound.lower() in {"false", "0", "no"}:
+        bound_filter = False
+    else:
+        raise HTTPException(status_code=400, detail=f"invalid bound={bound!r}; expected any|true|false")
+    try:
+        rows = app.state.manager.list_streams(bound=bound_filter, limit=limit, offset=offset)
+        return {"streams": [StreamRow(**r).model_dump() for r in rows]}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/streams/bind")
+def bind_stream(req: StreamBindRequest) -> StreamRow:
+    """Bind an existing stream to a ``point_uri``.
+
+    Identify the stream by ``ref_uri`` or by ``(source_id, ref_name)``. The new
+    ``point_uri`` overwrites any prior value on that row.
+    """
+    try:
+        row = app.state.manager.bind_stream(
+            point_uri=req.point_uri,
+            ref_uri=req.ref_uri,
+            source_id=req.source_id,
+            ref_name=req.ref_name,
+        )
+        return StreamRow(**row)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/insert_timeseries_arrow")

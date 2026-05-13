@@ -720,6 +720,80 @@ class Manager:
             return None
         return str(value).strip('"')
 
+    def list_streams(
+        self,
+        *,
+        bound: bool | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """List rows from the ``streams`` table.
+
+        Filter on ``bound``: ``True`` for streams already linked to a point URI,
+        ``False`` for unassigned streams, ``None`` for all.
+        """
+        return self.timescale.list_streams(bound=bound, limit=limit, offset=offset)
+
+    def bind_stream(
+        self,
+        *,
+        point_uri: str,
+        ref_uri: str | None = None,
+        source_id: str | None = None,
+        ref_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Bind a stream to a semantic ``point_uri``.
+
+        Identify the stream by ``ref_uri`` or by ``(source_id, ref_name)``. The
+        binding overwrites any existing ``point_uri`` on the row. The binding
+        triples are inserted into the graph; ``_sync_stream_refs_from_graph``
+        propagates them to the ``streams`` table, keeping graph and table
+        consistent. Returns the updated row.
+        """
+        if not point_uri:
+            raise ValueError("point_uri is required")
+        if not ref_uri and not (source_id and ref_name):
+            raise ValueError("Either ref_uri or both source_id and ref_name are required")
+
+        if source_id and ref_name:
+            computed = str(compute_ref_uri(source_id, ref_name))
+            if ref_uri and str(ref_uri) != computed:
+                raise ValueError(
+                    f"ref_uri {ref_uri!r} does not match compute_ref_uri({source_id!r}, {ref_name!r}) = {computed!r}"
+                )
+            ref_uri_str = computed
+        else:
+            ref_uri_str = str(ref_uri)
+            existing = next(
+                (r for r in self.timescale.list_streams() if r["ref_uri"] == ref_uri_str),
+                None,
+            )
+            if existing is None:
+                raise ValueError(
+                    f"No stream with ref_uri={ref_uri_str!r}; supply source_id and ref_name to create it"
+                )
+            source_id = existing["source_id"]
+            ref_name = existing["ref_name"]
+
+        value_kind = self.timescale.stream_value_kind(ref_uri_str) or "text"
+
+        g = Graph()
+        point_node = URIRef(str(point_uri))
+        ref_node = URIRef(ref_uri_str)
+        g.add((point_node, HAS_EXTERNAL_REFERENCE, ref_node))
+        g.add((ref_node, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
+        g.add((ref_node, ACQUIRIUM_REF_NAME, Literal(ref_name)))
+        g.add((ref_node, ACQUIRIUM_VALUE_KIND, Literal(normalize_value_kind(value_kind))))
+        g.add((ref_node, STORED_AT, ACQUIRIUM_DB_URI))
+        self.insert_graph(g.serialize(format="turtle"), format="turtle", replace=False)
+
+        for row in self.timescale.list_streams():
+            if row["ref_uri"] == ref_uri_str:
+                return row
+        raise RuntimeError(
+            f"bind_stream: row missing after sync, ref_uri={ref_uri_str!r}"
+        )
+
     def register_datasource(self, source_id: str) -> str:
         """Register a named datasource in the knowledge graph.
 

@@ -297,6 +297,51 @@ class TimescaleStore(TimeseriesStore):
             )
         return ref_uri
 
+    def list_streams(
+        self,
+        *,
+        bound: bool | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Return stream rows, optionally filtered by whether ``point_uri`` is set.
+
+        ``bound=None`` returns every row, ``bound=True`` only rows with a non-null
+        ``point_uri``, ``bound=False`` only rows where it is null.
+        """
+        clauses: list[str] = []
+        if bound is True:
+            clauses.append("point_uri IS NOT NULL")
+        elif bound is False:
+            clauses.append("point_uri IS NULL")
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        params: list[Any] = []
+        limit_sql = ""
+        if limit is not None:
+            limit_sql = " LIMIT %s"
+            params.append(int(limit))
+        offset_sql = ""
+        if offset:
+            offset_sql = " OFFSET %s"
+            params.append(int(offset))
+        sql = (
+            f"SELECT ref_uri, point_uri, source_id, ref_name, value_kind "
+            f"FROM {STREAMS_TABLE}{where} ORDER BY source_id, ref_name{limit_sql}{offset_sql}"
+        )
+        with self.conn.cursor() as cur:
+            cur.execute(sql, tuple(params) if params else None)
+            rows = cur.fetchall()
+        return [
+            {
+                "ref_uri": r[0],
+                "point_uri": r[1],
+                "source_id": r[2],
+                "ref_name": r[3],
+                "value_kind": r[4],
+            }
+            for r in rows
+        ]
+
     def resolve_storage_key(self, point_uri: str) -> str:
         """Return the storage key (ref URI) for a point_uri, or point_uri itself if not registered.
 

@@ -166,6 +166,41 @@ def test_stream_registry_contract(contract_store, contract_uri_prefix):
     }
 
 
+def test_list_streams_contract(contract_store, contract_uri_prefix):
+    store = contract_store
+    sid = f"{contract_uri_prefix}:lsrc"
+
+    # Empty table → empty result.
+    assert store.list_streams(bound=False) == []
+
+    # Two unbound, one bound.
+    ref_a = str(store.ensure_stream_ref(None, sid, "alpha"))
+    ref_b = str(store.ensure_stream_ref(None, sid, "beta"))
+    ref_c = str(store.ensure_stream_ref(f"{contract_uri_prefix}:p-c", sid, "gamma"))
+
+    all_rows = store.list_streams()
+    refs = {r["ref_uri"] for r in all_rows}
+    assert {ref_a, ref_b, ref_c} <= refs
+    assert all(set(r.keys()) >= {"ref_uri", "point_uri", "source_id", "ref_name", "value_kind"} for r in all_rows)
+
+    unbound = store.list_streams(bound=False)
+    assert {r["ref_uri"] for r in unbound if r["source_id"] == sid} == {ref_a, ref_b}
+    assert all(r["point_uri"] is None for r in unbound)
+
+    bound = store.list_streams(bound=True)
+    assert ref_c in {r["ref_uri"] for r in bound}
+    assert all(r["point_uri"] is not None for r in bound)
+
+    # Pagination — results are ordered by (source_id, ref_name) so within our
+    # source ('alpha', 'beta', 'gamma') we can pick a deterministic slice.
+    paged = [r for r in store.list_streams(limit=2) if r["source_id"] == sid]
+    assert len(paged) <= 2
+    paged_offset = [r for r in store.list_streams(limit=2, offset=1) if r["source_id"] == sid]
+    # offset+limit slicing should not return the first row of the source twice.
+    if paged and paged_offset:
+        assert paged[0]["ref_uri"] != paged_offset[0]["ref_uri"]
+
+
 def test_logs_contract(contract_store, contract_uri_prefix):
     store = contract_store
     point_uri = f"{contract_uri_prefix}:logged"
