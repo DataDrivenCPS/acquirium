@@ -1,6 +1,7 @@
 # acquirium/TextMatch/query_decorators.py
 
 from dataclasses import dataclass
+import inspect
 from typing import Any, Callable, Concatenate, ParamSpec, Sequence, TypeVar
 import functools
 from rdflib import URIRef
@@ -13,35 +14,52 @@ class FlexSpec:
     arg: str
     kind: str = "any"
 
+
+def _looks_like_uri(value: Any) -> bool:
+    return isinstance(value, str) and ("http" in value or "urn:" in value)
+
+
 def flex_query_rdf_inputs(
     *, specs: Sequence[FlexSpec],
 ) -> Callable[[Callable[Concatenate[Any, P], T]], Callable[Concatenate[Any, P], T]]:
     def deco(fn: Callable[Concatenate[Any, P], T]) -> Callable[Concatenate[Any, P], T]:
+        sig = inspect.signature(fn)
+
         @functools.wraps(fn)
         def wrapper(self: Any, *args: P.args, **kwargs: P.kwargs) -> T:
+            # Bind positional args to parameter names so a call like
+            # `q.filter_by_unit("mg/l")` is treated the same as
+            # `q.filter_by_unit(unit="mg/l")` for text-matching purposes.
+            try:
+                bound = sig.bind_partial(self, *args, **kwargs)
+            except TypeError:
+                return fn(self, *args, **kwargs)
+
+            arguments = bound.arguments
             for spec in specs:
-                if spec.arg not in kwargs:
+                if spec.arg not in arguments:
                     continue
-                v = kwargs.get(spec.arg)
+                v = arguments[spec.arg]
                 if v is None:
                     continue
 
                 if isinstance(v, list):
-                    kwargs[spec.arg] = []
+                    resolved = []
                     for x in v:
                         if isinstance(x, URIRef):
-                            kwargs[spec.arg].append(x)
-                        elif "http" in x or "urn:" in x:
-                            kwargs[spec.arg].append(URIRef(x))
+                            resolved.append(x)
+                        elif _looks_like_uri(x):
+                            resolved.append(URIRef(x))
                         else:
-                            kwargs[spec.arg].append(self._resolve_rdf(x, spec.kind))
+                            resolved.append(self._resolve_rdf(x, spec.kind))
+                    arguments[spec.arg] = resolved
                 elif isinstance(v, URIRef):
-                    kwargs[spec.arg] = v
-                elif "http" in v or "urn:" in v:
-                    kwargs[spec.arg] = URIRef(v)
-                else: 
-                    kwargs[spec.arg] = self._resolve_rdf(v, spec.kind)
+                    pass
+                elif _looks_like_uri(v):
+                    arguments[spec.arg] = URIRef(v)
+                else:
+                    arguments[spec.arg] = self._resolve_rdf(v, spec.kind)
 
-            return fn(self, *args, **kwargs)
+            return fn(*bound.args, **bound.kwargs)
         return wrapper  # type: ignore[return-value]
     return deco

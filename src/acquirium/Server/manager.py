@@ -361,13 +361,17 @@ class Manager:
     # ----- Embedding index methods -----
 
     def _extract_concepts_for_embedding(self) -> list[dict[str, Any]]:
-        """Extract classes and predicates from the union graph for embedding.
+        """Extract classes, predicates, and graph-defined units/QKs from the union graph.
 
-        QUDT Units and QuantityKinds are handled separately by QUDTStore/_qudt_matcher.
+        Graph-defined units and quantity_kinds land in _graph_matcher so they take
+        priority over the broader QUDT vocab in _qudt_matcher when resolve_text runs.
+        QUDT acts as a fallback when the graph yields no match above the threshold.
         """
         concepts: list[dict[str, Any]] = []
         seen_class: set[str] = set()
         seen_pred: set[str] = set()
+        seen_unit: set[str] = set()
+        seen_qk: set[str] = set()
 
         # Query 1: Classes (rdfs:Class, owl:Class, rdfs:subClassOf targets,
         # and any URI used as an rdf:type object)
@@ -446,6 +450,52 @@ class Manager:
             _aggregate_uri_label_rows(res.get("rows", []), seen_pred, "predicate", concepts)
         except Exception:
             logger.warning("Failed to extract predicate concepts", exc_info=True)
+
+        # Query 3 & 4: graph-defined units & quantity kinds.
+        # Pulls instances typed as qudt:Unit / qudt:QuantityKind, subclasses of
+        # them, and anything referenced via qudt:hasUnit / qudt:hasQuantityKind.
+        # Surface labels include qudt:symbol and qudt:ucumCode so "mg/l", "kg"
+        # etc. embed well.
+        label_block = f"""
+          OPTIONAL {{
+            {{ ?uri <{RDFS.label}> ?label . }}
+            UNION {{ ?uri <{SKOS.prefLabel}> ?label . }}
+            UNION {{ ?uri <{SKOS.altLabel}> ?label . }}
+            UNION {{ ?uri <{QUDT.symbol}> ?label . }}
+            UNION {{ ?uri <{QUDT.ucumCode}> ?label . }}
+            FILTER(LANG(?label) = "" || LANGMATCHES(LANG(?label), "en"))
+          }}
+        """
+
+        unit_query = f"""
+        SELECT DISTINCT ?uri ?label WHERE {{
+          {{ ?uri a <{QUDT.Unit}> . }}
+          UNION {{ ?uri <{RDFS.subClassOf}> <{QUDT.Unit}> . }}
+          UNION {{ ?x <{HAS_UNIT}> ?uri . }}
+          {label_block}
+          FILTER(isIRI(?uri))
+        }}
+        """
+        try:
+            res = self.graph_store.sparql_query(unit_query, use_union=True)
+            _aggregate_uri_label_rows(res.get("rows", []), seen_unit, "unit", concepts)
+        except Exception:
+            logger.warning("Failed to extract unit concepts from graph", exc_info=True)
+
+        qk_query = f"""
+        SELECT DISTINCT ?uri ?label WHERE {{
+          {{ ?uri a <{QUDT.QuantityKind}> . }}
+          UNION {{ ?uri <{RDFS.subClassOf}> <{QUDT.QuantityKind}> . }}
+          UNION {{ ?x <{HAS_QUANTITY_KIND}> ?uri . }}
+          {label_block}
+          FILTER(isIRI(?uri))
+        }}
+        """
+        try:
+            res = self.graph_store.sparql_query(qk_query, use_union=True)
+            _aggregate_uri_label_rows(res.get("rows", []), seen_qk, "quantity_kind", concepts)
+        except Exception:
+            logger.warning("Failed to extract quantity_kind concepts from graph", exc_info=True)
 
         return concepts
 
@@ -573,6 +623,14 @@ class Manager:
                 self._graph_matcher.query(text=text, kind=kind, top_k=top_k, min_score=min_score)
             )
         elif kind in ("unit", "quantity_kind"):
+            # Prefer units/QKs found in the user's union graph if there's a high score; 
+            # If the graph yields nothing above 0.8, fall back to the
+            # full QUDT vocab only when the graph yields nothing above min_score.
+            graph_results = self._graph_matcher.query(
+                text=text, kind=kind, top_k=top_k, min_score=0.8
+            )
+            if graph_results:
+                return _to_dicts(graph_results)
             return _to_dicts(
                 self._qudt_matcher.query(text=text, kind=kind, top_k=top_k, min_score=min_score)
             )
