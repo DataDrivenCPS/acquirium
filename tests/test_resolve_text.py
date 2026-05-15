@@ -113,10 +113,9 @@ PREDICATE_PAIRS = [
 # (natural language text, expected top-1 URI) — QUDT units
 UNIT_PAIRS = [
     ("kilogram",                    "http://qudt.org/vocab/unit/KiloGM"),
-    # Known hard case: bare "kg" collides with KiloGAUSS ("kG") under
-    # case-insensitive exact match. Resolves correctly only when a quantity
-    # kind context is supplied (see test_context_disambiguates_*). Kept as an
-    # honest eval datapoint, not a target for the no-context path.
+    # "kg" collides with KiloGAUSS ("kG") under case-insensitive exact match;
+    # only resolves correctly with a quantity-kind context (see
+    # test_context_disambiguates_*). Expected to miss on the no-context path.
     ("kg",                          "http://qudt.org/vocab/unit/KiloGM"),
     ("meter per second",            "http://qudt.org/vocab/unit/M-PER-SEC"),
     ("m/s",                         "http://qudt.org/vocab/unit/M-PER-SEC"),
@@ -152,8 +151,8 @@ UNIT_PAIRS = [
     # Water-treatment relevant units + prefixed/compound forms. Word forms
     # plus ASCII-safe confirmed symbols (avoid Unicode µ/μ ambiguity).
     ("milliliter",                  "http://qudt.org/vocab/unit/MilliL"),
-    # Same prefix-symbol collision class as "kg": "mL" (milli) vs "ML" (mega)
-    # fold together under case-insensitive exact match. Honest hard datapoint.
+    # Same collision as "kg": "mL" (milli) vs "ML" (mega) fold together
+    # under case-insensitive exact match. Expected to miss without context.
     ("mL",                          "http://qudt.org/vocab/unit/MilliL"),
     ("cubic meter",                 "http://qudt.org/vocab/unit/M3"),
     ("cubic meter per hour",        "http://qudt.org/vocab/unit/M3-PER-HR"),
@@ -494,8 +493,8 @@ def test_kind_filtering_unit_qk(acq):
 # Exact-stage tests — verify the deterministic surface lookup
 # ──────────────────────────────────────────────────────────────
 
-# (text, kind, expected_uri) — each is a symbol/label that must resolve via
-# the exact stage (score 1.0, match_stage="exact"), not noisy cosine.
+# (text, kind, expected_uri) — symbols/labels expected to resolve via the
+# exact stage (score 1.0, match_stage="exact").
 EXACT_PAIRS = [
     ("psi",            "unit",          "http://qudt.org/vocab/unit/PSI"),
     ("PSI",            "unit",          "http://qudt.org/vocab/unit/PSI"),     # case-insensitive
@@ -522,9 +521,7 @@ def test_exact_stage(acq, text, kind, expected_uri):
 
 
 def test_recall_at_3(acq):
-    """Looser signal than the strict top-1 metric: the expected URI should
-    appear within the top-3 for nearly every unit/QK pair. Catches ranking
-    regressions even when top-1 still passes the 70% gate."""
+    """Expected URI within top-3 for >=85% of unit/QK pairs (recall@3)."""
     pairs = [(t, u, "unit") for t, u in UNIT_PAIRS] + [
         (t, u, "quantity_kind") for t, u in QUANTITY_KIND_PAIRS
     ]
@@ -551,8 +548,8 @@ _UNIT_KILOGAUSS = "http://qudt.org/vocab/unit/KiloGAUSS"
 
 
 def test_context_disambiguates_ambiguous_symbol(acq):
-    """'kg' is shared by KiloGM (Mass) and KiloGAUSS (MagneticFluxDensity).
-    Supplying the quantity-kind context must steer resolution accordingly."""
+    """'kg' (KiloGM/Mass vs KiloGAUSS/MagneticFluxDensity) resolves per the
+    quantity-kind context passed in."""
     mass = acq.client.resolve_text(
         "kg", kind="unit", top_k=1, min_score=MIN_SCORE, context=[_QK_MASS]
     )
@@ -569,8 +566,7 @@ def test_context_disambiguates_ambiguous_symbol(acq):
 
 
 def test_no_context_is_first_wins_and_stable(acq):
-    """Without context, ranking is unchanged (backward-compatible first-wins):
-    a single deterministic result, identical across calls."""
+    """Without context, 'kg' resolves to a single result, stable across calls."""
     a = acq.client.resolve_text("kg", kind="unit", top_k=1, min_score=MIN_SCORE)
     b = acq.client.resolve_text("kg", kind="unit", top_k=1, min_score=MIN_SCORE)
     assert a and b, "'kg' should still resolve without context"
@@ -578,8 +574,7 @@ def test_no_context_is_first_wins_and_stable(acq):
 
 
 def test_irrelevant_context_does_not_reorder(acq):
-    """Context that nothing is connected to is a no-op: result matches the
-    no-context resolution rather than being dropped or reordered."""
+    """Unrelated context does not change the top result."""
     base = acq.client.resolve_text("pascal", kind="unit", top_k=1, min_score=MIN_SCORE)
     with_junk = acq.client.resolve_text(
         "pascal", kind="unit", top_k=1, min_score=MIN_SCORE,
@@ -592,12 +587,8 @@ def test_irrelevant_context_does_not_reorder(acq):
 
 
 def test_resolve_qudt_uri_honors_context_over_deterministic(acq):
-    """End-to-end guard for the register_stream path.
-
-    `_resolve_qudt_uri` tries the deterministic (non-context) unit resolver
-    first by default. When context is supplied it must instead prefer the
-    context-aware embedding matcher, otherwise register_stream's automatic
-    quantity-kind context would never actually disambiguate "kg"."""
+    """With context, _resolve_qudt_uri prefers the context-aware matcher over
+    the deterministic resolver (the path register_stream uses)."""
     from rdflib import URIRef
 
     mass = acq._resolve_qudt_uri("kg", "unit", context=[_QK_MASS])

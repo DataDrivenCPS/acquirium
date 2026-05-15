@@ -21,22 +21,17 @@ class ResolveResult:
     label: str
     score: float
     matched_surface: str
-    # Which retrieval stage produced this hit: "exact" (normalized surface
-    # lookup, score 1.0) or "semantic" (embedding cosine similarity). Surfaced
-    # in the /resolve_text response so failures are easy to triage.
+    # "exact" (surface lookup, score 1.0) or "semantic" (embedding similarity)
     match_stage: str = "semantic"
-    # URIs this concept is semantically connected to (e.g. a unit's quantity
-    # kinds). Used by Manager.resolve_text to break symbol ambiguity when the
-    # caller supplies context. Empty for concepts with no captured relations.
+    # URIs this concept links to (e.g. a unit's quantity kinds), used for
+    # context disambiguation in Manager.resolve_text. Empty if none captured.
     related: tuple[str, ...] = ()
 
 
 def _normalize_surface(text: str) -> str:
-    """Canonical form for exact-match lookup.
+    """Lower-case, strip, and collapse whitespace runs.
 
-    Lower-cases, trims, and collapses internal whitespace runs. This is the
-    single place the exact-match equivalence rule is defined — keep query-time
-    and index-time normalization going through here so they cannot drift.
+    Used for both index-time and query-time exact-match keys.
     """
     return re.sub(r"\s+", " ", text.strip().lower())
 
@@ -70,12 +65,11 @@ class EmbeddingMatcher:
         self._model = None  # lazy
         self._lock = threading.Lock()
 
-        # Index state — always read/swapped under self._lock via _set_index().
+        # Index state — read/swapped under self._lock via _set_index().
         self._vectors: np.ndarray | None = None  # shape (N, dim), L2-normalized
         self._meta: list[dict[str, Any]] = []  # parallel list: uri, kind, label, surface
         self._index_hash: str | None = None
-        # Exact-match acceleration: normalized surface -> meta row indices.
-        # Derived from _meta; always rebuilt by _set_index() so it cannot drift.
+        # normalized surface -> meta row indices, derived from _meta
         self._surface_index: dict[str, list[int]] = {}
 
     def _set_index(
@@ -84,11 +78,10 @@ class EmbeddingMatcher:
         meta: list[dict[str, Any]],
         index_hash: str | None,
     ) -> None:
-        """Atomically swap the index and derive the exact-match surface map.
+        """Swap the index under the lock and rebuild the surface map.
 
-        Every code path that changes the index (build, incremental update,
-        cache load) MUST go through here so _surface_index stays consistent
-        with _meta. This is the single source of truth for index mutation.
+        All index mutations (build, update, cache load) route through here so
+        _surface_index stays in sync with _meta.
         """
         surface_index: dict[str, list[int]] = {}
         for i, m in enumerate(meta):
@@ -206,18 +199,14 @@ class EmbeddingMatcher:
         top_k: int = 5,
         min_score: float = 0.5,
     ) -> list[ResolveResult]:
-        """Resolve *text* to concepts using two stages, best-first.
+        """Resolve *text* to concepts.
 
-        Stage 1 (exact): a normalized surface lookup — deterministic, score
-        1.0. This is what makes short symbols/abbreviations ("kg", "mg/L",
-        "m/s", "psi") resolve reliably; cosine similarity over tiny tokens is
-        noisy, so we never rely on it when an exact surface exists.
-
-        Stage 2 (semantic): embedding cosine similarity, used to fill any
-        remaining slots. URIs already returned by stage 1 are skipped.
+        Stage 1: normalized surface lookup (score 1.0). Stage 2: embedding
+        cosine similarity, filling remaining slots and skipping URIs already
+        returned by stage 1. Stage 1 first so short symbols ("kg", "mg/L")
+        don't depend on cosine similarity over very short tokens.
         """
-        # Snapshot all index state together so the parallel structures
-        # (_vectors / _meta / _surface_index) are mutually consistent.
+        # Snapshot together so _vectors / _meta / _surface_index stay aligned.
         with self._lock:
             vectors = self._vectors
             meta = self._meta
