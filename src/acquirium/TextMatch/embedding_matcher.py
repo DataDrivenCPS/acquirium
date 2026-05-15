@@ -7,11 +7,13 @@ import re
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
 logger = logging.getLogger("acquirium.embedding_matcher")
+
+MatchStage = Literal["exact", "semantic"]
 
 
 @dataclass
@@ -22,7 +24,7 @@ class ResolveResult:
     score: float
     matched_surface: str
     # "exact" (surface lookup, score 1.0) or "semantic" (embedding similarity)
-    match_stage: str = "semantic"
+    match_stage: MatchStage = "semantic"
     # URIs this concept links to (e.g. a unit's quantity kinds), used for
     # context disambiguation in Manager.resolve_text. Empty if none captured.
     related: tuple[str, ...] = ()
@@ -67,7 +69,7 @@ class EmbeddingMatcher:
 
         # Index state — read/swapped under self._lock via _set_index().
         self._vectors: np.ndarray | None = None  # shape (N, dim), L2-normalized
-        self._meta: list[dict[str, Any]] = []  # parallel list: uri, kind, label, surface
+        self._meta: list[dict[str, Any]] = []  # parallel: uri, kind, label, surface, related
         self._index_hash: str | None = None
         # normalized surface -> meta row indices, derived from _meta
         self._surface_index: dict[str, list[int]] = {}
@@ -181,7 +183,7 @@ class EmbeddingMatcher:
         logger.info("Embedding index built with %d entries", len(meta))
 
     @staticmethod
-    def _row_to_result(m: dict[str, Any], score: float, stage: str) -> ResolveResult:
+    def _row_to_result(m: dict[str, Any], score: float, stage: MatchStage) -> ResolveResult:
         return ResolveResult(
             uri=m["uri"],
             kind=m["kind"],

@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 import shutil
 import docker
 from docker.errors import DockerException, NotFound as ContainerNotFound
-from acquirium.TextMatch.embedding_matcher import EmbeddingMatcher, _split_local_name
+from acquirium.TextMatch.embedding_matcher import EmbeddingMatcher, ResolveResult, _split_local_name
 from acquirium.TextMatch.qudt_store import QUDTStore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -576,12 +576,15 @@ class Manager:
         elif kind in ("unit", "quantity_kind"):
             # Graph concepts take priority on ties, but an exact hit from
             # either matcher outranks a semantic one (e.g. QUDT "Mass
-            # Concentration" over graph "Concentration").
-            results = self._combine(
-                _q(self._graph_matcher, score=0.8),
-                _q(self._qudt_matcher),
-                limit=fetch_k,
-            )
+            # Concentration" over graph "Concentration"). A graph exact hit
+            # already wins, so skip the QUDT query (and its embedding) then.
+            graph_hits = _q(self._graph_matcher, score=0.8)
+            if graph_hits and graph_hits[0].match_stage == "exact":
+                results = graph_hits
+            else:
+                results = self._combine(
+                    graph_hits, _q(self._qudt_matcher), limit=fetch_k
+                )
         else:
             results = self._combine(
                 _q(self._graph_matcher),
@@ -595,7 +598,11 @@ class Manager:
         return [asdict(r) for r in results[:top_k]]
 
     @staticmethod
-    def _combine(primary: list, secondary: list, limit: int) -> list:
+    def _combine(
+        primary: list[ResolveResult],
+        secondary: list[ResolveResult],
+        limit: int,
+    ) -> list[ResolveResult]:
         """Merge two ranked lists: exact-stage hits first, then by score.
 
         Stable sort with ``primary`` concatenated first, so a graph concept
@@ -607,7 +614,7 @@ class Manager:
             reverse=True,
         )
         seen: set[str] = set()
-        out: list = []
+        out: list[ResolveResult] = []
         for r in ordered:
             if r.uri in seen:
                 continue
@@ -619,16 +626,18 @@ class Manager:
 
     @staticmethod
     def _rerank_by_context(
-        results: list, context: list[str]
-    ) -> list:
+        results: list[ResolveResult], context: list[str]
+    ) -> list[ResolveResult]:
         """Move results linked to a context URI ahead of the rest.
 
         Stable within each group, so existing order is kept when nothing is
         connected.
         """
         ctx = set(context)
-        connected = [r for r in results if ctx & set(r.related)]
-        rest = [r for r in results if not (ctx & set(r.related))]
+        connected: list[ResolveResult] = []
+        rest: list[ResolveResult] = []
+        for r in results:
+            (connected if ctx.intersection(r.related) else rest).append(r)
         return connected + rest
 
     ###########################################
