@@ -113,6 +113,10 @@ PREDICATE_PAIRS = [
 # (natural language text, expected top-1 URI) — QUDT units
 UNIT_PAIRS = [
     ("kilogram",                    "http://qudt.org/vocab/unit/KiloGM"),
+    # Known hard case: bare "kg" collides with KiloGAUSS ("kG") under
+    # case-insensitive exact match. Resolves correctly only when a quantity
+    # kind context is supplied (see test_context_disambiguates_*). Kept as an
+    # honest eval datapoint, not a target for the no-context path.
     ("kg",                          "http://qudt.org/vocab/unit/KiloGM"),
     ("meter per second",            "http://qudt.org/vocab/unit/M-PER-SEC"),
     ("m/s",                         "http://qudt.org/vocab/unit/M-PER-SEC"),
@@ -144,6 +148,42 @@ UNIT_PAIRS = [
     ("newton",                      "http://qudt.org/vocab/unit/N"),
     ("volt",                        "http://qudt.org/vocab/unit/V"),
     ("percent",                     "http://qudt.org/vocab/unit/PERCENT"),
+
+    # Water-treatment relevant units + prefixed/compound forms. Word forms
+    # plus ASCII-safe confirmed symbols (avoid Unicode µ/μ ambiguity).
+    ("milliliter",                  "http://qudt.org/vocab/unit/MilliL"),
+    # Same prefix-symbol collision class as "kg": "mL" (milli) vs "ML" (mega)
+    # fold together under case-insensitive exact match. Honest hard datapoint.
+    ("mL",                          "http://qudt.org/vocab/unit/MilliL"),
+    ("cubic meter",                 "http://qudt.org/vocab/unit/M3"),
+    ("cubic meter per hour",        "http://qudt.org/vocab/unit/M3-PER-HR"),
+    ("liter per second",            "http://qudt.org/vocab/unit/L-PER-SEC"),
+    ("gram per liter",              "http://qudt.org/vocab/unit/GM-PER-L"),
+    ("microgram per liter",         "http://qudt.org/vocab/unit/MicroGM-PER-L"),
+    ("kilowatt",                    "http://qudt.org/vocab/unit/KiloW"),
+    ("megawatt",                    "http://qudt.org/vocab/unit/MegaW"),
+    ("kilowatt hour",               "http://qudt.org/vocab/unit/KiloW-HR"),
+    ("siemens per meter",           "http://qudt.org/vocab/unit/S-PER-M"),
+    ("S/m",                         "http://qudt.org/vocab/unit/S-PER-M"),
+    ("microsiemens per centimeter", "http://qudt.org/vocab/unit/MicroS-PER-CentiM"),
+    ("nephelometric turbidity unit","http://qudt.org/vocab/unit/NTU"),
+    ("NTU",                         "http://qudt.org/vocab/unit/NTU"),
+    ("parts per million",           "http://qudt.org/vocab/unit/PPM"),
+    ("ppm",                         "http://qudt.org/vocab/unit/PPM"),
+    ("kelvin",                      "http://qudt.org/vocab/unit/K"),
+    ("degree fahrenheit",           "http://qudt.org/vocab/unit/DEG_F"),
+    ("°F",                          "http://qudt.org/vocab/unit/DEG_F"),
+    ("megapascal",                  "http://qudt.org/vocab/unit/MegaPA"),
+    ("MPa",                         "http://qudt.org/vocab/unit/MegaPA"),
+    ("hertz",                       "http://qudt.org/vocab/unit/HZ"),
+    ("Hz",                          "http://qudt.org/vocab/unit/HZ"),
+    ("joule",                       "http://qudt.org/vocab/unit/J"),
+    ("mole",                        "http://qudt.org/vocab/unit/MOL"),
+    ("mol",                         "http://qudt.org/vocab/unit/MOL"),
+    ("millimeter",                  "http://qudt.org/vocab/unit/MilliM"),
+    ("centimeter",                  "http://qudt.org/vocab/unit/CentiM"),
+    ("kilometer",                   "http://qudt.org/vocab/unit/KiloM"),
+    ("horsepower",                  "http://qudt.org/vocab/unit/HP"),
 ]
 
 # (natural language text, expected top-1 URI) — QUDT quantity kinds
@@ -167,6 +207,21 @@ QUANTITY_KIND_PAIRS = [
     ("velocity",                    "http://qudt.org/vocab/quantitykind/Velocity"),
     ("voltage",                     "http://qudt.org/vocab/quantitykind/Voltage"),
     ("frequency",                   "http://qudt.org/vocab/quantitykind/Frequency"),
+
+    # Additional standard quantity kinds (water-treatment / process relevant).
+    ("area",                        "http://qudt.org/vocab/quantitykind/Area"),
+    ("volume",                      "http://qudt.org/vocab/quantitykind/Volume"),
+    ("speed",                       "http://qudt.org/vocab/quantitykind/Speed"),
+    ("acceleration",                "http://qudt.org/vocab/quantitykind/Acceleration"),
+    ("torque",                      "http://qudt.org/vocab/quantitykind/Torque"),
+    ("electric charge",             "http://qudt.org/vocab/quantitykind/ElectricCharge"),
+    ("resistance",                  "http://qudt.org/vocab/quantitykind/Resistance"),
+    ("capacitance",                 "http://qudt.org/vocab/quantitykind/Capacitance"),
+    ("turbidity",                   "http://qudt.org/vocab/quantitykind/Turbidity"),
+    ("electric conductivity",       "http://qudt.org/vocab/quantitykind/ElectricConductivity"),
+    ("kinematic viscosity",         "http://qudt.org/vocab/quantitykind/KinematicViscosity"),
+    ("amount of substance",         "http://qudt.org/vocab/quantitykind/AmountOfSubstance"),
+    ("work",                        "http://qudt.org/vocab/quantitykind/Work"),
 ]
 
 # These should return zero matches at min_score=0.6
