@@ -34,9 +34,8 @@ def _build_surfaces(uri: str, labels: list[str], symbol: str | None, ucum: str |
     if tokens:
         _add(" ".join(tokens))
 
-    # Symbol / UCUM code added as surfaces. EmbeddingMatcher's exact stage
-    # normalizes these (case- and whitespace-insensitive) so "kg", "KG",
-    # "mg/L" resolve deterministically instead of via noisy cosine similarity.
+    # Symbol / UCUM code as surfaces; the matcher's exact stage normalizes
+    # case and whitespace so "kg", "KG", "mg/L" match without embeddings.
     if symbol:
         _add(symbol)
     if ucum:
@@ -94,12 +93,9 @@ class QUDTStore:
         # Label predicates to collect surfaces from
         label_preds = [RDFS.label, SKOS.prefLabel, SKOS.altLabel]
 
-        # Relation predicates used for context disambiguation. A unit points to
-        # its quantity kinds; a quantity kind points to its applicable units.
-        # The captured target URIs let resolve_text(context=[...]) prefer the
-        # candidate semantically connected to already-chosen concepts (e.g.
-        # "kg" + context Mass -> KiloGM, not KiloGAUSS). Extend this list to
-        # teach the resolver about additional relations.
+        # Relations captured for resolve_text(context=...): a unit's quantity
+        # kinds, a quantity kind's applicable units. Lets "kg" + Mass resolve
+        # to KiloGM rather than KiloGAUSS. Add predicates here as needed.
         is_unit = rdf_type == str(QUDT.Unit)
         relation_preds = [QUDT.hasQuantityKind] if is_unit else [QUDT.applicableUnit]
 

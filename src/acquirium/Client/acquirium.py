@@ -246,21 +246,18 @@ class Acquirium:
     def _resolve_qudt_uri(
         self, text: str, kind: str, context: list[str] | None = None
     ) -> URIRef | None:
-        """Try to resolve a plain string to a QUDT URI via the server.
+        """Resolve a plain string to a QUDT URI via the server.
 
-        For ``kind="unit"`` the deterministic unit resolver is normally tried
-        first (URI/symbol/UCUM/ratio notation like "mg/L"), with the embedding
-        matcher as a fallback. The deterministic resolver is **not** context
-        aware and returns the first graph-order match for an ambiguous symbol,
-        so when ``context`` is supplied we try the context-aware embedding
-        matcher first and only fall back to the deterministic resolver. This is
-        what lets "kg" + a Mass quantity kind resolve to KiloGM rather than
-        KiloGAUSS. For other kinds only the embedding matcher is used.
+        For ``kind="unit"`` the deterministic resolver runs first
+        (URI/symbol/UCUM/ratio like "mg/L"), then the embedding matcher. The
+        deterministic resolver ignores ``context`` and returns the first
+        graph-order match for ambiguous symbols, so when ``context`` is given
+        the order is flipped (embedding first) — that is how "kg" + a Mass
+        quantity kind reaches KiloGM instead of KiloGAUSS. Other kinds use the
+        embedding matcher only.
 
-        ``context`` is an optional list of already-resolved sibling URIs (e.g.
-        the quantity kind / medium chosen for the same stream).
-
-        Returns a URIRef on success, or None if no confident match is found.
+        ``context``: already-resolved sibling URIs (e.g. the quantity kind /
+        medium for the same stream). Returns None if nothing confident matches.
         """
 
         def _via_embeddings() -> URIRef | None:

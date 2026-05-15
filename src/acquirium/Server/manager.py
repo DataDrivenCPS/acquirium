@@ -553,22 +553,17 @@ class Manager:
         min_score: float = 0.5,
         context: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Resolve natural language text to ontology URIs via embedding similarity.
+        """Resolve natural language text to ontology URIs.
 
         Routing:
-          kind="class" or "predicate"      -> _graph_matcher only
-          kind="unit" or "quantity_kind"   -> graph wins if it has any result ≥ 0.8;
-                                              otherwise fall back to full QUDT vocab
-                                              at the caller's min_score
-          kind=None                        -> both, merged by score
+          class / predicate    -> graph matcher only
+          unit / quantity_kind -> graph (>=0.8) + QUDT, combined exact-first
+          None                 -> graph + QUDT, combined by score
 
-        ``context`` is an optional list of URIs the caller has already chosen
-        (e.g. a resolved quantity kind / medium / substance). When provided,
-        candidates semantically connected to any context URI (via the
-        ``related`` set captured at extraction time) are stably promoted ahead
-        of unconnected ones. This breaks symbol ambiguity such as "kg" -> mass
-        (KiloGM) vs magnetic flux density (KiloGAUSS). When no context is given,
-        or nothing is connected to it, ranking is unchanged (first-wins).
+        ``context`` is an optional list of already-chosen URIs (e.g. a
+        resolved quantity kind / medium). Candidates linked to a context URI
+        via their ``related`` set are moved ahead of the rest; empty or
+        unmatched context leaves ranking unchanged.
         """
         # Over-fetch only when context can actually reorder results.
         fetch_k = max(top_k, self._CONTEXT_FETCH_K) if context else top_k
@@ -579,11 +574,9 @@ class Manager:
         if kind in ("class", "predicate"):
             results = _q(self._graph_matcher)
         elif kind in ("unit", "quantity_kind"):
-            # Graph-defined units/QKs are preferred over the broad QUDT vocab,
-            # but only as a tie-breaker: an exact label/symbol hit (score 1.0)
-            # from either matcher must still win over a merely-semantic one
-            # (e.g. QUDT exact "Mass Concentration" beats a graph semantic
-            # "Concentration"). Graph is listed first so it wins equal ranks.
+            # Graph concepts take priority on ties, but an exact hit from
+            # either matcher outranks a semantic one (e.g. QUDT "Mass
+            # Concentration" over graph "Concentration").
             results = self._combine(
                 _q(self._graph_matcher, score=0.8),
                 _q(self._qudt_matcher),
@@ -603,12 +596,10 @@ class Manager:
 
     @staticmethod
     def _combine(primary: list, secondary: list, limit: int) -> list:
-        """Merge two ranked result lists, exact matches first.
+        """Merge two ranked lists: exact-stage hits first, then by score.
 
-        Ordering key: exact-stage hits before semantic, then by score. The
-        sort is stable and ``primary`` is concatenated first, so a
-        graph-defined concept wins any tie against an equally-ranked QUDT one
-        (preserving graph priority). Deduplicated by URI, capped at ``limit``.
+        Stable sort with ``primary`` concatenated first, so a graph concept
+        wins ties against an equal QUDT one. Dedupes by URI, caps at ``limit``.
         """
         ordered = sorted(
             primary + secondary,
@@ -630,11 +621,10 @@ class Manager:
     def _rerank_by_context(
         results: list, context: list[str]
     ) -> list:
-        """Stably promote results connected to any context URI.
+        """Move results linked to a context URI ahead of the rest.
 
-        Order within the connected and unconnected groups is preserved, so
-        this is a no-op whenever nothing is connected — the original
-        best-first ranking (and thus first-wins) is retained.
+        Stable within each group, so existing order is kept when nothing is
+        connected.
         """
         ctx = set(context)
         connected = [r for r in results if ctx & set(r.related)]
