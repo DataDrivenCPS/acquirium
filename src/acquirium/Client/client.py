@@ -226,12 +226,19 @@ class AcquiriumClient:
         kind: Optional[str] = None,
         top_k: int = 5,
         min_score: float = 0.5,
+        context: Optional[list[str]] = None,
     ) -> list[dict]:
-        """Resolve natural language text to ontology URIs via the server's embedding matcher."""
+        """Resolve natural language text to ontology URIs via the server's embedding matcher.
+
+        ``context`` is an optional list of already-chosen URIs used to break
+        symbol ambiguity (e.g. resolving "kg" given a Mass quantity kind).
+        """
         url = f"{self.base_url}/resolve_text"
         params: dict[str, Any] = {"text": text, "top_k": top_k, "min_score": min_score}
         if kind:
             params["kind"] = kind
+        if context:
+            params["context"] = context
         response = requests.get(url, params=params)
         _raise_for_status(response)
         return response.json().get("matches", [])

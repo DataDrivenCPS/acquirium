@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 import os
@@ -80,7 +80,13 @@ def _aggregate_uri_label_rows(
             if joined not in surfaces:
                 surfaces.append(joined)
         display_label = uri_first_label[uri] or (" ".join(tokens) if tokens else uri)
-        concepts.append({"uri": uri, "kind": kind, "label": display_label, "surfaces": surfaces})
+        concepts.append({
+            "uri": uri,
+            "kind": kind,
+            "label": display_label,
+            "surfaces": surfaces,
+            "related": [],
+        })
 
 
 def _wipe_dir_contents(base: Path) -> None:
@@ -368,95 +374,18 @@ class Manager:
         QUDT acts as a fallback when the graph yields no match above the threshold.
         """
         concepts: list[dict[str, Any]] = []
-        seen_class: set[str] = set()
-        seen_pred: set[str] = set()
-        seen_unit: set[str] = set()
-        seen_qk: set[str] = set()
 
-        # Query 1: Classes (rdfs:Class, owl:Class, rdfs:subClassOf targets,
-        # and any URI used as an rdf:type object)
-        # NOTE: QUDT Unit/QuantityKind removed — handled by _qudt_matcher
-        # Labels: rdfs:label, skos:prefLabel, skos:altLabel
-        # Language filter: keep English-tagged or untagged labels only
-        class_query = f"""
-        SELECT DISTINCT ?uri ?label WHERE {{
-          {{
-            ?uri a <{RDFS.Class}> .
-          }} UNION {{
-            ?uri a <{OWL_CLASS}> .
-          }} UNION {{
-            ?x <{RDFS.subClassOf}> ?uri .
-          }} UNION {{
-            ?x a ?uri .
-          }} UNION {{
-            ?uri a <{WATR.Class}> .
-          }} UNION {{
-            ?uri <{RDFS.subClassOf}> ?x .
-          }} UNION {{
-            ?x <{HAS_ENUMERATION_KIND}> ?uri .
-          }} UNION {{
-            ?x <{OF_SUBSTANCE}> ?uri .
-          }} UNION {{
-            ?x <{HAS_MEDIUM}> ?uri .
-          }}
+        label_block_basic = f"""
           OPTIONAL {{
-            {{
-              ?uri <{RDFS.label}> ?label .
-            }} UNION {{
-              ?uri <{SKOS.prefLabel}> ?label .
-            }} UNION {{
-              ?uri <{SKOS.altLabel}> ?label .
-            }}
+            {{ ?uri <{RDFS.label}> ?label . }}
+            UNION {{ ?uri <{SKOS.prefLabel}> ?label . }}
+            UNION {{ ?uri <{SKOS.altLabel}> ?label . }}
             FILTER(LANG(?label) = "" || LANGMATCHES(LANG(?label), "en"))
           }}
-          FILTER(isIRI(?uri))
-        }}
         """
-        try:
-            res = self.graph_store.sparql_query(class_query, use_union=True)
-            _aggregate_uri_label_rows(res.get("rows", []), seen_class, "class", concepts)
-        except Exception:
-            logger.warning("Failed to extract class concepts", exc_info=True)
-
-        # Query 2: Predicates (declared properties + any IRI used as a predicate)
-        # Labels: rdfs:label, skos:prefLabel, skos:altLabel
-        # Language filter: keep English-tagged or untagged labels only
-        pred_query = f"""
-        SELECT DISTINCT ?uri ?label WHERE {{
-          {{
-            ?uri a <{RDF_PROP}> .
-          }} UNION {{
-            ?uri a <{OWL_OBJ_PROP}> .
-          }} UNION {{
-            ?uri a <{OWL_DATA_PROP}> .
-          }} UNION {{
-            ?s ?uri ?o .
-          }}
-          OPTIONAL {{
-            {{
-              ?uri <{RDFS.label}> ?label .
-            }} UNION {{
-              ?uri <{SKOS.prefLabel}> ?label .
-            }} UNION {{
-              ?uri <{SKOS.altLabel}> ?label .
-            }}
-            FILTER(LANG(?label) = "" || LANGMATCHES(LANG(?label), "en"))
-          }}
-          FILTER(isIRI(?uri))
-        }}
-        """
-        try:
-            res = self.graph_store.sparql_query(pred_query, use_union=True)
-            _aggregate_uri_label_rows(res.get("rows", []), seen_pred, "predicate", concepts)
-        except Exception:
-            logger.warning("Failed to extract predicate concepts", exc_info=True)
-
-        # Query 3 & 4: graph-defined units & quantity kinds.
-        # Pulls instances typed as qudt:Unit / qudt:QuantityKind, subclasses of
-        # them, and anything referenced via qudt:hasUnit / qudt:hasQuantityKind.
-        # Surface labels include qudt:symbol and qudt:ucumCode so "mg/l", "kg"
-        # etc. embed well.
-        label_block = f"""
+        # Units/QKs additionally surface qudt:symbol and qudt:ucumCode so
+        # tokens like "mg/l" or "kg" embed well.
+        label_block_qudt = f"""
           OPTIONAL {{
             {{ ?uri <{RDFS.label}> ?label . }}
             UNION {{ ?uri <{SKOS.prefLabel}> ?label . }}
@@ -467,35 +396,55 @@ class Manager:
           }}
         """
 
-        unit_query = f"""
-        SELECT DISTINCT ?uri ?label WHERE {{
+        class_where = f"""
+          {{ ?uri a <{RDFS.Class}> . }}
+          UNION {{ ?uri a <{OWL_CLASS}> . }}
+          UNION {{ ?x <{RDFS.subClassOf}> ?uri . }}
+          UNION {{ ?x a ?uri . }}
+          UNION {{ ?uri a <{WATR.Class}> . }}
+          UNION {{ ?uri <{RDFS.subClassOf}> ?x . }}
+          UNION {{ ?x <{HAS_ENUMERATION_KIND}> ?uri . }}
+          UNION {{ ?x <{OF_SUBSTANCE}> ?uri . }}
+          UNION {{ ?x <{HAS_MEDIUM}> ?uri . }}
+        """
+        pred_where = f"""
+          {{ ?uri a <{RDF_PROP}> . }}
+          UNION {{ ?uri a <{OWL_OBJ_PROP}> . }}
+          UNION {{ ?uri a <{OWL_DATA_PROP}> . }}
+          UNION {{ ?s ?uri ?o . }}
+        """
+        unit_where = f"""
           {{ ?uri a <{QUDT.Unit}> . }}
           UNION {{ ?uri <{RDFS.subClassOf}> <{QUDT.Unit}> . }}
           UNION {{ ?x <{HAS_UNIT}> ?uri . }}
-          {label_block}
-          FILTER(isIRI(?uri))
-        }}
         """
-        try:
-            res = self.graph_store.sparql_query(unit_query, use_union=True)
-            _aggregate_uri_label_rows(res.get("rows", []), seen_unit, "unit", concepts)
-        except Exception:
-            logger.warning("Failed to extract unit concepts from graph", exc_info=True)
-
-        qk_query = f"""
-        SELECT DISTINCT ?uri ?label WHERE {{
+        qk_where = f"""
           {{ ?uri a <{QUDT.QuantityKind}> . }}
           UNION {{ ?uri <{RDFS.subClassOf}> <{QUDT.QuantityKind}> . }}
           UNION {{ ?x <{HAS_QUANTITY_KIND}> ?uri . }}
-          {label_block}
-          FILTER(isIRI(?uri))
-        }}
         """
-        try:
-            res = self.graph_store.sparql_query(qk_query, use_union=True)
-            _aggregate_uri_label_rows(res.get("rows", []), seen_qk, "quantity_kind", concepts)
-        except Exception:
-            logger.warning("Failed to extract quantity_kind concepts from graph", exc_info=True)
+
+        extractions: list[tuple[str, str, str]] = [
+            ("class", class_where, label_block_basic),
+            ("predicate", pred_where, label_block_basic),
+            ("unit", unit_where, label_block_qudt),
+            ("quantity_kind", qk_where, label_block_qudt),
+        ]
+
+        for kind, where, label_block in extractions:
+            query = f"""
+            SELECT DISTINCT ?uri ?label WHERE {{
+              {where}
+              {label_block}
+              FILTER(isIRI(?uri))
+            }}
+            """
+            seen: set[str] = set()
+            try:
+                res = self.graph_store.sparql_query(query, use_union=True)
+                _aggregate_uri_label_rows(res.get("rows", []), seen, kind, concepts)
+            except Exception:
+                logger.warning("Failed to extract %s concepts", kind, exc_info=True)
 
         return concepts
 
@@ -592,67 +541,105 @@ class Manager:
             self._update_embedding_status("graph", state="error", error=str(exc))
             logger.warning("Failed to rebuild graph embedding index", exc_info=True)
 
+    # When context disambiguation is requested we over-fetch this many
+    # candidates so a context-related-but-lower-ranked hit can still surface.
+    _CONTEXT_FETCH_K = 20
+
     def resolve_text(
         self,
         text: str,
         kind: str | None = None,
         top_k: int = 5,
         min_score: float = 0.5,
+        context: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Resolve natural language text to ontology URIs via embedding similarity.
 
         Routing:
-          kind="class" or "predicate"     -> _graph_matcher only
-          kind="unit" or "quantity_kind"   -> _qudt_matcher only
+          kind="class" or "predicate"      -> _graph_matcher only
+          kind="unit" or "quantity_kind"   -> graph wins if it has any result ≥ 0.8;
+                                              otherwise fall back to full QUDT vocab
+                                              at the caller's min_score
           kind=None                        -> both, merged by score
+
+        ``context`` is an optional list of URIs the caller has already chosen
+        (e.g. a resolved quantity kind / medium / substance). When provided,
+        candidates semantically connected to any context URI (via the
+        ``related`` set captured at extraction time) are stably promoted ahead
+        of unconnected ones. This breaks symbol ambiguity such as "kg" -> mass
+        (KiloGM) vs magnetic flux density (KiloGAUSS). When no context is given,
+        or nothing is connected to it, ranking is unchanged (first-wins).
         """
-        def _to_dicts(results):
-            return [
-                {
-                    "uri": r.uri,
-                    "kind": r.kind,
-                    "label": r.label,
-                    "score": r.score,
-                    "matched_surface": r.matched_surface,
-                }
-                for r in results
-            ]
+        # Over-fetch only when context can actually reorder results.
+        fetch_k = max(top_k, self._CONTEXT_FETCH_K) if context else top_k
+
+        def _q(matcher, score: float = min_score):
+            return matcher.query(text=text, kind=kind, top_k=fetch_k, min_score=score)
 
         if kind in ("class", "predicate"):
-            return _to_dicts(
-                self._graph_matcher.query(text=text, kind=kind, top_k=top_k, min_score=min_score)
-            )
+            results = _q(self._graph_matcher)
         elif kind in ("unit", "quantity_kind"):
-            # Prefer units/QKs found in the user's union graph if there's a high score; 
-            # If the graph yields nothing above 0.8, fall back to the
-            # full QUDT vocab only when the graph yields nothing above min_score.
-            graph_results = self._graph_matcher.query(
-                text=text, kind=kind, top_k=top_k, min_score=0.8
-            )
-            if graph_results:
-                return _to_dicts(graph_results)
-            return _to_dicts(
-                self._qudt_matcher.query(text=text, kind=kind, top_k=top_k, min_score=min_score)
+            # Graph-defined units/QKs are preferred over the broad QUDT vocab,
+            # but only as a tie-breaker: an exact label/symbol hit (score 1.0)
+            # from either matcher must still win over a merely-semantic one
+            # (e.g. QUDT exact "Mass Concentration" beats a graph semantic
+            # "Concentration"). Graph is listed first so it wins equal ranks.
+            results = self._combine(
+                _q(self._graph_matcher, score=0.8),
+                _q(self._qudt_matcher),
+                limit=fetch_k,
             )
         else:
-            # Query both matchers, merge results sorted by score
-            graph_results = self._graph_matcher.query(text=text, kind=kind, top_k=top_k, min_score=min_score)
-            qudt_results = self._qudt_matcher.query(text=text, kind=kind, top_k=top_k, min_score=min_score)
-            merged = sorted(
-                graph_results + qudt_results,
-                key=lambda r: r.score,
-                reverse=True,
+            results = self._combine(
+                _q(self._graph_matcher),
+                _q(self._qudt_matcher),
+                limit=fetch_k,
             )
-            # Deduplicate by URI
-            seen: set[str] = set()
-            deduped = []
-            for r in merged:
-                if r.uri not in seen:
-                    seen.add(r.uri)
-                    deduped.append(r)
-                    if len(deduped) >= top_k:
-                        break
-            return _to_dicts(deduped)
+
+        if context:
+            results = self._rerank_by_context(results, context)
+
+        return [asdict(r) for r in results[:top_k]]
+
+    @staticmethod
+    def _combine(primary: list, secondary: list, limit: int) -> list:
+        """Merge two ranked result lists, exact matches first.
+
+        Ordering key: exact-stage hits before semantic, then by score. The
+        sort is stable and ``primary`` is concatenated first, so a
+        graph-defined concept wins any tie against an equally-ranked QUDT one
+        (preserving graph priority). Deduplicated by URI, capped at ``limit``.
+        """
+        ordered = sorted(
+            primary + secondary,
+            key=lambda r: (r.match_stage == "exact", r.score),
+            reverse=True,
+        )
+        seen: set[str] = set()
+        out: list = []
+        for r in ordered:
+            if r.uri in seen:
+                continue
+            seen.add(r.uri)
+            out.append(r)
+            if len(out) >= limit:
+                break
+        return out
+
+    @staticmethod
+    def _rerank_by_context(
+        results: list, context: list[str]
+    ) -> list:
+        """Stably promote results connected to any context URI.
+
+        Order within the connected and unconnected groups is preserved, so
+        this is a no-op whenever nothing is connected — the original
+        best-first ranking (and thus first-wins) is retained.
+        """
+        ctx = set(context)
+        connected = [r for r in results if ctx & set(r.related)]
+        rest = [r for r in results if not (ctx & set(r.related))]
+        return connected + rest
 
     ###########################################
     #################### API ###############

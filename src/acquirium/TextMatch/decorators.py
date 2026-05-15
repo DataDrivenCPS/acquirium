@@ -16,7 +16,15 @@ class FlexSpec:
 
 
 def _looks_like_uri(value: Any) -> bool:
-    return isinstance(value, str) and ("http" in value or "urn:" in value)
+    return isinstance(value, str) and value.startswith(("http://", "https://", "urn:"))
+
+
+def _coerce(self: Any, v: Any, kind: str) -> Any:
+    if isinstance(v, URIRef):
+        return v
+    if _looks_like_uri(v):
+        return URIRef(v)
+    return self._resolve_rdf(v, kind)
 
 
 def flex_query_rdf_inputs(
@@ -42,23 +50,11 @@ def flex_query_rdf_inputs(
                 v = arguments[spec.arg]
                 if v is None:
                     continue
-
-                if isinstance(v, list):
-                    resolved = []
-                    for x in v:
-                        if isinstance(x, URIRef):
-                            resolved.append(x)
-                        elif _looks_like_uri(x):
-                            resolved.append(URIRef(x))
-                        else:
-                            resolved.append(self._resolve_rdf(x, spec.kind))
-                    arguments[spec.arg] = resolved
-                elif isinstance(v, URIRef):
-                    pass
-                elif _looks_like_uri(v):
-                    arguments[spec.arg] = URIRef(v)
-                else:
-                    arguments[spec.arg] = self._resolve_rdf(v, spec.kind)
+                arguments[spec.arg] = (
+                    [_coerce(self, x, spec.kind) for x in v]
+                    if isinstance(v, list)
+                    else _coerce(self, v, spec.kind)
+                )
 
             return fn(*bound.args, **bound.kwargs)
         return wrapper  # type: ignore[return-value]
