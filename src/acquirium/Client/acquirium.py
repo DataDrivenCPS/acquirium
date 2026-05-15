@@ -243,17 +243,40 @@ class Acquirium:
         if chunk:
             yield chunk
 
-    def _resolve_qudt_uri(self, text: str, kind: str) -> URIRef | None:
+    def _resolve_qudt_uri(
+        self, text: str, kind: str, context: list[str] | None = None
+    ) -> URIRef | None:
         """Try to resolve a plain string to a QUDT URI via the server.
 
-        For ``kind="unit"`` the deterministic unit resolver is tried first
-        (ref_uris symbols, UCUM codes, and ratio notation like "mg/L"), then
-        the embedding matcher as a fallback.  For other kinds (``"quantity_kind"``,
-        ``"class"``) only the embedding matcher is used.
+        For ``kind="unit"`` the deterministic unit resolver is normally tried
+        first (URI/symbol/UCUM/ratio notation like "mg/L"), with the embedding
+        matcher as a fallback. The deterministic resolver is **not** context
+        aware and returns the first graph-order match for an ambiguous symbol,
+        so when ``context`` is supplied we try the context-aware embedding
+        matcher first and only fall back to the deterministic resolver. This is
+        what lets "kg" + a Mass quantity kind resolve to KiloGM rather than
+        KiloGAUSS. For other kinds only the embedding matcher is used.
+
+        ``context`` is an optional list of already-resolved sibling URIs (e.g.
+        the quantity kind / medium chosen for the same stream).
 
         Returns a URIRef on success, or None if no confident match is found.
         """
-        if kind == "unit":
+
+        def _via_embeddings() -> URIRef | None:
+            try:
+                matches = self.client.resolve_text(
+                    text, kind=kind, top_k=1, min_score=0.6, context=context
+                )
+                if matches:
+                    return URIRef(matches[0]["uri"])
+            except Exception:
+                pass
+            return None
+
+        def _via_deterministic() -> URIRef | None:
+            if kind != "unit":
+                return None
             try:
                 result = self.client.resolve_unit(text)
                 uri = result.get("uri")
@@ -261,14 +284,19 @@ class Acquirium:
                     return URIRef(uri)
             except Exception:
                 pass  # fall through to embedding matcher
+            return None
 
-        try:
-            matches = self.client.resolve_text(text, kind=kind, top_k=1, min_score=0.6)
-            if matches:
-                return URIRef(matches[0]["uri"])
-        except Exception:
-            pass
+        # Context can only disambiguate via the embedding matcher, so prefer it
+        # when context is present; otherwise keep the fast deterministic path.
+        if kind == "unit" and context:
+            order = (_via_embeddings, _via_deterministic)
+        else:
+            order = (_via_deterministic, _via_embeddings)
 
+        for step in order:
+            uri = step()
+            if uri is not None:
+                return uri
         return None
 
     def graph_version(self) -> int:
@@ -323,12 +351,16 @@ class Acquirium:
         """
         g = RDFGraph()
 
-        def _coerce(value: str | URIRef | None, qudt_kind: str) -> str | URIRef | None:
+        def _coerce(
+            value: str | URIRef | None,
+            qudt_kind: str,
+            context: list[str] | None = None,
+        ) -> str | URIRef | None:
             if value is None or isinstance(value, URIRef):
                 return value
             if "://" in value or value.startswith("urn:"):
                 return URIRef(value)
-            resolved = self._resolve_qudt_uri(value, qudt_kind)
+            resolved = self._resolve_qudt_uri(value, qudt_kind, context=context)
             if resolved is None:
                 warnings.warn(
                     f"Could not resolve {qudt_kind!r} value {value!r} to a QUDT URI; "
@@ -351,10 +383,21 @@ class Acquirium:
             g.add((subj, RDF.type, VIRTUAL_POINT))
             if label is not None:
                 g.add((subj, RDFS.label, Literal(label)))
-            _add_triple(g, subj, HAS_UNIT,          _coerce(unit,          "unit"))
-            _add_triple(g, subj, HAS_QUANTITY_KIND, _coerce(quantity_kind, "quantity_kind"))
-            _add_triple(g, subj, HAS_MEDIUM,        _coerce(medium,        "class"))
-            _add_triple(g, subj, OF_SUBSTANCE,      _coerce(substance,     "class"))
+            # Resolve the unit's sibling concepts first; their URIs become the
+            # disambiguation context for the unit (e.g. quantity kind "mass"
+            # steers "kg" to KiloGM rather than KiloGAUSS).
+            qk_uri = _coerce(quantity_kind, "quantity_kind")
+            medium_uri = _coerce(medium, "class")
+            substance_uri = _coerce(substance, "class")
+            unit_context = [
+                str(u)
+                for u in (qk_uri, medium_uri, substance_uri)
+                if isinstance(u, URIRef)
+            ]
+            _add_triple(g, subj, HAS_UNIT,          _coerce(unit, "unit", unit_context))
+            _add_triple(g, subj, HAS_QUANTITY_KIND, qk_uri)
+            _add_triple(g, subj, HAS_MEDIUM,        medium_uri)
+            _add_triple(g, subj, OF_SUBSTANCE,      substance_uri)
             _add_triple(g, subj, DATA_SOURCE,       data_source)
             if ref_uri is not None:
                 g.add((subj, HAS_EXTERNAL_REFERENCE, ref_uri))

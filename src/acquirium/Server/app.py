@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any, Optional, Iterator
 
-from fastapi import Body, FastAPI, HTTPException, Request
+from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse, Response
 from dateutil import parser as dtparser
 from pydantic import BaseModel, Field
@@ -468,9 +468,10 @@ def resolve_text(
     kind: Optional[str] = None,
     top_k: int = 5,
     min_score: float = 0.5,
+    context: Optional[list[str]] = Query(None),
 ) -> dict[str, Any]:
     matches = app.state.manager.resolve_text(
-        text=text, kind=kind, top_k=top_k, min_score=min_score
+        text=text, kind=kind, top_k=top_k, min_score=min_score, context=context
     )
     return {"matches": matches}
 

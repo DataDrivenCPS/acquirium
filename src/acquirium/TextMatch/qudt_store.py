@@ -34,7 +34,9 @@ def _build_surfaces(uri: str, labels: list[str], symbol: str | None, ucum: str |
     if tokens:
         _add(" ".join(tokens))
 
-    # Abbreviations kept as-is (case-sensitive matching handled at query time)
+    # Symbol / UCUM code added as surfaces. EmbeddingMatcher's exact stage
+    # normalizes these (case- and whitespace-insensitive) so "kg", "KG",
+    # "mg/L" resolve deterministically instead of via noisy cosine similarity.
     if symbol:
         _add(symbol)
     if ucum:
@@ -92,6 +94,15 @@ class QUDTStore:
         # Label predicates to collect surfaces from
         label_preds = [RDFS.label, SKOS.prefLabel, SKOS.altLabel]
 
+        # Relation predicates used for context disambiguation. A unit points to
+        # its quantity kinds; a quantity kind points to its applicable units.
+        # The captured target URIs let resolve_text(context=[...]) prefer the
+        # candidate semantically connected to already-chosen concepts (e.g.
+        # "kg" + context Mass -> KiloGM, not KiloGAUSS). Extend this list to
+        # teach the resolver about additional relations.
+        is_unit = rdf_type == str(QUDT.Unit)
+        relation_preds = [QUDT.hasQuantityKind] if is_unit else [QUDT.applicableUnit]
+
         for subj in g.subjects(RDF.type, type_uri):
             uri = str(subj)
 
@@ -120,7 +131,15 @@ class QUDTStore:
             if not surfaces:
                 continue
 
-            kind = "unit" if rdf_type == str(QUDT.Unit) else "quantity_kind"
+            related = sorted(
+                {
+                    str(obj)
+                    for pred in relation_preds
+                    for obj in g.objects(subj, pred)
+                }
+            )
+
+            kind = "unit" if is_unit else "quantity_kind"
             concepts.append({
                 "uri": uri,
                 "kind": kind,
@@ -128,6 +147,7 @@ class QUDTStore:
                 "surfaces": surfaces,
                 "symbol": symbol,
                 "ucum": ucum,
+                "related": related,
             })
 
         return concepts
