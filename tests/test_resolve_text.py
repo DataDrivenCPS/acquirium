@@ -113,9 +113,9 @@ PREDICATE_PAIRS = [
 # (natural language text, expected top-1 URI) — QUDT units
 UNIT_PAIRS = [
     ("kilogram",                    "http://qudt.org/vocab/unit/KiloGM"),
-    # "kg" collides with KiloGAUSS ("kG") under case-insensitive exact match;
-    # only resolves correctly with a quantity-kind context (see
-    # test_context_disambiguates_*). Expected to miss on the no-context path.
+    # "kg" (kilogram) vs "kG" (kilogauss): the case-sensitive exact tier
+    # resolves the case-exact reading without context; context can still
+    # override (see test_context_disambiguates_*).
     ("kg",                          "http://qudt.org/vocab/unit/KiloGM"),
     ("meter per second",            "http://qudt.org/vocab/unit/M-PER-SEC"),
     ("m/s",                         "http://qudt.org/vocab/unit/M-PER-SEC"),
@@ -151,8 +151,7 @@ UNIT_PAIRS = [
     # Water-treatment relevant units + prefixed/compound forms. Word forms
     # plus ASCII-safe confirmed symbols (avoid Unicode µ/μ ambiguity).
     ("milliliter",                  "http://qudt.org/vocab/unit/MilliL"),
-    # Same collision as "kg": "mL" (milli) vs "ML" (mega) fold together
-    # under case-insensitive exact match. Expected to miss without context.
+    # "mL" (milli) vs "ML" (mega): resolved by the case-sensitive exact tier.
     ("mL",                          "http://qudt.org/vocab/unit/MilliL"),
     ("cubic meter",                 "http://qudt.org/vocab/unit/M3"),
     ("cubic meter per hour",        "http://qudt.org/vocab/unit/M3-PER-HR"),

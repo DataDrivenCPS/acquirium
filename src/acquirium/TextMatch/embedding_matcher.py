@@ -30,12 +30,14 @@ class ResolveResult:
     related: tuple[str, ...] = ()
 
 
-def _normalize_surface(text: str) -> str:
-    """Lower-case, strip, and collapse whitespace runs.
+def _collapse_ws(text: str) -> str:
+    """Strip and collapse whitespace runs, preserving case."""
+    return re.sub(r"\s+", " ", text.strip())
 
-    Used for both index-time and query-time exact-match keys.
-    """
-    return re.sub(r"\s+", " ", text.strip().lower())
+
+def _normalize_surface(text: str) -> str:
+    """Case-folded exact-match key (whitespace-collapsed, lower-cased)."""
+    return _collapse_ws(text).lower()
 
 
 def _split_local_name(uri: str) -> list[str]:
@@ -71,8 +73,11 @@ class EmbeddingMatcher:
         self._vectors: np.ndarray | None = None  # shape (N, dim), L2-normalized
         self._meta: list[dict[str, Any]] = []  # parallel: uri, kind, label, surface, related
         self._index_hash: str | None = None
-        # normalized surface -> meta row indices, derived from _meta
+        # surface -> meta row indices, derived from _meta. Two keyings:
+        # _cs preserves case (QUDT symbols are case-significant: "kg" vs "kG"),
+        # the other is case-folded as a fallback.
         self._surface_index: dict[str, list[int]] = {}
+        self._surface_index_cs: dict[str, list[int]] = {}
 
     def _set_index(
         self,
@@ -83,16 +88,20 @@ class EmbeddingMatcher:
         """Swap the index under the lock and rebuild the surface map.
 
         All index mutations (build, update, cache load) route through here so
-        _surface_index stays in sync with _meta.
+        the surface maps stay in sync with _meta.
         """
         surface_index: dict[str, list[int]] = {}
+        surface_index_cs: dict[str, list[int]] = {}
         for i, m in enumerate(meta):
-            surface_index.setdefault(_normalize_surface(m["surface"]), []).append(i)
+            surface = m["surface"]
+            surface_index.setdefault(_normalize_surface(surface), []).append(i)
+            surface_index_cs.setdefault(_collapse_ws(surface), []).append(i)
         with self._lock:
             self._vectors = vectors
             self._meta = meta
             self._index_hash = index_hash
             self._surface_index = surface_index
+            self._surface_index_cs = surface_index_cs
 
     def _ensure_model(self) -> None:
         if self._model is not None:
@@ -208,11 +217,12 @@ class EmbeddingMatcher:
         returned by stage 1. Stage 1 first so short symbols ("kg", "mg/L")
         don't depend on cosine similarity over very short tokens.
         """
-        # Snapshot together so _vectors / _meta / _surface_index stay aligned.
+        # Snapshot together so _vectors / _meta / surface maps stay aligned.
         with self._lock:
             vectors = self._vectors
             meta = self._meta
             surface_index = self._surface_index
+            surface_index_cs = self._surface_index_cs
 
         if vectors is None or len(meta) == 0:
             return []
@@ -220,7 +230,9 @@ class EmbeddingMatcher:
         results: list[ResolveResult] = []
         seen_uris: set[str] = set()
 
-        exact_hits = self._exact_stage(text, kind, meta, surface_index, top_k)
+        exact_hits = self._exact_stage(
+            text, kind, meta, surface_index, surface_index_cs, top_k
+        )
         for r in exact_hits:
             if r.uri not in seen_uris:
                 seen_uris.add(r.uri)
@@ -244,15 +256,21 @@ class EmbeddingMatcher:
         kind: str | None,
         meta: list[dict[str, Any]],
         surface_index: dict[str, list[int]],
+        surface_index_cs: dict[str, list[int]],
         top_k: int,
     ) -> list[ResolveResult]:
-        """Normalized exact surface lookup. Hits get score 1.0."""
-        rows = surface_index.get(_normalize_surface(text))
-        if not rows:
-            return []
+        """Exact surface lookup (score 1.0).
+
+        Case-sensitive matches first, then case-folded ones — QUDT symbols
+        are case-significant ("kg"=kilogram vs "kG"=kilogauss), so without
+        context the case-exact reading should lead. Both are returned so a
+        context rerank can still pick a case-folded alternative.
+        """
+        cs_rows = surface_index_cs.get(_collapse_ws(text), [])
+        cf_rows = surface_index.get(_normalize_surface(text), [])
         hits: list[ResolveResult] = []
         seen: set[str] = set()
-        for idx in rows:
+        for idx in (*cs_rows, *cf_rows):
             m = meta[idx]
             if kind and m["kind"] != kind:
                 continue
