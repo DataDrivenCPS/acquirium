@@ -181,15 +181,45 @@ def _run_driver_loop(
     interval: float,
     stop_event: threading.Event,
 ) -> None:
-    """Tick loop shared by in-process and driver-only threads."""
+    """Tick loop shared by in-process and driver-only threads.
+
+    The graph-version watcher runs in its own thread so that long-running
+    :meth:`Driver.tick` calls (e.g. bulk CSV ingest) cannot starve
+    :meth:`Driver.on_graph_change`. The two are still synchronised through
+    ``stop_event``.
+    """
     _log = logging.getLogger(f"acquirium.driver.{driver.__class__.__name__}")
-    # Seed known_version before the loop so the first iteration doesn't fire
-    # on_graph_change() spuriously against a pre-existing graph version.
-    known_version = 0
+
+    # Seed known_version once so the watcher doesn't fire spuriously against
+    # whatever the graph already contained when the driver started.
+    initial_version = 0
     try:
-        known_version = aq.graph_version()
+        initial_version = aq.graph_version()
     except Exception:
         pass
+
+    def _watch_graph_version(seed: int) -> None:
+        known = seed
+        while not stop_event.wait(timeout=interval):
+            try:
+                v = aq.graph_version()
+            except Exception:
+                continue
+            if v == known:
+                continue
+            known = v
+            try:
+                driver.on_graph_change()
+            except Exception:
+                _log.exception("on_graph_change error")
+
+    watcher = threading.Thread(
+        target=_watch_graph_version,
+        args=(initial_version,),
+        daemon=True,
+        name=f"acquirium-graph-watch-{driver.__class__.__name__}",
+    )
+    watcher.start()
 
     def _tick() -> None:
         try:
@@ -200,16 +230,6 @@ def _run_driver_loop(
     _tick()
 
     while not stop_event.wait(timeout=interval):
-        try:
-            v = aq.graph_version()
-            if v != known_version:
-                known_version = v
-                try:
-                    driver.on_graph_change()
-                except Exception:
-                    _log.exception("on_graph_change error")
-        except Exception:
-            pass
         _tick()
 
     try:
