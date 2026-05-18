@@ -226,6 +226,13 @@ class AcquiriumClient:
 
         ``context`` is an optional list of already-chosen URIs used to break
         symbol ambiguity (e.g. resolving "kg" given a Mass quantity kind).
+
+        Example::
+
+            # unit string read from a chlorine-analyzer tag description
+            resolve_text("mg/L", kind="unit", top_k=1)
+            # -> [{"uri": "http://qudt.org/vocab/unit/MilliGM-PER-L",
+            #      "kind": "unit", "score": 1.0, "match_stage": "exact", ...}]
         """
         url = f"{self.base_url}/resolve_text"
         params: dict[str, Any] = {"text": text, "top_k": top_k, "min_score": min_score}
@@ -252,6 +259,14 @@ class AcquiriumClient:
         unified resolver (data-graph + deterministic unit converter + QUDT,
         with optional ``context`` disambiguation) is consulted and the top
         match's URI returned.
+
+        Example::
+
+            # turbidity-sensor unit cell from a CSV
+            resolve_concept("NTU", kind="unit")
+            # -> "http://qudt.org/vocab/unit/NTU"
+            resolve_concept("http://qudt.org/vocab/unit/NTU")  # passthrough
+            # -> "http://qudt.org/vocab/unit/NTU"
         """
         if isinstance(text, str) and text.startswith(("http://", "https://", "urn:")):
             return text
@@ -271,6 +286,15 @@ class AcquiriumClient:
         ``fields`` maps a logical name to ``(text, kind)``. Returns the
         ranked matches per field; related fields (e.g. a unit and its
         quantity kind) reinforce each other server-side.
+
+        Example::
+
+            # FIT-101 metadata columns from a historian export
+            resolve_record({"FIT-101.EU":  ("gal/min", "unit"),
+                            "FIT-101.QTY": ("flow rate", "quantity_kind")})
+            # -> {"FIT-101.EU":  [{"uri": ".../unit/GAL_US-PER-MIN", ...}, ...],
+            #     "FIT-101.QTY": [{"uri": ".../quantitykind/VolumeFlowRate",
+            #                      ...}, ...]}
         """
         body = {
             "fields": [
@@ -294,6 +318,14 @@ class AcquiriumClient:
         are resolved together so a confident field disambiguates an
         ambiguous sibling. ``None`` inputs and unresolved fields map to
         ``None``.
+
+        Example::
+
+            # FIT-101 metadata columns from a historian export
+            resolve_record_uris({"FIT-101.EU":  ("gal/min", "unit"),
+                                 "FIT-101.QTY": ("flow rate", "quantity_kind")})
+            # -> {"FIT-101.EU":  "http://qudt.org/vocab/unit/GAL_US-PER-MIN",
+            #     "FIT-101.QTY": ".../quantitykind/VolumeFlowRate"}
         """
         out: dict[str, Optional[str]] = {}
         to_resolve: dict[str, tuple[str, Optional[str]]] = {}
@@ -339,7 +371,16 @@ class AcquiriumClient:
     # -------------------- Unit conversion --------------------
 
     def resolve_unit(self, identifier: str) -> dict:
-        """Resolve a unit identifier to its QUDT metadata via the server."""
+        """Resolve a unit identifier to its QUDT metadata via the server.
+
+        Example::
+
+            resolve_unit("gal/min")   # off a flow-meter tag
+            # -> {"uri": "http://qudt.org/vocab/unit/GAL_US-PER-MIN",
+            #     "label": "US Gallon per Minute", "symbol": "gal/min",
+            #     "quantity_kind": ".../quantitykind/VolumeFlowRate",
+            #     "multiplier": 6.30901964e-05, "offset": 0.0}
+        """
         url = f"{self.base_url}/resolve_unit"
         response = requests.post(url, json={"identifier": identifier})
         if not response.ok:
