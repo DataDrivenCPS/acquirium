@@ -1,26 +1,22 @@
 """Single entry point for concept *normalization* (text → canonical URI).
 
-`ConceptResolver` owns the whole resolution policy that was previously split
-between `Manager.resolve_text` (data-graph + QUDT embedding matchers, context
-rerank) and the client-side deterministic path that called the QUDT unit
-converter. Conversion (numeric value math, multiplier/offset/compatibility) is
-a *separate* concern and deliberately not handled here — `Manager` keeps
-calling `QUDTUnitConverter` directly for that.
+`ConceptResolver` owns the resolution policy: data-graph + QUDT embedding
+matchers, a deterministic QUDT unit tier, and context rerank. Conversion
+(numeric value math, multiplier/offset/compatibility) is a separate concern
+handled by `QUDTUnitConverter` directly, not here.
 
 Pipeline (one ordered policy):
 
 1. data-graph exact   — `_graph_matcher` exact surface lookup
-2. converter exact    — `QUDTUnitConverter` deterministic resolution, *units
-                         only* (mirrors the old client deterministic path,
-                         which only ran for ``kind == "unit"``)
+2. converter exact    — `QUDTUnitConverter` deterministic resolution,
+                         units only
 3. data-graph semantic
 4. QUDT semantic      — `_qudt_matcher`
 5. context rerank     — promote candidates linked to a context URI
 
-Only `kind == "unit"` gains the deterministic converter tier; ``class`` /
-``predicate`` / ``quantity_kind`` / ``None`` keep the exact behavior they had
-in `Manager.resolve_text`, so existing ``/resolve_text`` responses are
-unchanged for those kinds.
+The deterministic converter tier applies only to ``kind == "unit"``;
+``class`` / ``predicate`` / ``quantity_kind`` / ``None`` resolve through the
+matchers alone.
 """
 
 from __future__ import annotations
@@ -104,9 +100,8 @@ class ConceptResolver:
             if graph_hits and graph_hits[0].match_stage == "exact":
                 results = graph_hits
             else:
-                # Converter tier is units-only and mirrors the old client
-                # deterministic path; it carries the unit's quantity kinds as
-                # ``related`` so context rerank still works.
+                # Units-only deterministic tier; it carries the unit's
+                # quantity kinds as ``related`` so context rerank still works.
                 det = self._deterministic_unit(text) if kind == "unit" else []
                 results = self._combine(
                     graph_hits + det, _q(self._qudt_matcher), limit=fetch_k
@@ -129,9 +124,8 @@ class ConceptResolver:
 
         Returns at most one exact (score 1.0) result. Silently yields nothing
         when no converter is available, the text is not a unit, or the only
-        result is a *synthetic composed ratio* (``urn:qudt:ratio:...``) — in
-        that last case the embedding matchers handled it before unification, so
-        we keep deferring to them to avoid a regression.
+        result is a *synthetic composed ratio* (``urn:qudt:ratio:...``);
+        synthetic ratios are left to the embedding matchers instead.
         """
         try:
             conv = self._converter_provider()

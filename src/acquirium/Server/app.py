@@ -121,11 +121,6 @@ class EmbeddingIndexStatus(BaseModel):
     error: str | None
     last_built: str | None
     duration_s: float | None
-    # Generation a rebuild has been requested for vs. what the live index
-    # reflects. Index is fresh iff state=="ready" and built_version >=
-    # target_version. (qudt leaves these at 0/0; only graph maintains them.)
-    target_version: int = 0
-    built_version: int = 0
 
 class EmbeddingStatus(BaseModel):
     graph: EmbeddingIndexStatus
@@ -135,7 +130,6 @@ class InsertGraphRequest(BaseModel):
     rdf_graph: str = Field(..., description="File path or RDF text")
     format: str = "turtle"
     replace: bool = True
-    wait_for_embedding: bool = False
 
 
 class TimeseriesInfoRequest(BaseModel):
@@ -228,9 +222,8 @@ def insert_graph(req: InsertGraphRequest) -> dict[str, Any]:
             rdf_graph=req.rdf_graph,
             format=req.format,
             replace=req.replace,
-            wait_for_embedding=req.wait_for_embedding,
         )
-        return {"ok": True, "embedding_ready": req.wait_for_embedding}
+        return {"ok": True, "embedding_ready": True}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

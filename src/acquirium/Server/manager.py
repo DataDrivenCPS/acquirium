@@ -243,20 +243,13 @@ class Manager:
 
         # Embedding index status tracking
         self._embedding_status_lock = threading.Lock()
-        # target_version: latest graph-index generation a rebuild has been
-        #   requested for (bumped synchronously in insert_graph).
-        # built_version: generation the live index actually reflects (set by
-        #   the rebuild worker on success). Index is fresh iff
-        #   state == "ready" and built_version >= target_version.
-        # This pair is independent of _graph_version (which other mutations
-        # bump without rebuilding), so the freshness predicate stays sound.
         self._embedding_status: dict[str, dict[str, Any]] = {
-            "graph": {"state": "idle", "concepts": 0, "surfaces": 0, "error": None, "last_built": None, "duration_s": None, "target_version": 0, "built_version": 0},
-            "qudt":  {"state": "idle", "concepts": 0, "surfaces": 0, "error": None, "last_built": None, "duration_s": None, "target_version": 0, "built_version": 0},
+            "graph": {"state": "idle", "concepts": 0, "surfaces": 0, "error": None, "last_built": None, "duration_s": None},
+            "qudt":  {"state": "idle", "concepts": 0, "surfaces": 0, "error": None, "last_built": None, "duration_s": None},
         }
 
         # Startup: both indexes run synchronously so drivers see a ready matcher.
-        self._startup_graph_index()
+        self._refresh_graph_index(replace=True)
         self._startup_qudt_task()
 
     
@@ -470,53 +463,16 @@ class Manager:
         with self._embedding_status_lock:
             self._embedding_status[index].update(kwargs)
 
-    def _bump_graph_index_target(self) -> int:
-        """Synchronously mark the graph index stale for a fresh generation.
-
-        Called from insert_graph *before* the rebuild is dispatched, so a
-        client polling right after the call cannot observe a stale "ready":
-        state is already "building" and target_version has advanced past the
-        current built_version. Returns the new target generation.
-        """
-        with self._embedding_status_lock:
-            g = self._embedding_status["graph"]
-            g["target_version"] += 1
-            g["state"] = "building"
-            return g["target_version"]
-
-    def _mark_graph_index_built(self, target: int, **fields: Any) -> None:
-        """Record a completed rebuild. built_version never regresses, so a
-        late-finishing older rebuild can't pull the freshness signal
-        backwards (the residual content/status divergence under *concurrent*
-        inserts is the known, out-of-scope item-4 problem)."""
-        with self._embedding_status_lock:
-            g = self._embedding_status["graph"]
-            g.update(fields)
-            g["state"] = "ready"
-            g["built_version"] = max(g.get("built_version", 0), target)
-
-    def _startup_graph_index(self) -> None:
-        """Build graph embedding index on startup. Uses cache if available."""
-        self._update_embedding_status("graph", state="building")
-        t0 = perf_counter()
-        try:
-            concepts = self._extract_concepts_for_embedding()
-            if concepts:
-                self._graph_matcher.build_index(concepts)
-                n_surfaces = sum(len(c.get("surfaces", [])) for c in concepts)
-                elapsed = perf_counter() - t0
-                self._update_embedding_status(
-                    "graph", state="ready", concepts=len(concepts),
-                    surfaces=n_surfaces, last_built=datetime.now().isoformat(),
-                    duration_s=round(elapsed, 2), error=None,
-                )
-                logger.info("Graph embedding index: %d concepts", len(concepts))
-            else:
-                self._update_embedding_status("graph", state="ready", concepts=0, surfaces=0)
-                logger.info("No concepts found in graph; graph embedding index is empty")
-        except Exception as exc:
-            self._update_embedding_status("graph", state="error", error=str(exc))
-            logger.warning("Failed to build graph embedding index", exc_info=True)
+    def _mark_index_ready(
+        self, index: str, concepts: list[dict[str, Any]], t0: float
+    ) -> None:
+        """Record an index as ready with concept/surface counts and timing."""
+        self._update_embedding_status(
+            index, state="ready", concepts=len(concepts),
+            surfaces=sum(len(c.get("surfaces", [])) for c in concepts),
+            last_built=datetime.now().isoformat(),
+            duration_s=round(perf_counter() - t0, 2), error=None,
+        )
 
     def _startup_qudt_task(self) -> None:
         """Background task: extract QUDT, diff, build/update QUDT embedding index."""
@@ -535,7 +491,7 @@ class Manager:
 
             if not all_concepts:
                 logger.warning("QUDT extraction returned 0 concepts")
-                self._update_embedding_status("qudt", state="ready", concepts=0, surfaces=0)
+                self._mark_index_ready("qudt", [], t0)
                 return
 
             if not self._qudt_matcher.is_ready:
@@ -551,50 +507,52 @@ class Manager:
             else:
                 logger.info("QUDT data unchanged, embedding index up to date")
 
-            n_surfaces = sum(len(c.get("surfaces", [])) for c in all_concepts)
-            elapsed = perf_counter() - t0
-            self._update_embedding_status(
-                "qudt", state="ready", concepts=len(all_concepts),
-                surfaces=n_surfaces, last_built=datetime.now().isoformat(),
-                duration_s=round(elapsed, 2), error=None,
-            )
+            self._mark_index_ready("qudt", all_concepts, t0)
 
         except Exception as exc:
             self._update_embedding_status("qudt", state="error", error=str(exc))
             logger.warning("Failed QUDT startup task", exc_info=True)
 
-    def _rebuild_graph_index_background(self, target: int) -> None:
-        """Rebuild the graph embedding index after insert_graph.
+    def _refresh_graph_index(self, *, replace: bool) -> None:
+        """Refresh the graph embedding index from the union graph.
 
-        ``target`` is the graph-index generation this rebuild reflects (from
-        _bump_graph_index_target). On success it is recorded as built_version
-        so a client can wait until the index is caught up (see
-        Acquirium.wait_for_graph_index).
+        Incremental by default (embed only added concepts, drop removed
+        URIs); a full rebuild when ``replace`` or no index exists yet. The
+        diff is by URI: a surface change on an existing URI is re-embedded
+        only on a full rebuild.
         """
         self._update_embedding_status("graph", state="building")
         t0 = perf_counter()
         try:
             concepts = self._extract_concepts_for_embedding()
-            if concepts:
+            if not concepts:
+                self._mark_index_ready("graph", [], t0)
+                logger.info("Graph embedding index: 0 concepts")
+                return
+
+            if replace or not self._graph_matcher.is_ready:
                 self._graph_matcher.build_index(concepts)
-                n_surfaces = sum(len(c.get("surfaces", [])) for c in concepts)
-                elapsed = perf_counter() - t0
-                self._mark_graph_index_built(
-                    target, concepts=len(concepts), surfaces=n_surfaces,
-                    last_built=datetime.now().isoformat(),
-                    duration_s=round(elapsed, 2), error=None,
-                )
-                logger.info("Graph embedding index rebuilt: %d concepts (v%d)", len(concepts), target)
             else:
-                # No concepts: still a valid (empty) index at this generation.
-                # Previously this left state stuck on "building" forever.
-                self._mark_graph_index_built(
-                    target, concepts=0, surfaces=0, error=None,
-                )
-                logger.info("Graph embedding index rebuilt: 0 concepts (v%d)", target)
+                indexed = self._graph_matcher.get_indexed_uris()
+                extracted = {c["uri"] for c in concepts}
+                added = [c for c in concepts if c["uri"] not in indexed]
+                removed = list(indexed - extracted)
+                if added or removed:
+                    logger.info(
+                        "Graph embedding index: +%d added, -%d removed",
+                        len(added), len(removed),
+                    )
+                    self._graph_matcher.update_index(
+                        added, removed, all_concepts=concepts
+                    )
+                else:
+                    logger.info("Graph concepts unchanged; index up to date")
+
+            self._mark_index_ready("graph", concepts, t0)
+            logger.info("Graph embedding index ready: %d concepts", len(concepts))
         except Exception as exc:
             self._update_embedding_status("graph", state="error", error=str(exc))
-            logger.warning("Failed to rebuild graph embedding index", exc_info=True)
+            logger.warning("Failed to refresh graph embedding index", exc_info=True)
 
     def resolve_text(
         self,
@@ -657,9 +615,14 @@ class Manager:
             return self._graph_version
 
 
-    def insert_graph(self, rdf_graph: str, format: str = "turtle", replace = True, wait_for_embedding: bool = False) -> None:
+    def insert_graph(self, rdf_graph: str, format: str = "turtle", replace = True) -> None:
         """
-        Insert RDF graph into the graph store to the main graph
+        Insert RDF graph into the graph store's main graph.
+
+        The embedding index is refreshed synchronously before returning, so
+        once this call completes the just-inserted concepts are resolvable.
+        The refresh is incremental (only new concepts are embedded) unless
+        ``replace=True``, which triggers a full rebuild.
 
         Args:
             :param rdf_graph: An `xml.sax.xmlreader.InputSource`, file-like object,
@@ -667,8 +630,6 @@ class Manager:
             is the location of the source.
             format: Format of the RDF data [turtle | n3 | xml | trix]
             replace: If True, replaces the existing main graph. If False, appends to it.
-            wait_for_embedding: If True, blocks until the embedding index rebuild is
-                complete and logs progress. If False (default), rebuilds in the background.
         """
 
         if isinstance(rdf_graph, Path):
@@ -685,20 +646,7 @@ class Manager:
             self.graph_store.insert_graph(rdf_graph, format=format, replace=replace)
             logging.info("acquirium: inserted graph into store")
             self._sync_stream_refs_from_graph()
-
-            # Flip status to "building" and advance the target generation
-            # synchronously, *before* the worker is even scheduled, so a
-            # client polling right after this returns cannot see a stale
-            # "ready". The rebuild is tagged with this exact generation.
-            target = self._bump_graph_index_target()
-
-            if wait_for_embedding:
-                logger.info("acquirium: rebuilding embedding index (synchronous)...")
-                self._rebuild_graph_index_background(target)
-                logger.info("acquirium: embedding index rebuild complete")
-            else:
-                self._executor.submit(self._rebuild_graph_index_background, target)
-
+            self._refresh_graph_index(replace=replace)
             self._notify_graph_change()
 
         except Exception as e:

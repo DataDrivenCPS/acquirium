@@ -5,65 +5,106 @@
 \setbeamertemplate{navigation symbols}{}
 \setbeamerfont{block body}{size=\small}
 \newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\req}[1]{\textbf{[#1]}}
 
-\title[QUDT in Acquirium]{Units the Acquirium Way}
-\subtitle{QUDT normalization \& conversion -- ingest path, API, and the code}
+\title[QUDT Normalization]{Concept Normalization \& Unit Conversion}
+\subtitle{Design Specification}
 \date{}
 
 \begin{document}
 
 \frame{\titlepage}
 
+\begin{frame}{Document control}
+  \small
+  \begin{tabular}{@{}p{0.22\textwidth}p{0.72\textwidth}@{}}
+    \hline
+    \textbf{Component} & Acquirium server-side concept normalization and
+        QUDT unit conversion \\
+    \textbf{Scope} & Ingest contract, embedding-index lifecycle, the
+        resolution pipeline, the conversion engine, and their HTTP
+        interface \\
+    \textbf{Out of scope} & Client query-builder ergonomics; time-series
+        storage; ontology authoring \\
+    \textbf{Audience} & Engineers extending or operating the resolver /
+        ingest path \\
+    \textbf{Status} & Implemented; verified (see \S Verification) \\ \hline
+  \end{tabular}
+\end{frame}
+
 \begin{frame}{Outline}
   \tableofcontents
 \end{frame}
 
 % ==================================================================
-\section{The big picture}
+\section{Scope \& objectives}
 
-\begin{frame}{Where QUDT sits}
-  Acquirium = RDF knowledge graph (Oxigraph) $+$ TimescaleDB time series,
-  fronted by a FastAPI server.
-  \begin{itemize}
-    \item A stream's metadata lives in the graph: a point linked to a unit,
-          quantity kind, medium, \dots
-    \item \textbf{QUDT} is the canonical vocabulary for units and quantity
-          kinds (\code{qudt.org/vocab/unit/*}).
-    \item Sources speak \code{"mg/L"}, \code{"kg"}, \code{"gallon per
-          minute"} -- not URIs.
-  \end{itemize}
-  \begin{block}{The job}
-    Map messy unit text $\rightarrow$ a canonical QUDT URI, and know how to
-    convert numerically between two such URIs.
+\begin{frame}{Problem \& objectives}
+  Acquirium stores stream metadata in an RDF graph (Oxigraph) alongside
+  TimescaleDB series. Units and quantity kinds are identified by canonical
+  \textbf{QUDT} URIs, but sources and users supply free text
+  (\code{"mg/L"}, \code{"kg"}, \code{"gallon per minute"}).
+
+  \begin{block}{Objectives}
+    \begin{enumerate}
+      \item Resolve free text / symbols to a canonical ontology or QUDT
+            URI, with ranking and optional context disambiguation.
+      \item Convert numeric values between two unit URIs.
+      \item Do both without mutating ingested data.
+    \end{enumerate}
   \end{block}
 \end{frame}
 
-\begin{frame}{Code map}
+\begin{frame}{Requirements}
   \small
-  \begin{tabular}{@{}p{0.46\textwidth}p{0.50\textwidth}@{}}
+  \begin{tabular}{@{}p{0.13\textwidth}p{0.83\textwidth}@{}}
     \hline
-    \textbf{Module} & \textbf{Role} \\ \hline
-    \code{Server/manager.py} & orchestration: startup, indexes, endpoints'
-        business logic \\
-    \code{Server/app.py} & FastAPI routes \\
-    \code{Storage/graph\_store.py} & Oxigraph store; \emph{verbatim} graph
-        ingest \\
-    \code{TextMatch/qudt\_store.py} & parse/cache/diff QUDT vocab \\
-    \code{TextMatch/embedding\_matcher.py} & two-stage surface +
-        embedding index \\
-    \code{TextMatch/resolver.py} & \code{ConceptResolver} -- the pipeline \\
-    \code{internals/qudt\_units.py} & \code{QUDTUnitConverter} -- exact
-        resolve + math \\ \hline
+    \req{R1} & Ingest does not normalize or rewrite submitted semantics:
+      unit / quantity-kind values are stored as given, never canonicalized
+      at ingest. (RDF set semantics still apply -- see Ingest contract.) \\
+    \req{R2} & Resolution is deterministic for exact inputs; ranked and
+      reproducible for fuzzy inputs. \\
+    \req{R3} & Resolution and conversion are separate concerns with
+      separate entry points. \\
+    \req{R4} & Context can only reorder candidates, never introduce one. \\
+    \req{R5} & After \code{insert\_graph} returns, the just-inserted
+      concepts are resolvable: the index is refreshed synchronously,
+      incrementally where possible. \\
+    \req{R6} & Absence of the QUDT graph degrades gracefully, never
+      hard-fails resolution. \\ \hline
   \end{tabular}
 \end{frame}
 
-\begin{frame}{Two separate concerns}
+% ==================================================================
+\section{Architecture}
+
+\begin{frame}{Module responsibilities}
+  \small
+  \begin{tabular}{@{}p{0.42\textwidth}p{0.54\textwidth}@{}}
+    \hline
+    \textbf{Module} & \textbf{Responsibility} \\ \hline
+    \code{Server/manager.py} & orchestration; index lifecycle; endpoint
+        logic \\
+    \code{Server/app.py} & HTTP interface (FastAPI) \\
+    \code{Storage/graph\_store.py} & Oxigraph store; verbatim graph ingest
+        \req{R1} \\
+    \code{TextMatch/qudt\_store.py} & QUDT vocabulary parse / cache / diff \\
+    \code{TextMatch/embedding\_matcher.py} & two-stage surface $+$
+        embedding index \\
+    \code{TextMatch/resolver.py} & \code{ConceptResolver}: resolution
+        pipeline \\
+    \code{internals/qudt\_units.py} & \code{QUDTUnitConverter}: exact
+        resolution $+$ conversion \\ \hline
+  \end{tabular}
+\end{frame}
+
+\begin{frame}{Separation of concerns \req{R3}}
   \begin{columns}[T]
     \column{0.5\textwidth}
-    \textbf{Normalization (resolution)}\\[2pt]
-    text / symbol $\rightarrow$ canonical URI
+    \textbf{Normalization}\\[2pt]
+    text / symbol $\rightarrow$ URI
     \begin{itemize}
-      \item fuzzy, ranked, context-aware
+      \item ranked, context-aware
       \item \code{ConceptResolver}
       \item \code{GET /resolve\_text}
     \end{itemize}
@@ -79,301 +120,309 @@
   \end{columns}
   \vspace{6pt}
   \begin{block}{Shared substrate}
-    One lazily-loaded converter instance
-    (\code{Manager.\_ensure\_qudt\_converter}); the resolver calls only its
-    \emph{resolution} methods, never its conversion math.
+    A single lazily-loaded \code{QUDTUnitConverter} instance is shared.
+    \code{ConceptResolver} invokes only its \emph{resolution} methods;
+    conversion math is reached only via the conversion endpoints.
   \end{block}
 \end{frame}
 
 % ==================================================================
-\section{Ingest path}
+\section{Domain model}
 
-\begin{frame}[fragile]{Ingest is verbatim}
+\begin{frame}[fragile]{Data types}
   \begin{semiverbatim}\scriptsize
-POST /insert_graph                       app.py:insert_graph
-  -> Manager.insert_graph()              manager.py:683
-     -> GraphStore.insert_graph()        graph_store.py:208
-          incoming = Graph(); incoming.parse(data, fmt)
-          for triple in incoming: main.add(triple)   # as-is
-          refresh_union()                # rebuild union graph
+ResolveResult   uri, kind, label, score, matched_surface,
+                match_stage in {exact, semantic}, related: tuple[uri]
+
+concept (index) uri, kind, label, surfaces: list[str],
+                symbol?, ucum?, related: list[uri]
+
+UnitDefinition  uri, label?, symbol?, quantity_kind?,
+                quantity_kinds: tuple, multiplier, offset,
+                dimension_vector?
+
+embedding_status[idx]  state in {idle,building,ready,error},
+                concepts, surfaces, error?, last_built?, duration_s?
   \end{semiverbatim}
-  \begin{itemize}
-    \item No unit rewriting at ingest. \code{qudt:hasUnit "mg/L"} is stored
-          exactly as sent.
-    \item The old \code{GraphStore.\_normalize\_unit} was \textbf{deleted} --
-          it was dead code and would have mutated stored data.
-  \end{itemize}
-  \begin{block}{Why}
-    Stored data stays faithful to the source; normalization is a
-    resolution-time service, re-derivable and debuggable.
-  \end{block}
+  \code{related} is the cross-reference set used by context rerank:
+  for a unit, its quantity kinds; for a quantity kind, its applicable
+  units.
 \end{frame}
 
 % ==================================================================
-\section{Startup \& indexes}
+\section{Ingest \& index lifecycle}
 
-\begin{frame}[fragile]{Startup: what \code{Manager.\_\_init\_\_} builds}
+\begin{frame}[fragile]{Ingest contract \req{R1}}
   \begin{semiverbatim}\scriptsize
-self._graph_matcher = EmbeddingMatcher(cache=.../embedding_cache/graph)
-self._qudt_matcher  = EmbeddingMatcher(cache=.../embedding_cache/qudt)
-self._qudt_store    = QUDTStore(data_dir)
-self._concept_resolver = ConceptResolver(
-    graph_matcher, qudt_matcher,
-    converter_provider = self._ensure_qudt_converter)
-self._startup_graph_index()      # synchronous
-self._startup_qudt_task()        # synchronous
+POST /insert_graph -> Manager.insert_graph -> GraphStore.insert_graph:
+    incoming.parse(data, fmt)
+    for triple in incoming: main.add(triple)     # verbatim
+    refresh_union()
   \end{semiverbatim}
   \begin{itemize}
-    \item Model: \code{BAAI/bge-small-en-v1.5} (fastembed), vectors
-          L2-normalized.
-    \item \code{\_ensure\_qudt\_converter} lazily loads
-          \code{QUDTUnitConverter("ontologies/qudt\_unit.ttl")}.
-    \item Build state per index in \code{\_embedding\_status} ->
-          \code{GET /embedding\_status}.
+    \item Specification: submitted triples are parsed and stored without
+          semantic rewriting or unit canonicalization
+          (\code{qudt:hasUnit "mg/L"} stays the literal \code{"mg/L"}).
+    \item Not a byte- or document-level guarantee: RDF set semantics
+          apply -- duplicate triples coalesce, blank nodes may be
+          relabeled, statement order is insignificant; \code{replace=True}
+          first clears the main graph; the queried union view adds the
+          \code{owl:imports} closure.
+    \item Rationale: normalization is a resolution-time service applied to
+          queries, not to storage. \code{insert\_graph} then refreshes the
+          embedding index before returning (next section).
   \end{itemize}
 \end{frame}
 
-\begin{frame}[fragile]{Graph matcher: concepts from the data graph}
-  \code{Manager.\_extract\_concepts\_for\_embedding()} runs four SPARQL
-  extractions over the \emph{union} graph:
-  \begin{semiverbatim}\scriptsize
-class      : ?uri a rdfs:Class / owl:Class / ?x a ?uri / ...
-predicate  : ?uri a rdf:Property / owl:*Property / ?s ?uri ?o
-unit       : ?uri a qudt:Unit | ?x acq:hasUnit ?uri
-quantity_kind: ?uri a qudt:QuantityKind | ?x acq:hasQuantityKind ?uri
-  \end{semiverbatim}
+\begin{frame}{Index construction}
+  Two embedding indexes, each an \code{EmbeddingMatcher}:
   \begin{itemize}
-    \item Unit/QK rows also surface \code{qudt:symbol} \&
-          \code{qudt:ucumCode} so \code{"mg/l"}, \code{"kg"} embed well.
-    \item \code{\_aggregate\_uri\_label\_rows} $\rightarrow$ concept dicts
-          $\rightarrow$ \code{\_graph\_matcher.build\_index(concepts)}.
-    \item Graph-defined units thus \emph{outrank} the broad QUDT vocab.
+    \item \textbf{graph index} -- concepts extracted from the union graph
+          by four SPARQL queries (class, predicate, unit, quantity\_kind);
+          unit/QK rows also surface \code{qudt:symbol}/\code{ucumCode}.
+          Graph-defined concepts take precedence over the broad vocabulary.
+    \item \textbf{QUDT index} -- the QUDT vocabulary via \code{QUDTStore}:
+          HTTP-first parse with local \code{ontologies/qudt\_*.ttl}
+          fallback; gzip-JSON cache diffed across restarts for incremental
+          index updates.
   \end{itemize}
+  Embedding model \code{bge-small-en-v1.5}; vectors L2-normalized and
+  disk-cached. State is reported per index via \code{GET /embedding\_status}.
 \end{frame}
 
-\begin{frame}[fragile]{QUDT matcher: \code{QUDTStore}}
+\begin{frame}[fragile]{Index refresh on ingest \req{R5}}
   \begin{semiverbatim}\scriptsize
-QUDTStore.extract_and_diff():
-  _parse_ontology(QUDT_UNIT_url, ontologies/qudt_unit.ttl, qudt:Unit)
-  _parse_ontology(QUDT_QK_url,   ontologies/qudt_qk.ttl,  qudt:QuantityKind)
-  diff vs gzip cache  ->  (all_concepts, removed_uris, changed)
-  save units.json.gz / qk.json.gz
-  \end{semiverbatim}
-  Per concept dict: \code{uri, kind, label, surfaces, symbol, ucum,
-  related}.
-  \begin{itemize}
-    \item Surfaces = lower(labels) $+$ split-local-name $+$ symbol $+$ ucum.
-    \item \code{related} = \code{qudt:hasQuantityKind} (units) /
-          \code{qudt:applicableUnit} (QKs) -- powers context rerank.
-    \item HTTP-first, local fallback; cache makes restarts incremental
-          (\code{matcher.update\_index(added, removed)}).
-  \end{itemize}
-\end{frame}
-
-% ==================================================================
-\section{The matcher}
-
-\begin{frame}[fragile]{\code{EmbeddingMatcher}: index \& two-stage query}
-  \begin{semiverbatim}\scriptsize
-build_index(concepts):
-  hash -> _try_load_cache({hash}_vectors.npz/_meta.json)
-  surfaces,meta = _build_surfaces_and_meta(concepts)
-  vectors = _embed(surfaces)            # fastembed, L2-norm
-  _set_index(vectors, meta, surface_index, surface_index_cs)
-
-query(text, kind, top_k, min_score):
-  1) _exact_stage : surface_index_cs (case) then casefold; score 1.0
-  2) _semantic_stage: cosine = q_vec @ vectors.T ; kind mask ; cutoff
-  -> [ResolveResult(uri,kind,label,score,matched_surface,
-                    match_stage, related)]
-  \end{semiverbatim}
-  Exact-first because QUDT case matters: \code{kg} (kilogram) vs \code{kG}
-  (kilogauss). Two surface maps (case-sensitive + casefold) keep both
-  readings reachable.
-\end{frame}
-
-% ==================================================================
-\section{ConceptResolver pipeline}
-
-\begin{frame}[fragile]{\code{ConceptResolver.resolve} -- control flow}
-  \begin{semiverbatim}\scriptsize
-fetch_k = 20 if context else top_k        # over-fetch to rerank
-
-if kind in (class, predicate):
-    results = graph_matcher.query()
-elif kind in (unit, quantity_kind):
-    graph_hits = graph_matcher.query(min_score=0.8)
-    if graph_hits and graph_hits[0].match_stage == "exact":
-        results = graph_hits              # short-circuit
+insert_graph(...):                       # synchronous, in-call
+  graph_store.insert_graph(...)
+  _refresh_graph_index(replace=replace):
+    concepts = _extract_concepts_for_embedding()
+    if replace or not matcher.is_ready:
+        matcher.build_index(concepts)               # full
     else:
-        det = _deterministic_unit(text) if kind=="unit" else []
-        results = _combine(graph_hits + det, qudt_matcher.query())
-else:
-    results = _combine(graph_matcher.query(), qudt_matcher.query())
-
-if context: results = _rerank_by_context(results, context)
-return results[:top_k]
-  \end{semiverbatim}
-\end{frame}
-
-\begin{frame}[fragile]{The deterministic unit tier}
-  \code{ConceptResolver.\_deterministic\_unit(text)}:
-  \begin{semiverbatim}\scriptsize
-conv = converter_provider()               # _ensure_qudt_converter
-try:    ud = conv.resolve_unit(text)
-except UnitNotFound: ud = conv.infer_unit(text)
-if str(ud.uri).startswith("urn:qudt:ratio:"): return []   # skip synth
-return [ResolveResult(uri, kind="unit", score=1.0,
-        match_stage="exact", related=ud.quantity_kinds)]
+        added/removed = diff(concepts, get_indexed_uris())
+        matcher.update_index(added, removed)         # incremental
+  _notify_graph_change()
   \end{semiverbatim}
   \begin{itemize}
-    \item Units only (mirrors the old client deterministic path).
-    \item Authoritative: a hit is exact, score 1.0, and carries its
-          quantity kinds as \code{related} so context still applies.
-    \item Synthetic composed ratios are \emph{not} emitted -- the
-          matchers handled those before, no regression.
-    \item Provider raises if no QUDT graph $\Rightarrow$ silently degrade
-          to matchers.
+    \item Synchronous: when \code{insert\_graph} returns, the inserted
+          concepts are resolvable. No async path, no readiness protocol.
+    \item Incremental by default -- only new concepts are embedded; a full
+          rebuild only on \code{replace=True} or first build.
+    \item Diff is by URI (mirrors the QUDT path): a surface change on an
+          \emph{existing} URI is re-embedded only on a full rebuild.
+  \end{itemize}
+\end{frame}
+
+% ==================================================================
+\section{Resolution specification}
+
+\begin{frame}[fragile]{Pipeline (normative)}
+  \begin{semiverbatim}\scriptsize
+fetch_k = 20 if context else top_k
+
+kind in {class, predicate}:
+    R = graph.query(kind)
+kind in {unit, quantity_kind}:
+    G = graph.query(kind, min_score=0.8)
+    if G and G[0].match_stage == exact:  R = G          # short-circuit
+    else:
+        D = deterministic_unit(text) if kind==unit else []
+        R = combine(G + D, qudt.query(kind))
+otherwise (kind is None):
+    R = combine(graph.query(), qudt.query())
+
+if context: R = rerank_by_context(R, context)
+return R[:top_k]
+  \end{semiverbatim}
+  \code{class}/\code{predicate} resolve against graph-defined concepts
+  only; QUDT participates only for \code{unit}/\code{quantity\_kind}/any.
+\end{frame}
+
+\begin{frame}[fragile]{Two-stage matcher}
+  \begin{semiverbatim}\scriptsize
+query(text, kind, top_k, min_score):
+  1. exact   : case-sensitive surface map, then case-folded map
+               -> score 1.0, match_stage = exact
+  2. semantic: cosine(query_embedding, surface_vectors), kind mask,
+               min_score cutoff -> match_stage = semantic
+  \end{semiverbatim}
+  \begin{itemize}
+    \item Exact precedes semantic: QUDT symbols are case-significant
+          (\code{kg} kilogram vs.\ \code{kG} kilogauss); both readings are
+          retained for a later context rerank.
+    \item Indexing: content hash $\rightarrow$ disk cache
+          (\code{vectors.npz} $+$ \code{meta.json}); rebuild only on change.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]{Deterministic unit tier}
+  \begin{semiverbatim}\scriptsize
+deterministic_unit(text):                 # kind == "unit" only
+  conv = converter_provider()             # may raise -> []
+  ud = conv.resolve_unit(text)  or  conv.infer_unit(text)
+  if ud.uri startswith "urn:qudt:ratio:": return []
+  return [ResolveResult(ud.uri, kind=unit, score=1.0,
+          match_stage=exact, related=ud.quantity_kinds)]
+  \end{semiverbatim}
+  \begin{itemize}
+    \item Authoritative: a hit is exact (score 1.0) and carries its
+          quantity kinds as \code{related}, so context still applies.
+    \item Synthetic composed ratios are not emitted here; such inputs
+          defer to the embedding matchers.
+    \item No converter (no QUDT graph) $\Rightarrow$ empty result; the
+          pipeline degrades to the matchers \req{R6}.
   \end{itemize}
 \end{frame}
 
 \begin{frame}[fragile]{Merge \& context rerank}
   \begin{semiverbatim}\scriptsize
-_combine(primary, secondary, limit):
-  sort by (match_stage=="exact", score) desc, primary first
-  dedupe by uri, cap at limit          # graph/converter win ties
+combine(primary, secondary, limit):
+  stable-sort by (match_stage==exact, score) desc, primary first
+  dedupe by uri; truncate to limit
 
-_rerank_by_context(results, context):
-  connected = [r for r if set(context) & set(r.related)]
-  rest      = [r for r if not ...]
-  return connected + rest              # stable within groups
+rerank_by_context(R, context):
+  connected = [r in R if set(context) & set(r.related)]
+  rest      = [r in R if not]
+  return connected + rest                 # stable within groups
   \end{semiverbatim}
-  \begin{block}{Safety property}
-    A wrong / missing context URI fails to intersect any
-    \code{r.related} $\Rightarrow$ ordering unchanged. Context can
-    \emph{only help}, never inject a wrong answer.
+  \begin{block}{Invariant \req{R4}}
+    \code{rerank\_by\_context} is a stable partition of its input. It
+    cannot add, remove, or invent a result; a context disjoint from every
+    \code{related} set is the identity.
   \end{block}
 \end{frame}
 
-\begin{frame}{Context disambiguation in action}
-  Same surface \code{"kg"}, two QUDT units:
+\begin{frame}{Context disambiguation (example)}
+  Surface \code{"kg"} maps to two units:
   \begin{itemize}
-    \item \code{unit:KiloGM} -- \code{related} $\ni$ quantitykind/Mass
-    \item \code{unit:KiloGAUSS} -- \code{related} $\ni$
+    \item \code{unit:KiloGM}, \code{related} $\ni$ quantitykind/Mass
+    \item \code{unit:KiloGAUSS}, \code{related} $\ni$
           quantitykind/MagneticFluxDensity
   \end{itemize}
-  \code{resolve\_text("kg", kind=unit, context=[.../Mass])}:
-  \begin{enumerate}
-    \item converter tier $\Rightarrow$ KiloGM exact (related = Mass\dots)
-    \item QUDT matcher exact $\Rightarrow$ also KiloGAUSS
-    \item rerank: KiloGM connected to \code{Mass} $\Rightarrow$ promoted
-  \end{enumerate}
-  Swap context to \code{.../MagneticFluxDensity} $\Rightarrow$ KiloGAUSS
-  wins. No context $\Rightarrow$ \code{\_combine} order (KiloGM, stable).
+  \code{resolve\_text("kg", kind=unit, context=[.../Mass])}: both surface
+  as exact candidates; the rerank promotes \code{KiloGM} because its
+  \code{related} set intersects the context. Context
+  \code{[.../MagneticFluxDensity]} selects \code{KiloGAUSS}. Empty context
+  yields the deterministic \code{combine} order.
 \end{frame}
 
 % ==================================================================
-\section{Conversion \& API}
+\section{Conversion specification}
 
-\begin{frame}[fragile]{\code{QUDTUnitConverter}: resolution ladder}
-  \code{resolve\_unit(identifier)} -- first match wins:
+\begin{frame}[fragile]{Unit resolution ladder}
+  \code{QUDTUnitConverter.resolve\_unit} -- first match wins:
   \begin{semiverbatim}\scriptsize
-1 direct URIRef / http(s) URI
-2 UNIT[identifier] / UNIT[UPPER] / UNIT[norm: space,hyphen->_]
-3 COMMON_ALIASES  (gal->GAL_US, degc->DEG_C, ...)
-4 literal == over [rdfs:label, skos:prefLabel,
-    qudt:symbol, qudt:ucumCode, qudt:uneceCommonCode]
-    case-sensitive, then casefold
-else raise UnitNotFound
+1  direct URIRef / http(s) URI
+2  UNIT[id] / UNIT[UPPER] / UNIT[norm(space,hyphen -> _)]
+3  COMMON_ALIASES   (e.g. gal -> GAL_US, degc -> DEG_C)
+4  literal equality over
+     {rdfs:label, skos:prefLabel, qudt:symbol,
+      qudt:ucumCode, qudt:uneceCommonCode}
+     case-sensitive, then case-folded
+   else raise UnitNotFound
   \end{semiverbatim}
-  \code{infer\_unit} adds: URI fragment/last-segment; ratio split
-  (\code{" per "}, \code{"/"}) preferring a real \code{X-PER-Y} unit, else
-  a synthetic \code{urn:qudt:ratio:} \code{\_compose\_ratio}; label
-  substring search.
+  \code{infer\_unit} additionally: URI fragment / last segment; ratio
+  decomposition (\code{" per "}, \code{"/"}) preferring an existing
+  \code{X-PER-Y} unit, else a synthetic \code{urn:qudt:ratio:};
+  label substring search.
 \end{frame}
 
-\begin{frame}[fragile]{Conversion math}
-  \code{UnitDefinition.from\_graph}: \code{conversionMultiplier},
-  \code{conversionOffset}, quantity kind(s), dimension vector
-  (\code{FIXED\_MULTIPLIERS} / \code{\_refine\_ratio\_multiplier} patch
-  edge cases).
-  \begin{block}{\code{convert(value, from, to)} -- Decimal, prec 28}
+\begin{frame}[fragile]{Conversion}
+  \code{UnitDefinition} carries \code{conversionMultiplier},
+  \code{conversionOffset}, quantity kind(s) and dimension vector.
+  \begin{block}{\code{convert(X, src, tgt)} -- \code{Decimal}, precision 28}
     \centering
-    $K = (X + \text{offset}_{src})\cdot \text{mult}_{src}$ \quad(SI anchor)\\[2pt]
+    $K = (X + \text{offset}_{src})\cdot \text{mult}_{src}$
+    \hspace{2em}
     $X' = K / \text{mult}_{tgt} - \text{offset}_{tgt}$
   \end{block}
-  \code{\_check\_compatible}: dimension vector equality first, then
-  quantity-kind overlap (raises \code{IncompatibleUnits} otherwise).
-\end{frame}
-
-\begin{frame}[fragile]{API surface}
-  \small
-  \begin{tabular}{@{}p{0.34\textwidth}p{0.58\textwidth}@{}}
-    \hline
-    \textbf{Endpoint $\rightarrow$ handler} & \textbf{Returns} \\ \hline
-    \code{GET /resolve\_text}\newline
-      \footnotesize\code{Manager.resolve\_text} &
-      ranked \code{matches}: uri, kind, label, score, match\_stage,
-      related (the pipeline; \code{asdict} of \code{ResolveResult}) \\[5pt]
-    \code{POST /resolve\_unit}\newline
-      \footnotesize\code{Manager.resolve\_unit\_info} &
-      uri, label, symbol, quantity\_kind, multiplier, offset
-      (converter direct) \\[5pt]
-    \code{POST /conversion\_factors}\newline
-      \footnotesize\code{Manager.get\_conversion\_factors} &
-      src/tgt multipliers \& offsets $+$ \code{compatible} -- caller
-      applies the arithmetic \\[5pt]
-    \code{GET /embedding\_status} & per-index build state (graph, qudt) \\
-    \hline
-  \end{tabular}
-  \vspace{4pt}\\
-  \footnotesize
-  Only \code{resolve\_text} goes through \code{ConceptResolver};
-  conversion endpoints call \code{QUDTUnitConverter} directly.
+  Compatibility (\code{\_check\_compatible}): dimension-vector equality
+  first, then quantity-kind overlap; otherwise
+  \code{IncompatibleUnits} is raised. \code{convert} resolves both
+  operands via the resolution ladder before applying the formula.
 \end{frame}
 
 % ==================================================================
-\section{End to end}
+\section{Interface contract}
 
-\begin{frame}{A unit string's journey}
-  \centering
-  \begin{tikzpicture}[
-      node distance=6mm and 9mm,
-      box/.style={draw, rounded corners, align=center, font=\scriptsize,
-                  minimum height=8mm, minimum width=20mm},
-      >={Stealth[]}]
-    \node[box] (in) {\texttt{"mg/L"}\\(+ context)};
-    \node[box, right=of in] (api) {\texttt{/resolve\_text}};
-    \node[box, right=of api] (res) {Concept\\Resolver};
-    \node[box, above right=of res] (gx) {graph\\matcher};
-    \node[box, right=of res] (cv) {QUDT\\converter};
-    \node[box, below right=of res] (sem) {QUDT\\matcher};
-    \node[box, right=44mm of res] (out) {canonical\\\texttt{unit:} URI};
-    \draw[->] (in) -- (api);
-    \draw[->] (api) -- (res);
-    \draw[->] (res) -- (gx);
-    \draw[->] (res) -- (cv);
-    \draw[->] (res) -- (sem);
-    \draw[->] (gx) -- (out);
-    \draw[->] (cv) -- (out);
-    \draw[->] (sem) -- (out);
-  \end{tikzpicture}
-  \vspace{4pt}
-
-  \footnotesize
-  Tiers tried in order; \code{\_combine} merges (exact-first), then
-  \code{\_rerank\_by\_context}. The stored graph is never touched.
+\begin{frame}[fragile]{HTTP interface}
+  \scriptsize
+  \begin{tabular}{@{}p{0.30\textwidth}p{0.64\textwidth}@{}}
+    \hline
+    \textbf{Endpoint} & \textbf{Contract} \\ \hline
+    \code{GET /resolve\_text}\newline
+      params: \code{text, kind?, top\_k, min\_score, context?} &
+      \code{matches}: ordered \code{ResolveResult} (the pipeline). \\[4pt]
+    \code{POST /resolve\_unit}\newline
+      \code{\{identifier\}} &
+      \code{uri, label, symbol, quantity\_kind, multiplier, offset}.
+      Deterministic; \code{UnitNotFound} $\rightarrow$ 4xx. \\[4pt]
+    \code{POST /conversion\_factors}\newline
+      \code{\{from\_unit, to\_unit\}} &
+      per-side multiplier/offset $+$ \code{compatible}; caller applies
+      the formula. \\[4pt]
+    \code{GET /embedding\_status} &
+      per index: \code{state, concepts, surfaces, last\_built,
+      duration\_s}. \\ \hline
+  \end{tabular}
+  \vspace{3pt}\\
+  \code{insert\_graph} refreshes the graph index synchronously before
+  responding; no readiness handshake is required of the caller.
 \end{frame}
 
-\begin{frame}{Takeaways}
+% ==================================================================
+\section{Invariants, failure modes, verification}
+
+\begin{frame}{Invariants \& failure modes}
+  \textbf{Invariants}
   \begin{itemize}
-    \item Ingest is faithful; normalization is a service, not a mutation.
-    \item One server-side \code{ConceptResolver} = data graph $+$
-          deterministic converter $+$ QUDT embeddings $+$ context.
-    \item Resolution and conversion are deliberately separate code paths
-          sharing one converter instance.
-    \item Exact-first everywhere; context can only help; everything
-          re-derivable from the graph $+$ QUDT vocab.
+    \item \req{R1} ingest does not rewrite semantics; \req{R4} context is
+          a stable partition; \req{R5} the index reflects an ingest by the
+          time \code{insert\_graph} returns.
+    \item Exact-stage hits outrank semantic ones; graph-defined concepts
+          outrank QUDT on ties.
+  \end{itemize}
+  \textbf{Failure modes \& degradation}
+  \begin{itemize}
+    \item No QUDT graph $\Rightarrow$ deterministic tier yields nothing;
+          pipeline falls back to matchers \req{R6}.
+    \item \code{UnitNotFound} / incompatible units $\Rightarrow$ explicit
+          errors at the conversion endpoints, never silent coercion.
+    \item Index \code{error} state is surfaced via
+          \code{/embedding\_status}; resolution serves the last good index.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Verification \& operability}
+  \textbf{Verification}
+  \begin{itemize}
+    \item \code{tests/unit/test\_concept\_resolver.py} -- pipeline policy,
+          no services required.
+    \item \code{tests/test\_resolve\_text.py} -- accuracy corpus, context
+          cases, latency profile.
+    \item \code{tests/test\_resolver\_microbench.py},
+          \code{scripts/benchmark/resolver\_latency.py} -- per-tier
+          performance bounds.
+  \end{itemize}
+  \textbf{Operability}
+  \begin{itemize}
+    \item \code{scripts/inspect\_resolver.py} -- one-shot / batch / REPL
+          inspection against a live server; query items and field records
+          (two-pass sibling context).
+    \item \code{/embedding\_status} reports per-index build state for
+          monitoring.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Summary}
+  \begin{itemize}
+    \item Ingest is faithful; normalization is a resolution-time service.
+    \item A single resolution pipeline composes data-graph matching, a
+          deterministic QUDT tier, vocabulary matching, and context rerank.
+    \item Conversion is a separate, deterministic engine reached only
+          through its own endpoints.
+    \item The index is refreshed synchronously on ingest (incremental
+          where possible); degradation and ranking are specified.
   \end{itemize}
 \end{frame}
 
