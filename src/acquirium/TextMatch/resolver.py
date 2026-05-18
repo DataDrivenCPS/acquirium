@@ -61,6 +61,39 @@ class Source:
         return max(base, self.floor) if kind in self.floor_kinds else base
 
 
+def _qudt_related_compat(a: ResolveResult, b: ResolveResult) -> float:
+    """1.0 if the two candidates are linked by a QUDT relation, else 0.0.
+
+    Symmetric: a unit's ``related`` holds its quantity kinds and a quantity
+    kind's holds its applicable units, so either direction suffices.
+    """
+    return 1.0 if (b.uri in a.related or a.uri in b.related) else 0.0
+
+
+@dataclass(frozen=True)
+class Relation:
+    """A cross-field compatibility used by joint record resolution.
+
+    The joint decoder references only this registry — it carries no
+    kind-specific logic. New relations (a graph-path check, a co-occurrence
+    prior, …) are added by appending a ``Relation`` with its own ``compat``;
+    no algorithm change.
+    """
+
+    kind_a: str
+    kind_b: str
+    compat: Callable[[ResolveResult, ResolveResult], float]  # → [0, 1]
+    weight: float = 0.25
+
+
+# The only authoritative cross-field relation today: a unit and its quantity
+# kind, via QUDT. medium/substance have no type-level relation (instance-only
+# in S223/water); a co-occurrence-prior relation is a designed follow-up.
+RELATIONS: list[Relation] = [
+    Relation("unit", "quantity_kind", _qudt_related_compat),
+]
+
+
 class ConceptResolver:
     """Resolve natural-language text to ontology / QUDT URIs.
 
@@ -125,31 +158,105 @@ class ConceptResolver:
     ) -> list[ResolveResult]:
         """Resolve *text* to ranked concepts.
 
-        ``context`` is an optional list of already-chosen URIs (e.g. a
-        resolved quantity kind / medium). Candidates linked to a context URI
-        via their ``related`` set are moved ahead; empty or unmatched context
-        leaves ranking unchanged (so a failed sibling resolution is harmless).
+        ``context`` is an optional list of already-resolved sibling URIs.
+        It is a *best-effort rerank hint only* — see ``_rerank_by_context``
+        for the exact (and deliberately narrow) contract. When ``context``
+        is present the cascade early-exit is disabled so every applicable
+        source contributes, and ``fetch_k`` is widened so a context-relevant
+        candidate ranked below ``top_k`` survives into the rerank.
         """
         fetch_k = max(top_k, self._CONTEXT_FETCH_K) if context else top_k
+        ranked = self._ranked_candidates(
+            text, kind, fetch_k, min_score, early_exit=not context
+        )
+        if context:
+            ranked = self._rerank_by_context(ranked, context)
+        return ranked[:top_k]
 
+    def resolve_record(
+        self,
+        fields: dict[str, tuple[str, str | None]],
+        top_k: int = 5,
+        min_score: float = 0.5,
+    ) -> dict[str, list[ResolveResult]]:
+        """Resolve a record's fields *jointly*.
+
+        ``fields`` maps a logical name to ``(text, kind)``. Each field's
+        candidates are gathered independently (cascade early-exit off, so the
+        joint decode sees depth); then for every :data:`RELATIONS` entry
+        whose two kinds are both present, the pair is chosen by
+        ``argmax a.score + b.score + weight·compat(a, b)``. Fields in no
+        relation take their own top candidate. When nothing is compatible
+        this reduces exactly to independent resolution — no special case.
+
+        Returns, per field, the candidate list with the chosen winner first
+        (then the rest by base score), truncated to ``top_k``.
+        """
+        fetch_k = max(top_k, self._CONTEXT_FETCH_K)
+        cands = {
+            name: self._ranked_candidates(
+                text, kind, fetch_k, min_score, early_exit=False
+            )
+            for name, (text, kind) in fields.items()
+        }
+
+        # First field per kind (multiple fields of one kind: first wins;
+        # a field-sharing relation graph is a documented future seam).
+        by_kind: dict[str | None, str] = {}
+        for name, (_text, kind) in fields.items():
+            by_kind.setdefault(kind, name)
+
+        winners: dict[str, ResolveResult] = {}
+        for rel in RELATIONS:
+            na, nb = by_kind.get(rel.kind_a), by_kind.get(rel.kind_b)
+            if na is None or nb is None or na == nb:
+                continue
+            if na in winners or nb in winners or not cands[na] or not cands[nb]:
+                continue
+            best, best_pair = None, None
+            for a in cands[na]:
+                for b in cands[nb]:
+                    s = a.score + b.score + rel.weight * rel.compat(a, b)
+                    if best is None or s > best:
+                        best, best_pair = s, (a, b)
+            winners[na], winners[nb] = best_pair  # type: ignore[misc]
+
+        out: dict[str, list[ResolveResult]] = {}
+        for name, ranked in cands.items():
+            win = winners.get(name) or (ranked[0] if ranked else None)
+            if win is None:
+                out[name] = []
+                continue
+            out[name] = [win, *[c for c in ranked if c.uri != win.uri]][:top_k]
+        return out
+
+    # -------------------- candidate generation --------------------
+    def _ranked_candidates(
+        self,
+        text: str,
+        kind: str | None,
+        limit: int,
+        min_score: float,
+        *,
+        early_exit: bool,
+    ) -> list[ResolveResult]:
+        """Gather candidates from applicable sources, ranked and capped.
+
+        With ``early_exit`` an exact hit from a higher-authority source
+        stops the cascade (a later source cannot outrank it). Callers that
+        rerank afterwards (context, joint record decode) pass
+        ``early_exit=False`` so the full candidate set is available.
+        """
         candidates: list[ResolveResult] = []
         for src in self._sources:
             if kind not in src.kinds:
                 continue
             candidates += src.produce(
-                text, kind, fetch_k, src.min_score(kind, min_score)
+                text, kind, limit, src.min_score(kind, min_score)
             )
-            # Cascade early-exit: an exact hit from this (higher-authority)
-            # source cannot be outranked by a later one, so further sources
-            # cannot change the result. Skipped under context, where the
-            # rerank needs the full candidate set.
-            if not context and any(c.match_stage == "exact" for c in candidates):
+            if early_exit and any(c.match_stage == "exact" for c in candidates):
                 break
-
-        ranked = self._rank(candidates, limit=fetch_k)
-        if context:
-            ranked = self._rerank_by_context(ranked, context)
-        return ranked[:top_k]
+        return self._rank(candidates, limit=limit)
 
     # -------------------- tiers --------------------
     def _deterministic_unit(self, text: str) -> list[ResolveResult]:
@@ -225,11 +332,43 @@ class ConceptResolver:
     def _rerank_by_context(
         results: list[ResolveResult], context: list[str]
     ) -> list[ResolveResult]:
-        """Move results linked to a context URI ahead of the rest.
+        """Stable-partition: candidates whose ``related`` set intersects
+        ``context`` move ahead of the rest; order is preserved within each
+        group. It only reorders the already-ranked, already-fetched list —
+        it never adds, drops, or rescores a candidate.
 
-        Stable within each group, so existing order is kept when nothing is
-        connected. A failed/wrong context URI simply fails to intersect any
-        candidate's ``related`` set → ordering unchanged.
+        How ``context`` is produced and what it can actually do:
+
+        - Origin (client side): the two-pass ``flex_query_rdf_inputs``
+          decorator and ``Acquirium.register_stream`` resolve the *non-unit*
+          siblings first and pass their resolved URIs here when resolving a
+          unit. It travels client → ``GET /resolve_text`` (repeated query
+          params) → ``Manager.resolve_text`` → ``resolve``.
+
+        - Match is exact-URI set intersection against
+          ``ResolveResult.related``. ``related`` is populated *only* for
+          QUDT-backed candidates: a unit's ``qudt:hasQuantityKind`` and a
+          quantity kind's ``qudt:applicableUnit`` (see ``QUDTStore``; the
+          converter source carries ``unit_def.quantity_kinds``).
+          Graph-matcher concepts always have ``related == ()``
+          (``_aggregate_uri_label_rows``), so context can never move a
+          class/predicate or a graph-defined unit/QK.
+
+        Consequences (the narrowness is deliberate, but real):
+
+        - The only effective use is disambiguating an ambiguous *unit* by a
+          *quantity-kind* context URI (e.g. "kg" + Mass → KiloGM, not
+          KiloGAUSS), or a quantity kind by a unit. Medium/substance URIs
+          that ``register_stream`` adds to the unit context are inert —
+          nothing links a unit to a medium/substance via ``related``.
+        - URIs must be byte-identical; a sibling resolved under a different
+          scheme (nawi vs s223 vs qudt) will not intersect.
+        - "wrong context" and "no context" are indistinguishable: both yield
+          the identity ordering. This is safe (context can never inject a
+          wrong answer) but silent — a mis-resolved sibling simply provides
+          no signal.
+        - Reorders only within the fetched ``fetch_k`` window; a relevant
+          concept ranked past it cannot be promoted.
         """
         ctx = set(context)
         connected: list[ResolveResult] = []

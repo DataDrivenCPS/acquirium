@@ -136,6 +136,18 @@ class TimeseriesInfoRequest(BaseModel):
     uris: list[str]
 
 
+class RecordFieldSpec(BaseModel):
+    name: str
+    text: str
+    kind: Optional[str] = None
+
+
+class ResolveRecordRequest(BaseModel):
+    fields: list[RecordFieldSpec]
+    top_k: int = 5
+    min_score: float = 0.5
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logging.basicConfig(
@@ -470,6 +482,15 @@ def resolve_text(
 ) -> dict[str, Any]:
     matches = app.state.manager.resolve_text(
         text=text, kind=kind, top_k=top_k, min_score=min_score, context=context
+    )
+    return {"matches": matches}
+
+
+@app.post("/resolve_record")
+def resolve_record(req: ResolveRecordRequest) -> dict[str, Any]:
+    fields = {f.name: (f.text, f.kind) for f in req.fields}
+    matches = app.state.manager.resolve_record(
+        fields, top_k=req.top_k, min_score=req.min_score
     )
     return {"matches": matches}
 

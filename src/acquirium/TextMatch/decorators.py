@@ -17,25 +17,12 @@ def _looks_like_uri(value: Any) -> bool:
     return isinstance(value, str) and value.startswith(("http://", "https://", "urn:"))
 
 
-def _coerce(self: Any, v: Any, kind: str, context: list[str] | None = None) -> Any:
+def _coerce(self: Any, v: Any, kind: str) -> Any:
     if isinstance(v, URIRef):
         return v
     if _looks_like_uri(v):
         return URIRef(v)
-    return self._resolve_rdf(v, kind, context)
-
-
-def _as_context_uris(value: Any) -> list[str]:
-    """Collect already-resolved URI(s) from a coerced argument value.
-
-    ``_coerce`` yields a ``URIRef`` (passthrough) or a URI string (resolved by
-    ``_resolve_rdf``); both are usable as sibling disambiguation context.
-    """
-    out: list[str] = []
-    for v in value if isinstance(value, list) else [value]:
-        if isinstance(v, URIRef) or _looks_like_uri(v):
-            out.append(str(v))
-    return out
+    return self._resolve_rdf(v, kind)
 
 
 def flex_query_rdf_inputs(
@@ -55,35 +42,35 @@ def flex_query_rdf_inputs(
                 return fn(self, *args, **kwargs)
 
             arguments = bound.arguments
-
-            def _coerce_spec(spec: FlexSpec, ctx: list[str] | None) -> None:
-                v = arguments[spec.arg]
-                arguments[spec.arg] = (
-                    [_coerce(self, x, spec.kind, ctx) for x in v]
-                    if isinstance(v, list)
-                    else _coerce(self, v, spec.kind, ctx)
-                )
-
             present = [
                 s for s in specs if s.arg in arguments and arguments[s.arg] is not None
             ]
 
-            # Two passes so a unit can be disambiguated by its siblings, the
-            # way register_stream does it: resolve non-unit specs first and
-            # feed their resolved URIs as context when resolving units (e.g.
-            # quantity kind "mass" steers "kg" to KiloGM, not KiloGAUSS). A
-            # sibling that fails resolution raises as before (unchanged
-            # contract); one that resolves simply joins the context.
-            unit_specs = [s for s in present if s.kind == "unit"]
-            context: list[str] = []
-            for spec in present:
-                if spec.kind == "unit":
-                    continue
-                _coerce_spec(spec, None)
-                context.extend(_as_context_uris(arguments[spec.arg]))
+            # Scalar text specs are resolved jointly so related siblings
+            # disambiguate each other (e.g. a quantity kind steers an
+            # ambiguous unit). URI/URIRef values and list values bypass the
+            # joint call and coerce element-wise.
+            record = {
+                s.arg: (arguments[s.arg], s.kind)
+                for s in present
+                if not isinstance(arguments[s.arg], (list, URIRef))
+                and not _looks_like_uri(arguments[s.arg])
+            }
+            resolved = self._resolve_record(record) if record else {}
 
-            for spec in unit_specs:
-                _coerce_spec(spec, context or None)
+            for s in present:
+                v = arguments[s.arg]
+                if isinstance(v, list):
+                    arguments[s.arg] = [_coerce(self, x, s.kind) for x in v]
+                elif isinstance(v, URIRef):
+                    arguments[s.arg] = v
+                elif _looks_like_uri(v):
+                    arguments[s.arg] = URIRef(v)
+                else:
+                    uri = resolved.get(s.arg)
+                    if uri is None:
+                        raise ValueError(f"Could not resolve {v!r} as {s.kind}")
+                    arguments[s.arg] = uri
 
             return fn(*bound.args, **bound.kwargs)
         return wrapper  # type: ignore[return-value]

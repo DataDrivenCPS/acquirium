@@ -265,6 +265,24 @@ class Acquirium:
             return None
         return URIRef(uri) if uri else None
 
+    def resolve_record(
+        self,
+        fields: dict[str, tuple[Any, str | None]],
+        min_score: float = 0.5,
+    ) -> dict[str, str | None]:
+        """Jointly resolve a record's fields to one URI each (or ``None``).
+
+        ``fields`` maps a name to ``(value, kind)``; values that already
+        look like URIs pass through. Related fields reinforce each other
+        server-side (e.g. a quantity kind disambiguates an ambiguous unit
+        and vice versa), so this is preferred over resolving fields one by
+        one when several are known together.
+        """
+        try:
+            return self.client.resolve_record_uris(fields, min_score=min_score)
+        except Exception:
+            return {name: None for name in fields}
+
     def graph_version(self) -> int:
         """Return the server's current graph mutation counter."""
         return self.client.graph_version()
@@ -317,24 +335,6 @@ class Acquirium:
         """
         g = RDFGraph()
 
-        def _coerce(
-            value: str | URIRef | None,
-            qudt_kind: str,
-            context: list[str] | None = None,
-        ) -> str | URIRef | None:
-            if value is None or isinstance(value, URIRef):
-                return value
-            if "://" in value or value.startswith("urn:"):
-                return URIRef(value)
-            resolved = self._resolve_qudt_uri(value, qudt_kind, context=context)
-            if resolved is None:
-                warnings.warn(
-                    f"Could not resolve {qudt_kind!r} value {value!r} to a QUDT URI; "
-                    "storing as a plain literal.",
-                    stacklevel=3,
-                )
-            return resolved or value
-
         ref_uri = None
         if ref_name is not None and source_id is not None:
             ref_uri = compute_ref_uri(source_id, ref_name)
@@ -349,21 +349,47 @@ class Acquirium:
             g.add((subj, RDF.type, VIRTUAL_POINT))
             if label is not None:
                 g.add((subj, RDFS.label, Literal(label)))
-            # Resolve the unit's sibling concepts first; their URIs become the
-            # disambiguation context for the unit (e.g. quantity kind "mass"
-            # steers "kg" to KiloGM rather than KiloGAUSS).
-            qk_uri = _coerce(quantity_kind, "quantity_kind")
-            medium_uri = _coerce(medium, "class")
-            substance_uri = _coerce(substance, "class")
-            unit_context = [
-                str(u)
-                for u in (qk_uri, medium_uri, substance_uri)
-                if isinstance(u, URIRef)
-            ]
-            _add_triple(g, subj, HAS_UNIT,          _coerce(unit, "unit", unit_context))
-            _add_triple(g, subj, HAS_QUANTITY_KIND, qk_uri)
-            _add_triple(g, subj, HAS_MEDIUM,        medium_uri)
-            _add_triple(g, subj, OF_SUBSTANCE,      substance_uri)
+            # Resolve the semantic fields jointly so related siblings
+            # disambiguate each other (e.g. a quantity kind steers an
+            # ambiguous unit to KiloGM rather than KiloGAUSS). URI/URIRef
+            # values pass through; plain text is resolved together.
+            _specs = (
+                ("unit", unit, "unit"),
+                ("quantity_kind", quantity_kind, "quantity_kind"),
+                ("medium", medium, "class"),
+                ("substance", substance, "class"),
+            )
+            _record: dict[str, tuple[Any, str | None]] = {
+                name: (value, kind)
+                for name, value, kind in _specs
+                if value is not None
+                and not isinstance(value, URIRef)
+                and not (isinstance(value, str)
+                         and value.startswith(("http://", "https://", "urn:")))
+            }
+            _resolved = self.resolve_record(_record, min_score=0.6) if _record else {}
+
+            def _coerce(name: str, value: Any) -> str | URIRef | None:
+                if value is None or isinstance(value, URIRef):
+                    return value
+                if isinstance(value, str) and value.startswith(
+                    ("http://", "https://", "urn:")
+                ):
+                    return URIRef(value)
+                uri = _resolved.get(name)
+                if uri is None:
+                    warnings.warn(
+                        f"Could not resolve {name!r} value {value!r} to a "
+                        "QUDT URI; storing as a plain literal.",
+                        stacklevel=3,
+                    )
+                    return value
+                return URIRef(uri)
+
+            _add_triple(g, subj, HAS_UNIT,          _coerce("unit", unit))
+            _add_triple(g, subj, HAS_QUANTITY_KIND, _coerce("quantity_kind", quantity_kind))
+            _add_triple(g, subj, HAS_MEDIUM,        _coerce("medium", medium))
+            _add_triple(g, subj, OF_SUBSTANCE,      _coerce("substance", substance))
             _add_triple(g, subj, DATA_SOURCE,       data_source)
             if ref_uri is not None:
                 g.add((subj, HAS_EXTERNAL_REFERENCE, ref_uri))

@@ -161,6 +161,12 @@ class Query:
         if uri is None:
             raise ValueError(f"Could not resolve '{text}' as {kind}")
         return uri
+
+    def _resolve_record(
+        self, fields: dict[str, tuple[Any, str | None]]
+    ) -> dict[str, str | None]:
+        """Jointly resolve sibling fields so they disambiguate each other."""
+        return self.client.resolve_record_uris(fields, min_score=0.4)
     
     def _query_resolver_adapter(self, text: str, kind: str) -> str:
         return self._resolve_rdf(text, kind)
