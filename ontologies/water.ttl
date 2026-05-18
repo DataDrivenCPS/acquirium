@@ -5,9 +5,10 @@
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix sh: <http://www.w3.org/ns/shacl#> .
 @prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix watr: <urn:nawi-water-ontology#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<urn:nawi-water-ontology#Class> a rdfs:Class,
+watr:Class a rdfs:Class,
         sh:NodeShape ;
     rdfs:label "Class"^^xsd:string ;
     rdfs:comment "This is a modeling construct. All classes defined in the watr ontology are instances of `watr:Class`."^^xsd:string ;
@@ -17,15 +18,15 @@
             sh:path rdfs:label ;
             sh:severity sh:Warning ] .
 
-<urn:nawi-water-ontology#UnitProcess> a rdfs:Class ;
+watr:UnitProcess a rdfs:Class ;
     rdfs:label "Unit Process"^^xsd:string ;
     rdfs:comment "A unit process is a specific type of water treatment process that can be applied to water."^^xsd:string ;
     rdfs:subClassOf ns1:Equipment,
-        <urn:nawi-water-ontology#Class> ;
-    sh:property [ sh:class <urn:nawi-water-ontology#Process> ;
+        watr:Class ;
+    sh:property [ sh:class watr:Process ;
             sh:message "A `Unit Process` must be associated with at least one water treatment process using the relation `watr:hasProcess`."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
 <urn:nawi-water-ontology> a owl:Ontology ;
     owl:imports <http://data.ashrae.org/standard223/1.0/model/all>,
@@ -33,784 +34,815 @@
         <http://qudt.org/3.1.1/vocab/unit>,
         sh: .
 
-<urn:nawi-water-ontology#AerationBasin> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:AerationBasin a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Aeration Basin"^^xsd:string ;
     rdfs:comment "A tank where water is aerated to remove gases and volatile organic compounds"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Basin>,
-        <urn:nawi-water-ontology#Reactor>,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Aeration> ;
-            sh:maxCount 1 ;
+    rdfs:subClassOf watr:Reactor ;
+    sh:property [ sh:in ( watr:Role-Aerobic watr:Role-Anoxic ) ;
+            sh:message "Instances of AerationBasin must have the aerobic role."^^xsd:string ;
+            sh:minCount 1 ;
+            sh:path ns1:hasRole ],
+        [ sh:hasValue watr:Process-Aeration ;
             sh:message "Instances of AerationBasin must have the Aeration process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#AerobicDigester> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:AerobicDigester a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Aerobic Digester"^^xsd:string ;
     rdfs:comment "A container to promote decomposition of organic waste in aerobic conditions"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Digester>,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-AerobicDigestion> ;
-            sh:maxCount 1 ;
+    rdfs:subClassOf watr:Digester ;
+    sh:property [ sh:hasValue watr:Process-AerobicDigestion ;
             sh:message "Instances of AerobicDigester must have the AerobicDigestion process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#AnaerobicDigester> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:AirReleaseValve a ns1:Class,
+        sh:NodeShape,
+        watr:Class ;
+    rdfs:label "Air Release Valve"^^xsd:string ;
+    rdfs:comment "Valve for vent trapped air pockets"^^xsd:string ;
+    rdfs:subClassOf ns1:Valve .
+
+watr:AnaerobicDigester a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Anaerobic Digester"^^xsd:string ;
     rdfs:comment "A container to promote decomposition of organic waste in anaerobic conditions"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Digester>,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-AnaerobicDigestion> ;
-            sh:maxCount 1 ;
+    rdfs:subClassOf watr:Digester ;
+    sh:property [ sh:hasValue watr:Process-AnaerobicDigestion ;
             sh:message "Instances of AnaerobicDigester must have the AnaerobicDigestion process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#Anode> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:Anode a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Anode"^^xsd:string ;
     rdfs:comment "An electrode where oxidation occurs, often a sacrificial component in electrocoagulation."^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Electrode> .
+    rdfs:subClassOf watr:Electrode .
 
-<urn:nawi-water-ontology#Battery> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:BallValve a ns1:Class,
+        sh:NodeShape,
+        watr:Class ;
+    rdfs:label "Ball Valve"^^xsd:string ;
+    rdfs:subClassOf ns1:Valve .
+
+watr:Battery a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Battery"^^xsd:string ;
     rdfs:comment "A device that stores energy for later use"^^xsd:string ;
     rdfs:subClassOf ns1:Battery .
 
-<urn:nawi-water-ontology#BiologicalAeratedFilter> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:BiologicalAeratedFilter a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Biological Aerated Filter (BAF)"^^xsd:string ;
     rdfs:comment "A filter that uses biological processes to remove contaminants."^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Filter>,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-BiologicallyActiveFiltration> ;
-            sh:maxCount 1 ;
+    rdfs:subClassOf watr:Filter,
+        watr:Reactor ;
+    sh:property [ sh:hasValue watr:Process-BiologicallyActiveFiltration ;
             sh:message "Instances of BiologicalAeratedFilter must have the BiologicallyActiveFiltration process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#Boiler> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:Boiler a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Boiler"^^xsd:string ;
     rdfs:comment "A device for heating water"^^xsd:string ;
-    rdfs:subClassOf ns1:Boiler ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Incineration> ;
-            sh:maxCount 1 ;
+    rdfs:subClassOf ns1:Boiler,
+        watr:UnitProcess ;
+    sh:property [ sh:hasValue watr:Process-Incineration ;
             sh:message "Instances of Boiler must have the Incineration process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#CartridgeFiltrationUnit> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:ButterflyValve a ns1:Class,
+        sh:NodeShape,
+        watr:Class ;
+    rdfs:label "Butterfly Valve"^^xsd:string ;
+    rdfs:subClassOf ns1:Valve .
+
+watr:CartridgeFiltrationUnit a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Cartridge Filtration Unit"^^xsd:string ;
     rdfs:comment "A filter system using a cartridge to remove contaminants from fluids"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Filter> .
+    rdfs:subClassOf watr:Filter .
 
-<urn:nawi-water-ontology#Cathode> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:Cathode a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Cathode"^^xsd:string ;
     rdfs:comment "An electrode where reduction occurs."^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Electrode> .
+    rdfs:subClassOf watr:Electrode .
 
-<urn:nawi-water-ontology#CentrifugalThickener> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:CentrifugalThickener a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Centrifugal Thickener"^^xsd:string ;
     rdfs:comment "A thickener that uses centrifugal force to separate solids from liquids"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Thickener>,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Centrifugation> ;
-            sh:maxCount 1 ;
+    rdfs:subClassOf watr:Thickener ;
+    sh:property [ sh:hasValue watr:Process-Centrifugation ;
             sh:message "Instances of CentrifugalThickener must have the Centrifugation process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#CheckValve> a ns1:Class,
+watr:CheckValve a ns1:Class,
         sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+        watr:Class ;
     rdfs:label "Check Valve"^^xsd:string ;
     rdfs:subClassOf ns1:Valve .
 
-<urn:nawi-water-ontology#ChlorinationBasin> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
-    rdfs:label "Chlorination Basin"^^xsd:string ;
-    rdfs:comment "A basin where chlorine is added for disinfection"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Basin>,
-        <urn:nawi-water-ontology#ChlorinationUnit> .
+watr:ChlorinationUnit a sh:NodeShape,
+        watr:Class ;
+    rdfs:label "Chlorination Unit"^^xsd:string ;
+    rdfs:comment "A unit that uses chlorine or chlorine compounds for disinfection."^^xsd:string ;
+    rdfs:subClassOf watr:DisinfectionUnit ;
+    sh:property [ sh:hasValue watr:Process-Chlorination ;
+            sh:message "Instances of ChlorinationUnit must have the Chlorination process."^^xsd:string ;
+            sh:minCount 1 ;
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#CoagulationBasin> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:CoagulationBasin a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Coagulation Basin"^^xsd:string ;
     rdfs:comment "A basin where coagulation occurs to destabilize particles in water"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Basin>,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Coagulation> ;
-            sh:maxCount 1 ;
+    rdfs:subClassOf watr:Reactor ;
+    sh:property [ sh:hasValue watr:Process-Coagulation ;
             sh:message "Instances of CoagulationBasin must have the Coagulation process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#Cogenerator> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:Cogenerator a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Cogenerator"^^xsd:string ;
     rdfs:comment "An equipment that produces both electricity and heat from the same energy source"^^xsd:string ;
-    rdfs:subClassOf ns1:Equipment ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Cogeneration> ;
-            sh:maxCount 1 ;
+    rdfs:subClassOf ns1:Equipment,
+        watr:UnitProcess ;
+    sh:property [ sh:hasValue watr:Process-Cogeneration ;
             sh:message "Instances of Cogenerator must have the Cogeneration process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#Compressor> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:Compressor a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Compressor"^^xsd:string ;
     rdfs:comment "An equipment that increases the pressure of a gas"^^xsd:string ;
     rdfs:subClassOf ns1:Compressor .
 
-<urn:nawi-water-ontology#Condenser> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:Condenser a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Condenser"^^xsd:string ;
     rdfs:comment "A device used to condense a gaseous substance back into a liquid"^^xsd:string ;
     rdfs:subClassOf ns1:HeatExchanger,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Condensation> ;
-            sh:maxCount 1 ;
+        watr:UnitProcess ;
+    sh:property [ sh:hasValue watr:Process-Condensation ;
             sh:message "Instances of Condenser must have the Condensation process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#Conditioner> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:Conditioner a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Conditioner"^^xsd:string ;
     rdfs:comment "An equipment used to prepare raw biogas from a digester by removing impurities"^^xsd:string ;
     rdfs:subClassOf ns1:Equipment .
 
-<urn:nawi-water-ontology#ConductivitySensor> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:ConductivitySensor a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Conductivity Sensor"^^xsd:string ;
     rdfs:comment "A sensor used to measure the electrical conductivity of a solution"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Sensor> .
+    rdfs:subClassOf ns1:Sensor .
 
-<urn:nawi-water-ontology#ContinuouslyStirredTankReactor> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:ContinuouslyStirredTankReactor a sh:NodeShape,
+        watr:Class ;
     rdfs:label "ContinuouslyStirredTankReactor"^^xsd:string ;
     rdfs:comment "A reactor in which contents are well mixed and reactants are added continuously"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Reactor> .
+    rdfs:subClassOf watr:Reactor .
 
-<urn:nawi-water-ontology#Controller> a ns1:Class,
+watr:Controller a ns1:Class,
         sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+        watr:Class ;
     rdfs:label "Controller"^^xsd:string ;
     rdfs:subClassOf ns1:Controller .
 
-<urn:nawi-water-ontology#Crystallizer> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:Crystallizer a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Crystallizer"^^xsd:string ;
     rdfs:comment "An equipment used to produce solid crystals from a solution"^^xsd:string ;
     rdfs:subClassOf ns1:Equipment,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Crystallization> ;
-            sh:maxCount 1 ;
+        watr:UnitProcess ;
+    sh:property [ sh:hasValue watr:Process-Crystallization ;
             sh:message "Instances of Crystallizer must have the Crystallization process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#DMERecoverySystem> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:DMERecoverySystem a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Dimethyl Ether (DME) Recovery System"^^xsd:string ;
     rdfs:comment "A system designed to recover a high percentage of Dimethyl Ether solvent in solvent-driven processes."^^xsd:string ;
     rdfs:subClassOf ns1:Equipment .
 
-<urn:nawi-water-ontology#DewateringUnit> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:DewateringUnit a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Dewatering Unit"^^xsd:string ;
     rdfs:comment "A unit used to remove water from solid material"^^xsd:string ;
     rdfs:subClassOf ns1:Equipment,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Dewatering> ;
-            sh:maxCount 1 ;
+        watr:UnitProcess ;
+    sh:property [ sh:hasValue watr:Process-Dewatering ;
             sh:message "Instances of DewateringUnit must have the Dewatering process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#DissolvedAirFlotationThickener> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:DissolvedAirFlotationThickener a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Dissolved Air Flotation Thickener"^^xsd:string ;
     rdfs:comment "A thickener that uses dissolved air to separate solids from liquids"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Thickener>,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Flotation> ;
-            sh:maxCount 1 ;
+    rdfs:subClassOf watr:Thickener ;
+    sh:property [ sh:hasValue watr:Process-Flotation ;
             sh:message "Instances of DissolvedAirFlotationThickener must have the Flotation process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#EfficiencySensor> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:EfficiencySensor a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Efficiency Sensor"^^xsd:string ;
     rdfs:comment "A sensor used to measure the efficiency of a system or equipment"^^xsd:string ;
     rdfs:subClassOf ns1:Sensor .
 
-<urn:nawi-water-ontology#ElectricallyConductingMembrane> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:ElectricallyConductingMembrane a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Electrically Conducting Membrane"^^xsd:string ;
     rdfs:comment "A membrane capable of conducting electricity, used for in-situ cleaning or electro-oxidation processes."^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Filter> .
+    rdfs:subClassOf watr:Filter .
 
-<urn:nawi-water-ontology#ElectroDialyticCrystallizer> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:ElectroDialyticCrystallizer a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Electro-Dialytic Crystallizer (EDC)"^^xsd:string ;
     rdfs:comment "A modular system designed for brine concentration and crystallization, integrating electrodialysis and crystallization."^^xsd:string ;
     rdfs:subClassOf ns1:Equipment,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Crystallization> ;
-            sh:maxCount 1 ;
-            sh:message "Instances of ElectroDialyticCrystallizer must have the Crystallization process."^^xsd:string ;
-            sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ],
-        [ sh:hasValue <urn:nawi-water-ontology#Process-Electrodialysis> ;
-            sh:maxCount 1 ;
+        watr:UnitProcess ;
+    sh:property [ sh:hasValue watr:Process-Electrodialysis ;
             sh:message "Instances of ElectroDialyticCrystallizer must have the Electrodialysis process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ],
+        [ sh:hasValue watr:Process-Crystallization ;
+            sh:message "Instances of ElectroDialyticCrystallizer must have the Crystallization process."^^xsd:string ;
+            sh:minCount 1 ;
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#ElectrocoagulationUnit> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:ElectrocoagulationUnit a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Electrocoagulation Unit"^^xsd:string ;
     rdfs:comment "A unit that uses electrocoagulation for contaminant removal."^^xsd:string ;
     rdfs:subClassOf ns1:Equipment,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Electrocoagulation> ;
-            sh:maxCount 1 ;
+        watr:Reactor ;
+    sh:property [ sh:hasValue watr:Process-Electrocoagulation ;
             sh:message "Instances of ElectrocoagulationUnit must have the Electrocoagulation process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#ElectrodialysisUnit> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:ElectrodialysisUnit a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Electrodialysis"^^xsd:string ;
     rdfs:comment "A unit that uses electricity to drive ion movement through a membrane"^^xsd:string ;
     rdfs:subClassOf ns1:Equipment,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Electrodialysis> ;
-            sh:maxCount 1 ;
+        watr:UnitProcess ;
+    sh:property [ sh:hasValue watr:Process-Electrodialysis ;
             sh:message "Instances of ElectrodialysisUnit must have the Electrodialysis process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#Electrolyzer> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:Electrolyzer a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Electrolyzer"^^xsd:string ;
     rdfs:comment "An equipment that uses electricity to split liquids into constituent elements"^^xsd:string ;
     rdfs:subClassOf ns1:Equipment,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Electrolysis> ;
-            sh:maxCount 1 ;
+        watr:UnitProcess ;
+    sh:property [ sh:hasValue watr:Process-Electrolysis ;
             sh:message "Instances of Electrolyzer must have the Electrolysis process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#ElectromagneticFieldDevice> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:ElectromagneticFieldDevice a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Electromagnetic Field (EMF) Device"^^xsd:string ;
     rdfs:comment "A device that generates an electromagnetic field, used as a pretreatment method for membrane scaling and fouling control."^^xsd:string ;
     rdfs:subClassOf ns1:Equipment .
 
-<urn:nawi-water-ontology#Evaporator> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:Evaporator a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Evaporator"^^xsd:string ;
     rdfs:comment "A device used to turn the liquid form of a substance into its gaseous form"^^xsd:string ;
     rdfs:subClassOf ns1:HeatExchanger,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Evaporation> ;
-            sh:maxCount 1 ;
+        watr:UnitProcess ;
+    sh:property [ sh:hasValue watr:Process-Evaporation ;
             sh:message "Instances of Evaporator must have the Evaporation process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#Flare> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:Flare a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Flare"^^xsd:string ;
     rdfs:comment "A device used to burn off unwanted gas"^^xsd:string ;
     rdfs:subClassOf ns1:Equipment .
 
-<urn:nawi-water-ontology#FlocculationBasin> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:FlocculationBasin a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Flocculation Basin"^^xsd:string ;
     rdfs:comment "A tank where flocculation occurs to aggregate particles in water"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Basin>,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Flocculation> ;
-            sh:maxCount 1 ;
+    rdfs:subClassOf watr:Reactor ;
+    sh:property [ sh:hasValue watr:Process-Flocculation ;
             sh:message "Instances of FlocculationBasin must have the Flocculation process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#FlowSensor> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:FlowSensor a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Flow Sensor"^^xsd:string ;
     rdfs:comment "A sensor used to measure the flow rate of liquids or gases"^^xsd:string ;
     rdfs:subClassOf ns1:FlowSensor .
 
-<urn:nawi-water-ontology#FrequencySensor> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:FrequencySensor a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Frequency Sensor"^^xsd:string ;
     rdfs:comment "A sensor used to measure the frequency of a signal or mechanical vibration"^^xsd:string ;
     rdfs:subClassOf ns1:Sensor .
 
-<urn:nawi-water-ontology#GranularActivatedCarbonAdsorber> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:GlobeValve a ns1:Class,
+        sh:NodeShape,
+        watr:Class ;
+    rdfs:label "Globe Valve"^^xsd:string ;
+    rdfs:subClassOf ns1:Valve .
+
+watr:GranularActivatedCarbonAdsorber a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Granular Activated Carbon (GAC) Adsorber"^^xsd:string ;
     rdfs:comment "A unit that uses granulated activated carbon to adsorb impurities from water."^^xsd:string ;
     rdfs:subClassOf ns1:Equipment,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-GranularActivatedCarbon> ;
-            sh:maxCount 1 ;
+        watr:UnitProcess ;
+    sh:property [ sh:hasValue watr:Process-GranularActivatedCarbon ;
             sh:message "Instances of GranulatedActivatedCarbonAdsorber must have the GranularActivatedCarbon process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#GravityBeltThickener> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:GravityBeltThickener a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Gravity Belt Thickener"^^xsd:string ;
     rdfs:comment "A thickener that combines gravity separation with a belt system"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#BeltThickener>,
-        <urn:nawi-water-ontology#GravityThickener> .
+    rdfs:subClassOf watr:BeltThickener,
+        watr:GravityThickener .
 
-<urn:nawi-water-ontology#Grinder> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:Grinder a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Grinder"^^xsd:string ;
     rdfs:comment "Machine that shreds solid waste into tiny particles"^^xsd:string ;
     rdfs:subClassOf ns1:Equipment,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Comminution> ;
-            sh:maxCount 1 ;
+        watr:UnitProcess ;
+    sh:property [ sh:hasValue watr:Process-Comminution ;
             sh:message "Instances of Grinder must have the Comminution process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#GritChamber> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:GritChamber a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Grit Chamber"^^xsd:string ;
     rdfs:comment "A chamber used to remove grit from wastewater"^^xsd:string ;
     rdfs:subClassOf ns1:Equipment,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Sedimentation> ;
-            sh:maxCount 1 ;
+        watr:UnitProcess ;
+    sh:property [ sh:hasValue watr:Process-Sedimentation ;
             sh:message "Instances of GritChamber must have the Sedimentation process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#ImhoffTank> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:ImhoffTank a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Imhoff Tank"^^xsd:string ;
     rdfs:comment "A sedimentation tank specifically designed for septic treatment"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#SedimentationTank> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Sedimentation> ;
-            sh:maxCount 1 ;
+    rdfs:subClassOf watr:SedimentationTank ;
+    sh:property [ sh:hasValue watr:Process-Sedimentation ;
             sh:message "Instances of ImhoffTank must have the Sedimentation process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#IonExchangeMembrane> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:IonExchangeMembrane a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Ion Exchange Membrane"^^xsd:string ;
     rdfs:comment "A membrane that selectively allows ions to pass through while blocking other substances"^^xsd:string ;
     rdfs:subClassOf ns1:Equipment,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-IonExchange> ;
-            sh:maxCount 1 ;
+        watr:UnitProcess ;
+    sh:property [ sh:hasValue watr:Process-IonExchange ;
             sh:message "Instances of IonExchangeMembrane must have the IonExchange process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#LevelSensor> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:LevelSensor a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Level Sensor"^^xsd:string ;
     rdfs:comment "A sensor used to detect the level of liquids or solids in a tank"^^xsd:string ;
     rdfs:subClassOf ns1:Sensor .
 
-<urn:nawi-water-ontology#ManualMeasurementPort> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:ManualMeasurementPort a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Manual Measurement Port"^^xsd:string ;
     rdfs:comment "A location where manual measurements are taken"^^xsd:string ;
     rdfs:subClassOf ns1:Sensor .
 
-<urn:nawi-water-ontology#MembraneBioreactor> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:MembraneAeratedBiofilmReaactor a sh:NodeShape,
+        watr:Class ;
+    rdfs:label "Membrane Aerated Biofilm Reactor"^^xsd:string ;
+    rdfs:comment "A reactor that grows biofilm on membranes supplied with air"^^xsd:string ;
+    rdfs:subClassOf watr:Reactor ;
+    sh:property [ sh:hasValue watr:Process-Aeration ;
+            sh:message "Instances of MembraneAeratedBiofilmReaactor must have the Aeration process."^^xsd:string ;
+            sh:minCount 1 ;
+            sh:path watr:hasProcess ] .
+
+watr:MembraneBioreactor a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Membrane Bioreactor"^^xsd:string ;
     rdfs:comment "A filter system that combines a membrane process like microfiltration with a biological reactor"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Filter>,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-MembraneBioreactor> ;
-            sh:maxCount 1 ;
-            sh:message "Instances of MembraneBioreactor must have the MembraneBioreactor process."^^xsd:string ;
+    rdfs:subClassOf watr:Filter,
+        watr:Reactor,
+        watr:SeparationTank ;
+    sh:property [ sh:hasValue watr:Process-Biofiltration ;
+            sh:message "Instances of MembraneBioreactor must have the Biofiltration process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ],
+        [ sh:in ( watr:Process-Microfiltration watr:Process-Ultrafiltration ) ;
+            sh:message "Instances of MembraneBioreactor must have either the Microfiltration or Ultrafiltration process."^^xsd:string ;
+            sh:minCount 1 ;
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#MicrofiltrationUnit> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:MicrofiltrationUnit a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Microfiltration Unit"^^xsd:string ;
     rdfs:comment "A filter system which removes contaminants from a liquid by passing it through a microporous membrane"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Filter> .
+    rdfs:subClassOf watr:Filter ;
+    sh:property [ sh:hasValue watr:Process-Microfiltration ;
+            sh:message "Instances of MicrofiltrationUnit must have the Microfiltration process."^^xsd:string ;
+            sh:minCount 1 ;
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#MolybdenumSulfideBasedMembrane> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:MixingBasin a sh:NodeShape,
+        watr:Class ;
+    rdfs:label "Mixing Basin"^^xsd:string ;
+    rdfs:comment "A tank where mixed liquor is stirred without aeration"^^xsd:string ;
+    rdfs:subClassOf watr:Reactor ;
+    sh:property [ sh:hasValue watr:Process-Mixing ;
+            sh:message "Instances of MixingBasin must have the Mixing process."^^xsd:string ;
+            sh:minCount 1 ;
+            sh:path watr:hasProcess ],
+        [ sh:in ( watr:Role-Anoxic watr:Role-Anaerobic ) ;
+            sh:message "Instances of MixingBasin must have the anoxic or anaerobic role."^^xsd:string ;
+            sh:minCount 1 ;
+            sh:path ns1:hasRole ] .
+
+watr:MolybdenumSulfideBasedMembrane a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Molybdenum Sulfide (MoS2)-based Membrane"^^xsd:string ;
     rdfs:comment "A specific material demonstrating effectiveness in removing heavy metals and oxyanions with high selectivity."^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Filter> .
+    rdfs:subClassOf watr:Filter .
 
-<urn:nawi-water-ontology#MultifunctionalMembrane> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:MultifunctionalMembrane a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Multifunctional Membrane"^^xsd:string ;
     rdfs:comment "A membrane integrating multiple processes (e.g., reduction, adsorption, filtration) for selective removal and recovery of contaminants."^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Filter> .
+    rdfs:subClassOf watr:Filter .
 
-<urn:nawi-water-ontology#NanofiltrationUnit> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:NanofiltrationUnit a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Nanofiltration Unit"^^xsd:string ;
     rdfs:comment "A filter system that uses a membrane to soften water and remove organic contaminants"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Filter> .
+    rdfs:subClassOf watr:Filter .
 
-<urn:nawi-water-ontology#OxidationDitch> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:OxidationDitch a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Oxidation Ditch"^^xsd:string ;
     rdfs:comment "Modified activated sludge process that uses a ring-shaped channel to biologically remove pollutants"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Reactor>,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-ActivatedSludge> ;
-            sh:maxCount 1 ;
+    rdfs:subClassOf watr:Reactor ;
+    sh:property [ sh:hasValue watr:Process-ActivatedSludge ;
             sh:message "Instances of OxidationDitch must have the ActivatedSludge process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#OxygenDemandSensor> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:OxygenDemandSensor a sh:NodeShape,
+        watr:Class ;
     rdfs:label "OxygenDemand Sensor"^^xsd:string ;
     rdfs:comment "A sensor used to measure Chemical Oxygen Demand (COD) and Biological Oxygen Demand (BOD)"^^xsd:string ;
     rdfs:subClassOf ns1:Sensor .
 
-<urn:nawi-water-ontology#OxygenMeter> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:OxygenMeter a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Oxygen Meter"^^xsd:string ;
     rdfs:comment "A sensor used to measure the concentration of oxygen"^^xsd:string ;
     rdfs:subClassOf ns1:ConcentrationSensor .
 
-<urn:nawi-water-ontology#OzonationUnit> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:OzonationUnit a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Ozonation Unit"^^xsd:string ;
     rdfs:comment "A unit that uses ozone for water treatment."^^xsd:string ;
     rdfs:subClassOf ns1:Equipment,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Ozonation> ;
-            sh:maxCount 1 ;
+        watr:Reactor ;
+    sh:property [ sh:hasValue watr:Process-Ozonation ;
             sh:message "Instances of OzonationUnit must have the Ozonation process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#PlugFlowReactor> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:PlugFlowReactor a sh:NodeShape,
+        watr:Class ;
     rdfs:label "PlugFlowReactor"^^xsd:string ;
     rdfs:comment "A type of reactor where the fluid flows in one direction through the tube"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Reactor> ;
-    sh:property [ rdfs:comment "A plug flow reactor has at least one outlet fluid connection point"^^xsd:string ;
-            sh:path ns1:hasConnectionPoint ;
-            sh:qualifiedMinCount 1 ;
-            sh:qualifiedValueShape [ sh:class ns1:OutletConnectionPoint ;
-                    sh:property [ sh:hasValue ns1:Mix-Fluid ;
-                            sh:path ns1:hasMedium ] ] ],
-        [ rdfs:comment "A plug flow reactor has at least one inlet fluid connection point"^^xsd:string ;
+    rdfs:subClassOf watr:Reactor ;
+    sh:property [ rdfs:comment "A plug flow reactor has at least one inlet fluid connection point"^^xsd:string ;
             sh:path ns1:hasConnectionPoint ;
             sh:qualifiedMinCount 1 ;
             sh:qualifiedValueShape [ sh:class ns1:InletConnectionPoint ;
-                    sh:property [ sh:hasValue ns1:Mix-Fluid ;
+                    sh:property [ sh:class ns1:Mix-Fluid ;
+                            sh:path ns1:hasMedium ] ] ],
+        [ rdfs:comment "A plug flow reactor has at least one outlet fluid connection point"^^xsd:string ;
+            sh:path ns1:hasConnectionPoint ;
+            sh:qualifiedMinCount 1 ;
+            sh:qualifiedValueShape [ sh:class ns1:OutletConnectionPoint ;
+                    sh:property [ sh:class ns1:Mix-Fluid ;
                             sh:path ns1:hasMedium ] ] ] .
 
-<urn:nawi-water-ontology#Pond> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:PlugValve a ns1:Class,
+        sh:NodeShape,
+        watr:Class ;
+    rdfs:label "Plug Valve"^^xsd:string ;
+    rdfs:subClassOf ns1:Valve .
+
+watr:Pond a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Pond"^^xsd:string ;
-    rdfs:comment "A body of still water smaller than a lake, used for treatment or storage"^^xsd:string ;
+    rdfs:comment "A body of still water smaller than a lake, used for treatment or storage."^^xsd:string ;
     rdfs:subClassOf ns1:Equipment .
 
-<urn:nawi-water-ontology#PressureExchanger> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:PressureExchanger a sh:NodeShape,
+        watr:Class ;
     rdfs:label "PressureExchanger"^^xsd:string ;
     rdfs:comment "A device used to transfer pressure energy from one fluid to another"^^xsd:string ;
     rdfs:subClassOf ns1:Equipment .
 
-<urn:nawi-water-ontology#PressureSensor> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:PressureSensor a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Pressure Sensor"^^xsd:string ;
     rdfs:comment "A sensor used to measure pressure"^^xsd:string ;
     rdfs:subClassOf ns1:PressureSensor .
 
-<urn:nawi-water-ontology#ProcessType> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:ProcessType a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Water Process"^^xsd:string ;
     skos:definition "A process applied to water treatment."^^xsd:string ;
     sh:property [ sh:datatype xsd:string ;
-            sh:description "A human-readable definition of the process type."^^xsd:string ;
-            sh:maxCount 1 ;
-            sh:minCount 1 ;
-            sh:path skos:definition ],
-        [ sh:datatype xsd:string ;
             sh:description "A human-readable label for the process type."^^xsd:string ;
             sh:maxCount 1 ;
             sh:minCount 1 ;
-            sh:path rdfs:label ] .
+            sh:path rdfs:label ],
+        [ sh:datatype xsd:string ;
+            sh:description "A human-readable definition of the process type."^^xsd:string ;
+            sh:maxCount 1 ;
+            sh:minCount 1 ;
+            sh:path skos:definition ] .
 
-<urn:nawi-water-ontology#Pump> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:Pump a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Pump"^^xsd:string ;
     rdfs:comment "A device used to move fluids by mechanical action"^^xsd:string ;
     rdfs:subClassOf ns1:Pump .
 
-<urn:nawi-water-ontology#RapidSandFilter> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:RapidSandFilter a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Rapid Sand Filter"^^xsd:string ;
     rdfs:comment "A type of media filter that uses sand as the filter medium and operates at high filtration rates."^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#MediaFiltration> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-RapidSandFiltration> ;
-            sh:maxCount 1 ;
+    rdfs:subClassOf watr:MediaFiltration ;
+    sh:property [ sh:hasValue watr:Process-RapidSandFiltration ;
             sh:message "Instances of RapidSandFilter must have the RapidSandFiltration process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#Reservoir> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:Reservoir a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Reservoir"^^xsd:string ;
     rdfs:comment "A large natural or artificial body of water used for water supply"^^xsd:string ;
     rdfs:subClassOf ns1:Equipment .
 
-<urn:nawi-water-ontology#ReverseOsmosisMembrane> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:ReverseOsmosisMembrane a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Reverse Osmosis Membrane"^^xsd:string ;
     rdfs:comment "A membrane used for reverse osmosis"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Filter> .
+    rdfs:subClassOf watr:Filter ;
+    sh:property [ sh:hasValue watr:Process-ReverseOsmosis ;
+            sh:message "Instances of ReverseOsmosisMembrane must have the ReverseOsmosis process."^^xsd:string ;
+            sh:minCount 1 ;
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#RotaryDrumThickener> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:RotaryDrumThickener a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Rotary Drum Thickener"^^xsd:string ;
     rdfs:comment "A thickener that uses a rotating drum to separate solids from liquids"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Thickener>,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Filtration> ;
-            sh:maxCount 1 ;
+    rdfs:subClassOf watr:Thickener ;
+    sh:property [ sh:hasValue watr:Process-Filtration ;
             sh:message "Instances of RotaryDrumThickener must have the Filtration process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#RotatingBiologicalContactor> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:RotatingBiologicalContactor a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Rotating Biological Contactor (RBC)"^^xsd:string ;
     rdfs:comment "Fixed-film process using a slowly rotating discs partially submerged in a tank"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Filter> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Biofiltration> ;
-            sh:maxCount 1 ;
+    rdfs:subClassOf watr:Filter ;
+    sh:property [ sh:hasValue watr:Process-Biofiltration ;
             sh:message "Instances of RotatingBiologicalContactor must have the Biofiltration process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#RotationSensor> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:RotationSensor a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Rotation Sensor"^^xsd:string ;
     rdfs:comment "A sensor used to measure the rotational speed or position of an object"^^xsd:string ;
     rdfs:subClassOf ns1:Sensor .
 
-<urn:nawi-water-ontology#Screen> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:Screen a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Screen"^^xsd:string ;
     rdfs:comment "An equipment used for separation"^^xsd:string ;
     rdfs:subClassOf ns1:Equipment,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Screening> ;
-            sh:maxCount 1 ;
+        watr:UnitProcess ;
+    sh:property [ sh:hasValue watr:Process-Screening ;
             sh:message "Instances of Screen must have the Screening process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#SequencingBatchReactor> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:SequencingBatchReactor a sh:NodeShape,
+        watr:Class ;
     rdfs:label "SequencingBatchReactor"^^xsd:string ;
     rdfs:comment "A type of activated sludge process for wastewater treatment"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Reactor>,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-ActivatedSludge> ;
-            sh:maxCount 1 ;
+    rdfs:subClassOf watr:Reactor,
+        watr:SeparationTank ;
+    sh:property [ sh:hasValue watr:Process-ActivatedSludge ;
             sh:message "Instances of SequencingBatchReactor must have the ActivatedSludge process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ],
+            sh:path watr:hasProcess ],
         [ rdfs:comment "A SBR has at least 1 sludge return point"^^xsd:string ;
             sh:path ns1:hasConnectionPoint ;
             sh:qualifiedMinCount 1 ;
             sh:qualifiedValueShape [ sh:class ns1:OutletConnectionPoint ;
-                    sh:property [ sh:hasValue ns1:Fluid-Sludge ;
+                    sh:property [ sh:class ns1:Fluid-Sludge ;
                             sh:path ns1:hasMedium ] ] ] ;
     sh:xone ( [ sh:property [ rdfs:comment "A SBR has at least 1 inlet fluid connection point"^^xsd:string ;
                         sh:path ns1:hasConnectionPoint ;
                         sh:qualifiedMinCount 1 ;
                         sh:qualifiedValueShape [ sh:class ns1:InletConnectionPoint ;
-                                sh:property [ sh:hasValue ns1:Mix-Fluid ;
+                                sh:property [ sh:class ns1:Mix-Fluid ;
                                         sh:path ns1:hasMedium ] ] ],
                     [ rdfs:comment "A SBR has at least 1 outlet fluid connection point"^^xsd:string ;
                         sh:path ns1:hasConnectionPoint ;
                         sh:qualifiedMinCount 1 ;
                         sh:qualifiedValueShape [ sh:class ns1:OutletConnectionPoint ;
-                                sh:property [ sh:hasValue ns1:Mix-Fluid ;
+                                sh:property [ sh:class ns1:Mix-Fluid ;
                                         sh:path ns1:hasMedium ] ] ] ] [ sh:property [ rdfs:comment "A SBR has at least 1 bidirectional fluid connection point"^^xsd:string ;
                         sh:path ns1:hasConnectionPoint ;
                         sh:qualifiedMinCount 1 ;
                         sh:qualifiedValueShape [ sh:class ns1:BidirectionalConnectionPoint ;
-                                sh:property [ sh:hasValue ns1:Mix-Fluid ;
+                                sh:property [ sh:class ns1:Mix-Fluid ;
                                         sh:path ns1:hasMedium ] ] ] ] ) .
 
-<urn:nawi-water-ontology#SluiceGate> a ns1:Class,
+watr:SluiceGate a ns1:Class,
         sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+        watr:Class ;
     rdfs:label "Sluice Gate"^^xsd:string ;
     rdfs:comment "Large gate that slide vertically to control flow in channels, reservoirs, or treatment basins"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Gate> .
+    rdfs:subClassOf watr:Gate .
 
-<urn:nawi-water-ontology#SolventExtractionSystem> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:SolventExtractionSystem a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Solvent Extraction System"^^xsd:string ;
     rdfs:comment "A system that uses a solvent to selectively extract water from highly saline brines."^^xsd:string ;
     rdfs:subClassOf ns1:Equipment,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-SolventExtraction> ;
-            sh:maxCount 1 ;
+        watr:UnitProcess ;
+    sh:property [ sh:hasValue watr:Process-SolventExtraction ;
             sh:message "Instances of SolventExtractionSystem must have the SolventExtraction process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#SpeedSensor> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:SpeedSensor a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Speed Sensor"^^xsd:string ;
     rdfs:comment "A sensor used to measure the speed of an object or fluid"^^xsd:string ;
     rdfs:subClassOf ns1:Sensor .
 
-<urn:nawi-water-ontology#StandardizedFlowCell> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:StandardizedFlowCell a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Standardized Flow Cell"^^xsd:string ;
     rdfs:comment "An experimental apparatus developed for research experiments, for example in Electrocoagulation (EC), in continuous flow mode."^^xsd:string ;
     rdfs:subClassOf ns1:Equipment .
 
-<urn:nawi-water-ontology#StateOfChargeSensor> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:StateOfChargeSensor a sh:NodeShape,
+        watr:Class ;
     rdfs:label "State of Charge Sensor"^^xsd:string ;
     rdfs:comment "A sensor used to measure the remaining charge in a battery or energy storage system"^^xsd:string ;
     rdfs:subClassOf ns1:Sensor .
 
-<urn:nawi-water-ontology#StaticMixer> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:StaticMixer a sh:NodeShape,
+        watr:Class ;
     rdfs:label "StaticMixer"^^xsd:string ;
     rdfs:comment "A device for mixing liquids without moving components"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Reactor>,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Mixing> ;
-            sh:maxCount 1 ;
+    rdfs:subClassOf watr:Reactor ;
+    sh:property [ sh:hasValue watr:Process-Mixing ;
             sh:message "Instances of StaticMixer must have the Mixing process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#TemperatureSensor> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:TemperatureSensor a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Temperature Sensor"^^xsd:string ;
     rdfs:comment "A sensor used to measure temperature"^^xsd:string ;
     rdfs:subClassOf ns1:TemperatureSensor .
 
-<urn:nawi-water-ontology#ThreeWayValve> a ns1:Class,
+watr:ThreeWayValve a ns1:Class,
         sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+        watr:Class ;
     rdfs:label "Three Way Valve"^^xsd:string ;
     rdfs:subClassOf ns1:Valve .
 
-<urn:nawi-water-ontology#TotalOrganicCompoundConcentrationSensor> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:TotalOrganicCompoundConcentrationSensor a sh:NodeShape,
+        watr:Class ;
     rdfs:label "TOC Sensor"^^xsd:string ;
     rdfs:comment "A sensor used to measure the total organic compound concentration"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#ConcentrationSensor> .
+    rdfs:subClassOf watr:ConcentrationSensor .
 
-<urn:nawi-water-ontology#TricklingFilter> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:TricklingFilter a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Trickling Filter"^^xsd:string ;
     rdfs:comment "A filter system that treats wastewater by trickling it over a bed of rocks or plastic"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Filter>,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-TricklingFiltration> ;
-            sh:maxCount 1 ;
+    rdfs:subClassOf watr:Filter ;
+    sh:property [ sh:hasValue watr:Process-TricklingFiltration ;
             sh:message "Instances of TricklingFilter must have the TricklingFiltration process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#TurbidityMeter> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:TurbidityMeter a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Turbidity Meter"^^xsd:string ;
     rdfs:comment "A sensor used to measure the turbidity (clarity) of a fluid"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Sensor> .
+    rdfs:subClassOf ns1:Sensor .
 
-<urn:nawi-water-ontology#UVH2O2Reactor> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:UVH2O2Reactor a sh:NodeShape,
+        watr:Class ;
     rdfs:label "UV/H2O2 Reactor"^^xsd:string ;
     rdfs:comment "A specific reactor used in Advanced Oxidation Processes (AOPs) combining UV light with hydrogen peroxide."^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Reactor>,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-AdvancedOxidation> ;
-            sh:maxCount 1 ;
+    rdfs:subClassOf watr:Reactor ;
+    sh:property [ sh:hasValue watr:Process-AdvancedOxidation ;
             sh:message "Instances of UVH2O2Reactor must have the AdvancedOxidation process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#UltrafiltrationUnit> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:UltrafiltrationUnit a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Ultrafiltration Unit"^^xsd:string ;
     rdfs:comment "A filter system that uses a pressure-driven barrier to separate particles and solutes in a fluid"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Filter> .
+    rdfs:subClassOf watr:Filter ;
+    sh:property [ sh:hasValue watr:Process-Ultrafiltration ;
+            sh:message "Instances of UltrafiltrationUnit must have the Ultrafiltration process."^^xsd:string ;
+            sh:minCount 1 ;
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#UltravioletLightUnit> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:UltravioletLightUnit a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Ultravioletlight Unit"^^xsd:string ;
     rdfs:comment "A unit using ultraviolet light for disinfection"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#DisinfectionUnit> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-UVDisinfection> ;
-            sh:maxCount 1 ;
+    rdfs:subClassOf watr:DisinfectionUnit ;
+    sh:property [ sh:hasValue watr:Process-UVDisinfection ;
             sh:message "Instances of UltravioletLightUnit must have the UVDisinfection process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#Valve> a ns1:Class,
+watr:Valve a ns1:Class,
         sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+        watr:Class ;
     rdfs:label "Valve"^^xsd:string ;
     rdfs:subClassOf ns1:Valve .
 
-<urn:nawi-water-ontology#VariableFrequencyDrive> a ns1:Class,
+watr:VariableFrequencyDrive a ns1:Class,
         sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+        watr:Class ;
     rdfs:label "Variable Frequency Drive"^^xsd:string ;
     rdfs:subClassOf ns1:VariableFrequencyDrive .
 
-<urn:nawi-water-ontology#VolumeSensor> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:VolumeSensor a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Volume Sensor"^^xsd:string ;
     rdfs:comment "A sensor used to measure the volume of a substance"^^xsd:string ;
     rdfs:subClassOf ns1:Sensor .
 
-<urn:nawi-water-ontology#Wetland> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:Wetland a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Wetland"^^xsd:string ;
     rdfs:comment "A marsh or bog-like area that is permanently or seasonally saturated with water, used for pre- or post-treatment."^^xsd:string ;
     rdfs:subClassOf ns1:Equipment .
 
-<urn:nawi-water-ontology#pHSensor> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:pHSensor a sh:NodeShape,
+        watr:Class ;
     rdfs:label "pH Sensor"^^xsd:string ;
     rdfs:comment "A sensor used to measure the pH of a solution"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#ConcentrationSensor> .
+    rdfs:subClassOf watr:ConcentrationSensor .
 
 <urn:nawi-water-ontology/equip> rdfs:label "NAWI Water Equipment Ontology"^^xsd:string ;
     rdfs:comment "An ontology for water equipment used in the NAWI project"^^xsd:string ;
@@ -823,968 +855,1046 @@
     rdfs:comment "An ontology for water substances used in the NAWI project"^^xsd:string ;
     owl:imports <http://data.ashrae.org/standard223/1.0/model/all> .
 
-<urn:nawi-water-ontology#BeltThickener> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:BeltThickener a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Belt Thickener"^^xsd:string ;
     rdfs:comment "A thickener that uses a belt system to separate solids from liquids"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Thickener>,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Filtration> ;
-            sh:maxCount 1 ;
+    rdfs:subClassOf watr:Thickener ;
+    sh:property [ sh:hasValue watr:Process-Filtration ;
             sh:message "Instances of BeltThickener must have the Filtration process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#Brine-15Percent> a sh:NodeShape,
-        <urn:nawi-water-ontology#Brine-15Percent>,
-        <urn:nawi-water-ontology#Class> ;
+watr:Brine-15Percent a sh:NodeShape,
+        watr:Brine-15Percent,
+        watr:Class ;
     rdfs:label "Brine-15Percent"^^xsd:string ;
     ns1:composedOf [ a ns1:QuantifiableProperty ;
+            rdfs:label "Salt Concentration"^^xsd:string ;
+            ns1:hasValue 15.0 ;
+            ns1:ofConstituent watr:Salt-NaCl ;
+            ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/MassFraction> ;
+            ns2:hasUnit <http://qudt.org/vocab/unit/PERCENT> ],
+        [ a ns1:QuantifiableProperty ;
             rdfs:label "Water Concentration"^^xsd:string ;
             ns1:hasValue 85.0 ;
             ns1:ofConstituent ns1:Constituent-H2O ;
             ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/MassFraction> ;
-            ns2:hasUnit <http://qudt.org/vocab/unit/PERCENT> ],
-        [ a ns1:QuantifiableProperty ;
-            rdfs:label "Salt Concentration"^^xsd:string ;
-            ns1:hasValue 15.0 ;
-            ns1:ofConstituent <urn:nawi-water-ontology#Salt-NaCl> ;
-            ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/MassFraction> ;
             ns2:hasUnit <http://qudt.org/vocab/unit/PERCENT> ] ;
     rdfs:comment "Brine-15Percent"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Water-Brine> .
+    rdfs:subClassOf watr:Water-Brine .
 
-<urn:nawi-water-ontology#Brine-5to10Percent> a sh:NodeShape,
-        <urn:nawi-water-ontology#Brine-5to10Percent>,
-        <urn:nawi-water-ontology#Class> ;
+watr:Brine-5to10Percent a sh:NodeShape,
+        watr:Brine-5to10Percent,
+        watr:Class ;
     rdfs:label "Brine-5to10Percent"^^xsd:string ;
     ns1:composedOf [ a ns1:QuantifiableProperty ;
-            rdfs:label "High Salt Concentration"^^xsd:string ;
-            ns1:hasAspect ns1:Aspect-HighLimit ;
-            ns1:hasValue 10.0 ;
-            ns1:ofConstituent <urn:nawi-water-ontology#Salt-NaCl> ;
-            ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/MassFraction> ;
-            ns2:hasUnit <http://qudt.org/vocab/unit/PERCENT> ],
-        [ a ns1:QuantifiableProperty ;
             rdfs:label "Low Salt Concentration"^^xsd:string ;
             ns1:hasAspect ns1:Aspect-LowLimit ;
             ns1:hasValue 5.0 ;
-            ns1:ofConstituent <urn:nawi-water-ontology#Salt-NaCl> ;
+            ns1:ofConstituent watr:Salt-NaCl ;
+            ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/MassFraction> ;
+            ns2:hasUnit <http://qudt.org/vocab/unit/PERCENT> ],
+        [ a ns1:QuantifiableProperty ;
+            rdfs:label "High Salt Concentration"^^xsd:string ;
+            ns1:hasAspect ns1:Aspect-HighLimit ;
+            ns1:hasValue 10.0 ;
+            ns1:ofConstituent watr:Salt-NaCl ;
             ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/MassFraction> ;
             ns2:hasUnit <http://qudt.org/vocab/unit/PERCENT> ] ;
     rdfs:comment "Brine-5to10Percent"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Water-Brine> .
+    rdfs:subClassOf watr:Water-Brine .
 
-<urn:nawi-water-ontology#ChlorinationUnit> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
-    rdfs:label "Chlorination Unit"^^xsd:string ;
-    rdfs:comment "A unit that uses chlorine or chlorine compounds for disinfection."^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#DisinfectionUnit> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Chlorination> ;
-            sh:maxCount 1 ;
-            sh:message "Instances of ChlorinationUnit must have the Chlorination process."^^xsd:string ;
-            sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
-
-<urn:nawi-water-ontology#Coagulant-Alum> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Coagulant-Alum> ;
+watr:Coagulant-Alum a sh:NodeShape,
+        watr:Class,
+        watr:Coagulant-Alum ;
     rdfs:label "Alum"^^xsd:string ;
     rdfs:comment "Aluminum sulfate (alum), a common coagulant"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Coagulant> .
+    rdfs:subClassOf watr:Coagulant .
 
-<urn:nawi-water-ontology#Coagulant-FerricChloride> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Coagulant-FerricChloride> ;
+watr:Coagulant-FerricChloride a sh:NodeShape,
+        watr:Class,
+        watr:Coagulant-FerricChloride ;
     rdfs:label "Ferric Chloride"^^xsd:string ;
     rdfs:comment "Ferric chloride, a coagulant for wastewater treatment"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Coagulant> .
+    rdfs:subClassOf watr:Coagulant .
 
-<urn:nawi-water-ontology#Coagulant-PolyaluminumChloride> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Coagulant-PolyaluminumChloride> ;
+watr:Coagulant-PolyaluminumChloride a sh:NodeShape,
+        watr:Class,
+        watr:Coagulant-PolyaluminumChloride ;
     rdfs:label "Polyaluminum Chloride"^^xsd:string ;
     rdfs:comment "Polyaluminum chloride (PAC), a coagulant"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Coagulant> .
+    rdfs:subClassOf watr:Coagulant .
 
-<urn:nawi-water-ontology#Constituent-Bacteria> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Constituent-Bacteria> ;
+watr:Constituent-Bacteria a sh:NodeShape,
+        watr:Class,
+        watr:Constituent-Bacteria ;
     rdfs:label "Constituent Bacteria"^^xsd:string ;
     rdfs:comment "Bacteria: Microscopic single-celled organisms that can be found in water"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Medium-Constituent> .
+    rdfs:subClassOf ns1:Medium-Constituent .
 
-<urn:nawi-water-ontology#Constituent-Cyanide> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Constituent-Cyanide> ;
+watr:Constituent-Cyanide a sh:NodeShape,
+        watr:Class,
+        watr:Constituent-Cyanide ;
     rdfs:label "Constituent Cyanide"^^xsd:string ;
     rdfs:comment "Cyanide: A highly toxic chemical compound that can be harmful to aquatic life"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Medium-Constituent> .
+    rdfs:subClassOf ns1:Medium-Constituent .
 
-<urn:nawi-water-ontology#Constituent-Metals> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Constituent-Metals> ;
+watr:Constituent-Metals a sh:NodeShape,
+        watr:Class,
+        watr:Constituent-Metals ;
     rdfs:label "Constituent-Metals"^^xsd:string ;
     rdfs:comment "Constituent-Metals"^^xsd:string ;
     rdfs:subClassOf ns1:Medium-Constituent .
 
-<urn:nawi-water-ontology#Constituent-Organics> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Constituent-Organics> ;
+watr:Constituent-Organics a sh:NodeShape,
+        watr:Class,
+        watr:Constituent-Organics ;
     rdfs:label "Constituent-Organics"^^xsd:string ;
     rdfs:comment "Constituent-Organics"^^xsd:string ;
     rdfs:subClassOf ns1:Medium-Constituent .
 
-<urn:nawi-water-ontology#Disinfectant-Chlorine> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Disinfectant-Chlorine> ;
+watr:Disinfectant-Chlorine a sh:NodeShape,
+        watr:Class,
+        watr:Disinfectant-Chlorine ;
     rdfs:label "Chlorine"^^xsd:string ;
     rdfs:comment "Chlorine, a common disinfectant"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Disinfectant> .
+    rdfs:subClassOf watr:Disinfectant .
 
-<urn:nawi-water-ontology#Disinfectant-Ozone> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Disinfectant-Ozone> ;
+watr:Disinfectant-Ozone a sh:NodeShape,
+        watr:Class,
+        watr:Disinfectant-Ozone ;
     rdfs:label "Ozone"^^xsd:string ;
     rdfs:comment "Ozone, an advanced disinfectant"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Disinfectant> .
+    rdfs:subClassOf watr:Disinfectant .
 
-<urn:nawi-water-ontology#Flocculant-Polyacrylamide> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Flocculant-Polyacrylamide> ;
+watr:Flocculant-Polyacrylamide a sh:NodeShape,
+        watr:Class,
+        watr:Flocculant-Polyacrylamide ;
     rdfs:label "Polyacrylamide"^^xsd:string ;
     rdfs:comment "Polyacrylamide, a common flocculant"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Flocculant> .
+    rdfs:subClassOf watr:Flocculant-Polymer .
 
-<urn:nawi-water-ontology#Fluid-Sludge> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Fluid-Sludge> ;
+watr:Fluid-Sludge a sh:NodeShape,
+        watr:Class,
+        watr:Fluid-Sludge ;
     rdfs:label "Sludge"^^xsd:string ;
     ns1:composedOf [ a ns1:QuantifiableProperty ;
             ns1:ofConstituent ns1:Constituent-H2O ;
             ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/MassFraction> ;
             ns2:hasUnit <http://qudt.org/vocab/unit/PERCENT> ],
         [ a ns1:QuantifiableProperty ;
-            ns1:ofConstituent <urn:nawi-water-ontology#Constituent-Solids> ;
+            ns1:ofConstituent watr:Constituent-Solids ;
             ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/MassFraction> ;
             ns2:hasUnit <http://qudt.org/vocab/unit/PERCENT> ] ;
     rdfs:comment "A semi-solid slurry composed of water and solids."^^xsd:string ;
     rdfs:subClassOf ns1:Mix-Fluid .
 
-<urn:nawi-water-ontology#Gate> a ns1:Class,
+watr:Gate a ns1:Class,
         sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+        watr:Class ;
     rdfs:label "Gate"^^xsd:string ;
     rdfs:comment "Tool to control water flow and isolate sections"^^xsd:string ;
-    rdfs:subClassOf ns1:Equipment .
+    rdfs:subClassOf ns1:Valve .
 
-<urn:nawi-water-ontology#GravityThickener> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:GravityThickener a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Gravity Thickener"^^xsd:string ;
     rdfs:comment "A thickener that uses gravity to separate solids from liquids"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Thickener>,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Sedimentation> ;
-            sh:maxCount 1 ;
+    rdfs:subClassOf watr:Thickener ;
+    sh:property [ sh:hasValue watr:Process-Sedimentation ;
             sh:message "Instances of GravityThickener must have the Sedimentation process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#HeavyMetalRemovalAgent-SodiumSulfide> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#HeavyMetalRemovalAgent-SodiumSulfide> ;
+watr:HeavyMetalRemovalAgent-SodiumSulfide a sh:NodeShape,
+        watr:Class,
+        watr:HeavyMetalRemovalAgent-SodiumSulfide ;
     rdfs:label "Sodium Sulfide"^^xsd:string ;
     rdfs:comment "Sodium sulfide, used to precipitate heavy metals"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#HeavyMetalRemovalAgent> .
+    rdfs:subClassOf watr:HeavyMetalRemovalAgent .
 
-<urn:nawi-water-ontology#MediaFiltration> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:HighPurityOxygen a sh:NodeShape,
+        watr:Class,
+        watr:HighPurityOxygen ;
+    rdfs:label "High Purity Oxygen"^^xsd:string ;
+    rdfs:comment "Class for high purity oxygen used in wastewater treatment"^^xsd:string ;
+    rdfs:subClassOf watr:WastewaterTreatmentChemical .
+
+watr:MediaFiltration a sh:NodeShape,
+        watr:Class ;
     rdfs:label "MediaFiltration Unit"^^xsd:string ;
     rdfs:comment "A filter system that uses a bed of material to filter out contaminants"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Filter> .
+    rdfs:subClassOf watr:Filter ;
+    sh:property [ sh:hasValue watr:Process-MediaFiltration ;
+            sh:message "Instances of MediaFiltration must have the MediaFiltration process."^^xsd:string ;
+            sh:minCount 1 ;
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#OdorControlAgent-ActivatedCarbon> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#OdorControlAgent-ActivatedCarbon> ;
+watr:OdorControlAgent-ActivatedCarbon a sh:NodeShape,
+        watr:Class,
+        watr:OdorControlAgent-ActivatedCarbon ;
     rdfs:label "Activated Carbon"^^xsd:string ;
     rdfs:comment "Activated carbon, used to absorb odors"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#OdorControlAgent> .
+    rdfs:subClassOf watr:OdorControlAgent .
 
-<urn:nawi-water-ontology#Process-Bardenpho> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Bardenpho> ;
-    rdfs:label "BARDENPHO (BARnard DENitrification and PHOsphorus removal)"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Biological-Process> ;
-    skos:definition "A five-stage biological nutrient removal process specifically designed for nitrogen and phosphorus."^^xsd:string .
-
-<urn:nawi-water-ontology#Process-BiosolidsDisposal> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-BiosolidsDisposal> ;
-    rdfs:label "BiosolidsDisposal"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-Physical> ;
-    skos:definition "Generic process for unspecified disposal of biosolids (e.g., incineration, land application, landfilling, etc.)."^^xsd:string .
-
-<urn:nawi-water-ontology#Process-ChemicalPrecipitation> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-ChemicalPrecipitation> ;
+watr:Process-ChemicalPrecipitation a watr:Class,
+        watr:Process-ChemicalPrecipitation ;
     rdfs:label "Chemical Precipitation"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Chemical-Process> ;
+    rdfs:subClassOf watr:Process-ChemicalProcess ;
     skos:definition "Removal of nutrients or metals using coagulants"^^xsd:string .
 
-<urn:nawi-water-ontology#Process-ClosedCircuitReverseOsmosis> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-ClosedCircuitReverseOsmosis> ;
+watr:Process-ClosedCircuitReverseOsmosis a watr:Class,
+        watr:Process-ClosedCircuitReverseOsmosis ;
     rdfs:label "Closed Circuit Reverse Osmosis (CCRO)"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-ReverseOsmosis> ;
+    rdfs:subClassOf watr:Process-ReverseOsmosis ;
     skos:definition "A specific RO configuration explored for optimization, capable of adapting to unmeasured changes like feed salinity."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Dechlorination> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Dechlorination> ;
+watr:Process-Dechlorination a watr:Class,
+        watr:Process-Dechlorination ;
     rdfs:label "Dechlorination"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-Disinfection> ;
+    rdfs:subClassOf watr:Process-Disinfection ;
     skos:definition "A post-disinfection process that removes excess chlorine compounds."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Denitrification> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Denitrification> ;
-    rdfs:label "Denitrification"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Biological-Process> ;
-    skos:definition "Process by which nitrate is deoxidized to nitrogen gas and nitrogen oxides."^^xsd:string .
+watr:Process-Drying a watr:Class,
+        watr:Process-Drying ;
+    rdfs:label "Drying"^^xsd:string ;
+    rdfs:subClassOf watr:Process-Dewatering,
+        watr:Process-Evaporation ;
+    skos:definition "Drying of biosolids to reduce moisture content."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Digestion> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Digestion> ;
-    rdfs:label "Digestion"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Biological-Process> ;
-    skos:definition "A biological process that breaks down organic matter over a long duration in a tank."^^xsd:string .
-
-<urn:nawi-water-ontology#Process-ElectroDialyticCrystallization> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-ElectroDialyticCrystallization> ;
+watr:Process-ElectroDialyticCrystallization a watr:Class,
+        watr:Process-ElectroDialyticCrystallization ;
     rdfs:label "Electro-Dialytic Crystallization (EDC)"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-Crystallization>,
-        <urn:nawi-water-ontology#Process-Electrodialysis> ;
+    rdfs:subClassOf watr:Process-Crystallization,
+        watr:Process-Electrodialysis ;
     skos:definition "A novel integrated process combining electrodialysis and crystallization for energy-efficient Zero-Liquid Discharge (ZLD) by maintaining a saturated brine stream."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Electrooxidation> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Electrooxidation> ;
+watr:Process-Electrooxidation a watr:Class,
+        watr:Process-Electrooxidation ;
     rdfs:label "Electrooxidation (EO)"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Physical-Process>,
-        <urn:nawi-water-ontology#Process-Oxidation> ;
+    rdfs:subClassOf watr:Process-Oxidation,
+        watr:Process-PhysicalProcess ;
     skos:definition "An advanced oxidation process often combined with EC to enhance contaminant removal and inactivation, particularly for viruses."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Elutriation> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Elutriation> ;
+watr:Process-Elutriation a watr:Class,
+        watr:Process-Elutriation ;
     rdfs:label "Elutriation"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-Separation> ;
+    rdfs:subClassOf watr:Process-Separation ;
     skos:definition "A process that uses a stream of fluid flowing upward to separate a mixture of particles based on their size, shape, and density."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Equalization> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Equalization> ;
-    rdfs:label "Equalization"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Physical-Process> ;
-    skos:definition "Flow and load dampening using a tank or basin"^^xsd:string .
-
-<urn:nawi-water-ontology#Process-FeedReversalReverseOsmosis> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-FeedReversalReverseOsmosis> ;
+watr:Process-FeedReversalReverseOsmosis a watr:Class,
+        watr:Process-FeedReversalReverseOsmosis ;
     rdfs:label "Feed Reversal Reverse Osmosis (FRRO)"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-ReverseOsmosis> ;
+    rdfs:subClassOf watr:Process-ReverseOsmosis ;
     skos:definition "A dynamic and cyclic design to mitigate scaling and balance salt/foulant load, enabling high recovery."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-FluidizedBedIncineration> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-FluidizedBedIncineration> ;
+watr:Process-FiveStageBardenpho a watr:Class,
+        watr:Process-FiveStageBardenpho ;
+    rdfs:label "Five-Stage BARDENPHO (BARnard DENitrification and PHOsphorus removal)"^^xsd:string ;
+    rdfs:subClassOf watr:Process-ActivatedSludge,
+        watr:Process-Denitrification,
+        watr:Process-Nitrification ;
+    skos:definition "A five-stage biological nutrient removal process specifically designed for nitrogen and phosphorus."^^xsd:string .
+
+watr:Process-FluidizedBedIncineration a watr:Class,
+        watr:Process-FluidizedBedIncineration ;
     rdfs:label "Fluidized Bed Incineration"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Chemical-Process>,
-        <urn:nawi-water-ontology#Physical-Process> ;
+    rdfs:subClassOf watr:Process-ChemicalProcess,
+        watr:Process-PhysicalProcess ;
     skos:definition "A process that combusts a constantly moving bed of biosolids."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-HighDensitySludge> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-HighDensitySludge> ;
+watr:Process-FourStageBardenpho a watr:Class,
+        watr:Process-FourStageBardenpho ;
+    rdfs:label "Four-Stage BARDENPHO (BARnard DENitrification and PHOsphorus removal)"^^xsd:string ;
+    rdfs:subClassOf watr:Process-ActivatedSludge,
+        watr:Process-Denitrification,
+        watr:Process-Nitrification ;
+    skos:definition "A four-stage biological nutrient removal process with two anoxic and two aerobic zoneswith two anoxic and two aerobic zones."^^xsd:string .
+
+watr:Process-HighDensitySludge a watr:Class,
+        watr:Process-HighDensitySludge ;
     rdfs:label "High-Density Sludge (HDS) Process"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Chemical-Process>,
-        <urn:nawi-water-ontology#Physical-Process> ;
+    rdfs:subClassOf watr:Process-ChemicalProcess,
+        watr:Process-PhysicalProcess ;
     skos:definition "A method for treating acid mine drainage involving neutralization."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-MembraneDistillation> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-MembraneDistillation> ;
+watr:Process-LandApplication a watr:Class,
+        watr:Process-LandApplication ;
+    rdfs:label "Land Application"^^xsd:string ;
+    rdfs:subClassOf watr:Process-BiosolidsDisposal ;
+    skos:definition "Beneficial reuse of biosolids by spreading on agricultural land."^^xsd:string .
+
+watr:Process-Landfill a watr:Class,
+        watr:Process-Landfill ;
+    rdfs:label "Biosolids Landfill"^^xsd:string ;
+    rdfs:subClassOf watr:Process-BiosolidsDisposal ;
+    skos:definition "Disposal of biosolids in a landfill."^^xsd:string .
+
+watr:Process-MLE a watr:Class,
+        watr:Process-MLE ;
+    rdfs:label "Modified Ludzack-Ettinger (MLE)"^^xsd:string ;
+    rdfs:subClassOf watr:Process-AO ;
+    skos:definition "Modification of AO a with internal recycle."^^xsd:string .
+
+watr:Process-MembraneDistillation a watr:Class,
+        watr:Process-MembraneDistillation ;
     rdfs:label "Membrane Distillation (MD)"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-MembraneProcess> ;
+    rdfs:subClassOf watr:Process-MembraneProcess ;
     skos:definition "A thermal membrane process, often subject to CFD modeling for optimization of heat and mass transfer."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Neutralization> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Neutralization> ;
+watr:Process-MultipleHearthIncineration a watr:Class,
+        watr:Process-MultipleHearthIncineration ;
+    rdfs:label "Multiple Hearth Incineration (MHI)"^^xsd:string ;
+    rdfs:subClassOf watr:Process-Incineration ;
+    skos:definition "A process that combusts biosolids as they move through a series of stacked hearths with controlled air flow."^^xsd:string .
+
+watr:Process-Neutralization a watr:Class,
+        watr:Process-Neutralization ;
     rdfs:label "Neutralization"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-pHAdjustment> ;
+    rdfs:subClassOf watr:Process-pHAdjustment ;
     skos:definition "pH adjustment to neutral, typically with a base, used in processes like high-density sludge treatment."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Nitrification> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Nitrification> ;
-    rdfs:label "Nitrification"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Biological-Process> ;
-    skos:definition "Process by which ammonia is oxidized to nitrite and subsequently nitrate."^^xsd:string .
-
-<urn:nawi-water-ontology#Process-OsmoticallyAssistedReverseOsmosis> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-OsmoticallyAssistedReverseOsmosis> ;
+watr:Process-OsmoticallyAssistedReverseOsmosis a watr:Class,
+        watr:Process-OsmoticallyAssistedReverseOsmosis ;
     rdfs:label "Osmotically Assisted Reverse Osmosis (OARO)"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-ReverseOsmosis> ;
+    rdfs:subClassOf watr:Process-ReverseOsmosis ;
     skos:definition "A process with validated Computational Fluid Dynamics (CFD) models for cost optimization."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Reduction> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Reduction> ;
+watr:Process-Reduction a watr:Class,
+        watr:Process-Reduction ;
     rdfs:label "Chemical Reduction"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Chemical-Process> ;
+    rdfs:subClassOf watr:Process-ChemicalProcess ;
     skos:definition "Mechanism by which contaminants are transformed through the gain of electrons."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-SlowSandFiltration> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-SlowSandFiltration> ;
+watr:Process-SlowSandFiltration a watr:Class,
+        watr:Process-SlowSandFiltration ;
     rdfs:label "Slow Sand Filtration"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-MediaFiltration> ;
+    rdfs:subClassOf watr:Process-MediaFiltration ;
     skos:definition "A filtration process that uses a bed of sand to remove impurities at low flow rates."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Softening> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Softening> ;
+watr:Process-Softening a watr:Class,
+        watr:Process-Softening ;
     rdfs:label "Softening"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-ChemicalAddition> ;
+    rdfs:subClassOf watr:Process-ChemicalAddition ;
     skos:definition "Chemical precipitation of calcium/magnesium"^^xsd:string .
 
-<urn:nawi-water-ontology#Process-TricklingFiltration> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Biofiltration> ;
+watr:Process-Stripping a watr:Class,
+        watr:Process-Stripping ;
+    rdfs:label "Stripping"^^xsd:string ;
+    rdfs:subClassOf watr:Process-Separation ;
+    skos:definition "Gas stripping for removal of dissolved gases such as ammonia and volatile organic compounds."^^xsd:string .
+
+watr:Process-ThermalDisinfection a watr:Class,
+        watr:Process-ThermalDisinfection ;
+    rdfs:label "Thermal Disinfection"^^xsd:string ;
+    rdfs:subClassOf watr:Process-Disinfection ;
+    skos:definition "Heat-based pathogen inactivation such as pasteurization."^^xsd:string .
+
+watr:Process-TricklingFiltration a watr:Class,
+        watr:Process-Biofiltration ;
     rdfs:label "TricklingFiltration"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-Biofiltration> ;
+    rdfs:subClassOf watr:Process-Biofiltration ;
     skos:definition "Trickling filter using any media (e.g., plastic, sand, gravel, etc.)"^^xsd:string .
 
-<urn:nawi-water-ontology#SedimentationTank> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:Process-UCT a watr:Class,
+        watr:Process-UCT ;
+    rdfs:label "University of Cape Town (UCT)"^^xsd:string ;
+    rdfs:subClassOf watr:Process-A2O ;
+    skos:definition "Variant of A2O with modified recycle streams for phosphorus removal."^^xsd:string .
+
+watr:SedimentationTank a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Sedimentation Tank"^^xsd:string ;
     rdfs:comment "A tank used to remove solids from liquids through sedimentation"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Tank>,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Sedimentation> ;
-            sh:maxCount 1 ;
+    rdfs:subClassOf watr:SeparationTank ;
+    sh:property [ sh:hasValue watr:Process-Sedimentation ;
             sh:message "Instances of SedimentationTank must have the Sedimentation process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#Sludge-MixedLiquor> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Sludge-MixedLiquor> ;
+watr:Sludge-MixedLiquor a sh:NodeShape,
+        watr:Class,
+        watr:Sludge-MixedLiquor ;
     rdfs:label "Sludge-MixedLiquor"^^xsd:string ;
     ns1:composedOf [ a ns1:QuantifiableProperty ;
-            rdfs:label "Suspended Solids Fraction"^^xsd:string ;
-            ns1:ofConstituent <urn:nawi-water-ontology#Constituent-SuspendedSolids> ;
+            rdfs:label "Water Fraction"^^xsd:string ;
+            ns1:ofConstituent ns1:Constituent-H2O ;
             ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/MassFraction> ;
             ns2:hasUnit <http://qudt.org/vocab/unit/PERCENT> ],
         [ a ns1:QuantifiableProperty ;
-            rdfs:label "Water Fraction"^^xsd:string ;
-            ns1:ofConstituent ns1:Constituent-H2O ;
+            rdfs:label "Suspended Solids Fraction"^^xsd:string ;
+            ns1:ofConstituent watr:Constituent-SuspendedSolids ;
             ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/MassFraction> ;
             ns2:hasUnit <http://qudt.org/vocab/unit/PERCENT> ] ;
     rdfs:comment "Mixed liquor is the mixture of wastewater and activated sludge in the aeration basin of a wastewater treatment plant. It contains suspended solids and water."^^xsd:string ;
     rdfs:subClassOf ns1:Fluid-Sludge .
 
-<urn:nawi-water-ontology#hasAccuracy> a rdf:Property ;
+watr:hasAccuracy a rdf:Property ;
     rdfs:label "has accuracy"^^xsd:string ;
     rdfs:comment "The `hasAccuracy` relation is used to link to a numerical `Property` whose value indicates the maximum expected deviation between the measured value and the true value in engineering units."^^xsd:string .
 
-<urn:nawi-water-ontology#hasBias> a rdf:Property ;
+watr:hasBias a rdf:Property ;
     rdfs:label "has bias"^^xsd:string ;
     rdfs:comment "The `hasBias` relation is used to link to a numerical `Property` whose value indicates the systematic offset or drift in measurements relative to the true value."^^xsd:string .
 
-<urn:nawi-water-ontology#hasCalibrationCurve> a rdf:Property ;
+watr:hasCalibrationCurve a rdf:Property ;
     rdfs:label "has calibration curve"^^xsd:string ;
     rdfs:comment "The `hasCalibrationCurve` relation is used to link to a `Property` that describes the mathematical relationship or lookup table between raw sensor output and calibrated engineering units."^^xsd:string .
 
-<urn:nawi-water-ontology#hasDropRate> a rdf:Property ;
+watr:hasDropRate a rdf:Property ;
     rdfs:label "has drop rate"^^xsd:string ;
     rdfs:comment "The `hasDropRate` relation is used to link to a `Property` describes the amount of data points lost within a range of time due to latencies or other factors."^^xsd:string .
 
-<urn:nawi-water-ontology#hasNumericRange> a rdf:Property ;
+watr:hasNumericRange a rdf:Property ;
     rdfs:label "has numeric range"^^xsd:string ;
     rdfs:comment "The `hasNumericRange` relation is used to link to a numerical `Property` whose value indicates the span between the minimum and maximum measurable values in engineering units."^^xsd:string .
 
-<urn:nawi-water-ontology#hasNumericResolution> a rdf:Property ;
+watr:hasNumericResolution a rdf:Property ;
     rdfs:label "has numeric resolution"^^xsd:string ;
     rdfs:comment "The `hasNumericResolution` relation is used to link to a numerical `Property` whose value indicates the smallest distinguishable difference between two measured values in engineering units."^^xsd:string .
 
-<urn:nawi-water-ontology#hasPrecision> a rdf:Property ;
+watr:hasPrecision a rdf:Property ;
     rdfs:label "has precision"^^xsd:string ;
     rdfs:comment "The `hasPrecision` relation is used to link to a numerical `Property` whose value indicates the repeatability or reproducibility of measurements under identical conditions."^^xsd:string .
 
-<urn:nawi-water-ontology#hasProcessedData> a rdf:Property ;
+watr:hasProcessedData a rdf:Property ;
     rdfs:label "has processed data"^^xsd:string ;
     rdfs:comment "The `hasProcessedData` relation is used to link to a `Property` that describes any data processing, filtering, or transformation applied to the raw measurement values."^^xsd:string .
 
-<urn:nawi-water-ontology#hasResponseTime> a rdf:Property ;
+watr:hasResponseTime a rdf:Property ;
     rdfs:label "has response time"^^xsd:string ;
     rdfs:comment "The `hasResponseTime` relation is used to link to a numerical `Property` whose value indicates the time required for the sensor or measurement system to respond to a step change in the measured variable."^^xsd:string .
 
-<urn:nawi-water-ontology#hasTemporalRange> a rdf:Property ;
+watr:hasTemporalRange a rdf:Property ;
     rdfs:label "has temporal range"^^xsd:string ;
     rdfs:comment "The `hasTemporalRange` relation is used to link to a numerical `Property` whose value indicates the start and end times for which data has been recorded."^^xsd:string .
 
-<urn:nawi-water-ontology#hasTemporalResolution> a rdf:Property ;
+watr:hasTemporalResolution a rdf:Property ;
     rdfs:label "has temporal resolution"^^xsd:string ;
     rdfs:comment "The `hasTemporalResolution` relation is used to link to a numerical `Property` whose value indicates the minimum time interval between successive measurements or data points."^^xsd:string .
 
-<urn:nawi-water-ontology#hasVariableRange> a rdf:Property ;
+watr:hasVariableRange a rdf:Property ;
     rdfs:label "has variable range"^^xsd:string ;
     rdfs:comment "The `hasVariableRange` relation is used to link to a numerical `Property` whose value indicates the expected range of variation for the measured variable under normal operating conditions."^^xsd:string .
 
-<urn:nawi-water-ontology#pHAdjuster-Lime> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#pHAdjuster-Lime> ;
+watr:pHAdjuster-Lime a sh:NodeShape,
+        watr:Class,
+        watr:pHAdjuster-Lime ;
     rdfs:label "Lime"^^xsd:string ;
     rdfs:comment "Calcium hydroxide (lime), used to increase pH"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#pHAdjuster> .
+    rdfs:subClassOf watr:pHAdjuster .
 
-<urn:nawi-water-ontology#pHAdjuster-SulfuricAcid> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#pHAdjuster-SulfuricAcid> ;
+watr:pHAdjuster-SulfuricAcid a sh:NodeShape,
+        watr:Class,
+        watr:pHAdjuster-SulfuricAcid ;
     rdfs:label "Sulfuric Acid"^^xsd:string ;
     rdfs:comment "Sulfuric acid, used to decrease pH"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#pHAdjuster> .
+    rdfs:subClassOf watr:pHAdjuster .
 
-<urn:nawi-water-ontology#ConcentrationSensor> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:ConcentrationSensor a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Concentration Sensor"^^xsd:string ;
     rdfs:comment "A sensor used to measure the concentration of specific substances (e.g., Total Dissolved Solids)"^^xsd:string ;
     rdfs:subClassOf ns1:ConcentrationSensor .
 
-<urn:nawi-water-ontology#Constituent-Salt> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Constituent-Salt> ;
+watr:Constituent-Salt a sh:NodeShape,
+        watr:Class,
+        watr:Constituent-Salt ;
     rdfs:label "Constituent-Salt"^^xsd:string ;
     rdfs:comment "Constituent-Salt"^^xsd:string ;
     rdfs:subClassOf ns1:Medium-Constituent .
 
-<urn:nawi-water-ontology#Constituent-SuspendedSolids> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Constituent-SuspendedSolids> ;
+watr:Constituent-SuspendedSolids a sh:NodeShape,
+        watr:Class,
+        watr:Constituent-SuspendedSolids ;
     rdfs:label "Constituent-SuspendedSolids"^^xsd:string ;
     rdfs:comment "Suspended solids are particulate matter that is not dissolved in water and can be removed by filtration including organic and inorganic particles."^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Constituent-Solids> .
+    rdfs:subClassOf watr:Constituent-Solids .
 
-<urn:nawi-water-ontology#Digester> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:Digester a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Digester"^^xsd:string ;
     rdfs:comment "A container to promote decomposition of organic waste"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Tank> .
+    rdfs:subClassOf watr:Reactor,
+        watr:UnitProcess ;
+    sh:property [ sh:hasValue watr:Process-Digestion ;
+            sh:message "Instances of Digester must have the Digestion process."^^xsd:string ;
+            sh:minCount 1 ;
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#DisinfectionUnit> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:DisinfectionUnit a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Disinfection Unit"^^xsd:string ;
     rdfs:comment "A unit used to eliminate or reduce harmful microorganisms"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Tank>,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Disinfection> ;
-            sh:maxCount 1 ;
+    rdfs:subClassOf watr:Reactor ;
+    sh:property [ sh:hasValue watr:Process-Disinfection ;
             sh:message "Instances of DisinfectionUnit must have the Disinfection process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#Electrode> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:Electrode a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Electrode"^^xsd:string ;
     rdfs:comment "A component where electrochemical reactions occur in electrified processes."^^xsd:string ;
     rdfs:subClassOf ns1:Equipment .
 
-<urn:nawi-water-ontology#Flocculant> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Flocculant> ;
+watr:Flocculant a sh:NodeShape,
+        watr:Class,
+        watr:Flocculant ;
     rdfs:label "Flocculant"^^xsd:string ;
     rdfs:comment "Class for flocculants used in wastewater treatment"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#WastewaterTreatmentChemical> .
+    rdfs:subClassOf watr:WastewaterTreatmentChemical .
 
-<urn:nawi-water-ontology#HeavyMetalRemovalAgent> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#HeavyMetalRemovalAgent> ;
+watr:Flocculant-Polymer a sh:NodeShape,
+        watr:Class,
+        watr:Flocculant-Polymer ;
+    rdfs:label "Polymer Flocculant"^^xsd:string ;
+    rdfs:comment "Flocculant that is a type of polymer"^^xsd:string ;
+    rdfs:subClassOf watr:Flocculant .
+
+watr:HeavyMetalRemovalAgent a sh:NodeShape,
+        watr:Class,
+        watr:HeavyMetalRemovalAgent ;
     rdfs:label "Heavy Metal Removal Agent"^^xsd:string ;
     rdfs:comment "Class for chemicals used to remove heavy metals"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#WastewaterTreatmentChemical> .
+    rdfs:subClassOf watr:WastewaterTreatmentChemical .
 
-<urn:nawi-water-ontology#OdorControlAgent> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#OdorControlAgent> ;
+watr:OdorControlAgent a sh:NodeShape,
+        watr:Class,
+        watr:OdorControlAgent ;
     rdfs:label "Odor Control Agent"^^xsd:string ;
     rdfs:comment "Class for chemicals used for odor control"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#WastewaterTreatmentChemical> .
+    rdfs:subClassOf watr:WastewaterTreatmentChemical .
 
-<urn:nawi-water-ontology#Process-Adsorption> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Adsorption> ;
+watr:Process-A2O a watr:Class,
+        watr:Process-A2O ;
+    rdfs:label "Anaerobic-Anoxic-Oxic (A2O)"^^xsd:string ;
+    rdfs:subClassOf watr:Process-ActivatedSludge,
+        watr:Process-Denitrification,
+        watr:Process-Nitrification ;
+    skos:definition "Anaerobic-anoxic-aerobic process for simultaneous biological nitrogen and phosphorus removal."^^xsd:string .
+
+watr:Process-AO a watr:Class,
+        watr:Process-AO ;
+    rdfs:label "Anoxic-Aerobic"^^xsd:string ;
+    rdfs:subClassOf watr:Process-ActivatedSludge,
+        watr:Process-Denitrification,
+        watr:Process-Nitrification ;
+    skos:definition "Two-stage process with anoxic zone followed by aerobic zone for biological nitrogen removal."^^xsd:string .
+
+watr:Process-Adsorption a watr:Class,
+        watr:Process-Adsorption ;
     rdfs:label "Adsorption"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Physical-Process> ;
+    rdfs:subClassOf watr:Process-PhysicalProcess ;
     skos:definition "A process by which substances bind to a surface."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-AdvancedOxidation> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-AdvancedOxidation> ;
+watr:Process-AdvancedOxidation a watr:Class,
+        watr:Process-AdvancedOxidation ;
     rdfs:label "Advanced Oxidation Process (AOP)"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-Oxidation> ;
+    rdfs:subClassOf watr:Process-Oxidation ;
     skos:definition "Processes combining UV light with oxidants (e.g., UV-AOP) to destroy contaminants."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Aeration> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Aeration> ;
-    rdfs:label "Aeration"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-GasTransfer> ;
-    skos:definition "A unit process that aerates (i.e., transfers oxygen into water)."^^xsd:string .
-
-<urn:nawi-water-ontology#Process-AerobicDigestion> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-AerobicDigestion> ;
+watr:Process-AerobicDigestion a watr:Class,
+        watr:Process-AerobicDigestion ;
     rdfs:label "Aerobic Digestion"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Digestion> ;
+    rdfs:subClassOf watr:Digestion ;
     skos:definition "A biological process that breaks down organic matter in the presence of oxygen."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-AnaerobicDigestion> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-AnaerobicDigestion> ;
+watr:Process-AnaerobicDigestion a watr:Class,
+        watr:Process-AnaerobicDigestion ;
     rdfs:label "Anaerobic Digestion"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Digestion> ;
+    rdfs:subClassOf watr:Digestion ;
     skos:definition "A biological process that breaks down organic matter in the absence of oxygen."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-BiologicallyActiveFiltration> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-BiologicallyActiveFiltration> ;
+watr:Process-BiologicallyActiveFiltration a watr:Class,
+        watr:Process-BiologicallyActiveFiltration ;
     rdfs:label "Biologically Active Filtration (BAF)"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-Biofiltration> ;
+    rdfs:subClassOf watr:Process-Biofiltration ;
     skos:definition "A biologically activated filtration column."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Centrifugation> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Centrifugation> ;
+watr:Process-Centrifugation a watr:Class,
+        watr:Process-Centrifugation ;
     rdfs:label "Centrifugation"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Physical-Process> ;
+    rdfs:subClassOf watr:Process-PhysicalProcess ;
     skos:definition "A process that uses centrifugal force to separate substances of different densities."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Chlorination> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Chlorination> ;
+watr:Process-Chlorination a watr:Class,
+        watr:Process-Chlorination ;
     rdfs:label "Chlorination"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-Disinfection> ;
+    rdfs:subClassOf watr:Process-Disinfection ;
     skos:definition "A disinfection process that uses chlorine or chlorine compounds."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Cogeneration> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Cogeneration> ;
+watr:Process-Cogeneration a watr:Class,
+        watr:Process-Cogeneration ;
     rdfs:label "Cogeneration"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-Incineration> ;
+    rdfs:subClassOf watr:Process-Incineration ;
     skos:definition "A process that combusts biosolids or biogas to produce electricity and heat simultaneously."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Comminution> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Comminution> ;
+watr:Process-Comminution a watr:Class,
+        watr:Process-Comminution ;
     rdfs:label "Comminution"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-Physical> ;
+    rdfs:subClassOf watr:Process-Physical ;
     skos:definition "Process of reducing solid materials into smaller particles through mechanical forces such as crushing, grinding, impact, shear, or compression."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Condensation> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Condensation> ;
+watr:Process-Condensation a watr:Class,
+        watr:Process-Condensation ;
     rdfs:label "Condensation"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Physical-Process> ;
+    rdfs:subClassOf watr:Process-PhysicalProcess ;
     skos:definition "A process of turning a vapor into a liquid."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Dewatering> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Dewatering> ;
-    rdfs:label "Dewatering"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Physical-Process> ;
-    skos:definition "A process to remove or separate water from another material, typically solids."^^xsd:string .
+watr:Process-Digestion a watr:Class,
+        watr:Process-Digestion ;
+    rdfs:label "Digestion"^^xsd:string ;
+    rdfs:subClassOf watr:Process-BiologicalProcess ;
+    skos:definition "A biological process that breaks down organic matter over a long duration in a tank."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Electrocoagulation> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Electrocoagulation> ;
+watr:Process-Electrocoagulation a watr:Class,
+        watr:Process-Electrocoagulation ;
     rdfs:label "Electrocoagulation (EC)"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Physical-Process>,
-        <urn:nawi-water-ontology#Process-Coagulation> ;
+    rdfs:subClassOf watr:Process-Coagulation,
+        watr:Process-PhysicalProcess ;
     skos:definition "An electrified pretreatment technology using sacrificial anodes to release coagulant precursors for contaminant removal."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Electrolysis> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Electrolysis> ;
+watr:Process-Electrolysis a watr:Class,
+        watr:Process-Electrolysis ;
     rdfs:label "Electrolysis"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Chemical-Process> ;
+    rdfs:subClassOf watr:Process-ChemicalProcess ;
     skos:definition "A process that uses a direct electric current to drive an otherwise non-spontaneous chemical reaction."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Evaporation> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Evaporation> ;
-    rdfs:label "Evaporation"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Physical-Process> ;
-    skos:definition "A process of turning a liquid into a vapor."^^xsd:string .
-
-<urn:nawi-water-ontology#Process-Flocculation> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Flocculation> ;
+watr:Process-Flocculation a watr:Class,
+        watr:Process-Flocculation ;
     rdfs:label "Flocculation"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Chemical-Process>,
-        <urn:nawi-water-ontology#Process-Mixing> ;
+    rdfs:subClassOf watr:Process-ChemicalProcess,
+        watr:Process-Mixing ;
     skos:definition "A unit process that gently mixes water to allow coagulated particles to form larger clumps."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Flotation> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Flotation> ;
+watr:Process-Flotation a watr:Class,
+        watr:Process-Flotation ;
     rdfs:label "Flotation"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Physical-Process> ;
+    rdfs:subClassOf watr:Process-PhysicalProcess ;
     skos:definition "A unit process that uses buoyancy to separate solids from water, often using air bubbles."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-GasTransfer> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-GasTransfer> ;
+watr:Process-GasTransfer a watr:Class,
+        watr:Process-GasTransfer ;
     rdfs:label "Gas Transfer"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Physical-Process> ;
+    rdfs:subClassOf watr:Process-PhysicalProcess ;
     skos:definition "A unit process that transfers gases, such as oxygen or carbon dioxide, into or out of water."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-GranularActivatedCarbon> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-GranularActivatedCarbon> ;
+watr:Process-GranularActivatedCarbon a watr:Class,
+        watr:Process-GranularActivatedCarbon ;
     rdfs:label "Granular Activated Carbon (GAC)"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-Adsorption>,
-        <urn:nawi-water-ontology#Process-Filtration> ;
+    rdfs:subClassOf watr:Process-Adsorption,
+        watr:Process-Filtration ;
     skos:definition "A process that uses an activated carbon filter to adsorb impurities from water."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-IonExchange> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-IonExchange> ;
+watr:Process-IonExchange a watr:Class,
+        watr:Process-IonExchange ;
     rdfs:label "Ion Exchange"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Chemical-Process>,
-        <urn:nawi-water-ontology#Physical-Process> ;
+    rdfs:subClassOf watr:Process-ChemicalProcess,
+        watr:Process-PhysicalProcess ;
     skos:definition "A process in which ions are exchanged between a solution and an ion-exchange resin or membrane."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-MembraneBioreactor> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-MembraneBioreactor> ;
-    rdfs:label "Membrane Bioreactor"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-Biofiltration> ;
-    skos:definition "Combined biological and membrane filtration"^^xsd:string .
-
-<urn:nawi-water-ontology#Process-Ozonation> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Ozonation> ;
+watr:Process-Ozonation a watr:Class,
+        watr:Process-Ozonation ;
     rdfs:label "Ozonation"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-Oxidation> ;
+    rdfs:subClassOf watr:Process-Oxidation ;
     skos:definition "A water treatment process that uses ozone as an oxidant."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-RapidSandFiltration> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-RapidSandFiltration> ;
+watr:Process-RapidSandFiltration a watr:Class,
+        watr:Process-RapidSandFiltration ;
     rdfs:label "Rapid Sand Filtration"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-MediaFiltration> ;
+    rdfs:subClassOf watr:Process-MediaFiltration ;
     skos:definition "A filtration process that uses a bed of sand to remove impurities at high flow rates."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Screening> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Screening> ;
+watr:Process-Screening a watr:Class,
+        watr:Process-Screening ;
     rdfs:label "Screening"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-Separation> ;
+    rdfs:subClassOf watr:Process-Separation ;
     skos:definition "A unit process that removes large solids from water, such as leaves, branches, and other debris."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Solidification> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Solidification> ;
+watr:Process-Solidification a watr:Class,
+        watr:Process-Solidification ;
     rdfs:label "Solidification"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Physical-Process> ;
+    rdfs:subClassOf watr:Process-PhysicalProcess ;
     skos:definition "A process of turning a liquid into a solid (e.g., freezing)."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-SolventExtraction> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-SolventExtraction> ;
+watr:Process-SolventExtraction a watr:Class,
+        watr:Process-SolventExtraction ;
     rdfs:label "Solvent-Based Extraction"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Chemical-Process> ;
+    rdfs:subClassOf watr:Process-ChemicalProcess ;
     skos:definition "A non-membrane, non-thermal method using a solvent to selectively extract water from highly saline brines."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-UVDisinfection> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-UVDisinfection> ;
+watr:Process-UVDisinfection a watr:Class,
+        watr:Process-UVDisinfection ;
     rdfs:label "UV Disinfection"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-Disinfection> ;
+    rdfs:subClassOf watr:Process-Disinfection ;
     skos:definition "A disinfection process that uses ultraviolet light to inactivate microorganisms."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-pHAdjustment> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-pHAdjustment> ;
+watr:Process-pHAdjustment a watr:Class,
+        watr:Process-pHAdjustment ;
     rdfs:label "pH Adjustment"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-ChemicalAddition> ;
+    rdfs:subClassOf watr:Process-ChemicalAddition ;
     skos:definition "A unit process that adjusts the pH of water to a desired level using chemicals."^^xsd:string .
 
-<urn:nawi-water-ontology#hasMeasurementRange> a rdf:Property ;
+watr:Tank a sh:NodeShape,
+        watr:Class ;
+    rdfs:label "Tank"^^xsd:string ;
+    rdfs:comment "A tank with at least one inlet and one outlet"^^xsd:string ;
+    rdfs:subClassOf ns1:Equipment ;
+    sh:property [ rdfs:comment "A tank has an outlet fluid connection point"^^xsd:string ;
+            sh:path ns1:hasConnectionPoint ;
+            sh:qualifiedMinCount 1 ;
+            sh:qualifiedValueShape [ sh:class ns1:OutletConnectionPoint ;
+                    sh:not [ sh:property [ sh:hasValue watr:Role-Drain ;
+                                    sh:minCount 1 ;
+                                    sh:path ns1:hasRole ] ] ;
+                    sh:property [ sh:class ns1:Mix-Fluid ;
+                            sh:path ns1:hasMedium ] ] ],
+        [ rdfs:comment "A tank may have a drain connection point"^^xsd:string ;
+            sh:path ns1:hasConnectionPoint ;
+            sh:qualifiedMinCount 0 ;
+            sh:qualifiedValueShape [ sh:class ns1:OutletConnectionPoint ;
+                    sh:property [ sh:class ns1:Mix-Fluid ;
+                            sh:path ns1:hasMedium ],
+                        [ sh:hasValue watr:Role-Drain ;
+                            sh:path ns1:hasRole ] ] ],
+        [ rdfs:comment "A tank may have an overflow connection point"^^xsd:string ;
+            sh:path ns1:hasConnectionPoint ;
+            sh:qualifiedMinCount 0 ;
+            sh:qualifiedValueShape [ sh:class ns1:OutletConnectionPoint ;
+                    sh:property [ sh:hasValue ns1:Role-Overflow ;
+                            sh:path ns1:hasRole ],
+                        [ sh:class ns1:Mix-Fluid ;
+                            sh:path ns1:hasMedium ] ] ],
+        [ rdfs:comment "A tank has an inlet fluid connection point"^^xsd:string ;
+            sh:path ns1:hasConnectionPoint ;
+            sh:qualifiedMinCount 1 ;
+            sh:qualifiedValueShape [ sh:class ns1:InletConnectionPoint ;
+                    sh:property [ sh:class ns1:Mix-Fluid ;
+                            sh:path ns1:hasMedium ] ] ] .
+
+watr:hasMeasurementRange a rdf:Property ;
     rdfs:label "has measurement range"^^xsd:string ;
     rdfs:comment "The `hasMeasurementRange` relation is used to link to a numerical `Property` whose value indicates the expected range of variation that can physically be measured, e.g. by a sensor."^^xsd:string .
 
-<urn:nawi-water-ontology#Constituent-Solids> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Constituent-Solids> ;
+watr:Constituent-Solids a sh:NodeShape,
+        watr:Class,
+        watr:Constituent-Solids ;
     rdfs:label "Constituent-Solids"^^xsd:string ;
     rdfs:comment "Constituent-Solids"^^xsd:string ;
     rdfs:subClassOf ns1:Medium-Constituent .
 
-<urn:nawi-water-ontology#Disinfectant> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Disinfectant> ;
+watr:Disinfectant a sh:NodeShape,
+        watr:Class,
+        watr:Disinfectant ;
     rdfs:label "Disinfectant"^^xsd:string ;
     rdfs:comment "Class for disinfectants used in wastewater treatment"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#WastewaterTreatmentChemical> .
+    rdfs:subClassOf watr:WastewaterTreatmentChemical .
 
-<urn:nawi-water-ontology#Process-ActivatedSludge> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-ActivatedSludge> ;
-    rdfs:label "Activated Sludge"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Biological-Process> ;
-    skos:definition "Aerobic suspended-growth biological treatment"^^xsd:string .
+watr:Process-Aeration a watr:Class,
+        watr:Process-Aeration ;
+    rdfs:label "Aeration"^^xsd:string ;
+    rdfs:subClassOf watr:Process-GasTransfer ;
+    skos:definition "A unit process that aerates (i.e., transfers oxygen into water)."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Coagulation> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Coagulation> ;
+watr:Process-BiosolidsDisposal a watr:Class,
+        watr:Process-BiosolidsDisposal ;
+    rdfs:label "BiosolidsDisposal"^^xsd:string ;
+    rdfs:subClassOf watr:Process-Physical ;
+    skos:definition "Generic process for unspecified disposal of biosolids (e.g., incineration, land application, landfilling, etc.)."^^xsd:string .
+
+watr:Process-Coagulation a watr:Class,
+        watr:Process-Coagulation ;
     rdfs:label "Coagulation"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-ChemicalAddition> ;
+    rdfs:subClassOf watr:Process-ChemicalAddition ;
     skos:definition "A unit process that adds chemicals to water to cause small particles to clump together."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Incineration> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Incineration> ;
-    rdfs:label "Incineration"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Chemical-Process>,
-        <urn:nawi-water-ontology#Physical-Process> ;
-    skos:definition "A process that combusts biosolids or biogas."^^xsd:string .
+watr:Process-Dewatering a watr:Class,
+        watr:Process-Dewatering ;
+    rdfs:label "Dewatering"^^xsd:string ;
+    rdfs:subClassOf watr:Process-PhysicalProcess ;
+    skos:definition "A process to remove or separate water from another material, typically solids."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-MediaFiltration> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-MediaFiltration> ;
-    rdfs:label "Media Filtration"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-Filtration> ;
-    skos:definition "A filtration process that uses a bed of media (as opposed to a membrane-based process)."^^xsd:string .
+watr:Process-Evaporation a watr:Class,
+        watr:Process-Evaporation ;
+    rdfs:label "Evaporation"^^xsd:string ;
+    rdfs:subClassOf watr:Process-PhysicalProcess ;
+    skos:definition "A process of turning a liquid into a vapor."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-MembraneProcess> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-MembraneProcess> ;
+watr:Process-MembraneProcess a watr:Class,
+        watr:Process-MembraneProcess ;
     rdfs:label "Membrane Process"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Physical-Process> ;
+    rdfs:subClassOf watr:Process-PhysicalProcess ;
     skos:definition "A process that uses a semi-permeable membrane to separate substances."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Mixing> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Mixing> ;
-    rdfs:label "Mixing"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Physical-Process> ;
-    skos:definition "A unit process that mixes water with chemicals or other substances to achieve a desired effect."^^xsd:string .
+watr:Process-Microfiltration a watr:Class,
+        watr:Process-Microfiltration ;
+    rdfs:label "Microfiltration"^^xsd:string ;
+    rdfs:subClassOf watr:Process-Filtration ;
+    skos:definition "0.1 to 1 micron-scale filtration"^^xsd:string .
 
-<urn:nawi-water-ontology#Water-Brine> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Water-Brine> ;
+watr:Process-Ultrafiltration a watr:Class,
+        watr:Process-Ultrafiltration ;
+    rdfs:label "Ultrafiltration"^^xsd:string ;
+    rdfs:subClassOf watr:Process-Filtration ;
+    skos:definition "0.01 to 0.1 micron-scale filtration"^^xsd:string .
+
+watr:SeparationTank a sh:NodeShape,
+        watr:Class ;
+    rdfs:label "Separation Tank"^^xsd:string ;
+    rdfs:comment "A tank that has at least two outlets (e.g. overflow and underflow)"^^xsd:string ;
+    rdfs:subClassOf watr:Tank,
+        watr:UnitProcess ;
+    sh:property [ rdfs:comment "A separation tank has at least two outlet connection points"^^xsd:string ;
+            sh:path ns1:hasConnectionPoint ;
+            sh:qualifiedMinCount 2 ;
+            sh:qualifiedValueShape [ sh:class ns1:OutletConnectionPoint ;
+                    sh:property [ sh:class ns1:Mix-Fluid ;
+                            sh:path ns1:hasMedium ] ] ],
+        [ sh:hasValue watr:Process-Separation ;
+            sh:message "Instances of SeparationTank must have the Separation process."^^xsd:string ;
+            sh:minCount 1 ;
+            sh:path watr:hasProcess ] .
+
+watr:Water-Brine a sh:NodeShape,
+        watr:Class,
+        watr:Water-Brine ;
     rdfs:label "Water-Brine"^^xsd:string ;
     ns1:composedOf [ a ns1:QuantifiableProperty ;
-            ns1:ofConstituent ns1:Constituent-H2O ;
+            ns1:ofConstituent watr:Salt-NaCl ;
             ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/MassFraction> ;
             ns2:hasUnit <http://qudt.org/vocab/unit/PERCENT> ],
         [ a ns1:QuantifiableProperty ;
-            ns1:ofConstituent <urn:nawi-water-ontology#Salt-NaCl> ;
+            ns1:ofConstituent ns1:Constituent-H2O ;
             ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/MassFraction> ;
             ns2:hasUnit <http://qudt.org/vocab/unit/PERCENT> ] ;
     rdfs:comment "Water-Brine"^^xsd:string ;
     rdfs:subClassOf ns1:Fluid-Water .
 
-<urn:nawi-water-ontology#pHAdjuster> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#pHAdjuster> ;
+watr:pHAdjuster a sh:NodeShape,
+        watr:Class,
+        watr:pHAdjuster ;
     rdfs:label "pH Adjuster"^^xsd:string ;
     rdfs:comment "Class for pH adjusters used in wastewater treatment"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#WastewaterTreatmentChemical> .
+    rdfs:subClassOf watr:WastewaterTreatmentChemical .
 
-<urn:nawi-water-ontology#Basin> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
-    rdfs:label "Basin"^^xsd:string ;
-    rdfs:comment "A Basin is a physical structure or containment unit designed to hold and condition a volume of water as part of a treatment process. It has at least one inlet and one outlet for water flow and may include drains, overflow paths, mixing devices, or aeration elements depending on its operational role."^^xsd:string ;
-    rdfs:subClassOf ns1:Equipment ;
-    sh:property [ rdfs:comment "A basin may have an overflow connection point"^^xsd:string ;
-            sh:path ns1:hasConnectionPoint ;
-            sh:qualifiedMinCount 0 ;
-            sh:qualifiedValueShape [ sh:class ns1:OutletConnectionPoint ;
-                    sh:property [ sh:hasValue ns1:Mix-Fluid ;
-                            sh:path ns1:hasMedium ],
-                        [ sh:hasValue ns1:Role-Overflow ;
-                            sh:path ns1:hasRole ] ] ],
-        [ rdfs:comment "A basin has an outlet fluid connection point"^^xsd:string ;
-            sh:path ns1:hasConnectionPoint ;
-            sh:qualifiedMinCount 1 ;
-            sh:qualifiedValueShape [ sh:class ns1:OutletConnectionPoint ;
-                    sh:property [ sh:hasValue ns1:Mix-Fluid ;
-                            sh:path ns1:hasMedium ] ] ],
-        [ rdfs:comment "A basin has an inlet fluid connection point"^^xsd:string ;
-            sh:path ns1:hasConnectionPoint ;
-            sh:qualifiedMinCount 1 ;
-            sh:qualifiedValueShape [ sh:class ns1:InletConnectionPoint ;
-                    sh:property [ sh:hasValue ns1:Mix-Fluid ;
-                            sh:path ns1:hasMedium ] ] ],
-        [ rdfs:comment "A basin may have an drain connection point"^^xsd:string ;
-            sh:path ns1:hasConnectionPoint ;
-            sh:qualifiedMinCount 0 ;
-            sh:qualifiedValueShape [ sh:class ns1:OutletConnectionPoint ;
-                    sh:property [ sh:hasValue ns1:Role-Drain ;
-                            sh:path ns1:hasRole ],
-                        [ sh:hasValue ns1:Mix-Fluid ;
-                            sh:path ns1:hasMedium ] ] ] .
-
-<urn:nawi-water-ontology#Coagulant> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Coagulant> ;
+watr:Coagulant a sh:NodeShape,
+        watr:Class,
+        watr:Coagulant ;
     rdfs:label "Coagulant"^^xsd:string ;
     rdfs:comment "Class for coagulants used in wastewater treatment"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#WastewaterTreatmentChemical> .
+    rdfs:subClassOf watr:WastewaterTreatmentChemical .
 
-<urn:nawi-water-ontology#Process-ChemicalAddition> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-ChemicalAddition> ;
+watr:Process-ChemicalAddition a watr:Class,
+        watr:Process-ChemicalAddition ;
     rdfs:label "Chemical Addition"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Chemical-Process> ;
+    rdfs:subClassOf watr:Process-ChemicalProcess ;
     skos:definition "Addition of chemicals, such as coagulant, polymer, disinfectant, etc."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Crystallization> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Crystallization> ;
+watr:Process-Crystallization a watr:Class,
+        watr:Process-Crystallization ;
     rdfs:label "Crystallization"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-Solidification> ;
+    rdfs:subClassOf watr:Process-Solidification ;
     skos:definition "A process of forming solid crystals from a solution."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Electrodialysis> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Electrodialysis> ;
+watr:Process-Electrodialysis a watr:Class,
+        watr:Process-Electrodialysis ;
     rdfs:label "Electrodialysis"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Chemical-Process>,
-        <urn:nawi-water-ontology#Physical-Process> ;
+    rdfs:subClassOf watr:Process-ChemicalProcess,
+        watr:Process-PhysicalProcess ;
     skos:definition "A process that uses ion-exchange membranes and an electric potential to separate ions from water."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Oxidation> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Oxidation> ;
+watr:Process-Incineration a watr:Class,
+        watr:Process-Incineration ;
+    rdfs:label "Incineration"^^xsd:string ;
+    rdfs:subClassOf watr:Process-ChemicalProcess,
+        watr:Process-PhysicalProcess ;
+    skos:definition "A process that combusts biosolids or biogas."^^xsd:string .
+
+watr:Process-MediaFiltration a watr:Class,
+        watr:Process-MediaFiltration ;
+    rdfs:label "Media Filtration"^^xsd:string ;
+    rdfs:subClassOf watr:Process-Filtration ;
+    skos:definition "A filtration process that uses a bed of media (as opposed to a membrane-based process)."^^xsd:string .
+
+watr:Process-Mixing a watr:Class,
+        watr:Process-Mixing ;
+    rdfs:label "Mixing"^^xsd:string ;
+    rdfs:subClassOf watr:Process-PhysicalProcess ;
+    skos:definition "A unit process that mixes water with chemicals or other substances to achieve a desired effect."^^xsd:string .
+
+watr:Process-Oxidation a watr:Class,
+        watr:Process-Oxidation ;
     rdfs:label "Oxidation"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Chemical-Process> ;
+    rdfs:subClassOf watr:Process-ChemicalProcess ;
     skos:definition "A unit process that adds oxidizing agents to water to remove contaminants or improve water quality."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-ReverseOsmosis> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-ReverseOsmosis> ;
+watr:Process-Denitrification a watr:Class,
+        watr:Process-Denitrification ;
+    rdfs:label "Denitrification"^^xsd:string ;
+    rdfs:subClassOf watr:Process-BiologicalProcess ;
+    skos:definition "Process by which nitrate is deoxidized to nitrogen gas and nitrogen oxides."^^xsd:string .
+
+watr:Process-Nitrification a watr:Class,
+        watr:Process-Nitrification ;
+    rdfs:label "Nitrification"^^xsd:string ;
+    rdfs:subClassOf watr:Process-BiologicalProcess ;
+    skos:definition "Process by which ammonia is oxidized to nitrite and subsequently nitrate."^^xsd:string .
+
+watr:Process-ReverseOsmosis a watr:Class,
+        watr:Process-ReverseOsmosis ;
     rdfs:label "Reverse Osmosis (RO)"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-MembraneProcess> ;
+    rdfs:subClassOf watr:Process-MembraneProcess ;
     skos:definition "A core membrane separation process for desalination and advanced purification."^^xsd:string .
 
-<urn:nawi-water-ontology#Tank> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
-    rdfs:label "Tank"^^xsd:string ;
-    rdfs:comment "A tank for storing liquid"^^xsd:string ;
-    rdfs:subClassOf ns1:Equipment ;
-    sh:property [ rdfs:comment "A tank has an inlet fluid connection point"^^xsd:string ;
-            sh:path ns1:hasConnectionPoint ;
-            sh:qualifiedMinCount 1 ;
-            sh:qualifiedValueShape [ sh:class ns1:InletConnectionPoint ;
-                    sh:property [ sh:hasValue ns1:Mix-Fluid ;
-                            sh:path ns1:hasMedium ] ] ],
-        [ rdfs:comment "A tank has an outlet fluid connection point"^^xsd:string ;
-            sh:path ns1:hasConnectionPoint ;
-            sh:qualifiedMinCount 1 ;
-            sh:qualifiedValueShape [ sh:class ns1:OutletConnectionPoint ;
-                    sh:property [ sh:hasValue ns1:Mix-Fluid ;
-                            sh:path ns1:hasMedium ] ] ] .
-
-<urn:nawi-water-ontology#Process-Disinfection> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Disinfection> ;
-    rdfs:label "Disinfection"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Chemical-Process> ;
-    skos:definition "A unit process that uses chemicals or other methods to kill or inactivate harmful microorganisms in water."^^xsd:string .
-
-<urn:nawi-water-ontology#Process-Sedimentation> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Sedimentation> ;
+watr:Process-Sedimentation a watr:Class,
+        watr:Process-Sedimentation ;
     rdfs:label "Sedimentation"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-Separation> ;
+    rdfs:subClassOf watr:Process-Separation ;
     skos:definition "A unit process that allows solids to settle out of water by gravity."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Separation> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Separation> ;
-    rdfs:label "Separation"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Physical-Process> ;
-    skos:definition "The most generic process for separation of any two constituents."^^xsd:string .
-
-<urn:nawi-water-ontology#Salt-NaCl> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Salt-NaCl> ;
+watr:Salt-NaCl a sh:NodeShape,
+        watr:Class,
+        watr:Salt-NaCl ;
     rdfs:label "Salt-NaCl"^^xsd:string ;
     rdfs:comment "Salt-NaCl"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Constituent-Salt> .
+    rdfs:subClassOf watr:Constituent-Salt .
 
-<urn:nawi-water-ontology#Thickener> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:Thickener a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Thickener"^^xsd:string ;
     rdfs:comment "A device used to increase the solids concentration of a slurry"^^xsd:string ;
-    rdfs:subClassOf ns1:Equipment .
+    rdfs:subClassOf ns1:Equipment,
+        watr:UnitProcess .
 
-<urn:nawi-water-ontology#Process-Biofiltration> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Biofiltration> ;
+watr:Process-Biofiltration a watr:Class,
+        watr:Process-Biofiltration ;
     rdfs:label "Biofiltration"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Biological-Process>,
-        <urn:nawi-water-ontology#Process-Filtration> ;
+    rdfs:subClassOf watr:Process-BiologicalProcess,
+        watr:Process-Filtration ;
     skos:definition "A filtration method that uses biological processes to remove contaminants (e.g., trickling filter)."^^xsd:string .
 
-<urn:nawi-water-ontology#Biological-Process> a <urn:nawi-water-ontology#Biological-Process>,
-        <urn:nawi-water-ontology#Class> ;
+watr:Process-BiologicalProcess a watr:Class,
+        watr:Process-BiologicalProcess ;
     rdfs:label "Biological Process"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process> ;
+    rdfs:subClassOf watr:Process ;
     skos:definition "A unit process that utilizes biological activity for water treatment."^^xsd:string .
 
-<urn:nawi-water-ontology#Process-Filtration> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Process-Filtration> ;
-    rdfs:label "Filtration"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process-Separation> ;
-    skos:definition "A unit process that removes smaller particles from water by passing it through a filter."^^xsd:string .
+watr:Process-Disinfection a watr:Class,
+        watr:Process-Disinfection ;
+    rdfs:label "Disinfection"^^xsd:string ;
+    rdfs:subClassOf watr:Process-ChemicalProcess ;
+    skos:definition "A unit process that uses chemicals or other methods to kill or inactivate harmful microorganisms in water."^^xsd:string .
 
-<urn:nawi-water-ontology#Reactor> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
-    rdfs:label "Reactor"^^xsd:string ;
-    rdfs:comment "An equipment used for chemical reaction"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Tank> ;
-    sh:property [ rdfs:comment "A reactor has at least one inlet fluid connection point"^^xsd:string ;
-            sh:path ns1:hasConnectionPoint ;
-            sh:qualifiedMinCount 1 ;
-            sh:qualifiedValueShape [ sh:class ns1:InletConnectionPoint ;
-                    sh:property [ sh:hasValue ns1:Mix-Fluid ;
-                            sh:path ns1:hasMedium ] ] ],
-        [ rdfs:comment "A reactor has at least one outlet fluid connection point"^^xsd:string ;
-            sh:path ns1:hasConnectionPoint ;
-            sh:qualifiedMinCount 1 ;
-            sh:qualifiedValueShape [ sh:class ns1:OutletConnectionPoint ;
-                    sh:property [ sh:hasValue ns1:Mix-Fluid ;
-                            sh:path ns1:hasMedium ] ] ] .
+watr:Process-ActivatedSludge a watr:Class,
+        watr:Process-ActivatedSludge ;
+    rdfs:label "Activated Sludge"^^xsd:string ;
+    rdfs:subClassOf watr:Process-BiologicalProcess ;
+    skos:definition "Aerobic suspended-growth biological treatment"^^xsd:string .
 
-<urn:nawi-water-ontology#WastewaterTreatmentChemical> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#WastewaterTreatmentChemical> ;
+watr:Process-Separation a watr:Class,
+        watr:Process-Separation ;
+    rdfs:label "Separation"^^xsd:string ;
+    rdfs:subClassOf watr:Process-PhysicalProcess ;
+    skos:definition "The most generic process for separation of any two constituents."^^xsd:string .
+
+watr:WastewaterTreatmentChemical a sh:NodeShape,
+        watr:Class,
+        watr:WastewaterTreatmentChemical ;
     rdfs:label "Wastewater Treatment Chemical"^^xsd:string ;
     rdfs:comment "Base class for all chemicals used in wastewater treatment"^^xsd:string ;
     rdfs:subClassOf ns1:Medium-Constituent .
 
+watr:Process-Filtration a watr:Class,
+        watr:Process-Filtration ;
+    rdfs:label "Filtration"^^xsd:string ;
+    rdfs:subClassOf watr:Process-Separation ;
+    skos:definition "A unit process that removes smaller particles from water by passing it through a filter."^^xsd:string .
+
 ns1:Sensor sh:property [ rdfs:comment "The `hasMeasurementRange` relation is used to link to a numerical `Property` whose value indicates the maximum or minimum that can physically be measured, e.g. by a sensor."^^xsd:string ;
             sh:class ns1:QuantifiableProperty ;
-            sh:path <urn:nawi-water-ontology#hasMeasurementRange> ] .
+            sh:path watr:hasMeasurementRange ] .
 
-<urn:nawi-water-ontology#Filter> a sh:NodeShape,
-        <urn:nawi-water-ontology#Class> ;
+watr:Filter a sh:NodeShape,
+        watr:Class ;
     rdfs:label "Filter"^^xsd:string ;
     rdfs:comment "An equipment used to remove impurities from liquids or gases"^^xsd:string ;
     rdfs:subClassOf ns1:Filter,
-        <urn:nawi-water-ontology#UnitProcess> ;
-    sh:property [ sh:hasValue <urn:nawi-water-ontology#Process-Filtration> ;
-            sh:maxCount 1 ;
+        watr:UnitProcess ;
+    sh:property [ sh:hasValue watr:Process-Filtration ;
             sh:message "Instances of Filter must have the Filtration process."^^xsd:string ;
             sh:minCount 1 ;
-            sh:path <urn:nawi-water-ontology#hasProcess> ] .
+            sh:path watr:hasProcess ] .
 
-<urn:nawi-water-ontology#Chemical-Process> a <urn:nawi-water-ontology#Chemical-Process>,
-        <urn:nawi-water-ontology#Class> ;
+watr:Process-ChemicalProcess a watr:Class,
+        watr:Process-ChemicalProcess ;
     rdfs:label "Chemical Process"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process> ;
+    rdfs:subClassOf watr:Process ;
     skos:definition "A unit process that involves the addition of chemicals to water to achieve a desired effect."^^xsd:string .
 
-<urn:nawi-water-ontology#Physical-Process> a <urn:nawi-water-ontology#Class>,
-        <urn:nawi-water-ontology#Physical-Process> ;
+watr:Reactor a sh:NodeShape,
+        watr:Class ;
+    rdfs:label "Reactor"^^xsd:string ;
+    rdfs:comment "A tank used for reaction or biological/chemical treatment processes"^^xsd:string ;
+    rdfs:subClassOf watr:Tank,
+        watr:UnitProcess ;
+    sh:property [ rdfs:comment "A reactor may have recirculation or return connection points"^^xsd:string ;
+            sh:path ns1:hasConnectionPoint ;
+            sh:qualifiedMinCount 0 ;
+            sh:qualifiedValueShape [ sh:class ns1:OutletConnectionPoint ;
+                    sh:property [ sh:in ( ns1:Role-Recirculating ns1:Role-Return ) ;
+                            sh:path ns1:hasRole ],
+                        [ sh:class ns1:Mix-Fluid ;
+                            sh:path ns1:hasMedium ] ] ] .
+
+watr:Process-PhysicalProcess a watr:Class,
+        watr:Process-PhysicalProcess ;
     rdfs:label "Physical Process"^^xsd:string ;
-    rdfs:subClassOf <urn:nawi-water-ontology#Process> ;
+    rdfs:subClassOf watr:Process ;
     skos:definition "A unit process that relies on physical forces to separate or treat water."^^xsd:string .
 
-ns1:QuantifiableProperty sh:property [ rdfs:comment "The `hasPrecision` relation is used to link to a numerical `Property` whose value indicates the repeatability or reproducibility of measurements under identical conditions."^^xsd:string ;
+ns1:QuantifiableProperty sh:property [ rdfs:comment "The `hasNumericResolution` relation is used to link to a numerical `Property` whose value indicates the smallest distinguishable difference between two measured values in engineering units."^^xsd:string ;
             sh:class ns1:QuantifiableProperty ;
-            sh:path <urn:nawi-water-ontology#hasPrecision> ],
-        [ rdfs:comment "The `hasNumericResolution` relation is used to link to a numerical `Property` whose value indicates the smallest distinguishable difference between two measured values in engineering units."^^xsd:string ;
-            sh:class ns1:QuantifiableProperty ;
-            sh:path <urn:nawi-water-ontology#hasNumericResolution> ],
-        [ rdfs:comment "The `hasDropRate` relation is used to link to a `Property` describes the amount of data points lost within a range of time due to latencies or other factors."^^xsd:string ;
-            sh:class ns1:QuantifiableProperty ;
-            sh:path <urn:nawi-water-ontology#hasDropRate> ],
-        [ rdfs:comment "The `hasProcessedData` relation is used to link to a `Property` that describes any data processing, filtering, or transformation applied to the raw measurement values."^^xsd:string ;
-            sh:class ns1:QuantifiableProperty ;
-            sh:path <urn:nawi-water-ontology#hasProcessedData> ],
-        [ rdfs:comment "The `hasMeasurementRange` relation is used to link to a numerical `Property` whose value indicates the maximum or minimum that can physically be measured, e.g. by a sensor."^^xsd:string ;
-            sh:class ns1:QuantifiableProperty ;
-            sh:path <urn:nawi-water-ontology#hasMeasurementRange> ],
-        [ rdfs:comment "The `hasAccuracy` relation is used to link to a numerical `Property` whose value indicates the maximum expected deviation between the measured value and the true value in engineering units."^^xsd:string ;
-            sh:class ns1:QuantifiableProperty ;
-            sh:path <urn:nawi-water-ontology#hasAccuracy> ],
-        [ rdfs:comment "The `hasTemporalResolution` relation is used to link to a numerical `Property` whose value indicates the minimum time interval between successive measurements or data points."^^xsd:string ;
-            sh:class ns1:QuantifiableProperty ;
-            sh:path <urn:nawi-water-ontology#hasTemporalResolution> ],
+            sh:path watr:hasNumericResolution ],
         [ rdfs:comment "The `hasVariableRange` relation is used to link to a numerical `Property` whose value indicates the maximum or minimum for the measured variable during normal operation."^^xsd:string ;
             sh:class ns1:QuantifiableProperty ;
-            sh:path <urn:nawi-water-ontology#hasVariableRange> ],
-        [ rdfs:comment "The `hasTemporalRange` relation is used to link to a numerical `Property` whose value indicates the start and end times for which data has been recorded."^^xsd:string ;
+            sh:path watr:hasVariableRange ],
+        [ rdfs:comment "The `hasDropRate` relation is used to link to a `Property` describes the amount of data points lost within a range of time due to latencies or other factors."^^xsd:string ;
             sh:class ns1:QuantifiableProperty ;
-            sh:path <urn:nawi-water-ontology#hasTemporalRange> ],
-        [ rdfs:comment "The `hasResponseTime` relation is used to link to a numerical `Property` whose value indicates the time required for the sensor or measurement system to respond to a step change in the measured variable."^^xsd:string ;
-            sh:class ns1:QuantifiableProperty ;
-            sh:path <urn:nawi-water-ontology#hasResponseTime> ],
-        [ rdfs:comment "The `hasBias` relation is used to link to a numerical `Property` whose value indicates the systematic offset or drift in measurements relative to the true value."^^xsd:string ;
-            sh:class ns1:QuantifiableProperty ;
-            sh:path <urn:nawi-water-ontology#hasBias> ],
-        [ rdfs:comment "The `hasCalibrationCurve` relation is used to link to a `Property` that describes the mathematical relationship or lookup table between raw sensor output and calibrated engineering units."^^xsd:string ;
-            sh:class ns1:QuantifiableProperty ;
-            sh:path <urn:nawi-water-ontology#hasCalibrationCurve> ],
+            sh:path watr:hasDropRate ],
         [ rdfs:comment "The `hasNumericRange` relation is used to link to a numerical `Property` whose value indicates the span between the minimum and maximum measured values."^^xsd:string ;
             sh:class ns1:QuantifiableProperty ;
-            sh:path <urn:nawi-water-ontology#hasNumericRange> ] .
+            sh:path watr:hasNumericRange ],
+        [ rdfs:comment "The `hasTemporalRange` relation is used to link to a numerical `Property` whose value indicates the start and end times for which data has been recorded."^^xsd:string ;
+            sh:class ns1:QuantifiableProperty ;
+            sh:path watr:hasTemporalRange ],
+        [ rdfs:comment "The `hasProcessedData` relation is used to link to a `Property` that describes any data processing, filtering, or transformation applied to the raw measurement values."^^xsd:string ;
+            sh:class ns1:QuantifiableProperty ;
+            sh:path watr:hasProcessedData ],
+        [ rdfs:comment "The `hasTemporalResolution` relation is used to link to a numerical `Property` whose value indicates the minimum time interval between successive measurements or data points."^^xsd:string ;
+            sh:class ns1:QuantifiableProperty ;
+            sh:path watr:hasTemporalResolution ],
+        [ rdfs:comment "The `hasBias` relation is used to link to a numerical `Property` whose value indicates the systematic offset or drift in measurements relative to the true value."^^xsd:string ;
+            sh:class ns1:QuantifiableProperty ;
+            sh:path watr:hasBias ],
+        [ rdfs:comment "The `hasMeasurementRange` relation is used to link to a numerical `Property` whose value indicates the maximum or minimum that can physically be measured, e.g. by a sensor."^^xsd:string ;
+            sh:class ns1:QuantifiableProperty ;
+            sh:path watr:hasMeasurementRange ],
+        [ rdfs:comment "The `hasPrecision` relation is used to link to a numerical `Property` whose value indicates the repeatability or reproducibility of measurements under identical conditions."^^xsd:string ;
+            sh:class ns1:QuantifiableProperty ;
+            sh:path watr:hasPrecision ],
+        [ rdfs:comment "The `hasResponseTime` relation is used to link to a numerical `Property` whose value indicates the time required for the sensor or measurement system to respond to a step change in the measured variable."^^xsd:string ;
+            sh:class ns1:QuantifiableProperty ;
+            sh:path watr:hasResponseTime ],
+        [ rdfs:comment "The `hasCalibrationCurve` relation is used to link to a `Property` that describes the mathematical relationship or lookup table between raw sensor output and calibrated engineering units."^^xsd:string ;
+            sh:class ns1:QuantifiableProperty ;
+            sh:path watr:hasCalibrationCurve ],
+        [ rdfs:comment "The `hasAccuracy` relation is used to link to a numerical `Property` whose value indicates the maximum expected deviation between the measured value and the true value in engineering units."^^xsd:string ;
+            sh:class ns1:QuantifiableProperty ;
+            sh:path watr:hasAccuracy ] .
 
-<urn:nawi-water-ontology#hasProcess> a rdf:Property ;
+watr:hasProcess a rdf:Property ;
     rdfs:label "has process"^^xsd:string ;
     rdfs:comment "This property is used to associate a water treatment process with a piece of equipment."^^xsd:string .
 
