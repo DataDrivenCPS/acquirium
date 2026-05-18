@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -98,10 +97,12 @@ class Acquirium:
         rdf_graph: str,
         format: str = "turtle",
         replace=True,
-        wait_for_embedding: bool = False,
     ) -> None:
         """
-        Insert RDF graph into the graph store to the main graph
+        Insert RDF graph into the graph store's main graph.
+
+        The server refreshes the embedding index synchronously before
+        responding, so inserted concepts are resolvable once this returns.
 
         Args:
             :param rdf_graph: `pathlib.Path` like object, or string.
@@ -110,10 +111,8 @@ class Acquirium:
                 - location of the source file
             format: Format of the RDF data [turtle | n3 | xml | trix]
             replace: If True, replaces the existing main graph. If False, appends to it.
-            wait_for_embedding: If True, blocks until the server finishes rebuilding
-                the embedding index. Default False (background rebuild).
         """
-        self.client.insert_graph(rdf_graph, format=format, replace=replace, wait_for_embedding=wait_for_embedding)
+        self.client.insert_graph(rdf_graph, format=format, replace=replace)
 
     def query(self) -> Query:
         """Create a new empty Query bound to this Acquirium instance."""
@@ -269,41 +268,6 @@ class Acquirium:
     def graph_version(self) -> int:
         """Return the server's current graph mutation counter."""
         return self.client.graph_version()
-
-    def wait_for_graph_index(
-        self, timeout: float = 60.0, poll: float = 0.5
-    ) -> None:
-        """Block until the graph embedding index reflects all graph
-        mutations made so far.
-
-        Use this after an async ``insert_graph`` (``wait_for_embedding=False``)
-        before issuing queries that depend on the newly inserted concepts.
-        Unlike polling for ``state == "ready"``, this is race-free: it waits
-        for the server's ``built_version`` to reach the ``target_version``
-        that was advanced synchronously by the insert, so a stale "ready"
-        from a previous build cannot satisfy it.
-
-        Raises ``RuntimeError`` if the index errors, ``TimeoutError`` if it
-        does not catch up within ``timeout`` seconds.
-        """
-        deadline = time.monotonic() + timeout
-        while True:
-            g = self.client.embedding_status().get("graph", {})
-            state = g.get("state")
-            if state == "error":
-                raise RuntimeError(
-                    f"graph embedding index error: {g.get('error')}"
-                )
-            built = g.get("built_version")
-            target = g.get("target_version", 0)
-            if state == "ready" and built is not None and built >= target:
-                return
-            if time.monotonic() >= deadline:
-                raise TimeoutError(
-                    f"graph index not caught up within {timeout}s "
-                    f"(state={state}, built={built}, target={target})"
-                )
-            time.sleep(poll)
 
     def reference_uri(self, source_id: str, ref_name: str) -> URIRef:
         """Return the canonical Acquirium reference URI for ``(source_id, ref_name)``."""

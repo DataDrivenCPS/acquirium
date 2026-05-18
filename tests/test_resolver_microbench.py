@@ -1,8 +1,8 @@
 """No-Docker microbenchmarks: regression tripwires for the resolve hot path.
 
-These do NOT need the server. They guard the two tiers the QUDT/concept
-unification newly put on the hot path so a perf regression can't land
-silently without a running stack:
+These do NOT need the server. They guard the deterministic tiers on the
+resolve hot path so a perf regression can't land silently without a
+running stack:
 
   - QUDTUnitConverter.resolve_unit HIT  — fast deterministic path
   - QUDTUnitConverter.resolve_unit MISS — the ~O(graph) literal scan

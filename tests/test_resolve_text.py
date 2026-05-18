@@ -323,21 +323,15 @@ def acq():
         server_port=ACQUIRIUM_TEST_SERVER_PORT,
         use_ssl=False,
     )
-    # wait_for_embedding=True makes the server rebuild the graph index
-    # synchronously before returning. Without it, insert_graph submits the
-    # rebuild to a thread pool and returns; _wait_for_embeddings_ready can
-    # then observe a stale "ready" (from startup / the first insert) and
-    # return before water.ttl's predicates/classes are indexed, so queries
-    # fall back to the nearest wrong concept. See _rebuild_graph_index_background.
+    # insert_graph refreshes the graph embedding index synchronously before
+    # returning, so the inserted concepts are resolvable immediately.
     client.insert_graph(
         "deployments/BENICIA/benicia-model.ttl",
         replace=True,
-        wait_for_embedding=True,
     )
     client.insert_graph(
         "ontologies/water.ttl",
         replace=False,
-        wait_for_embedding=True,
     )
     # Graph index is now built; this still guards the QUDT startup index.
     _wait_for_embeddings_ready(client, timeout=60)

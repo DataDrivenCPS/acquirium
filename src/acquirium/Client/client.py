@@ -53,9 +53,12 @@ class AcquiriumClient:
         )
 
 
-    def insert_graph(self, rdf_graph: str, format: str = "turtle", replace: bool = True, wait_for_embedding: bool = False) -> None:
+    def insert_graph(self, rdf_graph: str, format: str = "turtle", replace: bool = True) -> None:
         """
-        Insert RDF graph into the graph store to the main graph
+        Insert RDF graph into the graph store to the main graph.
+
+        The server refreshes the embedding index synchronously before
+        responding, so inserted concepts are resolvable once this returns.
 
         Args:
             :param rdf_graph: `pathlib.Path` like object, or string.
@@ -64,8 +67,6 @@ class AcquiriumClient:
                 - location of the source file
             format: Format of the RDF data [turtle | n3 | xml | trix]
             replace: If True, replaces the existing main graph. If False, appends to it.
-            wait_for_embedding: If True, the server will block until the embedding
-                index rebuild is complete before returning. Default False.
         """
         if isinstance(rdf_graph, Path):
             if not rdf_graph.is_file():
@@ -92,21 +93,14 @@ class AcquiriumClient:
             raise ValueError("rdf_graph must be a string or Path object")
 
 
-        if wait_for_embedding:
-            logger.info("acquirium client: requesting server to rebuild embedding index (waiting)...")
-
         url = f"{self.base_url}/insert_graph"
         data = {
             "rdf_graph": rdf_graph,
             "format": format,
             "replace": replace,
-            "wait_for_embedding": wait_for_embedding,
         }
         response = requests.post(url, json=data)
         _raise_for_status(response)
-
-        if wait_for_embedding:
-            logger.info("acquirium client: server embedding index rebuild complete")
 
 
     def timeseries_df(

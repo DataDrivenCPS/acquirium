@@ -1,5 +1,3 @@
-# acquirium/TextMatch/decorators.py
-
 from dataclasses import dataclass
 import inspect
 from typing import Any, Callable, Concatenate, ParamSpec, Sequence, TypeVar

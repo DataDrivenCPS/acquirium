@@ -1,10 +1,11 @@
 """Resolver latency benchmark — track + debug ConceptResolver performance.
 
-The unification put new work on the resolve hot path (a deterministic QUDT
-converter tier for units, and N+1 round trips for two-pass context coerce).
-This script isolates each tier so a regression can be pinned to one of them,
-and appends a per-tier row to ``tests/text_match_results/resolver_bench.csv``
-(timestamp + git SHA) so latency can be tracked across commits.
+The resolve path has several tiers (a deterministic QUDT converter tier for
+units, embedding matchers, context rerank) plus N+1 round trips for two-pass
+context coerce. This script isolates each tier so a regression can be pinned
+to one of them, and appends a per-tier row to
+``tests/text_match_results/resolver_bench.csv`` (timestamp + git SHA) so
+latency can be tracked across commits.
 
 Two modes:
 

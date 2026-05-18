@@ -121,7 +121,6 @@ class TestTimeseriesEndpoints:
             "rdf_graph": graph,
             "format": "turtle",
             "replace": False,
-            "wait_for_embedding": False,
         })
         assert resp.status_code == 200
 
