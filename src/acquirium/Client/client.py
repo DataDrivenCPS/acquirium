@@ -243,6 +243,29 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json().get("matches", [])
 
+    def resolve_concept(
+        self,
+        text: str,
+        kind: Optional[str] = None,
+        context: Optional[list[str]] = None,
+        min_score: float = 0.5,
+    ) -> Optional[str]:
+        """Resolve text to a single best ontology/QUDT URI, or ``None``.
+
+        The one coordination point for concept normalization shared by the
+        query builder and stream registration. A value that already looks
+        like a URI is passed through unchanged; otherwise the server's
+        unified resolver (data-graph + deterministic unit converter + QUDT,
+        with optional ``context`` disambiguation) is consulted and the top
+        match's URI returned.
+        """
+        if isinstance(text, str) and text.startswith(("http://", "https://", "urn:")):
+            return text
+        matches = self.resolve_text(
+            text, kind=kind, top_k=1, min_score=min_score, context=context
+        )
+        return matches[0]["uri"] if matches else None
+
     def embedding_status(self) -> dict:
         """
         Get the current status of embedding index builds.

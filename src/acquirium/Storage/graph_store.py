@@ -14,7 +14,7 @@ from rdflib.namespace import OWL
 from acquirium.internals.internals_namespaces import *
 
 from acquirium.internals.models import Point, PointCreateRequest
-from acquirium.internals.qudt_units import QUDTUnitConverter, UnitNotFound
+from acquirium.internals.qudt_units import QUDTUnitConverter
 
 _logger = logging.getLogger("acquirium.graph_store")
 
@@ -255,15 +255,6 @@ class OxigraphGraphStore:
         except Exception:
             # Oxigraph's commit is a no-op but keep for forward compatibility.
             pass
-
-    def _normalize_unit(self, unit_str: str) -> URIRef | Literal:
-        if self.qudt_converter is None:
-            return Literal(unit_str)
-        try:
-            unit_def = self.qudt_converter.infer_unit(unit_str)
-            return unit_def.uri
-        except Exception:
-            return Literal(unit_str)
 
     def close(self) -> None:
         try:

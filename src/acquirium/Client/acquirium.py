@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -246,59 +247,63 @@ class Acquirium:
     def _resolve_qudt_uri(
         self, text: str, kind: str, context: list[str] | None = None
     ) -> URIRef | None:
-        """Resolve a plain string to a QUDT URI via the server.
+        """Resolve a plain string to a QUDT/ontology URI via the server.
 
-        For ``kind="unit"`` the deterministic resolver runs first
-        (URI/symbol/UCUM/ratio like "mg/L"), then the embedding matcher. The
-        deterministic resolver ignores ``context`` and returns the first
-        graph-order match for ambiguous symbols, so when ``context`` is given
-        the order is flipped (embedding first) — that is how "kg" + a Mass
-        quantity kind reaches KiloGM instead of KiloGAUSS. Other kinds use the
-        embedding matcher only.
+        Thin wrapper over the shared :meth:`AcquiriumClient.resolve_concept`.
+        The server's unified resolver already runs the deterministic unit
+        converter ahead of the embedding matchers and applies ``context``
+        disambiguation (so "kg" + a Mass quantity kind reaches KiloGM, not
+        KiloGAUSS). Returns ``None`` if nothing confident matches.
 
         ``context``: already-resolved sibling URIs (e.g. the quantity kind /
-        medium for the same stream). Returns None if nothing confident matches.
+        medium for the same stream).
         """
-
-        def _via_embeddings() -> URIRef | None:
-            try:
-                matches = self.client.resolve_text(
-                    text, kind=kind, top_k=1, min_score=0.6, context=context
-                )
-                if matches:
-                    return URIRef(matches[0]["uri"])
-            except Exception:
-                pass
+        try:
+            uri = self.client.resolve_concept(
+                text, kind=kind, context=context, min_score=0.6
+            )
+        except Exception:
             return None
-
-        def _via_deterministic() -> URIRef | None:
-            if kind != "unit":
-                return None
-            try:
-                result = self.client.resolve_unit(text)
-                uri = result.get("uri")
-                if uri:
-                    return URIRef(uri)
-            except Exception:
-                pass  # fall through to embedding matcher
-            return None
-
-        # Context can only disambiguate via the embedding matcher, so prefer it
-        # when context is present; otherwise keep the fast deterministic path.
-        if kind == "unit" and context:
-            order = (_via_embeddings, _via_deterministic)
-        else:
-            order = (_via_deterministic, _via_embeddings)
-
-        for step in order:
-            uri = step()
-            if uri is not None:
-                return uri
-        return None
+        return URIRef(uri) if uri else None
 
     def graph_version(self) -> int:
         """Return the server's current graph mutation counter."""
         return self.client.graph_version()
+
+    def wait_for_graph_index(
+        self, timeout: float = 60.0, poll: float = 0.5
+    ) -> None:
+        """Block until the graph embedding index reflects all graph
+        mutations made so far.
+
+        Use this after an async ``insert_graph`` (``wait_for_embedding=False``)
+        before issuing queries that depend on the newly inserted concepts.
+        Unlike polling for ``state == "ready"``, this is race-free: it waits
+        for the server's ``built_version`` to reach the ``target_version``
+        that was advanced synchronously by the insert, so a stale "ready"
+        from a previous build cannot satisfy it.
+
+        Raises ``RuntimeError`` if the index errors, ``TimeoutError`` if it
+        does not catch up within ``timeout`` seconds.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            g = self.client.embedding_status().get("graph", {})
+            state = g.get("state")
+            if state == "error":
+                raise RuntimeError(
+                    f"graph embedding index error: {g.get('error')}"
+                )
+            built = g.get("built_version")
+            target = g.get("target_version", 0)
+            if state == "ready" and built is not None and built >= target:
+                return
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"graph index not caught up within {timeout}s "
+                    f"(state={state}, built={built}, target={target})"
+                )
+            time.sleep(poll)
 
     def reference_uri(self, source_id: str, ref_name: str) -> URIRef:
         """Return the canonical Acquirium reference URI for ``(source_id, ref_name)``."""

@@ -121,6 +121,11 @@ class EmbeddingIndexStatus(BaseModel):
     error: str | None
     last_built: str | None
     duration_s: float | None
+    # Generation a rebuild has been requested for vs. what the live index
+    # reflects. Index is fresh iff state=="ready" and built_version >=
+    # target_version. (qudt leaves these at 0/0; only graph maintains them.)
+    target_version: int = 0
+    built_version: int = 0
 
 class EmbeddingStatus(BaseModel):
     graph: EmbeddingIndexStatus

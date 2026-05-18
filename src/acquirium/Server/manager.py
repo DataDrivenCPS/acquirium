@@ -30,8 +30,9 @@ if TYPE_CHECKING:
 import shutil
 import docker
 from docker.errors import DockerException, NotFound as ContainerNotFound
-from acquirium.TextMatch.embedding_matcher import EmbeddingMatcher, ResolveResult, _split_local_name
+from acquirium.TextMatch.embedding_matcher import EmbeddingMatcher, _split_local_name
 from acquirium.TextMatch.qudt_store import QUDTStore
+from acquirium.TextMatch.resolver import ConceptResolver
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("acquirium.manager")
@@ -228,14 +229,30 @@ class Manager:
         )
         self._qudt_store = QUDTStore(data_dir=base)
 
+        # Single normalization façade. Uses the same lazily-built converter
+        # instance that resolve_unit_info / get_conversion_factors use, but
+        # only its resolution methods (resolve_unit / infer_unit).
+        self._concept_resolver = ConceptResolver(
+            graph_matcher=self._graph_matcher,
+            qudt_matcher=self._qudt_matcher,
+            converter_provider=self._ensure_qudt_converter,
+        )
+
         # Kept for backward compat — points to graph matcher
         self.embedding_matcher = self._graph_matcher
 
         # Embedding index status tracking
         self._embedding_status_lock = threading.Lock()
+        # target_version: latest graph-index generation a rebuild has been
+        #   requested for (bumped synchronously in insert_graph).
+        # built_version: generation the live index actually reflects (set by
+        #   the rebuild worker on success). Index is fresh iff
+        #   state == "ready" and built_version >= target_version.
+        # This pair is independent of _graph_version (which other mutations
+        # bump without rebuilding), so the freshness predicate stays sound.
         self._embedding_status: dict[str, dict[str, Any]] = {
-            "graph": {"state": "idle", "concepts": 0, "surfaces": 0, "error": None, "last_built": None, "duration_s": None},
-            "qudt":  {"state": "idle", "concepts": 0, "surfaces": 0, "error": None, "last_built": None, "duration_s": None},
+            "graph": {"state": "idle", "concepts": 0, "surfaces": 0, "error": None, "last_built": None, "duration_s": None, "target_version": 0, "built_version": 0},
+            "qudt":  {"state": "idle", "concepts": 0, "surfaces": 0, "error": None, "last_built": None, "duration_s": None, "target_version": 0, "built_version": 0},
         }
 
         # Startup: both indexes run synchronously so drivers see a ready matcher.
@@ -453,6 +470,31 @@ class Manager:
         with self._embedding_status_lock:
             self._embedding_status[index].update(kwargs)
 
+    def _bump_graph_index_target(self) -> int:
+        """Synchronously mark the graph index stale for a fresh generation.
+
+        Called from insert_graph *before* the rebuild is dispatched, so a
+        client polling right after the call cannot observe a stale "ready":
+        state is already "building" and target_version has advanced past the
+        current built_version. Returns the new target generation.
+        """
+        with self._embedding_status_lock:
+            g = self._embedding_status["graph"]
+            g["target_version"] += 1
+            g["state"] = "building"
+            return g["target_version"]
+
+    def _mark_graph_index_built(self, target: int, **fields: Any) -> None:
+        """Record a completed rebuild. built_version never regresses, so a
+        late-finishing older rebuild can't pull the freshness signal
+        backwards (the residual content/status divergence under *concurrent*
+        inserts is the known, out-of-scope item-4 problem)."""
+        with self._embedding_status_lock:
+            g = self._embedding_status["graph"]
+            g.update(fields)
+            g["state"] = "ready"
+            g["built_version"] = max(g.get("built_version", 0), target)
+
     def _startup_graph_index(self) -> None:
         """Build graph embedding index on startup. Uses cache if available."""
         self._update_embedding_status("graph", state="building")
@@ -521,8 +563,14 @@ class Manager:
             self._update_embedding_status("qudt", state="error", error=str(exc))
             logger.warning("Failed QUDT startup task", exc_info=True)
 
-    def _rebuild_graph_index_background(self) -> None:
-        """Rebuild graph embedding index in background after insert_graph."""
+    def _rebuild_graph_index_background(self, target: int) -> None:
+        """Rebuild the graph embedding index after insert_graph.
+
+        ``target`` is the graph-index generation this rebuild reflects (from
+        _bump_graph_index_target). On success it is recorded as built_version
+        so a client can wait until the index is caught up (see
+        Acquirium.wait_for_graph_index).
+        """
         self._update_embedding_status("graph", state="building")
         t0 = perf_counter()
         try:
@@ -531,19 +579,22 @@ class Manager:
                 self._graph_matcher.build_index(concepts)
                 n_surfaces = sum(len(c.get("surfaces", [])) for c in concepts)
                 elapsed = perf_counter() - t0
-                self._update_embedding_status(
-                    "graph", state="ready", concepts=len(concepts),
-                    surfaces=n_surfaces, last_built=datetime.now().isoformat(),
+                self._mark_graph_index_built(
+                    target, concepts=len(concepts), surfaces=n_surfaces,
+                    last_built=datetime.now().isoformat(),
                     duration_s=round(elapsed, 2), error=None,
                 )
-                logger.info("Graph embedding index rebuilt: %d concepts", len(concepts))
+                logger.info("Graph embedding index rebuilt: %d concepts (v%d)", len(concepts), target)
+            else:
+                # No concepts: still a valid (empty) index at this generation.
+                # Previously this left state stuck on "building" forever.
+                self._mark_graph_index_built(
+                    target, concepts=0, surfaces=0, error=None,
+                )
+                logger.info("Graph embedding index rebuilt: 0 concepts (v%d)", target)
         except Exception as exc:
             self._update_embedding_status("graph", state="error", error=str(exc))
             logger.warning("Failed to rebuild graph embedding index", exc_info=True)
-
-    # When context disambiguation is requested we over-fetch this many
-    # candidates so a context-related-but-lower-ranked hit can still surface.
-    _CONTEXT_FETCH_K = 20
 
     def resolve_text(
         self,
@@ -555,90 +606,16 @@ class Manager:
     ) -> list[dict[str, Any]]:
         """Resolve natural language text to ontology URIs.
 
-        Routing:
-          class / predicate    -> graph matcher only
-          unit / quantity_kind -> graph (>=0.8) + QUDT, combined exact-first
-          None                 -> graph + QUDT, combined by score
-
-        ``context`` is an optional list of already-chosen URIs (e.g. a
-        resolved quantity kind / medium). Candidates linked to a context URI
-        via their ``related`` set are moved ahead of the rest; empty or
-        unmatched context leaves ranking unchanged.
+        Thin delegation to :class:`ConceptResolver`, which owns the full
+        resolution policy (data-graph + QUDT matchers, deterministic unit
+        converter tier, context rerank). Conversion is a separate concern and
+        still goes through ``QUDTUnitConverter`` directly
+        (:meth:`resolve_unit_info` / :meth:`get_conversion_factors`).
         """
-        # Over-fetch only when context can actually reorder results.
-        fetch_k = max(top_k, self._CONTEXT_FETCH_K) if context else top_k
-
-        def _q(matcher, score: float = min_score):
-            return matcher.query(text=text, kind=kind, top_k=fetch_k, min_score=score)
-
-        if kind in ("class", "predicate"):
-            results = _q(self._graph_matcher)
-        elif kind in ("unit", "quantity_kind"):
-            # Graph concepts take priority on ties, but an exact hit from
-            # either matcher outranks a semantic one (e.g. QUDT "Mass
-            # Concentration" over graph "Concentration"). A graph exact hit
-            # already wins, so skip the QUDT query (and its embedding) then.
-            graph_hits = _q(self._graph_matcher, score=0.8)
-            if graph_hits and graph_hits[0].match_stage == "exact":
-                results = graph_hits
-            else:
-                results = self._combine(
-                    graph_hits, _q(self._qudt_matcher), limit=fetch_k
-                )
-        else:
-            results = self._combine(
-                _q(self._graph_matcher),
-                _q(self._qudt_matcher),
-                limit=fetch_k,
-            )
-
-        if context:
-            results = self._rerank_by_context(results, context)
-
-        return [asdict(r) for r in results[:top_k]]
-
-    @staticmethod
-    def _combine(
-        primary: list[ResolveResult],
-        secondary: list[ResolveResult],
-        limit: int,
-    ) -> list[ResolveResult]:
-        """Merge two ranked lists: exact-stage hits first, then by score.
-
-        Stable sort with ``primary`` concatenated first, so a graph concept
-        wins ties against an equal QUDT one. Dedupes by URI, caps at ``limit``.
-        """
-        ordered = sorted(
-            primary + secondary,
-            key=lambda r: (r.match_stage == "exact", r.score),
-            reverse=True,
+        results = self._concept_resolver.resolve(
+            text, kind=kind, top_k=top_k, min_score=min_score, context=context
         )
-        seen: set[str] = set()
-        out: list[ResolveResult] = []
-        for r in ordered:
-            if r.uri in seen:
-                continue
-            seen.add(r.uri)
-            out.append(r)
-            if len(out) >= limit:
-                break
-        return out
-
-    @staticmethod
-    def _rerank_by_context(
-        results: list[ResolveResult], context: list[str]
-    ) -> list[ResolveResult]:
-        """Move results linked to a context URI ahead of the rest.
-
-        Stable within each group, so existing order is kept when nothing is
-        connected.
-        """
-        ctx = set(context)
-        connected: list[ResolveResult] = []
-        rest: list[ResolveResult] = []
-        for r in results:
-            (connected if ctx.intersection(r.related) else rest).append(r)
-        return connected + rest
+        return [asdict(r) for r in results]
 
     ###########################################
     #################### API ###############
@@ -709,12 +686,18 @@ class Manager:
             logging.info("acquirium: inserted graph into store")
             self._sync_stream_refs_from_graph()
 
+            # Flip status to "building" and advance the target generation
+            # synchronously, *before* the worker is even scheduled, so a
+            # client polling right after this returns cannot see a stale
+            # "ready". The rebuild is tagged with this exact generation.
+            target = self._bump_graph_index_target()
+
             if wait_for_embedding:
                 logger.info("acquirium: rebuilding embedding index (synchronous)...")
-                self._rebuild_graph_index_background()
+                self._rebuild_graph_index_background(target)
                 logger.info("acquirium: embedding index rebuild complete")
             else:
-                self._executor.submit(self._rebuild_graph_index_background)
+                self._executor.submit(self._rebuild_graph_index_background, target)
 
             self._notify_graph_change()
 

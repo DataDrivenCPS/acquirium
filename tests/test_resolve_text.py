@@ -323,15 +323,23 @@ def acq():
         server_port=ACQUIRIUM_TEST_SERVER_PORT,
         use_ssl=False,
     )
+    # wait_for_embedding=True makes the server rebuild the graph index
+    # synchronously before returning. Without it, insert_graph submits the
+    # rebuild to a thread pool and returns; _wait_for_embeddings_ready can
+    # then observe a stale "ready" (from startup / the first insert) and
+    # return before water.ttl's predicates/classes are indexed, so queries
+    # fall back to the nearest wrong concept. See _rebuild_graph_index_background.
     client.insert_graph(
         "deployments/BENICIA/benicia-model.ttl",
-        replace = True
+        replace=True,
+        wait_for_embedding=True,
     )
     client.insert_graph(
         "ontologies/water.ttl",
-        replace = False
+        replace=False,
+        wait_for_embedding=True,
     )
-    # Wait for both embedding indexes (graph + QUDT) to finish building
+    # Graph index is now built; this still guards the QUDT startup index.
     _wait_for_embeddings_ready(client, timeout=60)
 
     yield client
@@ -603,3 +611,97 @@ def test_resolve_qudt_uri_honors_context_over_deterministic(acq):
     # No context: deterministic path still works and is stable.
     plain = acq._resolve_qudt_uri("kg", "unit")
     assert plain is not None, "'kg' must still resolve without context"
+
+
+# ──────────────────────────────────────────────────────────────
+# Latency profile — per-tier trend tracking across commits
+# ──────────────────────────────────────────────────────────────
+#
+# Writes to resolver_bench.csv (same file scripts/benchmark/resolver_latency.py
+# uses) with a stable wide schema, rather than appending mismatched-width rows
+# to the historical stats.csv. Every test run is one latency datapoint per
+# (tier, kind), tagged with the git SHA so regressions are bisectable.
+
+import subprocess  # noqa: E402
+
+_BENCH_CSV = _OUTPUT_DIR / "resolver_bench.csv"
+
+
+def _git_sha() -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"], text=True
+        ).strip()
+    except Exception:
+        return "unknown"
+
+
+def _pctile_ms(samples_s, q: float) -> float:
+    if not samples_s:
+        return 0.0
+    s = sorted(samples_s)
+    idx = min(len(s) - 1, int(round(q * (len(s) - 1))))
+    return s[idx] * 1000.0
+
+
+def _classify_tier(match: dict) -> str:
+    """Best-effort tier tag from the response alone (uri namespace + stage)."""
+    is_qudt = match.get("uri", "").startswith("http://qudt.org/")
+    stage = match.get("match_stage", "semantic")
+    if stage == "exact":
+        return "qudt_or_converter_exact" if is_qudt else "graph_exact"
+    return "qudt_semantic" if is_qudt else "graph_semantic"
+
+
+def test_latency_profile(acq):
+    """Time resolve_text across kinds (and unit with/without context), record
+    per-tier p50/p95 to resolver_bench.csv. Not an accuracy gate — it asserts
+    only a loose end-to-end ceiling so a gross regression still fails CI."""
+    _MASS = "http://qudt.org/vocab/quantitykind/Mass"
+    probes = [
+        ("class",            "class",         dict()),
+        ("predicate",        "predicate",     dict()),
+        ("unit",             "unit",          dict()),
+        ("quantity_kind",    "quantity_kind", dict()),
+        ("unit_noctx",       "unit",          dict()),
+        ("unit_ctx",         "unit",          dict(context=[_MASS])),
+    ]
+    sample_text = {
+        "class": "pump", "predicate": "has unit", "unit": "kg",
+        "quantity_kind": "temperature", "unit_noctx": "kg", "unit_ctx": "kg",
+    }
+    ITERS = 25
+    by_group: dict[str, tuple[str, list[float]]] = {}
+    for group, kind, extra in probes:
+        text = sample_text[group]
+        # warmup
+        acq.client.resolve_text(text, kind=kind, top_k=1, min_score=MIN_SCORE, **extra)
+        samples, tier = [], "n/a"
+        for _ in range(ITERS):
+            t0 = time.perf_counter()
+            matches = acq.client.resolve_text(
+                text, kind=kind, top_k=1, min_score=MIN_SCORE, **extra
+            )
+            samples.append(time.perf_counter() - t0)
+            if matches:
+                tier = _classify_tier(matches[0])
+        by_group[group] = (tier, samples)
+
+    _OUTPUT_DIR.mkdir(exist_ok=True)
+    sha, ts = _git_sha(), datetime.now().isoformat(timespec="seconds")
+    write_header = not _BENCH_CSV.exists()
+    with open(_BENCH_CSV, "a", newline="") as f:
+        w = csv.writer(f)
+        if write_header:
+            w.writerow(
+                ["timestamp", "git_sha", "mode", "tier", "kind", "n", "p50_ms", "p95_ms"]
+            )
+        for group, (tier, samples) in by_group.items():
+            p50, p95 = _pctile_ms(samples, 0.50), _pctile_ms(samples, 0.95)
+            w.writerow([ts, sha, "harness", f"{group}:{tier}", group, ITERS,
+                        f"{p50:.4f}", f"{p95:.4f}"])
+
+    worst_p95 = max(_pctile_ms(s, 0.95) for _, s in by_group.values())
+    assert worst_p95 < 5000.0, (
+        f"resolve_text p95 {worst_p95:.0f}ms — gross latency regression"
+    )
