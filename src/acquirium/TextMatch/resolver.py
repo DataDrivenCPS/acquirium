@@ -1,27 +1,31 @@
 """Single entry point for concept *normalization* (text → canonical URI).
 
-`ConceptResolver` owns the resolution policy: data-graph + QUDT embedding
-matchers, a deterministic QUDT unit tier, and context rerank. Conversion
-(numeric value math, multiplier/offset/compatibility) is a separate concern
-handled by `QUDTUnitConverter` directly, not here.
+`ConceptResolver` resolves text against an ordered set of candidate
+**sources** and applies one ranking policy. Conversion (numeric value math,
+multiplier/offset/compatibility) is a separate concern handled by
+`QUDTUnitConverter` directly, not here.
 
-Pipeline (one ordered policy):
+Sources, in authority order:
 
-1. data-graph exact   — `_graph_matcher` exact surface lookup
-2. converter exact    — `QUDTUnitConverter` deterministic resolution,
-                         units only
-3. data-graph semantic
-4. QUDT semantic      — `_qudt_matcher`
-5. context rerank     — promote candidates linked to a context URI
+1. graph     — embedding index over the union (data) graph; all kinds.
+2. converter — `QUDTUnitConverter` deterministic resolution; units only.
+3. qudt      — embedding index over the broad QUDT vocabulary; unit /
+               quantity_kind / untyped.
 
-The deterministic converter tier applies only to ``kind == "unit"``;
-``class`` / ``predicate`` / ``quantity_kind`` / ``None`` resolve through the
-matchers alone.
+A source declares which ``kind`` values it serves and an optional per-source
+``min_score`` floor. `resolve` walks the sources in order, gathers
+candidates, and stops early once an exact hit exists and no context rerank is
+pending (a cascade early-exit: an exact hit from an earlier source cannot be
+outranked by a later one, so querying the rest cannot change the result).
+Candidates are then ranked by one total order (exact before semantic, then
+score, with source order as a stable tiebreak), reranked by context, and cut
+to ``top_k``.
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable
 
 from acquirium.TextMatch.embedding_matcher import (
@@ -37,6 +41,26 @@ if TYPE_CHECKING:
 logger = logging.getLogger("acquirium.concept_resolver")
 
 
+@dataclass(frozen=True)
+class Source:
+    """A candidate source in the resolution cascade.
+
+    ``produce(text, kind, top_k, min_score) -> list[ResolveResult]``. The
+    effective ``min_score`` is raised to ``floor`` when ``kind`` is in
+    ``floor_kinds`` (e.g. the graph source distrusts weak guesses for
+    vocabulary kinds, where the curated QUDT vocabulary is authoritative).
+    """
+
+    name: str
+    kinds: frozenset[str | None]
+    produce: Callable[[str, str | None, int, float], list[ResolveResult]]
+    floor: float = 0.0
+    floor_kinds: frozenset[str] = frozenset()
+
+    def min_score(self, kind: str | None, base: float) -> float:
+        return max(base, self.floor) if kind in self.floor_kinds else base
+
+
 class ConceptResolver:
     """Resolve natural-language text to ontology / QUDT URIs.
 
@@ -45,8 +69,8 @@ class ConceptResolver:
         qudt_matcher: embedding index over the broad QUDT vocabulary.
         converter_provider: zero-arg callable returning a ready
             ``QUDTUnitConverter``. It may raise if no QUDT graph is available;
-            the deterministic tier degrades silently to the matchers in that
-            case (preserving pre-unification behavior).
+            the converter source then yields nothing and the cascade falls
+            through to the matchers.
     """
 
     # Over-fetch this many candidates when context is present so the rerank
@@ -63,6 +87,33 @@ class ConceptResolver:
         self._qudt_matcher = qudt_matcher
         self._converter_provider = converter_provider
 
+        def _matcher(m: EmbeddingMatcher):
+            return lambda text, kind, k, ms: m.query(
+                text=text, kind=kind, top_k=k, min_score=ms
+            )
+
+        # Authority order — list position is the precedence (a stable rank
+        # makes earlier sources win ties against later ones).
+        self._sources: list[Source] = [
+            Source(
+                "graph",
+                kinds=frozenset({None, "class", "predicate", "unit", "quantity_kind"}),
+                produce=_matcher(graph_matcher),
+                floor=0.8,
+                floor_kinds=frozenset({"unit", "quantity_kind"}),
+            ),
+            Source(
+                "converter",
+                kinds=frozenset({"unit"}),
+                produce=lambda text, kind, k, ms: self._deterministic_unit(text),
+            ),
+            Source(
+                "qudt",
+                kinds=frozenset({None, "unit", "quantity_kind"}),
+                produce=_matcher(qudt_matcher),
+            ),
+        ]
+
     # -------------------- public API --------------------
     def resolve(
         self,
@@ -74,13 +125,6 @@ class ConceptResolver:
     ) -> list[ResolveResult]:
         """Resolve *text* to ranked concepts.
 
-        Routing:
-          class / predicate    -> graph matcher only
-          unit                 -> graph exact short-circuit, else
-                                  graph(>=0.8) + deterministic converter + QUDT
-          quantity_kind        -> graph(>=0.8) + QUDT (no converter)
-          None                 -> graph + QUDT
-
         ``context`` is an optional list of already-chosen URIs (e.g. a
         resolved quantity kind / medium). Candidates linked to a context URI
         via their ``related`` set are moved ahead; empty or unmatched context
@@ -88,35 +132,24 @@ class ConceptResolver:
         """
         fetch_k = max(top_k, self._CONTEXT_FETCH_K) if context else top_k
 
-        def _q(matcher: EmbeddingMatcher, score: float = min_score) -> list[ResolveResult]:
-            return matcher.query(text=text, kind=kind, top_k=fetch_k, min_score=score)
-
-        if kind in ("class", "predicate"):
-            results = _q(self._graph_matcher)
-        elif kind in ("unit", "quantity_kind"):
-            # Graph concepts take priority on ties; an exact graph hit already
-            # wins, so skip the QUDT query (and its embedding) entirely then.
-            graph_hits = _q(self._graph_matcher, score=0.8)
-            if graph_hits and graph_hits[0].match_stage == "exact":
-                results = graph_hits
-            else:
-                # Units-only deterministic tier; it carries the unit's
-                # quantity kinds as ``related`` so context rerank still works.
-                det = self._deterministic_unit(text) if kind == "unit" else []
-                results = self._combine(
-                    graph_hits + det, _q(self._qudt_matcher), limit=fetch_k
-                )
-        else:
-            results = self._combine(
-                _q(self._graph_matcher),
-                _q(self._qudt_matcher),
-                limit=fetch_k,
+        candidates: list[ResolveResult] = []
+        for src in self._sources:
+            if kind not in src.kinds:
+                continue
+            candidates += src.produce(
+                text, kind, fetch_k, src.min_score(kind, min_score)
             )
+            # Cascade early-exit: an exact hit from this (higher-authority)
+            # source cannot be outranked by a later one, so further sources
+            # cannot change the result. Skipped under context, where the
+            # rerank needs the full candidate set.
+            if not context and any(c.match_stage == "exact" for c in candidates):
+                break
 
+        ranked = self._rank(candidates, limit=fetch_k)
         if context:
-            results = self._rerank_by_context(results, context)
-
-        return results[:top_k]
+            ranked = self._rerank_by_context(ranked, context)
+        return ranked[:top_k]
 
     # -------------------- tiers --------------------
     def _deterministic_unit(self, text: str) -> list[ResolveResult]:
@@ -163,21 +196,17 @@ class ConceptResolver:
             )
         ]
 
-    # -------------------- merge / rerank policy --------------------
+    # -------------------- rank / rerank policy --------------------
     @staticmethod
-    def _combine(
-        primary: list[ResolveResult],
-        secondary: list[ResolveResult],
-        limit: int,
-    ) -> list[ResolveResult]:
-        """Merge two ranked lists: exact-stage hits first, then by score.
+    def _rank(candidates: list[ResolveResult], limit: int) -> list[ResolveResult]:
+        """One total order: exact before semantic, then score.
 
-        Stable sort with ``primary`` concatenated first, so a graph / converter
-        concept wins ties against an equal QUDT one. Dedupes by URI, caps at
-        ``limit``.
+        Stable sort, so candidates from earlier (higher-authority) sources
+        win ties against equal candidates from later ones. Dedupes by URI,
+        caps at ``limit``.
         """
         ordered = sorted(
-            primary + secondary,
+            candidates,
             key=lambda r: (r.match_stage == "exact", r.score),
             reverse=True,
         )
