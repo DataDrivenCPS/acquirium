@@ -260,6 +260,59 @@ class AcquiriumClient:
         )
         return matches[0]["uri"] if matches else None
 
+    def resolve_record(
+        self,
+        fields: dict[str, tuple[str, Optional[str]]],
+        top_k: int = 5,
+        min_score: float = 0.5,
+    ) -> dict[str, list[dict]]:
+        """Jointly resolve a record's fields (server ``/resolve_record``).
+
+        ``fields`` maps a logical name to ``(text, kind)``. Returns the
+        ranked matches per field; related fields (e.g. a unit and its
+        quantity kind) reinforce each other server-side.
+        """
+        body = {
+            "fields": [
+                {"name": n, "text": t, "kind": k} for n, (t, k) in fields.items()
+            ],
+            "top_k": top_k,
+            "min_score": min_score,
+        }
+        response = requests.post(f"{self.base_url}/resolve_record", json=body)
+        _raise_for_status(response)
+        return response.json().get("matches", {})
+
+    def resolve_record_uris(
+        self,
+        fields: dict[str, tuple[Any, Optional[str]]],
+        min_score: float = 0.5,
+    ) -> dict[str, Optional[str]]:
+        """Jointly resolve a record to one best URI per field, or ``None``.
+
+        Per-field URI passthrough (like :meth:`resolve_concept`); the rest
+        are resolved together so a confident field disambiguates an
+        ambiguous sibling. ``None`` inputs and unresolved fields map to
+        ``None``.
+        """
+        out: dict[str, Optional[str]] = {}
+        to_resolve: dict[str, tuple[str, Optional[str]]] = {}
+        for name, (text, kind) in fields.items():
+            if text is None:
+                out[name] = None
+            elif isinstance(text, str) and text.startswith(
+                ("http://", "https://", "urn:")
+            ):
+                out[name] = text
+            else:
+                to_resolve[name] = (text, kind)
+        if to_resolve:
+            matches = self.resolve_record(to_resolve, top_k=1, min_score=min_score)
+            for name in to_resolve:
+                m = matches.get(name) or []
+                out[name] = m[0]["uri"] if m else None
+        return out
+
     def embedding_status(self) -> dict:
         """
         Get the current status of embedding index builds.
