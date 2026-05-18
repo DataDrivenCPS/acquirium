@@ -164,6 +164,14 @@ class ConceptResolver:
         is present the cascade early-exit is disabled so every applicable
         source contributes, and ``fetch_k`` is widened so a context-relevant
         candidate ranked below ``top_k`` survives into the rerank.
+
+        Example::
+
+            # engineering-unit cell from a SCADA CSV column header
+            resolve("mg/L", kind="unit", top_k=3)
+            # -> [ResolveResult(uri="http://qudt.org/vocab/unit/MilliGM-PER-L",
+            #                    kind="unit", score=1.0, match_stage="exact",
+            #                    ...), ...]
         """
         fetch_k = max(top_k, self._CONTEXT_FETCH_K) if context else top_k
         ranked = self._ranked_candidates(
@@ -181,9 +189,25 @@ class ConceptResolver:
     ) -> dict[str, list[ResolveResult]]:
         """Resolve a record's fields *jointly*.
 
-        ``fields`` maps a logical name to ``(text, kind)``. Each field's
-        candidates are gathered independently (cascade early-exit off, so the
-        joint decode sees depth); then for every :data:`RELATIONS` entry
+        ``fields`` maps an arbitrary *result label* to ``(text, kind)``.
+        The label is only used to key the returned dict (typically a source
+        column / sensor tag). ``kind`` constrains *how* the text is
+        resolved (which vocabulary — "resolve as a unit"), like
+        ``resolve_text(kind=...)``; it is not a claim about the answer, and
+        may be ``None`` to resolve across all kinds. The typed cross-field
+        relations (e.g. unit↔quantity_kind) only connect fields whose
+        ``kind`` says which role they play — declaring ``kind`` declares the
+        role, not the result. Example — the metadata columns a driver
+        pulled from a plant historian point export for chlorine-residual
+        analyzer ``AIT-330`` (the keys are that export's column headers)::
+
+            {"AIT-330.EU":  ("mg/L", "unit"),
+             "AIT-330.QTY": ("mass concentration", "quantity_kind"),
+             "AIT-330.MED": ("treated water", "class")}
+
+        Each field's candidates are gathered independently (cascade
+        early-exit off, so the joint decode sees depth); then for every
+        :data:`RELATIONS` entry
         whose two kinds are both present, the pair is chosen by
         ``argmax a.score + b.score + weight·compat(a, b)``. Fields in no
         relation take their own top candidate. When nothing is compatible

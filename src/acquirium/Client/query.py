@@ -155,6 +155,14 @@ class Query:
         return sorted(set(attached)) if attached else []
 
     def _resolve_rdf(self, text: str, kind: str, context: list[str] | None = None) -> str:
+        """Resolve one text value to a URI; raise if nothing confident.
+
+        Example::
+
+            # equipment class from a user query filter
+            self._resolve_rdf("sand filter", "class")
+            # -> "urn:nawi-water-ontology#SandFilter"
+        """
         uri = self.client.resolve_concept(
             text, kind=kind, context=context, min_score=0.4
         )
@@ -165,7 +173,16 @@ class Query:
     def _resolve_record(
         self, fields: dict[str, tuple[Any, str | None]]
     ) -> dict[str, str | None]:
-        """Jointly resolve sibling fields so they disambiguate each other."""
+        """Jointly resolve sibling fields so they disambiguate each other.
+
+        Example::
+
+            # sibling filter args from a query against FIT-101
+            self._resolve_record({"unit": ("gal/min", "unit"),
+                                  "qty": ("flow rate", "quantity_kind")})
+            # -> {"unit": ".../unit/GAL_US-PER-MIN",
+            #     "qty": ".../quantitykind/VolumeFlowRate"}
+        """
         return self.client.resolve_record_uris(fields, min_score=0.4)
     
     def _query_resolver_adapter(self, text: str, kind: str) -> str:

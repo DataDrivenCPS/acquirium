@@ -569,6 +569,14 @@ class Manager:
         converter tier, context rerank). Conversion is a separate concern and
         still goes through ``QUDTUnitConverter`` directly
         (:meth:`resolve_unit_info` / :meth:`get_conversion_factors`).
+
+        Example::
+
+            # asset-type label from an equipment register row
+            resolve_text("sedimentation tank", kind="class", top_k=2)
+            # -> [{"uri": "urn:nawi-water-ontology#SedimentationTank",
+            #      "kind": "class", "score": 1.0,
+            #      "match_stage": "exact", ...}, ...]
         """
         results = self._concept_resolver.resolve(
             text, kind=kind, top_k=top_k, min_score=min_score, context=context
@@ -586,6 +594,16 @@ class Manager:
         Thin delegation to :meth:`ConceptResolver.resolve_record`: related
         fields (e.g. unit and its quantity kind) reinforce each other so a
         confident sibling disambiguates an ambiguous one.
+
+        Example::
+
+            # metadata columns for flow transmitter FIT-101 from a
+            # historian export; keys are that export's column headers
+            resolve_record({"FIT-101.EU":  ("gal/min", "unit"),
+                            "FIT-101.QTY": ("flow rate", "quantity_kind")})
+            # -> {"FIT-101.EU":  [{"uri": ".../unit/GAL_US-PER-MIN", ...}, ...],
+            #     "FIT-101.QTY": [{"uri": ".../quantitykind/VolumeFlowRate",
+            #                      ...}, ...]}
         """
         resolved = self._concept_resolver.resolve_record(
             fields, top_k=top_k, min_score=min_score
@@ -1201,7 +1219,17 @@ class Manager:
         )
 
     def resolve_unit_info(self, identifier: str) -> dict[str, Any]:
-        """Resolve a unit identifier to its QUDT metadata."""
+        """Resolve a unit identifier to its QUDT metadata (deterministic).
+
+        Example::
+
+            # engineering-unit string off a flow meter tag
+            resolve_unit_info("gal/min")
+            # -> {"uri": "http://qudt.org/vocab/unit/GAL_US-PER-MIN",
+            #     "label": "US Gallon per Minute", "symbol": "gal/min",
+            #     "quantity_kind": ".../quantitykind/VolumeFlowRate",
+            #     "multiplier": 6.30901964e-05, "offset": 0.0}
+        """
         converter = self._ensure_qudt_converter()
         unit_def = converter.resolve_unit(identifier)
         return {

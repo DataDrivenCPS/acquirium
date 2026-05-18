@@ -256,6 +256,12 @@ class Acquirium:
 
         ``context``: already-resolved sibling URIs (e.g. the quantity kind /
         medium for the same stream).
+
+        Example::
+
+            # unit string off a turbidimeter tag
+            self._resolve_qudt_uri("NTU", "unit")
+            # -> rdflib.URIRef("http://qudt.org/vocab/unit/NTU")
         """
         try:
             uri = self.client.resolve_concept(
@@ -272,11 +278,28 @@ class Acquirium:
     ) -> dict[str, str | None]:
         """Jointly resolve a record's fields to one URI each (or ``None``).
 
-        ``fields`` maps a name to ``(value, kind)``; values that already
-        look like URIs pass through. Related fields reinforce each other
-        server-side (e.g. a quantity kind disambiguates an ambiguous unit
-        and vice versa), so this is preferred over resolving fields one by
-        one when several are known together.
+        ``fields`` maps an arbitrary result label to ``(value, kind)``. The
+        label only keys the result; ``kind`` says which vocabulary to
+        resolve the text *as* (the field's role — not the answer; ``None``
+        = any). Values that already look like URIs (or are ``URIRef``) pass
+        through, ``None`` maps to ``None``. Example::
+
+            # metadata columns for chlorine analyzer AIT-330 pulled from a
+            # plant historian export (keys = that export's column headers)
+            aq.resolve_record({
+                "AIT-330.EU":  ("mg/L", "unit"),
+                "AIT-330.QTY": ("mass concentration", "quantity_kind"),
+                "AIT-330.MED": ("urn:nawi-water-ontology#TreatedWater",
+                                "class"),  # already a URI -> passthrough
+            })
+            # -> {"AIT-330.EU":  "http://qudt.org/vocab/unit/MilliGM-PER-L",
+            #     "AIT-330.QTY": ".../quantitykind/MassConcentration",
+            #     "AIT-330.MED": "urn:nawi-water-ontology#TreatedWater"}
+
+        Related fields reinforce each other server-side (e.g. a quantity
+        kind disambiguates an ambiguous unit and vice versa), so this is
+        preferred over resolving fields one by one when several are known
+        together.
         """
         try:
             return self.client.resolve_record_uris(fields, min_score=min_score)
