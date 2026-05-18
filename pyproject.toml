@@ -57,13 +57,15 @@ acquirium = "acquirium.cli:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "openpyxl>=3.1.5",
     "q>=2.7",
     "pytest-cov>=6.0",
     "openpyxl>=3.1",
 ]
+
+[tool.uv]
 no-build-isolation-package = ["pygit2"]
 
 [tool.pytest.ini_options]
