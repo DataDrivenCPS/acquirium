@@ -25,7 +25,7 @@ dependencies = [
     "psycopg[binary]>=3.3.1",
     "pyarrow>=22.0.0",
     "pydantic>=2.12.5",
-    "pyontoenv==0.4.0a4",
+    "pyontoenv==0.5.4",
     "pyoxigraph>=0.5.2",
     "pytest>=9.0.2",
     "python-dateutil>=2.9.0.post0",

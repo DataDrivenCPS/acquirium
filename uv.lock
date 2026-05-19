@@ -75,7 +75,7 @@ requires-dist = [
     { name = "pyarrow", specifier = ">=22.0.0" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pyomo", marker = "extra == 'watertap'", specifier = ">=6" },
-    { name = "pyontoenv", specifier = "==0.4.0a4" },
+    { name = "pyontoenv", specifier = "==0.5.4" },
     { name = "pyoxigraph", specifier = ">=0.5.2" },
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "python-dateutil", specifier = ">=2.9.0.post0" },
@@ -1458,6 +1458,24 @@ wheels = [
 ]
 
 [[package]]
+name = "ontoenv"
+version = "0.5.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "oxrdflib" },
+    { name = "rdflib" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ce/fd/c4f98f4361f93aebba9393f39674e13b069b0490c23645b2edc8e041aece/ontoenv-0.5.4.tar.gz", hash = "sha256:9a17462e7a50a3fb2babaaaef192562f3153c613da1ac6421f1e24b62dfd1f85", size = 1149940, upload-time = "2026-05-05T14:11:29.968Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/09/53/054bb193821c1b9a96f542614e1c9c633bb1d9018d3e5379979cc8308eb5/ontoenv-0.5.4-cp311-abi3-macosx_10_14_x86_64.macosx_11_0_arm64.macosx_10_14_universal2.whl", hash = "sha256:947587e7e10f5cc223f533e837a55e0ced40d6ce60d439c79064c621de98e2e4", size = 11756413, upload-time = "2026-05-05T14:11:11.958Z" },
+    { url = "https://files.pythonhosted.org/packages/a7/1e/cbaf4b5e7b4aba4f469a7c9796981ee04b98981d358597856c69d374295f/ontoenv-0.5.4-cp311-abi3-macosx_10_14_x86_64.whl", hash = "sha256:5e3fef264d170b3225fdd46ff7393448ff770b121fa92af05b039bceb6670ddf", size = 6033616, upload-time = "2026-05-05T14:11:14.318Z" },
+    { url = "https://files.pythonhosted.org/packages/7d/41/8d6d490eef84a3bc50ede5021e09eaa2188a904d5c43784a818e53616610/ontoenv-0.5.4-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:f16c2d2a0f5da4d31f8c08f65bd3d63931bf718f8ca753ff3327f5bbd53f6838", size = 5766742, upload-time = "2026-05-05T14:11:16.079Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/16/8980f353a5d90ba5b7e8bcf673fdf7f47c50f93586ca5d923f27440f908a/ontoenv-0.5.4-cp311-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:672a4551632585614debbf54b318eed50f8a32f8b830fc6c2584ae1e01329ba2", size = 53471939, upload-time = "2026-05-05T14:11:19.277Z" },
+    { url = "https://files.pythonhosted.org/packages/f7/f2/bc3011cf68e9bb8d5c779251f975a8ba21751281aff41be52c9c1b7e5179/ontoenv-0.5.4-cp311-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:ac2d299809a5fd779bdcc86851a4d310ee5bda4b3951905f239e35420488192f", size = 54578083, upload-time = "2026-05-05T14:11:23.752Z" },
+    { url = "https://files.pythonhosted.org/packages/85/e3/a6d6b6a38b6382c1ec4f4cedcc6309c5495536a8b0621af1895b569908b7/ontoenv-0.5.4-cp311-abi3-win_amd64.whl", hash = "sha256:657dbd1fc3bd5a2b4d80e4f3a63973715bd28c099b39a6a2b9f70e02176b9074", size = 5012032, upload-time = "2026-05-05T14:11:26.986Z" },
+]
+
+[[package]]
 name = "openpyxl"
 version = "3.1.5"
 source = { registry = "https://pypi.org/simple" }
@@ -2051,26 +2069,14 @@ wheels = [
 
 [[package]]
 name = "pyontoenv"
-version = "0.4.0a4"
+version = "0.5.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "oxrdflib" },
-    { name = "rdflib" },
+    { name = "ontoenv" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/47/ea/719c8191c68ecbea4cd167f374f776b6fdf59a3b3da7265f98d592b69081/pyontoenv-0.4.0a4.tar.gz", hash = "sha256:a58c568d6826810057c4a3e2b178200c3eb6b1b73a69d80718fde8700ea75e59", size = 934507, upload-time = "2025-09-05T02:56:55.099Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/df/06/b7e425b65691f4c1126f509b651d5a4409ba2749a0154588146d6a1f3688/pyontoenv-0.5.4.tar.gz", hash = "sha256:66ad4e5df312dc1478850db7ec7407eff0e3bbe01435d380dcd7c26ac4dbd3d8", size = 1175, upload-time = "2026-05-05T14:11:31.308Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a9/44/fcc03ca8d93f1d30b91b924276feccca75b96046f113d784f53ff59bd909/pyontoenv-0.4.0a4-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:dc11c4ed90b53310613697e7be36d446a6744937a109af6bbc9f8ed478cd0fc1", size = 6002729, upload-time = "2025-09-05T02:56:18.409Z" },
-    { url = "https://files.pythonhosted.org/packages/a5/72/317db936f64422e0842dcacb56e4e41398d7d67313923d448c2e15736c5a/pyontoenv-0.4.0a4-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:ce2fe4c44e25f85721651e4d9b9cca81f776124d6e3698bdd9342dceab9bb74d", size = 6186788, upload-time = "2025-09-05T02:56:19.805Z" },
-    { url = "https://files.pythonhosted.org/packages/f5/b7/a7e607f86547f193c9256e67fddc0b7e5a8f305013f185e28f8fe0c137ca/pyontoenv-0.4.0a4-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:d66425efa1f4010738d0d09d2c1c8660429e668759e8750837ef3e6dfa748908", size = 7005298, upload-time = "2025-09-05T02:56:21.921Z" },
-    { url = "https://files.pythonhosted.org/packages/ae/d4/806bc00c7ea0de26f2b4f05205fbdfb6b2619ee5d31d947b3ce9de95853c/pyontoenv-0.4.0a4-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:dfd99fde0d8d65a6a2acd5022259e03fa52f8802d4fd0e227d943613bc12b9b0", size = 7355361, upload-time = "2025-09-05T02:56:24.081Z" },
-    { url = "https://files.pythonhosted.org/packages/87/a9/c41b88d4267ba887a922f6fbfae30c72f49cf52969a4ecb741f7d9c1ed66/pyontoenv-0.4.0a4-cp39-abi3-macosx_10_14_x86_64.macosx_11_0_arm64.macosx_10_14_universal2.whl", hash = "sha256:c5a3a1c2d765df6afe47e0fff9577acef520521c970a6e623435bb65ffeee468", size = 10367458, upload-time = "2025-09-05T02:56:31.52Z" },
-    { url = "https://files.pythonhosted.org/packages/2a/69/9abaa617c3c105ee6e4a5d178e6063f42e81718d90ec39a783b2355aea63/pyontoenv-0.4.0a4-cp39-abi3-macosx_10_14_x86_64.whl", hash = "sha256:64521313c9e7780d2912deb97baeb231343797a5b17343646815a4f556838b2a", size = 5374956, upload-time = "2025-09-05T02:56:33.608Z" },
-    { url = "https://files.pythonhosted.org/packages/44/81/721728a4de1f7f5db015e29099d488c2e04b482ac3c968b06b1eb947de83/pyontoenv-0.4.0a4-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:0a3aed43cb6e4944ec6c16e74dac10614c087b9c07234d4f5941d000d9fc7262", size = 4999273, upload-time = "2025-09-05T02:56:35.167Z" },
-    { url = "https://files.pythonhosted.org/packages/78/8b/488fedd6d41d30b73efc487261644b429f4f5628dc88468070b6f2f63b1d/pyontoenv-0.4.0a4-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:3429c4e79279b1c292cce9089ffc725d7ea6ecfc867216eff2489591ded84a73", size = 6007700, upload-time = "2025-09-05T02:56:36.354Z" },
-    { url = "https://files.pythonhosted.org/packages/33/68/44f9a784f2215a4dc8d1af177f89a5fbcc223dd521c768deea75c61471a8/pyontoenv-0.4.0a4-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:7b8c246e0998f0ccb25acb78244fe26b335bada7306f60b90b549079f3f79fbb", size = 6194439, upload-time = "2025-09-05T02:56:37.972Z" },
-    { url = "https://files.pythonhosted.org/packages/f5/6d/a9fd7df04362a3fa0566eb4283696c6f7adb65d71cdcbc016430d44c8197/pyontoenv-0.4.0a4-cp39-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:00a8761d477f3db036575819856c4df12f876b66e3e074a3326da843c9e915fe", size = 7008628, upload-time = "2025-09-05T02:56:39.661Z" },
-    { url = "https://files.pythonhosted.org/packages/22/52/fdcd3d1fa101282998be5aeb2b86812d4aff68fb581e20bbeab1338845ad/pyontoenv-0.4.0a4-cp39-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:a9d50747331a893134ba3e58cc0b06e3c32def361e8a82fd058706ef3f30d7cf", size = 7362682, upload-time = "2025-09-05T02:56:41.312Z" },
-    { url = "https://files.pythonhosted.org/packages/9b/72/7f2e83cd67d7472c08be870de7d862f145232a4c5ced5d9a188c815e52d0/pyontoenv-0.4.0a4-cp39-abi3-win_amd64.whl", hash = "sha256:4cc0d1e754d08289c21686908294f2b2ea341cf0e9f36203ac155e856c0824a3", size = 4605484, upload-time = "2025-09-05T02:56:42.595Z" },
+    { url = "https://files.pythonhosted.org/packages/0b/75/b276223fc010126e1d41ed342793fb7354c58107f9376ff3f20fa9469688/pyontoenv-0.5.4-py3-none-any.whl", hash = "sha256:5767224507e85c5e4fafe210cebea30a50c9090ae4b12920d76c00c93722976a", size = 1848, upload-time = "2026-05-05T14:11:28.464Z" },
 ]
 
 [[package]]
