@@ -10,6 +10,17 @@ change in any release.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-05-19
+
+### Changed
+- Default `timeseries_backend` is now `duckdb` when no `acquirium.toml` is
+  present, so `pip install acquirium && acquirium server` starts a working
+  server with no external services. Set
+  `ACQUIRIUM_TIMESERIES_BACKEND=timescale` (or configure it in
+  `acquirium.toml`) to opt back into Postgres/TimescaleDB.
+- `ipykernel` moved out of the runtime dependency set into a `notebook`
+  optional extra; install with `pip install "acquirium[notebook]"`.
+
 ## [0.1.0] - 2026-05-19
 
 ### Added
@@ -22,5 +33,6 @@ change in any release.
 - Text matcher backed by FastEmbed with QUDT and graph indexes.
 - Grafana dashboard helpers.
 
-[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/DataDrivenCPS/acquirium/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/DataDrivenCPS/acquirium/releases/tag/v0.1.0
