@@ -175,6 +175,9 @@ class Query:
     ) -> dict[str, str | None]:
         """Jointly resolve sibling fields so they disambiguate each other.
 
+        Keys are caller-chosen labels echoed back in the result; only
+        ``(text, kind)`` drives resolution.
+
         Example::
 
             # sibling filter args from a query against FIT-101

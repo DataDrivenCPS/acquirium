@@ -284,13 +284,15 @@ class AcquiriumClient:
     ) -> dict[str, list[dict]]:
         """Jointly resolve a record's fields (server ``/resolve_record``).
 
-        ``fields`` maps a logical name to ``(text, kind)``. Returns the
-        ranked matches per field; related fields (e.g. a unit and its
-        quantity kind) reinforce each other server-side.
+        ``fields`` maps a caller-chosen label to ``(text, kind)``. The
+        label is echoed back unchanged as the result key and is never read
+        by the resolver; resolution is driven by ``(text, kind)``. Returns
+        the ranked matches per label; related fields (e.g. a unit and its
+        quantity kind) reinforce each other server-side. The example labels
+        below mimic a historian export's column headers (real-source feel).
 
         Example::
 
-            # FIT-101 metadata columns from a historian export
             resolve_record({"FIT-101.EU":  ("gal/min", "unit"),
                             "FIT-101.QTY": ("flow rate", "quantity_kind")})
             # -> {"FIT-101.EU":  [{"uri": ".../unit/GAL_US-PER-MIN", ...}, ...],
@@ -315,14 +317,15 @@ class AcquiriumClient:
     ) -> dict[str, Optional[str]]:
         """Jointly resolve a record to one best URI per field, or ``None``.
 
-        Per-field URI passthrough (like :meth:`resolve_concept`); the rest
-        are resolved together so a confident field disambiguates an
-        ambiguous sibling. ``None`` inputs and unresolved fields map to
-        ``None``.
+        Keys are caller-chosen labels echoed back unchanged (never read by
+        the resolver); ``(text, kind)`` drives resolution. Per-field URI
+        passthrough (like :meth:`resolve_concept`); the rest are resolved
+        together so a confident field disambiguates an ambiguous sibling.
+        ``None`` inputs and unresolved fields map to ``None``. Example
+        labels below mimic a historian export's column headers.
 
         Example::
 
-            # FIT-101 metadata columns from a historian export
             resolve_record_uris({"FIT-101.EU":  ("gal/min", "unit"),
                                  "FIT-101.QTY": ("flow rate", "quantity_kind")})
             # -> {"FIT-101.EU":  "http://qudt.org/vocab/unit/GAL_US-PER-MIN",

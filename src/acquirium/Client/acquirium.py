@@ -52,6 +52,17 @@ from acquirium.internals.internals_namespaces import (
     DATA_SOURCE,
 )
 from acquirium.Storage.values import normalize_value_kind
+
+# Known point-metadata fields → the resolver ``kind`` each is resolved as.
+# The field name is the semantic role, so callers supply no ``kind``.
+POINT_FIELD_KINDS: dict[str, str] = {
+    "unit": "unit",
+    "quantity_kind": "quantity_kind",
+    "medium": "class",
+    "substance": "class",
+}
+
+
 @dataclass
 class Acquirium:
     """
@@ -306,6 +317,63 @@ class Acquirium:
         except Exception:
             return {name: None for name in fields}
 
+    def resolve_point_metadata(
+        self, fields: dict[str, Any], min_score: float = 0.6
+    ) -> dict[str, str | None]:
+        """Resolve the semantic metadata of a single point/property.
+
+        ``fields`` maps known semantic field names to a raw value::
+
+            aq.resolve_point_metadata({
+                "unit": "gal/min",
+                "quantity_kind": "flow rate",
+                "medium": "water",
+            })
+            # -> {"unit": "http://qudt.org/vocab/unit/GAL_US-PER-MIN",
+            #     "quantity_kind": ".../quantitykind/VolumeFlowRate",
+            #     "medium": "urn:nawi-water-ontology#Water"}
+
+        The field name *is* the role — no ``kind`` to supply, no label, no
+        tuple. Recognised fields (``unit``, ``quantity_kind``, ``medium``,
+        ``substance``) resolve against their vocabulary; any other field is
+        resolved across all kinds. Related fields reinforce each other (a
+        quantity kind disambiguates an ambiguous unit and vice versa).
+        Values that already look like URIs / ``URIRef`` / ``None`` pass
+        through. Returns ``{field: uri-or-None}``.
+
+        This is the preferred entry point for drivers and stream
+        registration; :meth:`resolve_record` is the lower-level form for
+        callers that need arbitrary labels and explicit kinds.
+        """
+        record = {
+            name: (value, POINT_FIELD_KINDS.get(name))
+            for name, value in fields.items()
+        }
+        return self.resolve_record(record, min_score=min_score)
+
+    @staticmethod
+    def _coerce_resolved(
+        resolved: dict[str, str | None], name: str, value: Any
+    ) -> "str | URIRef | None":
+        """Map a raw field value to its resolved URIRef.
+
+        Passes ``None``/``URIRef`` through; warns and keeps the literal
+        when plain text did not resolve.
+        """
+        if value is None:
+            return None
+        if isinstance(value, URIRef):
+            return value
+        uri = resolved.get(name)
+        if uri is None:
+            warnings.warn(
+                f"Could not resolve {name!r} value {value!r} to a QUDT URI; "
+                "storing as a plain literal.",
+                stacklevel=3,
+            )
+            return value
+        return URIRef(uri)
+
     def graph_version(self) -> int:
         """Return the server's current graph mutation counter."""
         return self.client.graph_version()
@@ -373,37 +441,20 @@ class Acquirium:
             if label is not None:
                 g.add((subj, RDFS.label, Literal(label)))
             # Resolve the semantic fields jointly so related siblings
-            # disambiguate each other. resolve_record passes URI/URIRef/None
-            # values through, so the full set can go in as-is.
-            _resolved = self.resolve_record(
+            # disambiguate each other (URI/URIRef/None pass through).
+            _resolved = self.resolve_point_metadata(
                 {
-                    "unit": (unit, "unit"),
-                    "quantity_kind": (quantity_kind, "quantity_kind"),
-                    "medium": (medium, "class"),
-                    "substance": (substance, "class"),
-                },
-                min_score=0.6,
+                    "unit": unit,
+                    "quantity_kind": quantity_kind,
+                    "medium": medium,
+                    "substance": substance,
+                }
             )
 
-            def _coerce(name: str, value: Any) -> str | URIRef | None:
-                if value is None:
-                    return None
-                if isinstance(value, URIRef):
-                    return value
-                uri = _resolved.get(name)
-                if uri is None:  # plain text that did not resolve
-                    warnings.warn(
-                        f"Could not resolve {name!r} value {value!r} to a "
-                        "QUDT URI; storing as a plain literal.",
-                        stacklevel=3,
-                    )
-                    return value
-                return URIRef(uri)
-
-            _add_triple(g, subj, HAS_UNIT,          _coerce("unit", unit))
-            _add_triple(g, subj, HAS_QUANTITY_KIND, _coerce("quantity_kind", quantity_kind))
-            _add_triple(g, subj, HAS_MEDIUM,        _coerce("medium", medium))
-            _add_triple(g, subj, OF_SUBSTANCE,      _coerce("substance", substance))
+            _add_triple(g, subj, HAS_UNIT,          self._coerce_resolved(_resolved, "unit", unit))
+            _add_triple(g, subj, HAS_QUANTITY_KIND, self._coerce_resolved(_resolved, "quantity_kind", quantity_kind))
+            _add_triple(g, subj, HAS_MEDIUM,        self._coerce_resolved(_resolved, "medium", medium))
+            _add_triple(g, subj, OF_SUBSTANCE,      self._coerce_resolved(_resolved, "substance", substance))
             _add_triple(g, subj, DATA_SOURCE,       data_source)
             if ref_uri is not None:
                 g.add((subj, HAS_EXTERNAL_REFERENCE, ref_uri))
@@ -466,6 +517,17 @@ class Acquirium:
                 g.add((subj, RDF.type, VIRTUAL_POINT))
                 if label is not None:
                     g.add((subj, RDFS.label, Literal(label)))
+                meta = {
+                    f: stream.get(f)
+                    for f in POINT_FIELD_KINDS
+                    if stream.get(f) is not None
+                }
+                if meta:
+                    res = self.resolve_point_metadata(meta)
+                    _add_triple(g, subj, HAS_UNIT,          self._coerce_resolved(res, "unit", stream.get("unit")))
+                    _add_triple(g, subj, HAS_QUANTITY_KIND, self._coerce_resolved(res, "quantity_kind", stream.get("quantity_kind")))
+                    _add_triple(g, subj, HAS_MEDIUM,        self._coerce_resolved(res, "medium", stream.get("medium")))
+                    _add_triple(g, subj, OF_SUBSTANCE,      self._coerce_resolved(res, "substance", stream.get("substance")))
                 _add_triple(g, subj, DATA_SOURCE, stream.get("data_source"))
                 if ref_uri is not None:
                     g.add((subj, HAS_EXTERNAL_REFERENCE, ref_uri))

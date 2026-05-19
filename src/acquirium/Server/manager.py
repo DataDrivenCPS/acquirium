@@ -593,10 +593,13 @@ class Manager:
         fields (e.g. unit and its quantity kind) reinforce each other so a
         confident sibling disambiguates an ambiguous one.
 
+        ``fields`` keys are caller-chosen labels echoed back unchanged in
+        the result; the resolver never reads them. Resolution is driven by
+        the ``(text, kind)`` tuple. The example keys below are styled as a
+        historian export's column headers only to look like a real source.
+
         Example::
 
-            # metadata columns for flow transmitter FIT-101 from a
-            # historian export; keys are that export's column headers
             resolve_record({"FIT-101.EU":  ("gal/min", "unit"),
                             "FIT-101.QTY": ("flow rate", "quantity_kind")})
             # -> {"FIT-101.EU":  [{"uri": ".../unit/GAL_US-PER-MIN", ...}, ...],
