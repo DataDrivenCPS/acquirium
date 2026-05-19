@@ -588,22 +588,20 @@ def test_irrelevant_context_does_not_reorder(acq):
 
 
 def test_resolve_qudt_uri_honors_context_over_deterministic(acq):
-    """With context, _resolve_qudt_uri prefers the context-aware matcher over
+    """With context, resolve_concept prefers the context-aware matcher over
     the deterministic resolver (the path register_stream uses)."""
-    from rdflib import URIRef
-
-    mass = acq._resolve_qudt_uri("kg", "unit", context=[_QK_MASS])
-    assert mass == URIRef(_UNIT_KILOGM), (
+    mass = acq.client.resolve_concept("kg", kind="unit", context=[_QK_MASS])
+    assert mass == _UNIT_KILOGM, (
         f"'kg' + Mass context should resolve to KiloGM, got {mass}"
     )
 
-    flux = acq._resolve_qudt_uri("kg", "unit", context=[_QK_FLUX])
-    assert flux == URIRef(_UNIT_KILOGAUSS), (
+    flux = acq.client.resolve_concept("kg", kind="unit", context=[_QK_FLUX])
+    assert flux == _UNIT_KILOGAUSS, (
         f"'kg' + flux context should resolve to KiloGAUSS, got {flux}"
     )
 
     # No context: deterministic path still works and is stable.
-    plain = acq._resolve_qudt_uri("kg", "unit")
+    plain = acq.client.resolve_concept("kg", kind="unit")
     assert plain is not None, "'kg' must still resolve without context"
 
 

@@ -170,27 +170,6 @@ class Query:
             raise ValueError(f"Could not resolve '{text}' as {kind}")
         return uri
 
-    def _resolve_record(
-        self, fields: dict[str, tuple[Any, str | None]]
-    ) -> dict[str, str | None]:
-        """Jointly resolve sibling fields so they disambiguate each other.
-
-        Keys are caller-chosen labels echoed back in the result; only
-        ``(text, kind)`` drives resolution.
-
-        Example::
-
-            # sibling filter args from a query against FIT-101
-            self._resolve_record({"unit": ("gal/min", "unit"),
-                                  "qty": ("flow rate", "quantity_kind")})
-            # -> {"unit": ".../unit/GAL_US-PER-MIN",
-            #     "qty": ".../quantitykind/VolumeFlowRate"}
-        """
-        return self.client.resolve_record_uris(fields, min_score=0.4)
-    
-    def _query_resolver_adapter(self, text: str, kind: str) -> str:
-        return self._resolve_rdf(text, kind)
-
     def _is_uri(self, text: str) -> bool:
         return isinstance(text, str) and (text.startswith("urn:") or text.startswith("http://") or text.startswith("https://"))
 
