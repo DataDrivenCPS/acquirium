@@ -78,6 +78,14 @@ class TestRouting:
         assert [m.uri for m in out] == ["urn:C"]
         assert q.queried_kinds == []  # QUDT matcher untouched for class
 
+    def test_substance_uses_graph_only(self):
+        g = FakeMatcher([_rr("urn:nawi#Chlorine", "substance")])
+        q = FakeMatcher([_rr("urn:Q", "substance")])
+        r = ConceptResolver(g, q, lambda: None)
+        out = r.resolve("chlorine", kind="substance")
+        assert [m.uri for m in out] == ["urn:nawi#Chlorine"]
+        assert q.queried_kinds == []  # QUDT/converter untouched for substance
+
     def test_quantity_kind_skips_converter(self):
         # converter_provider raises if invoked — QK must not call it.
         r = _resolver(qudt=[_rr("http://qudt.org/qk/Mass", "quantity_kind")])

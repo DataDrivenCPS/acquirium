@@ -37,8 +37,8 @@ def test_field_name_is_the_kind():
     assert captured["fields"] == {
         "unit": ("kg", "unit"),
         "quantity_kind": ("mass", "quantity_kind"),
-        "medium": ("water", "class"),
-        "substance": ("nitrate", "class"),
+        "medium": ("water", "substance"),
+        "substance": ("nitrate", "substance"),
         "custom": ("whatever", None),
     }
     assert captured["min_score"] == 0.6  # point-metadata default

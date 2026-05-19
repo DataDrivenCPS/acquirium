@@ -58,8 +58,8 @@ from acquirium.Storage.values import normalize_value_kind
 POINT_FIELD_KINDS: dict[str, str] = {
     "unit": "unit",
     "quantity_kind": "quantity_kind",
-    "medium": "class",
-    "substance": "class",
+    "medium": "substance",
+    "substance": "substance",
 }
 
 
