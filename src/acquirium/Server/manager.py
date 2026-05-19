@@ -239,7 +239,7 @@ class Manager:
     
     @classmethod
     def from_env(cls) -> Manager:
-        _backend = os.getenv("ACQUIRIUM_TIMESERIES_BACKEND", "timescale").lower()
+        _backend = os.getenv("ACQUIRIUM_TIMESERIES_BACKEND", "duckdb").lower()
         _data_dir = os.getenv("ACQUIRIUM_DATA_DIR")
         _ontology_deps_raw = os.getenv("ACQUIRIUM_ONTOLOGY_DEPENDENCIES")
         return cls(
