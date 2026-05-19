@@ -375,65 +375,6 @@ class Acquirium:
         """Return the canonical Acquirium reference URI for ``(source_id, ref_name)``."""
         return compute_ref_uri(source_id, ref_name)
 
-    def register_stream(
-        self,
-        point_uri: str | URIRef | None = None,
-        label: str | None = None,
-        *,
-        source_id: str | None = None,
-        ref_name: str | None = None,
-        unit: str | URIRef | None = None,
-        quantity_kind: str | URIRef | None = None,
-        medium: str | URIRef | None = None,
-        substance: str | URIRef | None = None,
-        data_source: str | URIRef | None = None,
-        properties: dict[URIRef, str | URIRef] | None = None,
-        value_kind: str = "text",
-    ) -> None:
-        """Declare a stream's semantic metadata in the RDF graph.
-
-        ``point_uri`` is optional. When provided, a semantic point node is
-        created and linked to the external reference. When omitted, only the
-        external reference node is written; semantic linkage can be added later
-        by inserting an RDF graph that connects a point to the same ref URI.
-
-        Plain strings for ``unit``, ``quantity_kind``, ``medium``, and
-        ``substance`` are resolved against the QUDT vocabulary via the server
-        (unit resolver + embedding matcher). Falls back to a plain literal with
-        a warning if no confident match is found.
-
-        Args:
-            point_uri: Optional URI identifying this stream in the knowledge
-                graph. If omitted, only the external reference node is written.
-            label: Human-readable name (rdfs:label) written on ``point_uri``.
-            source_id: Registered datasource identifier.
-            ref_name: Source-native stream identifier (sensor tag, column name,
-                MQTT topic, etc.). Written as ``acq:refName`` on the reference node.
-            unit: Unit of measurement — URIRef, URI string, or plain text.
-            quantity_kind: Physical quantity — URIRef, URI string, or plain text.
-            medium: Medium the measurement applies to (S223 hasMedium).
-            substance: Substance being measured (S223 ofSubstance).
-            data_source: Origin of the data — written as a literal string.
-            properties: Arbitrary extra triples written on the reference node
-                (or on ``point_uri`` when no reference node exists).
-
-        This is the single-stream form of :meth:`register_streams` (one
-        batch of one), so the two share identical per-stream behavior.
-        """
-        self.register_streams([{
-            "point_uri": point_uri,
-            "label": label,
-            "source_id": source_id,
-            "ref_name": ref_name,
-            "unit": unit,
-            "quantity_kind": quantity_kind,
-            "medium": medium,
-            "substance": substance,
-            "data_source": data_source,
-            "properties": properties,
-            "value_kind": value_kind,
-        }])
-
     def register_streams(
         self,
         streams: Iterable[dict[str, Any]],
