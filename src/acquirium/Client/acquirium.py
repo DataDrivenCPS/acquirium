@@ -306,69 +306,6 @@ class Acquirium:
         if chunk:
             yield chunk
 
-    def _resolve_qudt_uri(
-        self, text: str, kind: str, context: list[str] | None = None
-    ) -> URIRef | None:
-        """Resolve a plain string to a QUDT/ontology URI via the server.
-
-        Thin wrapper over the shared :meth:`AcquiriumClient.resolve_concept`.
-        The server's unified resolver already runs the deterministic unit
-        converter ahead of the embedding matchers and applies ``context``
-        disambiguation (so "kg" + a Mass quantity kind reaches KiloGM, not
-        KiloGAUSS). Returns ``None`` if nothing confident matches.
-
-        ``context``: already-resolved sibling URIs (e.g. the quantity kind /
-        medium for the same stream).
-
-        Example::
-
-            # unit string off a turbidimeter tag
-            self._resolve_qudt_uri("NTU", "unit")
-            # -> rdflib.URIRef("http://qudt.org/vocab/unit/NTU")
-        """
-        try:
-            uri = self.client.resolve_concept(
-                text, kind=kind, context=context, min_score=0.6
-            )
-        except Exception:
-            return None
-        return URIRef(uri) if uri else None
-
-    def resolve_record(
-        self,
-        fields: dict[str, tuple[Any, str | None]],
-        min_score: float = 0.5,
-    ) -> dict[str, str | None]:
-        """Jointly resolve a record's fields to one URI each (or ``None``).
-
-        ``fields`` maps an arbitrary result label to ``(value, kind)``. The
-        label only keys the result; ``kind`` says which vocabulary to
-        resolve the text *as* (the field's role — not the answer; ``None``
-        = any). Values that already look like URIs (or are ``URIRef``) pass
-        through, ``None`` maps to ``None``. Example::
-
-            # metadata columns for chlorine analyzer AIT-330 pulled from a
-            # plant historian export (keys = that export's column headers)
-            aq.resolve_record({
-                "AIT-330.EU":  ("mg/L", "unit"),
-                "AIT-330.QTY": ("mass concentration", "quantity_kind"),
-                "AIT-330.MED": ("urn:nawi-water-ontology#TreatedWater",
-                                "class"),  # already a URI -> passthrough
-            })
-            # -> {"AIT-330.EU":  "http://qudt.org/vocab/unit/MilliGM-PER-L",
-            #     "AIT-330.QTY": ".../quantitykind/MassConcentration",
-            #     "AIT-330.MED": "urn:nawi-water-ontology#TreatedWater"}
-
-        Related fields reinforce each other server-side (e.g. a quantity
-        kind disambiguates an ambiguous unit and vice versa), so this is
-        preferred over resolving fields one by one when several are known
-        together.
-        """
-        try:
-            return self.client.resolve_record_uris(fields, min_score=min_score)
-        except Exception:
-            return {name: None for name in fields}
-
     def resolve_point_metadata(
         self, fields: dict[str, Any], min_score: float = 0.6
     ) -> dict[str, str | None]:
@@ -394,14 +331,17 @@ class Acquirium:
         through. Returns ``{field: uri-or-None}``.
 
         This is the preferred entry point for drivers and stream
-        registration; :meth:`resolve_record` is the lower-level form for
-        callers that need arbitrary labels and explicit kinds.
+        registration. For arbitrary labels and explicit kinds use
+        :meth:`AcquiriumClient.resolve_record_uris` directly.
         """
         record = {
             name: (value, POINT_FIELD_KINDS.get(name))
             for name, value in fields.items()
         }
-        return self.resolve_record(record, min_score=min_score)
+        try:
+            return self.client.resolve_record_uris(record, min_score=min_score)
+        except Exception:
+            return {name: None for name in record}
 
     @staticmethod
     def _coerce_resolved(
