@@ -36,6 +36,29 @@ def _add_triple(g: "RDFGraph", subj: "URIRef", pred: "URIRef", value: "str | URI
         g.add((subj, pred, Literal(value)))
 
 
+def _coerce_resolved(
+    resolved: dict[str, "str | None"], name: str, value: "Any",
+) -> "str | URIRef | None":
+    """Map a raw field value to its resolved URIRef.
+
+    Passes ``None``/``URIRef`` through; warns and keeps the literal when
+    plain text did not resolve.
+    """
+    if value is None:
+        return None
+    if isinstance(value, URIRef):
+        return value
+    uri = resolved.get(name)
+    if uri is None:
+        warnings.warn(
+            f"Could not resolve {name!r} value {value!r} to a QUDT URI; "
+            "storing as a plain literal.",
+            stacklevel=3,
+        )
+        return value
+    return URIRef(uri)
+
+
 def _build_stream_triples(aq: "Acquirium", g: "RDFGraph", stream: dict) -> None:
     """Write one stream's reference/point/metadata triples into ``g``.
 
@@ -43,7 +66,7 @@ def _build_stream_triples(aq: "Acquirium", g: "RDFGraph", stream: dict) -> None:
     batch) and ``register_streams``; no graph insert here — the caller
     batches and inserts once. Module-level (not a method) so it is not
     shadowed when callers invoke ``register_streams`` with a substitute
-    ``self``; ``aq`` supplies ``resolve_point_metadata``/``_coerce_resolved``.
+    ``self``; ``aq`` supplies ``resolve_point_metadata``.
     """
     point_uri_raw = stream.get("point_uri")
     label = stream.get("label")
@@ -74,10 +97,10 @@ def _build_stream_triples(aq: "Acquirium", g: "RDFGraph", stream: dict) -> None:
         }
         if meta:
             res = aq.resolve_point_metadata(meta)
-            _add_triple(g, subj, HAS_UNIT,          aq._coerce_resolved(res, "unit", stream.get("unit")))
-            _add_triple(g, subj, HAS_QUANTITY_KIND, aq._coerce_resolved(res, "quantity_kind", stream.get("quantity_kind")))
-            _add_triple(g, subj, HAS_MEDIUM,        aq._coerce_resolved(res, "medium", stream.get("medium")))
-            _add_triple(g, subj, OF_SUBSTANCE,      aq._coerce_resolved(res, "substance", stream.get("substance")))
+            _add_triple(g, subj, HAS_UNIT,          _coerce_resolved(res, "unit", stream.get("unit")))
+            _add_triple(g, subj, HAS_QUANTITY_KIND, _coerce_resolved(res, "quantity_kind", stream.get("quantity_kind")))
+            _add_triple(g, subj, HAS_MEDIUM,        _coerce_resolved(res, "medium", stream.get("medium")))
+            _add_triple(g, subj, OF_SUBSTANCE,      _coerce_resolved(res, "substance", stream.get("substance")))
         _add_triple(g, subj, DATA_SOURCE, stream.get("data_source"))
         if ref_uri is not None:
             g.add((subj, HAS_EXTERNAL_REFERENCE, ref_uri))
@@ -343,28 +366,6 @@ class Acquirium:
         except Exception:
             return {name: None for name in record}
 
-    @staticmethod
-    def _coerce_resolved(
-        resolved: dict[str, str | None], name: str, value: Any
-    ) -> "str | URIRef | None":
-        """Map a raw field value to its resolved URIRef.
-
-        Passes ``None``/``URIRef`` through; warns and keeps the literal
-        when plain text did not resolve.
-        """
-        if value is None:
-            return None
-        if isinstance(value, URIRef):
-            return value
-        uri = resolved.get(name)
-        if uri is None:
-            warnings.warn(
-                f"Could not resolve {name!r} value {value!r} to a QUDT URI; "
-                "storing as a plain literal.",
-                stacklevel=3,
-            )
-            return value
-        return URIRef(uri)
 
     def graph_version(self) -> int:
         """Return the server's current graph mutation counter."""
