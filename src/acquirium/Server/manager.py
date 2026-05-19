@@ -229,9 +229,7 @@ class Manager:
         )
         self._qudt_store = QUDTStore(data_dir=base)
 
-        # Single normalization façade. Uses the same lazily-built converter
-        # instance that resolve_unit_info / get_conversion_factors use, but
-        # only its resolution methods (resolve_unit / infer_unit).
+        # Single normalization façade, sharing the lazily-built converter.
         self._concept_resolver = ConceptResolver(
             graph_matcher=self._graph_matcher,
             qudt_matcher=self._qudt_matcher,

@@ -13,6 +13,7 @@ from acquirium.internals.models import (
     AppStopRequest,
     StreamInsert,
     RegisterDatasourceRequest,
+    looks_like_uri,
 )
 from acquirium.internals.internals_namespaces import *
 from acquirium.Grafana.grafana_dashboard_creator import GrafanaDashboardCreator
@@ -268,7 +269,7 @@ class AcquiriumClient:
             resolve_concept("http://qudt.org/vocab/unit/NTU")  # passthrough
             # -> "http://qudt.org/vocab/unit/NTU"
         """
-        if isinstance(text, str) and text.startswith(("http://", "https://", "urn:")):
+        if looks_like_uri(text):
             return text
         matches = self.resolve_text(
             text, kind=kind, top_k=1, min_score=min_score, context=context
@@ -332,9 +333,7 @@ class AcquiriumClient:
         for name, (text, kind) in fields.items():
             if text is None:
                 out[name] = None
-            elif isinstance(text, str) and text.startswith(
-                ("http://", "https://", "urn:")
-            ):
+            elif looks_like_uri(text):
                 out[name] = text
             else:
                 to_resolve[name] = (text, kind)
