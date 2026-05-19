@@ -103,14 +103,14 @@ def test_setup_registers_datasource_and_streams(tmp_path):
     driver.setup()
 
     driver.aq.register_datasource.assert_called_once_with("watertap")
-    assert driver.aq.register_stream.call_count == 2
-    first_call = driver.aq.register_stream.call_args_list[0]
-    assert first_call.args == ()
-    assert first_call.kwargs == {
+    assert driver.aq.register_streams.call_count == 2
+    first_call = driver.aq.register_streams.call_args_list[0]
+    assert first_call.kwargs == {}
+    assert first_call.args == ([{
         "source_id": "watertap",
         "ref_name": "value_a",
         "value_kind": "numeric",
-    }
+    }],)
 
 
 def test_setup_can_insert_graph(tmp_path):

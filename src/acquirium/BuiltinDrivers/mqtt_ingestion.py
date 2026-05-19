@@ -149,11 +149,11 @@ class MQTTIngestDriver(EventIngestDriver):
             if self._spec_key(spec) in self._spec_keys:
                 continue
             try:
-                self.aq.register_stream(
-                    source_id=self.source_id,
-                    ref_name=ref_name_s,
-                    value_kind=spec.value_kind,
-                )
+                self.aq.register_streams([{
+                    "source_id": self.source_id,
+                    "ref_name": ref_name_s,
+                    "value_kind": spec.value_kind,
+                }])
             except Exception:
                 logger.warning("mqtt: failed to register stream %s", ref_uri, exc_info=True)
                 continue

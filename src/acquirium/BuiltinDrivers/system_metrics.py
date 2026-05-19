@@ -109,11 +109,11 @@ class SystemMetricsDriver(PollingIngestDriver):
 
     def _register_stream_metadata(self) -> None:
         for ref, _, unit, quantity_kind in _METRICS:
-            self.aq.register_stream(
-                self._stream_uri(ref),
-                unit=unit,
-                quantity_kind=quantity_kind,
-                source_id=self.source_id,
-                ref_name=ref,
-                value_kind="numeric",
-            )
+            self.aq.register_streams([{
+                "point_uri": self._stream_uri(ref),
+                "unit": unit,
+                "quantity_kind": quantity_kind,
+                "source_id": self.source_id,
+                "ref_name": ref,
+                "value_kind": "numeric",
+            }])

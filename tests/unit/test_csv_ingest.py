@@ -29,7 +29,6 @@ def make_driver(cfg_overrides: dict | None = None, tmp_path: Path | None = None)
     aq = MagicMock()
     aq.client = MagicMock()
     aq.register_datasource.return_value = "csv_files"
-    aq.register_stream.return_value = None
     aq.register_streams.side_effect = lambda streams: Acquirium.register_streams(aq, streams)
     aq.insert_timeseries_batch.return_value = {"ok": True, "rows_inserted": 0}
     aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 0}

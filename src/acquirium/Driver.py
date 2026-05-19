@@ -46,7 +46,7 @@ class Driver(ABC):
             def setup(self):
                 self.source_id = "my-source"
                 self.aq.register_datasource(self.source_id)
-                self.aq.register_stream(source_id=self.source_id, ref_name="temp")
+                self.aq.register_streams([{"source_id": self.source_id, "ref_name": "temp"}])
 
             def collect(self):
                 return pl.DataFrame({"ts": [datetime.now(timezone.utc)],

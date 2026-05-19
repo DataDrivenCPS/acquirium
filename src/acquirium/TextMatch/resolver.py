@@ -393,7 +393,7 @@ class ConceptResolver:
         How ``context`` is produced and what it can actually do:
 
         - Origin (client side): the two-pass ``flex_query_rdf_inputs``
-          decorator and ``Acquirium.register_stream`` resolve the *non-unit*
+          decorator and ``Acquirium.register_streams`` resolve the *non-unit*
           siblings first and pass their resolved URIs here when resolving a
           unit. It travels client → ``GET /resolve_text`` (repeated query
           params) → ``Manager.resolve_text`` → ``resolve``.
