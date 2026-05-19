@@ -125,6 +125,7 @@ class OxigraphGraphStore:
         self.store_path = Path(store_path)
         self.env_root = Path(env_root)
         self.store_path.mkdir(parents=True, exist_ok=True)
+        self.env_root.mkdir(parents=True, exist_ok=True)
 
         self.dataset = Dataset(store="Oxigraph", default_union=False)
         self._open_store()
@@ -141,17 +142,20 @@ class OxigraphGraphStore:
 
         # ontoenv shares this Oxigraph store via the graph-store protocol,
         # so its graphs and the instance data live together and ontoenv's
-        # closure tooling runs over Oxigraph. graph_store is incompatible
-        # with recreate/create_or_use_cached, so neither is passed. Every
-        # vocabulary (incl. s223, vendored as ontologies/s223.ttl) is a
-        # local file discovered by the directory crawl — no remote fetch,
-        # then pulled out by IRI via ontology_iris()/named_graph().
+        # closure tooling runs over Oxigraph. Its .ontoenv metadata dir
+        # goes under the configured env_root (not the cwd). graph_store is
+        # incompatible with recreate/create_or_use_cached, so neither is
+        # passed. Every vocabulary (incl. s223, vendored as
+        # ontologies/s223.ttl) is a local file discovered by the directory
+        # crawl — no remote fetch, then pulled out by IRI via
+        # ontology_iris()/named_graph().
         ont_dir = Path(ontologies_dir)
         search_dirs = [str(ont_dir)] if ont_dir.is_dir() else []
         self._ontoenv_store = _OntoenvOxigraphStore(
             self.dataset, self._invalidate_closure
         )
         self.env = OntoEnv(
+            path=str(self.env_root),
             graph_store=self._ontoenv_store,
             search_directories=search_dirs,
         )
