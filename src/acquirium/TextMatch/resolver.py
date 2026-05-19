@@ -217,7 +217,9 @@ class ConceptResolver:
         early-exit off, so the joint decode sees depth); then for every
         :data:`RELATIONS` entry
         whose two kinds are both present, the pair is chosen by
-        ``argmax a.score + b.score + weight·compat(a, b)``. Fields in no
+        ``argmax a.score + b.score + weight·compat(a, b)``. A side whose top
+        candidate is an exact hit is pinned (the compat bonus may not demote
+        an authoritative match for an uncertain sibling). Fields in no
         relation take their own top candidate. When nothing is compatible
         this reduces exactly to independent resolution — no special case.
 
@@ -254,9 +256,19 @@ class ConceptResolver:
                 continue
             if na in winners or nb in winners or not cands[na] or not cands[nb]:
                 continue
+            # An exact hit (exact surface / URI, score 1.0) is authoritative:
+            # pin that side to its top candidate so the compat bonus cannot
+            # demote a confident match because of an uncertain sibling (e.g.
+            # unit "byte"->BYTE must not flip to a data-rate unit just
+            # because a weak quantity_kind matched DataRate). The other side
+            # still optimises against the pin; both pinned -> independent.
+            def _pool(cs: list[ResolveResult]) -> list[ResolveResult]:
+                return [cs[0]] if cs[0].match_stage == "exact" else cs
+
+            pool_a, pool_b = _pool(cands[na]), _pool(cands[nb])
             best, best_pair = None, None
-            for a in cands[na]:
-                for b in cands[nb]:
+            for a in pool_a:
+                for b in pool_b:
                     s = a.score + b.score + rel.weight * rel.compat(a, b)
                     if best is None or s > best:
                         best, best_pair = s, (a, b)
