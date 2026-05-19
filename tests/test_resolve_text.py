@@ -589,7 +589,7 @@ def test_irrelevant_context_does_not_reorder(acq):
 
 def test_resolve_qudt_uri_honors_context_over_deterministic(acq):
     """With context, resolve_concept prefers the context-aware matcher over
-    the deterministic resolver (the path register_stream uses)."""
+    the deterministic resolver (the path register_streams uses)."""
     mass = acq.client.resolve_concept("kg", kind="unit", context=[_QK_MASS])
     assert mass == _UNIT_KILOGM, (
         f"'kg' + Mass context should resolve to KiloGM, got {mass}"

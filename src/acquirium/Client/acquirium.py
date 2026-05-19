@@ -59,14 +59,14 @@ def _coerce_resolved(
     return URIRef(uri)
 
 
-def _build_stream_triples(aq: "Acquirium", g: "RDFGraph", stream: dict) -> None:
+def _build_stream_triples(
+    g: "RDFGraph", stream: dict, resolved: dict[str, "str | None"],
+) -> None:
     """Write one stream's reference/point/metadata triples into ``g``.
 
-    The single per-stream path shared by ``register_stream`` (a one-element
-    batch) and ``register_streams``; no graph insert here — the caller
-    batches and inserts once. Module-level (not a method) so it is not
-    shadowed when callers invoke ``register_streams`` with a substitute
-    ``self``; ``aq`` supplies ``resolve_point_metadata``.
+    ``resolved`` is the precomputed ``field -> URI-or-None`` map for this
+    stream's semantic fields (typically from ``resolve_point_metadata``);
+    pass ``{}`` when there is nothing to resolve.
     """
     point_uri_raw = stream.get("point_uri")
     label = stream.get("label")
@@ -88,19 +88,8 @@ def _build_stream_triples(aq: "Acquirium", g: "RDFGraph", stream: dict) -> None:
         g.add((subj, RDF.type, VIRTUAL_POINT))
         if label is not None:
             g.add((subj, RDFS.label, Literal(label)))
-        # Resolve the semantic fields jointly so related siblings
-        # disambiguate each other (URI/URIRef/None pass through).
-        meta = {
-            f: stream.get(f)
-            for f in POINT_FIELD_KINDS
-            if stream.get(f) is not None
-        }
-        if meta:
-            res = aq.resolve_point_metadata(meta)
-            _add_triple(g, subj, HAS_UNIT,          _coerce_resolved(res, "unit", stream.get("unit")))
-            _add_triple(g, subj, HAS_QUANTITY_KIND, _coerce_resolved(res, "quantity_kind", stream.get("quantity_kind")))
-            _add_triple(g, subj, HAS_MEDIUM,        _coerce_resolved(res, "medium", stream.get("medium")))
-            _add_triple(g, subj, OF_SUBSTANCE,      _coerce_resolved(res, "substance", stream.get("substance")))
+        for field, pred in POINT_FIELD_PREDICATES.items():
+            _add_triple(g, subj, pred, _coerce_resolved(resolved, field, stream.get(field)))
         _add_triple(g, subj, DATA_SOURCE, stream.get("data_source"))
         if ref_uri is not None:
             g.add((subj, HAS_EXTERNAL_REFERENCE, ref_uri))
@@ -135,6 +124,14 @@ POINT_FIELD_KINDS: dict[str, str] = {
     "quantity_kind": "quantity_kind",
     "medium": "substance",
     "substance": "substance",
+}
+
+# Field → graph predicate the resolved URI is written under.
+POINT_FIELD_PREDICATES: dict[str, URIRef] = {
+    "unit": HAS_UNIT,
+    "quantity_kind": HAS_QUANTITY_KIND,
+    "medium": HAS_MEDIUM,
+    "substance": OF_SUBSTANCE,
 }
 
 
@@ -379,11 +376,7 @@ class Acquirium:
         self,
         streams: Iterable[dict[str, Any]],
     ) -> None:
-        """Declare multiple stream metadata records in one graph insert.
-
-        This is the batch form of :meth:`register_stream`. Use it when a driver
-        discovers many streams at once, such as a wide CSV file with one column
-        per stream. Batching avoids one graph insert and graph resync per stream.
+        """Declare one or more streams' semantic metadata in one graph insert.
 
         Each stream item is a dictionary with these commonly used keys:
 
@@ -398,16 +391,23 @@ class Acquirium:
         - ``properties``: optional mapping of predicate URIRefs to values,
           written on the reference node (or ``point_uri`` when no ref node exists).
 
+        Plain strings for ``unit``/``quantity_kind``/``medium``/``substance``
+        are resolved jointly per stream via :meth:`resolve_point_metadata`;
+        URI / URIRef / None values pass through.
+
         Drivers should still insert rows with ``insert_timeseries_arrow`` using
         the same ``source_id`` and source-local ``ref_name``. Acquirium resolves
         those inserts to the same canonical reference URI internally.
-
-        Single-stream callers should use :meth:`register_stream`, which is a
-        one-element batch over this method.
         """
         g = RDFGraph()
         for stream in streams:
-            _build_stream_triples(self, g, stream)
+            meta = {
+                f: stream.get(f)
+                for f in POINT_FIELD_KINDS
+                if stream.get(f) is not None
+            }
+            resolved = self.resolve_point_metadata(meta) if meta else {}
+            _build_stream_triples(g, stream, resolved)
         if len(g):
             self.client.insert_graph(g.serialize(format="turtle"), format="turtle", replace=False)
 
