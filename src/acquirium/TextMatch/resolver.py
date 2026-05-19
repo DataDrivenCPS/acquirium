@@ -136,7 +136,9 @@ class ConceptResolver:
         self._sources: list[Source] = [
             Source(
                 "graph",
-                kinds=frozenset({None, "class", "predicate", "unit", "quantity_kind"}),
+                kinds=frozenset(
+                    {None, "class", "predicate", "unit", "quantity_kind", "substance"}
+                ),
                 produce=_matcher(graph_matcher),
                 floor=0.8,
                 floor_kinds=frozenset({"unit", "quantity_kind"}),

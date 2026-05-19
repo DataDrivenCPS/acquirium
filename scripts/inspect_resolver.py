@@ -9,14 +9,16 @@ Two input shapes are accepted:
 
   1. Query item   - a single text + optional kind/context:
        {"text": "mg/L", "kind": "unit", "context": ["http://.../Mass"]}
-     (kind: unit | quantity_kind | class | predicate | null)
+     (kind: unit | quantity_kind | substance | class | predicate | null)
 
   2. Field record - a stream-like record with NO "text" key, e.g.:
-       {"unit": "mg/L", "quantity_kind": "mass concentration",
+       {"unit": "gal/min", "quantity_kind": "flow rate",
         "medium": "water", "class": "pump"}
-     Each field is resolved with two-pass sibling context (non-unit fields
-     first, their URIs fed as context to units) - exactly how the ingest /
-     register_stream / query-builder path coerces a record.
+     The whole record is resolved jointly by the server (one
+     /resolve_record call): related fields reinforce each other (a
+     quantity kind disambiguates an ambiguous unit and vice versa) -
+     the same path register_stream / resolve_point_metadata use. The
+     field name selects the vocabulary (see FIELD_KINDS).
 
 Modes
 -----
@@ -50,14 +52,14 @@ FIELD_KINDS: dict[str, str] = {
     "unit": "unit",
     "quantity_kind": "quantity_kind",
     "qk": "quantity_kind",
-    "medium": "class",
-    "substance": "class",
+    "medium": "substance",
+    "substance": "substance",
     "class": "class",
     "type": "class",
     "predicate": "predicate",
     "property": "predicate",
 }
-_KINDS = {"unit", "quantity_kind", "class", "predicate"}
+_KINDS = {"unit", "quantity_kind", "class", "predicate", "substance"}
 
 
 def _client(host: str, port: int):
@@ -91,8 +93,8 @@ def resolve_record(
 ) -> dict[str, Any]:
     """Resolve a query item or a field record.
 
-    Field records use the two-pass rule: resolve non-unit fields first,
-    feed their resolved URIs as context when resolving unit fields.
+    Field records are resolved jointly by the server in a single
+    /resolve_record call (related fields reinforce each other).
     """
     if "text" in record:
         text = str(record["text"])
@@ -101,25 +103,23 @@ def resolve_record(
         matches = resolve_one(aq, text, kind, ctx, top_k, min_score)
         return {"input": record, "matches": matches}
 
-    # Field record: split unit fields from the rest for two-pass context.
-    fields = [(k, v) for k, v in record.items() if v is not None]
-    non_unit = [(k, v) for k, v in fields if FIELD_KINDS.get(k) != "unit"]
-    unit_f = [(k, v) for k, v in fields if FIELD_KINDS.get(k) == "unit"]
-
-    out: dict[str, Any] = {}
-    context: list[str] = []
-    for name, value in non_unit:
-        kind = FIELD_KINDS.get(name)  # None -> resolve across all kinds
-        m = resolve_one(aq, str(value), kind, None, top_k, min_score)
-        out[name] = {"kind": kind, "input": value, "matches": m}
-        if m:
-            context.append(m[0]["uri"])
-    for name, value in unit_f:
-        m = resolve_one(aq, str(value), "unit", context or None, top_k, min_score)
-        out[name] = {
-            "kind": "unit", "input": value, "matches": m,
-            "context_used": list(context),
+    # Field record: field name -> kind; resolve the whole record jointly.
+    fields = {
+        name: (str(value), FIELD_KINDS.get(name))
+        for name, value in record.items()
+        if value is not None
+    }
+    by_field = aq.client.resolve_record(
+        fields, top_k=top_k, min_score=min_score
+    )
+    out = {
+        name: {
+            "kind": FIELD_KINDS.get(name),
+            "input": record[name],
+            "matches": by_field.get(name, []),
         }
+        for name in fields
+    }
     return {"input": record, "fields": out}
 
 
@@ -148,22 +148,18 @@ def render(result: dict[str, Any], top_k: int) -> str:
             f'context={inp.get("context") or []}'
         )
         return f"= {head}\n" + _fmt_matches(result["matches"], top_k)
-    # field record
+    # field record (resolved jointly)
     parts = [f"= record {json.dumps(result['input'], ensure_ascii=False)}"]
     for name, info in result["fields"].items():
         m = info["matches"]
         top = m[0] if m else None
-        ctx = (
-            f"  [ctx={len(info['context_used'])}]"
-            if info.get("context_used") else ""
-        )
         if top:
             parts.append(
                 f"  {name:<14} {info['input']!r:<26} -> {top['uri']}  "
-                f"({top['score']:.3f} {top.get('match_stage','?')}){ctx}"
+                f"({top['score']:.3f} {top.get('match_stage','?')})"
             )
         else:
-            parts.append(f"  {name:<14} {info['input']!r:<26} -> (no match){ctx}")
+            parts.append(f"  {name:<14} {info['input']!r:<26} -> (no match)")
     return "\n".join(parts)
 
 

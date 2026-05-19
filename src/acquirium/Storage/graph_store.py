@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -73,6 +75,7 @@ class OxigraphGraphStore:
         include_dependency_graphs: bool = True,
         qudt_converter: QUDTUnitConverter | None = None,
         base_namespace: str | None = None,
+        ontologies_dir: str | Path = "ontologies",
     ):
         self.store_path = Path(store_path)
         self.env_root = Path(env_root)
@@ -81,19 +84,91 @@ class OxigraphGraphStore:
         self.dataset = Dataset(store="Oxigraph", default_union=False)
         self._open_store()
 
-        # OntoEnv expects the *root* directory; it manages .ontoenv within it.
+        # ontoenv is the single source of ontology graphs: it discovers the
+        # local `ontologies/` directory; s223 is not a local file so it is
+        # added once from the canonical URL. Graphs are read out per-IRI via
+        # named_graph()/ontology_iris() (imports NOT followed).
+        ont_dir = Path(ontologies_dir)
+        search_dirs = [str(ont_dir)] if ont_dir.is_dir() else []
         env_exists = (self.env_root / ".ontoenv").exists()
         try:
-            self.env = OntoEnv(path=str(self.env_root), recreate=not env_exists)
+            self.env = OntoEnv(
+                path=str(self.env_root),
+                recreate=not env_exists,
+                search_directories=search_dirs,
+            )
         except ValueError:
-            # First run or missing config; recreate to initialize metadata.
-            self.env = OntoEnv(path=str(self.env_root), recreate=True)
+            self.env = OntoEnv(
+                path=str(self.env_root),
+                recreate=True,
+                search_directories=search_dirs,
+            )
+        try:
+            self.env.update()
+        except Exception as exc:
+            _logger.warning("ontoenv: directory crawl failed: %s", exc)
+        try:
+            self.env.add("https://open223.info/223p.ttl", fetch_imports=False)
+        except Exception as exc:
+            _logger.warning("ontoenv: could not add s223 (open223.info): %s", exc)
 
         self.main_graph_uri = main_graph_uri
         self.union_graph_uri = union_graph_uri
         self.include_dependency_graphs = include_dependency_graphs
         self.qudt_converter = qudt_converter
         self.base_namespace = base_namespace
+
+    # -------------------- ontoenv named-graph access --------------------
+    def named_graph(self, iri: str) -> Graph:
+        """One ontology's own graph from ontoenv (owl:imports NOT followed)."""
+        return self.env.get_graph(iri)
+
+    # Default exact ontology IRIs declared by the vendored files in
+    # `ontologies/` (qudt_unit.ttl pins QUDT 3.1.5; qudt_qk.ttl uses the
+    # version-agnostic quantitykind IRI). Exact match avoids the QUDT
+    # version sprawl ontoenv pulls in via owl:imports. Overridable via the
+    # acquirium.toml `[ontologies]` table (cli.py -> ACQUIRIUM_ONTOLOGY_IRIS).
+    _ONTOLOGY_IRIS = {
+        "water": "urn:nawi-water-ontology",
+        "s223": "http://data.ashrae.org/standard223/1.0/model/all",
+        "unit": "http://qudt.org/3.1.5/vocab/unit",
+        "quantity_kind": "http://qudt.org/vocab/quantitykind",
+    }
+
+    @classmethod
+    def _resolve_iri_map(cls) -> dict[str, str]:
+        """The configured logical-name -> IRI map (env override or default)."""
+        raw = os.getenv("ACQUIRIUM_ONTOLOGY_IRIS")
+        if raw:
+            try:
+                data = json.loads(raw)
+                if isinstance(data, dict) and data:
+                    return {str(k): str(v) for k, v in data.items()}
+                _logger.warning(
+                    "ACQUIRIUM_ONTOLOGY_IRIS not a non-empty object; using defaults"
+                )
+            except ValueError as exc:
+                _logger.warning(
+                    "ACQUIRIUM_ONTOLOGY_IRIS invalid JSON (%s); using defaults", exc
+                )
+        return dict(cls._ONTOLOGY_IRIS)
+
+    def ontology_iris(self) -> dict[str, str]:
+        """Logical name -> ontology IRI for the ontologies ontoenv discovered.
+
+        Keys: ``water``, ``s223``, ``unit``, ``quantity_kind`` (a key is
+        absent if ontoenv did not register that exact IRI).
+        """
+        try:
+            names = set(self.env.get_ontology_names())
+        except Exception as exc:
+            _logger.warning("ontoenv: get_ontology_names failed: %s", exc)
+            return {}
+        return {
+            name: iri
+            for name, iri in self._resolve_iri_map().items()
+            if iri in names
+        }
 
     def qualify_uri(self, value: str) -> str:
         if "://" in value or value.startswith("urn:"):
