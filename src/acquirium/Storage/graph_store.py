@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ontoenv import OntoEnv
+from pyoxigraph import NamedNode, RdfFormat
 from rdflib import Dataset, Graph, Literal, RDF, URIRef
 from rdflib.namespace import XSD
 from rdflib.namespace import OWL
@@ -76,8 +77,14 @@ class _OntoenvOxigraphStore:
         if len(ctx) and not overwrite:
             return
         ctx.remove((None, None, None))
-        for triple in graph:
-            ctx.add(triple)
+        # rdflib's per-triple ctx.add() crosses the Rust FFI once per triple
+        # — ~76s for the 535k-triple ontoenv crawl. Serialise to N-Triples
+        # (rdflib's fastest writer) once and bulk-load through pyoxigraph,
+        # which writes straight to SST. ~10× faster on cold startup.
+        nt = graph.serialize(format="nt", encoding="utf-8")
+        self._ds.store._inner.bulk_load(
+            input=nt, format=RdfFormat.N_TRIPLES, to_graph=NamedNode(iri),
+        )
         self._on_change()
 
     def get_graph(self, iri: str) -> Graph:

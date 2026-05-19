@@ -88,8 +88,10 @@ def _build_stream_triples(
         g.add((subj, RDF.type, VIRTUAL_POINT))
         if label is not None:
             g.add((subj, RDFS.label, Literal(label)))
-        for field, pred in POINT_FIELD_PREDICATES.items():
-            _add_triple(g, subj, pred, _coerce_resolved(resolved, field, stream.get(field)))
+        _add_triple(g, subj, HAS_UNIT,          _coerce_resolved(resolved, "unit", stream.get("unit")))
+        _add_triple(g, subj, HAS_QUANTITY_KIND, _coerce_resolved(resolved, "quantity_kind", stream.get("quantity_kind")))
+        _add_triple(g, subj, HAS_MEDIUM,        _coerce_resolved(resolved, "medium", stream.get("medium")))
+        _add_triple(g, subj, OF_SUBSTANCE,      _coerce_resolved(resolved, "substance", stream.get("substance")))
         _add_triple(g, subj, DATA_SOURCE, stream.get("data_source"))
         if ref_uri is not None:
             g.add((subj, HAS_EXTERNAL_REFERENCE, ref_uri))
@@ -124,14 +126,6 @@ POINT_FIELD_KINDS: dict[str, str] = {
     "quantity_kind": "quantity_kind",
     "medium": "substance",
     "substance": "substance",
-}
-
-# Field → graph predicate the resolved URI is written under.
-POINT_FIELD_PREDICATES: dict[str, URIRef] = {
-    "unit": HAS_UNIT,
-    "quantity_kind": HAS_QUANTITY_KIND,
-    "medium": HAS_MEDIUM,
-    "substance": OF_SUBSTANCE,
 }
 
 
