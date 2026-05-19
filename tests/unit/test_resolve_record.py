@@ -119,3 +119,27 @@ class TestWeight:
             {"u": ("x", "unit"), "q": ("y", "quantity_kind")}
         )
         assert out2["u"][0].uri == "u:Strong"
+
+    def test_exact_match_is_pinned_against_weak_sibling(self):
+        # The byte/"data size" failure: unit "byte" is an EXACT hit
+        # (BYTE, 1.0) unrelated to anything; the quantity_kind text is junk
+        # whose best is a semantic DataRate, and a data-rate unit is related
+        # to it. Without pinning, the compat bonus (0.25) would flip the
+        # unit off its authoritative exact match. It must not.
+        r = _resolver(qudt=[
+            _rr("u:BYTE", "unit", 1.0, stage="exact"),          # authoritative
+            _rr("u:MegaBIT-PER-SEC", "unit", 0.93,
+                related=["q:DataRate"]),                          # compatible
+            _rr("q:DataRate", "quantity_kind", 0.85,
+                related=["u:MegaBIT-PER-SEC"]),
+        ])
+        # Unpinned argmax would prefer 0.93+0.85+0.25=2.03 over
+        # 1.0+0.85+0=1.85; the pin forces the exact BYTE to win.
+        out = r.resolve_record(
+            {"unit": ("byte", "unit"),
+             "quantity_kind": ("data size", "quantity_kind")}
+        )
+        assert out["unit"][0].uri == "u:BYTE"
+        assert out["unit"][0].match_stage == "exact"
+        # The uncertain sibling still resolves (against the pinned unit).
+        assert out["quantity_kind"][0].uri == "q:DataRate"
