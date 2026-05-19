@@ -93,6 +93,12 @@ RELATIONS: list[Relation] = [
     Relation("unit", "quantity_kind", _qudt_related_compat),
 ]
 
+# Kinds that participate in some relation; only these benefit from the joint
+# decode, so only they need the wider fetch + disabled early-exit.
+_RELATION_KINDS: frozenset[str] = frozenset(
+    k for r in RELATIONS for k in (r.kind_a, r.kind_b)
+)
+
 
 class ConceptResolver:
     """Resolve natural-language text to ontology / QUDT URIs.
@@ -216,12 +222,21 @@ class ConceptResolver:
         Returns, per field, the candidate list with the chosen winner first
         (then the rest by base score), truncated to ``top_k``.
         """
-        fetch_k = max(top_k, self._CONTEXT_FETCH_K)
-        cands = {
-            name: self._ranked_candidates(
-                text, kind, fetch_k, min_score, early_exit=False
+        # Only fields whose kind participates in a relation can be reranked
+        # by the joint decode, so only they need the wider fetch + disabled
+        # early-exit; the rest resolve with the normal cheap settings.
+        def _gather(text: str, kind: str | None) -> list[ResolveResult]:
+            joint = kind in _RELATION_KINDS
+            return self._ranked_candidates(
+                text,
+                kind,
+                max(top_k, self._CONTEXT_FETCH_K) if joint else top_k,
+                min_score,
+                early_exit=not joint,
             )
-            for name, (text, kind) in fields.items()
+
+        cands = {
+            name: _gather(text, kind) for name, (text, kind) in fields.items()
         }
 
         # First field per kind (multiple fields of one kind: first wins;

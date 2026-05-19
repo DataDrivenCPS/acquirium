@@ -373,34 +373,25 @@ class Acquirium:
             if label is not None:
                 g.add((subj, RDFS.label, Literal(label)))
             # Resolve the semantic fields jointly so related siblings
-            # disambiguate each other (e.g. a quantity kind steers an
-            # ambiguous unit to KiloGM rather than KiloGAUSS). URI/URIRef
-            # values pass through; plain text is resolved together.
-            _specs = (
-                ("unit", unit, "unit"),
-                ("quantity_kind", quantity_kind, "quantity_kind"),
-                ("medium", medium, "class"),
-                ("substance", substance, "class"),
+            # disambiguate each other. resolve_record passes URI/URIRef/None
+            # values through, so the full set can go in as-is.
+            _resolved = self.resolve_record(
+                {
+                    "unit": (unit, "unit"),
+                    "quantity_kind": (quantity_kind, "quantity_kind"),
+                    "medium": (medium, "class"),
+                    "substance": (substance, "class"),
+                },
+                min_score=0.6,
             )
-            _record: dict[str, tuple[Any, str | None]] = {
-                name: (value, kind)
-                for name, value, kind in _specs
-                if value is not None
-                and not isinstance(value, URIRef)
-                and not (isinstance(value, str)
-                         and value.startswith(("http://", "https://", "urn:")))
-            }
-            _resolved = self.resolve_record(_record, min_score=0.6) if _record else {}
 
             def _coerce(name: str, value: Any) -> str | URIRef | None:
-                if value is None or isinstance(value, URIRef):
+                if value is None:
+                    return None
+                if isinstance(value, URIRef):
                     return value
-                if isinstance(value, str) and value.startswith(
-                    ("http://", "https://", "urn:")
-                ):
-                    return URIRef(value)
                 uri = _resolved.get(name)
-                if uri is None:
+                if uri is None:  # plain text that did not resolve
                     warnings.warn(
                         f"Could not resolve {name!r} value {value!r} to a "
                         "QUDT URI; storing as a plain literal.",

@@ -15,6 +15,18 @@ from rdflib import URIRef
 _REF_URI_NAMESPACE = uuid.UUID("6a8f3c2e-4b1d-5e7f-9012-3a4b5c6d7e8f")
 
 
+def looks_like_uri(value: object) -> bool:
+    """True if *value* is a string already in URI form.
+
+    The single canonical check (strict prefix form). The looser
+    ``"://" in value`` variant scattered elsewhere also matches arbitrary
+    text containing ``://`` and should converge here.
+    """
+    return isinstance(value, str) and value.startswith(
+        ("http://", "https://", "urn:")
+    )
+
+
 def compute_ref_uri(source_id: str, ref_name: str) -> URIRef:
     """Return a deterministic UUID5 ref URI for a (source_id, ref_name) pair.
 
