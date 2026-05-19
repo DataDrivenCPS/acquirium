@@ -34,6 +34,58 @@ def _add_triple(g: "RDFGraph", subj: "URIRef", pred: "URIRef", value: "str | URI
         g.add((subj, pred, URIRef(str(value))))
     else:
         g.add((subj, pred, Literal(value)))
+
+
+def _build_stream_triples(aq: "Acquirium", g: "RDFGraph", stream: dict) -> None:
+    """Write one stream's reference/point/metadata triples into ``g``.
+
+    The single per-stream path shared by ``register_stream`` (a one-element
+    batch) and ``register_streams``; no graph insert here — the caller
+    batches and inserts once. Module-level (not a method) so it is not
+    shadowed when callers invoke ``register_streams`` with a substitute
+    ``self``; ``aq`` supplies ``resolve_point_metadata``/``_coerce_resolved``.
+    """
+    point_uri_raw = stream.get("point_uri")
+    label = stream.get("label")
+    source_id = stream.get("source_id")
+    ref_name = stream.get("ref_name")
+    value_kind = normalize_value_kind(stream.get("value_kind"))
+
+    ref_uri = None
+    if ref_name is not None and source_id is not None:
+        ref_uri = compute_ref_uri(source_id, ref_name)
+        g.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
+        g.add((ref_uri, ACQUIRIUM_REF_NAME,  Literal(ref_name)))
+        g.add((ref_uri, ACQUIRIUM_VALUE_KIND, Literal(value_kind)))
+        g.add((ref_uri, STORED_AT,           ACQUIRIUM_DB_URI))
+        g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
+
+    if point_uri_raw is not None:
+        subj = URIRef(str(point_uri_raw))
+        g.add((subj, RDF.type, VIRTUAL_POINT))
+        if label is not None:
+            g.add((subj, RDFS.label, Literal(label)))
+        # Resolve the semantic fields jointly so related siblings
+        # disambiguate each other (URI/URIRef/None pass through).
+        meta = {
+            f: stream.get(f)
+            for f in POINT_FIELD_KINDS
+            if stream.get(f) is not None
+        }
+        if meta:
+            res = aq.resolve_point_metadata(meta)
+            _add_triple(g, subj, HAS_UNIT,          aq._coerce_resolved(res, "unit", stream.get("unit")))
+            _add_triple(g, subj, HAS_QUANTITY_KIND, aq._coerce_resolved(res, "quantity_kind", stream.get("quantity_kind")))
+            _add_triple(g, subj, HAS_MEDIUM,        aq._coerce_resolved(res, "medium", stream.get("medium")))
+            _add_triple(g, subj, OF_SUBSTANCE,      aq._coerce_resolved(res, "substance", stream.get("substance")))
+        _add_triple(g, subj, DATA_SOURCE, stream.get("data_source"))
+        if ref_uri is not None:
+            g.add((subj, HAS_EXTERNAL_REFERENCE, ref_uri))
+
+    target = ref_uri if ref_uri is not None else (URIRef(str(point_uri_raw)) if point_uri_raw is not None else None)
+    if target is not None:
+        for pred, value in (stream.get("properties") or {}).items():
+            _add_triple(g, target, pred, value)
 from acquirium.Client.client import AcquiriumClient
 from acquirium.Apps.base import App
 from acquirium.internals.models import AppOutputSpec, AppSpec, compute_ref_uri
@@ -423,49 +475,23 @@ class Acquirium:
             data_source: Origin of the data — written as a literal string.
             properties: Arbitrary extra triples written on the reference node
                 (or on ``point_uri`` when no reference node exists).
+
+        This is the single-stream form of :meth:`register_streams` (one
+        batch of one), so the two share identical per-stream behavior.
         """
-        g = RDFGraph()
-
-        ref_uri = None
-        if ref_name is not None and source_id is not None:
-            ref_uri = compute_ref_uri(source_id, ref_name)
-            g.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
-            g.add((ref_uri, ACQUIRIUM_REF_NAME,  Literal(ref_name)))
-            g.add((ref_uri, ACQUIRIUM_VALUE_KIND, Literal(normalize_value_kind(value_kind))))
-            g.add((ref_uri, STORED_AT,           ACQUIRIUM_DB_URI))
-            g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
-
-        if point_uri is not None:
-            subj = URIRef(str(point_uri))
-            g.add((subj, RDF.type, VIRTUAL_POINT))
-            if label is not None:
-                g.add((subj, RDFS.label, Literal(label)))
-            # Resolve the semantic fields jointly so related siblings
-            # disambiguate each other (URI/URIRef/None pass through).
-            _resolved = self.resolve_point_metadata(
-                {
-                    "unit": unit,
-                    "quantity_kind": quantity_kind,
-                    "medium": medium,
-                    "substance": substance,
-                }
-            )
-
-            _add_triple(g, subj, HAS_UNIT,          self._coerce_resolved(_resolved, "unit", unit))
-            _add_triple(g, subj, HAS_QUANTITY_KIND, self._coerce_resolved(_resolved, "quantity_kind", quantity_kind))
-            _add_triple(g, subj, HAS_MEDIUM,        self._coerce_resolved(_resolved, "medium", medium))
-            _add_triple(g, subj, OF_SUBSTANCE,      self._coerce_resolved(_resolved, "substance", substance))
-            _add_triple(g, subj, DATA_SOURCE,       data_source)
-            if ref_uri is not None:
-                g.add((subj, HAS_EXTERNAL_REFERENCE, ref_uri))
-
-        target = ref_uri if ref_uri is not None else (URIRef(str(point_uri)) if point_uri is not None else None)
-        if target is not None:
-            for pred, value in (properties or {}).items():
-                _add_triple(g, target, pred, value)
-
-        if len(g):
-            self.client.insert_graph(g.serialize(format="turtle"), format="turtle", replace=False)
+        self.register_streams([{
+            "point_uri": point_uri,
+            "label": label,
+            "source_id": source_id,
+            "ref_name": ref_name,
+            "unit": unit,
+            "quantity_kind": quantity_kind,
+            "medium": medium,
+            "substance": substance,
+            "data_source": data_source,
+            "properties": properties,
+            "value_kind": value_kind,
+        }])
 
     def register_streams(
         self,
@@ -493,50 +519,13 @@ class Acquirium:
         Drivers should still insert rows with ``insert_timeseries_arrow`` using
         the same ``source_id`` and source-local ``ref_name``. Acquirium resolves
         those inserts to the same canonical reference URI internally.
+
+        Single-stream callers should use :meth:`register_stream`, which is a
+        one-element batch over this method.
         """
         g = RDFGraph()
-
         for stream in streams:
-            point_uri_raw = stream.get("point_uri")
-            label = stream.get("label")
-            source_id = stream.get("source_id")
-            ref_name = stream.get("ref_name")
-            value_kind = normalize_value_kind(stream.get("value_kind"))
-
-            ref_uri = None
-            if ref_name is not None and source_id is not None:
-                ref_uri = compute_ref_uri(source_id, ref_name)
-                g.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
-                g.add((ref_uri, ACQUIRIUM_REF_NAME,  Literal(ref_name)))
-                g.add((ref_uri, ACQUIRIUM_VALUE_KIND, Literal(value_kind)))
-                g.add((ref_uri, STORED_AT,           ACQUIRIUM_DB_URI))
-                g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
-
-            if point_uri_raw is not None:
-                subj = URIRef(str(point_uri_raw))
-                g.add((subj, RDF.type, VIRTUAL_POINT))
-                if label is not None:
-                    g.add((subj, RDFS.label, Literal(label)))
-                meta = {
-                    f: stream.get(f)
-                    for f in POINT_FIELD_KINDS
-                    if stream.get(f) is not None
-                }
-                if meta:
-                    res = self.resolve_point_metadata(meta)
-                    _add_triple(g, subj, HAS_UNIT,          self._coerce_resolved(res, "unit", stream.get("unit")))
-                    _add_triple(g, subj, HAS_QUANTITY_KIND, self._coerce_resolved(res, "quantity_kind", stream.get("quantity_kind")))
-                    _add_triple(g, subj, HAS_MEDIUM,        self._coerce_resolved(res, "medium", stream.get("medium")))
-                    _add_triple(g, subj, OF_SUBSTANCE,      self._coerce_resolved(res, "substance", stream.get("substance")))
-                _add_triple(g, subj, DATA_SOURCE, stream.get("data_source"))
-                if ref_uri is not None:
-                    g.add((subj, HAS_EXTERNAL_REFERENCE, ref_uri))
-
-            target = ref_uri if ref_uri is not None else (URIRef(str(point_uri_raw)) if point_uri_raw is not None else None)
-            if target is not None:
-                for pred, value in (stream.get("properties") or {}).items():
-                    _add_triple(g, target, pred, value)
-
+            _build_stream_triples(self, g, stream)
         if len(g):
             self.client.insert_graph(g.serialize(format="turtle"), format="turtle", replace=False)
 
