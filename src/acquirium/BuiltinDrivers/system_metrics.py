@@ -25,12 +25,11 @@ from acquirium.internals.internals_namespaces import (
 
 HOST_NS = Namespace("urn:acquirium:host#")
 
-# Canonical QUDT URIs (not free text): these pass straight through
-# register_stream's URI passthrough, so no text resolution / joint decode
-# runs. `%` -> unit:PERCENT (qudt:hasQuantityKind quantitykind:Dimension-
-# lessRatio); a byte count -> unit:BYTE (qudt:hasQuantityKind
-# quantitykind:InformationEntropy, QUDT's quantity kind for information
-# amount). Free text like "data size" is not a QUDT quantity kind.
+# Canonical QUDT URIs (not free text) so register_streams passes them
+# straight through with no text resolution. `%` -> unit:PERCENT
+# (qudt:hasQuantityKind quantitykind:DimensionlessRatio); a byte count
+# -> unit:BYTE (qudt:hasQuantityKind quantitykind:InformationEntropy,
+# QUDT's quantity kind for information amount).
 _U_PERCENT = "http://qudt.org/vocab/unit/PERCENT"
 _U_BYTE = "http://qudt.org/vocab/unit/BYTE"
 _QK_RATIO = "http://qudt.org/vocab/quantitykind/DimensionlessRatio"

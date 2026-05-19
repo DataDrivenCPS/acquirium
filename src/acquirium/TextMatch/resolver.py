@@ -412,7 +412,7 @@ class ConceptResolver:
         - The only effective use is disambiguating an ambiguous *unit* by a
           *quantity-kind* context URI (e.g. "kg" + Mass → KiloGM, not
           KiloGAUSS), or a quantity kind by a unit. Medium/substance URIs
-          that ``register_stream`` adds to the unit context are inert —
+          that ``register_streams`` adds to the unit context are inert —
           nothing links a unit to a medium/substance via ``related``.
         - URIs must be byte-identical; a sibling resolved under a different
           scheme (nawi vs s223 vs qudt) will not intersect.

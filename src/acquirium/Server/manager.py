@@ -338,7 +338,10 @@ class Manager:
           OPTIONAL {{ ?point <{HAS_EXTERNAL_REFERENCE}> ?ref_node . }}
         }}
         """
-        res = self.graph_store.sparql_query(q, use_union=True)
+        # use_union=False: these acquirium-internal predicates only ever live
+        # in the main graph, so skipping the closure rebuild on the hot
+        # insert path is correct and avoids the per-insert closure refresh.
+        res = self.graph_store.sparql_query(q, use_union=False)
         count = 0
         for point_uri, ref_node, source_id, ref_name, value_kind in res.get("rows", []):
             try:

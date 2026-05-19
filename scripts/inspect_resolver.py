@@ -17,7 +17,7 @@ Two input shapes are accepted:
      The whole record is resolved jointly by the server (one
      /resolve_record call): related fields reinforce each other (a
      quantity kind disambiguates an ambiguous unit and vice versa) -
-     the same path register_stream / resolve_point_metadata use. The
+     the same path register_streams / resolve_point_metadata use. The
      field name selects the vocabulary (see FIELD_KINDS).
 
 Modes
@@ -46,7 +46,7 @@ import os
 import sys
 from typing import Any
 
-# Map record field names -> resolver kind. Mirrors register_stream / the
+# Map record field names -> resolver kind. Mirrors register_streams / the
 # flex_query_rdf_inputs decorator. Edit/extend as your records require.
 FIELD_KINDS: dict[str, str] = {
     "unit": "unit",
