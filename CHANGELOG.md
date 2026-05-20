@@ -10,6 +10,27 @@ change in any release.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-05-20
+
+### Added
+- `Query.timeseries(..., include_ref=True)` opt-in to keep the per-`ref_uri`
+  `ref` column in narrow time-series output for callers that need it.
+
+### Changed
+- `Query.timeseries()` now keys results by the data-node alias instead of
+  `ref_uri`. Narrow output columns are
+  `["data_alias", "point_id", "time", "value_numeric", "value_text"]`;
+  wide output column names use the data-node alias, disambiguated as
+  `f"{alias}__{point_local}"` when one alias resolves to multiple points.
+  Rows sharing the same `(data_alias, point_id, time)` across multiple
+  `ref_uris` are merged first-wins.
+- Driver loop runs the graph-version watcher on its own thread so a
+  long-running `Driver.tick()` (e.g. bulk CSV ingest) no longer starves
+  `Driver.on_graph_change()`.
+- `pyproject.toml` migrated from the deprecated `tool.uv.dev-dependencies`
+  field to `dependency-groups.dev` to silence uv's deprecation warning.
+- Updated bundled water ontology (`ontologies/water.ttl`).
+
 ## [0.2.0] - 2026-05-19
 
 ### Added
@@ -71,7 +92,8 @@ change in any release.
 - Text matcher backed by FastEmbed with QUDT and graph indexes.
 - Grafana dashboard helpers.
 
-[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/DataDrivenCPS/acquirium/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/DataDrivenCPS/acquirium/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/DataDrivenCPS/acquirium/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/DataDrivenCPS/acquirium/releases/tag/v0.1.0
