@@ -153,6 +153,8 @@ class _TabularIngestBase(IngestDriver):
 
             if result.get("ok"):
                 self._rows_seen[key] = offset + rows_read
+                # Persist updated row offsets
+                self.state.set("rows_seen", self._rows_seen)
                 logger.info(
                     "tabular_ingest: %s — inserted %d row(s) across %d stream(s)",
                     rel, result.get("rows_inserted", 0), len(stream_names),
