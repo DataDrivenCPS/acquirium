@@ -40,6 +40,21 @@ recreate = false
 # Number of rows per Arrow RecordBatch in timeseries read responses.
 # read_batch_size = 50000
 
+# ---------------------------------------------------------------------------
+# Vocabulary ontology IRIs used to build the text->URI embedding indexes.
+# These are the exact ontology IRIs ontoenv reads out of `ontologies/`:
+#   - water + s223 graphs are merged into the class/predicate/substance index
+#   - unit and quantity_kind graphs each feed the QUDT index
+# Exact IRIs avoid the QUDT version sprawl ontoenv pulls via owl:imports
+# (qudt_unit.ttl pins 3.1.5). Omit this table to use these same built-in
+# defaults; override only if you vendor different ontology files.
+# ---------------------------------------------------------------------------
+[ontologies]
+water         = "urn:nawi-water-ontology"
+s223          = "http://data.ashrae.org/standard223/1.0/model/all"
+unit          = "http://qudt.org/3.1.5/vocab/unit"
+quantity_kind = "http://qudt.org/vocab/quantitykind"
+
 [driver]
 # Defaults applied to all drivers — used by `acquirium run` and [[drivers]] entries.
 server_url  = "localhost"

@@ -19,7 +19,6 @@ OWL = Namespace("http://www.w3.org/2002/07/owl#")
 
 # Internal predicates for scaffold-only metadata
 DEFAULT_MAIN_GRAPH = ACQUIRIUM_NS.MainGraph
-DEFAULT_UNION_GRAPH = ACQUIRIUM_NS.UnionGraph
 VIRTUAL_POINT = ACQUIRIUM_NS.VirtualPoint
 
 # Well-known URI representing the Acquirium TimescaleDB instance

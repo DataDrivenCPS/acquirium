@@ -14,7 +14,6 @@ from rdflib import URIRef, Literal, RDF, RDFS
 from acquirium.Storage.graph_store import OxigraphGraphStore
 from acquirium.internals.internals_namespaces import (
     DEFAULT_MAIN_GRAPH,
-    DEFAULT_UNION_GRAPH,
     ACQUIRIUM_POINT_NS,
 )
 
@@ -57,7 +56,6 @@ def graph_store(tmp_path):
     gs = OxigraphGraphStore(
         store_path=store_path,
         env_root=env_root,
-        include_dependency_graphs=False,
     )
     yield gs
     gs.close()
@@ -187,13 +185,13 @@ class TestLifecycle:
         env_root.mkdir()
 
         gs = OxigraphGraphStore(
-            store_path=store_path, env_root=env_root, include_dependency_graphs=False,
+            store_path=store_path, env_root=env_root,
         )
         gs.insert_graph(SAMPLE_TURTLE, format="turtle")
         gs.close()
 
         gs2 = OxigraphGraphStore(
-            store_path=store_path, env_root=env_root, include_dependency_graphs=False,
+            store_path=store_path, env_root=env_root,
         )
         result = gs2.sparql_query(
             "SELECT ?s WHERE { ?s a <http://example.org/TemperatureSensor> }"

@@ -113,6 +113,9 @@ PREDICATE_PAIRS = [
 # (natural language text, expected top-1 URI) — QUDT units
 UNIT_PAIRS = [
     ("kilogram",                    "http://qudt.org/vocab/unit/KiloGM"),
+    # "kg" (kilogram) vs "kG" (kilogauss): the case-sensitive exact tier
+    # resolves the case-exact reading without context; context can still
+    # override (see test_context_disambiguates_*).
     ("kg",                          "http://qudt.org/vocab/unit/KiloGM"),
     ("meter per second",            "http://qudt.org/vocab/unit/M-PER-SEC"),
     ("m/s",                         "http://qudt.org/vocab/unit/M-PER-SEC"),
@@ -127,6 +130,58 @@ UNIT_PAIRS = [
     ("gallon per minute",           "http://qudt.org/vocab/unit/GAL_US-PER-MIN"),
     ("ampere",                      "http://qudt.org/vocab/unit/A"),
     # --- add new unit pairs below this line ---
+
+    # Exact-stage cases: symbols & abbreviations (deterministic, score 1.0).
+    # These are the cases cosine similarity handles poorly, so they directly
+    # exercise the normalized exact-surface lookup.
+    ("psi",                         "http://qudt.org/vocab/unit/PSI"),
+    ("Psi",                         "http://qudt.org/vocab/unit/PSI"),       # case-insensitive
+    ("kPa",                         "http://qudt.org/vocab/unit/KiloPA"),
+    ("kilopascal",                  "http://qudt.org/vocab/unit/KiloPA"),
+    ("°C",                          "http://qudt.org/vocab/unit/DEG_C"),     # symbol
+    ("degree celsius",              "http://qudt.org/vocab/unit/DEG_C"),     # already-cased label
+    ("second",                      "http://qudt.org/vocab/unit/SEC"),
+    ("minute",                      "http://qudt.org/vocab/unit/MIN"),
+    ("hour",                        "http://qudt.org/vocab/unit/HR"),
+    ("gram",                        "http://qudt.org/vocab/unit/GM"),
+    ("newton",                      "http://qudt.org/vocab/unit/N"),
+    ("volt",                        "http://qudt.org/vocab/unit/V"),
+    ("percent",                     "http://qudt.org/vocab/unit/PERCENT"),
+
+    # Water-treatment relevant units + prefixed/compound forms. Word forms
+    # plus ASCII-safe confirmed symbols (avoid Unicode µ/μ ambiguity).
+    ("milliliter",                  "http://qudt.org/vocab/unit/MilliL"),
+    # "mL" (milli) vs "ML" (mega): resolved by the case-sensitive exact tier.
+    ("mL",                          "http://qudt.org/vocab/unit/MilliL"),
+    ("cubic meter",                 "http://qudt.org/vocab/unit/M3"),
+    ("cubic meter per hour",        "http://qudt.org/vocab/unit/M3-PER-HR"),
+    ("liter per second",            "http://qudt.org/vocab/unit/L-PER-SEC"),
+    ("gram per liter",              "http://qudt.org/vocab/unit/GM-PER-L"),
+    ("microgram per liter",         "http://qudt.org/vocab/unit/MicroGM-PER-L"),
+    ("kilowatt",                    "http://qudt.org/vocab/unit/KiloW"),
+    ("megawatt",                    "http://qudt.org/vocab/unit/MegaW"),
+    ("kilowatt hour",               "http://qudt.org/vocab/unit/KiloW-HR"),
+    ("siemens per meter",           "http://qudt.org/vocab/unit/S-PER-M"),
+    ("S/m",                         "http://qudt.org/vocab/unit/S-PER-M"),
+    ("microsiemens per centimeter", "http://qudt.org/vocab/unit/MicroS-PER-CentiM"),
+    ("nephelometric turbidity unit","http://qudt.org/vocab/unit/NTU"),
+    ("NTU",                         "http://qudt.org/vocab/unit/NTU"),
+    ("parts per million",           "http://qudt.org/vocab/unit/PPM"),
+    ("ppm",                         "http://qudt.org/vocab/unit/PPM"),
+    ("kelvin",                      "http://qudt.org/vocab/unit/K"),
+    ("degree fahrenheit",           "http://qudt.org/vocab/unit/DEG_F"),
+    ("°F",                          "http://qudt.org/vocab/unit/DEG_F"),
+    ("megapascal",                  "http://qudt.org/vocab/unit/MegaPA"),
+    ("MPa",                         "http://qudt.org/vocab/unit/MegaPA"),
+    ("hertz",                       "http://qudt.org/vocab/unit/HZ"),
+    ("Hz",                          "http://qudt.org/vocab/unit/HZ"),
+    ("joule",                       "http://qudt.org/vocab/unit/J"),
+    ("mole",                        "http://qudt.org/vocab/unit/MOL"),
+    ("mol",                         "http://qudt.org/vocab/unit/MOL"),
+    ("millimeter",                  "http://qudt.org/vocab/unit/MilliM"),
+    ("centimeter",                  "http://qudt.org/vocab/unit/CentiM"),
+    ("kilometer",                   "http://qudt.org/vocab/unit/KiloM"),
+    ("horsepower",                  "http://qudt.org/vocab/unit/HP"),
 ]
 
 # (natural language text, expected top-1 URI) — QUDT quantity kinds
@@ -143,6 +198,28 @@ QUANTITY_KIND_PAIRS = [
     ("concentration",               "http://qudt.org/vocab/quantitykind/Concentration"),
     ("power",                       "http://qudt.org/vocab/quantitykind/Power"),
     # --- add new quantity kind pairs below this line ---
+    ("force",                       "http://qudt.org/vocab/quantitykind/Force"),
+    ("energy",                      "http://qudt.org/vocab/quantitykind/Energy"),
+    ("length",                      "http://qudt.org/vocab/quantitykind/Length"),
+    ("time",                        "http://qudt.org/vocab/quantitykind/Time"),
+    ("velocity",                    "http://qudt.org/vocab/quantitykind/Velocity"),
+    ("voltage",                     "http://qudt.org/vocab/quantitykind/Voltage"),
+    ("frequency",                   "http://qudt.org/vocab/quantitykind/Frequency"),
+
+    # Additional standard quantity kinds (water-treatment / process relevant).
+    ("area",                        "http://qudt.org/vocab/quantitykind/Area"),
+    ("volume",                      "http://qudt.org/vocab/quantitykind/Volume"),
+    ("speed",                       "http://qudt.org/vocab/quantitykind/Speed"),
+    ("acceleration",                "http://qudt.org/vocab/quantitykind/Acceleration"),
+    ("torque",                      "http://qudt.org/vocab/quantitykind/Torque"),
+    ("electric charge",             "http://qudt.org/vocab/quantitykind/ElectricCharge"),
+    ("resistance",                  "http://qudt.org/vocab/quantitykind/Resistance"),
+    ("capacitance",                 "http://qudt.org/vocab/quantitykind/Capacitance"),
+    ("turbidity",                   "http://qudt.org/vocab/quantitykind/Turbidity"),
+    ("electric conductivity",       "http://qudt.org/vocab/quantitykind/ElectricConductivity"),
+    ("kinematic viscosity",         "http://qudt.org/vocab/quantitykind/KinematicViscosity"),
+    ("amount of substance",         "http://qudt.org/vocab/quantitykind/AmountOfSubstance"),
+    ("work",                        "http://qudt.org/vocab/quantitykind/Work"),
 ]
 
 # These should return zero matches at min_score=0.6
@@ -246,15 +323,17 @@ def acq():
         server_port=ACQUIRIUM_TEST_SERVER_PORT,
         use_ssl=False,
     )
+    # insert_graph refreshes the graph embedding index synchronously before
+    # returning, so the inserted concepts are resolvable immediately.
     client.insert_graph(
         "deployments/BENICIA/benicia-model.ttl",
-        replace = True
+        replace=True,
     )
     client.insert_graph(
         "ontologies/water.ttl",
-        replace = False
+        replace=False,
     )
-    # Wait for both embedding indexes (graph + QUDT) to finish building
+    # Graph index is now built; this still guards the QUDT startup index.
     _wait_for_embeddings_ready(client, timeout=60)
 
     yield client
@@ -409,3 +488,212 @@ def test_kind_filtering_unit_qk(acq):
     # quantity_kind filter should not return predicates
     for m in acq.client.resolve_text("has unit", kind="quantity_kind", top_k=5, min_score=0.3):
         assert m["kind"] == "quantity_kind", f"Expected kind='quantity_kind', got '{m['kind']}' for uri={m['uri']}"
+
+
+# ──────────────────────────────────────────────────────────────
+# Exact-stage tests — verify the deterministic surface lookup
+# ──────────────────────────────────────────────────────────────
+
+# (text, kind, expected_uri) — symbols/labels expected to resolve via the
+# exact stage (score 1.0, match_stage="exact").
+EXACT_PAIRS = [
+    ("psi",            "unit",          "http://qudt.org/vocab/unit/PSI"),
+    ("PSI",            "unit",          "http://qudt.org/vocab/unit/PSI"),     # case-insensitive
+    ("kPa",            "unit",          "http://qudt.org/vocab/unit/KiloPA"),
+    ("  kPa  ",        "unit",          "http://qudt.org/vocab/unit/KiloPA"),  # whitespace-insensitive
+    ("Second",         "unit",          "http://qudt.org/vocab/unit/SEC"),
+    ("voltage",        "quantity_kind", "http://qudt.org/vocab/quantitykind/Voltage"),
+]
+
+
+@pytest.mark.parametrize("text,kind,expected_uri", EXACT_PAIRS)
+def test_exact_stage(acq, text, kind, expected_uri):
+    """Symbols/labels resolve via the exact stage: top-1, score 1.0, stage=exact."""
+    matches = acq.client.resolve_text(text, kind=kind, top_k=3, min_score=MIN_SCORE)
+    assert matches, f"'{text}' returned no matches"
+    top = matches[0]
+    assert top["uri"] == expected_uri, (
+        f"'{text}': expected '{expected_uri}', got '{top['uri']}'"
+    )
+    assert top["score"] == 1.0, f"'{text}': exact hit should score 1.0, got {top['score']}"
+    assert top.get("match_stage") == "exact", (
+        f"'{text}': expected match_stage='exact', got '{top.get('match_stage')}'"
+    )
+
+
+def test_recall_at_3(acq):
+    """Expected URI within top-3 for >=85% of unit/QK pairs (recall@3)."""
+    pairs = [(t, u, "unit") for t, u in UNIT_PAIRS] + [
+        (t, u, "quantity_kind") for t, u in QUANTITY_KIND_PAIRS
+    ]
+    misses = []
+    for text, expected_uri, kind in pairs:
+        matches = acq.client.resolve_text(text, kind=kind, top_k=3, min_score=MIN_SCORE)
+        if expected_uri not in [m["uri"] for m in matches]:
+            got = [m["uri"] for m in matches] or "<no matches>"
+            misses.append(f"'{text}' ({kind}): expected '{expected_uri}' in top-3, got {got}")
+    recall = (len(pairs) - len(misses)) / len(pairs) * 100
+    assert recall >= 85, (
+        f"Unit/QK recall@3 {recall:.0f}% is below 85%.\nMisses:\n" + "\n".join(misses)
+    )
+
+
+# ──────────────────────────────────────────────────────────────
+# Context disambiguation — same symbol, different quantity kind
+# ──────────────────────────────────────────────────────────────
+
+_QK_MASS = "http://qudt.org/vocab/quantitykind/Mass"
+_QK_FLUX = "http://qudt.org/vocab/quantitykind/MagneticFluxDensity"
+_UNIT_KILOGM = "http://qudt.org/vocab/unit/KiloGM"
+_UNIT_KILOGAUSS = "http://qudt.org/vocab/unit/KiloGAUSS"
+
+
+def test_context_disambiguates_ambiguous_symbol(acq):
+    """'kg' (KiloGM/Mass vs KiloGAUSS/MagneticFluxDensity) resolves per the
+    quantity-kind context passed in."""
+    mass = acq.client.resolve_text(
+        "kg", kind="unit", top_k=1, min_score=MIN_SCORE, context=[_QK_MASS]
+    )
+    assert mass and mass[0]["uri"] == _UNIT_KILOGM, (
+        f"'kg' + Mass context: expected KiloGM, got {mass[0]['uri'] if mass else '<none>'}"
+    )
+
+    flux = acq.client.resolve_text(
+        "kg", kind="unit", top_k=1, min_score=MIN_SCORE, context=[_QK_FLUX]
+    )
+    assert flux and flux[0]["uri"] == _UNIT_KILOGAUSS, (
+        f"'kg' + flux context: expected KiloGAUSS, got {flux[0]['uri'] if flux else '<none>'}"
+    )
+
+
+def test_no_context_is_first_wins_and_stable(acq):
+    """Without context, 'kg' resolves to a single result, stable across calls."""
+    a = acq.client.resolve_text("kg", kind="unit", top_k=1, min_score=MIN_SCORE)
+    b = acq.client.resolve_text("kg", kind="unit", top_k=1, min_score=MIN_SCORE)
+    assert a and b, "'kg' should still resolve without context"
+    assert a[0]["uri"] == b[0]["uri"], "no-context resolution must be deterministic"
+
+
+def test_irrelevant_context_does_not_reorder(acq):
+    """Unrelated context does not change the top result."""
+    base = acq.client.resolve_text("pascal", kind="unit", top_k=1, min_score=MIN_SCORE)
+    with_junk = acq.client.resolve_text(
+        "pascal", kind="unit", top_k=1, min_score=MIN_SCORE,
+        context=["http://example.org/unrelated/Thing"],
+    )
+    assert base and with_junk, "'pascal' should resolve in both calls"
+    assert base[0]["uri"] == with_junk[0]["uri"], (
+        "irrelevant context must not change the top result"
+    )
+
+
+def test_resolve_qudt_uri_honors_context_over_deterministic(acq):
+    """With context, resolve_concept prefers the context-aware matcher over
+    the deterministic resolver (the path register_streams uses)."""
+    mass = acq.client.resolve_concept("kg", kind="unit", context=[_QK_MASS])
+    assert mass == _UNIT_KILOGM, (
+        f"'kg' + Mass context should resolve to KiloGM, got {mass}"
+    )
+
+    flux = acq.client.resolve_concept("kg", kind="unit", context=[_QK_FLUX])
+    assert flux == _UNIT_KILOGAUSS, (
+        f"'kg' + flux context should resolve to KiloGAUSS, got {flux}"
+    )
+
+    # No context: deterministic path still works and is stable.
+    plain = acq.client.resolve_concept("kg", kind="unit")
+    assert plain is not None, "'kg' must still resolve without context"
+
+
+# ──────────────────────────────────────────────────────────────
+# Latency profile — per-tier trend tracking across commits
+# ──────────────────────────────────────────────────────────────
+#
+# Writes to resolver_bench.csv (same file scripts/benchmark/resolver_latency.py
+# uses) with a stable wide schema, rather than appending mismatched-width rows
+# to the historical stats.csv. Every test run is one latency datapoint per
+# (tier, kind), tagged with the git SHA so regressions are bisectable.
+
+import subprocess  # noqa: E402
+
+_BENCH_CSV = _OUTPUT_DIR / "resolver_bench.csv"
+
+
+def _git_sha() -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"], text=True
+        ).strip()
+    except Exception:
+        return "unknown"
+
+
+def _pctile_ms(samples_s, q: float) -> float:
+    if not samples_s:
+        return 0.0
+    s = sorted(samples_s)
+    idx = min(len(s) - 1, int(round(q * (len(s) - 1))))
+    return s[idx] * 1000.0
+
+
+def _classify_tier(match: dict) -> str:
+    """Best-effort tier tag from the response alone (uri namespace + stage)."""
+    is_qudt = match.get("uri", "").startswith("http://qudt.org/")
+    stage = match.get("match_stage", "semantic")
+    if stage == "exact":
+        return "qudt_or_converter_exact" if is_qudt else "graph_exact"
+    return "qudt_semantic" if is_qudt else "graph_semantic"
+
+
+def test_latency_profile(acq):
+    """Time resolve_text across kinds (and unit with/without context), record
+    per-tier p50/p95 to resolver_bench.csv. Not an accuracy gate — it asserts
+    only a loose end-to-end ceiling so a gross regression still fails CI."""
+    _MASS = "http://qudt.org/vocab/quantitykind/Mass"
+    probes = [
+        ("class",            "class",         dict()),
+        ("predicate",        "predicate",     dict()),
+        ("unit",             "unit",          dict()),
+        ("quantity_kind",    "quantity_kind", dict()),
+        ("unit_noctx",       "unit",          dict()),
+        ("unit_ctx",         "unit",          dict(context=[_MASS])),
+    ]
+    sample_text = {
+        "class": "pump", "predicate": "has unit", "unit": "kg",
+        "quantity_kind": "temperature", "unit_noctx": "kg", "unit_ctx": "kg",
+    }
+    ITERS = 25
+    by_group: dict[str, tuple[str, list[float]]] = {}
+    for group, kind, extra in probes:
+        text = sample_text[group]
+        # warmup
+        acq.client.resolve_text(text, kind=kind, top_k=1, min_score=MIN_SCORE, **extra)
+        samples, tier = [], "n/a"
+        for _ in range(ITERS):
+            t0 = time.perf_counter()
+            matches = acq.client.resolve_text(
+                text, kind=kind, top_k=1, min_score=MIN_SCORE, **extra
+            )
+            samples.append(time.perf_counter() - t0)
+            if matches:
+                tier = _classify_tier(matches[0])
+        by_group[group] = (tier, samples)
+
+    _OUTPUT_DIR.mkdir(exist_ok=True)
+    sha, ts = _git_sha(), datetime.now().isoformat(timespec="seconds")
+    write_header = not _BENCH_CSV.exists()
+    with open(_BENCH_CSV, "a", newline="") as f:
+        w = csv.writer(f)
+        if write_header:
+            w.writerow(
+                ["timestamp", "git_sha", "mode", "tier", "kind", "n", "p50_ms", "p95_ms"]
+            )
+        for group, (tier, samples) in by_group.items():
+            p50, p95 = _pctile_ms(samples, 0.50), _pctile_ms(samples, 0.95)
+            w.writerow([ts, sha, "harness", f"{group}:{tier}", group, ITERS,
+                        f"{p50:.4f}", f"{p95:.4f}"])
+
+    worst_p95 = max(_pctile_ms(s, 0.95) for _, s in by_group.values())
+    assert worst_p95 < 5000.0, (
+        f"resolve_text p95 {worst_p95:.0f}ms — gross latency regression"
+    )

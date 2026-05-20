@@ -18,7 +18,6 @@ from acquirium.BuiltinDrivers.xlsx_ingest import XLSXIngestDriver
 def make_driver(cfg_overrides: dict | None = None, tmp_path: Path | None = None) -> XLSXIngestDriver:
     aq = MagicMock()
     aq.register_datasource.return_value = None
-    aq.register_stream.return_value = None
     aq.insert_timeseries_batch.return_value = {"ok": True, "rows_inserted": 0}
     aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 0}
     watch = str(tmp_path) if tmp_path else "/tmp/xlsx_test_watch"

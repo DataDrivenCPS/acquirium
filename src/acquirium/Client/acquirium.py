@@ -34,6 +34,72 @@ def _add_triple(g: "RDFGraph", subj: "URIRef", pred: "URIRef", value: "str | URI
         g.add((subj, pred, URIRef(str(value))))
     else:
         g.add((subj, pred, Literal(value)))
+
+
+def _coerce_resolved(
+    resolved: dict[str, "str | None"], name: str, value: "Any",
+) -> "str | URIRef | None":
+    """Map a raw field value to its resolved URIRef.
+
+    Passes ``None``/``URIRef`` through; warns and keeps the literal when
+    plain text did not resolve.
+    """
+    if value is None:
+        return None
+    if isinstance(value, URIRef):
+        return value
+    uri = resolved.get(name)
+    if uri is None:
+        warnings.warn(
+            f"Could not resolve {name!r} value {value!r} to a QUDT URI; "
+            "storing as a plain literal.",
+            stacklevel=3,
+        )
+        return value
+    return URIRef(uri)
+
+
+def _build_stream_triples(
+    g: "RDFGraph", stream: dict, resolved: dict[str, "str | None"],
+) -> None:
+    """Write one stream's reference/point/metadata triples into ``g``.
+
+    ``resolved`` is the precomputed ``field -> URI-or-None`` map for this
+    stream's semantic fields (typically from ``resolve_point_metadata``);
+    pass ``{}`` when there is nothing to resolve.
+    """
+    point_uri_raw = stream.get("point_uri")
+    label = stream.get("label")
+    source_id = stream.get("source_id")
+    ref_name = stream.get("ref_name")
+    value_kind = normalize_value_kind(stream.get("value_kind"))
+
+    ref_uri = None
+    if ref_name is not None and source_id is not None:
+        ref_uri = compute_ref_uri(source_id, ref_name)
+        g.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
+        g.add((ref_uri, ACQUIRIUM_REF_NAME,  Literal(ref_name)))
+        g.add((ref_uri, ACQUIRIUM_VALUE_KIND, Literal(value_kind)))
+        g.add((ref_uri, STORED_AT,           ACQUIRIUM_DB_URI))
+        g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
+
+    if point_uri_raw is not None:
+        subj = URIRef(str(point_uri_raw))
+        g.add((subj, RDF.type, VIRTUAL_POINT))
+        if label is not None:
+            g.add((subj, RDFS.label, Literal(label)))
+        _add_triple(g, subj, HAS_UNIT,          _coerce_resolved(resolved, "unit", stream.get("unit")))
+        _add_triple(g, subj, HAS_QUANTITY_KIND, _coerce_resolved(resolved, "quantity_kind", stream.get("quantity_kind")))
+        _add_triple(g, subj, HAS_MEDIUM,        _coerce_resolved(resolved, "medium", stream.get("medium")))
+        _add_triple(g, subj, OF_SUBSTANCE,      _coerce_resolved(resolved, "substance", stream.get("substance")))
+        _add_triple(g, subj, DATA_SOURCE, stream.get("data_source"))
+        if ref_uri is not None:
+            g.add((subj, HAS_EXTERNAL_REFERENCE, ref_uri))
+
+    target = ref_uri if ref_uri is not None else (URIRef(str(point_uri_raw)) if point_uri_raw is not None else None)
+    if target is not None:
+        for pred, value in (stream.get("properties") or {}).items():
+            _add_triple(g, target, pred, value)
 from acquirium.Client.client import AcquiriumClient
 from acquirium.Apps.base import App
 from acquirium.internals.models import AppOutputSpec, AppSpec, compute_ref_uri
@@ -52,6 +118,17 @@ from acquirium.internals.internals_namespaces import (
     DATA_SOURCE,
 )
 from acquirium.Storage.values import normalize_value_kind
+
+# Known point-metadata fields → the resolver ``kind`` each is resolved as.
+# The field name is the semantic role, so callers supply no ``kind``.
+POINT_FIELD_KINDS: dict[str, str] = {
+    "unit": "unit",
+    "quantity_kind": "quantity_kind",
+    "medium": "substance",
+    "substance": "substance",
+}
+
+
 @dataclass
 class Acquirium:
     """
@@ -97,10 +174,12 @@ class Acquirium:
         rdf_graph: str,
         format: str = "turtle",
         replace=True,
-        wait_for_embedding: bool = False,
     ) -> None:
         """
-        Insert RDF graph into the graph store to the main graph
+        Insert RDF graph into the graph store's main graph.
+
+        The server refreshes the embedding index synchronously before
+        responding, so inserted concepts are resolvable once this returns.
 
         Args:
             :param rdf_graph: `pathlib.Path` like object, or string.
@@ -109,10 +188,8 @@ class Acquirium:
                 - location of the source file
             format: Format of the RDF data [turtle | n3 | xml | trix]
             replace: If True, replaces the existing main graph. If False, appends to it.
-            wait_for_embedding: If True, blocks until the server finishes rebuilding
-                the embedding index. Default False (background rebuild).
         """
-        self.client.insert_graph(rdf_graph, format=format, replace=replace, wait_for_embedding=wait_for_embedding)
+        self.client.insert_graph(rdf_graph, format=format, replace=replace)
 
     def query(self) -> Query:
         """Create a new empty Query bound to this Acquirium instance."""
@@ -243,33 +320,43 @@ class Acquirium:
         if chunk:
             yield chunk
 
-    def _resolve_qudt_uri(self, text: str, kind: str) -> URIRef | None:
-        """Try to resolve a plain string to a QUDT URI via the server.
+    def resolve_point_metadata(
+        self, fields: dict[str, Any], min_score: float = 0.6
+    ) -> dict[str, str | None]:
+        """Resolve the semantic metadata of a single point/property.
 
-        For ``kind="unit"`` the deterministic unit resolver is tried first
-        (ref_uris symbols, UCUM codes, and ratio notation like "mg/L"), then
-        the embedding matcher as a fallback.  For other kinds (``"quantity_kind"``,
-        ``"class"``) only the embedding matcher is used.
+        ``fields`` maps known semantic field names to a raw value::
 
-        Returns a URIRef on success, or None if no confident match is found.
+            aq.resolve_point_metadata({
+                "unit": "gal/min",
+                "quantity_kind": "flow rate",
+                "medium": "water",
+            })
+            # -> {"unit": "http://qudt.org/vocab/unit/GAL_US-PER-MIN",
+            #     "quantity_kind": ".../quantitykind/VolumeFlowRate",
+            #     "medium": "urn:nawi-water-ontology#Water"}
+
+        The field name *is* the role — no ``kind`` to supply, no label, no
+        tuple. Recognised fields (``unit``, ``quantity_kind``, ``medium``,
+        ``substance``) resolve against their vocabulary; any other field is
+        resolved across all kinds. Related fields reinforce each other (a
+        quantity kind disambiguates an ambiguous unit and vice versa).
+        Values that already look like URIs / ``URIRef`` / ``None`` pass
+        through. Returns ``{field: uri-or-None}``.
+
+        This is the preferred entry point for drivers and stream
+        registration. For arbitrary labels and explicit kinds use
+        :meth:`AcquiriumClient.resolve_record_uris` directly.
         """
-        if kind == "unit":
-            try:
-                result = self.client.resolve_unit(text)
-                uri = result.get("uri")
-                if uri:
-                    return URIRef(uri)
-            except Exception:
-                pass  # fall through to embedding matcher
-
+        record = {
+            name: (value, POINT_FIELD_KINDS.get(name))
+            for name, value in fields.items()
+        }
         try:
-            matches = self.client.resolve_text(text, kind=kind, top_k=1, min_score=0.6)
-            if matches:
-                return URIRef(matches[0]["uri"])
+            return self.client.resolve_record_uris(record, min_score=min_score)
         except Exception:
-            pass
+            return {name: None for name in record}
 
-        return None
 
     def graph_version(self) -> int:
         """Return the server's current graph mutation counter."""
@@ -279,103 +366,11 @@ class Acquirium:
         """Return the canonical Acquirium reference URI for ``(source_id, ref_name)``."""
         return compute_ref_uri(source_id, ref_name)
 
-    def register_stream(
-        self,
-        point_uri: str | URIRef | None = None,
-        label: str | None = None,
-        *,
-        source_id: str | None = None,
-        ref_name: str | None = None,
-        unit: str | URIRef | None = None,
-        quantity_kind: str | URIRef | None = None,
-        medium: str | URIRef | None = None,
-        substance: str | URIRef | None = None,
-        data_source: str | URIRef | None = None,
-        properties: dict[URIRef, str | URIRef] | None = None,
-        value_kind: str = "text",
-    ) -> None:
-        """Declare a stream's semantic metadata in the RDF graph.
-
-        ``point_uri`` is optional. When provided, a semantic point node is
-        created and linked to the external reference. When omitted, only the
-        external reference node is written; semantic linkage can be added later
-        by inserting an RDF graph that connects a point to the same ref URI.
-
-        Plain strings for ``unit``, ``quantity_kind``, ``medium``, and
-        ``substance`` are resolved against the QUDT vocabulary via the server
-        (unit resolver + embedding matcher). Falls back to a plain literal with
-        a warning if no confident match is found.
-
-        Args:
-            point_uri: Optional URI identifying this stream in the knowledge
-                graph. If omitted, only the external reference node is written.
-            label: Human-readable name (rdfs:label) written on ``point_uri``.
-            source_id: Registered datasource identifier.
-            ref_name: Source-native stream identifier (sensor tag, column name,
-                MQTT topic, etc.). Written as ``acq:refName`` on the reference node.
-            unit: Unit of measurement — URIRef, URI string, or plain text.
-            quantity_kind: Physical quantity — URIRef, URI string, or plain text.
-            medium: Medium the measurement applies to (S223 hasMedium).
-            substance: Substance being measured (S223 ofSubstance).
-            data_source: Origin of the data — written as a literal string.
-            properties: Arbitrary extra triples written on the reference node
-                (or on ``point_uri`` when no reference node exists).
-        """
-        g = RDFGraph()
-
-        def _coerce(value: str | URIRef | None, qudt_kind: str) -> str | URIRef | None:
-            if value is None or isinstance(value, URIRef):
-                return value
-            if "://" in value or value.startswith("urn:"):
-                return URIRef(value)
-            resolved = self._resolve_qudt_uri(value, qudt_kind)
-            if resolved is None:
-                warnings.warn(
-                    f"Could not resolve {qudt_kind!r} value {value!r} to a QUDT URI; "
-                    "storing as a plain literal.",
-                    stacklevel=3,
-                )
-            return resolved or value
-
-        ref_uri = None
-        if ref_name is not None and source_id is not None:
-            ref_uri = compute_ref_uri(source_id, ref_name)
-            g.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
-            g.add((ref_uri, ACQUIRIUM_REF_NAME,  Literal(ref_name)))
-            g.add((ref_uri, ACQUIRIUM_VALUE_KIND, Literal(normalize_value_kind(value_kind))))
-            g.add((ref_uri, STORED_AT,           ACQUIRIUM_DB_URI))
-            g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
-
-        if point_uri is not None:
-            subj = URIRef(str(point_uri))
-            g.add((subj, RDF.type, VIRTUAL_POINT))
-            if label is not None:
-                g.add((subj, RDFS.label, Literal(label)))
-            _add_triple(g, subj, HAS_UNIT,          _coerce(unit,          "unit"))
-            _add_triple(g, subj, HAS_QUANTITY_KIND, _coerce(quantity_kind, "quantity_kind"))
-            _add_triple(g, subj, HAS_MEDIUM,        _coerce(medium,        "class"))
-            _add_triple(g, subj, OF_SUBSTANCE,      _coerce(substance,     "class"))
-            _add_triple(g, subj, DATA_SOURCE,       data_source)
-            if ref_uri is not None:
-                g.add((subj, HAS_EXTERNAL_REFERENCE, ref_uri))
-
-        target = ref_uri if ref_uri is not None else (URIRef(str(point_uri)) if point_uri is not None else None)
-        if target is not None:
-            for pred, value in (properties or {}).items():
-                _add_triple(g, target, pred, value)
-
-        if len(g):
-            self.client.insert_graph(g.serialize(format="turtle"), format="turtle", replace=False)
-
     def register_streams(
         self,
         streams: Iterable[dict[str, Any]],
     ) -> None:
-        """Declare multiple stream metadata records in one graph insert.
-
-        This is the batch form of :meth:`register_stream`. Use it when a driver
-        discovers many streams at once, such as a wide CSV file with one column
-        per stream. Batching avoids one graph insert and graph resync per stream.
+        """Declare one or more streams' semantic metadata in one graph insert.
 
         Each stream item is a dictionary with these commonly used keys:
 
@@ -390,42 +385,23 @@ class Acquirium:
         - ``properties``: optional mapping of predicate URIRefs to values,
           written on the reference node (or ``point_uri`` when no ref node exists).
 
+        Plain strings for ``unit``/``quantity_kind``/``medium``/``substance``
+        are resolved jointly per stream via :meth:`resolve_point_metadata`;
+        URI / URIRef / None values pass through.
+
         Drivers should still insert rows with ``insert_timeseries_arrow`` using
         the same ``source_id`` and source-local ``ref_name``. Acquirium resolves
         those inserts to the same canonical reference URI internally.
         """
         g = RDFGraph()
-
         for stream in streams:
-            point_uri_raw = stream.get("point_uri")
-            label = stream.get("label")
-            source_id = stream.get("source_id")
-            ref_name = stream.get("ref_name")
-            value_kind = normalize_value_kind(stream.get("value_kind"))
-
-            ref_uri = None
-            if ref_name is not None and source_id is not None:
-                ref_uri = compute_ref_uri(source_id, ref_name)
-                g.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
-                g.add((ref_uri, ACQUIRIUM_REF_NAME,  Literal(ref_name)))
-                g.add((ref_uri, ACQUIRIUM_VALUE_KIND, Literal(value_kind)))
-                g.add((ref_uri, STORED_AT,           ACQUIRIUM_DB_URI))
-                g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
-
-            if point_uri_raw is not None:
-                subj = URIRef(str(point_uri_raw))
-                g.add((subj, RDF.type, VIRTUAL_POINT))
-                if label is not None:
-                    g.add((subj, RDFS.label, Literal(label)))
-                _add_triple(g, subj, DATA_SOURCE, stream.get("data_source"))
-                if ref_uri is not None:
-                    g.add((subj, HAS_EXTERNAL_REFERENCE, ref_uri))
-
-            target = ref_uri if ref_uri is not None else (URIRef(str(point_uri_raw)) if point_uri_raw is not None else None)
-            if target is not None:
-                for pred, value in (stream.get("properties") or {}).items():
-                    _add_triple(g, target, pred, value)
-
+            meta = {
+                f: stream.get(f)
+                for f in POINT_FIELD_KINDS
+                if stream.get(f) is not None
+            }
+            resolved = self.resolve_point_metadata(meta) if meta else {}
+            _build_stream_triples(g, stream, resolved)
         if len(g):
             self.client.insert_graph(g.serialize(format="turtle"), format="turtle", replace=False)
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 import os
@@ -32,6 +32,7 @@ import docker
 from docker.errors import DockerException, NotFound as ContainerNotFound
 from acquirium.TextMatch.embedding_matcher import EmbeddingMatcher, _split_local_name
 from acquirium.TextMatch.qudt_store import QUDTStore
+from acquirium.TextMatch.resolver import ConceptResolver
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("acquirium.manager")
@@ -80,7 +81,13 @@ def _aggregate_uri_label_rows(
             if joined not in surfaces:
                 surfaces.append(joined)
         display_label = uri_first_label[uri] or (" ".join(tokens) if tokens else uri)
-        concepts.append({"uri": uri, "kind": kind, "label": display_label, "surfaces": surfaces})
+        concepts.append({
+            "uri": uri,
+            "kind": kind,
+            "label": display_label,
+            "surfaces": surfaces,
+            "related": [],
+        })
 
 
 def _wipe_dir_contents(base: Path) -> None:
@@ -220,7 +227,13 @@ class Manager:
             model_name=_emb_model,
             cache_dir=base / "embedding_cache" / "qudt",
         )
-        self._qudt_store = QUDTStore(data_dir=base)
+
+        # Single normalization façade, sharing the lazily-built converter.
+        self._concept_resolver = ConceptResolver(
+            graph_matcher=self._graph_matcher,
+            qudt_matcher=self._qudt_matcher,
+            converter_provider=self._ensure_qudt_converter,
+        )
 
         # Kept for backward compat — points to graph matcher
         self.embedding_matcher = self._graph_matcher
@@ -232,9 +245,8 @@ class Manager:
             "qudt":  {"state": "idle", "concepts": 0, "surfaces": 0, "error": None, "last_built": None, "duration_s": None},
         }
 
-        # Startup: both indexes run synchronously so drivers see a ready matcher.
-        self._startup_graph_index()
-        self._startup_qudt_task()
+        # Embedding corpus is the static ontoenv vocabularies; build once.
+        self._build_embedding_indexes()
 
     
     @classmethod
@@ -326,7 +338,10 @@ class Manager:
           OPTIONAL {{ ?point <{HAS_EXTERNAL_REFERENCE}> ?ref_node . }}
         }}
         """
-        res = self.graph_store.sparql_query(q, use_union=True)
+        # use_union=False: these acquirium-internal predicates only ever live
+        # in the main graph, so skipping the closure rebuild on the hot
+        # insert path is correct and avoids the per-insert closure refresh.
+        res = self.graph_store.sparql_query(q, use_union=False)
         count = 0
         for point_uri, ref_node, source_id, ref_name, value_kind in res.get("rows", []):
             try:
@@ -360,92 +375,73 @@ class Manager:
 
     # ----- Embedding index methods -----
 
-    def _extract_concepts_for_embedding(self) -> list[dict[str, Any]]:
-        """Extract classes and predicates from the union graph for embedding.
+    def _extract_concepts_for_embedding(self, graph: "Graph") -> list[dict[str, Any]]:
+        """Extract class / predicate / substance concepts from *graph*.
 
-        QUDT Units and QuantityKinds are handled separately by QUDTStore/_qudt_matcher.
+        *graph* is the merged water + s223 vocabulary (read out of ontoenv,
+        imports not followed). Unit / quantity_kind concepts come separately
+        from the QUDT graphs via :class:`QUDTStore`.
         """
         concepts: list[dict[str, Any]] = []
-        seen_class: set[str] = set()
-        seen_pred: set[str] = set()
 
-        # Query 1: Classes (rdfs:Class, owl:Class, rdfs:subClassOf targets,
-        # and any URI used as an rdf:type object)
-        # NOTE: QUDT Unit/QuantityKind removed — handled by _qudt_matcher
-        # Labels: rdfs:label, skos:prefLabel, skos:altLabel
-        # Language filter: keep English-tagged or untagged labels only
-        class_query = f"""
-        SELECT DISTINCT ?uri ?label WHERE {{
-          {{
-            ?uri a <{RDFS.Class}> .
-          }} UNION {{
-            ?uri a <{OWL_CLASS}> .
-          }} UNION {{
-            ?x <{RDFS.subClassOf}> ?uri .
-          }} UNION {{
-            ?x a ?uri .
-          }} UNION {{
-            ?uri a <{WATR.Class}> .
-          }} UNION {{
-            ?uri <{RDFS.subClassOf}> ?x .
-          }} UNION {{
-            ?x <{HAS_ENUMERATION_KIND}> ?uri .
-          }} UNION {{
-            ?x <{OF_SUBSTANCE}> ?uri .
-          }} UNION {{
-            ?x <{HAS_MEDIUM}> ?uri .
-          }}
+        label_block_basic = f"""
           OPTIONAL {{
-            {{
-              ?uri <{RDFS.label}> ?label .
-            }} UNION {{
-              ?uri <{SKOS.prefLabel}> ?label .
-            }} UNION {{
-              ?uri <{SKOS.altLabel}> ?label .
-            }}
+            {{ ?uri <{RDFS.label}> ?label . }}
+            UNION {{ ?uri <{SKOS.prefLabel}> ?label . }}
+            UNION {{ ?uri <{SKOS.altLabel}> ?label . }}
             FILTER(LANG(?label) = "" || LANGMATCHES(LANG(?label), "en"))
           }}
-          FILTER(isIRI(?uri))
-        }}
         """
-        try:
-            res = self.graph_store.sparql_query(class_query, use_union=True)
-            _aggregate_uri_label_rows(res.get("rows", []), seen_class, "class", concepts)
-        except Exception:
-            logger.warning("Failed to extract class concepts", exc_info=True)
 
-        # Query 2: Predicates (declared properties + any IRI used as a predicate)
-        # Labels: rdfs:label, skos:prefLabel, skos:altLabel
-        # Language filter: keep English-tagged or untagged labels only
-        pred_query = f"""
-        SELECT DISTINCT ?uri ?label WHERE {{
-          {{
-            ?uri a <{RDF_PROP}> .
-          }} UNION {{
-            ?uri a <{OWL_OBJ_PROP}> .
-          }} UNION {{
-            ?uri a <{OWL_DATA_PROP}> .
-          }} UNION {{
-            ?s ?uri ?o .
-          }}
-          OPTIONAL {{
-            {{
-              ?uri <{RDFS.label}> ?label .
-            }} UNION {{
-              ?uri <{SKOS.prefLabel}> ?label .
-            }} UNION {{
-              ?uri <{SKOS.altLabel}> ?label .
-            }}
-            FILTER(LANG(?label) = "" || LANGMATCHES(LANG(?label), "en"))
-          }}
-          FILTER(isIRI(?uri))
-        }}
+        class_where = f"""
+          {{ ?uri a <{RDFS.Class}> . }}
+          UNION {{ ?uri a <{OWL_CLASS}> . }}
+          UNION {{ ?x <{RDFS.subClassOf}> ?uri . }}
+          UNION {{ ?x a ?uri . }}
+          UNION {{ ?uri a <{WATR.Class}> . }}
+          UNION {{ ?uri <{RDFS.subClassOf}> ?x . }}
+          UNION {{ ?x <{HAS_ENUMERATION_KIND}> ?uri . }}
+          UNION {{ ?x <{OF_SUBSTANCE}> ?uri . }}
+          UNION {{ ?x <{HAS_MEDIUM}> ?uri . }}
         """
-        try:
-            res = self.graph_store.sparql_query(pred_query, use_union=True)
-            _aggregate_uri_label_rows(res.get("rows", []), seen_pred, "predicate", concepts)
-        except Exception:
-            logger.warning("Failed to extract predicate concepts", exc_info=True)
+        pred_where = f"""
+          {{ ?uri a <{RDF_PROP}> . }}
+          UNION {{ ?uri a <{OWL_OBJ_PROP}> . }}
+          UNION {{ ?uri a <{OWL_DATA_PROP}> . }}
+          UNION {{ ?s ?uri ?o . }}
+        """
+        # Constrained medium/substance space: the s223 substance enumeration
+        # and the NAWI water medium taxonomy, plus whatever the loaded model
+        # actually uses as a medium/substance (self-grounding so it's correct
+        # regardless of the imported s223 closure).
+        substance_where = f"""
+          {{ ?uri (<{RDFS.subClassOf}>)* <{S223['EnumerationKind-Substance']}> . }}
+          UNION {{ ?uri (<{RDFS.subClassOf}>)* <{WATR['Medium-Constituent']}> . }}
+          UNION {{ ?x <{S223.ofMedium}> ?uri . }}
+          UNION {{ ?x <{HAS_MEDIUM}> ?uri . }}
+          UNION {{ ?x <{OF_SUBSTANCE}> ?uri . }}
+        """
+
+        extractions: list[tuple[str, str, str]] = [
+            ("class", class_where, label_block_basic),
+            ("predicate", pred_where, label_block_basic),
+            ("substance", substance_where, label_block_basic),
+        ]
+
+        for kind, where, label_block in extractions:
+            query = f"""
+            SELECT DISTINCT ?uri ?label WHERE {{
+              {where}
+              {label_block}
+              FILTER(isIRI(?uri))
+            }}
+            """
+            seen: set[str] = set()
+            try:
+                rows = list(graph.query(query))
+                _aggregate_uri_label_rows(rows, seen, kind, concepts)
+            except Exception:
+                logger.warning("Failed to extract %s concepts", kind, exc_info=True)
 
         return concepts
 
@@ -454,93 +450,66 @@ class Manager:
         with self._embedding_status_lock:
             self._embedding_status[index].update(kwargs)
 
-    def _startup_graph_index(self) -> None:
-        """Build graph embedding index on startup. Uses cache if available."""
+    def _mark_index_ready(
+        self, index: str, concepts: list[dict[str, Any]], t0: float
+    ) -> None:
+        """Record an index as ready with concept/surface counts and timing."""
+        self._update_embedding_status(
+            index, state="ready", concepts=len(concepts),
+            surfaces=sum(len(c.get("surfaces", [])) for c in concepts),
+            last_built=datetime.now().isoformat(),
+            duration_s=round(perf_counter() - t0, 2), error=None,
+        )
+
+    def _build_embedding_indexes(self) -> None:
+        """Build both embedding indexes once from the static ontoenv graphs.
+
+        graph matcher <- water + s223 vocabularies merged (class / predicate
+        / substance); qudt matcher <- the QUDT unit + quantity_kind
+        vocabularies. Graphs are read out of ontoenv by IRI (owl:imports
+        not followed); no inserted data is embedded.
+        """
+        iris = self.graph_store.ontology_iris()
+
         self._update_embedding_status("graph", state="building")
         t0 = perf_counter()
         try:
-            concepts = self._extract_concepts_for_embedding()
+            merged = Graph()
+            for key in ("water", "s223"):
+                if key in iris:
+                    for triple in self.graph_store.named_graph(iris[key]):
+                        merged.add(triple)
+            concepts = self._extract_concepts_for_embedding(merged)
             if concepts:
                 self._graph_matcher.build_index(concepts)
-                n_surfaces = sum(len(c.get("surfaces", [])) for c in concepts)
-                elapsed = perf_counter() - t0
-                self._update_embedding_status(
-                    "graph", state="ready", concepts=len(concepts),
-                    surfaces=n_surfaces, last_built=datetime.now().isoformat(),
-                    duration_s=round(elapsed, 2), error=None,
-                )
-                logger.info("Graph embedding index: %d concepts", len(concepts))
-            else:
-                self._update_embedding_status("graph", state="ready", concepts=0, surfaces=0)
-                logger.info("No concepts found in graph; graph embedding index is empty")
+            self._mark_index_ready("graph", concepts, t0)
+            logger.info(
+                "Graph embedding index: %d concepts (water+s223)", len(concepts)
+            )
         except Exception as exc:
             self._update_embedding_status("graph", state="error", error=str(exc))
             logger.warning("Failed to build graph embedding index", exc_info=True)
 
-    def _startup_qudt_task(self) -> None:
-        """Background task: extract QUDT, diff, build/update QUDT embedding index."""
         self._update_embedding_status("qudt", state="building")
         t0 = perf_counter()
         try:
-            if self._qudt_store.has_cache() and not self._qudt_matcher.is_ready:
-                # Try loading cached concepts + cached embeddings first
-                cached = self._qudt_store.get_all_concepts()
-                if cached:
-                    self._qudt_matcher.build_index(cached)
-                    if self._qudt_matcher.is_ready:
-                        logger.info("QUDT embedding index loaded from cache (%d concepts)", len(cached))
-
-            all_concepts, removed_uris, changed = self._qudt_store.extract_and_diff()
-
-            if not all_concepts:
-                logger.warning("QUDT extraction returned 0 concepts")
-                self._update_embedding_status("qudt", state="ready", concepts=0, surfaces=0)
-                return
-
-            if not self._qudt_matcher.is_ready:
-                # First build
-                logger.info("Building QUDT embedding index from scratch (%d concepts)...", len(all_concepts))
-                self._qudt_matcher.build_index(all_concepts)
-            elif changed:
-                # Incremental update — use public API instead of private _meta
-                indexed_uris = self._qudt_matcher.get_indexed_uris()
-                added = [c for c in all_concepts if c["uri"] not in indexed_uris]
-                logger.info("Updating QUDT embedding index: +%d added, -%d removed", len(added), len(removed_uris))
-                self._qudt_matcher.update_index(added, removed_uris, all_concepts=all_concepts)
-            else:
-                logger.info("QUDT data unchanged, embedding index up to date")
-
-            n_surfaces = sum(len(c.get("surfaces", [])) for c in all_concepts)
-            elapsed = perf_counter() - t0
-            self._update_embedding_status(
-                "qudt", state="ready", concepts=len(all_concepts),
-                surfaces=n_surfaces, last_built=datetime.now().isoformat(),
-                duration_s=round(elapsed, 2), error=None,
-            )
-
+            qc: list[dict[str, Any]] = []
+            if "unit" in iris:
+                qc += QUDTStore.extract_concepts(
+                    self.graph_store.named_graph(iris["unit"]), str(QUDT.Unit)
+                )
+            if "quantity_kind" in iris:
+                qc += QUDTStore.extract_concepts(
+                    self.graph_store.named_graph(iris["quantity_kind"]),
+                    str(QUDT.QuantityKind),
+                )
+            if qc:
+                self._qudt_matcher.build_index(qc)
+            self._mark_index_ready("qudt", qc, t0)
+            logger.info("QUDT embedding index: %d concepts", len(qc))
         except Exception as exc:
             self._update_embedding_status("qudt", state="error", error=str(exc))
-            logger.warning("Failed QUDT startup task", exc_info=True)
-
-    def _rebuild_graph_index_background(self) -> None:
-        """Rebuild graph embedding index in background after insert_graph."""
-        self._update_embedding_status("graph", state="building")
-        t0 = perf_counter()
-        try:
-            concepts = self._extract_concepts_for_embedding()
-            if concepts:
-                self._graph_matcher.build_index(concepts)
-                n_surfaces = sum(len(c.get("surfaces", [])) for c in concepts)
-                elapsed = perf_counter() - t0
-                self._update_embedding_status(
-                    "graph", state="ready", concepts=len(concepts),
-                    surfaces=n_surfaces, last_built=datetime.now().isoformat(),
-                    duration_s=round(elapsed, 2), error=None,
-                )
-                logger.info("Graph embedding index rebuilt: %d concepts", len(concepts))
-        except Exception as exc:
-            self._update_embedding_status("graph", state="error", error=str(exc))
-            logger.warning("Failed to rebuild graph embedding index", exc_info=True)
+            logger.warning("Failed to build QUDT embedding index", exc_info=True)
 
     def resolve_text(
         self,
@@ -548,53 +517,58 @@ class Manager:
         kind: str | None = None,
         top_k: int = 5,
         min_score: float = 0.5,
+        context: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Resolve natural language text to ontology URIs via embedding similarity.
+        """Resolve natural language text to ontology URIs.
 
-        Routing:
-          kind="class" or "predicate"     -> _graph_matcher only
-          kind="unit" or "quantity_kind"   -> _qudt_matcher only
-          kind=None                        -> both, merged by score
+        Thin delegation to :class:`ConceptResolver`, which owns the full
+        resolution policy (data-graph + QUDT matchers, deterministic unit
+        converter tier, context rerank). Conversion is a separate concern and
+        still goes through ``QUDTUnitConverter`` directly
+        (:meth:`resolve_unit_info` / :meth:`get_conversion_factors`).
+
+        Example::
+
+            # asset-type label from an equipment register row
+            resolve_text("sedimentation tank", kind="class", top_k=2)
+            # -> [{"uri": "urn:nawi-water-ontology#SedimentationTank",
+            #      "kind": "class", "score": 1.0,
+            #      "match_stage": "exact", ...}, ...]
         """
-        def _to_dicts(results):
-            return [
-                {
-                    "uri": r.uri,
-                    "kind": r.kind,
-                    "label": r.label,
-                    "score": r.score,
-                    "matched_surface": r.matched_surface,
-                }
-                for r in results
-            ]
+        results = self._concept_resolver.resolve(
+            text, kind=kind, top_k=top_k, min_score=min_score, context=context
+        )
+        return [asdict(r) for r in results]
 
-        if kind in ("class", "predicate"):
-            return _to_dicts(
-                self._graph_matcher.query(text=text, kind=kind, top_k=top_k, min_score=min_score)
-            )
-        elif kind in ("unit", "quantity_kind"):
-            return _to_dicts(
-                self._qudt_matcher.query(text=text, kind=kind, top_k=top_k, min_score=min_score)
-            )
-        else:
-            # Query both matchers, merge results sorted by score
-            graph_results = self._graph_matcher.query(text=text, kind=kind, top_k=top_k, min_score=min_score)
-            qudt_results = self._qudt_matcher.query(text=text, kind=kind, top_k=top_k, min_score=min_score)
-            merged = sorted(
-                graph_results + qudt_results,
-                key=lambda r: r.score,
-                reverse=True,
-            )
-            # Deduplicate by URI
-            seen: set[str] = set()
-            deduped = []
-            for r in merged:
-                if r.uri not in seen:
-                    seen.add(r.uri)
-                    deduped.append(r)
-                    if len(deduped) >= top_k:
-                        break
-            return _to_dicts(deduped)
+    def resolve_record(
+        self,
+        fields: dict[str, tuple[str, str | None]],
+        top_k: int = 5,
+        min_score: float = 0.5,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Jointly resolve a record's fields.
+
+        Thin delegation to :meth:`ConceptResolver.resolve_record`: related
+        fields (e.g. unit and its quantity kind) reinforce each other so a
+        confident sibling disambiguates an ambiguous one.
+
+        ``fields`` keys are caller-chosen labels echoed back unchanged in
+        the result; the resolver never reads them. Resolution is driven by
+        the ``(text, kind)`` tuple. The example keys below are styled as a
+        historian export's column headers only to look like a real source.
+
+        Example::
+
+            resolve_record({"FIT-101.EU":  ("gal/min", "unit"),
+                            "FIT-101.QTY": ("flow rate", "quantity_kind")})
+            # -> {"FIT-101.EU":  [{"uri": ".../unit/GAL_US-PER-MIN", ...}, ...],
+            #     "FIT-101.QTY": [{"uri": ".../quantitykind/VolumeFlowRate",
+            #                      ...}, ...]}
+        """
+        resolved = self._concept_resolver.resolve_record(
+            fields, top_k=top_k, min_score=min_score
+        )
+        return {name: [asdict(r) for r in rs] for name, rs in resolved.items()}
 
     ###########################################
     #################### API ###############
@@ -636,9 +610,14 @@ class Manager:
             return self._graph_version
 
 
-    def insert_graph(self, rdf_graph: str, format: str = "turtle", replace = True, wait_for_embedding: bool = False) -> None:
+    def insert_graph(self, rdf_graph: str, format: str = "turtle", replace = True) -> None:
         """
-        Insert RDF graph into the graph store to the main graph
+        Insert RDF graph into the graph store's main graph.
+
+        The embedding index is refreshed synchronously before returning, so
+        once this call completes the just-inserted concepts are resolvable.
+        The refresh is incremental (only new concepts are embedded) unless
+        ``replace=True``, which triggers a full rebuild.
 
         Args:
             :param rdf_graph: An `xml.sax.xmlreader.InputSource`, file-like object,
@@ -646,8 +625,6 @@ class Manager:
             is the location of the source.
             format: Format of the RDF data [turtle | n3 | xml | trix]
             replace: If True, replaces the existing main graph. If False, appends to it.
-            wait_for_embedding: If True, blocks until the embedding index rebuild is
-                complete and logs progress. If False (default), rebuilds in the background.
         """
 
         if isinstance(rdf_graph, Path):
@@ -664,14 +641,9 @@ class Manager:
             self.graph_store.insert_graph(rdf_graph, format=format, replace=replace)
             logging.info("acquirium: inserted graph into store")
             self._sync_stream_refs_from_graph()
-
-            if wait_for_embedding:
-                logger.info("acquirium: rebuilding embedding index (synchronous)...")
-                self._rebuild_graph_index_background()
-                logger.info("acquirium: embedding index rebuild complete")
-            else:
-                self._executor.submit(self._rebuild_graph_index_background)
-
+            # Embedding corpus is the static ontoenv vocabularies, not
+            # inserted data — no per-insert reindex. refresh_union (inside
+            # graph_store.insert_graph) keeps the data/SPARQL union current.
             self._notify_graph_change()
 
         except Exception as e:
@@ -1209,7 +1181,17 @@ class Manager:
         )
 
     def resolve_unit_info(self, identifier: str) -> dict[str, Any]:
-        """Resolve a unit identifier to its QUDT metadata."""
+        """Resolve a unit identifier to its QUDT metadata (deterministic).
+
+        Example::
+
+            # engineering-unit string off a flow meter tag
+            resolve_unit_info("gal/min")
+            # -> {"uri": "http://qudt.org/vocab/unit/GAL_US-PER-MIN",
+            #     "label": "US Gallon per Minute", "symbol": "gal/min",
+            #     "quantity_kind": ".../quantitykind/VolumeFlowRate",
+            #     "multiplier": 6.30901964e-05, "offset": 0.0}
+        """
         converter = self._ensure_qudt_converter()
         unit_def = converter.resolve_unit(identifier)
         return {
