@@ -1,19 +1,22 @@
-"""
-QUDT Unit and QuantityKind extraction, caching, and diff logic.
+"""QUDT Unit / QuantityKind concept extraction.
 
-Parses QUDT ontologies (HTTP-first, local fallback) and stores extracted
-concepts as gzipped JSON for change detection across restarts.
+Pure extractor: given an ``rdflib.Graph`` (read out of ontoenv) and an RDF
+type, return concept dicts (uri, kind, label, surfaces, symbol, ucum,
+related) for the embedding index. The graphs are sourced and cached by
+ontoenv; this module does no parsing, fetching, or disk caching.
 """
 
 from __future__ import annotations
 
-import gzip
-import json
 import logging
-from pathlib import Path
 from typing import Any
-from acquirium.internals.internals_namespaces import *
+
+from rdflib import Graph, URIRef
+from rdflib.namespace import SKOS
+
+from acquirium.internals.internals_namespaces import *  # noqa: F403
 from acquirium.TextMatch.embedding_matcher import _split_local_name
+
 logger = logging.getLogger("acquirium.qudt_store")
 
 
@@ -34,7 +37,8 @@ def _build_surfaces(uri: str, labels: list[str], symbol: str | None, ucum: str |
     if tokens:
         _add(" ".join(tokens))
 
-    # Abbreviations kept as-is (case-sensitive matching handled at query time)
+    # Symbol / UCUM code as surfaces; the matcher's exact stage normalizes
+    # case and whitespace so "kg", "KG", "mg/L" match without embeddings.
     if symbol:
         _add(symbol)
     if ucum:
@@ -44,62 +48,31 @@ def _build_surfaces(uri: str, labels: list[str], symbol: str | None, ucum: str |
 
 
 class QUDTStore:
-    """Extract, cache, and diff QUDT units and quantity kinds."""
-
-    def __init__(self, data_dir: Path) -> None:
-        self._cache_dir = data_dir / "qudt_cache"
-        self._cache_dir.mkdir(parents=True, exist_ok=True)
-        self._units_path = self._cache_dir / "units.json.gz"
-        self._qk_path = self._cache_dir / "qk.json.gz"
-
-    # ── Parsing ────────────────────────────────────────────────
+    """Extract QUDT unit / quantity-kind concepts from a given graph."""
 
     @staticmethod
-    def _parse_ontology(
-        http_url: str,
-        local_path: Path,
-        rdf_type: str,
-    ) -> list[dict[str, Any]]:
-        """Parse a QUDT ontology, HTTP-first with local fallback. Returns concept dicts."""
-        from rdflib import Graph, URIRef, Namespace
-        from rdflib.namespace import SKOS
+    def extract_concepts(graph: Graph, rdf_type: str) -> list[dict[str, Any]]:
+        """Concept dicts for every ``rdf_type`` subject in *graph*.
 
-        g = Graph()
-        loaded = False
-
-        # Try HTTP first
-        try:
-            logger.info("Fetching QUDT from %s ...", http_url)
-            g.parse(http_url, format="turtle")
-            loaded = True
-            logger.info("Loaded QUDT from HTTP (%d triples)", len(g))
-        except Exception as e:
-            logger.warning("HTTP fetch failed for %s: %s", http_url, e)
-
-        # Fall back to local file
-        if not loaded:
-            if local_path.exists():
-                logger.info("Loading QUDT from local file %s", local_path)
-                g.parse(str(local_path), format="turtle")
-                logger.info("Loaded QUDT from local file (%d triples)", len(g))
-            else:
-                logger.warning("No local QUDT file at %s", local_path)
-                return []
-
+        ``related`` captures the cross-reference used by joint/context
+        rerank: a unit's ``qudt:hasQuantityKind``, a quantity kind's
+        ``qudt:applicableUnit``.
+        """
         type_uri = URIRef(rdf_type)
+        is_unit = rdf_type == str(QUDT.Unit)  # noqa: F405
+        label_preds = [RDFS.label, SKOS.prefLabel, SKOS.altLabel]  # noqa: F405
+        relation_preds = (
+            [QUDT.hasQuantityKind] if is_unit else [QUDT.applicableUnit]  # noqa: F405
+        )
+
         concepts: list[dict[str, Any]] = []
-
-        # Label predicates to collect surfaces from
-        label_preds = [RDFS.label, SKOS.prefLabel, SKOS.altLabel]
-
-        for subj in g.subjects(RDF.type, type_uri):
+        for subj in graph.subjects(RDF.type, type_uri):  # noqa: F405
             uri = str(subj)
 
-            # Collect all labels; keep untagged or English only
             labels: list[str] = []
             display_label: str | None = None
             for pred in label_preds:
-                for lit in g.objects(subj, pred):
+                for lit in graph.objects(subj, pred):
                     lang = getattr(lit, "language", None)
                     if lang and not lang.startswith("en"):
                         continue
@@ -109,102 +82,29 @@ class QUDTStore:
                     if display_label is None:
                         display_label = text
 
-            # Symbol and ucumCode
-            symbols = list(g.objects(subj, QUDT.symbol))
+            symbols = list(graph.objects(subj, QUDT.symbol))  # noqa: F405
             symbol = str(symbols[0]) if symbols else None
-
-            ucums = list(g.objects(subj, QUDT.ucumCode))
+            ucums = list(graph.objects(subj, QUDT.ucumCode))  # noqa: F405
             ucum = str(ucums[0]) if ucums else None
 
             surfaces = _build_surfaces(uri, labels, symbol, ucum)
             if not surfaces:
                 continue
 
-            kind = "unit" if rdf_type == str(QUDT.Unit) else "quantity_kind"
+            related = sorted(
+                {
+                    str(obj)
+                    for pred in relation_preds
+                    for obj in graph.objects(subj, pred)
+                }
+            )
             concepts.append({
                 "uri": uri,
-                "kind": kind,
+                "kind": "unit" if is_unit else "quantity_kind",
                 "label": display_label or " ".join(_split_local_name(uri)) or uri,
                 "surfaces": surfaces,
                 "symbol": symbol,
                 "ucum": ucum,
+                "related": related,
             })
-
         return concepts
-
-    # ── Cache I/O ──────────────────────────────────────────────
-
-    @staticmethod
-    def _save_gz(path: Path, data: list[dict[str, Any]]) -> None:
-        with gzip.open(path, "wt", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=True, sort_keys=True)
-
-    @staticmethod
-    def _load_gz(path: Path) -> list[dict[str, Any]]:
-        if not path.exists():
-            return []
-        with gzip.open(path, "rt", encoding="utf-8") as f:
-            return json.load(f)
-
-    def _load_cached_uris(self) -> set[str]:
-        uris: set[str] = set()
-        for path in (self._units_path, self._qk_path):
-            for c in self._load_gz(path):
-                uris.add(c["uri"])
-        return uris
-
-    # ── Public API ─────────────────────────────────────────────
-
-    def extract_and_diff(
-        self,
-        local_unit_path: Path | None = None,
-        local_qk_path: Path | None = None,
-    ) -> tuple[list[dict[str, Any]], list[str], bool]:
-        """
-        Parse QUDT ontologies, diff against cache, update cache.
-
-        Returns:
-            (all_concepts, removed_uris, changed)
-            - all_concepts: full list of freshly-parsed concept dicts
-            - removed_uris: URIs present in old cache but missing from fresh parse
-            - changed: True if there were any additions or removals
-        """
-        # Defaults for local paths
-        if local_unit_path is None:
-            local_unit_path = Path("ontologies/qudt_unit.ttl")
-        if local_qk_path is None:
-            local_qk_path = Path("ontologies/qudt_qk.ttl")
-
-        # Parse fresh
-        units = self._parse_ontology(str(QUDT_UNIT), local_unit_path, str(QUDT.Unit))
-        qks = self._parse_ontology(str(QUDT_QUANTITY_KIND), local_qk_path, str(QUDT.QuantityKind))
-        fresh_concepts = units + qks
-        fresh_uris = {c["uri"] for c in fresh_concepts}
-
-        # Load old cache
-        old_uris = self._load_cached_uris()
-
-        # Diff
-        added_uris = fresh_uris - old_uris
-        removed_uris = old_uris - fresh_uris
-        changed = bool(added_uris or removed_uris)
-
-        logger.info(
-            "QUDT diff: %d total (%d units, %d QKs), +%d added, -%d removed, changed=%s",
-            len(fresh_concepts), len(units), len(qks),
-            len(added_uris), len(removed_uris), changed,
-        )
-
-        # Update cache
-        self._save_gz(self._units_path, units)
-        self._save_gz(self._qk_path, qks)
-
-        return fresh_concepts, list(removed_uris), changed
-
-    def get_all_concepts(self) -> list[dict[str, Any]]:
-        """Load all cached QUDT concepts (units + QKs) from disk."""
-        return self._load_gz(self._units_path) + self._load_gz(self._qk_path)
-
-    def has_cache(self) -> bool:
-        """Return True if any QUDT cache files exist on disk."""
-        return self._units_path.exists() or self._qk_path.exists()

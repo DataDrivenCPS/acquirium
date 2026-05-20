@@ -25,14 +25,24 @@ from acquirium.internals.internals_namespaces import (
 
 HOST_NS = Namespace("urn:acquirium:host#")
 
+# Canonical QUDT URIs (not free text) so register_streams passes them
+# straight through with no text resolution. `%` -> unit:PERCENT
+# (qudt:hasQuantityKind quantitykind:DimensionlessRatio); a byte count
+# -> unit:BYTE (qudt:hasQuantityKind quantitykind:InformationEntropy,
+# QUDT's quantity kind for information amount).
+_U_PERCENT = "http://qudt.org/vocab/unit/PERCENT"
+_U_BYTE = "http://qudt.org/vocab/unit/BYTE"
+_QK_RATIO = "http://qudt.org/vocab/quantitykind/DimensionlessRatio"
+_QK_INFO = "http://qudt.org/vocab/quantitykind/InformationEntropy"
+
 _METRICS: list[tuple[str, str, str, str]] = [
-    # (ref_name,            label,                    unit,   quantity_kind)
-    ("cpu_percent",       "CPU usage",              "%",    "dimensionless ratio"),
-    ("memory_percent",    "RAM usage",              "%",    "dimensionless ratio"),
-    ("memory_used_bytes", "RAM used",               "byte", "data size"),
-    ("disk_percent",      "Disk usage (root)",      "%",    "dimensionless ratio"),
-    ("net_bytes_sent",    "Network bytes sent",     "byte", "data size"),
-    ("net_bytes_recv",    "Network bytes received", "byte", "data size"),
+    # (ref_name,            label,                    unit,       quantity_kind)
+    ("cpu_percent",       "CPU usage",              _U_PERCENT, _QK_RATIO),
+    ("memory_percent",    "RAM usage",              _U_PERCENT, _QK_RATIO),
+    ("memory_used_bytes", "RAM used",               _U_BYTE,    _QK_INFO),
+    ("disk_percent",      "Disk usage (root)",      _U_PERCENT, _QK_RATIO),
+    ("net_bytes_sent",    "Network bytes sent",     _U_BYTE,    _QK_INFO),
+    ("net_bytes_recv",    "Network bytes received", _U_BYTE,    _QK_INFO),
 ]
 
 
@@ -98,11 +108,11 @@ class SystemMetricsDriver(PollingIngestDriver):
 
     def _register_stream_metadata(self) -> None:
         for ref, _, unit, quantity_kind in _METRICS:
-            self.aq.register_stream(
-                self._stream_uri(ref),
-                unit=unit,
-                quantity_kind=quantity_kind,
-                source_id=self.source_id,
-                ref_name=ref,
-                value_kind="numeric",
-            )
+            self.aq.register_streams([{
+                "point_uri": self._stream_uri(ref),
+                "unit": unit,
+                "quantity_kind": quantity_kind,
+                "source_id": self.source_id,
+                "ref_name": ref,
+                "value_kind": "numeric",
+            }])

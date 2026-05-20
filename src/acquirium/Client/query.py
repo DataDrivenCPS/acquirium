@@ -154,14 +154,21 @@ class Query:
                 attached.append(e.target_id)
         return sorted(set(attached)) if attached else []
 
-    def _resolve_rdf(self, text: str, kind: str) -> str:
-        matches = self.client.resolve_text(text, kind=kind, top_k=1, min_score=0.4)
-        if not matches:
+    def _resolve_rdf(self, text: str, kind: str, context: list[str] | None = None) -> str:
+        """Resolve one text value to a URI; raise if nothing confident.
+
+        Example::
+
+            # equipment class from a user query filter
+            self._resolve_rdf("sand filter", "class")
+            # -> "urn:nawi-water-ontology#SandFilter"
+        """
+        uri = self.client.resolve_concept(
+            text, kind=kind, context=context, min_score=0.4
+        )
+        if uri is None:
             raise ValueError(f"Could not resolve '{text}' as {kind}")
-        return matches[0]["uri"]
-    
-    def _query_resolver_adapter(self, text: str, kind: str) -> str:
-        return self._resolve_rdf(text, kind)
+        return uri
 
     def _is_uri(self, text: str) -> bool:
         return isinstance(text, str) and (text.startswith("urn:") or text.startswith("http://") or text.startswith("https://"))

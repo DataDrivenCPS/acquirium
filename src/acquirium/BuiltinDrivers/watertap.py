@@ -72,11 +72,11 @@ class WaterTAPDriver(PollingIngestDriver):
             )
         if self._register_streams:
             for spec in self._point_specs:
-                self.aq.register_stream(
-                    source_id=self.source_id,
-                    ref_name=spec.ref_name,
-                    value_kind="numeric",
-                )
+                self.aq.register_streams([{
+                    "source_id": self.source_id,
+                    "ref_name": spec.ref_name,
+                    "value_kind": "numeric",
+                }])
 
     def collect(self) -> pl.DataFrame:
         result = self._build_fn(**self._build_kwargs)

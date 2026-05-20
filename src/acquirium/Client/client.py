@@ -13,6 +13,7 @@ from acquirium.internals.models import (
     AppStopRequest,
     StreamInsert,
     RegisterDatasourceRequest,
+    looks_like_uri,
 )
 from acquirium.internals.internals_namespaces import *
 from acquirium.Grafana.grafana_dashboard_creator import GrafanaDashboardCreator
@@ -53,9 +54,12 @@ class AcquiriumClient:
         )
 
 
-    def insert_graph(self, rdf_graph: str, format: str = "turtle", replace: bool = True, wait_for_embedding: bool = False) -> None:
+    def insert_graph(self, rdf_graph: str, format: str = "turtle", replace: bool = True) -> None:
         """
-        Insert RDF graph into the graph store to the main graph
+        Insert RDF graph into the graph store to the main graph.
+
+        The server refreshes the embedding index synchronously before
+        responding, so inserted concepts are resolvable once this returns.
 
         Args:
             :param rdf_graph: `pathlib.Path` like object, or string.
@@ -64,8 +68,6 @@ class AcquiriumClient:
                 - location of the source file
             format: Format of the RDF data [turtle | n3 | xml | trix]
             replace: If True, replaces the existing main graph. If False, appends to it.
-            wait_for_embedding: If True, the server will block until the embedding
-                index rebuild is complete before returning. Default False.
         """
         if isinstance(rdf_graph, Path):
             if not rdf_graph.is_file():
@@ -92,21 +94,14 @@ class AcquiriumClient:
             raise ValueError("rdf_graph must be a string or Path object")
 
 
-        if wait_for_embedding:
-            logger.info("acquirium client: requesting server to rebuild embedding index (waiting)...")
-
         url = f"{self.base_url}/insert_graph"
         data = {
             "rdf_graph": rdf_graph,
             "format": format,
             "replace": replace,
-            "wait_for_embedding": wait_for_embedding,
         }
         response = requests.post(url, json=data)
         _raise_for_status(response)
-
-        if wait_for_embedding:
-            logger.info("acquirium client: server embedding index rebuild complete")
 
 
     def timeseries_df(
@@ -226,15 +221,131 @@ class AcquiriumClient:
         kind: Optional[str] = None,
         top_k: int = 5,
         min_score: float = 0.5,
+        context: Optional[list[str]] = None,
     ) -> list[dict]:
-        """Resolve natural language text to ontology URIs via the server's embedding matcher."""
+        """Resolve natural language text to ontology URIs via the server's embedding matcher.
+
+        ``context`` is an optional list of already-chosen URIs used to break
+        symbol ambiguity (e.g. resolving "kg" given a Mass quantity kind).
+
+        Example::
+
+            # unit string read from a chlorine-analyzer tag description
+            resolve_text("mg/L", kind="unit", top_k=1)
+            # -> [{"uri": "http://qudt.org/vocab/unit/MilliGM-PER-L",
+            #      "kind": "unit", "score": 1.0, "match_stage": "exact", ...}]
+        """
         url = f"{self.base_url}/resolve_text"
         params: dict[str, Any] = {"text": text, "top_k": top_k, "min_score": min_score}
         if kind:
             params["kind"] = kind
+        if context:
+            params["context"] = context
         response = requests.get(url, params=params)
         _raise_for_status(response)
         return response.json().get("matches", [])
+
+    def resolve_concept(
+        self,
+        text: str,
+        kind: Optional[str] = None,
+        context: Optional[list[str]] = None,
+        min_score: float = 0.5,
+    ) -> Optional[str]:
+        """Resolve text to a single best ontology/QUDT URI, or ``None``.
+
+        The one coordination point for concept normalization shared by the
+        query builder and stream registration. A value that already looks
+        like a URI is passed through unchanged; otherwise the server's
+        unified resolver (data-graph + deterministic unit converter + QUDT,
+        with optional ``context`` disambiguation) is consulted and the top
+        match's URI returned.
+
+        Example::
+
+            # turbidity-sensor unit cell from a CSV
+            resolve_concept("NTU", kind="unit")
+            # -> "http://qudt.org/vocab/unit/NTU"
+            resolve_concept("http://qudt.org/vocab/unit/NTU")  # passthrough
+            # -> "http://qudt.org/vocab/unit/NTU"
+        """
+        if looks_like_uri(text):
+            return text
+        matches = self.resolve_text(
+            text, kind=kind, top_k=1, min_score=min_score, context=context
+        )
+        return matches[0]["uri"] if matches else None
+
+    def resolve_record(
+        self,
+        fields: dict[str, tuple[str, Optional[str]]],
+        top_k: int = 5,
+        min_score: float = 0.5,
+    ) -> dict[str, list[dict]]:
+        """Jointly resolve a record's fields (server ``/resolve_record``).
+
+        ``fields`` maps a caller-chosen label to ``(text, kind)``. The
+        label is echoed back unchanged as the result key and is never read
+        by the resolver; resolution is driven by ``(text, kind)``. Returns
+        the ranked matches per label; related fields (e.g. a unit and its
+        quantity kind) reinforce each other server-side. The example labels
+        below mimic a historian export's column headers (real-source feel).
+
+        Example::
+
+            resolve_record({"FIT-101.EU":  ("gal/min", "unit"),
+                            "FIT-101.QTY": ("flow rate", "quantity_kind")})
+            # -> {"FIT-101.EU":  [{"uri": ".../unit/GAL_US-PER-MIN", ...}, ...],
+            #     "FIT-101.QTY": [{"uri": ".../quantitykind/VolumeFlowRate",
+            #                      ...}, ...]}
+        """
+        body = {
+            "fields": [
+                {"name": n, "text": t, "kind": k} for n, (t, k) in fields.items()
+            ],
+            "top_k": top_k,
+            "min_score": min_score,
+        }
+        response = requests.post(f"{self.base_url}/resolve_record", json=body)
+        _raise_for_status(response)
+        return response.json().get("matches", {})
+
+    def resolve_record_uris(
+        self,
+        fields: dict[str, tuple[Any, Optional[str]]],
+        min_score: float = 0.5,
+    ) -> dict[str, Optional[str]]:
+        """Jointly resolve a record to one best URI per field, or ``None``.
+
+        Keys are caller-chosen labels echoed back unchanged (never read by
+        the resolver); ``(text, kind)`` drives resolution. Per-field URI
+        passthrough (like :meth:`resolve_concept`); the rest are resolved
+        together so a confident field disambiguates an ambiguous sibling.
+        ``None`` inputs and unresolved fields map to ``None``. Example
+        labels below mimic a historian export's column headers.
+
+        Example::
+
+            resolve_record_uris({"FIT-101.EU":  ("gal/min", "unit"),
+                                 "FIT-101.QTY": ("flow rate", "quantity_kind")})
+            # -> {"FIT-101.EU":  "http://qudt.org/vocab/unit/GAL_US-PER-MIN",
+            #     "FIT-101.QTY": ".../quantitykind/VolumeFlowRate"}
+        """
+        out: dict[str, Optional[str]] = {}
+        to_resolve: dict[str, tuple[str, Optional[str]]] = {}
+        for name, (text, kind) in fields.items():
+            if text is None:
+                out[name] = None
+            elif looks_like_uri(text):
+                out[name] = text
+            else:
+                to_resolve[name] = (text, kind)
+        if to_resolve:
+            matches = self.resolve_record(to_resolve, top_k=1, min_score=min_score)
+            for name in to_resolve:
+                m = matches.get(name) or []
+                out[name] = m[0]["uri"] if m else None
+        return out
 
     def embedding_status(self) -> dict:
         """
@@ -262,7 +373,16 @@ class AcquiriumClient:
     # -------------------- Unit conversion --------------------
 
     def resolve_unit(self, identifier: str) -> dict:
-        """Resolve a unit identifier to its QUDT metadata via the server."""
+        """Resolve a unit identifier to its QUDT metadata via the server.
+
+        Example::
+
+            resolve_unit("gal/min")   # off a flow-meter tag
+            # -> {"uri": "http://qudt.org/vocab/unit/GAL_US-PER-MIN",
+            #     "label": "US Gallon per Minute", "symbol": "gal/min",
+            #     "quantity_kind": ".../quantitykind/VolumeFlowRate",
+            #     "multiplier": 6.30901964e-05, "offset": 0.0}
+        """
         url = f"{self.base_url}/resolve_unit"
         response = requests.post(url, json={"identifier": identifier})
         if not response.ok:

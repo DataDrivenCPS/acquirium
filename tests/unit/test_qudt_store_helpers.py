@@ -1,8 +1,5 @@
 """Tests for pure helpers in acquirium.TextMatch.qudt_store."""
 
-import pytest
-from pathlib import Path
-
 from acquirium.TextMatch.qudt_store import _split_local_name, _build_surfaces, QUDTStore
 
 
@@ -59,30 +56,46 @@ class TestBuildSurfaces:
         assert "degC" in result
 
 
-# ── QUDTStore gz cache ─────────────────────────────────────
+# ── QUDTStore.extract_concepts (graph-fed) ─────────────────
 
 
-class TestGzCache:
-    def test_save_and_load_roundtrip(self, tmp_path):
-        data = [
-            {"uri": "urn:unit1", "kind": "unit", "label": "Meter", "surfaces": ["meter", "m"]},
-            {"uri": "urn:unit2", "kind": "unit", "label": "Kelvin", "surfaces": ["kelvin", "K"]},
+class TestExtractConcepts:
+    def _graph(self):
+        from rdflib import Graph
+
+        g = Graph()
+        g.parse(
+            data="""
+            @prefix qudt: <http://qudt.org/schema/qudt/> .
+            @prefix unit: <http://qudt.org/vocab/unit/> .
+            @prefix qk:   <http://qudt.org/vocab/quantitykind/> .
+            @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+            unit:KiloGM a qudt:Unit ; rdfs:label "Kilogram" ;
+                qudt:symbol "kg" ; qudt:hasQuantityKind qk:Mass .
+            qk:Mass a qudt:QuantityKind ; rdfs:label "Mass" ;
+                qudt:applicableUnit unit:KiloGM .
+            """,
+            format="turtle",
+        )
+        return g
+
+    def test_unit_extraction(self):
+        c = QUDTStore.extract_concepts(
+            self._graph(), "http://qudt.org/schema/qudt/Unit"
+        )
+        assert len(c) == 1
+        u = c[0]
+        assert u["uri"] == "http://qudt.org/vocab/unit/KiloGM"
+        assert u["kind"] == "unit"
+        assert "kg" in u["surfaces"] and "kilogram" in u["surfaces"]
+        assert u["related"] == ["http://qudt.org/vocab/quantitykind/Mass"]
+
+    def test_quantity_kind_extraction(self):
+        c = QUDTStore.extract_concepts(
+            self._graph(), "http://qudt.org/schema/qudt/QuantityKind"
+        )
+        assert [x["uri"] for x in c] == [
+            "http://qudt.org/vocab/quantitykind/Mass"
         ]
-        path = tmp_path / "test.json.gz"
-        QUDTStore._save_gz(path, data)
-        loaded = QUDTStore._load_gz(path)
-        assert loaded == data
-
-    def test_load_missing_file(self, tmp_path):
-        path = tmp_path / "nonexistent.json.gz"
-        result = QUDTStore._load_gz(path)
-        assert result == []
-
-    def test_load_cached_uris(self, tmp_path):
-        store = QUDTStore(data_dir=tmp_path)
-        units = [{"uri": "urn:u1"}, {"uri": "urn:u2"}]
-        qks = [{"uri": "urn:qk1"}]
-        QUDTStore._save_gz(store._units_path, units)
-        QUDTStore._save_gz(store._qk_path, qks)
-        uris = store._load_cached_uris()
-        assert uris == {"urn:u1", "urn:u2", "urn:qk1"}
+        assert c[0]["kind"] == "quantity_kind"
+        assert c[0]["related"] == ["http://qudt.org/vocab/unit/KiloGM"]

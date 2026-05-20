@@ -43,13 +43,11 @@ class _DirectClient:
         rdf_graph: str,
         format: str = "turtle",
         replace: bool = False,
-        wait_for_embedding: bool = False,
     ) -> None:
         self._manager.insert_graph(
             rdf_graph=rdf_graph,
             format=format,
             replace=replace,
-            wait_for_embedding=wait_for_embedding,
         )
 
     def sparql_query(self, query: str, use_union: bool = True) -> dict:
@@ -145,11 +143,9 @@ class DirectAcquirium(Acquirium):
         rdf_graph: str,
         format: str = "turtle",
         replace: bool = True,
-        wait_for_embedding: bool = False,
     ) -> None:
         self._manager.insert_graph(
             rdf_graph=rdf_graph,
             format=format,
             replace=replace,
-            wait_for_embedding=wait_for_embedding,
         )

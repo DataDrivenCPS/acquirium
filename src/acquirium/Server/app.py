@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any, Optional, Iterator
 
-from fastapi import Body, FastAPI, HTTPException, Request
+from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse, Response
 from dateutil import parser as dtparser
 from pydantic import BaseModel, Field
@@ -130,11 +130,22 @@ class InsertGraphRequest(BaseModel):
     rdf_graph: str = Field(..., description="File path or RDF text")
     format: str = "turtle"
     replace: bool = True
-    wait_for_embedding: bool = False
 
 
 class TimeseriesInfoRequest(BaseModel):
     uris: list[str]
+
+
+class RecordFieldSpec(BaseModel):
+    name: str
+    text: str
+    kind: Optional[str] = None
+
+
+class ResolveRecordRequest(BaseModel):
+    fields: list[RecordFieldSpec]
+    top_k: int = 5
+    min_score: float = 0.5
 
 
 @asynccontextmanager
@@ -223,9 +234,8 @@ def insert_graph(req: InsertGraphRequest) -> dict[str, Any]:
             rdf_graph=req.rdf_graph,
             format=req.format,
             replace=req.replace,
-            wait_for_embedding=req.wait_for_embedding,
         )
-        return {"ok": True, "embedding_ready": req.wait_for_embedding}
+        return {"ok": True, "embedding_ready": True}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -468,9 +478,19 @@ def resolve_text(
     kind: Optional[str] = None,
     top_k: int = 5,
     min_score: float = 0.5,
+    context: Optional[list[str]] = Query(None),
 ) -> dict[str, Any]:
     matches = app.state.manager.resolve_text(
-        text=text, kind=kind, top_k=top_k, min_score=min_score
+        text=text, kind=kind, top_k=top_k, min_score=min_score, context=context
+    )
+    return {"matches": matches}
+
+
+@app.post("/resolve_record")
+def resolve_record(req: ResolveRecordRequest) -> dict[str, Any]:
+    fields = {f.name: (f.text, f.kind) for f in req.fields}
+    matches = app.state.manager.resolve_record(
+        fields, top_k=req.top_k, min_score=req.min_score
     )
     return {"matches": matches}
 

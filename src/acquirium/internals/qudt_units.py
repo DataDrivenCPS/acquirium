@@ -169,6 +169,14 @@ class QUDTUnitConverter:
         surprising fuzzy matches. If multiple candidates satisfy the lookup, the
         first in graph order is returned; the caller can always disambiguate by
         passing the full URI.
+
+        Example::
+
+            # turbidimeter unit symbol off a plant tag
+            resolve_unit("NTU")   # or "NTU"/the full UNIT.NTU URI
+            # -> UnitDefinition(uri=UNIT.NTU, label="Nephelometric Turbidity"
+            #                    " Unit", symbol="NTU", multiplier=1.0,
+            #                    offset=0.0, ...)
         """
 
         # 1) Direct URI check

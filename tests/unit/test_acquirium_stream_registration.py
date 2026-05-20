@@ -68,7 +68,7 @@ def test_register_stream_without_point_uri_writes_only_ref_node():
     aq = Acquirium.__new__(Acquirium)
     aq.client = MagicMock()
 
-    aq.register_stream(source_id="demo-source", ref_name="cpu_percent", value_kind="numeric")
+    aq.register_streams([{"source_id": "demo-source", "ref_name": "cpu_percent", "value_kind": "numeric"}])
 
     aq.client.insert_graph.assert_called_once()
     graph_text = aq.client.insert_graph.call_args[0][0]

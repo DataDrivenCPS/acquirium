@@ -66,8 +66,11 @@ services:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()\""]
       interval: 5s
       timeout: 2s
-      retries: 60
-      start_period: 20s
+      # Cold start is heavy: ontoenv loads ~535k triples into Oxigraph
+      # (~76s) then the embedding indexes build (slow in-container, no
+      # GPU). make test runs with recreate so it pays this every time.
+      retries: 120
+      start_period: 180s
     profiles:
       - server
 

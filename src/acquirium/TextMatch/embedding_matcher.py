@@ -7,11 +7,13 @@ import re
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
 logger = logging.getLogger("acquirium.embedding_matcher")
+
+MatchStage = Literal["exact", "semantic"]
 
 
 @dataclass
@@ -21,6 +23,21 @@ class ResolveResult:
     label: str
     score: float
     matched_surface: str
+    # "exact" (surface lookup, score 1.0) or "semantic" (embedding similarity)
+    match_stage: MatchStage = "semantic"
+    # URIs this concept links to (e.g. a unit's quantity kinds), used for
+    # context disambiguation in Manager.resolve_text. Empty if none captured.
+    related: tuple[str, ...] = ()
+
+
+def _collapse_ws(text: str) -> str:
+    """Strip and collapse whitespace runs, preserving case."""
+    return re.sub(r"\s+", " ", text.strip())
+
+
+def _normalize_surface(text: str) -> str:
+    """Case-folded exact-match key (whitespace-collapsed, lower-cased)."""
+    return _collapse_ws(text).lower()
 
 
 def _split_local_name(uri: str) -> list[str]:
@@ -52,10 +69,39 @@ class EmbeddingMatcher:
         self._model = None  # lazy
         self._lock = threading.Lock()
 
-        # Index state — always read/swapped under self._lock
+        # Index state — read/swapped under self._lock via _set_index().
         self._vectors: np.ndarray | None = None  # shape (N, dim), L2-normalized
-        self._meta: list[dict[str, str]] = []  # parallel list: uri, kind, label, surface
+        self._meta: list[dict[str, Any]] = []  # parallel: uri, kind, label, surface, related
         self._index_hash: str | None = None
+        # surface -> meta row indices, derived from _meta. Two keyings:
+        # _cs preserves case (QUDT symbols are case-significant: "kg" vs "kG"),
+        # the other is case-folded as a fallback.
+        self._surface_index: dict[str, list[int]] = {}
+        self._surface_index_cs: dict[str, list[int]] = {}
+
+    def _set_index(
+        self,
+        vectors: np.ndarray | None,
+        meta: list[dict[str, Any]],
+        index_hash: str | None,
+    ) -> None:
+        """Swap the index under the lock and rebuild the surface map.
+
+        All index mutations (build, update, cache load) route through here so
+        the surface maps stay in sync with _meta.
+        """
+        surface_index: dict[str, list[int]] = {}
+        surface_index_cs: dict[str, list[int]] = {}
+        for i, m in enumerate(meta):
+            surface = m["surface"]
+            surface_index.setdefault(_normalize_surface(surface), []).append(i)
+            surface_index_cs.setdefault(_collapse_ws(surface), []).append(i)
+        with self._lock:
+            self._vectors = vectors
+            self._meta = meta
+            self._index_hash = index_hash
+            self._surface_index = surface_index
+            self._surface_index_cs = surface_index_cs
 
     def _ensure_model(self) -> None:
         if self._model is not None:
@@ -84,14 +130,15 @@ class EmbeddingMatcher:
         return hashlib.sha256(canonical.encode()).hexdigest()
 
     @staticmethod
-    def _build_surfaces_and_meta(concepts: list[dict[str, Any]]) -> tuple[list[str], list[dict[str, str]]]:
+    def _build_surfaces_and_meta(concepts: list[dict[str, Any]]) -> tuple[list[str], list[dict[str, Any]]]:
         """Extract surface strings and parallel metadata from concept dicts."""
         surfaces: list[str] = []
-        meta: list[dict[str, str]] = []
+        meta: list[dict[str, Any]] = []
         for concept in concepts:
             uri = concept["uri"]
             kind = concept.get("kind", "class")
             label = concept.get("label", "")
+            related = concept.get("related", [])
             concept_surfaces = concept.get("surfaces", [])
 
             if not concept_surfaces:
@@ -110,6 +157,7 @@ class EmbeddingMatcher:
                         "kind": kind,
                         "label": label or surface,
                         "surface": surface,
+                        "related": related,
                     }
                 )
         return surfaces, meta
@@ -129,27 +177,31 @@ class EmbeddingMatcher:
 
         if not surfaces:
             logger.warning("No surfaces to embed; index will be empty")
-            with self._lock:
-                self._vectors = np.empty((0, 1), dtype=np.float32)
-                self._meta = []
-                self._index_hash = new_hash
+            self._set_index(np.empty((0, 1), dtype=np.float32), [], new_hash)
             return
 
         logger.info("Embedding %d surfaces from %d concepts...", len(surfaces), len(concepts))
         # Embed outside the lock (expensive I/O)
         vectors = self._embed(surfaces)
-
-        # Atomic swap under lock
-        with self._lock:
-            self._vectors = vectors
-            self._meta = meta
-            self._index_hash = new_hash
+        self._set_index(vectors, meta, new_hash)
 
         # Save to disk cache
         if self._cache_dir:
             self._save_cache(new_hash)
 
         logger.info("Embedding index built with %d entries", len(meta))
+
+    @staticmethod
+    def _row_to_result(m: dict[str, Any], score: float, stage: MatchStage) -> ResolveResult:
+        return ResolveResult(
+            uri=m["uri"],
+            kind=m["kind"],
+            label=m["label"],
+            score=score,
+            matched_surface=m["surface"],
+            match_stage=stage,
+            related=tuple(m.get("related", ())),
+        )
 
     def query(
         self,
@@ -158,34 +210,105 @@ class EmbeddingMatcher:
         top_k: int = 5,
         min_score: float = 0.5,
     ) -> list[ResolveResult]:
-        # Snapshot state under lock so reads are consistent
+        """Resolve *text* to concepts.
+
+        Stage 1: normalized surface lookup (score 1.0). Stage 2: embedding
+        cosine similarity, filling remaining slots and skipping URIs already
+        returned by stage 1. Stage 1 first so short symbols ("kg", "mg/L")
+        don't depend on cosine similarity over very short tokens.
+        """
+        # Snapshot together so _vectors / _meta / surface maps stay aligned.
         with self._lock:
             vectors = self._vectors
             meta = self._meta
+            surface_index = self._surface_index
+            surface_index_cs = self._surface_index_cs
 
         if vectors is None or len(meta) == 0:
             return []
 
+        results: list[ResolveResult] = []
+        seen_uris: set[str] = set()
+
+        exact_hits = self._exact_stage(
+            text, kind, meta, surface_index, surface_index_cs, top_k
+        )
+        for r in exact_hits:
+            if r.uri not in seen_uris:
+                seen_uris.add(r.uri)
+                results.append(r)
+
+        if len(results) < top_k:
+            semantic_hits = self._semantic_stage(
+                text, kind, vectors, meta, top_k, min_score, seen_uris
+            )
+            results.extend(semantic_hits)
+
+        logger.debug(
+            "query(%r, kind=%s) -> %d exact + %d semantic",
+            text, kind, len(exact_hits), len(results) - len(exact_hits),
+        )
+        return results[:top_k]
+
+    def _exact_stage(
+        self,
+        text: str,
+        kind: str | None,
+        meta: list[dict[str, Any]],
+        surface_index: dict[str, list[int]],
+        surface_index_cs: dict[str, list[int]],
+        top_k: int,
+    ) -> list[ResolveResult]:
+        """Exact surface lookup (score 1.0).
+
+        Case-sensitive matches first, then case-folded ones — QUDT symbols
+        are case-significant ("kg"=kilogram vs "kG"=kilogauss), so without
+        context the case-exact reading should lead. Both are returned so a
+        context rerank can still pick a case-folded alternative.
+        """
+        cs_rows = surface_index_cs.get(_collapse_ws(text), [])
+        cf_rows = surface_index.get(_normalize_surface(text), [])
+        hits: list[ResolveResult] = []
+        seen: set[str] = set()
+        for idx in (*cs_rows, *cf_rows):
+            m = meta[idx]
+            if kind and m["kind"] != kind:
+                continue
+            if m["uri"] in seen:
+                continue
+            seen.add(m["uri"])
+            hits.append(self._row_to_result(m, 1.0, "exact"))
+            if len(hits) >= top_k:
+                break
+        return hits
+
+    def _semantic_stage(
+        self,
+        text: str,
+        kind: str | None,
+        vectors: np.ndarray,
+        meta: list[dict[str, Any]],
+        top_k: int,
+        min_score: float,
+        exclude_uris: set[str],
+    ) -> list[ResolveResult]:
+        """Embedding cosine-similarity search, skipping already-seen URIs."""
         q_vec = self._embed([text])  # shape (1, dim)
         scores = (q_vec @ vectors.T).squeeze(0)  # shape (N,)
 
-        # Filter by kind if specified
         if kind:
             mask = np.array([m["kind"] == kind for m in meta], dtype=bool)
             scores = np.where(mask, scores, -1.0)
 
-        # Get top_k indices
-        # We need more than top_k to handle deduplication
+        # Over-fetch so dedup by URI still leaves enough candidates.
         n_candidates = min(len(scores), top_k * 3)
         if n_candidates >= len(scores):
-            # All entries fit, just sort
             top_indices = np.argsort(-scores)
         else:
             top_indices = np.argpartition(-scores, n_candidates)[:n_candidates]
             top_indices = top_indices[np.argsort(-scores[top_indices])]
 
-        # Deduplicate by URI (keep highest score per URI)
-        seen_uris: set[str] = set()
+        seen_uris = set(exclude_uris)
         results: list[ResolveResult] = []
         for idx in top_indices:
             s = float(scores[idx])
@@ -195,18 +318,9 @@ class EmbeddingMatcher:
             if m["uri"] in seen_uris:
                 continue
             seen_uris.add(m["uri"])
-            results.append(
-                ResolveResult(
-                    uri=m["uri"],
-                    kind=m["kind"],
-                    label=m["label"],
-                    score=s,
-                    matched_surface=m["surface"],
-                )
-            )
+            results.append(self._row_to_result(m, s, "semantic"))
             if len(results) >= top_k:
                 break
-
         return results
 
     def update_index(
@@ -265,11 +379,8 @@ class EmbeddingMatcher:
                     unique.append({"uri": m["uri"]})
             new_hash = self._concepts_hash(unique)
 
-        # 4. Atomic swap under lock
-        with self._lock:
-            self._vectors = vectors
-            self._meta = meta
-            self._index_hash = new_hash
+        # 4. Atomic swap (also rebuilds the exact-match surface index)
+        self._set_index(vectors, meta, new_hash)
 
         if self._cache_dir:
             self._save_cache(new_hash)
@@ -304,10 +415,7 @@ class EmbeddingMatcher:
                 return False
             vectors = np.load(vec_path)["vectors"]
             meta = json.loads(meta_path.read_text())
-            with self._lock:
-                self._vectors = vectors
-                self._meta = meta
-                self._index_hash = hash_val
+            self._set_index(vectors, meta, hash_val)
             return True
         except Exception:
             logger.warning("Failed to load embedding cache, will rebuild")
