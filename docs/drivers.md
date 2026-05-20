@@ -176,6 +176,12 @@ Override `on_graph_change()` when the driver depends on graph-declared
 configuration. The runner polls `GET /graph_version` before each tick and calls
 `on_graph_change()` only when the version changes after `setup()`.
 
+`on_graph_change()` runs on a separate thread from `tick()` and event
+callbacks. If it mutates state that those paths also read or write — caches,
+subscription sets, registered-stream bookkeeping — guard that state with a
+lock. `register_stream()` and `insert_observations()` are already safe to call
+concurrently; only driver-owned state needs synchronization.
+
 MQTT is the main example: it queries the graph for new `ref:MQTTReference`
 nodes, registers the associated streams, and subscribes to newly discovered
 topics.
