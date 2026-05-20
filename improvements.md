@@ -54,9 +54,9 @@ If you have suggestions or improvement ideas, feel free to open an issue, submit
 - [x] Improve testing mechanism:
     - [x] Use github actions 
     - [x] Write unit tests that doesn’t require backend running (or create a fake backend)
-- [ ] CSV reference ingestion
-    - [ ] Support multiple csv files (e.g. all files in a folder or multiple names)
-    - [ ] Support column name instead of number to specify csvs with different schemas (or also multiple schemas for different csvs)
+- [x] CSV reference ingestion
+    - [x] Support multiple csv files (e.g. all files in a folder or multiple names)
+    - [x] Support column name instead of number to specify csvs with different schemas (or also multiple schemas for different csvs)
 
 
 ### Examples and Demos
