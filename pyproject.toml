@@ -1,13 +1,34 @@
 [project]
 name = "acquirium"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.1.1"
+description = "Acquirium: A data-metadata management platform for water treatment systems"
 readme = "README.md"
 authors = [
     { name = "Gabe Fierro", email = "gtfierro@mines.edu" },
     { name = "Mete Saka", email = "saka@mines.edu"}
 ]
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = [
+    "water-treatment",
+    "metadata",
+    "knowledge-graph",
+    "ontology",
+    "time-series",
+    "rdf",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Database",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
 
 dependencies = [
     "adbc-driver-postgresql>=1.9.0",
@@ -27,7 +48,6 @@ dependencies = [
     "pydantic>=2.12.5",
     "pyontoenv==0.4.0a4",
     "pyoxigraph>=0.5.2",
-    "pytest>=9.0.2",
     "python-dateutil>=2.9.0.post0",
     "python-multipart>=0.0.21",
     "requests>=2.32.5",
@@ -61,8 +81,8 @@ build-backend = "hatchling.build"
 dev-dependencies = [
     "openpyxl>=3.1.5",
     "q>=2.7",
+    "pytest>=9.0.2",
     "pytest-cov>=6.0",
-    "openpyxl>=3.1",
 ]
 no-build-isolation-package = ["pygit2"]
 

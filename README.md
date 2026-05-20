@@ -3,127 +3,143 @@ A Data-Metadata Framework for Water Treatment Plants
 
 Acquirium is a framework for storing, managing, querying, and integrating data and metadata for water treatment systems. It combines knowledge graphs and time series data to support analysis, monitoring, and experimentation.
 
-## Getting Started
+## Installation
 
-#### UV Package Manager
+From PyPI:
 
-This repository requires having [uv package manager](https://docs.astral.sh/uv/getting-started/installation/)
-
-After installing run this to make sure it's working:
-
-```
-uv sync
+```bash
+pip install acquirium
 ```
 
-#### Running the Acquirium Server:
+Optional extras for specific drivers:
 
-To run any example script using Acquirium, you must first start the backend services and Acquirium Server:
-```
-make up
-```
-
-If you want to recreate the instance (will delete all previously inserted data - graphs):
-
-```
-make up ACQUIRIUM_RECREATE=true
-```
-To stop:
-```
-make down
+```bash
+pip install "acquirium[mqtt]"       # MQTT ingestion driver
+pip install "acquirium[xlsx]"       # Excel ingestion driver
+pip install "acquirium[watertap]"   # WaterTAP simulation driver
 ```
 
-#### Running the WaterTAP and Streaming Simulations:
+Or with [uv](https://docs.astral.sh/uv/):
 
-To run the WaterTAP simulation, streaming simulator, and API examples, start Docker using the WaterTAP profile instead:
-
+```bash
+uv pip install acquirium
 ```
+
+For development from a clone:
+
+```bash
+git clone https://github.com/DataDrivenCPS/acquirium.git
+cd acquirium
+python -m venv .venv && source .venv/bin/activate
+pip install -e .
+# or: uv sync
+```
+
+## Quickstart
+
+Acquirium ships a single CLI entry point. Start the server and any configured drivers with:
+
+```bash
+acquirium server --config acquirium.toml
+```
+
+A sample `acquirium.toml` is included at the repository root. Key sections:
+
+- `[server]` — bind host/port, choice of timeseries backend (DuckDB or TimescaleDB), data directory.
+- `[driver]` — connection defaults applied to all drivers (server URL, port, tick interval).
+- `[[drivers]]` — drivers to start alongside the server.
+
+By default the server stores data on local disk — an embedded Oxigraph RDF store and a single DuckDB file under `data_dir`. **No external services are required for a fresh install.** For multi-worker or production deployments, switch the config to `timeseries_backend = "timescale"` and point `pg_dsn` at a Postgres + TimescaleDB instance.
+
+Override the bind host/port from the CLI if needed:
+
+```bash
+acquirium server --config acquirium.toml --host 127.0.0.1 --port 8000
+acquirium server --config acquirium.toml --reload          # uvicorn auto-reload
+```
+
+## Driver-only mode
+
+To run only `[[drivers]]` against a remote Acquirium server (no FastAPI on this host), set:
+
+```toml
+[server]
+enabled = false
+```
+
+and configure `[driver].server_url` / `server_port` to point at the remote instance. Then:
+
+```bash
+acquirium server --config acquirium.toml
+```
+
+When `enabled = false`, the `server` subcommand starts only the drivers.
+
+## Docker stack (optional)
+
+A `compose.yaml` is provided for an all-in-one local stack (Acquirium + TimescaleDB + Grafana):
+
+```bash
+make up                              # start
+make up ACQUIRIUM_RECREATE=true      # wipe data + start
+make down                            # stop
+```
+
+> By default each Docker run resets the system. To preserve data across runs, set `ACQUIRIUM_RECREATE=false` in `compose.yaml`.
+
+## WaterTAP integration
+
+The `watertap` extra installs the Python packages needed for the built-in WaterTAP driver:
+
+```bash
+pip install "acquirium[watertap]"
+acquirium server --config acquirium.toml   # with a [[drivers]] entry for WaterTAP
+```
+
+Some WaterTAP setups also require native extensions that are not installed by the extra:
+
+```bash
+pyomo download-extensions
+python -m pip install setuptools && pyomo build-extensions
+idaes get-extensions
+```
+
+For a full demo (WaterTAP + streaming simulator + API examples):
+
+```bash
 make watertap-up
-```
-
-After that you can run our API example:
-```
 uv run scripts/api_example.py
-```
-or the notebook examples
-[Example notebook](./notebooks/watertap-single-pump.ipynb)
-
-If you are running the built-in WaterTAP driver directly, enable the optional dependency set with:
-
-```bash
-uv run --extra watertap acquirium run acquirium.BuiltinDrivers.watertap:WaterTAPDriver --config acquirium.toml
-```
-
-Note that the `watertap` extra only installs the Python packages from `pyproject.toml`. Some WaterTAP setups also require separate PyNumero or IDAES extension installation steps; those native builds are not performed automatically by package extras.
-
-Typical setup commands are:
-
-```bash
-uv sync --extra watertap
-uv run pyomo download-extensions
-uv run --with setuptools pyomo build-extensions
-uv run idaes get-extensions
-```
-
-After you're done, run this to stop containers:
-
-```
+# or open notebooks/watertap-single-pump.ipynb
 make watertap-down
-```
-
-Note that every start of watertap workflow recreates the system (all data is lost)
-
-#### Running Tests
-
-To run pytest tests:
-```
-make test
-```
-
-#### Data Persistence Note
-
-By default, every Docker run resets the system. This means all stored data and metadata are deleted when containers restart.
-
-To preserve data across runs, set the following environment variable in compose.yaml:
-```
-ACQUIRIUM_RECREATE=false
 ```
 
 ## Logging
 
-Acquirium supports insert user logs for each entity in the system. To see how it works check [this script](./scripts/logging_example.py):
+Acquirium supports user logs attached to entities in the system. See [scripts/logging_example.py](./scripts/logging_example.py):
 
-```
-make up
-uv run scripts/logging_example.py
+```bash
+acquirium server --config acquirium.toml &
+python scripts/logging_example.py
 ```
 
 ## Text Matcher
 
-The application uses a text matcher for mapping natural language input to ontology URIs (classes, predicates, units, and quantity kinds).
+Acquirium uses a text matcher to map natural-language input to ontology URIs (classes, predicates, units, quantity kinds). The match algorithm uses **semantic embedding similarity** powered by [FastEmbed](https://github.com/qdrant/fastembed) (default model: `BAAI/bge-small-en-v1.5`). Each ontology concept is represented by one or more surface strings, embedded and stored in an in-memory vector index. At query time the input phrase is embedded and compared against the index using cosine similarity.
 
-The matching algorithm uses **semantic embedding similarity** powered by [FastEmbed](https://github.com/qdrant/fastembed) (default model: `BAAI/bge-small-en-v1.5`). Each ontology concept is represented by one or more surface strings, which are embedded and stored in an in-memory vector index. At query time, the input phrase is embedded and compared against the index using cosine similarity.
-
-#### How the index is built
-
-There are two separate matchers, each with its own embedding index:
+There are two separate matchers, each with its own index:
 
 1. **Graph matcher** — indexes classes and predicates from user-inserted RDF graphs. Surface strings are derived from `rdfs:label` values and CamelCase/underscore-split local names.
 2. **QUDT matcher** — indexes units and quantity kinds from the QUDT ontology (fetched over HTTP with local fallback). Surface strings include `rdfs:label`, `skos:prefLabel`, `skos:altLabel`, symbols, UCUM codes, and split local names.
 
-Both indexes are cached to disk and updated incrementally when graphs change.
+Both indexes are cached to disk and updated incrementally when graphs change. Results can be filtered by `kind` (`class`, `predicate`, `unit`, `quantity_kind`) and are ranked by cosine similarity, deduplicated to the highest-scoring surface per URI. See [scripts/text_matcher_example.py](./scripts/text_matcher_example.py) for usage.
 
-#### Querying
+## Tests
 
-Results can be filtered by `kind` (`class`, `predicate`, `unit`, `quantity_kind`) and are ranked by cosine similarity score. Duplicate URIs are deduplicated, keeping the highest-scoring surface match.
-
-[Here's](./scripts/text_matcher_example.py) an example of how the text matcher works.
-
-```
-make up
-uv run ./scripts/text_matcher_example.py
+```bash
+pytest tests/unit            # unit tests only
+make test                    # full suite (Docker required)
 ```
 
-## Improvements
-- Acquirium is still under development. We're working on the improvements listed [here](./improvements.md). 
+## Status
 
-Feel free to open an issue for noticed bugs or new feature ideas!
+Acquirium is under active development. Planned work is tracked in [improvements.md](./improvements.md). Bug reports and feature requests are welcome — please open an issue.
