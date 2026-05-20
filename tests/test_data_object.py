@@ -126,8 +126,11 @@ def test_metadata(acquirium_client_csv):
     meta = data.metadata()
     assert "data_alias" in meta.columns
     assert "point_uri" in meta.columns
-    assert "ref_uri" in meta.columns
+    assert "ref_uri" not in meta.columns
     assert not meta.is_empty()
+
+    meta_full = data.metadata(include_ref_uris=True)
+    assert "ref_uri" in meta_full.columns
 
 
 # ---- ref_info ----
