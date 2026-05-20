@@ -6,12 +6,12 @@ from pathlib import Path
 
 import polars as pl
 
-from acquirium.BuiltinDrivers._tabular_base import _TabularIngestBase
+from acquirium.BuiltinDrivers.tabular_base import TabularIngestBase
 
 logger = logging.getLogger("acquirium.csv_ingest")
 
 
-class CSVIngestDriver(_TabularIngestBase):
+class CSVIngestDriver(TabularIngestBase):
     """Watches a directory for CSV and TSV files and ingests new rows into Acquirium.
 
     Row positions are tracked in memory so only rows added since the last tick
@@ -42,6 +42,7 @@ class CSVIngestDriver(_TabularIngestBase):
         time_col     = "time"
         id_col       = "id"          # narrow only
         value_col    = "value"       # narrow only
+        skip_cols    = ["notes"]     # optional columns to ignore entirely
         date_format  = "%m/%d/%Y"    # optional; only needed for non-ISO date strings
         skip_rows    = [1, 3]        # or { "subdir/data.csv" = [2, 5] }
         encoding     = "utf8-lossy"  # "utf8", "utf8-lossy", "latin1", etc.
@@ -58,8 +59,7 @@ class CSVIngestDriver(_TabularIngestBase):
 
     _glob_patterns = ("*.csv", "*.tsv")
 
-    def setup(self) -> None:
-        self._setup_common()
+    def configure_tabular_driver(self) -> None:
         self._encoding: str = self.config.get("driver", {}).get("encoding", "utf8-lossy")
         logger.info("csv_ingest watching %s", self._watch_dir)
 
@@ -75,12 +75,14 @@ class CSVIngestDriver(_TabularIngestBase):
     ) -> pl.DataFrame:
         sep = "\t" if path.suffix.lower() == ".tsv" else ","
         skip = self.skip_rows_for(path)
+        include_cols = self._included_columns(path, sep)
         if skip:
             return pl.read_csv(
                 StringIO(self._filtered_csv_text(path)),
                 separator=sep, try_parse_dates=True,
                 skip_rows_after_header=row_offset,
                 encoding=self._encoding,
+                columns=include_cols,
                 schema_overrides=schema_overrides,
             )
         lf = pl.scan_csv(
@@ -89,7 +91,34 @@ class CSVIngestDriver(_TabularIngestBase):
         )
         if row_offset:
             lf = lf.slice(row_offset)
-        return lf.collect()
+        return lf.select(include_cols).collect()
+
+    def _included_columns(self, path: Path, sep: str) -> list[str]:
+        col_names = self._column_names(path, sep)
+        skip_cols = set(self.skip_cols(path, col_names))
+        include_cols = [name for name in col_names if name not in skip_cols]
+        if not include_cols:
+            raise ValueError(f"all columns were skipped for {path}")
+        return include_cols
+
+    def _column_names(self, path: Path, sep: str) -> list[str]:
+        if self.skip_rows_for(path):
+            df = pl.read_csv(
+                StringIO(self._filtered_csv_text(path)),
+                separator=sep,
+                try_parse_dates=True,
+                encoding=self._encoding,
+                n_rows=0,
+            )
+        else:
+            df = pl.read_csv(
+                path,
+                separator=sep,
+                try_parse_dates=True,
+                encoding=self._encoding,
+                n_rows=0,
+            )
+        return [str(name) for name in df.columns]
 
     def _filtered_csv_text(self, path: Path) -> str:
         skip_rows = set(self.skip_rows_for(path))

@@ -5,12 +5,12 @@ from pathlib import Path
 
 import polars as pl
 
-from acquirium.BuiltinDrivers._tabular_base import _TabularIngestBase
+from acquirium.BuiltinDrivers.tabular_base import TabularIngestBase
 
 logger = logging.getLogger("acquirium.xlsx_ingest")
 
 
-class XLSXIngestDriver(_TabularIngestBase):
+class XLSXIngestDriver(TabularIngestBase):
     """Watches a directory for Excel (XLSX) files and ingests new rows into Acquirium.
 
     Row positions are tracked in memory so only rows added since the last tick
@@ -31,6 +31,7 @@ class XLSXIngestDriver(_TabularIngestBase):
         time_col     = "time"
         id_col       = "id"          # narrow only
         value_col    = "value"       # narrow only
+        skip_cols    = ["notes"]     # optional columns to ignore entirely
         date_format  = "%m/%d/%Y"    # optional; only needed for non-ISO date strings
         sheets       = ["Sheet1"]    # omit to read the first sheet only
 
@@ -45,8 +46,7 @@ class XLSXIngestDriver(_TabularIngestBase):
 
     _glob_patterns = ("*.xlsx",)
 
-    def setup(self) -> None:
-        self._setup_common()
+    def configure_tabular_driver(self) -> None:
         raw_sheets = self.config.get("driver", {}).get("sheets", None)
         self._sheets: list[str] | None = list(raw_sheets) if raw_sheets else None
         logger.info("xlsx_ingest watching %s", self._watch_dir)
@@ -66,4 +66,7 @@ class XLSXIngestDriver(_TabularIngestBase):
                 df = result
         else:
             df = pl.read_excel(path, engine="calamine")
+        skip_cols = set(self.skip_cols(path, [str(name) for name in df.columns]))
+        if skip_cols:
+            df = df.drop(list(skip_cols))
         return df.slice(row_offset)

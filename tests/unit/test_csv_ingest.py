@@ -10,7 +10,7 @@ import polars as pl
 import pytest
 from rdflib import Graph, Literal
 
-from acquirium.BuiltinDrivers._tabular_base import _safe_name
+from acquirium.BuiltinDrivers.tabular_base import _safe_name
 from acquirium.BuiltinDrivers.csv_ingest import CSVIngestDriver
 from acquirium.Client.acquirium import Acquirium
 from acquirium.internals.models import compute_ref_uri
@@ -148,6 +148,57 @@ def test_parse_wide_skip_rows_by_file(tmp_path):
     assert rows == 1
     assert batch["temp"] == [(datetime(2024, 1, 2, tzinfo=timezone.utc), 23.0)]
     assert batch["rh"] == [(datetime(2024, 1, 2, tzinfo=timezone.utc), 60.0)]
+
+
+def test_parse_wide_skip_cols_from_config(tmp_path):
+    p = tmp_path / "wide_skip_cols.csv"
+    p.write_text(
+        "time,temp,rh,notes\n"
+        "2024-01-01T00:00:00Z,22.5,55.0,ok\n"
+        "2024-01-02T00:00:00Z,23.0,60.0,still ok\n"
+    )
+    driver = make_driver({"skip_cols": ["notes"]}, tmp_path=tmp_path)
+    driver.setup()
+    batch, rows = driver.parse_file(p)
+    assert rows == 2
+    assert set(batch) == {"temp", "rh"}
+
+
+def test_tick_allows_subclass_control_of_registration(tmp_path):
+    captured = []
+
+    class CustomRegistrationDriver(CSVIngestDriver):
+        def read_frame(self, path: Path, row_offset: int = 0) -> tuple[pl.DataFrame, int]:
+            return pl.DataFrame({
+                "ts": [datetime(2024, 1, 1, tzinfo=timezone.utc)],
+                "ref_name": ["TOTAL POTABLE WATER PRODUCED (gal)"],
+                "value": [1.0],
+            }), 1
+
+        def ensure_streams_registered(
+            self, path: Path, source_id: str, df: pl.DataFrame, value_kinds: dict[str, str]
+        ) -> None:
+            captured.append((path.name, source_id, df["ref_name"].to_list(), dict(value_kinds)))
+            self._registered.setdefault(source_id, set()).update(value_kinds)
+
+    aq = MagicMock()
+    aq.client = MagicMock()
+    aq.register_datasource.return_value = "csv_files"
+    aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 1}
+
+    p = tmp_path / "one.csv"
+    p.write_text("unused\n")
+    driver = CustomRegistrationDriver(aq, {"driver": {"watch_dir": str(tmp_path)}})
+    driver.setup()
+    driver.tick()
+
+    assert captured == [(
+        "one.csv",
+        str(p),
+        ["TOTAL POTABLE WATER PRODUCED (gal)"],
+        {"TOTAL_POTABLE_WATER_PRODUCED_gal": "numeric"},
+    )]
+    aq.register_streams.assert_not_called()
 
 
 def test_parse_wide_date_only_col(tmp_path):
