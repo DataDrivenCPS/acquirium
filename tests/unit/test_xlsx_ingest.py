@@ -6,9 +6,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import openpyxl
 import pytest
 
-from acquirium.BuiltinDrivers._tabular_base import _safe_name
+from acquirium.BuiltinDrivers.tabular_base import _safe_name
 from acquirium.BuiltinDrivers.xlsx_ingest import XLSXIngestDriver
 
 
@@ -26,13 +27,23 @@ def make_driver(cfg_overrides: dict | None = None, tmp_path: Path | None = None)
 
 
 def _wide_xlsx(tmp_path: Path) -> Path:
-    import openpyxl
     p = tmp_path / "wide.xlsx"
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.append(["time", "temp", "rh"])
     ws.append(["2024-01-01T00:00:00", 22.5, 55.0])
     ws.append(["2024-01-02T00:00:00", 23.0, 60.0])
+    wb.save(p)
+    return p
+
+
+def _wide_xlsx_with_notes(tmp_path: Path) -> Path:
+    p = tmp_path / "wide_notes.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["time", "temp", "rh", "notes"])
+    ws.append(["2024-01-01T00:00:00", 22.5, 55.0, "ok"])
+    ws.append(["2024-01-02T00:00:00", 23.0, 60.0, "still ok"])
     wb.save(p)
     return p
 
@@ -66,6 +77,14 @@ def test_parse_xlsx_offset_past_end(tmp_path):
     batch, rows = driver.parse_file(_wide_xlsx(tmp_path), row_offset=10)
     assert rows == 0
     assert batch == {}
+
+
+def test_parse_xlsx_skip_cols_from_config(tmp_path):
+    driver = make_driver({"skip_cols": ["notes"]}, tmp_path=tmp_path)
+    driver.setup()
+    batch, rows = driver.parse_file(_wide_xlsx_with_notes(tmp_path))
+    assert rows == 2
+    assert set(batch) == {"temp", "rh"}
 
 
 # ------------------------------------------------------------------ loop / source_id
