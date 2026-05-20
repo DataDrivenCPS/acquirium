@@ -115,20 +115,6 @@ class Driver(ABC):
         state_file = self.config_dir() / ".acquirium" / "drivers" / f"{identifier}.json"
         return DriverState(state_file)
 
-
-def _sanitize_filename(name: str) -> str:
-    """Sanitize a string for use as a filename.
-
-    Replaces unsafe characters with underscores.
-    """
-    unsafe = "<>:" "|?*\\"
-    result = name
-    for char in unsafe:
-        result = result.replace(char, "_")
-    # Also replace spaces and other problematic chars
-    result = result.strip().replace(" ", "_")
-    return result
-
     @abstractmethod
     def setup(self) -> None:
         """One-time initialisation: register_datasource, insert RDF, etc.
@@ -159,6 +145,20 @@ def _sanitize_filename(name: str) -> str:
 
         Default is a no-op.  Override to close file ref URIs, flush buffers, etc.
         """
+
+
+def _sanitize_filename(name: str) -> str:
+    """Sanitize a string for use as a filename.
+
+    Replaces unsafe characters with underscores.
+    """
+    unsafe = "<>:" "|?*\\"
+    result = name
+    for char in unsafe:
+        result = result.replace(char, "_")
+    # Also replace spaces and other problematic chars
+    result = result.strip().replace(" ", "_")
+    return result
 
 
 class IngestDriver(Driver):
