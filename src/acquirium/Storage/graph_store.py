@@ -10,13 +10,10 @@ from pathlib import Path
 from ontoenv import OntoEnv
 from pyoxigraph import NamedNode, RdfFormat
 from rdflib import Dataset, Graph, Literal, RDF, URIRef
-from rdflib.namespace import XSD
-from rdflib.namespace import OWL
-
+from rdflib.namespace import XSD, OWL, NamespaceManager
 
 ## ALL NAMESPACES AND INTERNAL PREDICATES HERE ##
 from acquirium.internals.internals_namespaces import *
-
 from acquirium.internals.models import Point, PointCreateRequest
 from acquirium.internals.qudt_units import QUDTUnitConverter
 
@@ -353,6 +350,10 @@ class OxigraphGraphStore:
             "union_triples": len(self._data_closure()),
             "replaced": replace,
         }
+
+    def namespace_manager(self, use_union: bool = False) -> NamespaceManager:
+        graph = self._data_closure() if use_union else self._main_graph()
+        return graph.namespace_manager
 
     # -------------------- helpers --------------------
     def _materialize_point(self, subject: URIRef) -> Point:
