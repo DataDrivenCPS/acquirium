@@ -266,30 +266,6 @@ def export_graph(include_union: bool = True, format: str = "turtle"):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-@app.get("/namespace/curie")
-def compute_curie(uri: str) -> str:
-    """Compute the CURIE for a given URI using the union graph."""
-    try:
-        return app.state.manager.namespace_manager(use_union=True).compute_curie(uri)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-@app.get("/namespace/expand_curie")
-def expand_curie(curie: str) -> str:
-    """Expand a CURIE to its full URI using the union graph."""
-    try:
-        return app.state.manager.namespace_manager(use_union=True).expand_curie(curie)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-@app.get("/namespace/strip")
-def strip_namespace(uri: str) -> str:
-    """Strip the namespace from a URI, returning only the local name."""
-    try:
-        return app.state.manager.namespace_manager(use_union=True).compute_qname(uri)[2]
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
 @app.get("/namespace/list")
 def list_namespaces() -> dict[str, str]:
     """List all namespaces in the union graph as a mapping of prefix to URI."""
