@@ -69,23 +69,30 @@ class QUDTStore:
         for subj in graph.subjects(RDF.type, type_uri):  # noqa: F405
             uri = str(subj)
 
+            # Sort within each predicate so iteration order from the
+            # underlying store doesn't change the resulting concept dict —
+            # otherwise the cache hash drifts and warm starts re-embed.
             labels: list[str] = []
             display_label: str | None = None
             for pred in label_preds:
+                pred_labels: list[str] = []
                 for lit in graph.objects(subj, pred):
                     lang = getattr(lit, "language", None)
                     if lang and not lang.startswith("en"):
                         continue
                     text = str(lit)
-                    if text and text not in labels:
+                    if text:
+                        pred_labels.append(text)
+                for text in sorted(set(pred_labels)):
+                    if text not in labels:
                         labels.append(text)
                     if display_label is None:
                         display_label = text
 
-            symbols = list(graph.objects(subj, QUDT.symbol))  # noqa: F405
-            symbol = str(symbols[0]) if symbols else None
-            ucums = list(graph.objects(subj, QUDT.ucumCode))  # noqa: F405
-            ucum = str(ucums[0]) if ucums else None
+            symbols = sorted({str(s) for s in graph.objects(subj, QUDT.symbol)})  # noqa: F405
+            symbol = symbols[0] if symbols else None
+            ucums = sorted({str(u) for u in graph.objects(subj, QUDT.ucumCode)})  # noqa: F405
+            ucum = ucums[0] if ucums else None
 
             surfaces = _build_surfaces(uri, labels, symbol, ucum)
             if not surfaces:
