@@ -90,6 +90,15 @@ class TestInsertExport:
         assert "sensor1" in exported
         assert "sensor3" in exported
 
+    def test_insert_same_graph_is_idempotent(self, graph_store):
+        first = graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
+        second = graph_store.insert_graph(SAMPLE_TURTLE, format="turtle", replace=False)
+
+        assert first["changed"] is True
+        assert second["changed"] is False
+        assert second["main_triples"] == first["main_triples"]
+        assert second["union_triples"] == first["union_triples"]
+
     def test_insert_malformed_raises(self, graph_store):
         with pytest.raises(Exception):
             graph_store.insert_graph("this is not valid turtle {{{}}", format="turtle")

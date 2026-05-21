@@ -638,7 +638,10 @@ class Manager:
                 pass
 
         try:
-            self.graph_store.insert_graph(rdf_graph, format=format, replace=replace)
+            result = self.graph_store.insert_graph(rdf_graph, format=format, replace=replace)
+            if not result.get("changed", True):
+                logging.info("acquirium: graph insert was a no-op")
+                return
             logging.info("acquirium: inserted graph into store")
             self._sync_stream_refs_from_graph()
             # Embedding corpus is the static ontoenv vocabularies, not
@@ -1140,9 +1143,10 @@ class Manager:
           ?log a <{LOGBOOK}> .
         }}
         """
-        self.graph_store.sparql_update(q)
+        result = self.graph_store.sparql_update(q)
         logger.info("Deleted all log references for point %s from graph", point_uri)
-        self._notify_graph_change()
+        if result.get("changed", True):
+            self._notify_graph_change()
         return True
 
     def sparql_dict(self, query: str, use_union: bool = True) -> dict[str, Any]:

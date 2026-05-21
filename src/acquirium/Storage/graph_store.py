@@ -10,6 +10,7 @@ from pathlib import Path
 from ontoenv import OntoEnv
 from pyoxigraph import NamedNode, RdfFormat
 from rdflib import Dataset, Graph, Literal, RDF, URIRef
+from rdflib.compare import to_isomorphic
 from rdflib.namespace import XSD
 from rdflib.namespace import OWL
 
@@ -21,6 +22,11 @@ from acquirium.internals.models import Point, PointCreateRequest
 from acquirium.internals.qudt_units import QUDTUnitConverter
 
 _logger = logging.getLogger("acquirium.graph_store")
+
+
+def _graph_digest(graph: Graph) -> int:
+    """Stable digest for graph content, insensitive to blank-node renaming."""
+    return to_isomorphic(graph).graph_digest()
 
 
 def _literal_dt(value: datetime) -> Literal:
@@ -308,10 +314,14 @@ class OxigraphGraphStore:
         return {"columns": [str(c) for c in cols], "rows": rows}
 
     def sparql_update(self, update: str) -> dict:
-        self._main_graph().update(update)
+        main = self._main_graph()
+        before = _graph_digest(main)
+        main.update(update)
         self._commit()
+        if _graph_digest(main) == before:
+            return {"message": "update applied", "changed": False}
         self._invalidate_closure()
-        return {"message": "update applied"}
+        return {"message": "update applied", "changed": True}
 
     def export_graph(self, *, include_union: bool = True, format: str = "turtle") -> str:
         """Serialize for download: the data-graph closure, or just the data."""
@@ -329,7 +339,7 @@ class OxigraphGraphStore:
                 merged.add(triple)
         return merged.serialize(format=fmt)
 
-    def insert_graph(self, content: str | bytes | Graph, *, format: str = "turtle", replace: bool = False) -> dict[str, int]:
+    def insert_graph(self, content: str | bytes | Graph, *, format: str = "turtle", replace: bool = False) -> dict[str, int | bool]:
         """Parse incoming graph data and merge (or replace) into the main graph.
         format: turtle | n3 | xml | trix
         """
@@ -343,15 +353,38 @@ class OxigraphGraphStore:
 
         main = self._main_graph()
         if replace:
+            changed = _graph_digest(main) != _graph_digest(incoming)
+            if not changed:
+                return {
+                    "main_triples": len(main),
+                    "union_triples": len(self._data_closure()),
+                    "replaced": replace,
+                    "changed": False,
+                }
             main.remove((None, None, None))
-        for triple in incoming:
-            main.add(triple)
+            for triple in incoming:
+                main.add(triple)
+        else:
+            changed_count = 0
+            for triple in incoming:
+                if triple in main:
+                    continue
+                main.add(triple)
+                changed_count += 1
+            if changed_count == 0:
+                return {
+                    "main_triples": len(main),
+                    "union_triples": len(self._data_closure()),
+                    "replaced": replace,
+                    "changed": False,
+                }
         self._commit()
         self._invalidate_closure()
         return {
             "main_triples": len(main),
             "union_triples": len(self._data_closure()),
             "replaced": replace,
+            "changed": True,
         }
 
     # -------------------- helpers --------------------
