@@ -40,6 +40,19 @@ def _normalize_surface(text: str) -> str:
     return _collapse_ws(text).lower()
 
 
+def _canonicalize_jsonish(value: Any) -> Any:
+    """Recursively normalize concept payloads for stable hashing."""
+    if isinstance(value, dict):
+        return {k: _canonicalize_jsonish(value[k]) for k in sorted(value)}
+    if isinstance(value, list):
+        normalized = [_canonicalize_jsonish(item) for item in value]
+        return sorted(
+            normalized,
+            key=lambda item: json.dumps(item, sort_keys=True, ensure_ascii=True),
+        )
+    return value
+
+
 def _split_local_name(uri: str) -> list[str]:
     """Split a URI local name on CamelCase, underscores, and hyphens into lowercase tokens."""
     # Extract local name from URI
@@ -123,7 +136,14 @@ class EmbeddingMatcher:
     @staticmethod
     def _concepts_hash(concepts: list[dict[str, Any]]) -> str:
         canonical = json.dumps(
-            sorted(concepts, key=lambda c: c["uri"]),
+            sorted(
+                (_canonicalize_jsonish(concept) for concept in concepts),
+                key=lambda c: (
+                    c.get("uri", ""),
+                    c.get("kind", ""),
+                    c.get("label", ""),
+                ),
+            ),
             sort_keys=True,
             ensure_ascii=True,
         )
