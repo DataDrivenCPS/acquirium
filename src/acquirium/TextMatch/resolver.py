@@ -194,6 +194,7 @@ class ConceptResolver:
         fields: dict[str, tuple[str, str | None]],
         top_k: int = 5,
         min_score: float = 0.5,
+        context: list[str] | None = None,
     ) -> dict[str, list[ResolveResult]]:
         """Resolve a record's fields *jointly*.
 
@@ -214,8 +215,9 @@ class ConceptResolver:
              "AIT-330.MED": ("treated water", "class")}
 
         Each field's candidates are gathered independently (cascade
-        early-exit off, so the joint decode sees depth); then for every
-        :data:`RELATIONS` entry
+        early-exit off, so the joint decode sees depth), with optional
+        sibling-URI ``context`` applied as a per-field rerank hint; then
+        for every :data:`RELATIONS` entry
         whose two kinds are both present, the pair is chosen by
         ``argmax a.score + b.score + weight·compat(a, b)``. A side whose top
         candidate is an exact hit is pinned (the compat bonus may not demote
@@ -231,13 +233,14 @@ class ConceptResolver:
         # early-exit; the rest resolve with the normal cheap settings.
         def _gather(text: str, kind: str | None) -> list[ResolveResult]:
             joint = kind in _RELATION_KINDS
-            return self._ranked_candidates(
+            ranked = self._ranked_candidates(
                 text,
                 kind,
-                max(top_k, self._CONTEXT_FETCH_K) if joint else top_k,
+                max(top_k, self._CONTEXT_FETCH_K) if (joint or context) else top_k,
                 min_score,
-                early_exit=not joint,
+                early_exit=not (joint or context),
             )
+            return self._rerank_by_context(ranked, context) if context else ranked
 
         cands = {
             name: _gather(text, kind) for name, (text, kind) in fields.items()

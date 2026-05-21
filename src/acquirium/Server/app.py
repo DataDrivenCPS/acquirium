@@ -146,6 +146,7 @@ class ResolveRecordRequest(BaseModel):
     fields: list[RecordFieldSpec]
     top_k: int = 5
     min_score: float = 0.5
+    context: list[str] | None = None
 
 
 @asynccontextmanager
@@ -490,7 +491,7 @@ def resolve_text(
 def resolve_record(req: ResolveRecordRequest) -> dict[str, Any]:
     fields = {f.name: (f.text, f.kind) for f in req.fields}
     matches = app.state.manager.resolve_record(
-        fields, top_k=req.top_k, min_score=req.min_score
+        fields, top_k=req.top_k, min_score=req.min_score, context=req.context
     )
     return {"matches": matches}
 

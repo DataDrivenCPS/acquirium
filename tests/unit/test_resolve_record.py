@@ -143,3 +143,16 @@ class TestWeight:
         assert out["unit"][0].match_stage == "exact"
         # The uncertain sibling still resolves (against the pinned unit).
         assert out["quantity_kind"][0].uri == "q:DataRate"
+
+
+class TestExternalContext:
+    def test_context_reranks_record_candidates_before_joint_decode(self):
+        r = _resolver(qudt=[
+            _rr("u:KiloGAUSS", "unit", 0.92),
+            _rr("u:KiloGM", "unit", 0.90, related=["q:Mass"]),
+        ])
+        out = r.resolve_record(
+            {"unit": ("kg", "unit")},
+            context=["q:Mass"],
+        )
+        assert out["unit"][0].uri == "u:KiloGM"

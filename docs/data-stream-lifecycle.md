@@ -68,7 +68,7 @@ ref_uri  →  (point_uri, source_id, ref_name, value_kind)
 
 This table is populated three ways:
 
-- **On stream registration** (`register_stream` / `register_streams`): the client writes the graph triple `point_uri → ref:hasExternalReference → ref_uri` when `point_uri` is known, and the server's `_sync_stream_refs_from_graph` method scans for these triples and upserts them into the streams table.
+- **On stream registration** (`register_stream` / `register_streams`): the client always writes the managed reference node carrying `acq:sourceId` and `acq:refName`. When `point_uri` is known it also writes `point_uri → ref:hasExternalReference → ref_uri`. The server's `_sync_stream_refs_from_graph` method scans for managed reference nodes and upserts them into the streams table, recording `point_uri` when that link exists and `NULL` when it does not.
 - **On data insert** (`insert_timeseries`, `insert_timeseries_batch`, `insert_timeseries_arrow`): the server computes `ref_uri` from `(source_id, ref_name)` and upserts a streams row even when no `point_uri` is known yet. In that case `streams.point_uri` is `NULL`.
 - **On graph insert**: any time RDF is inserted, the server re-scans the graph for managed reference patterns.
 
@@ -113,7 +113,16 @@ The RDF graph for a managed stream looks like this:
     rdfs:label "mybox-system-metrics" .
 ```
 
-The `ref_uri` node (the UUID5 URI) is intentionally thin. It is an indirection node, not a description of the measurement itself. Semantic metadata goes on `point_uri`; provenance and routing metadata goes on `ref_uri`.
+The `ref_uri` node (the UUID5 URI) is intentionally thin when a semantic point
+exists. It is an indirection node first, and a semantic fallback second:
+
+- when `point_uri` is present, semantic metadata such as unit and quantity kind
+  is written on the point node, while provenance/routing metadata lives on
+  `ref_uri`
+- when `point_uri` is absent, Acquirium writes stream-level semantic metadata
+  such as unit, quantity kind, medium, substance, and data source on `ref_uri`
+  so the stream is still queryable and self-describing before a point node is
+  minted later
 
 ---
 
@@ -169,8 +178,22 @@ aq.register_streams([
 Registration:
 - writes the external reference node with `acq:sourceId`, `acq:refName`, `acq:valueKind`, and `ref:storedAt`
 - if `point_uri` is provided, also creates the point node and links it to the ref node
-- resolves plain-text unit/quantity_kind strings to QUDT URIs via the server's embedding matcher
+- writes semantic stream metadata (`unit`, `quantity_kind`, `medium`, `substance`, `data_source`) on the point node when `point_uri` exists, otherwise on the managed ref node
+- resolves plain-text semantic fields jointly per stream before writing them:
+  `unit` resolves as a unit, `quantity_kind` as a quantity kind, and
+  `medium`/`substance` as substances
+- passes through values already supplied as URI strings, `rdflib.URIRef`, or `None`
+- uses any already-known sibling URIs as disambiguation context for the remaining text fields during joint resolution
 - triggers `_sync_stream_refs_from_graph`, which upserts the mapping into the streams table
+
+The joint-resolution helper is intentionally conservative:
+
+- text fields are resolved together so a known quantity kind can disambiguate an
+  ambiguous unit, and vice versa
+- already-known URIs do not get re-resolved; they are forwarded unchanged and
+  only used as context
+- context is a rerank hint, not an override. Today it is mainly effective for
+  QUDT unit `<->` quantity-kind disambiguation
 
 Stream registration is purely a metadata operation. No timeseries rows are written.
 

@@ -400,6 +400,14 @@ CSV and XLSX drivers are polling tabular drivers. They watch a directory,
 normalize file rows to canonical observations, register streams as columns or
 IDs are discovered, and return rows for insertion by the common ingest base.
 
+When drivers call `aq.register_streams(...)`, the semantic metadata fields
+`unit`, `quantity_kind`, `medium`, and `substance` can be supplied either as
+plain text or as already-known URIs. Plain text is jointly resolved per stream
+before graph insertion; URI strings, `rdflib.URIRef`, and `None` values pass
+through unchanged. If `point_uri` is omitted, Acquirium still writes the
+managed reference node and stores that semantic metadata on the `ref_uri` so
+the stream remains queryable before a point node is added later.
+
 ```toml
 [[drivers]]
 spec = "acquirium.BuiltinDrivers.csv_ingest:CSVIngestDriver"

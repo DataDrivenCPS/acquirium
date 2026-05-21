@@ -3,6 +3,7 @@ from datetime import datetime
 import requests
 from requests import HTTPError
 from pathlib import Path
+from rdflib import URIRef
 import polars as pl
 import pyarrow.ipc as ipc
 from acquirium.internals.models import (
@@ -14,6 +15,7 @@ from acquirium.internals.models import (
     StreamInsert,
     RegisterDatasourceRequest,
     looks_like_uri,
+    split_record_uri_inputs,
 )
 from acquirium.internals.internals_namespaces import *
 from acquirium.Grafana.grafana_dashboard_creator import GrafanaDashboardCreator
@@ -281,15 +283,19 @@ class AcquiriumClient:
         fields: dict[str, tuple[str, Optional[str]]],
         top_k: int = 5,
         min_score: float = 0.5,
+        context: Optional[list[str]] = None,
     ) -> dict[str, list[dict]]:
         """Jointly resolve a record's fields (server ``/resolve_record``).
 
         ``fields`` maps a caller-chosen label to ``(text, kind)``. The
         label is echoed back unchanged as the result key and is never read
-        by the resolver; resolution is driven by ``(text, kind)``. Returns
-        the ranked matches per label; related fields (e.g. a unit and its
-        quantity kind) reinforce each other server-side. The example labels
-        below mimic a historian export's column headers (real-source feel).
+        by the resolver; resolution is driven by ``(text, kind)``.
+        ``context`` is an optional list of already-chosen sibling URIs
+        that should participate in disambiguation even when those siblings
+        themselves do not need resolving. Returns the ranked matches per
+        label; related fields (e.g. a unit and its quantity kind) reinforce
+        each other server-side. The example labels below mimic a historian
+        export's column headers (real-source feel).
 
         Example::
 
@@ -306,6 +312,8 @@ class AcquiriumClient:
             "top_k": top_k,
             "min_score": min_score,
         }
+        if context:
+            body["context"] = context
         response = requests.post(f"{self.base_url}/resolve_record", json=body)
         _raise_for_status(response)
         return response.json().get("matches", {})
@@ -314,15 +322,17 @@ class AcquiriumClient:
         self,
         fields: dict[str, tuple[Any, Optional[str]]],
         min_score: float = 0.5,
-    ) -> dict[str, Optional[str]]:
+    ) -> dict[str, str | URIRef | None]:
         """Jointly resolve a record to one best URI per field, or ``None``.
 
         Keys are caller-chosen labels echoed back unchanged (never read by
         the resolver); ``(text, kind)`` drives resolution. Per-field URI
         passthrough (like :meth:`resolve_concept`); the rest are resolved
         together so a confident field disambiguates an ambiguous sibling.
-        ``None`` inputs and unresolved fields map to ``None``. Example
-        labels below mimic a historian export's column headers.
+        ``None`` inputs and unresolved fields map to ``None``. URI/URIRef
+        inputs pass through unchanged and also become disambiguating context
+        for the remaining text fields. Example labels below mimic a historian
+        export's column headers.
 
         Example::
 
@@ -331,17 +341,14 @@ class AcquiriumClient:
             # -> {"FIT-101.EU":  "http://qudt.org/vocab/unit/GAL_US-PER-MIN",
             #     "FIT-101.QTY": ".../quantitykind/VolumeFlowRate"}
         """
-        out: dict[str, Optional[str]] = {}
-        to_resolve: dict[str, tuple[str, Optional[str]]] = {}
-        for name, (text, kind) in fields.items():
-            if text is None:
-                out[name] = None
-            elif looks_like_uri(text):
-                out[name] = text
-            else:
-                to_resolve[name] = (text, kind)
+        out, to_resolve, context = split_record_uri_inputs(fields)
         if to_resolve:
-            matches = self.resolve_record(to_resolve, top_k=1, min_score=min_score)
+            matches = self.resolve_record(
+                to_resolve,
+                top_k=1,
+                min_score=min_score,
+                context=context or None,
+            )
             for name in to_resolve:
                 m = matches.get(name) or []
                 out[name] = m[0]["uri"] if m else None
