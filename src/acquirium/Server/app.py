@@ -290,6 +290,16 @@ def strip_namespace(uri: str) -> str:
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+@app.get("/namespace/list")
+def list_namespaces() -> dict[str, str]:
+    """List all namespaces in the union graph as a mapping of prefix to URI."""
+    try:
+        manager = app.state.manager
+        ns_manager = manager.namespace_manager(use_union=True)
+        return {prefix: str(uri) for prefix, uri in ns_manager.namespaces()}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 #### APPS API ENDPOINTS ####
 
 
