@@ -767,6 +767,13 @@ class Manager:
         if len(table) == 0:
             return 0
         df = pl.from_arrow(table)
+        stream_count = df["ref_name"].n_unique()
+        logger.info(
+            "acquirium: insert_timeseries_arrow received %d row(s) across %d stream(s) for source_id=%s",
+            len(df),
+            stream_count,
+            source_id,
+        )
         ref_uri_map: dict[str, str] = {}
         value_kind_map: dict[str, str] = {}
         for name in df["ref_name"].unique().to_list():
@@ -781,7 +788,13 @@ class Manager:
             .drop("ref_name")
             .select(["ref_uri", "ts", "value", "value_kind"])
         )
-        return self.timescale.bulk_insert_polars(df)
+        inserted = self.timescale.bulk_insert_polars(df)
+        logger.info(
+            "acquirium: insert_timeseries_arrow wrote %d row(s) for source_id=%s",
+            inserted,
+            source_id,
+        )
+        return inserted
 
     def _registered_value_kind(self, ref_uri: str) -> str:
         value_kind = self.timescale.stream_value_kind(ref_uri)

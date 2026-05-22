@@ -8,11 +8,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ontoenv import OntoEnv
+import pyoxigraph as ox
 from pyoxigraph import NamedNode, RdfFormat
 from rdflib import Dataset, Graph, Literal, RDF, URIRef
-from rdflib.compare import to_isomorphic
 from rdflib.namespace import XSD
 from rdflib.namespace import OWL
+from oxrdflib.store import from_ox
 
 
 ## ALL NAMESPACES AND INTERNAL PREDICATES HERE ##
@@ -22,11 +23,6 @@ from acquirium.internals.models import Point, PointCreateRequest
 from acquirium.internals.qudt_units import QUDTUnitConverter
 
 _logger = logging.getLogger("acquirium.graph_store")
-
-
-def _graph_digest(graph: Graph) -> int:
-    """Stable digest for graph content, insensitive to blank-node renaming."""
-    return to_isomorphic(graph).graph_digest()
 
 
 def _literal_dt(value: datetime) -> Literal:
@@ -64,6 +60,16 @@ def _external_uri(subject: URIRef) -> str:
     return uri_str
 
 
+def _graph_affects_closure(graph: Graph) -> bool:
+    """Return True if *graph* can change owl:imports-driven closure."""
+    for s, p, o in graph:
+        if p == OWL.imports:
+            return True
+        if p == RDF.type and o == OWL.Ontology:
+            return True
+    return False
+
+
 class _OntoenvOxigraphStore:
     """ontoenv graph-store protocol over the shared Oxigraph dataset.
 
@@ -81,8 +87,6 @@ class _OntoenvOxigraphStore:
     def add_graph(self, iri: str, graph: Graph, overwrite: bool = False) -> None:
         ctx = self._ds.graph(URIRef(iri))
         if len(ctx) and not overwrite:
-            return
-        if len(ctx) and overwrite and _graph_digest(ctx) == _graph_digest(graph):
             return
         ctx.remove((None, None, None))
         # rdflib's per-triple ctx.add() crosses the Rust FFI once per triple
@@ -120,9 +124,7 @@ class _OntoenvOxigraphStore:
 
 
 class OxigraphGraphStore:
-    """Authoritative ontoenv source store plus a derived Oxigraph query cache."""
-
-    _UNION_GRAPH_URI = URIRef("urn:acquirium:internal:union")
+    """Authoritative ontoenv source store plus an in-memory dependency cache."""
 
     def __init__(
         self,
@@ -139,22 +141,20 @@ class OxigraphGraphStore:
         self.store_path.mkdir(parents=True, exist_ok=True)
         self.env_root.mkdir(parents=True, exist_ok=True)
         self.source_store_path = self.store_path / "source"
-        self.query_store_path = self.store_path / "query"
         self.source_store_path.mkdir(parents=True, exist_ok=True)
-        self.query_store_path.mkdir(parents=True, exist_ok=True)
 
         self.source_dataset, self.source_store_path = self._open_dataset(self.source_store_path)
-        self.query_dataset, self.query_store_path = self._open_dataset(self.query_store_path)
 
         self.main_graph_uri = main_graph_uri
         self.qudt_converter = qudt_converter
         self.base_namespace = base_namespace
         self._source_version = self._load_source_version()
-        self._query_source_version = self._load_query_source_version()
+        self._dependency_graph_cache: Graph | None = None
+        self._dependency_graph_source_version = -1
 
         # ontoenv shares this Oxigraph store via the graph-store protocol,
-        # but only over the authoritative source dataset. The query dataset
-        # is a derived materialization used only for SPARQL/export reads.
+        # over the authoritative source dataset. SPARQL reads query that
+        # dataset directly; only export-time dependency closure is cached.
         ont_dir = Path(ontologies_dir)
         search_dirs = [str(ont_dir)] if ont_dir.is_dir() else []
         init_from_store = self._can_init_ontoenv_from_store()
@@ -174,7 +174,6 @@ class OxigraphGraphStore:
             except Exception as exc:
                 _logger.warning("ontoenv: directory crawl failed: %s", exc)
         self._commit_dataset(self.source_dataset)
-        self._ensure_query_cache_current()
 
     # -------------------- ontoenv named-graph access --------------------
     def named_graph(self, iri: str) -> Graph:
@@ -264,14 +263,11 @@ class OxigraphGraphStore:
             return
         self._commit_dataset(self.source_dataset)
         self._mark_source_changed()
-        self._refresh_query_cache()
+        self._refresh_dependency_cache()
 
-    # -------------------- source/query cache coordination --------------------
+    # -------------------- source/dependency cache coordination --------------------
     def _source_state_path(self) -> Path:
         return self.source_store_path / "acquirium_source_state.json"
-
-    def _query_state_path(self) -> Path:
-        return self.query_store_path / "acquirium_query_state.json"
 
     def _can_init_ontoenv_from_store(self) -> bool:
         # Reuse ontoenv's persisted source-store state only when both
@@ -302,93 +298,85 @@ class OxigraphGraphStore:
         self._source_version += 1
         self._write_source_version()
 
-    def _load_query_source_version(self) -> int:
-        path = self._query_state_path()
-        if not path.exists():
-            return -1
-        try:
-            raw = json.loads(path.read_text())
-        except (OSError, ValueError):
-            return -1
-        value = raw.get("source_version") if isinstance(raw, dict) else -1
-        return int(value) if isinstance(value, int) else -1
+    def _invalidate_dependency_cache(self) -> None:
+        self._dependency_graph_source_version = -1
 
-    def _write_query_source_version(self) -> None:
-        self._query_state_path().write_text(
-            json.dumps({"source_version": self._query_source_version})
-        )
+    def _ensure_dependency_cache_current(self) -> Graph:
+        if self._dependency_graph_source_version != self._source_version:
+            return self._refresh_dependency_cache()
+        return self._dependency_graph_cache or Graph()
 
-    def _ensure_query_cache_current(self) -> Graph:
-        if self._query_source_version != self._source_version:
-            return self._refresh_query_cache()
-        return self._query_union_graph()
-
-    def _refresh_query_cache(self) -> Graph:
+    def _refresh_dependency_cache(self) -> Graph:
         main_graph = self._source_main_graph()
         closure = Graph()
         for triple in main_graph:
             closure.add(triple)
         self.env.import_dependencies(closure)
-        self._clear_query_cache()
-        self._bulk_load_query_graph(self.main_graph_uri, main_graph)
-        self._bulk_load_query_graph(self._UNION_GRAPH_URI, closure)
-        self._commit_dataset(self.query_dataset)
-        self._query_source_version = self._source_version
-        self._write_query_source_version()
-        return closure
+        deps = Graph()
+        for triple in closure:
+            if triple not in main_graph:
+                deps.add(triple)
+        self._dependency_graph_cache = deps
+        self._dependency_graph_source_version = self._source_version
+        return deps
 
-    def _clear_query_cache(self) -> None:
-        self.query_dataset.store._inner.clear()
+    def _export_union_graph(self) -> Graph:
+        merged = Graph()
+        for triple in self._source_main_graph():
+            merged.add(triple)
+        for triple in self._ensure_dependency_cache_current():
+            merged.add(triple)
+        return merged
 
     def refresh_union(self, snapshot_path: str | Path | None = None) -> dict[str, int]:
-        """Ensure the query cache reflects the current ontoenv source store."""
-        closure = self._ensure_query_cache_current()
+        """Ensure the dependency closure cache reflects the current source store."""
+        merged = self._export_union_graph()
         if snapshot_path:
             snapshot_path = Path(snapshot_path)
             snapshot_path.parent.mkdir(parents=True, exist_ok=True)
-            closure.serialize(destination=str(snapshot_path), format="turtle")
+            merged.serialize(destination=str(snapshot_path), format="turtle")
         return {
-            "main_triples": len(self._query_main_graph()),
-            "union_triples": len(closure),
+            "main_triples": len(self._source_main_graph()),
+            "union_triples": len(merged),
         }
 
     # -------------------- SPARQL surface --------------------
     def sparql_query(self, query: str, use_union: bool = False) -> dict:
-        self._ensure_query_cache_current()
-        graph = self._query_union_graph() if use_union else self._query_main_graph()
-        results = graph.query(query)
-        cols = results.vars
-        rows = [[cell for cell in row] for row in results]
-        return {"columns": [str(c) for c in cols], "rows": rows}
+        result = self.source_dataset.store._inner.query(
+            query,
+            use_default_graph_as_union=use_union,
+            default_graph=None if use_union else ox.NamedNode(str(self.main_graph_uri)),
+        )
+        if isinstance(result, ox.QueryBoolean):
+            return {"columns": [], "rows": [[bool(result)]]}
+        if isinstance(result, ox.QuerySolutions):
+            cols = [str(v.value) for v in result.variables]
+            rows = [[from_ox(cell) for cell in row] for row in result]
+            return {"columns": cols, "rows": rows}
+        if isinstance(result, ox.QueryTriples):
+            out = Graph()
+            out += (from_ox(t) for t in result)
+            return {"columns": ["triple"], "rows": [[triple] for triple in out]}
+        raise ValueError(f"Unexpected query result: {result!r}")
 
     def sparql_update(self, update: str) -> dict:
         main = self._source_main_graph()
-        before = _graph_digest(main)
         main.update(update)
         self._commit_dataset(self.source_dataset)
-        if _graph_digest(main) == before:
-            return {"message": "update applied", "changed": False}
         self._mark_source_changed()
-        self._refresh_query_cache()
+        self._invalidate_dependency_cache()
         return {"message": "update applied", "changed": True}
 
     def export_graph(self, *, include_union: bool = True, format: str = "turtle") -> str:
         """Serialize for download: the data-graph closure, or just the data."""
         fmt = (format or "turtle").lower()
-        self._ensure_query_cache_current()
-        graph = self._query_union_graph() if include_union else self._query_main_graph()
+        graph = self._export_union_graph() if include_union else self._source_main_graph()
         return graph.serialize(format=fmt)
 
     def export_dependency_graph(self, *, format: str = "trig") -> str:
         """Serialize only the imported triples (closure minus instance data)."""
         fmt = (format or "trig").lower()
-        self._ensure_query_cache_current()
-        main = self._query_main_graph()
-        merged = Graph()
-        for triple in self._query_union_graph():
-            if triple not in main:
-                merged.add(triple)
-        return merged.serialize(format=fmt)
+        return self._ensure_dependency_cache_current().serialize(format=fmt)
 
     def insert_graph(self, content: str | bytes | Graph, *, format: str = "turtle", replace: bool = False) -> dict[str, int | bool]:
         """Parse incoming graph data and merge (or replace) into the main graph.
@@ -403,46 +391,31 @@ class OxigraphGraphStore:
             incoming.parse(data=content, format=fmt)
 
         main = self._source_main_graph()
+        affects_closure = replace or _graph_affects_closure(incoming)
         if replace:
-            changed = _graph_digest(main) != _graph_digest(incoming)
-            if not changed:
-                return {
-                    "main_triples": len(main),
-                    "union_triples": len(self._ensure_query_cache_current()),
-                    "replaced": replace,
-                    "changed": False,
-                }
             main.remove((None, None, None))
             for triple in incoming:
                 main.add(triple)
         else:
-            changed_count = 0
             for triple in incoming:
-                if triple in main:
-                    continue
                 main.add(triple)
-                changed_count += 1
-            if changed_count == 0:
-                return {
-                    "main_triples": len(main),
-                    "union_triples": len(self._ensure_query_cache_current()),
-                    "replaced": replace,
-                    "changed": False,
-                }
         self._commit_dataset(self.source_dataset)
         self._mark_source_changed()
-        closure = self._refresh_query_cache()
+        if affects_closure:
+            self._refresh_dependency_cache()
+        union_triples = len(self._export_union_graph()) if affects_closure else len(main) + len(
+            self._ensure_dependency_cache_current()
+        )
         return {
             "main_triples": len(main),
-            "union_triples": len(closure),
+            "union_triples": union_triples,
             "replaced": replace,
             "changed": True,
         }
 
     # -------------------- helpers --------------------
     def _materialize_point(self, subject: URIRef) -> Point:
-        self._ensure_query_cache_current()
-        main_graph = self._query_main_graph()
+        main_graph = self._source_main_graph()
         types = [str(o) for o in main_graph.objects(subject, RDF.type)]
         unit_literal = next(main_graph.objects(subject, QUDT.hasUnit), None)
         last_literal = next(main_graph.objects(subject, LAST_REPORTED), None)
@@ -456,22 +429,6 @@ class OxigraphGraphStore:
     def _source_main_graph(self) -> Graph:
         return self.source_dataset.graph(self.main_graph_uri)
 
-    def _query_main_graph(self) -> Graph:
-        return self.query_dataset.graph(self.main_graph_uri)
-
-    def _query_union_graph(self) -> Graph:
-        return self.query_dataset.graph(self._UNION_GRAPH_URI)
-
-    def _bulk_load_query_graph(self, iri: URIRef, graph: Graph) -> None:
-        if len(graph) == 0:
-            return
-        nt = graph.serialize(format="nt", encoding="utf-8")
-        self.query_dataset.store._inner.bulk_load(
-            input=nt,
-            format=RdfFormat.N_TRIPLES,
-            to_graph=NamedNode(str(iri)),
-        )
-
     @staticmethod
     def _commit_dataset(dataset: Dataset) -> None:
         try:
@@ -483,10 +440,6 @@ class OxigraphGraphStore:
     def close(self) -> None:
         try:
             self.source_dataset.close()
-        except Exception:
-            pass
-        try:
-            self.query_dataset.close()
         except Exception:
             pass
 

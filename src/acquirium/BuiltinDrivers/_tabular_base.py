@@ -146,6 +146,13 @@ class _TabularIngestBase(IngestDriver):
                 self.aq.register_datasource(source_id)
             self._ensure_streams(stream_names, source_id, value_kinds)
 
+            logger.info(
+                "tabular_ingest: %s — forwarding %d row(s) across %d stream(s) for source_id=%s",
+                rel,
+                len(df),
+                len(stream_names),
+                source_id,
+            )
             result = self.insert_observations(
                 df.with_columns(pl.lit(source_id).alias("source_id"))
             )

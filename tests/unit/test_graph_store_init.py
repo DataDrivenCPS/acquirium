@@ -17,14 +17,13 @@ class _FakeDataset:
 
 def _build_store(tmp_path: Path, monkeypatch, *, source_ready: bool):
     opened_paths: list[Path] = []
-    datasets = [_FakeDataset(), _FakeDataset()]
+    datasets = [_FakeDataset()]
 
     def fake_open_dataset(path: Path):
         opened_paths.append(path)
         return datasets[len(opened_paths) - 1], path
 
     monkeypatch.setattr(graph_store_module.OxigraphGraphStore, "_open_dataset", staticmethod(fake_open_dataset))
-    monkeypatch.setattr(graph_store_module.OxigraphGraphStore, "_ensure_query_cache_current", lambda self: None)
 
     ontoenv_instances = []
 
