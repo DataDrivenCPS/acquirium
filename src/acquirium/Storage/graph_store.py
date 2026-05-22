@@ -157,6 +157,7 @@ class OxigraphGraphStore:
         # is a derived materialization used only for SPARQL/export reads.
         ont_dir = Path(ontologies_dir)
         search_dirs = [str(ont_dir)] if ont_dir.is_dir() else []
+        init_from_store = self._can_init_ontoenv_from_store()
         self._ontoenv_store = _OntoenvOxigraphStore(
             self.source_dataset,
             self._mark_source_changed,
@@ -165,11 +166,13 @@ class OxigraphGraphStore:
             path=str(self.env_root),
             graph_store=self._ontoenv_store,
             search_directories=search_dirs,
+            init_from_store=init_from_store,
         )
-        try:
-            self.env.update()
-        except Exception as exc:
-            _logger.warning("ontoenv: directory crawl failed: %s", exc)
+        if not init_from_store:
+            try:
+                self.env.update()
+            except Exception as exc:
+                _logger.warning("ontoenv: directory crawl failed: %s", exc)
         self._commit_dataset(self.source_dataset)
         self._ensure_query_cache_current()
 
@@ -269,6 +272,17 @@ class OxigraphGraphStore:
 
     def _query_state_path(self) -> Path:
         return self.query_store_path / "acquirium_query_state.json"
+
+    def _can_init_ontoenv_from_store(self) -> bool:
+        # Reuse ontoenv's persisted source-store state only when both
+        # Acquirium's source-version metadata and ontoenv's own metadata are
+        # present, and the source Oxigraph store already has SST files.
+        ontoenv_dir = self.env_root / ".ontoenv"
+        return (
+            self._source_state_path().exists()
+            and ontoenv_dir.exists()
+            and any(self.source_store_path.glob("*.sst"))
+        )
 
     def _load_source_version(self) -> int:
         path = self._source_state_path()
