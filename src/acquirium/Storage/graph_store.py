@@ -121,7 +121,17 @@ class _OntoenvOxigraphStore:
 
 
 class OxigraphGraphStore:
-    """Authoritative ontoenv source store plus an in-memory dependency cache."""
+    """Oxigraph-backed source store with an in-memory imports-closure cache.
+
+    There are two distinct representations in play:
+
+    - The persisted source dataset is the system of record. Driver/API writes
+      and ontoenv-managed ontology graphs all land there.
+    - The dependency cache is an in-memory rdflib graph containing only the
+      triples introduced by owl:imports closure expansion. It exists for
+      export-style "data plus dependencies" views, not for normal SPARQL
+      reads.
+    """
 
     def __init__(
         self,
@@ -155,22 +165,11 @@ class OxigraphGraphStore:
         # dataset directly; only export-time dependency closure is cached.
         ont_dir = Path(ontologies_dir)
         search_dirs = [str(ont_dir)] if ont_dir.is_dir() else []
-        init_from_store = self._can_init_ontoenv_from_store()
         self._ontoenv_store = _OntoenvOxigraphStore(
             self.source_dataset,
             self._mark_source_changed,
         )
-        self.env = OntoEnv(
-            path=str(self.env_root),
-            graph_store=self._ontoenv_store,
-            search_directories=search_dirs,
-            init_from_store=init_from_store,
-        )
-        if not init_from_store:
-            try:
-                self.env.update()
-            except Exception as exc:
-                _logger.warning("ontoenv: directory crawl failed: %s", exc)
+        self.env = self._build_ontoenv(search_dirs)
         self._commit_dataset(self.source_dataset)
 
     # -------------------- ontoenv named-graph access --------------------
@@ -238,7 +237,7 @@ class OxigraphGraphStore:
     def _uri(self, value: str) -> URIRef:
         return URIRef(self.qualify_uri(value))
 
-    # -------------------- dependency + union management --------------------
+    # -------------------- ontology root + closure management --------------------
     def register_ontology(self, source: str) -> str:
         """Add an ontology source (IRI or path) to the ontoenv environment."""
         return self.env.add(source, fetch_imports=False)
@@ -259,25 +258,48 @@ class OxigraphGraphStore:
             changed = True
         if not changed:
             return
-        self._commit_dataset(self.source_dataset)
-        self._mark_source_changed()
-        self._mark_closure_changed()
-        self._refresh_dependency_cache()
+        self._finalize_source_write(affects_closure=True)
 
-    # -------------------- source/dependency cache coordination --------------------
+    # -------------------- source + dependency cache coordination --------------------
     def _source_state_path(self) -> Path:
         return self.source_store_path / "acquirium_source_state.json"
 
-    def _can_init_ontoenv_from_store(self) -> bool:
-        # Reuse ontoenv's persisted source-store state only when both
-        # Acquirium's source-version metadata and ontoenv's own metadata are
-        # present, and the source Oxigraph store already has SST files.
-        ontoenv_dir = self.env_root / ".ontoenv"
-        return (
-            self._source_state_path().exists()
-            and ontoenv_dir.exists()
-            and any(self.source_store_path.glob("*.sst"))
+    def _has_persisted_source_graphs(self) -> bool:
+        """Return True when the attached Oxigraph store already contains graphs."""
+        return any(True for _ in self.source_dataset.graphs())
+
+    def _new_ontoenv(self, search_dirs: list[str], *, init_from_store: bool) -> OntoEnv:
+        return OntoEnv(
+            path=str(self.env_root),
+            graph_store=self._ontoenv_store,
+            search_directories=search_dirs,
+            init_from_store=init_from_store,
         )
+
+    def _build_ontoenv(self, search_dirs: list[str]) -> OntoEnv:
+        """Prefer rebuilding ontoenv state from the attached graph store.
+
+        This avoids baking in assumptions about ontoenv or Oxigraph's on-disk
+        layout. If the store-backed rebuild fails, fall back to the directory
+        crawl/update path used on a cold start.
+        """
+        can_rebuild_from_store = (
+            self._source_state_path().exists() and self._has_persisted_source_graphs()
+        )
+        if can_rebuild_from_store:
+            try:
+                return self._new_ontoenv(search_dirs, init_from_store=True)
+            except Exception as exc:
+                _logger.warning(
+                    "ontoenv: init_from_store failed; falling back to directory crawl: %s",
+                    exc,
+                )
+        env = self._new_ontoenv(search_dirs, init_from_store=False)
+        try:
+            env.update()
+        except Exception as exc:
+            _logger.warning("ontoenv: directory crawl failed: %s", exc)
+        return env
 
     def _load_source_version(self) -> int:
         path = self._source_state_path()
@@ -301,6 +323,8 @@ class OxigraphGraphStore:
         self._dependency_graph_closure_version = -1
 
     def _mark_closure_changed(self) -> None:
+        # Closure invalidation is narrower than source invalidation: ordinary
+        # instance-data writes should not force dependency recomputation.
         self._closure_version += 1
         self._invalidate_dependency_cache()
 
@@ -314,6 +338,8 @@ class OxigraphGraphStore:
         closure = Graph()
         for triple in main_graph:
             closure.add(triple)
+        # OntoEnv mutates the working graph in place by loading imported
+        # ontologies, so keep only the dependency delta in the cache.
         self.env.import_dependencies(closure)
         deps = Graph()
         for triple in closure:
@@ -323,7 +349,8 @@ class OxigraphGraphStore:
         self._dependency_graph_closure_version = self._closure_version
         return deps
 
-    def _export_union_graph(self) -> Graph:
+    def _source_graph_with_dependencies(self) -> Graph:
+        """Materialize the export view: source graph plus imported triples."""
         merged = Graph()
         for triple in self._source_main_graph():
             merged.add(triple)
@@ -331,9 +358,26 @@ class OxigraphGraphStore:
             merged.add(triple)
         return merged
 
+    def _apply_main_graph_write(self, incoming: Graph, *, replace: bool) -> Graph:
+        """Apply a parsed graph write to the main source graph and return it."""
+        main = self._source_main_graph()
+        if replace:
+            main.remove((None, None, None))
+        for triple in incoming:
+            main.add(triple)
+        return main
+
+    def _finalize_source_write(self, *, affects_closure: bool) -> None:
+        """Persist a source-graph write and refresh only the state it invalidates."""
+        self._commit_dataset(self.source_dataset)
+        self._mark_source_changed()
+        if affects_closure:
+            self._mark_closure_changed()
+            self._refresh_dependency_cache()
+
     def refresh_union(self, snapshot_path: str | Path | None = None) -> dict[str, int]:
         """Ensure the dependency closure cache reflects the current source store."""
-        merged = self._export_union_graph()
+        merged = self._source_graph_with_dependencies()
         if snapshot_path:
             snapshot_path = Path(snapshot_path)
             snapshot_path.parent.mkdir(parents=True, exist_ok=True)
@@ -365,15 +409,13 @@ class OxigraphGraphStore:
     def sparql_update(self, update: str) -> dict:
         main = self._source_main_graph()
         main.update(update)
-        self._commit_dataset(self.source_dataset)
-        self._mark_source_changed()
-        self._mark_closure_changed()
+        self._finalize_source_write(affects_closure=True)
         return {"message": "update applied", "changed": True}
 
     def export_graph(self, *, include_union: bool = True, format: str = "turtle") -> str:
         """Serialize for download: the data-graph closure, or just the data."""
         fmt = (format or "turtle").lower()
-        graph = self._export_union_graph() if include_union else self._source_main_graph()
+        graph = self._source_graph_with_dependencies() if include_union else self._source_main_graph()
         return graph.serialize(format=fmt)
 
     def export_dependency_graph(self, *, format: str = "trig") -> str:
@@ -393,20 +435,9 @@ class OxigraphGraphStore:
         else:
             incoming.parse(data=content, format=fmt)
 
-        main = self._source_main_graph()
         affects_closure = replace or _graph_affects_closure(incoming)
-        if replace:
-            main.remove((None, None, None))
-            for triple in incoming:
-                main.add(triple)
-        else:
-            for triple in incoming:
-                main.add(triple)
-        self._commit_dataset(self.source_dataset)
-        self._mark_source_changed()
-        if affects_closure:
-            self._mark_closure_changed()
-            self._refresh_dependency_cache()
+        main = self._apply_main_graph_write(incoming, replace=replace)
+        self._finalize_source_write(affects_closure=affects_closure)
         union_triples = len(main) + len(self._ensure_dependency_cache_current())
         return {
             "main_triples": len(main),
