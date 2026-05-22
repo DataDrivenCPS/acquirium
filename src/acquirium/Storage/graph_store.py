@@ -62,12 +62,9 @@ def _external_uri(subject: URIRef) -> str:
 
 def _graph_affects_closure(graph: Graph) -> bool:
     """Return True if *graph* can change owl:imports-driven closure."""
-    for s, p, o in graph:
-        if p == OWL.imports:
-            return True
-        if p == RDF.type and o == OWL.Ontology:
-            return True
-    return False
+    return any(graph.triples((None, OWL.imports, None))) or any(
+        graph.triples((None, RDF.type, OWL.Ontology))
+    )
 
 
 class _OntoenvOxigraphStore:
@@ -149,8 +146,9 @@ class OxigraphGraphStore:
         self.qudt_converter = qudt_converter
         self.base_namespace = base_namespace
         self._source_version = self._load_source_version()
+        self._closure_version = 0
         self._dependency_graph_cache: Graph | None = None
-        self._dependency_graph_source_version = -1
+        self._dependency_graph_closure_version = -1
 
         # ontoenv shares this Oxigraph store via the graph-store protocol,
         # over the authoritative source dataset. SPARQL reads query that
@@ -263,6 +261,7 @@ class OxigraphGraphStore:
             return
         self._commit_dataset(self.source_dataset)
         self._mark_source_changed()
+        self._mark_closure_changed()
         self._refresh_dependency_cache()
 
     # -------------------- source/dependency cache coordination --------------------
@@ -299,10 +298,14 @@ class OxigraphGraphStore:
         self._write_source_version()
 
     def _invalidate_dependency_cache(self) -> None:
-        self._dependency_graph_source_version = -1
+        self._dependency_graph_closure_version = -1
+
+    def _mark_closure_changed(self) -> None:
+        self._closure_version += 1
+        self._invalidate_dependency_cache()
 
     def _ensure_dependency_cache_current(self) -> Graph:
-        if self._dependency_graph_source_version != self._source_version:
+        if self._dependency_graph_closure_version != self._closure_version:
             return self._refresh_dependency_cache()
         return self._dependency_graph_cache or Graph()
 
@@ -317,7 +320,7 @@ class OxigraphGraphStore:
             if triple not in main_graph:
                 deps.add(triple)
         self._dependency_graph_cache = deps
-        self._dependency_graph_source_version = self._source_version
+        self._dependency_graph_closure_version = self._closure_version
         return deps
 
     def _export_union_graph(self) -> Graph:
@@ -364,7 +367,7 @@ class OxigraphGraphStore:
         main.update(update)
         self._commit_dataset(self.source_dataset)
         self._mark_source_changed()
-        self._invalidate_dependency_cache()
+        self._mark_closure_changed()
         return {"message": "update applied", "changed": True}
 
     def export_graph(self, *, include_union: bool = True, format: str = "turtle") -> str:
@@ -402,10 +405,9 @@ class OxigraphGraphStore:
         self._commit_dataset(self.source_dataset)
         self._mark_source_changed()
         if affects_closure:
+            self._mark_closure_changed()
             self._refresh_dependency_cache()
-        union_triples = len(self._export_union_graph()) if affects_closure else len(main) + len(
-            self._ensure_dependency_cache_current()
-        )
+        union_triples = len(main) + len(self._ensure_dependency_cache_current())
         return {
             "main_triples": len(main),
             "union_triples": union_triples,
