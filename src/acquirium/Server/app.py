@@ -61,7 +61,9 @@ def _start_inprocess_drivers(
         log.warning("Could not load config from ACQUIRIUM_CONFIG=%s; skipping in-process drivers", config_path)
         return []
 
-    threads: list[threading.Thread] = []
+    # Stage every driver first so setup-time graph writes cannot race with
+    # another driver's tick loop.
+    drivers_to_start: list[tuple[str, float, object, object]] = []
     for entry in cfg.get("drivers", []):
         spec = entry.get("spec")
         if not spec:
@@ -79,12 +81,18 @@ def _start_inprocess_drivers(
                 insert_batch_rows=int(merged_cfg.get("driver", {}).get("insert_batch_rows", 50_000)),
             )
             driver = driver_cls(direct_aq, merged_cfg)
+            log.info("Setting up in-process driver: %s", spec)
             driver.setup()
             log.info("In-process driver ready: %s", driver_cls.__name__)
+            drivers_to_start.append((spec, interval, driver, direct_aq))
         except Exception:
             log.exception("In-process driver %s setup failed; thread exiting", spec)
             continue
 
+    # Only start background loops after all setups have either succeeded or
+    # failed, so later drivers are not competing with earlier tick threads.
+    threads: list[threading.Thread] = []
+    for spec, interval, driver, direct_aq in drivers_to_start:
         t = threading.Thread(
             target=_run_driver_loop,
             args=(driver, direct_aq, interval, stop_event),

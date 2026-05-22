@@ -638,11 +638,10 @@ class Manager:
                 pass
 
         try:
-            result = self.graph_store.insert_graph(rdf_graph, format=format, replace=replace)
-            if not result.get("changed", True):
-                logging.info("acquirium: graph insert was a no-op")
-                return
+            self.graph_store.insert_graph(rdf_graph, format=format, replace=replace)
             logging.info("acquirium: inserted graph into store")
+            # Graph writes can create or update Acquirium-managed references,
+            # so refresh the registry before notifying listeners.
             self._sync_stream_refs_from_graph()
             # Embedding corpus is the static ontoenv vocabularies, not
             # inserted data — no per-insert reindex. refresh_union (inside

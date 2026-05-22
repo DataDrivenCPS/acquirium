@@ -5,8 +5,9 @@ from acquirium.Storage import graph_store as graph_store_module
 
 
 class _FakeDataset:
-    def __init__(self) -> None:
+    def __init__(self, *, has_graphs: bool) -> None:
         self.store = MagicMock()
+        self._graphs = [object()] if has_graphs else []
 
     def commit(self) -> None:
         return None
@@ -14,10 +15,13 @@ class _FakeDataset:
     def close(self) -> None:
         return None
 
+    def graphs(self):
+        return iter(self._graphs)
+
 
 def _build_store(tmp_path: Path, monkeypatch, *, source_ready: bool):
     opened_paths: list[Path] = []
-    datasets = [_FakeDataset()]
+    datasets = [_FakeDataset(has_graphs=source_ready)]
 
     def fake_open_dataset(path: Path):
         opened_paths.append(path)
@@ -42,9 +46,7 @@ def _build_store(tmp_path: Path, monkeypatch, *, source_ready: bool):
     env_root.mkdir(parents=True)
 
     if source_ready:
-        (source_path / "000001.sst").write_bytes(b"sst")
         (source_path / "acquirium_source_state.json").write_text('{"version": 1}')
-        (env_root / ".ontoenv").mkdir()
 
     store = graph_store_module.OxigraphGraphStore(
         store_path=store_path,
