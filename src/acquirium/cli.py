@@ -191,12 +191,16 @@ def _run_driver_loop(
     except Exception:
         pass
 
+    from acquirium.internals._log import timed_debug as _timed_debug
+
     def _tick() -> None:
         try:
-            driver.tick()
+            with _timed_debug(_log, "tick"):
+                driver.tick()
         except Exception:
             _log.exception("tick error")
 
+    _log.debug("driver loop start: interval=%.1fs initial_version=%s", interval, known_version)
     _tick()
 
     while not stop_event.wait(timeout=interval):
@@ -211,6 +215,7 @@ def _run_driver_loop(
         except Exception:
             pass
         _tick()
+    _log.debug("driver loop exit")
 
     try:
         driver.stop()
@@ -224,6 +229,8 @@ def _run_driver_loop(
 
 def _run_driver_only_mode(cfg: dict) -> None:
     """Run [[drivers]] against a remote Acquirium server without starting FastAPI."""
+    from acquirium.internals._log import configure_logging
+    configure_logging()  # honors ACQUIRIUM_VERBOSE; safe to call again
     from acquirium.Client.acquirium import Acquirium
 
     driver_cfg = cfg.get("driver", {})
@@ -294,12 +301,19 @@ def server_cmd(
     port: Annotated[Optional[int], typer.Option("--port", "-p", help="Bind port")] = None,
     reload: Annotated[bool, typer.Option("--reload", help="Enable uvicorn auto-reload (development)")] = False,
     workers: Annotated[Optional[int], typer.Option("--workers", "-w", help="Uvicorn worker processes (timescale backend only; incompatible with --reload)")] = None,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Enable DEBUG logs in acquirium.* (server, storage, drivers)")] = False,
 ) -> None:
     """Start the Acquirium server and any [[drivers]] declared in the config.
 
     Set ``[server] enabled = false`` in the config to run drivers only
     (no HTTP server).
     """
+    if verbose:
+        os.environ["ACQUIRIUM_VERBOSE"] = "1"
+
+    from acquirium.internals._log import configure_logging
+    configure_logging(verbose=verbose or os.environ.get("ACQUIRIUM_VERBOSE") == "1")
+
     cfg = _load_config(config)
     _apply_server_env(cfg)
 

@@ -9,6 +9,8 @@ from typing import Any, Iterable, Literal, cast
 
 import polars as pl
 
+from acquirium.internals._log import timed_debug
+
 logger = logging.getLogger(__name__)
 
 ValueMode = Literal["default", "coalesce", "numeric", "text"]
@@ -98,6 +100,7 @@ def split_value(value: Any, value_kind: str | None = None) -> tuple[float | None
 
 def prepare_value_columns(df: pl.DataFrame) -> pl.DataFrame:
     if {"numeric_value", "text_value"}.issubset(df.columns):
+        logger.debug("prepare_value_columns: already split (%d rows)", len(df))
         return df.select(["ref_uri", "ts", "numeric_value", "text_value"])
 
     if "value" not in df.columns:
@@ -107,17 +110,18 @@ def prepare_value_columns(df: pl.DataFrame) -> pl.DataFrame:
     selected = ["ref_uri", "ts", "value"] + (["value_kind"] if has_value_kind else [])
     rows = []
     fallback_counts: defaultdict[str, int] = defaultdict(int)
-    for row in df.select(selected).iter_rows():
-        if has_value_kind:
-            ref_uri, ts, value, value_kind = row
-            kind = normalize_value_kind(value_kind)
-            numeric_value, text_value = split_value(value, kind)
-            if kind == "numeric" and text_value is not None:
-                fallback_counts[str(ref_uri)] += 1
-        else:
-            ref_uri, ts, value = row
-            numeric_value, text_value = split_value(value)
-        rows.append((ref_uri, ts, numeric_value, text_value))
+    with timed_debug(logger, "prepare_value_columns split rows=%d has_value_kind=%s", len(df), has_value_kind):
+        for row in df.select(selected).iter_rows():
+            if has_value_kind:
+                ref_uri, ts, value, value_kind = row
+                kind = normalize_value_kind(value_kind)
+                numeric_value, text_value = split_value(value, kind)
+                if kind == "numeric" and text_value is not None:
+                    fallback_counts[str(ref_uri)] += 1
+            else:
+                ref_uri, ts, value = row
+                numeric_value, text_value = split_value(value)
+            rows.append((ref_uri, ts, numeric_value, text_value))
 
     for ref_uri, count in fallback_counts.items():
         logger.warning(

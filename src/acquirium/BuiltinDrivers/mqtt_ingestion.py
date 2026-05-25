@@ -75,6 +75,7 @@ class MQTTIngestDriver(EventIngestDriver):
         self.source_id: str = driver_cfg.get("mqtt_source_id", "mqtt")
         self.qos: int = int(driver_cfg.get("mqtt_qos", 0))
         self.default_value_kind: str = normalize_value_kind(driver_cfg.get("mqtt_value_kind"))
+        logger.debug("mqtt setup source=%s qos=%d default_kind=%s", self.source_id, self.qos, self.default_value_kind)
 
         self._clients: dict[str, mqtt.Client] = {}
         self._topic_specs: dict[str, dict[str, list[MQTTStreamSpec]]] = {}
@@ -112,7 +113,9 @@ class MQTTIngestDriver(EventIngestDriver):
             logger.warning("mqtt: failed to query graph for subscriptions", exc_info=True)
             return
 
-        for row in result.get("rows", []):
+        rows = result.get("rows", [])
+        logger.debug("mqtt _sync_subscriptions: %d candidate rows from graph", len(rows))
+        for row in rows:
             data_uri, ref_uri, ref_name, value_kind, broker, topic, tkey, vkey = row
             topic_s = (topic or "").strip('"')
             if not topic_s:

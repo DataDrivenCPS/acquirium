@@ -42,6 +42,7 @@ from acquirium.Storage.values import (
     normalize_value_mode,
     prepare_value_columns,
 )
+from acquirium.internals._log import timed_debug
 
 logger = logging.getLogger(__name__)
 
@@ -66,14 +67,18 @@ class DuckDBStore:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
-        self._conn = duckdb.connect(str(self.db_path))
+        logger.debug("DuckDBStore.__init__: connecting to %s (recreate=%s)", self.db_path, recreate)
+        with timed_debug(logger, "duckdb.connect(%s)", self.db_path):
+            self._conn = duckdb.connect(str(self.db_path))
         self._in_tx = False
 
         if recreate:
+            logger.debug("DuckDBStore.__init__: dropping existing tables/views (recreate=True)")
             self._conn.execute(f"DROP VIEW IF EXISTS {TIMESERIES_STREAMS_VIEW}")
             for tbl in (TIMESERIES_TABLE, STREAMS_TABLE, LOGS_TABLE):
                 self._conn.execute(f"DROP TABLE IF EXISTS {tbl}")
         self.ensure_table()
+        logger.debug("DuckDBStore.__init__: ready at %s", self.db_path)
 
     # ---- table management ----
 
@@ -136,7 +141,7 @@ class DuckDBStore:
             f"CREATE INDEX IF NOT EXISTS idx_logs_point ON {LOGS_TABLE} (point_uri, timestamp)",
             f"CREATE INDEX IF NOT EXISTS idx_logs_obs ON {LOGS_TABLE} (observed_start, observed_end)",
         ]
-        with self._lock:
+        with self._lock, timed_debug(logger, "ensure_table: %d DDL statements", len(stmts)):
             for stmt in stmts:
                 self._conn.execute(stmt)
         return "ok"
@@ -151,6 +156,7 @@ class DuckDBStore:
         value_kind: str = "text",
     ) -> int:
         rows_list = list(rows)
+        logger.debug("upsert_rows ref_uri=%s rows=%d kind=%s", ref_uri, len(rows_list), value_kind)
         if not rows_list:
             return 0
         df = pl.DataFrame(
@@ -177,7 +183,8 @@ class DuckDBStore:
         value_kind: str = "text",
     ) -> int:
         rows_list = list(rows)
-        with self._lock:
+        logger.debug("replace_rows ref_uri=%s new_rows=%d kind=%s", ref_uri, len(rows_list), value_kind)
+        with self._lock, timed_debug(logger, "replace_rows DELETE ref_uri=%s", ref_uri):
             self._conn.execute(
                 f"DELETE FROM {TIMESERIES_TABLE} WHERE ref_uri = ?", [ref_uri]
             )
@@ -189,12 +196,17 @@ class DuckDBStore:
         Uses DuckDB's native Polars bridge — no ADBC required.
         """
         if df.is_empty():
+            logger.debug("bulk_insert_polars: empty DataFrame, skipping")
             return 0
-        df = prepare_value_columns(df).with_columns(
-            pl.col("ts").dt.convert_time_zone("UTC").dt.replace_time_zone(None)
-        )
-        df = df.unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
-        with self._lock:
+        in_rows = len(df)
+        with timed_debug(logger, "bulk_insert_polars prepare/dedupe rows=%d", in_rows):
+            df = prepare_value_columns(df).with_columns(
+                pl.col("ts").dt.convert_time_zone("UTC").dt.replace_time_zone(None)
+            )
+            df = df.unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
+        deduped = len(df)
+        logger.debug("bulk_insert_polars: %d rows after dedupe (was %d)", deduped, in_rows)
+        with self._lock, timed_debug(logger, "bulk_insert_polars DELETE+INSERT rows=%d", deduped):
             self._conn.register("_acquirium_incoming_timeseries", df)
             owns_transaction = not self._in_tx
             try:
@@ -240,6 +252,10 @@ class DuckDBStore:
             ref_uri = compute_ref_uri(source_id, ref_name)
         ref_uri_str = str(ref_uri)
         value_kind = normalize_value_kind(value_kind)
+        logger.debug(
+            "ensure_stream_ref source=%s ref_name=%s point_uri=%s kind=%s",
+            source_id, ref_name, point_uri, value_kind,
+        )
         with self._lock:
             self._conn.execute(
                 f"""
@@ -268,7 +284,7 @@ class DuckDBStore:
         if not point_uris:
             return {}
         placeholders = ", ".join("?" * len(point_uris))
-        with self._lock:
+        with self._lock, timed_debug(logger, "resolve_storage_keys n=%d", len(point_uris)):
             d = self._conn.execute(
                 f"SELECT point_uri, ref_uri FROM {STREAMS_TABLE} WHERE point_uri IN ({placeholders})",
                 point_uris,
@@ -319,9 +335,13 @@ class DuckDBStore:
             ORDER BY ts {order_sql}{limit_sql}
         """
 
-        with self._lock:
+        with self._lock, timed_debug(
+            logger, "timeseries ref_uri=%s start=%s end=%s limit=%s order=%s mode=%s",
+            ref_uri, start, end, limit, order, mode,
+        ):
             value_kind = self._stream_value_kind(ref_uri)
             table = self._conn.execute(query, params).to_arrow_table()
+        logger.debug("timeseries: ref_uri=%s rows=%d (batch_size=%d)", ref_uri, table.num_rows, batch_size)
         for batch in table.to_batches(max_chunksize=batch_size):
             numeric_col = batch.column("numeric_value")
             text_col = batch.column("text_value")
@@ -346,7 +366,7 @@ class DuckDBStore:
             yield pa.record_batch([ts_col, val_col, uri_col], names=["ts", "value", "uri"])
 
     def timeseries_info(self, ref_uri: str) -> TimeseriesInfo:
-        with self._lock:
+        with self._lock, timed_debug(logger, "timeseries_info ref_uri=%s", ref_uri):
             row = self._conn.execute(
                 f"SELECT COUNT(*), MIN(ts), MAX(ts) FROM {TIMESERIES_TABLE} WHERE ref_uri = ?",
                 [ref_uri],
@@ -363,7 +383,7 @@ class DuckDBStore:
         if not ref_uris:
             return {}
         placeholders = ", ".join("?" * len(ref_uris))
-        with self._lock:
+        with self._lock, timed_debug(logger, "timeseries_info_batch n=%d", len(ref_uris)):
             d = self._conn.execute(
                 f"""
                 SELECT ref_uri,
@@ -396,6 +416,7 @@ class DuckDBStore:
     def insert_log(self, log: LogEntry) -> None:
         obs_start = self._to_utc_naive(log.period.start) if log.period and log.period.start else None
         obs_end = self._to_utc_naive(log.period.end) if log.period and log.period.end else None
+        logger.debug("insert_log point_uri=%s ts=%s", log.point_uri, log.timestamp)
         with self._lock:
             self._conn.execute(
                 f"""
@@ -449,7 +470,8 @@ class DuckDBStore:
             ORDER BY timestamp ASC
         """
         try:
-            tbl = self._conn.execute(query, params).to_arrow_table()
+            with timed_debug(logger, "query_logs point_uri=%s clauses=%d", point_uri, len(clauses)):
+                tbl = self._conn.execute(query, params).to_arrow_table()
         except Exception as exc:
             logger.error("query_logs failed: %s", exc)
             return []
@@ -464,6 +486,7 @@ class DuckDBStore:
         return result
 
     def delete_logs(self, point_uri: str) -> bool:
+        logger.debug("delete_logs point_uri=%s", point_uri)
         with self._lock:
             self._conn.execute(
                 f"DELETE FROM {LOGS_TABLE} WHERE point_uri = ?", [point_uri]
@@ -475,25 +498,30 @@ class DuckDBStore:
     def begin(self) -> None:
         with self._lock:
             if not self._in_tx:
+                logger.debug("BEGIN TRANSACTION")
                 self._conn.execute("BEGIN TRANSACTION")
                 self._in_tx = True
 
     def commit(self) -> None:
         with self._lock:
             if self._in_tx:
+                logger.debug("COMMIT")
                 self._conn.execute("COMMIT")
                 self._in_tx = False
 
     def rollback(self) -> None:
         with self._lock:
             if self._in_tx:
+                logger.debug("ROLLBACK")
                 self._conn.execute("ROLLBACK")
                 self._in_tx = False
 
     # ---- utility ----
 
     def sql_query(self, query: str) -> dict[str, Any]:
-        tbl = self._conn.execute(query).to_arrow_table()
+        logger.debug("sql_query: %s", query.replace("\n", " ")[:200])
+        with timed_debug(logger, "sql_query"):
+            tbl = self._conn.execute(query).to_arrow_table()
         d = tbl.to_pydict()
         cols = tbl.schema.names
         return {
@@ -502,6 +530,7 @@ class DuckDBStore:
         }
 
     def close(self) -> None:
+        logger.debug("DuckDBStore.close")
         self._conn.close()
 
     # ---- helpers ----

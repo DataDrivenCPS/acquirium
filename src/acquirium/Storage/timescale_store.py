@@ -22,7 +22,8 @@ from acquirium.Storage.values import (
     prepare_value_columns,
     split_value,
 )
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+from acquirium.internals._log import timed_debug
+
 logger = logging.getLogger(__name__)
 
 TIMESERIES_TABLE = "timeseries"
@@ -41,21 +42,24 @@ class TimescaleStore(TimeseriesStore):
     ):
         self.dsn = dsn
         self.db_path = self.dsn
-        # print(f"Connecting to TimescaleDB at {self.dsn}...")
         # default autocommit so reads don't hold open transactions; explicit begin toggles off
-        self.conn = psycopg.connect(self.dsn, autocommit=True, connect_timeout=connect_timeout)
+        logger.debug("TimescaleStore.__init__: connecting (recreate=%s)", recreate)
+        with timed_debug(logger, "psycopg.connect"):
+            self.conn = psycopg.connect(self.dsn, autocommit=True, connect_timeout=connect_timeout)
         self._in_tx = False
         if recreate:
+            logger.debug("TimescaleStore.__init__: dropping existing tables/views")
             with self.conn.cursor() as cur:
                 cur.execute(sql.SQL("DROP VIEW IF EXISTS {} CASCADE").format(sql.Identifier(TIMESERIES_STREAMS_VIEW)))
                 cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(TIMESERIES_TABLE)))
                 cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(STREAMS_TABLE)))
                 cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(LOGS_TABLE)))
         self.ensure_table()
+        logger.debug("TimescaleStore.__init__: ready")
 
     # -------------------- table management --------------------
     def ensure_table(self) -> str:
-        with self.conn.cursor() as cur:
+        with timed_debug(logger, "ensure_table"), self.conn.cursor() as cur:
             cur.execute("CREATE EXTENSION IF NOT EXISTS timescaledb;")
             cur.execute(
                 f"""
@@ -181,13 +185,14 @@ class TimescaleStore(TimeseriesStore):
         value_kind: str = "text",
     ) -> int:
         rows_list = list(rows)
+        logger.debug("upsert_rows ref_uri=%s rows=%d kind=%s", ref_uri, len(rows_list), value_kind)
         if not rows_list:
             return 0
         payload = [
             (ref_uri, self._to_utc(ts), *split_value(val, value_kind))
             for ts, val in rows_list
         ]
-        with self.conn.cursor() as cur:
+        with timed_debug(logger, "upsert_rows INSERT n=%d", len(payload)), self.conn.cursor() as cur:
             cur.executemany(
                 f"""
                 INSERT INTO {TIMESERIES_TABLE} (ref_uri, ts, numeric_value, text_value)
@@ -208,7 +213,8 @@ class TimescaleStore(TimeseriesStore):
         *,
         value_kind: str = "text",
     ) -> int:
-        with self.conn.cursor() as cur:
+        logger.debug("replace_rows ref_uri=%s kind=%s", ref_uri, value_kind)
+        with timed_debug(logger, "replace_rows DELETE ref_uri=%s", ref_uri), self.conn.cursor() as cur:
             cur.execute(sql.SQL("DELETE FROM {} WHERE ref_uri=%s").format(sql.Identifier(TIMESERIES_TABLE)), [ref_uri])
         return self.upsert_rows(ref_uri, rows, value_kind=value_kind)
 
@@ -217,9 +223,14 @@ class TimescaleStore(TimeseriesStore):
         # Input df format: columns ["ref_uri", "ts", "value"] or already split
         # columns ["ref_uri", "ts", "numeric_value", "text_value"].
         if df.is_empty():
+            logger.debug("bulk_insert_polars: empty DataFrame, skipping")
             return 0
-        df = prepare_value_columns(df)
-        df = df.unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
+        in_rows = len(df)
+        with timed_debug(logger, "bulk_insert_polars prepare/dedupe rows=%d", in_rows):
+            df = prepare_value_columns(df)
+            df = df.unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
+        deduped = len(df)
+        logger.debug("bulk_insert_polars: %d rows after dedupe (was %d)", deduped, in_rows)
         random_string = ''.join(random.choice(string.ascii_lowercase) for _ in range(15))
         with self.conn.cursor() as cur:
             cur.execute(
@@ -234,13 +245,14 @@ class TimescaleStore(TimeseriesStore):
                 text_value TEXT
             );""")
         try:
-            rows_affected = df.write_database(
-                table_name=random_string,
-                connection=self.dsn,
-                engine="adbc",
-                if_table_exists="append" # Use 'replace' to drop/create the table
-            )
-            with self.conn.cursor() as cur:
+            with timed_debug(logger, "bulk_insert_polars ADBC write rows=%d", deduped):
+                rows_affected = df.write_database(
+                    table_name=random_string,
+                    connection=self.dsn,
+                    engine="adbc",
+                    if_table_exists="append" # Use 'replace' to drop/create the table
+                )
+            with timed_debug(logger, "bulk_insert_polars merge into %s", TIMESERIES_TABLE), self.conn.cursor() as cur:
                 cur.execute(
                     f"""
                     INSERT INTO {TIMESERIES_TABLE} (ref_uri, ts, numeric_value, text_value)
@@ -281,13 +293,17 @@ class TimescaleStore(TimeseriesStore):
         if ref_uri is None:
             ref_uri = compute_ref_uri(source_id, ref_name)
         value_kind = normalize_value_kind(value_kind)
+        logger.debug(
+            "ensure_stream_ref source=%s ref_name=%s point_uri=%s kind=%s",
+            source_id, ref_name, point_uri, value_kind,
+        )
         with self.conn.cursor() as cur:
             cur.execute(
                 f"""
                 INSERT INTO {STREAMS_TABLE} (ref_uri, point_uri, source_id, ref_name, value_kind)
                 VALUES (%s, %s, %s, %s, %s)
                 ON CONFLICT (ref_uri) DO UPDATE
-                    SET 
+                    SET
                         point_uri = COALESCE(EXCLUDED.point_uri, {STREAMS_TABLE}.point_uri),
                         source_id = EXCLUDED.source_id,
                         ref_name = EXCLUDED.ref_name,
@@ -320,7 +336,7 @@ class TimescaleStore(TimeseriesStore):
         """
         if not point_uris:
             return {}
-        with self.conn.cursor() as cur:
+        with timed_debug(logger, "resolve_storage_keys n=%d", len(point_uris)), self.conn.cursor() as cur:
             cur.execute(
                 f"SELECT point_uri, ref_uri FROM {STREAMS_TABLE} WHERE point_uri = ANY(%s)",
                 (point_uris,),
@@ -376,13 +392,21 @@ class TimescaleStore(TimeseriesStore):
         """
 
         value_kind = self.stream_value_kind(str(ref_uri))
+        logger.debug(
+            "timeseries ref_uri=%s start=%s end=%s limit=%s order=%s mode=%s",
+            ref_uri, start, end, limit, order, mode,
+        )
         with self.conn.cursor() as cur:
-            cur.execute(query, params)
+            with timed_debug(logger, "timeseries cur.execute ref_uri=%s", ref_uri):
+                cur.execute(query, params)
 
+            total = 0
             while True:
                 rows = cur.fetchmany(batch_size)
                 if not rows:
+                    logger.debug("timeseries ref_uri=%s yielded total rows=%d", ref_uri, total)
                     break
+                total += len(rows)
 
                 ts_col = [r[0] for r in rows]
                 numeric_col = [r[1] for r in rows]
@@ -416,7 +440,7 @@ class TimescaleStore(TimeseriesStore):
                 yield batch
 
     def timeseries_info(self, ref_uri: str) -> TimeseriesInfo:
-        with self.conn.cursor() as cur:
+        with timed_debug(logger, "timeseries_info ref_uri=%s", ref_uri), self.conn.cursor() as cur:
             cur.execute(
                 f"SELECT COUNT(*), MIN(ts), MAX(ts) FROM {TIMESERIES_TABLE} WHERE ref_uri=%s",
                 (ref_uri,),
@@ -428,7 +452,7 @@ class TimescaleStore(TimeseriesStore):
         """Return stats (row_count, earliest, latest) for multiple ref URIs in one query."""
         if not ref_uris:
             return {}
-        with self.conn.cursor() as cur:
+        with timed_debug(logger, "timeseries_info_batch n=%d", len(ref_uris)), self.conn.cursor() as cur:
             cur.execute(
                 f"SELECT ref_uri, COUNT(*), MIN(ts), MAX(ts) FROM {TIMESERIES_TABLE} WHERE ref_uri = ANY(%s) GROUP BY ref_uri",
                 (ref_uris,),
@@ -487,6 +511,7 @@ class TimescaleStore(TimeseriesStore):
             """
             params = [point_uri, ts, message]
         
+        logger.debug("insert_log point_uri=%s ts=%s", point_uri, ts)
         try:
             with self.conn.cursor() as cur:
                 cur.execute(sql, params)
@@ -534,7 +559,7 @@ class TimescaleStore(TimeseriesStore):
             ORDER BY timestamp ASC
         """
         try:
-            with self.conn.cursor() as cur:
+            with timed_debug(logger, "query_logs point_uri=%s clauses=%d", point_uri, len(clauses)), self.conn.cursor() as cur:
                 cur.execute(query, params)
                 rows = cur.fetchall()
 
@@ -562,6 +587,7 @@ class TimescaleStore(TimeseriesStore):
             return []
 
     def delete_logs(self, point_uri: str) -> None:
+        logger.debug("delete_logs point_uri=%s", point_uri)
         with self.conn.cursor() as cur:
             cur.execute(f"DELETE FROM {LOGS_TABLE} WHERE point_uri=%s", (point_uri,))
         return True
@@ -569,25 +595,29 @@ class TimescaleStore(TimeseriesStore):
     # -------------------- transaction helpers --------------------
     def begin(self) -> None:
         if not self._in_tx:
+            logger.debug("BEGIN")
             self.conn.autocommit = False
             self._in_tx = True
             self.conn.execute("BEGIN")
 
     def commit(self) -> None:
         if self._in_tx:
+            logger.debug("COMMIT")
             self.conn.commit()
             self.conn.autocommit = True
             self._in_tx = False
 
     def rollback(self) -> None:
         if self._in_tx:
+            logger.debug("ROLLBACK")
             self.conn.rollback()
             self.conn.autocommit = True
             self._in_tx = False
 
     # -------------------- utility --------------------
     def sql_query(self, query: str) -> dict[str, Any]:
-        with self.conn.cursor() as cur:
+        logger.debug("sql_query: %s", query.replace("\n", " ")[:200])
+        with timed_debug(logger, "sql_query"), self.conn.cursor() as cur:
             cur.execute(query)
             cols = [desc[0] for desc in cur.description] if cur.description else []
             rows = cur.fetchall() if cur.description else []
@@ -595,6 +625,7 @@ class TimescaleStore(TimeseriesStore):
 
     # -------------------- lifecycle --------------------
     def close(self) -> None:
+        logger.debug("TimescaleStore.close")
         self.conn.close()
 
     # -------------------- helpers --------------------

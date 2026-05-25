@@ -23,7 +23,10 @@ from typing import TYPE_CHECKING, Any, Optional
 from acquirium.Client.acquirium import Acquirium
 from acquirium.Server.insert_stats import insert_stats
 
+import logging
 import warnings
+
+logger = logging.getLogger("acquirium.direct_client")
 
 if TYPE_CHECKING:
     import polars as pl
@@ -64,6 +67,10 @@ class _DirectClient:
         point_uri: Optional[str] = None,
         replace: bool = False,
     ) -> dict[str, Any]:
+        logger.debug(
+            "DirectClient.insert_timeseries source=%s ref_name=%s rows=%d replace=%s origin=%s",
+            source_id, ref_name, len(rows), replace, self._origin,
+        )
         n = self._manager.insert_timeseries(
             source_id=source_id,
             ref_name=ref_name,
@@ -79,6 +86,10 @@ class _DirectClient:
         source_id: str,
         streams: dict[str, list[tuple[datetime, Any]]],
     ) -> dict[str, Any]:
+        logger.debug(
+            "DirectClient.insert_timeseries_batch source=%s streams=%d total_rows=%d origin=%s",
+            source_id, len(streams), sum(len(rows) for rows in streams.values()), self._origin,
+        )
         total = self._manager.insert_timeseries_batch(source_id, streams)
         insert_stats.record(
             origin=self._origin,
@@ -89,6 +100,10 @@ class _DirectClient:
 
     def insert_timeseries_arrow(self, source_id: str, table: "pa.Table") -> dict[str, Any]:
         streams = table.column("ref_name").unique().to_pylist()
+        logger.debug(
+            "DirectClient.insert_timeseries_arrow source=%s arrow_rows=%d unique_streams=%d origin=%s",
+            source_id, len(table), len(streams), self._origin,
+        )
         total = self._manager.insert_timeseries_arrow(source_id, table)
         insert_stats.record(origin=self._origin, rows=total, streams=streams)
         return {"ok": True, "rows_inserted": total}
