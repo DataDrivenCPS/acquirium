@@ -6,12 +6,15 @@ Usage:
         --config acquirium.toml
 """
 
+import logging
 import platform
 import socket
 from datetime import datetime, timezone
 
 import polars as pl
 import psutil
+
+logger = logging.getLogger("acquirium.system_metrics")
 from rdflib import Graph, Literal, URIRef, Namespace
 from rdflib.namespace import RDF, RDFS
 
@@ -52,6 +55,7 @@ class SystemMetricsDriver(PollingIngestDriver):
         self.source_id = f"{hostname}-system-metrics"
         self._hostname = hostname
         self._host_uri = URIRef(f"urn:host:{hostname}")
+        logger.debug("system_metrics setup: hostname=%s source=%s", hostname, self.source_id)
 
         self.aq.register_datasource(self.source_id)
         self._insert_host_graph(hostname)
@@ -71,6 +75,10 @@ class SystemMetricsDriver(PollingIngestDriver):
             "net_bytes_sent":    net.bytes_sent,
             "net_bytes_recv":    net.bytes_recv,
         }
+        logger.debug(
+            "system_metrics sample ts=%s cpu=%.1f%% mem=%.1f%% disk=%.1f%%",
+            ts.isoformat(), sample["cpu_percent"], sample["memory_percent"], sample["disk_percent"],
+        )
         return pl.DataFrame({
             "ts": [ts] * len(sample),
             "ref_name": list(sample.keys()),

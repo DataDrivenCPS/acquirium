@@ -7,6 +7,7 @@ from pathlib import Path
 import polars as pl
 
 from acquirium.BuiltinDrivers._tabular_base import _TabularIngestBase
+from acquirium.internals._log import timed_debug
 
 logger = logging.getLogger("acquirium.csv_ingest")
 
@@ -75,21 +76,22 @@ class CSVIngestDriver(_TabularIngestBase):
     ) -> pl.DataFrame:
         sep = "\t" if path.suffix.lower() == ".tsv" else ","
         skip = self.skip_rows_for(path)
-        if skip:
-            return pl.read_csv(
-                StringIO(self._filtered_csv_text(path)),
-                separator=sep, try_parse_dates=True,
-                skip_rows_after_header=row_offset,
-                encoding=self._encoding,
-                schema_overrides=schema_overrides,
+        with timed_debug(logger, "csv read_df path=%s offset=%d skip=%d sep=%r", path.name, row_offset, len(skip), sep):
+            if skip:
+                return pl.read_csv(
+                    StringIO(self._filtered_csv_text(path)),
+                    separator=sep, try_parse_dates=True,
+                    skip_rows_after_header=row_offset,
+                    encoding=self._encoding,
+                    schema_overrides=schema_overrides,
+                )
+            lf = pl.scan_csv(
+                path, separator=sep, try_parse_dates=True,
+                encoding=self._encoding, schema_overrides=schema_overrides,
             )
-        lf = pl.scan_csv(
-            path, separator=sep, try_parse_dates=True,
-            encoding=self._encoding, schema_overrides=schema_overrides,
-        )
-        if row_offset:
-            lf = lf.slice(row_offset)
-        return lf.collect()
+            if row_offset:
+                lf = lf.slice(row_offset)
+            return lf.collect()
 
     def _filtered_csv_text(self, path: Path) -> str:
         skip_rows = set(self.skip_rows_for(path))

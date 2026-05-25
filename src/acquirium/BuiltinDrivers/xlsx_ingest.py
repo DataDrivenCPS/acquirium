@@ -6,6 +6,7 @@ from pathlib import Path
 import polars as pl
 
 from acquirium.BuiltinDrivers._tabular_base import _TabularIngestBase
+from acquirium.internals._log import timed_debug
 
 logger = logging.getLogger("acquirium.xlsx_ingest")
 
@@ -57,13 +58,14 @@ class XLSXIngestDriver(_TabularIngestBase):
 
     def _read_excel(self, path: Path, row_offset: int) -> pl.DataFrame:
         """Read an Excel workbook, merging requested sheets into one DataFrame."""
-        if self._sheets:
-            result = pl.read_excel(path, sheet_name=self._sheets, engine="calamine")
-            if isinstance(result, dict):
-                frames = list(result.values())
-                df = pl.concat(frames, how="diagonal_relaxed") if len(frames) > 1 else frames[0]
+        with timed_debug(logger, "xlsx read path=%s sheets=%s offset=%d", path.name, self._sheets, row_offset):
+            if self._sheets:
+                result = pl.read_excel(path, sheet_name=self._sheets, engine="calamine")
+                if isinstance(result, dict):
+                    frames = list(result.values())
+                    df = pl.concat(frames, how="diagonal_relaxed") if len(frames) > 1 else frames[0]
+                else:
+                    df = result
             else:
-                df = result
-        else:
-            df = pl.read_excel(path, engine="calamine")
+                df = pl.read_excel(path, engine="calamine")
         return df.slice(row_offset)

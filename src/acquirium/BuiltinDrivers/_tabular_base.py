@@ -14,6 +14,7 @@ import polars as pl
 
 from acquirium.Driver import IngestDriver
 from acquirium.Storage.values import assign_stream_value_kind, normalize_value_kind
+from acquirium.internals._log import timed_debug
 
 logger = logging.getLogger("acquirium.tabular_ingest")
 
@@ -123,29 +124,37 @@ class _TabularIngestBase(IngestDriver):
     # ------------------------------------------------------------------ loop
 
     def tick(self) -> None:
-        for path in self._pending_paths():
+        paths = self._pending_paths()
+        logger.debug("tabular_ingest tick: watch_dir=%s pending=%d", self._watch_dir, len(paths))
+        for path in paths:
             key = str(path)
             offset = self._rows_seen.get(key, 0)
             source_id = self.source_id_for(path)
             rel = path.relative_to(self._watch_dir)
 
             try:
-                df, rows_read = self.parse_polars(path, row_offset=offset)
+                with timed_debug(logger, "tabular_ingest parse %s (offset=%d)", path.name, offset):
+                    df, rows_read = self.parse_polars(path, row_offset=offset)
             except Exception:
                 logger.exception("tabular_ingest: failed to parse %s", path.name)
                 continue
 
             if df.is_empty():
+                logger.debug("tabular_ingest: %s empty after parse (offset=%d)", rel, offset)
                 continue
 
-            df, value_kinds = self._with_value_kinds(df)
+            with timed_debug(logger, "tabular_ingest _with_value_kinds %s rows=%d", rel, len(df)):
+                df, value_kinds = self._with_value_kinds(df)
             stream_names = value_kinds.keys()
+            logger.debug("tabular_ingest %s: %d streams (%d rows)", rel, len(value_kinds), len(df))
 
             # Metadata registration — if the server is down these raise and
             # the file is skipped; the offset stays put so we retry next tick.
             if source_id not in self._registered:
+                logger.debug("tabular_ingest: register_datasource %s", source_id)
                 self.aq.register_datasource(source_id)
-            self._ensure_streams(stream_names, source_id, value_kinds)
+            with timed_debug(logger, "tabular_ingest _ensure_streams source=%s n=%d", source_id, len(value_kinds)):
+                self._ensure_streams(stream_names, source_id, value_kinds)
 
             logger.info(
                 "tabular_ingest: %s — forwarding %d row(s) across %d stream(s) for source_id=%s",
@@ -154,9 +163,10 @@ class _TabularIngestBase(IngestDriver):
                 len(stream_names),
                 source_id,
             )
-            result = self.insert_observations(
-                df.with_columns(pl.lit(source_id).alias("source_id"))
-            )
+            with timed_debug(logger, "tabular_ingest insert_observations %s rows=%d", rel, len(df)):
+                result = self.insert_observations(
+                    df.with_columns(pl.lit(source_id).alias("source_id"))
+                )
 
             if result.get("ok"):
                 self._rows_seen[key] = offset + rows_read
@@ -464,8 +474,10 @@ class _TabularIngestBase(IngestDriver):
         registered = self._registered.setdefault(source_id, set())
         new_ref_names = [ref_name for ref_name in ref_names if ref_name not in registered]
         if not new_ref_names:
+            logger.debug("_ensure_streams source=%s: all %d already registered", source_id, len(list(ref_names)))
             return
 
+        logger.debug("_ensure_streams source=%s registering %d new stream(s)", source_id, len(new_ref_names))
         try:
             self.aq.register_streams(
                 [
