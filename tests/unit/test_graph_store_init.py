@@ -21,7 +21,10 @@ class _FakeDataset:
 
 def _build_store(tmp_path: Path, monkeypatch, *, source_ready: bool):
     opened_paths: list[Path] = []
-    datasets = [_FakeDataset(has_graphs=source_ready)]
+    datasets = [
+        _FakeDataset(has_graphs=source_ready),
+        _FakeDataset(has_graphs=False),
+    ]
 
     def fake_open_dataset(path: Path):
         opened_paths.append(path)
@@ -52,18 +55,20 @@ def _build_store(tmp_path: Path, monkeypatch, *, source_ready: bool):
         store_path=store_path,
         env_root=env_root,
     )
-    return store, ontoenv_instances[0]
+    return store, ontoenv_instances[0], opened_paths
 
 
 def test_init_from_store_skips_ontoenv_update(tmp_path, monkeypatch):
-    store, env = _build_store(tmp_path, monkeypatch, source_ready=True)
+    store, env, opened_paths = _build_store(tmp_path, monkeypatch, source_ready=True)
+    assert opened_paths == [tmp_path / "store" / "source", tmp_path / "store" / "query"]
     assert env.kwargs["init_from_store"] is True
     env.update.assert_not_called()
     store.close()
 
 
 def test_cold_start_runs_ontoenv_update(tmp_path, monkeypatch):
-    store, env = _build_store(tmp_path, monkeypatch, source_ready=False)
+    store, env, opened_paths = _build_store(tmp_path, monkeypatch, source_ready=False)
+    assert opened_paths == [tmp_path / "store" / "source", tmp_path / "store" / "query"]
     assert env.kwargs["init_from_store"] is False
     env.update.assert_called_once_with()
     store.close()

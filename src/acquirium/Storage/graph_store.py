@@ -67,6 +67,9 @@ def _graph_affects_closure(graph: Graph) -> bool:
     )
 
 
+_IMPORTS_UNION_GRAPH = URIRef(str(ACQUIRIUM_NS.ImportsUnionGraph))
+
+
 class _OntoenvOxigraphStore:
     """ontoenv graph-store protocol over the shared Oxigraph dataset.
 
@@ -148,9 +151,12 @@ class OxigraphGraphStore:
         self.store_path.mkdir(parents=True, exist_ok=True)
         self.env_root.mkdir(parents=True, exist_ok=True)
         self.source_store_path = self.store_path / "source"
+        self.query_store_path = self.store_path / "query"
         self.source_store_path.mkdir(parents=True, exist_ok=True)
+        self.query_store_path.mkdir(parents=True, exist_ok=True)
 
         self.source_dataset, self.source_store_path = self._open_dataset(self.source_store_path)
+        self.query_dataset, self.query_store_path = self._open_dataset(self.query_store_path)
 
         self.main_graph_uri = main_graph_uri
         self.qudt_converter = qudt_converter
@@ -159,6 +165,9 @@ class OxigraphGraphStore:
         self._closure_version = 0
         self._dependency_graph_cache: Graph | None = None
         self._dependency_graph_closure_version = -1
+        self.imports_union_graph_uri = _IMPORTS_UNION_GRAPH
+        self._imports_union_graph_source_version = -1
+        self._imports_union_graph_closure_version = -1
 
         # ontoenv shares this Oxigraph store via the graph-store protocol,
         # over the authoritative source dataset. SPARQL reads query that
@@ -167,7 +176,7 @@ class OxigraphGraphStore:
         search_dirs = [str(ont_dir)] if ont_dir.is_dir() else []
         self._ontoenv_store = _OntoenvOxigraphStore(
             self.source_dataset,
-            self._mark_source_changed,
+            self._mark_ontology_graph_changed,
         )
         self.env = self._build_ontoenv(search_dirs)
         self._commit_dataset(self.source_dataset)
@@ -319,6 +328,10 @@ class OxigraphGraphStore:
         self._source_version += 1
         self._write_source_version()
 
+    def _mark_ontology_graph_changed(self) -> None:
+        self._mark_source_changed()
+        self._mark_closure_changed()
+
     def _invalidate_dependency_cache(self) -> None:
         self._dependency_graph_closure_version = -1
 
@@ -358,6 +371,34 @@ class OxigraphGraphStore:
             merged.add(triple)
         return merged
 
+    def _imports_union_graph(self) -> Graph:
+        return self.query_dataset.graph(self.imports_union_graph_uri)
+
+    def _ensure_imports_union_graph_current(self) -> Graph:
+        if (
+            self._imports_union_graph_source_version != self._source_version
+            or self._imports_union_graph_closure_version != self._closure_version
+        ):
+            return self._refresh_imports_union_graph()
+        return self._imports_union_graph()
+
+    def _refresh_imports_union_graph(self) -> Graph:
+        """Materialize data graph + imports closure into one query graph."""
+        merged = self._source_graph_with_dependencies()
+        graph = self._imports_union_graph()
+        graph.remove((None, None, None))
+        if len(merged):
+            nt = merged.serialize(format="nt", encoding="utf-8")
+            self.query_dataset.store._inner.bulk_load(
+                input=nt,
+                format=RdfFormat.N_TRIPLES,
+                to_graph=NamedNode(str(self.imports_union_graph_uri)),
+            )
+        self._commit_dataset(self.query_dataset)
+        self._imports_union_graph_source_version = self._source_version
+        self._imports_union_graph_closure_version = self._closure_version
+        return graph
+
     def _apply_main_graph_write(self, incoming: Graph, *, replace: bool) -> Graph:
         """Apply a parsed graph write to the main source graph and return it."""
         main = self._source_main_graph()
@@ -389,10 +430,16 @@ class OxigraphGraphStore:
 
     # -------------------- SPARQL surface --------------------
     def sparql_query(self, query: str, use_union: bool = False) -> dict:
-        result = self.source_dataset.store._inner.query(
+        if use_union:
+            dataset = self.query_dataset
+            graph_uri = self._ensure_imports_union_graph_current().identifier
+        else:
+            dataset = self.source_dataset
+            graph_uri = self.main_graph_uri
+        result = dataset.store._inner.query(
             query,
-            use_default_graph_as_union=use_union,
-            default_graph=None if use_union else ox.NamedNode(str(self.main_graph_uri)),
+            use_default_graph_as_union=False,
+            default_graph=ox.NamedNode(str(graph_uri)),
         )
         if isinstance(result, ox.QueryBoolean):
             return {"columns": [], "rows": [[bool(result)]]}
@@ -471,10 +518,11 @@ class OxigraphGraphStore:
             pass
 
     def close(self) -> None:
-        try:
-            self.source_dataset.close()
-        except Exception:
-            pass
+        for dataset in (self.source_dataset, self.query_dataset):
+            try:
+                dataset.close()
+            except Exception:
+                pass
 
     # -------------------- internal: store bootstrap --------------------
     @staticmethod
