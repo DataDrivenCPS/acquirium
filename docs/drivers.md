@@ -219,6 +219,112 @@ def setup(self):
     self.aq.register_datasource(self.source_id)
 ```
 
+## Persistent State
+
+Drivers can persist state across restarts using `self.state`, a key-value store
+backed by JSON files. State is stored in `.acquirium/drivers/<driver-id>.json`
+relative to the config directory.
+
+### State API
+
+```python
+# Get a value (with optional default)
+offset = self.state.get("last_offset", default=0)
+
+# Set a value (auto-saves to disk)
+self.state.set("last_offset", 150)
+
+# Delete a key
+self.state.delete("temp_data")
+
+# List all keys
+keys = self.state.keys()
+
+# Update multiple keys at once
+self.state.update({"offset": 200, "cursor": "abc123"})
+
+# Check if a key exists
+if "last_offset" in self.state:
+    ...
+```
+
+### Driver Identifier
+
+The state file is named based on a driver identifier, determined as follows:
+
+1. **Explicit `driver_id`** (recommended for human-readable names):
+   ```toml
+   [[drivers]]
+   spec = "acquirium.BuiltinDrivers.csv_ingest:CSVIngestDriver"
+   driver_id = "my-csv-monitor"
+   ```
+   → State file: `.acquirium/drivers/my-csv-monitor.json`
+
+2. **Derived from spec** (if `driver_id` not provided):
+   - A hash of the spec combined with the class name
+   - Example: `CSVIngestDriver_a1b2c3d4e5f6g7h8.json`
+
+### Example: CSV Driver with `driver_id`
+
+```toml
+[[drivers]]
+spec = "acquirium.BuiltinDrivers.csv_ingest:CSVIngestDriver"
+interval = 5.0
+watch_dir = "./data/incoming"
+driver_id = "sensor-data-ingest"  # Human-readable state file name
+```
+
+Row offsets are automatically persisted, so restarting the driver resumes
+from where it left off.
+
+### Example: Custom Driver with API Cursor
+
+```python
+from acquirium import PollingIngestDriver
+import polars as pl
+
+class APIPollingDriver(PollingIngestDriver):
+    def setup(self):
+        self.source_id = "api-source"
+        self.aq.register_datasource(self.source_id)
+        self.aq.register_stream(self.source_id, "metric/value", "numeric")
+
+    def collect(self):
+        # Load cursor from persistent state
+        cursor = self.state.get("api_cursor", default=None)
+
+        # Fetch data from API using cursor
+        data = fetch_api_page(cursor=cursor)
+
+        # Save new cursor for next tick
+        if data.next_cursor:
+            self.state.set("api_cursor", data.next_cursor)
+
+        return pl.DataFrame({
+            "ts": data.timestamps,
+            "ref_name": data.names,
+            "value": data.values,
+        })
+```
+
+### Example: Custom Checkpointing
+
+```python
+class ProcessingDriver(PollingIngestDriver):
+    def collect(self):
+        # Load checkpoint
+        checkpoint = self.state.get("processing_checkpoint", default={"id": 0})
+
+        # Process batch starting from checkpoint
+        batch = fetch_batch(after_id=checkpoint["id"])
+
+        # Update checkpoint after successful processing
+        if batch:
+            self.state.set("processing_checkpoint", {"id": batch.last_id})
+
+        return batch.to_dataframe()
+```
+
 ## Reference URIs
 
 Drivers should use the canonical reference helper instead of inventing their
