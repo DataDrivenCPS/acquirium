@@ -149,19 +149,6 @@ def _deduplicate_contexts(contexts: list[dict[str, str]]) -> list[dict[str, str]
 def _is_numeric_dtype(dtype: pl.DataType) -> bool:
     return bool(getattr(dtype, "is_numeric", lambda: False)())
 
-
-def _uri_local_name(uri: str) -> str:
-    """Strip the common URI prefix to a human-readable local name.
-
-    Mirrors ``Query._remove_prefixes`` so DataObject display matches the
-    rest of the client when falling back to point_uri for column labels.
-    """
-    s = str(uri)
-    if "#" in s:
-        return s.rsplit("#", 1)[-1]
-    return s.rsplit("/", 1)[-1]
-
-
 def _split_value_column(df: pl.DataFrame) -> pl.DataFrame:
     if "value" not in df.columns:
         return df
@@ -669,7 +656,7 @@ class DataObject:
             pts = points_per_alias.get(alias, set())
             if len(pts) <= 1:
                 return alias
-            return f"{alias}__{_uri_local_name(point_uri)}"
+            return f"{alias}__{self._client.strip_namespace(point_uri)}"
 
         tall = tall.with_columns(
             pl.struct(["data_alias", "point_uri"])
