@@ -69,7 +69,8 @@ class _TabularIngestBase(IngestDriver):
         if not watch_dir.is_absolute():
             watch_dir = (self.config_dir() / watch_dir).resolve()
         self._watch_dir = watch_dir
-        self._rows_seen: dict[str, int] = {}
+        # Load row offsets from persistent state (empty dict if not found)
+        self._rows_seen: dict[str, int] = self.state.get("rows_seen", {})
         self._registered: dict[str, set[str]] = {}  # source_id → registered ref_names
 
         self._watch_dir.mkdir(parents=True, exist_ok=True)
@@ -159,6 +160,8 @@ class _TabularIngestBase(IngestDriver):
 
             if result.get("ok"):
                 self._rows_seen[key] = offset + rows_read
+                # Persist updated row offsets
+                self.state.set("rows_seen", self._rows_seen)
                 logger.info(
                     "tabular_ingest: %s — inserted %d row(s) across %d stream(s)",
                     rel, result.get("rows_inserted", 0), len(stream_names),

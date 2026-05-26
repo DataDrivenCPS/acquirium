@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from pathlib import Path
@@ -7,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from rdflib import URIRef
 
+from acquirium.DriverState import DriverState
 from acquirium.internals.models import compute_ref_uri
 
 if TYPE_CHECKING:
@@ -66,6 +68,8 @@ class Driver(ABC):
         self.aq = aq
         # Full parsed TOML dict so drivers can read their own config sections.
         self.config = config
+        # Persistent state storage
+        self.state = self._init_state(config)
 
     def reference_uri(self, ref_name: str) -> URIRef:
         """Return the canonical reference URI for ``self.source_id``/``ref_name``."""
@@ -74,6 +78,42 @@ class Driver(ABC):
     def config_dir(self) -> Path:
         """Return the directory containing the loaded config file, if known."""
         return Path(self.config.get("__config_dir", Path.cwd()))
+
+    def _init_state(self, config: dict) -> DriverState:
+        """Initialize persistent state for this driver.
+
+        Derives a unique identifier from the driver config:
+        - Uses `driver_id` if provided in config
+        - Otherwise derives deterministically from the driver spec
+
+        Args:
+            config: The full configuration dictionary.
+
+        Returns:
+            A DriverState instance backed by a JSON file.
+        """
+        # Get driver spec from config (used for deriving identifier)
+        driver_section = config.get("driver", {})
+        driver_id = driver_section.get("driver_id")
+
+        if driver_id:
+            # Use explicit driver_id if provided (sanitize for filesystem)
+            identifier = _sanitize_filename(str(driver_id))
+        else:
+            # Derive from spec hash for stability
+            spec = driver_section.get("spec", "")
+            if spec:
+                # Hash the spec to create a stable identifier
+                spec_hash = hashlib.sha256(spec.encode()).hexdigest()[:16]
+                # Also include class name for readability
+                class_name = self.__class__.__name__
+                identifier = f"{_sanitize_filename(class_name)}_{spec_hash}"
+            else:
+                # Fallback to class name only
+                identifier = _sanitize_filename(self.__class__.__name__)
+
+        state_file = self.config_dir() / ".acquirium" / "drivers" / f"{identifier}.json"
+        return DriverState(state_file)
 
     @abstractmethod
     def setup(self) -> None:
@@ -105,6 +145,20 @@ class Driver(ABC):
 
         Default is a no-op.  Override to close file ref URIs, flush buffers, etc.
         """
+
+
+def _sanitize_filename(name: str) -> str:
+    """Sanitize a string for use as a filename.
+
+    Replaces unsafe characters with underscores.
+    """
+    unsafe = "<>:" "|?*\\"
+    result = name
+    for char in unsafe:
+        result = result.replace(char, "_")
+    # Also replace spaces and other problematic chars
+    result = result.strip().replace(" ", "_")
+    return result
 
 
 class IngestDriver(Driver):
