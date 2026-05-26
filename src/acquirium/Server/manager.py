@@ -52,25 +52,29 @@ def _aggregate_uri_label_rows(
     kind: str,
     concepts: list[dict[str, Any]],
 ) -> None:
-    """Aggregate SPARQL (uri, label) rows into *concepts*, skipping already-seen URIs."""
-    uri_labels: dict[str, list[str]] = {}
+    """Aggregate SPARQL (uri, label) rows into *concepts*, skipping already-seen URIs.
+
+    SPARQL row order is not stable across processes; sort labels and iterate
+    URIs in sorted order so the resulting concept dicts hash identically run
+    to run (otherwise the embedding cache misses every restart).
+    """
+    uri_labels: dict[str, set[str]] = {}
     uri_first_label: dict[str, str | None] = {}
     for row in rows:
         uri = str(row[0]) if row[0] else None
         label = str(row[1]).strip('"') if row[1] else None
         if not uri:
             continue
-        if uri not in uri_labels:
-            uri_labels[uri] = []
-            uri_first_label[uri] = label
-        if label and label not in uri_labels[uri]:
-            uri_labels[uri].append(label)
+        bucket = uri_labels.setdefault(uri, set())
+        if label:
+            bucket.add(label)
 
-    for uri, labels in uri_labels.items():
+    for uri in sorted(uri_labels):
         if uri in seen:
             continue
         seen.add(uri)
-        surfaces = []
+        labels = sorted(uri_labels[uri])
+        surfaces: list[str] = []
         for lbl in labels:
             lbl_lower = lbl.lower()
             if lbl_lower not in surfaces:
@@ -80,7 +84,7 @@ def _aggregate_uri_label_rows(
             joined = " ".join(tokens)
             if joined not in surfaces:
                 surfaces.append(joined)
-        display_label = uri_first_label[uri] or (" ".join(tokens) if tokens else uri)
+        display_label = labels[0] if labels else (" ".join(tokens) if tokens else uri)
         concepts.append({
             "uri": uri,
             "kind": kind,
