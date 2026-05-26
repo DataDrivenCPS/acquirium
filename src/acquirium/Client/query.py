@@ -714,7 +714,7 @@ class Query:
             points_per_nid.setdefault(nid, set()).add(point_uri)
 
         def _resolve_label(nid: int, point_uri: str) -> str:
-            point_local = self._remove_prefixes(point_uri)
+            point_local = self.client.strip_namespace(point_uri)
             alias = self.query_graph.aliases_reverse.get(nid)
             # An auto-alias like "0" (str of node id) is treated as no alias.
             if alias is None or alias == str(nid):
@@ -764,8 +764,8 @@ class Query:
             except Exception:
                 logging.warning("casting to int failed")
                 pass
-        tall = tall.with_columns(pl.col("point_id").map_elements(lambda x: self._remove_prefixes(x),return_dtype=pl.Utf8).alias("point_id"))
-        tall = tall.with_columns(pl.col("ref").map_elements(lambda x: self._remove_prefixes(x),return_dtype=pl.Utf8).alias("ref"))
+        tall = tall.with_columns(pl.col("point_id").map_elements(lambda x: self.client.strip_namespace(x),return_dtype=pl.Utf8).alias("point_id"))
+        tall = tall.with_columns(pl.col("ref").map_elements(lambda x: self.client.strip_namespace(x),return_dtype=pl.Utf8).alias("ref"))
 
         # Combine multiple ref_uris that share the same (data_alias, point_id,
         # time) — first row wins.  This implements the "combine refs per point"
@@ -787,7 +787,7 @@ class Query:
         if col_name == "time":
             return col_name
         if isinstance(col_name, str):
-            return self._remove_prefixes(col_name)
+            return self.client.strip_namespace(col_name)
         if isinstance(col_name, set):
             return list(col_name)[1]
         return str(col_name)
@@ -820,7 +820,7 @@ class Query:
             cols_kept = [cols[i] for i in keep_idx]
             rows_kept = [[r[i] for i in keep_idx] for r in rows]
             cols_w_alias = [self._col_name_to_alias(c) for c in cols_kept]
-            rows_clean = [[self._remove_prefixes(i) for i in r] for r in rows_kept]
+            rows_clean = [[self.client.strip_namespace(i) for i in r] for r in rows_kept]
             pl_table = pl.DataFrame(rows_clean, schema=cols_w_alias, orient="row")
             self.cache[cache_key] = pl_table
         return self.cache[cache_key]
@@ -1451,23 +1451,6 @@ class Query:
             return col_name
         return self.query_graph.aliases_reverse.get(node_id, col_name)
 
-    def _remove_prefixes(self, item: Union[str, Any]) -> str:
-        """Remove common URI prefixes for display."""
-        try:
-            s = str(item)
-            s = s.split("#")
-            if len(s) == 2:
-                return s[1]
-            raise ValueError()
-        except:
-            try:
-                s = str(item)
-                s = s.split("/")
-                return s[-1]
-            except:
-                return str(item)
-
-
     def _show_head_cli(self,columns, rows, n, title=None):
         console = Console()
 
@@ -1477,7 +1460,7 @@ class Query:
             table.add_column(self._col_name_to_alias(col))
 
         for row in rows[:n]:
-            table.add_row(*[self._remove_prefixes(x) for x in row])
+            table.add_row(*[self.client.strip_namespace(x) for x in row])
 
         console.print(table)
 
