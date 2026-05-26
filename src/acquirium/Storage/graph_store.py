@@ -11,8 +11,7 @@ from ontoenv import OntoEnv
 import pyoxigraph as ox
 from pyoxigraph import NamedNode, RdfFormat
 from rdflib import Dataset, Graph, Literal, RDF, URIRef
-from rdflib.namespace import XSD
-from rdflib.namespace import OWL
+from rdflib.namespace import XSD, OWL, NamespaceManager
 from oxrdflib.store import from_ox
 
 
@@ -451,7 +450,7 @@ class OxigraphGraphStore:
 
     # -------------------- SPARQL surface --------------------
     def sparql_query(self, query: str, use_union: bool = False) -> dict:
-        _logger.debug("sparql_query union=%s query=%s", use_union, query.replace("\n", " ")[:200])
+        _logger.debug("sparql_query union=%s query=%s", use_union, query)
         with timed_debug(_logger, "sparql_query union=%s", use_union):
             if use_union:
                 dataset = self.query_dataset
@@ -524,6 +523,9 @@ class OxigraphGraphStore:
             "changed": True,
         }
 
+    def namespace_manager(self) -> NamespaceManager :
+        return self.source_dataset.namespace_manager
+    
     # -------------------- helpers --------------------
     def _materialize_point(self, subject: URIRef) -> Point:
         main_graph = self._source_main_graph()
