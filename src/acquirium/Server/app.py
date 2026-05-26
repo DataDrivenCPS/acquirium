@@ -38,49 +38,18 @@ from acquirium.Server.insert_stats import insert_stats, start_insert_summary_thr
 
 log = logging.getLogger("acquirium.api")
 
-# ---------------------------------------------------------------------------
-# In-process driver helpers
-# ---------------------------------------------------------------------------
-
-def _run_inprocess_driver(
-    entry: dict,
-    manager: Manager,
-    cfg: dict,
-    stop_event: threading.Event,
-) -> None:
-    """Thread target: run a single [[drivers]] entry using DirectAcquirium."""
-    from acquirium.Server.direct_client import DirectAcquirium
-    from acquirium.cli import _import_driver_class, _run_driver_loop
-
-    spec = entry["spec"]
-    driver_overrides = {k: v for k, v in entry.items() if k != "spec"}
-    merged_cfg = {**cfg, "driver": {**cfg.get("driver", {}), **driver_overrides}}
-    interval = float(driver_overrides.get("interval", cfg.get("driver", {}).get("interval", 10.0)))
-    config_dir = Path(cfg.get("__config_dir", Path.cwd()))
-
-    try:
-        driver_cls = _import_driver_class(spec, base_dir=config_dir)
-        direct_aq = DirectAcquirium(
-            manager,
-            origin=spec,
-            insert_batch_rows=int(merged_cfg.get("driver", {}).get("insert_batch_rows", 50_000)),
-        )
-        driver = driver_cls(direct_aq, merged_cfg)
-        driver.setup()
-        log.info("In-process driver ready: %s", driver_cls.__name__)
-    except Exception:
-        log.exception("In-process driver %s setup failed; thread exiting", spec)
-        return
-
-    _run_driver_loop(driver, direct_aq, interval, stop_event)
-
-
 def _start_inprocess_drivers(
     manager: Manager,
     stop_event: threading.Event,
 ) -> list[threading.Thread]:
-    """Read [[drivers]] from ACQUIRIUM_CONFIG and start each as a daemon thread."""
+    """Read [[drivers]] from ACQUIRIUM_CONFIG and start each driver.
+
+    Driver setup runs serially to avoid concurrent graph mutations during
+    startup. Once setup succeeds, each driver gets its own daemon tick thread.
+    """
     from acquirium.cli import _load_config
+    from acquirium.cli import _import_driver_class, _run_driver_loop
+    from acquirium.Server.direct_client import DirectAcquirium
 
     config_path = os.environ.get("ACQUIRIUM_CONFIG")
     if not config_path:
@@ -92,15 +61,41 @@ def _start_inprocess_drivers(
         log.warning("Could not load config from ACQUIRIUM_CONFIG=%s; skipping in-process drivers", config_path)
         return []
 
-    threads: list[threading.Thread] = []
+    # Stage every driver first so setup-time graph writes cannot race with
+    # another driver's tick loop.
+    drivers_to_start: list[tuple[str, float, object, object]] = []
     for entry in cfg.get("drivers", []):
         spec = entry.get("spec")
         if not spec:
             log.warning("[[drivers]] entry missing 'spec'; skipping")
             continue
+        driver_overrides = {k: v for k, v in entry.items() if k != "spec"}
+        merged_cfg = {**cfg, "driver": {**cfg.get("driver", {}), **driver_overrides}}
+        interval = float(driver_overrides.get("interval", cfg.get("driver", {}).get("interval", 10.0)))
+        config_dir = Path(cfg.get("__config_dir", Path.cwd()))
+        try:
+            driver_cls = _import_driver_class(spec, base_dir=config_dir)
+            direct_aq = DirectAcquirium(
+                manager,
+                origin=spec,
+                insert_batch_rows=int(merged_cfg.get("driver", {}).get("insert_batch_rows", 50_000)),
+            )
+            driver = driver_cls(direct_aq, merged_cfg)
+            log.info("Setting up in-process driver: %s", spec)
+            driver.setup()
+            log.info("In-process driver ready: %s", driver_cls.__name__)
+            drivers_to_start.append((spec, interval, driver, direct_aq))
+        except Exception:
+            log.exception("In-process driver %s setup failed; thread exiting", spec)
+            continue
+
+    # Only start background loops after all setups have either succeeded or
+    # failed, so later drivers are not competing with earlier tick threads.
+    threads: list[threading.Thread] = []
+    for spec, interval, driver, direct_aq in drivers_to_start:
         t = threading.Thread(
-            target=_run_inprocess_driver,
-            args=(entry, manager, cfg, stop_event),
+            target=_run_driver_loop,
+            args=(driver, direct_aq, interval, stop_event),
             daemon=True,
             name=f"acquirium-driver-{spec.rsplit(':', 1)[-1]}",
         )
@@ -371,10 +366,20 @@ async def insert_timeseries_arrow(request: Request):
         body = await request.body()
         reader = ipc.RecordBatchStreamReader(pa.BufferReader(body))
         df = pl.from_arrow(reader.read_all())
+        log.info(
+            "HTTP insert_timeseries_arrow received %d row(s) across %d source batch(es)",
+            len(df),
+            df["source_id"].n_unique() if "source_id" in df.columns else 0,
+        )
 
         total = 0
         for key, source_df in df.partition_by("source_id", as_dict=True).items():
             sid = key[0] if isinstance(key, tuple) else key
+            log.info(
+                "HTTP insert_timeseries_arrow forwarding %d row(s) for source_id=%s",
+                len(source_df),
+                sid,
+            )
             total += app.state.manager.insert_timeseries_arrow(str(sid), source_df.drop("source_id").to_arrow())
 
         return {"ok": True, "rows_inserted": total}

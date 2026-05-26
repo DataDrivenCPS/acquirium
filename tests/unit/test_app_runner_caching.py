@@ -267,6 +267,29 @@ def test_manager_graph_version_bumps_on_change():
     assert calls == [1]
 
 
+def test_manager_insert_graph_notifies_on_successful_insert():
+    from unittest.mock import MagicMock
+
+    from acquirium.Server.manager import Manager
+
+    mgr = Manager.__new__(Manager)
+    mgr.graph_store = MagicMock()
+    mgr._sync_stream_refs_from_graph = MagicMock()
+    mgr._graph_version = 0
+    mgr._graph_version_lock = threading.Lock()
+    mgr._graph_change_listeners = []
+    mgr._graph_change_listeners_lock = threading.Lock()
+
+    calls: list[int] = []
+    mgr.add_graph_change_listener(lambda: calls.append(1))
+    mgr.insert_graph("@prefix ex: <urn:ex/> .", format="turtle", replace=False)
+
+    mgr.graph_store.insert_graph.assert_called_once()
+    mgr._sync_stream_refs_from_graph.assert_called_once()
+    assert mgr.graph_version() == 1
+    assert calls == [1]
+
+
 def test_persist_routes_timeseries_to_manager(runner, stub_manager):
     app = CountingApp()
     runner.register(app)

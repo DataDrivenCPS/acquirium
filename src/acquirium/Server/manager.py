@@ -640,6 +640,8 @@ class Manager:
         try:
             self.graph_store.insert_graph(rdf_graph, format=format, replace=replace)
             logging.info("acquirium: inserted graph into store")
+            # Graph writes can create or update Acquirium-managed references,
+            # so refresh the registry before notifying listeners.
             self._sync_stream_refs_from_graph()
             # Embedding corpus is the static ontoenv vocabularies, not
             # inserted data — no per-insert reindex. refresh_union (inside
@@ -764,6 +766,13 @@ class Manager:
         if len(table) == 0:
             return 0
         df = pl.from_arrow(table)
+        stream_count = df["ref_name"].n_unique()
+        logger.info(
+            "acquirium: insert_timeseries_arrow received %d row(s) across %d stream(s) for source_id=%s",
+            len(df),
+            stream_count,
+            source_id,
+        )
         ref_uri_map: dict[str, str] = {}
         value_kind_map: dict[str, str] = {}
         for name in df["ref_name"].unique().to_list():
@@ -778,7 +787,13 @@ class Manager:
             .drop("ref_name")
             .select(["ref_uri", "ts", "value", "value_kind"])
         )
-        return self.timescale.bulk_insert_polars(df)
+        inserted = self.timescale.bulk_insert_polars(df)
+        logger.info(
+            "acquirium: insert_timeseries_arrow wrote %d row(s) for source_id=%s",
+            inserted,
+            source_id,
+        )
+        return inserted
 
     def _registered_value_kind(self, ref_uri: str) -> str:
         value_kind = self.timescale.stream_value_kind(ref_uri)
@@ -1140,9 +1155,10 @@ class Manager:
           ?log a <{LOGBOOK}> .
         }}
         """
-        self.graph_store.sparql_update(q)
+        result = self.graph_store.sparql_update(q)
         logger.info("Deleted all log references for point %s from graph", point_uri)
-        self._notify_graph_change()
+        if result.get("changed", True):
+            self._notify_graph_change()
         return True
 
     def sparql_dict(self, query: str, use_union: bool = True) -> dict[str, Any]:
