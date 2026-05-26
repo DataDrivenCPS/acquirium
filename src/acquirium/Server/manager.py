@@ -7,7 +7,7 @@ import os
 import logging
 from time import perf_counter
 from rdflib import Graph, URIRef, Literal, RDF, RDFS, SKOS
-
+from rdflib.namespace import NamespaceManager
 from acquirium.Storage import (
     OxigraphGraphStore,
     TimeseriesStore,
@@ -1218,6 +1218,17 @@ class Manager:
         """
         logger.debug("sparql_dict union=%s len=%d", use_union, len(query))
         return self.graph_store.sparql_query(query, use_union=use_union)
+
+    def namespace_manager(self) -> NamespaceManager :
+        """
+        Get the RDFLib NamespaceManager from the graph store.
+
+        Args:
+            use_union: Whether to get the NamespaceManager for the union graph.
+        Returns:
+            An RDFLib NamespaceManager instance.
+        """
+        return self.graph_store.namespace_manager()
 
     def embedding_status(self) -> dict[str, Any]:
         """Return the current state of each embedding index."""
