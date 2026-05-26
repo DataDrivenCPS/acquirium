@@ -58,6 +58,23 @@ class TestConceptsHash:
         c2 = [{"uri": "urn:z", "kind": "predicate"}]
         assert EmbeddingMatcher._concepts_hash(c1) != EmbeddingMatcher._concepts_hash(c2)
 
+    def test_nested_list_order_does_not_change_hash(self):
+        c1 = [{
+            "uri": "urn:a",
+            "kind": "class",
+            "label": "Alpha",
+            "surfaces": ["alpha", "a"],
+            "related": ["urn:z", "urn:y"],
+        }]
+        c2 = [{
+            "uri": "urn:a",
+            "kind": "class",
+            "label": "Alpha",
+            "surfaces": ["a", "alpha"],
+            "related": ["urn:y", "urn:z"],
+        }]
+        assert EmbeddingMatcher._concepts_hash(c1) == EmbeddingMatcher._concepts_hash(c2)
+
 
 # ── EmbeddingMatcher._build_surfaces_and_meta ─────────────
 

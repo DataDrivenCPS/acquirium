@@ -90,6 +90,15 @@ class TestInsertExport:
         assert "sensor1" in exported
         assert "sensor3" in exported
 
+    def test_insert_same_graph_is_idempotent(self, graph_store):
+        first = graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
+        second = graph_store.insert_graph(SAMPLE_TURTLE, format="turtle", replace=False)
+
+        assert first["changed"] is True
+        assert second["changed"] is True
+        assert second["main_triples"] == first["main_triples"]
+        assert second["union_triples"] == first["union_triples"]
+
     def test_insert_malformed_raises(self, graph_store):
         with pytest.raises(Exception):
             graph_store.insert_graph("this is not valid turtle {{{}}", format="turtle")
@@ -134,6 +143,24 @@ class TestSparql:
             use_union=True,
         )
         assert len(result["rows"]) >= 1
+
+    def test_union_graph_excludes_unimported_named_graphs(self, graph_store):
+        graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
+        other = graph_store.source_dataset.graph(URIRef("urn:test:unimported"))
+        other.add((
+            URIRef("urn:test:stray"),
+            RDF.type,
+            URIRef("http://example.org/StrayType"),
+        ))
+
+        result = graph_store.sparql_query(
+            "SELECT ?s WHERE { ?s a <http://example.org/StrayType> }",
+            use_union=True,
+        )
+
+        assert result["rows"] == []
+        assert len(graph_store.query_dataset.graph(graph_store.imports_union_graph_uri)) > 0
+        assert len(graph_store.source_dataset.graph(graph_store.imports_union_graph_uri)) == 0
 
     def test_update(self, graph_store):
         graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
