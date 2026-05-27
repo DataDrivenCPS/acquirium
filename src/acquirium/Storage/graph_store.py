@@ -310,12 +310,14 @@ class OxigraphGraphStore:
         )
         if can_rebuild_from_store:
             try:
+                _logger.debug("ontoenv: rebuilding from store")
                 return self._new_ontoenv(search_dirs, init_from_store=True)
             except Exception as exc:
                 _logger.warning(
                     "ontoenv: init_from_store failed; falling back to directory crawl: %s",
                     exc,
                 )
+        _logger.debug("ontoenv: rebuilding from directory crawl")
         env = self._new_ontoenv(search_dirs, init_from_store=False)
         try:
             env.update()
