@@ -207,8 +207,8 @@ class OxigraphGraphStore:
     _ONTOLOGY_IRIS = {
         "water": "urn:nawi-water-ontology",
         "s223": "http://data.ashrae.org/standard223/1.0/model/all",
-        "unit": "http://qudt.org/3.1.5/vocab/unit",
-        "quantity_kind": "http://qudt.org/vocab/quantitykind",
+        "unit": "http://qudt.org/3.2.1/vocab/unit",
+        "quantity_kind": "http://qudt.org/3.2.1/vocab/quantitykind",
     }
 
     @classmethod
