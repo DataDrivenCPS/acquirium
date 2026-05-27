@@ -293,10 +293,10 @@ class TimescaleStore(TimeseriesStore):
         if ref_uri is None:
             ref_uri = compute_ref_uri(source_id, ref_name)
         value_kind = normalize_value_kind(value_kind)
-        logger.debug(
-            "ensure_stream_ref source=%s ref_name=%s point_uri=%s kind=%s",
-            source_id, ref_name, point_uri, value_kind,
-        )
+        # logger.debug(
+        #     "ensure_stream_ref source=%s ref_name=%s point_uri=%s kind=%s",
+        #     source_id, ref_name, point_uri, value_kind,
+        # )
         with self.conn.cursor() as cur:
             cur.execute(
                 f"""
