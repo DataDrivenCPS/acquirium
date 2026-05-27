@@ -277,56 +277,6 @@ class Manager:
             recreate=os.getenv("ACQUIRIUM_RECREATE", "false").lower() == "true",
         )
 
-    def _scan_pg_references_from_graph(self) -> int:
-        """Scan graph for external Postgres timeseries references.
-
-        External Postgres historians use a ``ref:hasExternalReference`` node
-        whose ``ref:storedAt`` is a literal DSN. Acquirium-managed streams are
-        handled separately by ``_sync_stream_refs_from_graph`` and are
-        identified by ``acq:sourceId``/``acq:refName`` on the same reference
-        node.
-        """
-        q = f"""
-        SELECT ?data ?ref ?dsn ?table ?query ?tcol ?vcol ?pfilter
-        WHERE {{
-          ?data <{HAS_EXTERNAL_REFERENCE}> ?ref .
-          ?ref <{STORED_AT}> ?dsn .
-          FILTER(isLiteral(?dsn))
-          FILTER(STRSTARTS(STR(?dsn), "postgresql://") || STRSTARTS(STR(?dsn), "postgres://"))
-          OPTIONAL {{ ?ref <{TIMESERIES_TABLE}> ?table . }}
-          OPTIONAL {{ ?ref <{TIMESERIES_QUERY}> ?query . }}
-          OPTIONAL {{ ?ref <{TIMESERIES_TIME_COLUMN}> ?tcol . }}
-          OPTIONAL {{ ?ref <{TIMESERIES_VALUE_COLUMN}> ?vcol . }}
-          OPTIONAL {{ ?ref <{TIMESERIES_POINT_FILTER}> ?pfilter . }}
-        }}
-        """
-        with timed_debug(logger, "_scan_pg_references_from_graph: SPARQL"):
-            res = self.graph_store.sparql_query(q, use_union=True)
-        rows = res.get("rows", [])
-        logger.debug("_scan_pg_references_from_graph: %d candidate rows", len(rows))
-
-        count = 0
-        for row in rows:
-            (data_uri, ref_uri, dsn, table, custom_query, tcol, vcol, pfilter) = row
-            try:
-                info = PGReferenceInfo(
-                    dsn=self._sparql_value(dsn) or "",
-                    table=self._sparql_value(table),
-                    custom_query=self._sparql_value(custom_query),
-                    time_col=self._sparql_value(tcol) or "time",
-                    value_col=self._sparql_value(vcol) or "value",
-                    point_filter=self._sparql_value(pfilter),
-                )
-                self.pg_registry.register(str(ref_uri), info)
-                count += 1
-            except Exception:
-                logger.warning("Failed to register external Postgres reference %s", ref_uri, exc_info=True)
-
-        if count:
-            logger.info("Registered %d external Postgres reference(s) from graph", count)
-        return count
-
-
     def _sync_stream_refs_from_graph(self) -> int:
         """Sync the streams reference table from Acquirium-managed timeseries refs.
 
