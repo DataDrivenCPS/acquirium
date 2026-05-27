@@ -13,6 +13,7 @@ from acquirium.Storage import (
     TimeseriesStore,
     create_timeseries_store,
 )
+from acquirium.Storage.graph_store import default_ontologies_dir
 from acquirium.Storage.values import normalize_value_kind
 from acquirium.internals.qudt_units import QUDTUnitConverter
 from acquirium.internals.models import LogEntry, Order, TimeIntervalModel, AppSpec, AppRunRequest, compute_ref_uri
@@ -166,7 +167,7 @@ class Manager:
             converter = QUDTUnitConverter(qudt_graph)
         if converter is None:
             # Auto-detect local QUDT unit ontology
-            _qudt_local = Path("ontologies/qudt_unit.ttl")
+            _qudt_local = default_ontologies_dir() / "qudt_unit.ttl"
             if _qudt_local.exists():
                 try:
                     converter = QUDTUnitConverter(str(_qudt_local))
@@ -1191,14 +1192,15 @@ class Manager:
         """Lazily initialize the QUDT converter if not already available."""
         if self.qudt_converter is not None:
             return self.qudt_converter
-        _qudt_local = Path("ontologies/qudt_unit.ttl")
+        _qudt_local = default_ontologies_dir() / "qudt_unit.ttl"
         if _qudt_local.exists():
             self.qudt_converter = QUDTUnitConverter(str(_qudt_local))
             logger.info("Lazily loaded QUDTUnitConverter from %s", _qudt_local)
             return self.qudt_converter
         raise ValueError(
-            "QUDT converter not available. Place ontologies/qudt_unit.ttl "
-            "in the working directory or pass qudt_graph to Manager."
+            "QUDT converter not available. Place qudt_unit.ttl in the "
+            "package's ontologies/ directory (or the CWD-relative "
+            "ontologies/) or pass qudt_graph to Manager."
         )
 
     def resolve_unit_info(self, identifier: str) -> dict[str, Any]:

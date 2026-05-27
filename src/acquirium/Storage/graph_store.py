@@ -25,6 +25,26 @@ from acquirium.internals._log import timed_debug
 _logger = logging.getLogger("acquirium.graph_store")
 
 
+def default_ontologies_dir() -> Path:
+    """Resolve the directory of vendored ontology .ttl files.
+
+    Tried in order:
+      1. `<site-packages>/acquirium/ontologies/` (built wheel layout —
+         populated by hatchling `force-include`).
+      2. `<repo-root>/ontologies/` walking up from this module — so an
+         editable install / source checkout works from any CWD.
+      3. CWD-relative `ontologies/` as a last resort.
+    """
+    packaged = Path(__file__).resolve().parent.parent / "ontologies"
+    if packaged.is_dir():
+        return packaged
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "ontologies"
+        if candidate.is_dir():
+            return candidate
+    return Path("ontologies")
+
+
 def _literal_dt(value: datetime) -> Literal:
     '''
     Convert a datetime to an XSD.dateTime Literal in UTC.
@@ -147,8 +167,10 @@ class OxigraphGraphStore:
         main_graph_uri: URIRef = DEFAULT_MAIN_GRAPH,
         qudt_converter: QUDTUnitConverter | None = None,
         base_namespace: str | None = None,
-        ontologies_dir: str | Path = "ontologies",
+        ontologies_dir: str | Path | None = None,
     ):
+        if ontologies_dir is None:
+            ontologies_dir = default_ontologies_dir()
         self.store_path = Path(store_path)
         self.env_root = Path(env_root)
         self.store_path.mkdir(parents=True, exist_ok=True)
