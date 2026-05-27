@@ -103,8 +103,14 @@ class _OntoenvOxigraphStore:
     def __init__(self, dataset: Dataset, on_change: Callable[[], None]) -> None:
         self._ds = dataset
         self._on_change = on_change
+        # Flips on for the duration of a single user-override registration so
+        # ontoenv's internal add_graph call replaces a same-IRI bundled
+        # default instead of silently skipping it. See register_ontology.
+        self._force_overwrite_next = False
 
     def add_graph(self, iri: str, graph: Graph, overwrite: bool = False) -> None:
+        if self._force_overwrite_next:
+            overwrite = True
         ctx = self._ds.graph(URIRef(iri))
         if len(ctx) and not overwrite:
             _logger.debug("add_graph skip (already populated): %s (%d triples)", iri, len(ctx))
@@ -282,9 +288,65 @@ class OxigraphGraphStore:
         return URIRef(self.qualify_uri(value))
 
     # -------------------- ontology root + closure management --------------------
-    def register_ontology(self, source: str) -> str:
-        """Add an ontology source (IRI or path) to the ontoenv environment."""
-        return self.env.add(source, fetch_imports=False)
+    def register_ontology(self, source: str) -> str | None:
+        """Add an ontology source (path or IRI), replacing same-IRI defaults.
+
+        Path: parsed with rdflib; the named-graph IRI is taken from the
+        file's ``?s a owl:Ontology`` triple. If that triple is missing the
+        source is skipped with a warning (we have no other way to identify
+        which named graph the contents should land in).
+
+        IRI: handed to ontoenv, which fetches it online. If the fetch
+        fails the source is skipped with an info-level log so the user
+        knows to download and pass the file path next time.
+
+        When the resolved IRI matches a bundled default the named graph
+        is replaced (not silently kept); different-IRI sources coexist as
+        separate named graphs. Returns the loaded IRI, or None if skipped.
+        """
+        source_path = Path(source)
+        is_path = source_path.exists() and source_path.is_file()
+
+        if is_path:
+            graph = Graph()
+            try:
+                graph.parse(str(source_path))
+            except Exception as exc:
+                _logger.warning(
+                    "ontology source: failed to parse %s: %s; skipping",
+                    source, exc,
+                )
+                return None
+            ontology_iri = next(graph.subjects(RDF.type, OWL.Ontology), None)
+            if ontology_iri is None:
+                _logger.warning(
+                    "ontology source: %s has no `?s a owl:Ontology` triple; "
+                    "skipping (cannot determine the named-graph IRI)",
+                    source,
+                )
+                return None
+            iri_str = str(ontology_iri)
+            self._ontoenv_store.add_graph(iri_str, graph, overwrite=True)
+            _logger.info(
+                "ontology source: loaded %s into <%s> (%d triples)",
+                source, iri_str, len(graph),
+            )
+            return iri_str
+
+        self._ontoenv_store._force_overwrite_next = True
+        try:
+            result = self.env.add(source, fetch_imports=False)
+            _logger.info("ontology source: loaded IRI %s", source)
+            return result
+        except Exception as exc:
+            _logger.info(
+                "ontology source: failed to fetch IRI %s (%s); skipping. "
+                "Download the ontology and pass the local file path instead.",
+                source, exc,
+            )
+            return None
+        finally:
+            self._ontoenv_store._force_overwrite_next = False
 
     def ensure_ontology_root(self, graph_iri: str, imports: list[str]) -> None:
         """Ensure an owl:Ontology root node with optional owl:imports declarations."""
