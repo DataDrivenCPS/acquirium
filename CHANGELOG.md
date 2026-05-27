@@ -10,6 +10,57 @@ change in any release.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-27
+
+### Added
+- `Driver.state` — a persistent key-value store (`DriverState`) scoped per
+  driver instance, surviving restarts. Tabular ingest drivers use it to
+  persist per-file row offsets so already-ingested rows are not re-read.
+- `acquirium server -v` / `--verbose` (and `ACQUIRIUM_VERBOSE=1`) to enable
+  DEBUG logging across `acquirium.*` (server, storage, drivers).
+- Backend namespace service: new endpoint exposing the configured
+  namespace map; the client now resolves URIs against the server's
+  namespace list instead of hardcoding them.
+- Public tabular ingest hooks on `TabularIngestBase`: subclassable
+  `read_frame`, `ensure_streams_registered`, `skip_cols`, and a
+  `_is_timeseries_frame` fast path for drivers that already produce a
+  normalized `(ts, ref_name, value)` frame.
+- `CSVIngestDriver`: per-column ignore filter (`skip_cols`), applied
+  before parsing so excluded columns never enter the polars frame.
+- `XLSXIngestDriver`: `skip_cols` is applied to the merged sheet frame
+  before slicing.
+- `acquirium.internals._log` module with `configure_logging()` and a
+  `timed_debug` context manager; FastAPI middleware emits one DEBUG line
+  per HTTP request with elapsed ms.
+
+### Changed
+- Graph store is now split into separate Oxigraph source and query
+  datasets; ontoenv state is persisted under `env_root` and reused across
+  restarts so cold startup avoids the full directory crawl.
+- Closure-cache invalidation is decoupled from source writes — ordinary
+  instance-data inserts no longer trigger an owl:imports closure rebuild.
+- Embedding indexes are now deterministic: graph-concept and QUDT-concept
+  extraction sort and dedupe their inputs, so successive builds over the
+  same vocabulary produce identical embeddings.
+- Bundled QUDT ontologies upgraded to **3.2.1** (`qudt_unit.ttl`,
+  `qudt_qk.ttl`); the default `_ONTOLOGY_IRIS` map in `OxigraphGraphStore`
+  was updated to match the new versioned IRIs.
+- `Query` / `DataObject`: `ref_uri` is hidden from results and
+  visualisations by default; pass `include_ref_uri=True` to opt back in.
+- Tabular driver base module renamed from `_tabular_base` to public
+  `tabular_base`; `TabularIngestBase` (no leading underscore) is the
+  supported subclass entry point.
+- No-op graph-change notifications are now skipped, avoiding spurious
+  driver `on_graph_change()` ticks.
+
+### Removed
+- **Breaking:** `acquirium.BuiltinDrivers._tabular_base` and
+  `_TabularIngestBase` — import from
+  `acquirium.BuiltinDrivers.tabular_base` and subclass
+  `TabularIngestBase` instead. The compatibility shim has been deleted.
+- Bundled `ontologies/Brick.ttl` — no longer referenced by the default
+  ontology set.
+
 ## [0.2.0] - 2026-05-19
 
 ### Added
@@ -71,7 +122,8 @@ change in any release.
 - Text matcher backed by FastEmbed with QUDT and graph indexes.
 - Grafana dashboard helpers.
 
-[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/DataDrivenCPS/acquirium/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/DataDrivenCPS/acquirium/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/DataDrivenCPS/acquirium/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/DataDrivenCPS/acquirium/releases/tag/v0.1.0
