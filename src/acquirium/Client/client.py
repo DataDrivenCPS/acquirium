@@ -52,6 +52,7 @@ class AcquiriumClient:
             title="Acquirium Grafana Dashboard",
             tags=["acquirium"],
         )
+        self._namespaces_cache: dict[str, str] | None = None
 
 
     def insert_graph(self, rdf_graph: str, format: str = "turtle", replace: bool = True) -> None:
@@ -214,6 +215,39 @@ class AcquiriumClient:
         response = requests.get(url, params=data)
         _raise_for_status(response)
         return response.json()
+
+    def list_namespaces(self) -> dict[str, str]:
+        """Return the bound ``prefix -> namespace URI`` map from the server.
+
+        Cached on the client after the first call.
+        """
+        if self._namespaces_cache is None:
+            url = f"{self.base_url}/namespace/list"
+            response = requests.get(url)
+            _raise_for_status(response)
+            self._namespaces_cache = response.json()
+        return self._namespaces_cache
+
+    def strip_namespace(self, item: Any) -> str:
+        """Strip the namespace from a URI, returning only the local name.
+
+        Uses the bound namespaces from ``list_namespaces`` (longest-prefix
+        match). Falls back to splitting on ``#`` or ``/`` when no bound
+        namespace matches; non-URI strings are returned unchanged.
+        """
+        s = str(item)
+        best = ""
+        for ns_uri in self.list_namespaces().values():
+            if s.startswith(ns_uri) and len(ns_uri) > len(best):
+                best = ns_uri
+        if best:
+            return s[len(best):]
+        if "#" in s:
+            return s.rsplit("#", 1)[-1]
+        if "/" in s:
+            return s.rsplit("/", 1)[-1]
+        return s
+
 
     def resolve_text(
         self,

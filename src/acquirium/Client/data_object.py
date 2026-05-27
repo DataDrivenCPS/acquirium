@@ -149,7 +149,6 @@ def _deduplicate_contexts(contexts: list[dict[str, str]]) -> list[dict[str, str]
 def _is_numeric_dtype(dtype: pl.DataType) -> bool:
     return bool(getattr(dtype, "is_numeric", lambda: False)())
 
-
 def _split_value_column(df: pl.DataFrame) -> pl.DataFrame:
     if "value" not in df.columns:
         return df
@@ -542,20 +541,24 @@ class DataObject:
     def __getitem__(self, alias: str) -> pl.DataFrame:
         """Return time-series for a data alias.
 
-        If the alias resolves to a single ref, returns ``[time, value]``.
-        If multiple refs exist, returns ``[time, value, ref_uri]`` so the
-        caller can disambiguate.
+        Multiple ref_uris that share the same point_uri are combined
+        (first-wins). If the alias resolves to a single point_uri the result
+        is ``[time, value]``; if several point_uris share the alias the
+        result is ``[time, value, point_uri]`` so the caller can
+        disambiguate.
         """
         self._materialize()
         subset = self._tall.filter(pl.col("data_alias") == alias)
         if subset.is_empty():
             return pl.DataFrame(schema={"time": pl.Datetime(time_zone="UTC"), "value": pl.Float64})
 
+        # Combine ref_uris that share the same (point_uri, time).
+        subset = subset.unique(subset=["point_uri", "time"], keep="first")
         subset = _restore_single_value_column(subset)
-        n_refs = subset["ref_uri"].n_unique()
-        if n_refs <= 1:
+        n_points = subset["point_uri"].n_unique()
+        if n_points <= 1:
             return subset.select("time", "value").sort("time")
-        return subset.select("time", "value", "ref_uri").sort("time")
+        return subset.select("time", "value", "point_uri").sort("time")
 
     # ------------------------------------------------------------------
     # Grouping
@@ -619,9 +622,13 @@ class DataObject:
     def dataframe(self, shape: str = "wide") -> pl.DataFrame:
         """Return a flat DataFrame.
 
-        - ``shape="narrow"``: returns the internal tall frame as-is.
-        - ``shape="wide"``: pivots to ``[time, alias_0, alias_1, ...]``.
-          When an alias has multiple refs, columns are suffixed ``_0``, ``_1``, etc.
+        - ``shape="narrow"``: returns the internal tall frame as-is (every
+          ``(data_alias, point_uri, ref_uri, time)`` row preserved).
+        - ``shape="wide"``: pivots to ``[time, <alias_or_alias__point>, ...]``.
+          Multiple ref_uris that share the same point_uri are combined
+          (first-wins). When an alias resolves to a single point the column
+          is just the alias; when it resolves to several points the columns
+          are disambiguated as ``f"{alias}__{point_local}"``.
         """
         self._materialize()
 
@@ -631,51 +638,34 @@ class DataObject:
         if shape == "narrow":
             return self._tall.sort("time")
 
-        # Build a pivot key that disambiguates multi-ref aliases
         tall = self._tall.clone()
 
-        # For each alias, check if there are multiple refs
-        ref_counts: dict[str, int] = {}
-        for alias in tall["data_alias"].unique().to_list():
-            alias_subset = tall.filter(pl.col("data_alias") == alias)
-            ref_counts[alias] = alias_subset["ref_uri"].n_unique()
+        # Combine ref_uris sharing the same (data_alias, point_uri, time):
+        # we want one row per point_uri at each timestamp.
+        tall = tall.unique(subset=["data_alias", "point_uri", "time"], keep="first")
 
-        # Build a pivot_key column
-        def _make_pivot_key(alias: str, ref_uri: str) -> str:
-            if ref_counts.get(alias, 1) <= 1:
+        # Count distinct point_uris per alias from the bindings (i.e. the
+        # query's metadata view, not just whichever bindings produced rows).
+        # This keeps disambiguation stable even when some bindings had no
+        # data within the requested window.
+        points_per_alias: dict[str, set[str]] = {}
+        for b in self._bindings:
+            points_per_alias.setdefault(b.alias, set()).add(b.point_uri)
+
+        def _pivot_key(alias: str, point_uri: str) -> str:
+            pts = points_per_alias.get(alias, set())
+            if len(pts) <= 1:
                 return alias
-            # Get index of this ref within the alias
-            return alias  # will be handled below
+            return f"{alias}__{self._client.strip_namespace(point_uri)}"
 
-        # For multi-ref aliases, we need to create indexed column names
-        has_multi_ref = any(v > 1 for v in ref_counts.values())
-        if has_multi_ref:
-            # Build ref index mapping
-            ref_index_map: dict[tuple[str, str], int] = {}
-            for alias in tall["data_alias"].unique().to_list():
-                alias_subset = tall.filter(pl.col("data_alias") == alias)
-                refs = alias_subset["ref_uri"].unique().sort().to_list()
-                if len(refs) > 1:
-                    for idx, ref in enumerate(refs):
-                        ref_index_map[(alias, ref)] = idx
-
-            # Create pivot_key column
-            def pivot_key(row_alias: str, row_ref: str) -> str:
-                key = (row_alias, row_ref)
-                if key in ref_index_map:
-                    return f"{row_alias}_{ref_index_map[key]}"
-                return row_alias
-
-            tall = tall.with_columns(
-                pl.struct(["data_alias", "ref_uri"])
-                .map_elements(
-                    lambda s: pivot_key(s["data_alias"], s["ref_uri"]),
-                    return_dtype=pl.Utf8,
-                )
-                .alias("_pivot_key")
+        tall = tall.with_columns(
+            pl.struct(["data_alias", "point_uri"])
+            .map_elements(
+                lambda s: _pivot_key(s["data_alias"], s["point_uri"]),
+                return_dtype=pl.Utf8,
             )
-        else:
-            tall = tall.with_columns(pl.col("data_alias").alias("_pivot_key"))
+            .alias("_pivot_key")
+        )
 
         return _pivot_split_values(tall, "_pivot_key")
 
@@ -696,10 +686,19 @@ class DataObject:
     # Metadata & introspection (no materialization needed)
     # ------------------------------------------------------------------
 
-    def metadata(self) -> pl.DataFrame:
-        """Return a DataFrame of unique (data_alias, point_uri, ref_uri, entity__*) tuples."""
+    def metadata(self, *, include_ref_uris: bool = False) -> pl.DataFrame:
+        """Return a DataFrame of unique ``(data_alias, point_uri, entity__*)``
+        tuples.
+
+        By default the UUID ``ref_uri`` column is hidden — multiple ref_uris
+        sharing the same point are folded into one row. Pass
+        ``include_ref_uris=True`` to keep the per-ref breakdown (useful for
+        per-ref filtering and debugging).
+        """
+        ref_col = ["ref_uri"] if include_ref_uris else []
+
         if self._materialized and self._tall is not None:
-            meta_cols = ["data_alias", "point_uri", "ref_uri"] + self._entity_columns
+            meta_cols = ["data_alias", "point_uri"] + ref_col + self._entity_columns
             existing = [c for c in meta_cols if c in self._tall.columns]
             if self._tall.is_empty():
                 return pl.DataFrame(schema={c: pl.Utf8 for c in existing})
@@ -712,12 +711,13 @@ class DataObject:
                 row: dict[str, str | None] = {
                     "data_alias": b.alias,
                     "point_uri": b.point_uri,
-                    "ref_uri": b.ref_uri,
                 }
+                if include_ref_uris:
+                    row["ref_uri"] = b.ref_uri
                 for ec in self._entity_columns:
                     row[ec] = ctx.get(ec)
                 rows.append(row)
-        cols = ["data_alias", "point_uri", "ref_uri"] + self._entity_columns
+        cols = ["data_alias", "point_uri"] + ref_col + self._entity_columns
         if not rows:
             return pl.DataFrame(schema={c: pl.Utf8 for c in cols})
         return pl.DataFrame(rows).unique().sort("data_alias")

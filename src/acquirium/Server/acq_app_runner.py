@@ -13,6 +13,7 @@ from acquirium.Apps.output_emission import emit_outputs
 from acquirium.Client.acquirium import Acquirium
 from acquirium.Client.query import Query
 from acquirium.Server.manager import Manager
+from acquirium.internals._log import timed_debug
 
 logger = logging.getLogger("acquirium.app_runner")
 
@@ -72,16 +73,19 @@ class AppRunner:
             raise ValueError("App must define .name")
         # Don't race with an in-flight refresh that might overwrite our build
         # with a stale snapshot.
+        logger.debug("register: waiting for in-flight refresh (app=%s)", app.name)
         self._refresh_event.wait()
         self._apps[app.name] = app
         try:
-            self._build_app_queries(app)
+            with timed_debug(logger, "register app=%s build_app_queries", app.name):
+                self._build_app_queries(app)
         except Exception:
             # Don't fail registration if the initial build fails — the next
             # graph change (or run_app fallback) will retry.
             logger.exception("Initial query build failed for app '%s'", app.name)
 
     def unregister(self, app_id: str) -> None:
+        logger.debug("unregister app_id=%s", app_id)
         self._apps.pop(app_id, None)
         with self._cache_lock:
             self._cached_queries.pop(app_id, None)
@@ -96,13 +100,15 @@ class AppRunner:
     # ─────────────────────── query caching ───────────────────────
 
     def _build_app_queries(self, app: App) -> None:
-        query_bundle = app.build_query(self.aq)
+        with timed_debug(logger, "build_query app=%s", app.name):
+            query_bundle = app.build_query(self.aq)
         if isinstance(query_bundle, dict):
             queries = query_bundle
             query = queries.get("default") or (next(iter(queries.values())) if queries else None)
         else:
             query = query_bundle
             queries = {"default": query}
+        logger.debug("_build_app_queries app=%s queries=%d", app.name, len(queries))
         with self._cache_lock:
             self._cached_queries[app.name] = _CachedQueries(query=query, queries=queries)
 
@@ -207,6 +213,9 @@ class AppRunner:
         return self._app_executor.submit(self._run_and_emit_outputs, app, ctx)
 
     def _run_and_emit_outputs(self, app: App, ctx: AppContext) -> list[Output]:
-        outputs = app.run(ctx)
-        emit_outputs(ctx.app_id, outputs, insert_timeseries=self.manager.insert_timeseries, logger=logger)
+        with timed_debug(logger, "app.run app_id=%s", ctx.app_id):
+            outputs = app.run(ctx)
+        logger.debug("emit_outputs app_id=%s outputs=%d", ctx.app_id, len(outputs))
+        with timed_debug(logger, "emit_outputs app_id=%s", ctx.app_id):
+            emit_outputs(ctx.app_id, outputs, insert_timeseries=self.manager.insert_timeseries, logger=logger)
         return outputs

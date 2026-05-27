@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,6 +11,9 @@ from rdflib import URIRef
 
 from acquirium.DriverState import DriverState
 from acquirium.internals.models import compute_ref_uri
+from acquirium.internals._log import timed_debug
+
+logger = logging.getLogger("acquirium.driver")
 
 if TYPE_CHECKING:
     import polars as pl
@@ -174,19 +178,33 @@ class IngestDriver(Driver):
     def insert_observations(self, observations: "pl.DataFrame | None") -> dict[str, Any]:
         import polars as pl
 
-        df = self.normalize_observations(observations)
+        with timed_debug(logger, "%s.normalize_observations", self.__class__.__name__):
+            df = self.normalize_observations(observations)
         if df.is_empty():
+            logger.debug("%s.insert_observations: empty after normalize, skipping", self.__class__.__name__)
             return {"ok": True, "rows_inserted": 0}
 
         if "source_id" not in df.columns:
-            result = self.aq.insert_timeseries_arrow(self.source_id, df.to_arrow())
+            logger.debug(
+                "%s.insert_observations source=%s rows=%d",
+                self.__class__.__name__, self.source_id, len(df),
+            )
+            with timed_debug(logger, "%s.aq.insert_timeseries_arrow source=%s rows=%d",
+                             self.__class__.__name__, self.source_id, len(df)):
+                result = self.aq.insert_timeseries_arrow(self.source_id, df.to_arrow())
             return self._coerce_insert_result(result, len(df))
 
         total = 0
         for source_id, source_df in df.partition_by("source_id", as_dict=True).items():
             source = source_id[0] if isinstance(source_id, tuple) else source_id
             payload = source_df.drop("source_id")
-            result = self.aq.insert_timeseries_arrow(str(source), payload.to_arrow())
+            logger.debug(
+                "%s.insert_observations source=%s rows=%d (multi-source)",
+                self.__class__.__name__, source, len(payload),
+            )
+            with timed_debug(logger, "%s.aq.insert_timeseries_arrow source=%s rows=%d",
+                             self.__class__.__name__, source, len(payload)):
+                result = self.aq.insert_timeseries_arrow(str(source), payload.to_arrow())
             total += self._coerce_insert_result(result, len(payload))["rows_inserted"]
         return {"ok": True, "rows_inserted": total}
 

@@ -9,6 +9,9 @@ base classes:
 - `PollingIngestDriver`: the runner pulls observations by calling `collect()`
 - `EventIngestDriver`: callbacks push observations by calling
   `insert_observations()`
+- `TabularIngestBase`: file-oriented drivers can reuse paging, wide/narrow
+  normalization, and generic insertion while specializing stream naming and
+  registration
 
 Both ingest bases use the same canonical observation frame:
 
@@ -130,6 +133,207 @@ Rules:
 - Do not put `while True` or `time.sleep` in a driver; the runner owns timing.
 - Register datasources and streams before reporting observations for them.
 - Use `stop()` to release resources on shutdown.
+
+## Tabular Drivers
+
+Use `TabularIngestBase` for drivers that ingest CSV/XLSX-like tabular files
+and want the framework to own:
+
+- file discovery under `watch_dir`
+- row-offset paging via driver state, allowing efficient ingestion of
+  "growing" files; this is a common pattern when recorded data is
+  batch-uploaded to a fileshare
+- wide/narrow normalization into `(ts, ref_name, value)`
+- observation insertion
+
+The public base lives at
+`acquirium.BuiltinDrivers.tabular_base:TabularIngestBase`. The built-in
+`CSVIngestDriver` and `XLSXIngestDriver` are thin specializations of it.
+
+### Describing Wide/Narrow Schemas
+
+Tabular drivers use five config/method hooks to describe the input schema:
+
+- `ingest_format()` / `format`
+- `time_col()` / `time_col`
+- `id_col()` / `id_col`
+- `value_col()` / `value_col`
+- `skip_cols(path, col_names)` / `skip_cols`
+
+You can set these in configuration:
+
+```toml
+[[drivers]]
+spec = "acquirium.BuiltinDrivers.csv_ingest:CSVIngestDriver"
+format = "narrow"
+time_col = "timestamp"
+id_col = "sensor_id"
+value_col = "reading"
+skip_cols = ["notes", "operator_comment"]
+```
+
+Or override the methods in a subclass when the schema is fixed:
+
+```python
+class MyDriver(CSVIngestDriver):
+    def ingest_format(self) -> str:
+        return "narrow"
+
+    def time_col(self) -> str:
+        return "timestamp"
+
+    def id_col(self) -> str:
+        return "tag"
+
+    def value_col(self) -> str:
+        return "reading"
+
+    def skip_cols(self, path: Path, col_names: list[str]) -> tuple[str, ...]:
+        if path.name.startswith("debug_"):
+            return tuple(col_names)
+        return tuple(name for name in col_names if name.startswith("debug_"))
+```
+
+When each field matters:
+
+- wide format:
+  - `time_col` matters
+  - `id_col` and `value_col` are ignored (ids are column names, values are cell values)
+- narrow format:
+  - `time_col`, `id_col`, and `value_col` all matter
+
+`skip_cols(path, col_names)` is applied before wide/narrow parsing. Use it to
+drop columns that are not part of the stream schema at all, such as note
+fields, debug columns, or report metadata.
+
+If timestamps or stream IDs must be derived from multiple columns, or if the
+file shape is otherwise more specialized than the built-in wide/narrow
+handlers, override `read_frame(...)` and return either:
+
+- a standard wide/narrow frame that these hooks describe, or
+- a fully normalized frame with `ts`, `ref_name`, and `value`
+
+`TabularIngestBase` is intentionally generic. Subclasses are expected to
+specialize their own stream semantics and registration policy through hooks
+such as:
+
+- `stream_name_for(raw_name)`
+- `stream_specs_for_names(path, source_id, raw_names, value_kinds)`
+- `ensure_streams_registered(path, source_id, df, value_kinds)`
+- `skip_cols(path, col_names)`
+
+That means source-specific header parsing and metadata inference should live in
+the subclass, not in the base frame format.
+
+### Tabular Hooks
+
+These hooks let subclasses specialize stream identity and registration without
+reimplementing paging or file parsing.
+
+#### `stream_name_for(raw_name)`
+
+What it does:
+- Maps a raw source-local stream/header name to the canonical `ref_name` that
+  Acquirium stores and uses for stream identity.
+
+When it is called:
+- During wide/narrow normalization, when the base converts parsed tabular data
+  into `(ts, ref_name, value)`.
+- During default registration logic, if a subclass derives stream specs from
+  raw names and wants them normalized consistently.
+
+How to use it:
+- Override when the default URI-safe normalization is not the right stream
+  identity for your source.
+- Good uses include preserving source-specific conventions, collapsing aliases,
+  or applying a custom sanitization rule.
+
+Default behavior:
+- Returns a URI-safe version of `raw_name` (not necessarily a URI, just safe
+  for use as one path segment). For example, `"Temp (°C)"` could become
+  `"Temp_C"`.
+
+#### `stream_specs_for_names(path, source_id, raw_names, value_kinds)`
+
+What it does:
+- Builds the `register_streams()` payload for a set of raw source-local stream
+  or header names.
+- This is where a subclass can add metadata such as `unit`, `medium`,
+  `quantity_kind`, `substance`, `point_uri`, or other stream-registration
+  fields.
+
+When it is called:
+- By the default `ensure_streams_registered(...)` implementation, only for
+  streams that have not already been registered for that `source_id`.
+
+How to use it:
+- Override when stream registration depends on source-specific knowledge such
+  as raw headers, sidecar config files, workbook sheet structure, or file-local
+  metadata.
+- Return one spec dict per stream in `raw_names`.
+- Set `ref_name` explicitly in each returned spec, typically by calling
+  `stream_name_for(raw_name)`.
+
+Default behavior:
+- Registers only `source_id`, `ref_name`, and normalized `value_kind`.
+
+#### `ensure_streams_registered(path, source_id, df, value_kinds)`
+
+What it does:
+- Ensures that streams for the current file are registered before observation
+  rows are inserted.
+- It is the highest-level registration hook for tabular drivers.
+- Receives the parsed per-file frame `df`, so subclasses can derive raw stream
+  names directly from the data they are already ingesting.
+
+When it is called:
+- Once per file during `tick()`, after the file has been parsed and value kinds
+  inferred, but before `insert_observations(...)`.
+
+How to use it:
+- Override when registration should be eager, file-aware, or otherwise more
+  specialized than “register newly seen names lazily”.
+- This is the right place to:
+  - inspect raw file headers
+  - inspect parsed `df["ref_name"]` values
+  - perform one-time registration for a whole file or datasource
+  - skip registration entirely because setup already handled it
+  - maintain custom registration state
+
+What `value_kinds` is:
+- `value_kinds` is a `dict[str, str]` mapping canonical `ref_name` to the
+  inferred or declared Acquirium value kind for that stream, usually
+  `"numeric"` or `"text"`.
+- The base computes it from the parsed frame before registration so subclasses
+  can reuse the same classification when building registration specs.
+
+Default behavior:
+- Registers only newly seen stream names for the given `source_id`, using the
+  raw names in `df["ref_name"]`, then records the resulting canonical
+  `ref_name`s in the base class's `_registered` cache.
+
+#### `skip_cols(path, col_names)`
+
+What it does:
+- Returns source-local column names that should be ignored entirely before the
+  built-in wide/narrow handling runs.
+
+When it is called:
+- By the built-in CSV and XLSX drivers, after column names are known but before
+  the parsed frame is handed to the base wide/narrow normalization logic.
+
+How to use it:
+- Set `skip_cols = [...]` in config when the file always has junk columns you
+  want to ignore.
+- Override it in a subclass when the choice depends on the available source
+  columns or on which file is being ingested.
+- Use it for dropping columns, not combining them. If you need `Date` + `Time`
+  or a composite ID built from several columns, override `read_frame(...)`
+  instead.
+
+Default behavior:
+- Reads `driver.skip_cols` from config and skips any matching names present in
+  `col_names`.
 
 ## Event Drivers
 
@@ -254,8 +458,10 @@ The state file is named based on a driver identifier, determined as follows:
    ```
    → State file: `.acquirium/drivers/my-csv-monitor.json`
 
-2. **Derived from spec** (if `driver_id` not provided):
-   - A hash of the spec combined with the class name
+2. **Derived from the driver config block** (if `driver_id` not provided):
+   - A hash of the merged `driver` config block combined with the class name
+   - This avoids collisions when two `[[drivers]]` entries use the same
+     driver class with different settings
    - Example: `CSVIngestDriver_a1b2c3d4e5f6g7h8.json`
 
 ### Example: CSV Driver with `driver_id`
@@ -515,6 +721,7 @@ format = "auto"        # "auto" | "wide" | "narrow"
 time_col = "time"
 id_col = "id"          # narrow only
 value_col = "value"    # narrow only
+skip_cols = ["notes"]  # optional columns to ignore entirely
 date_format = "%m/%d/%Y"
 skip_rows = [1, 3]     # or { "subdir/data.csv" = [2, 5] }
 encoding = "utf8-lossy"
@@ -559,6 +766,7 @@ Override any of them to hard-code behaviour without touching config:
 | `time_col()` | `"time"` | Timestamp column name |
 | `id_col()` | `"id"` | Stream-ID column (narrow only) |
 | `value_col()` | `"value"` | Value column (narrow only) |
+| `skip_cols(path, col_names)` | `driver.skip_cols` | Drop source-local columns before parsing |
 | `ingest_format()` | `"auto"` | `"wide"`, `"narrow"`, or `"auto"` |
 | `date_format()` | `None` | strptime format for non-ISO timestamps |
 | `skip_rows_for(path)` | from config | 1-indexed row numbers to skip |
@@ -575,7 +783,8 @@ file) and returns `(df, rows_read)`. Two return shapes are accepted:
 
 **`read_df(path, row_offset, schema_overrides=None)`** is the CSV I/O helper
 (defined on `CSVIngestDriver`). Call it from `read_frame` to get the raw
-frame with offset slicing, skip-row filtering, and encoding already handled.
+frame with offset slicing, skip-row filtering, skip-column filtering, and
+encoding already handled.
 
 ```python
 import polars as pl

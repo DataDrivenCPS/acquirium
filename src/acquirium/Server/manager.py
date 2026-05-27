@@ -7,7 +7,7 @@ import os
 import logging
 from time import perf_counter
 from rdflib import Graph, URIRef, Literal, RDF, RDFS, SKOS
-
+from rdflib.namespace import NamespaceManager
 from acquirium.Storage import (
     OxigraphGraphStore,
     TimeseriesStore,
@@ -34,9 +34,9 @@ from acquirium.TextMatch.embedding_matcher import EmbeddingMatcher, _split_local
 from acquirium.TextMatch.qudt_store import QUDTStore
 from acquirium.TextMatch.resolver import ConceptResolver
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+from acquirium.internals._log import timed_debug
+
 logger = logging.getLogger("acquirium.manager")
-logger.setLevel(logging.INFO)
 
 DEFAULT_DATA_DIR = Path(".acquirium")
 DEFAULT_DB_NAME = "acquirium"
@@ -52,25 +52,29 @@ def _aggregate_uri_label_rows(
     kind: str,
     concepts: list[dict[str, Any]],
 ) -> None:
-    """Aggregate SPARQL (uri, label) rows into *concepts*, skipping already-seen URIs."""
-    uri_labels: dict[str, list[str]] = {}
+    """Aggregate SPARQL (uri, label) rows into *concepts*, skipping already-seen URIs.
+
+    SPARQL row order is not stable across processes; sort labels and iterate
+    URIs in sorted order so the resulting concept dicts hash identically run
+    to run (otherwise the embedding cache misses every restart).
+    """
+    uri_labels: dict[str, set[str]] = {}
     uri_first_label: dict[str, str | None] = {}
     for row in rows:
         uri = str(row[0]) if row[0] else None
         label = str(row[1]).strip('"') if row[1] else None
         if not uri:
             continue
-        if uri not in uri_labels:
-            uri_labels[uri] = []
-            uri_first_label[uri] = label
-        if label and label not in uri_labels[uri]:
-            uri_labels[uri].append(label)
+        bucket = uri_labels.setdefault(uri, set())
+        if label:
+            bucket.add(label)
 
-    for uri, labels in uri_labels.items():
+    for uri in sorted(uri_labels):
         if uri in seen:
             continue
         seen.add(uri)
-        surfaces = []
+        labels = sorted(uri_labels[uri])
+        surfaces: list[str] = []
         for lbl in labels:
             lbl_lower = lbl.lower()
             if lbl_lower not in surfaces:
@@ -80,7 +84,7 @@ def _aggregate_uri_label_rows(
             joined = " ".join(tokens)
             if joined not in surfaces:
                 surfaces.append(joined)
-        display_label = uri_first_label[uri] or (" ".join(tokens) if tokens else uri)
+        display_label = labels[0] if labels else (" ".join(tokens) if tokens else uri)
         concepts.append({
             "uri": uri,
             "kind": kind,
@@ -123,11 +127,13 @@ class Manager:
         recreate: bool = False,
     ):
         if not logging.getLogger().handlers:
-            logging.basicConfig(
-                level=logging.INFO,
-                format="%(asctime)s %(levelname)s %(name)s %(message)s",
-            )
+            from acquirium.internals._log import configure_logging
+            configure_logging()
         start = perf_counter()
+        logger.debug(
+            "Manager.__init__: backend=%s data_dir=%s recreate=%s",
+            timeseries_backend, data_dir, recreate,
+        )
 
         base = Path(data_dir) if data_dir is not None else DEFAULT_DATA_DIR
         if recreate:
@@ -140,19 +146,20 @@ class Manager:
         ontoenv_root = Path(ontoenv_root) if ontoenv_root is not None else base
 
         _backend = timeseries_backend.lower()
-        if _backend == "duckdb":
-            _effective_dsn = None
-            _effective_duckdb_path = duckdb_path or (base / "timeseries.duckdb")
-            timescale: TimeseriesStore = create_timeseries_store(
-                "duckdb", duckdb_path=_effective_duckdb_path, recreate=recreate
-            )
-        else:
-            _effective_dsn = pg_dsn or os.getenv("PG_DSN")
-            if not _effective_dsn:
-                raise ValueError("PG_DSN required for timescale backend. Set pg_dsn or PG_DSN env var.")
-            timescale = create_timeseries_store(
-                "timescale", pg_dsn=_effective_dsn, recreate=recreate
-            )
+        with timed_debug(logger, "Manager.__init__: timeseries backend setup (%s)", _backend):
+            if _backend == "duckdb":
+                _effective_dsn = None
+                _effective_duckdb_path = duckdb_path or (base / "timeseries.duckdb")
+                timescale: TimeseriesStore = create_timeseries_store(
+                    "duckdb", duckdb_path=_effective_duckdb_path, recreate=recreate
+                )
+            else:
+                _effective_dsn = pg_dsn or os.getenv("PG_DSN")
+                if not _effective_dsn:
+                    raise ValueError("PG_DSN required for timescale backend. Set pg_dsn or PG_DSN env var.")
+                timescale = create_timeseries_store(
+                    "timescale", pg_dsn=_effective_dsn, recreate=recreate
+                )
 
         converter = qudt_converter
         if converter is None and qudt_graph is not None:
@@ -167,11 +174,12 @@ class Manager:
                 except Exception as exc:
                     logging.warning("acquirium: failed to load QUDT converter from %s: %s", _qudt_local, exc)
 
-        graph = OxigraphGraphStore(
-            store_path=graph_path,
-            env_root=ontoenv_root,
-            qudt_converter=converter,
-        )
+        with timed_debug(logger, "Manager.__init__: OxigraphGraphStore setup"):
+            graph = OxigraphGraphStore(
+                store_path=graph_path,
+                env_root=ontoenv_root,
+                qudt_converter=converter,
+            )
 
         if ontology_dependencies:
             for dep in ontology_dependencies:
@@ -185,7 +193,8 @@ class Manager:
                 ontology_dependencies or [],
             )
         if ontology_dependencies:
-            graph.refresh_union()
+            with timed_debug(logger, "Manager.__init__: refresh_union"):
+                graph.refresh_union()
             logging.info("acquirium: refreshed union graph after imports")
 
 
@@ -246,7 +255,9 @@ class Manager:
         }
 
         # Embedding corpus is the static ontoenv vocabularies; build once.
-        self._build_embedding_indexes()
+        with timed_debug(logger, "Manager.__init__: _build_embedding_indexes"):
+            self._build_embedding_indexes()
+        logger.debug("Manager.__init__: complete in %.2fs", perf_counter() - start)
 
     
     @classmethod
@@ -265,54 +276,6 @@ class Manager:
             ontology_dependencies=_ontology_deps_raw.split(",") if _ontology_deps_raw else None,
             recreate=os.getenv("ACQUIRIUM_RECREATE", "false").lower() == "true",
         )
-
-    def _scan_pg_references_from_graph(self) -> int:
-        """Scan graph for external Postgres timeseries references.
-
-        External Postgres historians use a ``ref:hasExternalReference`` node
-        whose ``ref:storedAt`` is a literal DSN. Acquirium-managed streams are
-        handled separately by ``_sync_stream_refs_from_graph`` and are
-        identified by ``acq:sourceId``/``acq:refName`` on the same reference
-        node.
-        """
-        q = f"""
-        SELECT ?data ?ref ?dsn ?table ?query ?tcol ?vcol ?pfilter
-        WHERE {{
-          ?data <{HAS_EXTERNAL_REFERENCE}> ?ref .
-          ?ref <{STORED_AT}> ?dsn .
-          FILTER(isLiteral(?dsn))
-          FILTER(STRSTARTS(STR(?dsn), "postgresql://") || STRSTARTS(STR(?dsn), "postgres://"))
-          OPTIONAL {{ ?ref <{TIMESERIES_TABLE}> ?table . }}
-          OPTIONAL {{ ?ref <{TIMESERIES_QUERY}> ?query . }}
-          OPTIONAL {{ ?ref <{TIMESERIES_TIME_COLUMN}> ?tcol . }}
-          OPTIONAL {{ ?ref <{TIMESERIES_VALUE_COLUMN}> ?vcol . }}
-          OPTIONAL {{ ?ref <{TIMESERIES_POINT_FILTER}> ?pfilter . }}
-        }}
-        """
-        res = self.graph_store.sparql_query(q, use_union=True)
-        rows = res.get("rows", [])
-
-        count = 0
-        for row in rows:
-            (data_uri, ref_uri, dsn, table, custom_query, tcol, vcol, pfilter) = row
-            try:
-                info = PGReferenceInfo(
-                    dsn=self._sparql_value(dsn) or "",
-                    table=self._sparql_value(table),
-                    custom_query=self._sparql_value(custom_query),
-                    time_col=self._sparql_value(tcol) or "time",
-                    value_col=self._sparql_value(vcol) or "value",
-                    point_filter=self._sparql_value(pfilter),
-                )
-                self.pg_registry.register(str(ref_uri), info)
-                count += 1
-            except Exception:
-                logger.warning("Failed to register external Postgres reference %s", ref_uri, exc_info=True)
-
-        if count:
-            logger.info("Registered %d external Postgres reference(s) from graph", count)
-        return count
-
 
     def _sync_stream_refs_from_graph(self) -> int:
         """Sync the streams reference table from Acquirium-managed timeseries refs.
@@ -341,9 +304,12 @@ class Manager:
         # use_union=False: these acquirium-internal predicates only ever live
         # in the main graph, so skipping the closure rebuild on the hot
         # insert path is correct and avoids the per-insert closure refresh.
-        res = self.graph_store.sparql_query(q, use_union=False)
+        with timed_debug(logger, "_sync_stream_refs_from_graph: SPARQL"):
+            res = self.graph_store.sparql_query(q, use_union=False)
+        rows = res.get("rows", [])
+        logger.debug("_sync_stream_refs_from_graph: %d candidate rows", len(rows))
         count = 0
-        for point_uri, ref_node, source_id, ref_name, value_kind in res.get("rows", []):
+        for point_uri, ref_node, source_id, ref_name, value_kind in rows:
             try:
                 sid = str(source_id).strip('"')
                 rn  = str(ref_name).strip('"')
@@ -438,11 +404,14 @@ class Manager:
             """
             seen: set[str] = set()
             try:
-                rows = list(graph.query(query))
+                with timed_debug(logger, "extract %s concepts (SPARQL)", kind):
+                    rows = list(graph.query(query))
+                logger.debug("extract %s: %d raw rows", kind, len(rows))
                 _aggregate_uri_label_rows(rows, seen, kind, concepts)
             except Exception:
                 logger.warning("Failed to extract %s concepts", kind, exc_info=True)
 
+        logger.debug("_extract_concepts_for_embedding: %d total concepts", len(concepts))
         return concepts
 
     def _update_embedding_status(self, index: str, **kwargs: Any) -> None:
@@ -470,18 +439,22 @@ class Manager:
         not followed); no inserted data is embedded.
         """
         iris = self.graph_store.ontology_iris()
+        logger.debug("_build_embedding_indexes: ontology IRIs = %s", iris)
 
         self._update_embedding_status("graph", state="building")
         t0 = perf_counter()
         try:
-            merged = Graph()
-            for key in ("water", "s223"):
-                if key in iris:
-                    for triple in self.graph_store.named_graph(iris[key]):
-                        merged.add(triple)
+            with timed_debug(logger, "graph embedding: merge water+s223 named graphs"):
+                merged = Graph()
+                for key in ("water", "s223"):
+                    if key in iris:
+                        for triple in self.graph_store.named_graph(iris[key]):
+                            merged.add(triple)
+            logger.debug("graph embedding: merged %d triples", len(merged))
             concepts = self._extract_concepts_for_embedding(merged)
             if concepts:
-                self._graph_matcher.build_index(concepts)
+                with timed_debug(logger, "graph embedding: build_index n=%d", len(concepts)):
+                    self._graph_matcher.build_index(concepts)
             self._mark_index_ready("graph", concepts, t0)
             logger.info(
                 "Graph embedding index: %d concepts (water+s223)", len(concepts)
@@ -495,16 +468,20 @@ class Manager:
         try:
             qc: list[dict[str, Any]] = []
             if "unit" in iris:
-                qc += QUDTStore.extract_concepts(
-                    self.graph_store.named_graph(iris["unit"]), str(QUDT.Unit)
-                )
+                with timed_debug(logger, "qudt embedding: extract Unit concepts"):
+                    qc += QUDTStore.extract_concepts(
+                        self.graph_store.named_graph(iris["unit"]), str(QUDT.Unit)
+                    )
             if "quantity_kind" in iris:
-                qc += QUDTStore.extract_concepts(
-                    self.graph_store.named_graph(iris["quantity_kind"]),
-                    str(QUDT.QuantityKind),
-                )
+                with timed_debug(logger, "qudt embedding: extract QuantityKind concepts"):
+                    qc += QUDTStore.extract_concepts(
+                        self.graph_store.named_graph(iris["quantity_kind"]),
+                        str(QUDT.QuantityKind),
+                    )
+            logger.debug("qudt embedding: %d total concepts", len(qc))
             if qc:
-                self._qudt_matcher.build_index(qc)
+                with timed_debug(logger, "qudt embedding: build_index n=%d", len(qc)):
+                    self._qudt_matcher.build_index(qc)
             self._mark_index_ready("qudt", qc, t0)
             logger.info("QUDT embedding index: %d concepts", len(qc))
         except Exception as exc:
@@ -638,11 +615,11 @@ class Manager:
                 pass
 
         try:
-            self.graph_store.insert_graph(rdf_graph, format=format, replace=replace)
+            with timed_debug(logger, "insert_graph format=%s replace=%s", format, replace):
+                self.graph_store.insert_graph(rdf_graph, format=format, replace=replace)
             logging.info("acquirium: inserted graph into store")
-            # Graph writes can create or update Acquirium-managed references,
-            # so refresh the registry before notifying listeners.
-            self._sync_stream_refs_from_graph()
+            with timed_debug(logger, "insert_graph: _sync_stream_refs_from_graph"):
+                self._sync_stream_refs_from_graph()
             # Embedding corpus is the static ontoenv vocabularies, not
             # inserted data — no per-insert reindex. refresh_union (inside
             # graph_store.insert_graph) keeps the data/SPARQL union current.
@@ -669,6 +646,10 @@ class Manager:
             An iterator that yields batches of time series data as Arrow RecordBatches.
         """
         storage_key = self.timescale.resolve_storage_key(uri)
+        logger.debug(
+            "timeseries_batch uri=%s storage_key=%s start=%s end=%s limit=%s",
+            uri, storage_key, start, end, limit,
+        )
         return self.timescale.timeseries(
             ref_uri=storage_key,
             start=start,
@@ -719,6 +700,10 @@ class Manager:
     ) -> int:
         ref_uri = str(compute_ref_uri(source_id, ref_name))
         value_kind = self._registered_value_kind(ref_uri)
+        logger.debug(
+            "insert_timeseries source=%s ref_name=%s rows=%d kind=%s replace=%s",
+            source_id, ref_name, len(rows), value_kind, replace,
+        )
         if replace:
             n = self.timescale.replace_rows(ref_uri, rows, value_kind=value_kind)
         else:
@@ -737,14 +722,19 @@ class Manager:
         timestamps: list[datetime] = []
         values: list[Any] = []
         value_kinds: list[str] = []
-        for ref_name, stream_rows in streams.items():
-            ref_uri = str(compute_ref_uri(source_id, ref_name))
-            value_kind = self._registered_value_kind(ref_uri)
-            for ts, value in stream_rows:
-                ref_uris.append(ref_uri)
-                timestamps.append(ts)
-                values.append(value)
-                value_kinds.append(value_kind)
+        with timed_debug(logger, "insert_timeseries_batch source=%s streams=%d", source_id, len(streams)):
+            for ref_name, stream_rows in streams.items():
+                ref_uri = str(compute_ref_uri(source_id, ref_name))
+                value_kind = self._registered_value_kind(ref_uri)
+                for ts, value in stream_rows:
+                    ref_uris.append(ref_uri)
+                    timestamps.append(ts)
+                    values.append(value)
+                    value_kinds.append(value_kind)
+        logger.debug(
+            "insert_timeseries_batch source=%s built %d total rows across %d streams",
+            source_id, len(ref_uris), len(streams),
+        )
         if not ref_uris:
             return 0
 
@@ -763,6 +753,7 @@ class Manager:
         """Insert a melted (ts, ref_name, value) Arrow table, computing ref_uris vectorized."""
         import polars as pl
 
+        logger.debug("insert_timeseries_arrow source=%s arrow_rows=%d", source_id, len(table))
         if len(table) == 0:
             return 0
         df = pl.from_arrow(table)
@@ -779,6 +770,7 @@ class Manager:
             ref_uri = str(compute_ref_uri(source_id, name))
             ref_uri_map[name] = ref_uri
             value_kind_map[name] = self._registered_value_kind(ref_uri)
+        logger.debug("insert_timeseries_arrow source=%s unique_streams=%d", source_id, len(ref_uri_map))
         df = (
             df.with_columns([
                 pl.col("ref_name").replace(ref_uri_map).alias("ref_uri"),
@@ -1103,6 +1095,7 @@ class Manager:
 
 
     def insert_log(self, log_message: LogEntry):
+        logger.debug("insert_log point_uri=%s ts=%s", log_message.point_uri, log_message.timestamp)
         self.timescale.insert_log(log_message)
         G = Graph()
         log_uri = URIRef(f"{str(log_message.point_uri)}_log")
@@ -1173,7 +1166,19 @@ class Manager:
             A dictionary containing the query results.
             {"cols": [...], "rows": [...]}
         """
+        logger.debug("sparql_dict union=%s len=%d", use_union, len(query))
         return self.graph_store.sparql_query(query, use_union=use_union)
+
+    def namespace_manager(self) -> NamespaceManager :
+        """
+        Get the RDFLib NamespaceManager from the graph store.
+
+        Args:
+            use_union: Whether to get the NamespaceManager for the union graph.
+        Returns:
+            An RDFLib NamespaceManager instance.
+        """
+        return self.graph_store.namespace_manager()
 
     def embedding_status(self) -> dict[str, Any]:
         """Return the current state of each embedding index."""
@@ -1239,6 +1244,7 @@ class Manager:
         }
 
     def close(self) -> None:
+        logger.debug("Manager.close: shutting down")
         try:
             self.stop_app(app_id="*")
         except Exception:
@@ -1254,3 +1260,4 @@ class Manager:
             pass
         self.timescale.close()
         self.graph_store.close()
+        logger.debug("Manager.close: done")
