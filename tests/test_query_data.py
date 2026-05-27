@@ -50,7 +50,10 @@ def test_find_all_data_2(acquirium_client_csv):
     meta = all_data_query.metadata()
 
     assert len(meta) == 8
-    assert len(meta.columns) == 10
+    assert len(meta.columns) == 4
+
+    meta_full = all_data_query.metadata(include_internals=True)
+    assert len(meta_full.columns) == 10
 
     df_long = all_data_query.dataframe(shape="narrow")
     assert df_long.shape == (6*365*24, 5)

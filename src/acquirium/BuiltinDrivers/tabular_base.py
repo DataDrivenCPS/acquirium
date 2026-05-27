@@ -5,15 +5,13 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    import polars as pl
+from typing import Any
 
 import polars as pl
 
 from acquirium.Driver import IngestDriver
 from acquirium.Storage.values import assign_stream_value_kind, normalize_value_kind
+from acquirium.internals._log import timed_debug
 
 logger = logging.getLogger("acquirium.tabular_ingest")
 
@@ -30,8 +28,7 @@ def _safe_name(s: str) -> str:
     return " ".join(s.split()).translate(_URI_UNSAFE)
 
 
-
-class _TabularIngestBase(IngestDriver):
+class TabularIngestBase(IngestDriver):
     """Base class for drivers that watch a directory for tabular data files.
 
     Subclasses must set ``_glob_patterns`` and implement ``read_frame()``.
@@ -55,6 +52,7 @@ class _TabularIngestBase(IngestDriver):
         time_col     = "time"
         id_col       = "id"            # narrow only
         value_col    = "value"         # narrow only
+        skip_cols    = ["Notes"]       # optional columns to ignore entirely
         date_format  = "%m/%d/%Y"      # optional; only needed for non-ISO date strings
         skip_rows    = [1, 3, 1337]    # or { "subdir/data.csv" = [2, 5] }
     """
@@ -62,6 +60,12 @@ class _TabularIngestBase(IngestDriver):
     _glob_patterns: tuple[str, ...] = ()
 
     # ------------------------------------------------------------------ setup
+
+    def setup(self) -> None:
+        """Initialize common tabular-driver state, then run subclass hooks."""
+        self._setup_common()
+        self.configure_tabular_driver()
+        self.after_tabular_setup()
 
     def _setup_common(self) -> None:
         cfg = self.config.get("driver", {})
@@ -74,6 +78,16 @@ class _TabularIngestBase(IngestDriver):
         self._registered: dict[str, set[str]] = {}  # source_id → registered ref_names
 
         self._watch_dir.mkdir(parents=True, exist_ok=True)
+
+    def configure_tabular_driver(self) -> None:
+        """Subclass hook for tabular-driver-specific setup.
+
+        Use this to load driver-specific config or assign stable source IDs
+        before any eager registration work runs.
+        """
+
+    def after_tabular_setup(self) -> None:
+        """Subclass hook that runs after common and driver-specific setup."""
 
     # ---------------------------------------------------------- config hooks
     # Override any of these methods to customise behaviour without touching
@@ -99,6 +113,21 @@ class _TabularIngestBase(IngestDriver):
         """strptime format string for non-ISO timestamp strings, or ``None`` to auto-detect."""
         return self.config.get("driver", {}).get("date_format", None)
 
+    def skip_cols(self, path: Path, col_names: list[str]) -> tuple[str, ...]:
+        """Return source-local column names that should be ignored entirely.
+
+        The default implementation reads ``driver.skip_cols`` from config.
+        Subclasses can override to make file-aware decisions based on ``path``
+        as well as the available source-local column names.
+        """
+        skip_cols = self.config.get("driver", {}).get("skip_cols", [])
+        if isinstance(skip_cols, str):
+            skip_cols = [skip_cols]
+        if not isinstance(skip_cols, (list, tuple, set)):
+            raise TypeError("driver.skip_cols must be a column name or a list of column names")
+        allowed = {str(name) for name in col_names}
+        return tuple(name for name in skip_cols if str(name) in allowed)
+
     def skip_rows_for(self, path: Path) -> tuple[int, ...]:
         """1-indexed row numbers to skip when reading *path*.
 
@@ -120,32 +149,114 @@ class _TabularIngestBase(IngestDriver):
             )
         return tuple(sorted({int(row) for row in skip_rows if int(row) > 0}))
 
+    def stream_name_for(self, raw_name: str) -> str:
+        """Return the canonical stream name to store for a raw column/header name.
+
+        Subclasses can override this when source-local stream identity should
+        differ from the base class's URI-safe header normalization.
+        """
+        return _safe_name(raw_name)
+
+    def stream_specs_for_names(
+        self,
+        path: Path,
+        source_id: str,
+        raw_names: list[str],
+        value_kinds: dict[str, str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Build stream-registration specs for the given names.
+
+        The default implementation only registers stream identity and value
+        kind. Subclasses can override to add richer metadata while keeping the
+        base class responsible only for paging and wide/narrow normalization.
+        """
+        return [
+            {
+                "source_id": source_id,
+                "ref_name": self.stream_name_for(raw_name),
+                "value_kind": normalize_value_kind(
+                    (value_kinds or {}).get(self.stream_name_for(raw_name))
+                ),
+            }
+            for raw_name in raw_names
+        ]
+
+    def ensure_streams_registered(
+        self,
+        path: Path,
+        source_id: str,
+        df: pl.DataFrame,
+        value_kinds: dict[str, str],
+    ) -> None:
+        """Ensure streams for *path* are registered before insertion.
+
+        The default behavior lazily registers newly observed stream names with
+        only their identity and value kind. Subclasses can override when stream
+        registration needs raw-header inspection or eager setup-time handling.
+        """
+        registered = self._registered.setdefault(source_id, set())
+        raw_names = self._raw_stream_names_from_frame(df)
+        new_raw_names = [
+            raw_name
+            for raw_name in raw_names
+            if self.stream_name_for(raw_name) not in registered
+        ]
+        if not new_raw_names:
+            return
+
+        try:
+            specs = self.stream_specs_for_names(path, source_id, new_raw_names, value_kinds)
+            self.aq.register_streams(specs)
+            registered.update(spec["ref_name"] for spec in specs if "ref_name" in spec)
+        except Exception:
+            logger.error(
+                "tabular_ingest: could not register %d stream(s)",
+                len(new_raw_names),
+                exc_info=True,
+            )
+            raise
+
     # ------------------------------------------------------------------ loop
 
     def tick(self) -> None:
-        for path in self._pending_paths():
+        paths = self._pending_paths()
+        logger.debug("tabular_ingest tick: watch_dir=%s pending=%d", self._watch_dir, len(paths))
+        for path in paths:
             key = str(path)
             offset = self._rows_seen.get(key, 0)
             source_id = self.source_id_for(path)
             rel = path.relative_to(self._watch_dir)
 
             try:
-                df, rows_read = self.parse_polars(path, row_offset=offset)
+                with timed_debug(logger, "tabular_ingest parse %s (offset=%d)", path.name, offset):
+                    raw_df, rows_read = self.read_frame(path, row_offset=offset)
+                    if rows_read == 0:
+                        continue
+
+                    if self._is_timeseries_frame(raw_df):
+                        df = self._normalize_timeseries_frame(raw_df)
+                    else:
+                        df = self._to_timeseries_frame(raw_df)
             except Exception:
                 logger.exception("tabular_ingest: failed to parse %s", path.name)
                 continue
 
             if df.is_empty():
+                logger.debug("tabular_ingest: %s empty after parse (offset=%d)", rel, offset)
                 continue
 
-            df, value_kinds = self._with_value_kinds(df)
-            stream_names = value_kinds.keys()
+            with timed_debug(logger, "tabular_ingest _with_value_kinds %s rows=%d", rel, len(df)):
+                df, value_kinds = self._with_value_kinds(df)
+            stream_names = list(value_kinds)
+            logger.debug("tabular_ingest %s: %d streams (%d rows)", rel, len(value_kinds), len(df))
 
             # Metadata registration — if the server is down these raise and
             # the file is skipped; the offset stays put so we retry next tick.
             if source_id not in self._registered:
+                logger.debug("tabular_ingest: register_datasource %s", source_id)
                 self.aq.register_datasource(source_id)
-            self._ensure_streams(stream_names, source_id, value_kinds)
+            with timed_debug(logger, "tabular_ingest ensure_streams_registered source=%s n=%d", source_id, len(value_kinds)):
+                self.ensure_streams_registered(path, source_id, raw_df, value_kinds)
 
             logger.info(
                 "tabular_ingest: %s — forwarding %d row(s) across %d stream(s) for source_id=%s",
@@ -154,9 +265,10 @@ class _TabularIngestBase(IngestDriver):
                 len(stream_names),
                 source_id,
             )
-            result = self.insert_observations(
-                df.with_columns(pl.lit(source_id).alias("source_id"))
-            )
+            with timed_debug(logger, "tabular_ingest insert_observations %s rows=%d", rel, len(df)):
+                result = self.insert_observations(
+                    df.with_columns(pl.lit(source_id).alias("source_id"))
+                )
 
             if result.get("ok"):
                 self._rows_seen[key] = offset + rows_read
@@ -166,6 +278,18 @@ class _TabularIngestBase(IngestDriver):
                     "tabular_ingest: %s — inserted %d row(s) across %d stream(s)",
                     rel, result.get("rows_inserted", 0), len(stream_names),
                 )
+
+    def _raw_stream_names_from_frame(self, df: pl.DataFrame) -> list[str]:
+        if self._is_timeseries_frame(df):
+            return [str(v) for v in df["ref_name"].drop_nulls().unique().to_list()]
+
+        fmt = self._detect_format(df)
+        if fmt == "narrow":
+            ic = self.id_col()
+            return [str(v) for v in df[ic].drop_nulls().unique().to_list()]
+
+        tc = self.time_col()
+        return [str(c) for c in df.columns if c != tc]
 
     def source_id_for(self, path: Path) -> str:
         """Return the datasource ID to use for rows from *path*.
@@ -181,9 +305,6 @@ class _TabularIngestBase(IngestDriver):
             for pattern in self._glob_patterns
             for p in self._watch_dir.rglob(pattern)
         })
-
-    def _source_id_for_path(self, path: Path) -> str:
-        return _safe_name(str(path))
 
     def _with_value_kinds(self, df: pl.DataFrame) -> tuple[pl.DataFrame, dict[str, str]]:
         if "value_kind" in df.columns:
@@ -304,7 +425,7 @@ class _TabularIngestBase(IngestDriver):
             ts, stream_id, val = row
             if stream_id is None:
                 continue
-            batch.setdefault(_safe_name(str(stream_id)), []).append((ts, val))
+            batch.setdefault(self.stream_name_for(str(stream_id)), []).append((ts, val))
         return batch
 
     def _to_timeseries_frame(self, df: pl.DataFrame) -> pl.DataFrame:
@@ -317,7 +438,7 @@ class _TabularIngestBase(IngestDriver):
         else:
             out = self._wide_to_timeseries_frame(df)
         return out.with_columns(
-            pl.col("ref_name").map_elements(_safe_name, return_dtype=pl.Utf8)
+            pl.col("ref_name").map_elements(self.stream_name_for, return_dtype=pl.Utf8)
         )
 
     def _wide_to_timeseries_frame(self, df: pl.DataFrame) -> pl.DataFrame:
@@ -368,7 +489,7 @@ class _TabularIngestBase(IngestDriver):
         df = df.with_columns(self.normalize_timestamps(df["ts"]).alias("ts"))
         df = df.drop_nulls(subset=["ts"])
         return df.with_columns(
-            pl.col("ref_name").map_elements(_safe_name, return_dtype=pl.Utf8)
+            pl.col("ref_name").map_elements(self.stream_name_for, return_dtype=pl.Utf8)
         )
 
     def _timeseries_frame_to_batch(self, df: pl.DataFrame) -> dict[str, list[tuple[datetime, Any]]]:
@@ -452,36 +573,3 @@ class _TabularIngestBase(IngestDriver):
 
         tz = getattr(best.dtype, "time_zone", None)
         return best.dt.replace_time_zone("UTC") if tz is None else best.dt.convert_time_zone("UTC")
-
-    # ---------------------------------------------------------- stream reg
-
-    def _ensure_streams(
-        self,
-        ref_names: list[str],
-        source_id: str,
-        value_kinds: dict[str, str] | None = None,
-    ) -> None:
-        registered = self._registered.setdefault(source_id, set())
-        new_ref_names = [ref_name for ref_name in ref_names if ref_name not in registered]
-        if not new_ref_names:
-            return
-
-        try:
-            self.aq.register_streams(
-                [
-                    {
-                        "source_id": source_id,
-                        "ref_name": ref_name,
-                        "value_kind": normalize_value_kind((value_kinds or {}).get(ref_name)),
-                    }
-                    for ref_name in new_ref_names
-                ]
-            )
-            registered.update(new_ref_names)
-        except Exception:
-            logger.error(
-                "tabular_ingest: could not register %d stream(s)",
-                len(new_ref_names),
-                exc_info=True,
-            )
-            raise

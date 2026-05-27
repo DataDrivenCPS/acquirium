@@ -145,10 +145,8 @@ class ResolveRecordRequest(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    from acquirium.internals._log import configure_logging
+    configure_logging()  # honors ACQUIRIUM_VERBOSE env var set by `acquirium server -v`
 
     from acquirium.cli import _load_config
     _config_path = os.environ.get("ACQUIRIUM_CONFIG")
@@ -191,6 +189,25 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Acquirium API", version="0.1", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def _debug_log_requests(request: Request, call_next):
+    """One DEBUG line per HTTP request with status + elapsed ms (off at INFO)."""
+    if not log.isEnabledFor(logging.DEBUG):
+        return await call_next(request)
+    import time as _time
+    start = _time.perf_counter()
+    log.debug("→ %s %s", request.method, request.url.path)
+    try:
+        response = await call_next(request)
+    except Exception:
+        log.debug("← %s %s -> ERROR (%.1f ms)", request.method, request.url.path,
+                  (_time.perf_counter() - start) * 1000.0)
+        raise
+    log.debug("← %s %s -> %d (%.1f ms)", request.method, request.url.path,
+              response.status_code, (_time.perf_counter() - start) * 1000.0)
+    return response
 
 
 @app.get("/health", response_model=Health)
@@ -261,7 +278,17 @@ def export_graph(include_union: bool = True, format: str = "turtle"):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-
+@app.get("/namespace/list")
+def list_namespaces() -> dict[str, str]:
+    """List all namespaces in the union graph as a mapping of prefix to URI."""
+    try:
+        manager = app.state.manager
+        ns_manager = manager.namespace_manager()
+        return {prefix: str(uri) for prefix, uri in ns_manager.namespaces()}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
+\
 #### APPS API ENDPOINTS ####
 
 
@@ -364,22 +391,15 @@ def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[st
 async def insert_timeseries_arrow(request: Request):
     try:
         body = await request.body()
+        log.debug("/insert_timeseries_arrow: received %d bytes", len(body))
         reader = ipc.RecordBatchStreamReader(pa.BufferReader(body))
         df = pl.from_arrow(reader.read_all())
-        log.info(
-            "HTTP insert_timeseries_arrow received %d row(s) across %d source batch(es)",
-            len(df),
-            df["source_id"].n_unique() if "source_id" in df.columns else 0,
-        )
+        log.debug("/insert_timeseries_arrow: parsed Arrow stream into df rows=%d", len(df))
 
         total = 0
         for key, source_df in df.partition_by("source_id", as_dict=True).items():
             sid = key[0] if isinstance(key, tuple) else key
-            log.info(
-                "HTTP insert_timeseries_arrow forwarding %d row(s) for source_id=%s",
-                len(source_df),
-                sid,
-            )
+            log.debug("/insert_timeseries_arrow: dispatching source=%s rows=%d", sid, len(source_df))
             total += app.state.manager.insert_timeseries_arrow(str(sid), source_df.drop("source_id").to_arrow())
 
         return {"ok": True, "rows_inserted": total}

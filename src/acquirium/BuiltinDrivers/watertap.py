@@ -79,6 +79,7 @@ class WaterTAPDriver(PollingIngestDriver):
                 }])
 
     def collect(self) -> pl.DataFrame:
+        logger.debug("watertap collect: building model via %s", self._build_spec)
         result = self._build_fn(**self._build_kwargs)
         model = self._extract_model(result)
         ts = datetime.now(timezone.utc)
@@ -94,6 +95,7 @@ class WaterTAPDriver(PollingIngestDriver):
                 continue
             rows.append((ts, spec.ref_name, value))
 
+        logger.debug("watertap collect: %d rows from %d specs (%d missing)", len(rows), len(self._point_specs), missing)
         if missing:
             logger.warning("watertap: skipped %d unmapped model values", missing)
         return pl.DataFrame(

@@ -1,6 +1,6 @@
 [project]
 name = "acquirium"
-version = "0.2.0"
+version = "0.3.0"
 description = "Acquirium: A data-metadata management platform for water treatment systems"
 readme = "README.md"
 authors = [
@@ -77,13 +77,15 @@ acquirium = "acquirium.cli:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "openpyxl>=3.1.5",
     "q>=2.7",
     "pytest>=9.0.2",
     "pytest-cov>=6.0",
 ]
+
+[tool.uv]
 no-build-isolation-package = ["pygit2"]
 
 [tool.pytest.ini_options]

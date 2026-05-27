@@ -2,7 +2,7 @@ from __future__ import annotations
 from rich.console import Console
 from rich.table import Table
 from dataclasses import dataclass, field, replace
-from typing import Any, Dict, List, Optional , Union
+from typing import Any, Dict, List, Optional , Union, TYPE_CHECKING
 from acquirium.internals.internals_namespaces import *
 from acquirium.internals.models import LogEntry
 import polars as pl
@@ -15,6 +15,9 @@ import logging
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from acquirium.Client.data_object import DataObject
 
 @dataclass(frozen=True)
 class _Exclude:
@@ -625,20 +628,28 @@ class Query:
         shape: str = "narrow",          # "wide" or "narrow"
         cast_value: str | None = "str",  # "float", "int", or None to keep string
         value_mode: str = "default",
+        include_ref: bool = False,
     ) -> pl.DataFrame:
         """
         Fetch time series for all bound data nodes in this query result.
 
+        Column naming uses the data node alias when defined; when one alias
+        resolves to multiple distinct point_uris, columns are disambiguated as
+        ``f"{alias}__{point_local}"``. Data from multiple ref_uris that share
+        the same (alias, point_uri) are combined (first-wins).
+
         Returns:
-        - wide: columns ["time", <data_node_alias_1>, <data_node_alias_2>, ...]
-        - narrow: columns ["time", "value", "id"]
+        - wide: columns ``["time", <alias_or_point_local_1>, ...]``
+        - narrow: columns ``["data_alias", "point_id", "time", "value_numeric",
+          "value_text"]``. Pass ``include_ref=True`` to also include the raw
+          ``ref`` column (ref_uri local name) for per-ref-uri use cases.
         """
         if not getattr(self.query_graph, "data_nodes", None):
-            return pl.DataFrame({"time": [], "value": [], "point_id": [], "ref": []})
+            return pl.DataFrame({"time": [], "value": [], "point_id": [], "data_alias": []})
 
         res = self.execute(use_union=use_union)
         cols: list[str] = res.get("columns", []) #v0, v1, ext1, ...
-        rows: list[list[Any]] = res.get("rows", []) 
+        rows: list[list[Any]] = res.get("rows", [])
 
         # map "v<ID>" column -> ID
         col_to_id: dict[int, int] = {}
@@ -662,7 +673,7 @@ class Query:
         data_col_indices = [i for i, nid in col_to_id.items() if nid in data_node_ids]
         ref_col_indices = [i for i, nid in ext_ref_col_to_id.items() if nid in data_node_ids]
         if not data_col_indices or not ref_col_indices:
-            return pl.DataFrame({"point_id": [], "ref": [], "time": [], "value": []})
+            return pl.DataFrame({"data_alias": [], "point_id": [], "time": [], "value": []})
 
         # gather unique point URIs bound to data nodes
         point_ref_uris: list[tuple[int, str, str]] = []
@@ -688,7 +699,29 @@ class Query:
                         point_ref_uris.append((nid, uri_s, ref_uri_s))
 
         if not point_ref_uris:
-            return pl.DataFrame({"point_id": [], "ref": [], "time": [], "value": []})
+            return pl.DataFrame({"data_alias": [], "point_id": [], "time": [], "value": []})
+
+        # Resolve per-data-node alias and decide a pivot/column key for each
+        # (nid, point_uri) binding.  Rules:
+        #   - column name = alias when the data node has one and resolves to
+        #     a single point_uri.
+        #   - when an alias resolves to several points, append the cleaned
+        #     point local name: ``f"{alias}__{point_local}"``.
+        #   - when the data node has no user alias (auto str(nid)), fall back
+        #     to the cleaned point local name.
+        points_per_nid: dict[int, set[str]] = {}
+        for nid, point_uri, _ in point_ref_uris:
+            points_per_nid.setdefault(nid, set()).add(point_uri)
+
+        def _resolve_label(nid: int, point_uri: str) -> str:
+            point_local = self.client.strip_namespace(point_uri)
+            alias = self.query_graph.aliases_reverse.get(nid)
+            # An auto-alias like "0" (str of node id) is treated as no alias.
+            if alias is None or alias == str(nid):
+                return point_local
+            if len(points_per_nid.get(nid, set())) > 1:
+                return f"{alias}__{point_local}"
+            return alias
 
         # fetch time series for each point URI and build tall frame
         frames: list[pl.DataFrame] = []
@@ -707,11 +740,14 @@ class Query:
 
             df = df.rename({"value": "value", "ts": "time","uri": "ref"})
             df = _split_value_column(df)
-            df = df.with_columns(pl.lit(point_uri).alias("point_id"))
+            df = df.with_columns(
+                pl.lit(point_uri).alias("point_id"),
+                pl.lit(_resolve_label(nid, point_uri)).alias("data_alias"),
+            )
             frames.append(df)
 
         if not frames:
-            return pl.DataFrame({"point_id": [], "ref": [], "time": [], "value_numeric": [], "value_text": []})
+            return pl.DataFrame({"data_alias": [], "point_id": [], "time": [], "value_numeric": [], "value_text": []})
 
         tall = pl.concat(frames, how="vertical")
 
@@ -728,40 +764,66 @@ class Query:
             except Exception:
                 logging.warning("casting to int failed")
                 pass
-        tall = tall.with_columns(pl.col("point_id").map_elements(lambda x: self._remove_prefixes(x),return_dtype=pl.Utf8).alias("point_id"))
-        tall = tall.with_columns(pl.col("ref").map_elements(lambda x: self._remove_prefixes(x),return_dtype=pl.Utf8).alias("ref"))
-        # else: keep as string
+        tall = tall.with_columns(pl.col("point_id").map_elements(lambda x: self.client.strip_namespace(x),return_dtype=pl.Utf8).alias("point_id"))
+        tall = tall.with_columns(pl.col("ref").map_elements(lambda x: self.client.strip_namespace(x),return_dtype=pl.Utf8).alias("ref"))
+
+        # Combine multiple ref_uris that share the same (data_alias, point_id,
+        # time) — first row wins.  This implements the "combine refs per point"
+        # contract for the default view.
+        tall = tall.unique(subset=["data_alias", "point_id", "time"], keep="first")
+
         if shape == "narrow":
-            return tall.select("point_id", "ref", "time", "value_numeric", "value_text").sort("time")
+            base_cols = ["data_alias", "point_id", "time", "value_numeric", "value_text"]
+            if include_ref:
+                base_cols.insert(2, "ref")
+            return tall.select(base_cols).sort("time")
 
         # wide
-        wide = _pivot_split_values(tall.rename({"ref": "_pivot_key"}), "_pivot_key")
+        wide = _pivot_split_values(tall.rename({"data_alias": "_pivot_key"}), "_pivot_key")
         wide.columns = [self._clean_column_name(c) for c in wide.columns]
-        # wide.columns = ["time"] + [self._remove_prefixes(c) for c in wide.columns[1:]]
         return wide.sort("time")
 
     def _clean_column_name(self, col_name: str) -> str:
         if col_name == "time":
             return col_name
         if isinstance(col_name, str):
-            return self._remove_prefixes(col_name)
+            return self.client.strip_namespace(col_name)
         if isinstance(col_name, set):
             return list(col_name)[1]
         return str(col_name)
     
-    def metadata(self) -> pl.DataFrame:
+    def metadata(self, *, include_internals: bool = False) -> pl.DataFrame:
         """
         Execute the SPARQL query to get the query graph results.
+
+        By default the internal SPARQL columns used to drive ``dataframe()`` /
+        ``DataObject`` (``ext<nid>``, ``unit<nid>``, ``extunit<nid>``) are
+        hidden — they show UUID ref URIs and unit URIs that aren't useful for
+        the user. Pass ``include_internals=True`` to keep them.
+
         Returns:
             A polars table.
         """
-        if self.cache.get("metadata_table") is None:
+        cache_key = f"metadata_table:{include_internals}"
+        if self.cache.get(cache_key) is None:
             res = self.execute(use_union=True)
-            cols_w_alias = [self._col_name_to_alias(c) for c in res.get("columns", [])]
-            rows_clean = [[self._remove_prefixes(i) for i in r] for r in res.get("rows", [])]
+            cols = res.get("columns", [])
+            rows = res.get("rows", [])
+            keep_idx = list(range(len(cols)))
+            if not include_internals:
+                keep_idx = [
+                    i for i, c in enumerate(cols)
+                    if not (isinstance(c, str) and (
+                        c.startswith("ext") or c.startswith("unit")
+                    ))
+                ]
+            cols_kept = [cols[i] for i in keep_idx]
+            rows_kept = [[r[i] for i in keep_idx] for r in rows]
+            cols_w_alias = [self._col_name_to_alias(c) for c in cols_kept]
+            rows_clean = [[self.client.strip_namespace(i) for i in r] for r in rows_kept]
             pl_table = pl.DataFrame(rows_clean, schema=cols_w_alias, orient="row")
-            self.cache["metadata_table"] = pl_table
-        return self.cache["metadata_table"]
+            self.cache[cache_key] = pl_table
+        return self.cache[cache_key]
 
     def latest_data(
         self,
@@ -1389,23 +1451,6 @@ class Query:
             return col_name
         return self.query_graph.aliases_reverse.get(node_id, col_name)
 
-    def _remove_prefixes(self, item: Union[str, Any]) -> str:
-        """Remove common URI prefixes for display."""
-        try:
-            s = str(item)
-            s = s.split("#")
-            if len(s) == 2:
-                return s[1]
-            raise ValueError()
-        except:
-            try:
-                s = str(item)
-                s = s.split("/")
-                return s[-1]
-            except:
-                return str(item)
-
-
     def _show_head_cli(self,columns, rows, n, title=None):
         console = Console()
 
@@ -1415,7 +1460,7 @@ class Query:
             table.add_column(self._col_name_to_alias(col))
 
         for row in rows[:n]:
-            table.add_row(*[self._remove_prefixes(x) for x in row])
+            table.add_row(*[self.client.strip_namespace(x) for x in row])
 
         console.print(table)
 
@@ -1467,22 +1512,40 @@ class Query:
 
 
     # ----------- public visualization API ----------
-    def metadata_head(self, limit = 10) -> dict:
+    def metadata_head(self, limit = 10, *, include_internals: bool = False) -> dict:
         """
         Execute the SPARQL query to get a sample of the query graph results.
+
+        By default the ``ext<nid>`` / ``unit<nid>`` / ``extunit<nid>`` columns
+        (UUID ref URIs and unit URIs used internally by ``dataframe()`` and
+        ``DataObject``) are hidden from the printed table. Pass
+        ``include_internals=True`` to keep them.
+
         Returns:
             A pandas-like table view (dict with 'columns' and 'rows').
         """
         if self.cache.get("metadata_head") is None:
             self.cache["metadata_head"] = self.execute()
+        full = self.cache["metadata_head"]
+        cols = full["columns"]
+        rows = full["rows"]
+        if not include_internals:
+            keep_idx = [
+                i for i, c in enumerate(cols)
+                if not (isinstance(c, str) and (
+                    c.startswith("ext") or c.startswith("unit")
+                ))
+            ]
+            cols = [cols[i] for i in keep_idx]
+            rows = [[r[i] for i in keep_idx] for r in rows]
         Query._show_head_cli(
                 self,
-                columns=self.cache["metadata_head"]["columns"],
-                rows=self.cache["metadata_head"]["rows"],
+                columns=cols,
+                rows=rows,
                 n=limit,
                 title=f"Metadata First {limit} Rows",
             )
-        return self.cache["metadata_head"]
+        return full
 
     def show_query_graph(self) -> None:
         """Print a human-readable representation of the internal query graph."""
