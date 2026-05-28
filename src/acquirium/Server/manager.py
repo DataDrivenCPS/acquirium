@@ -15,6 +15,7 @@ from acquirium.Storage import (
 )
 from acquirium.Storage.values import normalize_value_kind
 from acquirium.internals.qudt_units import QUDTUnitConverter
+from acquirium.Server.config import OntologySource
 from acquirium.internals.models import LogEntry, Order, TimeIntervalModel, AppSpec, AppRunRequest, compute_ref_uri
 from acquirium.internals.internals_namespaces import *
 from acquirium.internals.app_utils import app_uri_for
@@ -120,8 +121,7 @@ class Manager:
         timeseries_backend: str = "timescale",
         graph_path: str | Path | None = None,
         ontoenv_root: str | Path | None = None,
-        graph_name: str | None = None,
-        ontology_dependencies: list[str] | None = None,
+        ontology_sources: list["OntologySource"] | None = None,
         qudt_graph: Graph | None = None,
         qudt_converter: QUDTUnitConverter | None = None,
         recreate: bool = False,
@@ -161,42 +161,20 @@ class Manager:
                     "timescale", pg_dsn=_effective_dsn, recreate=recreate
                 )
 
+        # Caller-supplied converter or graph wins; otherwise the converter
+        # is built lazily in _ensure_qudt_converter from the QUDT unit
+        # named graph that ontoenv loads at startup — no separate file
+        # read or eager initialization needed.
         converter = qudt_converter
         if converter is None and qudt_graph is not None:
             converter = QUDTUnitConverter(qudt_graph)
-        if converter is None:
-            # Auto-detect local QUDT unit ontology
-            _qudt_local = Path("ontologies/qudt_unit.ttl")
-            if _qudt_local.exists():
-                try:
-                    converter = QUDTUnitConverter(str(_qudt_local))
-                    logging.info("acquirium: auto-loaded QUDTUnitConverter from %s", _qudt_local)
-                except Exception as exc:
-                    logging.warning("acquirium: failed to load QUDT converter from %s: %s", _qudt_local, exc)
 
         with timed_debug(logger, "Manager.__init__: OxigraphGraphStore setup"):
             graph = OxigraphGraphStore(
                 store_path=graph_path,
                 env_root=ontoenv_root,
-                qudt_converter=converter,
+                extra_ontology_sources=ontology_sources,
             )
-
-        if ontology_dependencies:
-            for dep in ontology_dependencies:
-                graph.register_ontology(dep)
-                logging.info("acquirium: registered ontology dependency via ontoenv: %s", dep)
-        if graph_name:
-            graph.ensure_ontology_root(graph_name, ontology_dependencies or [])
-            logging.info(
-                "acquirium: ensured ontology root %s with imports %s",
-                graph_name,
-                ontology_dependencies or [],
-            )
-        if ontology_dependencies:
-            with timed_debug(logger, "Manager.__init__: refresh_union"):
-                graph.refresh_union()
-            logging.info("acquirium: refreshed union graph after imports")
-
 
         self.timescale = timescale
         self.graph_store = graph
@@ -264,7 +242,12 @@ class Manager:
     def from_env(cls) -> Manager:
         _backend = os.getenv("ACQUIRIUM_TIMESERIES_BACKEND", "duckdb").lower()
         _data_dir = os.getenv("ACQUIRIUM_DATA_DIR")
-        _ontology_deps_raw = os.getenv("ACQUIRIUM_ONTOLOGY_DEPENDENCIES")
+        # Ontology sources are read directly from acquirium.toml —
+        # ACQUIRIUM_CONFIG points at it. Keeps the environment-variable
+        # surface small.
+        from acquirium.Server.config import load_ontology_config
+
+        ont_cfg = load_ontology_config()
         return cls(
             data_dir=_data_dir,
             pg_dsn=os.getenv("PG_DSN"),
@@ -272,8 +255,7 @@ class Manager:
             timeseries_backend=_backend,
             graph_path=os.getenv("ACQUIRIUM_GRAPH_PATH"),
             ontoenv_root=os.getenv("ACQUIRIUM_ONTOENV_ROOT"),
-            graph_name=os.getenv("ACQUIRIUM_GRAPH_NAME"),
-            ontology_dependencies=_ontology_deps_raw.split(",") if _ontology_deps_raw else None,
+            ontology_sources=list(ont_cfg.sources) or None,
             recreate=os.getenv("ACQUIRIUM_RECREATE", "false").lower() == "true",
         )
 
@@ -438,18 +420,18 @@ class Manager:
         vocabularies. Graphs are read out of ontoenv by IRI (owl:imports
         not followed); no inserted data is embedded.
         """
-        iris = self.graph_store.ontology_iris()
-        logger.debug("_build_embedding_indexes: ontology IRIs = %s", iris)
+        from acquirium._ontologies import (
+            WATER_IRI, S223_IRI, QUDT_UNIT_IRI, QUDT_QK_IRI,
+        )
 
         self._update_embedding_status("graph", state="building")
         t0 = perf_counter()
         try:
             with timed_debug(logger, "graph embedding: merge water+s223 named graphs"):
                 merged = Graph()
-                for key in ("water", "s223"):
-                    if key in iris:
-                        for triple in self.graph_store.named_graph(iris[key]):
-                            merged.add(triple)
+                for iri in (WATER_IRI, S223_IRI):
+                    for triple in self.graph_store.named_graph(iri):
+                        merged.add(triple)
             logger.debug("graph embedding: merged %d triples", len(merged))
             concepts = self._extract_concepts_for_embedding(merged)
             if concepts:
@@ -467,17 +449,15 @@ class Manager:
         t0 = perf_counter()
         try:
             qc: list[dict[str, Any]] = []
-            if "unit" in iris:
-                with timed_debug(logger, "qudt embedding: extract Unit concepts"):
-                    qc += QUDTStore.extract_concepts(
-                        self.graph_store.named_graph(iris["unit"]), str(QUDT.Unit)
-                    )
-            if "quantity_kind" in iris:
-                with timed_debug(logger, "qudt embedding: extract QuantityKind concepts"):
-                    qc += QUDTStore.extract_concepts(
-                        self.graph_store.named_graph(iris["quantity_kind"]),
-                        str(QUDT.QuantityKind),
-                    )
+            with timed_debug(logger, "qudt embedding: extract Unit concepts"):
+                qc += QUDTStore.extract_concepts(
+                    self.graph_store.named_graph(QUDT_UNIT_IRI), str(QUDT.Unit)
+                )
+            with timed_debug(logger, "qudt embedding: extract QuantityKind concepts"):
+                qc += QUDTStore.extract_concepts(
+                    self.graph_store.named_graph(QUDT_QK_IRI),
+                    str(QUDT.QuantityKind),
+                )
             logger.debug("qudt embedding: %d total concepts", len(qc))
             if qc:
                 with timed_debug(logger, "qudt embedding: build_index n=%d", len(qc)):
@@ -1188,18 +1168,25 @@ class Manager:
     # -------------------- Unit conversion --------------------
 
     def _ensure_qudt_converter(self) -> QUDTUnitConverter:
-        """Lazily initialize the QUDT converter if not already available."""
+        """Lazily initialize the QUDT converter from the in-store QUDT graph.
+
+        Pulling the QUDT unit graph through ontoenv (rather than re-reading
+        the bundled TTL) means a user-supplied override at the QUDT unit
+        IRI in ``[ontologies] sources`` is honored automatically: the
+        converter sees whatever graph ontoenv currently has registered
+        at that IRI, bundled or replaced.
+        """
         if self.qudt_converter is not None:
             return self.qudt_converter
-        _qudt_local = Path("ontologies/qudt_unit.ttl")
-        if _qudt_local.exists():
-            self.qudt_converter = QUDTUnitConverter(str(_qudt_local))
-            logger.info("Lazily loaded QUDTUnitConverter from %s", _qudt_local)
-            return self.qudt_converter
-        raise ValueError(
-            "QUDT converter not available. Place ontologies/qudt_unit.ttl "
-            "in the working directory or pass qudt_graph to Manager."
+        from acquirium._ontologies import QUDT_UNIT_IRI
+
+        qudt_graph = self.graph_store.named_graph(QUDT_UNIT_IRI)
+        self.qudt_converter = QUDTUnitConverter(qudt_graph)
+        logger.info(
+            "Lazily loaded QUDTUnitConverter from ontoenv graph %s (%d triples)",
+            QUDT_UNIT_IRI, len(qudt_graph),
         )
+        return self.qudt_converter
 
     def resolve_unit_info(self, identifier: str) -> dict[str, Any]:
         """Resolve a unit identifier to its QUDT metadata (deterministic).

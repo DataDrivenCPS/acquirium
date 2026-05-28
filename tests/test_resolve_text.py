@@ -15,6 +15,7 @@ and predicates like hasConnectionPoint, hasUnit, hasMedium, etc.
 import csv
 import time
 from datetime import datetime
+from importlib.resources import files as _res_files
 from pathlib import Path
 
 import pytest
@@ -330,7 +331,7 @@ def acq():
         replace=True,
     )
     client.insert_graph(
-        "ontologies/water.ttl",
+        str(_res_files("acquirium._ontologies") / "water.ttl"),
         replace=False,
     )
     # Graph index is now built; this still guards the QUDT startup index.

@@ -38,6 +38,8 @@ def _build_store(tmp_path: Path, monkeypatch, *, source_ready: bool):
         def __init__(self, *args, **kwargs):
             self.kwargs = kwargs
             self.update = MagicMock()
+            # cold start path now calls env.add per bundled file
+            self.add = MagicMock()
             ontoenv_instances.append(self)
 
     monkeypatch.setattr(graph_store_module, "OntoEnv", FakeOntoEnv)
@@ -66,9 +68,15 @@ def test_init_from_store_skips_ontoenv_update(tmp_path, monkeypatch):
     store.close()
 
 
-def test_cold_start_runs_ontoenv_update(tmp_path, monkeypatch):
+def test_cold_start_adds_bundled_ontologies(tmp_path, monkeypatch):
+    """Cold start must build an empty env (init_from_store=False) and
+    register each bundled ontology via env.add() — no directory crawl
+    (env.update is no longer the population path)."""
+    from acquirium._ontologies import BUNDLED_FILES
+
     store, env, opened_paths = _build_store(tmp_path, monkeypatch, source_ready=False)
     assert opened_paths == [tmp_path / "store" / "source", tmp_path / "store" / "query"]
     assert env.kwargs["init_from_store"] is False
-    env.update.assert_called_once_with()
+    env.update.assert_not_called()
+    assert env.add.call_count == len(BUNDLED_FILES)
     store.close()
