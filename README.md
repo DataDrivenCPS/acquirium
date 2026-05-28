@@ -129,7 +129,7 @@ Acquirium uses a text matcher to map natural-language input to ontology URIs (cl
 There are two separate matchers, each with its own index:
 
 1. **Graph matcher** — indexes classes and predicates from user-inserted RDF graphs. Surface strings are derived from `rdfs:label` values and CamelCase/underscore-split local names.
-2. **QUDT matcher** — indexes units and quantity kinds from the QUDT ontology (fetched over HTTP with local fallback). Surface strings include `rdfs:label`, `skos:prefLabel`, `skos:altLabel`, symbols, UCUM codes, and split local names.
+2. **QUDT matcher** — indexes units and quantity kinds from the QUDT ontology, which ships bundled inside the `acquirium` package and is registered at the versionless canonical IRIs `https://qudt.org/vocab/unit` and `https://qudt.org/vocab/quantitykind`. Override either by adding a `{ source = "...", as = "<canonical IRI>" }` entry to `[ontologies] sources` in `acquirium.toml`. Surface strings include `rdfs:label`, `skos:prefLabel`, `skos:altLabel`, symbols, UCUM codes, and split local names.
 
 Both indexes are cached to disk and updated incrementally when graphs change. Results can be filtered by `kind` (`class`, `predicate`, `unit`, `quantity_kind`) and are ranked by cosine similarity, deduplicated to the highest-scoring surface per URI. See [scripts/text_matcher_example.py](./scripts/text_matcher_example.py) for usage.
 

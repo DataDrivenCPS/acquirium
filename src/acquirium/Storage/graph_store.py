@@ -78,10 +78,10 @@ _IMPORTS_UNION_GRAPH = URIRef(str(ACQUIRIUM_NS.ImportsUnionGraph))
 class _OntoenvOxigraphStore:
     """ontoenv graph-store protocol over the shared Oxigraph dataset.
 
-    Each ontology ontoenv discovers is one Oxigraph named graph keyed by
-    its IRI, so ontoenv's graphs and the instance data live in one store
-    and ontoenv's own closure tooling runs against Oxigraph. ``on_change``
-    is fired on any add/remove so the owner can invalidate its cached
+    Each ontology ontoenv holds is one Oxigraph named graph keyed by its
+    IRI, so ontoenv's graphs and the instance data live in one store and
+    ontoenv's own closure tooling runs against Oxigraph. ``on_change`` is
+    fired on any add/remove so the owner can invalidate its cached
     data-graph closure.
     """
 
@@ -96,9 +96,9 @@ class _OntoenvOxigraphStore:
             return
         ctx.remove((None, None, None))
         # rdflib's per-triple ctx.add() crosses the Rust FFI once per triple
-        # — ~76s for the 535k-triple ontoenv crawl. Serialise to N-Triples
-        # (rdflib's fastest writer) once and bulk-load through pyoxigraph,
-        # which writes straight to SST. ~10× faster on cold startup.
+        # — ~76s for the ~535k-triple bundled-ontology load on a cold start.
+        # Serialise to N-Triples (rdflib's fastest writer) once and bulk-load
+        # through pyoxigraph, which writes straight to SST. ~10× faster.
         with timed_debug(_logger, "add_graph serialize %s (%d triples)", iri, len(graph)):
             nt = graph.serialize(format="nt", encoding="utf-8")
         with timed_debug(_logger, "add_graph bulk_load %s (%d bytes)", iri, len(nt)):
