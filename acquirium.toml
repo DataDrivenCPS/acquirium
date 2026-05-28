@@ -41,19 +41,25 @@ recreate = false
 # read_batch_size = 50000
 
 # ---------------------------------------------------------------------------
-# Vocabulary ontology IRIs used to build the text->URI embedding indexes.
-# These are the exact ontology IRIs ontoenv reads out of `ontologies/`:
-#   - water + s223 graphs are merged into the class/predicate/substance index
-#   - unit and quantity_kind graphs each feed the QUDT index
-# Exact IRIs avoid the QUDT version sprawl ontoenv pulls via owl:imports
-# (qudt_unit.ttl pins 3.2.1). Omit this table to use these same built-in
-# defaults; override only if you vendor different ontology files.
+# Additional or overriding ontology sources.
+#
+# The acquirium package ships these ontologies bundled (always loaded):
+#   - NAWI Water        urn:nawi-water-ontology
+#   - ASHRAE 223P       http://data.ashrae.org/standard223/1.0/model/all
+#   - QUDT units 3.2.1  http://qudt.org/3.2.1/vocab/unit
+#   - QUDT quantitykind http://qudt.org/3.2.1/vocab/quantitykind
+#   - ref-schema (internal external-reference vocabulary)
+#
+# `sources` is a list of URLs or file paths registered with ontoenv at
+# startup. Relative paths are resolved against this config file's directory.
+# If an entry declares an ontology IRI matching one bundled above, it
+# REPLACES that bundled graph. Otherwise it is loaded additively.
 # ---------------------------------------------------------------------------
-[ontologies]
-water         = "urn:nawi-water-ontology"
-s223          = "http://data.ashrae.org/standard223/1.0/model/all"
-unit          = "http://qudt.org/3.2.1/vocab/unit"
-quantity_kind = "http://qudt.org/3.2.1/vocab/quantitykind"
+# [ontologies]
+# sources = [
+#   "https://example.com/my-water-ontology.ttl",
+#   "./local-extensions.ttl",
+# ]
 
 [driver]
 # Defaults applied to all drivers — used by `acquirium run` and [[drivers]] entries.
