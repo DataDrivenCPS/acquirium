@@ -13,10 +13,6 @@ workers = 1
 # RDF graph store path (Oxigraph).  Defaults to {data_dir}/.oxigraph.
 # graph_path = ".acquirium/.oxigraph"
 
-# Optional: declare a root ontology IRI and any imported dependencies.
-# graph_name = "urn:my:ontology"
-# ontology_dependencies = ["urn:dep:brick", "urn:dep:s223"]
-
 # Embedding model for text → URI resolution.
 # embedding_model = "BAAI/bge-small-en-v1.5"
 

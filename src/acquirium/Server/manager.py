@@ -120,8 +120,6 @@ class Manager:
         timeseries_backend: str = "timescale",
         graph_path: str | Path | None = None,
         ontoenv_root: str | Path | None = None,
-        graph_name: str | None = None,
-        ontology_dependencies: list[str] | None = None,
         ontology_sources: list[str] | None = None,
         qudt_graph: Graph | None = None,
         qudt_converter: QUDTUnitConverter | None = None,
@@ -176,23 +174,6 @@ class Manager:
                 env_root=ontoenv_root,
                 extra_ontology_sources=ontology_sources,
             )
-
-        if ontology_dependencies:
-            for dep in ontology_dependencies:
-                graph.register_ontology(dep)
-                logging.info("acquirium: registered ontology dependency via ontoenv: %s", dep)
-        if graph_name:
-            graph.ensure_ontology_root(graph_name, ontology_dependencies or [])
-            logging.info(
-                "acquirium: ensured ontology root %s with imports %s",
-                graph_name,
-                ontology_dependencies or [],
-            )
-        if ontology_dependencies:
-            with timed_debug(logger, "Manager.__init__: refresh_union"):
-                graph.refresh_union()
-            logging.info("acquirium: refreshed union graph after imports")
-
 
         self.timescale = timescale
         self.graph_store = graph
@@ -260,9 +241,9 @@ class Manager:
     def from_env(cls) -> Manager:
         _backend = os.getenv("ACQUIRIUM_TIMESERIES_BACKEND", "duckdb").lower()
         _data_dir = os.getenv("ACQUIRIUM_DATA_DIR")
-        # Ontology config (sources + dependencies) is read directly from
-        # acquirium.toml — ACQUIRIUM_CONFIG points at it. Keeps the
-        # environment-variable surface small.
+        # Ontology sources are read directly from acquirium.toml —
+        # ACQUIRIUM_CONFIG points at it. Keeps the environment-variable
+        # surface small.
         from acquirium.Server.config import load_ontology_config
 
         ont_cfg = load_ontology_config()
@@ -273,8 +254,6 @@ class Manager:
             timeseries_backend=_backend,
             graph_path=os.getenv("ACQUIRIUM_GRAPH_PATH"),
             ontoenv_root=os.getenv("ACQUIRIUM_ONTOENV_ROOT"),
-            graph_name=os.getenv("ACQUIRIUM_GRAPH_NAME"),
-            ontology_dependencies=ont_cfg.dependencies or None,
             ontology_sources=ont_cfg.sources or None,
             recreate=os.getenv("ACQUIRIUM_RECREATE", "false").lower() == "true",
         )
