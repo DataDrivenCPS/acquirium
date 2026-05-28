@@ -21,7 +21,12 @@ from pathlib import Path
 import pytest
 from rdflib import Graph, URIRef
 
-from acquirium._ontologies import BUNDLED_IRIS, WATER_IRI
+from acquirium._ontologies import (
+    BUNDLED_IRIS,
+    QUDT_UNIT_IRI,
+    WATER_IRI,
+)
+from acquirium.Server.config import OntologySource
 from acquirium.Storage.graph_store import OxigraphGraphStore
 
 
@@ -51,7 +56,9 @@ def _write_ttl(path: Path, ontology_iri: str, *, marker_subject: URIRef | None =
     return path
 
 
-def _make_store(tmp_path: Path, *, extra_sources: list[str] | None = None) -> OxigraphGraphStore:
+def _make_store(
+    tmp_path: Path, *, extra_sources: list[OntologySource] | None = None,
+) -> OxigraphGraphStore:
     return OxigraphGraphStore(
         store_path=tmp_path / "store",
         env_root=tmp_path / "env",
@@ -73,7 +80,7 @@ def test_bundled_iris_load_by_default(tmp_path: Path) -> None:
 def test_extra_source_with_new_iri_is_additive(tmp_path: Path) -> None:
     """A user source declaring a fresh IRI must not displace bundled graphs."""
     src = _write_ttl(tmp_path / "extra.ttl", _NEW_ONT_IRI)
-    store = _make_store(tmp_path, extra_sources=[str(src)])
+    store = _make_store(tmp_path, extra_sources=[OntologySource(source=str(src))])
     try:
         registered = set(store.env.get_ontology_names())
         # All bundled IRIs still present.
@@ -85,40 +92,60 @@ def test_extra_source_with_new_iri_is_additive(tmp_path: Path) -> None:
         store.close()
 
 
-def test_extra_source_replaces_bundled_graph_on_iri_match(tmp_path: Path) -> None:
-    """A user source declaring a bundled IRI must replace that bundled graph.
+def test_rename_replaces_bundled_graph_at_canonical_iri(tmp_path: Path) -> None:
+    """An ``OntologySource`` with ``rename_to=<bundled IRI>`` replaces that
+    bundled graph at the canonical IRI, regardless of what the source
+    file itself declares.
 
-    Tests ``OxigraphGraphStore.__init__``'s use of
-    ``env.add(..., overwrite=True)`` — with ontoenv's default
-    ``overwrite=False``, the new source is silently skipped and the
-    bundled graph stays. This test would catch that regression because
-    the replacement file's distinctive marker triple would be absent.
+    Exercises the ``_add_user_source`` path: parse the source, rewrite
+    its declared owl:Ontology IRI to the canonical key, and add with
+    ``overwrite=True``.
     """
-    target_iri = WATER_IRI
+    # The override file declares a *different* IRI on purpose — the
+    # rename machinery must remap it to WATER_IRI on load.
     src = _write_ttl(
         tmp_path / "water_override.ttl",
-        target_iri,
+        ontology_iri="https://example.com/some-other-iri",
         marker_subject=_OVERRIDE_MARKER,
     )
-    store = _make_store(tmp_path, extra_sources=[str(src)])
+    store = _make_store(
+        tmp_path,
+        extra_sources=[OntologySource(source=str(src), rename_to=WATER_IRI)],
+    )
     try:
-        named: Graph = store.named_graph(target_iri)
-        # The override's marker triple is present.
+        named: Graph = store.named_graph(WATER_IRI)
+        # The override's marker triple is present at the canonical IRI.
         assert (
             _OVERRIDE_MARKER,
             URIRef("http://www.w3.org/2000/01/rdf-schema#seeAlso"),
             _OVERRIDE_VALUE,
-        ) in named, "user-supplied source did not replace bundled graph contents"
+        ) in named, "renamed user source did not land at canonical IRI"
 
-        # And the original bundled water ontology's content is gone — we
-        # pick an arbitrary class that the bundled water.ttl defines but
-        # the override file does not declare.
+        # And the original bundled water content is gone.
         from rdflib.namespace import RDF, OWL
 
         bundled_classes = list(named.triples((None, RDF.type, OWL.Class)))
         assert not bundled_classes, (
-            f"bundled water classes still present after override "
+            f"bundled water classes still present after rename override "
             f"({len(bundled_classes)} owl:Class triples)"
         )
+
+        # The source's originally-declared IRI must NOT also be registered:
+        # the rename moves the graph, it doesn't duplicate it.
+        registered = set(store.env.get_ontology_names())
+        assert "https://example.com/some-other-iri" not in registered
+    finally:
+        store.close()
+
+
+def test_qudt_iris_are_versionless_canonical(tmp_path: Path) -> None:
+    """The bundled QUDT 3.2.1 files must register under the versionless
+    canonical IRIs (not their declared version-specific IRIs)."""
+    store = _make_store(tmp_path)
+    try:
+        registered = set(store.env.get_ontology_names())
+        assert QUDT_UNIT_IRI in registered, registered
+        # Version-specific IRI must NOT be registered separately.
+        assert "http://qudt.org/3.2.1/vocab/unit" not in registered
     finally:
         store.close()
