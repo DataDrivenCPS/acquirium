@@ -54,7 +54,6 @@ _SERVER_ENV_MAP: dict[str, str] = {
     "duckdb_path":            "ACQUIRIUM_DUCKDB_PATH",
     "timeseries_backend":     "ACQUIRIUM_TIMESERIES_BACKEND",
     "graph_path":             "ACQUIRIUM_GRAPH_PATH",
-    "graph_name":             "ACQUIRIUM_GRAPH_NAME",
     "embedding_model":        "ACQUIRIUM_EMBEDDING_MODEL",
     "recreate":               "ACQUIRIUM_RECREATE",
     "workers":                "ACQUIRIUM_WORKERS",
@@ -93,8 +92,7 @@ def _apply_server_env(cfg: dict) -> None:
             str_value = str(value)
         os.environ.setdefault(env_var, str_value)
 
-    # Ontology configuration ([ontologies] sources and [server]
-    # ontology_dependencies) is read directly from acquirium.toml by
+    # `[ontologies] sources` is read directly from acquirium.toml by
     # Manager — see acquirium.Server.config.load_ontology_config.
 
 

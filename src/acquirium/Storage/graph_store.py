@@ -210,30 +210,7 @@ class OxigraphGraphStore:
         """One ontology's own graph from ontoenv (owl:imports NOT followed)."""
         return self.env.get_graph(iri)
 
-    # -------------------- ontology root + closure management --------------------
-    def register_ontology(self, source: str) -> str:
-        """Add an ontology source (IRI or path) to the ontoenv environment."""
-        return self.env.add(source, fetch_imports=False)
-
-    def ensure_ontology_root(self, graph_iri: str, imports: list[str]) -> None:
-        """Ensure an owl:Ontology root node with optional owl:imports declarations."""
-        main_graph = self._source_main_graph()
-        root = URIRef(graph_iri)
-        changed = False
-        if (root, RDF.type, OWL.Ontology) not in main_graph:
-            main_graph.add((root, RDF.type, OWL.Ontology))
-            changed = True
-        for dep in imports:
-            triple = (root, OWL.imports, URIRef(dep))
-            if triple in main_graph:
-                continue
-            main_graph.add(triple)
-            changed = True
-        if not changed:
-            return
-        self._finalize_source_write(affects_closure=True)
-
-    # -------------------- source + dependency cache coordination --------------------
+# -------------------- source + dependency cache coordination --------------------
     def _source_state_path(self) -> Path:
         return self.source_store_path / "acquirium_source_state.json"
 
