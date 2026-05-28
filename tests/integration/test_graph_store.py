@@ -184,23 +184,6 @@ class TestSparql:
         assert len(result["rows"]) == 1
 
 
-# ── URI Qualification Tests ────────────────────────────────
-
-
-class TestQualifyUri:
-    def test_relative(self, graph_store):
-        uri = graph_store.qualify_uri("my_sensor")
-        assert uri.startswith(str(ACQUIRIUM_POINT_NS))
-
-    def test_absolute_url(self, graph_store):
-        uri = graph_store.qualify_uri("http://example.org/sensor1")
-        assert uri == "http://example.org/sensor1"
-
-    def test_urn(self, graph_store):
-        uri = graph_store.qualify_uri("urn:test:sensor1")
-        assert uri == "urn:test:sensor1"
-
-
 # ── Lifecycle Tests ────────────────────────────────────────
 
 

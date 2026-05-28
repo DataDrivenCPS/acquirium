@@ -9,9 +9,9 @@ COPY pyproject.toml uv.lock README.md .python-version ./
 # Install dependencies but not the project itself.
 RUN uv sync --locked --no-dev --no-install-project
 
-# Now copy source and ontologies; changes here only re-run the steps below.
+# Now copy source. Bundled ontologies live under src/acquirium/_ontologies/
+# and are installed with the package — no separate ontologies/ copy needed.
 COPY src ./src
-COPY ontologies ./ontologies
 
 # Install the project itself into the already-populated venv.
 RUN uv sync --locked --no-dev

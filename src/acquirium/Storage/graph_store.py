@@ -19,8 +19,8 @@ from oxrdflib.store import from_ox
 from acquirium.internals.internals_namespaces import *
 
 from acquirium.internals.models import Point, PointCreateRequest
-from acquirium.internals.qudt_units import QUDTUnitConverter
 from acquirium.internals._log import timed_debug
+from acquirium._ontologies import bundled_dir
 
 _logger = logging.getLogger("acquirium.graph_store")
 
@@ -145,9 +145,7 @@ class OxigraphGraphStore:
         store_path: str | Path,
         env_root: str | Path,
         main_graph_uri: URIRef = DEFAULT_MAIN_GRAPH,
-        qudt_converter: QUDTUnitConverter | None = None,
-        base_namespace: str | None = None,
-        ontologies_dir: str | Path = "ontologies",
+        extra_ontology_sources: list[str] | None = None,
     ):
         self.store_path = Path(store_path)
         self.env_root = Path(env_root)
@@ -167,8 +165,6 @@ class OxigraphGraphStore:
             self.query_dataset, self.query_store_path = self._open_dataset(self.query_store_path)
 
         self.main_graph_uri = main_graph_uri
-        self.qudt_converter = qudt_converter
-        self.base_namespace = base_namespace
         self._source_version = self._load_source_version()
         self._closure_version = 0
         self._dependency_graph_cache: Graph | None = None
@@ -180,14 +176,29 @@ class OxigraphGraphStore:
         # ontoenv shares this Oxigraph store via the graph-store protocol,
         # over the authoritative source dataset. SPARQL reads query that
         # dataset directly; only export-time dependency closure is cached.
-        ont_dir = Path(ontologies_dir)
-        search_dirs = [str(ont_dir)] if ont_dir.is_dir() else []
+        #
+        # Search directories: the package-bundled ontologies (always loaded).
+        # `extra_ontology_sources` are individual URLs/paths registered with
+        # ontoenv after the directory crawl, so they can override bundled
+        # graphs by declaring a matching ontology IRI.
+        search_dirs: list[str] = [str(bundled_dir())]
         self._ontoenv_store = _OntoenvOxigraphStore(
             self.source_dataset,
             self._mark_ontology_graph_changed,
         )
         with timed_debug(_logger, "OntoEnv build env_root=%s search_dirs=%s", self.env_root, search_dirs):
             self.env = self._build_ontoenv(search_dirs)
+        # Override-or-augment: each user-supplied source is registered with
+        # ontoenv with ``overwrite=True`` so that a source whose declared
+        # ontology IRI matches one already loaded from the bundled directory
+        # replaces that graph. Without ``overwrite=True`` ontoenv would keep
+        # the bundled graph and silently skip the user source.
+        for src in extra_ontology_sources or []:
+            try:
+                self.env.add(src, overwrite=True, fetch_imports=False)
+                _logger.info("ontoenv: registered user ontology source %s", src)
+            except Exception as exc:
+                _logger.warning("ontoenv: failed to register ontology source %s: %s", src, exc)
         self._commit_dataset(self.source_dataset)
         _logger.debug(
             "OxigraphGraphStore.__init__: ready (main_graph=%s, source_version=%d)",
@@ -198,66 +209,6 @@ class OxigraphGraphStore:
     def named_graph(self, iri: str) -> Graph:
         """One ontology's own graph from ontoenv (owl:imports NOT followed)."""
         return self.env.get_graph(iri)
-
-    # Default exact ontology IRIs declared by the vendored files in
-    # `ontologies/` (qudt_unit.ttl pins QUDT 3.1.5; qudt_qk.ttl uses the
-    # version-agnostic quantitykind IRI). Exact match avoids the QUDT
-    # version sprawl ontoenv pulls in via owl:imports. Overridable via the
-    # acquirium.toml `[ontologies]` table (cli.py -> ACQUIRIUM_ONTOLOGY_IRIS).
-    _ONTOLOGY_IRIS = {
-        "water": "urn:nawi-water-ontology",
-        "s223": "http://data.ashrae.org/standard223/1.0/model/all",
-        "unit": "http://qudt.org/3.2.1/vocab/unit",
-        "quantity_kind": "http://qudt.org/3.2.1/vocab/quantitykind",
-    }
-
-    @classmethod
-    def _resolve_iri_map(cls) -> dict[str, str]:
-        """The configured logical-name -> IRI map (env override or default)."""
-        raw = os.getenv("ACQUIRIUM_ONTOLOGY_IRIS")
-        if raw:
-            try:
-                data = json.loads(raw)
-                if isinstance(data, dict) and data:
-                    return {str(k): str(v) for k, v in data.items()}
-                _logger.warning(
-                    "ACQUIRIUM_ONTOLOGY_IRIS not a non-empty object; using defaults"
-                )
-            except ValueError as exc:
-                _logger.warning(
-                    "ACQUIRIUM_ONTOLOGY_IRIS invalid JSON (%s); using defaults", exc
-                )
-        return dict(cls._ONTOLOGY_IRIS)
-
-    def ontology_iris(self) -> dict[str, str]:
-        """Logical name -> ontology IRI for the ontologies ontoenv discovered.
-
-        Keys: ``water``, ``s223``, ``unit``, ``quantity_kind`` (a key is
-        absent if ontoenv did not register that exact IRI).
-        """
-        try:
-            names = set(self.env.get_ontology_names())
-        except Exception as exc:
-            _logger.warning("ontoenv: get_ontology_names failed: %s", exc)
-            return {}
-        return {
-            name: iri
-            for name, iri in self._resolve_iri_map().items()
-            if iri in names
-        }
-
-    def qualify_uri(self, value: str) -> str:
-        if "://" in value or value.startswith("urn:"):
-            return value
-        base = self.base_namespace
-        if base:
-            if not base.endswith("/") and not base.endswith("#"):
-                base = base + "/"
-            return base + value.lstrip("/")
-        return str(ACQUIRIUM_POINT_NS[value])
-
-    def _uri(self, value: str) -> URIRef:
-        return URIRef(self.qualify_uri(value))
 
     # -------------------- ontology root + closure management --------------------
     def register_ontology(self, source: str) -> str:
