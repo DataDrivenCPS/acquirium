@@ -5,6 +5,7 @@ import logging
 import os
 from collections.abc import Callable
 from datetime import datetime, timezone
+from importlib.resources import files
 from pathlib import Path
 
 from ontoenv import OntoEnv
@@ -29,15 +30,18 @@ def default_ontologies_dir() -> Path:
     """Resolve the directory of vendored ontology .ttl files.
 
     Tried in order:
-      1. `<site-packages>/acquirium/ontologies/` (built wheel layout —
-         populated by hatchling `force-include`).
-      2. `<repo-root>/ontologies/` walking up from this module — so an
-         editable install / source checkout works from any CWD.
+      1. `acquirium`'s package data via importlib.resources — the official
+         API for shipped resources; works for any install layout.
+      2. `<repo-root>/ontologies/` walking up from this module, for an
+         uninstalled source checkout.
       3. CWD-relative `ontologies/` as a last resort.
     """
-    packaged = Path(__file__).resolve().parent.parent / "ontologies"
-    if packaged.is_dir():
-        return packaged
+    try:
+        resource = files("acquirium") / "ontologies"
+        if resource.is_dir():
+            return Path(str(resource))
+    except (ModuleNotFoundError, FileNotFoundError):
+        pass
     for parent in Path(__file__).resolve().parents:
         candidate = parent / "ontologies"
         if candidate.is_dir():
