@@ -75,7 +75,7 @@ requires-dist = [
     { name = "pyarrow", specifier = ">=22.0.0" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pyomo", marker = "extra == 'watertap'", specifier = ">=6" },
-    { name = "pyontoenv", specifier = "==0.5.4" },
+    { name = "pyontoenv", specifier = "==0.6.0a2" },
     { name = "pyoxigraph", specifier = ">=0.5.2" },
     { name = "python-dateutil", specifier = ">=2.9.0.post0" },
     { name = "python-multipart", specifier = ">=0.0.21" },
@@ -2068,14 +2068,14 @@ wheels = [
 
 [[package]]
 name = "pyontoenv"
-version = "0.5.4"
+version = "0.6.0a2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ontoenv" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/df/06/b7e425b65691f4c1126f509b651d5a4409ba2749a0154588146d6a1f3688/pyontoenv-0.5.4.tar.gz", hash = "sha256:66ad4e5df312dc1478850db7ec7407eff0e3bbe01435d380dcd7c26ac4dbd3d8", size = 1175, upload-time = "2026-05-05T14:11:31.308Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/52/fd/53e393e29071d7fc8f012892f5e88512e4517a4fd39605d30dfb01b85331/pyontoenv-0.6.0a2.tar.gz", hash = "sha256:fabbbe40da4f1e9ac00b2e237496896845650539dc96e0c4ee60c1fa5725f262", size = 1179, upload-time = "2026-05-28T17:47:04.953Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0b/75/b276223fc010126e1d41ed342793fb7354c58107f9376ff3f20fa9469688/pyontoenv-0.5.4-py3-none-any.whl", hash = "sha256:5767224507e85c5e4fafe210cebea30a50c9090ae4b12920d76c00c93722976a", size = 1848, upload-time = "2026-05-05T14:11:28.464Z" },
+    { url = "https://files.pythonhosted.org/packages/bc/6a/a7883fc7fd4e497b0a218c6847a954a192c8872a1dd1008d964703f97cc6/pyontoenv-0.6.0a2-py3-none-any.whl", hash = "sha256:ec92c7ad75fd8bdbb9c15456b8c52ee634fe06dc11356f22fb4e4bd571f1d246", size = 1857, upload-time = "2026-05-28T17:47:02.938Z" },
 ]
 
 [[package]]

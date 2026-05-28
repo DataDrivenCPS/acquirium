@@ -39,22 +39,31 @@ recreate = false
 # ---------------------------------------------------------------------------
 # Additional or overriding ontology sources.
 #
-# The acquirium package ships these ontologies bundled (always loaded):
-#   - NAWI Water        urn:nawi-water-ontology
-#   - ASHRAE 223P       http://data.ashrae.org/standard223/1.0/model/all
-#   - QUDT units 3.2.1  http://qudt.org/3.2.1/vocab/unit
-#   - QUDT quantitykind http://qudt.org/3.2.1/vocab/quantitykind
-#   - ref-schema (internal external-reference vocabulary)
+# The acquirium package ships these ontologies bundled, registered at
+# these canonical IRIs (the QUDT files are version-collapsed at load):
+#   - NAWI Water           urn:nawi-water-ontology
+#   - ASHRAE 223P          http://data.ashrae.org/standard223/1.0/model/all
+#   - QUDT units           https://qudt.org/vocab/unit
+#   - QUDT quantitykind    https://qudt.org/vocab/quantitykind
+#   - Brick ref-schema     https://brickschema.org/schema/Brick/ref
 #
-# `sources` is a list of URLs or file paths registered with ontoenv at
-# startup. Relative paths are resolved against this config file's directory.
-# If an entry declares an ontology IRI matching one bundled above, it
-# REPLACES that bundled graph. Otherwise it is loaded additively.
+# `sources` is a list of entries. Each entry is either:
+#
+#   * a plain string — load the URL/path and register it under
+#     whatever IRI the file's owl:Ontology declaration uses, OR
+#
+#   * a `{ source = "...", as = "<canonical IRI>" }` table — load the
+#     source, rewrite its declared owl:Ontology IRI to `as`, and
+#     register it there (replacing any existing graph at that IRI,
+#     bundled or otherwise).
+#
+# Relative file paths are resolved against this config file's directory.
 # ---------------------------------------------------------------------------
 # [ontologies]
 # sources = [
-#   "https://example.com/my-water-ontology.ttl",
 #   "./local-extensions.ttl",
+#   { source = "https://qudt.org/3.3.0/vocab/unit",
+#     as     = "https://qudt.org/vocab/unit" },
 # ]
 
 [driver]

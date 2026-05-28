@@ -15,6 +15,7 @@ from acquirium.Storage import (
 )
 from acquirium.Storage.values import normalize_value_kind
 from acquirium.internals.qudt_units import QUDTUnitConverter
+from acquirium.Server.config import OntologySource
 from acquirium.internals.models import LogEntry, Order, TimeIntervalModel, AppSpec, AppRunRequest, compute_ref_uri
 from acquirium.internals.internals_namespaces import *
 from acquirium.internals.app_utils import app_uri_for
@@ -120,7 +121,7 @@ class Manager:
         timeseries_backend: str = "timescale",
         graph_path: str | Path | None = None,
         ontoenv_root: str | Path | None = None,
-        ontology_sources: list[str] | None = None,
+        ontology_sources: list["OntologySource"] | None = None,
         qudt_graph: Graph | None = None,
         qudt_converter: QUDTUnitConverter | None = None,
         recreate: bool = False,
@@ -254,7 +255,7 @@ class Manager:
             timeseries_backend=_backend,
             graph_path=os.getenv("ACQUIRIUM_GRAPH_PATH"),
             ontoenv_root=os.getenv("ACQUIRIUM_ONTOENV_ROOT"),
-            ontology_sources=ont_cfg.sources or None,
+            ontology_sources=list(ont_cfg.sources) or None,
             recreate=os.getenv("ACQUIRIUM_RECREATE", "false").lower() == "true",
         )
 
