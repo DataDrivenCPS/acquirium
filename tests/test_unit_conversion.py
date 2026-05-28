@@ -1,7 +1,9 @@
 """Tests for QUDT unit conversion and DataObject.convert_to()."""
 
-import pytest
+from importlib.resources import files as _res_files
 from pathlib import Path
+
+import pytest
 
 from acquirium.internals.qudt_units import (
     QUDTUnitConverter,
@@ -14,7 +16,7 @@ from acquirium.internals.qudt_units import (
 # Fixtures
 # ---------------------------------------------------------------------------
 
-QUDT_UNIT_PATH = Path(__file__).resolve().parent.parent / "ontologies" / "qudt_unit.ttl"
+QUDT_UNIT_PATH = Path(str(_res_files("acquirium._ontologies") / "qudt_unit.ttl"))
 
 
 @pytest.fixture(scope="module")

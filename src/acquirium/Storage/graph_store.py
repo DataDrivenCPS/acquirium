@@ -19,8 +19,13 @@ from oxrdflib.store import from_ox
 from acquirium.internals.internals_namespaces import *
 
 from acquirium.internals.models import Point, PointCreateRequest
-from acquirium.internals.qudt_units import QUDTUnitConverter
 from acquirium.internals._log import timed_debug
+from acquirium._ontologies import (
+    BUNDLED_FILES,
+    load_bundled_graph,
+    rename_ontology_iri,
+)
+from acquirium.Server.config import OntologySource
 
 _logger = logging.getLogger("acquirium.graph_store")
 
@@ -73,10 +78,10 @@ _IMPORTS_UNION_GRAPH = URIRef(str(ACQUIRIUM_NS.ImportsUnionGraph))
 class _OntoenvOxigraphStore:
     """ontoenv graph-store protocol over the shared Oxigraph dataset.
 
-    Each ontology ontoenv discovers is one Oxigraph named graph keyed by
-    its IRI, so ontoenv's graphs and the instance data live in one store
-    and ontoenv's own closure tooling runs against Oxigraph. ``on_change``
-    is fired on any add/remove so the owner can invalidate its cached
+    Each ontology ontoenv holds is one Oxigraph named graph keyed by its
+    IRI, so ontoenv's graphs and the instance data live in one store and
+    ontoenv's own closure tooling runs against Oxigraph. ``on_change`` is
+    fired on any add/remove so the owner can invalidate its cached
     data-graph closure.
     """
 
@@ -91,9 +96,9 @@ class _OntoenvOxigraphStore:
             return
         ctx.remove((None, None, None))
         # rdflib's per-triple ctx.add() crosses the Rust FFI once per triple
-        # — ~76s for the 535k-triple ontoenv crawl. Serialise to N-Triples
-        # (rdflib's fastest writer) once and bulk-load through pyoxigraph,
-        # which writes straight to SST. ~10× faster on cold startup.
+        # — ~76s for the ~535k-triple bundled-ontology load on a cold start.
+        # Serialise to N-Triples (rdflib's fastest writer) once and bulk-load
+        # through pyoxigraph, which writes straight to SST. ~10× faster.
         with timed_debug(_logger, "add_graph serialize %s (%d triples)", iri, len(graph)):
             nt = graph.serialize(format="nt", encoding="utf-8")
         with timed_debug(_logger, "add_graph bulk_load %s (%d bytes)", iri, len(nt)):
@@ -145,9 +150,7 @@ class OxigraphGraphStore:
         store_path: str | Path,
         env_root: str | Path,
         main_graph_uri: URIRef = DEFAULT_MAIN_GRAPH,
-        qudt_converter: QUDTUnitConverter | None = None,
-        base_namespace: str | None = None,
-        ontologies_dir: str | Path = "ontologies",
+        extra_ontology_sources: list[OntologySource] | None = None,
     ):
         self.store_path = Path(store_path)
         self.env_root = Path(env_root)
@@ -167,8 +170,6 @@ class OxigraphGraphStore:
             self.query_dataset, self.query_store_path = self._open_dataset(self.query_store_path)
 
         self.main_graph_uri = main_graph_uri
-        self.qudt_converter = qudt_converter
-        self.base_namespace = base_namespace
         self._source_version = self._load_source_version()
         self._closure_version = 0
         self._dependency_graph_cache: Graph | None = None
@@ -180,14 +181,37 @@ class OxigraphGraphStore:
         # ontoenv shares this Oxigraph store via the graph-store protocol,
         # over the authoritative source dataset. SPARQL reads query that
         # dataset directly; only export-time dependency closure is cached.
-        ont_dir = Path(ontologies_dir)
-        search_dirs = [str(ont_dir)] if ont_dir.is_dir() else []
         self._ontoenv_store = _OntoenvOxigraphStore(
             self.source_dataset,
             self._mark_ontology_graph_changed,
         )
-        with timed_debug(_logger, "OntoEnv build env_root=%s search_dirs=%s", self.env_root, search_dirs):
-            self.env = self._build_ontoenv(search_dirs)
+        with timed_debug(_logger, "OntoEnv build env_root=%s", self.env_root):
+            self.env, is_warm_start = self._build_ontoenv()
+        # On a cold start, the persisted store has no bundled ontologies
+        # yet — parse each TTL, rewrite its declared owl:Ontology IRI to
+        # the package's canonical IRI, and register it. On warm start
+        # the bundled graphs are already in the store; skip re-adding.
+        if not is_warm_start:
+            for fname, canonical in BUNDLED_FILES:
+                try:
+                    g = load_bundled_graph(fname, canonical)
+                    self.env.add(g, fetch_imports=False)
+                    _logger.info("ontoenv: registered bundled %s at %s", fname, canonical)
+                except Exception as exc:
+                    _logger.error("ontoenv: failed to load bundled %s: %s", fname, exc)
+        # User sources from acquirium.toml. An entry without `rename_to`
+        # keeps its declared IRI; with `rename_to`, we rewrite the
+        # declared IRI to the canonical key and pass overwrite=True so
+        # the user's content replaces whatever graph was previously
+        # registered there (typically a bundled one).
+        for src in extra_ontology_sources or []:
+            try:
+                self._add_user_source(src)
+            except Exception as exc:
+                _logger.warning(
+                    "ontoenv: failed to register user ontology source %s: %s",
+                    src.source, exc,
+                )
         self._commit_dataset(self.source_dataset)
         _logger.debug(
             "OxigraphGraphStore.__init__: ready (main_graph=%s, source_version=%d)",
@@ -199,90 +223,7 @@ class OxigraphGraphStore:
         """One ontology's own graph from ontoenv (owl:imports NOT followed)."""
         return self.env.get_graph(iri)
 
-    # Default exact ontology IRIs declared by the vendored files in
-    # `ontologies/` (qudt_unit.ttl pins QUDT 3.1.5; qudt_qk.ttl uses the
-    # version-agnostic quantitykind IRI). Exact match avoids the QUDT
-    # version sprawl ontoenv pulls in via owl:imports. Overridable via the
-    # acquirium.toml `[ontologies]` table (cli.py -> ACQUIRIUM_ONTOLOGY_IRIS).
-    _ONTOLOGY_IRIS = {
-        "water": "urn:nawi-water-ontology",
-        "s223": "http://data.ashrae.org/standard223/1.0/model/all",
-        "unit": "http://qudt.org/3.2.1/vocab/unit",
-        "quantity_kind": "http://qudt.org/3.2.1/vocab/quantitykind",
-    }
-
-    @classmethod
-    def _resolve_iri_map(cls) -> dict[str, str]:
-        """The configured logical-name -> IRI map (env override or default)."""
-        raw = os.getenv("ACQUIRIUM_ONTOLOGY_IRIS")
-        if raw:
-            try:
-                data = json.loads(raw)
-                if isinstance(data, dict) and data:
-                    return {str(k): str(v) for k, v in data.items()}
-                _logger.warning(
-                    "ACQUIRIUM_ONTOLOGY_IRIS not a non-empty object; using defaults"
-                )
-            except ValueError as exc:
-                _logger.warning(
-                    "ACQUIRIUM_ONTOLOGY_IRIS invalid JSON (%s); using defaults", exc
-                )
-        return dict(cls._ONTOLOGY_IRIS)
-
-    def ontology_iris(self) -> dict[str, str]:
-        """Logical name -> ontology IRI for the ontologies ontoenv discovered.
-
-        Keys: ``water``, ``s223``, ``unit``, ``quantity_kind`` (a key is
-        absent if ontoenv did not register that exact IRI).
-        """
-        try:
-            names = set(self.env.get_ontology_names())
-        except Exception as exc:
-            _logger.warning("ontoenv: get_ontology_names failed: %s", exc)
-            return {}
-        return {
-            name: iri
-            for name, iri in self._resolve_iri_map().items()
-            if iri in names
-        }
-
-    def qualify_uri(self, value: str) -> str:
-        if "://" in value or value.startswith("urn:"):
-            return value
-        base = self.base_namespace
-        if base:
-            if not base.endswith("/") and not base.endswith("#"):
-                base = base + "/"
-            return base + value.lstrip("/")
-        return str(ACQUIRIUM_POINT_NS[value])
-
-    def _uri(self, value: str) -> URIRef:
-        return URIRef(self.qualify_uri(value))
-
-    # -------------------- ontology root + closure management --------------------
-    def register_ontology(self, source: str) -> str:
-        """Add an ontology source (IRI or path) to the ontoenv environment."""
-        return self.env.add(source, fetch_imports=False)
-
-    def ensure_ontology_root(self, graph_iri: str, imports: list[str]) -> None:
-        """Ensure an owl:Ontology root node with optional owl:imports declarations."""
-        main_graph = self._source_main_graph()
-        root = URIRef(graph_iri)
-        changed = False
-        if (root, RDF.type, OWL.Ontology) not in main_graph:
-            main_graph.add((root, RDF.type, OWL.Ontology))
-            changed = True
-        for dep in imports:
-            triple = (root, OWL.imports, URIRef(dep))
-            if triple in main_graph:
-                continue
-            main_graph.add(triple)
-            changed = True
-        if not changed:
-            return
-        self._finalize_source_write(affects_closure=True)
-
-    # -------------------- source + dependency cache coordination --------------------
+# -------------------- source + dependency cache coordination --------------------
     def _source_state_path(self) -> Path:
         return self.source_store_path / "acquirium_source_state.json"
 
@@ -290,40 +231,65 @@ class OxigraphGraphStore:
         """Return True when the attached Oxigraph store already contains graphs."""
         return any(True for _ in self.source_dataset.graphs())
 
-    def _new_ontoenv(self, search_dirs: list[str], *, init_from_store: bool) -> OntoEnv:
+    def _new_ontoenv(self, *, init_from_store: bool) -> OntoEnv:
         return OntoEnv(
             path=str(self.env_root),
             graph_store=self._ontoenv_store,
-            search_directories=search_dirs,
             init_from_store=init_from_store,
         )
 
-    def _build_ontoenv(self, search_dirs: list[str]) -> OntoEnv:
-        """Prefer rebuilding ontoenv state from the attached graph store.
+    def _build_ontoenv(self) -> tuple[OntoEnv, bool]:
+        """Build (or restore) the ontoenv environment.
 
-        This avoids baking in assumptions about ontoenv or Oxigraph's on-disk
-        layout. If the store-backed rebuild fails, fall back to the directory
-        crawl/update path used on a cold start.
+        Returns ``(env, is_warm_start)``. A warm start means the persisted
+        Oxigraph store already contains bundled ontology graphs from a
+        previous run, so the caller can skip re-adding them. On cold start
+        (or if init_from_store fails) we build an empty environment and
+        the caller is responsible for populating it.
         """
-        can_rebuild_from_store = (
+        can_warm_start = (
             self._source_state_path().exists() and self._has_persisted_source_graphs()
         )
-        if can_rebuild_from_store:
+        if can_warm_start:
             try:
                 _logger.debug("ontoenv: rebuilding from store")
-                return self._new_ontoenv(search_dirs, init_from_store=True)
+                return self._new_ontoenv(init_from_store=True), True
             except Exception as exc:
                 _logger.warning(
-                    "ontoenv: init_from_store failed; falling back to directory crawl: %s",
-                    exc,
+                    "ontoenv: init_from_store failed; building empty env: %s", exc
                 )
-        _logger.debug("ontoenv: rebuilding from directory crawl")
-        env = self._new_ontoenv(search_dirs, init_from_store=False)
-        try:
-            env.update()
-        except Exception as exc:
-            _logger.warning("ontoenv: directory crawl failed: %s", exc)
-        return env
+        _logger.debug("ontoenv: cold start, building empty env")
+        return self._new_ontoenv(init_from_store=False), False
+
+    def _add_user_source(self, src: OntologySource) -> None:
+        """Register one ``[ontologies] sources`` entry with ontoenv.
+
+        - No ``rename_to``: hand the source to ``env.add`` as-is, letting
+          ontoenv key it under its own declared ``owl:Ontology`` IRI.
+        - With ``rename_to``: parse the source into an rdflib graph,
+          rewrite the declared ontology IRI to the canonical value, and
+          add with ``overwrite=True`` so it replaces any pre-existing
+          graph at that IRI (typically a bundled one).
+        """
+        if src.rename_to is None:
+            self.env.add(src.source, fetch_imports=False)
+            _logger.info("ontoenv: registered %s (no rename)", src.source)
+            return
+        g = Graph()
+        g.parse(src.source)
+        declared = next(iter(g.subjects(RDF.type, OWL.Ontology)), None)
+        target = URIRef(src.rename_to)
+        if declared is not None and str(declared) != str(target):
+            rename_ontology_iri(g, URIRef(str(declared)), target)
+        elif declared is None:
+            # No owl:Ontology in the source — synthesize one so ontoenv
+            # registers the graph at the canonical IRI.
+            g.add((target, RDF.type, OWL.Ontology))
+        self.env.add(g, overwrite=True, fetch_imports=False)
+        _logger.info(
+            "ontoenv: registered %s at canonical IRI %s (rename applied)",
+            src.source, src.rename_to,
+        )
 
     def _load_source_version(self) -> int:
         path = self._source_state_path()

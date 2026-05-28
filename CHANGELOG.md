@@ -10,6 +10,44 @@ change in any release.
 
 ## [Unreleased]
 
+### Added
+- Bundled default ontologies inside the `acquirium` package
+  (`acquirium/_ontologies/`): NAWI Water, ASHRAE 223P, QUDT units +
+  quantity kinds, and Brick's `ref-schema`. They ship inside the wheel
+  and load at server startup — no separate `ontologies/` directory or
+  HTTP fetch required.
+- Versionless canonical IRIs for QUDT: bundled QUDT 3.2.1 is rewritten
+  on load to `https://qudt.org/vocab/unit` and
+  `https://qudt.org/vocab/quantitykind`. `owl:versionIRI` is preserved
+  so the original version is still recorded in the graph.
+- `[ontologies] sources` in `acquirium.toml`: a list of strings (load
+  as-is) or `{ source = "...", as = "<canonical IRI>" }` tables (parse,
+  rewrite declared ontology IRI to the canonical key, replace any
+  pre-existing graph at that IRI). Use this to override a bundled
+  ontology with a different file or URL.
+- `tests/unit/test_bundled_ontologies.py` and
+  `tests/unit/test_embedding_cache.py`.
+
+### Changed
+- The QUDT converter is now built lazily from the in-store QUDT graph
+  (`graph_store.named_graph(QUDT_UNIT_IRI)`) instead of re-parsing the
+  bundled TTL. User overrides at the canonical QUDT IRI are honored
+  automatically.
+- Bumped `pyontoenv` to `0.6.0a2`.
+
+### Removed
+- `ACQUIRIUM_ONTOLOGY_IRIS`, `ACQUIRIUM_ONTOLOGY_DEPENDENCIES`, and
+  `ACQUIRIUM_GRAPH_NAME` environment variables; the legacy
+  `[ontologies]` name-to-IRI map and `[server] ontology_dependencies`
+  /`graph_name` keys. The bundled IRIs are fixed by the package and
+  overrides go through `[ontologies] sources` only.
+- `OxigraphGraphStore.qualify_uri`, `_uri`, `register_ontology`,
+  `ensure_ontology_root`, and the `qudt_converter` / `base_namespace`
+  / `ontologies_dir` constructor parameters on `OxigraphGraphStore` —
+  all unused after the refactor. (`Manager.__init__` still accepts
+  `qudt_converter` and `qudt_graph` for callers who want to inject a
+  pre-built converter.)
+
 ## [0.3.0] - 2026-05-27
 
 ### Added

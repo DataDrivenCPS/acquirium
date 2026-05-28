@@ -46,7 +46,7 @@ dependencies = [
     "psycopg[binary]>=3.3.1",
     "pyarrow>=22.0.0",
     "pydantic>=2.12.5",
-    "pyontoenv==0.5.4",
+    "pyontoenv==0.6.0a2",
     "pyoxigraph>=0.5.2",
     "python-dateutil>=2.9.0.post0",
     "python-multipart>=0.0.21",
@@ -76,6 +76,24 @@ acquirium = "acquirium.cli:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+# Ship bundled ontology TTL files inside the wheel/sdist so
+# `importlib.resources.files("acquirium._ontologies")` works after
+# `pip install acquirium` — no reliance on a sibling `ontologies/` dir.
+[tool.hatch.build.targets.wheel]
+packages = ["src/acquirium"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/acquirium/_ontologies" = "acquirium/_ontologies"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/acquirium/**",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "pyproject.toml",
+]
 
 [dependency-groups]
 dev = [

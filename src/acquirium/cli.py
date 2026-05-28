@@ -16,7 +16,6 @@ Single subcommand:
 import importlib
 import importlib.util
 import inspect
-import json
 import logging
 import os
 import signal
@@ -55,8 +54,6 @@ _SERVER_ENV_MAP: dict[str, str] = {
     "duckdb_path":            "ACQUIRIUM_DUCKDB_PATH",
     "timeseries_backend":     "ACQUIRIUM_TIMESERIES_BACKEND",
     "graph_path":             "ACQUIRIUM_GRAPH_PATH",
-    "graph_name":             "ACQUIRIUM_GRAPH_NAME",
-    "ontology_dependencies":  "ACQUIRIUM_ONTOLOGY_DEPENDENCIES",
     "embedding_model":        "ACQUIRIUM_EMBEDDING_MODEL",
     "recreate":               "ACQUIRIUM_RECREATE",
     "workers":                "ACQUIRIUM_WORKERS",
@@ -95,11 +92,8 @@ def _apply_server_env(cfg: dict) -> None:
             str_value = str(value)
         os.environ.setdefault(env_var, str_value)
 
-    # [ontologies] is a small logical-name -> IRI map (not flat scalars);
-    # pass it as JSON so the graph store can override its built-in defaults.
-    ontologies = cfg.get("ontologies")
-    if isinstance(ontologies, dict) and ontologies:
-        os.environ.setdefault("ACQUIRIUM_ONTOLOGY_IRIS", json.dumps(ontologies))
+    # `[ontologies] sources` is read directly from acquirium.toml by
+    # Manager — see acquirium.Server.config.load_ontology_config.
 
 
 # ---------------------------------------------------------------------------

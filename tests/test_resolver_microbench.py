@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import statistics
 import time
+from importlib.resources import files as _res_files
 from pathlib import Path
 
 import pytest
@@ -24,7 +25,7 @@ import pytest
 from acquirium.TextMatch.embedding_matcher import EmbeddingMatcher
 from acquirium.internals.qudt_units import QUDTUnitConverter, UnitNotFound
 
-_QUDT_TTL = Path("ontologies/qudt_unit.ttl")
+_QUDT_TTL = Path(str(_res_files("acquirium._ontologies") / "qudt_unit.ttl"))
 
 
 def _median_ms(fn, iters: int) -> float:

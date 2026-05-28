@@ -27,10 +27,6 @@ duckdb_path = ".acquirium/timeseries.duckdb"
 # RDF graph store path (Oxigraph).  Defaults to {data_dir}/.oxigraph.
 # graph_path = ".acquirium/.oxigraph"
 
-# Optional: declare a root ontology IRI and any imported dependencies.
-# graph_name = "urn:my:ontology"
-# ontology_dependencies = ["urn:dep:brick", "urn:dep:s223"]
-
 # Embedding model for text → URI resolution.
 # embedding_model = "BAAI/bge-small-en-v1.5"
 
@@ -41,19 +37,34 @@ recreate = false
 # read_batch_size = 50000
 
 # ---------------------------------------------------------------------------
-# Vocabulary ontology IRIs used to build the text->URI embedding indexes.
-# These are the exact ontology IRIs ontoenv reads out of `ontologies/`:
-#   - water + s223 graphs are merged into the class/predicate/substance index
-#   - unit and quantity_kind graphs each feed the QUDT index
-# Exact IRIs avoid the QUDT version sprawl ontoenv pulls via owl:imports
-# (qudt_unit.ttl pins 3.2.1). Omit this table to use these same built-in
-# defaults; override only if you vendor different ontology files.
+# Additional or overriding ontology sources.
+#
+# The acquirium package ships these ontologies bundled, registered at
+# these canonical IRIs (the QUDT files are version-collapsed at load):
+#   - NAWI Water           urn:nawi-water-ontology
+#   - ASHRAE 223P          http://data.ashrae.org/standard223/1.0/model/all
+#   - QUDT units           https://qudt.org/vocab/unit
+#   - QUDT quantitykind    https://qudt.org/vocab/quantitykind
+#   - Brick ref-schema     https://brickschema.org/schema/Brick/ref
+#
+# `sources` is a list of entries. Each entry is either:
+#
+#   * a plain string — load the URL/path and register it under
+#     whatever IRI the file's owl:Ontology declaration uses, OR
+#
+#   * a `{ source = "...", as = "<canonical IRI>" }` table — load the
+#     source, rewrite its declared owl:Ontology IRI to `as`, and
+#     register it there (replacing any existing graph at that IRI,
+#     bundled or otherwise).
+#
+# Relative file paths are resolved against this config file's directory.
 # ---------------------------------------------------------------------------
-[ontologies]
-water         = "urn:nawi-water-ontology"
-s223          = "http://data.ashrae.org/standard223/1.0/model/all"
-unit          = "http://qudt.org/3.2.1/vocab/unit"
-quantity_kind = "http://qudt.org/3.2.1/vocab/quantitykind"
+# [ontologies]
+# sources = [
+#   "./local-extensions.ttl",
+#   { source = "https://qudt.org/3.3.0/vocab/unit",
+#     as     = "https://qudt.org/vocab/unit" },
+# ]
 
 [driver]
 # Defaults applied to all drivers — used by `acquirium run` and [[drivers]] entries.
