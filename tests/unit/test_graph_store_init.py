@@ -18,6 +18,10 @@ class _FakeDataset:
     def graphs(self):
         return iter(self._graphs)
 
+    def graph(self, _name):
+        # Pretend every queried named graph is empty.
+        return MagicMock(__len__=lambda self: 0)
+
 
 def _build_store(tmp_path: Path, monkeypatch, *, source_ready: bool):
     opened_paths: list[Path] = []

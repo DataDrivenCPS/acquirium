@@ -216,6 +216,7 @@ class OxigraphGraphStore:
         )
         with timed_debug(_logger, "OntoEnv build env_root=%s search_dirs=%s", self.env_root, search_dirs):
             self.env = self._build_ontoenv(search_dirs)
+        self._effective_iri_map = self._process_ontology_overrides()
         self._commit_dataset(self.source_dataset)
         _logger.debug(
             "OxigraphGraphStore.__init__: ready (main_graph=%s, source_version=%d)",
@@ -231,7 +232,9 @@ class OxigraphGraphStore:
     # `ontologies/` (qudt_unit.ttl pins QUDT 3.1.5; qudt_qk.ttl uses the
     # version-agnostic quantitykind IRI). Exact match avoids the QUDT
     # version sprawl ontoenv pulls in via owl:imports. Overridable via the
-    # acquirium.toml `[ontologies]` table (cli.py -> ACQUIRIUM_ONTOLOGY_IRIS).
+    # acquirium.toml `[ontologies]` table (cli.py -> ACQUIRIUM_ONTOLOGY_IRIS):
+    # values may be a known IRI (pure rename), a path to a local ontology
+    # file, or a remote IRI ontoenv can fetch.
     _ONTOLOGY_IRIS = {
         "water": "urn:nawi-water-ontology",
         "s223": "http://data.ashrae.org/standard223/1.0/model/all",
@@ -240,38 +243,77 @@ class OxigraphGraphStore:
     }
 
     @classmethod
-    def _resolve_iri_map(cls) -> dict[str, str]:
-        """The configured logical-name -> IRI map (env override or default)."""
+    def _raw_iri_map(cls) -> dict[str, str]:
+        """Merged literal [ontologies] table: defaults overlaid by env."""
+        merged = dict(cls._ONTOLOGY_IRIS)
         raw = os.getenv("ACQUIRIUM_ONTOLOGY_IRIS")
-        if raw:
-            try:
-                data = json.loads(raw)
-                if isinstance(data, dict) and data:
-                    return {str(k): str(v) for k, v in data.items()}
-                _logger.warning(
-                    "ACQUIRIUM_ONTOLOGY_IRIS not a non-empty object; using defaults"
-                )
-            except ValueError as exc:
-                _logger.warning(
-                    "ACQUIRIUM_ONTOLOGY_IRIS invalid JSON (%s); using defaults", exc
-                )
-        return dict(cls._ONTOLOGY_IRIS)
+        if not raw:
+            return merged
+        try:
+            data = json.loads(raw)
+        except ValueError as exc:
+            _logger.warning(
+                "ACQUIRIUM_ONTOLOGY_IRIS invalid JSON (%s); using defaults", exc
+            )
+            return merged
+        if not isinstance(data, dict) or not data:
+            _logger.warning(
+                "ACQUIRIUM_ONTOLOGY_IRIS not a non-empty object; using defaults"
+            )
+            return merged
+        merged.update({str(k): str(v) for k, v in data.items()})
+        return merged
 
-    def ontology_iris(self) -> dict[str, str]:
-        """Logical name -> ontology IRI for the ontologies ontoenv discovered.
+    def _process_ontology_overrides(self) -> dict[str, str]:
+        """Resolve each [ontologies] value to an IRI present in the store.
 
-        Keys: ``water``, ``s223``, ``unit``, ``quantity_kind`` (a key is
-        absent if ontoenv did not register that exact IRI).
+        A value is one of:
+
+        * an IRI ontoenv already discovered (pure rename) — kept as-is;
+        * a local file path — parsed; the owl:Ontology IRI inside the file
+          becomes the effective IRI and the named graph is (re)populated
+          with that file's triples (same-IRI bundled defaults replaced);
+        * any other string — handed to ontoenv as a remote IRI to fetch.
+
+        On loader failure the bundled default IRI is restored if it points
+        at a populated named graph; otherwise the key is dropped.
         """
         try:
-            names = set(self.env.get_ontology_names())
+            known = set(self.env.get_ontology_names())
         except Exception as exc:
             _logger.warning("ontoenv: get_ontology_names failed: %s", exc)
-            return {}
+            known = set()
+
+        raw_map = self._raw_iri_map()
+        effective: dict[str, str] = {}
+        for name, value in raw_map.items():
+            if value in known:
+                effective[name] = value
+                continue
+            resolved = self.register_ontology(value)
+            if resolved:
+                effective[name] = resolved
+                continue
+            default_iri = self._ONTOLOGY_IRIS.get(name)
+            if default_iri and len(self.source_dataset.graph(URIRef(default_iri))) > 0:
+                _logger.info(
+                    "ontology override for %s: falling back to bundled default %s",
+                    name, default_iri,
+                )
+                effective[name] = default_iri
+        return effective
+
+    def ontology_iris(self) -> dict[str, str]:
+        """Logical name -> ontology IRI for ontologies present in the store.
+
+        Keys: ``water``, ``s223``, ``unit``, ``quantity_kind`` (a key is
+        absent if its named graph is empty — e.g. the user override
+        failed to load and no usable default exists).
+        """
         return {
             name: iri
-            for name, iri in self._resolve_iri_map().items()
-            if iri in names
+            for name, iri in self._effective_iri_map.items()
+            if len(self.source_dataset.graph(URIRef(iri))) > 0
         }
 
     def qualify_uri(self, value: str) -> str:

@@ -41,13 +41,16 @@ recreate = false
 # read_batch_size = 50000
 
 # ---------------------------------------------------------------------------
-# Vocabulary ontology IRIs used to build the text->URI embedding indexes.
-# These are the exact ontology IRIs ontoenv reads out of `ontologies/`:
+# Vocabulary ontology sources used to build the text->URI embedding indexes:
 #   - water + s223 graphs are merged into the class/predicate/substance index
 #   - unit and quantity_kind graphs each feed the QUDT index
-# Exact IRIs avoid the QUDT version sprawl ontoenv pulls via owl:imports
-# (qudt_unit.ttl pins 3.2.1). Omit this table to use these same built-in
-# defaults; override only if you vendor different ontology files.
+# Each value can be one of:
+#   * an IRI ontoenv already discovered in `ontologies/` (pure rename),
+#   * a local file path — its `?s a owl:Ontology` triple names the graph,
+#     and a same-IRI bundled default is replaced (not duplicated),
+#   * a remote IRI — ontoenv fetches it; failures fall back to the default.
+# Omit this table (or any key) to use the built-in defaults; partial
+# overrides are merged with defaults so unspecified slots still resolve.
 # ---------------------------------------------------------------------------
 [ontologies]
 water         = "urn:nawi-water-ontology"
