@@ -214,3 +214,36 @@ class TestDataObjectUnits:
         # Original should be unchanged
         assert original_df.equals(after_df)
         assert converted is not data
+
+    def test_convert_to_unresolvable_to_unit_raises(self, acquirium_client):
+        """convert_to() resolves to_unit up front and names it in the error."""
+        acq = acquirium_client
+        data = acq.find_all_data().data()
+
+        with pytest.raises(ValueError, match=r"could not resolve to_unit"):
+            data.convert_to("NoSuchUnit12345")
+
+    def test_convert_to_unresolvable_from_unit_raises(self, acquirium_client):
+        """An unresolvable from_unit is reported before any conversion runs."""
+        acq = acquirium_client
+        data = acq.find_all_data().data()
+
+        with pytest.raises(ValueError, match=r"could not resolve from_unit"):
+            data.convert_to("L-PER-MIN", from_unit="NoSuchUnit12345")
+
+    def test_convert_to_accepts_full_unit_uri(self, acquirium_client):
+        """to_unit may be a full QUDT URI, not only a label/UCUM code."""
+        acq = acquirium_client
+        data = acq.find_all_data().data()
+
+        units = data.units()
+        alias_with_unit = next(
+            (a for a, u in units.items() if u and "MilliL-PER-MIN" in u), None
+        )
+        if alias_with_unit is None:
+            pytest.skip("No alias with MilliL-PER-MIN unit in test model")
+
+        converted = data.convert_to(
+            "http://qudt.org/vocab/unit/L-PER-MIN", alias=alias_with_unit
+        )
+        assert isinstance(converted, type(data))
