@@ -617,7 +617,13 @@ class DataObject:
     # Flat DataFrame (triggers materialization)
     # ------------------------------------------------------------------
 
-    def dataframe(self, shape: str = "wide") -> pl.DataFrame:
+    def dataframe(
+        self,
+        shape: str = "wide",
+        *,
+        include_ref: bool = False,
+        compact: bool = False,
+    ) -> pl.DataFrame:
         """Return a flat DataFrame.
 
         - ``shape="narrow"``: returns the internal tall frame as-is (every
@@ -627,11 +633,21 @@ class DataObject:
           (first-wins). When an alias resolves to a single point the column
           is just the alias; when it resolves to several points the columns
           are disambiguated as ``f"{alias}__{point_local}"``.
+
+        ``compact=True`` (used by :meth:`Query.dataframe`) renders URIs as
+        CURIEs and identifies points with a ``point_id`` column rather than the
+        raw ``point_uri``/``ref_uri``; auto-aliased data nodes are labelled by
+        their compacted point-local name. In this mode the narrow layout is
+        ``["data_alias", "point_id", "time", "value_numeric", "value_text"]``
+        and ``include_ref=True`` adds the compacted ``ref`` column.
         """
         self._materialize()
 
         if self._tall.is_empty():
             return self._tall
+
+        if compact:
+            return self._compact_dataframe(shape=shape, include_ref=include_ref)
 
         if shape == "narrow":
             return self._tall.sort("time")
@@ -656,7 +672,7 @@ class DataObject:
                 return alias
             try:
                 return f"{alias}__{self._client.compact_uri(point_uri)}"
-            except:
+            except Exception:
                 # we shouldn't come here
                 return f"{alias}__{point_uri}"
 
@@ -671,6 +687,63 @@ class DataObject:
         )
 
         return _pivot_split_values(tall, "_pivot_key")
+
+    def _compact_dataframe(self, *, shape: str, include_ref: bool) -> pl.DataFrame:
+        """Query-compatible layout: CURIE-rendered URIs and a ``point_id`` column.
+
+        Auto-aliased data nodes (alias == ``str(nid)``) are labelled by their
+        compacted point-local name; user aliases that resolve to several points
+        are disambiguated as ``f"{alias}__{point_local}"``.
+        """
+        def _compact(uri: str) -> str:
+            try:
+                return self._client.compact_uri(uri)
+            except Exception:
+                return uri
+
+        # Combine ref_uris sharing the same (data_alias, point_uri, time).
+        tall = self._tall.clone().unique(
+            subset=["data_alias", "point_uri", "time"], keep="first"
+        )
+
+        points_per_alias: dict[str, set[str]] = {}
+        auto_aliases: set[str] = set()
+        for b in self._bindings:
+            points_per_alias.setdefault(b.alias, set()).add(b.point_uri)
+            if b.alias == str(b.nid):
+                auto_aliases.add(b.alias)
+
+        def _label(alias: str, point_uri: str) -> str:
+            if alias in auto_aliases:
+                return _compact(point_uri)
+            if len(points_per_alias.get(alias, set())) > 1:
+                return f"{alias}__{_compact(point_uri)}"
+            return alias
+
+        tall = tall.with_columns(
+            pl.struct(["data_alias", "point_uri"])
+            .map_elements(
+                lambda s: _label(s["data_alias"], s["point_uri"]),
+                return_dtype=pl.Utf8,
+            )
+            .alias("_label")
+        )
+
+        if shape == "narrow":
+            out = tall.with_columns(
+                pl.col("_label").alias("data_alias"),
+                pl.col("point_uri").map_elements(_compact, return_dtype=pl.Utf8).alias("point_id"),
+            )
+            cols = ["data_alias", "point_id", "time", "value_numeric", "value_text"]
+            if include_ref:
+                out = out.with_columns(
+                    pl.col("ref_uri").map_elements(_compact, return_dtype=pl.Utf8).alias("ref")
+                )
+                cols.insert(2, "ref")
+            return out.select(cols).sort("time")
+
+        # wide
+        return _pivot_split_values(tall, "_label")
 
     # ------------------------------------------------------------------
     # Iteration (triggers materialization)
