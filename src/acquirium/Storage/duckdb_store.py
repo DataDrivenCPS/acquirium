@@ -93,15 +93,9 @@ class DuckDBStore:
                 ts      TIMESTAMP NOT NULL,
                 numeric_value DOUBLE,
                 text_value    VARCHAR,
-                CHECK (numeric_value IS NULL OR text_value IS NULL),
-                UNIQUE (ref_uri, ts)
+                CHECK (numeric_value IS NULL OR text_value IS NULL)
             )
             """,
-            f"CREATE INDEX IF NOT EXISTS idx_ts_ref ON {TIMESERIES_TABLE} (ref_uri, ts)",
-            f"CREATE INDEX IF NOT EXISTS idx_ts_numeric_ref ON {TIMESERIES_TABLE} (ref_uri, ts, numeric_value)",
-            f"CREATE INDEX IF NOT EXISTS idx_ts_text_ref ON {TIMESERIES_TABLE} (ref_uri, ts, text_value)",
-            f"CREATE INDEX IF NOT EXISTS idx_ts_numeric_value ON {TIMESERIES_TABLE} (ref_uri, numeric_value)",
-            f"CREATE INDEX IF NOT EXISTS idx_ts_text_value ON {TIMESERIES_TABLE} (ref_uri, text_value)",
             f"""
             CREATE TABLE IF NOT EXISTS {STREAMS_TABLE} (
                 ref_uri   VARCHAR PRIMARY KEY,
@@ -204,6 +198,7 @@ class DuckDBStore:
                 pl.col("ts").dt.convert_time_zone("UTC").dt.replace_time_zone(None)
             )
             df = df.unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
+            df = df.sort(["ref_uri", "ts"])
         deduped = len(df)
         logger.debug("bulk_insert_polars: %d rows after dedupe (was %d)", deduped, in_rows)
         with self._lock, timed_debug(logger, "bulk_insert_polars DELETE+INSERT rows=%d", deduped):

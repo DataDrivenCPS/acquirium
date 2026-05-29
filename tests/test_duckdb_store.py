@@ -39,6 +39,19 @@ def test_protocol_conformance(tmp_path):
     s.close()
 
 
+@pytest.mark.unit
+def test_fresh_store_does_not_create_timeseries_indexes(tmp_path):
+    s = DuckDBStore(db_path=tmp_path / "schema.duckdb", recreate=True)
+    try:
+        result = s.sql_query(
+            "SELECT index_name FROM duckdb_indexes() WHERE table_name = 'timeseries'"
+        )
+    finally:
+        s.close()
+
+    assert result["rows"] == []
+
+
 # ---- upsert_rows ----
 
 @pytest.mark.unit
@@ -127,6 +140,39 @@ def test_bulk_insert_polars_splits_numeric_and_text_values(store):
         [numeric_uri, 2.5, None],
         [text_uri, None, "1.5"],
         [text_uri, None, "ok"],
+    ]
+
+
+@pytest.mark.unit
+def test_bulk_insert_polars_appends_rows_in_stream_time_order(tmp_path):
+    s = DuckDBStore(db_path=tmp_path / "ordered_insert.duckdb", recreate=True)
+    try:
+        df = pl.DataFrame(
+            {
+                "ref_uri": ["urn:test:duck:z", "urn:test:duck:a", "urn:test:duck:z", "urn:test:duck:a"],
+                "ts": [_utc(2024, 2, 2), _utc(2024, 2, 2), _utc(2024, 2, 1), _utc(2024, 2, 1)],
+                "value": [4.0, 2.0, 3.0, 1.0],
+                "value_kind": ["numeric", "numeric", "numeric", "numeric"],
+            }
+        )
+
+        assert s.bulk_insert_polars(df) == 4
+
+        stored = s.sql_query(
+            """
+            SELECT ref_uri, ts, numeric_value
+            FROM timeseries
+            ORDER BY rowid
+            """
+        )["rows"]
+    finally:
+        s.close()
+
+    assert stored == [
+        ["urn:test:duck:a", _utc(2024, 2, 1).replace(tzinfo=None), 1.0],
+        ["urn:test:duck:a", _utc(2024, 2, 2).replace(tzinfo=None), 2.0],
+        ["urn:test:duck:z", _utc(2024, 2, 1).replace(tzinfo=None), 3.0],
+        ["urn:test:duck:z", _utc(2024, 2, 2).replace(tzinfo=None), 4.0],
     ]
 
 
