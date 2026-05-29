@@ -10,6 +10,8 @@ change in any release.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-05-29
+
 ### Added
 - Bundled default ontologies inside the `acquirium` package
   (`acquirium/_ontologies/`): NAWI Water, ASHRAE 223P, QUDT units +
@@ -25,14 +27,29 @@ change in any release.
   rewrite declared ontology IRI to the canonical key, replace any
   pre-existing graph at that IRI). Use this to override a bundled
   ontology with a different file or URL.
-- `tests/unit/test_bundled_ontologies.py` and
-  `tests/unit/test_embedding_cache.py`.
+- `AcquiriumClient.compact_uri` / `expand_uri` for round-tripping
+  between full URIs and `prefix:local` CURIEs, plus
+  `AcquiriumClient.namespace_manager` exposing the server's bound
+  prefixes as an rdflib `NamespaceManager`.
+- `tests/unit/test_bundled_ontologies.py`,
+  `tests/unit/test_embedding_cache.py`, and tests covering CURIE
+  prefix conversion and namespace transfer on graph insert.
 
 ### Changed
 - The QUDT converter is now built lazily from the in-store QUDT graph
   (`graph_store.named_graph(QUDT_UNIT_IRI)`) instead of re-parsing the
   bundled TTL. User overrides at the canonical QUDT IRI are honored
   automatically.
+- Client URI/CURIE handling now uses rdflib's `NamespaceManager`
+  instead of manual longest-prefix string matching; query results and
+  metadata render identifiers as compact `prefix:local` CURIEs.
+- Prefix bindings declared in inserted Turtle/RDF (`@prefix`) are now
+  propagated into the query dataset, so they survive into the
+  `/namespace/list` endpoint. `OxigraphGraphStore.namespace_manager`
+  now returns the query dataset's manager.
+- Query result assembly is unified in the client `DataObject` and the
+  wide→long reshape uses native Polars expressions instead of nested
+  Python loops.
 - Bumped `pyontoenv` to `0.6.0a2`.
 
 ### Removed
@@ -47,6 +64,8 @@ change in any release.
   all unused after the refactor. (`Manager.__init__` still accepts
   `qudt_converter` and `qudt_graph` for callers who want to inject a
   pre-built converter.)
+- `AcquiriumClient.list_namespaces` and `strip_namespace`, replaced by
+  `namespace_manager` / `compact_uri` / `expand_uri`.
 
 ## [0.3.0] - 2026-05-27
 
