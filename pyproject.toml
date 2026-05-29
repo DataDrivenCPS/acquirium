@@ -80,11 +80,11 @@ build-backend = "hatchling.build"
 # Ship bundled ontology TTL files inside the wheel/sdist so
 # `importlib.resources.files("acquirium._ontologies")` works after
 # `pip install acquirium` — no reliance on a sibling `ontologies/` dir.
+# The `_ontologies` package (and its .ttl data) ships automatically as
+# part of `packages`; do NOT also `force-include` it or every file ends
+# up twice in the wheel ("Duplicate filename in local headers" on upload).
 [tool.hatch.build.targets.wheel]
 packages = ["src/acquirium"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"src/acquirium/_ontologies" = "acquirium/_ontologies"
 
 [tool.hatch.build.targets.sdist]
 include = [
