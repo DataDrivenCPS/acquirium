@@ -394,6 +394,20 @@ class OxigraphGraphStore:
             main.remove((None, None, None))
         for triple in incoming:
             main.add(triple)
+        # Propagate prefix bindings declared in the incoming Turtle/RDF
+        # (rdflib's parser populates incoming.namespace_manager from
+        # `@prefix` directives) so they survive into the stores that back
+        # the public /namespace/list endpoint.
+        for prefix, ns_uri in incoming.namespaces():
+            try:
+                main.bind(prefix, ns_uri, override=False)
+                self.query_dataset.namespace_manager.bind(
+                    prefix, ns_uri, override=False
+                )
+            except Exception:
+                _logger.debug(
+                    "namespace bind failed for %s=%s", prefix, ns_uri, exc_info=True
+                )
         return main
 
     def _finalize_source_write(self, *, affects_closure: bool) -> None:
@@ -492,7 +506,7 @@ class OxigraphGraphStore:
         }
 
     def namespace_manager(self) -> NamespaceManager :
-        return self.source_dataset.namespace_manager
+        return self.query_dataset.namespace_manager
     
     # -------------------- helpers --------------------
     def _materialize_point(self, subject: URIRef) -> Point:
