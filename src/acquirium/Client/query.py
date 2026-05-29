@@ -691,7 +691,7 @@ class Query:
             pl_table = pl_table.with_columns([
                 pl.col(c)
                 .map_elements(
-                    lambda x: self._compact_uri_safe(x) if isinstance(x, str) else x,
+                    lambda x: self._compact_uri_safe(x) if isinstance(x, str) else str(x),
                     return_dtype=pl.String,
                 )
                 .alias(c)
