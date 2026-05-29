@@ -685,21 +685,18 @@ class Query:
             cols_kept = [cols[i] for i in keep_idx]
             rows_kept = [[r[i] for i in keep_idx] for r in rows]
             cols_w_alias = [self._col_name_to_alias(c) for c in cols_kept]
-            rows_clean = []
-            for r in rows_kept:
-                new_row = []
-                for cell in r:
-                    if isinstance(cell, str):
-                        try:
-                            new_cell = self.client.compact_uri(cell)
-                        except:
-                            new_cell = cell
-                    else:
-                        new_cell = cell
-                    new_row.append(new_cell)
-                rows_clean.append(new_row)
-
-            pl_table = pl.DataFrame(rows_clean, schema=cols_w_alias, orient="row")
+            
+            pl_table = pl.DataFrame(rows_kept, schema=cols_w_alias, orient="row")
+            
+            pl_table = pl_table.with_columns([
+                pl.col(c)
+                .map_elements(
+                    lambda x: self._compact_uri_safe(x) if isinstance(x, str) else x,
+                    return_dtype=pl.String,
+                )
+                .alias(c)
+                for c in cols_w_alias
+            ])
             self.cache[cache_key] = pl_table
         return self.cache[cache_key]
 
@@ -1338,16 +1335,16 @@ class Query:
             table.add_column(self._col_name_to_alias(col))
 
         for row in rows[:n]:
-            add_row = []
-            for x in row:
-                try:
-                    add_row.append(self.client.compact_uri(x))
-                except:
-                    add_row.append(x)
-            table.add_row(*add_row)
-
+            table.add_row(*[self._compact_uri_safe(str(cell)) for cell in row])
+            
         console.print(table)
 
+    def _compact_uri_safe(self, uri: str) -> str:
+        try:
+            return self.client.compact_uri(uri)
+        except:
+            return str(uri)
+    
     def _pretty_print_graph(self) -> None:
         print("QUERY GRAPH")
 
