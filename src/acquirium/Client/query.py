@@ -693,6 +693,7 @@ class Query:
                 .map_elements(
                     lambda x: self._compact_uri_safe(x) if isinstance(x, str) else str(x),
                     return_dtype=pl.String,
+                    skip_nulls=False,
                 )
                 .alias(c)
                 for c in cols_w_alias
