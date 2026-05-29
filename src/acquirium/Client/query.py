@@ -179,17 +179,13 @@ class Query:
     def _normalize_instance_uri(self, uri: str | URIRef | None, *, param: str = "uri") -> str | None:
         if uri is None:
             return None
-        if isinstance(uri, URIRef):
+        if isinstance(uri, URIRef) or (isinstance(uri, str) and self._is_uri(uri)):
             return str(uri)
         if isinstance(uri, str):
-            if self._is_uri(uri):
-                return uri
-            # Try CURIE expansion: "prefix:local" -> "<namespace_uri>local"
-            if ":" in uri:
-                prefix, _, local = uri.partition(":")
-                ns_uri = self.client.list_namespaces().get(prefix)
-                if ns_uri is not None:
-                    return f"{ns_uri}{local}"
+            try:
+                return self.client.expand_uri(uri)  # for side-effect of validating/normalizing the URI or CURIE
+            except Exception as e:
+                raise ValueError(f"Invalid URI or CURIE '{uri}' for parameter '{param}': {e}")
         raise ValueError(
             f"{param} must be a URI (urn:..., http://..., https://...) "
             f"or a CURIE 'prefix:local' with a bound prefix"
@@ -724,7 +720,10 @@ class Query:
             points_per_nid.setdefault(nid, set()).add(point_uri)
 
         def _resolve_label(nid: int, point_uri: str) -> str:
-            point_local = self.client.compact_uri(point_uri)
+            try:
+                point_local = self.client.compact_uri(point_uri)
+            except:
+                point_local = point_uri
             alias = self.query_graph.aliases_reverse.get(nid)
             # An auto-alias like "0" (str of node id) is treated as no alias.
             if alias is None or alias == str(nid):
@@ -770,8 +769,14 @@ class Query:
             return pl.DataFrame({"data_alias": [], "point_id": [], "time": [], "value_numeric": [], "value_text": []})
 
         tall = pl.concat(frames, how="vertical")
-        tall = tall.with_columns(pl.col("point_id").map_elements(lambda x: self.client.compact_uri(x),return_dtype=pl.Utf8).alias("point_id"))
-        tall = tall.with_columns(pl.col("ref").map_elements(lambda x: self.client.compact_uri(x),return_dtype=pl.Utf8).alias("ref"))
+        try:
+            tall = tall.with_columns(pl.col("point_id").map_elements(lambda x: self.client.compact_uri(x),return_dtype=pl.Utf8).alias("point_id"))
+        except:
+            pass
+        try:
+            tall = tall.with_columns(pl.col("ref").map_elements(lambda x: self.client.compact_uri(x),return_dtype=pl.Utf8).alias("ref"))
+        except:
+            pass
 
         # Combine multiple ref_uris that share the same (data_alias, point_id,
         # time) — first row wins.  This implements the "combine refs per point"
@@ -793,7 +798,10 @@ class Query:
         if col_name == "time":
             return col_name
         if isinstance(col_name, str):
-            return self.client.compact_uri(col_name)
+            try:
+                return self.client.compact_uri(col_name)
+            except:
+                pass
         if isinstance(col_name, set):
             return list(col_name)[1]
         return str(col_name)
@@ -826,7 +834,20 @@ class Query:
             cols_kept = [cols[i] for i in keep_idx]
             rows_kept = [[r[i] for i in keep_idx] for r in rows]
             cols_w_alias = [self._col_name_to_alias(c) for c in cols_kept]
-            rows_clean = [[self.client.compact_uri(i) for i in r] for r in rows_kept]
+            rows_clean = []
+            for r in rows_kept:
+                new_row = []
+                for cell in r:
+                    if isinstance(cell, str):
+                        try:
+                            new_cell = self.client.compact_uri(cell)
+                        except:
+                            new_cell = cell
+                    else:
+                        new_cell = cell
+                    new_row.append(new_cell)
+                rows_clean.append(new_row)
+
             pl_table = pl.DataFrame(rows_clean, schema=cols_w_alias, orient="row")
             self.cache[cache_key] = pl_table
         return self.cache[cache_key]
@@ -1466,7 +1487,13 @@ class Query:
             table.add_column(self._col_name_to_alias(col))
 
         for row in rows[:n]:
-            table.add_row(*[self.client.compact_uri(x) for x in row])
+            add_row = []
+            for x in row:
+                try:
+                    add_row.append(self.client.compact_uri(x))
+                except:
+                    add_row.append(x)
+            table.add_row(*add_row)
 
         console.print(table)
 
