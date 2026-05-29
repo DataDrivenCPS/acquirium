@@ -40,7 +40,7 @@ def test_protocol_conformance(tmp_path):
 
 
 @pytest.mark.unit
-def test_fresh_store_does_not_create_timeseries_indexes(tmp_path):
+def test_fresh_store_creates_timeseries_indexes(tmp_path):
     s = DuckDBStore(db_path=tmp_path / "schema.duckdb", recreate=True)
     try:
         result = s.sql_query(
@@ -49,7 +49,32 @@ def test_fresh_store_does_not_create_timeseries_indexes(tmp_path):
     finally:
         s.close()
 
-    assert result["rows"] == []
+    assert sorted(row[0] for row in result["rows"]) == [
+        "idx_timeseries_numeric_ref_ts",
+        "idx_timeseries_ref_ts_unique",
+        "idx_timeseries_text_ref_ts",
+    ]
+
+
+@pytest.mark.unit
+def test_fresh_store_enforces_ref_uri_timestamp_uniqueness(tmp_path):
+    s = DuckDBStore(db_path=tmp_path / "unique.duckdb", recreate=True)
+    try:
+        s.sql_query(
+            """
+            INSERT INTO timeseries (ref_uri, ts, numeric_value, text_value)
+            VALUES ('urn:test:duck:unique', TIMESTAMP '2024-01-01 00:00:00', 1.0, NULL)
+            """
+        )
+        with pytest.raises(Exception, match="Duplicate key"):
+            s.sql_query(
+                """
+                INSERT INTO timeseries (ref_uri, ts, numeric_value, text_value)
+                VALUES ('urn:test:duck:unique', TIMESTAMP '2024-01-01 00:00:00', 2.0, NULL)
+                """
+            )
+    finally:
+        s.close()
 
 
 # ---- upsert_rows ----

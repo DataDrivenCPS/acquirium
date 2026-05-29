@@ -96,6 +96,9 @@ class DuckDBStore:
                 CHECK (numeric_value IS NULL OR text_value IS NULL)
             )
             """,
+            f"CREATE UNIQUE INDEX IF NOT EXISTS idx_timeseries_ref_ts_unique ON {TIMESERIES_TABLE} (ref_uri, ts)",
+            f"CREATE INDEX IF NOT EXISTS idx_timeseries_numeric_ref_ts ON {TIMESERIES_TABLE} (ref_uri, numeric_value, ts)",
+            f"CREATE INDEX IF NOT EXISTS idx_timeseries_text_ref_ts ON {TIMESERIES_TABLE} (ref_uri, text_value, ts)",
             f"""
             CREATE TABLE IF NOT EXISTS {STREAMS_TABLE} (
                 ref_uri   VARCHAR PRIMARY KEY,
