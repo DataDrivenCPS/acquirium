@@ -18,6 +18,7 @@ from acquirium.internals.models import (
 from acquirium.internals.internals_namespaces import *
 from acquirium.Grafana.grafana_dashboard_creator import GrafanaDashboardCreator
 from rdflib import Graph, URIRef
+from rdflib.namespace import NamespaceManager
 import logging
 logger = logging.getLogger(__name__)
 
@@ -216,7 +217,7 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
-    def namespace_graph(self) -> Graph:
+    def namespace_manager(self) -> NamespaceManager:
         """Return the Graph that has the ``prefix -> namespace URI`` map from the server.
 
         Stores (caches) in a rdf Graph object for use by other methods. 
@@ -228,7 +229,7 @@ class AcquiriumClient:
             self._namespaces_cache = Graph()
             for prefix, ns_uri in response.json().items():
                 self._namespaces_cache.bind(prefix, ns_uri)
-        return self._namespaces_cache
+        return self._namespaces_cache.namespace_manager
       
     def compact_uri(self, item: str|URIRef) -> str:
         """Return ``prefix:local`` for a URI using bound namespaces.
@@ -238,7 +239,7 @@ class AcquiriumClient:
         passes non-URI strings through unchanged.
         """
         s = str(item)
-        nm = self.namespace_graph().namespace_manager
+        nm = self.namespace_manager()
         try:
             return nm.curie(s, generate=True)
         except:
@@ -253,7 +254,7 @@ class AcquiriumClient:
         the input unchanged if the prefix is not bound.
         """
         s = str(text)
-        nm = self.namespace_graph().namespace_manager
+        nm = self.namespace_manager()
         try:
             return str(nm.expand_curie(s))
         except Exception as e:
