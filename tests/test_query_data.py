@@ -103,77 +103,83 @@ def test_data_filters(acquirium_client_csv):
 
 
 ##### Namespace transfer + CURIE helper tests #####
+# These exercise the rdflib-backed namespace helpers on the client
+# (acq.client.compact_uri / expand_uri / namespace_graph). Prefix names are
+# environment-dependent (rdflib de-duplicates colliding prefixes), so the tests
+# assert round-trip behaviour and namespace URIs rather than fixed prefixes.
+
+def _bound_namespace_uris(acq):
+    """Set of namespace URIs currently bound on the client."""
+    return {str(uri) for _, uri in acq.client.namespace_graph().namespaces()}
+
 
 def test_namespaces_transferred_on_insert(acquirium_client_csv):
-    """insert_graph propagates @prefix bindings into /namespace/list."""
+    """insert_graph propagates @prefix bindings from the TTL into /namespace/list."""
     acq = acquirium_client_csv
-    ns = acq.list_namespaces()
+    bound = _bound_namespace_uris(acq)
 
-    # Prefixes declared in tests/test_model_csv.ttl must reach the query store.
-    assert ns.get("acq") == "urn:acquirium#"
-    assert "qudt" in ns
-    assert "s223" in ns
-    # ex: <urn:ex/> is bound (possibly under a de-duplicated prefix, e.g. ex1).
-    assert any(uri == "urn:ex/" for uri in ns.values())
+    # Namespaces declared in tests/test_model_csv.ttl must reach the query store.
+    assert "urn:acquirium#" in bound
+    assert "urn:ex/" in bound
+    assert "http://qudt.org/schema/qudt/" in bound
+    assert "http://data.ashrae.org/standard223#" in bound
 
 
 def test_compact_uri_roundtrip(acquirium_client_csv):
-    """compact_uri returns prefix:local and round-trips through expand_uri."""
-    acq = acquirium_client_csv
+    """compact_uri returns prefix:local for a URI and round-trips through expand_uri."""
+    c = acquirium_client_csv.client
 
-    compact = acq.compact_uri("urn:ex/point_1")
-    assert compact.endswith(":point_1")
-    assert ":" in compact and compact != "point_1"  # keeps prefix, unlike strip_namespace
-    assert acq.expand_uri(compact) == "urn:ex/point_1"
+    compact = c.compact_uri("urn:ex/point_1")
+    assert ":" in compact and compact.endswith(":point_1")
+    assert c.expand_uri(compact) == "urn:ex/point_1"
 
-    # acq:* (urn:acquirium#) also compacts to a CURIE that round-trips back.
-    compact_med = acq.compact_uri(str(ACQUIRIUM_NS.Medium4))
+    # urn:acquirium# round-trips too (the exact prefix is environment-dependent).
+    med = str(ACQUIRIUM_NS.Medium4)
+    compact_med = c.compact_uri(med)
     assert compact_med.endswith(":Medium4")
-    assert acq.expand_uri(compact_med) == str(ACQUIRIUM_NS.Medium4)
+    assert c.expand_uri(compact_med) == med
 
 
-def test_compact_uri_passthrough_and_fallback(acquirium_client_csv):
-    """Non-URIs pass through; unbound namespaces fall back to the local name."""
-    acq = acquirium_client_csv
+def test_compact_uri_rejects_non_uri(acquirium_client_csv):
+    """compact_uri raises on strings that are not splittable URIs."""
+    c = acquirium_client_csv.client
+    with pytest.raises(ValueError):
+        c.compact_uri("just text")
+    with pytest.raises(ValueError):
+        c.compact_uri("point_9")
 
-    assert acq.compact_uri("just text") == "just text"        # not a URI
-    assert acq.compact_uri(42) == "42"                         # non-string cast
-    assert acq.compact_uri("urn:unbound/thing") == "thing"    # no bound prefix -> bare local
 
-
-def test_expand_uri_passthrough(acquirium_client_csv):
-    """expand_uri leaves full URIs / colon-free / unbound-prefix inputs unchanged."""
-    acq = acquirium_client_csv
-
-    assert acq.expand_uri("urn:ex/point_1") == "urn:ex/point_1"          # already a URI
-    assert acq.expand_uri("http://example.com/x") == "http://example.com/x"
-    assert acq.expand_uri("point_1") == "point_1"                        # no colon
-    assert acq.expand_uri("nope:thing") == "nope:thing"                  # prefix not bound
+def test_expand_uri_requires_bound_curie(acquirium_client_csv):
+    """expand_uri only accepts a CURIE whose prefix is bound; full URIs/unbound raise."""
+    c = acquirium_client_csv.client
+    with pytest.raises(ValueError):
+        c.expand_uri("urn:ex/point_1")   # a full URI is not a CURIE
+    with pytest.raises(ValueError):
+        c.expand_uri("nope:thing")       # prefix not bound
 
 
 def test_metadata_renders_compact_curie(acquirium_client_csv):
     """metadata() renders point ids as CURIEs (prefix:local), not bare local names."""
     acq = acquirium_client_csv
-    meta = acq.find_all_data().metadata()
+    ids = acq.find_all_data().metadata()["0"].to_list()
 
-    ids = meta["0"].to_list()
     assert all(":" in pid for pid in ids)
-    assert "ex1:point_1" in ids
+    assert any(pid.endswith(":point_1") for pid in ids)
 
 
-def test_normalize_instance_uri_expands_curie(acquirium_client_csv):
-    """find_entity(uri=...) accepts CURIEs via bound-prefix expansion."""
+def test_normalize_instance_uri(acquirium_client_csv):
+    """find_entity(uri=...) accepts full URIs and bound CURIEs, rejects everything else."""
     acq = acquirium_client_csv
     query = acq.find_all_data()
 
-    # CURIE expands using bound prefixes.
-    assert query._normalize_instance_uri("acq:Medium4") == str(ACQUIRIUM_NS.Medium4)
-    assert query._normalize_instance_uri("ex1:point_1") == "urn:ex/point_1"
-
-    # Already-full URIs and URIRefs pass through unchanged.
+    # Full URI string and URIRef pass through unchanged; None stays None.
     assert query._normalize_instance_uri("urn:ex/point_1") == "urn:ex/point_1"
     assert query._normalize_instance_uri(ACQUIRIUM_NS.Medium4) == str(ACQUIRIUM_NS.Medium4)
     assert query._normalize_instance_uri(None) is None
+
+    # A CURIE with a bound prefix expands back to its full URI.
+    point_curie = acq.client.compact_uri("urn:ex/point_1")
+    assert query._normalize_instance_uri(point_curie) == "urn:ex/point_1"
 
     # Neither a URI nor a bound CURIE -> error.
     with pytest.raises(ValueError):
@@ -193,13 +199,18 @@ def test_dataframe_cast_float_is_per_frame(acquirium_client_csv):
     acq = acquirium_client_csv
     df = acq.find_all_data().dataframe(shape="narrow", cast_value="float", limit=5)
 
-    numeric = df.filter(pl.col("point_id") == "ex1:point_1")
+    # point ids render as CURIEs whose prefix is environment-dependent; derive
+    # them the same way dataframe() does so the test is prefix-agnostic.
+    p1 = acq.client.compact_uri("urn:ex/point_1")   # numeric
+    p9 = acq.client.compact_uri("urn:ex/point_9")   # text
+
+    numeric = df.filter(pl.col("point_id") == p1)
     assert len(numeric) > 0
     # numeric point populated value_numeric (cast succeeded) and not value_text
     assert numeric["value_numeric"].null_count() < len(numeric)
     assert numeric["value_text"].null_count() == len(numeric)
 
-    text = df.filter(pl.col("point_id") == "ex1:point_9")
+    text = df.filter(pl.col("point_id") == p9)
     assert len(text) > 0
     # un-castable text point gracefully stayed in value_text
     assert text["value_numeric"].null_count() == len(text)
@@ -215,8 +226,8 @@ def test_dataframe_cast_int_per_frame_does_not_raise(acquirium_client_csv):
     df = acq.find_all_data().dataframe(shape="narrow", cast_value="int", limit=5)
 
     point_ids = set(df["point_id"].to_list())
-    assert "ex1:point_1" in point_ids   # numeric point present
-    assert "ex1:point_9" in point_ids   # text point still present, not dropped
+    assert acq.client.compact_uri("urn:ex/point_1") in point_ids   # numeric point present
+    assert acq.client.compact_uri("urn:ex/point_9") in point_ids   # text point still present
 
 
 ##### Find data tests #####
