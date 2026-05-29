@@ -104,13 +104,13 @@ def test_data_filters(acquirium_client_csv):
 
 ##### Namespace transfer + CURIE helper tests #####
 # These exercise the rdflib-backed namespace helpers on the client
-# (acq.client.compact_uri / expand_uri / namespace_graph). Prefix names are
+# (acq.client.compact_uri / expand_uri / namespace_manager). Prefix names are
 # environment-dependent (rdflib de-duplicates colliding prefixes), so the tests
 # assert round-trip behaviour and namespace URIs rather than fixed prefixes.
 
-def _bound_namespace_uris(acq):
+def _bound_namespace_uris(acq: Acquirium) -> set[str]:
     """Set of namespace URIs currently bound on the client."""
-    return {str(uri) for _, uri in acq.client.namespace_graph().namespaces()}
+    return {str(uri) for _, uri in acq.client.namespace_manager().namespaces()}
 
 
 def test_namespaces_transferred_on_insert(acquirium_client_csv):
