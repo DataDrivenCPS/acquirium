@@ -181,9 +181,19 @@ class Query:
             return None
         if isinstance(uri, URIRef):
             return str(uri)
-        if isinstance(uri, str) and self._is_uri(uri):
-            return uri
-        raise ValueError(f"{param} must be a URI (urn:..., http://..., or https://...)")
+        if isinstance(uri, str):
+            if self._is_uri(uri):
+                return uri
+            # Try CURIE expansion: "prefix:local" -> "<namespace_uri>local"
+            if ":" in uri:
+                prefix, _, local = uri.partition(":")
+                ns_uri = self.client.list_namespaces().get(prefix)
+                if ns_uri is not None:
+                    return f"{ns_uri}{local}"
+        raise ValueError(
+            f"{param} must be a URI (urn:..., http://..., https://...) "
+            f"or a CURIE 'prefix:local' with a bound prefix"
+        )
 
     def _find_all_nodes(self, id_val=None) -> set[URIRef]:
         '''
@@ -714,7 +724,7 @@ class Query:
             points_per_nid.setdefault(nid, set()).add(point_uri)
 
         def _resolve_label(nid: int, point_uri: str) -> str:
-            point_local = self.client.strip_namespace(point_uri)
+            point_local = self.client.compact_uri(point_uri)
             alias = self.query_graph.aliases_reverse.get(nid)
             # An auto-alias like "0" (str of node id) is treated as no alias.
             if alias is None or alias == str(nid):
@@ -739,6 +749,16 @@ class Query:
                 continue
 
             df = df.rename({"value": "value", "ts": "time","uri": "ref"})
+            if cast_value == "float" and "value" in df.columns:
+                try:
+                    df = df.with_columns(pl.col("value").cast(pl.Float64, strict=True))
+                except Exception:
+                    logging.warning("casting to float failed for ref %s", ref_uri)
+            elif cast_value == "int" and "value" in df.columns:
+                try:
+                    df = df.with_columns(pl.col("value").cast(pl.Int64, strict=True))
+                except Exception:
+                    logging.warning("casting to int failed for ref %s", ref_uri)
             df = _split_value_column(df)
             df = df.with_columns(
                 pl.lit(point_uri).alias("point_id"),
@@ -750,22 +770,8 @@ class Query:
             return pl.DataFrame({"data_alias": [], "point_id": [], "time": [], "value_numeric": [], "value_text": []})
 
         tall = pl.concat(frames, how="vertical")
-
-        # optional casting
-        if cast_value == "float" and "value" in tall.columns:
-            try:
-                tall = tall.with_columns(pl.col("value").cast(pl.Float64, strict=True))
-            except Exception:
-                logging.warning("casting to float failed")
-                pass
-        elif cast_value == "int" and "value" in tall.columns:
-            try:
-                tall = tall.with_columns(pl.col("value").cast(pl.Int64, strict=True))
-            except Exception:
-                logging.warning("casting to int failed")
-                pass
-        tall = tall.with_columns(pl.col("point_id").map_elements(lambda x: self.client.strip_namespace(x),return_dtype=pl.Utf8).alias("point_id"))
-        tall = tall.with_columns(pl.col("ref").map_elements(lambda x: self.client.strip_namespace(x),return_dtype=pl.Utf8).alias("ref"))
+        tall = tall.with_columns(pl.col("point_id").map_elements(lambda x: self.client.compact_uri(x),return_dtype=pl.Utf8).alias("point_id"))
+        tall = tall.with_columns(pl.col("ref").map_elements(lambda x: self.client.compact_uri(x),return_dtype=pl.Utf8).alias("ref"))
 
         # Combine multiple ref_uris that share the same (data_alias, point_id,
         # time) — first row wins.  This implements the "combine refs per point"
@@ -787,7 +793,7 @@ class Query:
         if col_name == "time":
             return col_name
         if isinstance(col_name, str):
-            return self.client.strip_namespace(col_name)
+            return self.client.compact_uri(col_name)
         if isinstance(col_name, set):
             return list(col_name)[1]
         return str(col_name)
@@ -820,7 +826,7 @@ class Query:
             cols_kept = [cols[i] for i in keep_idx]
             rows_kept = [[r[i] for i in keep_idx] for r in rows]
             cols_w_alias = [self._col_name_to_alias(c) for c in cols_kept]
-            rows_clean = [[self.client.strip_namespace(i) for i in r] for r in rows_kept]
+            rows_clean = [[self.client.compact_uri(i) for i in r] for r in rows_kept]
             pl_table = pl.DataFrame(rows_clean, schema=cols_w_alias, orient="row")
             self.cache[cache_key] = pl_table
         return self.cache[cache_key]
@@ -1460,7 +1466,7 @@ class Query:
             table.add_column(self._col_name_to_alias(col))
 
         for row in rows[:n]:
-            table.add_row(*[self.client.strip_namespace(x) for x in row])
+            table.add_row(*[self.client.compact_uri(x) for x in row])
 
         console.print(table)
 

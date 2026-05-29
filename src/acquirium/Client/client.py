@@ -248,6 +248,44 @@ class AcquiriumClient:
             return s.rsplit("/", 1)[-1]
         return s
 
+    def compact_uri(self, item: Any) -> str:
+        """Return ``prefix:local`` for a URI using bound namespaces.
+
+        Longest-prefix match against ``list_namespaces``. Falls back to the
+        bare local name (``strip_namespace``) when no prefix is bound, and
+        passes non-URI strings through unchanged.
+        """
+        if not looks_like_uri(item):
+            return str(item)
+        s = str(item)
+        best_prefix = ""
+        best_uri = ""
+        for prefix, ns_uri in self.list_namespaces().items():
+            if s.startswith(ns_uri) and len(ns_uri) > len(best_uri):
+                best_prefix = prefix
+                best_uri = ns_uri
+        if best_uri:
+            return f"{best_prefix}:{s[len(best_uri):]}"
+        return self.strip_namespace(s)
+
+    def expand_uri(self, text: Any) -> str:
+        """Expand a ``prefix:local`` CURIE to a full URI using bound namespaces.
+
+        Passes already-full URIs (``urn:``, ``http://``, ``https://``)
+        through unchanged. Non-string inputs are cast to ``str``. Returns
+        the input unchanged if the prefix is not bound.
+        """
+        s = str(text)
+        if looks_like_uri(s):
+            return s
+        if ":" not in s:
+            return s
+        prefix, _, local = s.partition(":")
+        ns_uri = self.list_namespaces().get(prefix)
+        if ns_uri is None:
+            return s
+        return f"{ns_uri}{local}"
+
 
     def resolve_text(
         self,
