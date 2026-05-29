@@ -654,7 +654,12 @@ class DataObject:
             pts = points_per_alias.get(alias, set())
             if len(pts) <= 1:
                 return alias
-            return f"{alias}__{self._client.compact_uri(point_uri)}"
+            try:
+                return f"{alias}__{self._client.compact_uri(point_uri)}"
+            except:
+                # we shouldn't come here
+                return f"{alias}__{point_uri}"
+
 
         tall = tall.with_columns(
             pl.struct(["data_alias", "point_uri"])
