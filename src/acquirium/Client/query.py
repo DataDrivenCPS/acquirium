@@ -10,7 +10,6 @@ from datetime import datetime
 from acquirium.TextMatch.decorators import flex_query_rdf_inputs, FlexSpec
 from acquirium.Client.query_graph import QueryGraph, QueryNode, QueryEdge, DataNodeInfo
 from acquirium.Client.client import AcquiriumClient
-from acquirium.Client.data_object import _pivot_split_values, _split_value_column
 import logging
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -179,11 +178,17 @@ class Query:
     def _normalize_instance_uri(self, uri: str | URIRef | None, *, param: str = "uri") -> str | None:
         if uri is None:
             return None
-        if isinstance(uri, URIRef):
+        if isinstance(uri, URIRef) or (isinstance(uri, str) and self._is_uri(uri)):
             return str(uri)
-        if isinstance(uri, str) and self._is_uri(uri):
-            return uri
-        raise ValueError(f"{param} must be a URI (urn:..., http://..., or https://...)")
+        if isinstance(uri, str):
+            try:
+                return self.client.expand_uri(uri)  # for side-effect of validating/normalizing the URI or CURIE
+            except Exception as e:
+                raise ValueError(f"Invalid URI or CURIE '{uri}' for parameter '{param}': {e}")
+        raise ValueError(
+            f"{param} must be a URI (urn:..., http://..., https://...) "
+            f"or a CURIE 'prefix:local' with a bound prefix"
+        )
 
     def _find_all_nodes(self, id_val=None) -> set[URIRef]:
         '''
@@ -630,168 +635,28 @@ class Query:
         value_mode: str = "default",
         include_ref: bool = False,
     ) -> pl.DataFrame:
-        """
-        Fetch time series for all bound data nodes in this query result.
+        """Convenience wrapper around :meth:`data`.
 
-        Column naming uses the data node alias when defined; when one alias
-        resolves to multiple distinct point_uris, columns are disambiguated as
-        ``f"{alias}__{point_local}"``. Data from multiple ref_uris that share
-        the same (alias, point_uri) are combined (first-wins).
+        Equivalent to ``self.data(...).dataframe(shape=..., include_ref=...,
+        compact=True)``: it builds a :class:`DataObject` with the given fetch
+        parameters and renders it in the compact, CURIE-rendered layout.
 
         Returns:
         - wide: columns ``["time", <alias_or_point_local_1>, ...]``
         - narrow: columns ``["data_alias", "point_id", "time", "value_numeric",
-          "value_text"]``. Pass ``include_ref=True`` to also include the raw
-          ``ref`` column (ref_uri local name) for per-ref-uri use cases.
+          "value_text"]``. Pass ``include_ref=True`` to also include the
+          compacted ``ref`` column for per-ref-uri use cases.
         """
-        if not getattr(self.query_graph, "data_nodes", None):
-            return pl.DataFrame({"time": [], "value": [], "point_id": [], "data_alias": []})
+        return self.data(
+            start=start,
+            end=end,
+            limit=limit,
+            order=order,
+            use_union=use_union,
+            cast_value=cast_value,
+            value_mode=value_mode,
+        ).dataframe(shape=shape, include_ref=include_ref, compact=True)
 
-        res = self.execute(use_union=use_union)
-        cols: list[str] = res.get("columns", []) #v0, v1, ext1, ...
-        rows: list[list[Any]] = res.get("rows", [])
-
-        # map "v<ID>" column -> ID
-        col_to_id: dict[int, int] = {}
-        ext_ref_col_to_id: dict[int, int] = {}
-        for i, c in enumerate(cols):
-            if isinstance(c, str) and c.startswith("v"):
-                try:
-                    nid = int(c[1:])
-                    col_to_id[i] = nid
-                except ValueError:
-                    pass
-            elif isinstance(c, str) and c.startswith("ext"):
-                try:
-                    nid = int(c[3:])
-                    ext_ref_col_to_id[i] = nid
-                except ValueError:
-                    pass
-        nid_to_ext_ref_col: dict[int, int] = {v: k for k, v in ext_ref_col_to_id.items()}
-
-        data_node_ids = set(self.query_graph.data_nodes.keys())
-        data_col_indices = [i for i, nid in col_to_id.items() if nid in data_node_ids]
-        ref_col_indices = [i for i, nid in ext_ref_col_to_id.items() if nid in data_node_ids]
-        if not data_col_indices or not ref_col_indices:
-            return pl.DataFrame({"data_alias": [], "point_id": [], "time": [], "value": []})
-
-        # gather unique point URIs bound to data nodes
-        point_ref_uris: list[tuple[int, str, str]] = []
-        seen = set()
-        for r in rows:
-            for i in data_col_indices:
-                nid = col_to_id[i]
-                uri = r[i]
-                if uri is None:
-                    continue
-                uri_s = str(uri)
-                if nid in nid_to_ext_ref_col:
-                    ref_col_idx = nid_to_ext_ref_col[nid]
-                    if ref_col_idx >= len(r):
-                        continue
-                    ref_uri = r[ref_col_idx]
-                    if ref_uri is None:
-                        continue
-                    ref_uri_s = str(ref_uri)
-                    key = (nid, uri_s, ref_uri_s)
-                    if key not in seen:
-                        seen.add(key)
-                        point_ref_uris.append((nid, uri_s, ref_uri_s))
-
-        if not point_ref_uris:
-            return pl.DataFrame({"data_alias": [], "point_id": [], "time": [], "value": []})
-
-        # Resolve per-data-node alias and decide a pivot/column key for each
-        # (nid, point_uri) binding.  Rules:
-        #   - column name = alias when the data node has one and resolves to
-        #     a single point_uri.
-        #   - when an alias resolves to several points, append the cleaned
-        #     point local name: ``f"{alias}__{point_local}"``.
-        #   - when the data node has no user alias (auto str(nid)), fall back
-        #     to the cleaned point local name.
-        points_per_nid: dict[int, set[str]] = {}
-        for nid, point_uri, _ in point_ref_uris:
-            points_per_nid.setdefault(nid, set()).add(point_uri)
-
-        def _resolve_label(nid: int, point_uri: str) -> str:
-            point_local = self.client.strip_namespace(point_uri)
-            alias = self.query_graph.aliases_reverse.get(nid)
-            # An auto-alias like "0" (str of node id) is treated as no alias.
-            if alias is None or alias == str(nid):
-                return point_local
-            if len(points_per_nid.get(nid, set())) > 1:
-                return f"{alias}__{point_local}"
-            return alias
-
-        # fetch time series for each point URI and build tall frame
-        frames: list[pl.DataFrame] = []
-        for nid, point_uri, ref_uri in point_ref_uris:
-
-            df = self.client.timeseries_df(
-                ref_uri,
-                start=start,
-                end=end,
-                limit=limit,
-                order=order,
-                value_mode=value_mode,
-            )
-            if df.is_empty():
-                continue
-
-            df = df.rename({"value": "value", "ts": "time","uri": "ref"})
-            df = _split_value_column(df)
-            df = df.with_columns(
-                pl.lit(point_uri).alias("point_id"),
-                pl.lit(_resolve_label(nid, point_uri)).alias("data_alias"),
-            )
-            frames.append(df)
-
-        if not frames:
-            return pl.DataFrame({"data_alias": [], "point_id": [], "time": [], "value_numeric": [], "value_text": []})
-
-        tall = pl.concat(frames, how="vertical")
-
-        # optional casting
-        if cast_value == "float" and "value" in tall.columns:
-            try:
-                tall = tall.with_columns(pl.col("value").cast(pl.Float64, strict=True))
-            except Exception:
-                logging.warning("casting to float failed")
-                pass
-        elif cast_value == "int" and "value" in tall.columns:
-            try:
-                tall = tall.with_columns(pl.col("value").cast(pl.Int64, strict=True))
-            except Exception:
-                logging.warning("casting to int failed")
-                pass
-        tall = tall.with_columns(pl.col("point_id").map_elements(lambda x: self.client.strip_namespace(x),return_dtype=pl.Utf8).alias("point_id"))
-        tall = tall.with_columns(pl.col("ref").map_elements(lambda x: self.client.strip_namespace(x),return_dtype=pl.Utf8).alias("ref"))
-
-        # Combine multiple ref_uris that share the same (data_alias, point_id,
-        # time) — first row wins.  This implements the "combine refs per point"
-        # contract for the default view.
-        tall = tall.unique(subset=["data_alias", "point_id", "time"], keep="first")
-
-        if shape == "narrow":
-            base_cols = ["data_alias", "point_id", "time", "value_numeric", "value_text"]
-            if include_ref:
-                base_cols.insert(2, "ref")
-            return tall.select(base_cols).sort("time")
-
-        # wide
-        wide = _pivot_split_values(tall.rename({"data_alias": "_pivot_key"}), "_pivot_key")
-        wide.columns = [self._clean_column_name(c) for c in wide.columns]
-        return wide.sort("time")
-
-    def _clean_column_name(self, col_name: str) -> str:
-        if col_name == "time":
-            return col_name
-        if isinstance(col_name, str):
-            return self.client.strip_namespace(col_name)
-        if isinstance(col_name, set):
-            return list(col_name)[1]
-        return str(col_name)
-    
     def metadata(self, *, include_internals: bool = False) -> pl.DataFrame:
         """
         Execute the SPARQL query to get the query graph results.
@@ -820,8 +685,19 @@ class Query:
             cols_kept = [cols[i] for i in keep_idx]
             rows_kept = [[r[i] for i in keep_idx] for r in rows]
             cols_w_alias = [self._col_name_to_alias(c) for c in cols_kept]
-            rows_clean = [[self.client.strip_namespace(i) for i in r] for r in rows_kept]
-            pl_table = pl.DataFrame(rows_clean, schema=cols_w_alias, orient="row")
+            
+            pl_table = pl.DataFrame(rows_kept, schema=cols_w_alias, orient="row")
+            
+            pl_table = pl_table.with_columns([
+                pl.col(c)
+                .map_elements(
+                    lambda x: self._compact_uri_safe(x) if isinstance(x, str) else str(x),
+                    return_dtype=pl.String,
+                    skip_nulls=False,
+                )
+                .alias(c)
+                for c in cols_w_alias
+            ])
             self.cache[cache_key] = pl_table
         return self.cache[cache_key]
 
@@ -1460,10 +1336,16 @@ class Query:
             table.add_column(self._col_name_to_alias(col))
 
         for row in rows[:n]:
-            table.add_row(*[self.client.strip_namespace(x) for x in row])
-
+            table.add_row(*[self._compact_uri_safe(str(cell)) for cell in row])
+            
         console.print(table)
 
+    def _compact_uri_safe(self, uri: str) -> str:
+        try:
+            return self.client.compact_uri(uri)
+        except:
+            return str(uri)
+    
     def _pretty_print_graph(self) -> None:
         print("QUERY GRAPH")
 

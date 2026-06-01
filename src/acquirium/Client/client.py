@@ -17,7 +17,8 @@ from acquirium.internals.models import (
 )
 from acquirium.internals.internals_namespaces import *
 from acquirium.Grafana.grafana_dashboard_creator import GrafanaDashboardCreator
-
+from rdflib import Graph, URIRef
+from rdflib.namespace import NamespaceManager
 import logging
 logger = logging.getLogger(__name__)
 
@@ -216,38 +217,48 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
-    def list_namespaces(self) -> dict[str, str]:
-        """Return the bound ``prefix -> namespace URI`` map from the server.
+    def namespace_manager(self) -> NamespaceManager:
+        """Return the Graph that has the ``prefix -> namespace URI`` map from the server.
 
-        Cached on the client after the first call.
+        Stores (caches) in a rdf Graph object for use by other methods. 
         """
         if self._namespaces_cache is None:
             url = f"{self.base_url}/namespace/list"
             response = requests.get(url)
             _raise_for_status(response)
-            self._namespaces_cache = response.json()
-        return self._namespaces_cache
+            self._namespaces_cache = Graph()
+            for prefix, ns_uri in response.json().items():
+                self._namespaces_cache.bind(prefix, ns_uri)
+        return self._namespaces_cache.namespace_manager
+      
+    def compact_uri(self, item: str|URIRef) -> str:
+        """Return ``prefix:local`` for a URI using bound namespaces.
 
-    def strip_namespace(self, item: Any) -> str:
-        """Strip the namespace from a URI, returning only the local name.
-
-        Uses the bound namespaces from ``list_namespaces`` (longest-prefix
-        match). Falls back to splitting on ``#`` or ``/`` when no bound
-        namespace matches; non-URI strings are returned unchanged.
+        Longest-prefix match against ``list_namespaces``. Falls back to the
+        bare local name (``strip_namespace``) when no prefix is bound, and
+        passes non-URI strings through unchanged.
         """
         s = str(item)
-        best = ""
-        for ns_uri in self.list_namespaces().values():
-            if s.startswith(ns_uri) and len(ns_uri) > len(best):
-                best = ns_uri
-        if best:
-            return s[len(best):]
-        if "#" in s:
-            return s.rsplit("#", 1)[-1]
-        if "/" in s:
-            return s.rsplit("/", 1)[-1]
-        return s
+        nm = self.namespace_manager()
+        try:
+            return nm.curie(s, generate=True)
+        except:
+            raise ValueError(f"Cannot compact '{s}': no matching namespace for URI and not a valid URI format")
 
+
+    def expand_uri(self, text: Any) -> str:
+        """Expand a ``prefix:local`` CURIE to a full URI using bound namespaces.
+
+        Passes already-full URIs (``urn:``, ``http://``, ``https://``)
+        through unchanged. Non-string inputs are cast to ``str``. Returns
+        the input unchanged if the prefix is not bound.
+        """
+        s = str(text)
+        nm = self.namespace_manager()
+        try:
+            return str(nm.expand_curie(s))
+        except Exception as e:
+            raise ValueError(f"Cannot expand '{s}': no matching namespace for CURIE and not a full URI")
 
     def resolve_text(
         self,
