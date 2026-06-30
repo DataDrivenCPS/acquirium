@@ -9,6 +9,7 @@
 wbs: a owl:Ontology .
 
 wbs:Pump1 a nawi:Pump ;
+    s223:hasProperty wbs:Pump1-Work ;
     s223:hasConnectionPoint wbs:Pump1-in,
         wbs:Pump1-out .
 
@@ -39,3 +40,6 @@ wbs:Pump1-in-temperature a s223:QuantifiableObservableProperty ;
 wbs:Pump1-out a s223:OutletConnectionPoint ;
     s223:hasMedium s223:Medium-Water .
 
+wbs:Pump1-Work a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Power ;
+    qudt:hasUnit unit:W . 
