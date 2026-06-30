@@ -685,22 +685,43 @@ class MyCustomMQTTIngestDriver(MQTTIngestDriver):
 ## Built-In WaterTAP Driver
 
 `acquirium.BuiltinDrivers.watertap:WaterTAPDriver` is a polling driver. Each
-tick runs a configured WaterTAP build/solve callable and returns observations
-for RDF-mapped Pyomo variables.
+tick runs a model's `build -> change_inputs -> solve` pipeline and returns
+observations for the Pyomo variables listed in the model's
+`watertap-mapping.json`. This is the interface exposed by
+`deployments/WATERTAP/models/<name>/build-and-solve.py`.
+
+Points come from `watertap_mapping_path` (the model's `watertap-mapping.json`):
+its `properties` table maps each ontology point URI to a Pyomo path. On setup
+the driver registers a stream per point, which writes that point's external
+reference, its Pyomo variable (`acq:hasPyomoVar`), and the
+`ref:hasExternalReference` link — via Acquirium's insert-graph interface, so no
+hand-authored reference graph is needed.
 
 ```toml
 [[drivers]]
 spec = "acquirium.BuiltinDrivers.watertap:WaterTAPDriver"
 interval = 30.0
 watertap_source_id = "watertap"
-watertap_graph_path = "deployments/WATERTAP2/models/test-model.ttl"
-watertap_build_spec = "deployments/WATERTAP2/scripts/example_watertap.py:build_and_solve"
+watertap_mapping_path = "deployments/WATERTAP/models/seawater-ro/watertap-mapping.json"
+watertap_graph_path = "deployments/WATERTAP/models/seawater-ro/model.ttl"
+watertap_build_spec = "deployments/WATERTAP/models/seawater-ro/build-and-solve.py:build"
+watertap_change_inputs_spec = "deployments/WATERTAP/models/seawater-ro/build-and-solve.py:change_inputs"
+watertap_solve_spec = "deployments/WATERTAP/models/seawater-ro/build-and-solve.py:solve"
 watertap_insert_graph = true
-watertap_build_kwargs = { flow_vol = 0.001, salt_mass_conc = 0.035 }
+watertap_inputs = { flow_vol = 0.3092, conc_tds = 35.0, conc_tss = 0.03, temperature = 298.0 }
 ```
+
+`watertap_mapping_path`, `watertap_build_spec`, and `watertap_solve_spec` are
+required; the driver builds the model, applies `watertap_inputs` via
+`change_inputs` (when both are set), then solves before reading.
 
 Optional keys:
 
+- `watertap_change_inputs_spec` / `watertap_inputs` override model inputs each
+  tick before solving (skipped when `watertap_inputs` is empty)
+- `watertap_build_kwargs` passes kwargs to the build function
+- `watertap_graph_path` / `watertap_insert_graph` insert the model's s223
+  ontology on setup so point nodes carry domain semantics
 - `watertap_insert_graph_replace` replaces the main graph when inserting it
 - `watertap_register_streams` defaults to `true`
 - `watertap_result_attr` extracts the model from an attribute when the build
