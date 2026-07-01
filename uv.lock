@@ -28,6 +28,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyontoenv" },
     { name = "pyoxigraph" },
+    { name = "pyshifty" },
     { name = "python-dateutil" },
     { name = "python-multipart" },
     { name = "requests" },
@@ -77,6 +78,7 @@ requires-dist = [
     { name = "pyomo", marker = "extra == 'watertap'", specifier = ">=6" },
     { name = "pyontoenv", specifier = "==0.6.0a2" },
     { name = "pyoxigraph", specifier = ">=0.5.2" },
+    { name = "pyshifty", specifier = ">=0.2.3" },
     { name = "python-dateutil", specifier = ">=2.9.0.post0" },
     { name = "python-multipart", specifier = ">=0.0.21" },
     { name = "requests", specifier = ">=2.32.5" },
@@ -2116,6 +2118,20 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f3/91/9c6ee907786a473bf81c5f53cf703ba0957b23ab84c264080fb5a450416f/pyparsing-3.3.2.tar.gz", hash = "sha256:c777f4d763f140633dcb6d8a3eda953bf7a214dc4eff598413c070bcdc117cbc", size = 6851574, upload-time = "2026-01-21T03:57:59.36Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/10/bd/c038d7cc38edc1aa5bf91ab8068b63d4308c66c4c8bb3cbba7dfbc049f9c/pyparsing-3.3.2-py3-none-any.whl", hash = "sha256:850ba148bd908d7e2411587e247a1e4f0327839c40e2e5e6d05a007ecc69911d", size = 122781, upload-time = "2026-01-21T03:57:55.912Z" },
+]
+
+[[package]]
+name = "pyshifty"
+version = "0.2.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/5c/72/fbc3336865ac1ec4e3f34c26c0616289142394bf4afe0c2a02032412e452/pyshifty-0.2.3.tar.gz", hash = "sha256:8c4a32ec92a74e95d951b9e7941f1faa1629c646586e5713d2c1cf67d93fa729", size = 307150, upload-time = "2026-06-29T05:47:32.683Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c6/bc/7039801daa4e6e27bba9f5c57cca61ae716102f5c38c04ed9f198edc7f40/pyshifty-0.2.3-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:dbe66b2bc7178c44100b491d486da35366b473018628a7fcbe6d474a1a12f4aa", size = 3215836, upload-time = "2026-06-29T05:47:13.981Z" },
+    { url = "https://files.pythonhosted.org/packages/0e/dc/496fd183688760038a40503dbc501253f22f6ed62fee1c46384e0fa8dea7/pyshifty-0.2.3-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:f68c2c025e4c207c979cab37b46ed5343fd5f00fbfb2703e5936ecd058714885", size = 33204692, upload-time = "2026-06-29T05:47:16.922Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/a4/ce7c892ecd2a36359e111d723497e7754741c88b81bd4cf5380c38c326b4/pyshifty-0.2.3-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d8d9cb8d2c8eef0a183c653a04794aaa04e2beeaae55a836ed622f609c139f10", size = 33798165, upload-time = "2026-06-29T05:47:20.499Z" },
+    { url = "https://files.pythonhosted.org/packages/11/ff/7493b9fff1ca2247f6c9a41c509d14ddf60fe429379076ced17123449a3a/pyshifty-0.2.3-cp39-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:d39e8723bcb458baa7e7a38c54d7a74256b6df9a4d20c285340c0352f2eb9117", size = 33224645, upload-time = "2026-06-29T05:47:24.259Z" },
+    { url = "https://files.pythonhosted.org/packages/7d/19/2254213c92e1418bc4f5e5d23fb1a69f037303511754b373ce1855a152ab/pyshifty-0.2.3-cp39-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:4dc4919a59919abc3d305ff1f6448065eae65566b05aba22ca8d5289ba2fc413", size = 33796675, upload-time = "2026-06-29T05:47:28.038Z" },
+    { url = "https://files.pythonhosted.org/packages/56/f3/d0afe5192aa72dc79163733dfd49cbbd3ee941f9729bb591eb119a06580c/pyshifty-0.2.3-cp39-abi3-win_amd64.whl", hash = "sha256:ac56b39daf50184ee9a1285eb7058ae4152a258782a8b77baf83ccd0218ead7e", size = 3024733, upload-time = "2026-06-29T05:47:30.873Z" },
 ]
 
 [[package]]

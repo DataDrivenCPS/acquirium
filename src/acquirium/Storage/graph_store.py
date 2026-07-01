@@ -370,9 +370,33 @@ class OxigraphGraphStore:
             return self._refresh_imports_union_graph()
         return self._imports_union_graph()
 
+    def _compile_graph(self, merged: Graph) -> Graph:
+        """Materialize SHACL-AF inference over the merged source+imports graph.
+
+        This is the base -> compiled step: the source store keeps the graph as
+        provided, while the *query* graph is the inferred version. Inference is
+        cheap enough to run synchronously and is only recomputed when the source
+        version bumps (via the caller's version-keyed cache). On failure we log
+        and fall back to the un-inferred graph so a bad rule can't break queries.
+        """
+        from acquirium.internals.inference import compile_graph
+
+        base = len(merged)
+        try:
+            compiled = compile_graph(merged)
+        except Exception:
+            _logger.warning(
+                "graph inference failed; querying un-inferred graph", exc_info=True
+            )
+            return merged
+        _logger.debug(
+            "graph inference: %d -> %d triples (+%d)", base, len(compiled), len(compiled) - base
+        )
+        return compiled
+
     def _refresh_imports_union_graph(self) -> Graph:
-        """Materialize data graph + imports closure into one query graph."""
-        merged = self._source_graph_with_dependencies()
+        """Materialize data graph + imports closure + SHACL-AF inference into the query graph."""
+        merged = self._compile_graph(self._source_graph_with_dependencies())
         graph = self._imports_union_graph()
         graph.remove((None, None, None))
         if len(merged):

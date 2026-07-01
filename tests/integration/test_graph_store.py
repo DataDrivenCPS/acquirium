@@ -45,6 +45,21 @@ ex:sensor3 a ex:FlowSensor ;
     rdfs:label "Sensor 3" .
 """
 
+# Model carrying its own SHACL-AF rule: every ex:Thing gains an ex:derived edge.
+RULE_TURTLE = """\
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ex: <http://example.org/> .
+
+ex:ThingShape a sh:NodeShape ;
+    sh:targetClass ex:Thing ;
+    sh:rule [ a sh:TripleRule ;
+        sh:subject sh:this ; sh:predicate ex:derived ; sh:object ex:Yes ] .
+
+ex:a a ex:Thing .
+"""
+
+DERIVED_Q = "SELECT ?s ?o WHERE { ?s <http://example.org/derived> ?o }"
+
 
 @pytest.fixture
 def graph_store(tmp_path):
@@ -214,3 +229,32 @@ class TestLifecycle:
         counts = graph_store.refresh_union()
         assert counts["main_triples"] > 0
         assert counts["union_triples"] >= counts["main_triples"]
+
+
+# ── Inference (base vs compiled graph) ─────────────────────
+
+
+class TestInference:
+    def test_base_graph_is_uninferred_compiled_graph_is_inferred(self, graph_store):
+        graph_store.insert_graph(RULE_TURTLE, format="turtle")
+        # Base graph (as provided) has no materialized triples.
+        assert graph_store.sparql_query(DERIVED_Q, use_union=False)["rows"] == []
+        # The query/union graph is the compiled version — the rule has fired.
+        compiled = graph_store.sparql_query(DERIVED_Q, use_union=True)["rows"]
+        assert [str(compiled[0][0]), str(compiled[0][1])] == [
+            "http://example.org/a", "http://example.org/Yes"
+        ]
+
+    def test_compiled_graph_recomputes_after_edit(self, graph_store):
+        graph_store.insert_graph(RULE_TURTLE, format="turtle")
+        assert len(graph_store.sparql_query(DERIVED_Q, use_union=True)["rows"]) == 1
+        # A second ex:Thing added later must also be materialized on next query
+        # (the version bump invalidates the cached compiled graph).
+        graph_store.insert_graph(
+            "@prefix ex: <http://example.org/> .\nex:b a ex:Thing .\n",
+            format="turtle", replace=False,
+        )
+        subjects = {
+            str(r[0]) for r in graph_store.sparql_query(DERIVED_Q, use_union=True)["rows"]
+        }
+        assert subjects == {"http://example.org/a", "http://example.org/b"}
