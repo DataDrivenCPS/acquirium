@@ -10,9 +10,11 @@ import re
 
 import pytest
 
-from acquirium.Graframe import Graframe, P, Profile, Reasoning, like, parse_path, to_path
+from acquirium.Graframe import (
+    Facets, FacetRow, Graframe, P, Profile, Reasoning, like, parse_path, to_path,
+)
 from acquirium.Graframe.resolve import Fuzzy, resolve_iri
-from acquirium.Graframe.algebra import Alt, Inv, Iri, Lit, Pred, Seq, Var, Triple
+from acquirium.Graframe.algebra import Alt, Inv, Lit, Pred, Seq, Var, Triple
 from acquirium.Graframe.facets import _facet_query, _virtual_facet
 
 RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
@@ -67,13 +69,16 @@ class FakeClient:
     def timeseries_info_batch(self, uris):
         return {}
 
-    # embedding matcher stub: a tiny name -> (uri, kind) lexicon
+    # embedding matcher stub: a tiny name -> (uri, kind) lexicon. Value slots
+    # resolve with kind=None, so a few unkinded entries are included too.
     _LEXICON = {
         ("sensor", "class"): "http://data.ashrae.org/standard223#Sensor",
+        ("sensor", None): "http://data.ashrae.org/standard223#Sensor",
         ("pump", "class"): "urn:nawi-water-ontology#Pump",
         ("observes", "predicate"): "http://data.ashrae.org/standard223#observes",
         ("has property", "predicate"): "http://data.ashrae.org/standard223#hasProperty",
         ("concentration", "quantity_kind"): "http://qudt.org/vocab/quantitykind/Concentration",
+        ("concentration", None): "http://qudt.org/vocab/quantitykind/Concentration",
     }
 
     def resolve_concept(self, text, kind=None, context=None, min_score=0.5):
@@ -165,20 +170,20 @@ class TestSeeds:
 
 
 # ---------------------------------------------------------------------------
-# refine vs pivot
+# having (narrow) vs follow (move)
 # ---------------------------------------------------------------------------
 
 
-class TestRefinePivot:
-    def test_refine_is_existential(self, g):
-        sel = g.instances("s223:Sensor").refine("s223:hasProperty")
+class TestHavingFollow:
+    def test_having_is_existential(self, g):
+        sel = g.instances("s223:Sensor").having("s223:hasProperty")
         sparql = norm(sel.to_sparql())
         # focus stays n0; the edge is wrapped in FILTER EXISTS, never selected
         assert "(?n0 AS ?focus)" in sparql
         assert f"FILTER EXISTS {{ ?n0 <{PREFIXES['s223']}hasProperty> ?n1 . }}" in sparql
 
     def test_refine_with_is_a(self, g):
-        sel = g.instances("s223:Sensor").refine("s223:hasProperty", is_a="qk:Temperature")
+        sel = g.instances("s223:Sensor").having("s223:hasProperty", is_a="qk:Temperature")
         sparql = norm(sel.to_sparql())
         assert "FILTER EXISTS { ?n0 <" + PREFIXES["s223"] + "hasProperty> ?n1 ." in sparql
         assert (
@@ -187,29 +192,29 @@ class TestRefinePivot:
         )
 
     def test_pivot_moves_focus_and_adds_column(self, g):
-        sel = g.instances("s223:Sensor").pivot("s223:hasProperty")
+        sel = g.instances("s223:Sensor").follow("s223:hasProperty")
         sparql = norm(sel.to_sparql())
         assert "(?n1 AS ?focus)" in sparql  # focus moved to the new column
         assert f"?n0 <{PREFIXES['s223']}hasProperty> ?n1 ." in sparql
         assert "FILTER EXISTS" not in sparql  # pivot is inline, not existential
 
     def test_pivot_direction_in_inverts(self, g):
-        sel = g.instances("s223:Sensor").pivot("s223:hasProperty", direction="in")
+        sel = g.instances("s223:Sensor").follow("s223:hasProperty", direction="in")
         assert f"?n0 ^<{PREFIXES['s223']}hasProperty> ?n1 ." in norm(sel.to_sparql())
 
     def test_caret_prefix_inverts(self, g):
-        sel = g.instances("s223:Sensor").pivot("^s223:hasProperty")
+        sel = g.instances("s223:Sensor").follow("^s223:hasProperty")
         assert f"?n0 ^<{PREFIXES['s223']}hasProperty> ?n1 ." in norm(sel.to_sparql())
 
     def test_step_list_is_alternation(self, g):
-        sel = g.instances("s223:Sensor").pivot(["s223:hasProperty", "s223:contains"])
+        sel = g.instances("s223:Sensor").follow(["s223:hasProperty", "s223:contains"])
         assert (
             f"?n0 <{PREFIXES['s223']}hasProperty>|<{PREFIXES['s223']}contains> ?n1 ."
             in norm(sel.to_sparql())
         )
 
     def test_step_list_inverted_wraps(self, g):
-        sel = g.instances("s223:Sensor").pivot(
+        sel = g.instances("s223:Sensor").follow(
             ["s223:hasProperty", "s223:contains"], direction="in"
         )
         assert (
@@ -219,17 +224,17 @@ class TestRefinePivot:
 
     def test_path_object_step(self, g):
         step = P(PREFIXES["s223"] + "connectedTo").plus()
-        sel = g.instances("s223:Sensor").pivot(step)
+        sel = g.instances("s223:Sensor").follow(step)
         assert f"?n0 <{PREFIXES['s223']}connectedTo>+ ?n1 ." in norm(sel.to_sparql())
 
     def test_pivot_value_filter(self, g):
-        sel = g.instances("s223:Sensor").pivot("s223:hasLocation", value="bldg:room_5")
+        sel = g.instances("s223:Sensor").follow("s223:hasLocation", value="bldg:room_5")
         sparql = norm(sel.to_sparql())
         assert f"?n0 <{PREFIXES['s223']}hasLocation> ?n1 ." in sparql
         assert f"VALUES ?n1 {{ <{PREFIXES['bldg']}room_5> }}" in sparql
 
     def test_numeric_range(self, g):
-        sel = g.instances("watr:Reading").pivot("watr:value").in_range(min=0, max=100)
+        sel = g.instances("watr:Reading").follow("watr:value").in_range(min=0, max=100)
         sparql = norm(sel.to_sparql())
         assert "FILTER(?n1 >= 0)" in sparql
         assert "FILTER(?n1 <= 100)" in sparql
@@ -243,7 +248,7 @@ class TestRefinePivot:
 class TestCorrelation:
     def test_where_is_existential_and_holds_focus(self, g):
         sel = g.instances("s223:Sensor").where(
-            lambda s: s.pivot("s223:hasProperty").is_a("qk:Temperature")
+            lambda s: s.follow("s223:hasProperty").is_a("qk:Temperature")
         )
         sparql = norm(sel.to_sparql())
         assert "(?n0 AS ?focus)" in sparql  # focus unchanged
@@ -253,8 +258,8 @@ class TestCorrelation:
     def test_two_wheres_are_independent(self, g):
         sel = (
             g.instances("s223:Sensor")
-            .where(lambda s: s.pivot("s223:hasProperty").is_a("qk:Temperature"))
-            .where(lambda s: s.pivot("s223:hasLocation").is_("bldg:room_5"))
+            .where(lambda s: s.follow("s223:hasProperty").is_a("qk:Temperature"))
+            .where(lambda s: s.follow("s223:hasLocation").is_one_of("bldg:room_5"))
         )
         sparql = norm(sel.to_sparql())
         assert sparql.count("FILTER EXISTS") >= 2
@@ -264,8 +269,8 @@ class TestCorrelation:
 
     def test_any_of_compiles_to_or_of_exists(self, g):
         sel = g.instances("s223:Sensor").any_of(
-            lambda s: s.pivot("s223:hasProperty").is_a("qk:Temperature"),
-            lambda s: s.pivot("s223:hasProperty").is_a("qk:Pressure"),
+            lambda s: s.follow("s223:hasProperty").is_a("qk:Temperature"),
+            lambda s: s.follow("s223:hasProperty").is_a("qk:Pressure"),
         )
         sparql = norm(sel.to_sparql())
         assert "FILTER(EXISTS {" in sparql
@@ -277,9 +282,9 @@ class TestCorrelation:
 
     def test_matching_membership_join(self, g):
         rooms = g.instances("s223:DomainSpace").where(
-            lambda s: s.pivot("s223:hasProperty")
+            lambda s: s.follow("s223:hasProperty")
         )
-        sel = g.instances("s223:Sensor").refine("s223:hasLocation", matching=rooms)
+        sel = g.instances("s223:Sensor").having("s223:hasLocation", matching=rooms)
         sparql = norm(sel.to_sparql())
         # the other selection's focus (n0) is renamed to this edge's object (n1)
         assert f"FILTER EXISTS {{ ?n1 <{RDF_TYPE}>/<{SUBCLASS}>* <{PREFIXES['s223']}DomainSpace> ." in sparql
@@ -297,7 +302,7 @@ class TestWaypoints:
         sel = (
             g.instances("s223:Sensor")
             .mark("sensor")
-            .pivot("s223:hasLocation")
+            .follow("s223:hasLocation")
             .mark("room")
             .to("sensor")
         )
@@ -308,7 +313,7 @@ class TestWaypoints:
         sel = (
             g.instances("s223:Sensor")
             .mark("sensor")
-            .pivot("s223:hasLocation")
+            .follow("s223:hasLocation")
             .mark("room")
         )
         sparql = norm(sel.to_sparql("sensor", "room"))
@@ -455,13 +460,13 @@ class TestProfile:
     def test_named_edge_used_in_pivot(self):
         prof = Profile(edges={"downstream": "s223:connectedTo+"})
         g = Graframe(FakeClient(), profile=prof)
-        sel = g.instances("s223:Sensor").pivot("downstream")
+        sel = g.instances("s223:Sensor").follow("downstream")
         assert f"?n0 <{PREFIXES['s223']}connectedTo>+ ?n1 ." in norm(sel.to_sparql())
 
     def test_named_edge_in_refine(self):
         prof = Profile(edges={"measures": "s223:hasProperty"})
         g = Graframe(FakeClient(), profile=prof)
-        sel = g.instances("s223:Sensor").refine("measures", value="qk:Pressure")
+        sel = g.instances("s223:Sensor").having("measures", value="qk:Pressure")
         assert f"FILTER EXISTS {{ ?n0 <{PREFIXES['s223']}hasProperty> ?n1 ." in norm(sel.to_sparql())
 
     def test_facets_apply_predicate_filter(self):
@@ -518,7 +523,7 @@ class TestDataBridge:
 
         g = Graframe(FakeClient())
         sel = (g.instances("s223:Sensor").mark("sensor")
-                 .pivot("s223:hasProperty").mark("prop"))
+                 .follow("s223:hasProperty").mark("prop"))
         marks = {n: v for n, v in sel._state.marks.items() if v != sel._state.focus}
         q = norm(_data_sparql(sel, marks))
         assert f"?n1 <{HAS_EXT_REF}> ?gref ." in q          # focus (prop) is n1
@@ -537,7 +542,7 @@ class TestDataBridge:
             {"columns": ["point", "ref", "unit", "extunit", "entity__sensor"], "rows": rows}
         )
         g = Graframe(client)
-        sel = g.instances("s223:Sensor").mark("sensor").pivot("s223:hasProperty")
+        sel = g.instances("s223:Sensor").mark("sensor").follow("s223:hasProperty")
         d = build_data_object(sel)
         assert d._entity_columns == ["entity__sensor"]
         assert d.aliases == ["urn:p1", "urn:p2"]  # compact passthrough (no prefix match)
@@ -552,6 +557,27 @@ class TestDataBridge:
         client = FakeClient({"columns": ["point", "ref", "unit", "extunit"], "rows": []})
         d = build_data_object(Graframe(client).instances("s223:Sensor"))
         assert d.is_empty()
+
+    def test_metadata_columns_drop_entity_prefix(self):
+        from acquirium.Graframe.data import build_data_object
+
+        rows = [["urn:p1", "urn:r1", "urn:unitA", None, "urn:e1"]]
+        client = FakeClient(
+            {"columns": ["point", "ref", "unit", "extunit", "entity__sensor"], "rows": rows}
+        )
+        g = Graframe(client)
+        sel = g.instances("s223:Sensor").mark("sensor").follow("s223:hasProperty")
+        md = build_data_object(sel).metadata()
+        # internal key keeps the prefix; the user-facing frame drops it
+        assert "sensor" in md.columns and "entity__sensor" not in md.columns
+
+    def test_data_rejects_mark_colliding_with_reserved_column(self):
+        from acquirium.Graframe.data import build_data_object
+
+        g = Graframe(FakeClient())
+        sel = g.instances("s223:Sensor").mark("time").follow("s223:hasProperty")
+        with pytest.raises(ValueError, match="reserved data column"):
+            build_data_object(sel)
 
 
 # ---------------------------------------------------------------------------
@@ -575,9 +601,21 @@ class TestResolve:
     def test_curie_expands_not_fuzzy(self):
         assert resolve_iri(self._c(), "s223:Sensor", kind="class", fuzzy=True, min_score=0.5) == f"{S223}Sensor"
 
-    def test_bad_curie_raises_not_guessed(self):
+    def test_bad_prefix_warns_and_falls_back_to_fuzzy(self):
+        # unknown prefix + resolvable local part -> warn, then resolve the local
+        with pytest.warns(UserWarning):
+            got = resolve_iri(self._c(), "nope:sensor", kind="class", fuzzy=True, min_score=0.5)
+        assert got == f"{S223}Sensor"
+
+    def test_bad_prefix_unresolvable_still_raises(self):
+        # warns, tries fuzzy on the local part, which also fails -> raise
+        with pytest.warns(UserWarning):
+            with pytest.raises(ValueError):
+                resolve_iri(self._c(), "nope:Thing", kind="class", fuzzy=True, min_score=0.5)
+
+    def test_bad_prefix_raises_when_fuzzy_off(self):
         with pytest.raises(Exception):
-            resolve_iri(self._c(), "nope:Thing", kind="class", fuzzy=True, min_score=0.5)
+            resolve_iri(self._c(), "nope:Thing", kind="class", fuzzy=False, min_score=0.5)
 
     def test_natural_language_resolves_when_fuzzy(self):
         assert resolve_iri(self._c(), "sensor", kind="class", fuzzy=True, min_score=0.5) == f"{S223}Sensor"
@@ -605,18 +643,42 @@ class TestResolve:
 
     def test_pivot_natural_language_predicate(self):
         g = Graframe(self._c())
-        sel = g.instances("sensor").pivot("observes")
+        sel = g.instances("sensor").follow("observes")
         assert f"?n0 <{S223}observes> ?n1 ." in norm(sel.to_sparql())
 
-    def test_value_literal_by_default(self):
+    def test_value_curie_resolves_to_iri(self):
         g = Graframe(self._c())
-        # a bare string value is a literal, not fuzzy-resolved
-        sel = g.instances("sensor").refine("s223:hasProperty", value="concentration")
+        # a CURIE with a bound prefix expands to an IRI
+        sel = g.instances("sensor").having("s223:hasProperty", value="qk:Concentration")
+        assert f"VALUES ?n1 {{ <{PREFIXES['qk']}Concentration> }}" in norm(sel.to_sparql())
+
+    def test_value_bare_string_is_fuzzy_resolved(self):
+        g = Graframe(self._c())
+        # a colon-less value resolves like a concept slot (no like() needed)
+        sel = g.instances("sensor").having("s223:hasProperty", value="concentration")
+        assert f"VALUES ?n1 {{ <{PREFIXES['qk']}Concentration> }}" in norm(sel.to_sparql())
+
+    def test_value_number_stays_literal(self):
+        g = Graframe(self._c())
+        # numbers (and Lit/Literal) are the escape hatch for real literals
+        sel = g.instances("watr:Reading").having("watr:value", value=5)
+        assert "VALUES ?n1 { 5 }" in norm(sel.to_sparql())
+
+    def test_value_lit_escape_stays_literal(self):
+        g = Graframe(self._c())
+        sel = g.instances("sensor").having("s223:hasProperty", value=Lit("concentration"))
         assert 'VALUES ?n1 { "concentration" }' in norm(sel.to_sparql())
+
+    def test_value_bad_prefix_warns_and_fuzzy(self):
+        g = Graframe(self._c())
+        # a typo'd prefix warns then fuzzy-resolves the local part ("sensor")
+        with pytest.warns(UserWarning):
+            sel = g.instances("pump").having("s223:hasProperty", value="nope:sensor")
+        assert f"<{S223}Sensor>" in norm(sel.to_sparql())
 
     def test_value_like_resolves(self):
         g = Graframe(self._c())
-        sel = g.instances("sensor").refine(
+        sel = g.instances("sensor").having(
             "s223:hasProperty", value=like("concentration", "quantity_kind")
         )
         assert "<http://qudt.org/vocab/quantitykind/Concentration>" in norm(sel.to_sparql())
@@ -624,3 +686,61 @@ class TestResolve:
     def test_suggest(self):
         out = Graframe(self._c()).suggest("sensor", kind="class")
         assert out and out[0]["curie"] == "s223:Sensor" and out[0]["score"] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# actionable facet rows
+# ---------------------------------------------------------------------------
+
+
+class TestFacetRowAction:
+    def test_follow_facet_row_predicate(self, g):
+        row = FacetRow(direction="out", predicate=f"{S223}observes", support=3, edges=3)
+        sel = g.instances("s223:Sensor").follow(row)
+        assert f"?n0 <{S223}observes> ?n1 ." in norm(sel.to_sparql())
+
+    def test_follow_facet_row_direction_in(self, g):
+        row = FacetRow(direction="in", predicate=f"{S223}hasProperty", support=1, edges=1)
+        sel = g.instances("s223:Sensor").follow(row)
+        assert f"?n0 ^<{S223}hasProperty> ?n1 ." in norm(sel.to_sparql())
+
+    def test_having_facet_row_pred_obj_becomes_value_filter(self, g):
+        row = FacetRow(
+            direction="out", predicate=f"{S223}hasLocation", support=2, edges=2,
+            key=f"{PREFIXES['bldg']}room_5", key_kind="value",
+        )
+        sparql = norm(g.instances("s223:Sensor").having(row).to_sparql())
+        assert f"FILTER EXISTS {{ ?n0 <{S223}hasLocation> ?n1 ." in sparql
+        assert f"VALUES ?n1 {{ <{PREFIXES['bldg']}room_5> }}" in sparql
+
+    def test_having_facet_row_pred_obj_type_becomes_is_a(self, g):
+        row = FacetRow(
+            direction="out", predicate=f"{S223}hasProperty", support=2, edges=2,
+            key=f"{PREFIXES['qk']}Temperature", key_kind="type",
+        )
+        sparql = norm(g.instances("s223:Sensor").having(row).to_sparql())
+        assert f"?n1 <{RDF_TYPE}>/<{SUBCLASS}>* <{PREFIXES['qk']}Temperature> ." in sparql
+
+    def test_row_selects_by_predicate_name(self):
+        rows = [
+            FacetRow(direction="out", predicate=f"{S223}observes", support=3, edges=3),
+            FacetRow(direction="out", predicate=f"{S223}hasProperty", support=1, edges=1),
+        ]
+        f = Facets(Graframe(FakeClient()).instances("s223:Sensor"), "predicate", rows)
+        assert f.row("s223:observes").predicate == f"{S223}observes"  # compacted match
+        assert f.row(1).predicate == f"{S223}hasProperty"             # positional
+
+    def test_row_ambiguous_raises(self):
+        rows = [
+            FacetRow(direction="out", predicate=f"{S223}p", support=3, edges=3),
+            FacetRow(direction="in", predicate=f"{S223}p", support=1, edges=1),
+        ]
+        f = Facets(Graframe(FakeClient()).instances("s223:Sensor"), "predicate", rows)
+        with pytest.raises(ValueError):
+            f.row("s223:p")
+        assert f.row("s223:p", direction="in").direction == "in"  # disambiguated
+
+    def test_row_no_match_raises(self):
+        f = Facets(Graframe(FakeClient()).instances("s223:Sensor"), "predicate", [])
+        with pytest.raises(KeyError):
+            f.row("s223:nope")

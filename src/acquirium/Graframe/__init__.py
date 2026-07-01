@@ -5,15 +5,15 @@ Typical use (via the Acquirium client)::
     g = aq.graph()                              # Graframe root
     sensors = g.instances("s223:Sensor")        # seed a Selection
     sensors.facets().show()                      # explore the neighbourhood
-    temp = sensors.refine("s223:hasProperty", is_a="qudt:Temperature")
-    props = sensors.pivot("s223:hasProperty")    # move the cursor
+    temp = sensors.having("s223:hasProperty", is_a="qudt:Temperature")
+    props = sensors.follow("s223:hasProperty")   # move the cursor
     temp.nodes()                                 # pull results
 
 See :mod:`acquirium.Graframe.selection` for the operator reference and
 :mod:`acquirium.Graframe.algebra` for the SPARQL compilation core.
 """
 
-from .algebra import Alt, Inv, Mod, Path, Pred, RawPath, Seq, parse_path, to_path
+from .algebra import Alt, Inv, Iri, Lit, Mod, Path, Pred, RawPath, Seq, parse_path, to_path
 from .facets import FacetRow, Facets
 from .profile import Profile
 from .resolve import Fuzzy, like
@@ -42,6 +42,8 @@ __all__ = [
     "FacetRow",
     "Path",
     "Pred",
+    "Iri",
+    "Lit",
     "Inv",
     "Seq",
     "Alt",

@@ -60,16 +60,16 @@ nodes (a *selection*). You can:
 1. **Ask what is around you** — `facets()` lists the predicates leaving your
    current nodes and how many nodes each one applies to. This is exploratory:
    you *see* that `observes` exists before you use it.
-2. **Move** — `pivot("observes")` walks along that edge to the nodes on the
+2. **Move** — `follow("observes")` walks along that edge to the nodes on the
    other end.
-3. **Narrow** — `refine("observes", is_a="Power")` keeps only the nodes that
+3. **Narrow** — `having("observes", is_a="Power")` keeps only the nodes that
    *have* such an edge, without moving.
 
 So the walkthrough above becomes:
 
 ```python
-g.instances("s223:Sensor").refine("observes",
-    matching=g.instances("Property").refine("hasQuantityKind", value="Power"))
+g.instances("s223:Sensor").having("observes",
+    matching=g.instances("Property").having("hasQuantityKind", value="Power"))
 ```
 
 or, exploring interactively:
@@ -77,7 +77,7 @@ or, exploring interactively:
 ```python
 sensors = g.instances("s223:Sensor")
 sensors.facets().show()                 # oh, there's an "observes" predicate
-props = sensors.pivot("observes")       # step to the properties
+props = sensors.follow("observes")       # step to the properties
 props.facets().show()                   # ...which have "hasQuantityKind"
 ```
 
@@ -87,9 +87,11 @@ The design goals, in priority order:
 - **Composable.** Selections are immutable; every operator returns a new
   selection, so you can branch and reuse freely.
 - **Correct.** Everything denotes a SPARQL query you can print (`to_sparql()`).
-- **Ergonomic for non-experts.** Natural-language names resolve to URIs
-  (`instances("pump")`); a *profile* hides ontology noise and names common
-  multi-hop paths.
+- **Ergonomic for non-experts.** Natural-language names resolve to URIs in
+  *every* slot — class, predicate, *and* object value (`instances("pump")`,
+  `having("of substance", value="salt")`); facet rows are actionable
+  (`having(f.row(...))`) so you never retype a URI you just saw; and a *profile*
+  hides ontology noise and names common multi-hop paths.
 
 ---
 
@@ -165,10 +167,10 @@ Almost the entire API is two operators, and — this is the elegant part — the
 take the *same* two arguments: a step `π` and an **object filter** `φ` (a
 predicate on the target term, e.g. "is an IRI", "= 5", "has type C").
 
-**`refine` — stay and narrow (a semijoin):**
+**`having` — stay and narrow (a semijoin):**
 
 ```
-refine(F, π, φ)  =  { s ∈ F | ∃ o . (s, o) ∈ π ∧ φ(o) }        ⊆ F
+having(F, π, φ)  =  { s ∈ F | ∃ o . (s, o) ∈ π ∧ φ(o) }        ⊆ F
 ```
 
 "Keep the current nodes that *have* such an edge." The result is a subset of `F`;
@@ -176,10 +178,10 @@ you are still looking at the same kind of thing, just fewer of them. This is
 **existential** — one matching edge is enough — and therefore never duplicates a
 node.
 
-**`pivot` — move to the neighbours (an image):**
+**`follow` — move to the neighbours (an image):**
 
 ```
-pivot(F, π, φ)  =  { o | ∃ s ∈ F . (s, o) ∈ π ∧ φ(o) }
+follow(F, π, φ)  =  { o | ∃ s ∈ F . (s, o) ∈ π ∧ φ(o) }
 ```
 
 "Walk along the edge to the things on the other end." The cursor moves; you are
@@ -215,9 +217,9 @@ This is the correctness anchor. Every selection **denotes** a SPARQL query, and
 the fluent operators are defined so that they build exactly that query:
 
 - a one-column selection compiles to `SELECT DISTINCT ?focus WHERE { … }`;
-- `refine` adds a `FILTER EXISTS { ?focus <path> ?o . φ(?o) }` — an existential
+- `having` adds a `FILTER EXISTS { ?focus <path> ?o . φ(?o) }` — an existential
   test, which is why it cannot multiply rows;
-- `pivot` adds a triple `?focus <path> ?o .` and rebinds the focus to `?o`;
+- `follow` adds a triple `?focus <path> ?o .` and rebinds the focus to `?o`;
 - a step's property path compiles to SPARQL property-path syntax verbatim.
 
 Because the target is a small, well-understood fragment (conjunctive queries +
@@ -242,12 +244,12 @@ over named columns — with one column marked as the focus.
 
 This gives a clean rule that keeps the semantics predictable:
 
-> **`refine` / `where` / `any_of` never multiply rows** (they are existential
-> filters). **`pivot` followed by `select` on several columns is the only place a
+> **`having` / `where` / `any_of` never multiply rows** (they are existential
+> filters). **`follow` followed by `select` on several columns is the only place a
 > join — and hence row multiplication — happens.**
 
 Under the hood this is exactly the conjunctive-query fragment of relational
-algebra: `pivot` is a projection of a join, `refine` is a semijoin, `where` is a
+algebra: `follow` is a projection of a join, `having` is a semijoin, `where` is a
 semijoin against a sub-query, `select` is a projection.
 
 ### 2.8 Laws
@@ -255,13 +257,13 @@ semijoin against a sub-query, `select` is a projection.
 Because the operators denote relational-algebra expressions, they obey laws that
 justify both intuition and (future) query optimisation:
 
-- **`refine` is decreasing, monotone, idempotent, and commutes.** Narrowing can
+- **`having` is decreasing, monotone, idempotent, and commutes.** Narrowing can
   only shrink the set, order does not matter, and repeating a refinement changes
-  nothing: `refine(refine(F,c),c) = refine(F,c)`.
+  nothing: `having(having(F,c),c) = having(F,c)`.
 - **Composed pivots = composed paths (the virtual-edge law).** With no filter in
-  between, `pivot(pivot(F, π₁), π₂) = pivot(F, π₁ / π₂)`. Naming
-  `π₁ / π₂` as a virtual edge is therefore just memoising a pivot chain.
-- **Filtering commutes with the image.** `pivot(F, π, φ) = σ_φ(pivot(F, π, ⊤))`.
+  between, `follow(follow(F, π₁), π₂) = follow(F, π₁ / π₂)`. Naming
+  `π₁ / π₂` as a virtual edge is therefore just memoising a `follow` chain.
+- **Filtering commutes with the image.** `follow(F, π, φ) = σ_φ(follow(F, π, ⊤))`.
 - **Monotone in the graph.** If `G ⊆ G'` then every operator's result on `G` is a
   subset of its result on `G'`.
 
@@ -305,16 +307,16 @@ the edge) and `edges` (total matches), in **both** directions by default.
 
 ```python
 # MOVE: hop from sensors to the properties they observe
-props = sensors.pivot("s223:observes")
+props = sensors.follow("s223:observes")
 
 # NARROW: keep only sensors that observe *something* (cursor stays on sensors)
-observing = sensors.refine("s223:observes")
+observing = sensors.having("s223:observes")
 
 # NARROW with an object filter: sensors observing a Temperature property
-temp = sensors.refine("s223:observes", is_a="qudtqk:Temperature")
+temp = sensors.having("s223:observes", is_a="qudtqk:Temperature")
 ```
 
-Object filters (`φ`) work identically on `refine` and `pivot`:
+Object filters (`φ`) work identically on `having` and `follow`:
 
 | keyword          | meaning                                             |
 |------------------|-----------------------------------------------------|
@@ -325,36 +327,78 @@ Object filters (`φ`) work identically on `refine` and `pivot`:
 | `matching=sel`   | object is a member of another selection (a join)    |
 | `direction="in"` | follow the edge backwards (inverse)                 |
 
-### 3.3 Correlated constraints
-
-"Temperature sensors located in room 5" — the sensor must satisfy two
-independent conditions:
+**Facet rows are moves.** The whole point of `facets()` is to *show you* the next
+step — so a facet row can be handed straight back to `follow` / `having` /
+`without` instead of retyping the predicate and object you just saw:
 
 ```python
-result = (g.instances("s223:Sensor")
-    .where(lambda s: s.pivot("s223:observes").is_a("qudtqk:Temperature"))
-    .where(lambda s: s.pivot("s223:hasLocation").is_("bldg:room_5")))
+f = sensors.facets(by="pred-obj")          # predicate + object histogram
+row = f.row("s223:observes", key="qudtqk:Temperature")  # pick one (or f.row(0))
+
+sensors.having(row)     # narrow to sensors with that exact edge+object
+sensors.follow(row)     # ...or move along it
 ```
 
-`where` holds the focus on the sensor while each branch is checked; rows never
-multiply. Disjunction and negation:
+A row carries its predicate, its direction (`in`/`out`), and — for `pred-obj` /
+`pred-obj-type` facets — its object value or type, so `follow`/`having` apply the
+right filter automatically. This closes the explore→act loop: `facets()` to see,
+`f.row(...)` to act, no URI ever typed twice. Explicit keyword filters passed
+alongside a row still combine (AND) with it.
+
+### 3.3 Correlated constraints — and which operator to reach for
+
+There are four ways to constrain the current focus; they differ only in *how many
+edges* and *how many branches* are involved. The rule of thumb:
+
+| use…       | when…                                                              | denotes            |
+|------------|--------------------------------------------------------------------|--------------------|
+| `having`   | **one** edge condition ("has a `p` to something of type/value X")  | `FILTER EXISTS`    |
+| `without`  | the *negation* of a single edge condition                          | `FILTER NOT EXISTS`|
+| `where`    | **several independent** conditions that must all hold on the same node (a multi-hop branch, or two branches that must not be conflated) | `FILTER EXISTS { … }` per branch |
+| `any_of`   | a **disjunction** of such branches                                 | `FILTER(EXISTS{…} \|\| …)` |
+| `matching=`| the object must lie in **another, pre-built selection** (a set join)| `FILTER EXISTS` against the inlined sub-query |
+
+The key distinction: **`having` takes a single `step` and an object filter**, so a
+one-hop condition is always just `having(...)` — reach for `where` only when a
+branch is *multi-hop* or when you must hold the node fixed across *two* branches
+that would otherwise be conflated.
 
 ```python
+# ONE hop, one condition -> having (not where):
+sensors.having("s223:observes", is_a="qudtqk:Temperature")
+
+# TWO independent conditions on the same sensor -> where (holds the focus):
+result = (g.instances("s223:Sensor")
+    .where(lambda s: s.follow("s223:observes").is_a("qudtqk:Temperature"))
+    .where(lambda s: s.follow("s223:hasLocation").is_one_of("bldg:room_5")))
+
+# A MULTI-HOP branch (two follows before the test) -> where:
+sensors.where(lambda s: s.follow("s223:observes").follow("qudt:hasUnit").is_one_of("unit:DEG_C"))
+
+# DISJUNCTION -> any_of; NEGATION -> without:
 sensors.any_of(
-    lambda s: s.pivot("observes").is_a("qudtqk:Temperature"),
-    lambda s: s.pivot("observes").is_a("qudtqk:Pressure"),
+    lambda s: s.follow("observes").is_a("qudtqk:Temperature"),
+    lambda s: s.follow("observes").is_a("qudtqk:Pressure"),
 )
 sensors.without("s223:hasLocation")     # sensors with no location
+
+# JOIN against a pre-built set -> matching=:
+rooms = g.instances("s223:DomainSpace").having("s223:hasProperty")
+sensors.having("s223:hasLocation", matching=rooms)
 ```
+
+`where` / `any_of` / `matching` are all existential — like `having`, they *narrow*
+and never multiply rows. The only place rows multiply is `follow` + a multi-column
+`select` (§3.4).
 
 ### 3.4 Build a table with waypoints
 
 ```python
 table = (g.instances("s223:Sensor").mark("sensor")
-    .pivot("s223:observes").mark("property")
-    .pivot("qudt:hasQuantityKind").mark("quantity")
+    .follow("s223:observes").mark("property")
+    .follow("qudt:hasQuantityKind").mark("quantity")
     .to("sensor")
-    .pivot("s223:hasObservationLocation").mark("location"))
+    .follow("s223:hasObservationLocation").mark("location"))
 
 table.select("sensor", "property", "quantity", "location")   # -> polars DataFrame
 ```
@@ -367,7 +411,7 @@ happens — exactly when you want it.
 ```python
 connected = aq.client.expand_uri("s223:connectedTo")
 downstream = P(connected).plus()                 # connectedTo, one or more hops
-g.instances("nawi:Pump").pivot(downstream).count()
+g.instances("nawi:Pump").follow(downstream).count()
 ```
 
 You rarely write `P(...)` by hand — you name paths in a *profile* (§3.7) and use
@@ -375,26 +419,43 @@ them by name.
 
 ### 3.6 Query by name (fuzzy resolution)
 
-You do not have to know the URIs. In *concept slots* (class, predicate) a
-natural-language string is resolved via Acquirium's embedding matcher:
+You do not have to know the URIs. **Every slot resolves by the same rule** — the
+class in `instances(...)`, the predicate in `follow`/`having`, *and* the object in
+`value=` / `in_=`:
+
+1. a full URI (or `rdflib.URIRef`) is used as-is;
+2. a CURIE `prefix:local` with a **bound** prefix is expanded;
+3. a CURIE with an **unknown** prefix raises a `UserWarning` and falls back to
+   fuzzy resolution of the local part (a typo'd prefix degrades gracefully rather
+   than failing hard);
+4. a colon-less string is treated as natural language and embedding-resolved.
 
 ```python
-g.instances("pump")               # -> nawi:Pump / s223:Pump
-g.instances("sensor").pivot("connected to")
-g.instances("temperature sensor")
+g.instances("pump")                        # class slot   -> nawi:Pump
+g.instances("sensor").follow("connected to")  # predicate slot -> s223:connectedTo
+props.having("has quantity kind", value="pressure")  # value slot -> qk:Pressure
 
-g.suggest("pump", kind="class")   # preview matches when a term is ambiguous
+g.suggest("pump", kind="class")            # preview matches when a term is ambiguous
 ```
 
-Value slots stay literal unless you opt in with `like(...)`:
+So filtering by an object no longer means knowing its URI — `value="salt"`
+resolves just like `instances("pump")` does. Two knobs remain:
 
-```python
-props.refine("has quantity kind", value=like("concentration", "quantity_kind"))
-```
+- **`like(text, kind=...)`** pins the concept *kind* when a bare word is
+  ambiguous (e.g. force `"salt"` to resolve as a substance, not a class):
+  ```python
+  props.having("of substance", value=like("salt", "substance"))
+  ```
+- **To force a real literal** (bypassing all resolution), pass a number or an
+  explicit `Lit(...)` / `rdflib.Literal` — a bare string is *always* resolved:
+  ```python
+  from acquirium.Graframe import Lit
+  readings.having("watr:value", value=5)             # numeric literal
+  things.having("rdfs:label", value=Lit("Pump 1"))   # string literal
+  ```
 
-Rules: a full URI is used as-is; a CURIE (`prefix:local`) is expanded (a bad
-prefix is an error, never guessed); a colon-less string is treated as natural
-language. `aq.graph(fuzzy=False)` requires exact CURIEs.
+`aq.graph(fuzzy=False)` turns resolution off entirely: only full URIs and bound
+CURIEs are accepted (an unknown prefix or a bare word then raises).
 
 ### 3.7 Curate the view with a profile
 
@@ -415,7 +476,7 @@ water = Profile.base().with_(              # base() hides rdf/rdfs/owl/sh noise
 g = aq.graph(profile=water)
 
 g.instances("nawi:Pump").facets().show()   # curated; named edges appear on top
-g.nodes("wbs:P1").pivot("downstream")       # traverse the named path
+g.nodes("wbs:P1").follow("downstream")       # traverse the named path
 ```
 
 Named virtual edges surface as extra facet rows (tagged `is_virtual`) so you can
@@ -429,13 +490,13 @@ When the focus nodes are *data points* (they carry an external reference to a
 timeseries), fetch the values:
 
 ```python
-pressures = g.instances("Property").refine("has quantity kind", value=like("pressure","quantity_kind"))
+pressures = g.instances("Property").having("has quantity kind", value=like("pressure","quantity_kind"))
 pressures.dataframe(shape="wide")           # one column per point, per-unit
 pressures.latest_data()                     # most recent per series
 
 # marks become grouping keys:
 (g.instances("nawi:Pump").mark("pump")
-   .pivot("measures")
+   .follow("measures")
    .data().by("pump"))                       # iterate (pump_uri, DataObject)
 ```
 
@@ -461,7 +522,7 @@ Import surface:
 ```python
 from acquirium.Graframe import (
     Graframe, Selection, Reasoning, Profile, Facets, FacetRow,
-    Path, P, like, Fuzzy, parse_path, to_path,
+    Path, P, Lit, Iri, like, Fuzzy, parse_path, to_path,
 )
 ```
 
@@ -501,12 +562,12 @@ These create the initial selection.
 
 All of these return a **new** selection; the original is unchanged.
 
-**`refine(step, *, direction="out", value=None, is_a=None, min=None, max=None, in_=None, matching=None)`**
+**`having(step, *, direction="out", value=None, is_a=None, min=None, max=None, in_=None, matching=None)`**
 Existential semijoin. Keeps `s ∈ F` such that some edge `step` from `s` satisfies
 the object filter. **`F` shrinks; the cursor does not move; rows never multiply.**
 Compiles to `FILTER EXISTS`.
 
-**`pivot(step, *, direction="out", value=…, is_a=…, min=…, max=…, in_=…, matching=…)`**
+**`follow(step, *, direction="out", value=…, is_a=…, min=…, max=…, in_=…, matching=…)`**
 Image. Moves the cursor to the neighbours reached along `step` that satisfy the
 object filter. **The cursor moves and a column is added.** Compiles to a joined
 triple.
@@ -526,12 +587,19 @@ Compiles to `FILTER(EXISTS{…} || …)`.
 Shared parameters:
 
 - `step` — a predicate (concept slot), a `Path`, a list of predicates
-  (alternation), a named edge from the profile, or `like(...)`. A leading `^` (or
-  `~`) means inverse.
+  (alternation), a named edge from the profile, `like(...)`, or a **`FacetRow`**
+  from `facets().row(...)` (which supplies its own predicate, direction, and
+  object filter). A leading `^` (or `~`) means inverse.
 - `direction` — `"out"` (default) or `"in"` (reverse the step).
-- **object filter `φ`** — `value=` / `in_=` (equality/membership), `is_a=` (type,
-  or list), `min=` / `max=` (numeric range), `matching=other_selection`
-  (membership in another selection — a join).
+- **object filter `φ`** — `value=` / `in_=` (equality/membership; each value is a
+  concept slot, so it resolves by name — §4.7), `is_a=` (type, or list),
+  `min=` / `max=` (numeric range), `matching=other_selection` (membership in
+  another selection — a join). Pass a number or `Lit(...)` in `value=`/`in_=` to
+  force a plain literal instead of resolving it.
+
+When `step` is a `FacetRow`, its direction and (for `pred-obj`/`pred-obj-type`
+facets) its object key are applied automatically; any explicit keyword filters
+combine with the row's own.
 
 ### 4.4 Focus filters: `Selection → Selection`
 
@@ -540,7 +608,7 @@ Constraints on the *current* node rather than on an edge target.
 | method | keeps `s ∈ F` such that | compiles to |
 |--------|-------------------------|-------------|
 | `is_a(cls)`            | `s` has type `cls` (or a subclass) | `FILTER EXISTS { s a/subClassOf* cls }` |
-| `is_(*uris)`           | `s` is one of the given nodes      | `VALUES`   |
+| `is_one_of(*uris)`           | `s` is one of the given nodes      | `VALUES`   |
 | `in_range(min=, max=)` | the (literal) `s` is within range  | `FILTER`   |
 
 ### 4.5 Waypoints: `Selection → Selection`
@@ -570,24 +638,43 @@ A **`Facets`** object holds `rows: list[FacetRow]` and offers:
 
 - `.show(limit=25)` — pretty-print a table (returns self);
 - `.to_polars()` — the facets as a DataFrame;
-- `.predicates(direction=None)` — distinct predicates, most-supported first.
+- `.predicates(direction=None)` — distinct predicates, most-supported first;
+- `.row(selector=None, *, key=None, direction=None)` — pick a **single**
+  `FacetRow` to feed to `follow`/`having`/`without`. `selector` is an integer
+  index into `rows`, or a predicate / virtual-edge name (matched compacted *or*
+  full). Disambiguate collisions with `key=` (object value/type) and/or
+  `direction=`. Raises `KeyError` if nothing matches, `ValueError` if ambiguous.
 
-A **`FacetRow`** has `direction`, `predicate`, `support` (distinct focus nodes),
+A **`FacetRow`** has `direction` (`"out"`/`"in"`/`"virtual"`), `predicate`
+(predicate URI, or the virtual-edge name), `support` (distinct focus nodes),
 `edges` (total matches), `key` (object value/type for the non-`predicate` modes),
-and `is_virtual` (True for named-edge rows). Traverse a named edge with
-`pivot("<name>")`.
+`key_kind` (`"value"` for `pred-obj`, `"type"` for `pred-obj-type`, else `None`),
+and `is_virtual` (True for named-edge rows). A row is a first-class *move*: pass
+it to `follow`/`having`/`without` (§4.3), or traverse a named edge by name with
+`follow("<name>")`.
 
 ### 4.7 Fuzzy resolution
 
 - `like(text, kind=None)` → a `Fuzzy` marker forcing embedding resolution in any
-  slot (including literal `value=` slots). `kind` pins the concept kind
-  (`"class"`, `"predicate"`, `"quantity_kind"`, `"unit"`, `"substance"`).
+  slot. `kind` pins the concept kind (`"class"`, `"predicate"`, `"quantity_kind"`,
+  `"unit"`, `"substance"`) when a bare word would otherwise be ambiguous.
 - `Selection.suggest(text, kind=None, top_k=5)` / `Graframe.suggest(...)` — preview
   matches without resolving.
 
-Resolution order for a slot value: `Fuzzy` → embedding; full URI → itself; CURIE →
-prefix expansion (bad prefix raises); colon-less string → embedding when fuzzy is
-on. The chosen URI is logged at INFO.
+Resolution order for **any** slot value (class, predicate, or object) — the rule
+is uniform:
+
+1. `Fuzzy` (from `like`) → embedding;
+2. full URI / `URIRef` → itself;
+3. `Lit(...)` / `rdflib.Literal` / a non-string (number, bool) → a plain literal,
+   never resolved (the escape hatch for real literals in `value=`);
+4. bound CURIE `prefix:local` → prefix expansion;
+5. **unknown** prefix → a `UserWarning`, then embedding resolution of the local
+   part (a typo'd prefix does not fail hard);
+6. colon-less string → embedding when fuzzy is on (else raises).
+
+The chosen URI is logged at INFO. `aq.graph(fuzzy=False)` disables steps 5–6:
+only full URIs and bound CURIEs are accepted.
 
 ### 4.8 `Profile` — curating discovery
 
@@ -604,9 +691,9 @@ profile.with_(allow=…, deny=…, allow_types=…, deny_types=…, edges=…)  
   facets (drops schema/shape objects).
 - `edges` — `{name: path}` named virtual edges, where `path` is a property-path
   string (`"s223:connectedTo+"`), a list of predicates, or a `Path`. Named edges
-  are usable in `pivot`/`refine` by name and surface as facet rows.
+  are usable in `follow`/`having` by name and surface as facet rows.
 
-Profiles shape **discovery only** — they never prevent an explicit pivot/refine.
+Profiles shape **discovery only** — they never prevent an explicit follow/having.
 
 ### 4.9 `Reasoning` — entailments
 
@@ -646,7 +733,11 @@ These execute the query.
 ### 4.12 Terminals: the data plane
 
 Valid when the focus nodes carry `ref:hasExternalReference` (i.e. are data
-points). Marks become `entity__<name>` context columns so `by()` can group.
+points). Each mark becomes a context column — grouped with `.data().by("<mark>")`
+and present (under the **bare mark name**) in the narrow `dataframe` / `metadata`
+frames. A mark may not reuse a reserved data-column name (`time`,
+`value_numeric`, `value_text`, `data_alias`, `point_uri`, `ref_uri`); doing so
+raises at `.data()` time.
 
 | method | returns |
 |--------|---------|
