@@ -240,6 +240,63 @@ class TestHavingFollow:
         assert "FILTER(?n1 <= 100)" in sparql
 
 
+class TestInlinePaths:
+    def test_follow_sequence_path(self, g):
+        sel = g.instances("s223:Sensor").follow("s223:hasProperty/qudt:hasQuantityKind")
+        assert (
+            f"?n0 <{PREFIXES['s223']}hasProperty>/<{PREFIXES['qudt']}hasQuantityKind> ?n1 ."
+            in norm(sel.to_sparql())
+        )
+
+    def test_having_sequence_path_filters_far_end(self, g):
+        sel = g.instances("s223:DomainSpace").having(
+            "s223:hasProperty/qudt:hasQuantityKind", value="qk:Temperature"
+        )
+        sparql = norm(sel.to_sparql())
+        assert (
+            f"FILTER EXISTS {{ ?n0 <{PREFIXES['s223']}hasProperty>/<{PREFIXES['qudt']}hasQuantityKind> ?n1 ."
+            in sparql
+        )
+        assert f"VALUES ?n1 {{ <{PREFIXES['qk']}Temperature> }}" in sparql
+
+    def test_transitive_modifier_path(self, g):
+        sel = g.instances("s223:Sensor").follow("s223:connectedTo+")
+        assert f"?n0 <{PREFIXES['s223']}connectedTo>+ ?n1 ." in norm(sel.to_sparql())
+
+    def test_inline_alternation_path(self, g):
+        sel = g.instances("s223:Sensor").follow("s223:hasProperty|s223:contains")
+        assert (
+            f"?n0 <{PREFIXES['s223']}hasProperty>|<{PREFIXES['s223']}contains> ?n1 ."
+            in norm(sel.to_sparql())
+        )
+
+    def test_inline_path_direction_in_inverts_whole_path(self, g):
+        sel = g.instances("s223:Sensor").follow("s223:a/s223:b", direction="in")
+        assert (
+            f"?n0 ^(<{PREFIXES['s223']}a>/<{PREFIXES['s223']}b>) ?n1 ."
+            in norm(sel.to_sparql())
+        )
+
+    def test_full_uri_predicate_is_not_parsed_as_path(self, g):
+        # a full URI contains "/" but is a single predicate, not a path
+        uri = PREFIXES["s223"] + "hasProperty"
+        sel = g.instances("s223:Sensor").follow(uri)
+        assert f"?n0 <{uri}> ?n1 ." in norm(sel.to_sparql())
+
+    def test_path_segments_resolve_fuzzily(self, g):
+        # multi-word natural-language segments survive tokenization and resolve
+        sel = g.instances("s223:Sensor").follow("observes/has property")
+        assert (
+            f"?n0 <{PREFIXES['s223']}observes>/<{PREFIXES['s223']}hasProperty> ?n1 ."
+            in norm(sel.to_sparql())
+        )
+
+    def test_path_segments_fuzzy_off_rejects_names(self):
+        g = Graframe(FakeClient(), fuzzy=False)
+        with pytest.raises(ValueError):
+            g.instances("s223:Sensor").follow("observes/has property").to_sparql()
+
+
 # ---------------------------------------------------------------------------
 # correlation
 # ---------------------------------------------------------------------------

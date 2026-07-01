@@ -352,16 +352,17 @@ edges* and *how many branches* are involved. The rule of thumb:
 
 | use…       | when…                                                              | denotes            |
 |------------|--------------------------------------------------------------------|--------------------|
-| `having`   | **one** edge condition ("has a `p` to something of type/value X")  | `FILTER EXISTS`    |
-| `without`  | the *negation* of a single edge condition                          | `FILTER NOT EXISTS`|
-| `where`    | **several independent** conditions that must all hold on the same node (a multi-hop branch, or two branches that must not be conflated) | `FILTER EXISTS { … }` per branch |
+| `having`   | **one edge, or one linear path**, reaching something of type/value X (`having("p", …)` or `having("p/q/r", …)`) | `FILTER EXISTS` |
+| `without`  | the *negation* of such a condition                                 | `FILTER NOT EXISTS`|
+| `where`    | conditions a single linear path **can't** express — two or more independent branches that must stay correlated on the same node | `FILTER EXISTS { … }` per branch |
 | `any_of`   | a **disjunction** of such branches                                 | `FILTER(EXISTS{…} \|\| …)` |
 | `matching=`| the object must lie in **another, pre-built selection** (a set join)| `FILTER EXISTS` against the inlined sub-query |
 
-The key distinction: **`having` takes a single `step` and an object filter**, so a
-one-hop condition is always just `having(...)` — reach for `where` only when a
-branch is *multi-hop* or when you must hold the node fixed across *two* branches
-that would otherwise be conflated.
+The key distinction: **`having` takes a `step` (a predicate *or* a property path)
+and an object filter**, so any *linear* condition — however many hops — is just
+`having("a/b/c", …)`; the filter applies to the far end, and each segment resolves
+by name (§3.5). Reach for `where` only when the branch isn't a single linear path:
+two or more independent branches that must stay correlated on the same node.
 
 ```python
 # ONE hop, one condition -> having (not where):
@@ -372,8 +373,11 @@ result = (g.instances("s223:Sensor")
     .where(lambda s: s.follow("s223:observes").is_a("qudtqk:Temperature"))
     .where(lambda s: s.follow("s223:hasLocation").is_one_of("bldg:room_5")))
 
-# A MULTI-HOP branch (two follows before the test) -> where:
-sensors.where(lambda s: s.follow("s223:observes").follow("qudt:hasUnit").is_one_of("unit:DEG_C"))
+# A LINEAR multi-hop reaching one filter is just a path step -> having, NO lambda:
+sensors.having("observes/has quantity kind", value="temperature")
+#   ^ segments resolve by name too; the object filter applies to the FAR end of
+#     the path. Reach for `where` only when the branch is NOT a single linear
+#     path (e.g. two independent branches, below).
 
 # DISJUNCTION -> any_of; NEGATION -> without:
 sensors.any_of(
@@ -408,14 +412,41 @@ happens — exactly when you want it.
 
 ### 3.5 Property paths (virtual edges)
 
+Any `step` — in `follow`, `having`, or `without` — may be an **inline
+property-path string** in SPARQL syntax, so a multi-hop traversal needs no
+builder and no lambda:
+
+```python
+g.instances("nawi:Pump").follow("s223:connectedTo+").count()          # transitive
+g.instances("s223:DomainSpace").having(                                # linear multi-hop
+    "s223:hasProperty/qudt:hasQuantityKind", value="qk:Temperature")
+```
+
+The supported operators are the SPARQL ones — `/` (sequence), `|` (alternation),
+`^` (inverse), `+ * ?` (modifiers), and `()` grouping. A string is treated as a
+path only when it contains one of these; a plain predicate or natural-language
+name (`"observes"`, `"has property"`) is still a single-predicate step.
+
+**Each segment resolves like any predicate slot** — URI, CURIE, or (when fuzzy is
+on) a natural-language name — so names work mid-path too, including multi-word
+ones:
+
+```python
+g.instances("s223:Sensor").follow("observes/has quantity kind")
+g.instances("s223:DomainSpace").having("has property/has quantity kind", value="temperature")
+```
+
+When you need to build a path programmatically, `P(...)` and its combinators do
+the same thing:
+
 ```python
 connected = aq.client.expand_uri("s223:connectedTo")
 downstream = P(connected).plus()                 # connectedTo, one or more hops
 g.instances("nawi:Pump").follow(downstream).count()
 ```
 
-You rarely write `P(...)` by hand — you name paths in a *profile* (§3.7) and use
-them by name.
+But you rarely need to — an inline string or a profile-named edge is usually
+clearer.
 
 ### 3.6 Query by name (fuzzy resolution)
 
@@ -586,10 +617,12 @@ Compiles to `FILTER(EXISTS{…} || …)`.
 
 Shared parameters:
 
-- `step` — a predicate (concept slot), a `Path`, a list of predicates
-  (alternation), a named edge from the profile, `like(...)`, or a **`FacetRow`**
-  from `facets().row(...)` (which supplies its own predicate, direction, and
-  object filter). A leading `^` (or `~`) means inverse.
+- `step` — a predicate (concept slot), an **inline property-path string**
+  (`"a/b"`, `"p+"`, `"^a|b"`; segments resolve by name — §3.5), a `Path`, a list
+  of predicates (alternation), a named edge from the profile, `like(...)`, or a
+  **`FacetRow`** from `facets().row(...)` (which supplies its own predicate,
+  direction, and object filter). A leading `^` (or `~`) on a single predicate
+  means inverse.
 - `direction` — `"out"` (default) or `"in"` (reverse the step).
 - **object filter `φ`** — `value=` / `in_=` (equality/membership; each value is a
   concept slot, so it resolves by name — §4.7), `is_a=` (type, or list),

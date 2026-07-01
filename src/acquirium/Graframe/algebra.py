@@ -270,10 +270,14 @@ def _tokenize_path(s: str) -> list[str]:
             toks.append(s[i : j + 1])
             i = j + 1
             continue
+        # A predicate token runs up to the next operator or ``<``. Internal
+        # whitespace is kept (so a multi-word natural-language name like
+        # "has quantity kind" stays one token) and only the edges are trimmed;
+        # whitespace *between* tokens/operators is skipped at the top of the loop.
         j = i
-        while j < n and not s[j].isspace() and s[j] not in _PATH_OPS:
+        while j < n and s[j] not in _PATH_OPS and s[j] != "<":
             j += 1
-        toks.append(s[i:j])
+        toks.append(s[i:j].strip())
         i = j
     return toks
 
