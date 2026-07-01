@@ -11,12 +11,20 @@ count, per key, how many *distinct focus nodes* support that key (the
 
 Support (distinct focus nodes) is the useful measure for exploratory analysis:
 it tells you how many of the things you currently hold can take a given step.
+
+An active :class:`~acquirium.Graframe.profile.Profile` curates the result:
+hidden predicates/types are filtered out (in SPARQL, so ``LIMIT`` stays
+correct), and the profile's **named virtual edges** are surfaced as extra rows
+(``is_virtual=True``) that can be traversed with ``pivot("<name>")``.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Sequence
+
+from .algebra import Path, to_path
+from .profile import Profile
 
 if TYPE_CHECKING:
     import polars as pl
@@ -31,11 +39,12 @@ RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
 
 @dataclass(frozen=True)
 class FacetRow:
-    direction: str  # "out" or "in"
-    predicate: str
+    direction: str  # "out", "in", or "virtual"
+    predicate: str  # predicate URI, or the virtual-edge name when is_virtual
     support: int  # distinct focus nodes with this key
     edges: int  # total matching edges
     key: str | None = None  # object value or object type (None for by=predicate)
+    is_virtual: bool = False  # True for named virtual-edge rows
 
 
 class Facets:
@@ -48,7 +57,7 @@ class Facets:
 
     # -- inspection -----------------------------------------------------
     def predicates(self, direction: str | None = None) -> list[str]:
-        """Distinct predicates present, most-supported first."""
+        """Distinct predicates / edge names present, most-supported first."""
         seen: dict[str, int] = {}
         for r in self.rows:
             if direction and r.direction != direction:
@@ -61,7 +70,10 @@ class Facets:
 
         data = {
             "direction": [r.direction for r in self.rows],
-            "predicate": [self._compact(r.predicate) for r in self.rows],
+            "predicate": [
+                r.predicate if r.is_virtual else self._compact(r.predicate)
+                for r in self.rows
+            ],
         }
         if self.by != "predicate":
             data["object" if self.by == "pred-obj" else "object_type"] = [
@@ -76,8 +88,7 @@ class Facets:
         from rich.console import Console
         from rich.table import Table
 
-        title = f"Facets (by={self.by})"
-        table = Table(title=title)
+        table = Table(title=f"Facets (by={self.by})")
         table.add_column("dir")
         table.add_column("predicate")
         if self.by == "pred-obj":
@@ -88,7 +99,8 @@ class Facets:
         table.add_column("edges", justify="right")
 
         for r in self.rows[:limit]:
-            cells = [r.direction, self._compact(r.predicate)]
+            pred = r.predicate if r.is_virtual else self._compact(r.predicate)
+            cells = [("↳ virtual" if r.is_virtual else r.direction), pred]
             if self.by != "predicate":
                 cells.append(self._compact(r.key))
             cells += [str(r.support), str(r.edges)]
@@ -112,53 +124,148 @@ class Facets:
 
 
 def compute_facets(
-    selection: "Selection", *, by: str, direction: str, limit: int
+    selection: "Selection",
+    *,
+    by: str,
+    direction: str,
+    limit: int,
+    only: Sequence[str] | None = None,
+    hide: Sequence[str] | None = None,
+    raw: bool = False,
+    virtual: bool = True,
 ) -> Facets:
     if by not in _BY_CHOICES:
         raise ValueError(f"by must be one of {_BY_CHOICES}, got {by!r}")
     if direction not in _DIR_CHOICES:
         raise ValueError(f"direction must be one of {_DIR_CHOICES}, got {direction!r}")
 
-    dirs = ("out", "in") if direction == "both" else (direction,)
+    profile = None if raw else selection.profile
+    if not raw and (only or hide):
+        profile = (profile or Profile()).with_(allow=only or (), deny=hide or ())
+
+    nsmap = _nsmap(selection.client)
+    expand = selection._expand  # noqa: SLF001
+    pred_filter = profile.predicate_filter("fp", nsmap, expand) if profile else None
+    type_filter = profile.type_filter("ft", nsmap, expand) if profile else None
+
     rows: list[FacetRow] = []
+
+    # Named virtual edges first (they are the curated, important paths).
+    if profile and profile.edges and virtual and not raw:
+        for name, value in profile.edges.items():
+            path = to_path(value, expand)
+            rows.extend(_virtual_facet(selection, name, path, by=by, limit=limit))
+
+    dirs = ("out", "in") if direction == "both" else (direction,)
     for d in dirs:
-        sparql = _facet_query(selection, by=by, direction=d, limit=limit)
+        sparql = _facet_query(
+            selection, by=by, direction=d, limit=limit,
+            pred_filter=pred_filter, type_filter=type_filter,
+        )
         res = selection.client.sparql_query(sparql, use_union=True)
         rows.extend(_parse(res, by=by, direction=d))
-    rows.sort(key=lambda r: -r.support)
+
+    # Virtual edges surface first, then by support.
+    rows.sort(key=lambda r: (not r.is_virtual, -r.support))
     return Facets(selection, by, rows)
 
 
-def _facet_query(selection: "Selection", *, by: str, direction: str, limit: int) -> str:
-    focus = selection._state.focus  # noqa: SLF001 - internal access within package
-    body = selection._where_body()  # noqa: SLF001
+def _nsmap(client: Any) -> dict[str, str]:
+    try:
+        nm = client.namespace_manager()
+        return {p: str(n) for p, n in nm.namespaces()}
+    except Exception:
+        return {}
 
-    if direction == "out":
-        edge = f"?{focus} ?fp ?fo ."
-    else:
-        edge = f"?fo ?fp ?{focus} ."
+
+def _facet_query(
+    selection: "Selection",
+    *,
+    by: str,
+    direction: str,
+    limit: int,
+    pred_filter: str | None = None,
+    type_filter: str | None = None,
+) -> str:
+    focus = selection._state.focus  # noqa: SLF001
+    body = selection._where_body()  # noqa: SLF001
+    edge = f"?{focus} ?fp ?fo ." if direction == "out" else f"?fo ?fp ?{focus} ."
 
     support = f"(COUNT(DISTINCT ?{focus}) AS ?support)"
     edges = "(COUNT(*) AS ?edges)"
+    lines = [body, edge]
 
     if by == "predicate":
         select = f"SELECT ?fp {support} {edges}"
-        extra = ""
         group = "GROUP BY ?fp"
     elif by == "pred-obj":
         select = f"SELECT ?fp ?fo {support} {edges}"
-        extra = ""
         group = "GROUP BY ?fp ?fo"
     else:  # pred-obj-type
         select = f"SELECT ?fp ?ft {support} {edges}"
-        extra = f"?fo <{RDF_TYPE}> ?ft ."
+        lines.append(f"?fo <{RDF_TYPE}> ?ft .")
         group = "GROUP BY ?fp ?ft"
 
-    where = "\n  ".join(x for x in [body, edge, extra] if x)
+    if pred_filter:
+        lines.append(pred_filter)
+    if type_filter and by == "pred-obj-type":
+        lines.append(type_filter)
+
+    where = "\n  ".join(x for x in lines if x)
     return (
         f"{select}\nWHERE {{\n  {where}\n}}\n{group}\n"
         f"ORDER BY DESC(?support)\nLIMIT {int(limit)}"
     )
+
+
+def _virtual_facet(
+    selection: "Selection", name: str, path: Path, *, by: str, limit: int
+) -> list[FacetRow]:
+    focus = selection._state.focus  # noqa: SLF001
+    body = selection._where_body()  # noqa: SLF001
+    pr = path.render()
+
+    support = f"(COUNT(DISTINCT ?{focus}) AS ?support)"
+    edges = "(COUNT(*) AS ?edges)"
+    lines = [body, f"?{focus} {pr} ?fo ."]
+
+    if by == "predicate":
+        select = f"SELECT {support} {edges}"
+        group = ""
+    elif by == "pred-obj":
+        select = f"SELECT ?fo {support} {edges}"
+        group = "GROUP BY ?fo"
+    else:  # pred-obj-type
+        select = f"SELECT ?ft {support} {edges}"
+        lines.append(f"?fo <{RDF_TYPE}> ?ft .")
+        group = "GROUP BY ?ft"
+
+    where = "\n  ".join(x for x in lines if x)
+    q = f"{select}\nWHERE {{\n  {where}\n}}"
+    if group:
+        q += f"\n{group}\nORDER BY DESC(?support)\nLIMIT {int(limit)}"
+    res = selection.client.sparql_query(q, use_union=True)
+
+    out: list[FacetRow] = []
+    for row in res.get("rows", []):
+        if by == "predicate":
+            support_v, edges_v, key = row[0], row[1], None
+        else:
+            key, support_v, edges_v = row[0], row[1], row[2]
+        support_i = _int(support_v)
+        if support_i == 0:
+            continue  # no matches — don't surface an empty edge
+        out.append(
+            FacetRow(
+                direction="virtual",
+                predicate=name,
+                support=support_i,
+                edges=_int(edges_v),
+                key=str(key) if key is not None else None,
+                is_virtual=True,
+            )
+        )
+    return out
 
 
 def _parse(res: dict, *, by: str, direction: str) -> list[FacetRow]:

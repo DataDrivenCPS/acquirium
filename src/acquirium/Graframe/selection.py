@@ -46,7 +46,9 @@ from .algebra import (
     _is_uri,
     alt_of,
     patterns_vars,
+    to_path,
 )
+from .profile import Profile
 
 if TYPE_CHECKING:
     import polars as pl
@@ -95,9 +97,15 @@ class _State:
 class Graframe:
     """Root/session object: builds seed selections bound to a client."""
 
-    def __init__(self, client: Any, reasoning: Reasoning | None = None):
+    def __init__(
+        self,
+        client: Any,
+        reasoning: Reasoning | None = None,
+        profile: Profile | None = None,
+    ):
         self.client = client
         self.reasoning = reasoning or Reasoning()
+        self.profile = profile
 
     # -- seeds ----------------------------------------------------------
     def instances(self, cls: Any) -> "Selection":
@@ -112,7 +120,7 @@ class Graframe:
             focus="n0",
             counter=1,
         )
-        return Selection(self.client, self.reasoning, state)
+        return self._seed(state)
 
     def nodes(self, *uris: Any) -> "Selection":
         """Selection seeded from one or more explicit node URIs/CURIEs."""
@@ -122,7 +130,7 @@ class Graframe:
         state = _State(
             patterns=(Values(Var("n0"), terms),), focus="n0", counter=1
         )
-        return Selection(self.client, self.reasoning, state)
+        return self._seed(state)
 
     def everything(self) -> "Selection":
         """Selection of every node that appears as a subject in the graph."""
@@ -131,30 +139,46 @@ class Graframe:
             focus="n0",
             counter=2,
         )
-        return Selection(self.client, self.reasoning, state)
+        return self._seed(state)
+
+    def _seed(self, state: _State) -> "Selection":
+        return Selection(self.client, self.reasoning, state, profile=self.profile)
 
 
 class Selection:
     """An immutable cursor over a set of graph nodes. Operators return copies."""
 
-    def __init__(self, client: Any, reasoning: Reasoning, state: _State):
+    def __init__(
+        self,
+        client: Any,
+        reasoning: Reasoning,
+        state: _State,
+        profile: Profile | None = None,
+    ):
         self.client = client
         self.reasoning = reasoning
         self._state = state
+        self.profile = profile
 
     # ------------------------------------------------------------------
     # internal helpers
     # ------------------------------------------------------------------
     def _with(self, state: _State) -> "Selection":
-        return Selection(self.client, self.reasoning, state)
+        return Selection(self.client, self.reasoning, state, profile=self.profile)
 
     def _fresh(self, counter: int) -> tuple[Var, int]:
         return Var(f"n{counter}"), counter + 1
 
+    def _expand(self, x: Any) -> str:
+        """Resolve a CURIE/URI/URIRef to a full URI string."""
+        return _iri(self.client, x)
+
     def _step_to_path(self, step: Any, direction: str) -> Path:
         if direction not in ("out", "in"):
             raise ValueError("direction must be 'out' or 'in'")
-        if isinstance(step, Path):
+        if isinstance(step, str) and self.profile and step in self.profile.edges:
+            path = to_path(self.profile.edges[step], self._expand)
+        elif isinstance(step, Path):
             path = step
         elif isinstance(step, (list, tuple)):
             path = alt_of([self._atomic(s) for s in step])
@@ -389,15 +413,34 @@ class Selection:
         *,
         direction: str = "both",
         limit: int = 50,
+        only: Sequence[str] | None = None,
+        hide: Sequence[str] | None = None,
+        raw: bool = False,
+        virtual: bool = True,
     ) -> "Facets":
         """Summarise the neighbourhood of the current nodes — the next moves.
 
         ``by`` is one of ``"predicate"``, ``"pred-obj"``, ``"pred-obj-type"``.
         ``direction`` is ``"out"``, ``"in"``, or ``"both"``.
+
+        The active :class:`Profile` (if any) curates which predicates/types
+        appear and surfaces its named virtual edges as extra rows. Override
+        per call with ``only=`` (allow) / ``hide=`` (deny), disable virtual-edge
+        rows with ``virtual=False``, or ignore the profile entirely with
+        ``raw=True``.
         """
         from .facets import compute_facets
 
-        return compute_facets(self, by=by, direction=direction, limit=limit)
+        return compute_facets(
+            self,
+            by=by,
+            direction=direction,
+            limit=limit,
+            only=only,
+            hide=hide,
+            raw=raw,
+            virtual=virtual,
+        )
 
     # ------------------------------------------------------------------
     # compilation / terminals

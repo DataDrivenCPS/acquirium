@@ -214,6 +214,116 @@ def alt_of(paths: list[Path]) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# Property-path parsing (SPARQL-ish mini-syntax) + coercion
+# ---------------------------------------------------------------------------
+
+_PATH_OPS = set("/|^()+*?")
+
+
+def to_path(value: Any, expand) -> Path:
+    """Coerce a step value to a :class:`Path`.
+
+    Accepts a :class:`Path` (explicit builder), a list/tuple of predicates
+    (alternation), or a string in SPARQL property-path syntax
+    (``"s223:connectedTo+"``, ``"a/b|c"``, ``"^p"``). ``expand`` maps a CURIE
+    token to a full URI.
+    """
+    if isinstance(value, Path):
+        return value
+    if isinstance(value, (list, tuple)):
+        return alt_of([Pred(expand(v)) if not isinstance(v, Path) else v for v in value])
+    if isinstance(value, str):
+        return parse_path(value, expand)
+    raise TypeError(f"cannot interpret step value {value!r} as a path")
+
+
+def parse_path(expr: str, expand) -> Path:
+    """Parse a SPARQL property-path expression into a :class:`Path`.
+
+    Supports sequence ``/``, alternation ``|``, inverse ``^``, the modifiers
+    ``+ * ?``, grouping ``()``, and ``<uri>`` or ``curie`` tokens (CURIEs are
+    resolved with ``expand``).
+    """
+    toks = _tokenize_path(expr)
+    if not toks:
+        raise ValueError(f"empty path expression: {expr!r}")
+    path, i = _parse_alt(toks, 0, expand)
+    if i != len(toks):
+        raise ValueError(f"trailing tokens in path {expr!r}: {toks[i:]}")
+    return path
+
+
+def _tokenize_path(s: str) -> list[str]:
+    toks: list[str] = []
+    i, n = 0, len(s)
+    while i < n:
+        c = s[i]
+        if c.isspace():
+            i += 1
+            continue
+        if c in _PATH_OPS:
+            toks.append(c)
+            i += 1
+            continue
+        if c == "<":
+            j = s.index(">", i)
+            toks.append(s[i : j + 1])
+            i = j + 1
+            continue
+        j = i
+        while j < n and not s[j].isspace() and s[j] not in _PATH_OPS:
+            j += 1
+        toks.append(s[i:j])
+        i = j
+    return toks
+
+
+def _parse_alt(toks, i, expand):
+    left, i = _parse_seq(toks, i, expand)
+    while i < len(toks) and toks[i] == "|":
+        right, i = _parse_seq(toks, i + 1, expand)
+        left = Alt(left, right)
+    return left, i
+
+
+def _parse_seq(toks, i, expand):
+    left, i = _parse_unary(toks, i, expand)
+    while i < len(toks) and toks[i] == "/":
+        right, i = _parse_unary(toks, i + 1, expand)
+        left = Seq(left, right)
+    return left, i
+
+
+def _parse_unary(toks, i, expand):
+    inv = False
+    if i < len(toks) and toks[i] == "^":
+        inv = True
+        i += 1
+    atom, i = _parse_atom(toks, i, expand)
+    while i < len(toks) and toks[i] in ("+", "*", "?"):
+        atom = Mod(atom, toks[i])
+        i += 1
+    if inv:
+        atom = Inv(atom)
+    return atom, i
+
+
+def _parse_atom(toks, i, expand):
+    if i >= len(toks):
+        raise ValueError("unexpected end of path expression")
+    t = toks[i]
+    if t == "(":
+        inner, i = _parse_alt(toks, i + 1, expand)
+        if i >= len(toks) or toks[i] != ")":
+            raise ValueError("missing ')' in path expression")
+        return inner, i + 1
+    if t in _PATH_OPS:
+        raise ValueError(f"unexpected '{t}' in path expression")
+    uri = t[1:-1] if t.startswith("<") and t.endswith(">") else expand(t)
+    return Pred(uri), i + 1
+
+
+# ---------------------------------------------------------------------------
 # Patterns
 # ---------------------------------------------------------------------------
 
