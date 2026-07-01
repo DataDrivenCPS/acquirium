@@ -22,7 +22,7 @@
 # Uncomment another to switch, or enable several at once.
 
 [server]
-enabled = false            # connect to an already-running Acquirium server
+enabled = true            # connect to an already-running Acquirium server
 
 [driver]
 server_url  = "localhost"
