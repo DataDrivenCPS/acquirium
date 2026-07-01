@@ -6,25 +6,30 @@ Graframe so a natural-language string in a *concept slot* (class or predicate)
 is resolved to a URI automatically:
 
     g.instances("sensor")          # -> s223:Sensor
-    sel.pivot("connected to")      # -> s223:connectedTo
+    sel.follow("connected to")     # -> s223:connectedTo
     sel.is_a("temperature sensor")
 
-Resolution rule for a slot value:
+Resolution rule for a slot value (the *same* rule for concept slots — class /
+predicate — and value slots — ``value=`` / ``in_=``):
 
 * a :class:`Fuzzy` marker (from :func:`like`) -> always embedding-resolved;
 * a full URI / URIRef -> used as-is;
-* a CURIE (contains ``:``) -> expanded against bound prefixes (a bad prefix is
-  an error, never fuzzy-guessed);
+* a CURIE with a **bound** prefix (``prefix:local``) -> expanded;
+* a CURIE with an **unknown** prefix -> a :class:`UserWarning` is raised and the
+  local part is embedding-resolved (a typo'd prefix degrades to fuzzy rather
+  than failing hard);
 * anything else (no ``:``) -> treated as natural language and embedding-resolved
   when fuzzy matching is on.
 
-Literal *value* slots (``value=``/``in_=``) stay literal unless wrapped in
-:func:`like`, so filtering by a plain string isn't silently turned into a URI.
+To force a plain RDF **literal** in a value slot (bypassing all resolution),
+pass a number or an :class:`~acquirium.Graframe.algebra.Lit` /
+``rdflib.Literal`` — a bare string is resolved like any other term.
 """
 
 from __future__ import annotations
 
 import logging
+import warnings
 from dataclasses import dataclass
 from typing import Any
 
@@ -48,7 +53,7 @@ def like(text: str, kind: str | None = None) -> Fuzzy:
 
     Use in slots that are literal by default, or to pin a ``kind``::
 
-        sel.refine("qudt:hasQuantityKind", value=like("concentration", "quantity_kind"))
+        sel.having("qudt:hasQuantityKind", value=like("concentration", "quantity_kind"))
     """
     return Fuzzy(text, kind)
 
@@ -70,7 +75,21 @@ def resolve_iri(
     if _is_uri(s):
         return s
     if ":" in s:
-        return client.expand_uri(s)  # CURIE; a bad prefix raises (never guessed)
+        try:
+            return client.expand_uri(s)  # CURIE with a bound prefix
+        except Exception as exc:
+            # Unknown prefix: don't fail hard — warn and treat the local part as
+            # natural language (a typo'd prefix degrades to fuzzy resolution).
+            if not fuzzy:
+                raise
+            local = s.split(":", 1)[1] or s
+            warnings.warn(
+                f"unknown prefix in {s!r} ({exc}); falling back to fuzzy "
+                f"resolution of {local!r}. Check the prefix if this was a CURIE.",
+                UserWarning,
+                stacklevel=2,
+            )
+            return _match(client, local, kind, min_score)
     if fuzzy:
         return _match(client, s, kind, min_score)
     raise ValueError(

@@ -15,7 +15,13 @@ it tells you how many of the things you currently hold can take a given step.
 An active :class:`~acquirium.Graframe.profile.Profile` curates the result:
 hidden predicates/types are filtered out (in SPARQL, so ``LIMIT`` stays
 correct), and the profile's **named virtual edges** are surfaced as extra rows
-(``is_virtual=True``) that can be traversed with ``pivot("<name>")``.
+(``is_virtual=True``) that can be traversed with ``follow("<name>")``.
+
+Facet rows are *actionable*: pick one with :meth:`Facets.row` and hand it
+straight to :meth:`~acquirium.Graframe.selection.Selection.follow` /
+:meth:`~acquirium.Graframe.selection.Selection.having` — the row already knows
+its predicate, direction, and (for ``pred-obj`` / ``pred-obj-type`` facets) the
+object value/type to filter on, so you never retype a URI.
 """
 
 from __future__ import annotations
@@ -33,6 +39,7 @@ if TYPE_CHECKING:
 
 _BY_CHOICES = ("predicate", "pred-obj", "pred-obj-type")
 _DIR_CHOICES = ("out", "in", "both")
+_KEY_KIND = {"pred-obj": "value", "pred-obj-type": "type"}
 
 RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
 
@@ -45,6 +52,7 @@ class FacetRow:
     edges: int  # total matching edges
     key: str | None = None  # object value or object type (None for by=predicate)
     is_virtual: bool = False  # True for named virtual-edge rows
+    key_kind: str | None = None  # "value" (pred-obj) or "type" (pred-obj-type)
 
 
 class Facets:
@@ -64,6 +72,54 @@ class Facets:
                 continue
             seen[r.predicate] = max(seen.get(r.predicate, 0), r.support)
         return [p for p, _ in sorted(seen.items(), key=lambda kv: -kv[1])]
+
+    def row(
+        self,
+        selector: int | str | None = None,
+        *,
+        key: str | None = None,
+        direction: str | None = None,
+    ) -> FacetRow:
+        """Pick a single :class:`FacetRow` to feed to ``follow``/``having``.
+
+        ``selector`` is either an integer index into :attr:`rows`, or a
+        predicate / virtual-edge name (matched against the compacted *or* full
+        predicate). Disambiguate collisions with ``key=`` (the object value or
+        type, compacted or full) and/or ``direction=`` (``"out"``/``"in"``/
+        ``"virtual"``). Raises ``KeyError`` if nothing matches and ``ValueError``
+        if the selection is ambiguous.
+
+        Example::
+
+            f = sensors.facets(by="pred-obj")
+            sensors.having(f.row("s223:observes", key="qk:Power"))
+        """
+        if isinstance(selector, int):
+            return self.rows[selector]
+        matches: list[FacetRow] = []
+        for r in self.rows:
+            pred = r.predicate if r.is_virtual else self._compact(r.predicate)
+            if selector is not None and selector not in (pred, r.predicate):
+                continue
+            if key is not None:
+                rkey = self._compact(r.key) if r.key is not None else None
+                if key not in (rkey, r.key):
+                    continue
+            if direction is not None and r.direction != direction:
+                continue
+            matches.append(r)
+        if not matches:
+            raise KeyError(
+                f"no facet row matches selector={selector!r}"
+                + (f" key={key!r}" if key is not None else "")
+                + (f" direction={direction!r}" if direction is not None else "")
+            )
+        if len(matches) > 1:
+            raise ValueError(
+                f"{len(matches)} facet rows match selector={selector!r}; "
+                f"disambiguate with key=/direction="
+            )
+        return matches[0]
 
     def to_polars(self) -> "pl.DataFrame":
         import polars as pl
@@ -263,12 +319,14 @@ def _virtual_facet(
                 edges=_int(edges_v),
                 key=str(key) if key is not None else None,
                 is_virtual=True,
+                key_kind=_KEY_KIND.get(by),
             )
         )
     return out
 
 
 def _parse(res: dict, *, by: str, direction: str) -> list[FacetRow]:
+    key_kind = _KEY_KIND.get(by)
     rows_out: list[FacetRow] = []
     for row in res.get("rows", []):
         if by == "predicate":
@@ -283,6 +341,7 @@ def _parse(res: dict, *, by: str, direction: str) -> list[FacetRow]:
                 support=_int(support),
                 edges=_int(edges),
                 key=str(key) if key is not None else None,
+                key_kind=key_kind,
             )
         )
     return rows_out

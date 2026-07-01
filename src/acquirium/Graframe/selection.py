@@ -5,16 +5,17 @@ NAWI water ontology, ...) without writing SPARQL. You hold a **Selection** — a
 set of focus nodes carried as a bindings table with a cursor — and move through
 the graph with two symmetric operators:
 
-* :meth:`Selection.refine` — *stay* on the current nodes, keeping only those
+* :meth:`Selection.having` — *stay* on the current nodes, keeping only those
   that satisfy an edge condition (an existential semijoin; never multiplies
   rows).
-* :meth:`Selection.pivot` — *move* the cursor to the neighbours reached along an
+* :meth:`Selection.follow` — *move* the cursor to the neighbours reached along an
   edge / property path (an image; the only operator that adds a column).
 
-You inspect what is reachable with :meth:`Selection.facets`, hold waypoints with
-:meth:`Selection.mark` / :meth:`Selection.to`, express correlated constraints
-with :meth:`Selection.where` / :meth:`Selection.any_of`, and pull results with
-:meth:`Selection.nodes` / :meth:`Selection.select`.
+You inspect what is reachable with :meth:`Selection.facets` (whose rows can be
+fed straight back into :meth:`~Selection.follow` / :meth:`~Selection.having`),
+hold waypoints with :meth:`Selection.mark` / :meth:`Selection.to`, express
+correlated constraints with :meth:`Selection.where` / :meth:`Selection.any_of`,
+and pull results with :meth:`Selection.nodes` / :meth:`Selection.select`.
 
 The whole surface denotes a SPARQL query (see :meth:`Selection.to_sparql`); that
 denotation is the correctness anchor.
@@ -48,6 +49,7 @@ from .algebra import (
     patterns_vars,
     to_path,
 )
+from .facets import FacetRow
 from .profile import Profile
 from .resolve import Fuzzy, resolve_iri, suggest as _suggest
 
@@ -235,10 +237,47 @@ class Selection:
         return Pred(self._resolve(s, "predicate"))
 
     def _term(self, x: Any) -> Term:
-        # value slots are literal unless explicitly wrapped in like(...)
+        """Coerce an object-filter value to a term.
+
+        Strings resolve exactly like concept slots (URI / bound CURIE / unknown
+        prefix -> fuzzy / natural language -> fuzzy), so you filter by name, not
+        by URI. To force a plain literal, pass a number or an already-built
+        ``Lit`` / ``rdflib.Literal``.
+        """
+        if isinstance(x, Term):
+            return x
         if isinstance(x, Fuzzy):
             return Iri(self._resolve(x, None))
-        return _value_term(self.client, x)
+        if isinstance(x, URIRef):
+            return Iri(str(x))
+        if isinstance(x, str):
+            return Iri(self._resolve(x, None))
+        return Lit(x)
+
+    def _facet_row_expand(
+        self, step: Any, direction: str, filters: dict
+    ) -> tuple[Any, str, dict]:
+        """Expand a :class:`FacetRow` passed as ``step`` into (step, dir, φ).
+
+        A facet row carries everything needed to take the move it describes:
+        its predicate / virtual-edge name, its direction, and — for ``pred-obj``
+        / ``pred-obj-type`` facets — the object value or type as a filter. This
+        is what makes facets *actionable*: ``sel.follow(f.row(...))``. Explicit
+        keyword filters passed alongside win over the row's own key.
+        """
+        if not isinstance(step, FacetRow):
+            return step, direction, filters
+        row = step
+        if row.direction == "in":
+            direction = "in"
+        filters = dict(filters)
+        if row.key is not None:
+            if row.key_kind == "type" and filters.get("is_a") is None:
+                filters["is_a"] = row.key
+            elif row.key_kind == "value" and filters.get("value") is None:
+                # keep literal objects literal; let URIs resolve as IRIs
+                filters["value"] = row.key if _is_uri(row.key) else Lit(row.key)
+        return row.predicate, direction, filters
 
     def _constraints(
         self,
@@ -304,7 +343,7 @@ class Selection:
     # ------------------------------------------------------------------
     # navigation
     # ------------------------------------------------------------------
-    def refine(
+    def having(
         self,
         step: Any,
         *,
@@ -316,16 +355,19 @@ class Selection:
         in_: Sequence[Any] | None = None,
         matching: "Selection | None" = None,
     ) -> "Selection":
-        """Keep only current nodes that have an edge ``step`` satisfying φ.
+        """Keep only current nodes that *have* an edge ``step`` satisfying φ.
 
-        Existential semijoin — the cursor does not move and rows never multiply.
+        The narrowing operator: an existential semijoin, so the cursor does not
+        move and rows never multiply. ``step`` may be a predicate/path/named
+        edge, or a :class:`FacetRow` (from ``facets().row(...)``), in which case
+        its direction and object key are taken from the row.
         """
+        filters = dict(value=value, is_a=is_a, min=min, max=max, in_=in_, matching=matching)
+        step, direction, filters = self._facet_row_expand(step, direction, filters)
         path = self._step_to_path(step, direction)
         obj, counter = self._fresh(self._state.counter)
         body: list[Pattern] = [Triple(Var(self._state.focus), path, obj)]
-        extra, counter = self._constraints(
-            obj, counter, value=value, is_a=is_a, min=min, max=max, in_=in_, matching=matching
-        )
+        extra, counter = self._constraints(obj, counter, **filters)
         body.extend(extra)
         new = replace(
             self._state,
@@ -335,7 +377,11 @@ class Selection:
         return self._with(new)
 
     def without(self, step: Any, *, direction: str = "out", **filters: Any) -> "Selection":
-        """Keep only current nodes that have *no* edge ``step`` satisfying φ."""
+        """Keep only current nodes that have *no* edge ``step`` satisfying φ.
+
+        Accepts a :class:`FacetRow` as ``step`` like :meth:`having`.
+        """
+        step, direction, filters = self._facet_row_expand(step, direction, filters)
         path = self._step_to_path(step, direction)
         obj, counter = self._fresh(self._state.counter)
         body: list[Pattern] = [Triple(Var(self._state.focus), path, obj)]
@@ -348,7 +394,7 @@ class Selection:
         )
         return self._with(new)
 
-    def pivot(
+    def follow(
         self,
         step: Any,
         *,
@@ -360,13 +406,18 @@ class Selection:
         in_: Sequence[Any] | None = None,
         matching: "Selection | None" = None,
     ) -> "Selection":
-        """Move the cursor to the neighbours reached along ``step`` (adds a column)."""
+        """Move the cursor to the neighbours reached along ``step`` (adds a column).
+
+        The traversal operator: an image. ``step`` may be a predicate / path /
+        named edge, or a :class:`FacetRow` (from ``facets().row(...)``), in which
+        case its direction and object key come from the row.
+        """
+        filters = dict(value=value, is_a=is_a, min=min, max=max, in_=in_, matching=matching)
+        step, direction, filters = self._facet_row_expand(step, direction, filters)
         path = self._step_to_path(step, direction)
         obj, counter = self._fresh(self._state.counter)
         new_patterns: list[Pattern] = [Triple(Var(self._state.focus), path, obj)]
-        extra, counter = self._constraints(
-            obj, counter, value=value, is_a=is_a, min=min, max=max, in_=in_, matching=matching
-        )
+        extra, counter = self._constraints(obj, counter, **filters)
         new_patterns.extend(extra)
         new = replace(
             self._state,
@@ -415,7 +466,7 @@ class Selection:
         new = replace(self._state, patterns=self._state.patterns + tuple(extra), counter=counter)
         return self._with(new)
 
-    def is_(self, *uris: Any) -> "Selection":
+    def is_one_of(self, *uris: Any) -> "Selection":
         """Restrict the current focus to specific nodes (URI/CURIE/name)."""
         terms = tuple(Iri(self._resolve(u, None)) for u in uris)
         new = replace(self._state, patterns=self._state.patterns + (Values(Var(self._state.focus), terms),))
@@ -575,14 +626,16 @@ class Selection:
 
         The focus nodes must carry ``ref:hasExternalReference`` (i.e. be the
         observable/actuatable property points). Marks on this selection become
-        ``entity__<name>`` context columns, so ``.data().by("<mark>")`` groups
-        the series by that waypoint. Series are aliased by their compacted point
-        URI.
+        context columns (surfaced under the bare mark name), so
+        ``.data().by("<mark>")`` groups the series by that waypoint and the
+        narrow ``dataframe`` / ``metadata`` frames carry one column per mark.
+        Series are aliased by their compacted point URI. A mark may not reuse a
+        reserved data-column name (``time``, ``value_numeric``, …).
 
         Example::
 
             (g.instances("nawi:Pump").mark("pump")
-               .pivot("measures")
+               .follow("measures")
                .data(start=t0, end=t1).by("pump"))
         """
         from .data import build_data_object
@@ -647,24 +700,6 @@ def _iri(client: Any, x: Any) -> str:
     if _is_uri(s):
         return s
     return client.expand_uri(s)
-
-
-def _value_term(client: Any, x: Any) -> Term:
-    """Coerce a filter value: URIs/CURIEs → IRIs, everything else → literals."""
-    if isinstance(x, Term):
-        return x
-    if isinstance(x, URIRef):
-        return Iri(str(x))
-    if _is_uri(x):
-        return Iri(str(x))
-    if isinstance(x, str) and ":" in x:
-        try:
-            u = client.expand_uri(x)
-            if _is_uri(u):
-                return Iri(u)
-        except Exception:
-            pass
-    return Lit(x)
 
 
 def _inline(state: _State, target_name: str, counter: int) -> tuple[tuple[Pattern, ...], int]:

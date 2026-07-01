@@ -7,16 +7,22 @@ Graframe answers *which points*; this module hands those points to the existing
 reference and unit annotations, then build ``BindingInfo`` records that
 DataObject materializes on demand.
 
-Marks on the Selection become ``entity__<name>`` context columns, so
+Marks on the Selection become context columns, so
 ``selection.mark("system")...data().by("system")`` groups series by that
-waypoint — the same grouping the classic query builder offers.
+waypoint — the same grouping the classic query builder offers. Internally the
+column is carried as ``entity__<name>`` (a collision-guard prefix), but it
+surfaces to the user under the bare mark name.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from acquirium.Client.data_object import BindingInfo, DataObject
+from acquirium.Client.data_object import (
+    RESERVED_DATA_COLUMNS,
+    BindingInfo,
+    DataObject,
+)
 from acquirium.Client.query_graph import QueryGraph
 from acquirium.internals.internals_namespaces import HAS_EXTERNAL_REFERENCE, HAS_UNIT
 
@@ -64,6 +70,12 @@ def build_data_object(
         for name, var in selection._state.marks.items()  # noqa: SLF001
         if var != selection._state.focus  # noqa: SLF001
     }
+    clashes = sorted(n for n in entity_marks if n in RESERVED_DATA_COLUMNS)
+    if clashes:
+        raise ValueError(
+            f"mark name(s) {clashes} collide with reserved data columns "
+            f"{sorted(RESERVED_DATA_COLUMNS)}; rename the mark(s) before calling .data()"
+        )
     entity_columns = sorted(f"entity__{n}" for n in entity_marks)
 
     res = client.sparql_query(_data_sparql(selection, entity_marks), use_union=True)
