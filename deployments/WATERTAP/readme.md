@@ -9,6 +9,33 @@ as timeseries streams, semantically described by an `s223`/`nawi` RDF model.
 There are two models and a set of generic, model-agnostic tools that drive any
 of them.
 
+## Quick Start
+1. create and activate a fresh virtual environment: `python -m venv .venv && source .venv/bin/activate` (Linux/macOS) or `.venv\Scripts\activate` (Windows). **Requires Python 3.12**+.
+    - Alternatively you can use the [uv package manager](https://docs.astral.sh/uv/) with `uv init --python 3.12`
+2. Install Acquirium from PyPI: `pip install acquirium[watertap]`.
+    - Alternatively: `uv add acquirium[watertap]`
+3. Start the server (plus any drivers listed in the config), from the repo root:
+    - `acquirium server --config deployments/WATERTAP/scripts/acquirium.toml`.
+    - Alternatively, `uv run acquirium server --config deployments/WATERTAP/scripts/acquirium.toml`.
+4. Verify it's up by opening [`http://localhost:8000/docs`](http://localhost:8000/docs) (or whichever host/port your config sets) in a browser.
+    - Alternatively: `curl localhost:8000/health` from another terminal
+    - Or using Python session or notebook, run:
+    ```
+    from acquirium import Acquirium 
+    acq = Acquirium(server_url="localhost", server_port=8000, use_ssl=False)
+    ```
+5. We distribute our examples with jupyter notebooks. There're multiple ways to run a jupyter notebook:
+    - If you used uv for initial setup: `uv run --with jupyter jupyter lab` will start a jupyterlab in browser (`http://localhost:8888` by default)
+    - If you use VS code, when you try to run a notebook it will ask py environments. Provide the one you initiated above (.venv)
+    - If neither, then run the following in your .venv (make sure it's active)
+        - ` pip install ipykernel `
+        - ` pip install notebook `
+        - ` python -m ipykernel install --user --name=venv --display-name "Python (venv)" `
+        - ` jupyter notebook `
+
+6. Notebooks are in [this folder](../../notebooks/watertap/). We'll add new notebooks when we want to demonstrate new features! We recommend to follow the notebooks in order.
+
+
 ## Models
 
 Every model folder under `models/<name>/` exposes the **same interface**, so one
