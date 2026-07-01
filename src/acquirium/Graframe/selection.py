@@ -46,6 +46,7 @@ from .algebra import (
     Var,
     _is_uri,
     alt_of,
+    parse_path,
     patterns_vars,
     to_path,
 )
@@ -221,6 +222,12 @@ class Selection:
             path = step
         elif isinstance(step, (list, tuple)):
             path = alt_of([self._atomic(s) for s in step])
+        elif isinstance(step, str) and _is_path_expr(step):
+            # inline SPARQL property-path syntax, e.g. "a/b", "connectedTo+",
+            # "^a|b". Each segment resolves like a predicate slot — URI, CURIE,
+            # or (when fuzzy is on) a natural-language name, so
+            # "has property/has quantity kind" works.
+            path = parse_path(step, lambda t: self._resolve(t, "predicate"))
         elif isinstance(step, (str, Fuzzy)):
             path = self._atomic(step)
         else:
@@ -690,6 +697,21 @@ class Selection:
 # ---------------------------------------------------------------------------
 # module helpers
 # ---------------------------------------------------------------------------
+
+# Characters that only occur in SPARQL property-path syntax, never in a bare
+# CURIE or natural-language name. A full URI also contains "/", so callers must
+# exclude URIs first (see below).
+_PATH_META = frozenset("/|()*+?<")
+
+
+def _is_path_expr(s: str) -> bool:
+    """True if ``s`` should be parsed as a property path, not a single predicate.
+
+    A full URI is *not* a path (it contains ``/`` but is one predicate), so it is
+    excluded here; angle-bracketed URIs inside a real path start with ``<`` and
+    are kept.
+    """
+    return not _is_uri(s) and any(c in _PATH_META for c in s)
 
 
 def _iri(client: Any, x: Any) -> str:
