@@ -205,8 +205,8 @@ class Acquirium:
 
         Graframe is a fluent, RDF-agnostic query surface: seed a Selection with
         :meth:`Graframe.instances` / :meth:`Graframe.nodes`, inspect reachable
-        edges with ``.facets()``, then narrow with ``.refine()`` or move with
-        ``.pivot()``. Pass a :class:`Reasoning` profile to control entailments
+        edges with ``.facets()``, then narrow with ``.having()`` or move with
+        ``.follow()``. Pass a :class:`Reasoning` profile to control entailments
         (defaults to transitive-subclass class membership) and a
         :class:`Profile` to curate the discovery surface (hide noise predicates,
         name virtual edges).
