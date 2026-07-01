@@ -52,6 +52,7 @@ from .profile import Profile
 
 if TYPE_CHECKING:
     import polars as pl
+    from acquirium.Client.data_object import DataObject
     from .facets import Facets
 
 StepArg = "str | Path | Sequence[str]"
@@ -511,6 +512,69 @@ class Selection:
     def frame(self, *, compact: bool = True) -> "pl.DataFrame":
         """Return the focus nodes as a single-column polars DataFrame."""
         return self.select("focus", compact=compact)
+
+    # ------------------------------------------------------------------
+    # data plane (timeseries)
+    # ------------------------------------------------------------------
+    def data(
+        self,
+        *,
+        start: Any = None,
+        end: Any = None,
+        limit: int | None = None,
+        order: str = "asc",
+        cast_value: str | None = "float",
+        value_mode: str = "default",
+    ) -> "DataObject":
+        """Fetch timeseries for the focus **data points** as a :class:`DataObject`.
+
+        The focus nodes must carry ``ref:hasExternalReference`` (i.e. be the
+        observable/actuatable property points). Marks on this selection become
+        ``entity__<name>`` context columns, so ``.data().by("<mark>")`` groups
+        the series by that waypoint. Series are aliased by their compacted point
+        URI.
+
+        Example::
+
+            (g.instances("nawi:Pump").mark("pump")
+               .pivot("measures")
+               .data(start=t0, end=t1).by("pump"))
+        """
+        from .data import build_data_object
+
+        return build_data_object(
+            self,
+            start=start,
+            end=end,
+            limit=limit,
+            order=order,
+            cast_value=cast_value,
+            value_mode=value_mode,
+        )
+
+    def dataframe(
+        self,
+        *,
+        start: Any = None,
+        end: Any = None,
+        limit: int | None = None,
+        order: str = "asc",
+        shape: str = "wide",
+        cast_value: str | None = "float",
+        value_mode: str = "default",
+    ) -> "pl.DataFrame":
+        """Convenience: fetch timeseries and return a polars DataFrame.
+
+        ``shape="wide"`` gives one column per point; ``"narrow"`` is long-form.
+        """
+        return self.data(
+            start=start, end=end, limit=limit, order=order,
+            cast_value=cast_value, value_mode=value_mode,
+        ).dataframe(shape=shape)
+
+    def latest_data(self, *, shape: str = "wide", cast_value: str | None = "float") -> "pl.DataFrame":
+        """The most recent point per series (wide by default)."""
+        return self.dataframe(limit=1, order="desc", shape=shape, cast_value=cast_value)
 
     def _compact(self, x: Any) -> str | None:
         if x is None:
