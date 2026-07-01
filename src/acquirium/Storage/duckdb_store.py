@@ -105,7 +105,7 @@ class DuckDBStore:
             f"""
             CREATE TABLE IF NOT EXISTS {STREAMS_TABLE} (
                 ref_uri   VARCHAR PRIMARY KEY,
-                point_uri VARCHAR UNIQUE,
+                point_uri VARCHAR,
                 source_id VARCHAR NOT NULL,
                 ref_name  VARCHAR NOT NULL,
                 value_kind VARCHAR NOT NULL DEFAULT 'text'
