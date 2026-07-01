@@ -49,6 +49,7 @@ from .algebra import (
     to_path,
 )
 from .profile import Profile
+from .resolve import Fuzzy, resolve_iri, suggest as _suggest
 
 if TYPE_CHECKING:
     import polars as pl
@@ -103,19 +104,30 @@ class Graframe:
         client: Any,
         reasoning: Reasoning | None = None,
         profile: Profile | None = None,
+        *,
+        fuzzy: bool = True,
+        min_score: float = 0.5,
     ):
         self.client = client
         self.reasoning = reasoning or Reasoning()
         self.profile = profile
+        self.fuzzy = fuzzy
+        self.min_score = min_score
+
+    def _resolve(self, x: Any, kind: str | None) -> str:
+        return resolve_iri(
+            self.client, x, kind=kind, fuzzy=self.fuzzy, min_score=self.min_score
+        )
 
     # -- seeds ----------------------------------------------------------
     def instances(self, cls: Any) -> "Selection":
-        """Selection of all instances of ``cls`` (a CURIE, URI, or URIRef).
+        """Selection of all instances of ``cls``.
 
-        With the default reasoning profile this includes instances of
-        subclasses of ``cls``.
+        ``cls`` may be a CURIE, URI, URIRef, a natural-language name (resolved
+        via the embedding matcher when fuzzy matching is on), or ``like(...)``.
+        With the default reasoning profile subclasses are included.
         """
-        iri = _iri(self.client, cls)
+        iri = self._resolve(cls, "class")
         state = _State(
             patterns=(Triple(Var("n0"), self.reasoning.type_path(), Iri(iri)),),
             focus="n0",
@@ -124,10 +136,10 @@ class Graframe:
         return self._seed(state)
 
     def nodes(self, *uris: Any) -> "Selection":
-        """Selection seeded from one or more explicit node URIs/CURIEs."""
+        """Selection seeded from one or more explicit nodes (URI/CURIE/name)."""
         if not uris:
             raise ValueError("nodes: provide at least one URI/CURIE")
-        terms = tuple(Iri(_iri(self.client, u)) for u in uris)
+        terms = tuple(Iri(self._resolve(u, None)) for u in uris)
         state = _State(
             patterns=(Values(Var("n0"), terms),), focus="n0", counter=1
         )
@@ -143,7 +155,17 @@ class Graframe:
         return self._seed(state)
 
     def _seed(self, state: _State) -> "Selection":
-        return Selection(self.client, self.reasoning, state, profile=self.profile)
+        return Selection(
+            self.client, self.reasoning, state,
+            profile=self.profile, fuzzy=self.fuzzy, min_score=self.min_score,
+        )
+
+    def suggest(self, text: str, kind: str | None = None, *, top_k: int = 5) -> list[dict]:
+        """Preview embedding matches for ``text`` — ``[{curie, score, kind}, ...]``.
+
+        Useful for disambiguation (e.g. ``"pump"`` matches both s223 and nawi).
+        """
+        return _suggest(self.client, text, kind, top_k=top_k)
 
 
 class Selection:
@@ -155,23 +177,37 @@ class Selection:
         reasoning: Reasoning,
         state: _State,
         profile: Profile | None = None,
+        *,
+        fuzzy: bool = True,
+        min_score: float = 0.5,
     ):
         self.client = client
         self.reasoning = reasoning
         self._state = state
         self.profile = profile
+        self.fuzzy = fuzzy
+        self.min_score = min_score
 
     # ------------------------------------------------------------------
     # internal helpers
     # ------------------------------------------------------------------
     def _with(self, state: _State) -> "Selection":
-        return Selection(self.client, self.reasoning, state, profile=self.profile)
+        return Selection(
+            self.client, self.reasoning, state,
+            profile=self.profile, fuzzy=self.fuzzy, min_score=self.min_score,
+        )
 
     def _fresh(self, counter: int) -> tuple[Var, int]:
         return Var(f"n{counter}"), counter + 1
 
+    def _resolve(self, x: Any, kind: str | None) -> str:
+        """Resolve a term (URI/CURIE/name/Fuzzy) to a URI string for ``kind``."""
+        return resolve_iri(
+            self.client, x, kind=kind, fuzzy=self.fuzzy, min_score=self.min_score
+        )
+
     def _expand(self, x: Any) -> str:
-        """Resolve a CURIE/URI/URIRef to a full URI string."""
+        """Resolve a CURIE/URI/URIRef to a full URI string (no fuzzy)."""
         return _iri(self.client, x)
 
     def _step_to_path(self, step: Any, direction: str) -> Path:
@@ -183,20 +219,25 @@ class Selection:
             path = step
         elif isinstance(step, (list, tuple)):
             path = alt_of([self._atomic(s) for s in step])
-        elif isinstance(step, str):
+        elif isinstance(step, (str, Fuzzy)):
             path = self._atomic(step)
         else:
-            raise TypeError(f"step must be a str, list, or Path, got {type(step)}")
+            raise TypeError(f"step must be a str, list, Path, or like(...), got {type(step)}")
         if direction == "in":
             path = path.inverse()
         return path
 
-    def _atomic(self, s: str) -> Path:
-        if s.startswith("^") or s.startswith("~"):
-            return Pred(_iri(self.client, s[1:])).inverse()
-        return Pred(_iri(self.client, s))
+    def _atomic(self, s: Any) -> Path:
+        if isinstance(s, Fuzzy):
+            return Pred(self._resolve(s, "predicate"))
+        if isinstance(s, str) and (s.startswith("^") or s.startswith("~")):
+            return Pred(self._resolve(s[1:], "predicate")).inverse()
+        return Pred(self._resolve(s, "predicate"))
 
     def _term(self, x: Any) -> Term:
+        # value slots are literal unless explicitly wrapped in like(...)
+        if isinstance(x, Fuzzy):
+            return Iri(self._resolve(x, None))
         return _value_term(self.client, x)
 
     def _constraints(
@@ -226,14 +267,14 @@ class Selection:
             classes = is_a if isinstance(is_a, (list, tuple)) else [is_a]
             tpath = self.reasoning.type_path()
             if len(classes) == 1:
-                out.append(Exists((Triple(target, tpath, Iri(_iri(self.client, classes[0]))),)))
+                out.append(Exists((Triple(target, tpath, Iri(self._resolve(classes[0], "class"))),)))
             else:
                 tvar, counter = self._fresh(counter)
                 out.append(
                     Exists(
                         (
                             Triple(target, tpath, tvar),
-                            Values(tvar, tuple(Iri(_iri(self.client, c)) for c in classes)),
+                            Values(tvar, tuple(Iri(self._resolve(c, "class")) for c in classes)),
                         )
                     )
                 )
@@ -375,8 +416,8 @@ class Selection:
         return self._with(new)
 
     def is_(self, *uris: Any) -> "Selection":
-        """Restrict the current focus to specific node URIs/CURIEs."""
-        terms = tuple(Iri(_iri(self.client, u)) for u in uris)
+        """Restrict the current focus to specific nodes (URI/CURIE/name)."""
+        terms = tuple(Iri(self._resolve(u, None)) for u in uris)
         new = replace(self._state, patterns=self._state.patterns + (Values(Var(self._state.focus), terms),))
         return self._with(new)
 
@@ -512,6 +553,10 @@ class Selection:
     def frame(self, *, compact: bool = True) -> "pl.DataFrame":
         """Return the focus nodes as a single-column polars DataFrame."""
         return self.select("focus", compact=compact)
+
+    def suggest(self, text: str, kind: str | None = None, *, top_k: int = 5) -> list[dict]:
+        """Preview embedding matches for ``text`` — ``[{curie, score, kind}, ...]``."""
+        return _suggest(self.client, text, kind, top_k=top_k)
 
     # ------------------------------------------------------------------
     # data plane (timeseries)

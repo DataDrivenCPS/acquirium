@@ -16,6 +16,7 @@ See :mod:`acquirium.Graframe.selection` for the operator reference and
 from .algebra import Alt, Inv, Mod, Path, Pred, RawPath, Seq, parse_path, to_path
 from .facets import FacetRow, Facets
 from .profile import Profile
+from .resolve import Fuzzy, like
 from .selection import Graframe, Reasoning, Selection
 
 
@@ -35,6 +36,8 @@ __all__ = [
     "Selection",
     "Reasoning",
     "Profile",
+    "Fuzzy",
+    "like",
     "Facets",
     "FacetRow",
     "Path",

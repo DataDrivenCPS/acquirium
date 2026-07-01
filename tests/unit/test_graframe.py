@@ -10,7 +10,8 @@ import re
 
 import pytest
 
-from acquirium.Graframe import Graframe, P, Profile, Reasoning, parse_path, to_path
+from acquirium.Graframe import Graframe, P, Profile, Reasoning, like, parse_path, to_path
+from acquirium.Graframe.resolve import Fuzzy, resolve_iri
 from acquirium.Graframe.algebra import Alt, Inv, Iri, Lit, Pred, Seq, Var, Triple
 from acquirium.Graframe.facets import _facet_query, _virtual_facet
 
@@ -65,6 +66,24 @@ class FakeClient:
 
     def timeseries_info_batch(self, uris):
         return {}
+
+    # embedding matcher stub: a tiny name -> (uri, kind) lexicon
+    _LEXICON = {
+        ("sensor", "class"): "http://data.ashrae.org/standard223#Sensor",
+        ("pump", "class"): "urn:nawi-water-ontology#Pump",
+        ("observes", "predicate"): "http://data.ashrae.org/standard223#observes",
+        ("has property", "predicate"): "http://data.ashrae.org/standard223#hasProperty",
+        ("concentration", "quantity_kind"): "http://qudt.org/vocab/quantitykind/Concentration",
+    }
+
+    def resolve_concept(self, text, kind=None, context=None, min_score=0.5):
+        if text.startswith(("urn:", "http://", "https://")):
+            return text
+        return self._LEXICON.get((text.lower(), kind))
+
+    def resolve_text(self, text, kind=None, top_k=5, min_score=0.5, context=None):
+        uri = self.resolve_concept(text, kind=kind)
+        return [{"uri": uri, "score": 1.0, "kind": kind}] if uri else []
 
 
 def norm(s: str) -> str:
@@ -533,3 +552,75 @@ class TestDataBridge:
         client = FakeClient({"columns": ["point", "ref", "unit", "extunit"], "rows": []})
         d = build_data_object(Graframe(client).instances("s223:Sensor"))
         assert d.is_empty()
+
+
+# ---------------------------------------------------------------------------
+# fuzzy term resolution
+# ---------------------------------------------------------------------------
+
+S223 = PREFIXES["s223"]
+
+
+class TestResolve:
+    def _c(self):
+        return FakeClient()
+
+    def test_like_marker(self):
+        f = like("concentration", "quantity_kind")
+        assert isinstance(f, Fuzzy) and f.text == "concentration" and f.kind == "quantity_kind"
+
+    def test_uri_passthrough(self):
+        assert resolve_iri(self._c(), "urn:x", kind="class", fuzzy=True, min_score=0.5) == "urn:x"
+
+    def test_curie_expands_not_fuzzy(self):
+        assert resolve_iri(self._c(), "s223:Sensor", kind="class", fuzzy=True, min_score=0.5) == f"{S223}Sensor"
+
+    def test_bad_curie_raises_not_guessed(self):
+        with pytest.raises(Exception):
+            resolve_iri(self._c(), "nope:Thing", kind="class", fuzzy=True, min_score=0.5)
+
+    def test_natural_language_resolves_when_fuzzy(self):
+        assert resolve_iri(self._c(), "sensor", kind="class", fuzzy=True, min_score=0.5) == f"{S223}Sensor"
+
+    def test_natural_language_rejected_when_not_fuzzy(self):
+        with pytest.raises(ValueError):
+            resolve_iri(self._c(), "sensor", kind="class", fuzzy=False, min_score=0.5)
+
+    def test_unresolvable_raises_with_hint(self):
+        with pytest.raises(ValueError):
+            resolve_iri(self._c(), "wobblegonk", kind="class", fuzzy=True, min_score=0.5)
+
+    def test_fuzzy_marker_uses_its_kind(self):
+        # kind on the marker wins over the slot kind
+        got = resolve_iri(self._c(), like("concentration", "quantity_kind"), kind="class", fuzzy=True, min_score=0.5)
+        assert got == "http://qudt.org/vocab/quantitykind/Concentration"
+
+    def test_instances_natural_language(self):
+        g = Graframe(self._c())
+        assert f"<{S223}Sensor>" in g.instances("sensor").to_sparql()
+
+    def test_instances_fuzzy_off_raises(self):
+        with pytest.raises(ValueError):
+            Graframe(self._c(), fuzzy=False).instances("sensor")
+
+    def test_pivot_natural_language_predicate(self):
+        g = Graframe(self._c())
+        sel = g.instances("sensor").pivot("observes")
+        assert f"?n0 <{S223}observes> ?n1 ." in norm(sel.to_sparql())
+
+    def test_value_literal_by_default(self):
+        g = Graframe(self._c())
+        # a bare string value is a literal, not fuzzy-resolved
+        sel = g.instances("sensor").refine("s223:hasProperty", value="concentration")
+        assert 'VALUES ?n1 { "concentration" }' in norm(sel.to_sparql())
+
+    def test_value_like_resolves(self):
+        g = Graframe(self._c())
+        sel = g.instances("sensor").refine(
+            "s223:hasProperty", value=like("concentration", "quantity_kind")
+        )
+        assert "<http://qudt.org/vocab/quantitykind/Concentration>" in norm(sel.to_sparql())
+
+    def test_suggest(self):
+        out = Graframe(self._c()).suggest("sensor", kind="class")
+        assert out and out[0]["curie"] == "s223:Sensor" and out[0]["score"] == 1.0
