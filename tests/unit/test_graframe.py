@@ -63,6 +63,9 @@ class FakeClient:
 
         return _NM()
 
+    def timeseries_info_batch(self, uris):
+        return {}
+
 
 def norm(s: str) -> str:
     """Collapse whitespace for robust structural comparison."""
@@ -480,3 +483,53 @@ class TestProfile:
         g = Graframe(client, profile=prof)
         facets = g.instances("s223:Sensor").facets(by="predicate", raw=True)
         assert not any(r.is_virtual for r in facets.rows)  # no virtual edges when raw
+
+
+# ---------------------------------------------------------------------------
+# data plane bridge
+# ---------------------------------------------------------------------------
+
+HAS_EXT_REF = "https://brickschema.org/schema/Brick/ref#hasExternalReference"
+HAS_UNIT = "http://qudt.org/schema/qudt/hasUnit"
+
+
+class TestDataBridge:
+    def test_data_sparql_uses_ref_and_marks(self):
+        from acquirium.Graframe.data import _data_sparql
+
+        g = Graframe(FakeClient())
+        sel = (g.instances("s223:Sensor").mark("sensor")
+                 .pivot("s223:hasProperty").mark("prop"))
+        marks = {n: v for n, v in sel._state.marks.items() if v != sel._state.focus}
+        q = norm(_data_sparql(sel, marks))
+        assert f"?n1 <{HAS_EXT_REF}> ?gref ." in q          # focus (prop) is n1
+        assert f"OPTIONAL {{ ?n1 <{HAS_UNIT}> ?gunit . }}" in q
+        assert "OPTIONAL { ?gref <" in q                    # ext-ref unit
+        assert "(?n0 AS ?entity__sensor)" in q              # mark becomes entity col
+
+    def test_build_data_object_bindings(self):
+        from acquirium.Graframe.data import build_data_object
+
+        rows = [
+            ["urn:p1", "urn:r1", "urn:unitA", None, "urn:e1"],
+            ["urn:p2", "urn:r2", None, "urn:unitB", "urn:e1"],
+        ]
+        client = FakeClient(
+            {"columns": ["point", "ref", "unit", "extunit", "entity__sensor"], "rows": rows}
+        )
+        g = Graframe(client)
+        sel = g.instances("s223:Sensor").mark("sensor").pivot("s223:hasProperty")
+        d = build_data_object(sel)
+        assert d._entity_columns == ["entity__sensor"]
+        assert d.aliases == ["urn:p1", "urn:p2"]  # compact passthrough (no prefix match)
+        by_point = {b.point_uri: b for b in d.bindings}
+        assert by_point["urn:p1"].property_unit == "urn:unitA"
+        assert by_point["urn:p1"].ref_unit is None
+        assert by_point["urn:p2"].ref_unit == "urn:unitB"
+
+    def test_build_data_object_empty(self):
+        from acquirium.Graframe.data import build_data_object
+
+        client = FakeClient({"columns": ["point", "ref", "unit", "extunit"], "rows": []})
+        d = build_data_object(Graframe(client).instances("s223:Sensor"))
+        assert d.is_empty()
