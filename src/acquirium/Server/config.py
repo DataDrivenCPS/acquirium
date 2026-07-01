@@ -87,6 +87,46 @@ def _parse_entry(entry: object, base_dir: Path) -> OntologySource | None:
     return None
 
 
+def load_prefix_config() -> dict[str, str]:
+    """Read ``[prefixes]`` (prefix → namespace URI) from ``acquirium.toml``.
+
+    These bindings are applied authoritatively at server startup (overriding
+    any auto-generated ``ns1:``-style names), so ``/namespace/list`` and CURIE
+    expansion/compaction use the prefixes you expect (e.g. ``s223:``). Returns
+    an empty mapping when no config file or ``[prefixes]`` section is present.
+
+    Example ``acquirium.toml``::
+
+        [prefixes]
+        s223 = "http://data.ashrae.org/standard223#"
+        nawi = "urn:nawi-water-ontology#"
+    """
+    cfg_path_str = os.getenv("ACQUIRIUM_CONFIG")
+    if not cfg_path_str:
+        return {}
+    cfg_path = Path(cfg_path_str)
+    if not cfg_path.exists():
+        return {}
+    try:
+        with cfg_path.open("rb") as f:
+            data = tomllib.load(f)
+    except Exception as exc:
+        _logger.warning("failed to parse %s: %s", cfg_path, exc)
+        return {}
+
+    raw = data.get("prefixes", {})
+    if not isinstance(raw, dict):
+        _logger.warning("[prefixes] must be a table of prefix = \"uri\"; got %r", raw)
+        return {}
+    out: dict[str, str] = {}
+    for prefix, uri in raw.items():
+        if isinstance(prefix, str) and isinstance(uri, str):
+            out[prefix] = uri
+        else:
+            _logger.warning("[prefixes] ignoring non-string entry %r = %r", prefix, uri)
+    return out
+
+
 def load_ontology_config() -> OntologyConfig:
     """Read ontology settings from the acquirium.toml pointed to by
     ``ACQUIRIUM_CONFIG`` (set by the CLI). Returns an empty config when

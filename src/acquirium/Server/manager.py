@@ -122,6 +122,7 @@ class Manager:
         graph_path: str | Path | None = None,
         ontoenv_root: str | Path | None = None,
         ontology_sources: list["OntologySource"] | None = None,
+        namespace_prefixes: dict[str, str] | None = None,
         qudt_graph: Graph | None = None,
         qudt_converter: QUDTUnitConverter | None = None,
         recreate: bool = False,
@@ -175,6 +176,9 @@ class Manager:
                 env_root=ontoenv_root,
                 extra_ontology_sources=ontology_sources,
             )
+
+        if namespace_prefixes:
+            graph.bind_prefixes(namespace_prefixes)
 
         self.timescale = timescale
         self.graph_store = graph
@@ -245,7 +249,7 @@ class Manager:
         # Ontology sources are read directly from acquirium.toml —
         # ACQUIRIUM_CONFIG points at it. Keeps the environment-variable
         # surface small.
-        from acquirium.Server.config import load_ontology_config
+        from acquirium.Server.config import load_ontology_config, load_prefix_config
 
         ont_cfg = load_ontology_config()
         return cls(
@@ -256,6 +260,7 @@ class Manager:
             graph_path=os.getenv("ACQUIRIUM_GRAPH_PATH"),
             ontoenv_root=os.getenv("ACQUIRIUM_ONTOENV_ROOT"),
             ontology_sources=list(ont_cfg.sources) or None,
+            namespace_prefixes=load_prefix_config() or None,
             recreate=os.getenv("ACQUIRIUM_RECREATE", "false").lower() == "true",
         )
 
