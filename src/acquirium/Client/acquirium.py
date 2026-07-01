@@ -10,6 +10,7 @@ import inspect
 if TYPE_CHECKING:
     import polars as pl
     import pyarrow as pa
+    from acquirium.Graframe import Graframe, Reasoning
 
 from rdflib import Graph as RDFGraph, URIRef, Literal
 from rdflib.namespace import RDF, RDFS
@@ -194,6 +195,24 @@ class Acquirium:
     def query(self) -> Query:
         """Create a new empty Query bound to this Acquirium instance."""
         return Query(client=self.client)
+
+    def graph(self, reasoning: "Reasoning | None" = None) -> "Graframe":
+        """Create a Graframe root for facet-based graph exploration.
+
+        Graframe is a fluent, RDF-agnostic query surface: seed a Selection with
+        :meth:`Graframe.instances` / :meth:`Graframe.nodes`, inspect reachable
+        edges with ``.facets()``, then narrow with ``.refine()`` or move with
+        ``.pivot()``. Pass a :class:`Reasoning` profile to control entailments
+        (defaults to transitive-subclass class membership).
+
+        Example::
+
+            g = aq.graph()
+            g.instances("s223:Sensor").facets().show()
+        """
+        from acquirium.Graframe import Graframe
+
+        return Graframe(self.client, reasoning=reasoning)
 
     def find_entity(
         self,

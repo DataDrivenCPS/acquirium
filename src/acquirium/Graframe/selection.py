@@ -1,0 +1,533 @@
+"""Fluent faceted query interface over an RDF graph.
+
+Graframe ("graph frame") lets you explore graph-shaped metadata (223, Brick, the
+NAWI water ontology, ...) without writing SPARQL. You hold a **Selection** — a
+set of focus nodes carried as a bindings table with a cursor — and move through
+the graph with two symmetric operators:
+
+* :meth:`Selection.refine` — *stay* on the current nodes, keeping only those
+  that satisfy an edge condition (an existential semijoin; never multiplies
+  rows).
+* :meth:`Selection.pivot` — *move* the cursor to the neighbours reached along an
+  edge / property path (an image; the only operator that adds a column).
+
+You inspect what is reachable with :meth:`Selection.facets`, hold waypoints with
+:meth:`Selection.mark` / :meth:`Selection.to`, express correlated constraints
+with :meth:`Selection.where` / :meth:`Selection.any_of`, and pull results with
+:meth:`Selection.nodes` / :meth:`Selection.select`.
+
+The whole surface denotes a SPARQL query (see :meth:`Selection.to_sparql`); that
+denotation is the correctness anchor.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field, replace
+from typing import Any, Callable, Mapping, Sequence, TYPE_CHECKING
+
+from rdflib import URIRef
+
+from .algebra import (
+    RDF_TYPE,
+    RDFS_SUBCLASS_OF,
+    Cmp,
+    Exists,
+    Iri,
+    Lit,
+    OrExists,
+    Path,
+    Pattern,
+    Pred,
+    RawPath,
+    Term,
+    Triple,
+    Values,
+    Var,
+    _is_uri,
+    alt_of,
+    patterns_vars,
+)
+
+if TYPE_CHECKING:
+    import polars as pl
+    from .facets import Facets
+
+StepArg = "str | Path | Sequence[str]"
+
+
+@dataclass(frozen=True)
+class Reasoning:
+    """Which entailments to fold into queries.
+
+    * ``subclass`` — treat ``rdf:type`` as ``rdf:type/rdfs:subClassOf*`` so
+      ``instances(Sensor)`` also matches instances of subclasses of Sensor.
+      This is on by default; it is usually what you want for 223/Brick/water.
+    * ``subproperty`` / ``inverse`` — reserved; not yet implemented. Setting
+      either raises so behaviour is never silently wrong.
+    """
+
+    subclass: bool = True
+    subproperty: bool = False
+    inverse: bool = False
+
+    def __post_init__(self) -> None:
+        if self.subproperty or self.inverse:
+            raise NotImplementedError(
+                "Reasoning.subproperty / Reasoning.inverse are not implemented yet"
+            )
+
+    def type_path(self) -> Path:
+        if self.subclass:
+            return RawPath(f"<{RDF_TYPE}>/<{RDFS_SUBCLASS_OF}>*")
+        return RawPath(f"<{RDF_TYPE}>")
+
+
+@dataclass(frozen=True)
+class _State:
+    """Immutable query state: a conjunctive pattern + cursor + waypoints."""
+
+    patterns: tuple[Pattern, ...] = ()
+    focus: str = "n0"
+    marks: Mapping[str, str] = field(default_factory=dict)
+    counter: int = 1
+
+
+class Graframe:
+    """Root/session object: builds seed selections bound to a client."""
+
+    def __init__(self, client: Any, reasoning: Reasoning | None = None):
+        self.client = client
+        self.reasoning = reasoning or Reasoning()
+
+    # -- seeds ----------------------------------------------------------
+    def instances(self, cls: Any) -> "Selection":
+        """Selection of all instances of ``cls`` (a CURIE, URI, or URIRef).
+
+        With the default reasoning profile this includes instances of
+        subclasses of ``cls``.
+        """
+        iri = _iri(self.client, cls)
+        state = _State(
+            patterns=(Triple(Var("n0"), self.reasoning.type_path(), Iri(iri)),),
+            focus="n0",
+            counter=1,
+        )
+        return Selection(self.client, self.reasoning, state)
+
+    def nodes(self, *uris: Any) -> "Selection":
+        """Selection seeded from one or more explicit node URIs/CURIEs."""
+        if not uris:
+            raise ValueError("nodes: provide at least one URI/CURIE")
+        terms = tuple(Iri(_iri(self.client, u)) for u in uris)
+        state = _State(
+            patterns=(Values(Var("n0"), terms),), focus="n0", counter=1
+        )
+        return Selection(self.client, self.reasoning, state)
+
+    def everything(self) -> "Selection":
+        """Selection of every node that appears as a subject in the graph."""
+        state = _State(
+            patterns=(Triple(Var("n0"), RawPath("?__gp0"), Var("n1")),),
+            focus="n0",
+            counter=2,
+        )
+        return Selection(self.client, self.reasoning, state)
+
+
+class Selection:
+    """An immutable cursor over a set of graph nodes. Operators return copies."""
+
+    def __init__(self, client: Any, reasoning: Reasoning, state: _State):
+        self.client = client
+        self.reasoning = reasoning
+        self._state = state
+
+    # ------------------------------------------------------------------
+    # internal helpers
+    # ------------------------------------------------------------------
+    def _with(self, state: _State) -> "Selection":
+        return Selection(self.client, self.reasoning, state)
+
+    def _fresh(self, counter: int) -> tuple[Var, int]:
+        return Var(f"n{counter}"), counter + 1
+
+    def _step_to_path(self, step: Any, direction: str) -> Path:
+        if direction not in ("out", "in"):
+            raise ValueError("direction must be 'out' or 'in'")
+        if isinstance(step, Path):
+            path = step
+        elif isinstance(step, (list, tuple)):
+            path = alt_of([self._atomic(s) for s in step])
+        elif isinstance(step, str):
+            path = self._atomic(step)
+        else:
+            raise TypeError(f"step must be a str, list, or Path, got {type(step)}")
+        if direction == "in":
+            path = path.inverse()
+        return path
+
+    def _atomic(self, s: str) -> Path:
+        if s.startswith("^") or s.startswith("~"):
+            return Pred(_iri(self.client, s[1:])).inverse()
+        return Pred(_iri(self.client, s))
+
+    def _term(self, x: Any) -> Term:
+        return _value_term(self.client, x)
+
+    def _constraints(
+        self,
+        target: Var,
+        counter: int,
+        *,
+        value: Any = None,
+        is_a: Any = None,
+        min: Any = None,
+        max: Any = None,
+        in_: Sequence[Any] | None = None,
+        matching: "Selection | None" = None,
+    ) -> tuple[list[Pattern], int]:
+        """Build the object-filter (φ) patterns constraining ``target``."""
+        out: list[Pattern] = []
+
+        vals: list[Any] = []
+        if value is not None:
+            vals.extend(value if isinstance(value, (list, tuple)) else [value])
+        if in_ is not None:
+            vals.extend(in_)
+        if vals:
+            out.append(Values(target, tuple(self._term(v) for v in vals)))
+
+        if is_a is not None:
+            classes = is_a if isinstance(is_a, (list, tuple)) else [is_a]
+            tpath = self.reasoning.type_path()
+            if len(classes) == 1:
+                out.append(Exists((Triple(target, tpath, Iri(_iri(self.client, classes[0]))),)))
+            else:
+                tvar, counter = self._fresh(counter)
+                out.append(
+                    Exists(
+                        (
+                            Triple(target, tpath, tvar),
+                            Values(tvar, tuple(Iri(_iri(self.client, c)) for c in classes)),
+                        )
+                    )
+                )
+
+        if min is not None:
+            out.append(Cmp(target, ">=", Lit(min)))
+        if max is not None:
+            out.append(Cmp(target, "<=", Lit(max)))
+
+        if matching is not None:
+            block, counter = _inline(matching._state, target.name, counter)
+            out.append(Exists(block))
+
+        return out, counter
+
+    def _branch(self, fn: Callable[["Selection"], "Selection"]) -> tuple[tuple[Pattern, ...], int]:
+        """Run a sub-pipeline anchored at the current focus; return its patterns."""
+        sub_state = _State(
+            patterns=(),
+            focus=self._state.focus,
+            marks=self._state.marks,
+            counter=self._state.counter,
+        )
+        res = fn(self._with(sub_state))
+        return res._state.patterns, res._state.counter
+
+    # ------------------------------------------------------------------
+    # navigation
+    # ------------------------------------------------------------------
+    def refine(
+        self,
+        step: Any,
+        *,
+        direction: str = "out",
+        value: Any = None,
+        is_a: Any = None,
+        min: Any = None,
+        max: Any = None,
+        in_: Sequence[Any] | None = None,
+        matching: "Selection | None" = None,
+    ) -> "Selection":
+        """Keep only current nodes that have an edge ``step`` satisfying φ.
+
+        Existential semijoin — the cursor does not move and rows never multiply.
+        """
+        path = self._step_to_path(step, direction)
+        obj, counter = self._fresh(self._state.counter)
+        body: list[Pattern] = [Triple(Var(self._state.focus), path, obj)]
+        extra, counter = self._constraints(
+            obj, counter, value=value, is_a=is_a, min=min, max=max, in_=in_, matching=matching
+        )
+        body.extend(extra)
+        new = replace(
+            self._state,
+            patterns=self._state.patterns + (Exists(tuple(body)),),
+            counter=counter,
+        )
+        return self._with(new)
+
+    def without(self, step: Any, *, direction: str = "out", **filters: Any) -> "Selection":
+        """Keep only current nodes that have *no* edge ``step`` satisfying φ."""
+        path = self._step_to_path(step, direction)
+        obj, counter = self._fresh(self._state.counter)
+        body: list[Pattern] = [Triple(Var(self._state.focus), path, obj)]
+        extra, counter = self._constraints(obj, counter, **filters)
+        body.extend(extra)
+        new = replace(
+            self._state,
+            patterns=self._state.patterns + (Exists(tuple(body), negated=True),),
+            counter=counter,
+        )
+        return self._with(new)
+
+    def pivot(
+        self,
+        step: Any,
+        *,
+        direction: str = "out",
+        value: Any = None,
+        is_a: Any = None,
+        min: Any = None,
+        max: Any = None,
+        in_: Sequence[Any] | None = None,
+        matching: "Selection | None" = None,
+    ) -> "Selection":
+        """Move the cursor to the neighbours reached along ``step`` (adds a column)."""
+        path = self._step_to_path(step, direction)
+        obj, counter = self._fresh(self._state.counter)
+        new_patterns: list[Pattern] = [Triple(Var(self._state.focus), path, obj)]
+        extra, counter = self._constraints(
+            obj, counter, value=value, is_a=is_a, min=min, max=max, in_=in_, matching=matching
+        )
+        new_patterns.extend(extra)
+        new = replace(
+            self._state,
+            patterns=self._state.patterns + tuple(new_patterns),
+            focus=obj.name,
+            counter=counter,
+        )
+        return self._with(new)
+
+    def where(self, fn: Callable[["Selection"], "Selection"]) -> "Selection":
+        """Correlated existential constraint: focus must satisfy the sub-pipeline."""
+        body, counter = self._branch(fn)
+        new = replace(
+            self._state,
+            patterns=self._state.patterns + (Exists(body),),
+            counter=counter,
+        )
+        return self._with(new)
+
+    def any_of(self, *fns: Callable[["Selection"], "Selection"]) -> "Selection":
+        """Disjunctive constraint: focus must satisfy at least one sub-pipeline."""
+        if not fns:
+            raise ValueError("any_of: provide at least one branch")
+        branches: list[tuple[Pattern, ...]] = []
+        counter = self._state.counter
+        for fn in fns:
+            sub_state = _State(
+                patterns=(), focus=self._state.focus, marks=self._state.marks, counter=counter
+            )
+            res = fn(self._with(sub_state))
+            branches.append(res._state.patterns)
+            counter = res._state.counter
+        new = replace(
+            self._state,
+            patterns=self._state.patterns + (OrExists(tuple(branches)),),
+            counter=counter,
+        )
+        return self._with(new)
+
+    # ------------------------------------------------------------------
+    # focus filters (φ applied to the current node)
+    # ------------------------------------------------------------------
+    def is_a(self, cls: Any) -> "Selection":
+        """Keep only current nodes whose type is ``cls`` (or a subclass)."""
+        extra, counter = self._constraints(Var(self._state.focus), self._state.counter, is_a=cls)
+        new = replace(self._state, patterns=self._state.patterns + tuple(extra), counter=counter)
+        return self._with(new)
+
+    def is_(self, *uris: Any) -> "Selection":
+        """Restrict the current focus to specific node URIs/CURIEs."""
+        terms = tuple(Iri(_iri(self.client, u)) for u in uris)
+        new = replace(self._state, patterns=self._state.patterns + (Values(Var(self._state.focus), terms),))
+        return self._with(new)
+
+    def in_range(self, *, min: Any = None, max: Any = None) -> "Selection":
+        """Constrain the current (literal) focus to a numeric range."""
+        pats: list[Pattern] = []
+        if min is not None:
+            pats.append(Cmp(Var(self._state.focus), ">=", Lit(min)))
+        if max is not None:
+            pats.append(Cmp(Var(self._state.focus), "<=", Lit(max)))
+        new = replace(self._state, patterns=self._state.patterns + tuple(pats))
+        return self._with(new)
+
+    # ------------------------------------------------------------------
+    # waypoints
+    # ------------------------------------------------------------------
+    def mark(self, name: str) -> "Selection":
+        """Name the current focus column so it can be returned or revisited."""
+        marks = dict(self._state.marks)
+        marks[name] = self._state.focus
+        return self._with(replace(self._state, marks=marks))
+
+    def to(self, name: str) -> "Selection":
+        """Move the cursor back to a previously marked column."""
+        if name not in self._state.marks:
+            raise KeyError(f"to: no mark named {name!r} (have: {sorted(self._state.marks)})")
+        return self._with(replace(self._state, focus=self._state.marks[name]))
+
+    # ------------------------------------------------------------------
+    # facets
+    # ------------------------------------------------------------------
+    def facets(
+        self,
+        by: str = "predicate",
+        *,
+        direction: str = "both",
+        limit: int = 50,
+    ) -> "Facets":
+        """Summarise the neighbourhood of the current nodes — the next moves.
+
+        ``by`` is one of ``"predicate"``, ``"pred-obj"``, ``"pred-obj-type"``.
+        ``direction`` is ``"out"``, ``"in"``, or ``"both"``.
+        """
+        from .facets import compute_facets
+
+        return compute_facets(self, by=by, direction=direction, limit=limit)
+
+    # ------------------------------------------------------------------
+    # compilation / terminals
+    # ------------------------------------------------------------------
+    def _col_var(self, name: str) -> str:
+        if name in ("focus", self._state.focus):
+            return self._state.focus
+        if name in self._state.marks:
+            return self._state.marks[name]
+        raise KeyError(f"unknown column {name!r} (marks: {sorted(self._state.marks)})")
+
+    def _where_body(self) -> str:
+        return "\n  ".join(p.render() for p in self._state.patterns)
+
+    def to_sparql(self, *columns: str) -> str:
+        """Compile this selection to a SPARQL ``SELECT DISTINCT`` query."""
+        if columns:
+            projections = [(self._col_var(c), c) for c in columns]
+        else:
+            projections = [(self._state.focus, "focus")]
+        select = " ".join(f"(?{v} AS ?{alias})" for v, alias in projections)
+        return f"SELECT DISTINCT {select}\nWHERE {{\n  {self._where_body()}\n}}"
+
+    def _run(self, *columns: str) -> dict:
+        return self.client.sparql_query(self.to_sparql(*columns), use_union=True)
+
+    def nodes(self) -> list[str]:
+        """Return the focus node URIs as a sorted list of strings."""
+        res = self._run()
+        out: set[str] = set()
+        for row in res.get("rows", []):
+            if row and isinstance(row[0], str):
+                out.add(row[0])
+        return sorted(out)
+
+    def count(self) -> int:
+        """Number of distinct focus nodes."""
+        sparql = (
+            f"SELECT (COUNT(DISTINCT ?{self._state.focus}) AS ?count)\n"
+            f"WHERE {{\n  {self._where_body()}\n}}"
+        )
+        res = self.client.sparql_query(sparql, use_union=True)
+        rows = res.get("rows", [])
+        if not rows:
+            return 0
+        try:
+            return int(rows[0][0])
+        except (TypeError, ValueError):
+            return 0
+
+    def select(self, *columns: str, compact: bool = True) -> "pl.DataFrame":
+        """Project marked columns (+ current focus) into a polars DataFrame."""
+        import polars as pl
+
+        if not columns:
+            columns = ("focus",)
+        res = self._run(*columns)
+        cols = res.get("columns", list(columns))
+        rows = res.get("rows", [])
+        df = pl.DataFrame(rows, schema=list(cols), orient="row")
+        if compact:
+            df = df.with_columns(
+                pl.col(c).map_elements(self._compact, return_dtype=pl.String, skip_nulls=False)
+                for c in cols
+            )
+        return df
+
+    def frame(self, *, compact: bool = True) -> "pl.DataFrame":
+        """Return the focus nodes as a single-column polars DataFrame."""
+        return self.select("focus", compact=compact)
+
+    def _compact(self, x: Any) -> str | None:
+        if x is None:
+            return None
+        try:
+            return self.client.compact_uri(x)
+        except Exception:
+            return str(x)
+
+    def __repr__(self) -> str:
+        marks = ",".join(sorted(self._state.marks)) or "-"
+        return f"<Selection focus={self._state.focus} marks=[{marks}] patterns={len(self._state.patterns)}>"
+
+
+# ---------------------------------------------------------------------------
+# module helpers
+# ---------------------------------------------------------------------------
+
+
+def _iri(client: Any, x: Any) -> str:
+    """Resolve a CURIE / URI / URIRef to a full URI string."""
+    if isinstance(x, URIRef):
+        return str(x)
+    s = str(x)
+    if _is_uri(s):
+        return s
+    return client.expand_uri(s)
+
+
+def _value_term(client: Any, x: Any) -> Term:
+    """Coerce a filter value: URIs/CURIEs → IRIs, everything else → literals."""
+    if isinstance(x, Term):
+        return x
+    if isinstance(x, URIRef):
+        return Iri(str(x))
+    if _is_uri(x):
+        return Iri(str(x))
+    if isinstance(x, str) and ":" in x:
+        try:
+            u = client.expand_uri(x)
+            if _is_uri(u):
+                return Iri(u)
+        except Exception:
+            pass
+    return Lit(x)
+
+
+def _inline(state: _State, target_name: str, counter: int) -> tuple[tuple[Pattern, ...], int]:
+    """Rename a selection's patterns so its focus becomes ``target_name``.
+
+    All other variables are remapped to fresh names starting at ``counter`` to
+    avoid collisions with the enclosing query. Used for membership joins
+    (``matching=``).
+    """
+    allvars = patterns_vars(state.patterns) | {state.focus}
+    mapping: dict[str, str] = {state.focus: target_name}
+    for v in sorted(allvars):
+        if v == state.focus:
+            continue
+        mapping[v] = f"n{counter}"
+        counter += 1
+    renamed = tuple(p.rename(mapping) for p in state.patterns)
+    return renamed, counter

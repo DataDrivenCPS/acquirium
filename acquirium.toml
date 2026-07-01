@@ -66,6 +66,23 @@ recreate = false
 #     as     = "https://qudt.org/vocab/unit" },
 # ]
 
+# ---------------------------------------------------------------------------
+# Namespace prefixes (prefix -> namespace URI).
+#
+# Bound authoritatively at server startup (override=True), so they win over
+# any auto-generated `ns1:`-style names and are what `/namespace/list`,
+# CURIE expansion, and CURIE compaction use. Write queries like
+# `s223:Sensor` instead of the full URI regardless of what prefixes the
+# loaded RDF happened to declare.
+# ---------------------------------------------------------------------------
+[prefixes]
+s223   = "http://data.ashrae.org/standard223#"
+nawi   = "urn:nawi-water-ontology#"
+qudt   = "http://qudt.org/schema/qudt/"
+qk     = "http://qudt.org/vocab/quantitykind/"
+unit   = "http://qudt.org/vocab/unit/"
+brick  = "https://brickschema.org/schema/Brick#"
+
 [driver]
 # Defaults applied to all drivers — used by `acquirium run` and [[drivers]] entries.
 server_url  = "localhost"

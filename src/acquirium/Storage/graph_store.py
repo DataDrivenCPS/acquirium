@@ -507,7 +507,25 @@ class OxigraphGraphStore:
 
     def namespace_manager(self) -> NamespaceManager :
         return self.query_dataset.namespace_manager
-    
+
+    def bind_prefixes(self, mapping: dict[str, str]) -> None:
+        """Authoritatively bind prefix → namespace URIs (override=True).
+
+        Used at startup to apply the operator-controlled ``[prefixes]`` table
+        from acquirium.toml, so these names win over any auto-generated ones
+        and surface consistently in ``/namespace/list``.
+        """
+        if not mapping:
+            return
+        main = self._source_main_graph()
+        for prefix, ns_uri in mapping.items():
+            try:
+                main.bind(prefix, ns_uri, override=True)
+                self.query_dataset.namespace_manager.bind(prefix, ns_uri, override=True)
+                self.source_dataset.namespace_manager.bind(prefix, ns_uri, override=True)
+            except Exception:
+                _logger.warning("bind_prefixes failed for %s=%s", prefix, ns_uri, exc_info=True)
+
     # -------------------- helpers --------------------
     def _materialize_point(self, subject: URIRef) -> Point:
         main_graph = self._source_main_graph()
