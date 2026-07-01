@@ -10,9 +10,9 @@ import re
 
 import pytest
 
-from acquirium.Graframe import Graframe, P, Reasoning
+from acquirium.Graframe import Graframe, P, Profile, Reasoning, parse_path, to_path
 from acquirium.Graframe.algebra import Alt, Inv, Iri, Lit, Pred, Seq, Var, Triple
-from acquirium.Graframe.facets import _facet_query
+from acquirium.Graframe.facets import _facet_query, _virtual_facet
 
 RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
 SUBCLASS = "http://www.w3.org/2000/01/rdf-schema#subClassOf"
@@ -53,6 +53,15 @@ class FakeClient:
     def sparql_query(self, sparql, use_union=True):
         self.last_query = sparql
         return self._result
+
+    def namespace_manager(self):
+        prefixes = PREFIXES
+
+        class _NM:
+            def namespaces(self):
+                return [(p, u) for p, u in prefixes.items()]
+
+        return _NM()
 
 
 def norm(s: str) -> str:
@@ -348,3 +357,126 @@ class TestFacets:
     def test_facets_invalid_by(self, g):
         with pytest.raises(ValueError):
             g.instances("s223:Sensor").facets(by="bogus")
+
+
+# ---------------------------------------------------------------------------
+# path parsing
+# ---------------------------------------------------------------------------
+
+
+class TestPathParsing:
+    def _expand(self, x):
+        return FakeClient().expand_uri(x)
+
+    def test_plus_path(self):
+        p = parse_path("s223:connectedTo+", self._expand)
+        assert p.render() == f"<{PREFIXES['s223']}connectedTo>+"
+
+    def test_sequence(self):
+        p = parse_path("s223:hasProperty/qudt:hasQuantityKind", self._expand)
+        assert p.render() == f"<{PREFIXES['s223']}hasProperty>/<{PREFIXES['qudt']}hasQuantityKind>"
+
+    def test_alternation_and_inverse(self):
+        p = parse_path("^s223:a|s223:b", self._expand)
+        # inverse is a composite path, so it's parenthesized inside the alternation
+        assert p.render() == f"(^<{PREFIXES['s223']}a>)|<{PREFIXES['s223']}b>"
+
+    def test_grouping(self):
+        p = parse_path("s223:a/(s223:b|s223:c)", self._expand)
+        assert p.render() == f"<{PREFIXES['s223']}a>/(<{PREFIXES['s223']}b>|<{PREFIXES['s223']}c>)"
+
+    def test_to_path_accepts_builder_and_list(self):
+        assert to_path(P(PREFIXES["s223"] + "x").plus(), self._expand).render() == f"<{PREFIXES['s223']}x>+"
+        assert to_path(["s223:a", "s223:b"], self._expand).render() == (
+            f"<{PREFIXES['s223']}a>|<{PREFIXES['s223']}b>"
+        )
+
+
+# ---------------------------------------------------------------------------
+# profiles
+# ---------------------------------------------------------------------------
+
+
+class TestProfile:
+    def _expand(self, x):
+        return FakeClient().expand_uri(x)
+
+    def test_base_hides_schema_namespaces(self):
+        base = Profile.base()
+        assert "rdf:" in base.deny and "sh:" in base.deny
+        assert "sh:NodeShape" in base.deny_types
+
+    def test_with_merges(self):
+        p = Profile.base().with_(allow=["s223:"], edges={"downstream": "s223:connectedTo+"})
+        assert "s223:" in p.allow
+        assert "rdf:" in p.deny  # inherited
+        assert p.edges["downstream"] == "s223:connectedTo+"
+
+    def test_predicate_filter_namespace_and_exact(self):
+        prof = Profile(allow=["s223:", "qudt:hasQuantityKind"], deny=["s223:cnx"])
+        f = prof.predicate_filter("fp", PREFIXES, self._expand)
+        assert f'STRSTARTS(STR(?fp), "{PREFIXES["s223"]}")' in f
+        assert f"?fp IN (<{PREFIXES['qudt']}hasQuantityKind>)" in f
+        assert f"!(?fp IN (<{PREFIXES['s223']}cnx>))" in f
+
+    def test_no_filter_when_empty(self):
+        assert Profile().predicate_filter("fp", PREFIXES, self._expand) is None
+
+    def test_multi_term_allow_is_parenthesized(self):
+        # regression: && binds tighter than ||, so a multi-term allow must be
+        # wrapped or the deny only applies to the last allow term.
+        prof = Profile(allow=["s223:", "nawi:"], deny=["s223:cnx"])
+        f = prof.predicate_filter("fp", PREFIXES, self._expand)
+        assert f.startswith("FILTER((")
+        assert ") && !(" in f
+
+    def test_named_edge_used_in_pivot(self):
+        prof = Profile(edges={"downstream": "s223:connectedTo+"})
+        g = Graframe(FakeClient(), profile=prof)
+        sel = g.instances("s223:Sensor").pivot("downstream")
+        assert f"?n0 <{PREFIXES['s223']}connectedTo>+ ?n1 ." in norm(sel.to_sparql())
+
+    def test_named_edge_in_refine(self):
+        prof = Profile(edges={"measures": "s223:hasProperty"})
+        g = Graframe(FakeClient(), profile=prof)
+        sel = g.instances("s223:Sensor").refine("measures", value="qk:Pressure")
+        assert f"FILTER EXISTS {{ ?n0 <{PREFIXES['s223']}hasProperty> ?n1 ." in norm(sel.to_sparql())
+
+    def test_facets_apply_predicate_filter(self):
+        prof = Profile(allow=["s223:"])
+        g = Graframe(FakeClient(), profile=prof)
+        q = norm(_facet_query(
+            g.instances("s223:Sensor"), by="predicate", direction="out", limit=10,
+            pred_filter=prof.predicate_filter("fp", PREFIXES, g.instances("s223:Sensor")._expand),
+        ))
+        assert f'STRSTARTS(STR(?fp), "{PREFIXES["s223"]}")' in q
+        assert "FILTER((" in q
+
+    def test_virtual_facet_query_uses_path(self):
+        client = FakeClient({"columns": ["support", "edges"], "rows": []})
+        g = Graframe(client, profile=Profile(edges={"downstream": "s223:connectedTo+"}))
+        sel = g.instances("s223:Sensor")
+        _virtual_facet(sel, "downstream", to_path("s223:connectedTo+", sel._expand), by="predicate", limit=10)
+        assert f"?n0 <{PREFIXES['s223']}connectedTo>+ ?fo ." in norm(client.last_query)
+
+    def test_virtual_edges_surface_in_facets(self):
+        class VClient(FakeClient):
+            def sparql_query(self, sparql, use_union=True):
+                self.last_query = sparql
+                if "?fp" in sparql:  # atomic predicate facet
+                    return {"columns": ["fp", "support", "edges"], "rows": [["urn:p", 2, 2]]}
+                return {"columns": ["support", "edges"], "rows": [[5, 7]]}  # virtual edge
+
+        g = Graframe(VClient(), profile=Profile(edges={"downstream": "s223:connectedTo+"}))
+        facets = g.instances("s223:Sensor").facets(by="predicate", direction="out")
+        assert any(
+            r.is_virtual and r.predicate == "downstream" and r.support == 5
+            for r in facets.rows
+        )
+
+    def test_raw_bypasses_profile(self):
+        prof = Profile(allow=["s223:"], edges={"downstream": "s223:connectedTo+"})
+        client = FakeClient({"columns": ["fp", "support", "edges"], "rows": [["urn:p", 1, 1]]})
+        g = Graframe(client, profile=prof)
+        facets = g.instances("s223:Sensor").facets(by="predicate", raw=True)
+        assert not any(r.is_virtual for r in facets.rows)  # no virtual edges when raw

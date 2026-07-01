@@ -13,8 +13,9 @@ See :mod:`acquirium.Graframe.selection` for the operator reference and
 :mod:`acquirium.Graframe.algebra` for the SPARQL compilation core.
 """
 
-from .algebra import Alt, Inv, Mod, Path, Pred, RawPath, Seq
+from .algebra import Alt, Inv, Mod, Path, Pred, RawPath, Seq, parse_path, to_path
 from .facets import FacetRow, Facets
+from .profile import Profile
 from .selection import Graframe, Reasoning, Selection
 
 
@@ -33,6 +34,7 @@ __all__ = [
     "Graframe",
     "Selection",
     "Reasoning",
+    "Profile",
     "Facets",
     "FacetRow",
     "Path",
@@ -42,5 +44,7 @@ __all__ = [
     "Alt",
     "Mod",
     "RawPath",
+    "parse_path",
+    "to_path",
     "P",
 ]
