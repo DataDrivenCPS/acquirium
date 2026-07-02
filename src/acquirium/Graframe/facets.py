@@ -29,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Sequence
 
-from .algebra import Path, to_path
+from .algebra import Path, _is_uri, to_path
 from .profile import Profile
 
 if TYPE_CHECKING:
@@ -126,10 +126,7 @@ class Facets:
 
         data = {
             "direction": [r.direction for r in self.rows],
-            "predicate": [
-                r.predicate if r.is_virtual else self._compact(r.predicate)
-                for r in self.rows
-            ],
+            "predicate": [self._display_predicate(r) for r in self.rows],
         }
         if self.by != "predicate":
             data["object" if self.by == "pred-obj" else "object_type"] = [
@@ -155,7 +152,7 @@ class Facets:
         table.add_column("edges", justify="right")
 
         for r in self.rows[:limit]:
-            pred = r.predicate if r.is_virtual else self._compact(r.predicate)
+            pred = self._display_predicate(r)
             cells = [("↳ virtual" if r.is_virtual else r.direction), pred]
             if self.by != "predicate":
                 cells.append(self._compact(r.key))
@@ -163,6 +160,19 @@ class Facets:
             table.add_row(*cells)
         Console().print(table)
         return self
+
+    def _display_predicate(self, r: FacetRow) -> str:
+        """Compacted predicate, ``^``-prefixed for ``in`` rows.
+
+        The ``^`` matches this codebase's inverse-path syntax, so the printed
+        value can be pasted straight into ``follow()``/``having()`` to walk
+        the reverse edge. Uncompacted full URIs get ``<>``-wrapped so the
+        result still parses as a single inverse-predicate path.
+        """
+        pred = r.predicate if r.is_virtual else self._compact(r.predicate)
+        if r.direction != "in":
+            return pred
+        return f"^<{pred}>" if _is_uri(pred) else f"^{pred}"
 
     def _compact(self, x: Any) -> str:
         if x is None:
