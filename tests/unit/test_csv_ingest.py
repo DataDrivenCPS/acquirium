@@ -318,6 +318,88 @@ def test_auto_detects_format(tmp_path, cols, expected):
     assert driver._detect_format(pl.DataFrame(cols)) == expected
 
 
+# ------------------------------------------------------------------ ragged rows
+
+
+def _ragged_csv(tmp_path: Path) -> Path:
+    p = tmp_path / "ragged.csv"
+    p.write_text(
+        "time,temp,rh\n"
+        "2024-01-01T00:00:00Z,22.5,55.0,99.9\n"  # extra cell
+        "2024-01-02T00:00:00Z,23.0\n"            # missing cell
+        "2024-01-03T00:00:00Z,24.0,60.0\n"       # well-formed
+    )
+    return p
+
+
+def test_ragged_rows_ignored_by_default(tmp_path):
+    """Default: extra cells are dropped, missing cells become null; rows are kept."""
+    driver = make_driver(tmp_path=tmp_path)
+    driver.setup()
+    batch, rows = driver.parse_file(_ragged_csv(tmp_path))
+    assert rows == 3
+    assert [v for _, v in batch["temp"]] == [22.5, 23.0, 24.0]
+    assert [v for _, v in batch["rh"]] == [55.0, 60.0]  # null from short row dropped
+
+
+def test_ragged_lines_skip_drops_whole_rows(tmp_path):
+    driver = make_driver({"ragged_lines": "skip"}, tmp_path=tmp_path)
+    driver.setup()
+    batch, rows = driver.parse_file(_ragged_csv(tmp_path))
+    assert rows == 1
+    assert batch["temp"] == [(datetime(2024, 1, 3, tzinfo=timezone.utc), 24.0)]
+    assert batch["rh"] == [(datetime(2024, 1, 3, tzinfo=timezone.utc), 60.0)]
+
+
+def test_ragged_lines_error_raises_on_extra_cells(tmp_path):
+    driver = make_driver({"ragged_lines": "error"}, tmp_path=tmp_path)
+    driver.setup()
+    with pytest.raises(pl.exceptions.ComputeError, match="more fields"):
+        driver.parse_file(_ragged_csv(tmp_path))
+
+
+def test_ragged_lines_invalid_value_raises(tmp_path):
+    driver = make_driver({"ragged_lines": "explode"}, tmp_path=tmp_path)
+    driver.setup()
+    with pytest.raises(ValueError, match="ragged_lines"):
+        driver.parse_file(_ragged_csv(tmp_path))
+
+
+# ------------------------------------------------------------------ header auto-detection
+
+
+def test_header_contains_skips_banner_rows(tmp_path):
+    p = tmp_path / "banner.csv"
+    p.write_text(
+        "EXPORT from PLC, station 4\n"
+        "generated 2024-01-05\n"
+        "time,temp\n"
+        "2024-01-01T00:00:00Z,22.5\n"
+    )
+    driver = make_driver({"header_contains": ["time", "temp"]}, tmp_path=tmp_path)
+    driver.setup()
+    batch, rows = driver.parse_file(p)
+    assert rows == 1
+    assert batch["temp"] == [(datetime(2024, 1, 1, tzinfo=timezone.utc), 22.5)]
+
+
+def test_header_contains_handles_file_without_banner(tmp_path):
+    driver = make_driver({"header_contains": ["time", "temp"]}, tmp_path=tmp_path)
+    driver.setup()
+    batch, rows = driver.parse_file(_wide_csv(tmp_path))
+    assert rows == 2
+    assert batch["temp"][0][1] == 22.5
+
+
+def test_header_contains_missing_header_raises(tmp_path):
+    p = tmp_path / "no_header.csv"
+    p.write_text("just,some,cells\n1,2,3\n")
+    driver = make_driver({"header_contains": ["time", "temp"]}, tmp_path=tmp_path)
+    driver.setup()
+    with pytest.raises(ValueError, match="no header row"):
+        driver.parse_file(p)
+
+
 # ------------------------------------------------------------------ TSV support
 
 
