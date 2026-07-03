@@ -92,19 +92,19 @@ make down                            # stop
 
 ## WaterTAP integration
 
-The `watertap` extra installs the Python packages needed for the built-in WaterTAP driver:
+**The [WaterTAP deployment](./deployments/WATERTAP/README.md) is the recommended
+starting point** — it walks you through cloning the repo, installing (uv **or**
+pip), and running Acquirium against physically realistic simulated plant data,
+with example notebooks. Start there.
+
+In short, the `watertap` extra installs the Python packages needed for the
+built-in WaterTAP driver, plus a one-time install of native solver extensions:
 
 ```bash
 pip install "acquirium[watertap]"
-acquirium server --config acquirium.toml   # with a [[drivers]] entry for WaterTAP
-```
-
-Some WaterTAP setups also require native extensions that are not installed by the extra:
-
-```bash
-pyomo download-extensions
-python -m pip install setuptools && pyomo build-extensions
-idaes get-extensions
+idaes get-extensions                        # native IDAES/IPOPT solver binaries
+# with uv: uv sync --extra watertap && uv run idaes get-extensions
+acquirium server --config acquirium.toml    # with a [[drivers]] entry for WaterTAP
 ```
 
 For a full demo (WaterTAP + streaming simulator + API examples):
@@ -112,7 +112,7 @@ For a full demo (WaterTAP + streaming simulator + API examples):
 ```bash
 make watertap-up
 uv run scripts/api_example.py
-# or open notebooks/watertap-single-pump.ipynb
+# or open the notebooks in notebooks/watertap/
 make watertap-down
 ```
 

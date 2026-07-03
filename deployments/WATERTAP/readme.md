@@ -10,30 +10,93 @@ There are two models and a set of generic, model-agnostic tools that drive any
 of them.
 
 ## Quick Start
-1. create and activate a fresh virtual environment: `python -m venv .venv && source .venv/bin/activate` (Linux/macOS) or `.venv\Scripts\activate` (Windows). **Requires Python 3.12**+.
-    - Alternatively you can use the [uv package manager](https://docs.astral.sh/uv/) with `uv init --python 3.12`
-2. Install Acquirium from PyPI: `pip install acquirium[watertap]`.
-    - Alternatively: `uv add acquirium[watertap]`
-3. Start the server (plus any drivers listed in the config), from the repo root:
-    - `acquirium server --config deployments/WATERTAP/scripts/acquirium.toml`.
-    - Alternatively, `uv run acquirium server --config deployments/WATERTAP/scripts/acquirium.toml`.
-4. Verify it's up by opening [`http://localhost:8000/docs`](http://localhost:8000/docs) (or whichever host/port your config sets) in a browser.
-    - Alternatively: `curl localhost:8000/health` from another terminal
-    - Or using Python session or notebook, run:
-    ```
-    from acquirium import Acquirium 
-    acq = Acquirium(server_url="localhost", server_port=8000, use_ssl=False)
-    ```
-5. We distribute our examples with jupyter notebooks. There're multiple ways to run a jupyter notebook:
-    - If you used uv for initial setup: `uv run --with jupyter jupyter lab` will start a jupyterlab in browser (`http://localhost:8888` by default)
-    - If you use VS code, when you try to run a notebook it will ask py environments. Provide the one you initiated above (.venv)
-    - If neither, then run the following in your .venv (make sure it's active)
-        - ` pip install ipykernel `
-        - ` pip install notebook `
-        - ` python -m ipykernel install --user --name=venv --display-name "Python (venv)" `
-        - ` jupyter notebook `
 
-6. Notebooks are in [this folder](../../notebooks/watertap/). We'll add new notebooks when we want to demonstrate new features! We recommend to follow the notebooks in order.
+> **New to Acquirium?** Acquirium is a framework for storing, querying, and
+> integrating time-series data together with the knowledge graph (metadata)
+> that describes it — see the [top-level README](../../README.md). This
+> deployment is the recommended starting point: it runs Acquirium as if it were
+> connected to a live water-treatment plant, using WaterTAP simulations to
+> produce physically realistic data.
+
+These examples live in the Acquirium repository (config files, models, and
+notebooks), so the first step for **both** setups below is to clone it:
+
+```bash
+git clone https://github.com/DataDrivenCPS/acquirium.git
+cd acquirium
+```
+
+Everything after this assumes you are in the repo root. Pick **one** of the two
+setups below.
+
+### Option A — using [uv](https://docs.astral.sh/uv/) (recommended)
+
+uv manages the virtual environment and the right Python version for you.
+
+1. Install Acquirium with the WaterTAP extra (uv fetches Python 3.12 if needed):
+    ```bash
+    uv sync --extra watertap
+    ```
+2. Install the native solver extensions WaterTAP needs (IDAES/IPOPT binaries):
+    ```bash
+    uv run idaes get-extensions
+    ```
+3. Start the server (plus any drivers listed in the config):
+    ```bash
+    uv run acquirium server --config deployments/WATERTAP/scripts/acquirium.toml
+    ```
+4. Run the example notebooks (in a second terminal, repo still the working dir):
+    ```bash
+    uv run --with jupyter jupyter lab
+    ```
+    JupyterLab opens in your browser (`http://localhost:8888` by default).
+
+### Option B — using pip + venv
+
+**Requires Python 3.12+** already installed.
+
+1. Create and activate a fresh virtual environment:
+    ```bash
+    python3.12 -m venv .venv
+    source .venv/bin/activate          # Linux/macOS
+    # .venv\Scripts\activate           # Windows (PowerShell/cmd)
+    ```
+2. Install Acquirium (from the clone) with the WaterTAP extra:
+    ```bash
+    pip install -e ".[watertap]"
+    ```
+3. Install the native solver extensions WaterTAP needs (IDAES/IPOPT binaries):
+    ```bash
+    idaes get-extensions
+    ```
+4. Start the server (plus any drivers listed in the config):
+    ```bash
+    acquirium server --config deployments/WATERTAP/scripts/acquirium.toml
+    ```
+5. Run the example notebooks. With the `.venv` active:
+    ```bash
+    pip install jupyterlab
+    jupyter lab
+    ```
+    If you prefer VS Code, just open a notebook and select the `.venv`
+    interpreter when prompted. To register the venv as a named Jupyter kernel:
+    ```bash
+    pip install ipykernel
+    python -m ipykernel install --user --name=venv --display-name "Python (venv)"
+    ```
+
+### Verify it's running
+
+Once the server is up (either option), confirm it:
+
+- Open [`http://localhost:8000/docs`](http://localhost:8000/docs) in a browser
+  (or whichever host/port your config sets), **or**
+- `curl localhost:8000/health` from another terminal
+
+### Notebooks
+
+Example notebooks live in [`notebooks/watertap/`](../../notebooks/watertap/).
+We add new ones as we demonstrate new features — **we recommend starting with quickstart.ipynb**
 
 
 ## Models
@@ -80,7 +143,7 @@ deployments/WATERTAP/
 
 `scripts/data-generator.py` builds a model once, then walks `--N` timestamps,
 re-solving at each, and writes **wide** parquet snapshots (one column per mapped
-property) into `models/<name>/data/`:
+property) into `models/<name>/data/`. For instance the following command will generate 1 week of data with 1 hour intervals:
 
 ```bash
 .venv/bin/python deployments/WATERTAP/scripts/data-generator.py seawater-ro --N 168 -T 1h
@@ -97,6 +160,11 @@ property) into `models/<name>/data/`:
 
 Same `--seed` + `--start` → identical output. Files are named
 `<model>_<first>-<last>_<timestamp>.parquet` and sort chronologically.
+
+**NOTE:**
+- **We recommend generating data for regulation.ipynb example with** `.venv/bin/python deployments/WATERTAP/scripts/data-generator.py seawater-ro --N 4320 -T 10m` 
+
+
 
 ## Drivers
 
@@ -130,6 +198,9 @@ simulation) and the rest commented out — six blocks in total covering both
 models × {simulation, GUI, parquet}. To switch, comment the active block and
 uncomment another; enable several at once to run them together.
 
+**NOTE:**
+- **We recommend generating data (see above) and then uncommenting lines 107-112 in [deployments/WATERTAP/scripts/acquirium.toml](../WATERTAP/scripts/acquirium.toml) to enable parquet driver for working with the regulation.ipynb example.**
+
 Per-driver keys live in each `[[drivers]]` entry (merged over the shared
 `[driver]` section). Key WaterTAP options:
 
@@ -151,3 +222,4 @@ header):
   the repo root).
 - driver `spec`, parquet `watch_dir`, GUI `gui_script_path` /
   `watertap_inputs_path` → relative to **the config file's directory**.
+
