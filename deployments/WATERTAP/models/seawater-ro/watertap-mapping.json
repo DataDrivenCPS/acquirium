@@ -33,6 +33,8 @@
     "urn:swro/intake-in-flow-rate": "fs.feed.flow_vol[0]",
     "urn:swro/intake-in-tds-concentration": "fs.feed.conc_mass_comp[0, 'tds']",
     "urn:swro/intake-in-tss-concentration": "fs.feed.conc_mass_comp[0, 'tss']",
+    "urn:swro/intake-in-toc-concentration": "fs.feed.conc_mass_comp[0, 'nonvolatile_toc']",
+    "urn:swro/cartridge-filtration-out-toc-concentration": "fs.pretreatment.cartridge_filtration.properties_treated[0].conc_mass_comp['nonvolatile_toc']",
     "urn:swro/conn-cartridge-filtration-to-S1-temperature": "fs.tb_prtrt_desal.properties_out[0].temperature",
     "urn:swro/conn-cartridge-filtration-to-S1-pressure": "fs.tb_prtrt_desal.properties_out[0].pressure",
     "urn:swro/conn-cartridge-filtration-to-S1-flow-mass-water": "fs.tb_prtrt_desal.properties_out[0].flow_mass_phase_comp['Liq', 'H2O']",
@@ -57,6 +59,7 @@
     "urn:swro/PXR-brine-out-pressure": "fs.disposal.properties[0].pressure",
     "urn:swro/PXR-brine-out-flow-mass-water": "fs.disposal.properties[0].flow_mass_phase_comp['Liq', 'H2O']",
     "urn:swro/PXR-brine-out-flow-mass-tds": "fs.disposal.properties[0].flow_mass_phase_comp['Liq', 'TDS']",
+    "urn:swro/PXR-brine-out-tds-concentration": "fs.disposal.properties[0].conc_mass_phase_comp['Liq', 'TDS']",
     "urn:swro/storage-tank-3-out-flow-rate": "fs.municipal.properties[0].flow_vol",
     "urn:swro/storage-tank-3-out-tds-concentration": "fs.municipal.properties[0].conc_mass_comp['tds']"
   },

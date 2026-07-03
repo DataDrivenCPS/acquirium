@@ -51,6 +51,11 @@ wbs:PXR-brine-out-pressure-sensor a s223:Sensor ;
     s223:observes wbs:PXR-brine-out-pressure ;
     qudt:isDeltaQuantity false .
 
+wbs:PXR-brine-out-tds-concentration-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:PXR-brine-out ;
+    s223:observes wbs:PXR-brine-out-tds-concentration ;
+    qudt:isDeltaQuantity false .
+
 wbs:PXR-efficiency-sensor a s223:Sensor ;
     s223:hasObservationLocation wbs:PXR ;
     s223:observes wbs:PXR-efficiency ;
@@ -146,6 +151,16 @@ wbs:intake-in-tss-concentration-sensor a s223:Sensor ;
     s223:observes wbs:intake-in-tss-concentration ;
     qudt:isDeltaQuantity false .
 
+wbs:intake-in-toc-concentration-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:intake-in ;
+    s223:observes wbs:intake-in-toc-concentration ;
+    qudt:isDeltaQuantity false .
+
+wbs:cartridge-filtration-out-toc-concentration-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:cartridge-filtration-out ;
+    s223:observes wbs:cartridge-filtration-out-toc-concentration ;
+    qudt:isDeltaQuantity false .
+
 wbs:seawater-ro-plant a s223:System ;
     s223:hasBoundaryConnectionPoint wbs:PXR-brine-out,
         wbs:backwash-handling-out,
@@ -235,6 +250,13 @@ wbs:PXR-brine-out-flow-mass-water a s223:QuantifiableObservableProperty ;
 wbs:PXR-brine-out-pressure a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Pressure .
 
+wbs:PXR-brine-out-tds-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium nawi:Water-Brine ;
+    s223:ofSubstance nawi:Constituent-Salt ;
+    qudt:hasQuantityKind qudtqk:MassConcentration ;
+    qudt:hasUnit unit:KiloGM-PER-M3 ;
+    rdfs:comment "brine discharge TDS concentration (Ocean Plan III.M.3 effluent salinity)" .
+
 wbs:PXR-efficiency a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Efficiency ;
     qudt:hasUnit unit:UNITLESS .
@@ -322,6 +344,18 @@ wbs:intake-in-tss-concentration a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Density ;
     qudt:hasUnit unit:MilliGM-PER-L ;
     rdfs:comment "feed TSS concentration" .
+
+wbs:intake-in-toc-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium nawi:Water-Seawater ;
+    qudt:hasQuantityKind qudtqk:MassConcentration ;
+    qudt:hasUnit unit:KiloGM-PER-M3 ;
+    rdfs:comment "feed TOC (nonvolatile organic carbon) concentration" .
+
+wbs:cartridge-filtration-out-toc-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium nawi:Water-Seawater ;
+    qudt:hasQuantityKind qudtqk:MassConcentration ;
+    qudt:hasUnit unit:KiloGM-PER-M3 ;
+    rdfs:comment "pretreatment-effluent TOC concentration (after cartridge filtration)" .
 
 wbs:storage-tank-3-out-flow-rate a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:VolumeFlowRate ;
@@ -603,6 +637,7 @@ wbs:cartridge-filtration-out a s223:OutletConnectionPoint ;
         wbs:conn-cartridge-filtration-to-S1 ;
     s223:connectsThrough wbs:conn-cartridge-filtration-to-S1 ;
     s223:hasMedium nawi:Water-Seawater ;
+    s223:hasProperty wbs:cartridge-filtration-out-toc-concentration ;
     s223:isConnectionPointOf wbs:cartridge-filtration .
 
 wbs:storage-tank-2-in a s223:InletConnectionPoint ;
@@ -816,7 +851,8 @@ wbs:intake-in a s223:InletConnectionPoint ;
     s223:hasMedium nawi:Water-Seawater ;
     s223:hasProperty wbs:intake-in-flow-rate,
         wbs:intake-in-tds-concentration,
-        wbs:intake-in-tss-concentration ;
+        wbs:intake-in-tss-concentration,
+        wbs:intake-in-toc-concentration ;
     s223:isConnectionPointOf wbs:intake .
 
 wbs:storage-tank-3-out a s223:OutletConnectionPoint ;
@@ -829,7 +865,8 @@ wbs:PXR-brine-out a s223:OutletConnectionPoint ;
     s223:hasMedium nawi:Water-Brine ;
     s223:hasProperty wbs:PXR-brine-out-flow-mass-tds,
         wbs:PXR-brine-out-flow-mass-water,
-        wbs:PXR-brine-out-pressure ;
+        wbs:PXR-brine-out-pressure,
+        wbs:PXR-brine-out-tds-concentration ;
     s223:isConnectionPointOf wbs:PXR .
 
 wbs:RO-out-retentate a s223:OutletConnectionPoint ;

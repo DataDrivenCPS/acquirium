@@ -28,10 +28,17 @@ def generate_new_values(ts: datetime, rng: np.random.RandomState) -> dict:
     diurnal = 1.0 + 0.08 * math.sin(2 * math.pi * (hour - 9) / 24.0)
     flow_vol = 0.3092 * diurnal * (1.0 + rng.normal(0.0, 0.02))
 
+    # TOC [kg/m3]: ~3 mg/L baseline, higher in the warm season (algal
+    # productivity), lognormal noise, occasional bloom spikes.
+    toc = 0.003 * (1.0 + 0.4 * max(season, 0.0)) * float(np.exp(rng.normal(0.0, 0.2)))
+    if rng.random_sample() < 0.03:  # ~3% of steps see an algal bloom
+        toc *= rng.uniform(1.5, 3.0)
+
     # Physical clamps.
     return {
         "temperature": max(temperature, 274.0),
         "conc_tds": max(conc_tds, 1.0),
         "conc_tss": min(max(tss, 1e-4), 1.0),
+        "conc_toc": min(max(toc, 1e-4), 0.1),
         "flow_vol": max(flow_vol, 0.05),
     }
