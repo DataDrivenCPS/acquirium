@@ -37,7 +37,7 @@ pip install -e .
 
 ## Quickstart
 
-**Easiest way to experiment with acquirium is through an example. We strongly recommend following the steps in [watertap readme](./deployments/WATERTAP/README.md). Watertap is a simulation tool that has integration to acquirium. If you follow the steps there, you'll be able to run acquirium as if it's connected to a live plant that generates data or generate historical data that has realistic (abides physical formulations) ranges and try building applications over it.**
+**Easiest way to experiment with acquirium is through an example. We strongly recommend following the steps in [watertap readme](./deployments/WATERTAP/readme.md). Watertap is a simulation tool that has integration to acquirium. If you follow the steps there, you'll be able to run acquirium as if it's connected to a live plant that generates data or generate historical data that has realistic (abides physical formulations) ranges and try building applications over it.**
 
 
 Acquirium ships a single CLI entry point. Start the server and any configured drivers with:
