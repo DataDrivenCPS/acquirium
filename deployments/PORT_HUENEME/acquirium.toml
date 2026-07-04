@@ -1,0 +1,62 @@
+# Port Hueneme UF/RO — self-contained Acquirium deployment.
+#
+# Starts the server, loads the WaTr model (models/port-hueneme-uf.ttl) into the
+# graph, and ingests the SCADA files under ./data via the custom driver.
+#
+# Run from anywhere:
+#   acquirium server --config deployments/PORT_HUENEME/acquirium.toml
+#
+# All relative paths below resolve against THIS file's directory
+# (deployments/PORT_HUENEME/), so the config is portable.
+#
+# Prereq — put the data under ./data (once):
+#   brew install unar
+#   cd deployments/PORT_HUENEME && mkdir -p data && cd data
+#   curl -sL -o ph.rar "https://zenodo.org/api/records/4630769/files/data_in_UF-RO_system.rar/content"
+#   unar ph.rar        # -> "data in UF-RO system/{training,test}/*.csv|xlsx"
+# The driver globs ./data recursively, so the exact subfolder layout is fine.
+
+[server]
+host = "0.0.0.0"
+port = 8000
+
+# Graph store + timeseries + app storage live here (relative to this file).
+data_dir           = ".acquirium"
+timeseries_backend = "duckdb"
+duckdb_path        = ".acquirium/timeseries.duckdb"
+
+# Flip to true once to wipe and reload from scratch during development.
+recreate = false
+
+# Load the membrane-element extension ontology (adds nawi:Membrane /
+# nawi:UltrafiltrationMembrane) alongside the bundled water ontology, so the
+# model's `owl:imports <urn:nawi-water-ontology-membrane-ext>` resolves.
+[ontologies]
+sources = ["./models/water-membrane-ext.ttl"]
+
+# Bind the prefixes the model + queries use (so `ph:UF1`, `s223:`, etc. work).
+[prefixes]
+ph    = "urn:port-hueneme#"
+nawi  = "urn:nawi-water-ontology#"
+s223  = "http://data.ashrae.org/standard223#"
+qudt  = "http://qudt.org/schema/qudt/"
+qk    = "http://qudt.org/vocab/quantitykind/"
+unit  = "http://qudt.org/vocab/unit/"
+ref   = "https://brickschema.org/schema/Brick/ref#"
+
+[driver]
+server_url  = "localhost"
+server_port = 8000
+use_ssl     = false
+interval    = 30.0
+
+# One driver does both jobs: load the model on setup, then ingest the SCADA
+# files. It handles the dataset's dual header, Excel-serial (.csv) vs
+# elapsed-seconds fixed-width (.xlsx) time, and consolidates every file under
+# the single datasource "port-hueneme-uf".
+[[drivers]]
+spec        = "scripts/port_hueneme_ingest.py:PortHuenemeUFIngestDriver"
+driver_id   = "port-hueneme-uf"
+interval    = 30.0
+watch_dir   = "./data"
+model_graph = "./models/port-hueneme-uf.ttl"

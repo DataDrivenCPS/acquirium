@@ -1,0 +1,308 @@
+@prefix ph:      <urn:port-hueneme#> .
+@prefix nawi:    <urn:nawi-water-ontology#> .
+@prefix s223:    <http://data.ashrae.org/standard223#> .
+@prefix qudt:    <http://qudt.org/schema/qudt/> .
+@prefix qudtqk:  <http://qudt.org/vocab/quantitykind/> .
+@prefix unit:    <http://qudt.org/vocab/unit/> .
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+
+# =============================================================================
+# Port Hueneme integrated UF/RO seawater desalination pilot (NAVFAC-EXWC).
+#
+# Provenance: Gu et al. 2018, Desalination 431:86-99 (Fig. 1 P&ID); SCADA data
+# at Zenodo record 4630769 / Dryad 10.5068/D1310B (CC0). Built on the NAWI water
+# ontology (WaTr, urn:nawi-water-ontology#) over ASHRAE 223 (s223:) + QUDT.
+#
+# Layout (Fig. 1):
+#   feed seawater -> LP pump (VFD) -> prefilter -> inline coagulant
+#     -> [ UF1 || UF2 || UF3 ]  (PES multibore hollow-fiber, 0.02 um, 50 m^2 ea)
+#     -> filtrate header -> RO holding tank -> HP pump -> carbon filters
+#     -> RO (3x SW30HRLE-400 in series) -> product + brine
+#   Backwash: RO concentrate/permeate, pulsed; modules backwashed individually.
+#
+# TAG->ROLE MAPPING: the pilot has THREE PES hollow-fiber UF modules (Dizzer 5000+,
+#    50 m^2 each) arranged in PARALLEL, each with its own filtrate flow + pressure
+#    instrumentation (Gu et al. 2018, sec. 2.1). The tags map one-for-one per module:
+#      FT-101/102/103, PT-101/102/103  = UF1/UF2/UF3 filtrate flow + pressure
+#      FT-100 / PT-100                 = common feed (pre-split)
+#      PT-104                          = merged filtrate header
+#      FE/FT-104 / PT-100x             = backwash line
+#    So each module has its own TMP = PT-100 - PT-10i and flux = FT-10i / 50 m^2.
+#    Streams are bound to timeseries by the ingest driver
+#    (../scripts/port_hueneme_ingest.py) via (source_id="port-hueneme-uf",
+#    ref_name=<the exact SCADA tag>), so tag identity lives in one place there.
+# =============================================================================
+
+ph: a owl:Ontology ;
+    rdfs:label "Port Hueneme UF/RO pilot" ;
+    owl:imports nawi:,
+        <urn:nawi-water-ontology-membrane-ext> .   # membrane-element classes (water-membrane-ext.ttl)
+
+# ------------------------------------------------------------------ system
+ph:port-hueneme-uf-ro a s223:System ;
+    rdfs:label "Port Hueneme integrated UF/RO desalination pilot" ;
+    s223:hasMember ph:LP, ph:prefilter, ph:coagulant-dosing,
+        ph:feed-manifold, ph:UF1, ph:UF2, ph:UF3, ph:filtrate-header,
+        ph:backwash-line, ph:RO-tank, ph:HP, ph:carbon-filter, ph:RO ;
+    s223:hasBoundaryConnectionPoint ph:intake-in, ph:product-out, ph:brine-out .
+
+# ------------------------------------------------------------------ equipment
+ph:LP a nawi:Pump ;
+    rdfs:label "UF feed pump (low pressure, VFD-driven)" ;
+    s223:hasConnectionPoint ph:LP-in, ph:LP-out ;
+    s223:hasProperty ph:LP-pump-speed ;
+    rdfs:comment "Price Pump on a Danfoss VFD (VLT AQUA); tag VFD-100-FB = speed feedback." .
+
+ph:prefilter a nawi:Filter ;
+    rdfs:label "Prefilter (basket strainer + 200 um self-cleaning microfilter)" ;
+    s223:hasConnectionPoint ph:prefilter-in, ph:prefilter-out ;
+    nawi:hasProcess nawi:Process-Filtration .
+
+ph:coagulant-dosing a nawi:StaticMixer ;
+    rdfs:label "Inline coagulant dosing (FeCl3 / ACH into UF feed)" ;
+    s223:hasConnectionPoint ph:coagulant-in, ph:coagulant-out ;
+    nawi:hasProcess nawi:Process-Coagulation ;
+    rdfs:comment "Grundfos metering pump; adjustable coagulant dose (no dedicated SCADA tag in the raw CSVs)." .
+
+# Feed manifold: common feed header where the shared feed instrumentation sits,
+# before the flow splits to the three parallel UF modules.
+ph:feed-manifold a s223:Junction ;
+    rdfs:label "UF feed manifold (common header)" ;
+    s223:hasConnectionPoint ph:feed-manifold-in, ph:feed-manifold-out ;
+    s223:hasMedium nawi:Water-Seawater .
+
+ph:UF1 a nawi:UltrafiltrationUnit ;
+    rdfs:label "Ultrafiltration module UF1" ;
+    nawi:hasProcess nawi:Process-Ultrafiltration ;
+    s223:hasConnectionPoint ph:UF1-feed, ph:UF1-filtrate ;
+    s223:contains ph:UF1-membrane .
+
+ph:UF2 a nawi:UltrafiltrationUnit ;
+    rdfs:label "Ultrafiltration module UF2" ;
+    nawi:hasProcess nawi:Process-Ultrafiltration ;
+    s223:hasConnectionPoint ph:UF2-feed, ph:UF2-filtrate ;
+    s223:contains ph:UF2-membrane .
+
+ph:UF3 a nawi:UltrafiltrationUnit ;
+    rdfs:label "Ultrafiltration module UF3" ;
+    nawi:hasProcess nawi:Process-Ultrafiltration ;
+    s223:hasConnectionPoint ph:UF3-feed, ph:UF3-filtrate ;
+    s223:contains ph:UF3-membrane .
+
+# The physical membrane element inside each UF unit (nawi:UltrafiltrationMembrane,
+# defined in water-membrane-ext.ttl). Membrane area is a property of the membrane,
+# not of the unit. PES multibore hollow fiber (Inge Dizzer 5000+), 0.02 um pore.
+ph:UF1-membrane a nawi:UltrafiltrationMembrane ;
+    rdfs:label "UF1 membrane element" ;
+    s223:hasProperty ph:UF1-membrane-area .
+ph:UF2-membrane a nawi:UltrafiltrationMembrane ;
+    rdfs:label "UF2 membrane element" ;
+    s223:hasProperty ph:UF2-membrane-area .
+ph:UF3-membrane a nawi:UltrafiltrationMembrane ;
+    rdfs:label "UF3 membrane element" ;
+    s223:hasProperty ph:UF3-membrane-area .
+
+ph:filtrate-header a s223:Junction ;
+    rdfs:label "UF filtrate header (merged permeate to RO tank)" ;
+    s223:hasConnectionPoint ph:filtrate-header-in, ph:filtrate-header-out ;
+    s223:hasProperty ph:UF-filtrate-header-pressure ;
+    s223:hasMedium s223:Fluid-Water .
+
+ph:backwash-line a s223:Connection ;
+    rdfs:label "UF backwash line (RO concentrate/permeate via accumulators)" ;
+    s223:hasProperty ph:UF-backwash-flow, ph:UF-backwash-pressure ;
+    nawi:hasProcess nawi:Process-Backwashing .
+
+ph:RO-tank a nawi:Tank ;
+    rdfs:label "RO holding tank (7571 L, <3 h detention)" ;
+    s223:hasConnectionPoint ph:RO-tank-in, ph:RO-tank-out ;
+    s223:hasRole nawi:Role-Storage .
+
+ph:HP a nawi:Pump ;
+    rdfs:label "RO high-pressure feed pump (positive displacement)" ;
+    s223:hasConnectionPoint ph:HP-in, ph:HP-out .
+
+ph:carbon-filter a nawi:Filter ;
+    rdfs:label "Carbon filters (RO membrane protection)" ;
+    s223:hasConnectionPoint ph:CF-in, ph:CF-out ;
+    nawi:hasProcess nawi:Process-Adsorption .
+
+ph:RO a nawi:ReverseOsmosisMembrane ;
+    rdfs:label "Reverse osmosis (3x SW30HRLE-400 spiral-wound, in series)" ;
+    nawi:hasProcess nawi:Process-ReverseOsmosis ;
+    s223:hasConnectionPoint ph:RO-feed, ph:RO-permeate, ph:RO-concentrate ;
+    rdfs:comment "66.8 m^3/day permeate capacity; ~36% recovery; 99.65% salt rejection." .
+
+# ------------------------------------------------------- static design values
+ph:UF1-membrane-area a s223:QuantifiableObservableProperty ;
+    rdfs:label "UF1 membrane area" ;
+    qudt:hasQuantityKind qudtqk:Area ; qudt:hasUnit unit:M2 ;
+    s223:hasValue 50.0 .
+ph:UF2-membrane-area a s223:QuantifiableObservableProperty ;
+    rdfs:label "UF2 membrane area" ;
+    qudt:hasQuantityKind qudtqk:Area ; qudt:hasUnit unit:M2 ;
+    s223:hasValue 50.0 .
+ph:UF3-membrane-area a s223:QuantifiableObservableProperty ;
+    rdfs:label "UF3 membrane area" ;
+    qudt:hasQuantityKind qudtqk:Area ; qudt:hasUnit unit:M2 ;
+    s223:hasValue 50.0 .
+
+# =============================================================================
+# Connection points (with roles) + the measured properties that hang off them.
+# Property -> timeseries binding is created by the ingest driver via point_uri;
+# the SCADA tag each property maps to is noted in rdfs:comment for traceability.
+# =============================================================================
+
+# ---- feed side (common header): FT-100, PT-100, TT-100, TuT-100, pHT-100, ORP
+ph:feed-manifold-in a s223:InletConnectionPoint ;
+    rdfs:label "UF feed (common header)" ;
+    s223:isConnectionPointOf ph:feed-manifold ;
+    s223:hasRole nawi:Role-Feed ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:hasProperty ph:UF-feed-flow, ph:UF-feed-pressure, ph:UF-feed-temperature,
+        ph:UF-feed-turbidity, ph:UF-feed-ph, ph:UF-feed-orp .
+
+ph:UF-feed-flow a s223:QuantifiableObservableProperty ;
+    rdfs:label "UF feed flow" ; rdfs:comment "SCADA tag FE/FT-100 (GPM)" ;
+    s223:ofMedium nawi:Water-Seawater ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate ; qudt:hasUnit unit:GAL_US-PER-MIN .
+
+ph:UF-feed-pressure a s223:QuantifiableObservableProperty ;
+    rdfs:label "UF feed-side pressure" ; rdfs:comment "SCADA tag PT-100 (PSIG); common feed, high side of every module's TMP" ;
+    qudt:hasQuantityKind qudtqk:Pressure ; qudt:hasUnit unit:PSI .
+
+ph:UF-feed-temperature a s223:QuantifiableObservableProperty ;
+    rdfs:label "UF feed temperature" ; rdfs:comment "SCADA tag TE/TT-100 (deg C); drives viscosity correction" ;
+    qudt:hasQuantityKind qudtqk:Temperature ; qudt:hasUnit unit:DEG_C .
+
+ph:UF-feed-turbidity a s223:QuantifiableObservableProperty ;
+    rdfs:label "UF feed turbidity" ; rdfs:comment "SCADA tag Tu/TuT-100 (NTU); fouling driver" ;
+    qudt:hasQuantityKind qudtqk:Turbidity .
+
+ph:UF-feed-ph a s223:QuantifiableObservableProperty ;
+    rdfs:label "UF feed pH" ; rdfs:comment "SCADA tag pH/pHT-100" ;
+    qudt:hasQuantityKind qudtqk:PH .
+
+ph:UF-feed-orp a s223:QuantifiableObservableProperty ;
+    rdfs:label "UF feed ORP" ; rdfs:comment "SCADA tag ORP/ORPT-100 (mV)" ;
+    qudt:hasQuantityKind qudtqk:ElectricPotential ; qudt:hasUnit unit:MilliV .
+
+ph:LP-pump-speed a s223:QuantifiableObservableProperty ;
+    rdfs:label "UF feed pump speed" ; rdfs:comment "SCADA tag VFD-100-FB (RPM); >0 marks filtration ON" ;
+    qudt:hasQuantityKind qudtqk:AngularVelocity ; qudt:hasUnit unit:REV-PER-MIN .
+
+# ---- per-module filtrate side (permeate): three parallel modules, each with its own
+# filtrate flow (FT-101..103) and filtrate pressure (PT-101..103). (Gu et al. sec. 2.1)
+ph:UF1-filtrate a s223:OutletConnectionPoint ;
+    rdfs:label "UF1 filtrate (permeate)" ;
+    s223:isConnectionPointOf ph:UF1 ;
+    s223:hasRole nawi:Role-Permeate ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:hasProperty ph:UF1-filtrate-flow, ph:UF1-filtrate-pressure .
+ph:UF1-filtrate-flow a s223:QuantifiableObservableProperty ;
+    rdfs:label "UF1 filtrate flow" ; rdfs:comment "SCADA tag FE/FT-101 (GPM); permeate flow for J_F" ;
+    s223:ofMedium s223:Fluid-Water ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate ; qudt:hasUnit unit:GAL_US-PER-MIN .
+ph:UF1-filtrate-pressure a s223:QuantifiableObservableProperty ;
+    rdfs:label "UF1 filtrate-side pressure" ; rdfs:comment "SCADA tag PT-101 (PSIG); low side of UF1 TMP" ;
+    qudt:hasQuantityKind qudtqk:Pressure ; qudt:hasUnit unit:PSI .
+
+ph:UF2-filtrate a s223:OutletConnectionPoint ;
+    rdfs:label "UF2 filtrate (permeate)" ;
+    s223:isConnectionPointOf ph:UF2 ;
+    s223:hasRole nawi:Role-Permeate ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:hasProperty ph:UF2-filtrate-flow, ph:UF2-filtrate-pressure .
+ph:UF2-filtrate-flow a s223:QuantifiableObservableProperty ;
+    rdfs:label "UF2 filtrate flow" ; rdfs:comment "SCADA tag FE/FT-102 (GPM); permeate flow for J_F" ;
+    s223:ofMedium s223:Fluid-Water ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate ; qudt:hasUnit unit:GAL_US-PER-MIN .
+ph:UF2-filtrate-pressure a s223:QuantifiableObservableProperty ;
+    rdfs:label "UF2 filtrate-side pressure" ; rdfs:comment "SCADA tag PT-102 (PSIG); low side of UF2 TMP" ;
+    qudt:hasQuantityKind qudtqk:Pressure ; qudt:hasUnit unit:PSI .
+
+ph:UF3-filtrate a s223:OutletConnectionPoint ;
+    rdfs:label "UF3 filtrate (permeate)" ;
+    s223:isConnectionPointOf ph:UF3 ;
+    s223:hasRole nawi:Role-Permeate ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:hasProperty ph:UF3-filtrate-flow, ph:UF3-filtrate-pressure .
+ph:UF3-filtrate-flow a s223:QuantifiableObservableProperty ;
+    rdfs:label "UF3 filtrate flow" ; rdfs:comment "SCADA tag FE/FT-103 (GPM); permeate flow for J_F" ;
+    s223:ofMedium s223:Fluid-Water ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate ; qudt:hasUnit unit:GAL_US-PER-MIN .
+ph:UF3-filtrate-pressure a s223:QuantifiableObservableProperty ;
+    rdfs:label "UF3 filtrate-side pressure" ; rdfs:comment "SCADA tag PT-103 (PSIG); low side of UF3 TMP" ;
+    qudt:hasQuantityKind qudtqk:Pressure ; qudt:hasUnit unit:PSI .
+
+# ---- merged filtrate header pressure (post-merge): PT-104
+ph:UF-filtrate-header-pressure a s223:QuantifiableObservableProperty ;
+    rdfs:label "UF filtrate header pressure" ; rdfs:comment "SCADA tag PT-104 (PSI); merged filtrate header" ;
+    qudt:hasQuantityKind qudtqk:Pressure ; qudt:hasUnit unit:PSI .
+
+# ---- backwash line: FT-104 flow, PT-100x pressure (Role-Backwash)
+ph:UF-backwash-flow a s223:QuantifiableObservableProperty ;
+    rdfs:label "UF backwash flow" ; rdfs:comment "SCADA tag FE/FT-104 (GPM)" ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate ; qudt:hasUnit unit:GAL_US-PER-MIN .
+ph:UF-backwash-pressure a s223:QuantifiableObservableProperty ;
+    rdfs:label "UF backwash pressure" ; rdfs:comment "SCADA tag PT-100x (PSIG)" ;
+    qudt:hasQuantityKind qudtqk:Pressure ; qudt:hasUnit unit:PSI .
+
+# ------------------------------------------------------------- boundary CPs
+ph:intake-in a s223:InletConnectionPoint ;
+    rdfs:label "Raw seawater intake" ;
+    s223:isConnectionPointOf ph:LP ;
+    s223:hasRole nawi:Role-Feed ;
+    s223:hasMedium nawi:Water-Seawater .
+
+ph:product-out a s223:OutletConnectionPoint ;
+    rdfs:label "RO product water" ;
+    s223:isConnectionPointOf ph:RO ;
+    s223:hasRole nawi:Role-Permeate ;
+    s223:hasMedium s223:Fluid-Water .
+
+ph:brine-out a s223:OutletConnectionPoint ;
+    rdfs:label "RO brine/concentrate" ;
+    s223:isConnectionPointOf ph:RO ;
+    s223:hasMedium nawi:Water-Brine .
+
+# --------------------------------------------------- inlet/outlet CP stubs
+# (structural endpoints for the main flow path; instrumentation is above)
+ph:LP-in       a s223:InletConnectionPoint  ; s223:isConnectionPointOf ph:LP ; s223:hasMedium nawi:Water-Seawater .
+ph:LP-out      a s223:OutletConnectionPoint ; s223:isConnectionPointOf ph:LP ; s223:hasMedium nawi:Water-Seawater .
+ph:prefilter-in  a s223:InletConnectionPoint  ; s223:isConnectionPointOf ph:prefilter ; s223:hasMedium nawi:Water-Seawater .
+ph:prefilter-out a s223:OutletConnectionPoint ; s223:isConnectionPointOf ph:prefilter ; s223:hasMedium nawi:Water-Seawater .
+ph:coagulant-in  a s223:InletConnectionPoint  ; s223:isConnectionPointOf ph:coagulant-dosing ; s223:hasMedium nawi:Water-Seawater .
+ph:coagulant-out a s223:OutletConnectionPoint ; s223:isConnectionPointOf ph:coagulant-dosing ; s223:hasMedium nawi:Water-Seawater .
+ph:feed-manifold-out a s223:OutletConnectionPoint ; s223:isConnectionPointOf ph:feed-manifold ; s223:hasMedium nawi:Water-Seawater .
+ph:UF1-feed a s223:InletConnectionPoint ; s223:isConnectionPointOf ph:UF1 ; s223:hasRole nawi:Role-Feed ; s223:hasMedium nawi:Water-Seawater .
+ph:UF2-feed a s223:InletConnectionPoint ; s223:isConnectionPointOf ph:UF2 ; s223:hasRole nawi:Role-Feed ; s223:hasMedium nawi:Water-Seawater .
+ph:UF3-feed a s223:InletConnectionPoint ; s223:isConnectionPointOf ph:UF3 ; s223:hasRole nawi:Role-Feed ; s223:hasMedium nawi:Water-Seawater .
+ph:filtrate-header-in  a s223:InletConnectionPoint  ; s223:isConnectionPointOf ph:filtrate-header ; s223:hasRole nawi:Role-Permeate ; s223:hasMedium s223:Fluid-Water .
+ph:filtrate-header-out a s223:OutletConnectionPoint ; s223:isConnectionPointOf ph:filtrate-header ; s223:hasMedium s223:Fluid-Water .
+ph:RO-tank-in  a s223:InletConnectionPoint  ; s223:isConnectionPointOf ph:RO-tank ; s223:hasMedium s223:Fluid-Water .
+ph:RO-tank-out a s223:OutletConnectionPoint ; s223:isConnectionPointOf ph:RO-tank ; s223:hasMedium s223:Fluid-Water .
+ph:HP-in  a s223:InletConnectionPoint  ; s223:isConnectionPointOf ph:HP ; s223:hasMedium s223:Fluid-Water .
+ph:HP-out a s223:OutletConnectionPoint ; s223:isConnectionPointOf ph:HP ; s223:hasMedium s223:Fluid-Water .
+ph:CF-in  a s223:InletConnectionPoint  ; s223:isConnectionPointOf ph:carbon-filter ; s223:hasMedium s223:Fluid-Water .
+ph:CF-out a s223:OutletConnectionPoint ; s223:isConnectionPointOf ph:carbon-filter ; s223:hasMedium s223:Fluid-Water .
+ph:RO-feed a s223:InletConnectionPoint ; s223:isConnectionPointOf ph:RO ; s223:hasRole nawi:Role-Feed ; s223:hasMedium s223:Fluid-Water .
+ph:RO-permeate   a s223:OutletConnectionPoint ; s223:isConnectionPointOf ph:RO ; s223:hasRole nawi:Role-Permeate ; s223:hasMedium s223:Fluid-Water .
+ph:RO-concentrate a s223:OutletConnectionPoint ; s223:isConnectionPointOf ph:RO ; s223:hasMedium nawi:Water-Brine .
+
+# --------------------------------------------------- connections (main path)
+ph:c-intake-LP    a s223:Connection, s223:Pipe ; s223:connectsFrom ph:LP ; s223:connectsTo ph:prefilter ; s223:hasMedium nawi:Water-Seawater .
+ph:c-prefilter-coag a s223:Connection, s223:Pipe ; s223:connectsFrom ph:prefilter ; s223:connectsTo ph:coagulant-dosing ; s223:hasMedium nawi:Water-Seawater .
+ph:c-coag-manifold  a s223:Connection, s223:Pipe ; s223:connectsFrom ph:coagulant-dosing ; s223:connectsTo ph:feed-manifold ; s223:hasMedium nawi:Water-Seawater .
+ph:c-manifold-UF1 a s223:Connection, s223:Pipe ; s223:connectsFrom ph:feed-manifold ; s223:connectsTo ph:UF1 ; s223:hasMedium nawi:Water-Seawater .
+ph:c-manifold-UF2 a s223:Connection, s223:Pipe ; s223:connectsFrom ph:feed-manifold ; s223:connectsTo ph:UF2 ; s223:hasMedium nawi:Water-Seawater .
+ph:c-manifold-UF3 a s223:Connection, s223:Pipe ; s223:connectsFrom ph:feed-manifold ; s223:connectsTo ph:UF3 ; s223:hasMedium nawi:Water-Seawater .
+ph:c-UF1-header a s223:Connection, s223:Pipe ; s223:connectsFrom ph:UF1 ; s223:connectsTo ph:filtrate-header ; s223:hasMedium s223:Fluid-Water .
+ph:c-UF2-header a s223:Connection, s223:Pipe ; s223:connectsFrom ph:UF2 ; s223:connectsTo ph:filtrate-header ; s223:hasMedium s223:Fluid-Water .
+ph:c-UF3-header a s223:Connection, s223:Pipe ; s223:connectsFrom ph:UF3 ; s223:connectsTo ph:filtrate-header ; s223:hasMedium s223:Fluid-Water .
+ph:c-header-tank a s223:Connection, s223:Pipe ; s223:connectsFrom ph:filtrate-header ; s223:connectsTo ph:RO-tank ; s223:hasMedium s223:Fluid-Water .
+ph:c-tank-HP    a s223:Connection, s223:Pipe ; s223:connectsFrom ph:RO-tank ; s223:connectsTo ph:HP ; s223:hasMedium s223:Fluid-Water .
+ph:c-HP-CF      a s223:Connection, s223:Pipe ; s223:connectsFrom ph:HP ; s223:connectsTo ph:carbon-filter ; s223:hasMedium s223:Fluid-Water .
+ph:c-CF-RO      a s223:Connection, s223:Pipe ; s223:connectsFrom ph:carbon-filter ; s223:connectsTo ph:RO ; s223:hasMedium s223:Fluid-Water .

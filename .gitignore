@@ -2,6 +2,9 @@
 .acquirium
 
 scripts/dev_examples
+
+# downloaded dataset archives (fetched locally per each deployment's README)
+deployments/PORT_HUENEME/data/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

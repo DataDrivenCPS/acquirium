@@ -1,0 +1,40 @@
+@prefix watr: <urn:nawi-water-ontology#> .
+@prefix ns1:  <http://data.ashrae.org/standard223#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix sh:   <http://www.w3.org/ns/shacl#> .
+
+# =============================================================================
+# WaTr membrane-element extension.
+#
+# Adds physical *membrane element* classes to the NAWI water ontology (watr:)
+# WITHOUT editing the upstream water.ttl — load this alongside it.
+#
+# Why a new class: watr already has membrane classes (watr:ReverseOsmosisMembrane,
+# watr:IonExchangeMembrane, ...), but they are all rdfs:subClassOf watr:Filter,
+# which is a watr:UnitProcess and REQUIRES a treatment process (hasProcess). Those
+# model the membrane *unit process* (the treatment step). They are the wrong shape
+# for a physical part that sits *inside* a unit and merely carries element-level
+# properties such as membrane area — that part is Equipment, not a UnitProcess.
+#
+# So watr:Membrane here is scoped as physical equipment (ns1:Equipment), the same
+# base the water ontology's own equipment classes use. It is meant to be the target
+# of s223:contains from a membrane unit process (e.g. an UltrafiltrationUnit).
+# =============================================================================
+
+<urn:nawi-water-ontology-membrane-ext> a owl:Ontology ;
+    rdfs:label "WaTr membrane-element extension" ;
+    rdfs:comment "Physical membrane-element classes for the NAWI water ontology." ;
+    owl:imports <urn:nawi-water-ontology> .
+
+watr:Membrane a sh:NodeShape,
+        watr:Class ;
+    rdfs:label "Membrane" ;
+    rdfs:comment "A semipermeable barrier that selectively separates species by size or charge — the physical filtration element housed within a membrane unit process. Carries element-level properties such as membrane area. Distinct from the unit-process membrane classes (e.g. watr:ReverseOsmosisMembrane), which model the treatment step." ;
+    rdfs:subClassOf ns1:Equipment .
+
+watr:UltrafiltrationMembrane a sh:NodeShape,
+        watr:Class ;
+    rdfs:label "Ultrafiltration Membrane" ;
+    rdfs:comment "A membrane whose pore size (~0.01-0.1 um) performs ultrafiltration; the physical element housed within an UltrafiltrationUnit." ;
+    rdfs:subClassOf watr:Membrane .
