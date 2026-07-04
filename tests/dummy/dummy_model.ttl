@@ -1,0 +1,748 @@
+@prefix brick: <https://brickschema.org/schema/Brick#> .
+@prefix dum: <urn:dummy/> .
+@prefix ns1: <http://data.ashrae.org/standard223#> .
+@prefix ns2: <http://qudt.org/schema/qudt/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+dum: a owl:Ontology .
+
+# ----------------------------------------------------------------------------
+# Root building + boundary connection
+# ----------------------------------------------------------------------------
+
+dum:plant a brick:Building ;
+    ns1:cnx dum:plant-out ;
+    ns1:connected dum:intake-pump ;
+    ns1:connectedThrough dum:conn-plant-to-intake-pump ;
+    ns1:connectedTo dum:intake-pump ;
+    ns1:hasConnectionPoint dum:plant-in,
+        dum:plant-out .
+
+dum:plant-in a ns1:InletConnectionPoint ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:plant-out a ns1:OutletConnectionPoint ;
+    ns1:connectsAt dum:conn-plant-to-intake-pump ;
+    ns1:connectsThrough dum:conn-plant-to-intake-pump ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+# ----------------------------------------------------------------------------
+# Subsystems
+# ----------------------------------------------------------------------------
+
+dum:intake_subsystem a ns1:System ;
+    ns1:hasBoundaryConnectionPoint dum:intake-valve-out ;
+    ns1:hasMember dum:intake-pump,
+        dum:intake-tank,
+        dum:intake-valve,
+        dum:intake-junction .
+
+dum:treatment_subsystem a ns1:System ;
+    ns1:hasBoundaryConnectionPoint dum:intake-valve-out,
+        dum:treatment-valve-out ;
+    ns1:hasMember dum:prefilter,
+        dum:uv-unit,
+        dum:treatment-pump,
+        dum:treatment-valve,
+        dum:mid-tank,
+        dum:dosing-pump,
+        dum:treatment-junction .
+
+dum:output_subsystem a ns1:System ;
+    ns1:hasBoundaryConnectionPoint dum:treatment-valve-out,
+        dum:distribution-valve-out ;
+    ns1:hasMember dum:output-tank,
+        dum:output-valve,
+        dum:distribution-pump,
+        dum:distribution-valve,
+        dum:distribution-junction .
+
+# ----------------------------------------------------------------------------
+# Equipment in intake_subsystem
+# ----------------------------------------------------------------------------
+
+dum:intake-pump a brick:Pump ;
+    ns1:cnx dum:intake-pump-in,
+        dum:intake-pump-out ;
+    ns1:connected dum:intake-tank ;
+    ns1:connectedThrough dum:conn-intake-pump-to-intake-tank ;
+    ns1:connectedTo dum:intake-tank ;
+    ns1:hasConnectionPoint dum:intake-pump-in,
+        dum:intake-pump-out ;
+    ns1:hasProperty dum:intake-pump-flow-rate,
+        dum:intake-pump-speed-command,
+        dum:intake-pump-status .
+
+dum:intake-pump-in a ns1:InletConnectionPoint ;
+    ns1:connectsAt dum:conn-plant-to-intake-pump ;
+    ns1:connectsThrough dum:conn-plant-to-intake-pump ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:intake-pump-out a ns1:OutletConnectionPoint ;
+    ns1:connectsAt dum:conn-intake-pump-to-intake-tank ;
+    ns1:connectsThrough dum:conn-intake-pump-to-intake-tank ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:intake-tank a brick:Tank ;
+    ns1:cnx dum:intake-tank-in,
+        dum:intake-tank-out ;
+    ns1:connected dum:intake-valve ;
+    ns1:connectedThrough dum:conn-intake-tank-to-intake-valve ;
+    ns1:connectedTo dum:intake-valve ;
+    ns1:hasConnectionPoint dum:intake-tank-in,
+        dum:intake-tank-out ;
+    ns1:hasProperty dum:intake-tank-temperature,
+        dum:intake-tank-volume .
+
+dum:intake-tank-in a ns1:InletConnectionPoint ;
+    ns1:connectsAt dum:conn-intake-pump-to-intake-tank ;
+    ns1:connectsThrough dum:conn-intake-pump-to-intake-tank ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:intake-tank-out a ns1:OutletConnectionPoint ;
+    ns1:connectsAt dum:conn-intake-tank-to-intake-valve ;
+    ns1:connectsThrough dum:conn-intake-tank-to-intake-valve ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:intake-valve a brick:Valve ;
+    ns1:cnx dum:intake-valve-in,
+        dum:intake-valve-out ;
+    ns1:connected dum:intake-junction ;
+    ns1:connectedThrough dum:conn-intake-valve-to-intake-junction ;
+    ns1:connectedTo dum:intake-junction ;
+    ns1:hasConnectionPoint dum:intake-valve-in,
+        dum:intake-valve-out ;
+    ns1:hasProperty dum:intake-valve-status .
+
+dum:intake-valve-in a ns1:InletConnectionPoint ;
+    ns1:connectsAt dum:conn-intake-tank-to-intake-valve ;
+    ns1:connectsThrough dum:conn-intake-tank-to-intake-valve ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:intake-valve-out a ns1:OutletConnectionPoint ;
+    ns1:connectsAt dum:conn-intake-valve-to-intake-junction ;
+    ns1:connectsThrough dum:conn-intake-valve-to-intake-junction ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:intake-junction a ns1:Junction ;
+    ns1:cnx dum:intake-junction-in,
+        dum:intake-junction-out ;
+    ns1:connected dum:prefilter ;
+    ns1:connectedThrough dum:conn-intake-junction-to-prefilter ;
+    ns1:connectedTo dum:prefilter ;
+    ns1:hasConnectionPoint dum:intake-junction-in,
+        dum:intake-junction-out .
+
+dum:intake-junction-in a ns1:InletConnectionPoint ;
+    ns1:connectsAt dum:conn-intake-valve-to-intake-junction ;
+    ns1:connectsThrough dum:conn-intake-valve-to-intake-junction ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:intake-junction-out a ns1:OutletConnectionPoint ;
+    ns1:connectsAt dum:conn-intake-junction-to-prefilter ;
+    ns1:connectsThrough dum:conn-intake-junction-to-prefilter ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+# ----------------------------------------------------------------------------
+# Equipment in treatment_subsystem
+# ----------------------------------------------------------------------------
+
+dum:prefilter a brick:Filter ;
+    ns1:cnx dum:prefilter-in,
+        dum:prefilter-out ;
+    ns1:connected dum:uv-unit ;
+    ns1:connectedThrough dum:conn-prefilter-to-uv-unit ;
+    ns1:connectedTo dum:uv-unit ;
+    ns1:hasConnectionPoint dum:prefilter-in,
+        dum:prefilter-out ;
+    ns1:hasProperty dum:prefilter-status .
+
+dum:prefilter-in a ns1:InletConnectionPoint ;
+    ns1:connectsAt dum:conn-intake-junction-to-prefilter ;
+    ns1:connectsThrough dum:conn-intake-junction-to-prefilter ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:prefilter-out a ns1:OutletConnectionPoint ;
+    ns1:connectsAt dum:conn-prefilter-to-uv-unit ;
+    ns1:connectsThrough dum:conn-prefilter-to-uv-unit ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:uv-unit a brick:UV_Sterilizer ;
+    ns1:cnx dum:uv-unit-in,
+        dum:uv-unit-out ;
+    ns1:connected dum:treatment-pump ;
+    ns1:connectedThrough dum:conn-uv-unit-to-treatment-pump ;
+    ns1:connectedTo dum:treatment-pump ;
+    ns1:hasConnectionPoint dum:uv-unit-in,
+        dum:uv-unit-out ;
+    ns1:hasProperty dum:uv-unit-status .
+
+dum:uv-unit-in a ns1:InletConnectionPoint ;
+    ns1:connectsAt dum:conn-prefilter-to-uv-unit ;
+    ns1:connectsThrough dum:conn-prefilter-to-uv-unit ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:uv-unit-out a ns1:OutletConnectionPoint ;
+    ns1:connectsAt dum:conn-uv-unit-to-treatment-pump ;
+    ns1:connectsThrough dum:conn-uv-unit-to-treatment-pump ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:treatment-pump a brick:Pump ;
+    ns1:cnx dum:treatment-pump-in,
+        dum:treatment-pump-out ;
+    ns1:connected dum:mid-tank ;
+    ns1:connectedThrough dum:conn-treatment-pump-to-mid-tank ;
+    ns1:connectedTo dum:mid-tank ;
+    ns1:hasConnectionPoint dum:treatment-pump-in,
+        dum:treatment-pump-out ;
+    ns1:hasProperty dum:treatment-pump-flow-rate,
+        dum:treatment-pump-speed-command .
+
+dum:treatment-pump-in a ns1:InletConnectionPoint ;
+    ns1:connectsAt dum:conn-uv-unit-to-treatment-pump ;
+    ns1:connectsThrough dum:conn-uv-unit-to-treatment-pump ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:treatment-pump-out a ns1:OutletConnectionPoint ;
+    ns1:connectsAt dum:conn-treatment-pump-to-mid-tank ;
+    ns1:connectsThrough dum:conn-treatment-pump-to-mid-tank ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:mid-tank a brick:Tank ;
+    ns1:cnx dum:mid-tank-in,
+        dum:mid-tank-out ;
+    ns1:connected dum:treatment-junction ;
+    ns1:connectedThrough dum:conn-mid-tank-to-treatment-junction ;
+    ns1:connectedTo dum:treatment-junction ;
+    ns1:hasConnectionPoint dum:mid-tank-in,
+        dum:mid-tank-out ;
+    ns1:hasProperty dum:mid-tank-temperature,
+        dum:mid-tank-volume .
+
+dum:mid-tank-in a ns1:InletConnectionPoint ;
+    ns1:connectsAt dum:conn-treatment-pump-to-mid-tank ;
+    ns1:connectsThrough dum:conn-treatment-pump-to-mid-tank ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:mid-tank-out a ns1:OutletConnectionPoint ;
+    ns1:connectsAt dum:conn-mid-tank-to-treatment-junction ;
+    ns1:connectsThrough dum:conn-mid-tank-to-treatment-junction ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:treatment-junction a ns1:Junction ;
+    ns1:cnx dum:treatment-junction-in,
+        dum:treatment-junction-out,
+        dum:treatment-junction-dose-in ;
+    ns1:connected dum:treatment-valve,
+        dum:dosing-pump ;
+    ns1:connectedThrough dum:conn-treatment-junction-to-treatment-valve,
+        dum:conn-dosing-pump-to-treatment-junction ;
+    ns1:connectedTo dum:treatment-valve ;
+    ns1:hasConnectionPoint dum:treatment-junction-dose-in,
+        dum:treatment-junction-in,
+        dum:treatment-junction-out .
+
+dum:treatment-junction-in a ns1:InletConnectionPoint ;
+    ns1:connectsAt dum:conn-mid-tank-to-treatment-junction ;
+    ns1:connectsThrough dum:conn-mid-tank-to-treatment-junction ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:treatment-junction-dose-in a ns1:InletConnectionPoint ;
+    ns1:connectsAt dum:conn-dosing-pump-to-treatment-junction ;
+    ns1:connectsThrough dum:conn-dosing-pump-to-treatment-junction ;
+    ns1:hasMedium ns1:Mix-Fluid .
+
+dum:treatment-junction-out a ns1:OutletConnectionPoint ;
+    ns1:connectsAt dum:conn-treatment-junction-to-treatment-valve ;
+    ns1:connectsThrough dum:conn-treatment-junction-to-treatment-valve ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:dosing-pump a brick:Pump ;
+    ns1:cnx dum:dosing-pump-in,
+        dum:dosing-pump-out ;
+    ns1:connected dum:treatment-junction ;
+    ns1:connectedThrough dum:conn-dosing-pump-to-treatment-junction ;
+    ns1:connectedTo dum:treatment-junction ;
+    ns1:hasConnectionPoint dum:dosing-pump-in,
+        dum:dosing-pump-out ;
+    ns1:hasProperty dum:dosing-pump-flow-rate,
+        dum:dosing-pump-speed-command .
+
+dum:dosing-pump-in a ns1:InletConnectionPoint ;
+    ns1:hasMedium ns1:Mix-Fluid .
+
+dum:dosing-pump-out a ns1:OutletConnectionPoint ;
+    ns1:connectsAt dum:conn-dosing-pump-to-treatment-junction ;
+    ns1:connectsThrough dum:conn-dosing-pump-to-treatment-junction ;
+    ns1:hasMedium ns1:Mix-Fluid .
+
+dum:treatment-valve a brick:Valve ;
+    ns1:cnx dum:treatment-valve-in,
+        dum:treatment-valve-out ;
+    ns1:connected dum:output-tank ;
+    ns1:connectedThrough dum:conn-treatment-valve-to-output-tank ;
+    ns1:connectedTo dum:output-tank ;
+    ns1:hasConnectionPoint dum:treatment-valve-in,
+        dum:treatment-valve-out ;
+    ns1:hasProperty dum:treatment-valve-opening-ratio .
+
+dum:treatment-valve-in a ns1:InletConnectionPoint ;
+    ns1:connectsAt dum:conn-treatment-junction-to-treatment-valve ;
+    ns1:connectsThrough dum:conn-treatment-junction-to-treatment-valve ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:treatment-valve-out a ns1:OutletConnectionPoint ;
+    ns1:connectsAt dum:conn-treatment-valve-to-output-tank ;
+    ns1:connectsThrough dum:conn-treatment-valve-to-output-tank ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+# ----------------------------------------------------------------------------
+# Equipment in output_subsystem
+# ----------------------------------------------------------------------------
+
+dum:output-tank a brick:Tank ;
+    ns1:cnx dum:output-tank-in,
+        dum:output-tank-out ;
+    ns1:connected dum:output-valve ;
+    ns1:connectedThrough dum:conn-output-tank-to-output-valve ;
+    ns1:connectedTo dum:output-valve ;
+    ns1:hasConnectionPoint dum:output-tank-in,
+        dum:output-tank-out ;
+    ns1:hasProperty dum:output-tank-temperature,
+        dum:output-tank-volume .
+
+dum:output-tank-in a ns1:InletConnectionPoint ;
+    ns1:connectsAt dum:conn-treatment-valve-to-output-tank ;
+    ns1:connectsThrough dum:conn-treatment-valve-to-output-tank ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:output-tank-out a ns1:OutletConnectionPoint ;
+    ns1:connectsAt dum:conn-output-tank-to-output-valve ;
+    ns1:connectsThrough dum:conn-output-tank-to-output-valve ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:output-valve a brick:Valve ;
+    ns1:cnx dum:output-valve-in,
+        dum:output-valve-out ;
+    ns1:connected dum:distribution-pump ;
+    ns1:connectedThrough dum:conn-output-valve-to-distribution-pump ;
+    ns1:connectedTo dum:distribution-pump ;
+    ns1:hasConnectionPoint dum:output-valve-in,
+        dum:output-valve-out ;
+    ns1:hasProperty dum:output-valve-status .
+
+dum:output-valve-in a ns1:InletConnectionPoint ;
+    ns1:connectsAt dum:conn-output-tank-to-output-valve ;
+    ns1:connectsThrough dum:conn-output-tank-to-output-valve ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:output-valve-out a ns1:OutletConnectionPoint ;
+    ns1:connectsAt dum:conn-output-valve-to-distribution-pump ;
+    ns1:connectsThrough dum:conn-output-valve-to-distribution-pump ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:distribution-pump a brick:Pump ;
+    ns1:cnx dum:distribution-pump-in,
+        dum:distribution-pump-out ;
+    ns1:connected dum:distribution-junction ;
+    ns1:connectedThrough dum:conn-distribution-pump-to-distribution-junction ;
+    ns1:connectedTo dum:distribution-junction ;
+    ns1:hasConnectionPoint dum:distribution-pump-in,
+        dum:distribution-pump-out ;
+    ns1:hasProperty dum:distribution-pump-flow-rate,
+        dum:distribution-pump-speed-command .
+
+dum:distribution-pump-in a ns1:InletConnectionPoint ;
+    ns1:connectsAt dum:conn-output-valve-to-distribution-pump ;
+    ns1:connectsThrough dum:conn-output-valve-to-distribution-pump ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:distribution-pump-out a ns1:OutletConnectionPoint ;
+    ns1:connectsAt dum:conn-distribution-pump-to-distribution-junction ;
+    ns1:connectsThrough dum:conn-distribution-pump-to-distribution-junction ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:distribution-junction a ns1:Junction ;
+    ns1:cnx dum:distribution-junction-in,
+        dum:distribution-junction-out ;
+    ns1:connected dum:distribution-valve ;
+    ns1:connectedThrough dum:conn-distribution-junction-to-distribution-valve ;
+    ns1:connectedTo dum:distribution-valve ;
+    ns1:hasConnectionPoint dum:distribution-junction-in,
+        dum:distribution-junction-out .
+
+dum:distribution-junction-in a ns1:InletConnectionPoint ;
+    ns1:connectsAt dum:conn-distribution-pump-to-distribution-junction ;
+    ns1:connectsThrough dum:conn-distribution-pump-to-distribution-junction ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:distribution-junction-out a ns1:OutletConnectionPoint ;
+    ns1:connectsAt dum:conn-distribution-junction-to-distribution-valve ;
+    ns1:connectsThrough dum:conn-distribution-junction-to-distribution-valve ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:distribution-valve a brick:Valve ;
+    ns1:cnx dum:distribution-valve-in,
+        dum:distribution-valve-out ;
+    ns1:hasConnectionPoint dum:distribution-valve-in,
+        dum:distribution-valve-out ;
+    ns1:hasProperty dum:distribution-valve-opening-ratio .
+
+dum:distribution-valve-in a ns1:InletConnectionPoint ;
+    ns1:connectsAt dum:conn-distribution-junction-to-distribution-valve ;
+    ns1:connectsThrough dum:conn-distribution-junction-to-distribution-valve ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:distribution-valve-out a ns1:OutletConnectionPoint ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+# ----------------------------------------------------------------------------
+# Connections (pipes)
+# ----------------------------------------------------------------------------
+
+dum:conn-plant-to-intake-pump a ns1:Connection,
+        ns1:Pipe ;
+    ns1:cnx dum:plant-out,
+        dum:intake-pump-in ;
+    ns1:connectsFrom dum:plant ;
+    ns1:connectsTo dum:intake-pump ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:conn-intake-pump-to-intake-tank a ns1:Connection,
+        ns1:Pipe ;
+    ns1:cnx dum:intake-pump-out,
+        dum:intake-tank-in ;
+    ns1:connectsFrom dum:intake-pump ;
+    ns1:connectsTo dum:intake-tank ;
+    ns1:hasMedium ns1:Fluid-Water ;
+    ns1:hasProperty dum:conn-intake-pump-to-intake-tank-pressure .
+
+dum:conn-intake-tank-to-intake-valve a ns1:Connection,
+        ns1:Pipe ;
+    ns1:cnx dum:intake-tank-out,
+        dum:intake-valve-in ;
+    ns1:connectsFrom dum:intake-tank ;
+    ns1:connectsTo dum:intake-valve ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:conn-intake-valve-to-intake-junction a ns1:Connection,
+        ns1:Pipe ;
+    ns1:cnx dum:intake-valve-out,
+        dum:intake-junction-in ;
+    ns1:connectsFrom dum:intake-valve ;
+    ns1:connectsTo dum:intake-junction ;
+    ns1:hasMedium ns1:Fluid-Water ;
+    ns1:hasProperty dum:conn-intake-valve-to-intake-junction-flow-rate,
+        dum:conn-intake-valve-to-intake-junction-ph .
+
+dum:conn-intake-junction-to-prefilter a ns1:Connection,
+        ns1:Pipe ;
+    ns1:cnx dum:intake-junction-out,
+        dum:prefilter-in ;
+    ns1:connectsFrom dum:intake-junction ;
+    ns1:connectsTo dum:prefilter ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:conn-prefilter-to-uv-unit a ns1:Connection,
+        ns1:Pipe ;
+    ns1:cnx dum:prefilter-out,
+        dum:uv-unit-in ;
+    ns1:connectsFrom dum:prefilter ;
+    ns1:connectsTo dum:uv-unit ;
+    ns1:hasMedium ns1:Fluid-Water ;
+    ns1:hasProperty dum:conn-prefilter-to-uv-unit-toc-ppm,
+        dum:conn-prefilter-to-uv-unit-turbidity .
+
+dum:conn-uv-unit-to-treatment-pump a ns1:Connection,
+        ns1:Pipe ;
+    ns1:cnx dum:uv-unit-out,
+        dum:treatment-pump-in ;
+    ns1:connectsFrom dum:uv-unit ;
+    ns1:connectsTo dum:treatment-pump ;
+    ns1:hasMedium ns1:Fluid-Water ;
+    ns1:hasProperty dum:conn-uv-unit-to-treatment-pump-flow-rate,
+        dum:conn-uv-unit-to-treatment-pump-pressure .
+
+dum:conn-treatment-pump-to-mid-tank a ns1:Connection,
+        ns1:Pipe ;
+    ns1:cnx dum:treatment-pump-out,
+        dum:mid-tank-in ;
+    ns1:connectsFrom dum:treatment-pump ;
+    ns1:connectsTo dum:mid-tank ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:conn-mid-tank-to-treatment-junction a ns1:Connection,
+        ns1:Pipe ;
+    ns1:cnx dum:mid-tank-out,
+        dum:treatment-junction-in ;
+    ns1:connectsFrom dum:mid-tank ;
+    ns1:connectsTo dum:treatment-junction ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:conn-dosing-pump-to-treatment-junction a ns1:Connection,
+        ns1:Pipe ;
+    ns1:cnx dum:dosing-pump-out,
+        dum:treatment-junction-dose-in ;
+    ns1:connectsFrom dum:dosing-pump ;
+    ns1:connectsTo dum:treatment-junction ;
+    ns1:hasMedium ns1:Mix-Fluid .
+
+dum:conn-treatment-junction-to-treatment-valve a ns1:Connection,
+        ns1:Pipe ;
+    ns1:cnx dum:treatment-junction-out,
+        dum:treatment-valve-in ;
+    ns1:connectsFrom dum:treatment-junction ;
+    ns1:connectsTo dum:treatment-valve ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:conn-treatment-valve-to-output-tank a ns1:Connection,
+        ns1:Pipe ;
+    ns1:cnx dum:treatment-valve-out,
+        dum:output-tank-in ;
+    ns1:connectsFrom dum:treatment-valve ;
+    ns1:connectsTo dum:output-tank ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:conn-output-tank-to-output-valve a ns1:Connection,
+        ns1:Pipe ;
+    ns1:cnx dum:output-tank-out,
+        dum:output-valve-in ;
+    ns1:connectsFrom dum:output-tank ;
+    ns1:connectsTo dum:output-valve ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:conn-output-valve-to-distribution-pump a ns1:Connection,
+        ns1:Pipe ;
+    ns1:cnx dum:output-valve-out,
+        dum:distribution-pump-in ;
+    ns1:connectsFrom dum:output-valve ;
+    ns1:connectsTo dum:distribution-pump ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:conn-distribution-pump-to-distribution-junction a ns1:Connection,
+        ns1:Pipe ;
+    ns1:cnx dum:distribution-pump-out,
+        dum:distribution-junction-in ;
+    ns1:connectsFrom dum:distribution-pump ;
+    ns1:connectsTo dum:distribution-junction ;
+    ns1:hasMedium ns1:Fluid-Water .
+
+dum:conn-distribution-junction-to-distribution-valve a ns1:Connection,
+        ns1:Pipe ;
+    ns1:cnx dum:distribution-junction-out,
+        dum:distribution-valve-in ;
+    ns1:connectsFrom dum:distribution-junction ;
+    ns1:connectsTo dum:distribution-valve ;
+    ns1:hasMedium ns1:Fluid-Water ;
+    ns1:hasProperty dum:conn-distribution-junction-to-distribution-valve-cl2-mgL,
+        dum:conn-distribution-junction-to-distribution-valve-ph,
+        dum:conn-distribution-junction-to-distribution-valve-pressure,
+        dum:conn-distribution-junction-to-distribution-valve-turbidity .
+
+# ----------------------------------------------------------------------------
+# QuantifiableObservableProperty / QuantifiableActuatableProperty
+# ----------------------------------------------------------------------------
+
+dum:intake-pump-flow-rate a ns1:QuantifiableObservableProperty ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/VolumeFlowRate> ;
+    ns2:hasUnit <http://qudt.org/vocab/unit/GAL_US-PER-MIN> ;
+    rdfs:comment "Intake pump volumetric flow"^^xsd:string .
+
+dum:intake-pump-speed-command a ns1:QuantifiableActuatableProperty ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/SpeedRatio> ;
+    ns2:hasUnit <http://qudt.org/vocab/unit/PERCENT> ;
+    rdfs:comment "Intake pump VFD speed setpoint"^^xsd:string .
+
+dum:intake-pump-status a ns1:QuantifiableObservableProperty ;
+    ns2:hasEnumerationKind ns1:EnumerationKind-Status ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/Dimensionless> ;
+    ns2:unit <http://qudt.org/vocab/unit/UNITLESS> .
+
+dum:intake-tank-volume a ns1:QuantifiableObservableProperty ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/Volume> ;
+    ns2:hasUnit <http://qudt.org/vocab/unit/GAL_US> .
+
+dum:intake-tank-temperature a ns1:QuantifiableObservableProperty ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/Temperature> ;
+    ns2:hasUnit <http://qudt.org/vocab/unit/DEG_C> .
+
+dum:intake-valve-status a ns1:QuantifiableObservableProperty ;
+    ns2:hasEnumerationKind ns1:EnumerationKind-Status ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/Dimensionless> ;
+    ns2:unit <http://qudt.org/vocab/unit/UNITLESS> .
+
+dum:conn-intake-pump-to-intake-tank-pressure a ns1:QuantifiableObservableProperty ;
+    ns1:hasMedium ns1:Fluid-Water ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/Pressure> ;
+    ns2:hasUnit <http://qudt.org/vocab/unit/PSI> .
+
+dum:conn-intake-valve-to-intake-junction-flow-rate a ns1:QuantifiableObservableProperty ;
+    ns1:hasMedium ns1:Fluid-Water ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/VolumeFlowRate> ;
+    ns2:hasUnit <http://qudt.org/vocab/unit/GAL_US-PER-MIN> .
+
+dum:conn-intake-valve-to-intake-junction-ph a ns1:QuantifiableObservableProperty ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/Acidity> ;
+    ns2:hasUnit <http://qudt.org/vocab/unit/PH> .
+
+dum:prefilter-status a ns1:QuantifiableObservableProperty ;
+    ns2:hasEnumerationKind ns1:EnumerationKind-Status ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/Dimensionless> ;
+    ns2:unit <http://qudt.org/vocab/unit/UNITLESS> .
+
+dum:conn-prefilter-to-uv-unit-turbidity a ns1:QuantifiableObservableProperty ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/Turbidity> ;
+    ns2:hasUnit <http://qudt.org/vocab/unit/NTU> .
+
+dum:conn-prefilter-to-uv-unit-toc-ppm a ns1:QuantifiableObservableProperty ;
+    ns1:ofMedium ns1:Fluid-Water ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/Concentration> ;
+    ns2:hasUnit <http://qudt.org/vocab/unit/PPM> .
+
+dum:uv-unit-status a ns1:QuantifiableObservableProperty ;
+    ns2:hasEnumerationKind ns1:EnumerationKind-Status ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/Dimensionless> ;
+    ns2:unit <http://qudt.org/vocab/unit/UNITLESS> .
+
+dum:treatment-pump-speed-command a ns1:QuantifiableActuatableProperty ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/SpeedRatio> ;
+    ns2:hasUnit <http://qudt.org/vocab/unit/PERCENT> .
+
+dum:treatment-pump-flow-rate a ns1:QuantifiableObservableProperty ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/VolumeFlowRate> ;
+    ns2:hasUnit <http://qudt.org/vocab/unit/GAL_US-PER-MIN> .
+
+dum:treatment-valve-opening-ratio a ns1:QuantifiableObservableProperty ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/OpeningRatio> ;
+    ns2:hasUnit <http://qudt.org/vocab/unit/PERCENT> .
+
+dum:conn-uv-unit-to-treatment-pump-flow-rate a ns1:QuantifiableObservableProperty ;
+    ns1:hasMedium ns1:Fluid-Water ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/VolumeFlowRate> ;
+    ns2:hasUnit <http://qudt.org/vocab/unit/GAL_US-PER-MIN> .
+
+dum:conn-uv-unit-to-treatment-pump-pressure a ns1:QuantifiableObservableProperty ;
+    ns1:hasMedium ns1:Fluid-Water ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/Pressure> ;
+    ns2:hasUnit <http://qudt.org/vocab/unit/PSI> .
+
+dum:mid-tank-volume a ns1:QuantifiableObservableProperty ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/Volume> ;
+    ns2:hasUnit <http://qudt.org/vocab/unit/GAL_US> .
+
+dum:mid-tank-temperature a ns1:QuantifiableObservableProperty ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/Temperature> ;
+    ns2:hasUnit <http://qudt.org/vocab/unit/DEG_C> .
+
+dum:dosing-pump-flow-rate a ns1:QuantifiableObservableProperty ;
+    ns1:hasMedium ns1:Mix-Fluid ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/VolumeFlowRate> ;
+    ns2:hasUnit <http://qudt.org/vocab/unit/MilliL-PER-MIN> .
+
+dum:dosing-pump-speed-command a ns1:QuantifiableActuatableProperty ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/SpeedRatio> ;
+    ns2:hasUnit <http://qudt.org/vocab/unit/PERCENT> .
+
+dum:output-tank-volume a ns1:QuantifiableObservableProperty ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/Volume> ;
+    ns2:hasUnit <http://qudt.org/vocab/unit/GAL_US> .
+
+dum:output-tank-temperature a ns1:QuantifiableObservableProperty ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/Temperature> ;
+    ns2:hasUnit <http://qudt.org/vocab/unit/DEG_C> .
+
+dum:output-valve-status a ns1:QuantifiableObservableProperty ;
+    ns2:hasEnumerationKind ns1:EnumerationKind-Status ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/Dimensionless> ;
+    ns2:unit <http://qudt.org/vocab/unit/UNITLESS> .
+
+dum:distribution-pump-speed-command a ns1:QuantifiableActuatableProperty ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/SpeedRatio> ;
+    ns2:hasUnit <http://qudt.org/vocab/unit/PERCENT> .
+
+dum:distribution-pump-flow-rate a ns1:QuantifiableObservableProperty ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/VolumeFlowRate> ;
+    ns2:hasUnit <http://qudt.org/vocab/unit/GAL_US-PER-MIN> .
+
+dum:distribution-valve-opening-ratio a ns1:QuantifiableObservableProperty ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/OpeningRatio> ;
+    ns2:hasUnit <http://qudt.org/vocab/unit/PERCENT> .
+
+dum:conn-distribution-junction-to-distribution-valve-pressure a ns1:QuantifiableObservableProperty ;
+    ns1:hasMedium ns1:Fluid-Water ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/Pressure> ;
+    ns2:hasUnit <http://qudt.org/vocab/unit/PSI> .
+
+dum:conn-distribution-junction-to-distribution-valve-ph a ns1:QuantifiableObservableProperty ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/Acidity> ;
+    ns2:hasUnit <http://qudt.org/vocab/unit/PH> .
+
+dum:conn-distribution-junction-to-distribution-valve-turbidity a ns1:QuantifiableObservableProperty ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/Turbidity> ;
+    ns2:hasUnit <http://qudt.org/vocab/unit/NTU> .
+
+dum:conn-distribution-junction-to-distribution-valve-cl2-mgL a ns1:QuantifiableObservableProperty ;
+    ns1:ofMedium ns1:Fluid-Water ;
+    ns2:hasQuantityKind <http://qudt.org/vocab/quantitykind/MassConcentration> ;
+    ns2:hasUnit <http://qudt.org/vocab/unit/MilliGM-PER-L> .
+
+# ----------------------------------------------------------------------------
+# Sensors (observing properties at connection locations)
+# ----------------------------------------------------------------------------
+
+dum:conn-intake-pump-to-intake-tank-pressure-sensor a ns1:Sensor ;
+    ns1:hasObservationLocation dum:conn-intake-pump-to-intake-tank ;
+    ns1:observes dum:conn-intake-pump-to-intake-tank-pressure ;
+    ns2:isDeltaQuantity false .
+
+dum:conn-intake-valve-to-intake-junction-flow-rate-sensor a ns1:Sensor ;
+    ns1:hasObservationLocation dum:conn-intake-valve-to-intake-junction ;
+    ns1:observes dum:conn-intake-valve-to-intake-junction-flow-rate ;
+    ns2:isDeltaQuantity false .
+
+dum:conn-intake-valve-to-intake-junction-ph-sensor a ns1:Sensor ;
+    ns1:hasObservationLocation dum:conn-intake-valve-to-intake-junction ;
+    ns1:observes dum:conn-intake-valve-to-intake-junction-ph ;
+    ns2:isDeltaQuantity false .
+
+dum:conn-prefilter-to-uv-unit-turbidity-sensor a ns1:Sensor ;
+    ns1:hasObservationLocation dum:conn-prefilter-to-uv-unit ;
+    ns1:observes dum:conn-prefilter-to-uv-unit-turbidity ;
+    ns2:isDeltaQuantity false .
+
+dum:conn-prefilter-to-uv-unit-toc-ppm-sensor a ns1:Sensor ;
+    ns1:hasObservationLocation dum:conn-prefilter-to-uv-unit ;
+    ns1:observes dum:conn-prefilter-to-uv-unit-toc-ppm ;
+    ns2:isDeltaQuantity false .
+
+dum:conn-uv-unit-to-treatment-pump-flow-rate-sensor a ns1:Sensor ;
+    ns1:hasObservationLocation dum:conn-uv-unit-to-treatment-pump ;
+    ns1:observes dum:conn-uv-unit-to-treatment-pump-flow-rate ;
+    ns2:isDeltaQuantity false .
+
+dum:conn-uv-unit-to-treatment-pump-pressure-sensor a ns1:Sensor ;
+    ns1:hasObservationLocation dum:conn-uv-unit-to-treatment-pump ;
+    ns1:observes dum:conn-uv-unit-to-treatment-pump-pressure ;
+    ns2:isDeltaQuantity false .
+
+dum:conn-distribution-junction-to-distribution-valve-pressure-sensor a ns1:Sensor ;
+    ns1:hasObservationLocation dum:conn-distribution-junction-to-distribution-valve ;
+    ns1:observes dum:conn-distribution-junction-to-distribution-valve-pressure ;
+    ns2:isDeltaQuantity false .
+
+dum:conn-distribution-junction-to-distribution-valve-ph-sensor a ns1:Sensor ;
+    ns1:hasObservationLocation dum:conn-distribution-junction-to-distribution-valve ;
+    ns1:observes dum:conn-distribution-junction-to-distribution-valve-ph ;
+    ns2:isDeltaQuantity false .
+
+dum:conn-distribution-junction-to-distribution-valve-turbidity-sensor a ns1:Sensor ;
+    ns1:hasObservationLocation dum:conn-distribution-junction-to-distribution-valve ;
+    ns1:observes dum:conn-distribution-junction-to-distribution-valve-turbidity ;
+    ns2:isDeltaQuantity false .
+
+dum:conn-distribution-junction-to-distribution-valve-cl2-mgL-sensor a ns1:Sensor ;
+    ns1:hasObservationLocation dum:conn-distribution-junction-to-distribution-valve ;
+    ns1:observes dum:conn-distribution-junction-to-distribution-valve-cl2-mgL ;
+    ns2:isDeltaQuantity false .
