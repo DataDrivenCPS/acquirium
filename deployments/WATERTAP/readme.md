@@ -134,9 +134,10 @@ deployments/WATERTAP/
 └── scripts/
     ├── data-generator.py     batch: write parquet snapshots over time
     ├── simulation_driver.py  live: auto-generate inputs, solve, ingest
+    ├── parquet_driver.py     live: watches data directory of the model and loads
     ├── gui_driver.py         live: solve on GUI input changes, ingest
     ├── input_gui.py          generic Streamlit GUI for any model's inputs
-    └── acquirium.toml        driver configuration (one active block)
+    └── acquirium.toml        driver configuration (two active blocks)
 ```
 
 ## Generating data (batch → parquet)
@@ -161,9 +162,7 @@ property) into `models/<name>/data/`. For instance the following command will ge
 Same `--seed` + `--start` → identical output. Files are named
 `<model>_<first>-<last>_<timestamp>.parquet` and sort chronologically.
 
-**NOTE:**
-- **We recommend generating data for regulation.ipynb example with** `.venv/bin/python deployments/WATERTAP/scripts/data-generator.py seawater-ro --N 4320 -T 10m` 
-
+We provide one example pq file in seawater-ro model folder, you can add more data to the same folder using the generator. 
 
 
 ## Drivers
@@ -178,7 +177,7 @@ interface — no hand-authored reference graph needed.
 |--------|------|--------------|
 | **Simulation** | `simulation_driver.py:SimulationDriver` | Each tick calls `generate_new_values`, applies them via `change_inputs`, solves, and ingests. Fully autonomous. |
 | **GUI** | `gui_driver.py:GuiDriver` | Launches `input_gui.py` (Streamlit) for the model's inputs; solves + ingests **only when a value changes**. Decoupled via a shared JSON file. |
-| **Parquet** | `acquirium.BuiltinDrivers.parquet_ingest:ParquetIngestDriver` | Watches `models/<name>/data/` and replays generated parquet snapshots into Acquirium. |
+| **Parquet** | `parquet_driver.py:WaterTAPParquetDriver` | Watches `models/<name>/data/` and replays generated parquet snapshots into Acquirium. |
 
 Both WaterTAP drivers inherit `WaterTAPDriver` and so share its
 `build → change_inputs → solve → read` pipeline. The GUI is **model-agnostic**:
@@ -193,13 +192,13 @@ acquirium run --config deployments/WATERTAP/scripts/acquirium.toml
 
 ## Changing the config (`scripts/acquirium.toml`)
 
-The TOML ships with **exactly one `[[drivers]]` block enabled** (the seawater-ro
-simulation) and the rest commented out — six blocks in total covering both
+The TOML ships with **two `[[drivers]]` block enabled** (the seawater-ro
+simulation and parquet ingestion) and the rest commented out — six blocks in total covering both
 models × {simulation, GUI, parquet}. To switch, comment the active block and
 uncomment another; enable several at once to run them together.
 
 **NOTE:**
-- **We recommend generating data (see above) and then uncommenting lines 107-112 in [deployments/WATERTAP/scripts/acquirium.toml](../WATERTAP/scripts/acquirium.toml) to enable parquet driver for working with the regulation.ipynb example.**
+- **We recommend default settings for working with the regulation.ipynb example.**
 
 Per-driver keys live in each `[[drivers]]` entry (merged over the shared
 `[driver]` section). Key WaterTAP options:
