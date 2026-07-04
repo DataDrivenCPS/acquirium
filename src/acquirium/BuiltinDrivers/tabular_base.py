@@ -43,6 +43,11 @@ class TabularIngestBase(IngestDriver):
     a restart will at worst re-insert the full file — no data is duplicated in
     the store.  Files are never moved or deleted.
 
+    Once a file has been read to completion (a tick sees no new rows), its
+    ``(mtime, size)`` is cached and later ticks skip re-reading it entirely
+    until it changes on disk — avoiding a full re-parse of every file, every
+    tick, forever.
+
     Shared config keys (all optional, under ``self.config["driver"]``):
 
     .. code-block:: toml
@@ -75,6 +80,11 @@ class TabularIngestBase(IngestDriver):
         self._watch_dir = watch_dir
         # Load row offsets from persistent state (empty dict if not found)
         self._rows_seen: dict[str, int] = self.state.get("rows_seen", {})
+        # (mtime, size) a file had the last time it was read and produced no
+        # new rows -- lets tick() skip re-parsing files that haven't changed
+        # since they were fully caught up, instead of re-reading every file
+        # from disk every tick forever.
+        self._fully_read: dict[str, list[float]] = self.state.get("fully_read", {})
         self._registered: dict[str, set[str]] = {}  # source_id → registered ref_names
 
         self._watch_dir.mkdir(parents=True, exist_ok=True)
@@ -223,6 +233,14 @@ class TabularIngestBase(IngestDriver):
         logger.debug("tabular_ingest tick: watch_dir=%s pending=%d", self._watch_dir, len(paths))
         for path in paths:
             key = str(path)
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            stamp = [stat.st_mtime, stat.st_size]
+            if self._fully_read.get(key) == stamp:
+                continue
+
             offset = self._rows_seen.get(key, 0)
             source_id = self.source_id_for(path)
             rel = path.relative_to(self._watch_dir)
@@ -231,6 +249,8 @@ class TabularIngestBase(IngestDriver):
                 with timed_debug(logger, "tabular_ingest parse %s (offset=%d)", path.name, offset):
                     raw_df, rows_read = self.read_frame(path, row_offset=offset)
                     if rows_read == 0:
+                        self._fully_read[key] = stamp
+                        self.state.set("fully_read", self._fully_read)
                         continue
 
                     if self._is_timeseries_frame(raw_df):
