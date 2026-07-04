@@ -200,6 +200,9 @@ class Acquirium:
         self,
         reasoning: "Reasoning | None" = None,
         profile: "Profile | None" = None,
+        *,
+        fuzzy: bool = True,
+        min_score: float = 0.5,
     ) -> "Graframe":
         """Create a Graframe root for facet-based graph exploration.
 
@@ -219,7 +222,10 @@ class Acquirium:
         """
         from acquirium.Graframe import Graframe
 
-        return Graframe(self.client, reasoning=reasoning, profile=profile)
+        return Graframe(
+            self.client, reasoning=reasoning, profile=profile,
+            fuzzy=fuzzy, min_score=min_score,
+        )
 
     def find_entity(
         self,
@@ -258,6 +264,7 @@ class Acquirium:
         rows: list[tuple[datetime, Any]],
         *,
         point_uri: Optional[str] = None,
+        value_kind: str = "numeric",
         replace: bool = False,
     ) -> dict[str, Any]:
         """Insert timeseries data for a single stream.
@@ -279,6 +286,7 @@ class Acquirium:
             ref_name=ref_name,
             rows=rows,
             point_uri=point_uri,
+            value_kind=value_kind,
             replace=replace,
         )
 

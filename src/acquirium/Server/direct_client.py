@@ -65,6 +65,7 @@ class _DirectClient:
         ref_name: str,
         rows: list[tuple[datetime, Any]],
         point_uri: Optional[str] = None,
+        value_kind: str = "numeric",
         replace: bool = False,
     ) -> dict[str, Any]:
         logger.debug(
@@ -76,6 +77,7 @@ class _DirectClient:
             ref_name=ref_name,
             rows=rows,
             point_uri=point_uri,
+            value_kind=value_kind,
             replace=replace,
         )
         insert_stats.record(origin=self._origin, rows=len(rows), streams=[ref_name])

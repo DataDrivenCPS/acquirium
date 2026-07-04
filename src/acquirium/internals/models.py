@@ -88,6 +88,7 @@ class StreamInsert(BaseModel):
     source_id: str
     ref_name: str
     point_uri: str | None = None
+    value_kind: Literal["numeric", "text"] = "numeric"
     replace: bool = False
     values: list[tuple[datetime, float | int | str | None]]
 

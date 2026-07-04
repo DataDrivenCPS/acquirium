@@ -375,6 +375,7 @@ def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[st
                 ref_name=s.ref_name,
                 rows=s.values,
                 point_uri=s.point_uri,
+                value_kind=s.value_kind,
                 replace=s.replace,
             )
         insert_stats.record(

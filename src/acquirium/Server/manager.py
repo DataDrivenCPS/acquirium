@@ -681,10 +681,17 @@ class Manager:
         ref_name: str,
         rows: list[tuple[datetime, Any]],
         point_uri: str | None = None,
+        value_kind: str = "numeric",
         replace: bool = False,
     ) -> int:
         ref_uri = str(compute_ref_uri(source_id, ref_name))
-        value_kind = self._registered_value_kind(ref_uri)
+        value_kind = self._ensure_insert_stream(
+            ref_uri=ref_uri,
+            source_id=source_id,
+            ref_name=ref_name,
+            point_uri=point_uri,
+            value_kind=value_kind,
+        )
         logger.debug(
             "insert_timeseries source=%s ref_name=%s rows=%d kind=%s replace=%s",
             source_id, ref_name, len(rows), value_kind, replace,
@@ -694,6 +701,44 @@ class Manager:
         else:
             n = self.timescale.upsert_rows(ref_uri, rows, value_kind=value_kind)
         return n
+
+    def _ensure_insert_stream(
+        self,
+        *,
+        ref_uri: str,
+        source_id: str,
+        ref_name: str,
+        point_uri: str | None,
+        value_kind: str,
+    ) -> str:
+        registered = self.timescale.stream_value_kind(ref_uri)
+        if registered is not None:
+            return normalize_value_kind(registered)
+        if point_uri is None:
+            raise ValueError(f"stream {ref_uri} is not registered")
+
+        normalized = normalize_value_kind(value_kind)
+        self.timescale.ensure_stream_ref(
+            point_uri=point_uri,
+            source_id=source_id,
+            ref_name=ref_name,
+            ref_uri=ref_uri,
+            value_kind=normalized,
+        )
+
+        graph = Graph()
+        point = URIRef(point_uri)
+        ref = URIRef(ref_uri)
+        graph.add((point, RDF.type, VIRTUAL_POINT))
+        graph.add((point, HAS_EXTERNAL_REFERENCE, ref))
+        graph.add((ref, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
+        graph.add((ref, ACQUIRIUM_REF_NAME, Literal(ref_name)))
+        graph.add((ref, ACQUIRIUM_VALUE_KIND, Literal(normalized)))
+        graph.add((ref, STORED_AT, ACQUIRIUM_DB_URI))
+        graph.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
+        self.graph_store.insert_graph(graph, format="turtle", replace=False)
+        self._notify_graph_change()
+        return normalized
 
     def insert_timeseries_batch(
         self,
