@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import io
 import logging
 import os
@@ -7,6 +9,7 @@ import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any, Optional, Iterator
+import ray
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse, Response
@@ -17,11 +20,8 @@ from datetime import datetime
 from acquirium.Server.manager import Manager
 
 from acquirium.internals.models import (
-    Order,
     LogEntry,
-    TimeInterval,
     TimeIntervalModel,
-    TimeseriesInfo,
     AppSpec,
     AppRunRequest,
     AppStopRequest,
@@ -35,74 +35,72 @@ import pyarrow as pa
 import polars as pl
 
 from acquirium.Server.insert_stats import insert_stats, start_insert_summary_thread
+from acquirium.Server.ray_backend import DriverSupervisor
 
 log = logging.getLogger("acquirium.api")
 
-def _start_inprocess_drivers(
-    manager: Manager,
-    stop_event: threading.Event,
-) -> list[threading.Thread]:
-    """Read [[drivers]] from ACQUIRIUM_CONFIG and start each driver.
 
-    Driver setup runs serially to avoid concurrent graph mutations during
-    startup. Once setup succeeds, each driver gets its own daemon tick thread.
+def _self_connect_cfg(cfg: dict) -> tuple[str, int, bool]:
+    """Return (host, port, use_ssl) that driver actors use to reach this server."""
+    driver_cfg = cfg.get("driver", {})
+    host = driver_cfg.get("server_url", "localhost")
+    if host == "0.0.0.0":
+        host = "localhost"
+    port = int(
+        driver_cfg.get("server_port")
+        or os.environ.get("ACQUIRIUM_SELF_PORT")
+        or cfg.get("server", {}).get("port", 8000)
+    )
+    use_ssl = bool(driver_cfg.get("use_ssl", False))
+    return host, port, use_ssl
+
+
+async def _start_config_drivers(supervisor: DriverSupervisor, cfg: dict) -> None:
+    """Start every [[drivers]] entry from the config as a Ray actor.
+
+    Driver actors talk to this server over HTTP, so this waits until the
+    server answers /health before starting them — the lifespan startup hook
+    runs before uvicorn begins serving. Setup ordering stays serial because
+    DriverSupervisor.start_driver holds its lock across setup.
     """
-    from acquirium.cli import _load_config
-    from acquirium.cli import _import_driver_class, _run_driver_loop
-    from acquirium.Server.direct_client import DirectAcquirium
+    import requests
 
-    config_path = os.environ.get("ACQUIRIUM_CONFIG")
-    if not config_path:
-        return []
+    entries = cfg.get("drivers", [])
+    if not entries:
+        return
 
-    try:
-        cfg = _load_config(Path(config_path))
-    except Exception:
-        log.warning("Could not load config from ACQUIRIUM_CONFIG=%s; skipping in-process drivers", config_path)
-        return []
+    health_url = f"{supervisor.base_url}/health"
+    for _ in range(300):
+        try:
+            r = await asyncio.to_thread(requests.get, health_url, timeout=2)
+            if r.ok:
+                break
+        except Exception:
+            pass
+        await asyncio.sleep(2)
+    else:
+        log.error("Server never became healthy at %s; not starting [[drivers]]", health_url)
+        return
 
-    # Stage every driver first so setup-time graph writes cannot race with
-    # another driver's tick loop.
-    drivers_to_start: list[tuple[str, float, object, object]] = []
-    for entry in cfg.get("drivers", []):
+    for entry in entries:
         spec = entry.get("spec")
         if not spec:
             log.warning("[[drivers]] entry missing 'spec'; skipping")
             continue
-        driver_overrides = {k: v for k, v in entry.items() if k != "spec"}
-        merged_cfg = {**cfg, "driver": {**cfg.get("driver", {}), **driver_overrides}}
-        interval = float(driver_overrides.get("interval", cfg.get("driver", {}).get("interval", 10.0)))
-        config_dir = Path(cfg.get("__config_dir", Path.cwd()))
+        overrides = {k: v for k, v in entry.items() if k not in ("spec", "name")}
+        merged_cfg = {**cfg, "driver": {**cfg.get("driver", {}), **overrides}}
+        interval = float(overrides.get("interval", cfg.get("driver", {}).get("interval", 10.0)))
         try:
-            driver_cls = _import_driver_class(spec, base_dir=config_dir)
-            direct_aq = DirectAcquirium(
-                manager,
-                origin=spec,
-                insert_batch_rows=int(merged_cfg.get("driver", {}).get("insert_batch_rows", 50_000)),
+            info = await asyncio.to_thread(
+                supervisor.start_driver,
+                spec=spec,
+                config=merged_cfg,
+                interval=interval,
+                name=entry.get("name"),
             )
-            driver = driver_cls(direct_aq, merged_cfg)
-            log.info("Setting up in-process driver: %s", spec)
-            driver.setup()
-            log.info("In-process driver ready: %s", driver_cls.__name__)
-            drivers_to_start.append((spec, interval, driver, direct_aq))
+            log.info("Started config driver '%s' (%s)", info["name"], spec)
         except Exception:
-            log.exception("In-process driver %s setup failed; thread exiting", spec)
-            continue
-
-    # Only start background loops after all setups have either succeeded or
-    # failed, so later drivers are not competing with earlier tick threads.
-    threads: list[threading.Thread] = []
-    for spec, interval, driver, direct_aq in drivers_to_start:
-        t = threading.Thread(
-            target=_run_driver_loop,
-            args=(driver, direct_aq, interval, stop_event),
-            daemon=True,
-            name=f"acquirium-driver-{spec.rsplit(':', 1)[-1]}",
-        )
-        t.start()
-        threads.append(t)
-        log.info("Started in-process driver: %s", spec)
-    return threads
+            log.exception("Config driver %s failed to start", spec)
 
 
 class Health(BaseModel):
@@ -165,23 +163,31 @@ async def lifespan(app: FastAPI):
         finally:
             raise
 
-    # Shared shutdown signal for all server-owned background threads.
-    # In-process drivers listed in [[drivers]] run alongside the API server,
-    # and the insert summary logger also runs in a background thread. They both
-    # poll this event so FastAPI lifespan shutdown can stop them before closing
-    # the Manager and its storage connections.
-    driver_stop = threading.Event()
-    _start_inprocess_drivers(m, driver_stop)
-    start_insert_summary_thread(driver_stop, interval=10.0)
+    # Shutdown signal for the insert summary logger thread.
+    summary_stop = threading.Event()
+    start_insert_summary_thread(summary_stop, interval=10.0)
+
+    # Drivers run as Ray actors that connect back over HTTP.
+    ray.init(ignore_reinit_error=True)
+    _host, _port, _use_ssl = _self_connect_cfg(_cfg)
+    supervisor = DriverSupervisor(server_url=_host, server_port=_port, use_ssl=_use_ssl)
+    app.state.drivers = supervisor
+    # [[drivers]] from the config start once the server answers /health;
+    # the lifespan startup hook runs before uvicorn begins serving.
+    startup_task = asyncio.create_task(_start_config_drivers(supervisor, _cfg))
 
     try:
         yield
     finally:
-        # Tell background driver/summary threads to exit, then close the manager.
-        # Driver threads are daemons, so shutdown should not block indefinitely;
-        # the event mainly prevents them from continuing to use Manager after it
-        # starts closing.
-        driver_stop.set()
+        summary_stop.set()
+        startup_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await startup_task
+        try:
+            await asyncio.to_thread(supervisor.stop_all)
+        except Exception:
+            log.exception("Error stopping drivers during shutdown")
+        ray.shutdown()
         try:
             m.close()
         except Exception:
@@ -329,6 +335,62 @@ def list_app_runs(app_id: Optional[str] = None) -> dict[str, Any]:
         return {"ok": True, "runs": runs}
     except Exception as e:
         log.exception("list_app_runs failed")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+#### DRIVERS API ENDPOINTS ####
+
+
+class DriverStartRequest(BaseModel):
+    spec: str = Field(..., description="Driver spec: 'my.module:ClassName' or 'path/to/file.py:ClassName'")
+    config: dict = Field(default_factory=dict, description="Full merged acquirium config for the driver")
+    name: Optional[str] = Field(None, description="Registry name; defaults to the spec's class name")
+    interval: Optional[float] = Field(None, description="Tick interval in seconds")
+
+
+class DriverStopRequest(BaseModel):
+    name: str
+
+
+@app.post("/drivers/start")
+def start_driver(req: DriverStartRequest) -> dict[str, Any]:
+    """Start a driver as a Ray actor on this server.
+
+    The driver spec must be importable/resolvable on the server host; file
+    paths are resolved against the config's __config_dir. Setup runs before
+    this returns, so a slow driver setup means a slow response.
+    """
+    try:
+        info = app.state.drivers.start_driver(
+            spec=req.spec,
+            config=req.config,
+            interval=req.interval,
+            name=req.name,
+        )
+        return {"ok": True, "driver": info}
+    except Exception as e:
+        log.exception("start_driver failed")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/drivers/stop")
+def stop_driver(req: DriverStopRequest) -> dict[str, Any]:
+    try:
+        result = app.state.drivers.stop_driver(req.name)
+        return {"ok": True, **result}
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        log.exception("stop_driver failed")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/drivers/list")
+def list_drivers() -> dict[str, Any]:
+    try:
+        return {"ok": True, "drivers": app.state.drivers.list_drivers()}
+    except Exception as e:
+        log.exception("list_drivers failed")
         raise HTTPException(status_code=400, detail=str(e))
 
 
