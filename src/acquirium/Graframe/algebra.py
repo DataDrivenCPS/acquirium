@@ -396,6 +396,27 @@ class Cmp(Pattern):
 
 
 @dataclass(frozen=True)
+class DatatypeCmp(Pattern):
+    """A literal-datatype ``FILTER``, e.g. ``FILTER(DATATYPE(?o) = <xsd:double>)``.
+
+    This is how a ``pred-obj-type`` facet row keyed by a datatype (rather than an
+    ``rdf:type`` class) compiles when fed back to ``follow``/``having``.
+    """
+
+    var: Var
+    datatype: str  # datatype IRI
+
+    def render(self) -> str:
+        return f"FILTER(DATATYPE({self.var.render()}) = <{self.datatype}>)"
+
+    def rename(self, mapping: Mapping[str, str]) -> "DatatypeCmp":
+        return DatatypeCmp(self.var.rename(mapping), self.datatype)
+
+    def vars(self) -> set[str]:
+        return {self.var.name}
+
+
+@dataclass(frozen=True)
 class Exists(Pattern):
     patterns: tuple[Pattern, ...]
     negated: bool = False

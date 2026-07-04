@@ -268,9 +268,16 @@ def _facet_query(
         select = f"SELECT ?fp ?fo {support} {edges}"
         group = "GROUP BY ?fp ?fo"
     else:  # pred-obj-type
-        select = f"SELECT ?fp ?ft {support} {edges}"
-        lines.append(f"?fo <{RDF_TYPE}> ?ft .")
-        group = "GROUP BY ?fp ?ft"
+        # IRIs are keyed by rdf:type; literals (which have no rdf:type) are keyed
+        # by their datatype instead, so literal-valued edges like s223:hasValue
+        # are not silently dropped. ?ftkind records which kind of key it is so
+        # the row stays actionable (class -> is_a, datatype -> DATATYPE filter).
+        select = f"SELECT ?fp ?ft ?ftkind {support} {edges}"
+        lines.append(f"OPTIONAL {{ ?fo <{RDF_TYPE}> ?fcls . }}")
+        lines.append("BIND(COALESCE(?fcls, DATATYPE(?fo)) AS ?ft)")
+        lines.append('BIND(IF(BOUND(?fcls), "class", "datatype") AS ?ftkind)')
+        lines.append("FILTER(BOUND(?ft))")
+        group = "GROUP BY ?fp ?ft ?ftkind"
 
     if pred_filter:
         lines.append(pred_filter)
@@ -302,9 +309,12 @@ def _virtual_facet(
         select = f"SELECT ?fo {support} {edges}"
         group = "GROUP BY ?fo"
     else:  # pred-obj-type
-        select = f"SELECT ?ft {support} {edges}"
-        lines.append(f"?fo <{RDF_TYPE}> ?ft .")
-        group = "GROUP BY ?ft"
+        select = f"SELECT ?ft ?ftkind {support} {edges}"
+        lines.append(f"OPTIONAL {{ ?fo <{RDF_TYPE}> ?fcls . }}")
+        lines.append("BIND(COALESCE(?fcls, DATATYPE(?fo)) AS ?ft)")
+        lines.append('BIND(IF(BOUND(?fcls), "class", "datatype") AS ?ftkind)')
+        lines.append("FILTER(BOUND(?ft))")
+        group = "GROUP BY ?ft ?ftkind"
 
     where = "\n  ".join(x for x in lines if x)
     q = f"{select}\nWHERE {{\n  {where}\n}}"
@@ -314,10 +324,14 @@ def _virtual_facet(
 
     out: list[FacetRow] = []
     for row in res.get("rows", []):
+        key_kind = _KEY_KIND.get(by)
         if by == "predicate":
             support_v, edges_v, key = row[0], row[1], None
-        else:
+        elif by == "pred-obj":
             key, support_v, edges_v = row[0], row[1], row[2]
+        else:  # pred-obj-type: (?ft, ?ftkind, support, edges)
+            key, ftkind, support_v, edges_v = row[0], row[1], row[2], row[3]
+            key_kind = "type" if str(ftkind) == "class" else "datatype"
         support_i = _int(support_v)
         if support_i == 0:
             continue  # no matches — don't surface an empty edge
@@ -329,21 +343,24 @@ def _virtual_facet(
                 edges=_int(edges_v),
                 key=str(key) if key is not None else None,
                 is_virtual=True,
-                key_kind=_KEY_KIND.get(by),
+                key_kind=key_kind,
             )
         )
     return out
 
 
 def _parse(res: dict, *, by: str, direction: str) -> list[FacetRow]:
-    key_kind = _KEY_KIND.get(by)
     rows_out: list[FacetRow] = []
     for row in res.get("rows", []):
+        key_kind = _KEY_KIND.get(by)
         if by == "predicate":
             pred, support, edges = row[0], row[1], row[2]
             key = None
-        else:
+        elif by == "pred-obj":
             pred, key, support, edges = row[0], row[1], row[2], row[3]
+        else:  # pred-obj-type: (?fp, ?ft, ?ftkind, support, edges)
+            pred, key, ftkind, support, edges = row[0], row[1], row[2], row[3], row[4]
+            key_kind = "type" if str(ftkind) == "class" else "datatype"
         rows_out.append(
             FacetRow(
                 direction=direction,

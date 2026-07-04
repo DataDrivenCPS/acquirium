@@ -5,6 +5,7 @@ import logging
 import os
 from collections.abc import Callable
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 
 from ontoenv import OntoEnv
@@ -52,6 +53,33 @@ def _maybe_literal_dt(value: Literal | None) -> datetime | None:
         return datetime.fromisoformat(str(value))
     except ValueError:
         return None
+
+
+def _cell_to_py(node):
+    '''
+    Convert an rdflib term from a SPARQL result cell to a native Python value.
+
+    Literals are mapped to their Python type via ``toPython`` (``50.0^^xsd:double``
+    -> ``float``, an ``xsd:date`` -> ``datetime.date``, ...); IRIs and blank nodes
+    are returned unchanged. Datatypes rdflib does not recognise fall back to the
+    lexical string. This runs at the one boundary where the datatype is still
+    known: over HTTP the value is JSON-encoded immediately after, so the type
+    would otherwise be lost.
+
+    ``xsd:decimal`` -> :class:`~decimal.Decimal` is coerced further to ``float``:
+    JSON has no decimal type and the response serializer stringifies ``Decimal``
+    (so it would arrive as ``"50"``, not a number). ``float`` is the right target
+    for a numeric column and round-trips as a JSON number.
+    '''
+    if isinstance(node, Literal):
+        try:
+            value = node.toPython()
+        except Exception:
+            return str(node)
+        if isinstance(value, Decimal):
+            return float(value)
+        return value
+    return node
 
 
 def _external_uri(subject: URIRef) -> str:
@@ -449,7 +477,7 @@ class OxigraphGraphStore:
                 out = {"columns": [], "rows": [[bool(result)]]}
             elif isinstance(result, ox.QuerySolutions):
                 cols = [str(v.value) for v in result.variables]
-                rows = [[from_ox(cell) for cell in row] for row in result]
+                rows = [[_cell_to_py(from_ox(cell)) for cell in row] for row in result]
                 out = {"columns": cols, "rows": rows}
             elif isinstance(result, ox.QueryTriples):
                 triples = Graph()
