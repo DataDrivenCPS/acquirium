@@ -539,6 +539,7 @@ class AcquiriumClient:
         ref_name: str,
         rows: list[tuple[datetime, Any]],
         point_uri: Optional[str] = None,
+        value_kind: str = "numeric",
         replace: bool = False,
     ) -> dict:
         url = f"{self.base_url}/insert_timeseries"
@@ -546,6 +547,7 @@ class AcquiriumClient:
             source_id=source_id,
             ref_name=ref_name,
             point_uri=point_uri,
+            value_kind=value_kind,
             replace=replace,
             values=rows,
         )

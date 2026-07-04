@@ -24,6 +24,7 @@ class Output:
         rows: Iterable[tuple[datetime, Any]] | None = None,
         series: Any | None = None,
         time_index: Iterable[datetime] | None = None,
+        value_kind: str = "numeric",
     ) -> "Output":
         if rows is None:
             if series is None:
@@ -42,7 +43,26 @@ class Output:
                 if len(times) != len(values):
                     raise ValueError("time_index length must match series length")
                 rows = list(zip(times, values))
-        return Output(kind="timeseries", payload={"point_uri": point_uri, "rows": list(rows)})
+        return Output(
+            kind="timeseries",
+            payload={"point_uri": point_uri, "rows": list(rows), "value_kind": value_kind},
+        )
+
+    @staticmethod
+    def text_timeseries(
+        *,
+        point_uri: str,
+        rows: Iterable[tuple[datetime, str | None]] | None = None,
+        series: Any | None = None,
+        time_index: Iterable[datetime] | None = None,
+    ) -> "Output":
+        return Output.timeseries(
+            point_uri=point_uri,
+            rows=rows,
+            series=series,
+            time_index=time_index,
+            value_kind="text",
+        )
 
     @staticmethod
     def event(
