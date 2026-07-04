@@ -422,11 +422,15 @@ class TestFacets:
         q = norm(_facet_query(sel, by="predicate", direction="in", limit=10))
         assert "?fo ?fp ?n0 ." in q
 
-    def test_pred_obj_type_adds_type_triple(self, g):
+    def test_pred_obj_type_keys_iris_by_type_and_literals_by_datatype(self, g):
         sel = g.instances("s223:Sensor")
         q = norm(_facet_query(sel, by="pred-obj-type", direction="out", limit=5))
-        assert f"?fo <{RDF_TYPE}> ?ft ." in q
-        assert "GROUP BY ?fp ?ft" in q
+        # IRIs keyed by rdf:type, literals keyed by datatype, via COALESCE so
+        # literal-valued edges are not dropped by an inner type join.
+        assert f"OPTIONAL {{ ?fo <{RDF_TYPE}> ?fcls . }}" in q
+        assert "BIND(COALESCE(?fcls, DATATYPE(?fo)) AS ?ft)" in q
+        assert 'BIND(IF(BOUND(?fcls), "class", "datatype") AS ?ftkind)' in q
+        assert "GROUP BY ?fp ?ft ?ftkind" in q
 
     def test_facets_both_directions(self):
         client = FakeClient(
@@ -777,6 +781,20 @@ class TestFacetRowAction:
         )
         sparql = norm(g.instances("s223:Sensor").having(row).to_sparql())
         assert f"?n1 <{RDF_TYPE}>/<{SUBCLASS}>* <{PREFIXES['qk']}Temperature> ." in sparql
+
+    def test_having_facet_row_datatype_becomes_datatype_filter(self, g):
+        xsd_double = "http://www.w3.org/2001/XMLSchema#double"
+        row = FacetRow(
+            direction="out", predicate=f"{S223}hasValue", support=2, edges=2,
+            key=xsd_double, key_kind="datatype",
+        )
+        sparql = norm(g.instances("s223:Sensor").having(row).to_sparql())
+        assert f"FILTER(DATATYPE(?n1) = <{xsd_double}>)" in sparql
+
+    def test_datatype_kwarg_on_follow(self, g):
+        xsd_double = "http://www.w3.org/2001/XMLSchema#double"
+        sel = g.instances("s223:Sensor").follow("s223:hasValue", datatype=xsd_double)
+        assert f"FILTER(DATATYPE(?n1) = <{xsd_double}>)" in norm(sel.to_sparql())
 
     def test_row_selects_by_predicate_name(self):
         rows = [

@@ -32,6 +32,7 @@ from .algebra import (
     RDF_TYPE,
     RDFS_SUBCLASS_OF,
     Cmp,
+    DatatypeCmp,
     Exists,
     Iri,
     Lit,
@@ -281,6 +282,8 @@ class Selection:
         if row.key is not None:
             if row.key_kind == "type" and filters.get("is_a") is None:
                 filters["is_a"] = row.key
+            elif row.key_kind == "datatype" and filters.get("datatype") is None:
+                filters["datatype"] = row.key
             elif row.key_kind == "value" and filters.get("value") is None:
                 # keep literal objects literal; let URIs resolve as IRIs
                 filters["value"] = row.key if _is_uri(row.key) else Lit(row.key)
@@ -293,6 +296,7 @@ class Selection:
         *,
         value: Any = None,
         is_a: Any = None,
+        datatype: Any = None,
         min: Any = None,
         max: Any = None,
         in_: Sequence[Any] | None = None,
@@ -308,6 +312,9 @@ class Selection:
             vals.extend(in_)
         if vals:
             out.append(Values(target, tuple(self._term(v) for v in vals)))
+
+        if datatype is not None:
+            out.append(DatatypeCmp(target, self._expand(datatype)))
 
         if is_a is not None:
             classes = is_a if isinstance(is_a, (list, tuple)) else [is_a]
@@ -357,6 +364,7 @@ class Selection:
         direction: str = "out",
         value: Any = None,
         is_a: Any = None,
+        datatype: Any = None,
         min: Any = None,
         max: Any = None,
         in_: Sequence[Any] | None = None,
@@ -369,7 +377,7 @@ class Selection:
         edge, or a :class:`FacetRow` (from ``facets().row(...)``), in which case
         its direction and object key are taken from the row.
         """
-        filters = dict(value=value, is_a=is_a, min=min, max=max, in_=in_, matching=matching)
+        filters = dict(value=value, is_a=is_a, datatype=datatype, min=min, max=max, in_=in_, matching=matching)
         step, direction, filters = self._facet_row_expand(step, direction, filters)
         path = self._step_to_path(step, direction)
         obj, counter = self._fresh(self._state.counter)
@@ -408,6 +416,7 @@ class Selection:
         direction: str = "out",
         value: Any = None,
         is_a: Any = None,
+        datatype: Any = None,
         min: Any = None,
         max: Any = None,
         in_: Sequence[Any] | None = None,
@@ -419,7 +428,7 @@ class Selection:
         named edge, or a :class:`FacetRow` (from ``facets().row(...)``), in which
         case its direction and object key come from the row.
         """
-        filters = dict(value=value, is_a=is_a, min=min, max=max, in_=in_, matching=matching)
+        filters = dict(value=value, is_a=is_a, datatype=datatype, min=min, max=max, in_=in_, matching=matching)
         step, direction, filters = self._facet_row_expand(step, direction, filters)
         path = self._step_to_path(step, direction)
         obj, counter = self._fresh(self._state.counter)
@@ -602,9 +611,14 @@ class Selection:
         rows = res.get("rows", [])
         df = pl.DataFrame(rows, schema=list(cols), orient="row")
         if compact:
+            # Literal columns already arrive as native Python types (the server
+            # calls ``toPython`` on every cell), so only URI-bearing string
+            # columns get compacted to ``prefix:local`` — numeric/boolean/date
+            # columns keep their dtype.
             df = df.with_columns(
-                pl.col(c).map_elements(self._compact, return_dtype=pl.String, skip_nulls=False)
+                pl.col(c).map_elements(self._compact, return_dtype=pl.String, skip_nulls=True)
                 for c in cols
+                if df.schema[c] == pl.String
             )
         return df
 
