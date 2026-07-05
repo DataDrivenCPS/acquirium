@@ -196,14 +196,33 @@ class DriverSupervisor:
             records = list(self._drivers.values())
         return [self._public_info(r) for r in records]
 
-    def stop_all(self) -> None:
+    def stop_all(self, *, timeout: float = 10.0) -> None:
         with self._lock:
-            names = list(self._drivers)
-        for name in names:
+            records = list(self._drivers.values())
+            self._drivers.clear()
+        if not records:
+            return
+
+        # Signal every driver to exit first, then join them in one window, so
+        # N drivers' shutdown timeouts overlap instead of stacking serially the
+        # way a loop over stop_driver() would.
+        for record in records:
             try:
-                self.stop_driver(name)
+                record["actor"].stop.remote()
             except Exception:
-                logger.exception("Failed to stop driver '%s'", name)
+                logger.exception("Failed to signal stop for driver '%s'", record["name"])
+
+        by_ref = {record["run_ref"]: record for record in records}
+        _, not_ready = ray.wait(list(by_ref), num_returns=len(by_ref), timeout=timeout)
+        for ref in not_ready:
+            logger.warning(
+                "Driver '%s' did not exit within %.1fs; killing actor",
+                by_ref[ref]["name"], timeout,
+            )
+
+        for record in records:
+            ray.kill(record["actor"])
+            logger.info("Stopped driver '%s'", record["name"])
 
     def _public_info(self, record: dict[str, Any]) -> dict[str, Any]:
         ready, _ = ray.wait([record["run_ref"]], timeout=0)
