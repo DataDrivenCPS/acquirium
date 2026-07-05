@@ -1,0 +1,25 @@
+{
+  "source_module": "build-and-solve.py",
+  "model_file": "model.ttl",
+  "namespace": "urn:ex/",
+  "notes": [
+    "Single Pump unit model built directly in build-and-solve.py (not a library flowsheet).",
+    "Mapped properties are the four Pump1-in inlet states plus Pump1-Work (the pump's mechanical power, an observable property on Pump1 itself). Pump1-Work is named 'Work' but is mechanical power in Watts (fs.pump.work_mechanical[0]). The TTL still declares no s223 properties on Pump1-out, so the outlet state stays under unmapped_watertap_variables.",
+    "Property paths are written relative to 'fs' (i.e. m.fs), matching the seawater-ro mapping convention."
+  ],
+  "equipment": {
+    "urn:ex/Pump1": "fs.pump (Pump)"
+  },
+  "properties": {
+    "urn:ex/Pump1-in-pressure": "fs.pump.control_volume.properties_in[0].pressure",
+    "urn:ex/Pump1-in-temperature": "fs.pump.control_volume.properties_in[0].temperature",
+    "urn:ex/Pump1-in-flow-mass-water": "fs.pump.control_volume.properties_in[0].flow_mass_phase_comp['Liq', 'H2O']",
+    "urn:ex/Pump1-in-flow-mass-seawater": "fs.pump.control_volume.properties_in[0].flow_mass_phase_comp['Liq', 'TDS']",
+    "urn:ex/Pump1-Work": "fs.pump.work_mechanical[0]"
+  },
+  "unmapped_watertap_variables": {
+    "fs.pump.control_volume.properties_out[0].pressure": "pump outlet pressure [Pa] - no s223 property on Pump1-out yet",
+    "fs.pump.deltaP[0]": "pump pressure rise (fixed 500000 Pa) - design input",
+    "fs.pump.efficiency_pump[0]": "pump efficiency (fixed 0.8) - design input"
+  }
+}

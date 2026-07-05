@@ -67,6 +67,7 @@ xlsx = [
 watertap = [
     "pyomo>=6",
     "watertap",
+    "streamlit",
 ]
 
 

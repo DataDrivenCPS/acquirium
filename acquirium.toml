@@ -111,15 +111,18 @@ interval = 30.0
 # value_col    = "value"       # narrow format: value column
 # sheets       = ["Sheet1"]    # omit to read the first sheet only
 
-# Run a WaterTAP build/solve function and ingest mapped outputs.
-# The graph file must contain ref:hasExternalReference and acquirium:hasPyomoVar
-# triples for each point to ingest.
+# Drive a WaterTAP build -> change_inputs -> solve model and ingest mapped outputs.
+# Points come from the model's watertap-mapping.json; registering streams writes
+# each point's external reference + Pyomo var (hasExternalReference/hasPyomoVar).
 # [[drivers]]
-# spec                      = "acquirium.BuiltinDrivers.watertap:WaterTAPDriver"
-# interval                  = 30.0
-# watertap_source_id        = "watertap"
-# watertap_graph_path       = "deployments/WATERTAP2/models/test-model.ttl"
-# watertap_build_spec       = "deployments/WATERTAP2/scripts/example_watertap.py:build_and_solve"
-# watertap_insert_graph     = true
-# watertap_register_streams = true
-# watertap_build_kwargs     = { flow_vol = 0.001, salt_mass_conc = 0.035, operating_pressure = 5000000.0, flow_mass_liq = 0.985, flow_mass_salt = 0.015 }
+# spec                        = "acquirium.BuiltinDrivers.watertap:WaterTAPDriver"
+# interval                    = 30.0
+# watertap_source_id          = "watertap"
+# watertap_mapping_path       = "deployments/WATERTAP/models/seawater-ro/watertap-mapping.json"
+# watertap_graph_path         = "deployments/WATERTAP/models/seawater-ro/model.ttl"
+# watertap_build_spec         = "deployments/WATERTAP/models/seawater-ro/build-and-solve.py:build"
+# watertap_change_inputs_spec = "deployments/WATERTAP/models/seawater-ro/build-and-solve.py:change_inputs"
+# watertap_solve_spec         = "deployments/WATERTAP/models/seawater-ro/build-and-solve.py:solve"
+# watertap_insert_graph       = true
+# watertap_register_streams   = true
+# watertap_inputs             = { flow_vol = 0.3092, conc_tds = 35.0, conc_tss = 0.03, temperature = 298.0 }

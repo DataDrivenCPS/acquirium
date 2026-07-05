@@ -5,18 +5,13 @@ from datetime import datetime, timezone
 from importlib import import_module, util as importlib_util
 from pathlib import Path
 from typing import Any, Callable
+import json
 import logging
 
 import polars as pl
-from rdflib import Graph
 
 from acquirium.Driver import PollingIngestDriver
-from acquirium.internals.internals_namespaces import (
-    ACQUIRIUM_REF_NAME,
-    ACQUIRIUM_SOURCE_ID,
-    HAS_EXTERNAL_REFERENCE,
-    HAS_PYOMO_VAR,
-)
+from acquirium.internals.internals_namespaces import HAS_PYOMO_VAR
 from acquirium.internals.models import compute_ref_uri
 
 logger = logging.getLogger("acquirium.watertap")
@@ -31,17 +26,38 @@ class WaterTAPPointSpec:
 
 
 class WaterTAPDriver(PollingIngestDriver):
-    """Run a configurable WaterTAP build/solve function and ingest mapped outputs.
+    """Drive a WaterTAP ``build -> change_inputs -> solve`` model and ingest outputs.
+
+    Each tick the driver builds the model, optionally applies inputs, solves it,
+    then reads the RDF-mapped Pyomo variables. This matches the model interface
+    in ``deployments/WATERTAP/models/<name>/build-and-solve.py``:
+    ``build() -> model``, ``change_inputs(model, inputs)``, ``solve(model)``.
+
+    Points come from the model's ``watertap-mapping.json`` (the ``properties``
+    table of ontology-point-URI -> Pyomo-path). On setup the driver registers a
+    stream per point; registration writes each point's external reference, its
+    Pyomo variable (``acq:hasPyomoVar``), and the ``ref:hasExternalReference``
+    link via Acquirium's insert-graph interface — so no hand-authored reference
+    graph is needed.
 
     Required config keys under ``[driver]`` or ``[[drivers]]``:
-      - ``watertap_graph_path``: RDF file containing
-        ``ref:hasExternalReference`` and ``acquirium:hasPyomoVar`` triples
+      - ``watertap_mapping_path``: model ``watertap-mapping.json`` with a
+        ``namespace`` and a ``properties`` table of point-URI -> Pyomo-path
       - ``watertap_build_spec``: ``module.path:callable`` or ``path/to/file.py:callable``
+        resolving to ``build``
+      - ``watertap_solve_spec``: ``module:callable`` resolving to ``solve``,
+        applied as ``solve(model)`` after build
 
     Optional keys:
       - ``watertap_source_id``: datasource id, default ``"watertap"``
       - ``watertap_build_kwargs``: TOML table of kwargs passed to the build fn
-      - ``watertap_insert_graph``: insert the RDF graph on setup, default ``false``
+      - ``watertap_change_inputs_spec``: ``module:callable`` resolving to
+        ``change_inputs``, applied as ``change_inputs(model, inputs)`` after build
+      - ``watertap_inputs``: TOML table passed as the ``inputs`` dict to
+        ``watertap_change_inputs_spec`` (skipped when empty)
+      - ``watertap_graph_path``: model s223 ontology graph to insert on setup so
+        point nodes carry domain semantics (sensors, equipment, units)
+      - ``watertap_insert_graph``: insert ``watertap_graph_path`` on setup, default ``false``
       - ``watertap_insert_graph_replace``: replace main graph when inserting, default ``false``
       - ``watertap_register_streams``: register mapped streams on setup, default ``true``
       - ``watertap_result_attr``: attribute to read from the build fn result
@@ -50,38 +66,63 @@ class WaterTAPDriver(PollingIngestDriver):
     def setup(self) -> None:
         cfg = self.config.get("driver", {})
         self.source_id = str(cfg.get("watertap_source_id", "watertap"))
-        self._graph_path = _resolve_path(cfg.get("watertap_graph_path"), "watertap_graph_path")
+        self._mapping_path = _resolve_path(
+            cfg.get("watertap_mapping_path"), "watertap_mapping_path"
+        )
         self._build_spec = str(_require_config(cfg.get("watertap_build_spec"), "watertap_build_spec"))
+        self._solve_spec = str(_require_config(cfg.get("watertap_solve_spec"), "watertap_solve_spec"))
+        self._change_inputs_spec = cfg.get("watertap_change_inputs_spec")
         self._build_kwargs = dict(cfg.get("watertap_build_kwargs", {}))
+        self._inputs = dict(cfg.get("watertap_inputs", {}))
+        self._graph_path = cfg.get("watertap_graph_path")
         self._insert_graph = bool(cfg.get("watertap_insert_graph", False))
         self._insert_graph_replace = bool(cfg.get("watertap_insert_graph_replace", False))
         self._register_streams = bool(cfg.get("watertap_register_streams", True))
         self._result_attr = cfg.get("watertap_result_attr")
 
         self._build_fn = _load_callable(self._build_spec)
-        # The RDF model is the driver contract: each point supplies both the
-        # external reference to ingest under and the Pyomo path to read.
-        self._point_specs = _load_point_specs(self._graph_path)
+        self._solve_fn = _load_callable(self._solve_spec)
+        self._change_inputs_fn = (
+            _load_callable(str(self._change_inputs_spec)) if self._change_inputs_spec else None
+        )
+        # Points come from the model's watertap-mapping.json: each property maps
+        # an ontology point URI to the Pyomo path the driver reads each tick.
+        self._point_specs = _load_point_specs_from_mapping(self._mapping_path, self.source_id)
 
         self.aq.register_datasource(self.source_id)
-        if self._insert_graph:
+
+        # Optionally insert the model's s223 ontology graph so the point nodes
+        # carry their domain semantics (sensors, equipment, units).
+        if self._insert_graph and self._graph_path:
+            graph_path = _resolve_path(self._graph_path, "watertap_graph_path")
             self.aq.insert_graph(
-                self._graph_path.read_text(),
-                format=_guess_rdf_format(self._graph_path),
+                graph_path.read_text(),
+                format=_guess_rdf_format(graph_path),
                 replace=self._insert_graph_replace,
             )
+
+        # Registering streams writes each point's external reference, its Pyomo
+        # variable, and the hasExternalReference link straight from the mapping,
+        # using Acquirium's insert-graph interface under the hood.
         if self._register_streams:
-            for spec in self._point_specs:
-                self.aq.register_streams([{
+            self.aq.register_streams([
+                {
                     "source_id": self.source_id,
                     "ref_name": spec.ref_name,
+                    "point_uri": spec.point_uri,
                     "value_kind": "numeric",
-                }])
+                    "properties": {HAS_PYOMO_VAR: spec.pyomo_var},
+                }
+                for spec in self._point_specs
+            ])
 
     def collect(self) -> pl.DataFrame:
         logger.debug("watertap collect: building model via %s", self._build_spec)
         result = self._build_fn(**self._build_kwargs)
         model = self._extract_model(result)
+        if self._change_inputs_fn is not None and self._inputs:
+            self._change_inputs_fn(model, self._inputs)
+        self._solve_fn(model)
         ts = datetime.now(timezone.utc)
 
         rows: list[tuple[datetime, str, Any]] = []
@@ -170,43 +211,41 @@ def get_observation_from_model(model: Any, component_name: str) -> tuple[bool, A
     return True, raw
 
 
-def _load_point_specs(graph_path: Path) -> list[WaterTAPPointSpec]:
-    graph = Graph().parse(graph_path, format=_guess_rdf_format(graph_path))
-    point_specs: list[WaterTAPPointSpec] = []
+def _load_point_specs_from_mapping(
+    mapping_path: Path, source_id: str
+) -> list[WaterTAPPointSpec]:
+    """Build point specs from a model's ``watertap-mapping.json``.
 
-    # A single point can advertise its ingestion reference and its model lookup
-    # path independently; the driver joins them here into executable specs.
-    for point_uri, _, ref_uri in graph.triples((None, HAS_EXTERNAL_REFERENCE, None)):
-        ref_name_obj = graph.value(ref_uri, ACQUIRIUM_REF_NAME)
-        if ref_name_obj is None:
-            raise ValueError(
-                f"WaterTAP reference {ref_uri} is missing acq:refName. "
-                "Canonical external references must declare the source-local ref name."
-            )
-        ref_name = str(ref_name_obj)
-        source_id_obj = graph.value(ref_uri, ACQUIRIUM_SOURCE_ID)
-        source_id = str(source_id_obj) if source_id_obj is not None else None
-        for _, _, pyomo_var in graph.triples((point_uri, HAS_PYOMO_VAR, None)):
-            point_specs.append(
-                WaterTAPPointSpec(
-                    point_uri=str(point_uri),
-                    ref_uri=str(ref_uri),
-                    ref_name=ref_name,
-                    pyomo_var=str(pyomo_var),
-                )
-            )
-        if source_id is not None:
-            expected = str(compute_ref_uri(source_id, ref_name))
-            if str(ref_uri) != expected:
-                raise ValueError(
-                    f"WaterTAP reference {ref_uri} does not match canonical URI {expected} "
-                    f"for source_id={source_id!r} ref_name={ref_name!r}"
-                )
-
-    if not point_specs:
+    The mapping's ``properties`` table maps each ontology point URI to the Pyomo
+    variable path to read. The source-local ref name is the point URI with the
+    mapping ``namespace`` prefix stripped, and the canonical reference URI is
+    minted deterministically from ``(source_id, ref_name)`` — the same value the
+    server computes when streams are registered and rows inserted.
+    """
+    mapping = json.loads(mapping_path.read_text())
+    namespace = mapping.get("namespace", "")
+    properties = mapping.get("properties")
+    if not properties:
         raise ValueError(
-            f"No WaterTAP point mappings found in {graph_path}. Expected "
-            "ref:hasExternalReference + acquirium:hasPyomoVar triples."
+            f"No 'properties' found in {mapping_path}. Expected a watertap-mapping.json "
+            "with a 'properties' table of point-URI -> Pyomo-path."
+        )
+
+    point_specs: list[WaterTAPPointSpec] = []
+    for point_uri, pyomo_var in properties.items():
+        ref_name = (
+            point_uri[len(namespace):]
+            if namespace and point_uri.startswith(namespace)
+            else point_uri
+        )
+        ref_uri = str(compute_ref_uri(source_id, ref_name))
+        point_specs.append(
+            WaterTAPPointSpec(
+                point_uri=str(point_uri),
+                ref_uri=ref_uri,
+                ref_name=str(ref_name),
+                pyomo_var=str(pyomo_var),
+            )
         )
     return point_specs
 

@@ -1,0 +1,136 @@
+# Acquirium driver config for the WaterTAP deployment models.
+#
+# Run from the REPO ROOT:
+#   acquirium run --config deployments/WATERTAP/scripts/acquirium.toml
+#
+# Path bases differ by setting (existing acquirium behavior):
+#   * watertap_mapping_path / watertap_graph_path / watertap_build_spec /
+#     watertap_change_inputs_spec / watertap_solve_spec /
+#     watertap_generate_spec / watertap_model_dir
+#       -> relative to the current working directory (the repo root)
+#   * driver `spec`, parquet `watch_dir`, GUI `gui_script_path` /
+#     `watertap_inputs_path`
+#       -> relative to THIS config file's directory
+#
+# Points come from each model's watertap-mapping.json: the driver registers a
+# stream per mapped property, which writes its external reference + Pyomo var
+# (hasExternalReference / hasPyomoVar) via Acquirium's insert-graph interface.
+# Setting watertap_insert_graph=true also inserts the model's s223 ontology so
+# the point nodes carry domain semantics (sensors, equipment, units).
+#
+# Exactly ONE [[drivers]] block is enabled below (seawater-ro simulation).
+# Uncomment another to switch, or enable several at once.
+
+[server]
+enabled = true            # connect to an already-running Acquirium server
+
+[driver]
+server_url  = "localhost"
+server_port = 8000
+interval    = 10.0
+
+# ===========================================================================
+# 1) seawater-ro self-driving simulation.
+#    Generates fresh feed inputs every tick, solves, ingests mapped outputs.
+#    (Disabled: the enabled block below replays parquet snapshots instead.
+#    Both share source_id "watertap-seawater-ro", so you can enable both to
+#    merge live-sim and historical parquet data onto the same points.)
+# ===========================================================================
+# [[drivers]]
+# spec                        = "simulation_driver.py:SimulationDriver"
+# interval                    = 10.0
+# watertap_source_id          = "watertap-seawater-ro"
+# watertap_mapping_path       = "deployments/WATERTAP/models/seawater-ro/watertap-mapping.json"
+# watertap_graph_path         = "deployments/WATERTAP/models/seawater-ro/model.ttl"
+# watertap_insert_graph       = true
+# watertap_build_spec         = "deployments/WATERTAP/models/seawater-ro/build-and-solve.py:build"
+# watertap_change_inputs_spec = "deployments/WATERTAP/models/seawater-ro/build-and-solve.py:change_inputs"
+# watertap_solve_spec         = "deployments/WATERTAP/models/seawater-ro/build-and-solve.py:solve"
+# watertap_generate_spec      = "deployments/WATERTAP/models/seawater-ro/generate-values.py:generate_new_values"
+# watertap_seed               = 42
+
+# ===========================================================================
+# 2) simple-pipe self-driving simulation.
+# ===========================================================================
+# [[drivers]]
+# spec                        = "simulation_driver.py:SimulationDriver"
+# interval                    = 10.0
+# watertap_source_id          = "watertap-simple-pipe"
+# watertap_mapping_path       = "deployments/WATERTAP/models/simple-pipe/watertap-mapping.json"
+# watertap_graph_path         = "deployments/WATERTAP/models/simple-pipe/model.ttl"
+# watertap_insert_graph       = true
+# watertap_build_spec         = "deployments/WATERTAP/models/simple-pipe/build-and-solve.py:build"
+# watertap_change_inputs_spec = "deployments/WATERTAP/models/simple-pipe/build-and-solve.py:change_inputs"
+# watertap_solve_spec         = "deployments/WATERTAP/models/simple-pipe/build-and-solve.py:solve"
+# watertap_generate_spec      = "deployments/WATERTAP/models/simple-pipe/generate-values.py:generate_new_values"
+# watertap_seed               = 42
+
+# ===========================================================================
+# 3) seawater-ro GUI-driven solve.
+#    Launches a Streamlit GUI for the model's inputs; solves on every change.
+# ===========================================================================
+# [[drivers]]
+# spec                        = "gui_driver.py:GuiDriver"
+# interval                    = 2.0
+# watertap_source_id          = "watertap-seawater-ro-gui"
+# watertap_mapping_path       = "deployments/WATERTAP/models/seawater-ro/watertap-mapping.json"
+# watertap_graph_path         = "deployments/WATERTAP/models/seawater-ro/model.ttl"
+# watertap_insert_graph       = true
+# watertap_build_spec         = "deployments/WATERTAP/models/seawater-ro/build-and-solve.py:build"
+# watertap_change_inputs_spec = "deployments/WATERTAP/models/seawater-ro/build-and-solve.py:change_inputs"
+# watertap_solve_spec         = "deployments/WATERTAP/models/seawater-ro/build-and-solve.py:solve"
+# watertap_model_dir          = "deployments/WATERTAP/models/seawater-ro"
+# watertap_inputs_path        = ".gui_inputs.json"
+# gui_script_path             = "input_gui.py"
+# gui_port                    = 8501
+# gui_autostart               = true
+
+# ===========================================================================
+# 4) simple-pipe GUI-driven solve.
+# ===========================================================================
+# [[drivers]]
+# spec                        = "gui_driver.py:GuiDriver"
+# interval                    = 2.0
+# watertap_source_id          = "watertap-simple-pipe-gui"
+# watertap_mapping_path       = "deployments/WATERTAP/models/simple-pipe/watertap-mapping.json"
+# watertap_graph_path         = "deployments/WATERTAP/models/simple-pipe/model.ttl"
+# watertap_insert_graph       = true
+# watertap_build_spec         = "deployments/WATERTAP/models/simple-pipe/build-and-solve.py:build"
+# watertap_change_inputs_spec = "deployments/WATERTAP/models/simple-pipe/build-and-solve.py:change_inputs"
+# watertap_solve_spec         = "deployments/WATERTAP/models/simple-pipe/build-and-solve.py:solve"
+# watertap_model_dir          = "deployments/WATERTAP/models/simple-pipe"
+# watertap_inputs_path        = ".gui_inputs.json"
+# gui_script_path             = "input_gui.py"
+# gui_port                    = 8502
+
+# ===========================================================================
+# 5) ENABLED — Parquet ingest, WaterTAP-aware (seawater-ro).
+#    Replays data-generator snapshots and links each column to its ontology
+#    point (via watertap-mapping.json), so meaning-first queries reach the data.
+#    watch_dir is relative to THIS config file's directory; the watertap_* paths
+#    are relative to the current working directory (the repo root).
+# ===========================================================================
+[[drivers]]
+spec                   = "parquet_driver.py:WaterTAPParquetDriver"
+interval               = 5.0
+watch_dir              = "../models/seawater-ro/data"
+format                 = "wide"
+time_col               = "timestamp"
+watertap_source_id     = "watertap-seawater-ro"
+watertap_mapping_path  = "deployments/WATERTAP/models/seawater-ro/watertap-mapping.json"
+watertap_graph_path    = "deployments/WATERTAP/models/seawater-ro/model.ttl"
+watertap_insert_graph  = true
+
+# ===========================================================================
+# 6) Parquet ingest, WaterTAP-aware (simple-pipe).
+# ===========================================================================
+# [[drivers]]
+# spec                   = "parquet_driver.py:WaterTAPParquetDriver"
+# interval               = 5.0
+# watch_dir              = "../models/simple-pipe/data"
+# format                 = "wide"
+# time_col               = "timestamp"
+# watertap_source_id     = "watertap-simple-pipe"
+# watertap_mapping_path  = "deployments/WATERTAP/models/simple-pipe/watertap-mapping.json"
+# watertap_graph_path    = "deployments/WATERTAP/models/simple-pipe/model.ttl"
+# watertap_insert_graph  = true
