@@ -206,7 +206,10 @@ Three key functions cover the common cases:
 
 - `κ(s,p,o) = p` — group by predicate;
 - `κ(s,p,o) = (p, o)` — group by (predicate, object value);
-- `κ(s,p,o) = (p, type(o))` — group by (predicate, class of object).
+- `κ(s,p,o) = (p, type(o))` — group by (predicate, class of object). Literal
+  objects have no `rdf:type`, so for them `type(o)` is read as the literal's
+  datatype instead — otherwise every literal-valued edge (e.g. `s223:hasValue`)
+  would vanish from the histogram.
 
 Facets are the formal statement of "what can I query next": they enumerate the
 steps available from `F`, ranked by how widely they apply.
@@ -323,6 +326,7 @@ Object filters (`φ`) work identically on `having` and `follow`:
 | `value=`         | object equals a URI/CURIE/literal                   |
 | `in_=[...]`      | object is one of several values                     |
 | `is_a=`          | object has an rdf:type (or one of a list)           |
+| `datatype=`      | literal object has a given datatype (e.g. `xsd:double`) |
 | `min=`, `max=`   | numeric range on a literal object                   |
 | `matching=sel`   | object is a member of another selection (a join)    |
 | `direction="in"` | follow the edge backwards (inverse)                 |
@@ -512,8 +516,8 @@ g.nodes("wbs:P1").follow("downstream")       # traverse the named path
 
 Named virtual edges surface as extra facet rows (tagged `is_virtual`) so you can
 see and traverse them. Profiles shape *discovery only* — a hidden predicate can
-still be pivoted explicitly, and `facets(raw=True)` bypasses the profile
-entirely.
+still be pivoted explicitly, and `facets(raw=True)` bypasses the bound profile
+entirely (explicit `only=`/`hide=` overrides still apply).
 
 ### 3.8 From graph to data
 
@@ -593,19 +597,20 @@ These create the initial selection.
 
 All of these return a **new** selection; the original is unchanged.
 
-**`having(step, *, direction="out", value=None, is_a=None, min=None, max=None, in_=None, matching=None)`**
+**`having(step, *, direction="out", value=None, is_a=None, datatype=None, min=None, max=None, in_=None, matching=None)`**
 Existential semijoin. Keeps `s ∈ F` such that some edge `step` from `s` satisfies
 the object filter. **`F` shrinks; the cursor does not move; rows never multiply.**
 Compiles to `FILTER EXISTS`.
 
-**`follow(step, *, direction="out", value=…, is_a=…, min=…, max=…, in_=…, matching=…)`**
+**`follow(step, *, direction="out", value=…, is_a=…, datatype=…, min=…, max=…, in_=…, matching=…)`**
 Image. Moves the cursor to the neighbours reached along `step` that satisfy the
 object filter. **The cursor moves and a column is added.** Compiles to a joined
 triple.
 
 **`without(step, *, direction="out", **filters)`**
 Negated existential — keeps `s ∈ F` with **no** matching edge. Compiles to
-`FILTER NOT EXISTS`.
+`FILTER NOT EXISTS`. Accepts the same object-filter keywords (`value=`, `is_a=`,
+`datatype=`, `min=`/`max=`, `in_=`, `matching=`) as `having`.
 
 **`where(fn)`**
 Correlated existential constraint. `fn` is `Selection → Selection`; it runs from
@@ -626,6 +631,8 @@ Shared parameters:
 - `direction` — `"out"` (default) or `"in"` (reverse the step).
 - **object filter `φ`** — `value=` / `in_=` (equality/membership; each value is a
   concept slot, so it resolves by name — §4.7), `is_a=` (type, or list),
+  `datatype=` (literal datatype; a CURIE/URI expanded without fuzzy, e.g.
+  `"xsd:double"` — compiles to `FILTER(DATATYPE(?o) = <…>)`),
   `min=` / `max=` (numeric range), `matching=other_selection` (membership in
   another selection — a join). Pass a number or `Lit(...)` in `value=`/`in_=` to
   force a plain literal instead of resolving it.
@@ -660,11 +667,19 @@ facets(by="predicate", *, direction="both", limit=50,
 
 Summarises the neighbourhood of `F`.
 
-- `by` — `"predicate"`, `"pred-obj"` (group by object value), or `"pred-obj-type"`
-  (group by object's rdf:type).
+- `by` — `"predicate"`, `"pred-obj"` (group by object value), or
+  `"pred-obj-type"` (group by the object's `rdf:type`, or — for literal objects,
+  which have no type — by their datatype, so literal-valued edges like
+  `s223:hasValue` are not silently dropped). For `direction="in"` the "object"
+  is the incoming neighbour (the node pointing at the focus), so the key is its
+  type/datatype — useful for "what kinds of things point at me".
 - `direction` — `"out"`, `"in"`, or `"both"`.
-- `only=` / `hide=` — per-call allow / deny lists (override the profile).
-- `raw=True` — ignore the active profile entirely.
+- `only=` / `hide=` — per-call allow / deny lists. These are **overrides
+  independent of the profile**: they apply even when `raw=True` (which only drops
+  the *bound* profile and its virtual edges), so you never choose between seeing
+  raw facets and trimming noise.
+- `raw=True` — ignore the active profile entirely (no virtual edges, no
+  allow/deny from the profile); explicit `only=`/`hide=` still apply.
 - `virtual=` — include the profile's named edges as facet rows.
 
 A **`Facets`** object holds `rows: list[FacetRow]` and offers:
@@ -680,11 +695,14 @@ A **`Facets`** object holds `rows: list[FacetRow]` and offers:
 
 A **`FacetRow`** has `direction` (`"out"`/`"in"`/`"virtual"`), `predicate`
 (predicate URI, or the virtual-edge name), `support` (distinct focus nodes),
-`edges` (total matches), `key` (object value/type for the non-`predicate` modes),
-`key_kind` (`"value"` for `pred-obj`, `"type"` for `pred-obj-type`, else `None`),
-and `is_virtual` (True for named-edge rows). A row is a first-class *move*: pass
-it to `follow`/`having`/`without` (§4.3), or traverse a named edge by name with
-`follow("<name>")`.
+`edges` (total matches), `key` (object value/type/datatype for the
+non-`predicate` modes), `key_kind` (`"value"` for `pred-obj`; `"type"` for an
+IRI object of a `pred-obj-type` facet; `"datatype"` for a literal object of a
+`pred-obj-type` facet; else `None`), and `is_virtual` (True for named-edge rows).
+A `"type"`/`"datatype"` row is actionable: handing it to `follow`/`having`
+re-applies the filter as an `is_a=` / `datatype=` constraint respectively. A row
+is a first-class *move*: pass it to `follow`/`having`/`without` (§4.3), or traverse
+a named edge by name with `follow("<name>")`.
 
 ### 4.7 Fuzzy resolution
 
