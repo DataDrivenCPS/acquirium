@@ -614,12 +614,14 @@ class Selection:
             # Literal columns already arrive as native Python types (the server
             # calls ``toPython`` on every cell), so only URI-bearing string
             # columns get compacted to ``prefix:local`` — numeric/boolean/date
-            # columns keep their dtype.
-            df = df.with_columns(
-                pl.col(c).map_elements(self._compact, return_dtype=pl.String, skip_nulls=True)
-                for c in cols
-                if df.schema[c] == pl.String
-            )
+            # columns keep their dtype. We build the compacted series in Python
+            # rather than via the deprecated ``map_elements``; facet result sets
+            # are small so the per-cell Python call is not on a hot path.
+            for c in cols:
+                if df.schema.get(c) == pl.String:
+                    df = df.with_columns(
+                        pl.Series(c, [self._compact(v) for v in df[c].to_list()])
+                    )
         return df
 
     def frame(self, *, compact: bool = True) -> "pl.DataFrame":
