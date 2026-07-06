@@ -110,6 +110,11 @@ def build_data_object(
         contexts.setdefault(key, []).append(ctx)
 
     if not order_keys:
+        # ``DataObject._empty`` is a private constructor, but data.py is a sibling
+        # module in the same package and the two are co-designed (this bridge is
+        # the only external caller of it). Keeping it private prevents ad-hoc use
+        # from outside the package while letting us build an empty frame here
+        # without materializing a pointless QueryGraph round-trip.
         return DataObject._empty(QueryGraph(), cast_value=cast_value)  # noqa: SLF001
 
     stats = client.timeseries_info_batch(list({ref for _, ref in order_keys}))
