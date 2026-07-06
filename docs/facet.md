@@ -349,6 +349,15 @@ right filter automatically. This closes the explore→act loop: `facets()` to se
 `f.row(...)` to act, no URI ever typed twice. Explicit keyword filters passed
 alongside a row still combine (AND) with it.
 
+> **Round-trip caveat for typed-literal objects.** The `pred-obj` key is the
+> object *value*, which the server converts to a native Python type before it
+> reaches the row. For IRIs and plain strings the round-trip is exact; for a
+> numeric literal like `5^^xsd:decimal` the value arrives as `5.0` (float), and
+> re-filtering reconstructs `5.0^^xsd:double`, which is not term-equal to the
+> original — so `having(row)` can silently match nothing for decimal-valued
+> objects. Filter numeric objects with `min=`/`max=`/`datatype=` (or an explicit
+> `value=` number) instead of a `pred-obj` row.
+
 ### 3.3 Correlated constraints — and which operator to reach for
 
 There are four ways to constrain the current focus; they differ only in *how many
