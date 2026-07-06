@@ -9,6 +9,7 @@ import pytest
 from acquirium.Apps.uf_membrane_fouling import (
     ModuleSignals,
     PlantSignals,
+    _one,
     _viscosity_pas,
     assign_cycles,
     derived_uri,
@@ -239,3 +240,13 @@ def test_derived_uri_is_stable_and_sanitized():
 
     assert uri == "urn:acquirium:point#urn_port_hueneme_UF1_resistance_per_m"
     assert derived_uri("urn:port-hueneme#UF1", "resistance_per_m") == uri
+
+
+def test_one_raises_named_lookuperror_when_signal_missing():
+    with pytest.raises(LookupError, match="could not find a UF feed pressure point"):
+        _one([], "feed pressure point")
+
+
+def test_one_raises_when_multiple_matches_found():
+    with pytest.raises(LookupError, match="found 2"):
+        _one(["urn:a", "urn:b"], "feed pressure point")

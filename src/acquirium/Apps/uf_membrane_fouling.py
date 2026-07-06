@@ -44,6 +44,22 @@ class ModuleSignals:
     permeate_pressure_unit: str
 
 
+def _one(nodes: list[str], what: str) -> str:
+    """Return the sole element of ``nodes`` or raise a clear, named error.
+
+    Discovery in this app walks the graph by *meaning* (quantity kind + role);
+    when a required signal is absent the raw ``.nodes()[0]`` ``IndexError`` is
+    useless to an operator. This surfaces what was missing instead.
+    """
+    if not nodes:
+        raise LookupError(f"could not find a UF {what} point in the graph")
+    if len(nodes) > 1:
+        raise LookupError(
+            f"expected exactly one UF {what} point, found {len(nodes)}: {nodes}"
+        )
+    return nodes[0]
+
+
 def discover(client: Any) -> tuple[PlantSignals, list[ModuleSignals]]:
     """Find every UF module and its fouling signals purely by *meaning* -- quantity
     kind plus connection-point role -- never a hardcoded SCADA tag or module URI.
@@ -55,20 +71,25 @@ def discover(client: Any) -> tuple[PlantSignals, list[ModuleSignals]]:
     props = g.instances("s223:QuantifiableObservableProperty")
 
     def feed_point(quantity: str) -> str:
-        return (
+        return _one(
             props.having("qudt:hasQuantityKind", value=quantity)
             .having("^s223:hasProperty/s223:hasRole", value="nawi:Role-Feed")
-            .nodes()[0]
+            .nodes(),
+            f"feed {quantity.split('/')[-1].lower()}",
         )
 
     def unit_of(point_uri: str) -> str:
-        return g.nodes(point_uri).follow("qudt:hasUnit").nodes()[0]
+        return _one(
+            g.nodes(point_uri).follow("qudt:hasUnit").nodes(),
+            f"unit for {point_uri}",
+        )
 
     feed_pressure = feed_point("qk:Pressure")
-    backwash_flow = (
+    backwash_flow = _one(
         props.having("qudt:hasQuantityKind", value="qk:VolumeFlowRate")
         .having("^s223:hasProperty/nawi:hasProcess", value="nawi:Process-Backwashing")
-        .nodes()[0]
+        .nodes(),
+        "backwash flow",
     )
     plant = PlantSignals(feed_pressure, unit_of(feed_pressure), feed_point("qk:Temperature"), backwash_flow)
 
@@ -87,12 +108,13 @@ def discover(client: Any) -> tuple[PlantSignals, list[ModuleSignals]]:
         mod = g.nodes(module_uri)
 
         def permeate(quantity: str) -> str:
-            return (
+            return _one(
                 mod.follow("s223:hasConnectionPoint", is_a="s223:OutletConnectionPoint")
                 .having("s223:hasRole", value="nawi:Role-Permeate")
                 .follow("s223:hasProperty")
                 .having("qudt:hasQuantityKind", value=quantity)
-                .nodes()[0]
+                .nodes(),
+                f"permeate {quantity.split('/')[-1].lower()} for {module_uri}",
             )
 
         flow, pressure = permeate("qk:VolumeFlowRate"), permeate("qk:Pressure")
