@@ -337,6 +337,35 @@ class TestCorrelation:
         sel = g.instances("s223:Sensor").without("s223:hasProperty")
         assert "FILTER NOT EXISTS" in norm(sel.to_sparql())
 
+    def test_without_facet_row_carries_direction_and_key(self, g):
+        # a pred-obj facet row handed to without() should produce NOT EXISTS
+        # with the row's predicate, direction, and object value as a filter.
+        row = FacetRow(
+            direction="in", predicate=f"{S223}hasProperty", support=2, edges=2,
+            key=f"{PREFIXES['qk']}Temperature", key_kind="value",
+        )
+        sparql = norm(g.instances("s223:Sensor").without(row).to_sparql())
+        assert "FILTER NOT EXISTS" in sparql
+        # in-direction facet -> inverse predicate
+        assert f"?n0 ^<{S223}hasProperty> ?n1 ." in sparql
+        assert f"VALUES ?n1 {{ <{PREFIXES['qk']}Temperature> }}" in sparql
+
+    def test_any_of_with_matching_branch(self, g):
+        # any_of branch that itself uses a matching= membership join compiles
+        # to EXISTS(... EXISTS ...) without colliding variable names.
+        feed_props = g.instances("s223:DomainSpace").where(
+            lambda s: s.follow("s223:hasProperty")
+        )
+        sel = g.instances("s223:Sensor").any_of(
+            lambda s: s.having("s223:hasLocation", matching=feed_props),
+            lambda s: s.follow("s223:hasProperty").is_a("qk:Pressure"),
+        )
+        sparql = norm(sel.to_sparql())
+        assert "FILTER(EXISTS {" in sparql and " || EXISTS {" in sparql
+        # the membership join is nested inside the first branch
+        assert "FILTER EXISTS" in sparql
+        assert f"<{PREFIXES['qk']}Pressure>" in sparql
+
     def test_matching_membership_join(self, g):
         rooms = g.instances("s223:DomainSpace").where(
             lambda s: s.follow("s223:hasProperty")
