@@ -26,6 +26,9 @@ PREFIXES = {
     "qk": "http://qudt.org/vocab/quantitykind/",
     "watr": "urn:nawi-water-ontology#",
     "bldg": "urn:building#",
+    "sh": "http://www.w3.org/ns/shacl#",
+    "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
+    "owl": "http://www.w3.org/2002/07/owl#",
 }
 
 
@@ -238,6 +241,39 @@ class TestHavingFollow:
         sparql = norm(sel.to_sparql())
         assert "FILTER(?n1 >= 0)" in sparql
         assert "FILTER(?n1 <= 100)" in sparql
+
+    def test_having_datatype_filter(self, g):
+        xsd_double = "http://www.w3.org/2001/XMLSchema#double"
+        sel = g.instances("s223:Sensor").having("s223:hasValue", datatype=xsd_double)
+        sparql = norm(sel.to_sparql())
+        assert f"FILTER EXISTS {{ ?n0 <{PREFIXES['s223']}hasValue> ?n1 ." in sparql
+        assert f"FILTER(DATATYPE(?n1) = <{xsd_double}>)" in sparql
+
+    def test_having_with_in_list_builds_single_values(self, g):
+        sel = g.instances("s223:Sensor").having(
+            "s223:hasLocation", in_=["bldg:room_5", "bldg:room_6"]
+        )
+        sparql = norm(sel.to_sparql())
+        assert (
+            f"VALUES ?n1 {{ <{PREFIXES['bldg']}room_5> <{PREFIXES['bldg']}room_6> }}"
+            in sparql
+        )
+
+    def test_follow_is_a_list_compiles_to_values_on_type_var(self, g):
+        # multiple classes use a fresh type var bound by VALUES
+        sel = g.instances("s223:Sensor").follow(
+            "s223:hasProperty", is_a=["qk:Temperature", "qk:Pressure"]
+        )
+        sparql = norm(sel.to_sparql())
+        assert f"?n1 <{RDF_TYPE}>/<{SUBCLASS}>* ?n2 ." in sparql
+        assert (
+            f"VALUES ?n2 {{ <{PREFIXES['qk']}Temperature> <{PREFIXES['qk']}Pressure> }}"
+            in sparql
+        )
+
+    def test_any_of_empty_raises(self, g):
+        with pytest.raises(ValueError):
+            g.instances("s223:Sensor").any_of()
 
 
 class TestInlinePaths:
@@ -475,6 +511,42 @@ class TestFacets:
         with pytest.raises(ValueError):
             g.instances("s223:Sensor").facets(by="bogus")
 
+    def test_pred_obj_query_groups_by_predicate_and_object(self, g):
+        sel = g.instances("s223:Sensor")
+        q = norm(_facet_query(sel, by="pred-obj", direction="out", limit=8))
+        assert "SELECT ?fp ?fo (COUNT(DISTINCT ?n0) AS ?support) (COUNT(*) AS ?edges)" in q
+        assert "?n0 ?fp ?fo ." in q
+        assert "GROUP BY ?fp ?fo" in q
+        assert "LIMIT 8" in q
+        # pred-obj does not need the type/datatype COALESCE machinery
+        assert "COALESCE" not in q
+
+    def test_pred_obj_direction_in_flips_edge(self, g):
+        sel = g.instances("s223:Sensor")
+        q = norm(_facet_query(sel, by="pred-obj", direction="in", limit=10))
+        # in-direction: ?fo is the incoming neighbour (subject of the edge)
+        assert "?fo ?fp ?n0 ." in q
+        assert "GROUP BY ?fp ?fo" in q
+
+    def test_facets_to_polars_and_predicates(self):
+        rows = [
+            {"direction": "out", "predicate": "urn:p", "support": 3, "edges": 3},
+            {"direction": "out", "predicate": "urn:q", "support": 1, "edges": 1},
+            {"direction": "in", "predicate": "urn:p", "support": 2, "edges": 2},
+        ]
+        facet_rows = [
+            FacetRow(direction=r["direction"], predicate=r["predicate"],
+                     support=r["support"], edges=r["edges"])
+            for r in rows
+        ]
+        f = Facets(Graframe(FakeClient()).instances("s223:Sensor"), "predicate", facet_rows)
+        # predicates() collapses out/in and orders by max support
+        assert f.predicates() == ["urn:p", "urn:q"]
+        assert f.predicates(direction="in") == ["urn:p"]
+        df = f.to_polars()
+        assert "predicate" in df.columns and "support" in df.columns
+        assert df.height == 3
+
 
 # ---------------------------------------------------------------------------
 # path parsing
@@ -508,6 +580,20 @@ class TestPathParsing:
             f"<{PREFIXES['s223']}a>|<{PREFIXES['s223']}b>"
         )
 
+    @pytest.mark.parametrize("expr", ["", "a/", "/a", "a|", "a(", "a)", "(a"])
+    def test_parse_path_rejects_malformed(self, expr):
+        with pytest.raises(ValueError):
+            parse_path(expr, self._expand)
+
+    def test_parse_path_trailing_tokens_raise(self):
+        # unbalanced grouping leaves trailing tokens after the top-level parse
+        with pytest.raises(ValueError):
+            parse_path("(a|b", self._expand)
+
+    def test_to_path_rejects_unknown_type(self):
+        with pytest.raises(TypeError):
+            to_path(123, self._expand)  # type: ignore[arg-type]
+
 
 # ---------------------------------------------------------------------------
 # profiles
@@ -538,6 +624,22 @@ class TestProfile:
 
     def test_no_filter_when_empty(self):
         assert Profile().predicate_filter("fp", PREFIXES, self._expand) is None
+        # type_filter is a parallel API to predicate_filter for object rdf:types
+        assert Profile().type_filter("ft", PREFIXES, self._expand) is None
+
+    def test_type_filter_namespace_and_exact(self):
+        prof = Profile(allow_types=["s223:"], deny_types=["sh:NodeShape"])
+        f = prof.type_filter("ft", PREFIXES, self._expand)
+        assert f'STRSTARTS(STR(?ft), "{PREFIXES["s223"]}")' in f
+        assert f"?ft IN (<{PREFIXES['sh']}NodeShape>)" in f
+        assert f.startswith("FILTER(") and " && !(" in f
+
+    def test_base_profile_deny_types_drops_shapes(self):
+        base = Profile.base()
+        f = base.type_filter("ft", PREFIXES, self._expand)
+        # shapes and ontology classes are denied from object-type facets
+        assert f"?ft IN (<{PREFIXES['sh']}NodeShape>" in f
+        assert f"<{PREFIXES['rdfs']}Class>" in f
 
     def test_multi_term_allow_is_parenthesized(self):
         # regression: && binds tighter than ||, so a multi-term allow must be
