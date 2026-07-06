@@ -751,6 +751,12 @@ class Manager:
         graph.add((ref, ACQUIRIUM_VALUE_KIND, Literal(normalized)))
         graph.add((ref, STORED_AT, ACQUIRIUM_DB_URI))
         self.graph_store.insert_graph(graph, format="turtle", replace=False)
+        # Each first-time registration bumps the graph version, which invalidates
+        # the cached compiled (SHACL-AF) union graph and forces a re-inference on
+        # the next union query. That's fine in steady state (registrations are
+        # rare), but a bulk first-time registration of many point-backed streams
+        # pays the inference cost once per stream. Callers seeding many streams
+        # should prefer App registration (one graph mutation) over this path.
         self._notify_graph_change()
         return normalized
 
