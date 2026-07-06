@@ -124,6 +124,14 @@ def discover(client: Any) -> tuple[PlantSignals, list[ModuleSignals]]:
     return plant, sorted(modules, key=lambda m: m.module)
 
 
+def _compact(client: Any, uri: str) -> str:
+    """Compact a URI to a CURIE, falling back to the full URI (like DataObject._alias)."""
+    try:
+        return client.compact_uri(uri)
+    except Exception:
+        return uri
+
+
 def _convert(client: Any, col: pl.Expr, frm: str, to: str) -> pl.Expr:
     """polars expression: `col` (in QUDT unit `frm`) expressed in unit `to`."""
     f = client.get_conversion_factors(frm, to)
@@ -147,7 +155,7 @@ def assemble(client: Any, plant: PlantSignals, mod: ModuleSignals, start: Any, e
         mod.permeate_pressure: "perm_p",
     }
     wide = Graframe(client).nodes(*points).dataframe(shape="wide", start=start, end=end)
-    return wide.rename({client.compact_uri(uri): name for uri, name in points.items()})
+    return wide.rename({_compact(client, uri): name for uri, name in points.items()})
 
 
 def normalize(client: Any, plant: PlantSignals, mod: ModuleSignals, df: pl.DataFrame) -> pl.DataFrame:
