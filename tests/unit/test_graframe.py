@@ -687,6 +687,36 @@ class TestDataBridge:
         with pytest.raises(ValueError, match="reserved data column"):
             build_data_object(sel)
 
+    def test_build_data_object_passes_query_params_through(self):
+        from acquirium.Graframe.data import build_data_object
+
+        rows = [["urn:p1", "urn:r1", None, None]]
+        client = FakeClient(
+            {"columns": ["point", "ref", "unit", "extunit"], "rows": rows}
+        )
+        g = Graframe(client)
+        sel = g.instances("s223:Sensor").follow("s223:hasProperty")
+        d = build_data_object(
+            sel, start="t0", end="t1", limit=10, order="desc",
+            cast_value=None, value_mode="coalesce",
+        )
+        assert d._query_params == {
+            "start": "t0", "end": "t1", "limit": 10, "order": "desc",
+            "cast_value": None, "value_mode": "coalesce",
+        }
+
+    def test_data_mark_on_focus_column_is_not_an_entity_column(self):
+        # a mark created on the focus column would otherwise duplicate it; the
+        # bridge skips any mark whose var equals the focus var.
+        from acquirium.Graframe.data import _data_sparql
+
+        g = Graframe(FakeClient())
+        sel = g.instances("s223:Sensor").mark("sensor")  # focus is n0 == mark "sensor"
+        marks = {n: v for n, v in sel._state.marks.items() if v != sel._state.focus}
+        assert marks == {}  # the focus-equal mark is filtered out
+        q = norm(_data_sparql(sel, marks))
+        assert "entity__" not in q
+
 
 # ---------------------------------------------------------------------------
 # fuzzy term resolution
