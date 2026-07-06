@@ -184,6 +184,7 @@ class Manager:
         self.graph_store = graph
         self.qudt_converter = converter
         self.backend = _backend
+        self._seed_builtin_graph_nodes()
 
         self.data_dir = base
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="acquirium-ingest")
@@ -702,6 +703,20 @@ class Manager:
             n = self.timescale.upsert_rows(ref_uri, rows, value_kind=value_kind)
         return n
 
+    def _seed_builtin_graph_nodes(self) -> None:
+        """Add once-per-Manager schema-level nodes (e.g. the TimescaleDB label).
+
+        These are global statements about built-in resources, not per-stream
+        bookkeeping, so they belong here rather than on every stream
+        registration. Idempotent: ``insert_graph(replace=False)`` dedups.
+        """
+        g = Graph()
+        g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
+        try:
+            self.graph_store.insert_graph(g, format="turtle", replace=False)
+        except Exception:
+            logger.warning("could not seed builtin graph nodes", exc_info=True)
+
     def _ensure_insert_stream(
         self,
         *,
@@ -735,7 +750,6 @@ class Manager:
         graph.add((ref, ACQUIRIUM_REF_NAME, Literal(ref_name)))
         graph.add((ref, ACQUIRIUM_VALUE_KIND, Literal(normalized)))
         graph.add((ref, STORED_AT, ACQUIRIUM_DB_URI))
-        graph.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
         self.graph_store.insert_graph(graph, format="turtle", replace=False)
         self._notify_graph_change()
         return normalized
