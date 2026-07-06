@@ -217,3 +217,11 @@ scripts/benchmark/scalability/*.csv
 
 # Local DPR trailer data exports and generated databases.
 dpr-trailer-data/
+
+# Local model/data artifacts left in the worktree from reverted Port Hueneme
+# work (large, not part of the source tree). Keep them out of the index;
+# re-add explicitly with `git add -f` if a deployment is meant to ship.
+/DPR-full.ttl
+/benicia-model.ttl
+/rosystem.pdf
+/deployments/
