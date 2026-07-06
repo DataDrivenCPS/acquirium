@@ -235,6 +235,55 @@ def test_flag_fouling_flags_resistance_above_cip_threshold_even_without_anomaly(
     assert flagged["fouling_detected"].to_list() == [0.0, 0.0, 0.0, 1.0]
 
 
+def test_flag_fouling_warmup_cycles_cannot_flag_via_zscore():
+    # the first 3 cycles are below the lookback window (i>=3), so even an extreme
+    # rate can't trip the z-score path -- it can only fire via the CIP threshold.
+    cycles = pl.DataFrame(
+        {
+            "cycle": list(range(4)),
+            "end": [datetime(2013, 6, 5, tzinfo=timezone.utc) + timedelta(hours=i) for i in range(4)],
+            "fouling_rate": [5e12, 5e12, 5e12, 5e12],  # huge but constant
+            "resistance": [1e12, 1e12, 1e12, 1e12],     # below CIP
+        }
+    )
+
+    flagged = flag_fouling(cycles, z_alarm=3.0, cip_resistance_per_m=9.63e12)
+
+    assert flagged["fouling_detected"].to_list() == [0.0, 0.0, 0.0, 0.0]
+
+
+def test_assign_cycles_leading_backwash_counts_as_first_onset():
+    # ``shift(1, fill_value=False)`` means the first row's "previous" is False,
+    # so data that starts already mid-backwash registers an onset at row 0 and
+    # begins at cycle 1 (a leading partial cycle is counted, not skipped).
+    t0 = datetime(2013, 6, 5, tzinfo=timezone.utc)
+    full_df = pl.DataFrame({
+        "time": [t0, t0 + timedelta(seconds=1), t0 + timedelta(seconds=2)],
+        "bw_gpm": [5.0, 0.0, 5.0],
+    })
+    op = pl.DataFrame({"time": [t0, t0 + timedelta(seconds=1), t0 + timedelta(seconds=2)], "value": [0, 1, 2]})
+
+    tagged = assign_cycles(full_df, op, bw_on_gpm=1.0)
+
+    assert tagged.sort("time")["cycle"].to_list() == [1, 1, 2]
+
+
+def test_assign_cycles_null_backwash_treated_as_not_backwashing():
+    t0 = datetime(2013, 6, 5, tzinfo=timezone.utc)
+    full_df = pl.DataFrame({
+        "time": [t0, t0 + timedelta(seconds=1), t0 + timedelta(seconds=2)],
+        "bw_gpm": [None, 5.0, 5.0],
+    })
+    op = pl.DataFrame({
+        "time": [t0, t0 + timedelta(seconds=1), t0 + timedelta(seconds=2)], "value": [0, 1, 2],
+    })
+
+    tagged = assign_cycles(full_df, op, bw_on_gpm=1.0)
+
+    # null at t0 -> not backwashing -> cycle 0; onset at t0+1 -> cycle 1
+    assert tagged.sort("time")["cycle"].to_list() == [0, 1, 1]
+
+
 def test_derived_uri_is_stable_and_sanitized():
     uri = derived_uri("urn:port-hueneme#UF1", "resistance_per_m")
 
