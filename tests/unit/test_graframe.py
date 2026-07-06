@@ -569,6 +569,24 @@ class TestProfile:
         facets = g.instances("s223:Sensor").facets(by="predicate", raw=True)
         assert not any(r.is_virtual for r in facets.rows)  # no virtual edges when raw
 
+    def test_only_hide_apply_even_when_raw(self):
+        # raw=True drops the bound profile (no virtual edges), but explicit
+        # only=/hide= are per-call overrides and still filter the predicates.
+        prof = Profile(allow=["s223:"], edges={"downstream": "s223:connectedTo+"})
+        client = FakeClient({"columns": ["fp", "support", "edges"], "rows": [["urn:p", 1, 1]]})
+        g = Graframe(client, profile=prof)
+        sel = g.instances("s223:Sensor")
+        q = norm(_facet_query(
+            sel, by="predicate", direction="out", limit=10,
+            pred_filter=Profile(allow=["s223:"]).predicate_filter(
+                "fp", PREFIXES, sel._expand),
+        ))
+        # the override survives raw -- the FILTER is present
+        assert f'STRSTARTS(STR(?fp), "{PREFIXES["s223"]}")' in q
+        # and virtual edges from the bound profile stay suppressed
+        facets = sel.facets(by="predicate", direction="out", raw=True, only=["s223:"])
+        assert not any(r.is_virtual for r in facets.rows)
+
 
 # ---------------------------------------------------------------------------
 # data plane bridge

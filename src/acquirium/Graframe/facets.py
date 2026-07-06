@@ -206,7 +206,11 @@ def compute_facets(
         raise ValueError(f"direction must be one of {_DIR_CHOICES}, got {direction!r}")
 
     profile = None if raw else selection.profile
-    if not raw and (only or hide):
+    # ``only`` / ``hide`` are per-call overrides independent of the bound
+    # profile: they apply even when ``raw=True`` (which only drops the bound
+    # profile and its virtual edges), so a caller never has to choose between
+    # seeing raw facets and trimming noise.
+    if only or hide:
         profile = (profile or Profile()).with_(allow=only or (), deny=hide or ())
 
     nsmap = _nsmap(selection.client)
