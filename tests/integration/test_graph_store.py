@@ -214,3 +214,23 @@ class TestLifecycle:
         counts = graph_store.refresh_union()
         assert counts["main_triples"] > 0
         assert counts["union_triples"] >= counts["main_triples"]
+
+
+class TestBindPrefixes:
+    def test_bind_prefixes_overrides_and_compacts(self, graph_store):
+        # An authoritative bind should win over any auto-generated binding and
+        # show up in compaction/namespace listings.
+        graph_store.bind_prefixes({"ex": "http://example.org/"})
+        graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
+        nm = graph_store.namespace_manager()
+        # compaction round-trips through the bound prefix
+        assert nm.compute_qname("http://example.org/sensor1")[0] == "ex"
+        assert nm.expand_curie("ex:sensor1") == "http://example.org/sensor1"
+        nsmap = {p: str(n) for p, n in nm.namespaces()}
+        assert nsmap.get("ex") == "http://example.org/"
+
+    def test_bind_prefixes_empty_is_noop(self, graph_store):
+        before = {p: str(n) for p, n in graph_store.namespace_manager().namespaces()}
+        graph_store.bind_prefixes({})
+        after = {p: str(n) for p, n in graph_store.namespace_manager().namespaces()}
+        assert before == after
