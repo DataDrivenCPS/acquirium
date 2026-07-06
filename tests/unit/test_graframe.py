@@ -467,6 +467,19 @@ class TestTerminals:
         assert n == 7
         assert "COUNT(DISTINCT ?n0)" in client.last_query
 
+    def test_select_compacts_uri_column_and_preserves_nulls(self):
+        # compact=True should compact URI-bearing string values to CURIEs,
+        # leave None cells as None, and keep the column's String dtype.
+        import polars as pl
+        client = FakeClient({
+            "columns": ["focus"],
+            "rows": [[f"{PREFIXES['s223']}Sensor"], [None]],
+        })
+        g = Graframe(client)
+        df = g.instances("s223:Sensor").select("focus", compact=True)
+        assert df.schema["focus"] == pl.String
+        assert df["focus"].to_list() == ["s223:Sensor", None]
+
 
 # ---------------------------------------------------------------------------
 # facets

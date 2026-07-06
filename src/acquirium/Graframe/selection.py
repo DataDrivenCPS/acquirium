@@ -616,11 +616,14 @@ class Selection:
             # columns get compacted to ``prefix:local`` — numeric/boolean/date
             # columns keep their dtype. We build the compacted series in Python
             # rather than via the deprecated ``map_elements``; facet result sets
-            # are small so the per-cell Python call is not on a hot path.
+            # are small so the per-cell Python call is not on a hot path. Pass
+            # the original dtype explicitly so an all-null String column (an
+            # unmatched OPTIONAL) is not re-inferred to Null.
             for c in cols:
                 if df.schema.get(c) == pl.String:
                     df = df.with_columns(
-                        pl.Series(c, [self._compact(v) for v in df[c].to_list()])
+                        pl.Series(c, [self._compact(v) for v in df[c].to_list()],
+                                   dtype=pl.String)
                     )
         return df
 
