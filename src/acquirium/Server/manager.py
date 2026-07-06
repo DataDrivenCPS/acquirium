@@ -759,7 +759,16 @@ class Manager:
         source_id: str,
         streams: dict[str, list[tuple[datetime, Any]]],
     ) -> int:
-        """Insert multiple source-local streams in one storage operation."""
+        """Insert multiple source-local streams in one storage operation.
+
+        Unlike the single-stream :meth:`insert_timeseries`, this path does
+        **not** auto-register streams: every ref_name must already be a
+        registered stream (its value_kind is read from the registry via
+        :meth:`_registered_value_kind`, which raises if missing). Bulk/arrow
+        callers carry no per-stream ``point_uri`` to bind a new stream to, so
+        registration is left to the explicit point-backed ``insert_timeseries``
+        path (or to App registration) before data flows.
+        """
         import polars as pl
 
         ref_uris: list[str] = []
@@ -794,7 +803,12 @@ class Manager:
         return self.timescale.bulk_insert_polars(df)
 
     def insert_timeseries_arrow(self, source_id: str, table: "pa.Table") -> int:
-        """Insert a melted (ts, ref_name, value) Arrow table, computing ref_uris vectorized."""
+        """Insert a melted (ts, ref_name, value) Arrow table, computing ref_uris vectorized.
+
+        Same registration contract as :meth:`insert_timeseries_batch`: every
+        ref_name must already be a registered stream (no auto-registration;
+        the table carries no per-stream ``point_uri``).
+        """
         import polars as pl
 
         logger.debug("insert_timeseries_arrow source=%s arrow_rows=%d", source_id, len(table))
