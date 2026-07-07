@@ -4,7 +4,7 @@
   "model_file": "model.ttl",
   "namespace": "urn:swro-fouled/",
   "notes": [
-    "Fouled-membrane variant of the seawater-ro model: same flowsheet, but generate-values.py drives fs.desalination.RO.A_comp down a fouling trajectory (slow exponential decline) each re-solve instead of holding it fixed. Uses its own urn:swro-fouled/ namespace (distinct from urn:swro/) so it can be ingested alongside the healthy seawater-ro model without colliding ontology points.",
+    "Fouled-membrane variant of the seawater-ro model: same flowsheet, but generate-values.py drives fs.desalination.RO.A_comp down a fouling trajectory each re-solve instead of holding it fixed -- flat at the pristine value for the first FOULING_ONSET_DAYS (a clean operating baseline), then a slow exponential decline, so a single continuous time series covers both a known-clean period and a fouling event, mirroring one real plant's operating history rather than two parallel plants. Uses its own urn:swro-fouled/ namespace (distinct from urn:swro/) so it can be ingested alongside the healthy seawater-ro model without colliding ontology points.",
     "Translator blocks fs.tb_prtrt_desal / fs.tb_desal_psttrt are not physical equipment; their state variables are mapped onto the connection crossing the pretreatment->desalination boundary and the RO permeate connection point respectively.",
     "Flowsheet endpoints fs.feed, fs.municipal, fs.landfill and fs.disposal are boundary connection points; their stream state is mapped to properties on the adjacent connection points."
   ],

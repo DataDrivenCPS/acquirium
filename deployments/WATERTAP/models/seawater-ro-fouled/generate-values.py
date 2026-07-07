@@ -7,16 +7,19 @@ import numpy as np
 # Membrane fouling trajectory
 # --------------------------------------------------------------------------- #
 # Fouling (cake layer / biofilm build-up) adds resistance to water transport,
-# so the membrane's water permeability coefficient A declines over time. We
-# model a slow exponential decline from a pristine A0 toward an asymptotic,
-# heavily-fouled floor A_min = A_MIN_FRAC * A0, with time constant
+# so the membrane's water permeability coefficient A declines over time. The
+# plant runs at its pristine A0 (small noise only) for the first
+# FOULING_ONSET_DAYS -- mirroring a real plant's post-commissioning or
+# post-CIP baseline -- then declines exponentially toward an asymptotic,
+# heavily-fouled floor A_min = A_MIN_FRAC * A0 with time constant
 # FOULING_TAU_DAYS, plus small multiplicative noise for short-term cake-layer
-# variability. A CIP (clean-in-place) resets the membrane back near A0, which
-# is out of scope here -- this trajectory models a single fouling run between
-# cleanings.
+# variability. A further CIP (clean-in-place) resetting A back near A0 is out
+# of scope here -- this trajectory models one clean baseline followed by one
+# fouling run.
 A0 = 4.2e-12  # pristine membrane water permeability [m/s-Pa], matches flowsheet.py
 A_MIN_FRAC = 0.4  # asymptotic floor as a fraction of A0 (severe fouling)
 FOULING_TAU_DAYS = 45.0  # time constant of the exponential decline
+FOULING_ONSET_DAYS = 30.0  # length of the clean baseline before fouling begins
 
 # Elapsed time is measured from this epoch so the trajectory is reproducible
 # for the batch data-generator (whose default start is 2025-01-01) and still
@@ -31,9 +34,12 @@ def _elapsed_days(ts: datetime) -> float:
 
 
 def fouling_A_comp(elapsed_days: float, rng: np.random.RandomState) -> float:
-    """Membrane water permeability [m/s-Pa] at ``elapsed_days`` into a fouling run."""
+    """Membrane water permeability [m/s-Pa] at ``elapsed_days`` since the plant
+    started operating: flat at A0 through the clean baseline, then an
+    exponential decline starting at FOULING_ONSET_DAYS."""
     a_min = A_MIN_FRAC * A0
-    trend = a_min + (A0 - a_min) * math.exp(-elapsed_days / FOULING_TAU_DAYS)
+    days_since_onset = max(elapsed_days - FOULING_ONSET_DAYS, 0.0)
+    trend = a_min + (A0 - a_min) * math.exp(-days_since_onset / FOULING_TAU_DAYS)
     noisy = trend * float(np.exp(rng.normal(0.0, 0.01)))
     return min(max(noisy, a_min * 0.9), A0)
 

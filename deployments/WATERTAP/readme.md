@@ -120,13 +120,17 @@ so recovery and permeate quality float with conditions.
 
 ### `seawater-ro-fouled` — seawater RO with a fouling membrane
 Same flowsheet as `seawater-ro`, but the RO membrane's water permeability
-(`A_comp`) is no longer fixed: `generate-values.py` drives it down a slow
-exponential decline (cake layer / biofilm resistance building up over time),
-and `build-and-solve.py:change_inputs` re-fixes it before every re-solve, so
-permeate flow visibly degrades across the time series at constant feed
-pressure. **30 mapped properties** (adds `RO-membrane-water-permeability`).
-Uses its own `urn:swro-fouled/` namespace so it can be ingested alongside the
-healthy `seawater-ro` model without colliding ontology points.
+(`A_comp`) is no longer fixed: `generate-values.py` holds it at its pristine
+value for the first `FOULING_ONSET_DAYS` (a clean operating baseline), then
+drives it down a slow exponential decline (cake layer / biofilm resistance
+building up over time), and `build-and-solve.py:change_inputs` re-fixes it
+before every re-solve — so one continuous time series covers both a
+known-clean period and a fouling event, mirroring a single real plant's
+operating history rather than two parallel plants. Permeate flow visibly
+degrades once fouling begins, at constant feed pressure. **30 mapped
+properties** (adds `RO-membrane-water-permeability`). Uses its own
+`urn:swro-fouled/` namespace so it can be ingested alongside the healthy
+`seawater-ro` model without colliding ontology points.
 
 ### `simple-pipe` — single pump
 A minimal one-unit flowsheet (a `Pump` on a seawater stream) — the smallest
