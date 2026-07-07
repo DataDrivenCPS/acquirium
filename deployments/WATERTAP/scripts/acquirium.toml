@@ -104,6 +104,44 @@ interval    = 10.0
 # gui_port                    = 8502
 
 # ===========================================================================
+# 5b) seawater-ro-fouled self-driving simulation.
+#    Same flowsheet as seawater-ro, but generate-values.py also drives
+#    RO.A_comp down a slow exponential fouling trajectory each tick, so
+#    permeate output visibly degrades over time. Own namespace
+#    (urn:swro-fouled/), so it can run alongside the healthy seawater-ro
+#    model without colliding ontology points.
+# ===========================================================================
+# [[drivers]]
+# spec                        = "simulation_driver.py:SimulationDriver"
+# interval                    = 10.0
+# watertap_source_id          = "watertap-seawater-ro-fouled"
+# watertap_mapping_path       = "deployments/WATERTAP/models/seawater-ro-fouled/watertap-mapping.json"
+# watertap_graph_path         = "deployments/WATERTAP/models/seawater-ro-fouled/model.ttl"
+# watertap_insert_graph       = true
+# watertap_build_spec         = "deployments/WATERTAP/models/seawater-ro-fouled/build-and-solve.py:build"
+# watertap_change_inputs_spec = "deployments/WATERTAP/models/seawater-ro-fouled/build-and-solve.py:change_inputs"
+# watertap_solve_spec         = "deployments/WATERTAP/models/seawater-ro-fouled/build-and-solve.py:solve"
+# watertap_generate_spec      = "deployments/WATERTAP/models/seawater-ro-fouled/generate-values.py:generate_new_values"
+# watertap_seed               = 42
+
+# ===========================================================================
+# 5c) ENABLED — Parquet ingest, WaterTAP-aware (seawater-ro-fouled).
+#    Own namespace (urn:swro-fouled/, prefix wbsf:) so it ingests alongside
+#    the healthy seawater-ro model below without colliding ontology points.
+#    Used by notebooks/watertap/soft-sensor.ipynb (clean-vs-fouled anomaly demo).
+# ===========================================================================
+[[drivers]]
+spec                   = "parquet_driver.py:WaterTAPParquetDriver"
+interval               = 5.0
+watch_dir              = "../models/seawater-ro-fouled/data"
+format                 = "wide"
+time_col               = "timestamp"
+watertap_source_id     = "watertap-seawater-ro-fouled"
+watertap_mapping_path  = "deployments/WATERTAP/models/seawater-ro-fouled/watertap-mapping.json"
+watertap_graph_path    = "deployments/WATERTAP/models/seawater-ro-fouled/model.ttl"
+watertap_insert_graph  = true
+
+# ===========================================================================
 # 5) ENABLED — Parquet ingest, WaterTAP-aware (seawater-ro).
 #    Replays data-generator snapshots and links each column to its ontology
 #    point (via watertap-mapping.json), so meaning-first queries reach the data.

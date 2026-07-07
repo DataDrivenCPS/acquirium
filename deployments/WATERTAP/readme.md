@@ -118,6 +118,16 @@ Varying inputs: seawater **temperature**, **TDS** salinity, **TSS** turbidity,
 and demand-following intake **flow**. The high-pressure pump is held at 70 bar,
 so recovery and permeate quality float with conditions.
 
+### `seawater-ro-fouled` — seawater RO with a fouling membrane
+Same flowsheet as `seawater-ro`, but the RO membrane's water permeability
+(`A_comp`) is no longer fixed: `generate-values.py` drives it down a slow
+exponential decline (cake layer / biofilm resistance building up over time),
+and `build-and-solve.py:change_inputs` re-fixes it before every re-solve, so
+permeate flow visibly degrades across the time series at constant feed
+pressure. **30 mapped properties** (adds `RO-membrane-water-permeability`).
+Uses its own `urn:swro-fouled/` namespace so it can be ingested alongside the
+healthy `seawater-ro` model without colliding ontology points.
+
 ### `simple-pipe` — single pump
 A minimal one-unit flowsheet (a `Pump` on a seawater stream) — the smallest
 end-to-end example. **5 mapped properties.** Varying inputs: inlet
@@ -129,8 +139,9 @@ mapped output of interest is the pump's mechanical work (`Pump1-Work`).
 ```
 deployments/WATERTAP/
 ├── models/
-│   ├── seawater-ro/   build-and-solve.py · generate-values.py · model.ttl · watertap-mapping.json
-│   └── simple-pipe/   build-and-solve.py · generate-values.py · model.ttl · watertap-mapping.json
+│   ├── seawater-ro/          build-and-solve.py · generate-values.py · model.ttl · watertap-mapping.json
+│   ├── seawater-ro-fouled/   build-and-solve.py · generate-values.py · model.ttl · watertap-mapping.json
+│   └── simple-pipe/          build-and-solve.py · generate-values.py · model.ttl · watertap-mapping.json
 └── scripts/
     ├── data-generator.py     batch: write parquet snapshots over time
     ├── simulation_driver.py  live: auto-generate inputs, solve, ingest
@@ -192,10 +203,12 @@ acquirium run --config deployments/WATERTAP/scripts/acquirium.toml
 
 ## Changing the config (`scripts/acquirium.toml`)
 
-The TOML ships with **two `[[drivers]]` block enabled** (the seawater-ro
-simulation and parquet ingestion) and the rest commented out — six blocks in total covering both
-models × {simulation, GUI, parquet}. To switch, comment the active block and
-uncomment another; enable several at once to run them together.
+The TOML ships with **one `[[drivers]]` block enabled** (seawater-ro parquet
+ingestion) and the rest commented out — eight blocks in total covering all three
+models (`seawater-ro`, `seawater-ro-fouled`, `simple-pipe`) × {simulation, GUI,
+parquet}, except `seawater-ro-fouled` which only has simulation and parquet
+variants (no GUI driver). To switch, comment the active block and uncomment
+another; enable several at once to run them together.
 
 **NOTE:**
 - **We recommend default settings for working with the regulation.ipynb example.**
