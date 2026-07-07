@@ -657,7 +657,7 @@ class Query:
             value_mode=value_mode,
         ).dataframe(shape=shape, include_ref=include_ref, compact=True)
 
-    def metadata(self, *, include_internals: bool = False) -> pl.DataFrame:
+    def metadata(self, *, include_internals: bool = False, use_union=True) -> pl.DataFrame:
         """
         Execute the SPARQL query to get the query graph results.
 
@@ -671,7 +671,7 @@ class Query:
         """
         cache_key = f"metadata_table:{include_internals}"
         if self.cache.get(cache_key) is None:
-            res = self.execute(use_union=True)
+            res = self.execute(use_union=use_union)
             cols = res.get("columns", [])
             rows = res.get("rows", [])
             keep_idx = list(range(len(cols)))
@@ -1038,11 +1038,11 @@ class Query:
 
         # --- entity-reaching one-hop group ---
         if direction == "downstream":
-            one_hop_ent = f"({ct}|^{cf}|{cth}/{cst}|^{csf}/^{cth})"
+            one_hop_ent = f"({ct}|^{cf})"
             ent_to_conn = f"^{csf}"   # entity → its downstream connection
             conn_to_ent = cst          # connection → downstream entity
         else:  # upstream
-            one_hop_ent = f"(^{ct}|{cf}|{cth}/{csf}|^{cst}/^{cth})"
+            one_hop_ent = f"(^{ct}|{cf})"
             ent_to_conn = f"^{cst}"   # entity → its upstream connection
             conn_to_ent = csf          # connection → upstream entity
 
