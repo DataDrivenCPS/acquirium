@@ -43,16 +43,9 @@ def emit_outputs(
         if out.kind == "timeseries":
             point_uri = out.payload["point_uri"]
             rows = out.payload["rows"]
-            value_kind = out.payload.get("value_kind", "numeric")
             if logger is not None:
                 logger.debug("Output %d: persisting %d timeseries rows to %s", index, len(rows), point_uri)
-            insert_timeseries(
-                source_id=app_id,
-                ref_name=point_uri,
-                rows=rows,
-                point_uri=point_uri,
-                value_kind=value_kind,
-            )
+            insert_timeseries(source_id=app_id, ref_name=point_uri, rows=rows, point_uri=point_uri)
             if logger is not None:
                 logger.info("Output %d: wrote %d timeseries rows to %s", index, len(rows), point_uri)
         elif out.kind == "event":
@@ -72,7 +65,6 @@ def emit_outputs(
                 ref_name=point_uri,
                 rows=[(ts, value)],
                 point_uri=point_uri,
-                value_kind="text",
             )
             if logger is not None:
                 logger.info("Output %d: emitted %s event to %s", index, severity, point_uri)

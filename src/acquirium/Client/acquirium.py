@@ -10,7 +10,6 @@ import inspect
 if TYPE_CHECKING:
     import polars as pl
     import pyarrow as pa
-    from acquirium.Graframe import Graframe, Profile, Reasoning
 
 from rdflib import Graph as RDFGraph, URIRef, Literal
 from rdflib.namespace import RDF, RDFS
@@ -196,37 +195,6 @@ class Acquirium:
         """Create a new empty Query bound to this Acquirium instance."""
         return Query(client=self.client)
 
-    def graph(
-        self,
-        reasoning: "Reasoning | None" = None,
-        profile: "Profile | None" = None,
-        *,
-        fuzzy: bool = True,
-        min_score: float = 0.5,
-    ) -> "Graframe":
-        """Create a Graframe root for facet-based graph exploration.
-
-        Graframe is a fluent, RDF-agnostic query surface: seed a Selection with
-        :meth:`Graframe.instances` / :meth:`Graframe.nodes`, inspect reachable
-        edges with ``.facets()``, then narrow with ``.having()`` or move with
-        ``.follow()``. Pass a :class:`Reasoning` profile to control entailments
-        (defaults to transitive-subclass class membership) and a
-        :class:`Profile` to curate the discovery surface (hide noise predicates,
-        name virtual edges).
-
-        Example::
-
-            from acquirium.Graframe import Profile
-            g = aq.graph(profile=Profile.base().with_(edges={"downstream": "s223:connectedTo+"}))
-            g.instances("s223:Sensor").facets().show()
-        """
-        from acquirium.Graframe import Graframe
-
-        return Graframe(
-            self.client, reasoning=reasoning, profile=profile,
-            fuzzy=fuzzy, min_score=min_score,
-        )
-
     def find_entity(
         self,
         *,
@@ -264,7 +232,6 @@ class Acquirium:
         rows: list[tuple[datetime, Any]],
         *,
         point_uri: Optional[str] = None,
-        value_kind: str = "numeric",
         replace: bool = False,
     ) -> dict[str, Any]:
         """Insert timeseries data for a single stream.
@@ -286,7 +253,6 @@ class Acquirium:
             ref_name=ref_name,
             rows=rows,
             point_uri=point_uri,
-            value_kind=value_kind,
             replace=replace,
         )
 

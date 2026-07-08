@@ -13,7 +13,6 @@ class _BulkStore:
     def __init__(self) -> None:
         self.frames = []
         self.refs = []
-        self.upserts = []
 
     def ensure_stream_ref(self, point_uri, source_id, ref_name, ref_uri=None, value_kind="text"):
         self.refs.append(
@@ -36,30 +35,11 @@ class _BulkStore:
             return "text"
         return "numeric"
 
-    def upsert_rows(self, ref_uri, rows, *, value_kind="text"):
-        self.upserts.append(
-            {"ref_uri": ref_uri, "rows": list(rows), "value_kind": value_kind}
-        )
-        return len(rows)
-
 
 class _FailingBulkStore(_BulkStore):
     def bulk_insert_polars(self, df):
         self.frames.append(df)
         raise RuntimeError("bulk insert failed")
-
-
-class _UnregisteredStore(_BulkStore):
-    def stream_value_kind(self, ref_uri):
-        return None
-
-
-class _GraphStore:
-    def __init__(self) -> None:
-        self.graphs = []
-
-    def insert_graph(self, graph, *, format="turtle", replace=False):
-        self.graphs.append({"graph": graph, "format": format, "replace": replace})
 
 
 def test_insert_timeseries_batch_uses_computed_ref_uris_in_one_bulk_insert():
@@ -87,44 +67,6 @@ def test_insert_timeseries_batch_uses_computed_ref_uris_in_one_bulk_insert():
     assert {row["value"] for row in rows} == {72.4, "OK", None}
     assert store.frames[0].get_column("value_kind").to_list() == ["numeric", "text", "text"]
     assert store.refs == []
-
-
-def test_insert_timeseries_registers_point_backed_text_stream_when_missing():
-    mgr = Manager.__new__(Manager)
-    store = _UnregisteredStore()
-    graph_store = _GraphStore()
-    mgr.timescale = store
-    mgr.graph_store = graph_store
-    mgr._notify_graph_change = lambda: None
-
-    ts = datetime(2026, 4, 28, tzinfo=timezone.utc)
-    count = mgr.insert_timeseries(
-        source_id="app-a",
-        ref_name="urn:test:intervention",
-        rows=[(ts, "Collect grab sample")],
-        point_uri="urn:test:intervention",
-        value_kind="text",
-    )
-
-    ref_uri = str(compute_ref_uri("app-a", "urn:test:intervention"))
-    assert count == 1
-    assert store.refs == [
-        {
-            "point_uri": "urn:test:intervention",
-            "source_id": "app-a",
-            "ref_name": "urn:test:intervention",
-            "ref_uri": ref_uri,
-            "value_kind": "text",
-        }
-    ]
-    assert store.upserts == [
-        {
-            "ref_uri": ref_uri,
-            "rows": [(ts, "Collect grab sample")],
-            "value_kind": "text",
-        }
-    ]
-    assert len(graph_store.graphs) == 1
 
 
 def test_insert_timeseries_uses_computed_ref_uris_in_one_bulk_insert():

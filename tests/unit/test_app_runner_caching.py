@@ -52,7 +52,6 @@ class StubManager:
         ref_name: str,
         rows: Any,
         point_uri: str | None = None,
-        value_kind: str = "numeric",
         replace: bool = False,
     ) -> int:
         self.timeseries_inserts.append(
@@ -61,7 +60,6 @@ class StubManager:
                 "ref_name": ref_name,
                 "rows": list(rows),
                 "point_uri": point_uri,
-                "value_kind": value_kind,
             }
         )
         return len(rows)
@@ -308,5 +306,4 @@ def test_persist_routes_timeseries_to_manager(runner, stub_manager):
 
     assert len(stub_manager.timeseries_inserts) == 1
     assert stub_manager.timeseries_inserts[0]["point_uri"] == "urn:test:p1"
-    assert stub_manager.timeseries_inserts[0]["value_kind"] == "numeric"
     assert stub_manager.timeseries_inserts[0]["rows"] == ts_rows

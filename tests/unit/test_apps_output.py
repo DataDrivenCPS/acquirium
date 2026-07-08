@@ -21,14 +21,6 @@ class TestOutputTimeseries:
         assert out.kind == "timeseries"
         assert out.payload["point_uri"] == "urn:test:p1"
         assert len(out.payload["rows"]) == 2
-        assert out.payload["value_kind"] == "numeric"
-
-    def test_text_timeseries(self):
-        rows = [(datetime(2025, 1, 1, tzinfo=timezone.utc), "intervene")]
-        out = Output.text_timeseries(point_uri="urn:test:p1", rows=rows)
-        assert out.kind == "timeseries"
-        assert out.payload["rows"] == rows
-        assert out.payload["value_kind"] == "text"
 
     def test_with_list_of_tuples_as_series(self):
         tuples = [
@@ -116,21 +108,8 @@ class TestEmitOutputs:
                 "ref_name": "urn:test:p1",
                 "rows": rows,
                 "point_uri": "urn:test:p1",
-                "value_kind": "numeric",
             }
         ]
-
-    def test_text_timeseries_output_uses_text_value_kind(self):
-        calls = []
-        rows = [(datetime(2025, 1, 1, tzinfo=timezone.utc), "intervene")]
-
-        emit_outputs(
-            "app-a",
-            [Output.text_timeseries(point_uri="urn:test:p1", rows=rows)],
-            insert_timeseries=lambda **kwargs: calls.append(kwargs),
-        )
-
-        assert calls[0]["value_kind"] == "text"
 
     def test_event_output_serializes_json_text_row(self):
         calls = []
@@ -153,7 +132,6 @@ class TestEmitOutputs:
         assert calls[0]["source_id"] == "app-a"
         assert calls[0]["ref_name"] == "urn:test:event"
         assert calls[0]["point_uri"] == "urn:test:event"
-        assert calls[0]["value_kind"] == "text"
         row_ts, row_value = calls[0]["rows"][0]
         assert row_ts == ts
         assert json.loads(row_value) == {

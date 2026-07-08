@@ -5,7 +5,6 @@ import logging
 import os
 from collections.abc import Callable
 from datetime import datetime, timezone
-from decimal import Decimal
 from pathlib import Path
 
 from ontoenv import OntoEnv
@@ -53,33 +52,6 @@ def _maybe_literal_dt(value: Literal | None) -> datetime | None:
         return datetime.fromisoformat(str(value))
     except ValueError:
         return None
-
-
-def _cell_to_py(node):
-    '''
-    Convert an rdflib term from a SPARQL result cell to a native Python value.
-
-    Literals are mapped to their Python type via ``toPython`` (``50.0^^xsd:double``
-    -> ``float``, an ``xsd:date`` -> ``datetime.date``, ...); IRIs and blank nodes
-    are returned unchanged. Datatypes rdflib does not recognise fall back to the
-    lexical string. This runs at the one boundary where the datatype is still
-    known: over HTTP the value is JSON-encoded immediately after, so the type
-    would otherwise be lost.
-
-    ``xsd:decimal`` -> :class:`~decimal.Decimal` is coerced further to ``float``:
-    JSON has no decimal type and the response serializer stringifies ``Decimal``
-    (so it would arrive as ``"50"``, not a number). ``float`` is the right target
-    for a numeric column and round-trips as a JSON number.
-    '''
-    if isinstance(node, Literal):
-        try:
-            value = node.toPython()
-        except Exception:
-            return str(node)
-        if isinstance(value, Decimal):
-            return float(value)
-        return value
-    return node
 
 
 def _external_uri(subject: URIRef) -> str:
@@ -398,33 +370,9 @@ class OxigraphGraphStore:
             return self._refresh_imports_union_graph()
         return self._imports_union_graph()
 
-    def _compile_graph(self, merged: Graph) -> Graph:
-        """Materialize SHACL-AF inference over the merged source+imports graph.
-
-        This is the base -> compiled step: the source store keeps the graph as
-        provided, while the *query* graph is the inferred version. Inference is
-        cheap enough to run synchronously and is only recomputed when the source
-        version bumps (via the caller's version-keyed cache). On failure we log
-        and fall back to the un-inferred graph so a bad rule can't break queries.
-        """
-        from acquirium.internals.inference import compile_graph
-
-        base = len(merged)
-        try:
-            compiled = compile_graph(merged)
-        except Exception:
-            _logger.warning(
-                "graph inference failed; querying un-inferred graph", exc_info=True
-            )
-            return merged
-        _logger.debug(
-            "graph inference: %d -> %d triples (+%d)", base, len(compiled), len(compiled) - base
-        )
-        return compiled
-
     def _refresh_imports_union_graph(self) -> Graph:
-        """Materialize data graph + imports closure + SHACL-AF inference into the query graph."""
-        merged = self._compile_graph(self._source_graph_with_dependencies())
+        """Materialize data graph + imports closure into one query graph."""
+        merged = self._source_graph_with_dependencies()
         graph = self._imports_union_graph()
         graph.remove((None, None, None))
         if len(merged):
@@ -501,7 +449,7 @@ class OxigraphGraphStore:
                 out = {"columns": [], "rows": [[bool(result)]]}
             elif isinstance(result, ox.QuerySolutions):
                 cols = [str(v.value) for v in result.variables]
-                rows = [[_cell_to_py(from_ox(cell)) for cell in row] for row in result]
+                rows = [[from_ox(cell) for cell in row] for row in result]
                 out = {"columns": cols, "rows": rows}
             elif isinstance(result, ox.QueryTriples):
                 triples = Graph()
@@ -559,25 +507,7 @@ class OxigraphGraphStore:
 
     def namespace_manager(self) -> NamespaceManager :
         return self.query_dataset.namespace_manager
-
-    def bind_prefixes(self, mapping: dict[str, str]) -> None:
-        """Authoritatively bind prefix → namespace URIs (override=True).
-
-        Used at startup to apply the operator-controlled ``[prefixes]`` table
-        from acquirium.toml, so these names win over any auto-generated ones
-        and surface consistently in ``/namespace/list``.
-        """
-        if not mapping:
-            return
-        main = self._source_main_graph()
-        for prefix, ns_uri in mapping.items():
-            try:
-                main.bind(prefix, ns_uri, override=True)
-                self.query_dataset.namespace_manager.bind(prefix, ns_uri, override=True)
-                self.source_dataset.namespace_manager.bind(prefix, ns_uri, override=True)
-            except Exception:
-                _logger.warning("bind_prefixes failed for %s=%s", prefix, ns_uri, exc_info=True)
-
+    
     # -------------------- helpers --------------------
     def _materialize_point(self, subject: URIRef) -> Point:
         main_graph = self._source_main_graph()

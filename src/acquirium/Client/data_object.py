@@ -13,32 +13,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Fixed columns of the tall/metadata frames. Entity (waypoint) columns are
-# carried internally with an ``entity__`` prefix so a waypoint named e.g.
-# "value_numeric" can't collide with these; the prefix is stripped on the way
-# out (see ``_strip_entity_prefix``), except when doing so *would* collide.
-RESERVED_DATA_COLUMNS = frozenset(
-    {"data_alias", "point_uri", "ref_uri", "time", "value_numeric", "value_text"}
-)
-
-_ENTITY_PREFIX = "entity__"
-
-
-def _strip_entity_prefix(df: pl.DataFrame) -> pl.DataFrame:
-    """Rename ``entity__<name>`` columns to the bare ``<name>`` for display.
-
-    The prefix is an internal collision-guard; users pick, and group by, the
-    bare waypoint name. Keep the prefix only if stripping it would clash with a
-    reserved data column or an existing column.
-    """
-    renames = {}
-    for c in df.columns:
-        if c.startswith(_ENTITY_PREFIX):
-            bare = c[len(_ENTITY_PREFIX):]
-            if bare not in RESERVED_DATA_COLUMNS and bare not in df.columns:
-                renames[c] = bare
-    return df.rename(renames) if renames else df
-
 
 def _parse_sparql_bindings(
     query: Query,
@@ -676,7 +650,7 @@ class DataObject:
             return self._compact_dataframe(shape=shape, include_ref=include_ref)
 
         if shape == "narrow":
-            return _strip_entity_prefix(self._tall.sort("time"))
+            return self._tall.sort("time")
 
         tall = self._tall.clone()
 
@@ -789,8 +763,8 @@ class DataObject:
     # ------------------------------------------------------------------
 
     def metadata(self, *, include_ref_uris: bool = False) -> pl.DataFrame:
-        """Return a DataFrame of unique ``(data_alias, point_uri, <waypoint>*)``
-        tuples — one column per marked waypoint (bare name, no ``entity__``).
+        """Return a DataFrame of unique ``(data_alias, point_uri, entity__*)``
+        tuples.
 
         By default the UUID ``ref_uri`` column is hidden — multiple ref_uris
         sharing the same point are folded into one row. Pass
@@ -803,8 +777,8 @@ class DataObject:
             meta_cols = ["data_alias", "point_uri"] + ref_col + self._entity_columns
             existing = [c for c in meta_cols if c in self._tall.columns]
             if self._tall.is_empty():
-                return _strip_entity_prefix(pl.DataFrame(schema={c: pl.Utf8 for c in existing}))
-            return _strip_entity_prefix(self._tall.select(existing).unique().sort("data_alias"))
+                return pl.DataFrame(schema={c: pl.Utf8 for c in existing})
+            return self._tall.select(existing).unique().sort("data_alias")
 
         # Build from bindings without materializing
         rows: list[dict[str, str | None]] = []
@@ -821,8 +795,8 @@ class DataObject:
                 rows.append(row)
         cols = ["data_alias", "point_uri"] + ref_col + self._entity_columns
         if not rows:
-            return _strip_entity_prefix(pl.DataFrame(schema={c: pl.Utf8 for c in cols}))
-        return _strip_entity_prefix(pl.DataFrame(rows).unique().sort("data_alias"))
+            return pl.DataFrame(schema={c: pl.Utf8 for c in cols})
+        return pl.DataFrame(rows).unique().sort("data_alias")
 
     @property
     def aliases(self) -> list[str]:

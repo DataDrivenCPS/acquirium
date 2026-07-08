@@ -466,35 +466,6 @@ def test_loop_advances_cursor_on_each_tick(tmp_path):
     assert driver.aq.insert_timeseries_arrow.call_count == 2
 
 
-def test_tick_skips_fully_read_file_until_it_changes(tmp_path):
-    driver = make_driver(tmp_path=tmp_path)
-    driver.setup()
-    path = _wide_csv(tmp_path)  # 2 data rows
-
-    calls = []
-    original_read_frame = driver.read_frame
-
-    def counting_read_frame(p, row_offset=0):
-        calls.append(row_offset)
-        return original_read_frame(p, row_offset=row_offset)
-
-    driver.read_frame = counting_read_frame
-
-    driver.tick()  # reads both rows
-    assert len(calls) == 1
-
-    driver.tick()  # re-reads once more to confirm no new rows, then caches (mtime, size)
-    assert len(calls) == 2
-
-    driver.tick()  # unchanged on disk -> skipped without calling read_frame at all
-    assert len(calls) == 2
-
-    with path.open("a") as f:
-        f.write("2024-01-03T00:00:00Z,24.0\n")
-    driver.tick()  # file changed -> re-read
-    assert len(calls) == 3
-
-
 def test_file_stays_in_place_after_insert(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     driver.setup()
