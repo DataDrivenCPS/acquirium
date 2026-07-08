@@ -205,14 +205,20 @@ class Manager:
 
         _emb_model = os.getenv("ACQUIRIUM_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 
+        # Persist the downloaded embedding model under the data dir so it
+        # survives OS temp-dir purges (fastembed defaults to $TMPDIR).
+        _model_cache = base / "embedding_cache" / "models"
+
         # Dual matchers: graph (class/predicate) and QUDT (unit/quantity_kind)
         self._graph_matcher = EmbeddingMatcher(
             model_name=_emb_model,
             cache_dir=base / "embedding_cache" / "graph",
+            model_cache_dir=_model_cache,
         )
         self._qudt_matcher = EmbeddingMatcher(
             model_name=_emb_model,
             cache_dir=base / "embedding_cache" / "qudt",
+            model_cache_dir=_model_cache,
         )
 
         # Single normalization façade, sharing the lazily-built converter.

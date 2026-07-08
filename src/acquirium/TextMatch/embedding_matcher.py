@@ -76,9 +76,11 @@ class EmbeddingMatcher:
         self,
         model_name: str = "BAAI/bge-small-en-v1.5",
         cache_dir: str | Path | None = None,
+        model_cache_dir: str | Path | None = None,
     ) -> None:
         self._model_name = model_name
         self._cache_dir = Path(cache_dir) if cache_dir else None
+        self._model_cache_dir = Path(model_cache_dir) if model_cache_dir else None
         self._model = None  # lazy
         self._lock = threading.Lock()
 
@@ -121,7 +123,10 @@ class EmbeddingMatcher:
             return
         from fastembed import TextEmbedding
 
-        self._model = TextEmbedding(self._model_name)
+        cache_dir = str(self._model_cache_dir) if self._model_cache_dir else None
+        if cache_dir:
+            self._model_cache_dir.mkdir(parents=True, exist_ok=True)
+        self._model = TextEmbedding(self._model_name, cache_dir=cache_dir)
 
     def _embed(self, texts: list[str]) -> np.ndarray:
         self._ensure_model()
