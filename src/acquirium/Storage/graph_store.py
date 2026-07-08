@@ -435,28 +435,31 @@ class OxigraphGraphStore:
         _logger.debug("sparql_query union=%s query=%s", use_union, query)
         with timed_debug(_logger, "sparql_query union=%s", use_union):
             if use_union:
-                dataset = self.query_dataset
-                graph_uri = self._ensure_imports_union_graph_current().identifier
+                with timed_debug(_logger,"sparql_query--ensure imports union graph current"):
+                    dataset = self.query_dataset
+                    graph_uri = self._ensure_imports_union_graph_current().identifier
             else:
                 dataset = self.source_dataset
                 graph_uri = self.main_graph_uri
-            result = dataset.store._inner.query(
-                query,
-                use_default_graph_as_union=False,
-                default_graph=ox.NamedNode(str(graph_uri)),
-            )
-            if isinstance(result, ox.QueryBoolean):
-                out = {"columns": [], "rows": [[bool(result)]]}
-            elif isinstance(result, ox.QuerySolutions):
-                cols = [str(v.value) for v in result.variables]
-                rows = [[from_ox(cell) for cell in row] for row in result]
-                out = {"columns": cols, "rows": rows}
-            elif isinstance(result, ox.QueryTriples):
-                triples = Graph()
-                triples += (from_ox(t) for t in result)
-                out = {"columns": ["triple"], "rows": [[triple] for triple in triples]}
-            else:
-                raise ValueError(f"Unexpected query result: {result!r}")
+            with timed_debug(_logger,"sparql_query--oxi query time:"):
+                result = dataset.store._inner.query(
+                    query,
+                    use_default_graph_as_union=False,
+                    default_graph=ox.NamedNode(str(graph_uri)),
+                )
+            with timed_debug(_logger,"sparql_query--output processing:"):
+                if isinstance(result, ox.QueryBoolean):
+                    out = {"columns": [], "rows": [[bool(result)]]}
+                elif isinstance(result, ox.QuerySolutions):
+                    cols = [str(v.value) for v in result.variables]
+                    rows = [[from_ox(cell) for cell in row] for row in result]
+                    out = {"columns": cols, "rows": rows}
+                elif isinstance(result, ox.QueryTriples):
+                    triples = Graph()
+                    triples += (from_ox(t) for t in result)
+                    out = {"columns": ["triple"], "rows": [[triple] for triple in triples]}
+                else:
+                    raise ValueError(f"Unexpected query result: {result!r}")
         _logger.debug("sparql_query: %d rows", len(out["rows"]))
         return out
 
