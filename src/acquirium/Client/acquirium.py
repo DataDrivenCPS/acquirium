@@ -10,7 +10,7 @@ import inspect
 if TYPE_CHECKING:
     import polars as pl
     import pyarrow as pa
-    from acquirium.Graframe import Graframe, Profile, Reasoning
+    from acquirium.facetgraph import Graframe, Profile, Reasoning
 
 from rdflib import Graph as RDFGraph, URIRef, Literal
 from rdflib.namespace import RDF, RDFS
@@ -216,11 +216,11 @@ class Acquirium:
 
         Example::
 
-            from acquirium.Graframe import Profile
+            from acquirium.facetgraph import Profile
             g = aq.graph(profile=Profile.base().with_(edges={"downstream": "s223:connectedTo+"}))
             g.instances("s223:Sensor").facets().show()
         """
-        from acquirium.Graframe import Graframe
+        from acquirium.facetgraph import Graframe
 
         return Graframe(
             self.client, reasoning=reasoning, profile=profile,

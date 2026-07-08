@@ -22,7 +22,7 @@ predicate — and value slots — ``value=`` / ``in_=``):
   when fuzzy matching is on.
 
 To force a plain RDF **literal** in a value slot (bypassing all resolution),
-pass a number or an :class:`~acquirium.Graframe.algebra.Lit` /
+pass a number or an :class:`~acquirium.facetgraph.algebra.Lit` /
 ``rdflib.Literal`` — a bare string is resolved like any other term.
 """
 

@@ -9,7 +9,7 @@ import polars as pl
 
 from acquirium.Apps.base import App, Output
 from acquirium.Apps.output_emission import emit_outputs
-from acquirium.Graframe import Graframe, Profile
+from acquirium.facetgraph import Graframe, Profile
 from acquirium.internals.models import AppContext
 
 # Vogel correlation for water's dynamic viscosity (Pa*s), T in deg C -- lets the

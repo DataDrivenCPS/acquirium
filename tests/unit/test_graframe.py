@@ -10,12 +10,12 @@ import re
 
 import pytest
 
-from acquirium.Graframe import (
+from acquirium.facetgraph import (
     Facets, FacetRow, Graframe, P, Profile, Reasoning, like, parse_path, to_path,
 )
-from acquirium.Graframe.resolve import Fuzzy, resolve_iri
-from acquirium.Graframe.algebra import Alt, Inv, Lit, Pred, Seq, Var, Triple
-from acquirium.Graframe.facets import _facet_query, _virtual_facet
+from acquirium.facetgraph.resolve import Fuzzy, resolve_iri
+from acquirium.facetgraph.algebra import Alt, Inv, Lit, Pred, Seq, Var, Triple
+from acquirium.facetgraph.facets import _facet_query, _virtual_facet
 
 RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
 SUBCLASS = "http://www.w3.org/2000/01/rdf-schema#subClassOf"
@@ -742,7 +742,7 @@ HAS_UNIT = "http://qudt.org/schema/qudt/hasUnit"
 
 class TestDataBridge:
     def test_data_sparql_uses_ref_and_marks(self):
-        from acquirium.Graframe.data import _data_sparql
+        from acquirium.facetgraph.data import _data_sparql
 
         g = Graframe(FakeClient())
         sel = (g.instances("s223:Sensor").mark("sensor")
@@ -755,7 +755,7 @@ class TestDataBridge:
         assert "(?n0 AS ?entity__sensor)" in q              # mark becomes entity col
 
     def test_build_data_object_bindings(self):
-        from acquirium.Graframe.data import build_data_object
+        from acquirium.facetgraph.data import build_data_object
 
         rows = [
             ["urn:p1", "urn:r1", "urn:unitA", None, "urn:e1"],
@@ -775,14 +775,14 @@ class TestDataBridge:
         assert by_point["urn:p2"].ref_unit == "urn:unitB"
 
     def test_build_data_object_empty(self):
-        from acquirium.Graframe.data import build_data_object
+        from acquirium.facetgraph.data import build_data_object
 
         client = FakeClient({"columns": ["point", "ref", "unit", "extunit"], "rows": []})
         d = build_data_object(Graframe(client).instances("s223:Sensor"))
         assert d.is_empty()
 
     def test_metadata_columns_drop_entity_prefix(self):
-        from acquirium.Graframe.data import build_data_object
+        from acquirium.facetgraph.data import build_data_object
 
         rows = [["urn:p1", "urn:r1", "urn:unitA", None, "urn:e1"]]
         client = FakeClient(
@@ -795,7 +795,7 @@ class TestDataBridge:
         assert "sensor" in md.columns and "entity__sensor" not in md.columns
 
     def test_data_rejects_mark_colliding_with_reserved_column(self):
-        from acquirium.Graframe.data import build_data_object
+        from acquirium.facetgraph.data import build_data_object
 
         g = Graframe(FakeClient())
         sel = g.instances("s223:Sensor").mark("time").follow("s223:hasProperty")
@@ -803,7 +803,7 @@ class TestDataBridge:
             build_data_object(sel)
 
     def test_build_data_object_passes_query_params_through(self):
-        from acquirium.Graframe.data import build_data_object
+        from acquirium.facetgraph.data import build_data_object
 
         rows = [["urn:p1", "urn:r1", None, None]]
         client = FakeClient(
@@ -823,7 +823,7 @@ class TestDataBridge:
     def test_data_mark_on_focus_column_is_not_an_entity_column(self):
         # a mark created on the focus column would otherwise duplicate it; the
         # bridge skips any mark whose var equals the focus var.
-        from acquirium.Graframe.data import _data_sparql
+        from acquirium.facetgraph.data import _data_sparql
 
         g = Graframe(FakeClient())
         sel = g.instances("s223:Sensor").mark("sensor")  # focus is n0 == mark "sensor"

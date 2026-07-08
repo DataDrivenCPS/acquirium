@@ -12,14 +12,14 @@ count, per key, how many *distinct focus nodes* support that key (the
 Support (distinct focus nodes) is the useful measure for exploratory analysis:
 it tells you how many of the things you currently hold can take a given step.
 
-An active :class:`~acquirium.Graframe.profile.Profile` curates the result:
+An active :class:`~acquirium.facetgraph.profile.Profile` curates the result:
 hidden predicates/types are filtered out (in SPARQL, so ``LIMIT`` stays
 correct), and the profile's **named virtual edges** are surfaced as extra rows
 (``is_virtual=True``) that can be traversed with ``follow("<name>")``.
 
 Facet rows are *actionable*: pick one with :meth:`Facets.row` and hand it
-straight to :meth:`~acquirium.Graframe.selection.Selection.follow` /
-:meth:`~acquirium.Graframe.selection.Selection.having` — the row already knows
+straight to :meth:`~acquirium.facetgraph.selection.Selection.follow` /
+:meth:`~acquirium.facetgraph.selection.Selection.having` — the row already knows
 its predicate, direction, and (for ``pred-obj`` / ``pred-obj-type`` facets) the
 object value/type to filter on, so you never retype a URI.
 """

@@ -13,7 +13,7 @@ A profile carries four things:
 * ``allow_types`` / ``deny_types`` — same, for object rdf:types in
   ``pred-obj-type`` facets (used to drop schema/shape objects).
 * ``edges`` — named virtual edges: ``name -> path``. The path is a
-  :class:`~acquirium.Graframe.algebra.Path`, a list of predicates
+  :class:`~acquirium.facetgraph.algebra.Path`, a list of predicates
   (alternation), or a SPARQL property-path string (``"s223:connectedTo+"``).
 
 **Visibility rule:** a predicate shows iff ``(allow empty OR matches allow)

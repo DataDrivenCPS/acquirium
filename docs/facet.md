@@ -289,7 +289,7 @@ Set-up (assumes a running Acquirium server with a graph loaded):
 
 ```python
 from acquirium import Acquirium
-from acquirium.Graframe import Profile, P, like
+from acquirium.facetgraph import Profile, P, like
 
 aq = Acquirium(server_url="localhost", server_port=8000)
 g = aq.graph()          # a Graframe "root" bound to the client
@@ -493,7 +493,7 @@ resolves just like `instances("pump")` does. Two knobs remain:
 - **To force a real literal** (bypassing all resolution), pass a number or an
   explicit `Lit(...)` / `rdflib.Literal` — a bare string is *always* resolved:
   ```python
-  from acquirium.Graframe import Lit
+  from acquirium.facetgraph import Lit
   readings.having("watr:value", value=5)             # numeric literal
   things.having("rdfs:label", value=Lit("Pump 1"))   # string literal
   ```
@@ -564,7 +564,7 @@ a surprising result, or hand a query to someone who prefers raw SPARQL.
 Import surface:
 
 ```python
-from acquirium.Graframe import (
+from acquirium.facetgraph import (
     Graframe, Selection, Reasoning, Profile, Facets, FacetRow,
     Path, P, Lit, Iri, like, Fuzzy, parse_path, to_path,
 )
@@ -809,7 +809,7 @@ raises at `.data()` time.
 
 ## Where the code lives
 
-`src/acquirium/Graframe/`:
+`src/acquirium/facetgraph/`:
 
 - `algebra.py` — terms, property paths, the pattern AST, and SPARQL rendering.
   The denotational core (§2.6).

@@ -45,10 +45,8 @@ UNITS = {
 class FakeGraphClient:
     """A minimal fake answering the exact SPARQL shapes `discover()` compiles.
 
-    Dispatch is by distinguishing substring (same technique as
-    ``tests/unit/test_dpr_toc_alarm.py``'s ``TocClient``) rather than a real
-    triple store, since the App's own correctness was validated end-to-end
-    against the live Port Hueneme server (see project memory).
+    Dispatch is by distinguishing substrings rather than running a real triple
+    store, since these tests pin the app's query/assembly behavior directly.
     """
 
     def expand_uri(self, text: str) -> str:

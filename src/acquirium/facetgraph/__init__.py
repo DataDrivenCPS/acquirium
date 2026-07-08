@@ -9,8 +9,8 @@ Typical use (via the Acquirium client)::
     props = sensors.follow("s223:hasProperty")   # move the cursor
     temp.nodes()                                 # pull results
 
-See :mod:`acquirium.Graframe.selection` for the operator reference and
-:mod:`acquirium.Graframe.algebra` for the SPARQL compilation core.
+See :mod:`acquirium.facetgraph.selection` for the operator reference and
+:mod:`acquirium.facetgraph.algebra` for the SPARQL compilation core.
 """
 
 from .algebra import Alt, Inv, Iri, Lit, Mod, Path, Pred, RawPath, Seq, parse_path, to_path
@@ -23,7 +23,7 @@ from .selection import Graframe, Reasoning, Selection
 def P(predicate: str) -> Pred:
     """Build an atomic property-path step from a predicate URI/CURIE.
 
-    Compose with :meth:`~acquirium.Graframe.algebra.Path` combinators to make
+    Compose with :meth:`~acquirium.facetgraph.algebra.Path` combinators to make
     virtual edges, e.g. ``P("s223:connectedTo").plus()`` or
     ``P("s223:hasProperty").then(P("qudt:hasUnit"))``. Note: pass the *full URI*
     or resolve CURIEs yourself; combinators do not touch the server.
