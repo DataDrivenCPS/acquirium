@@ -1224,7 +1224,24 @@ class Query:
             if instance_uri is not None:
                 where_clauses.append(f"VALUES {v} {{ <{instance_uri}> }}")
             if node.rdf_class:
-                where_clauses.append(f"{v} <http://www.w3.org/1999/02/22-rdf-syntax-ns#type>/<http://www.w3.org/2000/01/rdf-schema#subClassOf>* <{node.rdf_class}> .")
+                # Anchor the subClassOf* traversal at the constant class inside
+                # a sub-SELECT. This fences the property path so Oxigraph
+                # evaluates it *backward* from <class> (a handful of nodes)
+                # instead of driving it *forward* from every ?v_typ bound by
+                # rdf:type. The naive `?v rdf:type ?t . ?t subClassOf* <class>`
+                # form lets the planner re-walk the whole subclass forest above
+                # each typed individual — catastrophic when a deep-hierarchy
+                # ontology (e.g. QUDT, with owl:Restriction skeletons over
+                # ~16k unit/quantitykind individuals) is in the union graph
+                # (~6s vs ~0.03s for this same query).
+                typ = f"{v}_typ"
+                where_clauses.append(f"{v} <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> {typ} .")
+                where_clauses.append(
+                    f"{{ SELECT DISTINCT {typ} WHERE {{ "
+                    f"{typ} <http://www.w3.org/2000/01/rdf-schema#subClassOf>* <{node.rdf_class}> . "
+                    f"}} }}"
+                )
+
 
         # edge constraints
         for edge_idx, edge in enumerate(self.query_graph.edges):
