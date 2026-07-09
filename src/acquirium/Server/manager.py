@@ -16,21 +16,16 @@ from acquirium.Storage import (
 from acquirium.Storage.values import normalize_value_kind
 from acquirium.internals.qudt_units import QUDTUnitConverter
 from acquirium.Server.config import OntologySource
-from acquirium.internals.models import LogEntry, Order, TimeIntervalModel, AppSpec, AppRunRequest, compute_ref_uri
+from acquirium.internals.models import LogEntry, Order, TimeIntervalModel, compute_ref_uri
 from acquirium.internals.internals_namespaces import *
-from acquirium.internals.app_utils import app_uri_for
 
-import json
-import re
 import threading
-from concurrent.futures import ThreadPoolExecutor, Future
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     import pyarrow as pa
 import shutil
-import docker
-from docker.errors import DockerException, NotFound as ContainerNotFound
 from acquirium.TextMatch.embedding_matcher import EmbeddingMatcher, _split_local_name
 from acquirium.TextMatch.qudt_store import QUDTStore
 from acquirium.TextMatch.resolver import ConceptResolver
@@ -194,14 +189,6 @@ class Manager:
         self._graph_version: int = 0
         self._graph_version_lock = threading.Lock()
 
-        # Initialize Docker client for spawning app containers
-        try:
-            self._docker = docker.from_env()
-            self._docker.ping()
-            logger.info("acquirium: connected to Docker daemon")
-        except DockerException as e:
-            logger.warning("acquirium: Docker not available, app execution disabled: %s", e)
-            self._docker = None
 
         _emb_model = os.getenv("ACQUIRIUM_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 
@@ -779,204 +766,6 @@ class Manager:
             raise ValueError(f"stream {ref_uri} is not registered")
         return normalize_value_kind(value_kind)
 
-
-    def _app_storage_dir(self, app_id: str) -> Path:
-        path = self.app_storage_root / app_id
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-
-    def _lookup_app_runtime(self, app_id: str) -> dict[str, str | None]:
-        app_uri = app_uri_for(app_id)
-        q = f"""
-        SELECT ?image ?module ?cls ?entry ?cmd
-        WHERE {{
-          BIND(<{app_uri}> AS ?app)
-          OPTIONAL {{ ?app <{HAS_IMAGE}> ?image . }}
-          OPTIONAL {{ ?app <{HAS_MODULE}> ?module . }}
-          OPTIONAL {{ ?app <{HAS_APP_CLASS}> ?cls . }}
-          OPTIONAL {{ ?app <{HAS_ENTRYPOINT}> ?entry . }}
-          OPTIONAL {{ ?app <{HAS_COMMAND}> ?cmd . }}
-        }}
-        """
-        res = self.graph_store.sparql_query(q, use_union=True)
-        rows = res.get("rows", [])
-        if not rows:
-            raise ValueError(f"App not found: {app_id}")
-
-        cols = res.get("columns", [])
-        idx = {name: i for i, name in enumerate(cols)}
-
-        def pick(name: str) -> str | None:
-            i = idx.get(name)
-            if i is None:
-                return None
-            for row in rows:
-                if i < len(row) and row[i] is not None:
-                    return str(row[i])
-            return None
-
-        return {
-            "image": pick("image"),
-            "module": pick("module"),
-            "app_class": pick("cls"),
-            "entrypoint": pick("entry"),
-            "command": pick("cmd"),
-        }
-
-    def _run_app_once(self, req: AppRunRequest, *, keep_alive: bool = False, interval: float | None = None) -> str | None :
-        if self._docker is None:
-            raise ValueError("Docker is not available - cannot run apps")
-
-        runtime = self._lookup_app_runtime(req.app_id)
-        logger.info("Running app %s with runtime config: %s", req.app_id, runtime)
-
-        image = runtime.get("image") or os.getenv("ACQUIRIUM_DEFAULT_APP_IMAGE")
-        if not image:
-            raise ValueError(f"App {req.app_id} has no docker image configured")
-
-        # Paths inside the worker container (backed by named volume)
-        container_data_root = os.getenv("ACQUIRIUM_APP_DATA_ROOT", "/app/.acquirium")
-        container_app_root = f"{container_data_root}/apps/{req.app_id}"
-
-        # entry file discovery remains server side; keep it if you need it
-        app_dir = self._app_storage_dir(req.app_id)
-        entry_file = None
-        meta_path = app_dir / "app.json"
-        if meta_path.exists():
-            try:
-                meta = json.loads(meta_path.read_text())
-                entry_file = meta.get("entry_file")
-            except Exception:
-                entry_file = None
-
-        env = {
-            "ACQUIRIUM_APP_ID": req.app_id,
-            "ACQUIRIUM_APP_MODULE": runtime.get("module") or "",
-            "ACQUIRIUM_APP_CLASS": runtime.get("app_class") or "",
-            "ACQUIRIUM_RUN_START": req.start.isoformat() if req.start else "",
-            "ACQUIRIUM_RUN_END": req.end.isoformat() if req.end else "",
-            "ACQUIRIUM_APP_PARAMS": json.dumps(req.params or {}, ensure_ascii=True),
-            "ACQUIRIUM_SERVER_URL": os.getenv("ACQUIRIUM_APP_SERVER_URL", "acquirium"),
-            "ACQUIRIUM_SERVER_PORT": os.getenv("ACQUIRIUM_APP_SERVER_PORT", "8000"),
-            "ACQUIRIUM_USE_SSL": os.getenv("ACQUIRIUM_APP_USE_SSL", "false"),
-            "ACQUIRIUM_APP_ROOT": container_app_root,
-            "PYTHONPATH": f"/app/src:{container_app_root}",
-        }
-        if keep_alive:
-            env["ACQUIRIUM_KEEP_ALIVE"] = "true"
-            env["ACQUIRIUM_KEEP_ALIVE_INTERVAL"] = str(interval if interval is not None else req.interval)
-        if entry_file:
-            env["ACQUIRIUM_APP_FILE"] = f"{container_app_root}/{entry_file}"
-
-        # Filter out empty environment values
-        env = {k: v for k, v in env.items() if v}
-
-        network = os.getenv("ACQUIRIUM_APP_NETWORK")
-        volume_name = os.getenv("ACQUIRIUM_APP_VOLUME", "acquirium_acquirium_data")
-
-        # Build volume mount specification
-        volumes = {
-            volume_name: {"bind": container_data_root, "mode": "ro"}
-        }
-
-        # Build the command to run inside the container
-        run_cmd = runtime.get("command") or "python -m acquirium.Apps.worker"
-        shell_cmd = f"/app/.venv/bin/{run_cmd}" if run_cmd.startswith("python ") else run_cmd
-
-        # Optional custom entrypoint
-        entrypoint = runtime.get("entrypoint")
-
-        # Generate container name (sanitize app_id for Docker naming rules)
-        safe_app_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', req.app_id)
-        container_name = f"acquirium_app_{safe_app_id}"
-
-        logger.info(
-            "Starting container: name=%s, image=%s, network=%s, volume=%s, env_keys=%s",
-            container_name, image, network, volume_name, list(env.keys())
-        )
-
-        try:
-            container = self._docker.containers.run(
-                image=image,
-                name=container_name,
-                command=["sh", "-lc", shell_cmd],
-                entrypoint=entrypoint if entrypoint else None,
-                environment=env,
-                volumes=volumes,
-                network=network if network else None,
-                extra_hosts={"host.docker.internal": "host-gateway"},  # Linux compatibility
-                detach=True,
-                auto_remove=True,
-            )
-        except DockerException as e:
-            logger.error("Failed to start container for app %s: %s", req.app_id, e)
-            raise ValueError(f"Failed to run app {req.app_id}: {e}") from e
-
-        cid = container.id
-        if isinstance(cid,str):
-            logger.info("Started docker container for app %s: %s", req.app_id, cid[:12])
-        else: 
-            logger.warning("Container ID is not a string for app %s: %s", req.app_id, cid)
-        return cid
-
-    def run_app(self, req: AppRunRequest) -> str | None:
-        if not req.keep_alive:
-            return self._run_app_once(req)
-
-        cid = self._run_app_once(req, keep_alive=True, interval=req.interval)
-        with self._app_runs_lock:
-            if isinstance(cid, str):
-                self._app_runs[cid] = {"app_id": req.app_id, "cid": cid}
-            else:
-                logger.warning("Received non-string container ID for app %s: %s", req.app_id, cid)
-        return cid
-
-    def _stop_container(self, cid: str) -> None:
-        if self._docker is None:
-            logger.warning("Docker not available, cannot stop container %s", cid)
-            return
-        try:
-            container = self._docker.containers.get(cid)
-            container.stop(timeout=10)
-            logger.info("Stopped container %s", cid[:12])
-        except ContainerNotFound:
-            logger.debug("Container %s already stopped or removed", cid[:12])
-        except DockerException:
-            logger.exception("Failed to stop container %s", cid[:12])
-
-    def stop_app(self, *, run_id: str | None = None, app_id: str | None = None) -> dict[str, Any]:
-        if not run_id and not app_id:
-            raise ValueError("stop_app requires run_id or app_id")
-
-        to_stop: list[str] = []
-        with self._app_runs_lock:
-            if run_id:
-                # Allow stopping by run_id even if not tracked (for cleanup)
-                to_stop.append(run_id)
-            else:
-                for rid, info in self._app_runs.items():
-                    if app_id == "*" or info.get("app_id") == app_id:
-                        to_stop.append(rid)
-
-        stopped: list[str] = []
-        for rid in to_stop:
-            with self._app_runs_lock:
-                record = self._app_runs.pop(rid, None)
-            cid = record.get("cid") if record else rid
-            if cid:
-                self._stop_container(cid)
-            stopped.append(rid)
-
-        return {"stopped": len(stopped), "run_ids": stopped}
-
-    def list_app_runs(self, *, app_id: str | None = None) -> list[dict[str, Any]]:
-        with self._app_runs_lock:
-            runs = list(self._app_runs.values())
-        if app_id:
-            runs = [r for r in runs if r.get("app_id") == app_id]
-        return [{"run_id": r.get("cid"), "app_id": r.get("app_id")} for r in runs]
-
-
     def insert_log(self, log_message: LogEntry):
         logger.debug("insert_log point_uri=%s ts=%s", log_message.point_uri, log_message.timestamp)
         self.timescale.insert_log(log_message)
@@ -1141,11 +930,6 @@ class Manager:
             pass
         try:
             self._executor.shutdown(wait=False, cancel_futures=False)
-        except Exception:
-            pass
-        try:
-            if self._docker is not None:
-                self._docker.close()
         except Exception:
             pass
         self.timescale.close()
