@@ -8,8 +8,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import ray
+import json
 
 from acquirium.internals._log import configure_logging, timed_debug as _timed_debug
+from acquirium.internals.models import AppSpec, compute_ref_uri
+from acquirium.internals.internals_namespaces import *
+from acquirium.internals.app_utils import app_uri_for, app_type_uri, add_literal_or_uri
+from rdflib import URIRef, Graph, Literal
 
 if TYPE_CHECKING:
     from acquirium.Client.acquirium import Acquirium
@@ -242,3 +247,188 @@ class DriverSupervisor:
             "started_at": record["started_at"],
             "status": status,
         }
+
+@ray.remote
+class AppRunner:
+    """One Ray actor per registered app; owns that app's lifecycle.
+
+    Constructed with the app's :class:`AppSpec` (which carries the app's
+    Python source). ``register()`` persists the source under the app storage
+    dir and writes the app's registration graph back to the server. Query
+    building and execution land here later.
+    """
+
+    def __init__(
+        self,
+        spec: AppSpec,
+        app_storage_root: Path,
+        acquirium_cli: "Acquirium",
+    ):
+        # Ray workers don't inherit the server process's logging config.
+        configure_logging()
+        self.spec = spec
+        self.app_storage_root = Path(app_storage_root)
+        self.acquirium_cli = acquirium_cli
+        self.logger = logging.getLogger(f"acquirium.app.{spec.name}")
+
+    @staticmethod
+    def _safe_entry_file(entry_file: str | None) -> str:
+        ef = (entry_file or "app.py").replace("\\", "/")
+        if ef.startswith("/") or ".." in ef.split("/"):
+            ef = "app.py"
+        return ef
+
+    def _persist_source(self) -> None:
+        """Write the shipped app source (and load metadata) under the app dir."""
+        entry_file = self._safe_entry_file(self.spec.entry_file)
+        app_dir = self.app_storage_root / self.spec.name
+        app_dir.mkdir(parents=True, exist_ok=True)
+        if self.spec.source_code:
+            (app_dir / entry_file).write_text(self.spec.source_code)
+        meta = {"entry_file": entry_file, "app_class": self.spec.app_class}
+        (app_dir / "app.json").write_text(
+            json.dumps(meta, ensure_ascii=True, sort_keys=True)
+        )
+
+    def register(self) -> dict[str, Any]:
+        """Persist the app's source and write its registration graph.
+
+        Called synchronously (``ray.get``) by :class:`AppSupervisor` so the
+        graph write completes — and races with other apps' writes are
+        serialized by the supervisor's lock — before registration returns.
+        """
+        self._persist_source()
+        graph = self._app_spec_graph(self.spec)
+        self.acquirium_cli.insert_graph(
+            graph.serialize(format="turtle"), format="turtle", replace=False
+        )
+        self.logger.info(
+            "Registered app '%s' (%d output stream(s))",
+            self.spec.name, len(self.spec.outputs),
+        )
+        return {
+            "name": self.spec.name,
+            "outputs": [o.point_uri for o in self.spec.outputs],
+        }
+
+    def _app_spec_graph(self, spec: AppSpec) -> Graph:
+        app_uri = URIRef(app_uri_for(spec.name))
+        graph = Graph()
+
+        graph.add((app_uri, RDF.type, APP))
+        graph.add((app_uri, RDFS.label, Literal(spec.name)))
+        if spec.app_type:
+            graph.add((app_uri, RDF.type, app_type_uri(spec.app_type)))
+
+        if spec.version:
+            graph.add((app_uri, HAS_VERSION, Literal(spec.version)))
+        if spec.queries:
+            graph.add((app_uri, APP_QUERY, Literal(json.dumps(spec.queries, sort_keys=True, ensure_ascii=True))))
+
+        for dep in spec.depends_on:
+            graph.add((app_uri, DEPENDS_ON, URIRef(dep)))
+
+        for out in spec.outputs:
+            point_uri = URIRef(out.point_uri)
+            ref_uri = compute_ref_uri(spec.name, out.point_uri)
+
+            graph.add((app_uri, PRODUCES, point_uri))
+            graph.add((point_uri, RDF.type, VIRTUAL_POINT))
+            graph.add((point_uri, HAS_EXTERNAL_REFERENCE, ref_uri))
+            graph.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(spec.name)))
+            graph.add((ref_uri, ACQUIRIUM_REF_NAME, Literal(out.point_uri)))
+            graph.add((ref_uri, RDF.type, STREAM))
+            if out.kind in {"event", "trigger"}:
+                graph.add((ref_uri, RDF.type, EVENT_STREAM))
+                graph.add((ref_uri, ACQUIRIUM_VALUE_KIND, Literal("text")))
+            else:
+                graph.add((ref_uri, RDF.type, TIMESERIES_STREAM))
+                graph.add((ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")))
+
+            graph.add((ref_uri, STORAGE_BACKEND, Literal(out.storage_backend or "timescale")))
+
+            add_literal_or_uri(graph, point_uri, HAS_QUANTITY_KIND, out.quantity_kind)
+            add_literal_or_uri(graph, point_uri, HAS_UNIT, out.unit)
+            add_literal_or_uri(graph, point_uri, DATA_SOURCE, out.data_source)
+            for dep in spec.depends_on:
+                graph.add((point_uri, IS_CALCULATED_FROM, URIRef(dep)))
+        return graph
+
+class AppSupervisor:
+    """Owns the AppRunner actors of one server process, keyed by app name.
+
+    Lives in the FastAPI process. ``register_app()`` spawns an AppRunner actor
+    for the app, connects it back to this server over HTTP, and runs its
+    ``register()`` step synchronously under a lock so apps' registration graph
+    writes cannot race each other.
+    """
+
+    def __init__(
+        self,
+        app_storage_root: Path,
+        server_url: str,
+        server_port: int,
+        use_ssl: bool = False,
+    ):
+        self.app_storage_root = Path(app_storage_root)
+        self.server_url = server_url
+        self.server_port = int(server_port)
+        self.use_ssl = bool(use_ssl)
+        self._lock = threading.Lock()
+        self._apps: dict[str, dict[str, Any]] = {}
+
+    def register_app(self, spec: AppSpec) -> dict[str, Any]:
+        from acquirium.Client.acquirium import Acquirium
+
+        with self._lock:
+            if spec.name in self._apps:
+                raise ValueError(f"App '{spec.name}' is already registered")
+
+            aq = Acquirium(
+                server_url=self.server_url,
+                server_port=self.server_port,
+                use_ssl=self.use_ssl,
+            )
+            actor = AppRunner.remote(spec, self.app_storage_root, aq)
+            try:
+                info = ray.get(actor.register.remote())
+            except Exception:
+                ray.kill(actor)
+                raise
+
+            self._apps[spec.name] = {
+                "name": spec.name,
+                "spec": spec,
+                "actor": actor,
+                "started_at": datetime.now(timezone.utc).isoformat(),
+            }
+            logger.info("Registered app '%s'", spec.name)
+            return info
+
+    def list_apps(self) -> list[dict[str, Any]]:
+        with self._lock:
+            records = list(self._apps.values())
+        return [
+            {"name": r["name"], "started_at": r["started_at"]} for r in records
+        ]
+
+    def run_app(self, app_id: str) -> bool:
+        raise NotImplementedError("run_app is not implemented yet")
+
+    def stop_app(self, app_id: str) -> bool:
+        raise NotImplementedError("stop_app is not implemented yet")
+
+    def stop_all_apps(self) -> None:
+        with self._lock:
+            records = list(self._apps.values())
+            self._apps.clear()
+        for record in records:
+            try:
+                ray.kill(record["actor"])
+                logger.info("Stopped app '%s'", record["name"])
+            except Exception:
+                logger.exception("Failed to stop app '%s'", record["name"])
+
+
+
+

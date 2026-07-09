@@ -779,114 +779,11 @@ class Manager:
             raise ValueError(f"stream {ref_uri} is not registered")
         return normalize_value_kind(value_kind)
 
-    def _app_type_uri(self, app_type: str) -> URIRef:
-        norm = (app_type or "").strip().lower()
-        if norm in {"soft_sensor", "softsensor"}:
-            return SOFT_SENSOR
-        if norm == "threshold":
-            return THRESHOLD
-        if norm == "alarm":
-            return ALARM
-        if norm == "report":
-            return REPORT
-        if "://" in app_type or app_type.startswith("urn:"):
-            return URIRef(app_type)
-        return URIRef(str(ACQUIRIUM_NS[app_type]))
 
     def _app_storage_dir(self, app_id: str) -> Path:
         path = self.app_storage_root / app_id
         path.mkdir(parents=True, exist_ok=True)
         return path
-
-    def _ensure_package_inits(self, target_dir: Path, root: Path) -> None:
-        current = target_dir
-        while current != root and root in current.parents:
-            init_file = current / "__init__.py"
-            if not init_file.exists():
-                init_file.write_text("")
-            current = current.parent
-
-    def _module_to_entry_file(self, module: str | None) -> str | None:
-        if not module:
-            return None
-        return f"{module.replace('.', '/')}.py"
-
-    def _add_literal_or_uri(self, graph: Graph, subj: URIRef, pred: URIRef, value: Any) -> None:
-        if value is None:
-            return
-        if isinstance(value, str) and ("://" in value or value.startswith("urn:")):
-            graph.add((subj, pred, URIRef(value)))
-        else:
-            graph.add((subj, pred, Literal(value)))
-
-    def register_app_spec(self, spec: AppSpec) -> None:
-        app_uri = URIRef(app_uri_for(spec.name))
-        graph = Graph()
-
-        graph.add((app_uri, RDF.type, APP))
-        graph.add((app_uri, RDFS.label, Literal(spec.name)))
-        if spec.app_type:
-            graph.add((app_uri, RDF.type, self._app_type_uri(spec.app_type)))
-
-        if spec.version:
-            graph.add((app_uri, HAS_VERSION, Literal(spec.version)))
-        if spec.module:
-            graph.add((app_uri, HAS_MODULE, Literal(spec.module)))
-        if spec.app_class:
-            graph.add((app_uri, HAS_APP_CLASS, Literal(spec.app_class)))
-        if spec.docker_image:
-            graph.add((app_uri, HAS_IMAGE, Literal(spec.docker_image)))
-        if spec.entrypoint:
-            graph.add((app_uri, HAS_ENTRYPOINT, Literal(spec.entrypoint)))
-        if spec.command:
-            graph.add((app_uri, HAS_COMMAND, Literal(spec.command)))
-        if spec.queries:
-            graph.add((app_uri, APP_QUERY, Literal(json.dumps(spec.queries, sort_keys=True, ensure_ascii=True))))
-
-        for dep in spec.depends_on:
-            graph.add((app_uri, DEPENDS_ON, URIRef(dep)))
-
-        for out in spec.outputs:
-            point_uri = URIRef(out.point_uri)
-            ref_uri = compute_ref_uri(spec.name, out.point_uri)
-
-            graph.add((app_uri, PRODUCES, point_uri))
-            graph.add((point_uri, RDF.type, VIRTUAL_POINT))
-            graph.add((point_uri, HAS_EXTERNAL_REFERENCE, ref_uri))
-            graph.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(spec.name)))
-            graph.add((ref_uri, ACQUIRIUM_REF_NAME, Literal(out.point_uri)))
-            graph.add((ref_uri, RDF.type, STREAM))
-            if out.kind in {"event", "trigger"}:
-                graph.add((ref_uri, RDF.type, EVENT_STREAM))
-                graph.add((ref_uri, ACQUIRIUM_VALUE_KIND, Literal("text")))
-            else:
-                graph.add((ref_uri, RDF.type, TIMESERIES_STREAM))
-                graph.add((ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")))
-
-            graph.add((ref_uri, STORAGE_BACKEND, Literal(out.storage_backend or "timescale")))
-
-            self._add_literal_or_uri(graph, point_uri, HAS_QUANTITY_KIND, out.quantity_kind)
-            self._add_literal_or_uri(graph, point_uri, HAS_UNIT, out.unit)
-            self._add_literal_or_uri(graph, point_uri, DATA_SOURCE, out.data_source)
-            for dep in spec.depends_on:
-                graph.add((point_uri, IS_CALCULATED_FROM, URIRef(dep)))
-
-        app_dir = self._app_storage_dir(spec.name)
-        entry_file = spec.entry_file or self._module_to_entry_file(spec.module) or "app.py"
-        entry_file = entry_file.replace("\\", "/")
-        if entry_file.startswith("/") or ".." in entry_file.split("/"):
-            entry_file = "app.py"
-        if spec.source_code:
-            target = app_dir / entry_file
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(spec.source_code)
-            self._ensure_package_inits(target.parent, app_dir)
-
-        meta = {"entry_file": entry_file}
-        (app_dir / "app.json").write_text(json.dumps(meta, ensure_ascii=True, sort_keys=True))
-
-        self.graph_store.insert_graph(graph, format="turtle", replace=False)
-        self._notify_graph_change()
 
     def _lookup_app_runtime(self, app_id: str) -> dict[str, str | None]:
         app_uri = app_uri_for(app_id)

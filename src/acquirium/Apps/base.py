@@ -104,6 +104,9 @@ class App(ABC):
     @abstractmethod
     def build_query(self, aq: Any) -> Query | dict[str, Query]:
         raise NotImplementedError
+    
+    def build_app(self, ctx:AppContext) -> Any:
+        return None
 
     @abstractmethod
     def run(self, ctx: AppContext) -> list[Output]:

@@ -35,7 +35,7 @@ import pyarrow as pa
 import polars as pl
 
 from acquirium.Server.insert_stats import insert_stats, start_insert_summary_thread
-from acquirium.Server.ray_backend import DriverSupervisor
+from acquirium.Server.ray_backend import DriverSupervisor, AppSupervisor
 
 log = logging.getLogger("acquirium.api")
 
@@ -172,6 +172,13 @@ async def lifespan(app: FastAPI):
     _host, _port, _use_ssl = _self_connect_cfg(_cfg)
     supervisor = DriverSupervisor(server_url=_host, server_port=_port, use_ssl=_use_ssl)
     app.state.drivers = supervisor
+    # Apps also run as Ray actors (one AppRunner per app) that connect back
+    # over HTTP; the supervisor spawns and tracks them.
+    app_supervisor = AppSupervisor(
+        app_storage_root=m.app_storage_root,
+        server_url=_host, server_port=_port, use_ssl=_use_ssl,
+    )
+    app.state.apps = app_supervisor
     # [[drivers]] from the config start once the server answers /health;
     # the lifespan startup hook runs before uvicorn begins serving.
     startup_task = asyncio.create_task(_start_config_drivers(supervisor, _cfg))
@@ -187,6 +194,10 @@ async def lifespan(app: FastAPI):
             await asyncio.to_thread(supervisor.stop_all)
         except Exception:
             log.exception("Error stopping drivers during shutdown")
+        try:
+            await asyncio.to_thread(app_supervisor.stop_all_apps)
+        except Exception:
+            log.exception("Error stopping apps during shutdown")
         ray.shutdown()
         try:
             m.close()
@@ -301,8 +312,8 @@ def list_namespaces() -> dict[str, str]:
 @app.post("/apps/register")
 def register_app(spec: AppSpec) -> dict[str, Any]:
     try:
-        app.state.manager.register_app_spec(spec)
-        return {"ok": True}
+        info = app.state.apps.register_app(spec)
+        return {"ok": True, **info}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
