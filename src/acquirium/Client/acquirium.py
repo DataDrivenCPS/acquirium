@@ -414,15 +414,10 @@ class Acquirium:
         app: App,
         *,
         app_type: str | None = None,
-        docker_image: str | None = None,
-        entrypoint: str | None = None,
-        command: str | None = None,
         outputs: list[AppOutputSpec | dict[str, Any]] | None = None,
         depends_on: list[str] | None = None,
         resolve_dependencies: bool = True,
         queries: dict[str, Query] | None = None,
-        source_code: str | None = None,
-        entry_file: str | None = None,
     ) -> dict[str, Any]:
         """Register an Acquirium App with the server."""
         query_bundle = queries if queries is not None else app.build_query(self)
@@ -449,38 +444,28 @@ class Acquirium:
                 raise TypeError("outputs must be AppOutputSpec or dict")
             output_specs.append(spec_item)
 
-        code = source_code or getattr(app, "source_code", None)
-        entry = entry_file or getattr(app, "entry_file", None)
-
-        if code is None:
+        # The app's Python source is shipped to the server so its AppRunner
+        # actor can load and run the class. Prefer an explicit override on the
+        # app; otherwise read the class's defining module file.
+        source_code = getattr(app, "source_code", None)
+        entry_file = getattr(app, "entry_file", None)
+        if source_code is None:
             try:
                 src_path = inspect.getsourcefile(app.__class__)
                 if src_path:
-                    code = Path(src_path).read_text()
-                    if entry is None:
-                        try:
-                            rel = Path(src_path).resolve().relative_to(Path.cwd().resolve())
-                            entry = rel.as_posix()
-                        except Exception:
-                            entry = Path(src_path).name
-                        if entry:
-                            entry = entry.replace("\\", "/")
+                    source_code = Path(src_path).read_text()
+                    if entry_file is None:
+                        entry_file = Path(src_path).name
             except Exception:
-                code = None
-        docker_image = docker_image or getattr(app, "docker_image", None)
-        if docker_image is None:
-            docker_image = "acquirium-acquirium:latest"
+                source_code = None
+
         spec = AppSpec(
             name=app.name,
             version=getattr(app, "version", "0.0"),
             app_type=app_type or getattr(app, "app_type", "soft_sensor"),
-            docker_image=docker_image,
-            module=app.__module__,
             app_class=app.__class__.__name__,
-            entrypoint=entrypoint or getattr(app, "entrypoint", None),
-            command=command or getattr(app, "command", None),
-            source_code=code,
-            entry_file=entry,
+            source_code=source_code,
+            entry_file=entry_file,
             queries=query_specs,
             outputs=output_specs,
             depends_on=deps,
