@@ -1,4 +1,4 @@
-from typing import Optional, Iterator, Any
+from typing import Optional, Iterator, Any, TYPE_CHECKING
 from datetime import datetime
 import requests
 from requests import HTTPError
@@ -22,6 +22,8 @@ from rdflib.namespace import NamespaceManager
 import logging
 logger = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
+    import pyarrow as pa
 
 def _raise_for_status(response: requests.Response) -> None:
     """Like response.raise_for_status(), but enriches the HTTPError message with the
