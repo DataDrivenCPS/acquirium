@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Any
 
 import ray
 import json
+import sys
+import importlib.util
 
 from acquirium.internals._log import configure_logging, timed_debug as _timed_debug
 from acquirium.internals.models import AppSpec, compute_ref_uri
@@ -271,6 +273,15 @@ class AppRunner:
         self.acquirium_cli = acquirium_cli
         self.logger = logging.getLogger(f"acquirium.app.{spec.name}")
 
+        # Populated by setup(): the loaded App instance, its resolved query
+        # bundle, and whatever build_app() returns (e.g. a trained model).
+        self.app: Any | None = None
+        self.query: Any | None = None
+        self.queries: dict[str, Any] = {}
+        self.state: Any | None = None
+        self.graph_version = 0
+        self._params: dict[str, Any] = {}
+
     @staticmethod
     def _safe_entry_file(entry_file: str | None) -> str:
         ef = (entry_file or "app.py").replace("\\", "/")
@@ -354,6 +365,132 @@ class AppRunner:
                 graph.add((point_uri, IS_CALCULATED_FROM, URIRef(dep)))
         return graph
 
+    # ─────────────────────── build phase ───────────────────────
+
+    def _load_app(self):
+        """Load the App class from the persisted source and instantiate it.
+
+        The client ships ``source_code`` + ``app_class``; ``register()`` wrote
+        both to the app dir. We import that file and pick the class by name
+        (falling back to the sole App subclass if no name was recorded).
+        """
+        from acquirium.Apps.base import App
+
+        app_dir = self.app_storage_root / self.spec.name
+        entry_file = self.spec.entry_file
+        app_class = self.spec.app_class
+        meta_path = app_dir / "app.json"
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text())
+                entry_file = entry_file or meta.get("entry_file")
+                app_class = app_class or meta.get("app_class")
+            except Exception:
+                self.logger.warning("Failed to read %s", meta_path, exc_info=True)
+
+        path = app_dir / self._safe_entry_file(entry_file)
+        # Make the app dir importable so multi-file apps resolve siblings.
+        if str(app_dir) not in sys.path:
+            sys.path.insert(0, str(app_dir))
+
+        module_spec = importlib.util.spec_from_file_location(
+            f"acquirium_app_{self.spec.name}", str(path)
+        )
+        if module_spec is None or module_spec.loader is None:
+            raise ValueError(f"Unable to load app file {path}")
+        module = importlib.util.module_from_spec(module_spec)
+        module_spec.loader.exec_module(module)
+
+        if app_class:
+            cls = getattr(module, app_class, None)
+            if cls is None:
+                raise ValueError(f"App class {app_class!r} not found in {path}")
+        else:
+            candidates = [
+                obj for obj in vars(module).values()
+                if isinstance(obj, type) and issubclass(obj, App) and obj is not App
+            ]
+            if not candidates:
+                raise ValueError(f"No App subclass found in {path}")
+            cls = candidates[0]
+
+        self.app = cls()
+        self.logger.info("Loaded app '%s' (%s)", self.spec.name, cls.__name__)
+        return self.app
+
+    def _make_context(self, *, params: dict[str, Any]):
+        from acquirium.internals.models import AppContext
+
+        return AppContext(
+            app_id=self.spec.name,
+            started_at=datetime.now(timezone.utc),
+            start=None,
+            end=None,
+            query=self.query,
+            params=params or {},
+            queries=self.queries,
+        )
+
+    def build_query(self) -> None:
+        """Resolve the app's query bundle against the current graph and cache it."""
+        if self.app is None:
+            raise RuntimeError("build_query called before the app was loaded")
+        bundle = self.app.build_query(self.acquirium_cli)
+        if isinstance(bundle, dict):
+            self.queries = bundle
+            self.query = bundle.get("default") or (
+                next(iter(bundle.values())) if bundle else None
+            )
+        else:
+            self.query = bundle
+            self.queries = {"default": bundle}
+        self.logger.info(
+            "Built %d query/queries for app '%s'", len(self.queries), self.spec.name
+        )
+
+    def build_app(self) -> None:
+        """Run the app's one-time build phase and cache whatever it returns.
+
+        This is where a stateful app does expensive setup (e.g. training a
+        model). The return value is held on the actor as ``self.state`` for
+        the run phase to consume.
+        """
+        if self.app is None:
+            raise RuntimeError("build_app called before the app was loaded")
+        ctx = self._make_context(params=self._params)
+        with _timed_debug(self.logger, "build_app app=%s", self.spec.name):
+            self.state = self.app.build_app(ctx)
+        self.logger.info(
+            "build_app complete for '%s' (state=%s)",
+            self.spec.name,
+            type(self.state).__name__ if self.state is not None else "None",
+        )
+
+    def setup(self, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Load the app and run its build phase (build_query + build_app).
+
+        Mirrors :meth:`DriverRunner.setup`: called once and serialized under
+        the supervisor lock so build-time graph reads/writes don't race. The
+        resolved query bundle and any state produced by ``build_app`` are
+        cached on the actor for the run phase.
+        """
+        self._params = params or {}
+        self._load_app()
+        self.build_query()
+        self.build_app()
+        # Seed the version the query was built against so the run phase can
+        # detect a stale query after later graph mutations.
+        try:
+            self.graph_version = self.acquirium_cli.graph_version()
+        except Exception:
+            self.graph_version = 0
+        return {
+            "name": self.spec.name,
+            "queries": list(self.queries.keys()),
+            "state": type(self.state).__name__ if self.state is not None else None,
+        }
+
+
 class AppSupervisor:
     """Owns the AppRunner actors of one server process, keyed by app name.
 
@@ -395,6 +532,15 @@ class AppSupervisor:
             except Exception:
                 ray.kill(actor)
                 raise
+
+            # Build phase (load app, build_query, build_app) runs serially
+            # under this lock so build-time graph reads/writes can't race.
+            # A build failure is non-fatal — the app stays registered and the
+            # run phase can rebuild — so registration itself stays robust.
+            try:
+                info = {**info, **ray.get(actor.setup.remote())}
+            except Exception:
+                logger.exception("Build phase failed for app '%s'", spec.name)
 
             self._apps[spec.name] = {
                 "name": spec.name,
