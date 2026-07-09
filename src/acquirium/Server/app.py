@@ -321,18 +321,17 @@ def register_app(spec: AppSpec) -> dict[str, Any]:
 @app.post("/apps/run")
 def run_app(req: AppRunRequest) -> dict[str, Any]:
     try:
-        run_id = app.state.manager.run_app(req)
-        print(f"Started app run with ID: {run_id}")
-        return {"ok": True, "run_id": run_id}
+        result = app.state.apps.run_app(req)
+        return {"ok": True, **result}
     except Exception as e:
-        log.exception("run_app failed") 
+        log.exception("run_app failed")
         raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/apps/stop")
 def stop_app(req: AppStopRequest) -> dict[str, Any]:
     try:
-        result = app.state.manager.stop_app(run_id=req.run_id, app_id=req.app_id)
+        result = app.state.apps.stop_app(req.app_id)
         return {"ok": True, **result}
     except Exception as e:
         log.exception("stop_app failed")
@@ -342,8 +341,9 @@ def stop_app(req: AppStopRequest) -> dict[str, Any]:
 @app.get("/apps/list")
 def list_app_runs(app_id: Optional[str] = None) -> dict[str, Any]:
     try:
-        runs = app.state.manager.list_app_runs(app_id=app_id)
-        return {"ok": True, "runs": runs}
+        if app_id:
+            return {"ok": True, **app.state.apps.app_status(app_id)}
+        return {"ok": True, "apps": app.state.apps.list_apps()}
     except Exception as e:
         log.exception("list_app_runs failed")
         raise HTTPException(status_code=400, detail=str(e))

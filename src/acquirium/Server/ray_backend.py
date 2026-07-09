@@ -13,7 +13,7 @@ import sys
 import importlib.util
 
 from acquirium.internals._log import configure_logging, timed_debug as _timed_debug
-from acquirium.internals.models import AppSpec, compute_ref_uri
+from acquirium.internals.models import AppSpec, AppRunRequest, compute_ref_uri
 from acquirium.internals.internals_namespaces import *
 from acquirium.internals.app_utils import app_uri_for, app_type_uri, add_literal_or_uri
 from rdflib import URIRef, Graph, Literal
@@ -251,6 +251,15 @@ class DriverSupervisor:
         }
 
 @ray.remote
+def _app_run_task(app: Any, ctx: Any) -> list:
+    """Execute one app run. Stateless: reads ``ctx`` (which carries the built
+    state) and returns outputs without mutating the actor. Dispatched by
+    :class:`AppRunner` so runs can execute in parallel off the actor thread.
+    """
+    return app.run(ctx)
+
+
+@ray.remote
 class AppRunner:
     """One Ray actor per registered app; owns that app's lifecycle.
 
@@ -281,6 +290,15 @@ class AppRunner:
         self.state: Any | None = None
         self.graph_version = 0
         self._params: dict[str, Any] = {}
+        self._build_status = "pending"
+
+        # Run scheduling / monitoring, all owned by this actor.
+        self._runs: dict[str, dict[str, Any]] = {}
+        self._run_counter = 0
+        self._keep_alive = False
+        self._loop_task: asyncio.Task | None = None
+        # Set by stop() to break the keep-alive loop.
+        self._stop_event = asyncio.Event()
 
     @staticmethod
     def _safe_entry_file(entry_file: str | None) -> str:
@@ -400,6 +418,10 @@ class AppRunner:
             raise ValueError(f"Unable to load app file {path}")
         module = importlib.util.module_from_spec(module_spec)
         module_spec.loader.exec_module(module)
+        # The app class is defined in this dynamically-loaded module, which the
+        # run-task worker can't import by name. Pin it to pickle by value so the
+        # class (and the app instance) ships intact to _app_run_task.
+        ray.cloudpickle.register_pickle_by_value(module)
 
         if app_class:
             cls = getattr(module, app_class, None)
@@ -418,17 +440,18 @@ class AppRunner:
         self.logger.info("Loaded app '%s' (%s)", self.spec.name, cls.__name__)
         return self.app
 
-    def _make_context(self, *, params: dict[str, Any]):
+    def _make_context(self, *, params: dict[str, Any], start=None, end=None):
         from acquirium.internals.models import AppContext
 
         return AppContext(
             app_id=self.spec.name,
             started_at=datetime.now(timezone.utc),
-            start=None,
-            end=None,
+            start=start,
+            end=end,
             query=self.query,
             params=params or {},
             queries=self.queries,
+            state=self.state,
         )
 
     def build_query(self) -> None:
@@ -484,10 +507,140 @@ class AppRunner:
             self.graph_version = self.acquirium_cli.graph_version()
         except Exception:
             self.graph_version = 0
+        self._build_status = "ready"
         return {
             "name": self.spec.name,
             "queries": list(self.queries.keys()),
             "state": type(self.state).__name__ if self.state is not None else None,
+        }
+
+    # ─────────────────────── run phase ───────────────────────
+
+    async def run(
+        self,
+        start=None,
+        end=None,
+        params: dict[str, Any] | None = None,
+        keep_alive: bool = False,
+        interval: float = 10.0,
+    ) -> dict[str, Any]:
+        """Schedule execution and return immediately.
+
+        One-shot: dispatch a single run task and return its ``run_id``.
+        Keep-alive: start a background loop that dispatches a run every
+        ``interval`` seconds until :meth:`stop`. In both cases the actual
+        ``app.run`` executes in a stateless Ray task; this actor only
+        schedules and monitors it.
+        """
+        params = params or {}
+        if self.app is None:
+            # Build never completed (e.g. failed at registration); retry once.
+            self.setup(params)
+
+        if keep_alive:
+            if self._loop_task is not None and not self._loop_task.done():
+                raise RuntimeError(f"App '{self.spec.name}' is already running keep-alive")
+            self._keep_alive = True
+            self._stop_event.clear()
+            self._loop_task = asyncio.create_task(self._run_loop(interval, start, end, params))
+            return {"name": self.spec.name, "keep_alive": True, "interval": interval}
+
+        run_id = self._dispatch_run(start, end, params)
+        return {"name": self.spec.name, "run_id": run_id}
+
+    def _dispatch_run(self, start, end, params: dict[str, Any]) -> str:
+        """Launch a stateless run task and monitor it in the background."""
+        self._run_counter += 1
+        run_id = f"{self.spec.name}-{self._run_counter}"
+        ctx = self._make_context(params=params, start=start, end=end)
+        ref = _app_run_task.remote(self.app, ctx)
+        record: dict[str, Any] = {
+            "run_id": run_id,
+            "status": "running",
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "finished_at": None,
+            "outputs": None,
+            "error": None,
+        }
+        self._runs[run_id] = record
+        record["_monitor"] = asyncio.create_task(self._monitor_run(run_id, ref))
+        self._trim_runs()
+        return run_id
+
+    async def _monitor_run(self, run_id: str, ref) -> None:
+        """Await a run task, emit its outputs, and record the outcome."""
+        from acquirium.Apps.output_emission import emit_outputs
+
+        record = self._runs[run_id]
+        try:
+            outputs = await ref
+            emit_outputs(
+                self.spec.name,
+                outputs,
+                insert_timeseries=self.acquirium_cli.client.insert_timeseries,
+                logger=self.logger,
+            )
+            record["status"] = "done"
+            record["outputs"] = len(outputs)
+        except Exception as exc:
+            record["status"] = "failed"
+            record["error"] = str(exc)
+            self.logger.exception("run %s failed", run_id)
+        finally:
+            record["finished_at"] = datetime.now(timezone.utc).isoformat()
+
+    async def _run_loop(self, interval: float, start, end, params: dict[str, Any]) -> None:
+        """Keep-alive loop: dispatch a run each interval, rebuilding the query
+        when the server's graph version advances (mirrors DriverRunner.run).
+        The state from build_app is reused, so the model trains once and each
+        dispatched run is an inference.
+        """
+        self.logger.info("keep-alive loop start '%s' (interval=%.1fs)", self.spec.name, interval)
+        self._dispatch_run(start, end, params)
+        while not self._stop_event.is_set():
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=interval)
+                break
+            except asyncio.TimeoutError:
+                pass
+            # A version poll failure must not skip the run, so guard it apart.
+            try:
+                v = self.acquirium_cli.graph_version()
+                if v != self.graph_version:
+                    self.graph_version = v
+                    self.build_query()
+            except Exception:
+                self.logger.exception("query refresh failed; keeping previous query")
+            self._dispatch_run(start, end, params)
+        self._keep_alive = False
+        self.logger.info("keep-alive loop exit '%s'", self.spec.name)
+
+    def _trim_runs(self, keep: int = 50) -> None:
+        """Bound the run history so a long keep-alive app doesn't grow forever."""
+        if len(self._runs) <= keep:
+            return
+        for run_id in list(self._runs)[: len(self._runs) - keep]:
+            rec = self._runs[run_id]
+            if rec["status"] != "running":
+                self._runs.pop(run_id, None)
+
+    def stop(self) -> dict[str, Any]:
+        """Signal the keep-alive loop to exit after its current iteration."""
+        self._stop_event.set()
+        return {"name": self.spec.name, "stopped": True}
+
+    def status(self) -> dict[str, Any]:
+        """Report build/run status for this app (the actor answers directly)."""
+        return {
+            "name": self.spec.name,
+            "build": self._build_status,
+            "queries": list(self.queries.keys()),
+            "state": type(self.state).__name__ if self.state is not None else None,
+            "keep_alive": self._keep_alive,
+            "runs": [
+                {k: v for k, v in r.items() if not k.startswith("_")}
+                for r in self._runs.values()
+            ],
         }
 
 
@@ -558,11 +711,29 @@ class AppSupervisor:
             {"name": r["name"], "started_at": r["started_at"]} for r in records
         ]
 
-    def run_app(self, app_id: str) -> bool:
-        raise NotImplementedError("run_app is not implemented yet")
+    def _actor(self, app_id: str):
+        with self._lock:
+            record = self._apps.get(app_id)
+        if record is None:
+            raise KeyError(f"Unknown app: {app_id}")
+        return record["actor"]
 
-    def stop_app(self, app_id: str) -> bool:
-        raise NotImplementedError("stop_app is not implemented yet")
+    def run_app(self, req: AppRunRequest) -> dict[str, Any]:
+        """Route a run request to the app's actor, which schedules it."""
+        actor = self._actor(req.app_id)
+        return ray.get(
+            actor.run.remote(req.start, req.end, req.params, req.keep_alive, req.interval)
+        )
+
+    def stop_app(self, app_id: str) -> dict[str, Any]:
+        """Ask the app's actor to stop its keep-alive loop."""
+        actor = self._actor(app_id)
+        return ray.get(actor.stop.remote())
+
+    def app_status(self, app_id: str) -> dict[str, Any]:
+        """Ask the app's actor to report its build/run status."""
+        actor = self._actor(app_id)
+        return ray.get(actor.status.remote())
 
     def stop_all_apps(self) -> None:
         with self._lock:

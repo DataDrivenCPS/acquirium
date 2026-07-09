@@ -165,6 +165,7 @@ class AppContext:
     params: dict[str, Any]
     queries: dict[str, Query] | None = None
     data: Any | None = None
+    state: Any | None = None
 
 
 class AppOutputSpec(BaseModel):
