@@ -1,4 +1,14 @@
 """
+NOTE: This example works, but for a better intro example, we recommend checking watertap notebooks.
+These also include detailed instructions to build and start using acquirium at:
+
+- /deployments/WATERTAP/readme.md
+
+Notebook directory:
+
+- /notebooks/watertap/
+
+
 Example: Acquirium + Query API end to end usage
 
 This script shows:
@@ -17,15 +27,7 @@ from datetime import datetime, timedelta
 from acquirium import Acquirium
 
 from acquirium.Client.query import Query
-from acquirium.internals.internals_namespaces import (
-    HAS_UNIT,
-    HAS_MEDIUM,
-    HAS_QUANTITY_KIND,
-    OF_SUBSTANCE,
-    S223,
-    WATR,
-    UNIT
-)
+from acquirium.internals.internals_namespaces import S223
 
 
 # Helper: pretty banners
@@ -43,12 +45,7 @@ acq = Acquirium(
         use_ssl=False,
     )
 
-## Add a graph to acquirium
-## This will automatically connect the data sources to database and ingest timeseries data (if file, ingest all, if stream, start listening)
-banner("2) Add a graph to acquirium")
-acq.insert_graph("deployments/WATERTAP/models/watertap-simple-pipe-model-with-ext-refs.ttl")
-
-banner("3) Start a new query and add an entity node")
+banner("2) Start a new query and add an entity node")
 
 #create a query object
 q1 = acq.query() 
@@ -62,7 +59,7 @@ q2 : Query = acq.find_entity(_class="inlet connection pt", alias="pump-in")
 q2.show_query_graph()
 q2.metadata_head() # should be same as q1
 
-banner("4) Add a related entity node")
+banner("3) Add a related entity node")
 # add a related entity node reachable within 1 hop from "pump-in"
 # _from is optional here since we have only one node so far and it is the current pointer
 q1 : Query = q1.find_related(_class="urn:nawi-water-ontology#Pump", alias="pump", _from="pump-in", hops=1)
@@ -74,19 +71,19 @@ q4 : Query = q2.relate_to(q3, _from="pump-in", hops=1)
 q4.show_query_graph() # should be same as q1
 
 
-banner("5) Find all data nodes")
+banner("4) Find all data nodes")
 q5 :Query = acq.find_all_data()
 q5.show_query_graph()
 q5.metadata_head()
 q5.data_head()
 
-banner("6) Find data nodes of specific entity")
+banner("5) Find data nodes of specific entity")
 q6 : Query = q3.find_data()
 q6.show_query_graph()
 q6.metadata_head()
 q6.data_head()
 
-banner("7) Apply filters to data nodes")
+banner("6) Apply filters to data nodes")
 q7 : Query = q5.filter_by_unit(unit = "kilogram per second")
 q7.show_query_graph()
 q7.metadata_head()
