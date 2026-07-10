@@ -1,0 +1,1239 @@
+@prefix nawi: <urn:nawi-water-ontology#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix qudt: <http://qudt.org/schema/qudt/> .
+@prefix qudtqk: <http://qudt.org/vocab/quantitykind/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix s223: <http://data.ashrae.org/standard223#> .
+@prefix unit: <http://qudt.org/vocab/unit/> .
+@prefix wbsf: <urn:swro-fouled/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+wbsf: a owl:Ontology ;
+    owl:imports nawi: .
+
+wbsf:P1-efficiency-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:P1 ;
+    s223:observes wbsf:P1-efficiency ;
+    qudt:isDeltaQuantity false .
+
+wbsf:P1-mechanical-power-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:P1 ;
+    s223:observes wbsf:P1-mechanical-power ;
+    qudt:isDeltaQuantity false .
+
+wbsf:P1-out-pressure-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:P1-out ;
+    s223:observes wbsf:P1-out-pressure ;
+    qudt:isDeltaQuantity false .
+
+wbsf:P2-efficiency-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:P2 ;
+    s223:observes wbsf:P2-efficiency ;
+    qudt:isDeltaQuantity false .
+
+wbsf:P2-mechanical-power-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:P2 ;
+    s223:observes wbsf:P2-mechanical-power ;
+    qudt:isDeltaQuantity false .
+
+wbsf:PXR-brine-out-flow-mass-tds-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:PXR-brine-out ;
+    s223:observes wbsf:PXR-brine-out-flow-mass-tds ;
+    qudt:isDeltaQuantity false .
+
+wbsf:PXR-brine-out-flow-mass-water-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:PXR-brine-out ;
+    s223:observes wbsf:PXR-brine-out-flow-mass-water ;
+    qudt:isDeltaQuantity false .
+
+wbsf:PXR-brine-out-pressure-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:PXR-brine-out ;
+    s223:observes wbsf:PXR-brine-out-pressure ;
+    qudt:isDeltaQuantity false .
+
+wbsf:PXR-brine-out-tds-concentration-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:PXR-brine-out ;
+    s223:observes wbsf:PXR-brine-out-tds-concentration ;
+    qudt:isDeltaQuantity false .
+
+wbsf:PXR-efficiency-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:PXR ;
+    s223:observes wbsf:PXR-efficiency ;
+    qudt:isDeltaQuantity false .
+
+wbsf:RO-in-flow-mass-tds-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:RO-in ;
+    s223:observes wbsf:RO-in-flow-mass-tds ;
+    qudt:isDeltaQuantity false .
+
+wbsf:RO-in-flow-mass-water-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:RO-in ;
+    s223:observes wbsf:RO-in-flow-mass-water ;
+    qudt:isDeltaQuantity false .
+
+wbsf:RO-in-pressure-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:RO-in ;
+    s223:observes wbsf:RO-in-pressure ;
+    qudt:isDeltaQuantity false .
+
+wbsf:RO-in-temperature-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:RO-in ;
+    s223:observes wbsf:RO-in-temperature ;
+    qudt:isDeltaQuantity false .
+
+wbsf:RO-membrane-area-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:RO ;
+    s223:observes wbsf:RO-membrane-area ;
+    qudt:isDeltaQuantity false .
+
+wbsf:RO-membrane-water-permeability-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:RO ;
+    s223:observes wbsf:RO-membrane-water-permeability ;
+    qudt:isDeltaQuantity false .
+
+wbsf:RO-out-flow-mass-tds-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:RO-out ;
+    s223:observes wbsf:RO-out-flow-mass-tds ;
+    qudt:isDeltaQuantity false .
+
+wbsf:RO-out-flow-mass-water-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:RO-out ;
+    s223:observes wbsf:RO-out-flow-mass-water ;
+    qudt:isDeltaQuantity false .
+
+wbsf:RO-out-pressure-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:RO-out ;
+    s223:observes wbsf:RO-out-pressure ;
+    qudt:isDeltaQuantity false .
+
+wbsf:RO-out-retentate-flow-mass-tds-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:RO-out-retentate ;
+    s223:observes wbsf:RO-out-retentate-flow-mass-tds ;
+    qudt:isDeltaQuantity false .
+
+wbsf:RO-out-retentate-flow-mass-water-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:RO-out-retentate ;
+    s223:observes wbsf:RO-out-retentate-flow-mass-water ;
+    qudt:isDeltaQuantity false .
+
+wbsf:RO-out-retentate-pressure-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:RO-out-retentate ;
+    s223:observes wbsf:RO-out-retentate-pressure ;
+    qudt:isDeltaQuantity false .
+
+wbsf:conn-cartridge-filtration-to-S1-flow-mass-tds-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:conn-cartridge-filtration-to-S1 ;
+    s223:observes wbsf:conn-cartridge-filtration-to-S1-flow-mass-tds ;
+    qudt:isDeltaQuantity false .
+
+wbsf:conn-cartridge-filtration-to-S1-flow-mass-water-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:conn-cartridge-filtration-to-S1 ;
+    s223:observes wbsf:conn-cartridge-filtration-to-S1-flow-mass-water ;
+    qudt:isDeltaQuantity false .
+
+wbsf:conn-cartridge-filtration-to-S1-pressure-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:conn-cartridge-filtration-to-S1 ;
+    s223:observes wbsf:conn-cartridge-filtration-to-S1-pressure ;
+    qudt:isDeltaQuantity false .
+
+wbsf:conn-cartridge-filtration-to-S1-temperature-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:conn-cartridge-filtration-to-S1 ;
+    s223:observes wbsf:conn-cartridge-filtration-to-S1-temperature ;
+    qudt:isDeltaQuantity false .
+
+wbsf:intake-in-flow-rate-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:intake-in ;
+    s223:observes wbsf:intake-in-flow-rate ;
+    qudt:isDeltaQuantity false .
+
+wbsf:intake-in-tds-concentration-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:intake-in ;
+    s223:observes wbsf:intake-in-tds-concentration ;
+    qudt:isDeltaQuantity false .
+
+wbsf:intake-in-tss-concentration-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:intake-in ;
+    s223:observes wbsf:intake-in-tss-concentration ;
+    qudt:isDeltaQuantity false .
+
+wbsf:intake-in-toc-concentration-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:intake-in ;
+    s223:observes wbsf:intake-in-toc-concentration ;
+    qudt:isDeltaQuantity false .
+
+wbsf:cartridge-filtration-out-toc-concentration-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:cartridge-filtration-out ;
+    s223:observes wbsf:cartridge-filtration-out-toc-concentration ;
+    qudt:isDeltaQuantity false .
+
+wbsf:seawater-ro-plant a s223:System ;
+    s223:hasBoundaryConnectionPoint wbsf:PXR-brine-out,
+        wbsf:backwash-handling-out,
+        wbsf:intake-in,
+        wbsf:storage-tank-3-out ;
+    s223:hasMember wbsf:desalination-system,
+        wbsf:posttreatment-system,
+        wbsf:pretreatment-system .
+
+wbsf:storage-tank-3-out-flow-rate-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:storage-tank-3-out ;
+    s223:observes wbsf:storage-tank-3-out-flow-rate ;
+    qudt:isDeltaQuantity false .
+
+wbsf:storage-tank-3-out-tds-concentration-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbsf:storage-tank-3-out ;
+    s223:observes wbsf:storage-tank-3-out-tds-concentration ;
+    qudt:isDeltaQuantity false .
+
+wbsf:desalination-system a s223:System ;
+    s223:hasBoundaryConnectionPoint wbsf:PXR-brine-out,
+        wbsf:RO-out,
+        wbsf:S1-inlet-cp ;
+    s223:hasMember wbsf:M1,
+        wbsf:P1,
+        wbsf:P2,
+        wbsf:PXR,
+        wbsf:RO,
+        wbsf:S1 .
+
+wbsf:posttreatment-system a s223:System ;
+    s223:hasBoundaryConnectionPoint wbsf:storage-tank-2-in,
+        wbsf:storage-tank-3-out ;
+    s223:hasMember wbsf:co2-addition,
+        wbsf:lime-addition,
+        wbsf:storage-tank-2,
+        wbsf:storage-tank-3,
+        wbsf:uv-aop ;
+    s223:hasRole nawi:Role-Posttreatment .
+
+wbsf:pretreatment-system a s223:System ;
+    s223:hasBoundaryConnectionPoint wbsf:backwash-handling-out,
+        wbsf:cartridge-filtration-out,
+        wbsf:intake-in ;
+    s223:hasMember wbsf:anti-scalant-addition,
+        wbsf:backwash-handling,
+        wbsf:cartridge-filtration,
+        wbsf:chlorination,
+        wbsf:ferric-chloride-addition,
+        wbsf:intake,
+        wbsf:media-filtration,
+        wbsf:static-mixer,
+        wbsf:storage-tank-1 ;
+    s223:hasRole nawi:Role-Pretreatment .
+
+wbsf:P1-efficiency a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Efficiency ;
+    qudt:hasUnit unit:UNITLESS .
+
+wbsf:P1-mechanical-power a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Power ;
+    qudt:hasUnit unit:W .
+
+wbsf:P1-out-pressure a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Pressure ;
+    rdfs:comment "RO operating pressure" .
+
+wbsf:P2-efficiency a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Efficiency ;
+    qudt:hasUnit unit:UNITLESS .
+
+wbsf:P2-mechanical-power a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Power ;
+    qudt:hasUnit unit:W .
+
+wbsf:PXR-brine-out-flow-mass-tds a s223:QuantifiableObservableProperty ;
+    s223:ofMedium nawi:Water-Brine ;
+    s223:ofSubstance nawi:Constituent-Salt ;
+    qudt:hasQuantityKind qudtqk:MassFlowRate ;
+    qudt:hasUnit unit:KiloGM-PER-SEC .
+
+wbsf:PXR-brine-out-flow-mass-water a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    qudt:hasQuantityKind qudtqk:MassFlowRate ;
+    qudt:hasUnit unit:KiloGM-PER-SEC .
+
+wbsf:PXR-brine-out-pressure a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Pressure .
+
+wbsf:PXR-brine-out-tds-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium nawi:Water-Brine ;
+    s223:ofSubstance nawi:Constituent-Salt ;
+    qudt:hasQuantityKind qudtqk:MassConcentration ;
+    qudt:hasUnit unit:KiloGM-PER-M3 ;
+    rdfs:comment "brine discharge TDS concentration (Ocean Plan III.M.3 effluent salinity)" .
+
+wbsf:PXR-efficiency a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Efficiency ;
+    qudt:hasUnit unit:UNITLESS .
+
+wbsf:RO-in-flow-mass-tds a s223:QuantifiableObservableProperty ;
+    s223:ofMedium nawi:Water-Seawater ;
+    s223:ofSubstance nawi:Constituent-Salt ;
+    qudt:hasQuantityKind qudtqk:MassFlowRate ;
+    qudt:hasUnit unit:KiloGM-PER-SEC .
+
+wbsf:RO-in-flow-mass-water a s223:QuantifiableObservableProperty ;
+    s223:ofMedium nawi:Water-Seawater ;
+    qudt:hasQuantityKind qudtqk:MassFlowRate ;
+    qudt:hasUnit unit:KiloGM-PER-SEC .
+
+wbsf:RO-in-pressure a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Pressure .
+
+wbsf:RO-in-temperature a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Temperature .
+
+wbsf:RO-membrane-area a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Area ;
+    qudt:hasUnit unit:M2 .
+
+wbsf:RO-membrane-water-permeability a s223:QuantifiableObservableProperty ;
+    rdfs:comment "RO membrane water permeability coefficient A [m/s-Pa]; declines from fouling (cake layer / biofilm resistance to water transport)." .
+
+wbsf:RO-out-flow-mass-tds a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance nawi:Constituent-Salt ;
+    qudt:hasQuantityKind qudtqk:MassFlowRate ;
+    qudt:hasUnit unit:KiloGM-PER-SEC .
+
+wbsf:RO-out-flow-mass-water a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    qudt:hasQuantityKind qudtqk:MassFlowRate ;
+    qudt:hasUnit unit:KiloGM-PER-SEC .
+
+wbsf:RO-out-pressure a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Pressure .
+
+wbsf:RO-out-retentate-flow-mass-tds a s223:QuantifiableObservableProperty ;
+    s223:ofMedium nawi:Water-Brine ;
+    s223:ofSubstance nawi:Constituent-Salt ;
+    qudt:hasQuantityKind qudtqk:MassFlowRate ;
+    qudt:hasUnit unit:KiloGM-PER-SEC .
+
+wbsf:RO-out-retentate-flow-mass-water a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    qudt:hasQuantityKind qudtqk:MassFlowRate ;
+    qudt:hasUnit unit:KiloGM-PER-SEC .
+
+wbsf:RO-out-retentate-pressure a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Pressure .
+
+wbsf:conn-cartridge-filtration-to-S1-flow-mass-tds a s223:QuantifiableObservableProperty ;
+    s223:ofMedium nawi:Water-Seawater ;
+    s223:ofSubstance nawi:Constituent-Salt ;
+    qudt:hasQuantityKind qudtqk:MassFlowRate ;
+    qudt:hasUnit unit:KiloGM-PER-SEC .
+
+wbsf:conn-cartridge-filtration-to-S1-flow-mass-water a s223:QuantifiableObservableProperty ;
+    s223:ofMedium nawi:Water-Seawater ;
+    qudt:hasQuantityKind qudtqk:MassFlowRate ;
+    qudt:hasUnit unit:KiloGM-PER-SEC .
+
+wbsf:conn-cartridge-filtration-to-S1-pressure a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Pressure .
+
+wbsf:conn-cartridge-filtration-to-S1-temperature a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Temperature .
+
+wbsf:intake-in-flow-rate a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate ;
+    rdfs:comment "feed volumetric flow" .
+
+wbsf:intake-in-tds-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium nawi:Water-Seawater ;
+    s223:ofSubstance nawi:Constituent-Salt ;
+    qudt:hasQuantityKind qudtqk:MassConcentration ;
+    qudt:hasUnit unit:KiloGM-PER-M3 ;
+    rdfs:comment "feed TDS concentration" .
+
+wbsf:intake-in-tss-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium nawi:Water-Seawater ;
+    s223:ofSubstance nawi:Constituent-SuspendedSolids ;
+    qudt:hasQuantityKind qudtqk:Density ;
+    qudt:hasUnit unit:MilliGM-PER-L ;
+    rdfs:comment "feed TSS concentration" .
+
+wbsf:intake-in-toc-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium nawi:Water-Seawater ;
+    qudt:hasQuantityKind qudtqk:MassConcentration ;
+    qudt:hasUnit unit:KiloGM-PER-M3 ;
+    rdfs:comment "feed TOC (nonvolatile organic carbon) concentration" .
+
+wbsf:cartridge-filtration-out-toc-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium nawi:Water-Seawater ;
+    qudt:hasQuantityKind qudtqk:MassConcentration ;
+    qudt:hasUnit unit:KiloGM-PER-M3 ;
+    rdfs:comment "pretreatment-effluent TOC concentration (after cartridge filtration)" .
+
+wbsf:storage-tank-3-out-flow-rate a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate ;
+    rdfs:comment "product volumetric flow" .
+
+wbsf:storage-tank-3-out-tds-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance nawi:Constituent-Salt ;
+    qudt:hasQuantityKind qudtqk:MassConcentration ;
+    qudt:hasUnit unit:KiloGM-PER-M3 ;
+    rdfs:comment "product TDS concentration" .
+
+wbsf:M1-inlet-cp a s223:InletConnectionPoint ;
+    s223:cnx wbsf:M1,
+        wbsf:conn-P1-to-M1 ;
+    s223:connectsThrough wbsf:conn-P1-to-M1 ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:isConnectionPointOf wbsf:M1 .
+
+wbsf:M1-inlet-cp-2 a s223:InletConnectionPoint ;
+    s223:cnx wbsf:M1,
+        wbsf:conn-P2-to-M1 ;
+    s223:connectsThrough wbsf:conn-P2-to-M1 ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:isConnectionPointOf wbsf:M1 .
+
+wbsf:M1-outlet-cp a s223:OutletConnectionPoint ;
+    s223:cnx wbsf:M1,
+        wbsf:conn-M1-to-RO ;
+    s223:connectsThrough wbsf:conn-M1-to-RO ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:isConnectionPointOf wbsf:M1 .
+
+wbsf:P1-in a s223:InletConnectionPoint ;
+    s223:cnx wbsf:P1,
+        wbsf:conn-S1-to-P1 ;
+    s223:connectsThrough wbsf:conn-S1-to-P1 ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:isConnectionPointOf wbsf:P1 .
+
+wbsf:P2-in a s223:InletConnectionPoint ;
+    s223:cnx wbsf:P2,
+        wbsf:conn-PXR-to-P2 ;
+    s223:connectsThrough wbsf:conn-PXR-to-P2 ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:isConnectionPointOf wbsf:P2 .
+
+wbsf:P2-out a s223:OutletConnectionPoint ;
+    s223:cnx wbsf:P2,
+        wbsf:conn-P2-to-M1 ;
+    s223:connectsThrough wbsf:conn-P2-to-M1 ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:isConnectionPointOf wbsf:P2 .
+
+wbsf:PXR-brine-in a s223:InletConnectionPoint ;
+    s223:cnx wbsf:PXR,
+        wbsf:conn-RO-to-PXR ;
+    s223:connectsThrough wbsf:conn-RO-to-PXR ;
+    s223:hasMedium nawi:Water-Brine ;
+    s223:isConnectionPointOf wbsf:PXR .
+
+wbsf:PXR-in a s223:InletConnectionPoint ;
+    s223:cnx wbsf:PXR,
+        wbsf:conn-S1-to-PXR ;
+    s223:connectsThrough wbsf:conn-S1-to-PXR ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:isConnectionPointOf wbsf:PXR .
+
+wbsf:PXR-out a s223:OutletConnectionPoint ;
+    s223:cnx wbsf:PXR,
+        wbsf:conn-PXR-to-P2 ;
+    s223:connectsThrough wbsf:conn-PXR-to-P2 ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:isConnectionPointOf wbsf:PXR .
+
+wbsf:S1-outlet-cp a s223:OutletConnectionPoint ;
+    s223:cnx wbsf:S1,
+        wbsf:conn-S1-to-P1 ;
+    s223:connectsThrough wbsf:conn-S1-to-P1 ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:isConnectionPointOf wbsf:S1 .
+
+wbsf:S1-outlet-cp-2 a s223:OutletConnectionPoint ;
+    s223:cnx wbsf:S1,
+        wbsf:conn-S1-to-PXR ;
+    s223:connectsThrough wbsf:conn-S1-to-PXR ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:isConnectionPointOf wbsf:S1 .
+
+wbsf:anti-scalant-addition-in a s223:InletConnectionPoint ;
+    s223:cnx wbsf:anti-scalant-addition,
+        wbsf:conn-media-filtration-to-anti-scalant-addition ;
+    s223:connectsThrough wbsf:conn-media-filtration-to-anti-scalant-addition ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:isConnectionPointOf wbsf:anti-scalant-addition .
+
+wbsf:anti-scalant-addition-out a s223:OutletConnectionPoint ;
+    s223:cnx wbsf:anti-scalant-addition,
+        wbsf:conn-anti-scalant-addition-to-cartridge-filtration ;
+    s223:connectsThrough wbsf:conn-anti-scalant-addition-to-cartridge-filtration ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:isConnectionPointOf wbsf:anti-scalant-addition .
+
+wbsf:backwash-handling-in a s223:InletConnectionPoint ;
+    s223:cnx wbsf:backwash-handling,
+        wbsf:conn-media-filtration-to-backwash-handling ;
+    s223:connectsThrough wbsf:conn-media-filtration-to-backwash-handling ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:isConnectionPointOf wbsf:backwash-handling .
+
+wbsf:backwash-handling-out a s223:OutletConnectionPoint ;
+    s223:hasMedium nawi:Fluid-Sludge ;
+    s223:isConnectionPointOf wbsf:backwash-handling .
+
+wbsf:cartridge-filtration-in a s223:InletConnectionPoint ;
+    s223:cnx wbsf:cartridge-filtration,
+        wbsf:conn-anti-scalant-addition-to-cartridge-filtration ;
+    s223:connectsThrough wbsf:conn-anti-scalant-addition-to-cartridge-filtration ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:isConnectionPointOf wbsf:cartridge-filtration .
+
+wbsf:chlorination-in a s223:InletConnectionPoint ;
+    s223:cnx wbsf:chlorination,
+        wbsf:conn-ferric-chloride-addition-to-chlorination ;
+    s223:connectsThrough wbsf:conn-ferric-chloride-addition-to-chlorination ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:isConnectionPointOf wbsf:chlorination .
+
+wbsf:chlorination-out a s223:OutletConnectionPoint ;
+    s223:cnx wbsf:chlorination,
+        wbsf:conn-chlorination-to-static-mixer ;
+    s223:connectsThrough wbsf:conn-chlorination-to-static-mixer ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:isConnectionPointOf wbsf:chlorination .
+
+wbsf:co2-addition-in a s223:InletConnectionPoint ;
+    s223:cnx wbsf:co2-addition,
+        wbsf:conn-uv-aop-to-co2-addition ;
+    s223:connectsThrough wbsf:conn-uv-aop-to-co2-addition ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbsf:co2-addition .
+
+wbsf:co2-addition-out a s223:OutletConnectionPoint ;
+    s223:cnx wbsf:co2-addition,
+        wbsf:conn-co2-addition-to-lime-addition ;
+    s223:connectsThrough wbsf:conn-co2-addition-to-lime-addition ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbsf:co2-addition .
+
+wbsf:ferric-chloride-addition-in a s223:InletConnectionPoint ;
+    s223:cnx wbsf:conn-intake-to-ferric-chloride-addition,
+        wbsf:ferric-chloride-addition ;
+    s223:connectsThrough wbsf:conn-intake-to-ferric-chloride-addition ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:isConnectionPointOf wbsf:ferric-chloride-addition .
+
+wbsf:ferric-chloride-addition-out a s223:OutletConnectionPoint ;
+    s223:cnx wbsf:conn-ferric-chloride-addition-to-chlorination,
+        wbsf:ferric-chloride-addition ;
+    s223:connectsThrough wbsf:conn-ferric-chloride-addition-to-chlorination ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:isConnectionPointOf wbsf:ferric-chloride-addition .
+
+wbsf:intake-out a s223:OutletConnectionPoint ;
+    s223:cnx wbsf:conn-intake-to-ferric-chloride-addition,
+        wbsf:intake ;
+    s223:connectsThrough wbsf:conn-intake-to-ferric-chloride-addition ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:isConnectionPointOf wbsf:intake .
+
+wbsf:lime-addition-in a s223:InletConnectionPoint ;
+    s223:cnx wbsf:conn-co2-addition-to-lime-addition,
+        wbsf:lime-addition ;
+    s223:connectsThrough wbsf:conn-co2-addition-to-lime-addition ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbsf:lime-addition .
+
+wbsf:lime-addition-out a s223:OutletConnectionPoint ;
+    s223:cnx wbsf:conn-lime-addition-to-storage-tank-3,
+        wbsf:lime-addition ;
+    s223:connectsThrough wbsf:conn-lime-addition-to-storage-tank-3 ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbsf:lime-addition .
+
+wbsf:media-filtration-in a s223:InletConnectionPoint ;
+    s223:cnx wbsf:conn-storage-tank-1-to-media-filtration,
+        wbsf:media-filtration ;
+    s223:connectsThrough wbsf:conn-storage-tank-1-to-media-filtration ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:isConnectionPointOf wbsf:media-filtration .
+
+wbsf:media-filtration-out a s223:OutletConnectionPoint ;
+    s223:cnx wbsf:conn-media-filtration-to-anti-scalant-addition,
+        wbsf:media-filtration ;
+    s223:connectsThrough wbsf:conn-media-filtration-to-anti-scalant-addition ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:isConnectionPointOf wbsf:media-filtration .
+
+wbsf:media-filtration-outlet-cp a s223:OutletConnectionPoint ;
+    s223:cnx wbsf:conn-media-filtration-to-backwash-handling,
+        wbsf:media-filtration ;
+    s223:connectsThrough wbsf:conn-media-filtration-to-backwash-handling ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:isConnectionPointOf wbsf:media-filtration .
+
+wbsf:static-mixer-in a s223:InletConnectionPoint ;
+    s223:cnx wbsf:conn-chlorination-to-static-mixer,
+        wbsf:static-mixer ;
+    s223:connectsThrough wbsf:conn-chlorination-to-static-mixer ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:isConnectionPointOf wbsf:static-mixer .
+
+wbsf:static-mixer-out a s223:OutletConnectionPoint ;
+    s223:cnx wbsf:conn-static-mixer-to-storage-tank-1,
+        wbsf:static-mixer ;
+    s223:connectsThrough wbsf:conn-static-mixer-to-storage-tank-1 ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:isConnectionPointOf wbsf:static-mixer .
+
+wbsf:storage-tank-1-in a s223:InletConnectionPoint ;
+    s223:cnx wbsf:conn-static-mixer-to-storage-tank-1,
+        wbsf:storage-tank-1 ;
+    s223:connectsThrough wbsf:conn-static-mixer-to-storage-tank-1 ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:isConnectionPointOf wbsf:storage-tank-1 .
+
+wbsf:storage-tank-1-out a s223:OutletConnectionPoint ;
+    s223:cnx wbsf:conn-storage-tank-1-to-media-filtration,
+        wbsf:storage-tank-1 ;
+    s223:connectsThrough wbsf:conn-storage-tank-1-to-media-filtration ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:isConnectionPointOf wbsf:storage-tank-1 .
+
+wbsf:storage-tank-2-out a s223:OutletConnectionPoint ;
+    s223:cnx wbsf:conn-storage-tank-2-to-uv-aop,
+        wbsf:storage-tank-2 ;
+    s223:connectsThrough wbsf:conn-storage-tank-2-to-uv-aop ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbsf:storage-tank-2 .
+
+wbsf:storage-tank-3-in a s223:InletConnectionPoint ;
+    s223:cnx wbsf:conn-lime-addition-to-storage-tank-3,
+        wbsf:storage-tank-3 ;
+    s223:connectsThrough wbsf:conn-lime-addition-to-storage-tank-3 ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbsf:storage-tank-3 .
+
+wbsf:uv-aop-in a s223:InletConnectionPoint ;
+    s223:cnx wbsf:conn-storage-tank-2-to-uv-aop,
+        wbsf:uv-aop ;
+    s223:connectsThrough wbsf:conn-storage-tank-2-to-uv-aop ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbsf:uv-aop .
+
+wbsf:uv-aop-out a s223:OutletConnectionPoint ;
+    s223:cnx wbsf:conn-uv-aop-to-co2-addition,
+        wbsf:uv-aop ;
+    s223:connectsThrough wbsf:conn-uv-aop-to-co2-addition ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbsf:uv-aop .
+
+wbsf:P1-out a s223:OutletConnectionPoint ;
+    s223:cnx wbsf:P1,
+        wbsf:conn-P1-to-M1 ;
+    s223:connectsThrough wbsf:conn-P1-to-M1 ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:hasProperty wbsf:P1-out-pressure ;
+    s223:isConnectionPointOf wbsf:P1 .
+
+wbsf:S1-inlet-cp a s223:InletConnectionPoint ;
+    s223:cnx wbsf:S1,
+        wbsf:conn-cartridge-filtration-to-S1 ;
+    s223:connectsThrough wbsf:conn-cartridge-filtration-to-S1 ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:isConnectionPointOf wbsf:S1 .
+
+wbsf:cartridge-filtration-out a s223:OutletConnectionPoint ;
+    s223:cnx wbsf:cartridge-filtration,
+        wbsf:conn-cartridge-filtration-to-S1 ;
+    s223:connectsThrough wbsf:conn-cartridge-filtration-to-S1 ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:hasProperty wbsf:cartridge-filtration-out-toc-concentration ;
+    s223:isConnectionPointOf wbsf:cartridge-filtration .
+
+wbsf:storage-tank-2-in a s223:InletConnectionPoint ;
+    s223:cnx wbsf:conn-RO-to-storage-tank-2,
+        wbsf:storage-tank-2 ;
+    s223:connectsThrough wbsf:conn-RO-to-storage-tank-2 ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbsf:storage-tank-2 .
+
+wbsf:conn-M1-to-RO a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbsf:M1-outlet-cp,
+        wbsf:RO-in ;
+    s223:connectsAt wbsf:M1-outlet-cp,
+        wbsf:RO-in ;
+    s223:connectsFrom wbsf:M1 ;
+    s223:connectsTo wbsf:RO ;
+    s223:hasMedium nawi:Water-Seawater .
+
+wbsf:conn-P1-to-M1 a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbsf:M1-inlet-cp,
+        wbsf:P1-out ;
+    s223:connectsAt wbsf:M1-inlet-cp,
+        wbsf:P1-out ;
+    s223:connectsFrom wbsf:P1 ;
+    s223:connectsTo wbsf:M1 ;
+    s223:hasMedium nawi:Water-Seawater .
+
+wbsf:conn-P2-to-M1 a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbsf:M1-inlet-cp-2,
+        wbsf:P2-out ;
+    s223:connectsAt wbsf:M1-inlet-cp-2,
+        wbsf:P2-out ;
+    s223:connectsFrom wbsf:P2 ;
+    s223:connectsTo wbsf:M1 ;
+    s223:hasMedium nawi:Water-Seawater .
+
+wbsf:conn-PXR-to-P2 a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbsf:P2-in,
+        wbsf:PXR-out ;
+    s223:connectsAt wbsf:P2-in,
+        wbsf:PXR-out ;
+    s223:connectsFrom wbsf:PXR ;
+    s223:connectsTo wbsf:P2 ;
+    s223:hasMedium nawi:Water-Seawater .
+
+wbsf:conn-RO-to-PXR a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbsf:PXR-brine-in,
+        wbsf:RO-out-retentate ;
+    s223:connectsAt wbsf:PXR-brine-in,
+        wbsf:RO-out-retentate ;
+    s223:connectsFrom wbsf:RO ;
+    s223:connectsTo wbsf:PXR ;
+    s223:hasMedium nawi:Water-Brine .
+
+wbsf:conn-RO-to-storage-tank-2 a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbsf:RO-out,
+        wbsf:storage-tank-2-in ;
+    s223:connectsAt wbsf:RO-out,
+        wbsf:storage-tank-2-in ;
+    s223:connectsFrom wbsf:RO ;
+    s223:connectsTo wbsf:storage-tank-2 ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbsf:conn-S1-to-P1 a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbsf:P1-in,
+        wbsf:S1-outlet-cp ;
+    s223:connectsAt wbsf:P1-in,
+        wbsf:S1-outlet-cp ;
+    s223:connectsFrom wbsf:S1 ;
+    s223:connectsTo wbsf:P1 ;
+    s223:hasMedium nawi:Water-Seawater .
+
+wbsf:conn-S1-to-PXR a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbsf:PXR-in,
+        wbsf:S1-outlet-cp-2 ;
+    s223:connectsAt wbsf:PXR-in,
+        wbsf:S1-outlet-cp-2 ;
+    s223:connectsFrom wbsf:S1 ;
+    s223:connectsTo wbsf:PXR ;
+    s223:hasMedium nawi:Water-Seawater .
+
+wbsf:conn-anti-scalant-addition-to-cartridge-filtration a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbsf:anti-scalant-addition-out,
+        wbsf:cartridge-filtration-in ;
+    s223:connectsAt wbsf:anti-scalant-addition-out,
+        wbsf:cartridge-filtration-in ;
+    s223:connectsFrom wbsf:anti-scalant-addition ;
+    s223:connectsTo wbsf:cartridge-filtration ;
+    s223:hasMedium nawi:Water-Seawater .
+
+wbsf:conn-chlorination-to-static-mixer a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbsf:chlorination-out,
+        wbsf:static-mixer-in ;
+    s223:connectsAt wbsf:chlorination-out,
+        wbsf:static-mixer-in ;
+    s223:connectsFrom wbsf:chlorination ;
+    s223:connectsTo wbsf:static-mixer ;
+    s223:hasMedium nawi:Water-Seawater .
+
+wbsf:conn-co2-addition-to-lime-addition a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbsf:co2-addition-out,
+        wbsf:lime-addition-in ;
+    s223:connectsAt wbsf:co2-addition-out,
+        wbsf:lime-addition-in ;
+    s223:connectsFrom wbsf:co2-addition ;
+    s223:connectsTo wbsf:lime-addition ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbsf:conn-ferric-chloride-addition-to-chlorination a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbsf:chlorination-in,
+        wbsf:ferric-chloride-addition-out ;
+    s223:connectsAt wbsf:chlorination-in,
+        wbsf:ferric-chloride-addition-out ;
+    s223:connectsFrom wbsf:ferric-chloride-addition ;
+    s223:connectsTo wbsf:chlorination ;
+    s223:hasMedium nawi:Water-Seawater .
+
+wbsf:conn-intake-to-ferric-chloride-addition a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbsf:ferric-chloride-addition-in,
+        wbsf:intake-out ;
+    s223:connectsAt wbsf:ferric-chloride-addition-in,
+        wbsf:intake-out ;
+    s223:connectsFrom wbsf:intake ;
+    s223:connectsTo wbsf:ferric-chloride-addition ;
+    s223:hasMedium nawi:Water-Seawater .
+
+wbsf:conn-lime-addition-to-storage-tank-3 a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbsf:lime-addition-out,
+        wbsf:storage-tank-3-in ;
+    s223:connectsAt wbsf:lime-addition-out,
+        wbsf:storage-tank-3-in ;
+    s223:connectsFrom wbsf:lime-addition ;
+    s223:connectsTo wbsf:storage-tank-3 ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbsf:conn-media-filtration-to-anti-scalant-addition a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbsf:anti-scalant-addition-in,
+        wbsf:media-filtration-out ;
+    s223:connectsAt wbsf:anti-scalant-addition-in,
+        wbsf:media-filtration-out ;
+    s223:connectsFrom wbsf:media-filtration ;
+    s223:connectsTo wbsf:anti-scalant-addition ;
+    s223:hasMedium nawi:Water-Seawater .
+
+wbsf:conn-media-filtration-to-backwash-handling a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbsf:backwash-handling-in,
+        wbsf:media-filtration-outlet-cp ;
+    s223:connectsAt wbsf:backwash-handling-in,
+        wbsf:media-filtration-outlet-cp ;
+    s223:connectsFrom wbsf:media-filtration ;
+    s223:connectsTo wbsf:backwash-handling ;
+    s223:hasMedium nawi:Water-Seawater .
+
+wbsf:conn-static-mixer-to-storage-tank-1 a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbsf:static-mixer-out,
+        wbsf:storage-tank-1-in ;
+    s223:connectsAt wbsf:static-mixer-out,
+        wbsf:storage-tank-1-in ;
+    s223:connectsFrom wbsf:static-mixer ;
+    s223:connectsTo wbsf:storage-tank-1 ;
+    s223:hasMedium nawi:Water-Seawater .
+
+wbsf:conn-storage-tank-1-to-media-filtration a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbsf:media-filtration-in,
+        wbsf:storage-tank-1-out ;
+    s223:connectsAt wbsf:media-filtration-in,
+        wbsf:storage-tank-1-out ;
+    s223:connectsFrom wbsf:storage-tank-1 ;
+    s223:connectsTo wbsf:media-filtration ;
+    s223:hasMedium nawi:Water-Seawater .
+
+wbsf:conn-storage-tank-2-to-uv-aop a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbsf:storage-tank-2-out,
+        wbsf:uv-aop-in ;
+    s223:connectsAt wbsf:storage-tank-2-out,
+        wbsf:uv-aop-in ;
+    s223:connectsFrom wbsf:storage-tank-2 ;
+    s223:connectsTo wbsf:uv-aop ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbsf:conn-uv-aop-to-co2-addition a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbsf:co2-addition-in,
+        wbsf:uv-aop-out ;
+    s223:connectsAt wbsf:co2-addition-in,
+        wbsf:uv-aop-out ;
+    s223:connectsFrom wbsf:uv-aop ;
+    s223:connectsTo wbsf:co2-addition ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbsf:intake-in a s223:InletConnectionPoint ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:hasProperty wbsf:intake-in-flow-rate,
+        wbsf:intake-in-tds-concentration,
+        wbsf:intake-in-tss-concentration,
+        wbsf:intake-in-toc-concentration ;
+    s223:isConnectionPointOf wbsf:intake .
+
+wbsf:storage-tank-3-out a s223:OutletConnectionPoint ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:hasProperty wbsf:storage-tank-3-out-flow-rate,
+        wbsf:storage-tank-3-out-tds-concentration ;
+    s223:isConnectionPointOf wbsf:storage-tank-3 .
+
+wbsf:PXR-brine-out a s223:OutletConnectionPoint ;
+    s223:hasMedium nawi:Water-Brine ;
+    s223:hasProperty wbsf:PXR-brine-out-flow-mass-tds,
+        wbsf:PXR-brine-out-flow-mass-water,
+        wbsf:PXR-brine-out-pressure,
+        wbsf:PXR-brine-out-tds-concentration ;
+    s223:isConnectionPointOf wbsf:PXR .
+
+wbsf:RO-out-retentate a s223:OutletConnectionPoint ;
+    s223:cnx wbsf:RO,
+        wbsf:conn-RO-to-PXR ;
+    s223:connectsThrough wbsf:conn-RO-to-PXR ;
+    s223:hasMedium nawi:Water-Brine ;
+    s223:hasProperty wbsf:RO-out-retentate-flow-mass-tds,
+        wbsf:RO-out-retentate-flow-mass-water,
+        wbsf:RO-out-retentate-pressure ;
+    s223:isConnectionPointOf wbsf:RO .
+
+wbsf:backwash-handling a nawi:Tank ;
+    rdfs:label "Backwash Solids Handling" ;
+    s223:cnx wbsf:backwash-handling-in,
+        wbsf:backwash-handling-out ;
+    s223:connected wbsf:media-filtration ;
+    s223:connectedFrom wbsf:media-filtration ;
+    s223:connectedThrough wbsf:conn-media-filtration-to-backwash-handling ;
+    s223:hasConnectionPoint wbsf:backwash-handling-in,
+        wbsf:backwash-handling-out ;
+    rdfs:comment "WaterTAP: fs.pretreatment.backwash_handling (BackwashSolidsHandlingZO); out = solids byproduct to landfill" .
+
+wbsf:intake a nawi:Pump ;
+    rdfs:label "Seawater Onshore Intake" ;
+    s223:cnx wbsf:intake-out ;
+    s223:connected wbsf:ferric-chloride-addition ;
+    s223:connectedThrough wbsf:conn-intake-to-ferric-chloride-addition ;
+    s223:connectedTo wbsf:ferric-chloride-addition ;
+    s223:hasConnectionPoint wbsf:intake-in,
+        wbsf:intake-out ;
+    rdfs:comment "WaterTAP: fs.pretreatment.intake (SWOnshoreIntakeZO), modeled as a pump" .
+
+wbsf:storage-tank-3 a nawi:Tank ;
+    rdfs:label "Storage Tank 3" ;
+    s223:cnx wbsf:storage-tank-3-in,
+        wbsf:storage-tank-3-out ;
+    s223:connected wbsf:lime-addition ;
+    s223:connectedFrom wbsf:lime-addition ;
+    s223:connectedThrough wbsf:conn-lime-addition-to-storage-tank-3 ;
+    s223:hasConnectionPoint wbsf:storage-tank-3-in,
+        wbsf:storage-tank-3-out ;
+    s223:hasRole nawi:Role-Storage ;
+    rdfs:comment "WaterTAP: fs.posttreatment.storage_tank_3 (StorageTankZO)" .
+
+wbsf:RO-in a s223:InletConnectionPoint ;
+    s223:cnx wbsf:RO,
+        wbsf:conn-M1-to-RO ;
+    s223:connectsThrough wbsf:conn-M1-to-RO ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:hasProperty wbsf:RO-in-flow-mass-tds,
+        wbsf:RO-in-flow-mass-water,
+        wbsf:RO-in-pressure,
+        wbsf:RO-in-temperature ;
+    s223:isConnectionPointOf wbsf:RO .
+
+wbsf:RO-out a s223:OutletConnectionPoint ;
+    s223:cnx wbsf:RO,
+        wbsf:conn-RO-to-storage-tank-2 ;
+    s223:connectsThrough wbsf:conn-RO-to-storage-tank-2 ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:hasProperty wbsf:RO-out-flow-mass-tds,
+        wbsf:RO-out-flow-mass-water,
+        wbsf:RO-out-pressure ;
+    s223:isConnectionPointOf wbsf:RO .
+
+wbsf:conn-cartridge-filtration-to-S1 a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbsf:S1-inlet-cp,
+        wbsf:cartridge-filtration-out ;
+    s223:connectsAt wbsf:S1-inlet-cp,
+        wbsf:cartridge-filtration-out ;
+    s223:connectsFrom wbsf:cartridge-filtration ;
+    s223:connectsTo wbsf:S1 ;
+    s223:hasMedium nawi:Water-Seawater ;
+    s223:hasProperty wbsf:conn-cartridge-filtration-to-S1-flow-mass-tds,
+        wbsf:conn-cartridge-filtration-to-S1-flow-mass-water,
+        wbsf:conn-cartridge-filtration-to-S1-pressure,
+        wbsf:conn-cartridge-filtration-to-S1-temperature .
+
+wbsf:anti-scalant-addition a nawi:StaticMixer ;
+    rdfs:label "Anti-scalant Addition" ;
+    s223:cnx wbsf:anti-scalant-addition-in,
+        wbsf:anti-scalant-addition-out ;
+    s223:connected wbsf:cartridge-filtration,
+        wbsf:media-filtration ;
+    s223:connectedFrom wbsf:media-filtration ;
+    s223:connectedThrough wbsf:conn-anti-scalant-addition-to-cartridge-filtration,
+        wbsf:conn-media-filtration-to-anti-scalant-addition ;
+    s223:connectedTo wbsf:cartridge-filtration ;
+    s223:hasConnectionPoint wbsf:anti-scalant-addition-in,
+        wbsf:anti-scalant-addition-out ;
+    rdfs:comment "WaterTAP: fs.pretreatment.anti_scalant_addition (ChemicalAdditionZO, anti-scalant)" ;
+    nawi:hasProcess nawi:Process-Mixing .
+
+wbsf:cartridge-filtration a nawi:Filter ;
+    rdfs:label "Cartridge Filtration" ;
+    s223:cnx wbsf:cartridge-filtration-in,
+        wbsf:cartridge-filtration-out ;
+    s223:connected wbsf:S1,
+        wbsf:anti-scalant-addition ;
+    s223:connectedFrom wbsf:anti-scalant-addition ;
+    s223:connectedThrough wbsf:conn-anti-scalant-addition-to-cartridge-filtration,
+        wbsf:conn-cartridge-filtration-to-S1 ;
+    s223:connectedTo wbsf:S1 ;
+    s223:hasConnectionPoint wbsf:cartridge-filtration-in,
+        wbsf:cartridge-filtration-out ;
+    rdfs:comment "WaterTAP: fs.pretreatment.cartridge_filtration (CartridgeFiltrationZO)" ;
+    nawi:hasProcess nawi:Process-Filtration .
+
+wbsf:chlorination a nawi:ChlorinationUnit ;
+    rdfs:label "Chlorination" ;
+    s223:cnx wbsf:chlorination-in,
+        wbsf:chlorination-out ;
+    s223:connected wbsf:ferric-chloride-addition,
+        wbsf:static-mixer ;
+    s223:connectedFrom wbsf:ferric-chloride-addition ;
+    s223:connectedThrough wbsf:conn-chlorination-to-static-mixer,
+        wbsf:conn-ferric-chloride-addition-to-chlorination ;
+    s223:connectedTo wbsf:static-mixer ;
+    s223:hasConnectionPoint wbsf:chlorination-in,
+        wbsf:chlorination-out ;
+    rdfs:comment "WaterTAP: fs.pretreatment.chlorination (ChlorinationZO)" ;
+    nawi:hasProcess nawi:Process-Chlorination .
+
+wbsf:co2-addition a nawi:StaticMixer ;
+    rdfs:label "CO2 Addition" ;
+    s223:cnx wbsf:co2-addition-in,
+        wbsf:co2-addition-out ;
+    s223:connected wbsf:lime-addition,
+        wbsf:uv-aop ;
+    s223:connectedFrom wbsf:uv-aop ;
+    s223:connectedThrough wbsf:conn-co2-addition-to-lime-addition,
+        wbsf:conn-uv-aop-to-co2-addition ;
+    s223:connectedTo wbsf:lime-addition ;
+    s223:hasConnectionPoint wbsf:co2-addition-in,
+        wbsf:co2-addition-out ;
+    rdfs:comment "WaterTAP: fs.posttreatment.co2_addition (CO2AdditionZO)" ;
+    nawi:hasProcess nawi:Process-Mixing .
+
+wbsf:ferric-chloride-addition a nawi:StaticMixer ;
+    rdfs:label "Ferric Chloride Addition" ;
+    s223:cnx wbsf:ferric-chloride-addition-in,
+        wbsf:ferric-chloride-addition-out ;
+    s223:connected wbsf:chlorination,
+        wbsf:intake ;
+    s223:connectedFrom wbsf:intake ;
+    s223:connectedThrough wbsf:conn-ferric-chloride-addition-to-chlorination,
+        wbsf:conn-intake-to-ferric-chloride-addition ;
+    s223:connectedTo wbsf:chlorination ;
+    s223:hasConnectionPoint wbsf:ferric-chloride-addition-in,
+        wbsf:ferric-chloride-addition-out ;
+    rdfs:comment "WaterTAP: fs.pretreatment.ferric_chloride_addition (ChemicalAdditionZO, ferric_chloride)" ;
+    nawi:hasProcess nawi:Process-Mixing .
+
+wbsf:lime-addition a nawi:StaticMixer ;
+    rdfs:label "Lime Addition" ;
+    s223:cnx wbsf:lime-addition-in,
+        wbsf:lime-addition-out ;
+    s223:connected wbsf:co2-addition,
+        wbsf:storage-tank-3 ;
+    s223:connectedFrom wbsf:co2-addition ;
+    s223:connectedThrough wbsf:conn-co2-addition-to-lime-addition,
+        wbsf:conn-lime-addition-to-storage-tank-3 ;
+    s223:connectedTo wbsf:storage-tank-3 ;
+    s223:hasConnectionPoint wbsf:lime-addition-in,
+        wbsf:lime-addition-out ;
+    rdfs:comment "WaterTAP: fs.posttreatment.lime_addition (ChemicalAdditionZO, lime)" ;
+    nawi:hasProcess nawi:Process-Mixing .
+
+wbsf:static-mixer a nawi:StaticMixer ;
+    rdfs:label "Static Mixer" ;
+    s223:cnx wbsf:static-mixer-in,
+        wbsf:static-mixer-out ;
+    s223:connected wbsf:chlorination,
+        wbsf:storage-tank-1 ;
+    s223:connectedFrom wbsf:chlorination ;
+    s223:connectedThrough wbsf:conn-chlorination-to-static-mixer,
+        wbsf:conn-static-mixer-to-storage-tank-1 ;
+    s223:connectedTo wbsf:storage-tank-1 ;
+    s223:hasConnectionPoint wbsf:static-mixer-in,
+        wbsf:static-mixer-out ;
+    rdfs:comment "WaterTAP: fs.pretreatment.static_mixer (StaticMixerZO)" ;
+    nawi:hasProcess nawi:Process-Mixing .
+
+wbsf:storage-tank-1 a nawi:Tank ;
+    rdfs:label "Storage Tank 1" ;
+    s223:cnx wbsf:storage-tank-1-in,
+        wbsf:storage-tank-1-out ;
+    s223:connected wbsf:media-filtration,
+        wbsf:static-mixer ;
+    s223:connectedFrom wbsf:static-mixer ;
+    s223:connectedThrough wbsf:conn-static-mixer-to-storage-tank-1,
+        wbsf:conn-storage-tank-1-to-media-filtration ;
+    s223:connectedTo wbsf:media-filtration ;
+    s223:hasConnectionPoint wbsf:storage-tank-1-in,
+        wbsf:storage-tank-1-out ;
+    s223:hasRole nawi:Role-Storage ;
+    rdfs:comment "WaterTAP: fs.pretreatment.storage_tank_1 (StorageTankZO)" .
+
+wbsf:storage-tank-2 a nawi:Tank ;
+    rdfs:label "Storage Tank 2" ;
+    s223:cnx wbsf:storage-tank-2-in,
+        wbsf:storage-tank-2-out ;
+    s223:connected wbsf:RO,
+        wbsf:uv-aop ;
+    s223:connectedFrom wbsf:RO ;
+    s223:connectedThrough wbsf:conn-RO-to-storage-tank-2,
+        wbsf:conn-storage-tank-2-to-uv-aop ;
+    s223:connectedTo wbsf:uv-aop ;
+    s223:hasConnectionPoint wbsf:storage-tank-2-in,
+        wbsf:storage-tank-2-out ;
+    s223:hasRole nawi:Role-Storage ;
+    rdfs:comment "WaterTAP: fs.posttreatment.storage_tank_2 (StorageTankZO)" .
+
+wbsf:uv-aop a nawi:UltravioletLightUnit ;
+    rdfs:label "UV/AOP" ;
+    s223:cnx wbsf:uv-aop-in,
+        wbsf:uv-aop-out ;
+    s223:connected wbsf:co2-addition,
+        wbsf:storage-tank-2 ;
+    s223:connectedFrom wbsf:storage-tank-2 ;
+    s223:connectedThrough wbsf:conn-storage-tank-2-to-uv-aop,
+        wbsf:conn-uv-aop-to-co2-addition ;
+    s223:connectedTo wbsf:co2-addition ;
+    s223:hasConnectionPoint wbsf:uv-aop-in,
+        wbsf:uv-aop-out ;
+    rdfs:comment "WaterTAP: fs.posttreatment.uv_aop (UVAOPZO, hydrogen_peroxide)" ;
+    nawi:hasProcess nawi:Process-UVDisinfection .
+
+wbsf:P1 a nawi:Pump ;
+    rdfs:label "High-pressure Pump P1" ;
+    s223:cnx wbsf:P1-in,
+        wbsf:P1-out ;
+    s223:connected wbsf:M1,
+        wbsf:S1 ;
+    s223:connectedFrom wbsf:S1 ;
+    s223:connectedThrough wbsf:conn-P1-to-M1,
+        wbsf:conn-S1-to-P1 ;
+    s223:connectedTo wbsf:M1 ;
+    s223:hasConnectionPoint wbsf:P1-in,
+        wbsf:P1-out ;
+    s223:hasProperty wbsf:P1-efficiency,
+        wbsf:P1-mechanical-power ;
+    rdfs:comment "WaterTAP: fs.desalination.P1 (Pump)" .
+
+wbsf:P2 a nawi:Pump ;
+    rdfs:label "Booster Pump P2" ;
+    s223:cnx wbsf:P2-in,
+        wbsf:P2-out ;
+    s223:connected wbsf:M1,
+        wbsf:PXR ;
+    s223:connectedFrom wbsf:PXR ;
+    s223:connectedThrough wbsf:conn-P2-to-M1,
+        wbsf:conn-PXR-to-P2 ;
+    s223:connectedTo wbsf:M1 ;
+    s223:hasConnectionPoint wbsf:P2-in,
+        wbsf:P2-out ;
+    s223:hasProperty wbsf:P2-efficiency,
+        wbsf:P2-mechanical-power ;
+    rdfs:comment "WaterTAP: fs.desalination.P2 (Pump)" .
+
+wbsf:M1 a s223:Junction ;
+    s223:cnx wbsf:M1-inlet-cp,
+        wbsf:M1-inlet-cp-2,
+        wbsf:M1-outlet-cp ;
+    s223:connected wbsf:P1,
+        wbsf:P2,
+        wbsf:RO ;
+    s223:connectedFrom wbsf:P1,
+        wbsf:P2 ;
+    s223:connectedThrough wbsf:conn-M1-to-RO,
+        wbsf:conn-P1-to-M1,
+        wbsf:conn-P2-to-M1 ;
+    s223:connectedTo wbsf:RO ;
+    s223:hasConnectionPoint wbsf:M1-inlet-cp,
+        wbsf:M1-inlet-cp-2,
+        wbsf:M1-outlet-cp ;
+    s223:hasMedium nawi:Water-Seawater .
+
+wbsf:S1 a s223:Junction ;
+    s223:cnx wbsf:S1-inlet-cp,
+        wbsf:S1-outlet-cp,
+        wbsf:S1-outlet-cp-2 ;
+    s223:connected wbsf:P1,
+        wbsf:PXR,
+        wbsf:cartridge-filtration ;
+    s223:connectedFrom wbsf:cartridge-filtration ;
+    s223:connectedThrough wbsf:conn-S1-to-P1,
+        wbsf:conn-S1-to-PXR,
+        wbsf:conn-cartridge-filtration-to-S1 ;
+    s223:connectedTo wbsf:P1,
+        wbsf:PXR ;
+    s223:hasConnectionPoint wbsf:S1-inlet-cp,
+        wbsf:S1-outlet-cp,
+        wbsf:S1-outlet-cp-2 ;
+    s223:hasMedium nawi:Water-Seawater .
+
+wbsf:media-filtration a nawi:Filter ;
+    rdfs:label "Media Filtration" ;
+    s223:cnx wbsf:media-filtration-in,
+        wbsf:media-filtration-out,
+        wbsf:media-filtration-outlet-cp ;
+    s223:connected wbsf:anti-scalant-addition,
+        wbsf:backwash-handling,
+        wbsf:storage-tank-1 ;
+    s223:connectedFrom wbsf:storage-tank-1 ;
+    s223:connectedThrough wbsf:conn-media-filtration-to-anti-scalant-addition,
+        wbsf:conn-media-filtration-to-backwash-handling,
+        wbsf:conn-storage-tank-1-to-media-filtration ;
+    s223:connectedTo wbsf:anti-scalant-addition,
+        wbsf:backwash-handling ;
+    s223:hasConnectionPoint wbsf:media-filtration-in,
+        wbsf:media-filtration-out,
+        wbsf:media-filtration-outlet-cp ;
+    rdfs:comment "WaterTAP: fs.pretreatment.media_filtration (MediaFiltrationZO); out = treated, extra outlet = backwash byproduct" ;
+    nawi:hasProcess nawi:Process-Filtration .
+
+wbsf:RO a nawi:ReverseOsmosisMembrane ;
+    rdfs:label "Reverse Osmosis Stage" ;
+    s223:cnx wbsf:RO-in,
+        wbsf:RO-out,
+        wbsf:RO-out-retentate ;
+    s223:connected wbsf:M1,
+        wbsf:PXR,
+        wbsf:storage-tank-2 ;
+    s223:connectedFrom wbsf:M1 ;
+    s223:connectedThrough wbsf:conn-M1-to-RO,
+        wbsf:conn-RO-to-PXR,
+        wbsf:conn-RO-to-storage-tank-2 ;
+    s223:connectedTo wbsf:PXR,
+        wbsf:storage-tank-2 ;
+    s223:hasConnectionPoint wbsf:RO-in,
+        wbsf:RO-out,
+        wbsf:RO-out-retentate ;
+    s223:hasProperty wbsf:RO-membrane-area,
+        wbsf:RO-membrane-water-permeability ;
+    rdfs:comment "WaterTAP: fs.desalination.RO (ReverseOsmosis0D); out = permeate, out-retentate = concentrate" ;
+    nawi:hasProcess nawi:Process-ReverseOsmosis .
+
+wbsf:PXR a nawi:PressureExchanger ;
+    rdfs:label "Pressure Exchanger" ;
+    s223:cnx wbsf:PXR-brine-in,
+        wbsf:PXR-brine-out,
+        wbsf:PXR-in,
+        wbsf:PXR-out ;
+    s223:connected wbsf:P2,
+        wbsf:RO,
+        wbsf:S1 ;
+    s223:connectedFrom wbsf:RO,
+        wbsf:S1 ;
+    s223:connectedThrough wbsf:conn-PXR-to-P2,
+        wbsf:conn-RO-to-PXR,
+        wbsf:conn-S1-to-PXR ;
+    s223:connectedTo wbsf:P2 ;
+    s223:hasConnectionPoint wbsf:PXR-brine-in,
+        wbsf:PXR-brine-out,
+        wbsf:PXR-in,
+        wbsf:PXR-out ;
+    s223:hasProperty wbsf:PXR-efficiency ;
+    rdfs:comment "WaterTAP: fs.desalination.PXR (PressureExchanger); in/out = feed side, brine-in/brine-out = brine side" .
+
