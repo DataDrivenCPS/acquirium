@@ -417,6 +417,9 @@ class AppRunner:
         if module_spec is None or module_spec.loader is None:
             raise ValueError(f"Unable to load app file {path}")
         module = importlib.util.module_from_spec(module_spec)
+        # register_pickle_by_value (below) requires the module to be reachable
+        # through sys.modules under its own name.
+        sys.modules[module_spec.name] = module
         module_spec.loader.exec_module(module)
         # The app class is defined in this dynamically-loaded module, which the
         # run-task worker can't import by name. Pin it to pickle by value so the
