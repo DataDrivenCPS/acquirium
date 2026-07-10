@@ -1,0 +1,26 @@
+# Acquirium driver config for the WaterTAP seawater-ro-fouled
+
+[server]
+enabled = true            # connect to an already-running Acquirium server
+
+[driver]
+server_url  = "localhost"
+server_port = 8000
+interval    = 10.0
+
+# ===========================================================================
+# 5c) ENABLED — Parquet ingest, WaterTAP-aware (seawater-ro-fouled).
+#    Own namespace (urn:swro-fouled/, prefix wbsf:) so it ingests alongside
+#    the healthy seawater-ro model below without colliding ontology points.
+#    Used by notebooks/watertap/soft-sensor.ipynb (clean-vs-fouled anomaly demo).
+# ===========================================================================
+[[drivers]]
+spec                   = "../../scripts/parquet_driver.py:WaterTAPParquetDriver"
+interval               = 5.0
+watch_dir              = "data"
+format                 = "wide"
+time_col               = "timestamp"
+watertap_source_id     = "watertap-seawater-ro-fouled"
+watertap_mapping_path  = "deployments/WATERTAP/models/seawater-ro-fouled/watertap-mapping.json"
+watertap_graph_path    = "deployments/WATERTAP/models/seawater-ro-fouled/model.ttl"
+watertap_insert_graph  = true
