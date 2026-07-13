@@ -188,6 +188,7 @@ class AppSpec(BaseModel):
     queries: dict[str, dict] = Field(default_factory=dict)
     outputs: list[AppOutputSpec] = Field(default_factory=list)
     depends_on: list[str] = Field(default_factory=list)
+    params: dict[str, Any] = Field(default_factory=dict)
 
 
 class AppRunRequest(BaseModel):

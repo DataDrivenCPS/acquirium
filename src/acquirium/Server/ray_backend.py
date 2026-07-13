@@ -387,6 +387,8 @@ class AppRunner:
             graph.add((app_uri, HAS_VERSION, Literal(spec.version)))
         if spec.queries:
             graph.add((app_uri, APP_QUERY, Literal(json.dumps(spec.queries, sort_keys=True, ensure_ascii=True))))
+        if spec.params:
+            graph.add((app_uri, APP_PARAMS, Literal(json.dumps(spec.params, sort_keys=True, ensure_ascii=True))))
 
         for dep in spec.depends_on:
             graph.add((app_uri, DEPENDS_ON, URIRef(dep)))
@@ -533,8 +535,12 @@ class AppRunner:
         the supervisor lock so build-time graph reads/writes don't race. The
         resolved query bundle and any state produced by ``build_app`` are
         cached on the actor for the run phase.
+
+        Params default to those registered with the app (``spec.params``), so
+        the build phase sees the same configuration after a server restart
+        restores the app from the graph.
         """
-        self._params = params or {}
+        self._params = params if params is not None else dict(self.spec.params)
         self._load_app()
         self.build_query()
         self.build_app()
@@ -718,17 +724,18 @@ def restore_app_specs(manager) -> list[AppSpec]:
 
     logger.debug("App restore: reading registered apps from the persistent graph")
     apps: dict[str, dict[str, Any]] = {}
-    for app_uri, label, version, queries, rdf_type in rows(f"""
-        SELECT ?app ?label ?version ?queries ?type WHERE {{
+    for app_uri, label, version, queries, params, rdf_type in rows(f"""
+        SELECT ?app ?label ?version ?queries ?params ?type WHERE {{
           ?app a <{APP}> .
           OPTIONAL {{ ?app <{RDFS.label}> ?label }}
           OPTIONAL {{ ?app <{HAS_VERSION}> ?version }}
           OPTIONAL {{ ?app <{APP_QUERY}> ?queries }}
+          OPTIONAL {{ ?app <{APP_PARAMS}> ?params }}
           OPTIONAL {{ ?app a ?type . FILTER(?type != <{APP}>) }}
         }}"""):
         entry = apps.setdefault(str(app_uri), {
             "name": None, "version": None, "app_type": None,
-            "queries": {}, "outputs": [], "depends_on": set(),
+            "queries": {}, "params": {}, "outputs": [], "depends_on": set(),
         })
         if label is not None:
             entry["name"] = str(label)
@@ -741,6 +748,11 @@ def restore_app_specs(manager) -> list[AppSpec]:
                 entry["queries"] = json.loads(str(queries))
             except json.JSONDecodeError:
                 logger.warning("App %s: unparseable querySpec in graph; dropped", app_uri)
+        if params is not None:
+            try:
+                entry["params"] = json.loads(str(params))
+            except json.JSONDecodeError:
+                logger.warning("App %s: unparseable paramSpec in graph; dropped", app_uri)
 
     for app_uri, dep in rows(
         f"SELECT ?app ?dep WHERE {{ ?app a <{APP}> ; <{DEPENDS_ON}> ?dep }}"
@@ -789,6 +801,7 @@ def restore_app_specs(manager) -> list[AppSpec]:
             queries=entry["queries"],
             outputs=entry["outputs"],
             depends_on=sorted(entry["depends_on"]),
+            params=entry["params"],
         ))
     logger.debug(
         "App restore: rebuilt %d spec(s) from %d registered app record(s)",

@@ -419,6 +419,7 @@ class Acquirium:
         depends_on: list[str] | None = None,
         resolve_dependencies: bool = True,
         queries: dict[str, Query] | None = None,
+        params: dict[str, Any] | None = None,
         replace: bool = False,
     ) -> dict[str, Any]:
         """Register an Acquirium App with the server.
@@ -427,6 +428,11 @@ class Acquirium:
         the request unless ``replace=True``, which gracefully tears down the
         existing app (stopping it and cleaning up its graph registration)
         before registering this one.
+
+        ``params`` are stored with the app and passed to ``build_app`` via
+        ``ctx.params`` during the (one-time) build phase, so build-time
+        configuration — training windows, thresholds — lives with the
+        registration rather than the run.
         """
         query_bundle = queries if queries is not None else app.build_query(self)
         if isinstance(query_bundle, Query):
@@ -477,6 +483,7 @@ class Acquirium:
             queries=query_specs,
             outputs=output_specs,
             depends_on=deps,
+            params=params or {},
         )
         return self.client.register_app(spec, replace=replace)
 
