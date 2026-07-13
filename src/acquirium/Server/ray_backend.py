@@ -10,10 +10,13 @@ from typing import TYPE_CHECKING, Any
 import ray
 import json
 import sys
+import time
 import importlib.util
 
+from urllib.parse import unquote
+
 from acquirium.internals._log import configure_logging, timed_debug as _timed_debug
-from acquirium.internals.models import AppSpec, AppRunRequest, compute_ref_uri
+from acquirium.internals.models import AppSpec, AppOutputSpec, AppRunRequest, compute_ref_uri
 from acquirium.internals.internals_namespaces import *
 from acquirium.internals.app_utils import app_uri_for, app_type_uri, add_literal_or_uri
 from rdflib import URIRef, Graph, Literal
@@ -647,6 +650,122 @@ class AppRunner:
         }
 
 
+def _app_type_name(type_uri: URIRef) -> str:
+    """Inverse of :func:`app_type_uri` for the graph→spec restore path."""
+    known = {SOFT_SENSOR: "soft_sensor", THRESHOLD: "threshold", ALARM: "alarm", REPORT: "report"}
+    if type_uri in known:
+        return known[type_uri]
+    ns = str(ACQUIRIUM_NS)
+    uri = str(type_uri)
+    return uri[len(ns):] if uri.startswith(ns) else uri
+
+
+def restore_app_specs(manager) -> list[AppSpec]:
+    """Rebuild the AppSpecs of apps registered by a previous server run.
+
+    Inverts :meth:`AppRunner._app_spec_graph`: enumerates ``?app a acq:App``
+    in the persistent graph and reads scalar fields, outputs, and
+    dependencies back out. Source code is not in the graph — it lives under
+    the app storage dir (with app.json carrying entry_file/app_class), where
+    ``AppRunner._load_app`` reads it — so specs are returned without source
+    and apps whose storage dir is gone are skipped.
+
+    One lossy corner: registration writes ``event`` and ``trigger`` outputs
+    identically (both as EventStream), so a restored trigger output comes
+    back as kind="event". Output kind is only used when writing the
+    registration graph, which the restore path skips, so behavior is
+    unaffected.
+    """
+    def rows(q: str) -> list:
+        start = time.perf_counter()
+        result = manager.graph_store.sparql_query(q, use_union=False).get("rows", [])
+        logger.debug(
+            "App restore: SPARQL query returned %d row(s) in %.1f ms",
+            len(result), (time.perf_counter() - start) * 1000.0,
+        )
+        return result
+
+    logger.debug("App restore: reading registered apps from the persistent graph")
+    apps: dict[str, dict[str, Any]] = {}
+    for app_uri, label, version, queries, rdf_type in rows(f"""
+        SELECT ?app ?label ?version ?queries ?type WHERE {{
+          ?app a <{APP}> .
+          OPTIONAL {{ ?app <{RDFS.label}> ?label }}
+          OPTIONAL {{ ?app <{HAS_VERSION}> ?version }}
+          OPTIONAL {{ ?app <{APP_QUERY}> ?queries }}
+          OPTIONAL {{ ?app a ?type . FILTER(?type != <{APP}>) }}
+        }}"""):
+        entry = apps.setdefault(str(app_uri), {
+            "name": None, "version": None, "app_type": None,
+            "queries": {}, "outputs": [], "depends_on": set(),
+        })
+        if label is not None:
+            entry["name"] = str(label)
+        if version is not None:
+            entry["version"] = str(version)
+        if rdf_type is not None:
+            entry["app_type"] = _app_type_name(URIRef(str(rdf_type)))
+        if queries is not None:
+            try:
+                entry["queries"] = json.loads(str(queries))
+            except json.JSONDecodeError:
+                logger.warning("App %s: unparseable querySpec in graph; dropped", app_uri)
+
+    for app_uri, dep in rows(
+        f"SELECT ?app ?dep WHERE {{ ?app a <{APP}> ; <{DEPENDS_ON}> ?dep }}"
+    ):
+        if str(app_uri) in apps:
+            apps[str(app_uri)]["depends_on"].add(str(dep))
+
+    # Refs carry Stream plus exactly one of EventStream/TimeseriesStream, so
+    # the FILTER IN yields one row per output.
+    for app_uri, point, ref, qk, unit, ds, backend, rtype in rows(f"""
+        SELECT ?app ?point ?ref ?qk ?unit ?ds ?backend ?rtype WHERE {{
+          ?app a <{APP}> ; <{PRODUCES}> ?point .
+          ?point <{HAS_EXTERNAL_REFERENCE}> ?ref .
+          ?ref a ?rtype . FILTER(?rtype IN (<{EVENT_STREAM}>, <{TIMESERIES_STREAM}>))
+          OPTIONAL {{ ?point <{HAS_QUANTITY_KIND}> ?qk }}
+          OPTIONAL {{ ?point <{HAS_UNIT}> ?unit }}
+          OPTIONAL {{ ?point <{DATA_SOURCE}> ?ds }}
+          OPTIONAL {{ ?ref <{STORAGE_BACKEND}> ?backend }}
+        }}"""):
+        if str(app_uri) not in apps:
+            continue
+        apps[str(app_uri)]["outputs"].append(AppOutputSpec(
+            kind="event" if URIRef(str(rtype)) == EVENT_STREAM else "timeseries",
+            point_uri=str(point),
+            ref_uri=str(ref),
+            quantity_kind=str(qk) if qk is not None else None,
+            unit=str(unit) if unit is not None else None,
+            data_source=str(ds) if ds is not None else None,
+            storage_backend=str(backend) if backend is not None else None,
+        ))
+
+    specs: list[AppSpec] = []
+    for app_uri, entry in apps.items():
+        name = entry["name"] or unquote(app_uri.rsplit("/", 1)[-1])
+        app_dir = Path(manager.app_storage_root) / name
+        if not app_dir.is_dir():
+            logger.error(
+                "App '%s' is registered in the graph but has no source under %s; not restored",
+                name, app_dir,
+            )
+            continue
+        specs.append(AppSpec(
+            name=name,
+            version=entry["version"] or "0.0",
+            app_type=entry["app_type"] or "soft_sensor",
+            queries=entry["queries"],
+            outputs=entry["outputs"],
+            depends_on=sorted(entry["depends_on"]),
+        ))
+    logger.debug(
+        "App restore: rebuilt %d spec(s) from %d registered app record(s)",
+        len(specs), len(apps),
+    )
+    return specs
+
+
 class AppSupervisor:
     """Owns the AppRunner actors of one server process, keyed by app name.
 
@@ -702,16 +821,57 @@ class AppSupervisor:
                 "name": spec.name,
                 "spec": spec,
                 "actor": actor,
-                "started_at": datetime.now(timezone.utc).isoformat(),
+                "registered_at": datetime.now(timezone.utc).isoformat(),
+                "started_at": None,
+                "stopped_at": None,
+                "running" : False
             }
             logger.info("Registered app '%s'", spec.name)
+            return info
+
+    def restore_app(self, spec: AppSpec) -> dict[str, Any]:
+        """Respawn the actor of an app registered by a previous server run.
+
+        The registration graph and the persisted source already exist (see
+        :func:`restore_app_specs`), so this skips ``register()`` and goes
+        straight to the build phase. Like register_app, a build failure is
+        non-fatal: the app stays listed and the run phase can rebuild.
+        """
+        from acquirium.Client.acquirium import Acquirium
+
+        with self._lock:
+            if spec.name in self._apps:
+                raise ValueError(f"App '{spec.name}' is already registered")
+
+            aq = Acquirium(
+                server_url=self.server_url,
+                server_port=self.server_port,
+                use_ssl=self.use_ssl,
+            )
+            actor = AppRunner.remote(spec, self.app_storage_root, aq)
+            info: dict[str, Any] = {"name": spec.name}
+            try:
+                with _timed_debug(logger, "restore_app setup app=%s", spec.name):
+                    info = {**info, **ray.get(actor.setup.remote())}
+            except Exception:
+                logger.exception("Build phase failed for restored app '%s'", spec.name)
+
+            self._apps[spec.name] = {
+                "name": spec.name,
+                "spec": spec,
+                "actor": actor,
+                "registered_at": datetime.now(timezone.utc).isoformat(),
+                "started_at": None,
+                "stopped_at": None,
+                "running": False,
+            }
             return info
 
     def list_apps(self) -> list[dict[str, Any]]:
         with self._lock:
             records = list(self._apps.values())
         return [
-            {"name": r["name"], "started_at": r["started_at"]} for r in records
+            {"name": r["name"],"running": r["running"], "started_at": r["started_at"],"stopped_at":r["stopped_at"]} for r in records
         ]
 
     def _actor(self, app_id: str):
@@ -724,14 +884,38 @@ class AppSupervisor:
     def run_app(self, req: AppRunRequest) -> dict[str, Any]:
         """Route a run request to the app's actor, which schedules it."""
         actor = self._actor(req.app_id)
-        return ray.get(
-            actor.run.remote(req.start, req.end, req.params, req.keep_alive, req.interval)
+        with _timed_debug(logger, "run_app actor.run app=%s", req.app_id):
+            run_message = ray.get(
+                actor.run.remote(req.start, req.end, req.params, req.keep_alive, req.interval)
+            )
+        with self._lock:
+            record = self._apps.get(req.app_id)
+            if record is None:
+                raise KeyError(f"Unknown app: {req.app_id}")
+            else:
+                record["running"] = True
+                record["started_at"] = datetime.now(timezone.utc).isoformat()
+                record["stopped_at"] = None
+        logger.info(
+            "App '%s' started (keep_alive=%s, interval=%s)",
+            req.app_id, req.keep_alive, req.interval,
         )
+        return run_message
 
     def stop_app(self, app_id: str) -> dict[str, Any]:
         """Ask the app's actor to stop its keep-alive loop."""
         actor = self._actor(app_id)
-        return ray.get(actor.stop.remote())
+        with _timed_debug(logger, "stop_app actor.stop app=%s", app_id):
+            stop_message = ray.get(actor.stop.remote())
+        with self._lock:
+            record = self._apps.get(app_id)
+            if record is None:
+                raise KeyError(f"Unknown app: {app_id}")
+            else:
+                record["running"] = False
+                record["stopped_at"] = datetime.now(timezone.utc).isoformat()
+        logger.info("App '%s' stopped", app_id)
+        return stop_message
 
     def app_status(self, app_id: str) -> dict[str, Any]:
         """Ask the app's actor to report its build/run status."""

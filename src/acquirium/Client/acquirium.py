@@ -17,6 +17,7 @@ from rdflib.namespace import RDF, RDFS
 import warnings
 
 from acquirium.Client.query import Query
+from acquirium.Client.app_display import AppsResponse
 
 
 def _dt_to_iso(v: "str | datetime | None") -> "str | None":
@@ -483,22 +484,22 @@ class Acquirium:
         interval: float = 10.0,
     ) -> dict[str, Any]:
         """Trigger an app execution in its own container via the server."""
-        return self.client.run_app(
+        return AppsResponse(self.client.run_app(
             app_id,
             start=start,
             end=end,
             params=params or {},
             keep_alive=keep_alive,
             interval=interval,
-        )
+        ))
 
     def stop_app(self, *, run_id: str | None = None, app_id: str | None = None) -> dict[str, Any]:
         """Stop a keep-alive app loop by run_id or all loops for an app_id."""
-        return self.client.stop_app(run_id=run_id, app_id=app_id)
+        return AppsResponse(self.client.stop_app(run_id=run_id, app_id=app_id))
 
     def list_app_runs(self, *, app_id: str | None = None) -> dict[str, Any]:
-        """List active keep-alive app runs."""
-        return self.client.list_app_runs(app_id=app_id)
+        """List registered apps, or one app's build/run status if app_id is given."""
+        return AppsResponse(self.client.list_app_runs(app_id=app_id))
 
     def generate_grafana_dashboard(self, grafana_server, api_key):
         return self.client.generate_grafana_dashboard(grafana_server, api_key)

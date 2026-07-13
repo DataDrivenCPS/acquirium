@@ -9,6 +9,12 @@ import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any, Optional, Iterator
+
+# When the server is launched via `uv run`, Ray's uv hook would give every
+# worker a fresh env resolved from pyproject.toml — dropping optional extras
+# like watertap/pyomo. Disable it so actors inherit this process's environment.
+# Ray reads this flag once at import time, so it must be set before `import ray`.
+os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "0")
 import ray
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request
@@ -55,31 +61,57 @@ def _self_connect_cfg(cfg: dict) -> tuple[str, int, bool]:
     return host, port, use_ssl
 
 
-async def _start_config_drivers(supervisor: DriverSupervisor, cfg: dict) -> None:
-    """Start every [[drivers]] entry from the config as a Ray actor.
-
-    Driver actors talk to this server over HTTP, so this waits until the
-    server answers /health before starting them — the lifespan startup hook
-    runs before uvicorn begins serving. Setup ordering stays serial because
-    DriverSupervisor.start_driver holds its lock across setup.
-    """
+async def _wait_until_healthy(base_url: str) -> bool:
+    """Poll /health until the server answers. The lifespan startup hook runs
+    before uvicorn begins serving, so startup work whose actors connect back
+    over HTTP must wait for this first."""
     import requests
 
-    entries = cfg.get("drivers", [])
-    if not entries:
-        return
-
-    health_url = f"{supervisor.base_url}/health"
+    health_url = f"{base_url}/health"
     for _ in range(300):
         try:
             r = await asyncio.to_thread(requests.get, health_url, timeout=2)
             if r.ok:
-                break
+                return True
         except Exception:
             pass
         await asyncio.sleep(2)
-    else:
-        log.error("Server never became healthy at %s; not starting [[drivers]]", health_url)
+    return False
+
+
+async def _restore_registered_apps(app_supervisor: AppSupervisor, manager: Manager) -> None:
+    """Respawn apps registered by a previous server run.
+
+    register_app() persisted each app's source under the app storage dir and
+    its registration triples in the graph; a restart only loses the
+    supervisor's in-memory records. Rebuild the specs from graph + disk and
+    respawn the actors without re-writing the graph. Restored apps come back
+    registered but not running — keep-alive state is not persisted.
+    """
+    from acquirium.Server.ray_backend import restore_app_specs
+
+    try:
+        specs = await asyncio.to_thread(restore_app_specs, manager)
+    except Exception:
+        log.exception("App restore: failed to rebuild specs from the graph")
+        return
+    for spec in specs:
+        try:
+            await asyncio.to_thread(app_supervisor.restore_app, spec)
+            log.info("Restored app '%s' from the persistent store", spec.name)
+        except Exception:
+            log.exception("Failed to restore app '%s'", spec.name)
+
+
+async def _start_config_drivers(supervisor: DriverSupervisor, cfg: dict) -> None:
+    """Start every [[drivers]] entry from the config as a Ray actor.
+
+    The caller must wait for /health first (_wait_until_healthy) — driver
+    actors talk to this server over HTTP. Setup ordering stays serial because
+    DriverSupervisor.start_driver holds its lock across setup.
+    """
+    entries = cfg.get("drivers", [])
+    if not entries:
         return
 
     for entry in entries:
@@ -179,9 +211,20 @@ async def lifespan(app: FastAPI):
         server_url=_host, server_port=_port, use_ssl=_use_ssl,
     )
     app.state.apps = app_supervisor
-    # [[drivers]] from the config start once the server answers /health;
-    # the lifespan startup hook runs before uvicorn begins serving.
-    startup_task = asyncio.create_task(_start_config_drivers(supervisor, _cfg))
+    # Once the server answers /health: respawn apps persisted by a previous
+    # run, then start the config's [[drivers]]. Apps restore first so their
+    # build-phase graph reads/writes don't interleave with driver setup.
+    async def _startup_actors() -> None:
+        if not await _wait_until_healthy(supervisor.base_url):
+            log.error(
+                "Server never became healthy at %s; skipping app restore and [[drivers]]",
+                supervisor.base_url,
+            )
+            return
+        await _restore_registered_apps(app_supervisor, m)
+        await _start_config_drivers(supervisor, _cfg)
+
+    startup_task = asyncio.create_task(_startup_actors())
 
     try:
         yield
