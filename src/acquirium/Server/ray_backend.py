@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 import ray
 import json
+import shutil
 import sys
 import time
 import importlib.util
@@ -342,6 +343,36 @@ class AppRunner:
             "name": self.spec.name,
             "outputs": [o.point_uri for o in self.spec.outputs],
         }
+
+    def deregister(self) -> dict[str, Any]:
+        """Inverse of :meth:`register`: strip this app's registration triples.
+
+        Removes every triple describing the app node, the virtual points it
+        produces, and those points' external references, then (server-side)
+        bumps the graph version so keep-alive workers rebuild. Driven only by
+        the app URI, so it also cleans up triples the build phase may have
+        added on the points, not just what register() wrote.
+        """
+        app_uri = app_uri_for(self.spec.name)
+        query = f"""
+        DELETE {{
+          ?app ?ap ?ao .
+          ?point ?pp ?po .
+          ?ref ?rp ?ro .
+        }} WHERE {{
+          VALUES ?app {{ <{app_uri}> }}
+          {{ ?app ?ap ?ao . }}
+          UNION {{ ?app <{PRODUCES}> ?point . ?point ?pp ?po . }}
+          UNION {{
+            ?app <{PRODUCES}> ?point .
+            ?point <{HAS_EXTERNAL_REFERENCE}> ?ref .
+            ?ref ?rp ?ro .
+          }}
+        }}
+        """
+        self.acquirium_cli.client.sparql_update(query)
+        self.logger.info("Deregistered app '%s' from the graph", self.spec.name)
+        return {"name": self.spec.name}
 
     def _app_spec_graph(self, spec: AppSpec) -> Graph:
         app_uri = URIRef(app_uri_for(spec.name))
@@ -766,6 +797,17 @@ def restore_app_specs(manager) -> list[AppSpec]:
     return specs
 
 
+class AppAlreadyRegistered(ValueError):
+    """Raised when registering a name that is already registered without replace."""
+
+    def __init__(self, name: str):
+        super().__init__(
+            f"App '{name}' is already registered; "
+            f"pass replace=True to overwrite it."
+        )
+        self.name = name
+
+
 class AppSupervisor:
     """Owns the AppRunner actors of one server process, keyed by app name.
 
@@ -789,12 +831,17 @@ class AppSupervisor:
         self._lock = threading.Lock()
         self._apps: dict[str, dict[str, Any]] = {}
 
-    def register_app(self, spec: AppSpec) -> dict[str, Any]:
+    def register_app(self, spec: AppSpec, *, replace: bool = False) -> dict[str, Any]:
         from acquirium.Client.acquirium import Acquirium
 
         with self._lock:
-            if spec.name in self._apps:
-                raise ValueError(f"App '{spec.name}' is already registered")
+            replaced = spec.name in self._apps
+            if replaced:
+                if not replace:
+                    raise AppAlreadyRegistered(spec.name)
+                # Gracefully dispose the existing app (stop, clean its graph
+                # registration, kill the actor) before spawning the new one.
+                self._teardown_app(self._apps.pop(spec.name), remove_source=False)
 
             aq = Acquirium(
                 server_url=self.server_url,
@@ -826,8 +873,8 @@ class AppSupervisor:
                 "stopped_at": None,
                 "running" : False
             }
-            logger.info("Registered app '%s'", spec.name)
-            return info
+            logger.info("%s app '%s'", "Replaced" if replaced else "Registered", spec.name)
+            return {**info, "replaced": replaced}
 
     def restore_app(self, spec: AppSpec) -> dict[str, Any]:
         """Respawn the actor of an app registered by a previous server run.
@@ -841,7 +888,7 @@ class AppSupervisor:
 
         with self._lock:
             if spec.name in self._apps:
-                raise ValueError(f"App '{spec.name}' is already registered")
+                self._teardown_app(self._apps.pop(spec.name), remove_source=False)
 
             aq = Acquirium(
                 server_url=self.server_url,
@@ -866,6 +913,48 @@ class AppSupervisor:
                 "running": False,
             }
             return info
+
+    def _teardown_app(self, record: dict[str, Any], *, remove_source: bool = False) -> None:
+        """Gracefully dispose one app's actor. Does NOT touch ``self._apps`` or
+        the lock — the caller owns removing the record. Every step is
+        best-effort so a partial failure still frees the name.
+
+        Order: stop a running keep-alive loop, strip the app's registration
+        triples from the graph, kill the actor, then (optionally) delete its
+        persisted source.
+        """
+        actor = record["actor"]
+        name = record["name"]
+        if record.get("running"):
+            try:
+                ray.get(actor.stop.remote())
+            except Exception:
+                logger.exception("Failed to stop app '%s' before teardown", name)
+        try:
+            ray.get(actor.deregister.remote())
+        except Exception:
+            logger.exception("Failed to deregister app '%s' from the graph", name)
+        try:
+            ray.kill(actor)
+        except Exception:
+            logger.exception("Failed to kill actor for app '%s'", name)
+        if remove_source:
+            app_dir = self.app_storage_root / name
+            try:
+                if app_dir.is_dir():
+                    shutil.rmtree(app_dir)
+            except Exception:
+                logger.exception("Failed to remove source dir for app '%s'", name)
+
+    def delete_app(self, app_id: str, *, remove_source: bool = True) -> dict[str, Any]:
+        """Stop, deregister, and dispose an app, cleaning up its graph triples."""
+        with self._lock:
+            record = self._apps.pop(app_id, None)
+        if record is None:
+            raise KeyError(f"Unknown app: {app_id}")
+        self._teardown_app(record, remove_source=remove_source)
+        logger.info("Deleted app '%s'", app_id)
+        return {"name": app_id, "deleted": True}
 
     def list_apps(self) -> list[dict[str, Any]]:
         with self._lock:

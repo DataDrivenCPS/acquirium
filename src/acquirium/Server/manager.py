@@ -826,6 +826,17 @@ class Manager:
             self._notify_graph_change()
         return True
 
+    def sparql_update(self, update: str) -> dict[str, Any]:
+        """Execute a SPARQL UPDATE (INSERT/DELETE) against the main graph.
+
+        Bumps the graph version when the store reports a change so long-running
+        clients (e.g. keep-alive app workers) rebuild cached queries.
+        """
+        result = self.graph_store.sparql_update(update)
+        if result.get("changed", True):
+            self._notify_graph_change()
+        return result
+
     def sparql_dict(self, query: str, use_union: bool = True) -> dict[str, Any]:
         """
         Execute a SPARQL query against the graph store and return results in dict format.

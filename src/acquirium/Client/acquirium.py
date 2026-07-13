@@ -419,8 +419,15 @@ class Acquirium:
         depends_on: list[str] | None = None,
         resolve_dependencies: bool = True,
         queries: dict[str, Query] | None = None,
+        replace: bool = False,
     ) -> dict[str, Any]:
-        """Register an Acquirium App with the server."""
+        """Register an Acquirium App with the server.
+
+        If an app with the same name is already registered, the server rejects
+        the request unless ``replace=True``, which gracefully tears down the
+        existing app (stopping it and cleaning up its graph registration)
+        before registering this one.
+        """
         query_bundle = queries if queries is not None else app.build_query(self)
         if isinstance(query_bundle, Query):
             query_bundle = {"default": query_bundle}
@@ -471,7 +478,12 @@ class Acquirium:
             outputs=output_specs,
             depends_on=deps,
         )
-        return self.client.register_app(spec)
+        return self.client.register_app(spec, replace=replace)
+
+    def delete_app(self, app_id: str) -> dict[str, Any]:
+        """Gracefully delete a registered app (stop it, clean up its graph
+        registration, and remove its persisted source)."""
+        return AppsResponse(self.client.delete_app(app_id))
 
     def run_app(
         self,

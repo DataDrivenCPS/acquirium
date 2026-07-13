@@ -41,7 +41,7 @@ import pyarrow as pa
 import polars as pl
 
 from acquirium.Server.insert_stats import insert_stats, start_insert_summary_thread
-from acquirium.Server.ray_backend import DriverSupervisor, AppSupervisor
+from acquirium.Server.ray_backend import DriverSupervisor, AppSupervisor, AppAlreadyRegistered
 
 log = logging.getLogger("acquirium.api")
 
@@ -353,11 +353,35 @@ def list_namespaces() -> dict[str, str]:
 
 
 @app.post("/apps/register")
-def register_app(spec: AppSpec) -> dict[str, Any]:
+def register_app(spec: AppSpec, replace: bool = False) -> dict[str, Any]:
+    """Register an app. Fails with 409 if the name already exists unless
+    ``replace=True``, in which case the existing app is gracefully torn down
+    (stopped, its graph registration cleaned up) and replaced."""
     try:
-        info = app.state.apps.register_app(spec)
+        info = app.state.apps.register_app(spec, replace=replace)
         return {"ok": True, **info}
+    except AppAlreadyRegistered as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
+        log.exception("register_app failed")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class AppDeleteRequest(BaseModel):
+    app_id: str
+
+
+@app.post("/apps/delete")
+def delete_app(req: AppDeleteRequest) -> dict[str, Any]:
+    """Gracefully delete a registered app: stop it, strip its registration
+    triples from the graph, kill its actor, and remove its persisted source."""
+    try:
+        result = app.state.apps.delete_app(req.app_id)
+        return {"ok": True, **result}
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        log.exception("delete_app failed")
         raise HTTPException(status_code=400, detail=str(e))
 
 
@@ -610,6 +634,19 @@ def sparql_json(query: str, use_union: bool = True) -> dict[str, Any]:
     try:
         result = app.state.manager.sparql_dict(query, use_union=use_union)
         return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class SparqlUpdateRequest(BaseModel):
+    update: str = Field(..., description="SPARQL UPDATE (INSERT/DELETE) statement")
+
+
+@app.post("/sparql_update")
+def sparql_update(req: SparqlUpdateRequest) -> dict[str, Any]:
+    """Run a SPARQL UPDATE against the main graph and bump the graph version."""
+    try:
+        return {"ok": True, **app.state.manager.sparql_update(req.update)}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

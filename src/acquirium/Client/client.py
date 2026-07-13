@@ -219,6 +219,13 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
+    def sparql_update(self, update: str) -> dict:
+        """Execute a SPARQL UPDATE (INSERT/DELETE) against the graph store."""
+        url = f"{self.base_url}/sparql_update"
+        response = requests.post(url, json={"update": update})
+        _raise_for_status(response)
+        return response.json()
+
     def namespace_manager(self) -> NamespaceManager:
         """Return the Graph that has the ``prefix -> namespace URI`` map from the server.
 
@@ -484,10 +491,18 @@ class AcquiriumClient:
         response.raise_for_status()
         return response.json()
 
-    def register_app(self, spec: AppSpec) -> dict:
+    def register_app(self, spec: AppSpec, *, replace: bool = False) -> dict:
         url = f"{self.base_url}/apps/register"
-        response = requests.post(url, json=spec.model_dump(mode="json"))
-        response.raise_for_status()
+        response = requests.post(
+            url, json=spec.model_dump(mode="json"), params={"replace": replace}
+        )
+        _raise_for_status(response)
+        return response.json()
+
+    def delete_app(self, app_id: str) -> dict:
+        url = f"{self.base_url}/apps/delete"
+        response = requests.post(url, json={"app_id": app_id})
+        _raise_for_status(response)
         return response.json()
 
     def run_app(
