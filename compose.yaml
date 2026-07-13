@@ -76,46 +76,6 @@ services:
     profiles:
       - server
 
-  watertap_sim:
-    platform: linux/arm64
-    build:
-      context: ./deployments/WATERTAP/scripts
-      dockerfile: Dockerfile
-    container_name: acquirium_watertap_sim
-    depends_on:
-      mosquitto:
-        condition: service_healthy
-      timescaledb:
-        condition: service_healthy
-      acquirium:
-        condition: service_healthy
-    networks:
-      - acquirium_net
-    profiles:
-      - watertap_simulation
-
-  watertap_w_gui:
-    platform: linux/arm64
-    build:
-      context: ./deployments/WATERTAP2/
-      dockerfile: scripts/Dockerfile
-    container_name: acquirium_watertap_w_gui
-    ports:
-      - "8501:8501"
-    depends_on:
-      mosquitto:
-        condition: service_healthy
-      timescaledb:
-        condition: service_healthy
-      acquirium:
-        condition: service_healthy
-    networks:
-      - acquirium_net
-    profiles:
-      - watertap_simulation
-      - watertap_gui
-
-
   testing_service:
     build:
       context: .
@@ -132,27 +92,6 @@ services:
       - acquirium_net
     profiles:
       - test
-
-  benicia_sim:
-    platform: linux/arm64
-    build:
-      context: ./deployments/BENICIA/
-      dockerfile: scripts/Dockerfile
-    container_name: acquirium_benicia_sim
-    depends_on:
-      mosquitto:
-        condition: service_healthy
-      timescaledb:
-        condition: service_healthy
-      acquirium:
-        condition: service_healthy
-    networks:
-      - acquirium_net
-    profiles:
-      - benicia_simulation
-
-
-
 
   grafana:
     image: grafana/grafana:latest

@@ -95,19 +95,6 @@ testing-up:
 testing-down:
 	$(TEST_COMPOSE) --profile server --profile test down --remove-orphans
 
-watertap-up: ACQUIRIUM_RECREATE := true
-watertap-up:
-	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile server --profile watertap_simulation up -d --build
-
-watertap-down:
-	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile server --profile watertap_simulation down --remove-orphans
-
-benicia-up:
-	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile server --profile benicia_simulation up -d --build
-
-benicia-down:
-	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile server --profile benicia_simulation down --remove-orphans
-
 unit-test:
 	uv run pytest tests/unit/ -v --tb=short
 
@@ -121,9 +108,3 @@ integration-test:
 	$(TEST_PYTEST_ENV) uv run pytest tests/ -v --tb=short --ignore=tests/unit || status=$$?; \
 	$(MAKE) testing-down; \
 	exit $$status
-
-watertap-gui-up:
-	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile server --profile watertap_gui up -d --build
-
-watertap-gui-down:
-	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile server --profile watertap_gui down --remove-orphans
