@@ -217,3 +217,5 @@ scripts/benchmark/scalability/*.csv
 
 # Local DPR trailer data exports and generated databases.
 dpr-trailer-data/
+
+.run_logs
