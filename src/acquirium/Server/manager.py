@@ -215,7 +215,7 @@ class Manager:
         self.embedding_matcher = self._graph_matcher
 
         # Embedding index status tracking
-        self._embedding_status_lock = threading.Lock()
+        self._embedding_status_lock = Lock()
         self._embedding_status: dict[str, dict[str, Any]] = {
             "graph": {"state": "idle", "concepts": 0, "surfaces": 0, "error": None, "last_built": None, "duration_s": None},
             "qudt":  {"state": "idle", "concepts": 0, "surfaces": 0, "error": None, "last_built": None, "duration_s": None},
