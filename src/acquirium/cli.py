@@ -99,8 +99,17 @@ def _apply_server_env(cfg: dict) -> None:
 # Driver import helpers
 # ---------------------------------------------------------------------------
 
-def _import_driver_class(driver_spec: str, *, base_dir: Path | None = None) -> type:
+def _import_driver_class(
+    driver_spec: str, *, base_dir: Path | None = None
+) -> tuple[type, str | None]:
     """Resolve a ``path/to/file.py:ClassName`` or ``my.module:ClassName`` spec to a Driver subclass.
+
+    Returns the class and, for a file spec, the directory added to ``sys.path``
+    so the file's sibling modules resolve. Callers that ship the class to
+    another process must put that directory on the target's ``PYTHONPATH``:
+    siblings imported by name pickle by reference, so the receiving process has
+    to be able to import them itself. Module specs return ``None`` — already
+    importable anywhere.
 
     Raises ``ValueError`` on any resolution failure so callers in background
     threads see a real exception rather than a silent ``SystemExit``.
@@ -114,6 +123,7 @@ def _import_driver_class(driver_spec: str, *, base_dir: Path | None = None) -> t
 
     path_part, class_name = driver_spec.rsplit(":", 1)
 
+    source_dir: str | None = None
     is_file = "/" in path_part or path_part.endswith(".py") or Path(path_part).exists()
     if is_file:
         file_path = Path(path_part)
@@ -124,9 +134,9 @@ def _import_driver_class(driver_spec: str, *, base_dir: Path | None = None) -> t
         spec = importlib.util.spec_from_file_location("_acquirium_driver_module", file_path)
         if spec is None or spec.loader is None:
             raise ValueError(f"could not load file: {path_part}")
-        file_dir = str(file_path.parent)
-        if file_dir not in sys.path:
-            sys.path.insert(0, file_dir)
+        source_dir = str(file_path.parent)
+        if source_dir not in sys.path:
+            sys.path.insert(0, source_dir)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)  # type: ignore[union-attr]
     else:
@@ -140,7 +150,7 @@ def _import_driver_class(driver_spec: str, *, base_dir: Path | None = None) -> t
         raise ValueError(f"'{class_name}' not found in {path_part}")
     if not (inspect.isclass(cls) and issubclass(cls, _Driver) and cls is not _Driver):
         raise ValueError(f"'{class_name}' is not a Driver subclass")
-    return cls
+    return cls, source_dir
 
 
 def _driver_connect_cfg(

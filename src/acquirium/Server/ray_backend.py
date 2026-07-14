@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +28,20 @@ if TYPE_CHECKING:
     from acquirium.Driver import Driver
 
 logger = logging.getLogger("acquirium.ray")
+
+
+def _worker_pythonpath(source_dir: str) -> str:
+    """Prepend ``source_dir`` to this process's PYTHONPATH for a Ray worker.
+
+    runtime_env env_vars replace rather than extend, so the inherited value has
+    to be carried over explicitly or the worker loses it.
+    """
+    inherited = os.environ.get("PYTHONPATH", "")
+    if not inherited:
+        return source_dir
+    if source_dir in inherited.split(os.pathsep):
+        return inherited
+    return source_dir + os.pathsep + inherited
 
 
 @ray.remote
@@ -160,14 +175,19 @@ class DriverSupervisor:
                 raise ValueError(f"Driver '{driver_name}' is already running")
 
             base_dir = Path(config.get("__config_dir", Path.cwd()))
-            driver_cls = _import_driver_class(spec, base_dir=base_dir)
+            driver_cls, source_dir = _import_driver_class(spec, base_dir=base_dir)
             aq = Acquirium(
                 server_url=self.server_url,
                 server_port=self.server_port,
                 use_ssl=self.use_ssl,
                 insert_batch_rows=int(driver_section.get("insert_batch_rows", 50_000)),
             )
-            runner = DriverRunner.remote(driver_cls, config, aq, effective_interval)
+            runner_cls = DriverRunner
+            if source_dir is not None:
+                runner_cls = DriverRunner.options(
+                    runtime_env={"env_vars": {"PYTHONPATH": _worker_pythonpath(source_dir)}}
+                )
+            runner = runner_cls.remote(driver_cls, config, aq, effective_interval)
             try:
                 ray.get(runner.setup.remote())
             except Exception:
