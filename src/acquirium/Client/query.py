@@ -697,7 +697,7 @@ class Query:
                 )
                 .alias(c)
                 for c in cols_w_alias
-            ])
+            ]).unique()
             self.cache[cache_key] = pl_table
         return self.cache[cache_key]
 
@@ -800,7 +800,7 @@ class Query:
     def filter_by_medium(self, medium: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Query":
         if isinstance(medium, str):
             medium = [medium]
-        return self.filter_data_nodes(predicate=HAS_MEDIUM, value=medium, _from=_from, exclude=exclude)
+        return self.filter_data_nodes(predicate=OF_MEDIUM, value=medium, _from=_from, exclude=exclude)
 
     @flex_query_rdf_inputs(specs=[FlexSpec("substance", "class")])
     def filter_by_substance(self, substance: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Query":

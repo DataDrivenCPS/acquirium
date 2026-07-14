@@ -78,6 +78,7 @@ ACQUIRIUM_VALUE_KIND = ACQUIRIUM_NS.valueKind  # "numeric" or "text"
 ACQUIRIUM_DATASOURCE = ACQUIRIUM_NS.DataSourceRegistry
 
 HAS_MEDIUM = S223.hasMedium
+OF_MEDIUM = S223.ofMedium
 OF_SUBSTANCE = S223.ofSubstance
 HAS_QUANTITY_KIND = QUDT.hasQuantityKind
 HAS_ENUMERATION_KIND = QUDT.hasEnumerationKind
