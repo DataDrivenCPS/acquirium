@@ -470,7 +470,7 @@ class DuckDBStore:
             ORDER BY timestamp ASC
         """
         try:
-            with timed_debug(logger, "query_logs point_uri=%s clauses=%d", point_uri, len(clauses)):
+            with self._lock, timed_debug(logger, "query_logs point_uri=%s clauses=%d", point_uri, len(clauses)):
                 tbl = self._conn.execute(query, params).to_arrow_table()
         except Exception as exc:
             logger.error("query_logs failed: %s", exc)
@@ -520,7 +520,7 @@ class DuckDBStore:
 
     def sql_query(self, query: str) -> dict[str, Any]:
         logger.debug("sql_query: %s", query.replace("\n", " ")[:200])
-        with timed_debug(logger, "sql_query"):
+        with self._lock, timed_debug(logger, "sql_query"):
             tbl = self._conn.execute(query).to_arrow_table()
         d = tbl.to_pydict()
         cols = tbl.schema.names
