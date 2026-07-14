@@ -83,18 +83,24 @@ def _build_stream_triples(
         g.add((ref_uri, STORED_AT,           ACQUIRIUM_DB_URI))
         g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
 
+    semantic_target = None
     if point_uri_raw is not None:
         subj = URIRef(str(point_uri_raw))
+        semantic_target = subj
         g.add((subj, RDF.type, VIRTUAL_POINT))
         if label is not None:
             g.add((subj, RDFS.label, Literal(label)))
-        _add_triple(g, subj, HAS_UNIT,          _coerce_resolved(resolved, "unit", stream.get("unit")))
-        _add_triple(g, subj, HAS_QUANTITY_KIND, _coerce_resolved(resolved, "quantity_kind", stream.get("quantity_kind")))
-        _add_triple(g, subj, HAS_MEDIUM,        _coerce_resolved(resolved, "medium", stream.get("medium")))
-        _add_triple(g, subj, OF_SUBSTANCE,      _coerce_resolved(resolved, "substance", stream.get("substance")))
-        _add_triple(g, subj, DATA_SOURCE, stream.get("data_source"))
         if ref_uri is not None:
             g.add((subj, HAS_EXTERNAL_REFERENCE, ref_uri))
+    elif ref_uri is not None:
+        semantic_target = ref_uri
+
+    if semantic_target is not None:
+        _add_triple(g, semantic_target, HAS_UNIT,          _coerce_resolved(resolved, "unit", stream.get("unit")))
+        _add_triple(g, semantic_target, HAS_QUANTITY_KIND, _coerce_resolved(resolved, "quantity_kind", stream.get("quantity_kind")))
+        _add_triple(g, semantic_target, HAS_MEDIUM,        _coerce_resolved(resolved, "medium", stream.get("medium")))
+        _add_triple(g, semantic_target, OF_SUBSTANCE,      _coerce_resolved(resolved, "substance", stream.get("substance")))
+        _add_triple(g, semantic_target, DATA_SOURCE, stream.get("data_source"))
 
     target = ref_uri if ref_uri is not None else (URIRef(str(point_uri_raw)) if point_uri_raw is not None else None)
     if target is not None:

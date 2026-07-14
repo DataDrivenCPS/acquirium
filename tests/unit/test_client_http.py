@@ -3,8 +3,10 @@
 import pytest
 from unittest.mock import patch, MagicMock
 from datetime import datetime, timezone
+from rdflib import URIRef
 
 from acquirium.Client.client import AcquiriumClient
+from acquirium.Server.direct_client import _DirectClient
 
 
 @pytest.fixture
@@ -106,6 +108,126 @@ class TestResolveText:
         call_kwargs = mock_requests.get.call_args
         # Verify kind param was passed
         assert "class" in str(call_kwargs)
+
+
+class TestResolveRecord:
+    @patch("acquirium.Client.client.requests")
+    def test_resolve_record_forwards_context(self, mock_requests, client):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"matches": {"unit": [{"uri": "urn:u"}]}}
+        mock_resp.raise_for_status = MagicMock()
+        mock_requests.post.return_value = mock_resp
+
+        out = client.resolve_record(
+            {"unit": ("kg", "unit")},
+            context=["http://qudt.org/vocab/quantitykind/Mass"],
+        )
+
+        assert out["unit"][0]["uri"] == "urn:u"
+        body = mock_requests.post.call_args.kwargs["json"]
+        assert body["context"] == ["http://qudt.org/vocab/quantitykind/Mass"]
+
+    def test_resolve_record_uris_passes_through_uri_and_uses_it_as_context(self, client):
+        captured = {}
+
+        def fake_resolve_record(fields, top_k=5, min_score=0.5, context=None):
+            captured["fields"] = fields
+            captured["top_k"] = top_k
+            captured["min_score"] = min_score
+            captured["context"] = context
+            return {"unit": [{"uri": "http://qudt.org/vocab/unit/KiloGM"}]}
+
+        client.resolve_record = fake_resolve_record
+
+        out = client.resolve_record_uris({
+            "quantity_kind": ("http://qudt.org/vocab/quantitykind/Mass", "quantity_kind"),
+            "unit": ("kg", "unit"),
+        })
+
+        assert out == {
+            "quantity_kind": "http://qudt.org/vocab/quantitykind/Mass",
+            "unit": "http://qudt.org/vocab/unit/KiloGM",
+        }
+        assert captured["fields"] == {"unit": ("kg", "unit")}
+        assert captured["top_k"] == 1
+        assert captured["min_score"] == 0.5
+        assert captured["context"] == ["http://qudt.org/vocab/quantitykind/Mass"]
+
+    def test_resolve_record_uris_passes_through_uriref_and_uses_it_as_context(self, client):
+        captured = {}
+
+        def fake_resolve_record(fields, top_k=5, min_score=0.5, context=None):
+            captured["fields"] = fields
+            captured["top_k"] = top_k
+            captured["min_score"] = min_score
+            captured["context"] = context
+            return {"unit": [{"uri": "http://qudt.org/vocab/unit/KiloGM"}]}
+
+        client.resolve_record = fake_resolve_record
+        qk = URIRef("http://qudt.org/vocab/quantitykind/Mass")
+
+        out = client.resolve_record_uris({
+            "quantity_kind": (qk, "quantity_kind"),
+            "unit": ("kg", "unit"),
+        })
+
+        assert out == {
+            "quantity_kind": qk,
+            "unit": "http://qudt.org/vocab/unit/KiloGM",
+        }
+        assert captured["fields"] == {"unit": ("kg", "unit")}
+        assert captured["top_k"] == 1
+        assert captured["min_score"] == 0.5
+        assert captured["context"] == ["http://qudt.org/vocab/quantitykind/Mass"]
+
+
+class TestDirectClientResolveRecord:
+    def test_resolve_record_uris_passes_through_uri_and_uses_it_as_context(self):
+        manager = MagicMock()
+        manager.resolve_record.return_value = {
+            "unit": [{"uri": "http://qudt.org/vocab/unit/KiloGM"}]
+        }
+        client = _DirectClient(manager, origin="test")
+
+        out = client.resolve_record_uris({
+            "quantity_kind": ("http://qudt.org/vocab/quantitykind/Mass", "quantity_kind"),
+            "unit": ("kg", "unit"),
+        })
+
+        assert out == {
+            "quantity_kind": "http://qudt.org/vocab/quantitykind/Mass",
+            "unit": "http://qudt.org/vocab/unit/KiloGM",
+        }
+        manager.resolve_record.assert_called_once_with(
+            {"unit": ("kg", "unit")},
+            top_k=1,
+            min_score=0.5,
+            context=["http://qudt.org/vocab/quantitykind/Mass"],
+        )
+
+    def test_resolve_record_uris_passes_through_uriref_and_uses_it_as_context(self):
+        manager = MagicMock()
+        manager.resolve_record.return_value = {
+            "unit": [{"uri": "http://qudt.org/vocab/unit/KiloGM"}]
+        }
+        client = _DirectClient(manager, origin="test")
+        qk = URIRef("http://qudt.org/vocab/quantitykind/Mass")
+
+        out = client.resolve_record_uris({
+            "quantity_kind": (qk, "quantity_kind"),
+            "unit": ("kg", "unit"),
+        })
+
+        assert out == {
+            "quantity_kind": qk,
+            "unit": "http://qudt.org/vocab/unit/KiloGM",
+        }
+        manager.resolve_record.assert_called_once_with(
+            {"unit": ("kg", "unit")},
+            top_k=1,
+            min_score=0.5,
+            context=["http://qudt.org/vocab/quantitykind/Mass"],
+        )
 
 
 # ── register_app / run_app / stop_app / list_app_runs ──────

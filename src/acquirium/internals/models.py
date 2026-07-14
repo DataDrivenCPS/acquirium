@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta
-from typing import Literal, Any, TYPE_CHECKING
+from typing import Literal, Any, TYPE_CHECKING, Optional
 from dataclasses import dataclass
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 from acquirium.internals.internals_namespaces import ACQUIRIUM_NS
@@ -25,6 +25,50 @@ def looks_like_uri(value: object) -> bool:
     return isinstance(value, str) and value.startswith(
         ("http://", "https://", "urn:")
     )
+
+
+def split_record_uri_inputs(
+    fields: dict[str, tuple[Any, Optional[str]]],
+) -> tuple[
+    dict[str, str | URIRef | None],
+    dict[str, tuple[str, Optional[str]]],
+    list[str],
+]:
+    """Partition record fields into passthrough outputs, text to resolve, and URI context.
+
+    Input shape matches ``resolve_record_uris``: each key is a caller-chosen
+    label and each value is ``(text, kind)`` where ``kind`` is the resolver
+    role for that field.
+
+    The returned tuple is:
+
+    1. ``out``: fields that already have their final answer and therefore
+       should bypass text resolution. This includes ``None``, plain URI
+       strings, and ``rdflib.URIRef`` objects.
+    2. ``to_resolve``: fields whose first tuple element is plain text and
+       still needs joint resolution.
+    3. ``context``: string URIs derived from the passthrough URI inputs.
+
+    ``context`` is intentionally stringified even for ``URIRef`` inputs because
+    the resolver transport and matching logic operate on raw URI strings.
+    Callers can feed ``context`` into joint record resolution so already-known
+    sibling URIs can help disambiguate the remaining text fields.
+    """
+    out: dict[str, str | URIRef | None] = {}
+    to_resolve: dict[str, tuple[str, Optional[str]]] = {}
+    context: list[str] = []
+    for name, (text, kind) in fields.items():
+        if text is None:
+            out[name] = None
+        elif isinstance(text, URIRef):
+            out[name] = text
+            context.append(str(text))
+        elif looks_like_uri(text):
+            out[name] = text
+            context.append(text)
+        else:
+            to_resolve[name] = (text, kind)
+    return out, to_resolve, context
 
 
 def compute_ref_uri(source_id: str, ref_name: str) -> URIRef:

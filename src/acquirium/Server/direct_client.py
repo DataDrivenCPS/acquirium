@@ -19,9 +19,11 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Optional
+from rdflib import URIRef
 
 from acquirium.Client.acquirium import Acquirium
 from acquirium.Server.insert_stats import insert_stats
+from acquirium.internals.models import split_record_uri_inputs
 
 import logging
 import warnings
@@ -120,8 +122,47 @@ class _DirectClient:
         kind: Optional[str] = None,
         top_k: int = 5,
         min_score: float = 0.5,
+        context: Optional[list[str]] = None,
     ) -> list[dict]:
-        return self._manager.resolve_text(text, kind=kind, top_k=top_k, min_score=min_score)
+        return self._manager.resolve_text(
+            text,
+            kind=kind,
+            top_k=top_k,
+            min_score=min_score,
+            context=context,
+        )
+
+    def resolve_record(
+        self,
+        fields: dict[str, tuple[str, Optional[str]]],
+        top_k: int = 5,
+        min_score: float = 0.5,
+        context: Optional[list[str]] = None,
+    ) -> dict[str, list[dict]]:
+        return self._manager.resolve_record(
+            fields,
+            top_k=top_k,
+            min_score=min_score,
+            context=context,
+        )
+
+    def resolve_record_uris(
+        self,
+        fields: dict[str, tuple[Any, Optional[str]]],
+        min_score: float = 0.5,
+    ) -> dict[str, str | URIRef | None]:
+        out, to_resolve, context = split_record_uri_inputs(fields)
+        if to_resolve:
+            matches = self.resolve_record(
+                to_resolve,
+                top_k=1,
+                min_score=min_score,
+                context=context or None,
+            )
+            for name in to_resolve:
+                m = matches.get(name) or []
+                out[name] = m[0]["uri"] if m else None
+        return out
 
 
 class DirectAcquirium(Acquirium):

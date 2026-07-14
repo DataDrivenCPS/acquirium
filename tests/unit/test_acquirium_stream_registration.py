@@ -15,6 +15,10 @@ from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_VALUE_KIND,
     DATA_SOURCE,
     HAS_EXTERNAL_REFERENCE,
+    HAS_QUANTITY_KIND,
+    HAS_UNIT,
+    HAS_MEDIUM,
+    OF_SUBSTANCE,
     STORED_AT,
     VIRTUAL_POINT,
 )
@@ -67,8 +71,23 @@ def test_register_streams_inserts_one_graph_for_multiple_streams():
 def test_register_stream_without_point_uri_writes_only_ref_node():
     aq = Acquirium.__new__(Acquirium)
     aq.client = MagicMock()
+    aq.client.resolve_record_uris.return_value = {
+        "unit": "http://qudt.org/vocab/unit/PERCENT",
+        "quantity_kind": "http://qudt.org/vocab/quantitykind/DimensionlessRatio",
+        "medium": "urn:nawi-water-ontology#Water",
+        "substance": "urn:nawi-water-ontology#Water",
+    }
 
-    aq.register_streams([{"source_id": "demo-source", "ref_name": "cpu_percent", "value_kind": "numeric"}])
+    aq.register_streams([{
+        "source_id": "demo-source",
+        "ref_name": "cpu_percent",
+        "value_kind": "numeric",
+        "unit": "http://qudt.org/vocab/unit/PERCENT",
+        "quantity_kind": "http://qudt.org/vocab/quantitykind/DimensionlessRatio",
+        "medium": "urn:nawi-water-ontology#Water",
+        "substance": "urn:nawi-water-ontology#Water",
+        "data_source": "driver",
+    }])
 
     aq.client.insert_graph.assert_called_once()
     graph_text = aq.client.insert_graph.call_args[0][0]
@@ -79,6 +98,11 @@ def test_register_stream_without_point_uri_writes_only_ref_node():
     assert (ref_uri, ACQUIRIUM_REF_NAME, Literal("cpu_percent")) in g
     assert (ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
     assert (ref_uri, STORED_AT, ACQUIRIUM_DB_URI) in g
+    assert (ref_uri, HAS_UNIT, URIRef("http://qudt.org/vocab/unit/PERCENT")) in g
+    assert (ref_uri, HAS_QUANTITY_KIND, URIRef("http://qudt.org/vocab/quantitykind/DimensionlessRatio")) in g
+    assert (ref_uri, HAS_MEDIUM, URIRef("urn:nawi-water-ontology#Water")) in g
+    assert (ref_uri, OF_SUBSTANCE, URIRef("urn:nawi-water-ontology#Water")) in g
+    assert (ref_uri, DATA_SOURCE, Literal("driver")) in g
     assert list(g.subjects(RDF.type, VIRTUAL_POINT)) == []
     assert list(g.subjects(HAS_EXTERNAL_REFERENCE, ref_uri)) == []
 

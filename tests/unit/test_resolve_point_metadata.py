@@ -7,6 +7,7 @@ and the passthrough/None contract without a server.
 from __future__ import annotations
 
 from unittest.mock import MagicMock
+from rdflib import URIRef
 
 from acquirium.Client.acquirium import Acquirium
 
@@ -57,6 +58,18 @@ def test_passthrough_and_none_delegated():
     )
     assert out == {"unit": "http://qudt.org/vocab/unit/W",
                    "quantity_kind": None}
+
+
+def test_uriref_passthrough_and_none_delegated():
+    unit = URIRef("http://qudt.org/vocab/unit/W")
+    aq = _aq(lambda fields, min_score=0.5: {
+        "unit": unit,
+        "quantity_kind": None,
+    })
+    out = aq.resolve_point_metadata(
+        {"unit": unit, "quantity_kind": "??"}
+    )
+    assert out == {"unit": unit, "quantity_kind": None}
 
 
 def test_client_failure_degrades_to_none():

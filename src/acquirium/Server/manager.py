@@ -502,6 +502,7 @@ class Manager:
         fields: dict[str, tuple[str, str | None]],
         top_k: int = 5,
         min_score: float = 0.5,
+        context: list[str] | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
         """Jointly resolve a record's fields.
 
@@ -523,7 +524,7 @@ class Manager:
             #                      ...}, ...]}
         """
         resolved = self._concept_resolver.resolve_record(
-            fields, top_k=top_k, min_score=min_score
+            fields, top_k=top_k, min_score=min_score, context=context
         )
         return {name: [asdict(r) for r in rs] for name, rs in resolved.items()}
 
