@@ -19,9 +19,8 @@ from acquirium.Server.config import OntologySource
 from acquirium.internals.models import LogEntry, Order, TimeIntervalModel, compute_ref_uri
 from acquirium.internals.internals_namespaces import *
 
-import threading
-from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING, Any, Callable
+from threading import Lock
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import pyarrow as pa
@@ -177,17 +176,14 @@ class Manager:
         self.backend = _backend
 
         self.data_dir = base
-        self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="acquirium-ingest")
         self.app_storage_root = Path(
             os.getenv("ACQUIRIUM_APP_STORAGE_ROOT", str(self.data_dir / "apps"))
         )
         self.app_storage_root.mkdir(parents=True, exist_ok=True)
         self._app_runs: dict[str, dict[str, Any]] = {}
-        self._app_runs_lock = threading.Lock()
-        self._graph_change_listeners: list[Callable[[], None]] = []
-        self._graph_change_listeners_lock = threading.Lock()
+        self._app_runs_lock = Lock()
         self._graph_version: int = 0
-        self._graph_version_lock = threading.Lock()
+        self._graph_version_lock = Lock()
 
 
         _emb_model = os.getenv("ACQUIRIUM_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
@@ -524,32 +520,9 @@ class Manager:
     #################### API ###############
     ###########################################
 
-    def add_graph_change_listener(self, callback: Callable[[], None]) -> None:
-        """Register a callback to be invoked after any graph mutation.
-
-        Listeners run synchronously on the thread that mutated the graph, so
-        they should be cheap (typically: hand off the actual work to a
-        background executor).
-        """
-        with self._graph_change_listeners_lock:
-            if callback not in self._graph_change_listeners:
-                self._graph_change_listeners.append(callback)
-
-    def remove_graph_change_listener(self, callback: Callable[[], None]) -> None:
-        with self._graph_change_listeners_lock:
-            if callback in self._graph_change_listeners:
-                self._graph_change_listeners.remove(callback)
-
     def _notify_graph_change(self) -> None:
         with self._graph_version_lock:
             self._graph_version += 1
-        with self._graph_change_listeners_lock:
-            listeners = list(self._graph_change_listeners)
-        for cb in listeners:
-            try:
-                cb()
-            except Exception:
-                logger.warning("Graph change listener %r failed", cb, exc_info=True)
 
     def graph_version(self) -> int:
         """Monotonically-increasing version bumped on every graph mutation.
@@ -937,10 +910,6 @@ class Manager:
         logger.debug("Manager.close: shutting down")
         try:
             self.stop_app(app_id="*")
-        except Exception:
-            pass
-        try:
-            self._executor.shutdown(wait=False, cancel_futures=False)
         except Exception:
             pass
         self.timescale.close()
