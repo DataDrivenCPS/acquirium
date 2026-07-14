@@ -311,7 +311,7 @@ wbsf:RO-out-retentate-flow-mass-tds a s223:QuantifiableObservableProperty ;
     qudt:hasUnit unit:KiloGM-PER-SEC .
 
 wbsf:RO-out-retentate-flow-mass-water a s223:QuantifiableObservableProperty ;
-    s223:ofMedium s223:Fluid-Water ;
+    s223:ofMedium nawi:Water-Brine ;
     qudt:hasQuantityKind qudtqk:MassFlowRate ;
     qudt:hasUnit unit:KiloGM-PER-SEC .
 
