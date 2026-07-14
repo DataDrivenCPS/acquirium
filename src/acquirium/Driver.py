@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from pathlib import Path
@@ -83,6 +84,24 @@ class Driver(ABC):
         """Return the directory containing the loaded config file, if known."""
         return Path(self.config.get("__config_dir", Path.cwd()))
 
+    def data_dir(self) -> Path:
+        """Return the resolved Acquirium data directory.
+
+        Resolved the same way the server resolves its data dir so driver state
+        lands *inside* the data dir rather than in a stray ``.acquirium`` next
+        to the config file: the ``ACQUIRIUM_DATA_DIR`` env var wins, then
+        ``[server] data_dir`` from config (relative paths resolved against the
+        config dir), falling back to ``<config_dir>/.acquirium``.
+        """
+        env_dir = os.getenv("ACQUIRIUM_DATA_DIR")
+        if env_dir:
+            return Path(env_dir)
+        server_dir = self.config.get("server", {}).get("data_dir")
+        if server_dir:
+            path = Path(server_dir)
+            return path if path.is_absolute() else (self.config_dir() / path).resolve()
+        return self.config_dir() / ".acquirium"
+
     def _init_state(self, config: dict) -> DriverState:
         """Initialize persistent state for this driver.
 
@@ -116,7 +135,7 @@ class Driver(ABC):
                 # Fallback to class name only
                 identifier = _sanitize_filename(self.__class__.__name__)
 
-        state_file = self.config_dir() / ".acquirium" / "drivers" / f"{identifier}.json"
+        state_file = self.data_dir() / "drivers" / f"{identifier}.json"
         return DriverState(state_file)
 
     @abstractmethod
