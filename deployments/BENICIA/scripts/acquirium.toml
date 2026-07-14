@@ -22,7 +22,7 @@
 
 [server]
 enabled           = true          # start the HTTP server in-process
-data_dir          = ".acquirium"        # -> deployments/BENICIA/.acquirium (duckdb, apps, graph)
+data_dir          = "../.acquirium"        # -> deployments/BENICIA/.acquirium (duckdb, apps, graph)
 timeseries_backend = "duckdb"
 
 [driver]
@@ -35,7 +35,7 @@ interval    = 1.0
 #    Generates a fresh value per property each tick and pushes to Acquirium.
 # ===========================================================================
 [[drivers]]
-spec           = "scripts/simulator_driver.py:BeniciaSimulatorDriver"
+spec           = "simulator_driver.py:BeniciaSimulatorDriver"
 interval       = 1.0
 model          = "benicia-model-100.ttl"
 source_id      = "benicia-live"
@@ -50,7 +50,7 @@ step_frac      = 0.02
 #    Replays deployments/BENICIA/data/historical/*.parquet onto the model points.
 # ===========================================================================
 [[drivers]]
-spec         = "scripts/parquet_driver.py:BeniciaParquetDriver"
+spec         = "parquet_driver.py:BeniciaParquetDriver"
 interval     = 5.0
 watch_dir    = "data/historical"
 format       = "wide"
