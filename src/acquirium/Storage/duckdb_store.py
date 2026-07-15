@@ -274,6 +274,54 @@ class DuckDBStore:
             )
         return ref_uri_str
 
+    def ensure_stream_refs(
+        self,
+        refs: Iterable[tuple[str | None, str, str, str | None, str]],
+    ) -> list[str]:
+        """Batch form of :meth:`ensure_stream_ref`: one statement for the lot.
+
+        Each entry is ``(point_uri, source_id, ref_name, ref_uri, value_kind)``.
+        Upserting from a registered frame rather than one statement per row is
+        what makes this worth having: 1000 refs take ~16ms this way versus ~3.6s
+        row-by-row.
+
+        The lock covers register/execute/unregister as a unit: the view name is
+        shared state on the write connection, so two concurrent callers would
+        otherwise overwrite each other's frame between register and insert.
+        """
+        prepared: dict[str, list[Any]] = {}
+        for point_uri, source_id, ref_name, ref_uri, value_kind in refs:
+            key = str(ref_uri if ref_uri is not None else compute_ref_uri(source_id, ref_name))
+            # Last occurrence wins, matching a sequence of individual upserts.
+            # DuckDB's ON CONFLICT DO UPDATE rejects a source naming the same row
+            # twice, and the caller's SPARQL can legitimately yield repeats.
+            prepared[key] = [key, point_uri, source_id, ref_name, normalize_value_kind(value_kind)]
+        if not prepared:
+            return []
+        df = pl.DataFrame(
+            list(prepared.values()),
+            schema=["ref_uri", "point_uri", "source_id", "ref_name", "value_kind"],
+            orient="row",
+        )
+        with self._lock, timed_debug(logger, "ensure_stream_refs rows=%d", len(df)):
+            self._conn.register("_acquirium_incoming_refs", df)
+            try:
+                self._conn.execute(
+                    f"""
+                    INSERT INTO {STREAMS_TABLE} (ref_uri, point_uri, source_id, ref_name, value_kind)
+                    SELECT ref_uri, point_uri, source_id, ref_name, value_kind
+                    FROM _acquirium_incoming_refs
+                    ON CONFLICT (ref_uri) DO UPDATE SET
+                        source_id  = excluded.source_id,
+                        ref_name   = excluded.ref_name,
+                        point_uri  = COALESCE(excluded.point_uri, {STREAMS_TABLE}.point_uri),
+                        value_kind = excluded.value_kind
+                    """
+                )
+            finally:
+                self._conn.unregister("_acquirium_incoming_refs")
+        return list(prepared.keys())
+
     def resolve_storage_key(self, point_uri: str) -> str:
         """Return the storage ref URI for point_uri, or point_uri itself if unregistered."""
         with self._lock:
