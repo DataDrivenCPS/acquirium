@@ -6,6 +6,7 @@ import os
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import RLock
 
 from ontoenv import OntoEnv
 import pyoxigraph as ox
@@ -152,6 +153,13 @@ class OxigraphGraphStore:
         main_graph_uri: URIRef = DEFAULT_MAIN_GRAPH,
         extra_ontology_sources: list[OntologySource] | None = None,
     ):
+        # Serializes the public surface below. Oxigraph's own core is
+        # thread-safe, but the derived state around it is not: the version
+        # counters are plain ints, and refreshing a cache empties a graph
+        # before reloading it, so an unguarded reader can observe the gap.
+        # Reentrant because read paths (sparql_query, export_graph) refresh
+        # those caches themselves.
+        self._lock = RLock()
         self.store_path = Path(store_path)
         self.env_root = Path(env_root)
         self.store_path.mkdir(parents=True, exist_ok=True)
@@ -221,7 +229,8 @@ class OxigraphGraphStore:
     # -------------------- ontoenv named-graph access --------------------
     def named_graph(self, iri: str) -> Graph:
         """One ontology's own graph from ontoenv (owl:imports NOT followed)."""
-        return self.env.get_graph(iri)
+        with self._lock:
+            return self.env.get_graph(iri)
 
 # -------------------- source + dependency cache coordination --------------------
     def _source_state_path(self) -> Path:
@@ -420,20 +429,24 @@ class OxigraphGraphStore:
 
     def refresh_union(self, snapshot_path: str | Path | None = None) -> dict[str, int]:
         """Ensure the dependency closure cache reflects the current source store."""
-        merged = self._source_graph_with_dependencies()
-        if snapshot_path:
-            snapshot_path = Path(snapshot_path)
-            snapshot_path.parent.mkdir(parents=True, exist_ok=True)
-            merged.serialize(destination=str(snapshot_path), format="turtle")
-        return {
-            "main_triples": len(self._source_main_graph()),
-            "union_triples": len(merged),
-        }
+        with self._lock:
+            merged = self._source_graph_with_dependencies()
+            if snapshot_path:
+                snapshot_path = Path(snapshot_path)
+                snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+                merged.serialize(destination=str(snapshot_path), format="turtle")
+            return {
+                "main_triples": len(self._source_main_graph()),
+                "union_triples": len(merged),
+            }
 
     # -------------------- SPARQL surface --------------------
     def sparql_query(self, query: str, use_union: bool = False) -> dict:
         _logger.debug("sparql_query union=%s query=%s", use_union, query)
-        with timed_debug(_logger, "sparql_query union=%s", use_union):
+        # Held across the row materialization too: pyoxigraph's query() returns
+        # a lazy iterator, so the rows are still being pulled from the store
+        # while `result` is consumed below.
+        with self._lock, timed_debug(_logger, "sparql_query union=%s", use_union):
             if use_union:
                 with timed_debug(_logger,"sparql_query--ensure imports union graph current"):
                     dataset = self.query_dataset
@@ -465,7 +478,7 @@ class OxigraphGraphStore:
 
     def sparql_update(self, update: str) -> dict:
         _logger.debug("sparql_update: %s", update.replace("\n", " ")[:200])
-        with timed_debug(_logger, "sparql_update"):
+        with self._lock, timed_debug(_logger, "sparql_update"):
             main = self._source_main_graph()
             main.update(update)
             self._finalize_source_write(affects_closure=True)
@@ -474,13 +487,15 @@ class OxigraphGraphStore:
     def export_graph(self, *, include_union: bool = True, format: str = "turtle") -> str:
         """Serialize for download: the data-graph closure, or just the data."""
         fmt = (format or "turtle").lower()
-        graph = self._source_graph_with_dependencies() if include_union else self._source_main_graph()
-        return graph.serialize(format=fmt)
+        with self._lock:
+            graph = self._source_graph_with_dependencies() if include_union else self._source_main_graph()
+            return graph.serialize(format=fmt)
 
     def export_dependency_graph(self, *, format: str = "trig") -> str:
         """Serialize only the imported triples (closure minus instance data)."""
         fmt = (format or "trig").lower()
-        return self._ensure_dependency_cache_current().serialize(format=fmt)
+        with self._lock:
+            return self._ensure_dependency_cache_current().serialize(format=fmt)
 
     def insert_graph(self, content: str | bytes | Graph, *, format: str = "turtle", replace: bool = False) -> dict[str, int | bool]:
         """Parse incoming graph data and merge (or replace) into the main graph.
@@ -496,13 +511,19 @@ class OxigraphGraphStore:
                 incoming.parse(data=content, format=fmt)
         _logger.debug("insert_graph: %d incoming triples (replace=%s)", len(incoming), replace)
 
+        # Parsing stays outside the lock: `incoming` is thread-local and this is
+        # the expensive part of the call.
         affects_closure = replace or _graph_affects_closure(incoming)
-        with timed_debug(_logger, "insert_graph merge into main (replace=%s, affects_closure=%s)", replace, affects_closure):
-            main = self._apply_main_graph_write(incoming, replace=replace)
-            self._finalize_source_write(affects_closure=affects_closure)
-        union_triples = len(main) + len(self._ensure_dependency_cache_current())
+        with self._lock:
+            with timed_debug(_logger, "insert_graph merge into main (replace=%s, affects_closure=%s)", replace, affects_closure):
+                main = self._apply_main_graph_write(incoming, replace=replace)
+                self._finalize_source_write(affects_closure=affects_closure)
+            # Counted under the same lock as the write, so the reported totals
+            # cannot include a concurrent writer's triples.
+            main_triples = len(main)
+            union_triples = main_triples + len(self._ensure_dependency_cache_current())
         return {
-            "main_triples": len(main),
+            "main_triples": main_triples,
             "union_triples": union_triples,
             "replaced": replace,
             "changed": True,
@@ -513,10 +534,11 @@ class OxigraphGraphStore:
     
     # -------------------- helpers --------------------
     def _materialize_point(self, subject: URIRef) -> Point:
-        main_graph = self._source_main_graph()
-        types = [str(o) for o in main_graph.objects(subject, RDF.type)]
-        unit_literal = next(main_graph.objects(subject, QUDT.hasUnit), None)
-        last_literal = next(main_graph.objects(subject, LAST_REPORTED), None)
+        with self._lock:
+            main_graph = self._source_main_graph()
+            types = [str(o) for o in main_graph.objects(subject, RDF.type)]
+            unit_literal = next(main_graph.objects(subject, QUDT.hasUnit), None)
+            last_literal = next(main_graph.objects(subject, LAST_REPORTED), None)
         return Point(
             uri=_external_uri(subject),
             types=types,
@@ -537,11 +559,12 @@ class OxigraphGraphStore:
 
     def close(self) -> None:
         _logger.debug("OxigraphGraphStore.close")
-        for dataset in (self.source_dataset, self.query_dataset):
-            try:
-                dataset.close()
-            except Exception:
-                pass
+        with self._lock:
+            for dataset in (self.source_dataset, self.query_dataset):
+                try:
+                    dataset.close()
+                except Exception:
+                    pass
 
     # -------------------- internal: store bootstrap --------------------
     @staticmethod
