@@ -546,31 +546,21 @@ class OxigraphGraphStore:
     # -------------------- internal: store bootstrap --------------------
     @staticmethod
     def _open_dataset(path: Path) -> tuple[Dataset, Path]:
-        """Open an Oxigraph-backed Dataset, falling back to temp if needed."""
+        """Open an Oxigraph-backed Dataset at *path*.
 
+        RocksDB's LOCK file is what stops two processes from opening the same
+        store and corrupting it, so a lock error is fatal: removing the lock or
+        diverting to a scratch store would turn a startup failure into silent
+        corruption or silent data loss.
+        """
         dataset = Dataset(store="Oxigraph", default_union=False)
-
-        def try_open(target: Path) -> None:
-            dataset.open(str(target))
-
         try:
-            try_open(path)
-            return dataset, path
-        except OSError as exc:  # pragma: no cover - depends on fs state
-            if "LOCK" in str(exc) or "No locks available" in str(exc):
-                lock_file = path / "LOCK"
-                if lock_file.exists():
-                    lock_file.unlink(missing_ok=True)
-                try:
-                    try_open(path)
-                    return dataset, path
-                except OSError:
-                    # fall through to temp fallback
-                    pass
-            # As a last resort (e.g., sandbox disallows file locking), use a temp store.
-            import tempfile
-
-            tmp_dir = Path(tempfile.mkdtemp(prefix="oxigraph-store-"))
-            dataset = Dataset(store="Oxigraph", default_union=False)
-            try_open(tmp_dir)
-            return dataset, tmp_dir
+            dataset.open(str(path))
+        except OSError as exc:
+            raise RuntimeError(
+                f"Cannot open Oxigraph store at {path}: {exc}. "
+                "Another Acquirium process is most likely already using this store "
+                "(the DuckDB and Oxigraph backends allow a single process only). "
+                "Stop it, or point this server at a different data directory."
+            ) from exc
+        return dataset, path

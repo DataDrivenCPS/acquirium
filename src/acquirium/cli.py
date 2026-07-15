@@ -333,7 +333,7 @@ def server_cmd(
     host: Annotated[Optional[str], typer.Option("--host", help="Bind host")] = None,
     port: Annotated[Optional[int], typer.Option("--port", "-p", help="Bind port")] = None,
     reload: Annotated[bool, typer.Option("--reload", help="Enable uvicorn auto-reload (development)")] = False,
-    workers: Annotated[Optional[int], typer.Option("--workers", "-w", help="Uvicorn worker processes (timescale backend only; incompatible with --reload)")] = None,
+    workers: Annotated[Optional[int], typer.Option("--workers", "-w", help="Uvicorn worker processes; must be 1 — the embedded Oxigraph graph store is single-process on every backend")] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Enable DEBUG logs in acquirium.* (server, storage, drivers)")] = False,
 ) -> None:
     """Start the Acquirium server and any [[drivers]] declared in the config.
@@ -376,6 +376,20 @@ def server_cmd(
     )
     if reload:
         effective_workers = 1  # uvicorn forbids workers > 1 with reload
+
+    if effective_workers > 1:
+        # Each worker process builds its own Manager, and every Manager opens the
+        # embedded Oxigraph store at the same graph_path. RocksDB permits one
+        # process per store, so N workers means N writers over the same files.
+        # This holds on the timescale backend too: it moves the timeseries store
+        # out of process, but the graph store stays embedded.
+        typer.echo(
+            f"Refusing to start with workers={effective_workers}: the embedded Oxigraph "
+            "graph store supports a single process, whatever the timeseries backend. "
+            "Start with workers=1.",
+            err=True,
+        )
+        raise typer.Exit(1)
 
     signal.signal(signal.SIGTERM, _sigterm_as_keyboard_interrupt)
 
