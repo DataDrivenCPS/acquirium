@@ -654,7 +654,11 @@ class AppRunner:
         record = self._runs[run_id]
         try:
             outputs = await ref
-            emit_outputs(
+            # emit_outputs does blocking I/O (timeseries inserts, webhook
+            # posts); run it off the event-loop thread so the actor's loop
+            # stays responsive to other runs and to stop().
+            await asyncio.to_thread(
+                emit_outputs,
                 self.spec.name,
                 outputs,
                 insert_timeseries=self.acquirium_cli.client.insert_timeseries,
