@@ -76,6 +76,9 @@ class DriverRunner:
             f"acquirium.driver.{type(self.driver).__name__}"
         )
         self._stop_event = asyncio.Event()
+        # Captured when run() starts so the sync stop() can flip the event on
+        # the loop thread via call_soon_threadsafe.
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     def setup(self) -> None:
         """One-time driver setup.
@@ -93,6 +96,7 @@ class DriverRunner:
             pass
 
     async def run(self) -> None:
+        self._loop = asyncio.get_running_loop()
         name = type(self.driver).__name__
         self.logger.info("Starting driver runner for %s", name)
         self._tick()
@@ -122,8 +126,17 @@ class DriverRunner:
             self.logger.exception("stop error")
 
     def stop(self) -> None:
-        """Signal run() to exit; driver.stop() cleanup happens there."""
-        self._stop_event.set()
+        """Signal run() to exit; driver.stop() cleanup happens there.
+
+        Sync methods run off the actor's event-loop thread, so the
+        asyncio.Event must be set via the loop rather than touched directly.
+        """
+        loop = self._loop
+        if loop is not None:
+            loop.call_soon_threadsafe(self._stop_event.set)
+        else:
+            # run() hasn't captured the loop yet; no coroutine is waiting.
+            self._stop_event.set()
 
     def _tick(self) -> None:
         try:
@@ -323,6 +336,9 @@ class AppRunner:
         self._loop_task: asyncio.Task | None = None
         # Set by stop() to break the keep-alive loop.
         self._stop_event = asyncio.Event()
+        # Captured when run() starts so the sync stop() can flip the event on
+        # the loop thread via call_soon_threadsafe.
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     @staticmethod
     def _safe_entry_file(entry_file: str | None) -> str:
@@ -595,6 +611,7 @@ class AppRunner:
         ``app.run`` executes in a stateless Ray task; this actor only
         schedules and monitors it.
         """
+        self._loop = asyncio.get_running_loop()
         params = params or {}
         if self.app is None:
             # Build never completed (e.g. failed at registration); retry once.
@@ -688,8 +705,17 @@ class AppRunner:
                 self._runs.pop(run_id, None)
 
     def stop(self) -> dict[str, Any]:
-        """Signal the keep-alive loop to exit after its current iteration."""
-        self._stop_event.set()
+        """Signal the keep-alive loop to exit after its current iteration.
+
+        Sync methods run off the actor's event-loop thread, so the
+        asyncio.Event must be set via the loop rather than touched directly.
+        """
+        loop = self._loop
+        if loop is not None:
+            loop.call_soon_threadsafe(self._stop_event.set)
+        else:
+            # run() hasn't captured the loop yet; no coroutine is waiting.
+            self._stop_event.set()
         return {"name": self.spec.name, "stopped": True}
 
     def status(self) -> dict[str, Any]:
