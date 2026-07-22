@@ -1,10 +1,15 @@
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+# Python version is parameterized so the server image can be built against
+# any supported interpreter (3.11–3.14). Defaults to 3.12.
+ARG PYTHON_VERSION=3.12
+FROM ghcr.io/astral-sh/uv:python${PYTHON_VERSION}-bookworm-slim
 
 WORKDIR /app
 
 # Copy dependency manifest first — this layer is only invalidated when
 # pyproject.toml changes, so source edits don't trigger a full dep reinstall.
-COPY pyproject.toml uv.lock README.md .python-version ./
+# Deliberately NOT copying .python-version: it pins 3.12 and would override
+# the base image's interpreter, defeating the PYTHON_VERSION build arg.
+COPY pyproject.toml uv.lock README.md ./
 
 # Install dependencies but not the project itself.
 RUN uv sync --locked --no-dev --no-install-project
