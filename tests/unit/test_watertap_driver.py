@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from acquirium.BuiltinDrivers.watertap import (
+from acquirium.Drivers.BuiltInDrivers.watertap import (
     WaterTAPDriver,
     get_observation_from_model,
     get_value_from_model,

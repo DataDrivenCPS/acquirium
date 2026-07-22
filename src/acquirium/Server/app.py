@@ -41,7 +41,10 @@ import pyarrow as pa
 import polars as pl
 
 from acquirium.Server.insert_stats import insert_stats, start_insert_summary_thread
-from acquirium.Server.ray_backend import DriverSupervisor, AppSupervisor, AppAlreadyRegistered
+from acquirium.Drivers.supervisor import DriverSupervisor
+from acquirium.Apps.supervisor import AppSupervisor, AppAlreadyRegistered
+
+
 
 log = logging.getLogger("acquirium.api")
 
@@ -88,7 +91,7 @@ async def _restore_registered_apps(app_supervisor: AppSupervisor, manager: Manag
     respawn the actors without re-writing the graph. Restored apps come back
     registered but not running — keep-alive state is not persisted.
     """
-    from acquirium.Server.ray_backend import restore_app_specs
+    from acquirium.Apps.supervisor import restore_app_specs
 
     try:
         specs = await asyncio.to_thread(restore_app_specs, manager)

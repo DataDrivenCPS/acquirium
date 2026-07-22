@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 
 import numpy as np
 
-from acquirium.BuiltinDrivers.watertap import (
+from acquirium.Drivers.BuiltInDrivers.watertap import (
     WaterTAPDriver,
     _load_callable,
     _require_config,

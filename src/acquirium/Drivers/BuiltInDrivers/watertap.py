@@ -10,7 +10,7 @@ import logging
 
 import polars as pl
 
-from acquirium.Driver import PollingIngestDriver
+from acquirium.Drivers.Driver import PollingIngestDriver
 from acquirium.internals.internals_namespaces import HAS_PYOMO_VAR
 from acquirium.internals.models import compute_ref_uri
 

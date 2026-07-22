@@ -36,8 +36,8 @@ from typing import Any
 
 import rdflib
 
-from acquirium.BuiltinDrivers.parquet_ingest import ParquetIngestDriver
-from acquirium.BuiltinDrivers.watertap import _guess_rdf_format
+from acquirium.Drivers.BuiltInDrivers.parquet_ingest import ParquetIngestDriver
+from acquirium.Drivers.BuiltInDrivers.watertap import _guess_rdf_format
 
 from benicia_generator import get_properties, local_name
 

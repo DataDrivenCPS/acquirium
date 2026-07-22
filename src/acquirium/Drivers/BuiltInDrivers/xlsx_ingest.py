@@ -5,7 +5,7 @@ from pathlib import Path
 
 import polars as pl
 
-from acquirium.BuiltinDrivers.tabular_base import TabularIngestBase
+from acquirium.Drivers.BuiltInDrivers.tabular_base import TabularIngestBase
 from acquirium.internals._log import timed_debug
 
 logger = logging.getLogger("acquirium.xlsx_ingest")
@@ -25,7 +25,7 @@ class XLSXIngestDriver(TabularIngestBase):
     .. code-block:: toml
 
         [[drivers]]
-        spec         = "acquirium.BuiltinDrivers.xlsx_ingest:XLSXIngestDriver"
+        spec         = "acquirium.Drivers.BuiltInDrivers.xlsx_ingest:XLSXIngestDriver"
         interval     = 5.0
         watch_dir    = "./data/incoming"
         format       = "auto"        # "auto" | "wide" | "narrow"

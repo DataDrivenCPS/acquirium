@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 
 import polars as pl
-from acquirium.BuiltinDrivers.tabular_base import _safe_name
-from acquirium.BuiltinDrivers.csv_ingest import CSVIngestDriver
+from acquirium.Drivers.BuiltInDrivers.tabular_base import _safe_name
+from acquirium.Drivers.BuiltInDrivers.csv_ingest import CSVIngestDriver
 
 SOURCE_ID = "dummy-plant"
 DATE_COL = "Date"

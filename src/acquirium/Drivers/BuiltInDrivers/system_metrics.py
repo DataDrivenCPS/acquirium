@@ -2,7 +2,7 @@
 Publish system metrics (CPU, RAM, disk, network) to an Acquirium backend.
 
 Usage:
-    acquirium run acquirium.BuiltinDrivers.system_metrics:SystemMetricsDriver \\
+    acquirium run acquirium.Drivers.BuiltInDrivers.system_metrics:SystemMetricsDriver \\
         --config acquirium.toml
 """
 
@@ -18,7 +18,7 @@ logger = logging.getLogger("acquirium.system_metrics")
 from rdflib import Graph, Literal, URIRef, Namespace
 from rdflib.namespace import RDF, RDFS
 
-from acquirium.Driver import PollingIngestDriver
+from acquirium.Drivers.Driver import PollingIngestDriver
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_DB_URI,
     DATABASE,

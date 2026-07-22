@@ -8,7 +8,7 @@ from pathlib import Path
 import polars as pl
 
 from acquirium.internals._log import timed_debug
-from acquirium.BuiltinDrivers.tabular_base import TabularIngestBase
+from acquirium.Drivers.BuiltInDrivers.tabular_base import TabularIngestBase
 
 logger = logging.getLogger("acquirium.csv_ingest")
 
@@ -42,7 +42,7 @@ class CSVIngestDriver(TabularIngestBase):
     .. code-block:: toml
 
         [[drivers]]
-        spec         = "acquirium.BuiltinDrivers.csv_ingest:CSVIngestDriver"
+        spec         = "acquirium.Drivers.BuiltInDrivers.csv_ingest:CSVIngestDriver"
         interval     = 5.0
         watch_dir    = "./data/incoming"
         format       = "auto"        # "auto" | "wide" | "narrow"

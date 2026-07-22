@@ -3,7 +3,7 @@
 import pytest
 from datetime import datetime, timezone, timedelta
 
-from acquirium.BuiltinDrivers.mqtt_ingestion import (
+from acquirium.Drivers.BuiltInDrivers.mqtt_ingestion import (
     decode_mqtt_payload,
     parse_mqtt_broker,
     parse_mqtt_timestamp,

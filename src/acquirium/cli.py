@@ -114,7 +114,7 @@ def _import_driver_class(
     Raises ``ValueError`` on any resolution failure so callers in background
     threads see a real exception rather than a silent ``SystemExit``.
     """
-    from acquirium.Driver import Driver as _Driver
+    from acquirium.Drivers.Driver import Driver as _Driver
 
     if ":" not in driver_spec:
         raise ValueError(

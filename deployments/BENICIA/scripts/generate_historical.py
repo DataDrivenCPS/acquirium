@@ -25,7 +25,7 @@ from pathlib import Path
 import polars as pl
 import rdflib
 
-from acquirium.BuiltinDrivers.watertap import _guess_rdf_format
+from acquirium.Drivers.BuiltInDrivers.watertap import _guess_rdf_format
 
 from benicia_generator import (
     build_state_for_property,

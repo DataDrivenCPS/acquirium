@@ -25,10 +25,10 @@ use_ssl     = false
 interval = 10.0
 
 [[drivers]]
-spec           = "acquirium.BuiltinDrivers.mqtt_ingestion:MQTTIngestDriver"
+spec           = "acquirium.Drivers.BuiltInDrivers.mqtt_ingestion:MQTTIngestDriver"
 interval       = 5.0
 mqtt_source_id = "my_mqtt_data"   # datasource name used for all MQTT streams
 
 [[drivers]]
-spec     = "acquirium.BuiltinDrivers.system_metrics:SystemMetricsDriver"
+spec     = "acquirium.Drivers.BuiltInDrivers.system_metrics:SystemMetricsDriver"
 interval = 30.0

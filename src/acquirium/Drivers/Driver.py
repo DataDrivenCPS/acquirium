@@ -47,7 +47,7 @@ class Driver(ABC):
     Example::
 
         import polars as pl
-        from acquirium.Driver import PollingIngestDriver
+        from acquirium.Drivers.Driver import PollingIngestDriver
 
         class MyDriver(PollingIngestDriver):
             def setup(self):

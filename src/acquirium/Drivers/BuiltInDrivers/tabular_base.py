@@ -9,7 +9,7 @@ from typing import Any
 
 import polars as pl
 
-from acquirium.Driver import IngestDriver
+from acquirium.Drivers.Driver import IngestDriver
 from acquirium.Storage.values import assign_stream_value_kind, normalize_value_kind
 from acquirium.internals._log import timed_debug
 

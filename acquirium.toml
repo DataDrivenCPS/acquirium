@@ -15,8 +15,9 @@ data_dir = ".acquirium"
 
 # Use DuckDB for timeseries storage instead of TimescaleDB.
 # The DuckDB file is created automatically if it does not exist.
-# NOTE: DuckDB does not support multiple server workers (uvicorn --workers N).
-#       Use timeseries_backend = "timescale" for multi-process deployments.
+# NOTE: the server runs as a single process (uvicorn --workers 1) on every
+#       backend: the embedded Oxigraph graph store is single-process, and
+#       "timescale" only moves the timeseries store out of process.
 timeseries_backend = "duckdb"
 duckdb_path = ".acquirium/timeseries.duckdb"
 
@@ -82,17 +83,17 @@ interval = 10.0
 
 # Uncomment to enable MQTT ingestion as a default driver:
 # [[drivers]]
-# spec           = "acquirium.BuiltinDrivers.mqtt_ingestion:MQTTIngestDriver"
+# spec           = "acquirium.Drivers.BuiltInDrivers.mqtt_ingestion:MQTTIngestDriver"
 # interval       = 5.0
 # mqtt_source_id = "my_mqtt_data"   # datasource name used for all MQTT streams
 
 [[drivers]]
-spec     = "acquirium.BuiltinDrivers.system_metrics:SystemMetricsDriver"
+spec     = "acquirium.Drivers.BuiltInDrivers.system_metrics:SystemMetricsDriver"
 interval = 30.0
 
 # Watch a directory for CSV and TSV files.
 # [[drivers]]
-# spec         = "acquirium.BuiltinDrivers.csv_ingest:CSVIngestDriver"
+# spec         = "acquirium.Drivers.BuiltInDrivers.csv_ingest:CSVIngestDriver"
 # interval     = 5.0
 # watch_dir    = "./data"
 # format       = "wide"        # "auto" | "wide" | "narrow"
@@ -102,7 +103,7 @@ interval = 30.0
 
 # Watch a directory for Excel (XLSX) files.
 # [[drivers]]
-# spec         = "acquirium.BuiltinDrivers.xlsx_ingest:XLSXIngestDriver"
+# spec         = "acquirium.Drivers.BuiltInDrivers.xlsx_ingest:XLSXIngestDriver"
 # interval     = 5.0
 # watch_dir    = "./data"
 # format       = "wide"        # "auto" | "wide" | "narrow"
@@ -115,7 +116,7 @@ interval = 30.0
 # Points come from the model's watertap-mapping.json; registering streams writes
 # each point's external reference + Pyomo var (hasExternalReference/hasPyomoVar).
 # [[drivers]]
-# spec                        = "acquirium.BuiltinDrivers.watertap:WaterTAPDriver"
+# spec                        = "acquirium.Drivers.BuiltInDrivers.watertap:WaterTAPDriver"
 # interval                    = 30.0
 # watertap_source_id          = "watertap"
 # watertap_mapping_path       = "deployments/WATERTAP/models/seawater-ro/watertap-mapping.json"

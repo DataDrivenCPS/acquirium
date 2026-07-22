@@ -11,7 +11,8 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-from acquirium.Server.ray_backend import AppRunner, restore_app_specs
+from acquirium.Apps.runner import AppRunner
+from acquirium.Apps.supervisor import restore_app_specs
 from acquirium.internals.models import AppSpec, AppOutputSpec
 
 AppRunnerCls = AppRunner.__ray_actor_class__

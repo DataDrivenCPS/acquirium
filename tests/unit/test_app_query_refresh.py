@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from acquirium.Apps.base import App
-from acquirium.Server.ray_backend import AppRunner
+from acquirium.Apps.runner import AppRunner
 from acquirium.internals.models import AppSpec
 
 AppRunnerCls = AppRunner.__ray_actor_class__

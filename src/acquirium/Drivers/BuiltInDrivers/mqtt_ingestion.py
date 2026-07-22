@@ -12,7 +12,7 @@ import logging
 import polars as pl
 import paho.mqtt.client as mqtt
 
-from acquirium.Driver import EventIngestDriver
+from acquirium.Drivers.Driver import EventIngestDriver
 from acquirium.Storage.values import normalize_value_kind
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_REF_NAME,
@@ -60,12 +60,12 @@ class MQTTIngestDriver(EventIngestDriver):
     samples via the standard Acquirium timeseries API.
 
     Run alongside the server:
-        acquirium run acquirium.BuiltinDrivers.mqtt_ingestion:MQTTIngestDriver \\
+        acquirium run acquirium.Drivers.BuiltInDrivers.mqtt_ingestion:MQTTIngestDriver \\
             --config acquirium.toml
 
     Or list it in acquirium.toml under [[drivers]] for auto-start:
         [[drivers]]
-        spec           = "acquirium.BuiltinDrivers.mqtt_ingestion:MQTTIngestDriver"
+        spec           = "acquirium.Drivers.BuiltInDrivers.mqtt_ingestion:MQTTIngestDriver"
         interval       = 5.0
         mqtt_source_id = "mqtt"
     """

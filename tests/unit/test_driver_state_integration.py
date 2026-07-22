@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from acquirium.Driver import Driver, _sanitize_filename
+from acquirium.Drivers.Driver import Driver, _sanitize_filename
 
 
 class MockAcquirium:
@@ -225,12 +225,12 @@ class TestDriverStateIntegration:
         config = {
             "__config_dir": str(tmp_path),
             "driver": {
-                "spec": "acquirium.BuiltinDrivers.csv_ingest:CSVIngestDriver",
+                "spec": "acquirium.Drivers.BuiltInDrivers.csv_ingest:CSVIngestDriver",
             },
         }
 
         # We need a real driver class for this test
-        from acquirium.BuiltinDrivers.csv_ingest import CSVIngestDriver
+        from acquirium.Drivers.BuiltInDrivers.csv_ingest import CSVIngestDriver
 
         # Create a minimal mock for the Acquirium client
         class MockAQ:
@@ -250,7 +250,7 @@ class TestDriverIdentifierDerivation:
 
     def test_spec_hash_is_deterministic(self, tmp_path: Path) -> None:
         """Test that the same spec always produces the same hash."""
-        spec = "acquirium.BuiltinDrivers.csv_ingest:CSVIngestDriver"
+        spec = "acquirium.Drivers.BuiltInDrivers.csv_ingest:CSVIngestDriver"
         expected_hash = hashlib.sha256(spec.encode()).hexdigest()[:16]
 
         config1 = {
@@ -263,7 +263,7 @@ class TestDriverIdentifierDerivation:
             "driver": {"spec": spec},
         }
 
-        from acquirium.BuiltinDrivers.csv_ingest import CSVIngestDriver
+        from acquirium.Drivers.BuiltInDrivers.csv_ingest import CSVIngestDriver
 
         class MockAQ:
             pass
@@ -277,8 +277,8 @@ class TestDriverIdentifierDerivation:
 
     def test_different_specs_different_hashes(self, tmp_path: Path) -> None:
         """Test that different specs produce different hashes."""
-        spec1 = "acquirium.BuiltinDrivers.csv_ingest:CSVIngestDriver"
-        spec2 = "acquirium.BuiltinDrivers.xlsx_ingest:XLSXIngestDriver"
+        spec1 = "acquirium.Drivers.BuiltInDrivers.csv_ingest:CSVIngestDriver"
+        spec2 = "acquirium.Drivers.BuiltInDrivers.xlsx_ingest:XLSXIngestDriver"
 
         config1 = {
             "__config_dir": str(tmp_path),
@@ -290,8 +290,8 @@ class TestDriverIdentifierDerivation:
             "driver": {"spec": spec2},
         }
 
-        from acquirium.BuiltinDrivers.csv_ingest import CSVIngestDriver
-        from acquirium.BuiltinDrivers.xlsx_ingest import XLSXIngestDriver
+        from acquirium.Drivers.BuiltInDrivers.csv_ingest import CSVIngestDriver
+        from acquirium.Drivers.BuiltInDrivers.xlsx_ingest import XLSXIngestDriver
 
         class MockAQ:
             pass
@@ -307,12 +307,12 @@ class TestDriverIdentifierDerivation:
         config = {
             "__config_dir": str(tmp_path),
             "driver": {
-                "spec": "acquirium.BuiltinDrivers.csv_ingest:CSVIngestDriver",
+                "spec": "acquirium.Drivers.BuiltInDrivers.csv_ingest:CSVIngestDriver",
                 "driver_id": "explicit-name",
             },
         }
 
-        from acquirium.BuiltinDrivers.csv_ingest import CSVIngestDriver
+        from acquirium.Drivers.BuiltInDrivers.csv_ingest import CSVIngestDriver
 
         class MockAQ:
             pass
