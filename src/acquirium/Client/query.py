@@ -85,10 +85,11 @@ class Query:
         }
         if instance_uri is not None:
             constraints["instance_uri"] = instance_uri
+        if _class:
+            constraints["rdf_class"] = _class
 
         node = QueryNode(
             id=new_id,
-            rdf_class=_class or None,
             alias=alias,
             constraints=constraints,
         )
@@ -325,7 +326,9 @@ class Query:
         constraints = {}
         if instance_uri is not None:
             constraints["instance_uri"] = instance_uri
-        new_node = QueryNode(id=new_id, rdf_class=_class, alias=alias, constraints=constraints)
+        if _class:
+            constraints["rdf_class"] = _class
+        new_node = QueryNode(id=new_id, alias=alias, constraints=constraints)
         g = self.query_graph.with_node(new_node)
 
         if direction is not None:
@@ -489,7 +492,7 @@ class Query:
             mid_id = self._new_id()
             src_alias = self.query_graph.aliases_reverse.get(src_id, str(src_id))
             mid_alias = f"{src_alias}_{direction}_entity"
-            mid_node = QueryNode(id=mid_id, rdf_class=None, alias=mid_alias, constraints={})
+            mid_node = QueryNode(id=mid_id, alias=mid_alias, constraints={})
             g = g.with_node(mid_node)
 
             edge = QueryEdge(source_id=src_id, target_id=mid_id, hops=hops, direction=direction)
@@ -978,7 +981,7 @@ class Query:
             "nodes": [
                 {
                     "id": n.id,
-                    "rdf_class": n.rdf_class,
+                    "rdf_class": (n.constraints or {}).get("rdf_class"),
                     "alias": n.alias,
                     "constraints": dict(n.constraints or {}),
                 }
@@ -1233,9 +1236,10 @@ class Query:
         for nid, node in self.query_graph.nodes.items():
             v = var_map[nid]
             instance_uri = (node.constraints or {}).get("instance_uri")
+            rdf_class = (node.constraints or {}).get("rdf_class")
             if instance_uri is not None:
                 where_clauses.append(f"VALUES {v} {{ <{instance_uri}> }}")
-            if node.rdf_class:
+            if rdf_class:
                 # Anchor the subClassOf* traversal at the constant class inside
                 # a sub-SELECT. This fences the property path so Oxigraph
                 # evaluates it *backward* from <class> (a handful of nodes)
@@ -1250,7 +1254,7 @@ class Query:
                 where_clauses.append(f"{v} <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> {typ} .")
                 where_clauses.append(
                     f"{{ SELECT DISTINCT {typ} WHERE {{ "
-                    f"{typ} <http://www.w3.org/2000/01/rdf-schema#subClassOf>* <{node.rdf_class}> . "
+                    f"{typ} <http://www.w3.org/2000/01/rdf-schema#subClassOf>* <{rdf_class}> . "
                     f"}} }}"
                 )
 
@@ -1384,7 +1388,7 @@ class Query:
             flags = []
             if node.constraints.get("is_data_node"):
                 flags.append("DATA")
-            cls = node.rdf_class or "*"
+            cls = node.constraints.get("rdf_class") or "*"
             flags_s = f" [{'|'.join(flags)}]" if flags else ""
             inst = node.constraints.get("instance_uri")
             inst_s = f"  instance={inst}" if inst else ""
