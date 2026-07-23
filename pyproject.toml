@@ -109,6 +109,11 @@ dev = [
 
 [tool.uv]
 no-build-isolation-package = ["pygit2"]
+# fastembed pulls in py-rust-stemmers transitively. Versions <0.1.7 ship no
+# cp314 wheel, so on Python 3.14 uv would compile it from a Rust sdist — which
+# fails in the slim server image (no C toolchain). 0.1.7+ ships cp314 wheels
+# and stays within fastembed's <0.2.0 range, keeping installs wheel-only.
+constraint-dependencies = ["py-rust-stemmers>=0.1.7"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
