@@ -221,8 +221,13 @@ class Query:
     # ----------------------------------------------------
 
 
-    @flex_query_rdf_inputs(specs=[FlexSpec("_class", "class")])
-    def find_entity(self, _class: Optional[str] = None, alias: Optional[str] = None, uri: str | URIRef | None = None) -> "Query":
+    @flex_query_rdf_inputs(specs=[FlexSpec("_class", "class"),FlexSpec("process","process")])
+    def find_entity(self, 
+                    _class: Optional[str] = None, 
+                    alias: Optional[str] = None, 
+                    uri: str | URIRef | None = None,
+                    process: str | URIRef | None = None
+                    ) -> "Query":
         """Add a new entity node to the query and set it as the current pointer.
 
         Example:
@@ -241,13 +246,17 @@ class Query:
         """
         self.cache.clear()
         instance_uri = self._normalize_instance_uri(uri, param="uri")
-        if _class is None and instance_uri is None:
-            raise ValueError("find_entity: provide _class, uri, or both")
+        if _class is None and instance_uri is None and process is None:
+            raise ValueError("find_entity: provide _class, uri, process or both")
         node_id = self._new_id()
         constraints = {}
+        if _class is not None:
+            constraints["rdf_class"] = _class
         if instance_uri is not None:
             constraints["instance_uri"] = instance_uri
-        node = QueryNode(id=node_id, rdf_class=_class, alias=alias, constraints=constraints)
+        if process is not None:
+            constraints["process"] = process
+        node = QueryNode(id=node_id, alias=alias, constraints=constraints)
         new_graph = self.query_graph.with_node(node)
         # bump internal id counter
         return self._clone_with_graph(new_graph, bump_id=True)
@@ -755,8 +764,11 @@ class Query:
             value_mode=value_mode,
         )
 
+    def filter_entities(
+            
+    ):
+        pass
 
-    @flex_query_rdf_inputs(specs=[FlexSpec("_class", "class")])
     def filter_data_nodes(
         self,
         *,
