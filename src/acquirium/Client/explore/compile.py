@@ -14,7 +14,9 @@ from __future__ import annotations
 
 from typing import Any, List
 
-from acquirium.Client.explore.attributes import Not
+from rdflib.namespace import RDF
+
+from acquirium.Client.explore.attributes import REGISTRY, Attr, Not, normalize_value
 from acquirium.Client.query_graph import QueryEdge, QueryGraph
 from acquirium.internals.internals_namespaces import (
     CONNECTED_THROUGH,
@@ -43,6 +45,57 @@ def _term(x: object) -> str:
     if _is_iri(x):
         return f"<{x}>"
     return f"\"{x}\""
+
+
+_RDF_TYPE = str(RDF.type)
+_SUBCLASS = "http://www.w3.org/2000/01/rdf-schema#subClassOf"
+
+
+def _attr_clauses(var: str, attr: Attr, value: Any) -> List[str]:
+    """WHERE clauses for one registry attribute constraint on ``var``.
+
+    Subclass-matched attrs use the same anchored sub-SELECT fence as
+    ``rdf_class`` (see the comment in :func:`compile_sparql`); multi-predicate
+    attrs OR-union their predicates; ``Not`` values become FILTER NOT EXISTS.
+    """
+    values, negated = normalize_value(value)
+    if not values:
+        return []
+    clauses: List[str] = []
+
+    if attr.via_subclass:
+        pred_path = "|".join(f"<{p}>" for p in attr.predicates)
+        if negated:
+            # Anchored at the constant class on the right, so no fence needed.
+            step = f"<{_RDF_TYPE}>/<{_SUBCLASS}>*" if _RDF_TYPE in attr.predicates \
+                else f"({pred_path})/<{_RDF_TYPE}>/<{_SUBCLASS}>*"
+            for c in values:
+                clauses.append(f"FILTER NOT EXISTS {{ {var} {step} <{c}> . }}")
+            return clauses
+        if _RDF_TYPE in attr.predicates:
+            fence_var = f"{var}_{attr.name}"
+            clauses.append(f"{var} <{_RDF_TYPE}> {fence_var} .")
+        else:
+            inst = f"{var}_{attr.name}"
+            fence_var = f"{var}_{attr.name}_typ"
+            clauses.append(f"{var} ({pred_path}) {inst} .")
+            clauses.append(f"{inst} <{_RDF_TYPE}> {fence_var} .")
+        if len(values) == 1:
+            inner = f"{fence_var} <{_SUBCLASS}>* <{values[0]}> . "
+        else:
+            inner = " UNION ".join(f"{{ {fence_var} <{_SUBCLASS}>* <{c}> . }}" for c in values)
+        clauses.append(f"{{ SELECT DISTINCT {fence_var} WHERE {{ {inner}}} }}")
+        return clauses
+
+    combos = [(p, _term(x)) for p in attr.predicates for x in values]
+    if len(combos) == 1:
+        p, t = combos[0]
+        triple = f"{var} <{p}> {t} ."
+        clauses.append(f"FILTER NOT EXISTS {{ {triple} }}" if negated else triple)
+    else:
+        union = " UNION ".join(f"{{ {var} <{p}> {t} . }}" for p, t in combos)
+        clauses.append(f"FILTER NOT EXISTS {{ {union} }}" if negated else f"{{ {union} }}")
+    return clauses
 
 
 def _direction_edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int) -> str:
@@ -268,6 +321,8 @@ def compile_sparql(graph: QueryGraph) -> str:
                 f"{typ} <http://www.w3.org/2000/01/rdf-schema#subClassOf>* <{rdf_class}> . "
                 f"}} }}"
             )
+        for name, aval in ((node.constraints or {}).get("attrs") or {}).items():
+            where_clauses.extend(_attr_clauses(v, REGISTRY[name], aval))
 
     # edge constraints
     for edge_idx, edge in enumerate(graph.edges):
@@ -294,6 +349,12 @@ def compile_sparql(graph: QueryGraph) -> str:
 
         for pred, val in (info.filters or {}).items():
             if val is None:
+                continue
+
+            # Registry-attribute keys expand via the attribute definition;
+            # anything else is a raw predicate URI (legacy-shaped filters).
+            if isinstance(pred, str) and pred in REGISTRY:
+                where_clauses.extend(_attr_clauses(v, REGISTRY[pred], val))
                 continue
 
             # Unwrap negation marker

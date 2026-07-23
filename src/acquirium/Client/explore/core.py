@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 import polars as pl
 from rdflib import URIRef
 
+from acquirium.Client.explore.attributes import REGISTRY, Not, normalize_value
 from acquirium.Client.explore.compile import compile_sparql
 from acquirium.Client.query_graph import DataNodeInfo, QueryEdge, QueryGraph, QueryNode
 from acquirium.internals.internals_namespaces import S223
@@ -90,30 +91,104 @@ class Q:
     def _src_alias(self, src_id: int) -> str:
         return self.query_graph.aliases_reverse.get(src_id, str(src_id))
 
+    def _resolve_attr_values(self, attrs: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate attr names and resolve text values to URIs in one joint call.
+
+        URIs/URIRefs pass through; literal attrs keep their raw value; the
+        remaining text values are resolved together via
+        ``client.resolve_record_uris`` so siblings disambiguate each other.
+        ``Not`` markers are preserved around the resolved value.
+        """
+        unknown = [k for k in attrs if k not in REGISTRY]
+        if unknown:
+            raise ValueError(f"unknown attribute(s) {unknown}; known: {sorted(REGISTRY)}")
+
+        record: Dict[str, Any] = {}
+        for name, raw in attrs.items():
+            attr = REGISTRY[name]
+            values, _ = normalize_value(raw)
+            for i, v in enumerate(values):
+                if attr.literal or isinstance(v, URIRef) or _is_uri(v):
+                    continue
+                record[f"{name}_{i}"] = (str(v), attr.kind)
+        resolved_uris = self.client.resolve_record_uris(record, min_score=0.4) if record else {}
+
+        out: Dict[str, Any] = {}
+        for name, raw in attrs.items():
+            attr = REGISTRY[name]
+            values, negated = normalize_value(raw)
+            if not values:
+                continue
+            coerced: List[Any] = []
+            for i, v in enumerate(values):
+                if attr.literal:
+                    coerced.append(v)
+                elif isinstance(v, URIRef) or _is_uri(v):
+                    coerced.append(str(v))
+                else:
+                    uri = resolved_uris.get(f"{name}_{i}")
+                    if uri is None:
+                        raise ValueError(f"Could not resolve {v!r} as {attr.kind} for attribute {name!r}")
+                    coerced.append(uri)
+            value = coerced[0] if len(coerced) == 1 else coerced
+            out[name] = Not(value) if negated else value
+        return out
+
+    def _apply_attrs(self, g: QueryGraph, node_ids: List[int], resolved: Dict[str, Any]) -> QueryGraph:
+        """Store resolved attribute constraints on the given nodes (role-checked)."""
+        ptr = g.current_pointer
+        for nid in node_ids:
+            is_data = nid in g.data_nodes
+            role = "data" if is_data else "entity"
+            for name in resolved:
+                if role not in REGISTRY[name].roles:
+                    alias = g.aliases_reverse.get(nid, str(nid))
+                    raise ValueError(f"attribute {name!r} does not apply to {role} node {alias!r}")
+            if is_data:
+                info = g.data_nodes[nid]
+                filters = dict(info.filters)
+                filters.update(resolved)
+                g = g.with_data_node(replace(info, filters=filters))
+            else:
+                node = g.nodes[nid]
+                constraints = dict(node.constraints)
+                merged = dict(constraints.get("attrs") or {})
+                merged.update(resolved)
+                constraints["attrs"] = merged
+                g = g.with_node(replace(node, constraints=constraints))
+        return replace(g, current_pointer=ptr)
+
     # ---------- verbs ----------
 
     def entity(self, cls: str | URIRef | None = None, *, uri: str | URIRef | None = None,
-               alias: Optional[str] = None) -> "Q":
+               alias: Optional[str] = None, **attrs: Any) -> "Q":
         """Add a new entity node to the pattern and point at it.
 
         ``cls`` is a class URI or free text (resolved via the server);
-        ``uri`` pins a specific instance.
+        ``uri`` pins a specific instance. Extra keyword arguments are
+        attribute filters applied to the new node (same as ``where()``)::
+
+            aq.explore().entity("Equipment", process="ozonation")
         """
         instance_uri = self._normalize_instance_uri(uri)
-        if cls is None and instance_uri is None:
-            raise ValueError("entity: provide cls, uri, or both")
+        if cls is None and instance_uri is None and not attrs:
+            raise ValueError("entity: provide cls, uri, or attribute filters")
         constraints: Dict[str, Any] = {}
         if cls is not None:
             constraints["rdf_class"] = self._as_uri(cls, "class")
         if instance_uri is not None:
             constraints["instance_uri"] = instance_uri
         node = QueryNode(id=self._next_id(), alias=alias, constraints=constraints)
-        return self._with_graph(self.query_graph.with_node(node))
+        q2 = self._with_graph(self.query_graph.with_node(node))
+        if attrs:
+            resolved = q2._resolve_attr_values(attrs)
+            q2 = q2._with_graph(q2._apply_attrs(q2.query_graph, [node.id], resolved))
+        return q2
 
     def related(self, cls: str | URIRef | None = None, *, uri: str | URIRef | None = None,
                 alias: Optional[str] = None, frm: Optional[str] = None,
                 via: Any = "any", direction: Optional[str] = None,
-                max_depth: Optional[int] = None) -> "Q":
+                max_depth: Optional[int] = None, **attrs: Any) -> "Q":
         """Add an entity related to an existing node and point at it.
 
         - ``frm``: alias of the source node (default: current pointer).
@@ -126,8 +201,8 @@ class Q:
           and 3 for ``"any"``/directional traversal.
         """
         instance_uri = self._normalize_instance_uri(uri)
-        if cls is None and instance_uri is None:
-            raise ValueError("related: provide cls, uri, or both")
+        if cls is None and instance_uri is None and not attrs:
+            raise ValueError("related: provide cls, uri, or attribute filters")
         src_id = self._source_id(frm, verb="related")
 
         preds: Optional[List[str]] = None
@@ -160,10 +235,15 @@ class Q:
         g = self.query_graph.with_node(QueryNode(id=new_id, alias=alias, constraints=constraints))
         edge = QueryEdge(source_id=src_id, target_id=new_id, hops=hops,
                          predicates=preds, direction=direction)
-        return self._with_graph(g.with_edge(edge, new_pointer=new_id))
+        q2 = self._with_graph(g.with_edge(edge, new_pointer=new_id))
+        if attrs:
+            resolved = q2._resolve_attr_values(attrs)
+            q2 = q2._with_graph(q2._apply_attrs(q2.query_graph, [new_id], resolved))
+        return q2
 
     def measurement(self, *, frm: Optional[str] = None, alias: Optional[str] = None,
-                    direction: Optional[str] = None, max_depth: int = 3) -> "Q":
+                    direction: Optional[str] = None, max_depth: int = 3,
+                    **attrs: Any) -> "Q":
         """Attach a measurement point (data node) to the pattern and point at it.
 
         Matches nodes carrying an external reference one hop from the source.
@@ -174,6 +254,11 @@ class Q:
         hops upstream/downstream through an intermediate entity, then looks
         for measurements one hop away (inlet connection points for upstream,
         outlet for downstream).
+
+        Extra keyword arguments are attribute filters applied to the new
+        measurement node(s), same as ``where()``::
+
+            q.measurement(quantity_kind="mass flow rate", medium=Not("brine"))
         """
         g = self.query_graph
 
@@ -198,6 +283,8 @@ class Q:
                                       cp_filter=cp_filter),
                             new_pointer=data_id)
             g = g.with_data_node(DataNodeInfo(node_id=data_id))
+            if attrs:
+                g = self._apply_attrs(g, [data_id], self._resolve_attr_values(attrs))
             return self._with_graph(g)
 
         if isinstance(frm, str) and frm.strip().lower() in {"*", "all"}:
@@ -207,6 +294,7 @@ class Q:
         else:
             src_ids = [self._source_id(frm, verb="measurement")]
 
+        created: List[int] = []
         for i, src_id in enumerate(src_ids):
             src_alias = g.aliases_reverse.get(src_id, str(src_id))
             a = alias
@@ -219,8 +307,39 @@ class Q:
             g = g.with_edge(QueryEdge(source_id=src_id, target_id=new_id, hops=1),
                             new_pointer=new_id)
             g = g.with_data_node(DataNodeInfo(node_id=new_id))
+            created.append(new_id)
 
+        if attrs:
+            g = self._apply_attrs(g, created, self._resolve_attr_values(attrs))
         return self._with_graph(g)
+
+    def where(self, target: Optional[str] = None, **attrs: Any) -> "Q":
+        """Filter a node by registry attributes (see ``explore.attributes.REGISTRY``).
+
+        - ``target``: alias to filter (default: current pointer); ``"*"``
+          applies to every measurement node.
+        - Values may be URIs, free text (server-resolved), lists (OR), or
+          wrapped in :class:`Not` to exclude::
+
+              q.where(quantity_kind="mass flow rate", medium=Not("brine"))
+        """
+        if not attrs:
+            raise ValueError('where: provide at least one attribute filter, e.g. where(medium="water")')
+        resolved = self._resolve_attr_values(attrs)
+        g = self.query_graph
+        if isinstance(target, str) and target.strip().lower() in {"*", "all"}:
+            ids = sorted(g.data_nodes)
+            if not ids:
+                raise ValueError("where: no measurement nodes to filter")
+        else:
+            nid = g.resolve_alias(target)
+            if nid is None:
+                raise ValueError(
+                    f"where: unknown target alias {target!r}" if target is not None
+                    else "where: no current node (start with entity())"
+                )
+            ids = [nid]
+        return self._with_graph(self._apply_attrs(g, ids, resolved))
 
     def refocus(self, alias: str) -> "Q":
         """Repoint the query at an existing node by alias."""
