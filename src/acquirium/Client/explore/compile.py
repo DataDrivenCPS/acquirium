@@ -17,6 +17,7 @@ from typing import Any, List
 from rdflib.namespace import RDF
 
 from acquirium.Client.explore.attributes import REGISTRY, Attr, Not, normalize_value
+from acquirium.Client.explore.shortcuts import hidden_predicates, instantiate_pattern
 from acquirium.Client.query_graph import QueryEdge, QueryGraph
 from acquirium.internals.internals_namespaces import (
     CONNECTED_THROUGH,
@@ -162,6 +163,32 @@ def _direction_edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_id
     return f"{src_var} {path} {tgt_var} ."
 
 
+def _shortcut_edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int) -> str:
+    """Chains of 1..hops shortcut steps; each step is a UNION of the patterns."""
+    hops = int(edge.hops)
+    if hops < 1:
+        raise ValueError(f"edge.hops must be >= 1, got {edge.hops}")
+    patterns = list(edge.patterns)
+
+    def step(prev: str, nxt: str, uid: str) -> str:
+        rendered = [instantiate_pattern(p, prev, nxt, f"{uid}_p{pi}") for pi, p in enumerate(patterns)]
+        if len(rendered) == 1:
+            return rendered[0]
+        return "{ " + " UNION ".join("{ " + r + " }" for r in rendered) + " }"
+
+    union_blocks: List[str] = []
+    for k in range(1, hops + 1):
+        mids = [f"?x_e{edge_idx}_{i}_k{k}" for i in range(1, k)]
+        chain_parts: List[str] = []
+        prev = src_var
+        for s in range(k):
+            nxt = tgt_var if s == k - 1 else mids[s]
+            chain_parts.append(step(prev, nxt, f"e{edge_idx}_k{k}_s{s}"))
+            prev = nxt
+        union_blocks.append("{ " + " ".join(chain_parts) + " }")
+    return " UNION ".join(union_blocks)
+
+
 def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int) -> str:
     """
     Build a WHERE fragment for one edge.
@@ -171,10 +198,14 @@ def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int) ->
     is taken via a connection point.
 
     Rules:
+    - If edge.patterns is set (a shortcut): chains of shortcut steps.
     - If edge.direction is set: delegate to _direction_edge_pattern for full topology traversal.
     - If edge.predicates is present/non-empty: constrain to those predicates and allow length 1..hops.
-    - Else: allow any predicates, but length <= hops, via UNION of k-step chains.
+    - Else: allow any predicates, but length <= hops, via UNION of k-step chains,
+      excluding any hidden predicates (see ``shortcuts.hide``).
     """
+    if getattr(edge, "patterns", None):
+        return _shortcut_edge_pattern(src_var, tgt_var, edge, edge_idx)
     if getattr(edge, "direction", None) is not None:
         return _direction_edge_pattern(src_var, tgt_var, edge, edge_idx)
 
@@ -253,7 +284,13 @@ def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int) ->
 
             return " UNION ".join(union_blocks)
 
-    # Case B: unconstrained predicates -> UNION of explicit k-step chains
+    # Case B: unconstrained predicates -> UNION of explicit k-step chains.
+    # Hidden predicates (shortcuts.hide) are excluded from every hop.
+    hidden = sorted(hidden_predicates())
+    hidden_filter = (
+        "FILTER({pvar} NOT IN (" + ", ".join(f"<{h}>" for h in hidden) + "))"
+        if hidden else None
+    )
     union_blocks: List[str] = []
     for k in range(1, hops + 1):
         mids = [f"?x_e{edge_idx}_{i}" for i in range(1, k)]  # k-1 intermediates
@@ -280,6 +317,11 @@ def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int) ->
         # remaining hops (if any) unchanged
         if k > 1:
             triples_cp.extend(triples_normal[1:])
+
+        if hidden_filter:
+            filters = [hidden_filter.format(pvar=pvar) for pvar in ps]
+            triples_normal.extend(filters)
+            triples_cp.extend(filters)
 
         block_normal = "{ " + " ".join(triples_normal) + " }"
         block_cp = "{ " + " ".join(triples_cp) + " }"

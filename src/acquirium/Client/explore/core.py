@@ -27,6 +27,7 @@ from rdflib import URIRef
 
 from acquirium.Client.explore.attributes import REGISTRY, Not, normalize_value
 from acquirium.Client.explore.compile import compile_sparql
+from acquirium.Client.explore.shortcuts import get_shortcut
 from acquirium.Client.query_graph import DataNodeInfo, QueryEdge, QueryGraph, QueryNode
 from acquirium.internals.internals_namespaces import S223
 
@@ -193,39 +194,49 @@ class Q:
         """Add an entity related to an existing node and point at it.
 
         - ``frm``: alias of the source node (default: current pointer).
-        - ``via``: ``"any"`` (any predicates) or a list of predicate URIs /
-          free-text names (``"^..."`` prefix inverts). Named traversal
-          profiles land in a later step.
-        - ``direction``: ``"upstream"``/``"downstream"`` topology traversal
-          (mutually exclusive with a ``via`` predicate list).
-        - ``max_depth``: traversal bound; defaults to 1 for a predicate list
-          and 3 for ``"any"``/directional traversal.
+        - ``via``: ``"any"`` (any predicates except hidden ones, see
+          ``shortcuts.hide``), a **shortcut name** (``"next_equipment"``, or
+          user-registered via ``register_shortcut``), or a list of predicate
+          URIs / free-text names (``"^..."`` prefix inverts).
+        - ``direction``: ``"upstream"``/``"downstream"`` built-in s223
+          topology traversal (``via="any"`` only — shortcuts encode their own
+          direction, so pick the directional shortcut instead).
+        - ``max_depth``: traversal bound; defaults to 1 for predicate lists
+          and shortcuts, 3 for ``"any"``/directional. Shortcut steps count
+          meaningful hops (one shortcut step per hop).
         """
         instance_uri = self._normalize_instance_uri(uri)
         if cls is None and instance_uri is None and not attrs:
             raise ValueError("related: provide cls, uri, or attribute filters")
         src_id = self._source_id(frm, verb="related")
 
+        if direction is not None and direction not in _DIRECTIONS:
+            raise ValueError(f"related: direction must be one of {_DIRECTIONS}, got {direction!r}")
+
         preds: Optional[List[str]] = None
+        patterns: Optional[tuple] = None
         if isinstance(via, (list, tuple)):
             preds = [
                 f"^{self._as_uri(str(p)[1:], 'predicate')}" if str(p).startswith("^")
                 else self._as_uri(p, "predicate")
                 for p in via
             ]
-        elif via != "any":
+        elif via == "any":
+            pass
+        elif isinstance(via, str):
+            patterns = get_shortcut(via).patterns
+        else:
             raise ValueError(
-                f"related: unknown via {via!r} (pass 'any' or a list of predicates; "
-                f"named traversal profiles are not available yet)"
+                f"related: via must be 'any', a shortcut name, or a list of predicates, got {via!r}"
             )
 
-        if direction is not None:
-            if direction not in _DIRECTIONS:
-                raise ValueError(f"related: direction must be one of {_DIRECTIONS}, got {direction!r}")
-            if preds is not None:
-                raise ValueError("related: pass either direction or a via predicate list, not both")
+        if direction is not None and (preds is not None or patterns is not None):
+            raise ValueError(
+                "related: direction only combines with via='any'; shortcuts and "
+                "predicate lists encode their own direction"
+            )
 
-        hops = max_depth if max_depth is not None else (1 if preds else 3)
+        hops = max_depth if max_depth is not None else (3 if via == "any" else 1)
 
         constraints: Dict[str, Any] = {}
         if cls is not None:
@@ -235,7 +246,7 @@ class Q:
         new_id = self._next_id()
         g = self.query_graph.with_node(QueryNode(id=new_id, alias=alias, constraints=constraints))
         edge = QueryEdge(source_id=src_id, target_id=new_id, hops=hops,
-                         predicates=preds, direction=direction)
+                         predicates=preds, direction=direction, patterns=patterns)
         q2 = self._with_graph(g.with_edge(edge, new_pointer=new_id))
         if attrs:
             resolved = q2._resolve_attr_values(attrs)
