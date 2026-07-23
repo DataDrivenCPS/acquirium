@@ -1,9 +1,10 @@
 """Core immutable query builder for the explore layer.
 
 ``Q`` is the clean replacement for the legacy ``Query`` builder: short verbs
-(``entity`` / ``related`` / ``measurement`` / ``refocus``) build an immutable
-:class:`QueryGraph`, and terminals (``metadata`` / ``data`` / ``dataframe`` /
-``execute`` / ``to_sparql``) run it. Compilation is delegated to the pure
+(``entity`` / ``related`` / ``measurement`` / ``where`` / ``include`` /
+``refocus``) build an immutable :class:`QueryGraph`, and terminals
+(``metadata`` / ``data`` / ``dataframe`` / ``execute`` / ``to_sparql``) run
+it. Compilation is delegated to the pure
 :func:`~acquirium.Client.explore.compile.compile_sparql`.
 
 Every verb returns a **new** ``Q`` with a fresh result cache, so variants can
@@ -341,6 +342,36 @@ class Q:
             ids = [nid]
         return self._with_graph(self._apply_attrs(g, ids, resolved))
 
+    def include(self, *attr_names: str, of: Optional[str] = None) -> "Q":
+        """Include attribute values as extra metadata columns named ``alias.attr``.
+
+        Additive: the regular node columns stay; each named attribute adds a
+        column. ``of`` targets a node by alias (default: current pointer).
+        Values bind OPTIONALly, so rows without the attribute are kept::
+
+            q.include("medium", "unit")          # of the current node
+            q.include("process", of="ro")        # of another node
+        """
+        if not attr_names:
+            raise ValueError('include: provide at least one attribute name, e.g. include("medium")')
+        g = self.query_graph
+        nid = g.resolve_alias(of)
+        if nid is None:
+            raise ValueError(
+                f"include: unknown alias {of!r}" if of is not None
+                else "include: no current node (start with entity())"
+            )
+        role = "data" if nid in g.data_nodes else "entity"
+        for name in attr_names:
+            if name not in REGISTRY:
+                raise ValueError(f"unknown attribute {name!r}; known: {sorted(REGISTRY)}")
+            if role not in REGISTRY[name].roles:
+                alias = g.aliases_reverse.get(nid, str(nid))
+                raise ValueError(f"include: attribute {name!r} does not apply to {role} node {alias!r}")
+        for name in attr_names:
+            g = g.with_select(nid, name)
+        return self._with_graph(g)
+
     def refocus(self, alias: str) -> "Q":
         """Repoint the query at an existing node by alias."""
         nid = self.query_graph.aliases.get(alias)
@@ -446,6 +477,14 @@ class Q:
     # ---------- display helpers ----------
 
     def _col_name_to_alias(self, col_name: str) -> str:
+        if col_name.startswith("attr"):
+            head, _, attr_name = col_name[4:].partition("_")
+            try:
+                node_id = int(head)
+            except ValueError:
+                return col_name
+            base_alias = self.query_graph.aliases_reverse.get(node_id, f"v{node_id}")
+            return f"{base_alias}.{attr_name}"
         if col_name.startswith("ext"):
             try:
                 node_id = int(col_name[3:])
