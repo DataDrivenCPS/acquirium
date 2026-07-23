@@ -388,7 +388,19 @@ def compile_sparql(graph: QueryGraph) -> str:
                 else:
                     where_clauses.append(f'{v} <{pred}> "{val}" .')
 
-    select_parts = list(var_map.values()) + list(ext_vars.values()) + list(unit_vars.values()) + list(extunit_vars.values())
+    # projected attribute columns (?attr<N>_<name>, OPTIONAL so rows without
+    # the attribute survive; the prefix is disjoint from v/ext/unit/extunit
+    # so DataObject's column parsing ignores them)
+    attr_vars: List[str] = []
+    for nid, name in getattr(graph, "selects", ()):
+        attr = REGISTRY[name]
+        avar = f"?attr{nid}_{name}"
+        pred_path = "|".join(f"<{p}>" for p in attr.predicates)
+        where_clauses.append(f"OPTIONAL {{ {var_map[nid]} ({pred_path}) {avar} . }}")
+        attr_vars.append(avar)
+
+    select_parts = (list(var_map.values()) + list(ext_vars.values())
+                    + list(unit_vars.values()) + list(extunit_vars.values()) + attr_vars)
     select_vars = " ".join(select_parts)
     where_block = "\n  ".join(where_clauses) if where_clauses else ""
     return f"SELECT DISTINCT {select_vars}\nWHERE {{\n  {where_block}\n}}"
