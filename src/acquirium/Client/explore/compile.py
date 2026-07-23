@@ -373,8 +373,13 @@ def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int) ->
     return " UNION ".join(union_blocks)
 
 
-def compile_sparql(graph: QueryGraph) -> str:
-    """Compile a query graph to a SPARQL SELECT string."""
+def compile_parts(graph: QueryGraph) -> tuple:
+    """Compile a query graph into ``(var_map, select_parts, where_clauses)``.
+
+    ``compile_sparql`` assembles these into the standard SELECT; facet
+    aggregations (``Q.options``) reuse the WHERE body with their own
+    projection and GROUP BY.
+    """
     # node id -> ?v{id}
     var_map = {nid: f"?v{nid}" for nid in graph.nodes}
     ext_vars = {}
@@ -486,6 +491,12 @@ def compile_sparql(graph: QueryGraph) -> str:
 
     select_parts = (list(var_map.values()) + list(ext_vars.values())
                     + list(unit_vars.values()) + list(extunit_vars.values()) + attr_vars)
+    return var_map, select_parts, where_clauses
+
+
+def compile_sparql(graph: QueryGraph) -> str:
+    """Compile a query graph to a SPARQL SELECT string."""
+    _, select_parts, where_clauses = compile_parts(graph)
     select_vars = " ".join(select_parts)
     where_block = "\n  ".join(where_clauses) if where_clauses else ""
     return f"SELECT DISTINCT {select_vars}\nWHERE {{\n  {where_block}\n}}"
