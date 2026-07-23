@@ -84,6 +84,28 @@ DOWNSTREAM_PROPERTY = Shortcut(
     "Properties observable immediately downstream of an entity.",
 )
 
+DOWNSTREAM_EQUIPMENT = Shortcut(
+    "downstream_equipment",
+    (
+        (Step(str(S223.connectedTo)),),
+        (Step(f"^{S223.connectedFrom}"),),
+        (Step(str(S223.connectedThrough)), Step(str(S223.connectsTo))),
+        (Step(f"^{S223.connectsFrom}"), Step(f"^{S223.connectedThrough}")),
+    ),
+    "The next entity downstream, via any s223 connection pattern (one step).",
+)
+
+UPSTREAM_EQUIPMENT = Shortcut(
+    "upstream_equipment",
+    (
+        (Step(f"^{S223.connectedTo}"),),
+        (Step(str(S223.connectedFrom)),),
+        (Step(str(S223.connectedThrough)), Step(str(S223.connectsFrom))),
+        (Step(f"^{S223.connectsTo}"), Step(f"^{S223.connectedThrough}")),
+    ),
+    "The next entity upstream, via any s223 connection pattern (one step).",
+)
+
 UPSTREAM_PROPERTY = Shortcut(
     "upstream_property",
     (
@@ -98,7 +120,9 @@ UPSTREAM_PROPERTY = Shortcut(
 )
 
 SHORTCUTS: dict[str, Shortcut] = {
-    s.name: s for s in (NEXT_EQUIPMENT, DOWNSTREAM_PROPERTY, UPSTREAM_PROPERTY)
+    s.name: s
+    for s in (NEXT_EQUIPMENT, DOWNSTREAM_EQUIPMENT, UPSTREAM_EQUIPMENT,
+              DOWNSTREAM_PROPERTY, UPSTREAM_PROPERTY)
 }
 
 _RESERVED = {"any", "all"}
