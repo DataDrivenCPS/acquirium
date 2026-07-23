@@ -10,6 +10,43 @@ change in any release.
 
 ## [Unreleased]
 
+## [0.4.0a0] - 2026-07-22
+
+### Added
+- **Ray driver backend.** `[[drivers]]` now run as Ray actors managed by the server instead of background threads in the CLI process. New driver-management HTTP endpoints — `POST /drivers/start`, `POST /drivers/stop`, `GET /drivers/list` — and a matching `acquirium driver` CLI group: `acquirium driver start CONFIG`, `acquirium driver list`, and `acquirium driver stop --name X` (each accepting `--server-url` / `--server-port`, or `--config` for the server address).
+- **SPARQL UPDATE support.** `AcquiriumClient.sparql_update(update)` and the backing `POST /sparql_update` endpoint run an INSERT/DELETE against the graph store and bump the graph version.
+- **App build phase.** New `App.build_app(ctx)` hook, run once during registration, plus an `AppContext.state` field and `AppContext.params`. `Acquirium.register_app(...)` gained a `params=` argument (stored with the app and passed to `build_app` via `ctx.params`) and a `replace=False` argument; `POST /apps/register` gained a `replace` query parameter that gracefully tears down an existing app of the same name before re-registering (otherwise the endpoint returns `409`).
+- **App deletion / teardown.** `Acquirium.delete_app(app_id)` and `AcquiriumClient.delete_app(app_id)`, backed by a new `POST /apps/delete` endpoint, which stops the app, strips its registration triples from the graph, kills its actor, and removes its persisted source.
+- **App restore after restart.** Apps registered by a previous server run are rebuilt from the persistent graph on startup and their actors respawned (build phase re-run; run phase can rebuild on failure).
+- `ParquetIngestDriver` (`acquirium.Drivers.BuiltInDrivers.parquet_ingest:ParquetIngestDriver`) — watches a directory for `*.parquet` / `*.pq` files and ingests new rows, supporting the same wide/narrow/`auto` formats as `CSVIngestDriver` and preserving native column dtypes.
+- `CSVIngestDriver` is now exported from the top-level `acquirium` package.
+- `Driver.data_dir()` — resolves the Acquirium data directory (env `ACQUIRIUM_DATA_DIR` > `[server] data_dir` > `<config_dir>/.acquirium`) so driver state lands inside the data dir.
+- **Python 3.11–3.14 support** (`requires-python` lowered from `>=3.12` to `>=3.11`, with classifiers for 3.11–3.14).
+- `streamlit` added to the `watertap` optional extra (for the model-agnostic input GUI in the WaterTAP deployment).
+- `Query.metadata()` gained a `use_union` keyword (default `True`).
+
+### Changed
+- **Driver execution model.** Drivers no longer run as in-process background threads. `acquirium server` submits `[[drivers]]` to the server to run as Ray actors that connect back over HTTP; `[server] enabled = false` now *submits* the config's `[[drivers]]` to the remote server in `[driver]` (equivalent to `acquirium driver start`) instead of running a local thread loop. File-based driver specs must therefore resolve on the server host.
+- **App execution model.** Apps run inside Ray `AppRunner` actors rather than Docker containers. The app's Python source is shipped to the server and loaded by the actor.
+- **Package restructure into dedicated packages.** Driver code moved under `acquirium.Drivers`: `acquirium.Driver` → `acquirium.Drivers.Driver`, and `acquirium.BuiltinDrivers.*` → `acquirium.Drivers.BuiltInDrivers.*` (note the capitalization change `Builtin` → `BuiltIn`). This changes `[[drivers]]` `spec` strings — e.g. `acquirium.BuiltinDrivers.system_metrics:SystemMetricsDriver` becomes `acquirium.Drivers.BuiltInDrivers.system_metrics:SystemMetricsDriver` (**Breaking:** existing configs and imports must be updated).
+- **`--workers` must be 1.** `acquirium server` now refuses `workers > 1` on every timeseries backend (previously allowed on the timescale backend), because the embedded Oxigraph graph store is single-process (one RocksDB writer). The `-w/--workers` help text and behavior reflect this.
+- **App status/listing semantics.** `Acquirium.list_app_runs(app_id=...)` now lists *registered apps*, or one app's build/run status when `app_id` is given (previously listed active keep-alive runs). `run_app`, `stop_app`, `list_app_runs`, and `delete_app` return a rich `AppsResponse` display object.
+- **WaterTAPDriver rewritten to a mapping-JSON contract.** The shipped `acquirium.Drivers.BuiltInDrivers.watertap:WaterTAPDriver` is now fully config-driven: it reads points from a model's `watertap-mapping.json` (`properties` → Pyomo variables) and resolves `watertap_build_spec` / `watertap_change_inputs_spec` / `watertap_solve_spec` callables, driving a `build -> change_inputs -> solve` cycle each tick. New config keys include `watertap_mapping_path`, `watertap_build_spec`, `watertap_solve_spec`, `watertap_change_inputs_spec`, `watertap_build_kwargs`, and `watertap_result_attr`.
+- **Default driver state location** moved from `<config_dir>/.acquirium/drivers/` to `<data_dir>/drivers/` (see `Driver.data_dir()`), so state lives inside the resolved data directory rather than beside the config file.
+- **Graph-store and DuckDB concurrency model** reworked for consistent concurrent querying (DuckDB now follows the vendor-recommended connection model), plus added locking around shared state.
+- **Batched stream-ref registration** on the server (new batch registration paths in the DuckDB and TimescaleDB stores) for faster bulk stream registration.
+- `pyproject.toml`: added `ray>=2.56.0` to runtime dependencies; pinned `py-rust-stemmers>=0.1.7` via `constraint-dependencies` so `fastembed` installs wheel-only on Python 3.14.
+
+### Removed
+- **`docker>=7.1.0`** runtime dependency.
+- **Breaking:** `docker_image`, `entrypoint`, and `command` parameters on `Acquirium.register_app(...)`, and the `docker_image`, `module`, `entrypoint`, and `command` fields on the `AppSpec` model / `POST /apps/register` request body. App execution no longer goes through Docker.
+- Internal driver-only thread machinery in the CLI (`_run_driver_only_mode`, `_run_driver_loop`) — replaced by the Ray submission path described above.
+
+### Fixed
+- **`Query.filter_by_medium`** now filters on the correct predicate (`OF_MEDIUM` instead of `HAS_MEDIUM`), so medium filters match the model's actual property.
+- **Class-membership query performance.** `rdf:type` / `subClassOf*` traversals are now anchored at the target class inside a sub-`SELECT`, so Oxigraph evaluates the subclass path backward from the class instead of forward from every typed individual — roughly `~6s → ~0.03s` when a deep-hierarchy vocabulary (e.g. QUDT, ~16k individuals) is in the union graph.
+- `Query.metadata()` now de-duplicates its result rows.
+
 ## [0.3.1] - 2026-05-29
 
 ### Added
@@ -179,7 +216,9 @@ change in any release.
 - Text matcher backed by FastEmbed with QUDT and graph indexes.
 - Grafana dashboard helpers.
 
-[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a0...HEAD
+[0.4.0a0]: https://github.com/DataDrivenCPS/acquirium/compare/v0.3.1...v0.4.0a0
+[0.3.1]: https://github.com/DataDrivenCPS/acquirium/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/DataDrivenCPS/acquirium/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/DataDrivenCPS/acquirium/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/DataDrivenCPS/acquirium/compare/v0.1.0...v0.1.1

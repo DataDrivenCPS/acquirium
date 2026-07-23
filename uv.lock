@@ -13,7 +13,7 @@ constraints = [{ name = "py-rust-stemmers", specifier = ">=0.1.7" }]
 
 [[package]]
 name = "acquirium"
-version = "0.3.1"
+version = "0.4.0a0"
 source = { editable = "." }
 dependencies = [
     { name = "adbc-driver-postgresql" },
