@@ -38,6 +38,9 @@ class QueryEdge:
     predicates: Optional[List[str]] = None
     direction: Optional[str] = None  # "upstream", "downstream", or None
     cp_filter: Optional[str] = None  # rdf:type URI to filter connection points in CP alternative
+    # Shortcut pattern snapshot (explore layer): each entry is a property path
+    # or a ?s/?t graph-pattern template; one hop = UNION of the patterns.
+    patterns: Optional[tuple] = None
 
 
 @dataclass(frozen=True)
