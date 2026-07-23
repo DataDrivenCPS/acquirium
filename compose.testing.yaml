@@ -42,6 +42,8 @@ services:
     build:
       context: .
       dockerfile: ./src/acquirium/Dockerfile
+      args:
+        PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
     container_name: acquirium_test_server
     volumes:
       - acquirium_test_data:/app/.acquirium

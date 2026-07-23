@@ -1,13 +1,13 @@
 [project]
 name = "acquirium"
-version = "0.3.1"
+version = "0.4.0a0"
 description = "Acquirium: A data-metadata management platform for water treatment systems"
 readme = "README.md"
 authors = [
     { name = "Gabe Fierro", email = "gtfierro@mines.edu" },
     { name = "Mete Saka", email = "saka@mines.edu"}
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 keywords = [
@@ -24,7 +24,10 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Database",
     "Topic :: Scientific/Engineering",
     "Topic :: Scientific/Engineering :: Information Analysis",
@@ -106,6 +109,11 @@ dev = [
 
 [tool.uv]
 no-build-isolation-package = ["pygit2"]
+# fastembed pulls in py-rust-stemmers transitively. Versions <0.1.7 ship no
+# cp314 wheel, so on Python 3.14 uv would compile it from a Rust sdist — which
+# fails in the slim server image (no C toolchain). 0.1.7+ ships cp314 wheels
+# and stays within fastembed's <0.2.0 range, keeping installs wheel-only.
+constraint-dependencies = ["py-rust-stemmers>=0.1.7"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
