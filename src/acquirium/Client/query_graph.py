@@ -38,9 +38,14 @@ class QueryEdge:
     predicates: Optional[List[str]] = None
     direction: Optional[str] = None  # "upstream", "downstream", or None
     cp_filter: Optional[str] = None  # rdf:type URI to filter connection points in CP alternative
-    # Shortcut pattern snapshot (explore layer): each entry is a property path
-    # or a ?s/?t graph-pattern template; one hop = UNION of the patterns.
+    # Lowered via-program snapshot (explore layer): tuple of segments
+    # (alternatives, star); one segment step = UNION of its step chains.
     patterns: Optional[tuple] = None
+    # Nearest-match edge (explore layer): resolved by client-side BFS at
+    # execute time; value_pairs holds the (source_uri, target_uri) matches
+    # injected as paired VALUES instead of the edge pattern.
+    nearest: bool = False
+    value_pairs: Optional[tuple] = None
 
 
 @dataclass(frozen=True)

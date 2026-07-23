@@ -267,7 +267,8 @@ class Q:
     def related(self, cls: str | URIRef | None = None, *, uri: str | URIRef | None = None,
                 alias: Optional[str] = None, frm: Optional[str] = None,
                 via: Any = "any", direction: Optional[str] = None,
-                max_depth: Optional[int] = None, **attrs: Any) -> "Q":
+                max_depth: Optional[int] = None, nearest: bool = False,
+                **attrs: Any) -> "Q":
         """Add an entity related to an existing node and point at it.
 
         - ``frm``: alias of the source node (default: current pointer).
@@ -282,6 +283,9 @@ class Q:
         - ``max_depth``: bound on the **total** steps of the chain. Defaults:
           1 per fixed segment, +3 when a ``*`` segment is present, 3 for
           ``"any"``/directional, 1 for predicate lists.
+        - ``nearest``: resolve this edge by client-side BFS at execute time —
+          per source, only the closest match(es) are kept (equal-distance
+          ties all survive). Requires a via expression or predicate list.
         """
         instance_uri = self._normalize_instance_uri(uri)
         if cls is None and instance_uri is None and not attrs:
@@ -316,6 +320,17 @@ class Q:
                 "predicate lists encode their own direction"
             )
 
+        if nearest:
+            if preds is not None:
+                # a predicate list is a one-segment repeatable program
+                patterns = ((tuple(((p, None),) for p in preds), True),)
+                preds = None
+            if patterns is None:
+                raise ValueError(
+                    "related: nearest=True requires a via expression or predicate list "
+                    "(via='any' has no traversal program to walk)"
+                )
+
         hops = max_depth if max_depth is not None else default_hops
         if patterns is not None:
             n_fixed = sum(1 for _, star in patterns if not star)
@@ -332,7 +347,8 @@ class Q:
         new_id = self._next_id()
         g = self.query_graph.with_node(QueryNode(id=new_id, alias=alias, constraints=constraints))
         edge = QueryEdge(source_id=src_id, target_id=new_id, hops=hops,
-                         predicates=preds, direction=direction, patterns=patterns)
+                         predicates=preds, direction=direction, patterns=patterns,
+                         nearest=nearest)
         q2 = self._with_graph(g.with_edge(edge, new_pointer=new_id))
         if attrs:
             resolved = q2._resolve_attr_values(attrs)
@@ -341,7 +357,7 @@ class Q:
 
     def measurement(self, *, frm: Optional[str] = None, alias: Optional[str] = None,
                     direction: Optional[str] = None, max_depth: int = 3,
-                    **attrs: Any) -> "Q":
+                    nearest: bool = False, **attrs: Any) -> "Q":
         """Attach a measurement point (data node) to the pattern and point at it.
 
         Matches nodes carrying an external reference one hop from the source.
@@ -353,12 +369,40 @@ class Q:
         for measurements one hop away (inlet connection points for upstream,
         outlet for downstream).
 
+        With ``nearest=True`` (requires ``direction``), the closest matching
+        measurement per source is found by client-side BFS over the
+        ``<direction>_equipment*/<direction>_property`` program —
+        ``max_depth`` bounds the equipment steps, attribute filters
+        participate in nearness (a closer non-matching property does not
+        shadow a farther matching one), and equal-distance ties are kept::
+
+            q.measurement(direction="upstream", nearest=True, quantity_kind="ph")
+
         Extra keyword arguments are attribute filters applied to the new
         measurement node(s), same as ``where()``::
 
             q.measurement(quantity_kind="mass flow rate", medium=Not("brine"))
         """
         g = self.query_graph
+
+        if nearest:
+            if direction is None:
+                raise ValueError("measurement: nearest=True requires direction ('upstream' or 'downstream')")
+            if direction not in _DIRECTIONS:
+                raise ValueError(f"measurement: direction must be one of {_DIRECTIONS}, got {direction!r}")
+            src_id = self._source_id(frm, verb="measurement")
+            src_alias = self._src_alias(src_id)
+            program, _ = self._lower_via(f"{direction}_equipment*/{direction}_property")
+            data_id = self._next_id()
+            g = g.with_node(QueryNode(id=data_id, alias=alias or f"{src_alias}_{direction}_data",
+                                      constraints={"is_data_node": True}))
+            g = g.with_edge(QueryEdge(source_id=src_id, target_id=data_id,
+                                      hops=max_depth + 1, patterns=program, nearest=True),
+                            new_pointer=data_id)
+            g = g.with_data_node(DataNodeInfo(node_id=data_id))
+            if attrs:
+                g = self._apply_attrs(g, [data_id], self._resolve_attr_values(attrs))
+            return self._with_graph(g)
 
         if direction is not None:
             if direction not in _DIRECTIONS:
@@ -482,9 +526,18 @@ class Q:
         return compile_sparql(self.query_graph)
 
     def execute(self, use_union: bool = True) -> dict:
-        """Execute the compiled SPARQL against the metadata graph (cached)."""
+        """Execute the compiled SPARQL against the metadata graph (cached).
+
+        Nearest edges are resolved first (client-side BFS, see
+        ``explore.traverse``); the final result always comes from one SPARQL
+        query with the matches injected as paired VALUES.
+        """
         if self.cache.get("execute") is None:
-            self.cache["execute"] = self.client.sparql_query(self.to_sparql(), use_union=use_union)
+            g = self.query_graph
+            if any(getattr(e, "nearest", False) and e.value_pairs is None for e in g.edges):
+                from acquirium.Client.explore.traverse import resolve_nearest
+                g = resolve_nearest(g, self.client)
+            self.cache["execute"] = self.client.sparql_query(compile_sparql(g), use_union=use_union)
         return self.cache["execute"]
 
     def metadata(self, *, include_internals: bool = False, use_union: bool = True) -> pl.DataFrame:

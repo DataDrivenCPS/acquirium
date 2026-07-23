@@ -54,6 +54,28 @@ _RDF_TYPE = str(RDF.type)
 _SUBCLASS = "http://www.w3.org/2000/01/rdf-schema#subClassOf"
 
 
+def render_alternatives(alts, prev: str, obj: str, uid: str) -> str:
+    """Render one program segment (UNION of step chains) between two vars.
+
+    Shared by the edge compiler and the traversal materializer
+    (``explore.traverse``), so both interpret programs identically.
+    """
+    rendered = []
+    for ai, chain in enumerate(alts):
+        clauses: List[str] = []
+        p = prev
+        for si, (pred, node_cls) in enumerate(chain):
+            o = obj if si == len(chain) - 1 else f"?m_{uid}_a{ai}_{si}"
+            clauses.append(f"{p} {_format_pred(pred)} {o} .")
+            if node_cls:
+                clauses.append(f"{o} <{_RDF_TYPE}>/<{_SUBCLASS}>* <{node_cls}> .")
+            p = o
+        rendered.append(" ".join(clauses))
+    if len(rendered) == 1:
+        return rendered[0]
+    return "{ " + " UNION ".join("{ " + r + " }" for r in rendered) + " }"
+
+
 def _attr_clauses(var: str, attr: Attr, value: Any) -> List[str]:
     """WHERE clauses for one registry attribute constraint on ``var``.
 
@@ -189,22 +211,6 @@ def _program_edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx:
             f"via chain needs at least {max(n_fixed, 1)} step(s) but max_depth is {max_total}"
         )
 
-    def render_group(alts, prev: str, obj: str, uid: str) -> str:
-        rendered = []
-        for ai, chain in enumerate(alts):
-            clauses: List[str] = []
-            p = prev
-            for si, (pred, node_cls) in enumerate(chain):
-                o = obj if si == len(chain) - 1 else f"?m_{uid}_a{ai}_{si}"
-                clauses.append(f"{p} {_format_pred(pred)} {o} .")
-                if node_cls:
-                    clauses.append(f"{o} <{_RDF_TYPE}>/<{_SUBCLASS}>* <{node_cls}> .")
-                p = o
-            rendered.append(" ".join(clauses))
-        if len(rendered) == 1:
-            return rendered[0]
-        return "{ " + " UNION ".join("{ " + r + " }" for r in rendered) + " }"
-
     union_blocks: List[str] = []
     for ci, counts in enumerate(count_combos):
         groups = []
@@ -216,7 +222,7 @@ def _program_edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx:
         prev = src_var
         for gi, alts in enumerate(groups):
             obj = tgt_var if gi == len(groups) - 1 else f"?x_e{edge_idx}_c{ci}_{gi}"
-            parts.append(render_group(alts, prev, obj, f"e{edge_idx}_c{ci}_g{gi}"))
+            parts.append(render_alternatives(alts, prev, obj, f"e{edge_idx}_c{ci}_g{gi}"))
             prev = obj
         union_blocks.append("{ " + " ".join(parts) + " }")
     return " UNION ".join(union_blocks)
@@ -231,12 +237,16 @@ def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int) ->
     is taken via a connection point.
 
     Rules:
+    - If edge.value_pairs is set (a resolved nearest edge): paired VALUES.
     - If edge.patterns is set (a lowered via program): chains of shortcut steps.
     - If edge.direction is set: delegate to _direction_edge_pattern for full topology traversal.
     - If edge.predicates is present/non-empty: constrain to those predicates and allow length 1..hops.
     - Else: allow any predicates, but length <= hops, via UNION of k-step chains,
       excluding any hidden predicates (see ``shortcuts.hide``).
     """
+    if getattr(edge, "value_pairs", None) is not None:
+        pairs = " ".join(f"(<{s}> <{t}>)" for s, t in edge.value_pairs)
+        return f"VALUES ({src_var} {tgt_var}) {{ {pairs} }}"
     if getattr(edge, "patterns", None):
         return _program_edge_pattern(src_var, tgt_var, edge, edge_idx)
     if getattr(edge, "direction", None) is not None:
