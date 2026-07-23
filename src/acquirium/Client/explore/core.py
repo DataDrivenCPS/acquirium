@@ -34,6 +34,7 @@ from acquirium.internals.internals_namespaces import S223
 if TYPE_CHECKING:
     from acquirium.Client.client import AcquiriumClient
     from acquirium.Client.data_object import DataObject
+    from acquirium.Client.explore.facets import FacetSummary
 
 _DIRECTIONS = ("upstream", "downstream")
 
@@ -571,6 +572,52 @@ class Q:
                 schema={attr_name: pl.String, "count": pl.Int64},
             )
         return self.cache[cache_key]
+
+    def facets(self, *, of: Optional[str] = None, use_union: bool = True) -> "FacetSummary":
+        """Value counts for every attribute applicable to a node, with fallback.
+
+        For each applicable registry attribute: values matched by the
+        current pattern; if none, model-wide usage; if still none (and the
+        attribute has a bounded vocabulary), the ontology's taxonomy. The
+        summary prints compactly and indexes like a dict::
+
+            f = q.facets()
+            f                    # notebook overview
+            f["quantity_kind"]   # full polars frame [value, count]
+        """
+        from acquirium.Client.explore.facets import FacetSummary, model_options, vocab_options
+
+        g = self.query_graph
+        nid = g.resolve_alias(of)
+        if nid is None:
+            raise ValueError(
+                f"facets: unknown alias {of!r}" if of is not None
+                else "facets: no current node (start with entity())"
+            )
+        role = "data" if nid in g.data_nodes else "entity"
+        alias = g.aliases_reverse.get(nid, str(nid))
+        version = self.client.graph_version()
+
+        summary = FacetSummary(node_alias=alias)
+        for name, attr in REGISTRY.items():
+            if role not in attr.roles:
+                continue
+            df = self.options(name, of=alias, use_union=use_union)
+            scope = "matched"
+            if df.height == 0:
+                pairs = model_options(self.client, attr, version)
+                scope = "model"
+                if not pairs:
+                    pairs = vocab_options(self.client, attr, version)
+                    scope = "vocabulary"
+                df = pl.DataFrame(
+                    {name: [self._compact_uri_safe(v) for v, _ in pairs],
+                     "count": [c for _, c in pairs]},
+                    schema={name: pl.String, "count": pl.Int64},
+                )
+            summary.frames[name] = df
+            summary.scopes[name] = scope
+        return summary
 
     # ---------- terminals ----------
 
