@@ -1,0 +1,212 @@
+"""Tests for acquirium.Client.explore.core — the Q builder.
+
+Graph-shape assertions plus SPARQL parity against equivalent legacy Query
+chains. All inputs are URIs, which bypass text resolution in both builders,
+so no server/client is needed.
+"""
+
+import re
+
+import pytest
+
+from acquirium.Client.explore.core import Q
+from acquirium.Client.query import Query
+
+CLS_A = "urn:test#TypeA"
+CLS_B = "urn:test#TypeB"
+INST = "urn:test:instance#x1"
+PRED_P = "urn:test#p"
+
+
+def q() -> Q:
+    return Q(client=None)
+
+
+def norm(s: str) -> str:
+    return re.sub(r"\s+", " ", s).strip()
+
+
+class TestEntity:
+    def test_adds_node_with_class(self):
+        b = q().entity(CLS_A, alias="a")
+        g = b.query_graph
+        assert g.nodes[0].constraints == {"rdf_class": CLS_A}
+        assert g.current_pointer == 0
+        assert g.aliases["a"] == 0
+
+    def test_uri_only(self):
+        b = q().entity(uri=INST, alias="x")
+        assert b.query_graph.nodes[0].constraints == {"instance_uri": INST}
+
+    def test_requires_cls_or_uri(self):
+        with pytest.raises(ValueError):
+            q().entity()
+
+    def test_immutability(self):
+        b1 = q().entity(CLS_A, alias="a")
+        b2 = b1.entity(CLS_B, alias="b")
+        assert len(b1.query_graph.nodes) == 1
+        assert len(b2.query_graph.nodes) == 2
+        assert b2.query_graph.current_pointer == 1
+
+    def test_fresh_cache_per_step(self):
+        b1 = q().entity(CLS_A)
+        b1.cache["execute"] = {"columns": [], "rows": []}
+        b2 = b1.entity(CLS_B)
+        assert b2.cache == {}
+
+
+class TestRelated:
+    def test_any_defaults_three_hops(self):
+        b = q().entity(CLS_A, alias="a").related(CLS_B, alias="b")
+        (edge,) = b.query_graph.edges
+        assert edge.hops == 3 and edge.predicates is None and edge.direction is None
+
+    def test_predicates_default_one_hop(self):
+        b = q().entity(CLS_A, alias="a").related(CLS_B, alias="b", via=[PRED_P])
+        (edge,) = b.query_graph.edges
+        assert edge.hops == 1 and edge.predicates == [PRED_P]
+
+    def test_max_depth_override(self):
+        b = q().entity(CLS_A).related(CLS_B, via=[PRED_P], max_depth=2)
+        assert b.query_graph.edges[0].hops == 2
+
+    def test_inverse_predicate_passthrough(self):
+        b = q().entity(CLS_A).related(CLS_B, via=[f"^{PRED_P}"])
+        assert b.query_graph.edges[0].predicates == [f"^{PRED_P}"]
+
+    def test_direction_edge(self):
+        b = q().entity(CLS_A, alias="a").related(CLS_B, alias="b", direction="upstream")
+        (edge,) = b.query_graph.edges
+        assert edge.direction == "upstream" and edge.hops == 3
+
+    def test_frm_alias(self):
+        b = (q().entity(CLS_A, alias="a").entity(CLS_B, alias="b")
+             .related(CLS_A, alias="c", frm="a"))
+        (edge,) = b.query_graph.edges
+        assert edge.source_id == 0 and edge.target_id == 2
+
+    def test_errors(self):
+        with pytest.raises(ValueError):
+            q().related(CLS_A)  # no source
+        base = q().entity(CLS_A)
+        with pytest.raises(ValueError):
+            base.related(CLS_B, direction="sideways")
+        with pytest.raises(ValueError):
+            base.related(CLS_B, via=[PRED_P], direction="upstream")
+        with pytest.raises(ValueError):
+            base.related(CLS_B, via="topology")  # profiles not available yet
+
+
+class TestMeasurement:
+    def test_attaches_data_node(self):
+        b = q().entity(CLS_A, alias="ro").measurement()
+        g = b.query_graph
+        assert g.nodes[1].constraints == {"is_data_node": True}
+        assert 1 in g.data_nodes
+        assert g.aliases["ro_data"] == 1
+        (edge,) = g.edges
+        assert edge.source_id == 0 and edge.target_id == 1 and edge.hops == 1
+
+    def test_alias_and_frm(self):
+        b = (q().entity(CLS_A, alias="a").entity(CLS_B, alias="b")
+             .measurement(frm="a", alias="m"))
+        g = b.query_graph
+        assert g.aliases["m"] == 2
+        assert g.edges[0].source_id == 0
+
+    def test_star_expands_all_entities(self):
+        b = q().entity(CLS_A, alias="a").entity(CLS_B, alias="b").measurement(frm="*")
+        g = b.query_graph
+        assert sorted(g.data_nodes) == [2, 3]
+        assert g.aliases["a_data"] == 2 and g.aliases["b_data"] == 3
+
+    def test_direction_builds_mid_node_and_cp_filter(self):
+        b = q().entity(CLS_A, alias="ro").measurement(direction="upstream", max_depth=2)
+        g = b.query_graph
+        assert g.aliases["ro_upstream_entity"] == 1
+        assert g.aliases["ro_upstream_data"] == 2
+        mid_edge, data_edge = g.edges
+        assert mid_edge.direction == "upstream" and mid_edge.hops == 2
+        assert data_edge.hops == 1
+        assert data_edge.cp_filter == "http://data.ashrae.org/standard223#InletConnectionPoint"
+        assert 2 in g.data_nodes
+
+    def test_requires_source(self):
+        with pytest.raises(ValueError):
+            q().measurement()
+
+
+class TestRefocus:
+    def test_repoints(self):
+        b = q().entity(CLS_A, alias="a").entity(CLS_B, alias="b")
+        assert b.query_graph.current_pointer == 1
+        assert b.refocus("a").query_graph.current_pointer == 0
+
+    def test_unknown_alias(self):
+        with pytest.raises(ValueError):
+            q().entity(CLS_A, alias="a").refocus("nope")
+
+
+def canon(s: str) -> str:
+    """Normalize whitespace and node-id numbering.
+
+    The legacy builder's id counter skips numbers (its ``_new_id`` +
+    ``bump_id`` both increment), so equivalent graphs get different node ids.
+    Renumber ``?v<N>/?ext<N>/?unit<N>/?extunit<N>`` by order of first
+    appearance so structurally identical queries compare equal.
+    """
+    s = norm(s)
+    mapping: dict[str, str] = {}
+
+    def sub(m: re.Match) -> str:
+        nid = m.group(2)
+        if nid not in mapping:
+            mapping[nid] = str(len(mapping))
+        return f"?{m.group(1)}{mapping[nid]}"
+
+    return re.sub(r"\?(v|extunit|ext|unit)(\d+)", sub, s)
+
+
+class TestSparqlParityWithLegacy:
+    """New verb chains must compile to the same SPARQL as the legacy builder
+    (modulo node numbering, see :func:`canon`)."""
+
+    def test_entity_related_chain(self):
+        new = (q().entity(CLS_A, alias="a")
+               .related(CLS_B, alias="b", via=[PRED_P]).to_sparql())
+        old = (Query(client=None).find_entity(_class=CLS_A, alias="a")
+               .find_related(_class=CLS_B, alias="b", predicates=[PRED_P]).to_sparql())
+        assert canon(new) == canon(old)
+
+    def test_direction_chain(self):
+        new = (q().entity(CLS_A, alias="a")
+               .related(CLS_B, alias="b", direction="downstream", max_depth=2).to_sparql())
+        old = (Query(client=None).find_entity(_class=CLS_A, alias="a")
+               .find_related(_class=CLS_B, alias="b", direction="downstream", hops=2).to_sparql())
+        assert canon(new) == canon(old)
+
+    def test_measurement_chain(self):
+        new = (q().entity(CLS_A, alias="ro").measurement().to_sparql())
+        old = (Query(client=None).find_entity(_class=CLS_A, alias="ro")
+               .find_data().to_sparql())
+        assert canon(new) == canon(old)
+
+    def test_directional_measurement_chain(self):
+        new = (q().entity(CLS_A, alias="ro")
+               .measurement(direction="upstream", max_depth=3).to_sparql())
+        old = (Query(client=None).find_entity(_class=CLS_A, alias="ro")
+               .find_related_data(direction="upstream", hops=3).to_sparql())
+        assert canon(new) == canon(old)
+
+    def test_soft_sensor_shape(self):
+        """entity -> CP class -> measurement, the copy-pasted notebook chain."""
+        ro = "urn:nawi-water-ontology#ReverseOsmosisMembrane"
+        cp = "http://data.ashrae.org/standard223#OutletConnectionPoint"
+        new = (q().entity(ro, alias="ro")
+               .related(cp, alias="out")
+               .measurement(alias="permeate").to_sparql())
+        old = (Query(client=None).find_entity(_class=ro, alias="ro")
+               .find_related(_class=cp, alias="out", hops=3)
+               .find_data(alias="permeate").to_sparql())
+        assert canon(new) == canon(old)
