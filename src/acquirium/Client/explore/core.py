@@ -26,7 +26,7 @@ import polars as pl
 from rdflib import URIRef
 
 from acquirium.Client.explore.attributes import REGISTRY, Not, normalize_value
-from acquirium.Client.explore.compile import compile_sparql
+from acquirium.Client.explore.compile import compile_parts, compile_sparql
 from acquirium.Client.explore.shortcuts import SHORTCUTS, Step, get_shortcut
 from acquirium.Client.query_graph import DataNodeInfo, QueryEdge, QueryGraph, QueryNode
 from acquirium.internals.internals_namespaces import S223
@@ -519,6 +519,58 @@ class Q:
         if nid is None:
             raise ValueError(f"at: unknown alias {alias!r}")
         return self._with_graph(replace(self.query_graph, current_pointer=nid))
+
+    # ---------- faceted exploration ----------
+
+    def options(self, attr_name: str, *, of: Optional[str] = None,
+                use_union: bool = True) -> pl.DataFrame:
+        """Distinct values of one attribute across the current matches, with counts.
+
+        Runs immediately (one aggregation query) and returns a polars frame
+        ``[<attr_name>, count]`` sorted by count, where count is the number
+        of distinct matched nodes carrying that value::
+
+            aq.explore().entity("Equipment").measurement(frm="*").options("quantity_kind")
+        """
+        if attr_name not in REGISTRY:
+            raise ValueError(f"unknown attribute {attr_name!r}; known: {sorted(REGISTRY)}")
+        g = self.query_graph
+        nid = g.resolve_alias(of)
+        if nid is None:
+            raise ValueError(
+                f"options: unknown alias {of!r}" if of is not None
+                else "options: no current node (start with entity())"
+            )
+        attr = REGISTRY[attr_name]
+        role = "data" if nid in g.data_nodes else "entity"
+        if role not in attr.roles:
+            alias = g.aliases_reverse.get(nid, str(nid))
+            raise ValueError(f"options: attribute {attr_name!r} does not apply to {role} node {alias!r}")
+
+        cache_key = f"options:{attr_name}:{nid}"
+        if self.cache.get(cache_key) is None:
+            var_map, _, where_clauses = compile_parts(g)
+            v = var_map[nid]
+            pred_path = "|".join(f"<{p}>" for p in attr.predicates)
+            where = list(where_clauses) + [f"{v} ({pred_path}) ?opt ."]
+            where_block = "\n  ".join(where)
+            sparql = (
+                f"SELECT ?opt (COUNT(DISTINCT {v}) AS ?count)\n"
+                f"WHERE {{\n  {where_block}\n}}\n"
+                f"GROUP BY ?opt\nORDER BY DESC(?count)"
+            )
+            res = self.client.sparql_query(sparql, use_union=use_union)
+            cols = res.get("columns", [])
+            rows = res.get("rows", [])
+            oi = cols.index("opt") if "opt" in cols else 0
+            ci = cols.index("count") if "count" in cols else 1
+            values = [self._compact_uri_safe(str(r[oi])) for r in rows if r[oi] is not None]
+            counts = [int(r[ci]) for r in rows if r[oi] is not None]
+            self.cache[cache_key] = pl.DataFrame(
+                {attr_name: values, "count": counts},
+                schema={attr_name: pl.String, "count": pl.Int64},
+            )
+        return self.cache[cache_key]
 
     # ---------- terminals ----------
 
