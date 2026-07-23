@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 import openpyxl
 import pytest
 
-from acquirium.BuiltinDrivers.tabular_base import _safe_name
-from acquirium.BuiltinDrivers.xlsx_ingest import XLSXIngestDriver
+from acquirium.Drivers.BuiltInDrivers.tabular_base import _safe_name
+from acquirium.Drivers.BuiltInDrivers.xlsx_ingest import XLSXIngestDriver
 
 
 # ------------------------------------------------------------------ helpers
@@ -126,7 +126,7 @@ def test_loop_advances_cursor_on_each_tick(tmp_path):
 
 def test_driver_does_not_glob_xlsx_when_using_csv_driver(tmp_path):
     """Sanity check: CSVIngestDriver does not touch .xlsx files."""
-    from acquirium.BuiltinDrivers.csv_ingest import CSVIngestDriver
+    from acquirium.Drivers.BuiltInDrivers.csv_ingest import CSVIngestDriver
 
     aq = MagicMock()
     aq.insert_timeseries_batch.return_value = {"ok": True}

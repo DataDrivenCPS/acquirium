@@ -313,6 +313,54 @@ class TimescaleStore(TimeseriesStore):
             )
         return ref_uri
 
+    def ensure_stream_refs(
+        self,
+        refs: Iterable[tuple[str | None, str, str, str | None, str]],
+    ) -> list[str]:
+        """Batch form of :meth:`ensure_stream_ref`.
+
+        Each entry is ``(point_uri, source_id, ref_name, ref_uri, value_kind)``.
+
+        COPY into a staging table and upsert from it in one statement, rather
+        than a statement per row: COPY streams the whole batch over the wire in
+        a single command, which beats even a pipelined executemany.
+        """
+        prepared: dict[str, tuple[Any, ...]] = {}
+        for point_uri, source_id, ref_name, ref_uri, value_kind in refs:
+            key = str(ref_uri if ref_uri is not None else compute_ref_uri(source_id, ref_name))
+            # Last occurrence wins, matching a sequence of individual upserts.
+            # ON CONFLICT DO UPDATE also refuses a source naming the same row
+            # twice, and the caller's SPARQL can legitimately yield repeats.
+            prepared[key] = (key, point_uri, source_id, ref_name, normalize_value_kind(value_kind))
+        if not prepared:
+            return []
+        cols = "(ref_uri, point_uri, source_id, ref_name, value_kind)"
+        # The connection runs autocommit, so an explicit transaction is what keeps
+        # the staging table alive from COPY through to the upsert (and drops it).
+        with timed_debug(logger, "ensure_stream_refs rows=%d", len(prepared)), self.conn.transaction():
+            with self.conn.cursor() as cur:
+                cur.execute(
+                    f"CREATE TEMP TABLE _acquirium_incoming_refs "
+                    f"(LIKE {STREAMS_TABLE}) ON COMMIT DROP"
+                )
+                with cur.copy(f"COPY _acquirium_incoming_refs {cols} FROM STDIN") as copy:
+                    for row in prepared.values():
+                        copy.write_row(row)
+                cur.execute(
+                    f"""
+                    INSERT INTO {STREAMS_TABLE} {cols}
+                    SELECT ref_uri, point_uri, source_id, ref_name, value_kind
+                    FROM _acquirium_incoming_refs
+                    ON CONFLICT (ref_uri) DO UPDATE
+                        SET
+                            point_uri = COALESCE(EXCLUDED.point_uri, {STREAMS_TABLE}.point_uri),
+                            source_id = EXCLUDED.source_id,
+                            ref_name = EXCLUDED.ref_name,
+                            value_kind = EXCLUDED.value_kind
+                    """
+                )
+        return list(prepared.keys())
+
     def resolve_storage_key(self, point_uri: str) -> str:
         """Return the storage key (ref URI) for a point_uri, or point_uri itself if not registered.
 

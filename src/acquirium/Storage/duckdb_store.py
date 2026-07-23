@@ -64,6 +64,9 @@ class DuckDBStore:
     def __init__(self, db_path: str | Path, *, recreate: bool = False) -> None:
         import duckdb  # lazy — not required unless duckdb backend is selected
 
+        # Kept on the instance so read paths can open their own connections
+        # without importing duckdb at module scope.
+        self._duckdb = duckdb
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
@@ -271,6 +274,54 @@ class DuckDBStore:
             )
         return ref_uri_str
 
+    def ensure_stream_refs(
+        self,
+        refs: Iterable[tuple[str | None, str, str, str | None, str]],
+    ) -> list[str]:
+        """Batch form of :meth:`ensure_stream_ref`: one statement for the lot.
+
+        Each entry is ``(point_uri, source_id, ref_name, ref_uri, value_kind)``.
+        Upserting from a registered frame rather than one statement per row is
+        what makes this worth having: 1000 refs take ~16ms this way versus ~3.6s
+        row-by-row.
+
+        The lock covers register/execute/unregister as a unit: the view name is
+        shared state on the write connection, so two concurrent callers would
+        otherwise overwrite each other's frame between register and insert.
+        """
+        prepared: dict[str, list[Any]] = {}
+        for point_uri, source_id, ref_name, ref_uri, value_kind in refs:
+            key = str(ref_uri if ref_uri is not None else compute_ref_uri(source_id, ref_name))
+            # Last occurrence wins, matching a sequence of individual upserts.
+            # DuckDB's ON CONFLICT DO UPDATE rejects a source naming the same row
+            # twice, and the caller's SPARQL can legitimately yield repeats.
+            prepared[key] = [key, point_uri, source_id, ref_name, normalize_value_kind(value_kind)]
+        if not prepared:
+            return []
+        df = pl.DataFrame(
+            list(prepared.values()),
+            schema=["ref_uri", "point_uri", "source_id", "ref_name", "value_kind"],
+            orient="row",
+        )
+        with self._lock, timed_debug(logger, "ensure_stream_refs rows=%d", len(df)):
+            self._conn.register("_acquirium_incoming_refs", df)
+            try:
+                self._conn.execute(
+                    f"""
+                    INSERT INTO {STREAMS_TABLE} (ref_uri, point_uri, source_id, ref_name, value_kind)
+                    SELECT ref_uri, point_uri, source_id, ref_name, value_kind
+                    FROM _acquirium_incoming_refs
+                    ON CONFLICT (ref_uri) DO UPDATE SET
+                        source_id  = excluded.source_id,
+                        ref_name   = excluded.ref_name,
+                        point_uri  = COALESCE(excluded.point_uri, {STREAMS_TABLE}.point_uri),
+                        value_kind = excluded.value_kind
+                    """
+                )
+            finally:
+                self._conn.unregister("_acquirium_incoming_refs")
+        return list(prepared.keys())
+
     def resolve_storage_key(self, point_uri: str) -> str:
         """Return the storage ref URI for point_uri, or point_uri itself if unregistered."""
         with self._lock:
@@ -335,35 +386,51 @@ class DuckDBStore:
             ORDER BY ts {order_sql}{limit_sql}
         """
 
-        with self._lock, timed_debug(
-            logger, "timeseries ref_uri=%s start=%s end=%s limit=%s order=%s mode=%s",
-            ref_uri, start, end, limit, order, mode,
-        ):
-            value_kind = self._stream_value_kind(ref_uri)
-            table = self._conn.execute(query, params).to_arrow_table()
-        logger.debug("timeseries: ref_uri=%s rows=%d (batch_size=%d)", ref_uri, table.num_rows, batch_size)
-        for batch in table.to_batches(max_chunksize=batch_size):
-            numeric_col = batch.column("numeric_value")
-            text_col = batch.column("text_value")
-            if mode == "coalesce":
-                numeric_values = numeric_col.to_pylist()
-                text_values = text_col.to_pylist()
-                values = [
-                    text if text is not None else (str(numeric) if numeric is not None else None)
-                    for numeric, text in zip(numeric_values, text_values)
-                ]
-                val_col = pa.array(values, type=pa.string())
-            elif mode == "text" or value_kind == "text":
-                val_col = text_col.cast(pa.string())
-            elif mode == "numeric" or value_kind == "numeric":
-                val_col = numeric_col.cast(pa.float64())
-            elif numeric_col.null_count < len(numeric_col):
-                val_col = numeric_col.cast(pa.float64())
-            else:
-                val_col = text_col.cast(pa.string())
-            ts_col = pc.assume_timezone(batch.column("ts"), timezone="UTC")
-            uri_col = pa.array([ref_uri] * len(batch), type=pa.string())
-            yield pa.record_batch([ts_col, val_col, uri_col], names=["ts", "value", "uri"])
+        # DuckDB connections are not thread-safe, and cursor() only returns another
+        # handle on the same connection -- the documented pattern for parallel work
+        # is an independent connection per concurrent reader. This read opens and
+        # owns one for the life of the generator (~0.1ms against an already-open
+        # database), which keeps it correct no matter which threadpool thread
+        # advances it, and keeps the scan off the write lock so a large read cannot
+        # park a driver insert behind it.
+        conn = self._duckdb.connect(str(self.db_path))
+        rows = 0
+        try:
+            with timed_debug(
+                logger, "timeseries ref_uri=%s start=%s end=%s limit=%s order=%s mode=%s",
+                ref_uri, start, end, limit, order, mode,
+            ):
+                value_kind = self._stream_value_kind(conn, ref_uri)
+                # Streamed, not materialized: batches are pulled as the caller
+                # consumes them, so an unbounded range need not fit in memory.
+                reader = conn.execute(query, params).to_arrow_reader(batch_size)
+            for batch in reader:
+                rows += batch.num_rows
+                numeric_col = batch.column("numeric_value")
+                text_col = batch.column("text_value")
+                if mode == "coalesce":
+                    numeric_values = numeric_col.to_pylist()
+                    text_values = text_col.to_pylist()
+                    values = [
+                        text if text is not None else (str(numeric) if numeric is not None else None)
+                        for numeric, text in zip(numeric_values, text_values)
+                    ]
+                    val_col = pa.array(values, type=pa.string())
+                elif mode == "text" or value_kind == "text":
+                    val_col = text_col.cast(pa.string())
+                elif mode == "numeric" or value_kind == "numeric":
+                    val_col = numeric_col.cast(pa.float64())
+                elif numeric_col.null_count < len(numeric_col):
+                    val_col = numeric_col.cast(pa.float64())
+                else:
+                    val_col = text_col.cast(pa.string())
+                ts_col = pc.assume_timezone(batch.column("ts"), timezone="UTC")
+                uri_col = pa.array([ref_uri] * len(batch), type=pa.string())
+                yield pa.record_batch([ts_col, val_col, uri_col], names=["ts", "value", "uri"])
+        finally:
+            # Runs on early caller exit (GeneratorExit) as well as on exhaustion.
+            conn.close()
+            logger.debug("timeseries: ref_uri=%s rows=%d (batch_size=%d)", ref_uri, rows, batch_size)
 
     def timeseries_info(self, ref_uri: str) -> TimeseriesInfo:
         with self._lock, timed_debug(logger, "timeseries_info ref_uri=%s", ref_uri):
@@ -470,7 +537,7 @@ class DuckDBStore:
             ORDER BY timestamp ASC
         """
         try:
-            with timed_debug(logger, "query_logs point_uri=%s clauses=%d", point_uri, len(clauses)):
+            with self._lock, timed_debug(logger, "query_logs point_uri=%s clauses=%d", point_uri, len(clauses)):
                 tbl = self._conn.execute(query, params).to_arrow_table()
         except Exception as exc:
             logger.error("query_logs failed: %s", exc)
@@ -520,7 +587,7 @@ class DuckDBStore:
 
     def sql_query(self, query: str) -> dict[str, Any]:
         logger.debug("sql_query: %s", query.replace("\n", " ")[:200])
-        with timed_debug(logger, "sql_query"):
+        with self._lock, timed_debug(logger, "sql_query"):
             tbl = self._conn.execute(query).to_arrow_table()
         d = tbl.to_pydict()
         cols = tbl.schema.names
@@ -557,10 +624,12 @@ class DuckDBStore:
 
     def stream_value_kind(self, ref_uri: str) -> str | None:
         with self._lock:
-            return self._stream_value_kind(ref_uri)
+            return self._stream_value_kind(self._conn, ref_uri)
 
-    def _stream_value_kind(self, ref_uri: str) -> str | None:
-        row = self._conn.execute(
+    def _stream_value_kind(self, conn, ref_uri: str) -> str | None:
+        """Look up a stream's value kind on *conn* — the caller's connection, so
+        readers can resolve it without touching the shared write connection."""
+        row = conn.execute(
             f"SELECT value_kind FROM {STREAMS_TABLE} WHERE ref_uri = ?",
             [ref_uri],
         ).fetchone()

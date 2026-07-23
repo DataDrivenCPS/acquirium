@@ -16,7 +16,7 @@ import struct
 from datetime import datetime, timezone
 from typing import Any
 
-from acquirium.BuiltinDrivers.mqtt_ingestion import MQTTIngestDriver, MQTTStreamSpec
+from acquirium.Drivers.BuiltInDrivers.mqtt_ingestion import MQTTIngestDriver, MQTTStreamSpec
 
 
 class MyCustomMQTTIngestDriver(MQTTIngestDriver):

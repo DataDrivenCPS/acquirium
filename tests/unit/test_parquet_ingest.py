@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import polars as pl
 
-from acquirium.BuiltinDrivers.parquet_ingest import ParquetIngestDriver
+from acquirium.Drivers.BuiltInDrivers.parquet_ingest import ParquetIngestDriver
 
 
 def make_driver(cfg_overrides: dict | None = None, tmp_path: Path | None = None) -> ParquetIngestDriver:

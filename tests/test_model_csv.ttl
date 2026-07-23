@@ -4,61 +4,61 @@
 @prefix s223: <http://data.ashrae.org/standard223#> .
 
 ex:point_1 a acq:QuantifiableObservableProperty ;
-    s223:hasMedium acq:Medium1 ;
+    s223:ofMedium acq:Medium1 ;
     s223:ofSubstance acq:Substance1 ;
     qudt:hasQuantityKind acq:QuantityKind0 ;
     qudt:hasUnit acq:Unit0 .
 
 ex:point_2 a acq:QuantifiableObservableProperty ;
-    s223:hasMedium acq:Medium1 ;
+    s223:ofMedium acq:Medium1 ;
     s223:ofSubstance acq:Substance1 ;
     qudt:hasQuantityKind acq:QuantityKind0 ;
     qudt:hasUnit acq:Unit0 .
 
 ex:point_3 a acq:QuantifiableObservableProperty ;
-    s223:hasMedium acq:Medium2 ;
+    s223:ofMedium acq:Medium2 ;
     s223:ofSubstance acq:Substance2 ;
     qudt:hasQuantityKind acq:QuantityKind1 ;
     qudt:hasUnit acq:Unit0 .
 
 ex:point_4 a acq:QuantifiableObservableProperty ;
-    s223:hasMedium acq:Medium2 ;
+    s223:ofMedium acq:Medium2 ;
     s223:ofSubstance acq:Substance2 ;
     qudt:hasQuantityKind acq:QuantityKind1 ;
     qudt:hasUnit acq:Unit1 .
 
 ex:point_5 a acq:QuantifiableObservableProperty ;
-    s223:hasMedium acq:Medium2 ;
+    s223:ofMedium acq:Medium2 ;
     s223:ofSubstance acq:Substance2 ;
     qudt:hasQuantityKind acq:QuantityKind1 ;
     qudt:hasUnit acq:Unit1 .
 
 ex:point_6 a acq:QuantifiableObservableProperty ;
-    s223:hasMedium acq:Medium3 ;
+    s223:ofMedium acq:Medium3 ;
     s223:ofSubstance acq:Substance3 ;
     qudt:hasQuantityKind acq:QuantityKind2 ;
     qudt:hasUnit acq:Unit1 .
 
 ex:point_7 a acq:QuantifiableObservableProperty ;
-    s223:hasMedium acq:Medium3 ;
+    s223:ofMedium acq:Medium3 ;
     s223:ofSubstance acq:Substance3 ;
     qudt:hasQuantityKind acq:QuantityKind2 ;
     qudt:hasUnit acq:Unit1 .
 
 ex:point_8 a acq:QuantifiableObservableProperty ;
-    s223:hasMedium acq:Medium3 ;
+    s223:ofMedium acq:Medium3 ;
     s223:ofSubstance acq:Substance3 ;
     qudt:hasQuantityKind acq:QuantityKind2 ;
     qudt:hasUnit acq:Unit2 .
 
 ex:point_9 a acq:QuantifiableObservableProperty ;
-    s223:hasMedium acq:Medium4 ;
+    s223:ofMedium acq:Medium4 ;
     s223:ofSubstance acq:Substance4 ;
     qudt:hasEnumerationKind acq:EnumerationKind1 ;
     qudt:hasUnit acq:Unit2 .
 
 ex:point_10 a acq:QuantifiableObservableProperty ;
-    s223:hasMedium acq:Medium4 ;
+    s223:ofMedium acq:Medium4 ;
     s223:ofSubstance acq:Substance4 ;
     qudt:hasEnumerationKind acq:EnumerationKind1 ;
     qudt:hasUnit acq:Unit2 .

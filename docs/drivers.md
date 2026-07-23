@@ -147,7 +147,7 @@ and want the framework to own:
 - observation insertion
 
 The public base lives at
-`acquirium.BuiltinDrivers.tabular_base:TabularIngestBase`. The built-in
+`acquirium.Drivers.BuiltInDrivers.tabular_base:TabularIngestBase`. The built-in
 `CSVIngestDriver` and `XLSXIngestDriver` are thin specializations of it.
 
 ### Describing Wide/Narrow Schemas
@@ -164,7 +164,7 @@ You can set these in configuration:
 
 ```toml
 [[drivers]]
-spec = "acquirium.BuiltinDrivers.csv_ingest:CSVIngestDriver"
+spec = "acquirium.Drivers.BuiltInDrivers.csv_ingest:CSVIngestDriver"
 format = "narrow"
 time_col = "timestamp"
 id_col = "sensor_id"
@@ -453,7 +453,7 @@ The state file is named based on a driver identifier, determined as follows:
 1. **Explicit `driver_id`** (recommended for human-readable names):
    ```toml
    [[drivers]]
-   spec = "acquirium.BuiltinDrivers.csv_ingest:CSVIngestDriver"
+   spec = "acquirium.Drivers.BuiltInDrivers.csv_ingest:CSVIngestDriver"
    driver_id = "my-csv-monitor"
    ```
    → State file: `.acquirium/drivers/my-csv-monitor.json`
@@ -468,7 +468,7 @@ The state file is named based on a driver identifier, determined as follows:
 
 ```toml
 [[drivers]]
-spec = "acquirium.BuiltinDrivers.csv_ingest:CSVIngestDriver"
+spec = "acquirium.Drivers.BuiltInDrivers.csv_ingest:CSVIngestDriver"
 interval = 5.0
 watch_dir = "./data/incoming"
 driver_id = "sensor-data-ingest"  # Human-readable state file name
@@ -568,7 +568,7 @@ spec = "scripts/temp_driver.py:TemperatureDriver"
 interval = 5.0
 
 [[drivers]]
-spec = "acquirium.BuiltinDrivers.mqtt_ingestion:MQTTIngestDriver"
+spec = "acquirium.Drivers.BuiltInDrivers.mqtt_ingestion:MQTTIngestDriver"
 interval = 10.0
 mqtt_source_id = "mqtt"
 ```
@@ -636,13 +636,13 @@ interval = 2.0            # overrides [driver].interval for this entry only
 
 ## Built-In MQTT Driver
 
-`acquirium.BuiltinDrivers.mqtt_ingestion:MQTTIngestDriver` is an event driver.
+`acquirium.Drivers.BuiltInDrivers.mqtt_ingestion:MQTTIngestDriver` is an event driver.
 It subscribes to MQTT topics declared in the graph and pushes observations from
 the MQTT message callback.
 
 ```toml
 [[drivers]]
-spec = "acquirium.BuiltinDrivers.mqtt_ingestion:MQTTIngestDriver"
+spec = "acquirium.Drivers.BuiltInDrivers.mqtt_ingestion:MQTTIngestDriver"
 interval = 5.0
 mqtt_source_id = "mqtt"
 mqtt_qos = 0
@@ -664,7 +664,7 @@ from typing import Any
 
 import msgpack
 
-from acquirium.BuiltinDrivers.mqtt_ingestion import (
+from acquirium.Drivers.BuiltInDrivers.mqtt_ingestion import (
     MQTTIngestDriver,
     MQTTStreamSpec,
     parse_mqtt_timestamp,
@@ -684,7 +684,7 @@ class MyCustomMQTTIngestDriver(MQTTIngestDriver):
 
 ## Built-In WaterTAP Driver
 
-`acquirium.BuiltinDrivers.watertap:WaterTAPDriver` is a polling driver. Each
+`acquirium.Drivers.BuiltInDrivers.watertap:WaterTAPDriver` is a polling driver. Each
 tick runs a model's `build -> change_inputs -> solve` pipeline and returns
 observations for the Pyomo variables listed in the model's
 `watertap-mapping.json`. This is the interface exposed by
@@ -699,7 +699,7 @@ hand-authored reference graph is needed.
 
 ```toml
 [[drivers]]
-spec = "acquirium.BuiltinDrivers.watertap:WaterTAPDriver"
+spec = "acquirium.Drivers.BuiltInDrivers.watertap:WaterTAPDriver"
 interval = 30.0
 watertap_source_id = "watertap"
 watertap_mapping_path = "deployments/WATERTAP/models/seawater-ro/watertap-mapping.json"
@@ -735,7 +735,7 @@ IDs are discovered, and return rows for insertion by the common ingest base.
 
 ```toml
 [[drivers]]
-spec = "acquirium.BuiltinDrivers.csv_ingest:CSVIngestDriver"
+spec = "acquirium.Drivers.BuiltInDrivers.csv_ingest:CSVIngestDriver"
 interval = 5.0
 watch_dir = "./data/incoming"
 format = "auto"        # "auto" | "wide" | "narrow"
@@ -811,7 +811,7 @@ encoding already handled.
 import polars as pl
 from pathlib import Path
 
-from acquirium.BuiltinDrivers.csv_ingest import CSVIngestDriver
+from acquirium.Drivers.BuiltInDrivers.csv_ingest import CSVIngestDriver
 
 DATE_COL = "Date"
 TIME_COL = "Time"

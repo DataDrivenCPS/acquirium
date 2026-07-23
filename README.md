@@ -92,7 +92,7 @@ make down                            # stop
 
 ## WaterTAP integration
 
-**The [WaterTAP deployment](./deployments/WATERTAP/README.md) is the recommended
+**The [WaterTAP deployment](./deployments/WATERTAP/readme.md) is the recommended
 starting point** — it walks you through cloning the repo, installing (uv **or**
 pip), and running Acquirium against physically realistic simulated plant data,
 with example notebooks. Start there.

@@ -10,8 +10,8 @@ import polars as pl
 import pytest
 from rdflib import Graph, Literal
 
-from acquirium.BuiltinDrivers.tabular_base import _safe_name
-from acquirium.BuiltinDrivers.csv_ingest import CSVIngestDriver
+from acquirium.Drivers.BuiltInDrivers.tabular_base import _safe_name
+from acquirium.Drivers.BuiltInDrivers.csv_ingest import CSVIngestDriver
 from acquirium.Client.acquirium import Acquirium
 from acquirium.internals.models import compute_ref_uri
 from acquirium.internals.internals_namespaces import (

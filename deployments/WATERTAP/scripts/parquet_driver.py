@@ -42,8 +42,8 @@ from typing import Any
 
 import polars as pl
 
-from acquirium.BuiltinDrivers.parquet_ingest import ParquetIngestDriver
-from acquirium.BuiltinDrivers.watertap import (
+from acquirium.Drivers.BuiltInDrivers.parquet_ingest import ParquetIngestDriver
+from acquirium.Drivers.BuiltInDrivers.watertap import (
     _guess_rdf_format,
     _load_point_specs_from_mapping,
     _resolve_path,

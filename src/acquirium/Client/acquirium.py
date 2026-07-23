@@ -17,6 +17,7 @@ from rdflib.namespace import RDF, RDFS
 import warnings
 
 from acquirium.Client.query import Query
+from acquirium.Client.app_display import AppsResponse
 
 
 def _dt_to_iso(v: "str | datetime | None") -> "str | None":
@@ -414,17 +415,25 @@ class Acquirium:
         app: App,
         *,
         app_type: str | None = None,
-        docker_image: str | None = None,
-        entrypoint: str | None = None,
-        command: str | None = None,
         outputs: list[AppOutputSpec | dict[str, Any]] | None = None,
         depends_on: list[str] | None = None,
         resolve_dependencies: bool = True,
         queries: dict[str, Query] | None = None,
-        source_code: str | None = None,
-        entry_file: str | None = None,
+        params: dict[str, Any] | None = None,
+        replace: bool = False,
     ) -> dict[str, Any]:
-        """Register an Acquirium App with the server."""
+        """Register an Acquirium App with the server.
+
+        If an app with the same name is already registered, the server rejects
+        the request unless ``replace=True``, which gracefully tears down the
+        existing app (stopping it and cleaning up its graph registration)
+        before registering this one.
+
+        ``params`` are stored with the app and passed to ``build_app`` via
+        ``ctx.params`` during the (one-time) build phase, so build-time
+        configuration — training windows, thresholds — lives with the
+        registration rather than the run.
+        """
         query_bundle = queries if queries is not None else app.build_query(self)
         if isinstance(query_bundle, Query):
             query_bundle = {"default": query_bundle}
@@ -449,43 +458,39 @@ class Acquirium:
                 raise TypeError("outputs must be AppOutputSpec or dict")
             output_specs.append(spec_item)
 
-        code = source_code or getattr(app, "source_code", None)
-        entry = entry_file or getattr(app, "entry_file", None)
-
-        if code is None:
+        # The app's Python source is shipped to the server so its AppRunner
+        # actor can load and run the class. Prefer an explicit override on the
+        # app; otherwise read the class's defining module file.
+        source_code = getattr(app, "source_code", None)
+        entry_file = getattr(app, "entry_file", None)
+        if source_code is None:
             try:
                 src_path = inspect.getsourcefile(app.__class__)
                 if src_path:
-                    code = Path(src_path).read_text()
-                    if entry is None:
-                        try:
-                            rel = Path(src_path).resolve().relative_to(Path.cwd().resolve())
-                            entry = rel.as_posix()
-                        except Exception:
-                            entry = Path(src_path).name
-                        if entry:
-                            entry = entry.replace("\\", "/")
+                    source_code = Path(src_path).read_text()
+                    if entry_file is None:
+                        entry_file = Path(src_path).name
             except Exception:
-                code = None
-        docker_image = docker_image or getattr(app, "docker_image", None)
-        if docker_image is None:
-            docker_image = "acquirium-acquirium:latest"
+                source_code = None
+
         spec = AppSpec(
             name=app.name,
             version=getattr(app, "version", "0.0"),
             app_type=app_type or getattr(app, "app_type", "soft_sensor"),
-            docker_image=docker_image,
-            module=app.__module__,
             app_class=app.__class__.__name__,
-            entrypoint=entrypoint or getattr(app, "entrypoint", None),
-            command=command or getattr(app, "command", None),
-            source_code=code,
-            entry_file=entry,
+            source_code=source_code,
+            entry_file=entry_file,
             queries=query_specs,
             outputs=output_specs,
             depends_on=deps,
+            params=params or {},
         )
-        return self.client.register_app(spec)
+        return self.client.register_app(spec, replace=replace)
+
+    def delete_app(self, app_id: str) -> dict[str, Any]:
+        """Gracefully delete a registered app (stop it, clean up its graph
+        registration, and remove its persisted source)."""
+        return AppsResponse(self.client.delete_app(app_id))
 
     def run_app(
         self,
@@ -498,22 +503,22 @@ class Acquirium:
         interval: float = 10.0,
     ) -> dict[str, Any]:
         """Trigger an app execution in its own container via the server."""
-        return self.client.run_app(
+        return AppsResponse(self.client.run_app(
             app_id,
             start=start,
             end=end,
             params=params or {},
             keep_alive=keep_alive,
             interval=interval,
-        )
+        ))
 
     def stop_app(self, *, run_id: str | None = None, app_id: str | None = None) -> dict[str, Any]:
         """Stop a keep-alive app loop by run_id or all loops for an app_id."""
-        return self.client.stop_app(run_id=run_id, app_id=app_id)
+        return AppsResponse(self.client.stop_app(run_id=run_id, app_id=app_id))
 
     def list_app_runs(self, *, app_id: str | None = None) -> dict[str, Any]:
-        """List active keep-alive app runs."""
-        return self.client.list_app_runs(app_id=app_id)
+        """List registered apps, or one app's build/run status if app_id is given."""
+        return AppsResponse(self.client.list_app_runs(app_id=app_id))
 
     def generate_grafana_dashboard(self, grafana_server, api_key):
         return self.client.generate_grafana_dashboard(grafana_server, api_key)

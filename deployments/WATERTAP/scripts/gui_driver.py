@@ -34,7 +34,7 @@ from pathlib import Path
 
 import polars as pl
 
-from acquirium.BuiltinDrivers.watertap import WaterTAPDriver
+from acquirium.Drivers.BuiltInDrivers.watertap import WaterTAPDriver
 
 logger = logging.getLogger("acquirium.watertap.gui")
 

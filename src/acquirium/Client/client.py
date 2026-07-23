@@ -1,4 +1,4 @@
-from typing import Optional, Iterator, Any
+from typing import Optional, Iterator, Any, TYPE_CHECKING
 from datetime import datetime
 import requests
 from requests import HTTPError
@@ -22,6 +22,8 @@ from rdflib.namespace import NamespaceManager
 import logging
 logger = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
+    import pyarrow as pa
 
 def _raise_for_status(response: requests.Response) -> None:
     """Like response.raise_for_status(), but enriches the HTTPError message with the
@@ -214,6 +216,13 @@ class AcquiriumClient:
             "use_union": use_union,
         }
         response = requests.get(url, params=data)
+        _raise_for_status(response)
+        return response.json()
+
+    def sparql_update(self, update: str) -> dict:
+        """Execute a SPARQL UPDATE (INSERT/DELETE) against the graph store."""
+        url = f"{self.base_url}/sparql_update"
+        response = requests.post(url, json={"update": update})
         _raise_for_status(response)
         return response.json()
 
@@ -482,10 +491,18 @@ class AcquiriumClient:
         response.raise_for_status()
         return response.json()
 
-    def register_app(self, spec: AppSpec) -> dict:
+    def register_app(self, spec: AppSpec, *, replace: bool = False) -> dict:
         url = f"{self.base_url}/apps/register"
-        response = requests.post(url, json=spec.model_dump(mode="json"))
-        response.raise_for_status()
+        response = requests.post(
+            url, json=spec.model_dump(mode="json"), params={"replace": replace}
+        )
+        _raise_for_status(response)
+        return response.json()
+
+    def delete_app(self, app_id: str) -> dict:
+        url = f"{self.base_url}/apps/delete"
+        response = requests.post(url, json={"app_id": app_id})
+        _raise_for_status(response)
         return response.json()
 
     def run_app(

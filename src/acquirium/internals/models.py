@@ -165,6 +165,7 @@ class AppContext:
     params: dict[str, Any]
     queries: dict[str, Query] | None = None
     data: Any | None = None
+    state: Any | None = None
 
 
 class AppOutputSpec(BaseModel):
@@ -181,16 +182,13 @@ class AppSpec(BaseModel):
     name: str
     version: str = "0.0"
     app_type: str = "soft_sensor"
-    docker_image: str | None = None
-    module: str | None = None
     app_class: str | None = None
-    entrypoint: str | None = None
-    command: str | None = None
     source_code: str | None = None
     entry_file: str | None = None
     queries: dict[str, dict] = Field(default_factory=dict)
     outputs: list[AppOutputSpec] = Field(default_factory=list)
     depends_on: list[str] = Field(default_factory=list)
+    params: dict[str, Any] = Field(default_factory=dict)
 
 
 class AppRunRequest(BaseModel):
