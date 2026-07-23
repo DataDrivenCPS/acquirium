@@ -10,6 +10,7 @@ import inspect
 if TYPE_CHECKING:
     import polars as pl
     import pyarrow as pa
+    from acquirium.Client.explore.core import Q
 
 from rdflib import Graph as RDFGraph, URIRef, Literal
 from rdflib.namespace import RDF, RDFS
@@ -195,6 +196,11 @@ class Acquirium:
     def query(self) -> Query:
         """Create a new empty Query bound to this Acquirium instance."""
         return Query(client=self.client)
+
+    def explore(self) -> "Q":
+        """Create a new empty explore query (the redesigned builder) bound to this instance."""
+        from acquirium.Client.explore.core import Q
+        return Q(client=self.client)
 
     def find_entity(
         self,
