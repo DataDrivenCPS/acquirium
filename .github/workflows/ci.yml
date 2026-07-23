@@ -20,6 +20,12 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
 
+    # Pin every uv invocation to the matrix interpreter, overriding the repo's
+    # .python-version (3.12). Without this, `uv run` re-resolves to 3.12 and
+    # recreates the venv, so the tests never actually run on the matrix version.
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -47,7 +53,7 @@ jobs:
 
       - name: Run unit tests with coverage
         run: |
-          uv run pytest tests/unit/ \
+          uv run --no-sync pytest tests/unit/ \
             -v \
             --tb=short \
             --junitxml=junit-results.xml \
@@ -73,6 +79,9 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
+
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
 
     steps:
       - name: Checkout code
@@ -117,7 +126,7 @@ jobs:
           ACQUIRIUM_TEST_SERVER_PORT: "8010"
           ACQUIRIUM_TEST_PG_DSN: postgresql://acquirium:acquirium@localhost:55432/acquirium_test
         run: |
-          uv run pytest tests/ \
+          uv run --no-sync pytest tests/ \
             -v \
             --tb=short \
             --ignore=tests/unit \
