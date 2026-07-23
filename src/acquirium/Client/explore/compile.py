@@ -16,8 +16,10 @@ from typing import Any, List
 
 from rdflib.namespace import RDF
 
+import itertools
+
 from acquirium.Client.explore.attributes import REGISTRY, Attr, Not, normalize_value
-from acquirium.Client.explore.shortcuts import hidden_predicates, instantiate_pattern
+from acquirium.Client.explore.shortcuts import hidden_predicates
 from acquirium.Client.query_graph import QueryEdge, QueryGraph
 from acquirium.internals.internals_namespaces import (
     CONNECTED_THROUGH,
@@ -163,29 +165,60 @@ def _direction_edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_id
     return f"{src_var} {path} {tgt_var} ."
 
 
-def _shortcut_edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int) -> str:
-    """Chains of 1..hops shortcut steps; each step is a UNION of the patterns."""
-    hops = int(edge.hops)
-    if hops < 1:
-        raise ValueError(f"edge.hops must be >= 1, got {edge.hops}")
-    patterns = list(edge.patterns)
+def _program_edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int) -> str:
+    """Render a lowered ``via`` step program (see ``core.Q.related``).
 
-    def step(prev: str, nxt: str, uid: str) -> str:
-        rendered = [instantiate_pattern(p, prev, nxt, f"{uid}_p{pi}") for pi, p in enumerate(patterns)]
+    ``edge.patterns`` is a tuple of segments ``(alternatives, star)``:
+    alternatives is a tuple of chains, a chain is a tuple of
+    ``(predicate_uri, node_class_uri | None)`` hops. Non-star segments run
+    exactly once; star segments repeat 0..N times, with ``edge.hops``
+    bounding the **total** number of steps in the whole chain (min 1).
+    """
+    segments = list(edge.patterns)
+    max_total = int(edge.hops)
+    n_fixed = sum(1 for _, star in segments if not star)
+    star_positions = [i for i, (_, star) in enumerate(segments) if star]
+
+    count_combos = []
+    for counts in itertools.product(range(0, max_total + 1), repeat=len(star_positions)):
+        total = n_fixed + sum(counts)
+        if 1 <= total <= max_total:
+            count_combos.append(counts)
+    if not count_combos:
+        raise ValueError(
+            f"via chain needs at least {max(n_fixed, 1)} step(s) but max_depth is {max_total}"
+        )
+
+    def render_group(alts, prev: str, obj: str, uid: str) -> str:
+        rendered = []
+        for ai, chain in enumerate(alts):
+            clauses: List[str] = []
+            p = prev
+            for si, (pred, node_cls) in enumerate(chain):
+                o = obj if si == len(chain) - 1 else f"?m_{uid}_a{ai}_{si}"
+                clauses.append(f"{p} {_format_pred(pred)} {o} .")
+                if node_cls:
+                    clauses.append(f"{o} <{_RDF_TYPE}>/<{_SUBCLASS}>* <{node_cls}> .")
+                p = o
+            rendered.append(" ".join(clauses))
         if len(rendered) == 1:
             return rendered[0]
         return "{ " + " UNION ".join("{ " + r + " }" for r in rendered) + " }"
 
     union_blocks: List[str] = []
-    for k in range(1, hops + 1):
-        mids = [f"?x_e{edge_idx}_{i}_k{k}" for i in range(1, k)]
-        chain_parts: List[str] = []
+    for ci, counts in enumerate(count_combos):
+        groups = []
+        star_iter = iter(counts)
+        for alts, star in segments:
+            reps = next(star_iter) if star else 1
+            groups.extend([alts] * reps)
+        parts: List[str] = []
         prev = src_var
-        for s in range(k):
-            nxt = tgt_var if s == k - 1 else mids[s]
-            chain_parts.append(step(prev, nxt, f"e{edge_idx}_k{k}_s{s}"))
-            prev = nxt
-        union_blocks.append("{ " + " ".join(chain_parts) + " }")
+        for gi, alts in enumerate(groups):
+            obj = tgt_var if gi == len(groups) - 1 else f"?x_e{edge_idx}_c{ci}_{gi}"
+            parts.append(render_group(alts, prev, obj, f"e{edge_idx}_c{ci}_g{gi}"))
+            prev = obj
+        union_blocks.append("{ " + " ".join(parts) + " }")
     return " UNION ".join(union_blocks)
 
 
@@ -198,14 +231,14 @@ def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int) ->
     is taken via a connection point.
 
     Rules:
-    - If edge.patterns is set (a shortcut): chains of shortcut steps.
+    - If edge.patterns is set (a lowered via program): chains of shortcut steps.
     - If edge.direction is set: delegate to _direction_edge_pattern for full topology traversal.
     - If edge.predicates is present/non-empty: constrain to those predicates and allow length 1..hops.
     - Else: allow any predicates, but length <= hops, via UNION of k-step chains,
       excluding any hidden predicates (see ``shortcuts.hide``).
     """
     if getattr(edge, "patterns", None):
-        return _shortcut_edge_pattern(src_var, tgt_var, edge, edge_idx)
+        return _program_edge_pattern(src_var, tgt_var, edge, edge_idx)
     if getattr(edge, "direction", None) is not None:
         return _direction_edge_pattern(src_var, tgt_var, edge, edge_idx)
 

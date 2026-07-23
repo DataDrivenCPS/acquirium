@@ -1,57 +1,69 @@
 """Named traversal shortcuts and the hidden-predicate list.
 
-A :class:`Shortcut` names a bundle of SPARQL path shapes: **one step of the
-shortcut** matches the UNION of its patterns. This lets queries say
-``related(via="next_equipment")`` instead of spelling out how equipment is
-wired at the RDF level, and makes ``max_depth`` count meaningful steps.
+A :class:`Shortcut` names *one meaningful step* through the RDF plumbing —
+"the next equipment", "a downstream property" — as a set of alternative
+:class:`Step` chains (the step matches if any chain does). Definitions are
+structured data, not SPARQL: each :class:`Step` is a predicate (URI,
+namespace constant, or free text resolved through the server) plus an
+optional class constraint on the node it lands on::
 
-Each pattern is either
+    register_shortcut(Shortcut("dosing", (
+        (Step("feeds chemical to"),),                       # free text, resolved on use
+        (Step(S223.connectedTo, node="chemical feeder"),),  # constant + class check
+    )))
 
-- a bare SPARQL property path, e.g. ``"<...connectedTo>"`` or
-  ``"^<...connectsFrom>/<...hasProperty>"`` — compiled as
-  ``?s (path) ?t .``; or
-- a graph-pattern template mentioning ``?s`` and ``?t``, for shapes a
-  property path cannot express (like a type check on an intermediate node)::
+Queries compose shortcuts in ``via`` with ``/`` and repeat them with ``*``
+(shortcuts are not always repeatable — an entity→property shortcut cannot
+follow itself, so repetition is explicit)::
 
-      "?s <...hasConnectionPoint> ?m . ?m a <...OutletConnectionPoint> . "
-      "?m <...hasProperty> ?t ."
+    related(via="next_equipment", ...)                        # exactly one step
+    related(via="next_equipment*/downstream_property", ...)   # 0..max_depth equipment
+                                                              # steps, then one property step
 
-  Internal variables (``?m`` above) are renamed per use, so patterns never
-  collide with each other or the rest of the query.
+Compilation and traversal do **not** consume ``Shortcut`` objects: the query
+core lowers a ``via`` expression into a plain-tuple *step program* (see
+:func:`compile_program` docs in ``core.py``), so the shortcut layer can
+evolve without touching the compiler or the BFS machinery.
 
-Separately, :func:`hide` maintains a set of predicates that generic
-(``via="any"``) traversal must never follow — scaffolding edges like
-``s223:cnx`` that would otherwise leak into "any predicate" hops.
+Separately, :func:`hide` maintains predicates that generic (``via="any"``)
+traversal must never follow — scaffolding edges like ``s223:cnx``.
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
+from typing import Optional, Union
+
+from rdflib import URIRef
 
 from acquirium.internals.internals_namespaces import S223
 
-_CONNECTED_TO = f"<{S223.connectedTo}>"
-_CONNECTS_FROM = f"<{S223.connectsFrom}>"
-_CONNECTS_TO = f"<{S223.connectsTo}>"
-_CONNECTS_AT = f"<{S223.connectsAt}>"
-_HAS_CP = f"<{S223.hasConnectionPoint}>"
-_HAS_PROPERTY = f"<{S223.hasProperty}>"
-_OUTLET_CP = f"<{S223.OutletConnectionPoint}>"
-_INLET_CP = f"<{S223.InletConnectionPoint}>"
+
+@dataclass(frozen=True)
+class Step:
+    """One hop of a shortcut chain.
+
+    - ``predicate``: URI, namespace constant, or free text (server-resolved
+      when the shortcut is used); prefix with ``"^"`` to invert.
+    - ``node``: optional class (URI or free text) the hop must land on,
+      matched through ``rdf:type``/``rdfs:subClassOf*``.
+    """
+
+    predicate: Union[str, URIRef]
+    node: Union[str, URIRef, None] = None
 
 
 @dataclass(frozen=True)
 class Shortcut:
-    """A named bundle of path shapes; one step = the union of the patterns."""
+    """A named step: alternatives of Step chains; the step matches any chain."""
 
     name: str
-    patterns: tuple[str, ...]
+    alternatives: tuple  # tuple[tuple[Step, ...], ...]
     description: str = ""
 
 
 NEXT_EQUIPMENT = Shortcut(
     "next_equipment",
-    (f"{_CONNECTED_TO}",),
+    ((Step(str(S223.connectedTo)),),),
     "The next connected entity downstream (s223:connectedTo only).",
 )
 
@@ -59,13 +71,15 @@ DOWNSTREAM_PROPERTY = Shortcut(
     "downstream_property",
     (
         # via own outlet connection point
-        f"?s {_HAS_CP} ?m . ?m a {_OUTLET_CP} . ?m {_HAS_PROPERTY} ?t .",
+        (Step(str(S223.hasConnectionPoint), node=str(S223.OutletConnectionPoint)),
+         Step(str(S223.hasProperty))),
         # on the outgoing connection itself
-        f"^{_CONNECTS_FROM}/{_HAS_PROPERTY}",
+        (Step(f"^{S223.connectsFrom}"), Step(str(S223.hasProperty))),
         # via the inlet connection point of the next entity
-        f"?s ^{_CONNECTS_FROM}/{_CONNECTS_AT} ?m . ?m a {_INLET_CP} . ?m {_HAS_PROPERTY} ?t .",
+        (Step(f"^{S223.connectsFrom}"), Step(str(S223.connectsAt), node=str(S223.InletConnectionPoint)),
+         Step(str(S223.hasProperty))),
         # directly on the next connected entity
-        f"{_CONNECTED_TO}/{_HAS_PROPERTY}",
+        (Step(str(S223.connectedTo)), Step(str(S223.hasProperty))),
     ),
     "Properties observable immediately downstream of an entity.",
 )
@@ -73,10 +87,12 @@ DOWNSTREAM_PROPERTY = Shortcut(
 UPSTREAM_PROPERTY = Shortcut(
     "upstream_property",
     (
-        f"?s {_HAS_CP} ?m . ?m a {_INLET_CP} . ?m {_HAS_PROPERTY} ?t .",
-        f"^{_CONNECTS_TO}/{_HAS_PROPERTY}",
-        f"?s ^{_CONNECTS_TO}/{_CONNECTS_AT} ?m . ?m a {_OUTLET_CP} . ?m {_HAS_PROPERTY} ?t .",
-        f"^{_CONNECTED_TO}/{_HAS_PROPERTY}",
+        (Step(str(S223.hasConnectionPoint), node=str(S223.InletConnectionPoint)),
+         Step(str(S223.hasProperty))),
+        (Step(f"^{S223.connectsTo}"), Step(str(S223.hasProperty))),
+        (Step(f"^{S223.connectsTo}"), Step(str(S223.connectsAt), node=str(S223.OutletConnectionPoint)),
+         Step(str(S223.hasProperty))),
+        (Step(f"^{S223.connectedTo}"), Step(str(S223.hasProperty))),
     ),
     "Properties observable immediately upstream of an entity.",
 )
@@ -89,19 +105,18 @@ _RESERVED = {"any", "all"}
 
 
 def register_shortcut(shortcut: Shortcut) -> None:
-    """Register (or replace) a shortcut for use as ``via=<name>``."""
+    """Register (or replace) a shortcut for use in ``via`` expressions."""
     if shortcut.name in _RESERVED:
         raise ValueError(f"shortcut name {shortcut.name!r} is reserved")
-    if not shortcut.patterns:
-        raise ValueError("shortcut must define at least one pattern")
+    if "/" in shortcut.name or shortcut.name.endswith("*"):
+        raise ValueError(f"shortcut name {shortcut.name!r} may not contain '/' or end with '*'")
+    if not shortcut.alternatives or any(not chain for chain in shortcut.alternatives):
+        raise ValueError("shortcut must define at least one non-empty Step chain")
     SHORTCUTS[shortcut.name] = shortcut
 
 
-def get_shortcut(name: str) -> Shortcut:
-    s = SHORTCUTS.get(name)
-    if s is None:
-        raise ValueError(f"unknown shortcut {name!r}; known: {sorted(SHORTCUTS)}")
-    return s
+def get_shortcut(name: str) -> Optional[Shortcut]:
+    return SHORTCUTS.get(name)
 
 
 # ---------------- hidden predicates ----------------
@@ -134,28 +149,3 @@ def unhide(*predicates) -> None:
 
 def hidden_predicates() -> frozenset[str]:
     return frozenset(_HIDDEN)
-
-
-# ---------------- pattern instantiation ----------------
-
-_VAR = re.compile(r"\?([A-Za-z_]\w*)")
-
-
-def instantiate_pattern(pattern: str, src_var: str, tgt_var: str, uid: str) -> str:
-    """Render one shortcut pattern as WHERE-clause text between two variables.
-
-    Bare property paths become ``src (path) tgt .``; templates get ``?s``/``?t``
-    substituted and every other variable suffixed with ``uid``.
-    """
-    if "?s" not in pattern and "?t" not in pattern:
-        return f"{src_var} ({pattern}) {tgt_var} ."
-
-    def repl(m: re.Match) -> str:
-        name = m.group(1)
-        if name == "s":
-            return src_var
-        if name == "t":
-            return tgt_var
-        return f"?{name}_{uid}"
-
-    return _VAR.sub(repl, pattern).strip()

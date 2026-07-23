@@ -27,7 +27,7 @@ from rdflib import URIRef
 
 from acquirium.Client.explore.attributes import REGISTRY, Not, normalize_value
 from acquirium.Client.explore.compile import compile_sparql
-from acquirium.Client.explore.shortcuts import get_shortcut
+from acquirium.Client.explore.shortcuts import SHORTCUTS, Step, get_shortcut
 from acquirium.Client.query_graph import DataNodeInfo, QueryEdge, QueryGraph, QueryNode
 from acquirium.internals.internals_namespaces import S223
 
@@ -92,6 +92,83 @@ class Q:
 
     def _src_alias(self, src_id: int) -> str:
         return self.query_graph.aliases_reverse.get(src_id, str(src_id))
+
+    def _lower_via(self, via: str) -> tuple:
+        """Lower a ``via`` expression into a step program.
+
+        Grammar: segments separated by ``/``; each segment is a shortcut
+        name, a predicate URI, or free predicate text (``"^"`` inverts); a
+        ``*`` suffix repeats the segment 0..max_depth times. A full http(s)
+        URI (which itself contains ``/``) is taken as one single-predicate
+        segment. Free text resolves through the server in one joint call.
+
+        Returns ``(program, default_hops)`` where program is
+        ``tuple[(alternatives, star), ...]`` with alternatives
+        ``tuple[tuple[(pred_uri, node_uri|None), ...], ...]``.
+        """
+        bare = via[1:] if via.startswith("^") else via
+        if _is_uri(bare):
+            tokens = [via]
+        else:
+            tokens = [t.strip() for t in via.split("/") if t.strip()]
+        if not tokens:
+            raise ValueError("related: empty via expression")
+
+        raw_segments: List[tuple] = []  # (alternatives of Step chains, star, from_shortcut)
+        for tok in tokens:
+            star = tok.endswith("*")
+            name = tok[:-1].rstrip() if star else tok
+            sc = get_shortcut(name)
+            if sc is not None:
+                raw_segments.append((sc.alternatives, star, True))
+            else:
+                raw_segments.append((((Step(name),),), star, False))
+
+        record: Dict[str, Any] = {}
+        for si, (alts, _, _) in enumerate(raw_segments):
+            for ai, chain in enumerate(alts):
+                for hi, step in enumerate(chain):
+                    pred = str(step.predicate)
+                    core = pred[1:] if pred.startswith("^") else pred
+                    if not _is_uri(core):
+                        record[f"p_{si}_{ai}_{hi}"] = (core, "predicate")
+                    if step.node is not None and not _is_uri(str(step.node)):
+                        record[f"n_{si}_{ai}_{hi}"] = (str(step.node), "class")
+        resolved = self.client.resolve_record_uris(record, min_score=0.4) if record else {}
+
+        program: List[tuple] = []
+        for si, (alts, star, from_shortcut) in enumerate(raw_segments):
+            new_alts = []
+            for ai, chain in enumerate(alts):
+                new_chain = []
+                for hi, step in enumerate(chain):
+                    pred = str(step.predicate)
+                    inverted = pred.startswith("^")
+                    core = pred[1:] if inverted else pred
+                    if _is_uri(core):
+                        pred_uri = core
+                    else:
+                        pred_uri = resolved.get(f"p_{si}_{ai}_{hi}")
+                        if pred_uri is None:
+                            hint = (f"in shortcut {tokens[si]!r}" if from_shortcut else
+                                    f"not a registered shortcut (known: {sorted(SHORTCUTS)}) and")
+                            raise ValueError(
+                                f"via segment {tokens[si]!r}: {core!r} {hint} could not be "
+                                f"resolved as a predicate")
+                    node_uri = None
+                    if step.node is not None:
+                        ns = str(step.node)
+                        node_uri = ns if _is_uri(ns) else resolved.get(f"n_{si}_{ai}_{hi}")
+                        if node_uri is None:
+                            raise ValueError(
+                                f"via segment {tokens[si]!r}: could not resolve {ns!r} as a class")
+                    new_chain.append((f"^{pred_uri}" if inverted else pred_uri, node_uri))
+                new_alts.append(tuple(new_chain))
+            program.append((tuple(new_alts), star))
+
+        n_fixed = sum(1 for _, star in program if not star)
+        default_hops = n_fixed + 3 if any(star for _, star in program) else max(n_fixed, 1)
+        return tuple(program), default_hops
 
     def _resolve_attr_values(self, attrs: Dict[str, Any]) -> Dict[str, Any]:
         """Validate attr names and resolve text values to URIs in one joint call.
@@ -195,15 +272,16 @@ class Q:
 
         - ``frm``: alias of the source node (default: current pointer).
         - ``via``: ``"any"`` (any predicates except hidden ones, see
-          ``shortcuts.hide``), a **shortcut name** (``"next_equipment"``, or
-          user-registered via ``register_shortcut``), or a list of predicate
-          URIs / free-text names (``"^..."`` prefix inverts).
+          ``shortcuts.hide``), a **via expression** (shortcut names /
+          predicate URIs / free predicate text, composed with ``/`` and
+          repeated with ``*``, e.g. ``"next_equipment*/downstream_property"``),
+          or a list of predicate URIs / free-text names (``"^..."`` inverts).
         - ``direction``: ``"upstream"``/``"downstream"`` built-in s223
           topology traversal (``via="any"`` only — shortcuts encode their own
           direction, so pick the directional shortcut instead).
-        - ``max_depth``: traversal bound; defaults to 1 for predicate lists
-          and shortcuts, 3 for ``"any"``/directional. Shortcut steps count
-          meaningful hops (one shortcut step per hop).
+        - ``max_depth``: bound on the **total** steps of the chain. Defaults:
+          1 per fixed segment, +3 when a ``*`` segment is present, 3 for
+          ``"any"``/directional, 1 for predicate lists.
         """
         instance_uri = self._normalize_instance_uri(uri)
         if cls is None and instance_uri is None and not attrs:
@@ -215,19 +293,21 @@ class Q:
 
         preds: Optional[List[str]] = None
         patterns: Optional[tuple] = None
+        default_hops = 3
         if isinstance(via, (list, tuple)):
             preds = [
                 f"^{self._as_uri(str(p)[1:], 'predicate')}" if str(p).startswith("^")
                 else self._as_uri(p, "predicate")
                 for p in via
             ]
+            default_hops = 1
         elif via == "any":
             pass
         elif isinstance(via, str):
-            patterns = get_shortcut(via).patterns
+            patterns, default_hops = self._lower_via(via)
         else:
             raise ValueError(
-                f"related: via must be 'any', a shortcut name, or a list of predicates, got {via!r}"
+                f"related: via must be 'any', a via expression, or a list of predicates, got {via!r}"
             )
 
         if direction is not None and (preds is not None or patterns is not None):
@@ -236,7 +316,13 @@ class Q:
                 "predicate lists encode their own direction"
             )
 
-        hops = max_depth if max_depth is not None else (3 if via == "any" else 1)
+        hops = max_depth if max_depth is not None else default_hops
+        if patterns is not None:
+            n_fixed = sum(1 for _, star in patterns if not star)
+            if hops < max(n_fixed, 1):
+                raise ValueError(
+                    f"related: via chain has {n_fixed} fixed step(s) but max_depth is {hops}"
+                )
 
         constraints: Dict[str, Any] = {}
         if cls is not None:

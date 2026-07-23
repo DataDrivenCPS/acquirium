@@ -95,7 +95,7 @@ class TestRelated:
         with pytest.raises(ValueError):
             base.related(CLS_B, via=[PRED_P], direction="upstream")
         with pytest.raises(ValueError):
-            base.related(CLS_B, via="topology")  # profiles not available yet
+            base.related(CLS_B, via=42)  # not a valid via expression
 
 
 class TestMeasurement:

@@ -5,6 +5,7 @@ from acquirium.Client.explore.core import Q
 from acquirium.Client.explore.shortcuts import (
     SHORTCUTS,
     Shortcut,
+    Step,
     hidden_predicates,
     hide,
     register_shortcut,
@@ -12,6 +13,7 @@ from acquirium.Client.explore.shortcuts import (
 )
 
 __all__ = [
-    "Attr", "Not", "Q", "REGISTRY", "SHORTCUTS", "Shortcut", "compile_sparql",
-    "hidden_predicates", "hide", "normalize_value", "register_shortcut", "unhide",
+    "Attr", "Not", "Q", "REGISTRY", "SHORTCUTS", "Shortcut", "Step",
+    "compile_sparql", "hidden_predicates", "hide", "normalize_value",
+    "register_shortcut", "unhide",
 ]
