@@ -13,12 +13,12 @@ class QueryNode:
     """A node in the logical query graph.
 
     - id: internal identifier (stable within this QueryGraph)
-    - rdf_class: ontology class URI (e.g., 'urn:nawi-water-ontology#Valve')
     - alias: user-facing name to refer to this node (e.g., 'valve'), if not provided, same as id
-    - constraints: future extension (labels, numeric filters, instance_uri, etc.)
+    - constraints: node constraints; well-known keys are "rdf_class"
+      (ontology class URI, e.g. 'urn:nawi-water-ontology#Valve'),
+      "instance_uri", "is_data_node", "path_from", and "process"
     """
     id: int
-    rdf_class: str | None = None
     alias: Optional[str] = None
     constraints: Dict[str, Any] = field(default_factory=dict)
 
