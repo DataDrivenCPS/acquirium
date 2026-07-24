@@ -58,7 +58,9 @@ def render_alternatives(alts, prev: str, obj: str, uid: str) -> str:
     """Render one program segment (UNION of step chains) between two vars.
 
     Shared by the edge compiler and the traversal materializer
-    (``explore.traverse``), so both interpret programs identically.
+    (``explore.traverse``), so both interpret programs identically. The
+    wildcard predicate ``"*"`` matches any predicate except the hidden set
+    (IRI objects only, so the hop lands on a node).
     """
     rendered = []
     for ai, chain in enumerate(alts):
@@ -66,7 +68,15 @@ def render_alternatives(alts, prev: str, obj: str, uid: str) -> str:
         p = prev
         for si, (pred, node_cls) in enumerate(chain):
             o = obj if si == len(chain) - 1 else f"?m_{uid}_a{ai}_{si}"
-            clauses.append(f"{p} {_format_pred(pred)} {o} .")
+            if pred == "*":
+                pvar = f"?p_{uid}_a{ai}_{si}"
+                clauses.append(f"{p} {pvar} {o} .")
+                hidden = sorted(hidden_predicates())
+                if hidden:
+                    clauses.append(f"FILTER({pvar} NOT IN (" + ", ".join(f"<{h}>" for h in hidden) + "))")
+                clauses.append(f"FILTER(isIRI({o}))")
+            else:
+                clauses.append(f"{p} {_format_pred(pred)} {o} .")
             if node_cls:
                 clauses.append(f"{o} <{_RDF_TYPE}>/<{_SUBCLASS}>* <{node_cls}> .")
             p = o
@@ -228,7 +238,8 @@ def _program_edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx:
     return " UNION ".join(union_blocks)
 
 
-def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int) -> str:
+def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int,
+                  is_data_edge: bool = False) -> str:
     """
     Build a WHERE fragment for one edge.
 
@@ -242,7 +253,10 @@ def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int) ->
     - If edge.direction is set: delegate to _direction_edge_pattern for full topology traversal.
     - If edge.predicates is present/non-empty: constrain to those predicates and allow length 1..hops.
     - Else: allow any predicates, but length <= hops, via UNION of k-step chains,
-      excluding any hidden predicates (see ``shortcuts.hide``).
+      excluding any hidden predicates (see ``shortcuts.hide``). Edges that
+      target a measurement node are exempt from hiding — that's how data
+      attaches (hasProperty/observes/...), and the external-reference
+      requirement bounds them.
     """
     if getattr(edge, "value_pairs", None) is not None:
         pairs = " ".join(f"(<{s}> <{t}>)" for s, t in edge.value_pairs)
@@ -328,8 +342,9 @@ def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int) ->
             return " UNION ".join(union_blocks)
 
     # Case B: unconstrained predicates -> UNION of explicit k-step chains.
-    # Hidden predicates (shortcuts.hide) are excluded from every hop.
-    hidden = sorted(hidden_predicates())
+    # Hidden predicates (shortcuts.hide) are excluded from every hop, except
+    # on data-node edges.
+    hidden = [] if is_data_edge else sorted(hidden_predicates())
     hidden_filter = (
         "FILTER({pvar} NOT IN (" + ", ".join(f"<{h}>" for h in hidden) + "))"
         if hidden else None
@@ -421,7 +436,10 @@ def compile_parts(graph: QueryGraph) -> tuple:
     for edge_idx, edge in enumerate(graph.edges):
         src_var = var_map[edge.source_id]
         tgt_var = var_map[edge.target_id]
-        where_clauses.append(_edge_pattern(src_var, tgt_var, edge, edge_idx))
+        where_clauses.append(_edge_pattern(
+            src_var, tgt_var, edge, edge_idx,
+            is_data_edge=edge.target_id in graph.data_nodes,
+        ))
 
     # data node constraints
     unit_vars = {}

@@ -166,24 +166,43 @@ class TestHide:
         with pytest.raises(ValueError, match="not a URI"):
             hide("s223:cnx")
 
-    def test_hide_and_unhide(self):
-        hide(CNX)
-        assert CNX in hidden_predicates()
-        unhide(CNX)
-        assert CNX not in hidden_predicates()
+    def test_defaults_cover_attribute_predicates(self):
+        from acquirium.Client.explore.attributes import REGISTRY
+        h = hidden_predicates()
+        assert {str(p) for a in REGISTRY.values() for p in a.predicates} <= h
+        assert "http://www.w3.org/2000/01/rdf-schema#subClassOf" in h
+        assert "http://data.ashrae.org/standard223#hasProperty" in h
+        assert "https://brickschema.org/schema/Brick/ref#hasExternalReference" in h
+        assert CNX in h
 
-    def test_any_traversal_filters_hidden(self):
-        hide(CNX)
+    def test_any_traversal_filters_defaults(self):
         s = q().entity(CLS_A, alias="a").related(CLS_B, alias="b", max_depth=2).to_sparql()
-        assert f"FILTER(?p_e0_1 NOT IN (<{CNX}>))" in s
-        assert f"FILTER(?p_e0_2 NOT IN (<{CNX}>))" in s
+        assert "FILTER(?p_e0_1 NOT IN (" in s and "FILTER(?p_e0_2 NOT IN (" in s
+        assert f"<{CNX}>" in s
+        assert "<http://www.w3.org/2000/01/rdf-schema#subClassOf>" in s
         prepareQuery(s)
 
-    def test_measurement_edge_filters_hidden(self):
-        hide(CNX)
+    def test_data_edge_exempt_from_hiding(self):
         s = q().entity(CLS_A, alias="a").measurement(alias="m").to_sparql()
-        assert f"NOT IN (<{CNX}>)" in s
-
-    def test_no_filter_when_nothing_hidden(self):
-        s = q().entity(CLS_A, alias="a").related(CLS_B, alias="b").to_sparql()
         assert "NOT IN" not in s
+
+    def test_unhide_lifts_a_default(self):
+        unhide(CNX)
+        assert CNX not in hidden_predicates()
+        s = q().entity(CLS_A, alias="a").related(CLS_B, alias="b", max_depth=1).to_sparql()
+        assert f"<{CNX}>" not in s and "NOT IN" in s
+
+    def test_hide_adds_on_top_and_bare_unhide_resets(self):
+        hide("urn:x#custom")
+        unhide(CNX)
+        assert "urn:x#custom" in hidden_predicates() and CNX not in hidden_predicates()
+        unhide()
+        h = hidden_predicates()
+        assert "urn:x#custom" not in h and CNX in h
+
+    def test_explicit_via_overrides_hiding(self):
+        ## naming a hidden predicate means it: no filter, plain traversal
+        s = q().entity(CLS_A, alias="a").related(CLS_B, alias="b", via=CNX).to_sparql()
+        assert f"<{CNX}>" in s and "NOT IN" not in s
+        s2 = q().entity(CLS_A, alias="a").related(CLS_B, alias="b", via=[CNX]).to_sparql()
+        assert f"(<{CNX}>)" in s2 and "NOT IN" not in s2

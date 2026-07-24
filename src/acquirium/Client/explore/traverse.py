@@ -27,6 +27,7 @@ from dataclasses import replace
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from acquirium.Client.explore.compile import compile_sparql, render_alternatives
+from acquirium.Client.explore.shortcuts import hidden_predicates
 from acquirium.Client.query_graph import QueryGraph
 
 # (server_key, alternatives, graph_version) -> adjacency {source: {targets}}
@@ -38,8 +39,14 @@ def _server_key(client) -> str:
 
 
 def materialize_segment(client, alternatives: tuple, version: int) -> Dict[str, Set[str]]:
-    """Fetch (and cache) the full edge list of one program segment."""
-    key = (_server_key(client), alternatives, version)
+    """Fetch (and cache) the full edge list of one program segment.
+
+    Wildcard segments render a hidden-predicate filter, so their cache key
+    includes the current hidden set.
+    """
+    has_wildcard = any(pred == "*" for chain in alternatives for pred, _ in chain)
+    key = (_server_key(client), alternatives, version,
+           hidden_predicates() if has_wildcard else None)
     cached = _SEGMENT_CACHE.get(key)
     if cached is not None:
         return cached
