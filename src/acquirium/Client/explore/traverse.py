@@ -1,6 +1,9 @@
-"""Client-side traversal for nearest-match edges.
+"""Client-side traversal for program edges (via expressions / wildcard).
 
-A ``nearest`` edge is resolved in three phases at execute time:
+Multi-hop traversal is join-explosive in SPARQL, so every edge carrying a
+step program is resolved here at execute time — ``nearest`` edges keep the
+closest match(es) per source, all others every reachable match — in three
+phases:
 
 1. **Sources** — the query graph minus the nearest edge (and everything
    hanging off its target) runs normally; the source node's bindings are the
@@ -75,7 +78,7 @@ def walk_program(
     adjacencies: List[Dict[str, Set[str]]],
     stars: List[bool],
     sources: Iterable[str],
-    max_total: int,
+    max_total: Optional[int] = None,
     nearest: bool = True,
     accept: Optional[Set[str]] = None,
 ) -> Dict[str, Dict[str, int]]:
@@ -88,10 +91,12 @@ def walk_program(
     filters) participate in nearness: a closer non-matching node does not
     shadow a farther matching one. With ``nearest`` the walk stops per
     source at the first layer containing a match (equal-distance ties are
-    all kept); otherwise every match within ``max_total`` steps is
-    collected at its minimum distance.
+    all kept); otherwise every match is collected at its minimum distance.
+    ``max_total`` of ``None`` or ``<= 0`` means unbounded — BFS visits each
+    state at most once, so it terminates at the reachable frontier.
     """
     n = len(adjacencies)
+    unbounded = max_total is None or max_total <= 0
 
     def eps(states: Set[tuple]) -> Set[tuple]:
         out = set(states)
@@ -108,7 +113,9 @@ def walk_program(
         frontier = eps({(src, 0)})
         visited = set(frontier)
         found: Dict[str, int] = {}
-        for depth in range(1, max_total + 1):
+        depth = 0
+        while frontier and (unbounded or depth < max_total):
+            depth += 1
             nxt: Set[tuple] = set()
             for node, pos in frontier:
                 if pos >= n:
@@ -202,10 +209,15 @@ def _fetch_target_accept(client, graph: QueryGraph, edge) -> Optional[Set[str]]:
     return {str(row[idx]) for row in res.get("rows", []) if row[idx] is not None}
 
 
-def resolve_nearest(graph: QueryGraph, client) -> QueryGraph:
-    """Resolve every unresolved nearest edge into paired VALUES matches."""
+def resolve_program_edges(graph: QueryGraph, client) -> QueryGraph:
+    """Resolve every unresolved traversal-program edge into paired VALUES.
+
+    ``nearest`` edges keep only the closest match(es) per source; other
+    program edges collect all reachable matches (``hops`` bounds the walk,
+    0 = unbounded).
+    """
     pending = [e for e in graph.edges
-               if getattr(e, "nearest", False) and e.value_pairs is None]
+               if getattr(e, "patterns", None) and e.value_pairs is None]
     if not pending:
         return graph
     version = client.graph_version()
@@ -219,7 +231,7 @@ def resolve_nearest(graph: QueryGraph, client) -> QueryGraph:
                            for alts, _ in edge.patterns]
             stars = [star for _, star in edge.patterns]
             matches = walk_program(adjacencies, stars, sources, int(edge.hops),
-                                   nearest=True, accept=accept)
+                                   nearest=edge.nearest, accept=accept)
             for src, targets in matches.items():
                 pairs.extend((src, tgt) for tgt in sorted(targets))
         resolved_edge = replace(edge, value_pairs=tuple(pairs))

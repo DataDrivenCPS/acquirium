@@ -281,14 +281,20 @@ class Q:
         - ``direction``: ``"upstream"``/``"downstream"`` built-in s223
           topology traversal (``via="any"`` only — shortcuts encode their own
           direction, so pick the directional shortcut instead).
-        - ``max_depth``: bound on the **total** steps of the chain. Defaults:
-          1 per fixed segment, +3 when a ``*`` segment is present, 3 for
-          ``"any"``/directional, 1 for predicate lists.
-        - ``nearest``: resolve this edge by client-side BFS at execute time —
-          per source, only the closest match(es) are kept (equal-distance
-          ties all survive). With ``via="any"`` distance means raw RDF hops
-          over all non-hidden predicates (graph-nearest); use a directional
-          shortcut when you mean nearest along the process flow.
+        - ``max_depth``: optional bound on the **total** steps of the chain
+          (0 = unbounded). Defaults: unbounded for ``via="any"``, 1 per fixed
+          segment +3 per ``*`` segment for via expressions, 3 for
+          directional, 1 for predicate lists.
+        - ``nearest``: keep only the closest match(es) per source instead of
+          all reachable ones (equal-distance ties all survive). With
+          ``via="any"`` distance means raw RDF hops over all non-hidden
+          predicates (graph-nearest); use a directional shortcut when you
+          mean nearest along the process flow.
+
+        Via-expression and ``via="any"`` edges are resolved by client-side
+        BFS at execute time (SPARQL cannot evaluate multi-hop any-predicate
+        chains); predicate lists and directional traversal compile to SPARQL
+        directly.
         """
         instance_uri = self._normalize_instance_uri(uri)
         if cls is None and instance_uri is None and not attrs:
@@ -309,7 +315,14 @@ class Q:
             ]
             default_hops = 1
         elif via == "any":
-            pass
+            if direction is None:
+                # Wildcard traversal program: any predicate except the hidden
+                # set. Multi-hop any-predicate chains are join-explosive in
+                # SPARQL, so program edges resolve by client-side BFS at
+                # execute time; distance means raw RDF hops. Unbounded by
+                # default (hops=0) — BFS visits each node once.
+                patterns = (((("*", None),),), True),
+                default_hops = 0
         elif isinstance(via, str):
             patterns, default_hops = self._lower_via(via)
         else:
@@ -328,19 +341,14 @@ class Q:
                 # a predicate list is a one-segment repeatable program
                 patterns = ((tuple(((p, None),) for p in preds), True),)
                 preds = None
-            if patterns is None:
-                if direction is not None:
-                    raise ValueError(
-                        "related: nearest=True with direction is not supported; "
-                        "use a directional shortcut (e.g. via='downstream_equipment*')"
-                    )
-                # via="any": wildcard program — any predicate except the hidden
-                # set, so distance means raw RDF hops (graph-nearest, not
-                # process-nearest; use a directional shortcut for flow order).
-                patterns = (((("*", None),),), True),
+            if patterns is None:  # only reachable when direction is set
+                raise ValueError(
+                    "related: nearest=True with direction is not supported; "
+                    "use a directional shortcut (e.g. via='downstream_equipment*')"
+                )
 
         hops = max_depth if max_depth is not None else default_hops
-        if patterns is not None:
+        if patterns is not None and hops != 0:
             n_fixed = sum(1 for _, star in patterns if not star)
             if hops < max(n_fixed, 1):
                 raise ValueError(
@@ -647,15 +655,17 @@ class Q:
     def execute(self, use_union: bool = True) -> dict:
         """Execute the compiled SPARQL against the metadata graph (cached).
 
-        Nearest edges are resolved first (client-side BFS, see
-        ``explore.traverse``); the final result always comes from one SPARQL
-        query with the matches injected as paired VALUES.
+        Traversal-program edges (via expressions / ``via="any"``) are
+        resolved first by client-side BFS (see ``explore.traverse``) —
+        nearest edges keep only the closest matches, others all reachable
+        matches. The final result always comes from one SPARQL query with
+        the matches injected as paired VALUES.
         """
         if self.cache.get("execute") is None:
             g = self.query_graph
-            if any(getattr(e, "nearest", False) and e.value_pairs is None for e in g.edges):
-                from acquirium.Client.explore.traverse import resolve_nearest
-                g = resolve_nearest(g, self.client)
+            if any(getattr(e, "patterns", None) and e.value_pairs is None for e in g.edges):
+                from acquirium.Client.explore.traverse import resolve_program_edges
+                g = resolve_program_edges(g, self.client)
             self.cache["execute"] = self.client.sparql_query(compile_sparql(g), use_union=use_union)
         return self.cache["execute"]
 
