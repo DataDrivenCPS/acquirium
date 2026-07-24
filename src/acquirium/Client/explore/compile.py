@@ -367,6 +367,9 @@ def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int) ->
             triples_cp.extend(filters)
 
         block_normal = "{ " + " ".join(triples_normal) + " }"
+        if not getattr(edge, "cp_union", True):
+            union_blocks.append(block_normal)
+            continue
         block_cp = "{ " + " ".join(triples_cp) + " }"
         union_blocks.append(f"{block_normal} UNION {block_cp}")
 

@@ -210,3 +210,28 @@ class TestSparqlParityWithLegacy:
                .find_related(_class=cp, alias="out", hops=3)
                .find_data(alias="permeate").to_sparql())
         assert canon(new) == canon(old)
+
+
+class TestIncludeConnectionPoints:
+    def test_default_includes_cp_union(self):
+        s = q().entity(CLS_A, alias="ro").measurement(alias="m").to_sparql()
+        assert "hasConnectionPoint" in s and "UNION" in s
+
+    def test_false_drops_cp_alternative(self):
+        s = (q().entity(CLS_A, alias="ro")
+             .measurement(alias="m", include_connection_points=False).to_sparql())
+        assert "hasConnectionPoint" not in s and "UNION" not in s
+        assert "?v0 ?p_e0_1 ?v1 ." in s
+
+    def test_star_respects_flag(self):
+        b = (q().entity(CLS_A, alias="a").entity(CLS_A, alias="b")
+             .measurement(frm="*", include_connection_points=False))
+        assert all(e.cp_union is False for e in b.query_graph.edges)
+
+    def test_directional_rejects_flag(self):
+        base = q().entity(CLS_A, alias="ro")
+        with pytest.raises(ValueError, match="only applies to the"):
+            base.measurement(direction="upstream", include_connection_points=False)
+        with pytest.raises(ValueError, match="only applies to the"):
+            base.measurement(direction="upstream", nearest=True,
+                             include_connection_points=False)

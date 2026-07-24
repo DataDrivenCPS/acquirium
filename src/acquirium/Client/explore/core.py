@@ -358,12 +358,17 @@ class Q:
 
     def measurement(self, *, frm: Optional[str] = None, alias: Optional[str] = None,
                     direction: Optional[str] = None, max_depth: int = 3,
-                    nearest: bool = False, **attrs: Any) -> "Q":
+                    nearest: bool = False, include_connection_points: bool = True,
+                    **attrs: Any) -> "Q":
         """Attach a measurement point (data node) to the pattern and point at it.
 
         Matches nodes carrying an external reference one hop from the source.
-        ``frm`` accepts an alias, ``None`` (current pointer), or ``"*"`` to
-        attach one measurement node to every entity in the pattern.
+        By default that includes measurements on the source's connection
+        points (inlet, outlet, bidirectional) as well as on the source
+        itself; pass ``include_connection_points=False`` for only the
+        source's own measurements. ``frm`` accepts an alias, ``None``
+        (current pointer), or ``"*"`` to attach one measurement node to
+        every entity in the pattern.
 
         With ``direction`` set, first traverses up to ``max_depth`` topology
         hops upstream/downstream through an intermediate entity, then looks
@@ -385,6 +390,13 @@ class Q:
             q.measurement(quantity_kind="mass flow rate", medium=Not("brine"))
         """
         g = self.query_graph
+
+        if direction is not None and not include_connection_points:
+            raise ValueError(
+                "measurement: include_connection_points=False only applies to the "
+                "non-directional form (directional traversal scopes connection "
+                "points by the direction rule)"
+            )
 
         if nearest:
             if direction is None:
@@ -447,7 +459,8 @@ class Q:
                 a = f"{a}_{i}"
             new_id = max(g.nodes, default=-1) + 1
             g = g.with_node(QueryNode(id=new_id, alias=a, constraints={"is_data_node": True}))
-            g = g.with_edge(QueryEdge(source_id=src_id, target_id=new_id, hops=1),
+            g = g.with_edge(QueryEdge(source_id=src_id, target_id=new_id, hops=1,
+                                      cp_union=include_connection_points),
                             new_pointer=new_id)
             g = g.with_data_node(DataNodeInfo(node_id=new_id))
             created.append(new_id)
