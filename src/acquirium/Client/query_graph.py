@@ -46,6 +46,9 @@ class QueryEdge:
     # injected as paired VALUES instead of the edge pattern.
     nearest: bool = False
     value_pairs: Optional[tuple] = None
+    # Unconstrained-edge compilation: also try the first hop through a
+    # connection point (measurement's include_connection_points flag).
+    cp_union: bool = True
 
 
 @dataclass(frozen=True)
