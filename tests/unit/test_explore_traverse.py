@@ -163,9 +163,16 @@ class TestResolveNearest:
 
 
 class TestNearestValidation:
-    def test_related_nearest_needs_program(self):
-        with pytest.raises(ValueError, match="nearest=True requires"):
-            Q(client=None).entity(CLS_A).related(TANK, nearest=True)
+    def test_related_nearest_any_builds_wildcard_program(self):
+        b = Q(client=None).entity(CLS_A).related(TANK, nearest=True)
+        (edge,) = b.query_graph.edges
+        alternatives = ((("*", None),),)
+        assert edge.patterns == ((alternatives, True),)
+        assert edge.nearest and edge.hops == 3
+
+    def test_related_nearest_any_with_direction_errors(self):
+        with pytest.raises(ValueError, match="directional shortcut"):
+            Q(client=None).entity(CLS_A).related(TANK, nearest=True, direction="upstream")
 
     def test_related_nearest_with_predicate_list(self):
         b = Q(client=None).entity(CLS_A).related(TANK, via=["urn:test#p"],
@@ -187,3 +194,38 @@ class TestNearestValidation:
         assert 1 in g.data_nodes and g.aliases["ro_upstream_data"] == 1
         # no intermediate entity node, unlike the non-nearest direction branch
         assert len(g.nodes) == 2
+
+
+class TestWildcardSegment:
+    def test_preview_sparql_has_filters(self):
+        from rdflib.plugins.sparql import prepareQuery
+        s = (Q(client=None).entity(CLS_A, alias="a")
+             .related(TANK, alias="t", nearest=True, max_depth=2).to_sparql())
+        assert "?p_e0_" in s and "NOT IN" in s and "FILTER(isIRI(" in s
+        prepareQuery(s)
+
+    def test_materialize_wildcard_query_shape(self):
+        client = MagicMock()
+        client.base_url = "http://test:8000"
+        client.sparql_query.return_value = {"columns": ["s", "t"], "rows": []}
+        materialize_segment(client, ((("*", None),),), version=1)
+        sparql = client.sparql_query.call_args.args[0]
+        assert sparql.startswith("SELECT DISTINCT ?s ?t")
+        assert "?s ?p_seg_a0_0 ?t ." in sparql
+        assert "NOT IN" in sparql and "FILTER(isIRI(?t))" in sparql
+
+    def test_wildcard_cache_keyed_by_hidden_set(self):
+        from acquirium.Client.explore.shortcuts import hide, unhide
+        client = MagicMock()
+        client.base_url = "http://test:8000"
+        client.sparql_query.return_value = {"columns": ["s", "t"], "rows": []}
+        alts = ((("*", None),),)
+        materialize_segment(client, alts, version=1)
+        materialize_segment(client, alts, version=1)
+        assert client.sparql_query.call_count == 1
+        hide("urn:x#extra")
+        try:
+            materialize_segment(client, alts, version=1)
+            assert client.sparql_query.call_count == 2
+        finally:
+            unhide()

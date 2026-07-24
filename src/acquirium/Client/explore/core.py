@@ -286,7 +286,9 @@ class Q:
           ``"any"``/directional, 1 for predicate lists.
         - ``nearest``: resolve this edge by client-side BFS at execute time —
           per source, only the closest match(es) are kept (equal-distance
-          ties all survive). Requires a via expression or predicate list.
+          ties all survive). With ``via="any"`` distance means raw RDF hops
+          over all non-hidden predicates (graph-nearest); use a directional
+          shortcut when you mean nearest along the process flow.
         """
         instance_uri = self._normalize_instance_uri(uri)
         if cls is None and instance_uri is None and not attrs:
@@ -327,10 +329,15 @@ class Q:
                 patterns = ((tuple(((p, None),) for p in preds), True),)
                 preds = None
             if patterns is None:
-                raise ValueError(
-                    "related: nearest=True requires a via expression or predicate list "
-                    "(via='any' has no traversal program to walk)"
-                )
+                if direction is not None:
+                    raise ValueError(
+                        "related: nearest=True with direction is not supported; "
+                        "use a directional shortcut (e.g. via='downstream_equipment*')"
+                    )
+                # via="any": wildcard program — any predicate except the hidden
+                # set, so distance means raw RDF hops (graph-nearest, not
+                # process-nearest; use a directional shortcut for flow order).
+                patterns = (((("*", None),),), True),
 
         hops = max_depth if max_depth is not None else default_hops
         if patterns is not None:
