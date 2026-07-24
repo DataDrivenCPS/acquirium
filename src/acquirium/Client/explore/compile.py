@@ -207,7 +207,10 @@ def _program_edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx:
     bounding the **total** number of steps in the whole chain (min 1).
     """
     segments = list(edge.patterns)
-    max_total = int(edge.hops)
+    # Program edges resolve by client-side BFS at execute time; this SPARQL
+    # rendering is a preview/debug aid. hops=0 means unbounded — render the
+    # preview with a bound of 3.
+    max_total = int(edge.hops) or 3
     n_fixed = sum(1 for _, star in segments if not star)
     star_positions = [i for i, (_, star) in enumerate(segments) if star]
 

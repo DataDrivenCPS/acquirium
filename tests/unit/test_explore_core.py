@@ -66,10 +66,11 @@ class TestEntity:
 
 
 class TestRelated:
-    def test_any_defaults_three_hops(self):
+    def test_any_defaults_to_unbounded_wildcard_program(self):
         b = q().entity(CLS_A, alias="a").related(CLS_B, alias="b")
         (edge,) = b.query_graph.edges
-        assert edge.hops == 3 and edge.predicates is None and edge.direction is None
+        assert edge.patterns == ((((("*", None),),), True),)
+        assert edge.hops == 0 and edge.predicates is None and edge.direction is None
 
     def test_predicates_default_one_hop(self):
         b = q().entity(CLS_A, alias="a").related(CLS_B, alias="b", via=[PRED_P])
@@ -209,14 +210,19 @@ class TestSparqlParityWithLegacy:
         assert canon(new) == canon(old)
 
     def test_soft_sensor_shape(self):
-        """entity -> CP class -> measurement, the copy-pasted notebook chain."""
+        """entity -> CP class -> measurement, the copy-pasted notebook chain.
+
+        The CP hop uses an explicit predicate: any-traversal deliberately
+        diverged from the legacy compiler (it resolves client-side now).
+        """
         ro = "urn:nawi-water-ontology#ReverseOsmosisMembrane"
-        cp = "http://data.ashrae.org/standard223#OutletConnectionPoint"
+        cp_cls = "http://data.ashrae.org/standard223#OutletConnectionPoint"
+        cp_pred = "http://data.ashrae.org/standard223#hasConnectionPoint"
         new = (q().entity(ro, alias="ro")
-               .related(cp, alias="out")
+               .related(cp_cls, alias="out", via=[cp_pred])
                .measurement(alias="permeate").to_sparql())
         old = (Query(client=None).find_entity(_class=ro, alias="ro")
-               .find_related(_class=cp, alias="out", hops=3)
+               .find_related(_class=cp_cls, alias="out", predicates=[cp_pred])
                .find_data(alias="permeate").to_sparql())
         assert canon(new) == canon(old)
 

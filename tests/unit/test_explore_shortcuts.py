@@ -177,9 +177,10 @@ class TestHide:
 
     def test_any_traversal_filters_defaults(self):
         s = q().entity(CLS_A, alias="a").related(CLS_B, alias="b", max_depth=2).to_sparql()
-        assert "FILTER(?p_e0_1 NOT IN (" in s and "FILTER(?p_e0_2 NOT IN (" in s
+        assert "NOT IN (" in s
         assert f"<{CNX}>" in s
         assert "<http://www.w3.org/2000/01/rdf-schema#subClassOf>" in s
+        assert "FILTER(isIRI(" in s  # wildcard program preview
         prepareQuery(s)
 
     def test_data_edge_exempt_from_hiding(self):

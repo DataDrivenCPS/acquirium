@@ -8,7 +8,7 @@ from acquirium.Client.explore.core import Q
 from acquirium.Client.explore.traverse import (
     clear_segment_cache,
     materialize_segment,
-    resolve_nearest,
+    resolve_program_edges,
     walk_program,
 )
 
@@ -168,7 +168,7 @@ class TestNearestValidation:
         (edge,) = b.query_graph.edges
         alternatives = ((("*", None),),)
         assert edge.patterns == ((alternatives, True),)
-        assert edge.nearest and edge.hops == 3
+        assert edge.nearest and edge.hops == 0  # unbounded by default
 
     def test_related_nearest_any_with_direction_errors(self):
         with pytest.raises(ValueError, match="directional shortcut"):
@@ -229,3 +229,68 @@ class TestWildcardSegment:
             assert client.sparql_query.call_count == 2
         finally:
             unhide()
+
+
+class TestConeResolution:
+    """Non-nearest program edges resolve client-side too, collecting all matches."""
+
+    def make_client(self, responses):
+        client = MagicMock()
+        client.base_url = "http://test:8000"
+        client.graph_version.return_value = 7
+        client.sparql_query.side_effect = responses
+        return client
+
+    def test_shortcut_cone_collects_all_matches(self):
+        client = self.make_client([
+            {"columns": ["v0"], "rows": [["urn:p#ro1"]]},                    # sources
+            {"columns": ["v1"], "rows": [["urn:p#tankA"], ["urn:p#tankB"]]},  # accept
+            {"columns": ["s", "t"], "rows": [                                 # edges
+                ["urn:p#ro1", "urn:p#tankA"],
+                ["urn:p#tankA", "urn:p#tankB"],
+            ]},
+            {"columns": ["v0", "v1"], "rows": []},                            # final
+        ])
+        b = (Q(client=client).entity(CLS_A, alias="ro")
+             .related(TANK, alias="tank", via="next_equipment*", max_depth=4))
+        b.execute()
+        final_sparql = client.sparql_query.call_args.args[0]
+        # nearest would keep only tankA; cone keeps both
+        assert "(<urn:p#ro1> <urn:p#tankA>)" in final_sparql
+        assert "(<urn:p#ro1> <urn:p#tankB>)" in final_sparql
+
+    def test_any_cone_unbounded(self):
+        client = self.make_client([
+            {"columns": ["v0"], "rows": [["urn:p#a"]]},
+            {"columns": ["v1"], "rows": [["urn:p#z"]]},
+            {"columns": ["s", "t"], "rows": [
+                ["urn:p#a", "urn:p#b"], ["urn:p#b", "urn:p#c"],
+                ["urn:p#c", "urn:p#d"], ["urn:p#d", "urn:p#z"],
+            ]},
+            {"columns": ["v0", "v1"], "rows": []},
+        ])
+        b = Q(client=client).entity(CLS_A, alias="a").related(TANK, alias="z")
+        b.execute()
+        final_sparql = client.sparql_query.call_args.args[0]
+        # four hops away — found because default is unbounded
+        assert "(<urn:p#a> <urn:p#z>)" in final_sparql
+
+    def test_explicit_predicate_edges_stay_sparql(self):
+        client = self.make_client([{"columns": ["v0", "v1"], "rows": []}])
+        b = Q(client=client).entity(CLS_A, alias="a").related(TANK, alias="t",
+                                                              via=["urn:test#p"])
+        b.execute()
+        assert client.sparql_query.call_count == 1  # no BFS phases
+        assert "VALUES" not in client.sparql_query.call_args.args[0]
+
+
+class TestUnboundedWalk:
+    def test_unbounded_walks_past_any_fixed_bound(self):
+        chain = adj(*[(f"n{i}", f"n{i+1}") for i in range(50)])
+        res = walk_program([chain], [True], ["n0"], None, nearest=True, accept={"n50"})
+        assert res == {"n0": {"n50": 50}}
+
+    def test_zero_means_unbounded(self):
+        chain = adj(("a", "b"), ("b", "c"))
+        res = walk_program([chain], [True], ["a"], 0, nearest=False)
+        assert res == {"a": {"b": 1, "c": 2}}
