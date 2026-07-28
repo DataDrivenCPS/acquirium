@@ -142,9 +142,28 @@ class TestMeasurement:
         assert data_edge.cp_filter == "http://data.ashrae.org/standard223#InletConnectionPoint"
         assert 2 in g.data_nodes
 
-    def test_requires_source(self):
+    def test_root_form_on_empty_query(self):
+        b = q().measurement()
+        g = b.query_graph
+        assert g.nodes[0].constraints == {"is_data_node": True}
+        assert 0 in g.data_nodes and not g.edges
+        assert g.aliases["data"] == 0
+
+    def test_root_form_with_attrs_and_alias(self):
+        qk = "http://qudt.org/vocab/quantitykind/PH"
+        b = q().measurement(alias="ph", quantity_kind=qk)
+        g = b.query_graph
+        assert g.aliases["ph"] == 0
+        assert g.data_nodes[0].filters == {"quantity_kind": qk}
+
+    def test_root_form_parity_with_find_all_data(self):
+        new = q().measurement().to_sparql()
+        old = Query(client=None).find_all_data().to_sparql()
+        assert canon(new) == canon(old)
+
+    def test_unknown_frm_still_errors(self):
         with pytest.raises(ValueError):
-            q().measurement()
+            q().entity(CLS_A).measurement(frm="nope")
 
 
 class TestRefocus:
