@@ -47,7 +47,7 @@ class Attr:
     """One queryable attribute.
 
     - ``predicates``: predicate URI alternatives (OR-union in SPARQL).
-    - ``kind``: resolver kind passed to ``client.resolve_record_uris`` when
+    - ``kind``: resolver kind passed to ``client.resolve`` when
       the user supplies free text instead of a URI.
     - ``roles``: which node roles the attribute applies to ("entity"/"data").
     - ``via_subclass``: the value is a class matched through the object's

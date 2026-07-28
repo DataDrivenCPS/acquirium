@@ -14,7 +14,7 @@ from acquirium.Client.acquirium import Acquirium
 def _aq(resolve_record_uris):
     aq = Acquirium.__new__(Acquirium)
     aq.client = MagicMock()
-    aq.client.resolve_record_uris.side_effect = resolve_record_uris
+    aq.client.resolve.side_effect = resolve_record_uris
     return aq
 
 
@@ -46,7 +46,7 @@ def test_field_name_is_the_kind():
 
 
 def test_passthrough_and_none_delegated():
-    # resolve_record_uris owns URI/URIRef/None passthrough; just verify
+    # client.resolve owns URI/URIRef/None passthrough; just verify
     # resolve_point_metadata returns whatever it produced, keyed by field.
     aq = _aq(lambda fields, min_score=0.5: {
         "unit": "http://qudt.org/vocab/unit/W",   # passthrough

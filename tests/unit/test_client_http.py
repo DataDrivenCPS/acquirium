@@ -67,45 +67,84 @@ class TestSparqlQuery:
             client.sparql_query("SELECT * WHERE { ?s ?p ?o }")
 
 
-# ── resolve_text ───────────────────────────────────────────
+# ── resolve ────────────────────────────────────────────────
 
 
-class TestResolveText:
+def _get_resp(payload):
+    resp = MagicMock()
+    resp.json.return_value = payload
+    resp.raise_for_status = MagicMock()
+    resp.ok = True
+    return resp
+
+
+class TestResolve:
     @patch("acquirium.Client.client.requests")
-    def test_with_matches(self, mock_requests, client):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {
-            "matches": [{"uri": "urn:a", "score": 0.9}]
-        }
-        mock_resp.raise_for_status = MagicMock()
-        mock_requests.get.return_value = mock_resp
-
-        result = client.resolve_text("pump")
-        # resolve_text returns response.json().get("matches", []) -> a list
-        assert len(result) == 1
-        assert result[0]["uri"] == "urn:a"
-
-    @patch("acquirium.Client.client.requests")
-    def test_empty_result(self, mock_requests, client):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {"matches": []}
-        mock_resp.raise_for_status = MagicMock()
-        mock_requests.get.return_value = mock_resp
-
-        result = client.resolve_text("zzzznonexistent")
-        assert result == []
+    def test_single_text_returns_best_uri(self, mock_requests, client):
+        mock_requests.get.return_value = _get_resp(
+            {"matches": [{"uri": "urn:a", "score": 0.9}]})
+        assert client.resolve("pump", "class") == "urn:a"
+        assert "resolve_text" in mock_requests.get.call_args.args[0]
 
     @patch("acquirium.Client.client.requests")
-    def test_with_kind_filter(self, mock_requests, client):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {"matches": []}
-        mock_resp.raise_for_status = MagicMock()
-        mock_requests.get.return_value = mock_resp
+    def test_single_text_no_match_is_none(self, mock_requests, client):
+        mock_requests.get.return_value = _get_resp({"matches": []})
+        assert client.resolve("zzzznonexistent") is None
 
-        client.resolve_text("pump", kind="class")
-        call_kwargs = mock_requests.get.call_args
-        # Verify kind param was passed
-        assert "class" in str(call_kwargs)
+    @patch("acquirium.Client.client.requests")
+    def test_top_k_returns_candidates(self, mock_requests, client):
+        matches = [{"uri": "urn:a", "score": 0.9}, {"uri": "urn:b", "score": 0.5}]
+        mock_requests.get.return_value = _get_resp({"matches": matches})
+        assert client.resolve("pump", "class", top_k=3) == matches
+
+    @patch("acquirium.Client.client.requests")
+    def test_uri_passthrough_skips_server(self, mock_requests, client):
+        assert client.resolve("urn:a", "class") == "urn:a"
+        assert client.resolve("urn:a", top_k=3)[0]["match_stage"] == "passthrough"
+        mock_requests.get.assert_not_called()
+
+    @patch("acquirium.Client.client.requests")
+    def test_record_form_joint_resolution(self, mock_requests, client):
+        mock_requests.post.return_value = _get_resp(
+            {"matches": {"eu": [{"uri": "urn:gpm"}], "qty": []}})
+        out = client.resolve({"eu": ("gal/min", "unit"),
+                              "qty": ("flow", "quantity_kind"),
+                              "pinned": ("urn:x", "unit"),
+                              "empty": (None, "unit")})
+        assert out == {"eu": "urn:gpm", "qty": None,
+                       "pinned": "urn:x", "empty": None}
+        body = mock_requests.post.call_args.kwargs["json"]
+        # pinned/None fields never reach the server
+        assert {f["name"] for f in body["fields"]} == {"eu", "qty"}
+
+    @patch("acquirium.Client.client.requests")
+    def test_kind_param_forwarded(self, mock_requests, client):
+        mock_requests.get.return_value = _get_resp({"matches": []})
+        client.resolve("pump", "class")
+        assert mock_requests.get.call_args.kwargs["params"]["kind"] == "class"
+
+
+class TestResolveConversion:
+    @patch("acquirium.Client.client.requests")
+    def test_success(self, mock_requests, client):
+        payload = {"from": {"uri": "urn:mgL"}, "to": {"uri": "urn:gL"},
+                   "factors": {"from_uri": "urn:mgL", "to_uri": "urn:gL",
+                               "compatible": True}}
+        mock_requests.post.return_value = _get_resp(payload)
+        out = client.resolve_conversion("mg/l", "grams per liter")
+        assert out == payload
+        assert "resolve_conversion" in mock_requests.post.call_args.args[0]
+
+    @patch("acquirium.Client.client.requests")
+    def test_error_becomes_valueerror(self, mock_requests, client):
+        resp = MagicMock()
+        resp.ok = False
+        resp.headers = {"content-type": "application/json"}
+        resp.json.return_value = {"detail": "no convertible pair"}
+        mock_requests.post.return_value = resp
+        with pytest.raises(ValueError, match="no convertible pair"):
+            client.resolve_conversion("mg/l", "volts")
+
 
 
 # ── register_app / run_app / stop_app / list_app_runs ──────

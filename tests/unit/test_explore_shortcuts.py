@@ -135,14 +135,14 @@ class TestViaExpression:
 class TestViaResolution:
     def make_client(self, mapping):
         client = MagicMock()
-        client.resolve_record_uris.return_value = mapping
+        client.resolve.return_value = mapping
         return client
 
     def test_text_token_resolves_as_predicate(self):
         client = self.make_client({"p_0_0_0": "urn:test#feedsChemicalTo"})
         b = (Q(client=client).entity(CLS_A, alias="a")
              .related(CLS_B, alias="b", via="feeds chemical to"))
-        client.resolve_record_uris.assert_called_once_with(
+        client.resolve.assert_called_once_with(
             {"p_0_0_0": ("feeds chemical to", "predicate")}, min_score=0.4)
         assert b.query_graph.edges[0].patterns == ((((("urn:test#feedsChemicalTo", None),),), False),)
 
@@ -150,7 +150,7 @@ class TestViaResolution:
         register_shortcut(Shortcut("dosing", ((Step("feeds chemical to", node="chemical feeder"),),)))
         client = self.make_client({"p_0_0_0": "urn:test#feeds", "n_0_0_0": "urn:test#Feeder"})
         b = Q(client=client).entity(CLS_A, alias="a").related(CLS_B, alias="b", via="dosing")
-        record = client.resolve_record_uris.call_args.args[0]
+        record = client.resolve.call_args.args[0]
         assert record == {"p_0_0_0": ("feeds chemical to", "predicate"),
                           "n_0_0_0": ("chemical feeder", "class")}
         assert b.query_graph.edges[0].patterns == ((((("urn:test#feeds", "urn:test#Feeder"),),), False),)

@@ -166,9 +166,7 @@ class Query:
             self._resolve_rdf("sand filter", "class")
             # -> "urn:nawi-water-ontology#SandFilter"
         """
-        uri = self.client.resolve_concept(
-            text, kind=kind, context=context, min_score=0.4
-        )
+        uri = self.client.resolve(text, kind, context=context, min_score=0.4)
         if uri is None:
             raise ValueError(f"Could not resolve '{text}' as {kind}")
         return uri

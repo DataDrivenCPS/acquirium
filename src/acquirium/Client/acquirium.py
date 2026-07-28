@@ -353,14 +353,14 @@ class Acquirium:
 
         This is the preferred entry point for drivers and stream
         registration. For arbitrary labels and explicit kinds use
-        :meth:`AcquiriumClient.resolve_record_uris` directly.
+        :meth:`AcquiriumClient.resolve` directly.
         """
         record = {
             name: (value, POINT_FIELD_KINDS.get(name))
             for name, value in fields.items()
         }
         try:
-            return self.client.resolve_record_uris(record, min_score=min_score)
+            return self.client.resolve(record, min_score=min_score)
         except Exception:
             return {name: None for name in record}
 

@@ -65,7 +65,7 @@ class Q:
         """Coerce a class/predicate input to a URI: passthrough or text-resolve."""
         if isinstance(value, URIRef) or _is_uri(value):
             return str(value)
-        uri = self.client.resolve_concept(str(value), kind=kind, min_score=0.4)
+        uri = self.client.resolve(str(value), kind, min_score=0.4)
         if uri is None:
             raise ValueError(f"Could not resolve {value!r} as {kind}")
         return uri
@@ -135,7 +135,7 @@ class Q:
                         record[f"p_{si}_{ai}_{hi}"] = (core, "predicate")
                     if step.node is not None and not _is_uri(str(step.node)):
                         record[f"n_{si}_{ai}_{hi}"] = (str(step.node), "class")
-        resolved = self.client.resolve_record_uris(record, min_score=0.4) if record else {}
+        resolved = self.client.resolve(record, min_score=0.4) if record else {}
 
         program: List[tuple] = []
         for si, (alts, star, from_shortcut) in enumerate(raw_segments):
@@ -176,7 +176,7 @@ class Q:
 
         URIs/URIRefs pass through; literal attrs keep their raw value; the
         remaining text values are resolved together via
-        ``client.resolve_record_uris`` so siblings disambiguate each other.
+        ``client.resolve`` so siblings disambiguate each other.
         ``Not`` markers are preserved around the resolved value.
         """
         unknown = [k for k in attrs if k not in REGISTRY]
@@ -191,7 +191,7 @@ class Q:
                 if attr.literal or isinstance(v, URIRef) or _is_uri(v):
                     continue
                 record[f"{name}_{i}"] = (str(v), attr.kind)
-        resolved_uris = self.client.resolve_record_uris(record, min_score=0.4) if record else {}
+        resolved_uris = self.client.resolve(record, min_score=0.4) if record else {}
 
         out: Dict[str, Any] = {}
         for name, raw in attrs.items():

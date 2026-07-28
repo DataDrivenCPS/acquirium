@@ -153,7 +153,7 @@ class TestVerbAttrSugar:
 class TestResolution:
     def make_client(self, mapping):
         client = MagicMock()
-        client.resolve_record_uris.return_value = mapping
+        client.resolve.return_value = mapping
         return client
 
     def test_joint_record_and_rewrap(self):
@@ -161,7 +161,7 @@ class TestResolution:
         b = (Q(client=client).entity(CLS_A, alias="ro")
              .measurement(alias="m")
              .where(quantity_kind="mass flow rate", medium=Not("brine")))
-        client.resolve_record_uris.assert_called_once_with(
+        client.resolve.assert_called_once_with(
             {"quantity_kind_0": ("mass flow rate", "quantity_kind"),
              "medium_0": ("brine", "class")},
             min_score=0.4,
@@ -173,12 +173,12 @@ class TestResolution:
     def test_uri_passthrough_skips_resolver(self):
         client = self.make_client({})
         Q(client=client).entity(CLS_A, alias="ro").measurement(alias="m").where(quantity_kind=QK_URI)
-        client.resolve_record_uris.assert_not_called()
+        client.resolve.assert_not_called()
 
     def test_literal_attr_skips_resolver(self):
         client = self.make_client({})
         Q(client=client).entity(CLS_A, alias="ro").measurement(alias="m").where(data_source="Lab")
-        client.resolve_record_uris.assert_not_called()
+        client.resolve.assert_not_called()
 
     def test_unresolved_raises(self):
         client = self.make_client({"medium_0": None})
@@ -190,6 +190,6 @@ class TestResolution:
         b = (Q(client=client).entity(CLS_A, alias="ro").measurement(alias="m")
              .where(medium=["brine", "urn:test#M2x".replace("x", "")]))
         # second element is already a URI: only the text goes to the resolver
-        record = client.resolve_record_uris.call_args.args[0]
+        record = client.resolve.call_args.args[0]
         assert record == {"medium_0": ("brine", "class")}
         assert b.query_graph.data_nodes[1].filters["medium"] == [MEDIUM_URI, "urn:test#M2"]

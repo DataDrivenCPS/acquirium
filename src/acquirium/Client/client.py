@@ -269,137 +269,110 @@ class AcquiriumClient:
         except Exception as e:
             raise ValueError(f"Cannot expand '{s}': no matching namespace for CURIE and not a full URI")
 
-    def resolve_text(
+    def resolve(
         self,
-        text: str,
+        query: "str | dict[str, tuple[Any, Optional[str]]]",
         kind: Optional[str] = None,
-        top_k: int = 5,
+        *,
+        top_k: int = 1,
         min_score: float = 0.5,
         context: Optional[list[str]] = None,
-    ) -> list[dict]:
-        """Resolve natural language text to ontology URIs via the server's embedding matcher.
+    ) -> "Optional[str] | list[dict] | dict[str, Optional[str]]":
+        """Resolve free text to ontology/QUDT URIs — the one resolution method.
 
-        ``context`` is an optional list of already-chosen URIs used to break
-        symbol ambiguity (e.g. resolving "kg" given a Mass quantity kind).
+        Three forms, chosen by the input:
 
-        Example::
+        - ``resolve("mg/l", "unit")`` -> best URI or ``None``. Values that
+          already look like URIs pass through unchanged.
+        - ``resolve("mg/l", "unit", top_k=3)`` -> ranked candidate dicts
+          (``uri``/``score``/``match_stage``/...), for disambiguation UIs and
+          debugging what a text almost matched.
+        - ``resolve({"eu": ("gal/min", "unit"), "qty": ("flow", "quantity_kind")})``
+          -> ``{label: URI-or-None}``; the fields are resolved **jointly**, so
+          a confident sibling disambiguates an ambiguous one. Labels are
+          echoed back unchanged; ``kind`` comes from each tuple.
 
-            # unit string read from a chlorine-analyzer tag description
-            resolve_text("mg/L", kind="unit", top_k=1)
-            # -> [{"uri": "http://qudt.org/vocab/unit/MilliGM-PER-L",
-            #      "kind": "unit", "score": 1.0, "match_stage": "exact", ...}]
+        ``context`` (single-text form only) is an optional list of
+        already-chosen URIs used to break symbol ambiguity.
         """
-        url = f"{self.base_url}/resolve_text"
+        if isinstance(query, dict):
+            out: dict[str, Optional[str]] = {}
+            to_resolve: dict[str, tuple[str, Optional[str]]] = {}
+            for name, (text, k) in query.items():
+                if text is None:
+                    out[name] = None
+                elif looks_like_uri(text):
+                    out[name] = str(text)
+                else:
+                    to_resolve[name] = (str(text), k)
+            if to_resolve:
+                body = {
+                    "fields": [
+                        {"name": n, "text": t, "kind": k}
+                        for n, (t, k) in to_resolve.items()
+                    ],
+                    "top_k": 1,
+                    "min_score": min_score,
+                }
+                response = requests.post(f"{self.base_url}/resolve_record", json=body)
+                _raise_for_status(response)
+                matches = response.json().get("matches", {})
+                for name in to_resolve:
+                    m = matches.get(name) or []
+                    out[name] = m[0]["uri"] if m else None
+            return out
+
+        text = str(query)
+        if looks_like_uri(text):
+            if top_k == 1:
+                return text
+            return [{"uri": text, "kind": kind, "score": 1.0, "match_stage": "passthrough"}]
         params: dict[str, Any] = {"text": text, "top_k": top_k, "min_score": min_score}
         if kind:
             params["kind"] = kind
         if context:
             params["context"] = context
-        response = requests.get(url, params=params)
+        response = requests.get(f"{self.base_url}/resolve_text", params=params)
         _raise_for_status(response)
-        return response.json().get("matches", [])
+        matches = response.json().get("matches", [])
+        if top_k == 1:
+            return matches[0]["uri"] if matches else None
+        return matches
 
-    def resolve_concept(
+    def resolve_conversion(
         self,
-        text: str,
-        kind: Optional[str] = None,
-        context: Optional[list[str]] = None,
-        min_score: float = 0.5,
-    ) -> Optional[str]:
-        """Resolve text to a single best ontology/QUDT URI, or ``None``.
-
-        The one coordination point for concept normalization shared by the
-        query builder and stream registration. A value that already looks
-        like a URI is passed through unchanged; otherwise the server's
-        unified resolver (data-graph + deterministic unit converter + QUDT,
-        with optional ``context`` disambiguation) is consulted and the top
-        match's URI returned.
-
-        Example::
-
-            # turbidity-sensor unit cell from a CSV
-            resolve_concept("NTU", kind="unit")
-            # -> "http://qudt.org/vocab/unit/NTU"
-            resolve_concept("http://qudt.org/vocab/unit/NTU")  # passthrough
-            # -> "http://qudt.org/vocab/unit/NTU"
-        """
-        if looks_like_uri(text):
-            return text
-        matches = self.resolve_text(
-            text, kind=kind, top_k=1, min_score=min_score, context=context
-        )
-        return matches[0]["uri"] if matches else None
-
-    def resolve_record(
-        self,
-        fields: dict[str, tuple[str, Optional[str]]],
+        from_unit: str,
+        to_unit: str,
+        *,
         top_k: int = 5,
         min_score: float = 0.5,
-    ) -> dict[str, list[dict]]:
-        """Jointly resolve a record's fields (server ``/resolve_record``).
+    ) -> dict:
+        """Resolve a from/to unit pair to a *convertible* match plus factors.
 
-        ``fields`` maps a caller-chosen label to ``(text, kind)``. The
-        label is echoed back unchanged as the result key and is never read
-        by the resolver; resolution is driven by ``(text, kind)``. Returns
-        the ranked matches per label; related fields (e.g. a unit and its
-        quantity kind) reinforce each other server-side. The example labels
-        below mimic a historian export's column headers (real-source feel).
-
-        Example::
-
-            resolve_record({"FIT-101.EU":  ("gal/min", "unit"),
-                            "FIT-101.QTY": ("flow rate", "quantity_kind")})
-            # -> {"FIT-101.EU":  [{"uri": ".../unit/GAL_US-PER-MIN", ...}, ...],
-            #     "FIT-101.QTY": [{"uri": ".../quantitykind/VolumeFlowRate",
-            #                      ...}, ...]}
-        """
-        body = {
-            "fields": [
-                {"name": n, "text": t, "kind": k} for n, (t, k) in fields.items()
-            ],
-            "top_k": top_k,
-            "min_score": min_score,
-        }
-        response = requests.post(f"{self.base_url}/resolve_record", json=body)
-        _raise_for_status(response)
-        return response.json().get("matches", {})
-
-    def resolve_record_uris(
-        self,
-        fields: dict[str, tuple[Any, Optional[str]]],
-        min_score: float = 0.5,
-    ) -> dict[str, Optional[str]]:
-        """Jointly resolve a record to one best URI per field, or ``None``.
-
-        Keys are caller-chosen labels echoed back unchanged (never read by
-        the resolver); ``(text, kind)`` drives resolution. Per-field URI
-        passthrough (like :meth:`resolve_concept`); the rest are resolved
-        together so a confident field disambiguates an ambiguous sibling.
-        ``None`` inputs and unresolved fields map to ``None``. Example
-        labels below mimic a historian export's column headers.
+        Each side may be a URI (pinned) or free text; the server picks the
+        best-ranked candidate pair that is actually compatible for
+        conversion, so a non-convertible near-match never shadows a
+        convertible one. Raises ``ValueError`` (with the candidate lists)
+        when no compatible pair exists.
 
         Example::
 
-            resolve_record_uris({"FIT-101.EU":  ("gal/min", "unit"),
-                                 "FIT-101.QTY": ("flow rate", "quantity_kind")})
-            # -> {"FIT-101.EU":  "http://qudt.org/vocab/unit/GAL_US-PER-MIN",
-            #     "FIT-101.QTY": ".../quantitykind/VolumeFlowRate"}
+            resolve_conversion("mg/l", "grams per liter")
+            # -> {"from": {"uri": ".../MilliGM-PER-L", "multiplier": ...},
+            #     "to":   {"uri": ".../GM-PER-L", ...},
+            #     "factors": {"from_multiplier": ..., "to_uri": ..., ...}}
         """
-        out: dict[str, Optional[str]] = {}
-        to_resolve: dict[str, tuple[str, Optional[str]]] = {}
-        for name, (text, kind) in fields.items():
-            if text is None:
-                out[name] = None
-            elif looks_like_uri(text):
-                out[name] = text
-            else:
-                to_resolve[name] = (text, kind)
-        if to_resolve:
-            matches = self.resolve_record(to_resolve, top_k=1, min_score=min_score)
-            for name in to_resolve:
-                m = matches.get(name) or []
-                out[name] = m[0]["uri"] if m else None
-        return out
+        url = f"{self.base_url}/resolve_conversion"
+        response = requests.post(url, json={
+            "from_unit": str(from_unit), "to_unit": str(to_unit),
+            "top_k": top_k, "min_score": min_score,
+        })
+        if not response.ok:
+            detail = (response.json().get("detail", response.text)
+                      if response.headers.get("content-type", "").startswith("application/json")
+                      else response.text)
+            raise ValueError(f"resolve_conversion failed: {detail}")
+        return response.json()
 
     def embedding_status(self) -> dict:
         """

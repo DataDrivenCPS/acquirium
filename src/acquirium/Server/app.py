@@ -756,6 +756,23 @@ class ConversionFactorsRequest(BaseModel):
     to_unit: str = Field(..., description="Target unit identifier")
 
 
+class ResolveConversionRequest(BaseModel):
+    from_unit: str = Field(..., description="Source unit: URI or free text")
+    to_unit: str = Field(..., description="Target unit: URI or free text")
+    top_k: int = Field(5, description="Candidates considered per side")
+    min_score: float = Field(0.5, description="Minimum resolver score")
+
+
+@app.post("/resolve_conversion")
+def resolve_conversion(req: ResolveConversionRequest) -> dict[str, Any]:
+    try:
+        return app.state.manager.resolve_conversion_info(
+            req.from_unit, req.to_unit, top_k=req.top_k, min_score=req.min_score
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.post("/resolve_unit")
 def resolve_unit(req: ResolveUnitRequest) -> dict[str, Any]:
     try:
