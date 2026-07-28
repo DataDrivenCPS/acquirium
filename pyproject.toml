@@ -49,7 +49,7 @@ dependencies = [
     "psycopg-pool>=3.2.0",
     "pyarrow>=22.0.0",
     "pydantic>=2.12.5",
-    "pyontoenv==0.6.0a2",
+    "pyontoenv==0.6.0",
     "pyoxigraph>=0.5.2",
     "python-dateutil>=2.9.0.post0",
     "python-multipart>=0.0.21",

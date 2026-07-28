@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
@@ -12,6 +12,7 @@ from ontoenv import OntoEnv
 import pyoxigraph as ox
 from pyoxigraph import NamedNode, RdfFormat
 from rdflib import Dataset, Graph, Literal, RDF, URIRef
+from rdflib.graph import DATASET_DEFAULT_GRAPH_ID
 from rdflib.namespace import XSD, OWL, NamespaceManager
 from oxrdflib.store import from_ox
 
@@ -84,11 +85,26 @@ class _OntoenvOxigraphStore:
     ontoenv's own closure tooling runs against Oxigraph. ``on_change`` is
     fired on any add/remove so the owner can invalidate its cached
     data-graph closure.
+
+    ``excluded_iris`` names the graphs acquirium owns in that shared
+    dataset. ontoenv syncs its catalog from ``graph_ids()``, so anything
+    left in there gets catalogued as an ontology — the main data graph and
+    rdflib's default graph would otherwise show up as (empty, and with
+    their non-absolute IRIs resolved against the cwd) bogus ontologies.
     """
 
-    def __init__(self, dataset: Dataset, on_change: Callable[[], None]) -> None:
+    def __init__(
+        self,
+        dataset: Dataset,
+        on_change: Callable[[], None],
+        *,
+        excluded_iris: Iterable[URIRef] = (),
+    ) -> None:
         self._ds = dataset
         self._on_change = on_change
+        self._excluded = {str(iri) for iri in excluded_iris} | {
+            str(DATASET_DEFAULT_GRAPH_ID)
+        }
 
     def add_graph(self, iri: str, graph: Graph, overwrite: bool = False) -> None:
         ctx = self._ds.graph(URIRef(iri))
@@ -121,11 +137,14 @@ class _OntoenvOxigraphStore:
         graph.remove((None, None, None))
         self._on_change()
 
+    def _ontology_graphs(self) -> list[Graph]:
+        return [g for g in self._ds.graphs() if str(g.identifier) not in self._excluded]
+
     def graph_ids(self) -> list[str]:
-        return [str(g.identifier) for g in self._ds.graphs()]
+        return [str(g.identifier) for g in self._ontology_graphs()]
 
     def size(self) -> dict[str, int]:
-        graphs = list(self._ds.graphs())
+        graphs = self._ontology_graphs()
         return {
             "num_graphs": len(graphs),
             "num_triples": sum(len(g) for g in graphs),
@@ -192,6 +211,7 @@ class OxigraphGraphStore:
         self._ontoenv_store = _OntoenvOxigraphStore(
             self.source_dataset,
             self._mark_ontology_graph_changed,
+            excluded_iris=(self.main_graph_uri, self.imports_union_graph_uri),
         )
         with timed_debug(_logger, "OntoEnv build env_root=%s", self.env_root):
             self.env, is_warm_start = self._build_ontoenv()
@@ -228,7 +248,12 @@ class OxigraphGraphStore:
 
     # -------------------- ontoenv named-graph access --------------------
     def named_graph(self, iri: str) -> Graph:
-        """One ontology's own graph from ontoenv (owl:imports NOT followed)."""
+        """One ontology's own graph from ontoenv (owl:imports NOT followed).
+
+        This is ontoenv's read-only store-backed view: cheap to take, but
+        mutating it raises ``ValueError``. Callers that need to write should
+        copy the triples out (or use ``env.copy_graph``).
+        """
         with self._lock:
             return self.env.get_graph(iri)
 
@@ -240,12 +265,23 @@ class OxigraphGraphStore:
         """Return True when the attached Oxigraph store already contains graphs."""
         return any(True for _ in self.source_dataset.graphs())
 
-    def _new_ontoenv(self, *, init_from_store: bool) -> OntoEnv:
-        return OntoEnv(
-            path=str(self.env_root),
-            graph_store=self._ontoenv_store,
-            init_from_store=init_from_store,
-        )
+    def _new_ontoenv(self, *, adopt_store: bool) -> OntoEnv:
+        """Open the environment at ``env_root`` over the shared graph store.
+
+        ``adopt_store`` marks the case where the Oxigraph store already
+        holds ontology graphs from a previous run. If the catalog under
+        ``.ontoenv/`` is gone, ontoenv has to index what the store holds
+        rather than start empty — that is what ``adopt`` is for. When the
+        catalog did survive, ``adopt`` refuses (the catalog is already
+        authoritative) and reopening with ``connect`` is what we want.
+        """
+        path = str(self.env_root)
+        if adopt_store:
+            try:
+                return OntoEnv.adopt(path, self._ontoenv_store)
+            except FileExistsError:
+                _logger.debug("ontoenv: catalog present, reopening instead of adopting")
+        return OntoEnv.connect(path, graph_store=self._ontoenv_store)
 
     def _build_ontoenv(self) -> tuple[OntoEnv, bool]:
         """Build (or restore) the ontoenv environment.
@@ -253,7 +289,7 @@ class OxigraphGraphStore:
         Returns ``(env, is_warm_start)``. A warm start means the persisted
         Oxigraph store already contains bundled ontology graphs from a
         previous run, so the caller can skip re-adding them. On cold start
-        (or if init_from_store fails) we build an empty environment and
+        (or if the warm-start open fails) we build an empty environment and
         the caller is responsible for populating it.
         """
         can_warm_start = (
@@ -261,14 +297,14 @@ class OxigraphGraphStore:
         )
         if can_warm_start:
             try:
-                _logger.debug("ontoenv: rebuilding from store")
-                return self._new_ontoenv(init_from_store=True), True
+                _logger.debug("ontoenv: reopening over the populated store")
+                return self._new_ontoenv(adopt_store=True), True
             except Exception as exc:
                 _logger.warning(
-                    "ontoenv: init_from_store failed; building empty env: %s", exc
+                    "ontoenv: warm start failed; building empty env: %s", exc
                 )
         _logger.debug("ontoenv: cold start, building empty env")
-        return self._new_ontoenv(init_from_store=False), False
+        return self._new_ontoenv(adopt_store=False), False
 
     def _add_user_source(self, src: OntologySource) -> None:
         """Register one ``[ontologies] sources`` entry with ontoenv.
@@ -560,6 +596,14 @@ class OxigraphGraphStore:
     def close(self) -> None:
         _logger.debug("OxigraphGraphStore.close")
         with self._lock:
+            # ontoenv holds an exclusive lock on .ontoenv/store.lock for the
+            # life of the environment, so it has to be released before the
+            # next open — otherwise reopening the same env_root (tests, or a
+            # restart within one process) fails to acquire it.
+            try:
+                self.env.close()
+            except Exception:
+                pass
             for dataset in (self.source_dataset, self.query_dataset):
                 try:
                     dataset.close()
