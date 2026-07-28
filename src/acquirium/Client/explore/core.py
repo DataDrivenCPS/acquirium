@@ -383,7 +383,12 @@ class Q:
         itself; pass ``include_connection_points=False`` for only the
         source's own measurements. ``frm`` accepts an alias, ``None``
         (current pointer), or ``"*"`` to attach one measurement node to
-        every entity in the pattern.
+        every entity in the pattern. On an **empty query** this is the root
+        form — every measurement point in the plant, no entity anchor
+        (default alias ``"data"``)::
+
+            aq.explore().measurement()                    # all registered streams
+            aq.explore().measurement(quantity_kind="ph")  # filtered
 
         With ``direction`` set, first traverses up to ``max_depth`` topology
         hops upstream/downstream through an intermediate entity, then looks
@@ -455,6 +460,18 @@ class Q:
             g = g.with_data_node(DataNodeInfo(node_id=data_id))
             if attrs:
                 g = self._apply_attrs(g, [data_id], self._resolve_attr_values(attrs))
+            return self._with_graph(g)
+
+        if frm is None and not g.nodes:
+            # Root form: every measurement point in the plant, no entity
+            # anchor (the legacy find_all_data). A standalone data node —
+            # still bounded by the external-reference requirement.
+            new_id = self._next_id()
+            g = g.with_node(QueryNode(id=new_id, alias=alias or "data",
+                                      constraints={"is_data_node": True}))
+            g = g.with_data_node(DataNodeInfo(node_id=new_id))
+            if attrs:
+                g = self._apply_attrs(g, [new_id], self._resolve_attr_values(attrs))
             return self._with_graph(g)
 
         if isinstance(frm, str) and frm.strip().lower() in {"*", "all"}:
