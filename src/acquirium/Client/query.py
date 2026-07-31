@@ -666,6 +666,7 @@ class Query:
         resolution: str | timedelta | None = None,
         upsample: str = "interpolate",
         downsample: str = "mean",
+        fill_value: float | None = None,
         suffix: str = "_reconciled",
         use_union: bool = True,
     ) -> pl.DataFrame:
@@ -689,10 +690,16 @@ class Query:
                 sampling interval among the selected points.
             upsample: How to fill a bucket with no raw reading in it:
                 ``"interpolate"`` (default), ``"copy"``/``"ffill"``,
-                ``"zero"``/``"zero_fill"``, or ``"none"``/``"null"``.
+                ``"zero"``, ``"default_value"`` (fill with the constant given
+                via ``fill_value``), or ``"null"`` (leave as null). ``"null"``
+                and ``"zero"`` are really just ``"default_value"`` with an
+                implicit ``fill_value=None``/``fill_value=0``, respectively.
             downsample: How to collapse a bucket with multiple raw readings:
                 ``"mean"``/``"average"`` (default), ``"first"``/
                 ``"ignore_intermediate"``, ``"last"``, ``"min"``, or ``"max"``.
+            fill_value: Constant used to fill empty buckets when
+                ``upsample="default_value"``. Required for that method;
+                ignored otherwise.
             suffix: Suffix appended to each point's name to form its
                 reconciled column name (default ``"_reconciled"``).
 
@@ -718,6 +725,7 @@ class Query:
             resolution=resolution,
             upsample=upsample,
             downsample=downsample,
+            fill_value=fill_value,
             suffix=suffix,
         )
 

@@ -281,6 +281,56 @@ def test_reconcile_invalid_downsample_raises(acquirium_client_csv):
         data.reconcile(downsample="not-a-real-method")
 
 
+def test_reconcile_default_upsample_is_interpolate(acquirium_client_csv):
+    """With no explicit upsample, empty buckets should be linearly
+    interpolated — same result as passing upsample='interpolate' explicitly."""
+    acq = acquirium_client_csv
+    query = acq.find_all_data()
+    data = query.data(cast_value="float")
+
+    df_default = data.reconcile(resolution=timedelta(minutes=1))
+    df_explicit = data.reconcile(resolution=timedelta(minutes=1), upsample="interpolate")
+    assert df_default.equals(df_explicit)
+
+
+def test_reconcile_upsample_null_leaves_gaps(acquirium_client_csv):
+    """upsample='null' should leave empty buckets as null (no fill applied)."""
+    acq = acquirium_client_csv
+    query = acq.find_all_data()
+    data = query.data(cast_value="float")
+
+    # Force a resolution finer than at least one series' native sampling so
+    # some buckets are guaranteed to be empty.
+    df = data.reconcile(resolution=timedelta(minutes=1), upsample="null")
+    reconciled_cols = [c for c in df.columns if c.endswith("_reconciled")]
+    assert reconciled_cols
+    assert any(df[c].null_count() > 0 for c in reconciled_cols)
+
+
+def test_reconcile_default_value_requires_fill_value(acquirium_client_csv):
+    """upsample='default_value' without fill_value should raise."""
+    acq = acquirium_client_csv
+    query = acq.find_all_data()
+    data = query.data(cast_value="float")
+
+    with pytest.raises(ValueError):
+        data.reconcile(upsample="default_value")
+
+
+def test_reconcile_default_value_fill(acquirium_client_csv):
+    """upsample='default_value' should fill empty buckets with fill_value
+    ('zero' is just its 0 special case)."""
+    acq = acquirium_client_csv
+    query = acq.find_all_data()
+    data = query.data(cast_value="float")
+
+    df = data.reconcile(resolution=timedelta(minutes=1), upsample="default_value", fill_value=-999.0)
+    reconciled_cols = [c for c in df.columns if c.endswith("_reconciled")]
+    for c in reconciled_cols:
+        assert df[c].null_count() == 0
+    assert any(-999.0 in df[c].to_list() for c in reconciled_cols)
+
+
 def test_reconcile_explicit_resolution_and_methods(acquirium_client_csv):
     """An explicit resolution should set the grid spacing; zero-fill upsample
     should leave no nulls."""
