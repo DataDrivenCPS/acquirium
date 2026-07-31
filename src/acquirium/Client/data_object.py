@@ -216,13 +216,13 @@ def _pivot_split_values(tall: pl.DataFrame, pivot_key: str) -> pl.DataFrame:
 #   - downsampled: multiple raw readings fell into it -> collapse them
 #     (mean/average, first/ignore_intermediate, last, min, max)
 #   - upsampled: no raw reading fell into it -> fill it in
-#     (interpolate, copy/ffill, zero/zero_fill, or leave as none/null)
+#     (interpolate, copy/ffill, zero, default_value, or leave as null)
 #
 # Only fixed-length resolutions are supported (seconds/minutes/hours/days/
 # weeks) — calendar units like months/years are not, since their length is
 # not constant and would make cross-series bucket alignment ambiguous.
 
-_UPSAMPLE_METHODS = {"interpolate", "copy", "ffill", "zero", "zero_fill", "none", "null"}
+_UPSAMPLE_METHODS = {"interpolate", "copy", "ffill", "zero", "default_value", "null"}
 _DOWNSAMPLE_METHODS = {"mean", "average", "first", "ignore_intermediate", "last", "min", "max"}
 
 _DURATION_UNIT_SECONDS = {
@@ -341,16 +341,30 @@ def _bucket_series(df: pl.DataFrame, origin: datetime, every: timedelta, method:
     return bucketed.group_by("time", maintain_order=True).agg(_downsample_expr(method)).sort("time")
 
 
-def _apply_upsample(df: pl.DataFrame, method: str) -> pl.DataFrame:
-    """Fill null buckets (no raw reading landed in them) per ``method``."""
+def _apply_upsample(df: pl.DataFrame, method: str, fill_value: float | None = None) -> pl.DataFrame:
+    """Fill null buckets (no raw reading landed in them) per ``method``.
+
+    ``"null"`` is conceptually ``"default_value"`` with an implicit
+    ``fill_value=None`` (a no-op, leaving empty buckets as null), and
+    ``"zero"`` is its ``fill_value=0`` case — but each is its own branch
+    below so that an explicit ``"default_value"`` request still enforces
+    that ``fill_value`` was actually provided, rather than silently
+    no-op'ing like ``"null"`` does.
+    """
     if method == "interpolate":
         return df.with_columns(pl.col("value").interpolate())
     if method in ("copy", "ffill"):
         return df.with_columns(pl.col("value").forward_fill())
-    if method in ("zero", "zero_fill"):
+    if method == "zero":
         return df.with_columns(pl.col("value").fill_null(0))
-    if method in ("none", "null"):
+    if method == "null":
         return df
+    if method == "default_value":
+        if fill_value is None:
+            raise ValueError(
+                "reconcile: upsample='default_value' requires fill_value to be set"
+            )
+        return df.with_columns(pl.col("value").fill_null(fill_value))
     raise ValueError(f"reconcile: unknown upsample method '{method}'")
 
 
@@ -1146,6 +1160,7 @@ class DataObject:
         resolution: str | timedelta | None = None,
         upsample: str = "interpolate",
         downsample: str = "mean",
+        fill_value: float | None = None,
         suffix: str = "_reconciled",
     ) -> pl.DataFrame:
         """Bring two or more time series onto a shared, uniform temporal grid.
@@ -1170,12 +1185,18 @@ class DataObject:
             upsample: How to fill a bucket with no raw reading in it:
                 ``"interpolate"`` (linear interpolation between neighboring
                 readings, default), ``"copy"``/``"ffill"`` (carry the last
-                known value forward), ``"zero"``/``"zero_fill"`` (fill with
-                0), or ``"none"``/``"null"`` (leave as null).
+                known value forward), ``"zero"`` (fill with 0),
+                ``"default_value"`` (fill with the constant given via
+                ``fill_value``), or ``"null"`` (leave as null). ``"null"`` and
+                ``"zero"`` are really just ``"default_value"`` with an
+                implicit ``fill_value=None``/``fill_value=0``, respectively.
             downsample: How to collapse a bucket with multiple raw readings:
                 ``"mean"``/``"average"`` (default), ``"first"``/
                 ``"ignore_intermediate"`` (keep only the first reading and
                 discard the rest), ``"last"``, ``"min"``, or ``"max"``.
+            fill_value: Constant used to fill empty buckets when
+                ``upsample="default_value"``. Required (no implicit default)
+                for that method; ignored otherwise.
             suffix: Suffix appended to each point's name to form its
                 reconciled column name (default ``"_reconciled"``).
 
@@ -1206,6 +1227,10 @@ class DataObject:
             raise ValueError(
                 f"reconcile: unknown downsample method '{downsample}'; "
                 f"choose from {sorted(_DOWNSAMPLE_METHODS)}"
+            )
+        if upsample == "default_value" and fill_value is None:
+            raise ValueError(
+                "reconcile: upsample='default_value' requires fill_value to be set"
             )
 
         aliases = list(points) if points else self.aliases
@@ -1280,7 +1305,7 @@ class DataObject:
         for label, s in series.items():
             bucketed = _bucket_series(s, origin, every, downsample)
             merged = grid_df.join(bucketed, on="time", how="left").sort("time")
-            merged = _apply_upsample(merged, upsample)
+            merged = _apply_upsample(merged, upsample, fill_value)
             out = out.with_columns(merged["value"].alias(f"{label}{suffix}"))
 
         return out
