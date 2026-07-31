@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Iterator, TYPE_CHECKING
 import polars as pl
 import logging
@@ -203,6 +204,154 @@ def _pivot_split_values(tall: pl.DataFrame, pivot_key: str) -> pl.DataFrame:
     for part in parts[1:]:
         wide = wide.join(part, on="time", how="full", coalesce=True)
     return wide.sort("time")
+
+
+# ------------------------------------------------------------------
+# Reconciliation helpers
+# ------------------------------------------------------------------
+#
+# "Reconciling" a set of point series means bringing them onto a single,
+# shared, uniform time grid so that they can be directly compared. Every
+# grid bucket is either:
+#   - downsampled: multiple raw readings fell into it -> collapse them
+#     (mean/average, first/ignore_intermediate, last, min, max)
+#   - upsampled: no raw reading fell into it -> fill it in
+#     (interpolate, copy/ffill, zero/zero_fill, or leave as none/null)
+#
+# Only fixed-length resolutions are supported (seconds/minutes/hours/days/
+# weeks) — calendar units like months/years are not, since their length is
+# not constant and would make cross-series bucket alignment ambiguous.
+
+_UPSAMPLE_METHODS = {"interpolate", "copy", "ffill", "zero", "zero_fill", "none", "null"}
+_DOWNSAMPLE_METHODS = {"mean", "average", "first", "ignore_intermediate", "last", "min", "max"}
+
+_DURATION_UNIT_SECONDS = {
+    "ns": 1e-9,
+    "us": 1e-6,
+    "ms": 1e-3,
+    "s": 1.0,
+    "m": 60.0,
+    "min": 60.0,
+    "h": 3600.0,
+    "d": 86400.0,
+    "w": 604800.0,
+}
+_DURATION_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(ns|us|ms|min|[smhdw])\s*$")
+
+
+def _parse_resolution(resolution: str | timedelta) -> timedelta:
+    """Parse a ``reconcile(resolution=...)`` value into a ``timedelta``.
+
+    Accepts a ``timedelta`` directly, or a duration string such as ``"10s"``,
+    ``"1.5m"`` (minutes — matches polars' convention where ``"m"`` means
+    minutes and months would be ``"mo"``), ``"2h"``, ``"1d"``, ``"1w"``.
+    """
+    if isinstance(resolution, timedelta):
+        if resolution <= timedelta(0):
+            raise ValueError("reconcile: resolution must be a positive duration")
+        return resolution
+    if isinstance(resolution, str):
+        m = _DURATION_RE.match(resolution)
+        if not m:
+            raise ValueError(
+                f"reconcile: could not parse resolution '{resolution}'. "
+                "Use a timedelta, or a string like '10s', '5m', '1h', '2d', '1w'."
+            )
+        qty = float(m.group(1))
+        unit = m.group(2)
+        td = timedelta(seconds=qty * _DURATION_UNIT_SECONDS[unit])
+        if td <= timedelta(0):
+            raise ValueError("reconcile: resolution must be a positive duration")
+        return td
+    raise TypeError(
+        f"reconcile: resolution must be a str or timedelta, got {type(resolution).__name__}"
+    )
+
+
+def _infer_resolution(series: list[pl.DataFrame]) -> timedelta:
+    """Default resolution: the smallest native sampling interval among the series."""
+    intervals: list[timedelta] = []
+    for df in series:
+        if df.height < 2:
+            continue
+        diffs = df["time"].diff().drop_nulls()
+        if diffs.len() == 0:
+            continue
+        min_diff = diffs.min()
+        if min_diff and min_diff > timedelta(0):
+            intervals.append(min_diff)
+    if not intervals:
+        return timedelta(seconds=1)
+    return min(intervals)
+
+
+def _truncate_to_epoch_grid(dt: datetime, every: timedelta) -> datetime:
+    """Truncate ``dt`` down to the nearest multiple of ``every`` since the UTC epoch.
+
+    Using a fixed epoch (rather than each series' own start time) as the
+    origin is what lets independently-sampled series land on the *same*
+    bucket boundaries.
+    """
+    epoch = datetime(1970, 1, 1, tzinfo=dt.tzinfo)
+    remainder = (dt - epoch) % every
+    return dt - remainder
+
+
+def _build_time_grid(start: datetime, end: datetime, every: timedelta) -> list[datetime]:
+    """Build the list of uniform grid timestamps covering [start, end]."""
+    if end < start:
+        return [start]
+    n_steps = int((end - start) // every)
+    grid = [start + i * every for i in range(n_steps + 1)]
+    if grid[-1] < end:
+        grid.append(grid[-1] + every)
+    return grid
+
+
+def _downsample_expr(method: str) -> pl.Expr:
+    if method in ("mean", "average"):
+        return pl.col("value").mean().alias("value")
+    if method in ("first", "ignore_intermediate"):
+        return pl.col("value").first().alias("value")
+    if method == "last":
+        return pl.col("value").last().alias("value")
+    if method == "min":
+        return pl.col("value").min().alias("value")
+    if method == "max":
+        return pl.col("value").max().alias("value")
+    raise ValueError(f"reconcile: unknown downsample method '{method}'")
+
+
+def _bucket_series(df: pl.DataFrame, origin: datetime, every: timedelta, method: str) -> pl.DataFrame:
+    """Assign each row of a ``[time, value]`` series to a fixed-size bucket
+    aligned to ``origin``, then collapse each bucket per ``method``.
+    """
+    every_us = int(round(every.total_seconds() * 1_000_000))
+    bucketed = df.with_columns(
+        (
+            pl.lit(origin)
+            + pl.duration(
+                microseconds=(
+                    (pl.col("time") - pl.lit(origin)).dt.total_microseconds() // every_us
+                )
+                * every_us
+            )
+        ).alias("time")
+    )
+    return bucketed.group_by("time", maintain_order=True).agg(_downsample_expr(method)).sort("time")
+
+
+def _apply_upsample(df: pl.DataFrame, method: str) -> pl.DataFrame:
+    """Fill null buckets (no raw reading landed in them) per ``method``."""
+    if method == "interpolate":
+        return df.with_columns(pl.col("value").interpolate())
+    if method in ("copy", "ffill"):
+        return df.with_columns(pl.col("value").forward_fill())
+    if method in ("zero", "zero_fill"):
+        return df.with_columns(pl.col("value").fill_null(0))
+    if method in ("none", "null"):
+        return df
+    raise ValueError(f"reconcile: unknown upsample method '{method}'")
 
 
 @dataclass(frozen=True)
@@ -985,6 +1134,156 @@ class DataObject:
             _materialized=False,
             _pending_conversions=pending,
         )
+
+    # ------------------------------------------------------------------
+    # Reconciliation
+    # ------------------------------------------------------------------
+
+    def reconcile(
+        self,
+        points: list[str] | None = None,
+        *,
+        resolution: str | timedelta | None = None,
+        upsample: str = "interpolate",
+        downsample: str = "mean",
+        suffix: str = "_reconciled",
+    ) -> pl.DataFrame:
+        """Bring two or more time series onto a shared, uniform temporal grid.
+
+        Different points are rarely sampled at exactly the same timestamps.
+        ``reconcile`` buckets every selected series onto a common grid at the
+        requested ``resolution``: buckets with several raw readings are
+        collapsed with ``downsample``, buckets with none are filled in with
+        ``upsample``. The result is a set of ``{point}_reconciled`` columns
+        that share a single ``time`` axis and can be directly compared,
+        differenced, or plotted together.
+
+        Args:
+            points: Data aliases to reconcile (as seen in ``self.aliases``).
+                If ``None`` (default), every alias in this DataObject is
+                reconciled.
+            resolution: Target temporal resolution, as a ``timedelta`` or a
+                duration string such as ``"10s"``, ``"5m"``, ``"1h"``,
+                ``"2d"``, ``"1w"``. If ``None`` (default), it is inferred as
+                the smallest native sampling interval among the selected
+                series, so no series loses resolution unless asked to.
+            upsample: How to fill a bucket with no raw reading in it:
+                ``"interpolate"`` (linear interpolation between neighboring
+                readings, default), ``"copy"``/``"ffill"`` (carry the last
+                known value forward), ``"zero"``/``"zero_fill"`` (fill with
+                0), or ``"none"``/``"null"`` (leave as null).
+            downsample: How to collapse a bucket with multiple raw readings:
+                ``"mean"``/``"average"`` (default), ``"first"``/
+                ``"ignore_intermediate"`` (keep only the first reading and
+                discard the rest), ``"last"``, ``"min"``, or ``"max"``.
+            suffix: Suffix appended to each point's name to form its
+                reconciled column name (default ``"_reconciled"``).
+
+        Returns:
+            A wide ``pl.DataFrame`` with a shared ``time`` column plus one
+            ``f"{point}{suffix}"`` column per reconciled series (e.g. ``a``
+            and ``b`` become ``a_reconciled`` and ``b_reconciled``). If an
+            alias resolves to multiple distinct points, each point gets its
+            own column, named ``f"{alias}__{point_local}{suffix}"``.
+
+        Example::
+
+            data = query.data(cast_value="float")
+            df = data.reconcile(["a", "b"], resolution="10s")
+            # -> columns: time, a_reconciled, b_reconciled
+            df = df.with_columns(
+                (pl.col("a_reconciled") - pl.col("b_reconciled")).alias("delta")
+            )
+        """
+        self._materialize()
+
+        if upsample not in _UPSAMPLE_METHODS:
+            raise ValueError(
+                f"reconcile: unknown upsample method '{upsample}'; "
+                f"choose from {sorted(_UPSAMPLE_METHODS)}"
+            )
+        if downsample not in _DOWNSAMPLE_METHODS:
+            raise ValueError(
+                f"reconcile: unknown downsample method '{downsample}'; "
+                f"choose from {sorted(_DOWNSAMPLE_METHODS)}"
+            )
+
+        aliases = list(points) if points else self.aliases
+        empty_schema: dict[str, Any] = {"time": pl.Datetime(time_zone="UTC")}
+        if not aliases:
+            return pl.DataFrame(schema=empty_schema)
+
+        unknown = sorted(set(aliases) - set(self.aliases))
+        if unknown:
+            raise ValueError(
+                f"reconcile: unknown alias(es) {unknown}; available: {self.aliases}"
+            )
+
+        if self._tall is None or self._tall.is_empty():
+            return pl.DataFrame(schema=empty_schema)
+
+        tall = (
+            self._tall
+            .filter(pl.col("data_alias").is_in(aliases) & pl.col("value_numeric").is_not_null())
+            .select("data_alias", "point_uri", "time", "value_numeric")
+            .rename({"value_numeric": "value"})
+            .sort("time")
+        )
+
+        if tall.is_empty():
+            for a in aliases:
+                empty_schema[f"{a}{suffix}"] = pl.Float64
+            return pl.DataFrame(schema=empty_schema)
+
+        # Label each (alias, point_uri) the same way dataframe(shape="wide")
+        # does: bare alias when it resolves to a single point, otherwise
+        # disambiguated as f"{alias}__{point_local}".
+        points_per_alias: dict[str, set[str]] = {}
+        for b in self._bindings:
+            if b.alias in aliases:
+                points_per_alias.setdefault(b.alias, set()).add(b.point_uri)
+
+        def _label(alias: str, point_uri: str) -> str:
+            pts = points_per_alias.get(alias, {point_uri})
+            if len(pts) <= 1:
+                return alias
+            try:
+                return f"{alias}__{self._client.compact_uri(point_uri)}"
+            except Exception:
+                return f"{alias}__{point_uri}"
+
+        series: dict[str, pl.DataFrame] = {}
+        for (alias, point_uri), grp in tall.group_by(["data_alias", "point_uri"], maintain_order=True):
+            label = _label(alias, point_uri)
+            s = grp.select("time", "value").unique(subset="time", keep="first").sort("time")
+            if label in series:
+                series[label] = (
+                    pl.concat([series[label], s]).unique(subset="time", keep="first").sort("time")
+                )
+            else:
+                series[label] = s
+
+        every = (
+            _parse_resolution(resolution)
+            if resolution is not None
+            else _infer_resolution(list(series.values()))
+        )
+
+        global_min = min(df["time"].min() for df in series.values())
+        global_max = max(df["time"].max() for df in series.values())
+
+        origin = _truncate_to_epoch_grid(global_min, every)
+        grid_times = _build_time_grid(origin, global_max, every)
+        grid_df = pl.DataFrame({"time": grid_times}, schema={"time": pl.Datetime(time_zone="UTC")})
+
+        out = grid_df
+        for label, s in series.items():
+            bucketed = _bucket_series(s, origin, every, downsample)
+            merged = grid_df.join(bucketed, on="time", how="left").sort("time")
+            merged = _apply_upsample(merged, upsample)
+            out = out.with_columns(merged["value"].alias(f"{label}{suffix}"))
+
+        return out
 
     # ------------------------------------------------------------------
     # Display
