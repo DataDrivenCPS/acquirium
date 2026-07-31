@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 import pytest
 from acquirium.Client.data_object import DataObject
 from acquirium.internals.internals_namespaces import *
@@ -212,3 +214,109 @@ def test_query_data_method_exists(acquirium_client_csv):
     query = acq.find_all_data()
     data = query.data()
     assert isinstance(data, DataObject)
+
+
+# ---- reconcile() ----
+
+def test_reconcile_basic_shape(acquirium_client_csv):
+    """reconcile() returns a wide frame: a shared uniform 'time' column plus
+    one '<point>_reconciled' column per reconciled series."""
+    acq = acquirium_client_csv
+    query = acq.find_all_data()
+    data = query.data(cast_value="float")
+
+    df = data.reconcile()
+    assert "time" in df.columns
+    assert not df.is_empty()
+
+    reconciled_cols = [c for c in df.columns if c.endswith("_reconciled")]
+    assert len(reconciled_cols) > 0
+
+    # the time column must be a sorted, uniform grid
+    times = df["time"].to_list()
+    assert times == sorted(times)
+    if len(times) > 2:
+        step = times[1] - times[0]
+        assert all(b - a == step for a, b in zip(times, times[1:]))
+
+
+def test_reconcile_points_subset(acquirium_client_csv):
+    """Passing `points` restricts reconciliation to those aliases only."""
+    acq = acquirium_client_csv
+    query = acq.find_all_data()
+    data = query.data(cast_value="float")
+
+    alias = data.aliases[0]
+    df = data.reconcile([alias])
+    non_time_cols = [c for c in df.columns if c != "time"]
+    assert non_time_cols
+    assert all(c.startswith(alias) for c in non_time_cols)
+
+
+def test_reconcile_unknown_alias_raises(acquirium_client_csv):
+    """An alias not present in the DataObject should raise ValueError."""
+    acq = acquirium_client_csv
+    query = acq.find_all_data()
+    data = query.data(cast_value="float")
+
+    with pytest.raises(ValueError):
+        data.reconcile(["definitely_not_a_real_alias"])
+
+
+def test_reconcile_invalid_upsample_raises(acquirium_client_csv):
+    acq = acquirium_client_csv
+    query = acq.find_all_data()
+    data = query.data(cast_value="float")
+
+    with pytest.raises(ValueError):
+        data.reconcile(upsample="not-a-real-method")
+
+
+def test_reconcile_invalid_downsample_raises(acquirium_client_csv):
+    acq = acquirium_client_csv
+    query = acq.find_all_data()
+    data = query.data(cast_value="float")
+
+    with pytest.raises(ValueError):
+        data.reconcile(downsample="not-a-real-method")
+
+
+def test_reconcile_explicit_resolution_and_methods(acquirium_client_csv):
+    """An explicit resolution should set the grid spacing; zero-fill upsample
+    should leave no nulls."""
+    acq = acquirium_client_csv
+    query = acq.find_all_data()
+    data = query.data(cast_value="float")
+
+    df = data.reconcile(resolution=timedelta(hours=2), downsample="mean", upsample="zero")
+    assert "time" in df.columns
+
+    reconciled_cols = [c for c in df.columns if c.endswith("_reconciled")]
+    for c in reconciled_cols:
+        assert df[c].null_count() == 0
+
+    times = df["time"].to_list()
+    if len(times) > 1:
+        assert (times[1] - times[0]) == timedelta(hours=2)
+
+
+def test_reconcile_resolution_string(acquirium_client_csv):
+    """String durations (e.g. '2h') should parse the same as an equivalent timedelta."""
+    acq = acquirium_client_csv
+    query = acq.find_all_data()
+    data = query.data(cast_value="float")
+
+    df_str = data.reconcile(resolution="2h", upsample="zero")
+    df_td = data.reconcile(resolution=timedelta(hours=2), upsample="zero")
+    assert df_str.shape == df_td.shape
+
+
+def test_reconcile_empty_data_object(acquirium_client_csv):
+    """reconcile() on an empty DataObject should return just a time column."""
+    acq = acquirium_client_csv
+    query = acq.find_entity(_class=ACQUIRIUM_NS.B, alias="b")
+    data = query.data()
+
+    df = data.reconcile()
+    assert df.columns == ["time"]
+    assert df.is_empty()
