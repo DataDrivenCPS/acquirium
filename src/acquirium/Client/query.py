@@ -664,8 +664,8 @@ class Query:
         start: datetime | None = None,
         end: datetime | None = None,
         resolution: str | timedelta | None = None,
-        upsample: str = "interpolate",
-        downsample: str = "mean",
+        upsample: str | None = None,
+        downsample: str | None = None,
         fill_value: float | None = None,
         suffix: str = "_reconciled",
         use_union: bool = True,
@@ -679,6 +679,12 @@ class Query:
         up on the same timestamps (e.g. before differencing, correlating, or
         flagging divergence between two sensors).
 
+        Each point is resampled independently based on its own native
+        resolution relative to the target ``resolution`` — untouched if
+        identical, downsampled with ``downsample`` if finer, upsampled with
+        ``upsample`` (interpolating from its own true timestamps) if
+        coarser. See :meth:`DataObject.reconcile` for the full algorithm.
+
         Args:
             points: Data aliases to reconcile. If ``None`` (default), every
                 data node bound by this query is reconciled.
@@ -686,18 +692,19 @@ class Query:
             end: Optional upper time bound for fetched data.
             resolution: Target temporal resolution (``timedelta`` or a
                 duration string like ``"10s"``, ``"5m"``, ``"1h"``, ``"2d"``).
-                If ``None`` (default), inferred as the smallest native
-                sampling interval among the selected points.
-            upsample: How to fill a bucket with no raw reading in it:
-                ``"interpolate"`` (default), ``"copy"``/``"ffill"``,
+                If ``None`` (default), the highest (finest) native resolution
+                among the selected points.
+            upsample: How to fill in a point that's coarser than the target
+                resolution: ``"interpolate"``, ``"copy"``/``"ffill"``,
                 ``"zero"``, ``"default_value"`` (fill with the constant given
-                via ``fill_value``), or ``"null"`` (leave as null). ``"null"``
-                and ``"zero"`` are really just ``"default_value"`` with an
-                implicit ``fill_value=None``/``fill_value=0``, respectively.
-            downsample: How to collapse a bucket with multiple raw readings:
-                ``"mean"``/``"average"`` (default), ``"first"``/
-                ``"ignore_intermediate"``, ``"last"``, ``"min"``, or ``"max"``.
-            fill_value: Constant used to fill empty buckets when
+                via ``fill_value``), or ``"null"``. ``None`` (default):
+                only required, and only an error, if some selected point
+                actually needs upsampling.
+            downsample: How to collapse a point that's finer than the target
+                resolution: ``"mean"``/``"average"``, ``"first"``/
+                ``"ignore_intermediate"``, ``"last"``, ``"min"``, or
+                ``"max"``. ``None`` (default): same rule as ``upsample``.
+            fill_value: Constant used to fill in gaps when
                 ``upsample="default_value"``. Required for that method;
                 ignored otherwise.
             suffix: Suffix appended to each point's name to form its
@@ -713,7 +720,7 @@ class Query:
             df = q.reconcile()          # single point, reconciled onto its own native grid
 
             # Two points, reconciled onto a common 10-second grid:
-            df = q.reconcile(["a", "b"], resolution="10s")
+            df = q.reconcile(["a", "b"], resolution="10s", upsample="interpolate", downsample="mean")
         """
         return self.data(
             start=start,

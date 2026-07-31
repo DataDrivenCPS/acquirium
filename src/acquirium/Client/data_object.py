@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
@@ -211,12 +212,20 @@ def _pivot_split_values(tall: pl.DataFrame, pivot_key: str) -> pl.DataFrame:
 # ------------------------------------------------------------------
 #
 # "Reconciling" a set of point series means bringing them onto a single,
-# shared, uniform time grid so that they can be directly compared. Every
-# grid bucket is either:
-#   - downsampled: multiple raw readings fell into it -> collapse them
-#     (mean/average, first/ignore_intermediate, last, min, max)
-#   - upsampled: no raw reading fell into it -> fill it in
-#     (interpolate, copy/ffill, zero, default_value, or leave as null)
+# shared, uniform time grid so they can be directly compared. Each point is
+# classified independently by comparing its own native resolution (median
+# gap between its raw timestamps) to the target resolution:
+#   - identical -> used as-is, untouched.
+#   - finer than target (multiple raw readings per target step) ->
+#     downsampled: collapse each step's readings (mean/average,
+#     first/ignore_intermediate, last, min, max).
+#   - coarser than target (gaps between raw readings at the target step) ->
+#     upsampled: fill the gaps by interpolating/holding/filling directly
+#     from that point's own true timestamps (interpolate, copy/ffill, zero,
+#     default_value, or leave as null) -- never by first snapping raw
+#     readings onto bucket boundaries and then filling, which would shift
+#     each reading's effective time by up to one target step and silently
+#     corrupt the interpolated values.
 #
 # Only fixed-length resolutions are supported (seconds/minutes/hours/days/
 # weeks) — calendar units like months/years are not, since their length is
@@ -224,6 +233,10 @@ def _pivot_split_values(tall: pl.DataFrame, pivot_key: str) -> pl.DataFrame:
 
 _UPSAMPLE_METHODS = {"interpolate", "copy", "ffill", "zero", "default_value", "null"}
 _DOWNSAMPLE_METHODS = {"mean", "average", "first", "ignore_intermediate", "last", "min", "max"}
+
+# A 5-way difference already yields C(5, 2) = 10 columns; more than that is
+# unwieldy and unlikely to be useful, so difference() caps it here.
+_MAX_DIFFERENCE_POINTS = 5
 
 _DURATION_UNIT_SECONDS = {
     "ns": 1e-9,
@@ -268,18 +281,27 @@ def _parse_resolution(resolution: str | timedelta) -> timedelta:
     )
 
 
+def _native_resolution(s: pl.DataFrame) -> timedelta | None:
+    """Characterize a ``[time, value]`` series' own native sampling interval
+    as the median gap between its consecutive timestamps.
+
+    Returns ``None`` if there are fewer than 2 points (no interval can be
+    defined). The median (rather than the min) is used so that a single
+    unusually-close pair of readings in an otherwise coarse series doesn't
+    misclassify it as high-resolution.
+    """
+    if s.height < 2:
+        return None
+    diffs = s["time"].diff().drop_nulls()
+    if diffs.len() == 0:
+        return None
+    return diffs.median()
+
+
 def _infer_resolution(series: list[pl.DataFrame]) -> timedelta:
-    """Default resolution: the smallest native sampling interval among the series."""
-    intervals: list[timedelta] = []
-    for df in series:
-        if df.height < 2:
-            continue
-        diffs = df["time"].diff().drop_nulls()
-        if diffs.len() == 0:
-            continue
-        min_diff = diffs.min()
-        if min_diff and min_diff > timedelta(0):
-            intervals.append(min_diff)
+    """Default target resolution when none is given: the highest (finest)
+    native resolution among the series, i.e. the smallest native interval."""
+    intervals = [r for r in (_native_resolution(s) for s in series) if r is not None]
     if not intervals:
         return timedelta(seconds=1)
     return min(intervals)
@@ -322,9 +344,18 @@ def _downsample_expr(method: str) -> pl.Expr:
     raise ValueError(f"reconcile: unknown downsample method '{method}'")
 
 
-def _bucket_series(df: pl.DataFrame, origin: datetime, every: timedelta, method: str) -> pl.DataFrame:
+def _apply_downsample(df: pl.DataFrame, origin: datetime, every: timedelta, method: str) -> pl.DataFrame:
     """Assign each row of a ``[time, value]`` series to a fixed-size bucket
     aligned to ``origin``, then collapse each bucket per ``method``.
+
+    The downsample counterpart to ``_apply_upsample``. It isn't quite the
+    same shape (it takes ``origin``/``every`` and does its own group-by,
+    where ``_apply_upsample`` just transforms an already-gridded frame)
+    because collapsing many raw rows into one bucket is fundamentally a
+    group-by aggregation (``_downsample_expr`` supplies the ``.agg()``
+    expression), whereas filling an empty bucket is a whole-column
+    transform (``interpolate``/``forward_fill`` need to see neighboring
+    rows in order, not just this bucket's rows).
     """
     every_us = int(round(every.total_seconds() * 1_000_000))
     bucketed = df.with_columns(
@@ -342,7 +373,18 @@ def _bucket_series(df: pl.DataFrame, origin: datetime, every: timedelta, method:
 
 
 def _apply_upsample(df: pl.DataFrame, method: str, fill_value: float | None = None) -> pl.DataFrame:
-    """Fill null buckets (no raw reading landed in them) per ``method``.
+    """Fill null rows in a ``[time, value]`` frame per ``method``, using the
+    real elapsed time between rows (``interpolate_by("time")``) rather than
+    row position.
+
+    This must NOT be fed a frame whose rows were pre-snapped onto bucket
+    boundaries by ``_apply_downsample`` — that would silently shift each raw
+    reading's timestamp by up to one grid step before interpolating, which
+    is a real, measurable distortion (not just a cosmetic one), not
+    "the same up to rounding". ``_resample_upsample`` is what builds the
+    correct input for this function: the raw series' true timestamps merged
+    with the target grid's timestamps, so ``"interpolate"`` sees genuine
+    time gaps to weight against.
 
     ``"null"`` is conceptually ``"default_value"`` with an implicit
     ``fill_value=None`` (a no-op, leaving empty buckets as null), and
@@ -352,7 +394,7 @@ def _apply_upsample(df: pl.DataFrame, method: str, fill_value: float | None = No
     no-op'ing like ``"null"`` does.
     """
     if method == "interpolate":
-        return df.with_columns(pl.col("value").interpolate())
+        return df.with_columns(pl.col("value").interpolate_by("time"))
     if method in ("copy", "ffill"):
         return df.with_columns(pl.col("value").forward_fill())
     if method == "zero":
@@ -366,6 +408,31 @@ def _apply_upsample(df: pl.DataFrame, method: str, fill_value: float | None = No
             )
         return df.with_columns(pl.col("value").fill_null(fill_value))
     raise ValueError(f"reconcile: unknown upsample method '{method}'")
+
+
+def _resample_upsample(
+    raw: pl.DataFrame, grid_df: pl.DataFrame, method: str, fill_value: float | None = None
+) -> pl.DataFrame:
+    """Resample a coarser ``[time, value]`` series onto ``grid_df``'s
+    timestamps directly from its true native readings — no bucket-snapping.
+
+    Unions the raw series' real timestamps with the grid's timestamps (so
+    ``interpolate``/``forward_fill`` see genuine, unshifted time gaps),
+    applies ``method`` via :func:`_apply_upsample`, then keeps only the
+    grid's rows.
+    """
+    raw = raw.select("time", "value")
+    grid_only = (
+        grid_df.join(raw, on="time", how="anti")
+        .with_columns(pl.lit(None, dtype=pl.Float64).alias("value"))
+    )
+    combined = (
+        pl.concat([raw, grid_only.select("time", "value")])
+        .unique(subset="time", keep="first")
+        .sort("time")
+    )
+    filled = _apply_upsample(combined, method, fill_value)
+    return grid_df.join(filled.select("time", "value"), on="time", how="left").sort("time")
 
 
 @dataclass(frozen=True)
@@ -1153,99 +1220,29 @@ class DataObject:
     # Reconciliation
     # ------------------------------------------------------------------
 
-    def reconcile(
-        self,
-        points: list[str] | None = None,
-        *,
-        resolution: str | timedelta | None = None,
-        upsample: str = "interpolate",
-        downsample: str = "mean",
-        fill_value: float | None = None,
-        suffix: str = "_reconciled",
-    ) -> pl.DataFrame:
-        """Bring two or more time series onto a shared, uniform temporal grid.
+    def _native_series(self, points: list[str] | None = None) -> dict[str, pl.DataFrame]:
+        """Extract each selected point's raw, native ``[time, value]`` series
+        (no resampling), keyed by the same disambiguated label used by
+        ``dataframe(shape="wide")``: the bare alias when it resolves to a
+        single point, otherwise ``f"{alias}__{point_local}"``.
 
-        Different points are rarely sampled at exactly the same timestamps.
-        ``reconcile`` buckets every selected series onto a common grid at the
-        requested ``resolution``: buckets with several raw readings are
-        collapsed with ``downsample``, buckets with none are filled in with
-        ``upsample``. The result is a set of ``{point}_reconciled`` columns
-        that share a single ``time`` axis and can be directly compared,
-        differenced, or plotted together.
-
-        Args:
-            points: Data aliases to reconcile (as seen in ``self.aliases``).
-                If ``None`` (default), every alias in this DataObject is
-                reconciled.
-            resolution: Target temporal resolution, as a ``timedelta`` or a
-                duration string such as ``"10s"``, ``"5m"``, ``"1h"``,
-                ``"2d"``, ``"1w"``. If ``None`` (default), it is inferred as
-                the smallest native sampling interval among the selected
-                series, so no series loses resolution unless asked to.
-            upsample: How to fill a bucket with no raw reading in it:
-                ``"interpolate"`` (linear interpolation between neighboring
-                readings, default), ``"copy"``/``"ffill"`` (carry the last
-                known value forward), ``"zero"`` (fill with 0),
-                ``"default_value"`` (fill with the constant given via
-                ``fill_value``), or ``"null"`` (leave as null). ``"null"`` and
-                ``"zero"`` are really just ``"default_value"`` with an
-                implicit ``fill_value=None``/``fill_value=0``, respectively.
-            downsample: How to collapse a bucket with multiple raw readings:
-                ``"mean"``/``"average"`` (default), ``"first"``/
-                ``"ignore_intermediate"`` (keep only the first reading and
-                discard the rest), ``"last"``, ``"min"``, or ``"max"``.
-            fill_value: Constant used to fill empty buckets when
-                ``upsample="default_value"``. Required (no implicit default)
-                for that method; ignored otherwise.
-            suffix: Suffix appended to each point's name to form its
-                reconciled column name (default ``"_reconciled"``).
-
-        Returns:
-            A wide ``pl.DataFrame`` with a shared ``time`` column plus one
-            ``f"{point}{suffix}"`` column per reconciled series (e.g. ``a``
-            and ``b`` become ``a_reconciled`` and ``b_reconciled``). If an
-            alias resolves to multiple distinct points, each point gets its
-            own column, named ``f"{alias}__{point_local}{suffix}"``.
-
-        Example::
-
-            data = query.data(cast_value="float")
-            df = data.reconcile(["a", "b"], resolution="10s")
-            # -> columns: time, a_reconciled, b_reconciled
-            df = df.with_columns(
-                (pl.col("a_reconciled") - pl.col("b_reconciled")).alias("delta")
-            )
+        Shared by :meth:`reconcile` and :meth:`plot`. Raises ``ValueError``
+        for aliases not present in ``self.aliases``.
         """
         self._materialize()
 
-        if upsample not in _UPSAMPLE_METHODS:
-            raise ValueError(
-                f"reconcile: unknown upsample method '{upsample}'; "
-                f"choose from {sorted(_UPSAMPLE_METHODS)}"
-            )
-        if downsample not in _DOWNSAMPLE_METHODS:
-            raise ValueError(
-                f"reconcile: unknown downsample method '{downsample}'; "
-                f"choose from {sorted(_DOWNSAMPLE_METHODS)}"
-            )
-        if upsample == "default_value" and fill_value is None:
-            raise ValueError(
-                "reconcile: upsample='default_value' requires fill_value to be set"
-            )
-
         aliases = list(points) if points else self.aliases
-        empty_schema: dict[str, Any] = {"time": pl.Datetime(time_zone="UTC")}
         if not aliases:
-            return pl.DataFrame(schema=empty_schema)
+            return {}
 
         unknown = sorted(set(aliases) - set(self.aliases))
         if unknown:
             raise ValueError(
-                f"reconcile: unknown alias(es) {unknown}; available: {self.aliases}"
+                f"unknown alias(es) {unknown}; available: {self.aliases}"
             )
 
         if self._tall is None or self._tall.is_empty():
-            return pl.DataFrame(schema=empty_schema)
+            return {}
 
         tall = (
             self._tall
@@ -1254,15 +1251,9 @@ class DataObject:
             .rename({"value_numeric": "value"})
             .sort("time")
         )
-
         if tall.is_empty():
-            for a in aliases:
-                empty_schema[f"{a}{suffix}"] = pl.Float64
-            return pl.DataFrame(schema=empty_schema)
+            return {}
 
-        # Label each (alias, point_uri) the same way dataframe(shape="wide")
-        # does: bare alias when it resolves to a single point, otherwise
-        # disambiguated as f"{alias}__{point_local}".
         points_per_alias: dict[str, set[str]] = {}
         for b in self._bindings:
             if b.alias in aliases:
@@ -1287,28 +1278,344 @@ class DataObject:
                 )
             else:
                 series[label] = s
+        return series
 
-        every = (
+    def reconcile(
+        self,
+        points: list[str] | None = None,
+        *,
+        resolution: str | timedelta | None = None,
+        upsample: str | None = None,
+        downsample: str | None = None,
+        fill_value: float | None = None,
+        suffix: str = "_reconciled",
+    ) -> pl.DataFrame:
+        """Bring two or more time series onto a shared, uniform temporal grid.
+
+        Each selected point keeps its own native readings until the last
+        possible moment. For every point, independently:
+
+        1. Its own native resolution is characterized (the median gap
+           between its consecutive raw timestamps).
+        2. That's compared to the target ``resolution``:
+           - identical -> the point is used as-is, untouched.
+           - finer than the target (multiple raw readings per target step)
+             -> it's downsampled with ``downsample`` (raises if not given).
+           - coarser than the target (gaps between raw readings at the
+             target step) -> it's upsampled with ``upsample`` (raises if
+             not given), interpolating/filling directly from its own true
+             timestamps, not from any pre-binned/snapped grid.
+        3. All points are then combined onto the shared ``resolution`` grid.
+
+        Points are handled independently: e.g. a fast sensor is downsampled
+        while a slow one alongside it is upsampled, in the same call.
+
+        Args:
+            points: Data aliases to reconcile (as seen in ``self.aliases``).
+                If ``None`` (default), every alias in this DataObject is
+                reconciled.
+            resolution: Target temporal resolution, as a ``timedelta`` or a
+                duration string such as ``"10s"``, ``"5m"``, ``"1h"``,
+                ``"2d"``, ``"1w"``. If ``None`` (default), it is the highest
+                (finest) native resolution among the selected points, so at
+                least one of them never needs resampling at all.
+            upsample: How to fill in a point that's coarser than the target
+                resolution: ``"interpolate"`` (linear interpolation, using
+                real elapsed time, between that point's own neighboring
+                readings), ``"copy"``/``"ffill"`` (carry the last known
+                value forward), ``"zero"`` (fill with 0), ``"default_value"``
+                (fill with the constant given via ``fill_value``), or
+                ``"null"`` (leave as null). ``None`` (default): if no point
+                actually needs upsampling this is never consulted; if one
+                does, ``reconcile`` raises rather than silently picking a
+                method for you.
+            downsample: How to collapse a point that's finer than the target
+                resolution: ``"mean"``/``"average"``, ``"first"``/
+                ``"ignore_intermediate"`` (keep only the first reading in
+                each step and discard the rest), ``"last"``, ``"min"``, or
+                ``"max"``. ``None`` (default): same rule as ``upsample`` —
+                only required, and only an error, if some point actually
+                needs it.
+            fill_value: Constant used to fill in gaps when
+                ``upsample="default_value"``. Required for that method;
+                ignored otherwise.
+            suffix: Suffix appended to each point's name to form its
+                reconciled column name (default ``"_reconciled"``).
+
+        Returns:
+            A wide ``pl.DataFrame`` with a shared ``time`` column plus one
+            ``f"{point}{suffix}"`` column per reconciled series (e.g. ``a``
+            and ``b`` become ``a_reconciled`` and ``b_reconciled``). If an
+            alias resolves to multiple distinct points, each point gets its
+            own column, named ``f"{alias}__{point_local}{suffix}"``.
+
+        Raises:
+            ValueError: if a point needs downsampling but ``downsample`` is
+                ``None``, if a point needs upsampling but ``upsample`` is
+                ``None``, for an unrecognized ``upsample``/``downsample``
+                name, or for ``upsample="default_value"`` without
+                ``fill_value``.
+
+        Example::
+
+            data = query.data(cast_value="float")
+            df = data.reconcile(["a", "b"], resolution="10s", upsample="interpolate", downsample="mean")
+            # -> columns: time, a_reconciled, b_reconciled
+            data.difference(df).plot(title="a - b")
+        """
+        self._materialize()
+
+        if upsample is not None and upsample not in _UPSAMPLE_METHODS:
+            raise ValueError(
+                f"reconcile: unknown upsample method '{upsample}'; "
+                f"choose from {sorted(_UPSAMPLE_METHODS)}"
+            )
+        if downsample is not None and downsample not in _DOWNSAMPLE_METHODS:
+            raise ValueError(
+                f"reconcile: unknown downsample method '{downsample}'; "
+                f"choose from {sorted(_DOWNSAMPLE_METHODS)}"
+            )
+        if upsample == "default_value" and fill_value is None:
+            raise ValueError(
+                "reconcile: upsample='default_value' requires fill_value to be set"
+            )
+
+        aliases = list(points) if points else self.aliases
+        empty_schema: dict[str, Any] = {"time": pl.Datetime(time_zone="UTC")}
+        if not aliases:
+            return pl.DataFrame(schema=empty_schema)
+
+        try:
+            series = self._native_series(aliases)
+        except ValueError as e:
+            raise ValueError(f"reconcile: {e}") from e
+
+        if not series:
+            for a in aliases:
+                empty_schema[f"{a}{suffix}"] = pl.Float64
+            return pl.DataFrame(schema=empty_schema)
+
+        # Step 1 + 2: characterize each point's own native resolution and
+        # pick the target resolution if the caller didn't.
+        native = {label: _native_resolution(s) for label, s in series.items()}
+
+        target = (
             _parse_resolution(resolution)
             if resolution is not None
             else _infer_resolution(list(series.values()))
         )
 
-        global_min = min(df["time"].min() for df in series.values())
-        global_max = max(df["time"].max() for df in series.values())
-
-        origin = _truncate_to_epoch_grid(global_min, every)
-        grid_times = _build_time_grid(origin, global_max, every)
+        global_min = min(s["time"].min() for s in series.values())
+        global_max = max(s["time"].max() for s in series.values())
+        origin = _truncate_to_epoch_grid(global_min, target)
+        grid_times = _build_time_grid(origin, global_max, target)
         grid_df = pl.DataFrame({"time": grid_times}, schema={"time": pl.Datetime(time_zone="UTC")})
 
         out = grid_df
         for label, s in series.items():
-            bucketed = _bucket_series(s, origin, every, downsample)
-            merged = grid_df.join(bucketed, on="time", how="left").sort("time")
-            merged = _apply_upsample(merged, upsample, fill_value)
+            n = native[label]
+
+            if n is None or n == target:
+                # Step 3.i: identical (or too few points to characterize) -> untouched
+                merged = grid_df.join(s, on="time", how="left").sort("time")
+
+            elif n < target:
+                # Step 3.ii: finer than target -> must downsample
+                if downsample is None:
+                    raise ValueError(
+                        f"reconcile: '{label}' has a finer native resolution ({n}) "
+                        f"than the target resolution ({target}) and needs "
+                        f"downsampling, but downsample=None"
+                    )
+                bucketed = _apply_downsample(s, origin, target, downsample)
+                merged = grid_df.join(bucketed, on="time", how="left").sort("time")
+
+            else:
+                # Step 3.iii: coarser than target -> must upsample, directly
+                # from this point's own true timestamps (no bucket-snapping)
+                if upsample is None:
+                    raise ValueError(
+                        f"reconcile: '{label}' has a coarser native resolution ({n}) "
+                        f"than the target resolution ({target}) and needs "
+                        f"upsampling, but upsample=None"
+                    )
+                merged = _resample_upsample(s, grid_df, upsample, fill_value)
+
             out = out.with_columns(merged["value"].alias(f"{label}{suffix}"))
 
         return out
+
+    def difference(
+        self,
+        df: pl.DataFrame,
+        *,
+        labels: list[str] | None = None,
+    ) -> "DataObject":
+        """Compute every pairwise difference between the columns of an
+        already-reconciled frame.
+
+        This is deliberately mechanical: it does not resample, align, fill,
+        or otherwise touch timestamps — it just subtracts columns that are
+        already on the same time axis. Pass in the output of
+        :meth:`reconcile` (or any wide frame shaped like it: a ``"time"``
+        column plus 2-5 other columns) so exactly what up/downsampling was
+        applied is visible at the call site, not hidden inside
+        ``difference()``.
+
+        Pairs are taken in the order ``df``'s columns appear (excluding
+        ``"time"``), so for columns ``[a, b, c]`` the pairs are ``(a, b)``,
+        ``(a, c)``, ``(b, c)`` — i.e. within each pair, whichever column
+        comes first is the one "subtracted from".
+
+        Args:
+            df: A wide frame with a ``"time"`` column plus 2-5 other
+                columns to difference, e.g. the output of :meth:`reconcile`.
+            labels: Optional column names, one per pair, in the order
+                described above. If omitted, each pair is named
+                ``f"{a}_minus_{b}"`` (with any ``"_reconciled"`` suffix
+                stripped from ``a``/``b``).
+
+        Returns:
+            A new :class:`DataObject` whose aliases are the difference
+            labels, so the result can be chained straight into
+            :meth:`plot`, :meth:`reconcile`, :meth:`dataframe`, etc.
+
+        Raises:
+            ValueError: if ``df`` has no ``"time"`` column, fewer than 2 or
+                more than 5 non-``"time"`` columns (5 columns already yields
+                ``C(5, 2) = 10`` difference columns — more than that is
+                unwieldy and unlikely to be useful), or if ``labels``
+                doesn't have exactly one entry per pair.
+
+        Example::
+
+            reconciled = data.reconcile(["a", "b"], resolution="10s", upsample="zero")
+            data.difference(reconciled).plot(title="a - b")
+        """
+        if "time" not in df.columns:
+            raise ValueError("difference: df must have a 'time' column")
+
+        value_cols = [c for c in df.columns if c != "time"]
+        if len(value_cols) > _MAX_DIFFERENCE_POINTS:
+            raise ValueError(
+                f"difference: at most {_MAX_DIFFERENCE_POINTS} columns supported "
+                f"(got {len(value_cols)}); a {_MAX_DIFFERENCE_POINTS}-way difference "
+                f"already yields {len(value_cols) * (len(value_cols) - 1) // 2} columns"
+            )
+        if len(value_cols) < 2:
+            raise ValueError("difference: df needs at least 2 non-'time' columns to difference")
+
+        pairs = list(itertools.combinations(value_cols, 2))
+        if labels is not None and len(labels) != len(pairs):
+            raise ValueError(
+                f"difference: expected {len(pairs)} labels for {len(value_cols)} columns "
+                f"(all pairwise combinations), got {len(labels)}"
+            )
+
+        def _strip(col: str) -> str:
+            return col[: -len("_reconciled")] if col.endswith("_reconciled") else col
+
+        times = df["time"].to_list()
+        schema = {
+            "data_alias": pl.Utf8, "point_uri": pl.Utf8, "ref_uri": pl.Utf8,
+            "time": pl.Datetime(time_zone="UTC"), "value_numeric": pl.Float64, "value_text": pl.Utf8,
+        }
+        diff_rows: list[dict] = []
+        diff_bindings: list[BindingInfo] = []
+        for i, (col_a, col_b) in enumerate(pairs):
+            label = labels[i] if labels else f"{_strip(col_a)}_minus_{_strip(col_b)}"
+            point_uri = f"urn:acquirium:diff#{label}"
+            for t, v in zip(times, (df[col_a] - df[col_b]).to_list()):
+                diff_rows.append({
+                    "data_alias": label, "point_uri": point_uri, "ref_uri": point_uri,
+                    "time": t, "value_numeric": v, "value_text": None,
+                })
+            diff_bindings.append(BindingInfo(
+                nid=i, point_uri=point_uri, ref_uri=point_uri, alias=label, entity_contexts=[{}],
+            ))
+
+        tall = pl.DataFrame(diff_rows, schema=schema) if diff_rows else pl.DataFrame(schema=schema)
+
+        return DataObject(
+            _bindings=diff_bindings,
+            _entity_columns=[],
+            _query_graph=self._query_graph,
+            _client=self._client,
+            _query_params={},
+            _tall=tall,
+            _materialized=True,
+        )
+
+    def plot(
+        self,
+        points: list[str] | None = None,
+        *,
+        labels: list[str] | None = None,
+        output_path: str | None = None,
+        title: str | None = None,
+        xlabel: str = "time",
+        ylabel: str | None = None,
+        figsize: tuple[float, float] = (10, 5),
+    ):
+        """Plot each selected point's native time series for visual comparison.
+
+        Unlike :meth:`reconcile`/:meth:`difference`, plotting doesn't need a
+        shared time grid — each series is drawn against its own native
+        timestamps — so any number of points can be plotted together.
+
+        Args:
+            points: Points to plot. If ``None`` (default), every point in
+                this DataObject is plotted.
+            labels: Optional legend labels, one per plotted series, matching
+                the order of the resolved points. If omitted, each point's
+                alias (or ``f"{alias}__{point_local}"`` when an alias covers
+                multiple points) is used, same as :meth:`reconcile`.
+            output_path: If given, save the figure to this path instead of
+                displaying it interactively.
+            title: Optional plot title.
+            xlabel / ylabel: Axis labels.
+            figsize: Figure size passed to matplotlib.
+
+        Returns:
+            The matplotlib ``Figure``.
+
+        Example::
+
+            data = query.data(cast_value="float")
+            data.difference(["a", "b"], resolution="10s").plot(title="a - b")
+        """
+        import matplotlib.pyplot as plt
+
+        series = self._native_series(points)
+        if not series:
+            raise ValueError("plot: no numeric data available to plot")
+
+        series_labels = list(series.keys())
+        if labels is not None and len(labels) != len(series_labels):
+            raise ValueError(
+                f"plot: expected {len(series_labels)} labels, got {len(labels)}"
+            )
+        display_labels = labels if labels is not None else series_labels
+
+        fig, ax = plt.subplots(figsize=figsize)
+        for (_, s), label in zip(series.items(), display_labels):
+            ax.plot(s["time"].to_list(), s["value"].to_list(), label=label)
+
+        ax.set_xlabel(xlabel)
+        if ylabel:
+            ax.set_ylabel(ylabel)
+        if title:
+            ax.set_title(title)
+        ax.legend()
+        fig.autofmt_xdate()
+
+        if output_path is not None:
+            fig.savefig(output_path)
+            plt.close(fig)
+        else:
+            plt.show()
+
+        return fig
 
     # ------------------------------------------------------------------
     # Display
