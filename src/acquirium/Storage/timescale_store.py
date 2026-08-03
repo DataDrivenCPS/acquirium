@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Iterable, Iterator
 import hashlib
 import random
 import string
+import threading
 
 import psycopg
 from psycopg import sql
 from psycopg.types.json import Json
+from psycopg_pool import ConnectionPool
 
 from acquirium.internals.models import Order, TimeseriesInfo, TimeInterval, LogEntry, TimeIntervalModel, compute_ref_uri
 from acquirium.Storage.base import TimeseriesStore
@@ -33,23 +36,62 @@ TIMESERIES_STREAMS_VIEW = "timeseries_streams"
 
 
 class TimescaleStore(TimeseriesStore):
+    """TimescaleDB-backed timeseries store.
+
+    Connections come from a :class:`psycopg_pool.ConnectionPool` rather than a
+    single shared connection. This matters because psycopg serialises every
+    cursor operation on a connection behind ``conn.lock``: with one shared
+    connection, a single long read (e.g. an unbounded ``timeseries`` scan)
+    blocks *every* other statement server-wide — including the small
+    ``resolve_storage_key`` lookup that ``/timeseries`` runs before it can
+    send response headers. Callers then time out waiting for the HTTP status
+    line, and because a client-side timeout does not cancel server-side work,
+    the stall outlives the request that caused it.
+
+    Each streaming read holds one pool connection for the life of its
+    generator, so ``max_size`` bounds how many concurrent reads can be in
+    flight; beyond that, callers queue for up to ``pool_timeout`` seconds.
+    """
+
     def __init__(
         self,
         *,
         dsn: str | None = None,
         connect_timeout: int | None = None,
         recreate: bool = False,
+        min_size: int = 1,
+        max_size: int = 10,
+        pool_timeout: float = 30.0,
     ):
         self.dsn = dsn
         self.db_path = self.dsn
-        # default autocommit so reads don't hold open transactions; explicit begin toggles off
-        logger.debug("TimescaleStore.__init__: connecting (recreate=%s)", recreate)
-        with timed_debug(logger, "psycopg.connect"):
-            self.conn = psycopg.connect(self.dsn, autocommit=True, connect_timeout=connect_timeout)
-        self._in_tx = False
+        # autocommit so reads never hold open transactions; begin() pins a
+        # non-autocommit connection to the calling thread instead.
+        kwargs: dict[str, Any] = {"autocommit": True}
+        if connect_timeout is not None:
+            kwargs["connect_timeout"] = connect_timeout
+        logger.debug(
+            "TimescaleStore.__init__: opening pool (recreate=%s min=%d max=%d)",
+            recreate, min_size, max_size,
+        )
+        with timed_debug(logger, "psycopg_pool.ConnectionPool.open"):
+            self.pool = ConnectionPool(
+                self.dsn,
+                min_size=min_size,
+                max_size=max_size,
+                timeout=pool_timeout,
+                kwargs=kwargs,
+                open=False,
+            )
+            self.pool.open()
+            # Surface an unreachable database here, as the old eager
+            # psycopg.connect() did, instead of on first query.
+            self.pool.wait(timeout=connect_timeout or 30.0)
+        # Explicit transactions pin a connection per-thread (see begin()).
+        self._tx = threading.local()
         if recreate:
             logger.debug("TimescaleStore.__init__: dropping existing tables/views")
-            with self.conn.cursor() as cur:
+            with self._cursor() as cur:
                 cur.execute(sql.SQL("DROP VIEW IF EXISTS {} CASCADE").format(sql.Identifier(TIMESERIES_STREAMS_VIEW)))
                 cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(TIMESERIES_TABLE)))
                 cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(STREAMS_TABLE)))
@@ -57,9 +99,35 @@ class TimescaleStore(TimeseriesStore):
         self.ensure_table()
         logger.debug("TimescaleStore.__init__: ready")
 
+    # -------------------- connection handling --------------------
+    @property
+    def _in_tx(self) -> bool:
+        """True when this thread holds an explicit transaction."""
+        return getattr(self._tx, "conn", None) is not None
+
+    @contextmanager
+    def _connection(self) -> Iterator[psycopg.Connection]:
+        """Yield a connection: the thread's pinned transaction, or a pooled one.
+
+        Held only for the duration of the ``with`` block, so a long read
+        occupies one pool slot rather than blocking every other statement.
+        """
+        pinned = getattr(self._tx, "conn", None)
+        if pinned is not None:
+            yield pinned
+            return
+        with self.pool.connection() as conn:
+            yield conn
+
+    @contextmanager
+    def _cursor(self) -> Iterator[psycopg.Cursor]:
+        """Yield a cursor on a pooled (or pinned) connection."""
+        with self._connection() as conn, conn.cursor() as cur:
+            yield cur
+
     # -------------------- table management --------------------
     def ensure_table(self) -> str:
-        with timed_debug(logger, "ensure_table"), self.conn.cursor() as cur:
+        with timed_debug(logger, "ensure_table"), self._cursor() as cur:
             cur.execute("CREATE EXTENSION IF NOT EXISTS timescaledb;")
             cur.execute(
                 f"""
@@ -172,8 +240,9 @@ class TimescaleStore(TimeseriesStore):
             cur.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_logs_observed ON {LOGS_TABLE} USING GIST (observed);"
             )
-        if not self._in_tx:
-            self.conn.commit()
+        # Pooled connections are autocommit, so the DDL above is already
+        # durable. Inside an explicit transaction we deliberately do not
+        # commit here — the caller owns that boundary.
         return TIMESERIES_TABLE
 
     # -------------------- mutations --------------------
@@ -192,7 +261,7 @@ class TimescaleStore(TimeseriesStore):
             (ref_uri, self._to_utc(ts), *split_value(val, value_kind))
             for ts, val in rows_list
         ]
-        with timed_debug(logger, "upsert_rows INSERT n=%d", len(payload)), self.conn.cursor() as cur:
+        with timed_debug(logger, "upsert_rows INSERT n=%d", len(payload)), self._cursor() as cur:
             cur.executemany(
                 f"""
                 INSERT INTO {TIMESERIES_TABLE} (ref_uri, ts, numeric_value, text_value)
@@ -214,7 +283,7 @@ class TimescaleStore(TimeseriesStore):
         value_kind: str = "text",
     ) -> int:
         logger.debug("replace_rows ref_uri=%s kind=%s", ref_uri, value_kind)
-        with timed_debug(logger, "replace_rows DELETE ref_uri=%s", ref_uri), self.conn.cursor() as cur:
+        with timed_debug(logger, "replace_rows DELETE ref_uri=%s", ref_uri), self._cursor() as cur:
             cur.execute(sql.SQL("DELETE FROM {} WHERE ref_uri=%s").format(sql.Identifier(TIMESERIES_TABLE)), [ref_uri])
         return self.upsert_rows(ref_uri, rows, value_kind=value_kind)
 
@@ -232,7 +301,7 @@ class TimescaleStore(TimeseriesStore):
         deduped = len(df)
         logger.debug("bulk_insert_polars: %d rows after dedupe (was %d)", deduped, in_rows)
         random_string = ''.join(random.choice(string.ascii_lowercase) for _ in range(15))
-        with self.conn.cursor() as cur:
+        with self._cursor() as cur:
             cur.execute(
                 f"""DROP TABLE IF EXISTS {random_string};"""
             )
@@ -252,7 +321,7 @@ class TimescaleStore(TimeseriesStore):
                     engine="adbc",
                     if_table_exists="append" # Use 'replace' to drop/create the table
                 )
-            with timed_debug(logger, "bulk_insert_polars merge into %s", TIMESERIES_TABLE), self.conn.cursor() as cur:
+            with timed_debug(logger, "bulk_insert_polars merge into %s", TIMESERIES_TABLE), self._cursor() as cur:
                 cur.execute(
                     f"""
                     INSERT INTO {TIMESERIES_TABLE} (ref_uri, ts, numeric_value, text_value)
@@ -268,7 +337,7 @@ class TimescaleStore(TimeseriesStore):
             logger.exception("acquirium: bulk insert into %s failed", TIMESERIES_TABLE)
             raise
         finally:
-            with self.conn.cursor() as cur:
+            with self._cursor() as cur:
                 cur.execute(f"DROP TABLE IF EXISTS {random_string};")
 
     # -------------------- stream references --------------------
@@ -297,7 +366,7 @@ class TimescaleStore(TimeseriesStore):
         #     "ensure_stream_ref source=%s ref_name=%s point_uri=%s kind=%s",
         #     source_id, ref_name, point_uri, value_kind,
         # )
-        with self.conn.cursor() as cur:
+        with self._cursor() as cur:
             cur.execute(
                 f"""
                 INSERT INTO {STREAMS_TABLE} (ref_uri, point_uri, source_id, ref_name, value_kind)
@@ -337,8 +406,12 @@ class TimescaleStore(TimeseriesStore):
         cols = "(ref_uri, point_uri, source_id, ref_name, value_kind)"
         # The connection runs autocommit, so an explicit transaction is what keeps
         # the staging table alive from COPY through to the upsert (and drops it).
-        with timed_debug(logger, "ensure_stream_refs rows=%d", len(prepared)), self.conn.transaction():
-            with self.conn.cursor() as cur:
+        # The temp table is ON COMMIT DROP and therefore connection-scoped: hold
+        # one connection across the transaction and the cursor, or the COPY and
+        # the INSERT could land on different pool members.
+        with timed_debug(logger, "ensure_stream_refs rows=%d", len(prepared)), \
+                self._connection() as conn, conn.transaction():
+            with conn.cursor() as cur:
                 cur.execute(
                     f"CREATE TEMP TABLE _acquirium_incoming_refs "
                     f"(LIKE {STREAMS_TABLE}) ON COMMIT DROP"
@@ -368,7 +441,7 @@ class TimescaleStore(TimeseriesStore):
         This resolves the semantic URI → ref URI so reads find the right rows.
         Falls back to the URI itself for data inserted directly (e.g. bulk CSV ingest).
         """
-        with self.conn.cursor() as cur:
+        with self._cursor() as cur:
             cur.execute(
                 f"SELECT ref_uri FROM {STREAMS_TABLE} WHERE point_uri = %s",
                 (point_uri,),
@@ -384,7 +457,7 @@ class TimescaleStore(TimeseriesStore):
         """
         if not point_uris:
             return {}
-        with timed_debug(logger, "resolve_storage_keys n=%d", len(point_uris)), self.conn.cursor() as cur:
+        with timed_debug(logger, "resolve_storage_keys n=%d", len(point_uris)), self._cursor() as cur:
             cur.execute(
                 f"SELECT point_uri, ref_uri FROM {STREAMS_TABLE} WHERE point_uri = ANY(%s)",
                 (point_uris,),
@@ -439,56 +512,60 @@ class TimescaleStore(TimeseriesStore):
             ORDER BY ts {order_sql}{limit_sql}
         """
 
-        value_kind = self.stream_value_kind(str(ref_uri))
         logger.debug(
             "timeseries ref_uri=%s start=%s end=%s limit=%s order=%s mode=%s",
             ref_uri, start, end, limit, order, mode,
         )
-        with self.conn.cursor() as cur:
-            with timed_debug(logger, "timeseries cur.execute ref_uri=%s", ref_uri):
-                cur.execute(query, params)
+        # One connection for the whole generator: the value-kind lookup and the
+        # scan share it, and it is returned to the pool when the generator is
+        # exhausted or closed (including when a client disconnects early).
+        with self._connection() as conn:
+            value_kind = self._stream_value_kind(conn, str(ref_uri))
+            with conn.cursor() as cur:
+                with timed_debug(logger, "timeseries cur.execute ref_uri=%s", ref_uri):
+                    cur.execute(query, params)
 
-            total = 0
-            while True:
-                rows = cur.fetchmany(batch_size)
-                if not rows:
-                    logger.debug("timeseries ref_uri=%s yielded total rows=%d", ref_uri, total)
-                    break
-                total += len(rows)
+                total = 0
+                while True:
+                    rows = cur.fetchmany(batch_size)
+                    if not rows:
+                        logger.debug("timeseries ref_uri=%s yielded total rows=%d", ref_uri, total)
+                        break
+                    total += len(rows)
 
-                ts_col = [r[0] for r in rows]
-                numeric_col = [r[1] for r in rows]
-                text_col = [r[2] for r in rows]
-                ref_uri_col = [ref_uri] * len(ts_col)
-                if not ts_col or not ref_uri_col:
-                    break
-                if mode == "coalesce":
-                    values = [
-                        text if text is not None else (str(numeric) if numeric is not None else None)
-                        for numeric, text in zip(numeric_col, text_col)
-                    ]
-                    val_array = pa.array(values, type=pa.string())
-                elif mode == "text" or value_kind == "text":
-                    val_array = pa.array(text_col, type=pa.string())
-                elif mode == "numeric" or value_kind == "numeric":
-                    val_array = pa.array(numeric_col, type=pa.float64())
-                elif any(v is not None for v in numeric_col):
-                    val_array = pa.array(numeric_col, type=pa.float64())
-                else:
-                    val_array = pa.array(text_col, type=pa.string())
+                    ts_col = [r[0] for r in rows]
+                    numeric_col = [r[1] for r in rows]
+                    text_col = [r[2] for r in rows]
+                    ref_uri_col = [ref_uri] * len(ts_col)
+                    if not ts_col or not ref_uri_col:
+                        break
+                    if mode == "coalesce":
+                        values = [
+                            text if text is not None else (str(numeric) if numeric is not None else None)
+                            for numeric, text in zip(numeric_col, text_col)
+                        ]
+                        val_array = pa.array(values, type=pa.string())
+                    elif mode == "text" or value_kind == "text":
+                        val_array = pa.array(text_col, type=pa.string())
+                    elif mode == "numeric" or value_kind == "numeric":
+                        val_array = pa.array(numeric_col, type=pa.float64())
+                    elif any(v is not None for v in numeric_col):
+                        val_array = pa.array(numeric_col, type=pa.float64())
+                    else:
+                        val_array = pa.array(text_col, type=pa.string())
 
-                batch = pa.record_batch(
-                    [
-                        pa.array(ts_col, type=pa.timestamp("us", tz="UTC")),
-                        val_array,
-                        pa.array(ref_uri_col, type=pa.string()),
-                    ],
-                    names=["ts", "value", "uri"],
-                )
-                yield batch
+                    batch = pa.record_batch(
+                        [
+                            pa.array(ts_col, type=pa.timestamp("us", tz="UTC")),
+                            val_array,
+                            pa.array(ref_uri_col, type=pa.string()),
+                        ],
+                        names=["ts", "value", "uri"],
+                    )
+                    yield batch
 
     def timeseries_info(self, ref_uri: str) -> TimeseriesInfo:
-        with timed_debug(logger, "timeseries_info ref_uri=%s", ref_uri), self.conn.cursor() as cur:
+        with timed_debug(logger, "timeseries_info ref_uri=%s", ref_uri), self._cursor() as cur:
             cur.execute(
                 f"SELECT COUNT(*), MIN(ts), MAX(ts) FROM {TIMESERIES_TABLE} WHERE ref_uri=%s",
                 (ref_uri,),
@@ -500,7 +577,7 @@ class TimescaleStore(TimeseriesStore):
         """Return stats (row_count, earliest, latest) for multiple ref URIs in one query."""
         if not ref_uris:
             return {}
-        with timed_debug(logger, "timeseries_info_batch n=%d", len(ref_uris)), self.conn.cursor() as cur:
+        with timed_debug(logger, "timeseries_info_batch n=%d", len(ref_uris)), self._cursor() as cur:
             cur.execute(
                 f"SELECT ref_uri, COUNT(*), MIN(ts), MAX(ts) FROM {TIMESERIES_TABLE} WHERE ref_uri = ANY(%s) GROUP BY ref_uri",
                 (ref_uris,),
@@ -561,7 +638,7 @@ class TimescaleStore(TimeseriesStore):
         
         logger.debug("insert_log point_uri=%s ts=%s", point_uri, ts)
         try:
-            with self.conn.cursor() as cur:
+            with self._cursor() as cur:
                 cur.execute(sql, params)
         except Exception as e:
             logger.error(f"An error occurred while inserting log: {e}")
@@ -607,7 +684,7 @@ class TimescaleStore(TimeseriesStore):
             ORDER BY timestamp ASC
         """
         try:
-            with timed_debug(logger, "query_logs point_uri=%s clauses=%d", point_uri, len(clauses)), self.conn.cursor() as cur:
+            with timed_debug(logger, "query_logs point_uri=%s clauses=%d", point_uri, len(clauses)), self._cursor() as cur:
                 cur.execute(query, params)
                 rows = cur.fetchall()
 
@@ -636,36 +713,61 @@ class TimescaleStore(TimeseriesStore):
 
     def delete_logs(self, point_uri: str) -> None:
         logger.debug("delete_logs point_uri=%s", point_uri)
-        with self.conn.cursor() as cur:
+        with self._cursor() as cur:
             cur.execute(f"DELETE FROM {LOGS_TABLE} WHERE point_uri=%s", (point_uri,))
         return True
 
     # -------------------- transaction helpers --------------------
+    # An explicit transaction must stay on one connection, so begin() checks a
+    # connection out of the pool and pins it to the calling thread until
+    # commit()/rollback() hands it back. Other threads keep using the pool
+    # normally in the meantime.
     def begin(self) -> None:
-        if not self._in_tx:
-            logger.debug("BEGIN")
-            self.conn.autocommit = False
-            self._in_tx = True
-            self.conn.execute("BEGIN")
+        if self._in_tx:
+            return
+        logger.debug("BEGIN")
+        conn = self.pool.getconn()
+        try:
+            conn.autocommit = False
+            conn.execute("BEGIN")
+        except Exception:
+            conn.autocommit = True
+            self.pool.putconn(conn)
+            raise
+        self._tx.conn = conn
 
     def commit(self) -> None:
-        if self._in_tx:
-            logger.debug("COMMIT")
-            self.conn.commit()
-            self.conn.autocommit = True
-            self._in_tx = False
+        conn = getattr(self._tx, "conn", None)
+        if conn is None:
+            return
+        logger.debug("COMMIT")
+        try:
+            conn.commit()
+        finally:
+            self._release_tx(conn)
 
     def rollback(self) -> None:
-        if self._in_tx:
-            logger.debug("ROLLBACK")
-            self.conn.rollback()
-            self.conn.autocommit = True
-            self._in_tx = False
+        conn = getattr(self._tx, "conn", None)
+        if conn is None:
+            return
+        logger.debug("ROLLBACK")
+        try:
+            conn.rollback()
+        finally:
+            self._release_tx(conn)
+
+    def _release_tx(self, conn: psycopg.Connection) -> None:
+        """Unpin the thread's transaction connection and return it to the pool."""
+        self._tx.conn = None
+        try:
+            conn.autocommit = True
+        finally:
+            self.pool.putconn(conn)
 
     # -------------------- utility --------------------
     def sql_query(self, query: str) -> dict[str, Any]:
         logger.debug("sql_query: %s", query.replace("\n", " ")[:200])
-        with timed_debug(logger, "sql_query"), self.conn.cursor() as cur:
+        with timed_debug(logger, "sql_query"), self._cursor() as cur:
             cur.execute(query)
             cols = [desc[0] for desc in cur.description] if cur.description else []
             rows = cur.fetchall() if cur.description else []
@@ -674,7 +776,15 @@ class TimescaleStore(TimeseriesStore):
     # -------------------- lifecycle --------------------
     def close(self) -> None:
         logger.debug("TimescaleStore.close")
-        self.conn.close()
+        # Hand back a dangling transaction connection before tearing the pool
+        # down, so close() cannot hang waiting on a checked-out member.
+        conn = getattr(self._tx, "conn", None)
+        if conn is not None:
+            try:
+                self.rollback()
+            except Exception:
+                logger.warning("TimescaleStore.close: rollback failed", exc_info=True)
+        self.pool.close()
 
     # -------------------- helpers --------------------
     def _to_utc(self, ts: datetime) -> datetime:
@@ -687,8 +797,23 @@ class TimescaleStore(TimeseriesStore):
             return None
         return str(val)
 
+    def _stream_value_kind(self, conn: psycopg.Connection, ref_uri: str) -> str | None:
+        """value_kind lookup on a caller-supplied connection.
+
+        Lets ``timeseries()`` reuse the connection it already holds instead of
+        checking out a second one, which would otherwise let concurrent
+        streaming reads exhaust the pool and deadlock against themselves.
+        """
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT value_kind FROM {STREAMS_TABLE} WHERE ref_uri = %s",
+                (ref_uri,),
+            )
+            row = cur.fetchone()
+        return row[0] if row else None
+
     def stream_value_kind(self, ref_uri: str) -> str | None:
-        with self.conn.cursor() as cur:
+        with self._cursor() as cur:
             cur.execute(
                 f"SELECT value_kind FROM {STREAMS_TABLE} WHERE ref_uri = %s",
                 (ref_uri,),

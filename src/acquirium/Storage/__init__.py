@@ -20,6 +20,9 @@ def create_timeseries_store(
     pg_dsn: str | None = None,
     duckdb_path: str | Path | None = None,
     recreate: bool = False,
+    pool_min_size: int = 1,
+    pool_max_size: int = 10,
+    pool_timeout: float = 30.0,
 ) -> TimeseriesStore:
     """Instantiate the timeseries backend selected by *backend*.
 
@@ -28,6 +31,11 @@ def create_timeseries_store(
 
     The ``duckdb`` backend lazily imports ``duckdb`` so the package is not
     required when using the TimescaleDB backend.
+
+    ``pool_max_size`` bounds concurrent TimescaleDB work: each in-flight
+    streaming read holds one connection for the life of its generator, so it
+    also caps how many simultaneous ``/timeseries`` reads can run before
+    callers start queueing for ``pool_timeout`` seconds. Ignored by duckdb.
     """
     logger.debug("create_timeseries_store backend=%s recreate=%s", backend, recreate)
     if backend == "duckdb":
@@ -40,7 +48,13 @@ def create_timeseries_store(
         if not pg_dsn:
             raise ValueError("pg_dsn is required for the timescale backend")
         logger.debug("create_timeseries_store: timescale dsn-host=%s", pg_dsn.split("@")[-1] if "@" in pg_dsn else "<redacted>")
-        return TimescaleStore(dsn=pg_dsn, recreate=recreate)
+        return TimescaleStore(
+            dsn=pg_dsn,
+            recreate=recreate,
+            min_size=pool_min_size,
+            max_size=pool_max_size,
+            pool_timeout=pool_timeout,
+        )
     else:
         raise ValueError(
             f"Unknown timeseries backend: {backend!r}. Choose 'timescale' or 'duckdb'."
