@@ -14,6 +14,10 @@ logger = logging.getLogger("acquirium.csv_ingest")
 
 # How many leading lines to scan when locating the header row by content.
 _HEADER_SCAN_LIMIT = 100
+# Heuristic for "this header is actually a data row" — see _check_header_sane.
+# Only applied to wide files, where a duplicate-heavy header is unambiguous.
+_HEADER_SANITY_MIN_COLS = 8
+_HEADER_DUPLICATE_RATIO = 0.30
 
 _RAGGED_MODES = ("ignore", "skip", "error")
 
@@ -152,15 +156,24 @@ class CSVIngestDriver(TabularIngestBase):
                 text = self._filtered_csv_text(path)
                 if ragged == "skip":
                     text = self._drop_ragged_lines(text, sep, path)
-                return pl.read_csv(
+                # Parse the header first, then drop consumed rows ourselves.
+                # Delegating the offset to skip_rows_after_header ties header
+                # detection to the offset, and any disagreement there silently
+                # promotes a data row to header: callers then see value-shaped
+                # column names ('7/28/2026', '9:02:52 AM', ... with
+                # _duplicated_N suffixes) and a baffling "column 'Date' not
+                # found". Slicing after the parse cannot consume the header,
+                # and costs nothing extra here because _filtered_csv_text has
+                # already read the whole file into memory.
+                df = pl.read_csv(
                     StringIO(text),
                     separator=sep, try_parse_dates=True,
-                    skip_rows_after_header=row_offset,
                     encoding=self._encoding,
                     columns=include_cols,
                     schema_overrides=schema_overrides,
                     truncate_ragged_lines=truncate,
                 )
+                return df.slice(row_offset) if row_offset else df
             lf = pl.scan_csv(
                 path, separator=sep, try_parse_dates=True,
                 encoding=self._encoding, schema_overrides=schema_overrides,
@@ -176,11 +189,36 @@ class CSVIngestDriver(TabularIngestBase):
 
     def _included_columns(self, path: Path, sep: str) -> list[str]:
         col_names = self._column_names(path, sep)
+        self._check_header_sane(path, col_names)
         skip_cols = set(self.skip_cols(path, col_names))
         include_cols = [name for name in col_names if name not in skip_cols]
         if not include_cols:
             raise ValueError(f"all columns were skipped for {path}")
         return include_cols
+
+    def _check_header_sane(self, path: Path, col_names: list[str]) -> None:
+        """Fail loudly when a data row appears to have been parsed as the header.
+
+        Polars appends ``_duplicated_N`` to repeated header cells. Genuine
+        headers rarely repeat a name; a *data* row misread as a header repeats
+        constantly (``0.000``, ``OFF``, ``NaN`` ...). A high duplicate ratio is
+        therefore a reliable tell that the real header line was consumed —
+        by a bad skip_rows_for, an unexpected banner, or a stale row offset.
+        Better to say so here than to fail later with a confusing
+        "column 'X' not found in ['7/28/2026', '9:02:52 AM', ...]".
+        """
+        if len(col_names) < _HEADER_SANITY_MIN_COLS:
+            return
+        dup = sum(1 for name in col_names if "_duplicated_" in name)
+        if dup / len(col_names) < _HEADER_DUPLICATE_RATIO:
+            return
+        sample = ", ".join(repr(c) for c in col_names[:4])
+        raise ValueError(
+            f"{path.name}: parsed header looks like a data row — "
+            f"{dup}/{len(col_names)} columns are duplicates (starts with {sample}). "
+            "The real header was probably skipped; check skip_rows_for() and "
+            "whether this file has the expected banner line."
+        )
 
     def _column_names(self, path: Path, sep: str) -> list[str]:
         truncate = self.ragged_lines() != "error"
