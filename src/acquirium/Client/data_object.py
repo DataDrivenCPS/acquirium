@@ -258,11 +258,13 @@ class DataObject:
     # ------------------------------------------------------------------
 
     @classmethod
-    def _empty(cls, qg: QueryGraph, *, cast_value: str | None = "float") -> DataObject:
+    def _empty(cls, qg: QueryGraph, *, cast_value: str | None = "float",
+               client: "AcquiriumClient | None" = None) -> DataObject:
         return cls(
             _bindings=[],
             _entity_columns=[],
             _query_graph=qg,
+            _client=client,
             _tall=pl.DataFrame(
                 schema={
                     "data_alias": pl.Utf8,
@@ -292,12 +294,12 @@ class DataObject:
         qg = query.query_graph
 
         if not getattr(qg, "data_nodes", None):
-            return cls._empty(qg, cast_value=cast_value)
+            return cls._empty(qg, cast_value=cast_value, client=query.client)
 
         point_ref_uris, entity_context, prop_units, ext_ref_units = _parse_sparql_bindings(query)
 
         if not point_ref_uris:
-            return cls._empty(qg, cast_value=cast_value)
+            return cls._empty(qg, cast_value=cast_value, client=query.client)
 
         # Determine all entity column names across every context dict
         all_entity_cols: set[str] = set()

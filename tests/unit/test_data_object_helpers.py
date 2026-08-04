@@ -27,3 +27,26 @@ class TestWideColumnOrder:
                                 "data__ns1:intake-in-tds",
                                 "data__ns1:PXR-brine-out-tds",
                                 "data__ns1:storage-tank-3-out-tds"]
+
+
+class TestEmptyDataObjectConversion:
+    def test_convert_to_on_empty_is_a_noop(self):
+        from unittest.mock import MagicMock
+        from acquirium.Client.data_object import DataObject
+        from acquirium.Client.query_graph import QueryGraph
+
+        client = MagicMock()
+        empty = DataObject._empty(QueryGraph(), client=client)
+        out = empty.convert_to("mg/L")
+        assert out.is_empty()
+        client.resolve_conversion.assert_not_called()  # nothing to convert
+
+    def test_empty_from_query_carries_the_client(self):
+        from unittest.mock import MagicMock
+        from acquirium.Client.explore.core import Q
+
+        client = MagicMock()
+        client.sparql_query.return_value = {"columns": ["v0", "v1"], "rows": []}
+        d = Q(client=client).entity("urn:t#A", alias="a").measurement(alias="m").data()
+        assert d._client is client
+        assert d.convert_to("mg/L").is_empty()
