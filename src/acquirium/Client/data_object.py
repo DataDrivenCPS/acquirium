@@ -202,7 +202,9 @@ def _pivot_split_values(tall: pl.DataFrame, pivot_key: str) -> pl.DataFrame:
     wide = parts[0]
     for part in parts[1:]:
         wide = wide.join(part, on="time", how="full", coalesce=True)
-    return wide.sort("time")
+    # deterministic column order: time first, then case-insensitive alphabetical
+    value_cols = sorted((c for c in wide.columns if c != "time"), key=str.casefold)
+    return wide.select(["time", *value_cols]).sort("time")
 
 
 @dataclass(frozen=True)
