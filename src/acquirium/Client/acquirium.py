@@ -150,7 +150,15 @@ class Acquirium:
             use_ssl: bool = False,
             lexicon_path: Optional[Path] = None,
             insert_batch_rows: int = 50_000,
+            health_timeout: float | None = 60.0,
         ):
+        """Connect to an Acquirium server.
+
+        The constructor waits up to ``health_timeout`` seconds (default 60)
+        for the server's ``/health`` to answer, retrying while it boots, and
+        raises ``ConnectionError`` if it never does. Pass
+        ``health_timeout=None`` (or 0) to skip the check.
+        """
         if lexicon_path is not None:
             warnings.warn(
                 "lexicon_path is deprecated and ignored. "
@@ -166,6 +174,27 @@ class Acquirium:
         self.insert_batch_rows = int(insert_batch_rows)
         if self.insert_batch_rows <= 0:
             raise ValueError("insert_batch_rows must be greater than zero")
+        if health_timeout:
+            self._wait_for_server(health_timeout)
+
+    def _wait_for_server(self, timeout: float) -> None:
+        import time as _time
+        deadline = _time.monotonic() + timeout
+        last_err: Exception | None = None
+        while True:
+            try:
+                self.client.health(timeout=3.0)
+                return
+            except Exception as e:
+                last_err = e
+            if _time.monotonic() >= deadline:
+                break
+            _time.sleep(min(2.0, max(0.1, deadline - _time.monotonic())))
+        raise ConnectionError(
+            f"Acquirium server at {self.client.base_url} did not answer /health "
+            f"within {timeout:.0f}s (last error: {last_err}). Is the server "
+            f"running? Start it with: acquirium server --config <config.toml>"
+        )
 
     # ------------------------------------------------------------------
     # GRAPH API

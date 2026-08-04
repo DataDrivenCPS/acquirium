@@ -241,3 +241,29 @@ class TestInsertLog:
             log_message="minimal log",
         )
         assert result["status"] == "ok"
+
+
+class TestConstructorHealthGate:
+    @patch("acquirium.Client.client.requests")
+    def test_healthy_server_constructs_immediately(self, mock_requests):
+        from acquirium import Acquirium
+        resp = MagicMock()
+        resp.json.return_value = {"status": "ok"}
+        resp.raise_for_status = MagicMock()
+        mock_requests.get.return_value = resp
+        aq = Acquirium(server_url="localhost", server_port=8000)
+        assert "health" in mock_requests.get.call_args.args[0]
+        assert aq.client.base_url == "http://localhost:8000"
+
+    @patch("acquirium.Client.client.requests")
+    def test_unreachable_server_raises_connectionerror(self, mock_requests):
+        from acquirium import Acquirium
+        mock_requests.get.side_effect = OSError("connection refused")
+        with pytest.raises(ConnectionError, match=r"did not answer /health.*Is the server"):
+            Acquirium(server_url="localhost", server_port=9999, health_timeout=0.3)
+
+    @patch("acquirium.Client.client.requests")
+    def test_health_timeout_none_skips_check(self, mock_requests):
+        from acquirium import Acquirium
+        Acquirium(server_url="localhost", server_port=9999, health_timeout=None)
+        mock_requests.get.assert_not_called()

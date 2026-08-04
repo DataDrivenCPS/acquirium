@@ -199,6 +199,12 @@ class AcquiriumClient:
         data = response.json()
         return {uri: TimeseriesInfo.model_validate(info) for uri, info in data.items()}
 
+    def health(self, timeout: float = 3.0) -> dict:
+        """GET /health; raises on connection failure or non-200."""
+        response = requests.get(f"{self.base_url}/health", timeout=timeout)
+        _raise_for_status(response)
+        return response.json()
+
     def sparql_query(self, sparql: str, use_union: bool = True) -> dict:
         """
         Execute a SPARQL query against the graph store.
