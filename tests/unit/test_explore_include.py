@@ -56,8 +56,14 @@ class TestSelectSparql:
     def test_optional_binding_and_projection(self):
         s = base().include("quantity_kind").to_sparql()
         assert "OPTIONAL { ?v1 (<http://qudt.org/schema/qudt/hasQuantityKind>) ?attr1_quantity_kind . }" in s
-        first_line = s.splitlines()[0]
-        assert first_line.endswith("?attr1_quantity_kind")
+        # attr columns directly follow their node's column
+        assert "?v1 ?attr1_quantity_kind" in s.splitlines()[0]
+
+    def test_attr_columns_interleave_per_node(self):
+        b = (q().entity(CLS_A, alias="a").include("medium")
+             .entity(CLS_A, alias="b").include("medium"))
+        first = b.to_sparql().splitlines()[0]
+        assert "?v0 ?attr0_medium ?v1 ?attr1_medium" in first
 
     def test_multi_predicate_attr_binds_path_union(self):
         s = base().include("medium").to_sparql()

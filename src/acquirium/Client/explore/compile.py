@@ -505,25 +505,30 @@ def compile_parts(graph: QueryGraph) -> tuple:
     # projected attribute columns (?attr<N>_<name>, OPTIONAL so rows without
     # the attribute survive; the prefix is disjoint from v/ext/unit/extunit
     # so DataObject's column parsing ignores them)
-    attr_vars: List[str] = []
+    attr_var_pairs: List[tuple] = []  # (node_id, var) in selects order
     for nid, name, required in getattr(graph, "selects", ()):
         attr = REGISTRY[name]
         avar = f"?attr{nid}_{name}"
         pred_path = "|".join(f"<{p}>" for p in attr.predicates)
         clause = f"{var_map[nid]} ({pred_path}) {avar} ."
         where_clauses.append(clause if required else f"OPTIONAL {{ {clause} }}")
-        attr_vars.append(avar)
+        attr_var_pairs.append((nid, avar))
 
     # drop(): nodes stay in the pattern (WHERE) but leave the projection —
     # which also collapses DISTINCT rows that differed only in them.
     dropped = {nid for nid, node in graph.nodes.items()
                if (node.constraints or {}).get("dropped")}
-    select_parts = (
-        [v for nid, v in var_map.items() if nid not in dropped]
-        + [v for nid, v in ext_vars.items() if nid not in dropped]
+    # Each node's attribute columns follow its own column, so metadata reads
+    # Equipment, Equipment.process, Equipment_2, Equipment_2.process, ...
+    select_parts: List[str] = []
+    for nid, v in var_map.items():
+        if nid not in dropped:
+            select_parts.append(v)
+        select_parts.extend(avar for anid, avar in attr_var_pairs if anid == nid)
+    select_parts += (
+        [v for nid, v in ext_vars.items() if nid not in dropped]
         + [v for nid, v in unit_vars.items() if nid not in dropped]
         + [v for nid, v in extunit_vars.items() if nid not in dropped]
-        + attr_vars
     )
     if not select_parts:
         raise ValueError("drop(): every node is dropped — nothing left to select")
