@@ -193,3 +193,15 @@ class TestResolution:
         record = client.resolve.call_args.args[0]
         assert record == {"medium_0": ("brine", "class")}
         assert b.query_graph.data_nodes[1].filters["medium"] == [MEDIUM_URI, "urn:test#M2"]
+
+
+class TestProcessKind:
+    def test_process_resolves_with_its_own_kind(self):
+        client = MagicMock()
+        client.resolve.return_value = {"process_0": "urn:nawi-water-ontology#Process-ReverseOsmosis"}
+        b = (Q(client=client).entity(CLS_A, alias="eq")
+             .where(process="reverse osmosis"))
+        client.resolve.assert_called_once_with(
+            {"process_0": ("reverse osmosis", "process")}, min_score=0.4)
+        assert b.query_graph.nodes[0].constraints["attrs"]["process"] == \
+            "urn:nawi-water-ontology#Process-ReverseOsmosis"

@@ -377,11 +377,21 @@ class Manager:
           UNION {{ ?x <{HAS_MEDIUM}> ?uri . }}
           UNION {{ ?x <{OF_SUBSTANCE}> ?uri . }}
         """
+        # Constrained process space: the NAWI process taxonomy plus whatever
+        # the loaded model actually uses as a process (self-grounding, like
+        # substances). Its own kind so process filters never rank equipment
+        # classes ("reverse osmosis" must hit Process-ReverseOsmosis, not
+        # ReverseOsmosisMembrane).
+        process_where = f"""
+          {{ ?uri (<{RDFS.subClassOf}>)* <{WATR.Process}> . }}
+          UNION {{ ?x <{WATR.hasProcess}> ?uri . }}
+        """
 
         extractions: list[tuple[str, str, str]] = [
             ("class", class_where, label_block_basic),
             ("predicate", pred_where, label_block_basic),
             ("substance", substance_where, label_block_basic),
+            ("process", process_where, label_block_basic),
         ]
 
         for kind, where, label_block in extractions:

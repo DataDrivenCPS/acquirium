@@ -69,9 +69,9 @@ REGISTRY: dict[str, Attr] = {
     for a in (
         # rdf:type of the node itself, subclass-closed.
         Attr("type", (str(RDF.type),), "class", BOTH, via_subclass=True),
-        # watr:hasProcess object, matched by its class (there is no
-        # dedicated "process" resolver kind; processes are classes).
-        Attr("process", (str(WATR.hasProcess),), "class", ENTITY, via_subclass=True),
+        # watr:hasProcess object, resolved within the process taxonomy (its
+        # own extraction kind, so equipment classes never outrank processes).
+        Attr("process", (str(WATR.hasProcess),), "process", ENTITY, via_subclass=True),
         # Class of a connection point hanging off the entity
         # (s223:hasConnectionPoint -> ?cp a <class>).
         Attr("cp_type", (str(CONNECTION_POINT),), "class", ENTITY, via_subclass=True),
