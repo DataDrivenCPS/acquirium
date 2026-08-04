@@ -122,9 +122,11 @@ class Q:
 
         Grammar: segments separated by ``/``; each segment is a shortcut
         name, a predicate URI, or free predicate text (``"^"`` inverts); a
-        ``*`` suffix repeats the segment 0..max_depth times. A full http(s)
-        URI (which itself contains ``/``) is taken as one single-predicate
-        segment. Free text resolves through the server in one joint call.
+        ``*`` suffix repeats the segment 0..max_depth times. A lone bare
+        predicate is implicitly repeatable (``via="hasMember"`` walks up to
+        ``max_depth`` hasMember hops, default 3). A full http(s) URI (which
+        itself contains ``/``) is taken as one single-predicate segment.
+        Free text resolves through the server in one joint call.
 
         Returns ``(program, default_hops)`` where program is
         ``tuple[(alternatives, star), ...]`` with alternatives
@@ -147,6 +149,13 @@ class Q:
                 raw_segments.append((sc.alternatives, star, True))
             else:
                 raw_segments.append((((Step(name),),), star, False))
+
+        # A lone bare predicate is implicitly repeatable: via="hasMember"
+        # walks 1..max_depth hasMember hops (default 3), matching intuition.
+        # Shortcuts and compositions keep explicit '*' (heterogeneous
+        # shortcuts aren't meaningfully repeatable).
+        if len(raw_segments) == 1 and not raw_segments[0][1] and not raw_segments[0][2]:
+            raw_segments[0] = (raw_segments[0][0], True, False)
 
         record: Dict[str, Any] = {}
         for si, (alts, _, _) in enumerate(raw_segments):

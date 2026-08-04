@@ -111,17 +111,19 @@ class TestViaExpression:
         with pytest.raises(ValueError, match="no repeatable segment"):
             q().entity(CLS_A).related(CLS_B, via="next_equipment/next_equipment", max_depth=1)
 
-    def test_uri_token_passthrough(self):
+    def test_uri_token_is_implicitly_repeatable(self):
         b = q().entity(CLS_A, alias="a").related(CLS_B, alias="b", via="urn:test#feeds")
-        assert b.query_graph.edges[0].patterns == ((((("urn:test#feeds", None),),), False),)
+        (edge,) = b.query_graph.edges
+        assert edge.patterns == ((((("urn:test#feeds", None),),), True),)
+        assert edge.hops == 3  # default bound for a lone predicate
 
-    def test_full_http_uri_is_single_segment(self):
+    def test_full_http_uri_is_single_repeatable_segment(self):
         b = q().entity(CLS_A, alias="a").related(CLS_B, alias="b", via=CONNECTED_TO)
-        assert b.query_graph.edges[0].patterns == (((((CONNECTED_TO, None),),), False),)
+        assert b.query_graph.edges[0].patterns == (((((CONNECTED_TO, None),),), True),)
 
     def test_inverted_uri_token(self):
         b = q().entity(CLS_A, alias="a").related(CLS_B, alias="b", via=f"^{CONNECTED_TO}")
-        assert b.query_graph.edges[0].patterns == (((((f"^{CONNECTED_TO}", None),),), False),)
+        assert b.query_graph.edges[0].patterns == (((((f"^{CONNECTED_TO}", None),),), True),)
 
     def test_direction_conflicts_with_via_expression(self):
         with pytest.raises(ValueError, match="direction only combines"):
@@ -144,7 +146,7 @@ class TestViaResolution:
              .related(CLS_B, alias="b", via="feeds chemical to"))
         client.resolve.assert_called_once_with(
             {"p_0_0_0": ("feeds chemical to", "predicate")}, min_score=0.4)
-        assert b.query_graph.edges[0].patterns == ((((("urn:test#feedsChemicalTo", None),),), False),)
+        assert b.query_graph.edges[0].patterns == ((((("urn:test#feedsChemicalTo", None),),), True),)
 
     def test_shortcut_with_text_steps_resolves_on_use(self):
         register_shortcut(Shortcut("dosing", ((Step("feeds chemical to", node="chemical feeder"),),)))
@@ -210,9 +212,14 @@ class TestHide:
 
 
 class TestStarlessMaxDepth:
-    def test_starless_via_with_max_depth_errors(self):
+    def test_bare_predicate_honors_max_depth(self):
+        b = q().entity(CLS_A).related(CLS_B, via="urn:test#hasMember", max_depth=3)
+        (edge,) = b.query_graph.edges
+        assert edge.hops == 3 and edge.patterns[0][1] is True  # 1..3 hasMember hops
+
+    def test_lone_shortcut_with_max_depth_still_errors(self):
         with pytest.raises(ValueError, match="no repeatable segment"):
-            q().entity(CLS_A).related(CLS_B, via="urn:test#hasMember", max_depth=3)
+            q().entity(CLS_A).related(CLS_B, via="next_equipment", max_depth=3)
 
     def test_star_form_accepts_max_depth(self):
         b = q().entity(CLS_A).related(CLS_B, via="urn:test#hasMember*", max_depth=3)
