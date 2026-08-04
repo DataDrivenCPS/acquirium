@@ -210,12 +210,11 @@ class AcquiriumClient:
         Returns:
             The SPARQL query result as a dictionary.
         """
+        # POST, not GET: resolved traversal edges inject potentially large
+        # VALUES blocks, and long query strings blow the server's URL limit
+        # ("Invalid HTTP request received").
         url = f"{self.base_url}/sparql_json"
-        data = {
-            "query": sparql,
-            "use_union": use_union,
-        }
-        response = requests.get(url, params=data)
+        response = requests.post(url, json={"query": sparql, "use_union": use_union})
         _raise_for_status(response)
         return response.json()
 

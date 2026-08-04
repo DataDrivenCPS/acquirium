@@ -50,19 +50,23 @@ class TestInsertGraph:
 
 class TestSparqlQuery:
     @patch("acquirium.Client.client.requests")
-    def test_success(self, mock_requests, client):
+    def test_success_posts_json_body(self, mock_requests, client):
         mock_resp = MagicMock()
         mock_resp.json.return_value = {"results": {"bindings": []}}
         mock_resp.raise_for_status = MagicMock()
-        mock_requests.get.return_value = mock_resp
+        mock_requests.post.return_value = mock_resp
 
         result = client.sparql_query("SELECT * WHERE { ?s ?p ?o }")
         assert result == {"results": {"bindings": []}}
-        mock_requests.get.assert_called_once()
+        # POST with a JSON body: VALUES-heavy queries exceed URL length limits
+        call = mock_requests.post.call_args
+        assert call.args[0].endswith("/sparql_json")
+        assert call.kwargs["json"] == {"query": "SELECT * WHERE { ?s ?p ?o }",
+                                       "use_union": True}
 
     @patch("acquirium.Client.client.requests")
     def test_error_propagation(self, mock_requests, client):
-        mock_requests.get.side_effect = Exception("Connection refused")
+        mock_requests.post.side_effect = Exception("Connection refused")
         with pytest.raises(Exception, match="Connection refused"):
             client.sparql_query("SELECT * WHERE { ?s ?p ?o }")
 

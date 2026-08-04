@@ -641,6 +641,21 @@ def sparql_json(query: str, use_union: bool = True) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(e))
 
 
+class SparqlQueryRequest(BaseModel):
+    query: str = Field(..., description="SPARQL SELECT/ASK/CONSTRUCT query")
+    use_union: bool = Field(True, description="Query the imports-union graph")
+
+
+@app.post("/sparql_json")
+def sparql_json_post(req: SparqlQueryRequest) -> dict[str, Any]:
+    """POST form of /sparql_json: VALUES-heavy queries (e.g. resolved
+    traversal edges) exceed URL length limits, so the client posts."""
+    try:
+        return app.state.manager.sparql_dict(req.query, use_union=req.use_union)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 class SparqlUpdateRequest(BaseModel):
     update: str = Field(..., description="SPARQL UPDATE (INSERT/DELETE) statement")
 
