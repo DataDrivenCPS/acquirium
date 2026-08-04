@@ -2,7 +2,7 @@
 
 ``Q`` is the clean replacement for the legacy ``Query`` builder: short verbs
 (``entity`` / ``related`` / ``measurement`` / ``where`` / ``include`` /
-``refocus``) build an immutable :class:`QueryGraph`, and terminals
+``alias`` / ``refocus``) build an immutable :class:`QueryGraph`, and terminals
 (``metadata`` / ``data`` / ``dataframe`` / ``execute`` / ``to_sparql``) run
 it. Compilation is delegated to the pure
 :func:`~acquirium.Client.explore.compile.compile_sparql`.
@@ -10,7 +10,7 @@ it. Compilation is delegated to the pure
 Every verb returns a **new** ``Q`` with a fresh result cache, so variants can
 be kept side by side::
 
-    ro = aq.explore().entity("reverse osmosis membrane", alias="ro")
+    ro = aq.explore().entity("reverse osmosis membrane").alias("ro")
     out = ro.related("outlet connection point", alias="out")
     permeate = out.measurement(alias="permeate")
     permeate.metadata()
@@ -26,7 +26,7 @@ import polars as pl
 from rdflib import URIRef
 
 from acquirium.Client.explore.attributes import REGISTRY, Not, normalize_value
-from acquirium.Client.explore.compile import compile_parts, compile_sparql
+from acquirium.Client.explore.compile import compile_sparql
 from acquirium.Client.explore.shortcuts import SHORTCUTS, Step, get_shortcut
 from acquirium.Client.query_graph import DataNodeInfo, QueryEdge, QueryGraph, QueryNode
 from acquirium.internals.internals_namespaces import S223
@@ -93,6 +93,29 @@ class Q:
 
     def _src_alias(self, src_id: int) -> str:
         return self.query_graph.aliases_reverse.get(src_id, str(src_id))
+
+    def _unique_alias(self, g: QueryGraph, base: str) -> str:
+        if base not in g.aliases:
+            return base
+        i = 2
+        while f"{base}_{i}" in g.aliases:
+            i += 1
+        return f"{base}_{i}"
+
+    def _default_alias(self, g: QueryGraph, cls: Any) -> Optional[str]:
+        """Default node alias: the class text as given; a CURIE for a class
+        URI (local name when no prefix is bound); None -> numeric fallback."""
+        if cls is None:
+            return None
+        s = str(cls)
+        if isinstance(cls, URIRef) or _is_uri(s):
+            try:
+                name = self.client.compact_uri(s)
+            except Exception:
+                name = s.split("#")[-1].rsplit("/", 1)[-1]
+        else:
+            name = s
+        return self._unique_alias(g, name)
 
     def _lower_via(self, via: str) -> tuple:
         """Lower a ``via`` expression into a step program.
@@ -258,6 +281,7 @@ class Q:
             constraints["rdf_class"] = self._as_uri(cls, "class")
         if instance_uri is not None:
             constraints["instance_uri"] = instance_uri
+        alias = alias or self._default_alias(self.query_graph, cls)
         node = QueryNode(id=self._next_id(), alias=alias, constraints=constraints)
         q2 = self._with_graph(self.query_graph.with_node(node))
         if attrs:
@@ -268,7 +292,7 @@ class Q:
     def related(self, cls: str | URIRef | None = None, *, uri: str | URIRef | None = None,
                 alias: Optional[str] = None, frm: Optional[str] = None,
                 via: Any = "any", direction: Optional[str] = None,
-                max_depth: Optional[int] = None, nearest: bool = False,
+                max_depth: Optional[int] = None, nearest: Optional[bool] = None,
                 **attrs: Any) -> "Q":
         """Add an entity related to an existing node and point at it.
 
@@ -336,6 +360,10 @@ class Q:
                 "predicate lists encode their own direction"
             )
 
+        if nearest is None:
+            # default: plain any-relatedness means the *nearest* matches;
+            # via expressions / predicate lists / direction default to all
+            nearest = via == "any" and direction is None
         if nearest:
             if preds is not None:
                 # a predicate list is a one-segment repeatable program
@@ -361,6 +389,7 @@ class Q:
         if instance_uri is not None:
             constraints["instance_uri"] = instance_uri
         new_id = self._next_id()
+        alias = alias or self._default_alias(self.query_graph, cls)
         g = self.query_graph.with_node(QueryNode(id=new_id, alias=alias, constraints=constraints))
         edge = QueryEdge(source_id=src_id, target_id=new_id, hops=hops,
                          predicates=preds, direction=direction, patterns=patterns,
@@ -371,7 +400,7 @@ class Q:
             q2 = q2._with_graph(q2._apply_attrs(q2.query_graph, [new_id], resolved))
         return q2
 
-    def measurement(self, *, frm: Optional[str] = None, alias: Optional[str] = None,
+    def measurement(self, *, frm: "str | list | tuple | None" = None, alias: Optional[str] = None,
                     direction: Optional[str] = None, max_depth: int = 3,
                     nearest: bool = False, include_connection_points: bool = True,
                     **attrs: Any) -> "Q":
@@ -382,8 +411,9 @@ class Q:
         points (inlet, outlet, bidirectional) as well as on the source
         itself; pass ``include_connection_points=False`` for only the
         source's own measurements. ``frm`` accepts an alias, ``None``
-        (current pointer), or ``"*"`` to attach one measurement node to
-        every entity in the pattern. On an **empty query** this is the root
+        (current pointer), a list of aliases, or ``"*"`` — one measurement
+        node is attached per named entity (``Pump_data``, ``Tank_data``,
+        ...). On an **empty query** this is the root
         form — every measurement point in the plant, no entity anchor
         (default alias ``"data"``)::
 
@@ -410,6 +440,9 @@ class Q:
             q.measurement(quantity_kind="mass flow rate", medium=Not("brine"))
         """
         g = self.query_graph
+
+        if isinstance(frm, (list, tuple)) and direction is not None:
+            raise ValueError("measurement: frm list only combines with the non-directional form")
 
         if direction is not None and not include_connection_points:
             raise ValueError(
@@ -478,6 +511,16 @@ class Q:
             if not g.nodes:
                 raise ValueError("measurement(frm='*'): query has no nodes to expand from")
             src_ids = sorted(g.nodes.keys())
+        elif isinstance(frm, (list, tuple)):
+            src_ids = []
+            for f in frm:
+                sid = g.aliases.get(f) if isinstance(f, str) else None
+                if sid is None:
+                    raise ValueError(f"measurement: unknown alias {f!r} in frm list")
+                if sid not in src_ids:
+                    src_ids.append(sid)
+            if not src_ids:
+                raise ValueError("measurement: frm list is empty")
         else:
             src_ids = [self._source_id(frm, verb="measurement")]
 
@@ -500,6 +543,20 @@ class Q:
         if attrs:
             g = self._apply_attrs(g, created, self._resolve_attr_values(attrs))
         return self._with_graph(g)
+
+    def alias(self, name: str) -> "Q":
+        """Name the current node (Cypher AS / Gremlin as-step).
+
+        The previous alias keeps working as an alternative handle; display
+        uses the latest name::
+
+            aq.explore().entity("reverse osmosis membrane").alias("ro")
+        """
+        g = self.query_graph
+        if g.current_pointer is None:
+            raise ValueError("alias: no current node (start with entity())")
+        node = g.nodes[g.current_pointer]
+        return self._with_graph(g.with_node(replace(node, alias=name)))
 
     def where(self, target: Optional[str] = None, **attrs: Any) -> "Q":
         """Filter a node by registry attributes (see ``explore.attributes.REGISTRY``).
@@ -595,25 +652,47 @@ class Q:
 
         cache_key = f"options:{attr_name}:{nid}"
         if self.cache.get(cache_key) is None:
-            var_map, _, where_clauses = compile_parts(g)
-            v = var_map[nid]
-            pred_path = "|".join(f"<{p}>" for p in attr.predicates)
-            where = list(where_clauses) + [f"{v} ({pred_path}) ?opt ."]
-            where_block = "\n  ".join(where)
-            sparql = (
-                f"SELECT ?opt (COUNT(DISTINCT {v}) AS ?count)\n"
-                f"WHERE {{\n  {where_block}\n}}\n"
-                f"GROUP BY ?opt\nORDER BY DESC(?count)"
-            )
-            res = self.client.sparql_query(sparql, use_union=use_union)
+            # Two-phase: the pattern runs once through execute() (program
+            # edges BFS-resolved, result cached and shared with metadata());
+            # attribute values come from a flat VALUES-anchored lookup and
+            # the counting happens here. The store only does index lookups —
+            # no server-side GROUP BY over the whole pattern.
+            res = self.execute(use_union=use_union)
             cols = res.get("columns", [])
-            rows = res.get("rows", [])
-            oi = cols.index("opt") if "opt" in cols else 0
-            ci = cols.index("count") if "count" in cols else 1
-            values = [self._compact_uri_safe(str(r[oi])) for r in rows if r[oi] is not None]
-            counts = [int(r[ci]) for r in rows if r[oi] is not None]
+            col = f"v{nid}"
+            uris: List[str] = []
+            if col in cols:
+                idx = cols.index(col)
+                seen: set = set()
+                for r in res.get("rows", []):
+                    val = r[idx]
+                    if val is None:
+                        continue
+                    s = str(val)
+                    if s not in seen and _is_uri(s):
+                        seen.add(s)
+                        uris.append(s)
+
+            pred_path = "|".join(f"<{p}>" for p in attr.predicates)
+            counts_by_value: Dict[str, set] = {}
+            for i in range(0, len(uris), 500):
+                chunk = " ".join(f"<{u}>" for u in uris[i:i + 500])
+                sparql = (
+                    f"SELECT ?v ?opt\nWHERE {{\n  VALUES ?v {{ {chunk} }}\n"
+                    f"  ?v ({pred_path}) ?opt .\n}}"
+                )
+                lookup = self.client.sparql_query(sparql, use_union=use_union)
+                lcols = lookup.get("columns", [])
+                vi = lcols.index("v") if "v" in lcols else 0
+                oi = lcols.index("opt") if "opt" in lcols else 1
+                for r in lookup.get("rows", []):
+                    if r[oi] is not None and r[vi] is not None:
+                        counts_by_value.setdefault(str(r[oi]), set()).add(str(r[vi]))
+
+            ranked = sorted(counts_by_value.items(), key=lambda kv: (-len(kv[1]), kv[0]))
             self.cache[cache_key] = pl.DataFrame(
-                {attr_name: values, "count": counts},
+                {attr_name: [self._compact_uri_safe(v) for v, _ in ranked],
+                 "count": [len(nodes) for _, nodes in ranked]},
                 schema={attr_name: pl.String, "count": pl.Int64},
             )
         return self.cache[cache_key]

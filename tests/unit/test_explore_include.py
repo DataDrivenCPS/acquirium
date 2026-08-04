@@ -72,10 +72,10 @@ class TestColumnNaming:
         b = base().include("quantity_kind")
         assert b._col_name_to_alias("attr1_quantity_kind") == "m.quantity_kind"
 
-    def test_unaliased_node_falls_back_to_vn(self):
+    def test_unaliased_node_gets_class_default_alias(self):
         b = q().entity(CLS_A).measurement(alias="m")
-        # node 0 has auto-alias "0"
-        assert b._col_name_to_alias("attr0_medium") == "0.medium"
+        # no client -> CURIE unavailable -> local name of the class URI
+        assert b._col_name_to_alias("attr0_medium") == "TypeA.medium"
 
     def test_garbage_passthrough(self):
         assert base()._col_name_to_alias("attrX_medium") == "attrX_medium"

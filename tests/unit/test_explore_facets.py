@@ -59,9 +59,17 @@ class TestFacetsSelection:
 
 class TestFallbackChain:
     def test_matched_wins(self):
+        nodes = [f"urn:p#m{i}" for i in range(4)]
+
         def responder(sparql, use_union=True):
-            if "COUNT(DISTINCT ?v1)" in sparql:  # options() on the data node
-                return {"columns": ["opt", "count"], "rows": [["urn:m#Water", 4]]}
+            if sparql.startswith("SELECT ?v ?opt"):
+                if "ofMedium" in sparql:  # medium lookup: all four carry Water
+                    return {"columns": ["v", "opt"],
+                            "rows": [[n, "urn:m#Water"] for n in nodes]}
+                return {"columns": ["v", "opt"], "rows": []}
+            if sparql.startswith("SELECT DISTINCT ?v0"):  # pattern execute
+                return {"columns": ["v0", "v1"],
+                        "rows": [["urn:p#ro", n] for n in nodes]}
             return empty_res(sparql)
         client = make_client(responder)
         f = Q(client=client).entity(CLS_A, alias="ro").measurement(alias="m").facets()
@@ -117,9 +125,17 @@ class TestModuleCache:
 
 class TestSummaryObject:
     def test_repr_and_indexing(self):
+        nodes = [f"urn:p#m{i}" for i in range(3)]
+
         def responder(sparql, use_union=True):
-            if "COUNT(DISTINCT ?v1)" in sparql and "hasQuantityKind" in sparql:
-                return {"columns": ["opt", "count"], "rows": [["urn:qk#PH", 3]]}
+            if sparql.startswith("SELECT ?v ?opt"):
+                if "hasQuantityKind" in sparql:
+                    return {"columns": ["v", "opt"],
+                            "rows": [[n, "urn:qk#PH"] for n in nodes]}
+                return {"columns": ["v", "opt"], "rows": []}
+            if sparql.startswith("SELECT DISTINCT ?v0"):
+                return {"columns": ["v0", "v1"],
+                        "rows": [["urn:p#ro", n] for n in nodes]}
             return empty_res(sparql)
         client = make_client(responder)
         f = Q(client=client).entity(CLS_A, alias="ro").measurement(alias="m").facets()

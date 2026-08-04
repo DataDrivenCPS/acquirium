@@ -269,3 +269,78 @@ class TestIncludeConnectionPoints:
         with pytest.raises(ValueError, match="only applies to the"):
             base.measurement(direction="upstream", nearest=True,
                              include_connection_points=False)
+
+
+class TestAliasing:
+    def test_alias_names_current_node(self):
+        b = q().entity(CLS_A).alias("ro")
+        g = b.query_graph
+        assert g.aliases["ro"] == 0 and g.aliases_reverse[0] == "ro"
+        assert g.current_pointer == 0
+
+    def test_previous_alias_still_resolves(self):
+        b = q().entity(CLS_A, alias="a").alias("ro")
+        g = b.query_graph
+        assert g.aliases["a"] == 0 and g.aliases["ro"] == 0
+        assert g.aliases_reverse[0] == "ro"  # display name is the latest
+
+    def test_alias_on_empty_query_errors(self):
+        with pytest.raises(ValueError, match="no current node"):
+            q().alias("x")
+
+    def test_default_alias_local_name_without_client(self):
+        b = q().entity(CLS_A)
+        assert b.query_graph.aliases_reverse[0] == "TypeA"  # no client -> no CURIE
+
+    def test_default_alias_text_and_curie(self):
+        from unittest.mock import MagicMock
+        client = MagicMock()
+        client.resolve.return_value = CLS_A
+        client.compact_uri.side_effect = lambda u: "test:" + u.rsplit("#", 1)[-1]
+        b = Q(client=client).entity("tank")
+        assert b.query_graph.aliases_reverse[0] == "tank"      # the text as given
+        b2 = Q(client=client).entity(CLS_A)
+        assert b2.query_graph.aliases_reverse[0] == "test:TypeA"  # CURIE
+
+    def test_default_alias_uniquified(self):
+        b = q().entity(CLS_A).entity(CLS_A)
+        g = b.query_graph
+        assert g.aliases_reverse[0] == "TypeA" and g.aliases_reverse[1] == "TypeA_2"
+
+    def test_uri_only_node_keeps_numeric_fallback(self):
+        b = q().entity(uri=INST)
+        assert b.query_graph.aliases_reverse[0] == "0"
+
+
+class TestMeasurementFrmList:
+    def test_list_attaches_per_named_entity(self):
+        b = (q().entity(CLS_A, alias="pump").related(CLS_B, alias="tank", max_depth=1)
+             .entity(CLS_A, alias="other")
+             .measurement(frm=["pump", "tank"]))
+        g = b.query_graph
+        assert g.aliases["pump_data"] == 3 and g.aliases["tank_data"] == 4
+        assert sorted(g.data_nodes) == [3, 4]
+        assert {e.source_id for e in g.edges if e.target_id in g.data_nodes} == {0, 1}
+
+    def test_list_deduplicates(self):
+        b = q().entity(CLS_A, alias="pump").measurement(frm=["pump", "pump"])
+        assert len(b.query_graph.data_nodes) == 1
+
+    def test_unknown_alias_in_list(self):
+        with pytest.raises(ValueError, match="unknown alias 'nope'"):
+            q().entity(CLS_A, alias="pump").measurement(frm=["pump", "nope"])
+
+    def test_empty_list(self):
+        with pytest.raises(ValueError, match="frm list is empty"):
+            q().entity(CLS_A, alias="pump").measurement(frm=[])
+
+    def test_list_with_direction_errors(self):
+        with pytest.raises(ValueError, match="only combines with the non-directional"):
+            q().entity(CLS_A, alias="pump").measurement(frm=["pump"], direction="upstream")
+
+    def test_attrs_apply_to_all_listed(self):
+        qk = "http://qudt.org/vocab/quantitykind/PH"
+        b = (q().entity(CLS_A, alias="pump").related(CLS_B, alias="tank", max_depth=1)
+             .measurement(frm=["pump", "tank"], quantity_kind=qk))
+        g = b.query_graph
+        assert all(g.data_nodes[n].filters == {"quantity_kind": qk} for n in g.data_nodes)
