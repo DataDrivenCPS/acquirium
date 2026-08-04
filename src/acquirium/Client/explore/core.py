@@ -2,7 +2,7 @@
 
 ``Q`` is the clean replacement for the legacy ``Query`` builder: short verbs
 (``entity`` / ``related`` / ``measurement`` / ``where`` / ``include`` /
-``alias`` / ``refocus``) build an immutable :class:`QueryGraph`, and terminals
+``alias`` / ``drop`` / ``refocus``) build an immutable :class:`QueryGraph`, and terminals
 (``metadata`` / ``data`` / ``dataframe`` / ``execute`` / ``to_sparql``) run
 it. Compilation is delegated to the pure
 :func:`~acquirium.Client.explore.compile.compile_sparql`.
@@ -631,6 +631,36 @@ class Q:
         for name in attr_names:
             g = g.with_select(nid, name)
         return self._with_graph(g)
+
+    def drop(self, *aliases: str) -> "Q":
+        """Keep node(s) in the pattern but drop them from the output.
+
+        No arguments drops the current node; aliases drop those nodes. The
+        column disappears from ``metadata()`` and, since the variable leaves
+        the SELECT, rows that differed only in the dropped node collapse::
+
+            (aq.explore().entity(uri="dpr:backwash_subsystem").drop()
+               .related("equipment").measurement().include("unit"))
+        """
+        g = self.query_graph
+        if aliases:
+            ids = []
+            for a in aliases:
+                nid = g.aliases.get(a)
+                if nid is None:
+                    raise ValueError(f"drop: unknown alias {a!r}")
+                ids.append(nid)
+        else:
+            if g.current_pointer is None:
+                raise ValueError("drop: no current node (start with entity())")
+            ids = [g.current_pointer]
+        ptr = g.current_pointer
+        for nid in ids:
+            node = g.nodes[nid]
+            constraints = dict(node.constraints)
+            constraints["dropped"] = True
+            g = g.with_node(replace(node, constraints=constraints))
+        return self._with_graph(replace(g, current_pointer=ptr))
 
     def refocus(self, alias: str) -> "Q":
         """Repoint the query at an existing node by alias."""

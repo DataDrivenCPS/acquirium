@@ -295,3 +295,24 @@ class TestUnboundedWalk:
         chain = adj(("a", "b"), ("b", "c"))
         res = walk_program([chain], [True], ["a"], 0, nearest=False)
         assert res == {"a": {"b": 1, "c": 2}}
+
+
+class TestDropWithTraversal:
+    def test_dropped_source_still_yields_bfs_sources(self):
+        client = MagicMock()
+        client.base_url = "http://test:8000"
+        client.graph_version.return_value = 7
+        client.sparql_query.side_effect = [
+            {"columns": ["v0"], "rows": [["urn:p#s1"]]},   # sources (undropped internally)
+            {"columns": ["v1"], "rows": [["urn:p#t1"]]},   # accept
+            {"columns": ["s", "t"], "rows": [["urn:p#s1", "urn:p#t1"]]},
+            {"columns": ["v1"], "rows": []},               # final (v0 dropped)
+        ]
+        b = (Q(client=client).entity(CLS_A, alias="sys").drop()
+             .related(TANK, alias="tank", via="next_equipment*", nearest=True, max_depth=3))
+        b.execute()
+        source_sparql = client.sparql_query.call_args_list[0].args[0]
+        assert "?v0" in source_sparql.splitlines()[0]  # internal fetch sees the var
+        final_sparql = client.sparql_query.call_args.args[0]
+        assert "?v0" not in final_sparql.splitlines()[0]  # output stays dropped
+        assert "VALUES (?v0 ?v1)" in final_sparql  # pairing still uses the var

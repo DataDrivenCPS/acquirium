@@ -513,8 +513,19 @@ def compile_parts(graph: QueryGraph) -> tuple:
         where_clauses.append(f"OPTIONAL {{ {var_map[nid]} ({pred_path}) {avar} . }}")
         attr_vars.append(avar)
 
-    select_parts = (list(var_map.values()) + list(ext_vars.values())
-                    + list(unit_vars.values()) + list(extunit_vars.values()) + attr_vars)
+    # drop(): nodes stay in the pattern (WHERE) but leave the projection —
+    # which also collapses DISTINCT rows that differed only in them.
+    dropped = {nid for nid, node in graph.nodes.items()
+               if (node.constraints or {}).get("dropped")}
+    select_parts = (
+        [v for nid, v in var_map.items() if nid not in dropped]
+        + [v for nid, v in ext_vars.items() if nid not in dropped]
+        + [v for nid, v in unit_vars.items() if nid not in dropped]
+        + [v for nid, v in extunit_vars.items() if nid not in dropped]
+        + attr_vars
+    )
+    if not select_parts:
+        raise ValueError("drop(): every node is dropped — nothing left to select")
     return var_map, select_parts, where_clauses
 
 

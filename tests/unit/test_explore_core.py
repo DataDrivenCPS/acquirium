@@ -348,3 +348,38 @@ class TestMeasurementFrmList:
              .measurement(frm=["pump", "tank"], quantity_kind=qk))
         g = b.query_graph
         assert all(g.data_nodes[n].filters == {"quantity_kind": qk} for n in g.data_nodes)
+
+
+class TestDrop:
+    def test_drop_pointer_removes_from_select(self):
+        b = (q().entity(uri=INST, alias="sys").drop()
+             .related(CLS_B, alias="eq", via=[PRED_P]))
+        s = b.to_sparql()
+        first = s.splitlines()[0]
+        assert "?v0" not in first and "?v1" in first
+        assert f"VALUES ?v0 {{ <{INST}> }}" in s  # still constrains the pattern
+
+    def test_drop_by_alias_and_multiple(self):
+        b = (q().entity(CLS_A, alias="a").entity(CLS_B, alias="b")
+             .entity(CLS_A, alias="c").drop("a", "b"))
+        first = b.to_sparql().splitlines()[0]
+        assert "?v0" not in first and "?v1" not in first and "?v2" in first
+        assert b.query_graph.current_pointer == 2  # pointer untouched
+
+    def test_dropped_data_node_hides_internals_too(self):
+        b = q().entity(CLS_A, alias="ro").measurement(alias="m").drop()
+        first = b.to_sparql().splitlines()[0]
+        assert "?ext1" not in first and "?unit1" not in first and "?v1" not in first
+
+    def test_drop_all_errors_at_compile(self):
+        b = q().entity(CLS_A, alias="a").drop()
+        with pytest.raises(ValueError, match="nothing left to select"):
+            b.to_sparql()
+
+    def test_unknown_alias(self):
+        with pytest.raises(ValueError, match="unknown alias"):
+            q().entity(CLS_A, alias="a").drop("nope")
+
+    def test_empty_query_errors(self):
+        with pytest.raises(ValueError, match="no current node"):
+            q().drop()

@@ -152,8 +152,15 @@ def _prune_target_subtree(graph: QueryGraph, edge) -> QueryGraph:
             if e.source_id in removed and e.target_id not in removed:
                 removed.add(e.target_id)
                 changed = True
+    def _undropped(node):
+        c = dict(node.constraints or {})
+        if c.pop("dropped", None):
+            return replace(node, constraints=c)
+        return node
+
     return QueryGraph(
-        nodes={k: v for k, v in graph.nodes.items() if k not in removed},
+        nodes={k: (_undropped(v) if k == edge.source_id else v)
+               for k, v in graph.nodes.items() if k not in removed},
         edges=[e for e in graph.edges
                if e is not edge and e.source_id not in removed and e.target_id not in removed],
         aliases={a: i for a, i in graph.aliases.items() if i not in removed},
@@ -192,6 +199,9 @@ def _fetch_target_accept(client, graph: QueryGraph, edge) -> Optional[Set[str]]:
     if not (node.constraints or {}) and info is None:
         return None
     alias = graph.aliases_reverse.get(tid, str(tid))
+    c = dict(node.constraints or {})
+    if c.pop("dropped", None):
+        node = replace(node, constraints=c)
     sub = QueryGraph(
         nodes={tid: node},
         edges=[],
