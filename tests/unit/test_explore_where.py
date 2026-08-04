@@ -205,3 +205,14 @@ class TestProcessKind:
             {"process_0": ("reverse osmosis", "process")}, min_score=0.4)
         assert b.query_graph.nodes[0].constraints["attrs"]["process"] == \
             "urn:nawi-water-ontology#Process-ReverseOsmosis"
+
+
+class TestAttributeDocs:
+    def test_all_attribute_methods_document_the_registry(self):
+        from acquirium.Client.explore.attributes import REGISTRY
+        for method in (Q.entity, Q.related, Q.measurement, Q.where,
+                       Q.include, Q.options, Q.facets):
+            doc = method.__doc__ or ""
+            assert "Attributes (usable on):" in doc, method.__name__
+            for name in REGISTRY:
+                assert name in doc, (method.__name__, name)

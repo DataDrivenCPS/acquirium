@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 import polars as pl
 from rdflib import URIRef
 
-from acquirium.Client.explore.attributes import REGISTRY, Not, normalize_value
+from acquirium.Client.explore.attributes import REGISTRY, Not, attributes_doc, normalize_value
 from acquirium.Client.explore.compile import compile_sparql
 from acquirium.Client.explore.shortcuts import SHORTCUTS, Step, get_shortcut
 from acquirium.Client.query_graph import DataNodeInfo, QueryEdge, QueryGraph, QueryNode
@@ -929,3 +929,10 @@ class Q:
             return self.client.compact_uri(uri)
         except Exception:
             return str(uri)
+
+
+# Append the attribute registry (single source of truth) to every method
+# that accepts attributes, so help(Q.where) etc. always list the current set.
+for _fn in (Q.entity, Q.related, Q.measurement, Q.where, Q.include, Q.options, Q.facets):
+    _fn.__doc__ = (_fn.__doc__ or "") + "\n" + attributes_doc(indent=8) + "\n"
+del _fn
