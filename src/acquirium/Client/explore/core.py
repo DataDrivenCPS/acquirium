@@ -305,10 +305,10 @@ class Q:
         - ``direction``: ``"upstream"``/``"downstream"`` built-in s223
           topology traversal (``via="any"`` only — shortcuts encode their own
           direction, so pick the directional shortcut instead).
-        - ``max_depth``: optional bound on the **total** steps of the chain
-          (0 = unbounded). Defaults: unbounded for ``via="any"``, 1 per fixed
-          segment +3 per ``*`` segment for via expressions, 3 for
-          directional, 1 for predicate lists.
+        - ``max_depth``: bound on the **total** steps of the chain;
+          ``max_depth=0`` means unbounded (explicit opt-in). Defaults: 3 for
+          ``"any"``/directional, 1 per fixed segment +3 per ``*`` segment
+          for via expressions, 1 for predicate lists.
         - ``nearest``: keep only the closest match(es) per source instead of
           all reachable ones (equal-distance ties all survive). With
           ``via="any"`` distance means raw RDF hops over all non-hidden
@@ -343,10 +343,9 @@ class Q:
                 # Wildcard traversal program: any predicate except the hidden
                 # set. Multi-hop any-predicate chains are join-explosive in
                 # SPARQL, so program edges resolve by client-side BFS at
-                # execute time; distance means raw RDF hops. Unbounded by
-                # default (hops=0) — BFS visits each node once.
+                # execute time; distance means raw RDF hops. Bounded to 3 by
+                # default; pass max_depth=0 for unbounded reachability.
                 patterns = (((("*", None),),), True),
-                default_hops = 0
         elif isinstance(via, str):
             patterns, default_hops = self._lower_via(via)
         else:
@@ -376,9 +375,17 @@ class Q:
                 )
 
         hops = max_depth if max_depth is not None else default_hops
-        if patterns is not None and hops != 0:
+        if patterns is not None:
             n_fixed = sum(1 for _, star in patterns if not star)
-            if hops < max(n_fixed, 1):
+            has_star = any(star for _, star in patterns)
+            if max_depth is not None and not has_star and via != "any" and hops != n_fixed:
+                raise ValueError(
+                    f"related: via chain {via!r} has no repeatable segment, so its "
+                    f"length is exactly {n_fixed} step(s) and max_depth={max_depth} "
+                    f"has no effect — add '*' to the segment to repeat it "
+                    f"(e.g. 'hasMember*')"
+                )
+            if hops != 0 and hops < max(n_fixed, 1):
                 raise ValueError(
                     f"related: via chain has {n_fixed} fixed step(s) but max_depth is {hops}"
                 )

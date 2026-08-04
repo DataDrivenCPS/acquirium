@@ -66,11 +66,15 @@ class TestEntity:
 
 
 class TestRelated:
-    def test_any_defaults_to_unbounded_wildcard_program(self):
+    def test_any_defaults_to_bounded_wildcard_program(self):
         b = q().entity(CLS_A, alias="a").related(CLS_B, alias="b")
         (edge,) = b.query_graph.edges
         assert edge.patterns == ((((("*", None),),), True),)
-        assert edge.hops == 0 and edge.predicates is None and edge.direction is None
+        assert edge.hops == 3 and edge.predicates is None and edge.direction is None
+
+    def test_any_unbounded_is_explicit(self):
+        b = q().entity(CLS_A, alias="a").related(CLS_B, alias="b", max_depth=0)
+        assert b.query_graph.edges[0].hops == 0
 
     def test_predicates_default_one_hop(self):
         b = q().entity(CLS_A, alias="a").related(CLS_B, alias="b", via=[PRED_P])

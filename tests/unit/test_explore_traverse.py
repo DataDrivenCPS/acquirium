@@ -168,7 +168,7 @@ class TestNearestValidation:
         (edge,) = b.query_graph.edges
         alternatives = ((("*", None),),)
         assert edge.patterns == ((alternatives, True),)
-        assert edge.nearest and edge.hops == 0  # unbounded by default
+        assert edge.nearest and edge.hops == 3  # bounded default; 0 = unbounded
 
     def test_related_nearest_any_with_direction_errors(self):
         with pytest.raises(ValueError, match="directional shortcut"):
@@ -259,7 +259,7 @@ class TestConeResolution:
         assert "(<urn:p#ro1> <urn:p#tankA>)" in final_sparql
         assert "(<urn:p#ro1> <urn:p#tankB>)" in final_sparql
 
-    def test_any_cone_unbounded(self):
+    def test_any_cone_unbounded_when_explicit(self):
         client = self.make_client([
             {"columns": ["v0"], "rows": [["urn:p#a"]]},
             {"columns": ["v1"], "rows": [["urn:p#z"]]},
@@ -269,10 +269,11 @@ class TestConeResolution:
             ]},
             {"columns": ["v0", "v1"], "rows": []},
         ])
-        b = Q(client=client).entity(CLS_A, alias="a").related(TANK, alias="z")
+        b = Q(client=client).entity(CLS_A, alias="a").related(TANK, alias="z",
+                                                              max_depth=0)
         b.execute()
         final_sparql = client.sparql_query.call_args.args[0]
-        # four hops away — found because default is unbounded
+        # four hops away — found because max_depth=0 opts into unbounded
         assert "(<urn:p#a> <urn:p#z>)" in final_sparql
 
     def test_explicit_predicate_edges_stay_sparql(self):

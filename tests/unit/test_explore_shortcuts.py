@@ -108,7 +108,7 @@ class TestViaExpression:
         prepareQuery(s)
 
     def test_max_depth_below_fixed_steps_errors(self):
-        with pytest.raises(ValueError, match="fixed step"):
+        with pytest.raises(ValueError, match="no repeatable segment"):
             q().entity(CLS_A).related(CLS_B, via="next_equipment/next_equipment", max_depth=1)
 
     def test_uri_token_passthrough(self):
@@ -207,3 +207,17 @@ class TestHide:
         assert f"<{CNX}>" in s and "NOT IN" not in s
         s2 = q().entity(CLS_A, alias="a").related(CLS_B, alias="b", via=[CNX]).to_sparql()
         assert f"(<{CNX}>)" in s2 and "NOT IN" not in s2
+
+
+class TestStarlessMaxDepth:
+    def test_starless_via_with_max_depth_errors(self):
+        with pytest.raises(ValueError, match="no repeatable segment"):
+            q().entity(CLS_A).related(CLS_B, via="urn:test#hasMember", max_depth=3)
+
+    def test_star_form_accepts_max_depth(self):
+        b = q().entity(CLS_A).related(CLS_B, via="urn:test#hasMember*", max_depth=3)
+        assert b.query_graph.edges[0].hops == 3
+
+    def test_matching_max_depth_allowed(self):
+        b = q().entity(CLS_A).related(CLS_B, via="next_equipment/next_equipment", max_depth=2)
+        assert b.query_graph.edges[0].hops == 2
