@@ -359,6 +359,8 @@ class Manager:
           UNION {{ ?x <{HAS_ENUMERATION_KIND}> ?uri . }}
           UNION {{ ?x <{OF_SUBSTANCE}> ?uri . }}
           UNION {{ ?x <{HAS_MEDIUM}> ?uri . }}
+          FILTER NOT EXISTS {{ ?uri (<{RDFS.subClassOf}>)* <{WATR.Process}> . }}
+          FILTER(!STRSTARTS(STR(?uri), "{WATR}Process"))
         """
         pred_where = f"""
           {{ ?uri a <{RDF_PROP}> . }}
@@ -385,6 +387,7 @@ class Manager:
         process_where = f"""
           {{ ?uri (<{RDFS.subClassOf}>)* <{WATR.Process}> . }}
           UNION {{ ?x <{WATR.hasProcess}> ?uri . }}
+          UNION {{ ?uri a <{WATR.Class}> . FILTER(STRSTARTS(STR(?uri), "{WATR}Process")) }}
         """
 
         extractions: list[tuple[str, str, str]] = [
