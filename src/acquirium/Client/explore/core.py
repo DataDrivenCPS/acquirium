@@ -602,15 +602,18 @@ class Q:
             ids = [nid]
         return self._with_graph(self._apply_attrs(g, ids, resolved))
 
-    def include(self, *attr_names: str, of: Optional[str] = None) -> "Q":
+    def include(self, *attr_names: str, of: Optional[str] = None,
+                required: bool = False) -> "Q":
         """Include attribute values as extra metadata columns named ``alias.attr``.
 
         Additive: the regular node columns stay; each named attribute adds a
         column. ``of`` targets a node by alias (default: current pointer).
-        Values bind OPTIONALly, so rows without the attribute are kept::
+        By default values bind OPTIONALly (rows without the attribute keep a
+        ``None``); ``required=True`` drops rows lacking the attribute::
 
-            q.include("medium", "unit")          # of the current node
-            q.include("process", of="ro")        # of another node
+            q.include("medium", "unit")             # None where absent
+            q.include("unit", required=True)        # only rows with a unit
+            q.include("process", of="ro")           # of another node
         """
         if not attr_names:
             raise ValueError('include: provide at least one attribute name, e.g. include("medium")')
@@ -629,7 +632,7 @@ class Q:
                 alias = g.aliases_reverse.get(nid, str(nid))
                 raise ValueError(f"include: attribute {name!r} does not apply to {role} node {alias!r}")
         for name in attr_names:
-            g = g.with_select(nid, name)
+            g = g.with_select(nid, name, required)
         return self._with_graph(g)
 
     def drop(self, *aliases: str) -> "Q":

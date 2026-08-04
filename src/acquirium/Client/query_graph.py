@@ -63,7 +63,8 @@ class QueryGraph:
 
     data_nodes: Dict[int, DataNodeInfo] = field(default_factory=dict)
 
-    # Projected attribute columns: (node_id, attr_name) pairs, in order.
+    # Projected attribute columns: (node_id, attr_name, required) triples,
+    # in order. required=True filters rows lacking the attribute.
     selects: tuple = ()
 
     def with_data_node(self, info: DataNodeInfo) -> "QueryGraph":
@@ -117,11 +118,25 @@ class QueryGraph:
             selects=self.selects,
         )
 
-    def with_select(self, node_id: int, attr_name: str) -> "QueryGraph":
-        """Return a new graph with an added (node, attr) projection (deduplicated)."""
-        entry = (node_id, attr_name)
+    def with_select(self, node_id: int, attr_name: str, required: bool = False) -> "QueryGraph":
+        """Return a new graph with an added (node, attr) projection.
+
+        Deduplicated on (node, attr); re-adding with a different ``required``
+        replaces the entry."""
+        entry = (node_id, attr_name, required)
         if entry in self.selects:
             return self
+        if any(n == node_id and a == attr_name for n, a, _ in self.selects):
+            return QueryGraph(
+                nodes=dict(self.nodes),
+                edges=list(self.edges),
+                aliases=dict(self.aliases),
+                aliases_reverse=dict(self.aliases_reverse),
+                current_pointer=self.current_pointer,
+                data_nodes=dict(self.data_nodes),
+                selects=tuple(entry if (n == node_id and a == attr_name) else (n, a, r)
+                              for n, a, r in self.selects),
+            )
         return QueryGraph(
             nodes=dict(self.nodes),
             edges=list(self.edges),

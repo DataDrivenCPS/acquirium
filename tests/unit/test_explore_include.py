@@ -21,19 +21,23 @@ def base() -> Q:
 class TestSelectStorage:
     def test_stores_selects_on_pointer(self):
         b = base().include("medium", "unit")
-        assert b.query_graph.selects == ((1, "medium"), (1, "unit"))
+        assert b.query_graph.selects == ((1, "medium", False), (1, "unit", False))
 
     def test_of_targets_alias(self):
         b = base().include("process", of="ro")
-        assert b.query_graph.selects == ((0, "process"),)
+        assert b.query_graph.selects == ((0, "process", False),)
 
     def test_dedup(self):
         b = base().include("medium").include("medium")
-        assert b.query_graph.selects == ((1, "medium"),)
+        assert b.query_graph.selects == ((1, "medium", False),)
+
+    def test_required_upgrades_existing_entry(self):
+        b = base().include("medium").include("medium", required=True)
+        assert b.query_graph.selects == ((1, "medium", True),)
 
     def test_selects_survive_later_verbs(self):
         b = base().include("medium").related(CLS_A, alias="next", frm="ro")
-        assert b.query_graph.selects == ((1, "medium"),)
+        assert b.query_graph.selects == ((1, "medium", False),)
 
     def test_errors(self):
         with pytest.raises(ValueError, match="at least one"):
@@ -61,6 +65,15 @@ class TestSelectSparql:
 
     def test_no_selects_means_no_attr_vars(self):
         assert "attr" not in base().to_sparql()
+
+    def test_required_binds_without_optional(self):
+        s = base().include("unit", required=True).to_sparql()
+        assert "?v1 (<http://qudt.org/schema/qudt/hasUnit>) ?attr1_unit ." in s
+        assert "OPTIONAL { ?v1 (<http://qudt.org/schema/qudt/hasUnit>)" not in s
+
+    def test_default_stays_optional(self):
+        s = base().include("unit").to_sparql()
+        assert "OPTIONAL { ?v1 (<http://qudt.org/schema/qudt/hasUnit>) ?attr1_unit . }" in s
 
 
 class TestColumnNaming:

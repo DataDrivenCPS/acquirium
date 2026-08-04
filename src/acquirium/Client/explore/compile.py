@@ -506,11 +506,12 @@ def compile_parts(graph: QueryGraph) -> tuple:
     # the attribute survive; the prefix is disjoint from v/ext/unit/extunit
     # so DataObject's column parsing ignores them)
     attr_vars: List[str] = []
-    for nid, name in getattr(graph, "selects", ()):
+    for nid, name, required in getattr(graph, "selects", ()):
         attr = REGISTRY[name]
         avar = f"?attr{nid}_{name}"
         pred_path = "|".join(f"<{p}>" for p in attr.predicates)
-        where_clauses.append(f"OPTIONAL {{ {var_map[nid]} ({pred_path}) {avar} . }}")
+        clause = f"{var_map[nid]} ({pred_path}) {avar} ."
+        where_clauses.append(clause if required else f"OPTIONAL {{ {clause} }}")
         attr_vars.append(avar)
 
     # drop(): nodes stay in the pattern (WHERE) but leave the projection —
