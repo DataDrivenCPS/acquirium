@@ -394,13 +394,90 @@ def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int,
     return " UNION ".join(union_blocks)
 
 
+def _node_constraint_clauses(v: str, node) -> List[str]:
+    """VALUES / class-fence / attribute clauses for one node."""
+    clauses: List[str] = []
+    instance_uri = (node.constraints or {}).get("instance_uri")
+    rdf_class = (node.constraints or {}).get("rdf_class")
+    if instance_uri is not None:
+        clauses.append(f"VALUES {v} {{ <{instance_uri}> }}")
+    if rdf_class:
+        # Anchor the subClassOf* traversal at the constant class inside
+        # a sub-SELECT. This fences the property path so Oxigraph
+        # evaluates it *backward* from <class> (a handful of nodes)
+        # instead of driving it *forward* from every ?v_typ bound by
+        # rdf:type (catastrophic with QUDT in the union graph).
+        typ = f"{v}_typ"
+        clauses.append(f"{v} <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> {typ} .")
+        clauses.append(
+            f"{{ SELECT DISTINCT {typ} WHERE {{ "
+            f"{typ} <http://www.w3.org/2000/01/rdf-schema#subClassOf>* <{rdf_class}> . "
+            f"}} }}"
+        )
+    for name, aval in ((node.constraints or {}).get("attrs") or {}).items():
+        clauses.extend(_attr_clauses(v, REGISTRY[name], aval))
+    return clauses
+
+
+def _data_node_clauses(v: str, nid: int, info) -> List[str]:
+    """ext-ref triple, unit OPTIONALs, and filters for one data node."""
+    clauses: List[str] = [f"{v} <{HAS_EXTERNAL_REFERENCE}> ?ext{nid} ."]
+    clauses.append(f"OPTIONAL {{ {v} <{HAS_UNIT}> ?unit{nid} . }}")
+    clauses.append(f"OPTIONAL {{ ?ext{nid} <{HAS_UNIT}> ?extunit{nid} . }}")
+
+    for pred, val in (info.filters or {}).items():
+        if val is None:
+            continue
+        if isinstance(pred, str) and pred in REGISTRY:
+            clauses.extend(_attr_clauses(v, REGISTRY[pred], val))
+            continue
+        negate = isinstance(val, Not)
+        if negate:
+            val = val.value
+        if isinstance(val, str) and ("://" in val or val.startswith("urn:")):
+            if negate:
+                clauses.append(f"FILTER NOT EXISTS {{ {v} <{pred}> <{val}> . }}")
+            else:
+                clauses.append(f"{v} <{pred}> <{val}> .")
+        elif isinstance(val, list):
+            items = [x for x in val if x is not None]
+            if negate:
+                if len(items) == 1:
+                    clauses.append(f"FILTER NOT EXISTS {{ {v} <{pred}> {_term(items[0])} . }}")
+                else:
+                    union_block = " UNION ".join(f"{{ {v} <{pred}> {_term(x)} . }}" for x in items)
+                    clauses.append(f"FILTER NOT EXISTS {{ {union_block} }}")
+            else:
+                union_block = " UNION ".join(f"{{ {v} <{pred}> {_term(x)} . }}" for x in items)
+                clauses.append(f"{{ {union_block} }}")
+        else:
+            if negate:
+                clauses.append(f'FILTER NOT EXISTS {{ {v} <{pred}> "{val}" . }}')
+            else:
+                clauses.append(f'{v} <{pred}> "{val}" .')
+    return clauses
+
+
+def _attr_select_clause(v: str, nid: int, name: str, required: bool) -> tuple:
+    attr = REGISTRY[name]
+    avar = f"?attr{nid}_{name}"
+    pred_path = "|".join(f"<{p}>" for p in attr.predicates)
+    clause = f"{v} ({pred_path}) {avar} ."
+    return (clause if required else f"OPTIONAL {{ {clause} }}"), avar
+
+
 def compile_parts(graph: QueryGraph) -> tuple:
     """Compile a query graph into ``(var_map, select_parts, where_clauses)``.
 
     ``compile_sparql`` assembles these into the standard SELECT; facet
     aggregations (``Q.options``) reuse the WHERE body with their own
-    projection and GROUP BY.
+    projection and GROUP BY. Queries with **multiple** measurement nodes
+    compile their data blocks as UNION branches over the shared entity
+    pattern, so results are the union of the per-node matches (M+N rows,
+    empty nodes contribute None columns) instead of a cross-product join.
     """
+    if len(graph.data_nodes) > 1:
+        return _compile_parts_multi(graph)
     # node id -> ?v{id}
     var_map = {nid: f"?v{nid}" for nid in graph.nodes}
     ext_vars = {}
@@ -529,6 +606,77 @@ def compile_parts(graph: QueryGraph) -> tuple:
         [v for nid, v in ext_vars.items() if nid not in dropped]
         + [v for nid, v in unit_vars.items() if nid not in dropped]
         + [v for nid, v in extunit_vars.items() if nid not in dropped]
+    )
+    if not select_parts:
+        raise ValueError("drop(): every node is dropped — nothing left to select")
+    return var_map, select_parts, where_clauses
+
+
+def _compile_parts_multi(graph: QueryGraph) -> tuple:
+    """compile_parts for graphs with 2+ measurement nodes.
+
+    The shared entity pattern compiles once; each data node's block (its
+    edge, ext-ref requirement, unit OPTIONALs, filters, and projected
+    attributes) becomes one UNION branch. Rows therefore bind exactly one
+    measurement node (the others' columns are None), the result is the
+    union of per-node matches instead of their cross product, and a node
+    with no matches contributes nothing without emptying the rest.
+    """
+    var_map = {nid: f"?v{nid}" for nid in graph.nodes}
+    data_ids = set(graph.data_nodes)
+
+    where_clauses: List[str] = []
+    for nid, node in graph.nodes.items():
+        if nid in data_ids:
+            continue
+        where_clauses.extend(_node_constraint_clauses(var_map[nid], node))
+
+    for edge_idx, edge in enumerate(graph.edges):
+        if edge.target_id in data_ids:
+            continue
+        where_clauses.append(_edge_pattern(
+            var_map[edge.source_id], var_map[edge.target_id], edge, edge_idx,
+            is_data_edge=False,
+        ))
+
+    attr_var_pairs: List[tuple] = []  # (node_id, var) in selects order
+    for nid, name, required in getattr(graph, "selects", ()):
+        if nid in data_ids:
+            continue
+        clause, avar = _attr_select_clause(var_map[nid], nid, name, required)
+        where_clauses.append(clause)
+        attr_var_pairs.append((nid, avar))
+
+    branches: List[str] = []
+    for nid, info in graph.data_nodes.items():
+        v = var_map[nid]
+        b: List[str] = list(_node_constraint_clauses(v, graph.nodes[nid]))
+        for edge_idx, edge in enumerate(graph.edges):
+            if edge.target_id == nid:
+                b.append(_edge_pattern(
+                    var_map[edge.source_id], v, edge, edge_idx, is_data_edge=True))
+        b.extend(_data_node_clauses(v, nid, info))
+        # this node's projected attributes live inside its branch: outside it
+        # the unbound variable would turn the binding into an open pattern
+        for snid, name, required in getattr(graph, "selects", ()):
+            if snid == nid:
+                clause, avar = _attr_select_clause(v, nid, name, required)
+                b.append(clause)
+                attr_var_pairs.append((nid, avar))
+        branches.append("{ " + " ".join(b) + " }")
+    where_clauses.append(" UNION ".join(branches))
+
+    dropped = {nid for nid, node in graph.nodes.items()
+               if (node.constraints or {}).get("dropped")}
+    select_parts: List[str] = []
+    for nid, v in var_map.items():
+        if nid not in dropped:
+            select_parts.append(v)
+        select_parts.extend(avar for anid, avar in attr_var_pairs if anid == nid)
+    select_parts += (
+        [f"?ext{nid}" for nid in graph.data_nodes if nid not in dropped]
+        + [f"?unit{nid}" for nid in graph.data_nodes if nid not in dropped]
+        + [f"?extunit{nid}" for nid in graph.data_nodes if nid not in dropped]
     )
     if not select_parts:
         raise ValueError("drop(): every node is dropped — nothing left to select")

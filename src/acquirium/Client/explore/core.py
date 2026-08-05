@@ -771,7 +771,8 @@ class Q:
             pl_table = pl_table.with_columns([
                 pl.col(c)
                 .map_elements(
-                    lambda x: self._compact_uri_safe(x) if isinstance(x, str) else str(x),
+                    lambda x: self._compact_uri_safe(x) if isinstance(x, str)
+                    else (None if x is None else str(x)),
                     return_dtype=pl.String,
                     skip_nulls=False,
                 )

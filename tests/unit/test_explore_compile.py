@@ -190,3 +190,53 @@ class TestFullChain:
         g_old = g_old.with_edge(QueryEdge(source_id=1, target_id=2, hops=1))
 
         assert_parity(g, g_old)
+
+
+class TestMultiMeasurementUnion:
+    """2+ measurement nodes compile as UNION branches, not a cross-product join."""
+
+    def _graph(self):
+        from acquirium.Client.explore.core import Q
+        return (Q(client=None).entity(CLS_A, alias="pump")
+                .related(CLS_B, alias="tank", via=[PRED_P])
+                .measurement(frm=["pump", "tank"]))
+
+    def test_data_blocks_are_union_branches(self):
+        s = self._graph().to_sparql()
+        body = s[s.index("WHERE"):]
+        # both ext requirements present, in separate UNION branches
+        assert "?v0 <https://brickschema.org/schema/Brick/ref#hasExternalReference>" not in body
+        assert body.count("hasExternalReference") == 2
+        pump_block = body.index("?ext2")
+        tank_block = body.index("?ext3")
+        assert pump_block < body.index("} UNION {", pump_block) < tank_block
+
+    def test_shared_entity_pattern_compiles_once(self):
+        s = self._graph().to_sparql()
+        assert s.count(f"<{CLS_A}>") == 1 and s.count(f"<{CLS_B}>") == 1
+
+    def test_parses_and_projects_all_columns(self):
+        from rdflib.plugins.sparql import prepareQuery
+        s = self._graph().to_sparql()
+        prepareQuery(s)
+        first = s.splitlines()[0]
+        for var in ("?v0", "?v1", "?v2", "?v3", "?ext2", "?ext3"):
+            assert var in first
+
+    def test_data_node_include_stays_inside_branch(self):
+        from acquirium.Client.explore.core import Q
+        b = (Q(client=None).entity(CLS_A, alias="pump")
+             .related(CLS_B, alias="tank", via=[PRED_P])
+             .measurement(frm=["pump", "tank"])
+             .include("unit", of="pump_data"))
+        body = b.to_sparql()
+        body = body[body.index("WHERE"):]
+        bind = body.index("?attr2_unit .")
+        assert body.index("?ext2") < bind < body.index("?ext3")  # inside pump_data's branch
+
+    def test_single_measurement_unchanged(self):
+        from acquirium.Client.explore.core import Q
+        s = (Q(client=None).entity(CLS_A, alias="pump").measurement(alias="m")
+             .to_sparql())
+        body = s[s.index("WHERE"):]
+        assert body.count("hasExternalReference") == 1  # plain join, single path
