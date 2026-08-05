@@ -35,12 +35,22 @@ def _build_store(tmp_path: Path, monkeypatch, *, source_ready: bool):
     ontoenv_instances = []
 
     class FakeOntoEnv:
-        def __init__(self, *args, **kwargs):
+        def __init__(self, lifecycle: str, *args, **kwargs):
+            # Which of ontoenv's lifecycle entry points built this env.
+            self.lifecycle = lifecycle
+            self.args = args
             self.kwargs = kwargs
             self.update = MagicMock()
             # cold start path now calls env.add per bundled file
             self.add = MagicMock()
+            self.close = MagicMock()
             ontoenv_instances.append(self)
+
+        # Only connect() is stubbed on purpose: reaching for one of the
+        # narrower lifecycle entry points instead would fail loudly here.
+        @classmethod
+        def connect(cls, *args, **kwargs):
+            return cls("connect", *args, **kwargs)
 
     monkeypatch.setattr(graph_store_module, "OntoEnv", FakeOntoEnv)
 
@@ -60,23 +70,35 @@ def _build_store(tmp_path: Path, monkeypatch, *, source_ready: bool):
     return store, ontoenv_instances[0], opened_paths
 
 
-def test_init_from_store_skips_ontoenv_update(tmp_path, monkeypatch):
+def test_warm_start_reuses_the_populated_store(tmp_path, monkeypatch):
+    """A populated store must be reopened, not re-populated: connect()
+    reconciles the catalog against what the store already holds, so the
+    bundled ontologies are not added a second time."""
     store, env, opened_paths = _build_store(tmp_path, monkeypatch, source_ready=True)
     assert opened_paths == [tmp_path / "store" / "source", tmp_path / "store" / "query"]
-    assert env.kwargs["init_from_store"] is True
+    assert env.lifecycle == "connect"
     env.update.assert_not_called()
+    env.add.assert_not_called()
     store.close()
 
 
 def test_cold_start_adds_bundled_ontologies(tmp_path, monkeypatch):
-    """Cold start must build an empty env (init_from_store=False) and
-    register each bundled ontology via env.add() — no directory crawl
-    (env.update is no longer the population path)."""
+    """Cold start must connect to an empty env and register each bundled
+    ontology via env.add() — no directory crawl (env.update is no longer
+    the population path)."""
     from acquirium._ontologies import BUNDLED_FILES
 
     store, env, opened_paths = _build_store(tmp_path, monkeypatch, source_ready=False)
     assert opened_paths == [tmp_path / "store" / "source", tmp_path / "store" / "query"]
-    assert env.kwargs["init_from_store"] is False
+    assert env.lifecycle == "connect"
     env.update.assert_not_called()
     assert env.add.call_count == len(BUNDLED_FILES)
     store.close()
+
+
+def test_close_releases_the_ontoenv_lock(tmp_path, monkeypatch):
+    """ontoenv holds an exclusive lock for the environment's lifetime, so
+    close() has to release it alongside the datasets."""
+    store, env, _ = _build_store(tmp_path, monkeypatch, source_ready=False)
+    store.close()
+    env.close.assert_called_once()
