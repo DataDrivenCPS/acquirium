@@ -1,19 +1,18 @@
-"""Explore: the redesigned Acquirium query client (core + conveniences + facets)."""
+"""Explore: the redesigned Acquirium query client (core + facets)."""
 from acquirium.Client.explore.attributes import REGISTRY, Attr, Not, normalize_value
 from acquirium.Client.explore.compile import compile_sparql
 from acquirium.Client.explore.core import Q
-from acquirium.Client.explore.shortcuts import (
-    SHORTCUTS,
-    Shortcut,
-    Step,
-    hidden_predicates,
-    hide,
-    register_shortcut,
-    unhide,
+from acquirium.Client.explore.directions import (
+    DOWNSTREAM_EQUIPMENT,
+    DOWNSTREAM_PROPERTY,
+    UPSTREAM_EQUIPMENT,
+    UPSTREAM_PROPERTY,
 )
+from acquirium.Client.explore.hidden import hidden_predicates, hide, unhide
 
 __all__ = [
-    "Attr", "Not", "Q", "REGISTRY", "SHORTCUTS", "Shortcut", "Step",
-    "compile_sparql", "hidden_predicates", "hide", "normalize_value",
-    "register_shortcut", "unhide",
+    "Attr", "Not", "Q", "REGISTRY",
+    "DOWNSTREAM_EQUIPMENT", "DOWNSTREAM_PROPERTY",
+    "UPSTREAM_EQUIPMENT", "UPSTREAM_PROPERTY",
+    "compile_sparql", "hidden_predicates", "hide", "normalize_value", "unhide",
 ]

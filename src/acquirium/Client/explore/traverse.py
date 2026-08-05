@@ -30,7 +30,7 @@ from dataclasses import replace
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from acquirium.Client.explore.compile import compile_sparql, render_alternatives
-from acquirium.Client.explore.shortcuts import hidden_predicates
+from acquirium.Client.explore.hidden import hidden_predicates
 from acquirium.Client.query_graph import QueryGraph
 
 # (server_key, alternatives, graph_version) -> adjacency {source: {targets}}

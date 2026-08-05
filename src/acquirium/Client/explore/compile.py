@@ -19,7 +19,7 @@ from rdflib.namespace import RDF
 import itertools
 
 from acquirium.Client.explore.attributes import REGISTRY, Attr, Not, normalize_value
-from acquirium.Client.explore.shortcuts import hidden_predicates
+from acquirium.Client.explore.hidden import hidden_predicates
 from acquirium.Client.query_graph import QueryEdge, QueryGraph
 from acquirium.internals.internals_namespaces import (
     CONNECTED_THROUGH,
@@ -252,11 +252,11 @@ def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int,
 
     Rules:
     - If edge.value_pairs is set (a resolved nearest edge): paired VALUES.
-    - If edge.patterns is set (a lowered via program): chains of shortcut steps.
+    - If edge.patterns is set (a lowered via program): chains of via steps.
     - If edge.direction is set: delegate to _direction_edge_pattern for full topology traversal.
     - If edge.predicates is present/non-empty: constrain to those predicates and allow length 1..hops.
     - Else: allow any predicates, but length <= hops, via UNION of k-step chains,
-      excluding any hidden predicates (see ``shortcuts.hide``). Edges that
+      excluding any hidden predicates (see ``hidden.hide``). Edges that
       target a measurement node are exempt from hiding — that's how data
       attaches (hasProperty/observes/...), and the external-reference
       requirement bounds them.
@@ -345,7 +345,7 @@ def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int,
             return " UNION ".join(union_blocks)
 
     # Case B: unconstrained predicates -> UNION of explicit k-step chains.
-    # Hidden predicates (shortcuts.hide) are excluded from every hop, except
+    # Hidden predicates (hidden.hide) are excluded from every hop, except
     # on data-node edges.
     hidden = [] if is_data_edge else sorted(hidden_predicates())
     hidden_filter = (

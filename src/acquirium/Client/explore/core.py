@@ -27,7 +27,7 @@ from rdflib import URIRef
 
 from acquirium.Client.explore.attributes import REGISTRY, Not, attributes_doc, normalize_value
 from acquirium.Client.explore.compile import compile_sparql
-from acquirium.Client.explore.shortcuts import SHORTCUTS, Step, get_shortcut
+from acquirium.Client.explore.directions import EQUIPMENT_STEPS, PROPERTY_STEPS
 from acquirium.Client.query_graph import DataNodeInfo, QueryEdge, QueryGraph, QueryNode
 from acquirium.internals.internals_namespaces import S223
 
@@ -118,90 +118,29 @@ class Q:
         return self._unique_alias(g, name)
 
     def _lower_via(self, via: str) -> tuple:
-        """Lower a ``via`` expression into a step program.
+        """Lower a single-predicate ``via`` into a repeatable step program.
 
-        Grammar: segments separated by ``/``; each segment is a shortcut
-        name, a predicate URI, or free predicate text (``"^"`` inverts); a
-        ``*`` suffix repeats the segment 0..max_depth times. A lone bare
-        predicate is implicitly repeatable (``via="hasMember"`` walks up to
-        ``max_depth`` hasMember hops, default 3). A full http(s) URI (which
-        itself contains ``/``) is taken as one single-predicate segment.
-        Free text resolves through the server in one joint call.
-
-        Returns ``(program, default_hops)`` where program is
-        ``tuple[(alternatives, star), ...]`` with alternatives
-        ``tuple[tuple[(pred_uri, node_uri|None), ...], ...]``.
+        The predicate may be a URI or free text (server-resolved as kind
+        "predicate"); a ``"^"`` prefix inverts it. The step repeats up to
+        ``max_depth`` times (default 3), so ``via="hasMember"`` walks nested
+        membership. Returns ``(program, default_hops)``.
         """
-        bare = via[1:] if via.startswith("^") else via
-        if _is_uri(bare):
-            tokens = [via]
-        else:
-            tokens = [t.strip() for t in via.split("/") if t.strip()]
-        if not tokens:
-            raise ValueError("related: empty via expression")
-
-        raw_segments: List[tuple] = []  # (alternatives of Step chains, star, from_shortcut)
-        for tok in tokens:
-            star = tok.endswith("*")
-            name = tok[:-1].rstrip() if star else tok
-            sc = get_shortcut(name)
-            if sc is not None:
-                raw_segments.append((sc.alternatives, star, True))
-            else:
-                raw_segments.append((((Step(name),),), star, False))
-
-        # A lone bare predicate is implicitly repeatable: via="hasMember"
-        # walks 1..max_depth hasMember hops (default 3), matching intuition.
-        # Shortcuts and compositions keep explicit '*' (heterogeneous
-        # shortcuts aren't meaningfully repeatable).
-        if len(raw_segments) == 1 and not raw_segments[0][1] and not raw_segments[0][2]:
-            raw_segments[0] = (raw_segments[0][0], True, False)
-
-        record: Dict[str, Any] = {}
-        for si, (alts, _, _) in enumerate(raw_segments):
-            for ai, chain in enumerate(alts):
-                for hi, step in enumerate(chain):
-                    pred = str(step.predicate)
-                    core = pred[1:] if pred.startswith("^") else pred
-                    if not _is_uri(core):
-                        record[f"p_{si}_{ai}_{hi}"] = (core, "predicate")
-                    if step.node is not None and not _is_uri(str(step.node)):
-                        record[f"n_{si}_{ai}_{hi}"] = (str(step.node), "class")
-        resolved = self.client.resolve(record, min_score=0.4) if record else {}
-
-        program: List[tuple] = []
-        for si, (alts, star, from_shortcut) in enumerate(raw_segments):
-            new_alts = []
-            for ai, chain in enumerate(alts):
-                new_chain = []
-                for hi, step in enumerate(chain):
-                    pred = str(step.predicate)
-                    inverted = pred.startswith("^")
-                    core = pred[1:] if inverted else pred
-                    if _is_uri(core):
-                        pred_uri = core
-                    else:
-                        pred_uri = resolved.get(f"p_{si}_{ai}_{hi}")
-                        if pred_uri is None:
-                            hint = (f"in shortcut {tokens[si]!r}" if from_shortcut else
-                                    f"not a registered shortcut (known: {sorted(SHORTCUTS)}) and")
-                            raise ValueError(
-                                f"via segment {tokens[si]!r}: {core!r} {hint} could not be "
-                                f"resolved as a predicate")
-                    node_uri = None
-                    if step.node is not None:
-                        ns = str(step.node)
-                        node_uri = ns if _is_uri(ns) else resolved.get(f"n_{si}_{ai}_{hi}")
-                        if node_uri is None:
-                            raise ValueError(
-                                f"via segment {tokens[si]!r}: could not resolve {ns!r} as a class")
-                    new_chain.append((f"^{pred_uri}" if inverted else pred_uri, node_uri))
-                new_alts.append(tuple(new_chain))
-            program.append((tuple(new_alts), star))
-
-        n_fixed = sum(1 for _, star in program if not star)
-        default_hops = n_fixed + 3 if any(star for _, star in program) else max(n_fixed, 1)
-        return tuple(program), default_hops
+        pred = via.strip()
+        inverted = pred.startswith("^")
+        core = pred[1:] if inverted else pred
+        if not core:
+            raise ValueError("related: empty via predicate")
+        if not _is_uri(core):
+            resolved = self.client.resolve(core, "predicate", min_score=0.4)
+            if resolved is None:
+                raise ValueError(
+                    f"related: could not resolve via predicate {core!r} "
+                    f"(pass 'any', a predicate URI/text, or a list of predicates)"
+                )
+            core = resolved
+        pred_uri = f"^{core}" if inverted else core
+        program = ((((pred_uri, None),),), True),
+        return program, 3
 
     def _resolve_attr_values(self, attrs: Dict[str, Any]) -> Dict[str, Any]:
         """Validate attr names and resolve text values to URIs in one joint call.
@@ -306,22 +245,21 @@ class Q:
         """Add an entity related to an existing node and point at it.
 
         - ``frm``: alias of the source node (default: current pointer).
-        - ``via``: ``"any"`` (any predicates except hidden ones, see
-          ``shortcuts.hide``), a **via expression** (shortcut names /
-          predicate URIs / free predicate text, composed with ``/`` and
-          repeated with ``*``, e.g. ``"next_equipment*/downstream_property"``),
-          or a list of predicate URIs / free-text names (``"^..."`` inverts).
-        - ``direction``: ``"upstream"``/``"downstream"`` built-in s223
-          topology traversal (``via="any"`` only — shortcuts encode their own
-          direction, so pick the directional shortcut instead).
-        - ``max_depth``: bound on the **total** steps of the chain;
-          ``max_depth=0`` means unbounded (explicit opt-in). Defaults: 3 for
-          ``"any"``/directional, 1 per fixed segment +3 per ``*`` segment
-          for via expressions, 1 for predicate lists.
+        - ``via``: ``"any"``/``"all"`` (any predicate except hidden ones,
+          see ``hidden.hide``), a single predicate (URI or free text,
+          ``"^"`` inverts, repeatable up to ``max_depth``), or a list of
+          predicate URIs / free-text names (compiled as SPARQL chains).
+        - ``direction``: ``"upstream"``/``"downstream"`` s223 topology
+          traversal (``via="any"`` only); the exact step patterns each
+          direction infers are documented in ``explore.directions``.
+        - ``max_depth``: bound on total steps; ``max_depth=0`` means
+          unbounded (explicit opt-in). Defaults: 3 for ``"any"``/single
+          predicates/directional, 1 for predicate lists.
         - ``nearest``: keep only the closest match(es) per source instead of
           all reachable ones (equal-distance ties all survive). With
           ``via="any"`` distance means raw RDF hops over all non-hidden
-          predicates (graph-nearest); use a directional shortcut when you
+          predicates (graph-nearest); pass a direction's steps
+          (``via=UPSTREAM_EQUIPMENT``, see ``explore.directions``) when you
           mean nearest along the process flow.
 
         Via-expression and ``via="any"`` edges are resolved by client-side
@@ -340,14 +278,19 @@ class Q:
         preds: Optional[List[str]] = None
         patterns: Optional[tuple] = None
         default_hops = 3
-        if isinstance(via, (list, tuple)):
+        if isinstance(via, (list, tuple)) and via and all(
+                isinstance(c, tuple) for c in via):
+            # step alternatives in program-IR form, e.g. the exported
+            # direction constants: via=UPSTREAM_EQUIPMENT (repeatable)
+            patterns = ((tuple(via), True),)
+        elif isinstance(via, (list, tuple)):
             preds = [
                 f"^{self._as_uri(str(p)[1:], 'predicate')}" if str(p).startswith("^")
                 else self._as_uri(p, "predicate")
                 for p in via
             ]
             default_hops = 1
-        elif via == "any":
+        elif via in ("any", "all"):
             if direction is None:
                 # Wildcard traversal program: any predicate except the hidden
                 # set. Multi-hop any-predicate chains are join-explosive in
@@ -359,13 +302,13 @@ class Q:
             patterns, default_hops = self._lower_via(via)
         else:
             raise ValueError(
-                f"related: via must be 'any', a via expression, or a list of predicates, got {via!r}"
+                f"related: via must be 'any'/'all', a predicate, or a list of predicates, got {via!r}"
             )
 
         if direction is not None and (preds is not None or patterns is not None):
             raise ValueError(
-                "related: direction only combines with via='any'; shortcuts and "
-                "predicate lists encode their own direction"
+                "related: direction only combines with via='any'; explicit "
+                "predicates/steps encode their own direction"
             )
 
         if nearest is None:
@@ -380,24 +323,11 @@ class Q:
             if patterns is None:  # only reachable when direction is set
                 raise ValueError(
                     "related: nearest=True with direction is not supported; "
-                    "use a directional shortcut (e.g. via='downstream_equipment*')"
+                    "pass the direction steps instead, e.g. "
+                    "via=UPSTREAM_EQUIPMENT (see explore.directions)"
                 )
 
         hops = max_depth if max_depth is not None else default_hops
-        if patterns is not None:
-            n_fixed = sum(1 for _, star in patterns if not star)
-            has_star = any(star for _, star in patterns)
-            if max_depth is not None and not has_star and via != "any" and hops != n_fixed:
-                raise ValueError(
-                    f"related: via chain {via!r} has no repeatable segment, so its "
-                    f"length is exactly {n_fixed} step(s) and max_depth={max_depth} "
-                    f"has no effect — add '*' to the segment to repeat it "
-                    f"(e.g. 'hasMember*')"
-                )
-            if hops != 0 and hops < max(n_fixed, 1):
-                raise ValueError(
-                    f"related: via chain has {n_fixed} fixed step(s) but max_depth is {hops}"
-                )
 
         constraints: Dict[str, Any] = {}
         if cls is not None:
@@ -474,7 +404,8 @@ class Q:
                 raise ValueError(f"measurement: direction must be one of {_DIRECTIONS}, got {direction!r}")
             src_id = self._source_id(frm, verb="measurement")
             src_alias = self._src_alias(src_id)
-            program, _ = self._lower_via(f"{direction}_equipment*/{direction}_property")
+            program = ((EQUIPMENT_STEPS[direction], True),
+                       (PROPERTY_STEPS[direction], False))
             data_id = self._next_id()
             g = g.with_node(QueryNode(id=data_id, alias=alias or f"{src_alias}_{direction}_data",
                                       constraints={"is_data_node": True}))

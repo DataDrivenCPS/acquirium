@@ -111,7 +111,7 @@ class TestMaterialize:
 class TestResolveNearest:
     def build_query(self, client):
         return (Q(client=client).entity(CLS_A, alias="ro")
-                .related(TANK, alias="tank", via="next_equipment*",
+                .related(TANK, alias="tank", via=CONNECTED_TO,
                          nearest=True, max_depth=4))
 
     def make_client(self, responses):
@@ -171,7 +171,7 @@ class TestNearestValidation:
         assert edge.nearest and edge.hops == 3  # bounded default; 0 = unbounded
 
     def test_related_nearest_any_with_direction_errors(self):
-        with pytest.raises(ValueError, match="directional shortcut"):
+        with pytest.raises(ValueError, match="direction steps"):
             Q(client=None).entity(CLS_A).related(TANK, nearest=True, direction="upstream")
 
     def test_related_nearest_with_predicate_list(self):
@@ -215,7 +215,7 @@ class TestWildcardSegment:
         assert "NOT IN" in sparql and "FILTER(isIRI(?t))" in sparql
 
     def test_wildcard_cache_keyed_by_hidden_set(self):
-        from acquirium.Client.explore.shortcuts import hide, unhide
+        from acquirium.Client.explore.hidden import hide, unhide
         client = MagicMock()
         client.base_url = "http://test:8000"
         client.sparql_query.return_value = {"columns": ["s", "t"], "rows": []}
@@ -241,7 +241,7 @@ class TestConeResolution:
         client.sparql_query.side_effect = responses
         return client
 
-    def test_shortcut_cone_collects_all_matches(self):
+    def test_predicate_cone_collects_all_matches(self):
         client = self.make_client([
             {"columns": ["v0"], "rows": [["urn:p#ro1"]]},                    # sources
             {"columns": ["v1"], "rows": [["urn:p#tankA"], ["urn:p#tankB"]]},  # accept
@@ -252,7 +252,7 @@ class TestConeResolution:
             {"columns": ["v0", "v1"], "rows": []},                            # final
         ])
         b = (Q(client=client).entity(CLS_A, alias="ro")
-             .related(TANK, alias="tank", via="next_equipment*", max_depth=4))
+             .related(TANK, alias="tank", via=CONNECTED_TO, max_depth=4))
         b.execute()
         final_sparql = client.sparql_query.call_args.args[0]
         # nearest would keep only tankA; cone keeps both

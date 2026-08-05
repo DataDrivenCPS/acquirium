@@ -28,7 +28,7 @@ MEDIUM = "http://data.ashrae.org/standard223#ofMedium"
 @pytest.fixture(autouse=True)
 def no_hidden_defaults():
     """Parity vs the legacy compiler needs the hidden-predicate filters off."""
-    from acquirium.Client.explore.shortcuts import hidden_predicates, unhide
+    from acquirium.Client.explore.hidden import hidden_predicates, unhide
     unhide(*hidden_predicates())
     yield
     unhide()
