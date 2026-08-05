@@ -377,7 +377,7 @@ class TestDrop:
             b.to_sparql()
 
     def test_unknown_alias(self):
-        with pytest.raises(ValueError, match="unknown alias"):
+        with pytest.raises(ValueError, match="unknown column"):
             q().entity(CLS_A, alias="a").drop("nope")
 
     def test_empty_query_errors(self):

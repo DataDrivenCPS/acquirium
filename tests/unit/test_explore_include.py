@@ -42,7 +42,7 @@ class TestSelectStorage:
     def test_errors(self):
         with pytest.raises(ValueError, match="at least one"):
             base().include()
-        with pytest.raises(ValueError, match="unknown attribute"):
+        with pytest.raises(ValueError, match="unknown column"):
             base().include("flavour")
         with pytest.raises(ValueError, match="unknown alias"):
             base().include("medium", of="nope")
@@ -107,3 +107,50 @@ class TestQueryGraphSelects:
 
     def test_default_empty(self):
         assert QueryGraph().selects == ()
+
+
+class TestColumnControl:
+    """include/drop as inverses + the unified with_columns()."""
+
+    def test_include_undrops_a_node(self):
+        b = base().drop("ro").include("ro")
+        assert "dropped" not in b.query_graph.nodes[0].constraints
+        assert "?v0" in b.to_sparql().splitlines()[0]
+
+    def test_drop_unincludes_an_attr(self):
+        b = base().include("unit").drop("unit")
+        assert b.query_graph.selects == ()
+
+    def test_drop_dotted_targets_other_node(self):
+        b = base().include("process", of="ro").drop("ro.process")
+        assert b.query_graph.selects == ()
+
+    def test_include_dotted_targets_other_node(self):
+        b = base().include("ro.process")
+        assert b.query_graph.selects == ((0, "process", False),)
+
+    def test_with_columns_mixed(self):
+        b = base().with_columns("unit", "-ro")
+        g = b.query_graph
+        assert g.selects == ((1, "unit", False),)
+        assert g.nodes[0].constraints.get("dropped") is True
+
+    def test_with_columns_undrop_and_uninclude(self):
+        b = (base().drop("ro").include("unit")
+             .with_columns("ro", "-unit"))
+        g = b.query_graph
+        assert "dropped" not in g.nodes[0].constraints
+        assert g.selects == ()
+
+    def test_with_columns_required_passthrough(self):
+        b = base().with_columns("unit", required=True)
+        assert b.query_graph.selects == ((1, "unit", True),)
+
+    def test_with_columns_empty_errors(self):
+        with pytest.raises(ValueError, match="at least one"):
+            base().with_columns()
+
+    def test_attr_name_wins_over_alias(self):
+        ## a node aliased like a registry attr is shadowed by the attribute
+        b = q().entity(CLS_A, alias="unit").measurement(alias="m").include("unit")
+        assert b.query_graph.selects == ((1, "unit", False),)

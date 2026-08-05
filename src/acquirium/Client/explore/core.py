@@ -533,68 +533,127 @@ class Q:
             ids = [nid]
         return self._with_graph(self._apply_attrs(g, ids, resolved))
 
-    def include(self, *attr_names: str, of: Optional[str] = None,
-                required: bool = False) -> "Q":
-        """Include attribute values as extra metadata columns named ``alias.attr``.
+    def _column_target(self, g: QueryGraph, name: str, of: Optional[str]) -> tuple:
+        """Resolve a column spec to ("attr", nid, attr_name) or ("node", nid).
 
-        Additive: the regular node columns stay; each named attribute adds a
-        column. ``of`` targets a node by alias (default: current pointer).
-        By default values bind OPTIONALly (rows without the attribute keep a
-        ``None``); ``required=True`` drops rows lacking the attribute::
-
-            q.include("medium", "unit")             # None where absent
-            q.include("unit", required=True)        # only rows with a unit
-            q.include("process", of="ro")           # of another node
+        Bare registry attribute names win over aliases; ``"alias.attr"``
+        targets an attribute of a specific node.
         """
-        if not attr_names:
-            raise ValueError('include: provide at least one attribute name, e.g. include("medium")')
+        if "." in name:
+            alias, _, attr_name = name.rpartition(".")
+            if attr_name in REGISTRY and alias in g.aliases:
+                return ("attr", g.aliases[alias], attr_name)
+        if name in REGISTRY:
+            nid = g.resolve_alias(of)
+            if nid is None:
+                raise ValueError(
+                    f"unknown alias {of!r}" if of is not None
+                    else "no current node (start with entity())"
+                )
+            return ("attr", nid, name)
+        if name in g.aliases:
+            return ("node", g.aliases[name])
+        raise ValueError(
+            f"unknown column {name!r}: not an attribute ({sorted(REGISTRY)}) "
+            f"or a node alias ({sorted(g.aliases)})"
+        )
+
+    def _set_dropped(self, g: QueryGraph, nid: int, dropped: bool) -> QueryGraph:
+        node = g.nodes[nid]
+        constraints = dict(node.constraints)
+        if dropped:
+            constraints["dropped"] = True
+        else:
+            constraints.pop("dropped", None)
+        ptr = g.current_pointer
+        return replace(g.with_node(replace(node, constraints=constraints)),
+                       current_pointer=ptr)
+
+    def include(self, *names: str, of: Optional[str] = None,
+                required: bool = False) -> "Q":
+        """Include columns: attribute values (``alias.attr`` columns) or a
+        previously ``drop()``ed node's column (un-drop).
+
+        ``of`` targets a node by alias (default: current pointer); dotted
+        ``"alias.attr"`` targets explicitly. Attribute values bind OPTIONALly
+        (``None`` where absent) unless ``required=True``::
+
+            q.include("medium", "unit")             # attrs of the current node
+            q.include("unit", required=True)        # only rows with a unit
+            q.include("ro.process")                 # attr of another node
+            q.include("Backwash")                   # un-drop a hidden node
+        """
+        if not names:
+            raise ValueError('include: provide at least one column name, e.g. include("medium")')
         g = self.query_graph
-        nid = g.resolve_alias(of)
-        if nid is None:
-            raise ValueError(
-                f"include: unknown alias {of!r}" if of is not None
-                else "include: no current node (start with entity())"
-            )
-        role = "data" if nid in g.data_nodes else "entity"
-        for name in attr_names:
-            if name not in REGISTRY:
-                raise ValueError(f"unknown attribute {name!r}; known: {sorted(REGISTRY)}")
-            if role not in REGISTRY[name].roles:
+        for name in names:
+            try:
+                target = self._column_target(g, name, of)
+            except ValueError as e:
+                raise ValueError(f"include: {e}") from None
+            if target[0] == "node":
+                g = self._set_dropped(g, target[1], False)
+                continue
+            _, nid, attr_name = target
+            role = "data" if nid in g.data_nodes else "entity"
+            if role not in REGISTRY[attr_name].roles:
                 alias = g.aliases_reverse.get(nid, str(nid))
-                raise ValueError(f"include: attribute {name!r} does not apply to {role} node {alias!r}")
-        for name in attr_names:
-            g = g.with_select(nid, name, required)
+                raise ValueError(
+                    f"include: attribute {attr_name!r} does not apply to {role} node {alias!r}")
+            g = g.with_select(nid, attr_name, required)
         return self._with_graph(g)
 
-    def drop(self, *aliases: str) -> "Q":
-        """Keep node(s) in the pattern but drop them from the output.
+    def drop(self, *names: str) -> "Q":
+        """Drop columns: a node (kept in the pattern, hidden from the
+        output) or a previously ``include()``d attribute (un-include).
 
-        No arguments drops the current node; aliases drop those nodes. The
-        column disappears from ``metadata()`` and, since the variable leaves
-        the SELECT, rows that differed only in the dropped node collapse::
+        No arguments drops the current node. Since a dropped node's variable
+        leaves the SELECT, rows that differed only in it collapse::
 
-            (aq.explore().entity(uri="dpr:backwash_subsystem").drop()
-               .related("equipment").measurement().include("unit"))
+            q.drop()                 # current node
+            q.drop("Backwash")       # node by alias
+            q.drop("unit")           # un-include an attr of the current node
+            q.drop("ro.process")     # un-include an attr of another node
         """
         g = self.query_graph
-        if aliases:
-            ids = []
-            for a in aliases:
-                nid = g.aliases.get(a)
-                if nid is None:
-                    raise ValueError(f"drop: unknown alias {a!r}")
-                ids.append(nid)
-        else:
+        if not names:
             if g.current_pointer is None:
                 raise ValueError("drop: no current node (start with entity())")
-            ids = [g.current_pointer]
-        ptr = g.current_pointer
-        for nid in ids:
-            node = g.nodes[nid]
-            constraints = dict(node.constraints)
-            constraints["dropped"] = True
-            g = g.with_node(replace(node, constraints=constraints))
-        return self._with_graph(replace(g, current_pointer=ptr))
+            return self._with_graph(self._set_dropped(g, g.current_pointer, True))
+        for name in names:
+            try:
+                target = self._column_target(g, name, None)
+            except ValueError as e:
+                raise ValueError(f"drop: {e}") from None
+            if target[0] == "node":
+                g = self._set_dropped(g, target[1], True)
+            else:
+                _, nid, attr_name = target
+                g = replace(g, selects=tuple(
+                    entry for entry in g.selects
+                    if not (entry[0] == nid and entry[1] == attr_name)))
+        return self._with_graph(g)
+
+    def with_columns(self, *specs: str, of: Optional[str] = None,
+                     required: bool = False) -> "Q":
+        """Unified column control: plain names include, ``"-"``-prefixed drop.
+
+        Each spec is an attribute name, a node alias, or ``"alias.attr"`` —
+        exactly what ``include()``/``drop()`` accept::
+
+            q.with_columns("unit", "-Backwash")       # add unit, hide node
+            q.with_columns("ro.process", "-m.unit")   # targeted add/remove
+            q.with_columns("Backwash")                # un-drop
+        """
+        if not specs:
+            raise ValueError("with_columns: provide at least one column spec")
+        q = self
+        for spec in specs:
+            if spec.startswith("-"):
+                q = q.drop(spec[1:])
+            else:
+                q = q.include(spec, of=of, required=required)
+        return q
 
     def refocus(self, alias: str) -> "Q":
         """Repoint the query at an existing node by alias."""
@@ -865,6 +924,7 @@ class Q:
 
 # Append the attribute registry (single source of truth) to every method
 # that accepts attributes, so help(Q.where) etc. always list the current set.
-for _fn in (Q.entity, Q.related, Q.measurement, Q.where, Q.include, Q.options, Q.facets):
+for _fn in (Q.entity, Q.related, Q.measurement, Q.where, Q.include, Q.drop,
+            Q.with_columns, Q.options, Q.facets):
     _fn.__doc__ = (_fn.__doc__ or "") + "\n" + attributes_doc(indent=8) + "\n"
 del _fn
