@@ -265,32 +265,30 @@ class OxigraphGraphStore:
         """Return True when the attached Oxigraph store already contains graphs."""
         return any(True for _ in self.source_dataset.graphs())
 
-    def _new_ontoenv(self, *, adopt_store: bool) -> OntoEnv:
+    def _new_ontoenv(self) -> OntoEnv:
         """Open the environment at ``env_root`` over the shared graph store.
 
-        ``adopt_store`` marks the case where the Oxigraph store already
-        holds ontology graphs from a previous run. If the catalog under
-        ``.ontoenv/`` is gone, ontoenv has to index what the store holds
-        rather than start empty — that is what ``adopt`` is for. When the
-        catalog did survive, ``adopt`` refuses (the catalog is already
-        authoritative) and reopening with ``connect`` is what we want.
+        ``connect`` covers both starts: it creates the catalog under
+        ``.ontoenv/`` when there isn't one yet and reopens it when there
+        is, reconciling either way against what the graph store currently
+        holds. The narrower entry points (``create``, ``open``, ``adopt``)
+        each rule out one of those cases, so none of them fit here.
         """
-        path = str(self.env_root)
-        if adopt_store:
-            try:
-                return OntoEnv.adopt(path, self._ontoenv_store)
-            except FileExistsError:
-                _logger.debug("ontoenv: catalog present, reopening instead of adopting")
-        return OntoEnv.connect(path, graph_store=self._ontoenv_store)
+        return OntoEnv.connect(
+            str(self.env_root),
+            graph_store=self._ontoenv_store,
+        )
 
     def _build_ontoenv(self) -> tuple[OntoEnv, bool]:
         """Build (or restore) the ontoenv environment.
 
-        Returns ``(env, is_warm_start)``. A warm start means the persisted
-        Oxigraph store already contains bundled ontology graphs from a
-        previous run, so the caller can skip re-adding them. On cold start
-        (or if the warm-start open fails) we build an empty environment and
-        the caller is responsible for populating it.
+        Returns ``(env, is_warm_start)``. Opening the environment is the
+        same call either way, so what this really decides is the flag: a
+        warm start means the persisted Oxigraph store already contains
+        bundled ontology graphs from a previous run and the caller can skip
+        re-adding them. On a cold start — or if the warm-start open raises,
+        in which case we retry and treat the result as empty — populating
+        the environment is the caller's job.
         """
         can_warm_start = (
             self._source_state_path().exists() and self._has_persisted_source_graphs()
@@ -298,13 +296,13 @@ class OxigraphGraphStore:
         if can_warm_start:
             try:
                 _logger.debug("ontoenv: reopening over the populated store")
-                return self._new_ontoenv(adopt_store=True), True
+                return self._new_ontoenv(), True
             except Exception as exc:
                 _logger.warning(
                     "ontoenv: warm start failed; building empty env: %s", exc
                 )
         _logger.debug("ontoenv: cold start, building empty env")
-        return self._new_ontoenv(adopt_store=False), False
+        return self._new_ontoenv(), False
 
     def _add_user_source(self, src: OntologySource) -> None:
         """Register one ``[ontologies] sources`` entry with ontoenv.
