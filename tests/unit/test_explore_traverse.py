@@ -316,3 +316,25 @@ class TestDropWithTraversal:
         final_sparql = client.sparql_query.call_args.args[0]
         assert "?v0" not in final_sparql.splitlines()[0]  # output stays dropped
         assert "VALUES (?v0 ?v1)" in final_sparql  # pairing still uses the var
+
+
+class TestIncludeWithTraversal:
+    def test_include_survives_pruning_on_program_edges(self):
+        """Regression: selects triples broke _prune's 2-tuple unpack."""
+        client = MagicMock()
+        client.base_url = "http://test:8000"
+        client.graph_version.return_value = 1
+        client.expand_uri.side_effect = lambda s: "urn:wbs#sys"
+        client.resolve.side_effect = lambda t, k=None, **kw: TANK
+        client.sparql_query.side_effect = [
+            {"columns": ["v0"], "rows": [["urn:wbs#sys"]]},          # sources
+            {"columns": ["v1"], "rows": [["urn:e#1"]]},              # accept
+            {"columns": ["s", "t"], "rows": [["urn:wbs#sys", "urn:e#1"]]},
+            {"columns": ["v1", "v2", "ext2", "unit2", "extunit2",
+                         "attr2_unit"], "rows": []},                 # final
+        ]
+        q = (Q(client=client).entity(uri="wbs:sys").drop()
+             .related("equipment").measurement(alias="sensor").include("unit"))
+        q.execute()
+        final_sparql = client.sparql_query.call_args.args[0]
+        assert "?attr2_unit" in final_sparql

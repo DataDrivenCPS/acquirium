@@ -167,7 +167,7 @@ def _prune_target_subtree(graph: QueryGraph, edge) -> QueryGraph:
         aliases_reverse={i: a for i, a in graph.aliases_reverse.items() if i not in removed},
         current_pointer=edge.source_id,
         data_nodes={k: v for k, v in graph.data_nodes.items() if k not in removed},
-        selects=tuple((nid, name) for nid, name in graph.selects if nid not in removed),
+        selects=tuple(entry for entry in graph.selects if entry[0] not in removed),
     )
 
 
