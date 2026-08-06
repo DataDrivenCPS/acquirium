@@ -205,8 +205,12 @@ class Manager:
         _emb_model = os.getenv("ACQUIRIUM_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 
         # Persist the downloaded embedding model under the data dir so it
-        # survives OS temp-dir purges (fastembed defaults to $TMPDIR).
-        _model_cache = base / "embedding_cache" / "models"
+        # survives OS temp-dir purges (fastembed defaults to $TMPDIR). A
+        # pre-warmed cache (e.g. baked into the Docker image) can be pointed
+        # at with FASTEMBED_CACHE_PATH.
+        _model_cache = Path(
+            os.getenv("FASTEMBED_CACHE_PATH") or base / "embedding_cache" / "models"
+        )
 
         # Dual matchers: graph (class/predicate) and QUDT (unit/quantity_kind)
         self._graph_matcher = EmbeddingMatcher(
