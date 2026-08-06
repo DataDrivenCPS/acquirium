@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 from rdflib.plugins.sparql import prepareQuery
 
-from acquirium.Client.explore.core import Q
+from acquirium.Client.explore.core import Query
 from acquirium.Client.explore.directions import (
     DOWNSTREAM_EQUIPMENT,
     DOWNSTREAM_PROPERTY,
@@ -22,8 +22,8 @@ CNX = "http://data.ashrae.org/standard223#cnx"
 CONNECTED_TO = "http://data.ashrae.org/standard223#connectedTo"
 
 
-def q() -> Q:
-    return Q(client=None)
+def q() -> Query:
+    return Query(client=None)
 
 
 @pytest.fixture(autouse=True)
@@ -57,7 +57,7 @@ class TestVia:
         client = MagicMock()
         client.resolve.side_effect = lambda t, k=None, **kw: (
             CLS_A if k == "class" else "urn:test#feedsChemicalTo")
-        b = (Q(client=client).entity(CLS_A, alias="a")
+        b = (Query(client=client).entity(CLS_A, alias="a")
              .related(CLS_B, alias="b", via="feeds chemical to"))
         assert b.query_graph.edges[0].patterns == \
             ((((("urn:test#feedsChemicalTo", None),),), True),)
@@ -67,7 +67,7 @@ class TestVia:
         client.resolve.side_effect = lambda t, k=None, **kw: (
             CLS_A if k == "class" else None)
         with pytest.raises(ValueError, match="could not resolve via predicate"):
-            Q(client=client).entity(CLS_A).related(CLS_B, via="teleport beam")
+            Query(client=client).entity(CLS_A).related(CLS_B, via="teleport beam")
 
     def test_bad_via_type(self):
         with pytest.raises(ValueError, match="via must be"):

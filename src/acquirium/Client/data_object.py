@@ -7,7 +7,7 @@ import polars as pl
 import logging
 
 if TYPE_CHECKING:
-    from acquirium.Client.query import Query
+    from acquirium.Client.explore.core import Query
     from acquirium.Client.query_graph import QueryGraph
     from acquirium.Client.client import AcquiriumClient
 

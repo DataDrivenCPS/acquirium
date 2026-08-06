@@ -1,6 +1,6 @@
-"""Tests for acquirium.Client.explore.core — the Q builder.
+"""Tests for acquirium.Client.explore.core — the Query builder.
 
-Graph-shape assertions plus SPARQL parity against equivalent legacy Query
+Graph-shape assertions plus SPARQL parity against equivalent legacy Q
 chains. All inputs are URIs, which bypass text resolution in both builders,
 so no server/client is needed.
 """
@@ -9,8 +9,8 @@ import re
 
 import pytest
 
-from acquirium.Client.explore.core import Q
-from acquirium.Client.query import Query
+from acquirium.Client.explore.core import Query
+from acquirium.Client.query import Q
 
 CLS_A = "urn:test#TypeA"
 CLS_B = "urn:test#TypeB"
@@ -18,8 +18,8 @@ INST = "urn:test:instance#x1"
 PRED_P = "urn:test#p"
 
 
-def q() -> Q:
-    return Q(client=None)
+def q() -> Query:
+    return Query(client=None)
 
 
 @pytest.fixture(autouse=True)
@@ -162,7 +162,7 @@ class TestMeasurement:
 
     def test_root_form_parity_with_find_all_data(self):
         new = q().measurement().to_sparql()
-        old = Query(client=None).find_all_data().to_sparql()
+        old = Q(client=None).find_all_data().to_sparql()
         assert canon(new) == canon(old)
 
     def test_unknown_frm_still_errors(self):
@@ -208,27 +208,27 @@ class TestSparqlParityWithLegacy:
     def test_entity_related_chain(self):
         new = (q().entity(CLS_A, alias="a")
                .related(CLS_B, alias="b", via=[PRED_P]).to_sparql())
-        old = (Query(client=None).find_entity(_class=CLS_A, alias="a")
+        old = (Q(client=None).find_entity(_class=CLS_A, alias="a")
                .find_related(_class=CLS_B, alias="b", predicates=[PRED_P]).to_sparql())
         assert canon(new) == canon(old)
 
     def test_direction_chain(self):
         new = (q().entity(CLS_A, alias="a")
                .related(CLS_B, alias="b", direction="downstream", max_depth=2).to_sparql())
-        old = (Query(client=None).find_entity(_class=CLS_A, alias="a")
+        old = (Q(client=None).find_entity(_class=CLS_A, alias="a")
                .find_related(_class=CLS_B, alias="b", direction="downstream", hops=2).to_sparql())
         assert canon(new) == canon(old)
 
     def test_measurement_chain(self):
         new = (q().entity(CLS_A, alias="ro").measurement().to_sparql())
-        old = (Query(client=None).find_entity(_class=CLS_A, alias="ro")
+        old = (Q(client=None).find_entity(_class=CLS_A, alias="ro")
                .find_data().to_sparql())
         assert canon(new) == canon(old)
 
     def test_directional_measurement_chain(self):
         new = (q().entity(CLS_A, alias="ro")
                .measurement(direction="upstream", max_depth=3).to_sparql())
-        old = (Query(client=None).find_entity(_class=CLS_A, alias="ro")
+        old = (Q(client=None).find_entity(_class=CLS_A, alias="ro")
                .find_related_data(direction="upstream", hops=3).to_sparql())
         assert canon(new) == canon(old)
 
@@ -244,7 +244,7 @@ class TestSparqlParityWithLegacy:
         new = (q().entity(ro, alias="ro")
                .related(cp_cls, alias="out", via=[cp_pred])
                .measurement(alias="permeate").to_sparql())
-        old = (Query(client=None).find_entity(_class=ro, alias="ro")
+        old = (Q(client=None).find_entity(_class=ro, alias="ro")
                .find_related(_class=cp_cls, alias="out", predicates=[cp_pred])
                .find_data(alias="permeate").to_sparql())
         assert canon(new) == canon(old)
@@ -301,9 +301,9 @@ class TestAliasing:
         client = MagicMock()
         client.resolve.return_value = CLS_A
         client.compact_uri.side_effect = lambda u: "test:" + u.rsplit("#", 1)[-1]
-        b = Q(client=client).entity("tank")
+        b = Query(client=client).entity("tank")
         assert b.query_graph.aliases_reverse[0] == "tank"      # the text as given
-        b2 = Q(client=client).entity(CLS_A)
+        b2 = Query(client=client).entity(CLS_A)
         assert b2.query_graph.aliases_reverse[0] == "test:TypeA"  # CURIE
 
     def test_default_alias_uniquified(self):

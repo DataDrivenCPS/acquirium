@@ -1,6 +1,6 @@
-"""Parity tests: explore.compile.compile_sparql vs the legacy Query.to_sparql.
+"""Parity tests: explore.compile.compile_sparql vs the legacy Q.to_sparql.
 
-The legacy compiler never touches ``self.client``, so ``Query(client=None,
+The legacy compiler never touches ``self.client``, so ``Q(client=None,
 query_graph=g).to_sparql()`` runs without a server. Negation differs only in
 the marker class (legacy private ``_Exclude`` vs explore ``Not``), so those
 cases build two structurally identical graphs, one per marker.
@@ -12,7 +12,7 @@ import pytest
 
 from acquirium.Client.explore.attributes import Not
 from acquirium.Client.explore.compile import compile_sparql
-from acquirium.Client.query import Query, _Exclude
+from acquirium.Client.query import Q, _Exclude
 from acquirium.Client.query_graph import DataNodeInfo, QueryEdge, QueryGraph, QueryNode
 
 CLS_A = "urn:test#TypeA"
@@ -39,7 +39,7 @@ def norm(s: str) -> str:
 
 
 def legacy_sparql(g: QueryGraph) -> str:
-    return Query(client=None, query_graph=g).to_sparql()
+    return Q(client=None, query_graph=g).to_sparql()
 
 
 def entity(g: QueryGraph, nid: int, *, cls: str | None = None, uri: str | None = None,
@@ -196,8 +196,8 @@ class TestMultiMeasurementUnion:
     """2+ measurement nodes compile as UNION branches, not a cross-product join."""
 
     def _graph(self):
-        from acquirium.Client.explore.core import Q
-        return (Q(client=None).entity(CLS_A, alias="pump")
+        from acquirium.Client.explore.core import Query
+        return (Query(client=None).entity(CLS_A, alias="pump")
                 .related(CLS_B, alias="tank", via=[PRED_P])
                 .measurement(frm=["pump", "tank"]))
 
@@ -224,8 +224,8 @@ class TestMultiMeasurementUnion:
             assert var in first
 
     def test_data_node_include_stays_inside_branch(self):
-        from acquirium.Client.explore.core import Q
-        b = (Q(client=None).entity(CLS_A, alias="pump")
+        from acquirium.Client.explore.core import Query
+        b = (Query(client=None).entity(CLS_A, alias="pump")
              .related(CLS_B, alias="tank", via=[PRED_P])
              .measurement(frm=["pump", "tank"])
              .include("unit", of="pump_data"))
@@ -235,8 +235,8 @@ class TestMultiMeasurementUnion:
         assert body.index("?ext2") < bind < body.index("?ext3")  # inside pump_data's branch
 
     def test_single_measurement_unchanged(self):
-        from acquirium.Client.explore.core import Q
-        s = (Q(client=None).entity(CLS_A, alias="pump").measurement(alias="m")
+        from acquirium.Client.explore.core import Query
+        s = (Query(client=None).entity(CLS_A, alias="pump").measurement(alias="m")
              .to_sparql())
         body = s[s.index("WHERE"):]
         assert body.count("hasExternalReference") == 1  # plain join, single path

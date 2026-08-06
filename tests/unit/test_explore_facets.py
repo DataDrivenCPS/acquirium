@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from acquirium.Client.explore.core import Q
+from acquirium.Client.explore.core import Query
 from acquirium.Client.explore.facets import (
     VOCAB_FRAGMENTS,
     FacetSummary,
@@ -46,14 +46,14 @@ def empty_res(sparql, use_union=True):
 class TestFacetsSelection:
     def test_data_node_attrs(self):
         client = make_client(empty_res)
-        f = (Q(client=client).entity(CLS_A, alias="ro")
+        f = (Query(client=client).entity(CLS_A, alias="ro")
              .measurement(alias="m").facets())
         assert f.attrs() == DATA_ATTRS
         assert f.node_alias == "m"
 
     def test_entity_node_attrs(self):
         client = make_client(empty_res)
-        f = Q(client=client).entity(CLS_A, alias="ro").facets()
+        f = Query(client=client).entity(CLS_A, alias="ro").facets()
         assert f.attrs() == ENTITY_ATTRS
 
 
@@ -72,7 +72,7 @@ class TestFallbackChain:
                         "rows": [["urn:p#ro", n] for n in nodes]}
             return empty_res(sparql)
         client = make_client(responder)
-        f = Q(client=client).entity(CLS_A, alias="ro").measurement(alias="m").facets()
+        f = Query(client=client).entity(CLS_A, alias="ro").measurement(alias="m").facets()
         assert f.scopes["medium"] == "matched"
         assert f["medium"]["medium"].to_list() == ["Water"]
         assert f["medium"]["count"].to_list() == [4]
@@ -85,7 +85,7 @@ class TestFallbackChain:
                 return {"columns": ["opt", "count"], "rows": [["urn:m#Brine", 2]]}
             return empty_res(sparql)
         client = make_client(responder)
-        f = Q(client=client).entity(CLS_A, alias="ro").measurement(alias="m").facets()
+        f = Query(client=client).entity(CLS_A, alias="ro").measurement(alias="m").facets()
         assert f.scopes["medium"] == "model"
         assert f["medium"]["medium"].to_list() == ["Brine"]
 
@@ -95,7 +95,7 @@ class TestFallbackChain:
                 return {"columns": ["uri"], "rows": [["urn:m#Seawater"]]}
             return {"columns": ["opt", "count"], "rows": []}
         client = make_client(responder)
-        f = Q(client=client).entity(CLS_A, alias="ro").measurement(alias="m").facets()
+        f = Query(client=client).entity(CLS_A, alias="ro").measurement(alias="m").facets()
         assert f.scopes["medium"] == "vocabulary"
         assert f["medium"]["medium"].to_list() == ["Seawater"]
         assert f["medium"]["count"].to_list() == [0]
@@ -138,7 +138,7 @@ class TestSummaryObject:
                         "rows": [["urn:p#ro", n] for n in nodes]}
             return empty_res(sparql)
         client = make_client(responder)
-        f = Q(client=client).entity(CLS_A, alias="ro").measurement(alias="m").facets()
+        f = Query(client=client).entity(CLS_A, alias="ro").measurement(alias="m").facets()
         assert isinstance(f, FacetSummary)
         text = repr(f)
         assert "quantity_kind [matched]: PH (3)" in text
@@ -148,4 +148,4 @@ class TestSummaryObject:
     def test_errors(self):
         client = make_client(empty_res)
         with pytest.raises(ValueError, match="unknown alias"):
-            Q(client=client).entity(CLS_A, alias="ro").facets(of="nope")
+            Query(client=client).entity(CLS_A, alias="ro").facets(of="nope")

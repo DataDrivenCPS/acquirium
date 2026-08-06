@@ -1,16 +1,16 @@
 """Core immutable query builder for the explore layer.
 
-``Q`` is the clean replacement for the legacy ``Query`` builder: short verbs
+``Query`` is the clean replacement for the legacy builder (now ``Q``): short verbs
 (``entity`` / ``related`` / ``measurement`` / ``where`` / ``include`` /
 ``alias`` / ``drop`` / ``refocus``) build an immutable :class:`QueryGraph`, and terminals
 (``metadata`` / ``data`` / ``dataframe`` / ``execute`` / ``to_sparql``) run
 it. Compilation is delegated to the pure
 :func:`~acquirium.Client.explore.compile.compile_sparql`.
 
-Every verb returns a **new** ``Q`` with a fresh result cache, so variants can
+Every verb returns a **new** ``Query`` with a fresh result cache, so variants can
 be kept side by side::
 
-    ro = aq.explore().entity("reverse osmosis membrane").alias("ro")
+    ro = aq.query().entity("reverse osmosis membrane").alias("ro")
     out = ro.related("outlet connection point", alias="out")
     permeate = out.measurement(alias="permeate")
     permeate.metadata()
@@ -46,7 +46,7 @@ def _is_uri(text: Any) -> bool:
 
 
 @dataclass(frozen=True)
-class Q:
+class Query:
     """Immutable explore query bound to an Acquirium client."""
 
     client: "AcquiriumClient | None"
@@ -58,8 +58,8 @@ class Q:
     def _next_id(self) -> int:
         return max(self.query_graph.nodes, default=-1) + 1
 
-    def _with_graph(self, g: QueryGraph) -> "Q":
-        return Q(client=self.client, query_graph=g)
+    def _with_graph(self, g: QueryGraph) -> "Query":
+        return Query(client=self.client, query_graph=g)
 
     def _as_uri(self, value: str | URIRef, kind: str) -> str:
         """Coerce a class/predicate input to a URI: passthrough or text-resolve."""
@@ -212,14 +212,14 @@ class Q:
     # ---------- verbs ----------
 
     def entity(self, cls: str | URIRef | None = None, *, uri: str | URIRef | None = None,
-               alias: Optional[str] = None, **attrs: Any) -> "Q":
+               alias: Optional[str] = None, **attrs: Any) -> "Query":
         """Add a new entity node to the pattern and point at it.
 
         ``cls`` is a class URI or free text (resolved via the server);
         ``uri`` pins a specific instance. Extra keyword arguments are
         attribute filters applied to the new node (same as ``where()``)::
 
-            aq.explore().entity("Equipment", process="ozonation")
+            aq.query().entity("Equipment", process="ozonation")
         """
         instance_uri = self._normalize_instance_uri(uri)
         if cls is None and instance_uri is None and not attrs:
@@ -241,7 +241,7 @@ class Q:
                 alias: Optional[str] = None, frm: Optional[str] = None,
                 via: Any = "any", direction: Optional[str] = None,
                 max_depth: Optional[int] = None, nearest: Optional[bool] = None,
-                **attrs: Any) -> "Q":
+                **attrs: Any) -> "Query":
         """Add an entity related to an existing node and point at it.
 
         - ``frm``: alias of the source node (default: current pointer).
@@ -349,7 +349,7 @@ class Q:
     def measurement(self, *, frm: "str | list | tuple | None" = None, alias: Optional[str] = None,
                     direction: Optional[str] = None, max_depth: int = 3,
                     nearest: bool = False, include_connection_points: bool = True,
-                    **attrs: Any) -> "Q":
+                    **attrs: Any) -> "Query":
         """Attach a measurement point (data node) to the pattern and point at it.
 
         Matches nodes carrying an external reference one hop from the source.
@@ -363,8 +363,8 @@ class Q:
         form — every measurement point in the plant, no entity anchor
         (default alias ``"data"``)::
 
-            aq.explore().measurement()                    # all registered streams
-            aq.explore().measurement(quantity_kind="ph")  # filtered
+            aq.query().measurement()                    # all registered streams
+            aq.query().measurement(quantity_kind="ph")  # filtered
 
         With ``direction`` set, first traverses up to ``max_depth`` topology
         hops upstream/downstream through an intermediate entity, then looks
@@ -491,13 +491,13 @@ class Q:
             g = self._apply_attrs(g, created, self._resolve_attr_values(attrs))
         return self._with_graph(g)
 
-    def alias(self, name: str) -> "Q":
+    def alias(self, name: str) -> "Query":
         """Name the current node (Cypher AS / Gremlin as-step).
 
         The previous alias keeps working as an alternative handle; display
         uses the latest name::
 
-            aq.explore().entity("reverse osmosis membrane").alias("ro")
+            aq.query().entity("reverse osmosis membrane").alias("ro")
         """
         g = self.query_graph
         if g.current_pointer is None:
@@ -505,7 +505,7 @@ class Q:
         node = g.nodes[g.current_pointer]
         return self._with_graph(g.with_node(replace(node, alias=name)))
 
-    def where(self, target: Optional[str] = None, **attrs: Any) -> "Q":
+    def where(self, target: Optional[str] = None, **attrs: Any) -> "Query":
         """Filter a node by registry attributes (see ``explore.attributes.REGISTRY``).
 
         - ``target``: alias to filter (default: current pointer); ``"*"``
@@ -570,7 +570,7 @@ class Q:
                        current_pointer=ptr)
 
     def include(self, *names: str, of: Optional[str] = None,
-                required: bool = False) -> "Q":
+                required: bool = False) -> "Query":
         """Include columns: attribute values (``alias.attr`` columns) or a
         previously ``drop()``ed node's column (un-drop).
 
@@ -603,7 +603,7 @@ class Q:
             g = g.with_select(nid, attr_name, required)
         return self._with_graph(g)
 
-    def drop(self, *names: str) -> "Q":
+    def drop(self, *names: str) -> "Query":
         """Drop columns: a node (kept in the pattern, hidden from the
         output) or a previously ``include()``d attribute (un-include).
 
@@ -635,7 +635,7 @@ class Q:
         return self._with_graph(g)
 
     def with_columns(self, *specs: str, of: Optional[str] = None,
-                     required: bool = False) -> "Q":
+                     required: bool = False) -> "Query":
         """Unified column control: plain names include, ``"-"``-prefixed drop.
 
         Each spec is an attribute name, a node alias, or ``"alias.attr"`` —
@@ -655,7 +655,7 @@ class Q:
                 q = q.include(spec, of=of, required=required)
         return q
 
-    def refocus(self, alias: str) -> "Q":
+    def refocus(self, alias: str) -> "Query":
         """Repoint the query at an existing node by alias."""
         nid = self.query_graph.aliases.get(alias)
         if nid is None:
@@ -672,7 +672,7 @@ class Q:
         ``[<attr_name>, count]`` sorted by count, where count is the number
         of distinct matched nodes carrying that value::
 
-            aq.explore().entity("Equipment").measurement(frm="*").options("quantity_kind")
+            aq.query().entity("Equipment").measurement(frm="*").options("quantity_kind")
         """
         if attr_name not in REGISTRY:
             raise ValueError(f"unknown attribute {attr_name!r}; known: {sorted(REGISTRY)}")
@@ -804,6 +804,93 @@ class Q:
             self.cache["execute"] = self.client.sparql_query(compile_sparql(g), use_union=use_union)
         return self.cache["execute"]
 
+    def to_dict(self) -> dict:
+        """Return a JSON-serializable representation of this query graph.
+
+        Used by app registration (:meth:`Acquirium.register_app`) to store
+        the query alongside the app spec. ``Not`` markers serialize as
+        ``{"not": value}``; via-programs serialize as nested lists.
+        """
+        def safe(v: Any) -> Any:
+            if isinstance(v, Not):
+                return {"not": safe(v.value)}
+            if isinstance(v, (list, tuple)):
+                return [safe(x) for x in v]
+            if isinstance(v, dict):
+                return {str(k): safe(x) for k, x in v.items()}
+            if v is None or isinstance(v, (str, int, float, bool)):
+                return v
+            return str(v)
+
+        g = self.query_graph
+        return {
+            "nodes": [
+                {
+                    "id": n.id,
+                    "rdf_class": (n.constraints or {}).get("rdf_class"),
+                    "alias": n.alias,
+                    "constraints": safe(dict(n.constraints or {})),
+                }
+                for n in g.nodes.values()
+            ],
+            "edges": [
+                {
+                    "source_id": e.source_id,
+                    "target_id": e.target_id,
+                    "hops": e.hops,
+                    "predicates": list(e.predicates) if e.predicates else None,
+                    "direction": e.direction,
+                    "patterns": safe(e.patterns) if e.patterns else None,
+                    "nearest": e.nearest,
+                }
+                for e in g.edges
+            ],
+            "aliases": dict(g.aliases),
+            "aliases_reverse": dict(g.aliases_reverse),
+            "current_pointer": g.current_pointer,
+            "selects": safe(g.selects),
+            "data_nodes": [
+                {
+                    "id": nid,
+                    "alias": g.aliases_reverse.get(nid, f"v{nid}"),
+                    "filters": safe(dict(info.filters or {})),
+                }
+                for nid, info in g.data_nodes.items()
+            ],
+        }
+
+    def resolved_nodes(
+        self,
+        *,
+        alias: Optional[str] = None,
+        only_data_nodes: bool = False,
+        use_union: bool = True,
+    ) -> List[str]:
+        """URIs the pattern currently matches (all nodes, one alias, or data nodes only)."""
+        res = self.execute(use_union=use_union)
+        cols = res.get("columns", [])
+        rows = res.get("rows", [])
+
+        if alias is not None:
+            nid = self.query_graph.resolve_alias(alias)
+            if nid is None:
+                raise ValueError("resolved_nodes: alias not found")
+            target_cols = [f"v{nid}"]
+        else:
+            node_ids = self.query_graph.data_nodes.keys() if only_data_nodes else self.query_graph.nodes.keys()
+            target_cols = [f"v{nid}" for nid in node_ids]
+
+        col_indices = [i for i, c in enumerate(cols) if c in target_cols]
+        uris: set = set()
+        for row in rows:
+            for i in col_indices:
+                if i >= len(row):
+                    continue
+                val = row[i]
+                if val is not None and _is_uri(str(val)):
+                    uris.add(str(val))
+        return sorted(uris)
+
     def metadata(self, *, include_internals: bool = False, use_union: bool = True) -> pl.DataFrame:
         """Return the pattern matches as a polars table with alias column names.
 
@@ -923,8 +1010,8 @@ class Q:
 
 
 # Append the attribute registry (single source of truth) to every method
-# that accepts attributes, so help(Q.where) etc. always list the current set.
-for _fn in (Q.entity, Q.related, Q.measurement, Q.where, Q.include, Q.drop,
-            Q.with_columns, Q.options, Q.facets):
+# that accepts attributes, so help(Query.where) etc. always list the current set.
+for _fn in (Query.entity, Query.related, Query.measurement, Query.where, Query.include, Query.drop,
+            Query.with_columns, Query.options, Query.facets):
     _fn.__doc__ = (_fn.__doc__ or "") + "\n" + attributes_doc(indent=8) + "\n"
 del _fn

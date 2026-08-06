@@ -24,14 +24,14 @@ class _Exclude:
     value: Any
 
 @dataclass(frozen=True)
-class Query:
-    """Query builder for Acquirium.
+class Q:
+    """Legacy query builder for Acquirium (superseded by the explore ``Query``).
 
-    This object is immutable: each operation returns a **new** Query with an
+    This object is immutable: each operation returns a **new** Q with an
     updated internal QueryGraph, so you can safely keep multiple variants:
 
-        q1 = aq.query().find_entity(_class=Valve, alias="valve")
-        q2 = aq.query().find_entity(_class=Pump, alias="pump")
+        q1 = aq.find_entity(_class=Valve, alias="valve")
+        q2 = aq.find_entity(_class=Pump, alias="pump")
         q3 = q1.relate_to(q2)
     """
 
@@ -45,19 +45,19 @@ class Query:
     def _new_id(self) -> int:
         nid = self._next_id
         # IMPORTANT: must mutate the counter
-        object.__setattr__(self, "_next_id", self._next_id + 1)  # because Query is frozen
+        object.__setattr__(self, "_next_id", self._next_id + 1)  # because Q is frozen
         return nid
         
 
-    def _with_incremented_id(self) -> "Query":
-        return Query(
+    def _with_incremented_id(self) -> "Q":
+        return Q(
             client=self.client,
             query_graph=self.query_graph,
             _next_id=self._next_id + 1,
         )
 
-    def _clone_with_graph(self, new_graph: QueryGraph, *, bump_id: bool = False) -> "Query":
-        return Query(
+    def _clone_with_graph(self, new_graph: QueryGraph, *, bump_id: bool = False) -> "Q":
+        return Q(
             client=self.client,
             query_graph=new_graph,
             _next_id=self._next_id + (1 if bump_id else 0),
@@ -226,17 +226,17 @@ class Query:
                     alias: Optional[str] = None, 
                     uri: str | URIRef | None = None,
                     process: str | URIRef | None = None
-                    ) -> "Query":
+                    ) -> "Q":
         """Add a new entity node to the query and set it as the current pointer.
 
         Example:
-            q = aq.query().find_entity(
+            q = aq.find_entity(
                 _class="urn:nawi-water-ontology#Valve",
                 alias="valve",
             )
 
         You can also target a specific instance by URI:
-            q = aq.query().find_entity(
+            q = aq.find_entity(
                 uri="urn:acquirium:point#MyPump_1",
                 alias="pump_1",
             )
@@ -272,7 +272,7 @@ class Query:
         predicates: Optional[List[str]] = None,
         multi_hop_predicates: bool = False,
         direction: Optional[str] = None,
-    ) -> "Query":
+    ) -> "Q":
         """Add a related entity node, connected from an existing node.
 
         Semantics:
@@ -297,7 +297,7 @@ class Query:
             4. tgt connectedThrough ?cp . ?cp connectsTo src             (inverse of downstream CP)
 
         Example:
-            q1 = aq.query().find_entity(_class=Valve, alias="valve")
+            q1 = aq.find_entity(_class=Valve, alias="valve")
             q1 = q1.find_related(_class=Pump, alias="related_pump", _from="valve")
 
         You can also relate to a specific instance:
@@ -344,18 +344,18 @@ class Query:
     @flex_query_rdf_inputs(specs=[FlexSpec("_class", "class"), FlexSpec("predicates", "predicate")])
     def relate_to(
         self,
-        other: "Query",
+        other: "Q",
         _from: Optional[str] = None,
         _to: Optional[str] = None,
         *,
         hops: int = 3,
         predicates: Optional[List[str]] = None,
-    ) -> "Query":
+    ) -> "Q":
         """Relate the current pointer of this query to the current pointer of another query.
 
         Example:
-            q1 = aq.query().find_entity(_class=Valve, alias="valve")
-            q2 = aq.query().find_entity(_class=Pump, alias="pump")
+            q1 = aq.find_entity(_class=Valve, alias="valve")
+            q2 = aq.find_entity(_class=Pump, alias="pump")
             q3 = q1.relate_to(q2)
 
         Interpretation:
@@ -413,7 +413,7 @@ class Query:
         edge = QueryEdge(source_id=src_id, target_id=other_mapping[tgt_id], hops=hops, predicates=predicates)
         merged_graph = merged_graph.with_edge(edge, new_pointer=other_mapping[tgt_id])
 
-        return Query(
+        return Q(
             client=self.client,
             query_graph=merged_graph,
             _next_id=max(self._next_id, other._next_id)
@@ -447,7 +447,7 @@ class Query:
         alias: Optional[str] = None,
         hops: int = 1,
         direction: Optional[str] = None,
-    ) -> "Query":
+    ) -> "Q":
         """Find data related to an entity, optionally traversing upstream/downstream.
 
         When ``direction`` is set ("upstream" or "downstream"), ``hops`` controls
@@ -520,7 +520,7 @@ class Query:
                 cp_filter=data_cp_filter,
             )
 
-            return Query(
+            return Q(
                 client=self.client,
                 query_graph=g,
                 _next_id=self._next_id,
@@ -547,7 +547,7 @@ class Query:
         hops: int = 1,
         filters_dict: Optional[Dict[str, Any]] = None,
         alias: Optional[str] = None,
-    ) -> "Query":
+    ) -> "Q":
         self.cache.clear()
         g = self.query_graph
         instance_uri = self._normalize_instance_uri(uri, param="uri")
@@ -594,9 +594,9 @@ class Query:
 
             # Important: advance ids as we go, since _new_id() reads _next_id
             # We do it by updating "self" logically through _next_id in a local counter:
-            self = Query(client=self.client, query_graph=last_graph, _next_id=self._next_id + created)
+            self = Q(client=self.client, query_graph=last_graph, _next_id=self._next_id + created)
 
-        return Query(
+        return Q(
             client=self.client,
             query_graph=last_graph,
             _next_id=self._next_id + created
@@ -611,7 +611,7 @@ class Query:
         hops: int = 1,
         filters_dict: Optional[Dict[str, Any]] = None,
         alias: Optional[str] = None,
-    ) -> "Query":
+    ) -> "Q":
         self.cache.clear()
         g = self.query_graph
         instance_uri = self._normalize_instance_uri(uri, param="uri")
@@ -777,7 +777,7 @@ class Query:
         value: Any,
         _from: Optional[str] = None,
         exclude: bool = False,
-    ) -> "Query":
+    ) -> "Q":
         self.cache.clear()
         g = self.query_graph
         targets = self._select_data_node_ids(_from)
@@ -804,37 +804,37 @@ class Query:
         return self._clone_with_graph(g2, bump_id=False)
 
     @flex_query_rdf_inputs(specs=[FlexSpec("unit", "unit")])
-    def filter_by_unit(self, unit: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Query":
+    def filter_by_unit(self, unit: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Q":
         if isinstance(unit, str):
             unit = [unit]
         return self.filter_data_nodes(predicate=HAS_UNIT, value=unit, _from=_from, exclude=exclude)
 
     @flex_query_rdf_inputs(specs=[FlexSpec("medium", "class")])
-    def filter_by_medium(self, medium: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Query":
+    def filter_by_medium(self, medium: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Q":
         if isinstance(medium, str):
             medium = [medium]
         return self.filter_data_nodes(predicate=OF_MEDIUM, value=medium, _from=_from, exclude=exclude)
 
     @flex_query_rdf_inputs(specs=[FlexSpec("substance", "class")])
-    def filter_by_substance(self, substance: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Query":
+    def filter_by_substance(self, substance: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Q":
         if isinstance(substance, str):
             substance = [substance]
         return self.filter_data_nodes(predicate=OF_SUBSTANCE, value=substance, _from=_from, exclude=exclude)
 
     @flex_query_rdf_inputs(specs=[FlexSpec("qk", "quantity_kind")])
-    def filter_by_quantity_kind(self, qk: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Query":
+    def filter_by_quantity_kind(self, qk: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Q":
         if isinstance(qk, str):
             qk = [qk]
         return self.filter_data_nodes(predicate=HAS_QUANTITY_KIND, value=qk, _from=_from, exclude=exclude)
 
     @flex_query_rdf_inputs(specs=[FlexSpec("ek", "class")])
-    def filter_by_enumeration_kind(self, ek: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Query":
+    def filter_by_enumeration_kind(self, ek: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Q":
         if isinstance(ek, str):
             ek = [ek]
         return self.filter_data_nodes(predicate=HAS_ENUMERATION_KIND, value=ek, _from=_from, exclude=exclude)
 
     #TODO: Not working yet
-    # def filter_by_data_source(self, data_source: str, *, _from: Optional[str] = None) -> "Query":
+    # def filter_by_data_source(self, data_source: str, *, _from: Optional[str] = None) -> "Q":
         # return self.filter_data_nodes(predicate=DATA_SOURCE, value=data_source, _from=_from)
 
 
@@ -1451,7 +1451,7 @@ class Query:
             ]
             cols = [cols[i] for i in keep_idx]
             rows = [[r[i] for i in keep_idx] for r in rows]
-        Query._show_head_cli(
+        Q._show_head_cli(
                 self,
                 columns=cols,
                 rows=rows,

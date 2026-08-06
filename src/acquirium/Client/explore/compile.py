@@ -198,7 +198,7 @@ def _direction_edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_id
 
 
 def _program_edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int) -> str:
-    """Render a lowered ``via`` step program (see ``core.Q.related``).
+    """Render a lowered ``via`` step program (see ``core.Query.related``).
 
     ``edge.patterns`` is a tuple of segments ``(alternatives, star)``:
     alternatives is a tuple of chains, a chain is a tuple of
@@ -470,7 +470,7 @@ def compile_parts(graph: QueryGraph) -> tuple:
     """Compile a query graph into ``(var_map, select_parts, where_clauses)``.
 
     ``compile_sparql`` assembles these into the standard SELECT; facet
-    aggregations (``Q.options``) reuse the WHERE body with their own
+    aggregations (``Query.options``) reuse the WHERE body with their own
     projection and GROUP BY. Queries with **multiple** measurement nodes
     compile their data blocks as UNION branches over the shared entity
     pattern, so results are the union of the per-node matches (M+N rows,

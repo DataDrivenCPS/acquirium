@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from acquirium.Client.explore.attributes import Not
-from acquirium.Client.explore.core import Q
+from acquirium.Client.explore.core import Query
 
 CLS_A = "urn:test#TypeA"
 QK_URI = "http://qudt.org/vocab/quantitykind/MassFlowRate"
@@ -19,11 +19,11 @@ OF_MEDIUM = "http://data.ashrae.org/standard223#ofMedium"
 HAS_MEDIUM = "http://data.ashrae.org/standard223#hasMedium"
 
 
-def q() -> Q:
-    return Q(client=None)
+def q() -> Query:
+    return Query(client=None)
 
 
-def base() -> Q:
+def base() -> Query:
     return q().entity(CLS_A, alias="ro").measurement(alias="m")
 
 
@@ -158,7 +158,7 @@ class TestResolution:
 
     def test_joint_record_and_rewrap(self):
         client = self.make_client({"quantity_kind_0": QK_URI, "medium_0": MEDIUM_URI})
-        b = (Q(client=client).entity(CLS_A, alias="ro")
+        b = (Query(client=client).entity(CLS_A, alias="ro")
              .measurement(alias="m")
              .where(quantity_kind="mass flow rate", medium=Not("brine")))
         client.resolve.assert_called_once_with(
@@ -172,22 +172,22 @@ class TestResolution:
 
     def test_uri_passthrough_skips_resolver(self):
         client = self.make_client({})
-        Q(client=client).entity(CLS_A, alias="ro").measurement(alias="m").where(quantity_kind=QK_URI)
+        Query(client=client).entity(CLS_A, alias="ro").measurement(alias="m").where(quantity_kind=QK_URI)
         client.resolve.assert_not_called()
 
     def test_literal_attr_skips_resolver(self):
         client = self.make_client({})
-        Q(client=client).entity(CLS_A, alias="ro").measurement(alias="m").where(data_source="Lab")
+        Query(client=client).entity(CLS_A, alias="ro").measurement(alias="m").where(data_source="Lab")
         client.resolve.assert_not_called()
 
     def test_unresolved_raises(self):
         client = self.make_client({"medium_0": None})
         with pytest.raises(ValueError, match="Could not resolve"):
-            Q(client=client).entity(CLS_A, alias="ro").measurement(alias="m").where(medium="xyzzy")
+            Query(client=client).entity(CLS_A, alias="ro").measurement(alias="m").where(medium="xyzzy")
 
     def test_list_elements_resolved_elementwise(self):
         client = self.make_client({"medium_0": MEDIUM_URI, "medium_1": "urn:test#M2"})
-        b = (Q(client=client).entity(CLS_A, alias="ro").measurement(alias="m")
+        b = (Query(client=client).entity(CLS_A, alias="ro").measurement(alias="m")
              .where(medium=["brine", "urn:test#M2x".replace("x", "")]))
         # second element is already a URI: only the text goes to the resolver
         record = client.resolve.call_args.args[0]
@@ -199,7 +199,7 @@ class TestProcessKind:
     def test_process_resolves_with_its_own_kind(self):
         client = MagicMock()
         client.resolve.return_value = {"process_0": "urn:nawi-water-ontology#Process-ReverseOsmosis"}
-        b = (Q(client=client).entity(CLS_A, alias="eq")
+        b = (Query(client=client).entity(CLS_A, alias="eq")
              .where(process="reverse osmosis"))
         client.resolve.assert_called_once_with(
             {"process_0": ("reverse osmosis", "process")}, min_score=0.4)
@@ -210,8 +210,8 @@ class TestProcessKind:
 class TestAttributeDocs:
     def test_all_attribute_methods_document_the_registry(self):
         from acquirium.Client.explore.attributes import REGISTRY
-        for method in (Q.entity, Q.related, Q.measurement, Q.where,
-                       Q.include, Q.options, Q.facets):
+        for method in (Query.entity, Query.related, Query.measurement, Query.where,
+                       Query.include, Query.options, Query.facets):
             doc = method.__doc__ or ""
             assert "Attributes (usable on):" in doc, method.__name__
             for name in REGISTRY:

@@ -2,7 +2,7 @@
 
 import pytest
 
-from acquirium.Client.explore.core import Q
+from acquirium.Client.explore.core import Query
 from acquirium.Client.query_graph import QueryGraph, QueryNode
 
 CLS_A = "urn:test#TypeA"
@@ -10,11 +10,11 @@ OF_MEDIUM = "http://data.ashrae.org/standard223#ofMedium"
 HAS_MEDIUM = "http://data.ashrae.org/standard223#hasMedium"
 
 
-def q() -> Q:
-    return Q(client=None)
+def q() -> Query:
+    return Query(client=None)
 
 
-def base() -> Q:
+def base() -> Query:
     return q().entity(CLS_A, alias="ro").measurement(alias="m")
 
 

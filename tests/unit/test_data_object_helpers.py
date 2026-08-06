@@ -43,10 +43,10 @@ class TestEmptyDataObjectConversion:
 
     def test_empty_from_query_carries_the_client(self):
         from unittest.mock import MagicMock
-        from acquirium.Client.explore.core import Q
+        from acquirium.Client.explore.core import Query
 
         client = MagicMock()
         client.sparql_query.return_value = {"columns": ["v0", "v1"], "rows": []}
-        d = Q(client=client).entity("urn:t#A", alias="a").measurement(alias="m").data()
+        d = Query(client=client).entity("urn:t#A", alias="a").measurement(alias="m").data()
         assert d._client is client
         assert d.convert_to("mg/L").is_empty()

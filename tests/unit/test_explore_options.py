@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import polars as pl
 import pytest
 
-from acquirium.Client.explore.core import Q
+from acquirium.Client.explore.core import Query
 
 CLS_A = "urn:test#TypeA"
 OF_MEDIUM = "http://data.ashrae.org/standard223#ofMedium"
@@ -34,8 +34,8 @@ def make_client(pattern_rows, lookup_rows):
     return client
 
 
-def base(client) -> Q:
-    return Q(client=client).entity(CLS_A, alias="ro").measurement(alias="m")
+def base(client) -> Query:
+    return Query(client=client).entity(CLS_A, alias="ro").measurement(alias="m")
 
 
 def pattern_row(m):

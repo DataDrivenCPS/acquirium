@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from acquirium.Client.explore.core import Q
+from acquirium.Client.explore.core import Query
 from acquirium.Client.explore.traverse import (
     clear_segment_cache,
     materialize_segment,
@@ -110,7 +110,7 @@ class TestMaterialize:
 
 class TestResolveNearest:
     def build_query(self, client):
-        return (Q(client=client).entity(CLS_A, alias="ro")
+        return (Query(client=client).entity(CLS_A, alias="ro")
                 .related(TANK, alias="tank", via=CONNECTED_TO,
                          nearest=True, max_depth=4))
 
@@ -164,7 +164,7 @@ class TestResolveNearest:
 
 class TestNearestValidation:
     def test_related_nearest_any_builds_wildcard_program(self):
-        b = Q(client=None).entity(CLS_A).related(TANK, nearest=True)
+        b = Query(client=None).entity(CLS_A).related(TANK, nearest=True)
         (edge,) = b.query_graph.edges
         alternatives = ((("*", None),),)
         assert edge.patterns == ((alternatives, True),)
@@ -172,20 +172,20 @@ class TestNearestValidation:
 
     def test_related_nearest_any_with_direction_errors(self):
         with pytest.raises(ValueError, match="direction steps"):
-            Q(client=None).entity(CLS_A).related(TANK, nearest=True, direction="upstream")
+            Query(client=None).entity(CLS_A).related(TANK, nearest=True, direction="upstream")
 
     def test_related_nearest_with_predicate_list(self):
-        b = Q(client=None).entity(CLS_A).related(TANK, via=["urn:test#p"],
+        b = Query(client=None).entity(CLS_A).related(TANK, via=["urn:test#p"],
                                                  nearest=True, max_depth=2)
         (edge,) = b.query_graph.edges
         assert edge.nearest and edge.patterns == ((((("urn:test#p", None),),), True),)
 
     def test_measurement_nearest_needs_direction(self):
         with pytest.raises(ValueError, match="requires direction"):
-            Q(client=None).entity(CLS_A).measurement(nearest=True)
+            Query(client=None).entity(CLS_A).measurement(nearest=True)
 
     def test_measurement_nearest_builds_program_edge(self):
-        b = Q(client=None).entity(CLS_A, alias="ro").measurement(
+        b = Query(client=None).entity(CLS_A, alias="ro").measurement(
             direction="upstream", nearest=True, max_depth=2)
         g = b.query_graph
         (edge,) = g.edges
@@ -199,7 +199,7 @@ class TestNearestValidation:
 class TestWildcardSegment:
     def test_preview_sparql_has_filters(self):
         from rdflib.plugins.sparql import prepareQuery
-        s = (Q(client=None).entity(CLS_A, alias="a")
+        s = (Query(client=None).entity(CLS_A, alias="a")
              .related(TANK, alias="t", nearest=True, max_depth=2).to_sparql())
         assert "?p_e0_" in s and "NOT IN" in s and "FILTER(isIRI(" in s
         prepareQuery(s)
@@ -251,7 +251,7 @@ class TestConeResolution:
             ]},
             {"columns": ["v0", "v1"], "rows": []},                            # final
         ])
-        b = (Q(client=client).entity(CLS_A, alias="ro")
+        b = (Query(client=client).entity(CLS_A, alias="ro")
              .related(TANK, alias="tank", via=CONNECTED_TO, max_depth=4))
         b.execute()
         final_sparql = client.sparql_query.call_args.args[0]
@@ -269,7 +269,7 @@ class TestConeResolution:
             ]},
             {"columns": ["v0", "v1"], "rows": []},
         ])
-        b = Q(client=client).entity(CLS_A, alias="a").related(TANK, alias="z",
+        b = Query(client=client).entity(CLS_A, alias="a").related(TANK, alias="z",
                                                               max_depth=0)
         b.execute()
         final_sparql = client.sparql_query.call_args.args[0]
@@ -278,7 +278,7 @@ class TestConeResolution:
 
     def test_explicit_predicate_edges_stay_sparql(self):
         client = self.make_client([{"columns": ["v0", "v1"], "rows": []}])
-        b = Q(client=client).entity(CLS_A, alias="a").related(TANK, alias="t",
+        b = Query(client=client).entity(CLS_A, alias="a").related(TANK, alias="t",
                                                               via=["urn:test#p"])
         b.execute()
         assert client.sparql_query.call_count == 1  # no BFS phases
@@ -308,7 +308,7 @@ class TestDropWithTraversal:
             {"columns": ["s", "t"], "rows": [["urn:p#s1", "urn:p#t1"]]},
             {"columns": ["v1"], "rows": []},               # final (v0 dropped)
         ]
-        b = (Q(client=client).entity(CLS_A, alias="sys").drop()
+        b = (Query(client=client).entity(CLS_A, alias="sys").drop()
              .related(TANK, alias="tank", via="next_equipment*", nearest=True, max_depth=3))
         b.execute()
         source_sparql = client.sparql_query.call_args_list[0].args[0]
@@ -333,7 +333,7 @@ class TestIncludeWithTraversal:
             {"columns": ["v1", "v2", "ext2", "unit2", "extunit2",
                          "attr2_unit"], "rows": []},                 # final
         ]
-        q = (Q(client=client).entity(uri="wbs:sys").drop()
+        q = (Query(client=client).entity(uri="wbs:sys").drop()
              .related("equipment").measurement(alias="sensor").include("unit"))
         q.execute()
         final_sparql = client.sparql_query.call_args.args[0]

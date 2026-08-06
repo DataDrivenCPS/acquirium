@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable
 
 from acquirium.internals.models import AppContext
-from acquirium.Client.query import Query
+from acquirium.Client.explore.core import Query
 
 
 

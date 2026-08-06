@@ -1,11 +1,11 @@
 """Multi-attribute facet summaries for the explore layer.
 
-``Q.facets()`` gives the notebook-first overview of one node: for every
+``Query.facets()`` gives the notebook-first overview of one node: for every
 registry attribute applicable to the node's role, the distinct values and
 counts. Each attribute falls back through three scopes until one yields
 values:
 
-- **matched** — aggregated over the current query pattern (``Q.options``);
+- **matched** — aggregated over the current query pattern (``Query.options``);
 - **model** — model-wide usage of the attribute, ignoring the pattern;
 - **vocabulary** — taxonomy enumeration from the loaded ontologies, for
   attributes with a bounded vocabulary (``medium``/``substance``/``type``),

@@ -10,14 +10,14 @@ import inspect
 if TYPE_CHECKING:
     import polars as pl
     import pyarrow as pa
-    from acquirium.Client.explore.core import Q
 
 from rdflib import Graph as RDFGraph, URIRef, Literal
 from rdflib.namespace import RDF, RDFS
 
 import warnings
 
-from acquirium.Client.query import Query
+from acquirium.Client.explore.core import Query
+from acquirium.Client.query import Q
 from acquirium.Client.app_display import AppsResponse
 
 
@@ -223,13 +223,12 @@ class Acquirium:
         self.client.insert_graph(rdf_graph, format=format, replace=replace)
 
     def query(self) -> Query:
-        """Create a new empty Query bound to this Acquirium instance."""
+        """Create a new empty Query (the explore builder) bound to this instance."""
         return Query(client=self.client)
 
-    def explore(self) -> "Q":
-        """Create a new empty explore query (the redesigned builder) bound to this instance."""
-        from acquirium.Client.explore.core import Q
-        return Q(client=self.client)
+    def explore(self) -> Query:
+        """Alias of :meth:`query`."""
+        return self.query()
 
     def find_entity(
         self,
@@ -237,12 +236,12 @@ class Acquirium:
         _class: Optional[str] = None,
         alias: Optional[str] = None,
         uri: str | URIRef | None = None,
-    ) -> "Query":
-        q = Query(client=self.client).find_entity(_class=_class, alias=alias, uri=uri)
+    ) -> "Q":
+        q = Q(client=self.client).find_entity(_class=_class, alias=alias, uri=uri)
         return q
-    
-    def find_all_data(self, *, _class: Optional[str] = None, uri: str | URIRef | None = None) -> "Query":
-        q = Query(client=self.client).find_all_data(_class=_class, uri=uri)
+
+    def find_all_data(self, *, _class: Optional[str] = None, uri: str | URIRef | None = None) -> "Q":
+        q = Q(client=self.client).find_all_data(_class=_class, uri=uri)
         return q
 
     # ------------------------------------------------------------------
@@ -470,7 +469,8 @@ class Acquirium:
         registration rather than the run.
         """
         query_bundle = queries if queries is not None else app.build_query(self)
-        if isinstance(query_bundle, Query):
+        if not isinstance(query_bundle, dict):
+            # a single Query (or legacy Q) builder
             query_bundle = {"default": query_bundle}
 
         query_specs = {name: q.to_dict() for name, q in query_bundle.items()}
