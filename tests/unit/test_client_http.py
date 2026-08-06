@@ -44,6 +44,22 @@ class TestInsertGraph:
         mock_requests.post.assert_called_once()
         assert mock_requests.post.call_args.args[0] == "http://localhost:8000/insert_graph"
 
+    @patch("acquirium.Client.client.requests")
+    def test_multiline_text_without_markers_is_content(self, mock_requests, client):
+        ## regression: used to raise NameError (undefined `p`)
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_requests.post.return_value = mock_resp
+
+        rdf = "PREFIX ex: <urn:ex/>\nex:s ex:p ex:o ."
+        client.insert_graph(rdf, replace=False)
+
+        assert mock_requests.post.call_args.kwargs["json"]["rdf_graph"] == rdf
+
+    def test_single_line_missing_path_raises(self, client):
+        with pytest.raises(FileNotFoundError):
+            client.insert_graph("no/such/file.ttl")
+
 
 # ── sparql_query ───────────────────────────────────────────
 
@@ -185,8 +201,9 @@ class TestAppMethods:
         mock_resp.raise_for_status = MagicMock()
         mock_requests.post.return_value = mock_resp
 
-        result = client.stop_app(run_id="run456")
+        result = client.stop_app(app_id="app123")
         assert result["status"] == "stopped"
+        assert mock_requests.post.call_args.kwargs["json"] == {"app_id": "app123"}
 
     @patch("acquirium.Client.client.requests")
     def test_list_app_runs_success(self, mock_requests, client):

@@ -547,9 +547,9 @@ class Acquirium:
             interval=interval,
         ))
 
-    def stop_app(self, *, run_id: str | None = None, app_id: str | None = None) -> dict[str, Any]:
-        """Stop a keep-alive app loop by run_id or all loops for an app_id."""
-        return AppsResponse(self.client.stop_app(run_id=run_id, app_id=app_id))
+    def stop_app(self, *, app_id: str) -> dict[str, Any]:
+        """Stop an app's keep-alive loop."""
+        return AppsResponse(self.client.stop_app(app_id=app_id))
 
     def list_app_runs(self, *, app_id: str | None = None) -> dict[str, Any]:
         """List registered apps, or one app's build/run status if app_id is given."""

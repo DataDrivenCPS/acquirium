@@ -1,5 +1,5 @@
 from typing import Optional, Iterator, Any, TYPE_CHECKING
-from datetime import datetime
+from datetime import datetime, timezone
 import requests
 from requests import HTTPError
 from pathlib import Path
@@ -79,20 +79,15 @@ class AcquiriumClient:
             with open(rdf_graph, "r") as f:
                 rdf_graph = f.read()
         elif isinstance(rdf_graph, str):
-            if rdf_graph.strip().startswith(("<", "@", "#")) or "\n" in rdf_graph and p.suffix:
-                # Looks like RDF content (has RDF markers or multiple lines) so treat as content
+            if rdf_graph.strip().startswith(("<", "@", "#")) or "\n" in rdf_graph:
+                # RDF content: starts with an RDF marker or spans multiple lines
                 pass
             else:
-                try:
-                    # Treat as file path and attempt to read           
-                    p = Path(rdf_graph)
-                    if p.is_file():
-                        with open(p, "r") as f:
-                            rdf_graph = f.read()
-                    else:
-                        raise FileNotFoundError                
-                except Exception:
-                    # Looks like a file path (no RDF content markers, single line, has extension) but doesn't exist
+                # Single line without RDF markers: treat as a file path
+                p = Path(rdf_graph)
+                if p.is_file():
+                    rdf_graph = p.read_text()
+                else:
                     raise FileNotFoundError(f"Graph file not found: {rdf_graph}")
         else:
             raise ValueError("rdf_graph must be a string or Path object")
@@ -455,7 +450,7 @@ class AcquiriumClient:
             A dictionary with the result of the insertion.
         """
         if log_time is None:
-            log_time = datetime.now().isoformat()
+            log_time = datetime.now(timezone.utc).isoformat()
         url = f"{self.base_url}/insert_log"
         data = {
             "log_timestamp": log_time,
@@ -506,9 +501,9 @@ class AcquiriumClient:
         response.raise_for_status()
         return response.json()
 
-    def stop_app(self, *, run_id: Optional[str] = None, app_id: Optional[str] = None) -> dict:
+    def stop_app(self, *, app_id: str) -> dict:
         url = f"{self.base_url}/apps/stop"
-        req = AppStopRequest(run_id=run_id, app_id=app_id)
+        req = AppStopRequest(app_id=app_id)
         response = requests.post(url, json=req.model_dump(mode="json"))
         response.raise_for_status()
         return response.json()

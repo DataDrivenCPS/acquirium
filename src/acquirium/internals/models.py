@@ -201,5 +201,4 @@ class AppRunRequest(BaseModel):
 
 
 class AppStopRequest(BaseModel):
-    run_id: str | None = None
-    app_id: str | None = None
+    app_id: str
