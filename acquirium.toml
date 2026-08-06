@@ -2,7 +2,6 @@
 #
 # Usage:
 #   acquirium server --config acquirium.toml
-#   acquirium run scripts/publish_system_metrics.py --config acquirium.toml
 
 [server]
 # Network
@@ -68,7 +67,7 @@ recreate = false
 # ]
 
 [driver]
-# Defaults applied to all drivers — used by `acquirium run` and [[drivers]] entries.
+# Defaults applied to every [[drivers]] entry.
 server_url  = "localhost"
 server_port = 8000
 use_ssl     = false

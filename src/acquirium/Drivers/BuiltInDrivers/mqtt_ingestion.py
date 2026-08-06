@@ -59,15 +59,13 @@ class MQTTIngestDriver(EventIngestDriver):
     """Subscribes to MQTT topics declared in the knowledge graph and ingests
     samples via the standard Acquirium timeseries API.
 
-    Run alongside the server:
-        acquirium run acquirium.Drivers.BuiltInDrivers.mqtt_ingestion:MQTTIngestDriver \\
-            --config acquirium.toml
-
-    Or list it in acquirium.toml under [[drivers]] for auto-start:
+    List it in acquirium.toml under [[drivers]] for auto-start:
         [[drivers]]
         spec           = "acquirium.Drivers.BuiltInDrivers.mqtt_ingestion:MQTTIngestDriver"
         interval       = 5.0
         mqtt_source_id = "mqtt"
+    then run `acquirium server --config acquirium.toml`, or push it to a
+    running server with `acquirium driver start acquirium.toml`.
     """
 
     def setup(self) -> None:
