@@ -10,6 +10,37 @@ change in any release.
 
 ## [Unreleased]
 
+### Added
+- **Explore query interface.** `acq.explore()` builds the new `Query`: `entity()` / `related()` / `measurement()` pattern verbs; one attribute vocabulary (type, process, cp_type, medium, substance, quantity_kind, unit, enumeration_kind, data_source) shared by `where()` filtering (with `Not()` exclusion and lists-as-OR), `include()` / `drop()` / `with_columns()` column controls (invertible, dotted `"alias.attr"` targeting, `required=`), and `options()` / `facets()` faceted exploration; `alias()` / `refocus()` pointer control; `to_sparql()` / `execute()` / `metadata()` / `data()` / `dataframe()` terminals. Attribute tables are generated into the docstrings of every attribute-taking method.
+- **Client-side multi-hop traversal.** `related`/`measurement` traversal runs as client-side BFS instead of join-explosive SPARQL property paths. `via=` takes a predicate, a predicate list, `"any"`/`"all"`, or a step-pattern constant; `direction="upstream"/"downstream"` maps to inspectable constants (`UPSTREAM_EQUIPMENT`, `DOWNSTREAM_EQUIPMENT`, `UPSTREAM_PROPERTY`, `DOWNSTREAM_PROPERTY`); `nearest=` returns closest matches per source; `max_depth` defaults to 3 (`0` = unbounded). Attribute predicates plus `rdfs:subClassOf`, `s223:hasProperty`, `ref:hasExternalReference`, and `s223:cnx` are hidden from `via="any"` by default (`hide()` / `unhide()` / `hidden_predicates()`).
+- **Multi-measurement UNION compilation.** Queries with several measurement nodes compile as UNION branches: M+N rows with nulls where a node has no data, instead of a cross product that empties the whole result.
+- `kind="process"` resolution: the process taxonomy is its own resolver kind and is excluded from `kind="class"`.
+- `POST /sparql_json` accepting a JSON body (resolved traversal queries exceed URL limits); the client always POSTs.
+- `POST /resolve_conversion`: joint source/target unit resolution that picks the best *convertible* pair; `DataObject.convert_to` uses it.
+- `Acquirium()` waits for `/health` (default 60 s, `health_timeout=None` to skip) and raises `ConnectionError` when the server is unreachable.
+- `include(required=True)` drops rows lacking the attribute instead of binding null.
+
+### Changed
+- The explore builder is the main `Query` interface; the legacy query class is renamed to `Q`.
+- `stop_app` takes a required `app_id=`; the never-implemented `run_id=` parameter is gone.
+- `Output.event` requires `point_uri` in its signature (it always raised without one).
+- Wide dataframes order value columns alphabetically (case-insensitive) after `time`; `metadata()` returns real nulls instead of `"None"` strings; attribute columns interleave directly after their node's column.
+- `--verbose` scopes DEBUG to `acquirium.*` loggers; root logging stays at INFO so solver libraries don't flood logs.
+- `client.insert_log` defaults `log_time` to timezone-aware UTC.
+- pyontoenv upgraded to 0.6.0.
+
+### Fixed
+- `AcquiriumClient.insert_graph` raised `NameError` for multi-line RDF text not starting with `<`, `@`, or `#`.
+- The embedding model cache honors `FASTEMBED_CACHE_PATH`, so a pre-warmed cache (e.g. in the Docker image) is actually used.
+- BENICIA deployment config: `model` and `watch_dir` resolved against the wrong base and the committed historical parquet sat outside the watched directory; the shipped config now replays it.
+- Empty `DataObject` keeps its client; `convert_to` on an empty result is a no-op.
+- Traversal pruning crash when `include()` was combined with a traversal edge.
+
+### Removed
+- The `via=` shortcut system; direction step patterns became inspectable constants.
+- `App.docker_image` / `App.entrypoint` / `App.command` (dead since apps moved to Ray actors) and the stale `python -m acquirium.Apps.worker` references in example apps.
+- `scripts/benchmark/` (stale; cited files that no longer exist).
+
 ## [0.4.0a0] - 2026-07-22
 
 ### Added
