@@ -170,6 +170,51 @@ class TestMeasurement:
             q().entity(CLS_A).measurement(frm="nope")
 
 
+class TestAliasUniqueness:
+    """Explicit aliases raise on collision; derived aliases auto-uniquify."""
+
+    def test_default_aliases_uniquified(self):
+        b = q().entity(CLS_A).entity(CLS_A)
+        assert set(b.query_graph.aliases) == {"TypeA", "TypeA_2"}
+
+    def test_entity_explicit_duplicate_raises(self):
+        with pytest.raises(ValueError, match="entity: alias 'x' is already used"):
+            q().entity(CLS_A, alias="x").entity(CLS_B, alias="x")
+
+    def test_related_explicit_duplicate_raises(self):
+        with pytest.raises(ValueError, match="related: alias 'x' is already used"):
+            q().entity(CLS_A, alias="x").related(CLS_B, alias="x")
+
+    def test_alias_steal_raises(self):
+        b = q().entity(CLS_A, alias="a").entity(CLS_B, alias="b")
+        with pytest.raises(ValueError, match="alias: alias 'a' is already used"):
+            b.alias("a")
+
+    def test_alias_rename_to_own_name_ok(self):
+        b = q().entity(CLS_A, alias="a").alias("a")
+        assert b.query_graph.aliases["a"] == 0
+
+    def test_measurement_derived_alias_uniquified(self):
+        b = q().entity(CLS_A, alias="ro").measurement().refocus("ro").measurement()
+        g = b.query_graph
+        assert g.aliases["ro_data"] == 1 and g.aliases["ro_data_2"] == 2
+        assert g.aliases_reverse[1] == "ro_data" and g.aliases_reverse[2] == "ro_data_2"
+
+    def test_measurement_explicit_duplicate_raises(self):
+        b = q().entity(CLS_A, alias="ro").measurement(alias="m")
+        with pytest.raises(ValueError, match="measurement: alias 'm' is already used"):
+            b.refocus("ro").measurement(alias="m")
+
+    def test_directional_measurement_twice_uniquified(self):
+        b = (q().entity(CLS_A, alias="ro")
+             .measurement(direction="upstream").refocus("ro")
+             .measurement(direction="upstream"))
+        aliases = b.query_graph.aliases
+        for name in ("ro_upstream_entity", "ro_upstream_entity_2",
+                     "ro_upstream_data", "ro_upstream_data_2"):
+            assert name in aliases
+
+
 class TestRefocus:
     def test_repoints(self):
         b = q().entity(CLS_A, alias="a").entity(CLS_B, alias="b")
