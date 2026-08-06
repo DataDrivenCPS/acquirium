@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional , Union, TYPE_CHECKING
 from acquirium.internals.internals_namespaces import *
 from acquirium.internals.models import LogEntry
 import polars as pl
-from datetime import datetime
+from datetime import datetime, timedelta
 from acquirium.TextMatch.decorators import flex_query_rdf_inputs, FlexSpec
 from acquirium.Client.query_graph import QueryGraph, QueryNode, QueryEdge, DataNodeInfo
 from acquirium.Client.client import AcquiriumClient
@@ -656,6 +656,85 @@ class Query:
             cast_value=cast_value,
             value_mode=value_mode,
         ).dataframe(shape=shape, include_ref=include_ref, compact=True)
+
+    def reconcile(
+        self,
+        points: list[str] | None = None,
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        resolution: str | timedelta | None = None,
+        upsample: str | None = None,
+        downsample: str | None = None,
+        fill_value: float | None = None,
+        suffix: str = "_reconciled",
+        use_union: bool = True,
+    ) -> pl.DataFrame:
+        """Reconcile one or more of this query's points onto a shared time grid.
+
+        Convenience wrapper around :meth:`data` + :meth:`DataObject.reconcile`:
+        it fetches the queried points as floats and brings them onto a single,
+        uniform temporal grid so they can be directly compared. Use this in
+        place of :meth:`dataframe` whenever you need ``a`` and ``b`` to line
+        up on the same timestamps (e.g. before differencing, correlating, or
+        flagging divergence between two sensors).
+
+        Each point is resampled independently based on its own native
+        resolution relative to the target ``resolution`` — untouched if
+        identical, downsampled with ``downsample`` if finer, upsampled with
+        ``upsample`` (interpolating from its own true timestamps) if
+        coarser. See :meth:`DataObject.reconcile` for the full algorithm.
+
+        Args:
+            points: Data aliases to reconcile. If ``None`` (default), every
+                data node bound by this query is reconciled.
+            start: Optional lower time bound for fetched data.
+            end: Optional upper time bound for fetched data.
+            resolution: Target temporal resolution (``timedelta`` or a
+                duration string like ``"10s"``, ``"5m"``, ``"1h"``, ``"2d"``).
+                If ``None`` (default), the highest (finest) native resolution
+                among the selected points.
+            upsample: How to fill in a point that's coarser than the target
+                resolution: ``"interpolate"``, ``"copy"``/``"ffill"``,
+                ``"zero"``, ``"default_value"`` (fill with the constant given
+                via ``fill_value``), or ``"null"``. ``None`` (default):
+                only required, and only an error, if some selected point
+                actually needs upsampling.
+            downsample: How to collapse a point that's finer than the target
+                resolution: ``"mean"``/``"average"``, ``"first"``/
+                ``"ignore_intermediate"``, ``"last"``, ``"min"``, or
+                ``"max"``. ``None`` (default): same rule as ``upsample``.
+            fill_value: Constant used to fill in gaps when
+                ``upsample="default_value"``. Required for that method;
+                ignored otherwise.
+            suffix: Suffix appended to each point's name to form its
+                reconciled column name (default ``"_reconciled"``).
+
+        Returns:
+            A wide ``pl.DataFrame``: ``time`` plus one ``f"{point}{suffix}"``
+            column per reconciled point.
+
+        Example::
+
+            q = acq.find_all_data(uri="dpr:conn-chlorine-contactor-to-potable-effluent-valve-toc-ppm")
+            df = q.reconcile()          # single point, reconciled onto its own native grid
+
+            # Two points, reconciled onto a common 10-second grid:
+            df = q.reconcile(["a", "b"], resolution="10s", upsample="interpolate", downsample="mean")
+        """
+        return self.data(
+            start=start,
+            end=end,
+            use_union=use_union,
+            cast_value="float",
+        ).reconcile(
+            points,
+            resolution=resolution,
+            upsample=upsample,
+            downsample=downsample,
+            fill_value=fill_value,
+            suffix=suffix,
+        )
 
     def metadata(self, *, include_internals: bool = False, use_union=True) -> pl.DataFrame:
         """
