@@ -47,14 +47,12 @@ class Output:
     @staticmethod
     def event(
         *,
-        point_uri: str | None = None,
+        point_uri: str,
         severity: str,
         message: str,
         ts: datetime | None = None,
         data: dict[str, Any] | None = None,
     ) -> "Output":
-        if point_uri is None:
-            raise ValueError("event output requires point_uri")
         ts = ts or datetime.now(timezone.utc)
         return Output(
             kind="event",
@@ -95,9 +93,6 @@ class App(ABC):
     version: str = "0.0"
     app_type: str = "soft_sensor"
     outputs: list[Any] = []
-    docker_image: str | None = None
-    entrypoint: str | None = None
-    command: str | None = None
     source_code: str | None = None
     entry_file: str | None = None
 
