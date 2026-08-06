@@ -617,9 +617,9 @@ def test_resolve_qudt_uri_honors_context_over_deterministic(acq):
 # Latency profile — per-tier trend tracking across commits
 # ──────────────────────────────────────────────────────────────
 #
-# Writes to resolver_bench.csv (same file scripts/benchmark/resolver_latency.py
-# uses) with a stable wide schema, rather than appending mismatched-width rows
-# to the historical stats.csv. Every test run is one latency datapoint per
+# Writes to resolver_bench.csv with a stable wide schema, rather than
+# appending mismatched-width rows to the historical stats.csv. Every test
+# run is one latency datapoint per
 # (tier, kind), tagged with the git SHA so regressions are bisectable.
 
 import subprocess  # noqa: E402
