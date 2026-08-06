@@ -689,7 +689,7 @@ class Query:
             alias = g.aliases_reverse.get(nid, str(nid))
             raise ValueError(f"options: attribute {attr_name!r} does not apply to {role} node {alias!r}")
 
-        cache_key = f"options:{attr_name}:{nid}"
+        cache_key = f"options:{attr_name}:{nid}:{use_union}"
         if self.cache.get(cache_key) is None:
             # Two-phase: the pattern runs once through execute() (program
             # edges BFS-resolved, result cached and shared with metadata());
@@ -796,13 +796,13 @@ class Query:
         matches. The final result always comes from one SPARQL query with
         the matches injected as paired VALUES.
         """
-        if self.cache.get("execute") is None:
+        if self.cache.get(f"execute_{use_union}") is None:
             g = self.query_graph
             if any(getattr(e, "patterns", None) and e.value_pairs is None for e in g.edges):
                 from acquirium.Client.explore.traverse import resolve_program_edges
                 g = resolve_program_edges(g, self.client)
-            self.cache["execute"] = self.client.sparql_query(compile_sparql(g), use_union=use_union)
-        return self.cache["execute"]
+            self.cache[f"execute_{use_union}"] = self.client.sparql_query(compile_sparql(g), use_union=use_union)
+        return self.cache[f"execute_{use_union}"]
 
     def to_dict(self) -> dict:
         """Return a JSON-serializable representation of this query graph.
@@ -898,7 +898,7 @@ class Query:
         ``unit<nid>``, ``extunit<nid>``) are hidden unless
         ``include_internals=True``.
         """
-        cache_key = f"metadata_table:{include_internals}"
+        cache_key = f"metadata_table:{include_internals}:{use_union}"
         if self.cache.get(cache_key) is None:
             res = self.execute(use_union=use_union)
             cols = res.get("columns", [])
