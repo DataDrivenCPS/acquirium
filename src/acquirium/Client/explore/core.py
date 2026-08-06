@@ -94,6 +94,18 @@ class Query:
     def _src_alias(self, src_id: int) -> str:
         return self.query_graph.aliases_reverse.get(src_id, str(src_id))
 
+    def _require_free_alias(self, g: QueryGraph, alias: str, *, verb: str) -> str:
+        """Reject a user-supplied alias already naming another node.
+
+        Derived aliases (class-name defaults, ``{src}_data``) are silently
+        uniquified instead — see ``_unique_alias``."""
+        if alias in g.aliases:
+            raise ValueError(
+                f"{verb}: alias {alias!r} is already used by another node; "
+                f"pick a different name (or omit alias= for an auto-unique default)"
+            )
+        return alias
+
     def _unique_alias(self, g: QueryGraph, base: str) -> str:
         if base not in g.aliases:
             return base
@@ -229,7 +241,10 @@ class Query:
             constraints["rdf_class"] = self._as_uri(cls, "class")
         if instance_uri is not None:
             constraints["instance_uri"] = instance_uri
-        alias = alias or self._default_alias(self.query_graph, cls)
+        if alias is not None:
+            self._require_free_alias(self.query_graph, alias, verb="entity")
+        else:
+            alias = self._default_alias(self.query_graph, cls)
         node = QueryNode(id=self._next_id(), alias=alias, constraints=constraints)
         q2 = self._with_graph(self.query_graph.with_node(node))
         if attrs:
@@ -335,7 +350,10 @@ class Query:
         if instance_uri is not None:
             constraints["instance_uri"] = instance_uri
         new_id = self._next_id()
-        alias = alias or self._default_alias(self.query_graph, cls)
+        if alias is not None:
+            self._require_free_alias(self.query_graph, alias, verb="related")
+        else:
+            alias = self._default_alias(self.query_graph, cls)
         g = self.query_graph.with_node(QueryNode(id=new_id, alias=alias, constraints=constraints))
         edge = QueryEdge(source_id=src_id, target_id=new_id, hops=hops,
                          predicates=preds, direction=direction, patterns=patterns,
@@ -407,7 +425,9 @@ class Query:
             program = ((EQUIPMENT_STEPS[direction], True),
                        (PROPERTY_STEPS[direction], False))
             data_id = self._next_id()
-            g = g.with_node(QueryNode(id=data_id, alias=alias or f"{src_alias}_{direction}_data",
+            data_alias = (self._require_free_alias(g, alias, verb="measurement") if alias is not None
+                          else self._unique_alias(g, f"{src_alias}_{direction}_data"))
+            g = g.with_node(QueryNode(id=data_id, alias=data_alias,
                                       constraints={"is_data_node": True}))
             g = g.with_edge(QueryEdge(source_id=src_id, target_id=data_id,
                                       hops=max_depth + 1, patterns=program, nearest=True),
@@ -424,7 +444,8 @@ class Query:
             src_alias = self._src_alias(src_id)
 
             mid_id = self._next_id()
-            g = g.with_node(QueryNode(id=mid_id, alias=f"{src_alias}_{direction}_entity"))
+            g = g.with_node(QueryNode(id=mid_id,
+                                      alias=self._unique_alias(g, f"{src_alias}_{direction}_entity")))
             g = g.with_edge(QueryEdge(source_id=src_id, target_id=mid_id,
                                       hops=max_depth, direction=direction),
                             new_pointer=mid_id)
@@ -432,7 +453,9 @@ class Query:
             cp_filter = str(S223.InletConnectionPoint if direction == "upstream"
                             else S223.OutletConnectionPoint)
             data_id = mid_id + 1
-            g = g.with_node(QueryNode(id=data_id, alias=alias or f"{src_alias}_{direction}_data",
+            data_alias = (self._require_free_alias(g, alias, verb="measurement") if alias is not None
+                          else self._unique_alias(g, f"{src_alias}_{direction}_data"))
+            g = g.with_node(QueryNode(id=data_id, alias=data_alias,
                                       constraints={"is_data_node": True}))
             g = g.with_edge(QueryEdge(source_id=mid_id, target_id=data_id, hops=1,
                                       cp_filter=cp_filter),
@@ -447,7 +470,7 @@ class Query:
             # anchor (the legacy find_all_data). A standalone data node —
             # still bounded by the external-reference requirement.
             new_id = self._next_id()
-            g = g.with_node(QueryNode(id=new_id, alias=alias or "data",
+            g = g.with_node(QueryNode(id=new_id, alias=alias if alias is not None else "data",
                                       constraints={"is_data_node": True}))
             g = g.with_data_node(DataNodeInfo(node_id=new_id))
             if attrs:
@@ -474,11 +497,11 @@ class Query:
         created: List[int] = []
         for i, src_id in enumerate(src_ids):
             src_alias = g.aliases_reverse.get(src_id, str(src_id))
-            a = alias
-            if a is None:
-                a = f"{src_alias}_data"
-            elif len(src_ids) > 1 and i > 0:
-                a = f"{a}_{i}"
+            if alias is None:
+                a = self._unique_alias(g, f"{src_alias}_data")
+            else:
+                a = alias if i == 0 else f"{alias}_{i}"
+                self._require_free_alias(g, a, verb="measurement")
             new_id = max(g.nodes, default=-1) + 1
             g = g.with_node(QueryNode(id=new_id, alias=a, constraints={"is_data_node": True}))
             g = g.with_edge(QueryEdge(source_id=src_id, target_id=new_id, hops=1,
@@ -503,6 +526,9 @@ class Query:
         if g.current_pointer is None:
             raise ValueError("alias: no current node (start with entity())")
         node = g.nodes[g.current_pointer]
+        owner = g.aliases.get(name)
+        if owner is not None and owner != node.id:
+            self._require_free_alias(g, name, verb="alias")
         return self._with_graph(g.with_node(replace(node, alias=name)))
 
     def where(self, target: Optional[str] = None, **attrs: Any) -> "Query":
