@@ -145,3 +145,15 @@ class TestContextRerank:
         r = _resolver(conv=conv)
         out = r.resolve("kg", kind="unit", top_k=1, context=["http://unrelated"])
         assert out[0].uri == "http://unit/KiloGM"
+
+
+class TestProcessKindRouting:
+    def test_graph_source_serves_process_kind(self):
+        """Regression: the process extraction kind existed but the graph
+        source's kind set didn't include it, so resolve(kind='process')
+        silently returned nothing."""
+        r = _resolver(graph=[
+            _rr("urn:nawi-water-ontology#Process-ReverseOsmosis", "process", score=0.9),
+        ])
+        out = r.resolve("reverse osmosis", kind="process", min_score=0.4)
+        assert out and out[0].uri == "urn:nawi-water-ontology#Process-ReverseOsmosis"

@@ -52,7 +52,7 @@ class TestOutputEvent:
         assert out.payload["point_uri"] == "urn:test:p1"
 
     def test_no_point_uri_raises(self):
-        with pytest.raises(ValueError, match="point_uri"):
+        with pytest.raises(TypeError, match="point_uri"):
             Output.event(severity="info", message="test")
 
     def test_default_ts(self):

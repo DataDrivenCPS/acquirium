@@ -16,7 +16,8 @@ from rdflib.namespace import RDF, RDFS
 
 import warnings
 
-from acquirium.Client.query import Query
+from acquirium.Client.explore.core import Query
+from acquirium.Client.query import Q
 from acquirium.Client.app_display import AppsResponse
 
 
@@ -149,7 +150,15 @@ class Acquirium:
             use_ssl: bool = False,
             lexicon_path: Optional[Path] = None,
             insert_batch_rows: int = 50_000,
+            health_timeout: float | None = 60.0,
         ):
+        """Connect to an Acquirium server.
+
+        The constructor waits up to ``health_timeout`` seconds (default 60)
+        for the server's ``/health`` to answer, retrying while it boots, and
+        raises ``ConnectionError`` if it never does. Pass
+        ``health_timeout=None`` (or 0) to skip the check.
+        """
         if lexicon_path is not None:
             warnings.warn(
                 "lexicon_path is deprecated and ignored. "
@@ -165,6 +174,27 @@ class Acquirium:
         self.insert_batch_rows = int(insert_batch_rows)
         if self.insert_batch_rows <= 0:
             raise ValueError("insert_batch_rows must be greater than zero")
+        if health_timeout:
+            self._wait_for_server(health_timeout)
+
+    def _wait_for_server(self, timeout: float) -> None:
+        import time as _time
+        deadline = _time.monotonic() + timeout
+        last_err: Exception | None = None
+        while True:
+            try:
+                self.client.health(timeout=3.0)
+                return
+            except Exception as e:
+                last_err = e
+            if _time.monotonic() >= deadline:
+                break
+            _time.sleep(min(2.0, max(0.1, deadline - _time.monotonic())))
+        raise ConnectionError(
+            f"Acquirium server at {self.client.base_url} did not answer /health "
+            f"within {timeout:.0f}s (last error: {last_err}). Is the server "
+            f"running? Start it with: acquirium server --config <config.toml>"
+        )
 
     # ------------------------------------------------------------------
     # GRAPH API
@@ -193,8 +223,12 @@ class Acquirium:
         self.client.insert_graph(rdf_graph, format=format, replace=replace)
 
     def query(self) -> Query:
-        """Create a new empty Query bound to this Acquirium instance."""
+        """Create a new empty Query (the explore builder) bound to this instance."""
         return Query(client=self.client)
+
+    def explore(self) -> Query:
+        """Alias of :meth:`query`."""
+        return self.query()
 
     def find_entity(
         self,
@@ -202,12 +236,12 @@ class Acquirium:
         _class: Optional[str] = None,
         alias: Optional[str] = None,
         uri: str | URIRef | None = None,
-    ) -> "Query":
-        q = Query(client=self.client).find_entity(_class=_class, alias=alias, uri=uri)
+    ) -> "Q":
+        q = Q(client=self.client).find_entity(_class=_class, alias=alias, uri=uri)
         return q
-    
-    def find_all_data(self, *, _class: Optional[str] = None, uri: str | URIRef | None = None) -> "Query":
-        q = Query(client=self.client).find_all_data(_class=_class, uri=uri)
+
+    def find_all_data(self, *, _class: Optional[str] = None, uri: str | URIRef | None = None) -> "Q":
+        q = Q(client=self.client).find_all_data(_class=_class, uri=uri)
         return q
 
     # ------------------------------------------------------------------
@@ -347,14 +381,14 @@ class Acquirium:
 
         This is the preferred entry point for drivers and stream
         registration. For arbitrary labels and explicit kinds use
-        :meth:`AcquiriumClient.resolve_record_uris` directly.
+        :meth:`AcquiriumClient.resolve` directly.
         """
         record = {
             name: (value, POINT_FIELD_KINDS.get(name))
             for name, value in fields.items()
         }
         try:
-            return self.client.resolve_record_uris(record, min_score=min_score)
+            return self.client.resolve(record, min_score=min_score)
         except Exception:
             return {name: None for name in record}
 
@@ -435,7 +469,8 @@ class Acquirium:
         registration rather than the run.
         """
         query_bundle = queries if queries is not None else app.build_query(self)
-        if isinstance(query_bundle, Query):
+        if not isinstance(query_bundle, dict):
+            # a single Query (or legacy Q) builder
             query_bundle = {"default": query_bundle}
 
         query_specs = {name: q.to_dict() for name, q in query_bundle.items()}
@@ -512,9 +547,9 @@ class Acquirium:
             interval=interval,
         ))
 
-    def stop_app(self, *, run_id: str | None = None, app_id: str | None = None) -> dict[str, Any]:
-        """Stop a keep-alive app loop by run_id or all loops for an app_id."""
-        return AppsResponse(self.client.stop_app(run_id=run_id, app_id=app_id))
+    def stop_app(self, *, app_id: str) -> dict[str, Any]:
+        """Stop an app's keep-alive loop."""
+        return AppsResponse(self.client.stop_app(app_id=app_id))
 
     def list_app_runs(self, *, app_id: str | None = None) -> dict[str, Any]:
         """List registered apps, or one app's build/run status if app_id is given."""

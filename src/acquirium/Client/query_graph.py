@@ -13,12 +13,12 @@ class QueryNode:
     """A node in the logical query graph.
 
     - id: internal identifier (stable within this QueryGraph)
-    - rdf_class: ontology class URI (e.g., 'urn:nawi-water-ontology#Valve')
     - alias: user-facing name to refer to this node (e.g., 'valve'), if not provided, same as id
-    - constraints: future extension (labels, numeric filters, instance_uri, etc.)
+    - constraints: node constraints; well-known keys are "rdf_class"
+      (ontology class URI, e.g. 'urn:nawi-water-ontology#Valve'),
+      "instance_uri", "is_data_node", "path_from", and "process"
     """
     id: int
-    rdf_class: str | None = None
     alias: Optional[str] = None
     constraints: Dict[str, Any] = field(default_factory=dict)
 
@@ -38,6 +38,17 @@ class QueryEdge:
     predicates: Optional[List[str]] = None
     direction: Optional[str] = None  # "upstream", "downstream", or None
     cp_filter: Optional[str] = None  # rdf:type URI to filter connection points in CP alternative
+    # Lowered via-program snapshot (explore layer): tuple of segments
+    # (alternatives, star); one segment step = UNION of its step chains.
+    patterns: Optional[tuple] = None
+    # Nearest-match edge (explore layer): resolved by client-side BFS at
+    # execute time; value_pairs holds the (source_uri, target_uri) matches
+    # injected as paired VALUES instead of the edge pattern.
+    nearest: bool = False
+    value_pairs: Optional[tuple] = None
+    # Unconstrained-edge compilation: also try the first hop through a
+    # connection point (measurement's include_connection_points flag).
+    cp_union: bool = True
 
 
 @dataclass(frozen=True)
@@ -52,6 +63,10 @@ class QueryGraph:
 
     data_nodes: Dict[int, DataNodeInfo] = field(default_factory=dict)
 
+    # Projected attribute columns: (node_id, attr_name, required) triples,
+    # in order. required=True filters rows lacking the attribute.
+    selects: tuple = ()
+
     def with_data_node(self, info: DataNodeInfo) -> "QueryGraph":
         dn = dict(self.data_nodes)
         dn[info.node_id] = info
@@ -62,6 +77,7 @@ class QueryGraph:
             aliases_reverse=dict(self.aliases_reverse),
             current_pointer=self.current_pointer,
             data_nodes=dn,
+            selects=self.selects,
         )
 
     def with_node(self, node: QueryNode) -> "QueryGraph":
@@ -85,6 +101,7 @@ class QueryGraph:
             aliases_reverse=aliases_reverse,
             current_pointer=node.id,
             data_nodes=dict(self.data_nodes),
+            selects=self.selects,
         )
 
     def with_edge(self, edge: QueryEdge, *, new_pointer: Optional[int] = None) -> "QueryGraph":
@@ -98,6 +115,36 @@ class QueryGraph:
             aliases_reverse=dict(self.aliases_reverse),
             current_pointer=new_pointer if new_pointer is not None else self.current_pointer,
             data_nodes=dict(self.data_nodes),
+            selects=self.selects,
+        )
+
+    def with_select(self, node_id: int, attr_name: str, required: bool = False) -> "QueryGraph":
+        """Return a new graph with an added (node, attr) projection.
+
+        Deduplicated on (node, attr); re-adding with a different ``required``
+        replaces the entry."""
+        entry = (node_id, attr_name, required)
+        if entry in self.selects:
+            return self
+        if any(n == node_id and a == attr_name for n, a, _ in self.selects):
+            return QueryGraph(
+                nodes=dict(self.nodes),
+                edges=list(self.edges),
+                aliases=dict(self.aliases),
+                aliases_reverse=dict(self.aliases_reverse),
+                current_pointer=self.current_pointer,
+                data_nodes=dict(self.data_nodes),
+                selects=tuple(entry if (n == node_id and a == attr_name) else (n, a, r)
+                              for n, a, r in self.selects),
+            )
+        return QueryGraph(
+            nodes=dict(self.nodes),
+            edges=list(self.edges),
+            aliases=dict(self.aliases),
+            aliases_reverse=dict(self.aliases_reverse),
+            current_pointer=self.current_pointer,
+            data_nodes=dict(self.data_nodes),
+            selects=self.selects + (entry,),
         )
 
     def resolve_alias(self, alias_or_none: Optional[str]) -> Optional[int]:

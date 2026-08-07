@@ -1,7 +1,7 @@
 # Acquirium config for the Benicia deployment.
 #
 # Boot the server (data + both drivers) from the REPO ROOT:
-#   acquirium server --config deployments/BENICIA/acquirium.toml
+#   acquirium server --config deployments/BENICIA/scripts/acquirium.toml
 #
 # This starts the HTTP server with its data directory inside this deployment
 # (deployments/BENICIA/data) and launches two drivers as Ray actors:
@@ -14,7 +14,7 @@
 #
 # Path bases:
 #   * [server] data_dir, driver `model`, and parquet `watch_dir` resolve
-#     relative to THIS config file's directory (deployments/BENICIA).
+#     relative to THIS config file's directory (deployments/BENICIA/scripts).
 #   * driver `spec` file paths also resolve relative to this directory.
 #
 # Generate the historical parquet first (from the repo root):
@@ -37,7 +37,7 @@ interval    = 1.0
 [[drivers]]
 spec           = "simulator_driver.py:BeniciaSimulatorDriver"
 interval       = 1.0
-model          = "benicia-model-100.ttl"
+model          = "../benicia-model-100.ttl"
 source_id      = "benicia-live"
 namespace      = "urn:ex/"
 insert_graph   = true
@@ -52,10 +52,10 @@ step_frac      = 0.02
 [[drivers]]
 spec         = "parquet_driver.py:BeniciaParquetDriver"
 interval     = 5.0
-watch_dir    = "data/historical"
+watch_dir    = "../data/historical"
 format       = "wide"
 time_col     = "timestamp"
 source_id    = "benicia-historical"
 namespace    = "urn:ex/"
-model        = "benicia-model-100.ttl"
+model        = "../benicia-model-100.ttl"
 insert_graph = true

@@ -641,6 +641,21 @@ def sparql_json(query: str, use_union: bool = True) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(e))
 
 
+class SparqlQueryRequest(BaseModel):
+    query: str = Field(..., description="SPARQL SELECT/ASK/CONSTRUCT query")
+    use_union: bool = Field(True, description="Query the imports-union graph")
+
+
+@app.post("/sparql_json")
+def sparql_json_post(req: SparqlQueryRequest) -> dict[str, Any]:
+    """POST form of /sparql_json: VALUES-heavy queries (e.g. resolved
+    traversal edges) exceed URL length limits, so the client posts."""
+    try:
+        return app.state.manager.sparql_dict(req.query, use_union=req.use_union)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 class SparqlUpdateRequest(BaseModel):
     update: str = Field(..., description="SPARQL UPDATE (INSERT/DELETE) statement")
 
@@ -754,6 +769,23 @@ class ResolveUnitRequest(BaseModel):
 class ConversionFactorsRequest(BaseModel):
     from_unit: str = Field(..., description="Source unit identifier")
     to_unit: str = Field(..., description="Target unit identifier")
+
+
+class ResolveConversionRequest(BaseModel):
+    from_unit: str = Field(..., description="Source unit: URI or free text")
+    to_unit: str = Field(..., description="Target unit: URI or free text")
+    top_k: int = Field(5, description="Candidates considered per side")
+    min_score: float = Field(0.5, description="Minimum resolver score")
+
+
+@app.post("/resolve_conversion")
+def resolve_conversion(req: ResolveConversionRequest) -> dict[str, Any]:
+    try:
+        return app.state.manager.resolve_conversion_info(
+            req.from_unit, req.to_unit, top_k=req.top_k, min_score=req.min_score
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/resolve_unit")

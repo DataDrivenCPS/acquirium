@@ -89,6 +89,22 @@ def _aggregate_uri_label_rows(
         })
 
 
+def pick_convertible_pair(from_candidates, to_candidates, are_compatible):
+    """Best-ranked compatible (from, to) pair from rank-ordered URI lists.
+
+    Minimizes the summed candidate ranks (ties favor the from side);
+    returns ``None`` when no pair is compatible.
+    """
+    best = None
+    for i, a in enumerate(from_candidates):
+        for j, b in enumerate(to_candidates):
+            if best is not None and i + j >= best[0]:
+                continue
+            if are_compatible(a, b):
+                best = (i + j, a, b)
+    return (best[1], best[2]) if best else None
+
+
 def _wipe_dir_contents(base: Path) -> None:
     base.mkdir(parents=True, exist_ok=True)
     for p in base.iterdir():
@@ -189,8 +205,12 @@ class Manager:
         _emb_model = os.getenv("ACQUIRIUM_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 
         # Persist the downloaded embedding model under the data dir so it
-        # survives OS temp-dir purges (fastembed defaults to $TMPDIR).
-        _model_cache = base / "embedding_cache" / "models"
+        # survives OS temp-dir purges (fastembed defaults to $TMPDIR). A
+        # pre-warmed cache (e.g. baked into the Docker image) can be pointed
+        # at with FASTEMBED_CACHE_PATH.
+        _model_cache = Path(
+            os.getenv("FASTEMBED_CACHE_PATH") or base / "embedding_cache" / "models"
+        )
 
         # Dual matchers: graph (class/predicate) and QUDT (unit/quantity_kind)
         self._graph_matcher = EmbeddingMatcher(
@@ -343,6 +363,8 @@ class Manager:
           UNION {{ ?x <{HAS_ENUMERATION_KIND}> ?uri . }}
           UNION {{ ?x <{OF_SUBSTANCE}> ?uri . }}
           UNION {{ ?x <{HAS_MEDIUM}> ?uri . }}
+          FILTER NOT EXISTS {{ ?uri (<{RDFS.subClassOf}>)* <{WATR.Process}> . }}
+          FILTER(!STRSTARTS(STR(?uri), "{WATR}Process"))
         """
         pred_where = f"""
           {{ ?uri a <{RDF_PROP}> . }}
@@ -361,11 +383,22 @@ class Manager:
           UNION {{ ?x <{HAS_MEDIUM}> ?uri . }}
           UNION {{ ?x <{OF_SUBSTANCE}> ?uri . }}
         """
+        # Constrained process space: the NAWI process taxonomy plus whatever
+        # the loaded model actually uses as a process (self-grounding, like
+        # substances). Its own kind so process filters never rank equipment
+        # classes ("reverse osmosis" must hit Process-ReverseOsmosis, not
+        # ReverseOsmosisMembrane).
+        process_where = f"""
+          {{ ?uri (<{RDFS.subClassOf}>)* <{WATR.Process}> . }}
+          UNION {{ ?x <{WATR.hasProcess}> ?uri . }}
+          UNION {{ ?uri a <{WATR.Class}> . FILTER(STRSTARTS(STR(?uri), "{WATR}Process")) }}
+        """
 
         extractions: list[tuple[str, str, str]] = [
             ("class", class_where, label_block_basic),
             ("predicate", pred_where, label_block_basic),
             ("substance", substance_where, label_block_basic),
+            ("process", process_where, label_block_basic),
         ]
 
         for kind, where, label_block in extractions:
@@ -866,6 +899,61 @@ class Manager:
             QUDT_UNIT_IRI, len(qudt_graph),
         )
         return self.qudt_converter
+
+    def resolve_conversion_info(
+        self,
+        from_unit: str,
+        to_unit: str,
+        top_k: int = 5,
+        min_score: float = 0.5,
+    ) -> dict[str, Any]:
+        """Resolve a from/to unit pair to a *convertible* match plus factors.
+
+        Each side may be a URI (pinned) or free text — text goes through the
+        full resolver cascade, and the best-ranked candidate pair that is
+        actually compatible for conversion wins. This closes the gap between
+        the lenient text resolver (which may top-rank a non-convertible
+        near-match) and the strict converter (which rejects anything but
+        exact symbols/labels).
+
+        Example::
+
+            resolve_conversion_info("mg/l", "grams per liter")
+            # -> {"from": {...MilliGM-PER-L...}, "to": {...GM-PER-L...},
+            #     "factors": {"from_multiplier": ..., "to_uri": ..., ...}}
+        """
+        converter = self._ensure_qudt_converter()
+
+        def candidates(identifier: str, side: str) -> list[str]:
+            s = str(identifier)
+            if s.startswith(("http://", "https://", "urn:")):
+                return [s]
+            uris = [m["uri"] for m in self.resolve_text(
+                s, kind="unit", top_k=top_k, min_score=min_score)]
+            if not uris:
+                raise ValueError(f"could not resolve {side} unit {identifier!r}")
+            return uris
+
+        from_cands = candidates(from_unit, "from")
+        to_cands = candidates(to_unit, "to")
+
+        def compat(a: str, b: str) -> bool:
+            try:
+                return converter.are_compatible(a, b)
+            except Exception:
+                return False
+
+        pair = pick_convertible_pair(from_cands, to_cands, compat)
+        if pair is None:
+            raise ValueError(
+                f"no convertible pair among the matches for {from_unit!r} -> {to_unit!r} "
+                f"(from candidates: {from_cands}, to candidates: {to_cands})"
+            )
+        return {
+            "from": self.resolve_unit_info(pair[0]),
+            "to": self.resolve_unit_info(pair[1]),
+            "factors": self.get_conversion_factors(pair[0], pair[1]),
+        }
 
     def resolve_unit_info(self, identifier: str) -> dict[str, Any]:
         """Resolve a unit identifier to its QUDT metadata (deterministic).

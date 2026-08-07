@@ -7,7 +7,7 @@ import polars as pl
 import logging
 
 if TYPE_CHECKING:
-    from acquirium.Client.query import Query
+    from acquirium.Client.explore.core import Query
     from acquirium.Client.query_graph import QueryGraph
     from acquirium.Client.client import AcquiriumClient
 
@@ -202,7 +202,9 @@ def _pivot_split_values(tall: pl.DataFrame, pivot_key: str) -> pl.DataFrame:
     wide = parts[0]
     for part in parts[1:]:
         wide = wide.join(part, on="time", how="full", coalesce=True)
-    return wide.sort("time")
+    # deterministic column order: time first, then case-insensitive alphabetical
+    value_cols = sorted((c for c in wide.columns if c != "time"), key=str.casefold)
+    return wide.select(["time", *value_cols]).sort("time")
 
 
 @dataclass(frozen=True)
@@ -256,11 +258,13 @@ class DataObject:
     # ------------------------------------------------------------------
 
     @classmethod
-    def _empty(cls, qg: QueryGraph, *, cast_value: str | None = "float") -> DataObject:
+    def _empty(cls, qg: QueryGraph, *, cast_value: str | None = "float",
+               client: "AcquiriumClient | None" = None) -> DataObject:
         return cls(
             _bindings=[],
             _entity_columns=[],
             _query_graph=qg,
+            _client=client,
             _tall=pl.DataFrame(
                 schema={
                     "data_alias": pl.Utf8,
@@ -290,12 +294,12 @@ class DataObject:
         qg = query.query_graph
 
         if not getattr(qg, "data_nodes", None):
-            return cls._empty(qg, cast_value=cast_value)
+            return cls._empty(qg, cast_value=cast_value, client=query.client)
 
         point_ref_uris, entity_context, prop_units, ext_ref_units = _parse_sparql_bindings(query)
 
         if not point_ref_uris:
-            return cls._empty(qg, cast_value=cast_value)
+            return cls._empty(qg, cast_value=cast_value, client=query.client)
 
         # Determine all entity column names across every context dict
         all_entity_cols: set[str] = set()
@@ -893,24 +897,31 @@ class DataObject:
         if self._client is None:
             raise ValueError("Cannot convert units without a client connection")
 
-        def _to_uri(identifier: str, *, param: str) -> str:
-            try:
-                return self._client.resolve_unit(identifier)["uri"]
-            except Exception as e:
-                raise ValueError(
-                    f"convert_to: could not resolve {param}={identifier!r} to a QUDT unit URI ({e})"
-                ) from e
-
-        to_unit_uri = _to_uri(to_unit, param="to_unit")
-        from_unit_uri = _to_uri(from_unit, param="from_unit") if from_unit is not None else None
-
         effective = self._resolve_effective_units()
         affected_aliases = [alias] if alias else self.aliases
 
-        # Validate and determine from_unit per alias
-        conversions: list[tuple[str, str, str]] = []  # (alias, from, to)
+        # Resolve a convertible pair per (source, target) — the server picks,
+        # among the top matches for a free-text side, the candidate that is
+        # actually compatible with the other side. The from side is usually a
+        # unit URI off the stream metadata, which pins it.
+        raw_pairs: dict[tuple[str, str], dict] = {}
+
+        def _factors(src: str, tgt: str) -> dict:
+            key = (str(src), str(tgt))
+            if key not in raw_pairs:
+                try:
+                    raw_pairs[key] = self._client.resolve_conversion(src, tgt)["factors"]
+                except Exception as e:
+                    raise ValueError(
+                        f"convert_to: no convertible unit pair for {src!r} -> {tgt!r} ({e})"
+                    ) from e
+            return raw_pairs[key]
+
+        # Validate and determine from_unit per alias; store resolved URIs so
+        # the pending/materialize paths only ever see exact units.
+        conversions: list[tuple[str, str, str]] = []  # (alias, from_uri, to_uri)
         for a in affected_aliases:
-            src = from_unit_uri
+            src = from_unit
             if src is None:
                 src = effective.get(a)
                 if src is None:
@@ -918,18 +929,12 @@ class DataObject:
                         f"No unit annotation found for alias '{a}'. "
                         f"Provide from_unit explicitly."
                     )
-            conversions.append((a, src, to_unit_uri))
+            f = _factors(src, to_unit)
+            conversions.append((a, f["from_uri"], f["to_uri"]))
 
-        # Deduplicate factor requests
-        factor_pairs = {(c[1], c[2]) for c in conversions}
-        factors_cache: dict[tuple[str, str], dict] = {}
-        for fu, tu in factor_pairs:
-            factors = self._client.get_conversion_factors(fu, tu)
-            if not factors.get("compatible", False):
-                raise ValueError(
-                    f"Incompatible units: {fu} -> {tu}"
-                )
-            factors_cache[(fu, tu)] = factors
+        factors_cache: dict[tuple[str, str], dict] = {
+            (f["from_uri"], f["to_uri"]): f for f in raw_pairs.values()
+        }
 
         if self._materialized and self._tall is not None:
             # Eager path: clone the tall frame and apply conversions

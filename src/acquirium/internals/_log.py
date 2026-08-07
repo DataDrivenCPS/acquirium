@@ -33,10 +33,10 @@ def configure_logging(verbose: bool | None = None) -> None:
 
     level = logging.DEBUG if verbose else logging.INFO
 
-    logging.basicConfig(level=level, format=_LOG_FORMAT, force=True)
-    # Explicit set, since basicConfig only configures root and a prior INFO-level
-    # call would have already won without force=True; this also lets us tune the
-    # acquirium tree independently of uvicorn / fastapi loggers in the future.
+    # Root stays at INFO even in verbose mode: third-party libraries
+    # (watertap/idaes/pyomo solvers, ...) propagate to root, and their DEBUG
+    # output would drown the log. --verbose means DEBUG for acquirium.* only.
+    logging.basicConfig(level=logging.INFO, format=_LOG_FORMAT, force=True)
     logging.getLogger("acquirium").setLevel(level)
 
 

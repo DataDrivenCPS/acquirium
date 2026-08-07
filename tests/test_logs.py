@@ -2,7 +2,7 @@ import pytest
 from conftest import ACQUIRIUM_TEST_SERVER_HOST, ACQUIRIUM_TEST_SERVER_PORT
 from acquirium import Acquirium
 from acquirium.internals.internals_namespaces import *
-from acquirium.Client.query import Query
+from acquirium.Client.query import Q
 import shutil
 import polars as pl
 import time
@@ -45,7 +45,7 @@ def test_log_1(acquirium_client_nodata):
         log_time="2024-06-10T12:00:00Z",
         log_message="Pump started successfully."
     )
-    # Query the logs
+    # Q the logs
     logs = acquirium_client_nodata.client.query_logs(
         point_uri="urn:ex/Pump1",
         log_time_start="2024-06-10T11:00:00Z"
@@ -122,7 +122,7 @@ def test_log_2(acquirium_client_nodata):
         log_message="Pump started successfully. - log 5"
     )
     
-    # Query the logs
+    # Q the logs
     logs = acquirium_client_nodata.client.query_logs(
         point_uri="urn:ex/Pump1-in",
         log_time_start="2024-06-10T11:00:00Z"
@@ -189,7 +189,7 @@ def test_log_3(acquirium_client_nodata):
         message="Pump started successfully."
     )
 
-    # Query the logs
+    # Q the logs
     logs = q.read_logs(log_time_start="2026-01-01T01:00:00Z")
     assert len(logs) == 1
     assert logs.shape == (1, 5)

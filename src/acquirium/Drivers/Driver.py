@@ -40,9 +40,9 @@ def _cast_value_to_utf8(col: "pl.Series") -> "pl.Expr":
 class Driver(ABC):
     """Base class for data-collection / processing drivers.
 
-    The ``acquirium run`` CLI calls :meth:`setup` once at startup, then calls
+    The server's driver runner calls :meth:`setup` once at startup, then calls
     :meth:`tick` repeatedly, sleeping for ``interval`` seconds between calls.
-    Override :meth:`stop` for cleanup on Ctrl-C or SIGTERM.
+    Override :meth:`stop` for cleanup when the driver is stopped.
 
     Example::
 
@@ -60,9 +60,13 @@ class Driver(ABC):
                                      "ref_name": ["temp"],
                                      "value": [21.5]})
 
-    Invoke with::
+    Run it by listing it under ``[[drivers]]`` in acquirium.toml::
 
-        acquirium run my_module:MyDriver --config acquirium.toml
+        [[drivers]]
+        spec = "my_module:MyDriver"
+
+    then ``acquirium server --config acquirium.toml``, or push it to a running
+    server with ``acquirium driver start acquirium.toml``.
     """
 
     # Default datasource for single-source ingest drivers. Multi-source drivers

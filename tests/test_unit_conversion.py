@@ -216,19 +216,21 @@ class TestDataObjectUnits:
         assert converted is not data
 
     def test_convert_to_unresolvable_to_unit_raises(self, acquirium_client):
-        """convert_to() resolves to_unit up front and names it in the error."""
+        """A garbage to_unit fails as 'no convertible pair': the lenient
+        resolver may return fuzzy candidates, but none is compatible with
+        the source unit, and the error names both sides."""
         acq = acquirium_client
         data = acq.find_all_data().data()
 
-        with pytest.raises(ValueError, match=r"could not resolve to_unit"):
+        with pytest.raises(ValueError, match=r"no convertible unit pair for .*NoSuchUnit12345"):
             data.convert_to("NoSuchUnit12345")
 
     def test_convert_to_unresolvable_from_unit_raises(self, acquirium_client):
-        """An unresolvable from_unit is reported before any conversion runs."""
+        """A garbage from_unit is reported before any conversion runs."""
         acq = acquirium_client
         data = acq.find_all_data().data()
 
-        with pytest.raises(ValueError, match=r"could not resolve from_unit"):
+        with pytest.raises(ValueError, match=r"no convertible unit pair for 'NoSuchUnit12345'"):
             data.convert_to("L-PER-MIN", from_unit="NoSuchUnit12345")
 
     def test_convert_to_accepts_full_unit_uri(self, acquirium_client):
