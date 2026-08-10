@@ -63,7 +63,7 @@ Everything before it only describes the pattern; nothing is sent until you ask
 for results.
 It returns the matched items as a polars frame, one column per node, and every
 example in this doc ends with it.
-Timeseries values are a separate ask, covered under
+Timeseries values are requested separately, covered under
 [Getting the values](#getting-the-values).
 
 `uri=` pins one specific instance instead (CURIEs work).
@@ -275,8 +275,8 @@ shape: (3, 2)
 └────────┴───────────────────────────────┘
 ```
 
-On an empty query, `measurement()` stands alone: it matches every registered
-stream in the plant.
+Called on an empty query, `measurement()` matches every registered stream in
+the plant.
 
 ```python
 acq.query().measurement(quantity_kind="pressure").metadata()
@@ -350,8 +350,8 @@ shape: (1, 2)
 `dataframe()` and `data()` fetch what those points recorded.
 
 `dataframe()` returns the timeseries in one frame.
-`shape="wide"` puts `time` first and one column per point, which is what you
-usually want for plotting or joining:
+`shape="wide"` puts `time` first and one column per point.
+This shape is useful for plotting or joining:
 
 ```python
 q = (acq.query().entity(uri="wbs:RO", alias="ro")
@@ -374,9 +374,9 @@ The default `shape="narrow"` gives one row per reading instead, with the point
 it came from in its own column.
 Either way you can bound what you pull with `start=`, `end=` and `limit=`.
 
-`data()` returns a `DataObject`, which is the same data kept lazy.
-It knows how many rows and what time range it would fetch before fetching
-anything, and lets you take one alias at a time:
+`data()` returns a `DataObject`, a lazy reference to the same data.
+It reports the row count and time range before fetching anything, and lets
+you take one alias at a time:
 
 ```python
 d = q.data()
@@ -400,9 +400,8 @@ shape: (3, 3)
 └────────────────────────────────┴──────────┴─────────────────────────────────┘
 ```
 
-Unit conversion, grouping by entity and the rest of the `DataObject` API are in
-the data guide.
-<!-- link data.md here once it exists (plan step DA1) -->
+Unit conversion, grouping by entity and the rest of the `DataObject` API are
+in the [data guide](data.md).
 
 ## where()
 
@@ -580,8 +579,8 @@ shape: (2, 2)                          shape: (1, 1)
 └─────────────────────────┴───────────┘
 ```
 
-With no arguments it drops the node the pointer is on, which is handy right
-after a step you only needed as a waypoint:
+With no arguments it drops the node the pointer is on, which is useful when a
+node exists only to constrain the pattern:
 
 ```python
 (acq.query().entity(uri="wbs:pretreatment-system").drop()
@@ -594,8 +593,8 @@ later in the chain: `include()` un-drops a node, `drop()` un-includes an
 attribute.
 
 ```python
-q.drop("System").include("System")      # back to showing it
-q.include("unit").drop("unit")          # never mind the unit column
+q.drop("System").include("System")      # show it again
+q.include("unit").drop("unit")          # remove the attribute again
 ```
 
 ### with_columns()
@@ -657,10 +656,10 @@ its label.
 
 ## Exploring what is there
 
-The hard part of a new plant is knowing what to ask for.
+In a new plant, the hard part is knowing what to ask for.
 `options()` and `facets()` answer that: they report the attribute values that
 actually occur in your current matches, so you can narrow down step by step.
-Both run immediately and return values, not a query.
+Both run immediately and return values rather than a new query.
 
 ### options()
 
@@ -752,7 +751,8 @@ So an empty query still tells you which filters exist to try.
 Empty results are usually one of five things.
 
 **The text resolved to the wrong concept.**
-The most common cause, and the quietest, because the query still runs.
+This is the most common cause, and the query still runs, so there is no
+error to see.
 It applies to predicates too: `via="flurb blah"` does not fail, it resolves to
 the closest predicate it can find and walks that instead.
 Check with `acq.client.resolve(text, kind, top_k=3)`.
@@ -783,8 +783,8 @@ Take `required=` off and look for nulls in the column.
 `include_connection_points=False` keeps only directly-owned points, which for
 most equipment is very few.
 
-When in doubt, take the chain apart: run `metadata()` after each step and see
-where the rows disappear.
+When in doubt, run `metadata()` after each step and see where the rows
+disappear.
 `facets()` on the last surviving node shows what values actually exist there.
 
 
@@ -798,8 +798,8 @@ Depth and internals. Nothing here is needed for everyday use.
 ### Seeing and running the raw query
 
 `to_sparql()` returns the SPARQL the query compiles to, without running it.
-It is the fastest way to understand what a chain actually asks for, and to
-check that a filter landed where you meant it to.
+It is the fastest way to see what a chain actually asks for, and to check
+that a filter applies to the node you intended.
 
 `execute()` runs that query and returns the raw bindings as
 `{"columns": [...], "rows": [[...]]}`.
@@ -813,8 +813,8 @@ the attributes (`rdf:type`, `hasUnit`, `hasQuantityKind`, `ofMedium`,
 `hasMedium`, `ofSubstance`, `hasEnumerationKind`, `hasProcess`, `dataSource`),
 plus `rdfs:subClassOf`, `s223:hasProperty`, `s223:hasConnectionPoint`,
 `s223:cnx` and `ref:hasExternalReference`.
-These describe a node rather than connect the plant, and walking them turns
-"what is near this pump" into a tour of the ontology.
+These predicates describe a node rather than connect the plant, and walking
+them returns ontology terms instead of nearby equipment.
 
 ```python
 from acquirium.Client.explore import hidden_predicates, hide, unhide
@@ -845,32 +845,55 @@ The `EQUIPMENT` pair walks equipment to equipment through connection points and
 connections; the `PROPERTY` pair ends on the measurements attached along the
 way.
 `related()` and `measurement()` pick the right one for you.
-Each constant is a tuple of chains you can read, and passing one to `via=`
-gives you the same traversal but as a program the client walks, which is what
-makes `nearest=True` work along the flow instead of over raw graph hops:
+Each constant is a readable tuple of chains.
+Passing one to `via=` runs the same traversal as a client-side walk, so
+`nearest=True` follows the process flow instead of raw graph hops:
 
 ```python
 q.related("pump", via=UPSTREAM_EQUIPMENT, nearest=True)
 ```
 
-The module docstring of `acquirium.Client.explore.directions` spells out every
-step.
+The module docstring of `acquirium.Client.explore.directions` documents
+every step.
 
 ### How traversal runs
 
-SPARQL is bad at "any predicate, several hops": every hop multiplies joins,
-and an unbounded wildcard path can stall the store.
-So Acquirium does not ask it to.
+SPARQL handles multi-hop wildcard traversal poorly: every hop multiplies
+joins, and an unbounded path can stall the store.
+Acquirium therefore resolves these steps client side.
 When a step uses `via="any"` or a repeatable predicate, the client resolves it
 at execute time with a breadth-first walk: fetch one layer of neighbors, step,
 repeat, up to `max_depth`.
-That walk is also what makes `nearest` exact; distance is counted per source,
-and ties survive.
+The walk also makes `nearest` exact: distance is counted per source, and
+ties survive.
 The final SPARQL only ever receives the concrete pairs the walk found.
-Predicate lists and `direction=` compile to SPARQL directly, no walk needed.
+Predicate lists and `direction=` compile to SPARQL directly, without the
+walk.
 Layer results are cached until the graph changes, so repeating a query is
 cheap.
 You can always inspect what will run with `.to_sparql()`.
+
+### Method fine points
+
+`measurement(frm=...)` also accepts a list of aliases, attaching one
+measurement node per named entity.
+This is the middle ground between a single `frm=` and `frm="*"`:
+
+```python
+(acq.query().entity(uri="wbs:P1", alias="p1").related("Pressure Exchanger", alias="px")
+ .measurement(frm=["p1", "px"], quantity_kind="pressure"))
+# columns: p1, px, p1_data, px_data
+```
+
+`alias()` renames the current node, but the previous alias keeps working as
+an alternative handle in `target=`, `frm=` and `of=`; display uses the latest
+name.
+
+The terminals take `use_union=` (default `True`).
+`True` queries the union of the model and the ontology closure, which is what
+makes subclass matching work.
+`False` restricts the query to the model graph alone; it is faster and
+correct only for queries that need no ontology terms.
 
 ---
 
@@ -907,7 +930,7 @@ is `max_depth`, and `predicates` is `via`.
 `metadata()`, `data()`, `dataframe()`, `execute()`, `to_sparql()`,
 `insert_log()` and `read_logs()` kept their names and behave the same.
 
-Two differences are worth knowing before you port anything.
+Two behavior differences matter when porting.
 
 Defaults changed.
 `related()` returns nearest matches where `find_related` returned everything
