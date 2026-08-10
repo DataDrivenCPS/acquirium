@@ -167,17 +167,10 @@ runs on every insert without slowing ingestion down.
 
 ## App outputs are streams too
 
-An app that produces values (a soft sensor, for instance) goes through the
-same machinery.
-When the app is registered, each declared output becomes a point and a
+When an app that produces values (a soft sensor, for instance) is registered, each declared output becomes a point and a
 reference node: the app's name is the `source_id`, the output's point URI
 string is the `ref_name`, and the computed `ref_uri` follows from the pair
 as usual.
-Timeseries outputs are registered as numeric streams, event outputs as text
-streams.
-
 The result is that computed values are indistinguishable from measured ones
-at query time: an app's output point is a `VirtualPoint` with a unit and a
-quantity kind, found by the same queries, fetched by the same read path.
-The only extra is provenance: the point carries `acq:isCalculatedFrom` links
-to the points the app depends on.
+at query time.
+
