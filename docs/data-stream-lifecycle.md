@@ -1,326 +1,183 @@
-# Acquirium Data Model
+# The data stream lifecycle
 
-Acquirium stores two kinds of things in two different stores:
+This is a guide to how a timeseries stream comes into existence, how its rows
+are stored, and how a query finds them again.
+It is background for driver authors and for anyone debugging ingestion; using
+the data is covered in the [data guide](data.md).
 
-- **The RDF graph** holds semantics: what a measurement point *is*, what it measures, where it lives in the physical topology, and how it connects to raw data.
-- **The timeseries store** (TimescaleDB or DuckDB) holds the raw observations keyed by `ref_uri` and timestamp. Logically this is `(ref_uri, timestamp, value)`, but physically Acquirium stores typed value columns such as `numeric_value` and `text_value`.
+## The identifier model
 
-These two stores are linked through an *external reference* pattern.
+A stream has three identifiers.
 
----
-
-## The three identifiers
-
-Every managed stream is described by three identifiers that live at different layers:
-
-### `point_uri`
-
-The semantic URI of a measurement point or computed output. This is what ontologies and application queries talk about. It identifies the *thing being measured*, not the storage location.
-
-Examples:
-```
-urn:host:mybox:cpu_percent
-urn:watertap:pump_1:outlet_pressure
-```
-
-`point_uri` lives in the RDF graph. It carries physical meaning: type, unit, quantity kind, medium, connections to other equipment. Applications and SPARQL queries operate on `point_uri` values. It also participates in the ontology, be that [ASHRAE 223](https://open223.info), [WaTr Ontology](https://watermetadata.org) or [Brick](https://brickschema.org).
-
-### `(source_id, ref_name)`
-
-The driver's natural name for a stream. `source_id` identifies the data source (e.g. a sensor network, a file, an MQTT broker, a simulation model) presented through a software process which delivers that data to Acquirium. `ref_name` is the source-local stream identifier: a column name, sensor tag, MQTT topic, etc. Together they form a globally unique, human-readable address for the stream. `source_id`s are unique to an Acquirium instance, but `ref_name`s only need to be unique with respect to the `source_id`.
-
-Examples:
-```
-source_id = "mybox-system-metrics",  ref_name = "cpu_percent"
-source_id = "plant-historian",       ref_name = "TI-101"
-source_id = "watertap",              ref_name = "pump_1.outlet.pressure"
-```
-
-This is what drivers work with. Drivers do not need to know `point_uri` values to insert data. They only need to know their `source_id` and their source-local `ref_name`.
-
-### `ref_uri` (the canonical reference URI)
-
-A deterministic UUID5 URI minted by Acquirium from `(source_id, ref_name)`:
-
-```python
-# from acquirium/internals/models.py
-ref_uri = compute_ref_uri(source_id, ref_name)
-```
-
-This URI serves double duty:
-
-1. **Graph node**: it is the object of `ref:hasExternalReference` on the `point_uri`, and carries `acq:sourceId` and `acq:refName` predicates so the mapping can be reconstructed from the graph alone.
-2. **Storage key**: it is the value stored in the `ref_uri` column of the timeseries table. All writes and reads go through this key.
-
-Because `ref_uri` is derived deterministically from `(source_id, ref_name)`, drivers, the server, and the graph all agree on the same value without any coordination. A driver that computes `ref_uri` offline will get the same key as the server. A graph that was inserted before the first data row arrives will already contain the correct `ref_uri`. The UUID5 construction means two sources with the same `ref_name` can never produce the same `ref_uri`.
-
-There is no separate `handle` concept. Older notes and code used `handle` for this same value; the current model calls it `ref_uri` everywhere because it is both the external-reference URI and the physical timeseries storage key.
-
----
-
-## The streams table
-
-The timeseries store maintains a `streams` table that records the mapping:
-
-```
-ref_uri  →  (point_uri, source_id, ref_name, value_kind)
-```
-
-This table is populated three ways:
-
-- **On stream registration** (`register_stream` / `register_streams`): the client writes the graph triple `point_uri → ref:hasExternalReference → ref_uri` when `point_uri` is known, and the server's `_sync_stream_refs_from_graph` method scans for these triples and upserts them into the streams table.
-- **On data insert** (`insert_timeseries`, `insert_timeseries_batch`, `insert_timeseries_arrow`): the server computes `ref_uri` from `(source_id, ref_name)` and upserts a streams row even when no `point_uri` is known yet. In that case `streams.point_uri` is `NULL`.
-- **On graph insert**: any time RDF is inserted, the server re-scans the graph for managed reference patterns.
-
-The streams table lets the server answer: *given a `point_uri`, what storage key should I read from?* Without it, reading by `point_uri` would require a SPARQL query on every data request.
-
-The table also records streams discovered only from data insertion. Those rows have a `ref_uri`, `source_id`, and `ref_name`, with `point_uri = NULL` until a semantic graph link is inserted later.
-
-`value_kind` records the stream-level storage type. Drivers declare it as `"numeric"` or `"text"` when registering streams or inserting observations. It defaults to `"text"` when omitted. Numeric telemetry is stored in `timeseries.numeric_value`; text/log-like samples are stored in `timeseries.text_value`; the other value column is normally `NULL`.
-
-Numeric streams can still contain occasional nonnumeric rows. If a value in a numeric stream cannot be converted to a float, Acquirium stores that row in `timeseries.text_value` rather than rejecting the whole insert. Read APIs expose `value_mode` to choose default behavior, numeric-only rows, text-only rows, or a coalesced mixed stream. See [`data-api.md`](data-api.md) for the read modes and examples.
-
----
-
-## The graph shape
-
-The RDF graph for a managed stream looks like this:
-
-```turtle
-@prefix acq:  <urn:acquirium#> .
-@prefix ref:  <https://brickschema.org/schema/Brick/ref#> .
-@prefix qudt: <http://qudt.org/schema/qudt/> .
-@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
-
-# The semantic point — what is being measured
-<urn:host:mybox:cpu_percent>
-    a acq:VirtualPoint ;
-    rdfs:label "CPU usage" ;
-    qudt:hasUnit      <http://qudt.org/vocab/unit/PERCENT> ;
-    qudt:hasQuantityKind <http://qudt.org/vocab/quantitykind/DimensionlessRatio> ;
-    ref:hasExternalReference <urn:acquirium#01234567-89ab-cdef-0123-456789abcdef> .
-
-# The external reference node — links semantics to storage
-<urn:acquirium#01234567-89ab-cdef-0123-456789abcdef>
-    acq:sourceId "mybox-system-metrics" ;
-    acq:refName  "cpu_percent" ;
-    acq:valueKind "numeric" ;
-    ref:storedAt <urn:acquirium#TimescaleDB> .
-
-# The datasource node — makes the source discoverable
-<urn:acquirium:datasource:mybox-system-metrics>
-    a acq:DataSourceRegistry ;
-    rdfs:label "mybox-system-metrics" .
-```
-
-The `ref_uri` node (the UUID5 URI) is intentionally thin. It is an indirection node, not a description of the measurement itself. Semantic metadata goes on `point_uri`; provenance and routing metadata goes on `ref_uri`.
-
----
-
-## How data flows in
-
-### Step 1 — register the datasource
-
-```python
-aq.register_datasource("mybox-system-metrics")
-```
-
-Writes the `acq:DataSourceRegistry` node to the graph. This is a discovery mechanism — it makes the source visible to SPARQL queries that enumerate known sources. Safe to call on every startup; the graph write is idempotent.
-
-### Step 2 — declare stream metadata
-
-`point_uri` is **optional**. Drivers that have a meaningful semantic URI for the stream should provide it; drivers that only know their source-local identity can omit it.
-
-**With a `point_uri`** — creates the semantic point node, links it to the ref node, and writes any metadata (unit, quantity kind, label) on the point:
-
-```python
-aq.register_stream(
-    "urn:host:mybox:cpu_percent",       # optional — omit if unknown
-    label="CPU usage",
-    unit="%",                           # resolved to a QUDT URI via server
-    quantity_kind="dimensionless ratio", # resolved to a QUDT URI via server
-    source_id="mybox-system-metrics",
-    ref_name="cpu_percent",
-    value_kind="numeric",
-)
-```
-
-**Without a `point_uri`** — writes only the external reference node. The stream is immediately usable for data insertion; a semantic point URI can be linked later by inserting an RDF graph that declares `<point_uri> ref:hasExternalReference <ref_uri>`:
-
-```python
-aq.register_stream(
-    source_id="mybox-system-metrics",
-    ref_name="cpu_percent",
-    value_kind="numeric",
-)
-```
-
-Or in bulk, which is preferred when a driver discovers many streams at once (e.g. columns in a CSV file):
-
-```python
-aq.register_streams([
-    {"source_id": "mybox-system-metrics", "ref_name": "cpu_percent", "value_kind": "numeric"},
-    {"source_id": "mybox-system-metrics", "ref_name": "memory_percent", "value_kind": "numeric"},
-    # point_uri is optional per entry
-    {"point_uri": "urn:host:mybox:disk", "source_id": "mybox-system-metrics", "ref_name": "disk_percent", "value_kind": "numeric"},
-])
-```
-
-Registration:
-- writes the external reference node with `acq:sourceId`, `acq:refName`, `acq:valueKind`, and `ref:storedAt`
-- if `point_uri` is provided, also creates the point node and links it to the ref node
-- resolves plain-text unit/quantity_kind strings to QUDT URIs via the server's embedding matcher
-- triggers `_sync_stream_refs_from_graph`, which upserts the mapping into the streams table
-
-Stream registration is purely a metadata operation. No timeseries rows are written.
-
-### Step 3 — insert data
-
-```python
-aq.insert_timeseries_batch(
-    "mybox-system-metrics",
-    {
-        "cpu_percent":    [(ts, 42.1)],
-        "memory_percent": [(ts, 71.3)],
-        "disk_percent":   [(ts, 18.5)],
-    },
-)
-```
-
-The server:
-1. computes `ref_uri = compute_ref_uri(source_id, ref_name)` for each `ref_name` key
-2. uses the explicit stream-level `value_kind`, defaulting to `"text"`
-3. builds a Polars DataFrame with `(ref_uri, timestamp, value, value_kind)` rows
-4. bulk-inserts into typed timeseries columns via the Arrow bridge
-5. upserts each stream into the `streams` table with `point_uri = NULL` if no semantic point has been registered yet
-
-The driver never touches `ref_uri` directly. The mapping from `ref_name` to storage key is entirely internal.
-
-For large batches, the `Acquirium` client facade splits the input into `insert_batch_rows`-sized chunks and issues multiple requests. Drivers do not need to chunk manually.
-
----
-
-## Reading data back
-
-Reads go by either `point_uri` or `ref_uri`:
-
-**By `point_uri`**: the server looks up `ref_uri` in the streams table, then queries the timeseries store for rows where `timeseries.ref_uri = ref_uri`.
-
-**By `ref_uri`** (direct): used internally and by API consumers that already know the canonical reference URI.
-
----
-
-## Logs use `point_uri`
-
-Logs are intentionally different from managed timeseries rows.
-
-The `logs` table is keyed by `point_uri`, not `ref_uri`, because logs describe semantic equipment, points, alarms, observations, and app outputs. A log entry is about the physical or modeled thing in the ontology, not about a particular storage stream. That means:
-
-- timeseries samples are stored by `ref_uri`
-- logs are stored by `point_uri`
-- the graph links a `point_uri` to one or more `ref_uri` values with `ref:hasExternalReference`
-
-This keeps logs stable even if a point gets multiple external references over time.
-
----
-
-## Driver-specific metadata on reference nodes
-
-Each driver type adds its own provenance triples to the `ref_uri` node. This records how the data was collected and what the source format looked like, so a consumer reading the graph can understand the origin of a stream.
-
-### Tabular drivers (CSV, XLSX)
-
-Tabular drivers register streams with `source_id`, `ref_name`, and `value_kind` only — no additional provenance triples are written to the reference node. The datasource ID and stream names are enough for the standard managed-stream lookup.
-
-### MQTT driver
-
-Written when `register_stream` is called from `_sync_subscriptions`:
-
-```turtle
-<ref_uri>
-    acq:sourceId "my_mqtt_data" ;
-    acq:refName  "sensors/room1/temp" .
-```
-
-The broker, topic, and payload-key configuration lives on separate `ref:MQTTReference` nodes declared in the user's graph, not on the managed `ref_uri`. The MQTT driver reads those nodes via SPARQL and subscribes accordingly.
-
-### WaterTAP driver
-
-The user-supplied RDF model file declares both `ref:hasExternalReference` (used to identify the managed stream) and `acq:hasPyomoVar` (used to extract the value from the solved WaterTAP model):
-
-```turtle
-<urn:watertap:pump1:outlet_pressure>
-    ref:hasExternalReference <ref_uri> ;
-    acq:hasPyomoVar "m.fs.pump.outlet.pressure[0]" .
-```
-
-The driver reads these triples at startup and uses them to map Pyomo variable paths to `ref_name` values for insertion.
-
-### Soft-sensor apps (computed outputs)
-
-App outputs get the same managed-stream treatment, but the reference node also carries type and dependency metadata:
-
-```turtle
-<ref_uri>
-    a acq:Stream, acq:TimeseriesStream ;
-    acq:sourceId "my-app" ;
-    acq:refName  "urn:output:predicted_flow" ;
-    acq:storageBackend "timescale" .
-```
-
-The `acq:produces` and `acq:isCalculatedFrom` triples on the output point URI record the app that generated the stream and the inputs it depended on.
-
-At runtime, app outputs are emitted through a single shared output sink used by
-both server-side `AppRunner` execution and external app workers:
-
-- `Output.timeseries(...)` inserts the returned `(timestamp, value)` rows into
-  the output stream.
-- `Output.event(...)` is serialized as one JSON text value in the event stream.
-- `Output.trigger(...)` sends the configured HTTP webhook and does not write a
-  timeseries row unless the app also returns a timeseries or event output.
-
-The two execution modes provide different insertion transports (`Manager`
-directly in the server, `AcquiriumClient` in the worker), but the output
-serialization and trigger rules are intentionally shared.
-
----
-
-## The streams table vs the graph
-
-A natural question is why there is both a `streams` table in the timeseries store *and* `acq:sourceId`/`acq:refName` triples in the graph. They appear to contain the same information.
-
-They serve different roles:
-
-| | RDF graph | streams table |
+| identifier | meaning | example |
 |---|---|---|
-| **Purpose** | semantic description and discovery | fast lookup for data reads and writes |
-| **Query interface** | SPARQL | SQL key lookup |
-| **Updated by** | `register_stream`, `insert_graph` | `_sync_stream_refs_from_graph` and data insertion |
-| **Authoritative for** | meaning, metadata, topology | storage key resolution |
+| `source_id` | who writes the stream | `watertap-seawater-ro` |
+| `ref_name` | which series, unique within the source | `P1-out-pressure` |
+| `ref_uri` | the canonical URI of the stream | `urn:acquirium#399ce39c-...` |
 
-The graph is authoritative for semantic meaning. The streams table is a fast lookup table and can also contain source-local streams that do not have a semantic `point_uri` yet. When the graph does contain a managed reference, `_sync_stream_refs_from_graph` re-derives that row from the graph, and the server rejects any managed reference node whose URI does not match the canonical `compute_ref_uri` value for its `(source_id, ref_name)` pair.
+`ref_uri` is computed from the other two, deterministically:
+the same `(source_id, ref_name)` pair always produces the same URI, and two
+sources can use the same `ref_name` without colliding.
 
----
+```python
+acq.reference_uri("watertap-seawater-ro", "P1-out-pressure")
+# urn:acquirium#399ce39c-e18d-5ad5-bd5c-9c9d053fe04d
+```
 
-## External references vs managed streams
+Because the URI is computable, no lookup is needed at insert time: a driver
+that knows its `source_id` and `ref_name` already knows where its rows go.
 
-Not all references are live read targets. The `ref:hasExternalReference` pattern can also record provenance for driver-managed streams:
+These stream URIs can be attached to `point_uri`s in the semantic model.
+A stream can be registered without being associated with a point, but then nothing in the model refers to
+it, and semantic queries will not find it.
 
-- **External Postgres historians**: `ref:storedAt` is a literal DSN string (`postgresql://...`). The server detects this and routes reads to `PGReferenceRegistry`.
-- **MQTT references**: `a ref:MQTTReference` with `ref:MQTTBroker` and `ref:MQTTTopic`, queried by the MQTT driver.
-- **Database references**: connection/table/query metadata belongs in a driver configuration; the driver ingests rows into managed streams.
+## What registration writes to the graph
 
-The distinction between a managed stream and a provenance-only external reference is structural: managed streams have `acq:sourceId` and `acq:refName` on the reference node.
+`register_streams()` writes two connected pieces of RDF.
 
----
+For the stream itself, a reference node under the computed `ref_uri`:
 
-## Summary
+```turtle
+<urn:acquirium#399ce39c-...>
+    acq:sourceId  "watertap-seawater-ro" ;
+    acq:refName   "P1-out-pressure" ;
+    acq:valueKind "numeric" ;
+    ref:storedAt  <urn:acquirium#TimescaleDB> .
+```
 
-| Identifier | Where it lives | Who creates it | What it means |
-|---|---|---|---|
-| `point_uri` | RDF graph | user / driver | semantic identity of a measurement point |
-| `source_id` | RDF graph, streams table, driver config | driver | datasource namespace |
-| `ref_name` | RDF graph, streams table, driver | driver | source-local stream name |
-| `ref_uri` | RDF graph, streams table, timeseries store | Acquirium (deterministic) | graph + storage identity, derived from `(source_id, ref_name)` |
+And, when a `point_uri` was given, the point node with its semantic metadata
+and the link between the two:
 
-Data enters through `(source_id, ref_name)`. The system resolves that to `ref_uri` for storage. Applications query by `point_uri`. The graph connects all three.
+```turtle
+<urn:swro/P1-out-pressure>
+    a                        acq:VirtualPoint ;
+    rdfs:label               "P1 outlet pressure" ;
+    qudt:hasUnit             unit:PA ;
+    qudt:hasQuantityKind     qudtqk:Pressure ;
+    ref:hasExternalReference <urn:acquirium#399ce39c-...> .
+```
+
+Registration is idempotent and additive.
+Registering the same stream again with a `point_uri` does not erase metadata written earlier.
+
+## Registration and the streams table
+
+Registration has two calls with different weight.
+
+The graph is the source of truth for streams
+So the server keeps a derived index: a `streams` table in the timeseries
+store, with one row per reference node
+(`ref_uri`, `point_uri`, `source_id`, `ref_name`, `value_kind`).
+After every graph insert, the server scans for nodes carrying `acq:sourceId`
+and `acq:refName` and upserts them into the table.
+This sync is why registration must precede insertion: the insert path checks
+the table, and a stream that was never registered has no row.
+
+Two details of the sync are worth stating.
+
+A later registration never erases an earlier link.
+If a stream was first registered with a `point_uri` and later without one,
+the table keeps the point.
+
+The sync validates the canonical URI.
+A hand-written reference node whose URI does not equal
+`compute_ref_uri(source_id, ref_name)` fails the entire insert:
+
+```text
+Managed reference URI mismatch for point <...>: graph has <...>, expected
+<...> from source_id='...', ref_name='...'
+```
+
+The same scan runs at server startup, so a bad reference node in a model file
+prevents the server from starting.
+Do not mint reference URIs by hand; use `acq.reference_uri()` or let
+`register_streams()` compute them.
+
+## The write path
+
+A row travels through five steps between a driver and the store.
+
+1. The client normalizes the observation frame (timestamps to UTC, values to
+   strings) and sends it as an Arrow table over HTTP.
+2. The server computes each row's `ref_uri` from `(source_id, ref_name)` and
+   checks it against the `streams` table.
+   An unregistered stream fails here, before anything is written.
+3. Each value is placed in one of two columns by the stream's registered
+   `value_kind`: numbers in `numeric_value`, everything else in `text_value`.
+   A value on a numeric stream that does not parse as a number falls back to
+   the text column instead of failing the batch.
+4. Rows are deduplicated on `(ref_uri, ts)`, keeping the last.
+5. The batch is written as a delete-then-insert on those pairs, in one
+   transaction.
+
+Step 5 is what makes ingestion idempotent: re-inserting the same timestamps
+replaces those rows instead of duplicating them, so re-running an import or
+replaying a file is safe.
+The other side of the same behavior: an insert with changed values silently
+overwrites the history at those timestamps.
+`replace=True` on `insert_timeseries` goes further and clears the whole
+stream first.
+
+Storage is one table, `timeseries(ref_uri, ts, numeric_value, text_value)`,
+with a uniqueness constraint on `(ref_uri, ts)` and a check that only one of
+the two value columns is set per row.
+
+## The read path
+
+A query travels the same links in reverse.
+
+1. The query pattern compiles to SPARQL; each measurement node binds a point
+   and follows its `ref:hasExternalReference` to the reference node.
+   The point's unit and the reference node's unit both come along.
+2. The client collects the distinct `(point_uri, ref_uri)` pairs from the
+   result; these are the bindings a `DataObject` reports before fetching.
+3. Values are fetched per `ref_uri` from the timeseries store, streamed back
+   as Arrow batches.
+4. When the reference node's unit differs from the point's, the values are
+   converted during the fetch (see the
+   [data guide](data.md#automatic-conversion)).
+
+So the graph answers which streams, and the timeseries store answers what
+values; the `ref_uri` is the key that joins the two.
+A point with no reference node yields metadata but no data.
+A reference node with no point stores data that no semantic query reaches.
+
+## How graph inserts behave
+
+Everything above writes RDF through `insert_graph`, so its semantics matter
+here.
+
+All inserted data lands in one main graph.
+There is no per-source or per-driver separation, which is why
+`replace=True` (the client default) is dangerous outside of loading a fresh
+model: it clears the entire main graph, including streams registered by other
+drivers and apps.
+
+The ontologies (s223, the water ontology, QUDT, the reference schema) live in
+their own graphs, separate from the main graph, and inserts never touch them.
+Queries run against a union of the main graph and the ontology closure by
+default, which is how a model that says `wbs:P1 a s223:Pump` matches a query
+for equipment: the subclass chain lives in the ontology graphs.
+
+A model file that declares `owl:imports` triggers a recomputation of that
+closure on insert.
+Plain instance data does not, which keeps stream registration cheap; this is
+why the sync from [Registration and the streams table](#registration-and-the-streams-table)
+runs on every insert without slowing ingestion down.
+
+## App outputs are streams too
+
+An app that produces values (a soft sensor, for instance) goes through the
+same machinery.
+When the app is registered, each declared output becomes a point and a
+reference node: the app's name is the `source_id`, the output's point URI
+string is the `ref_name`, and the computed `ref_uri` follows from the pair
+as usual.
+Timeseries outputs are registered as numeric streams, event outputs as text
+streams.
+
+The result is that computed values are indistinguishable from measured ones
+at query time: an app's output point is a `VirtualPoint` with a unit and a
+quantity kind, found by the same queries, fetched by the same read path.
+The only extra is provenance: the point carries `acq:isCalculatedFrom` links
+to the points the app depends on.
