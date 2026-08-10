@@ -136,8 +136,8 @@ shape: (2, 5)
 └────────────────────────────────┴───────────────────────────┴────────────────────────────┴──────────────────────────────────────┴────────────┘
 ```
 
-One difference worth knowing: `Query.dataframe()` shortens the identifiers.
-It gives you a `point_id` column with CURIEs (`wbs:RO-in-pressure`) where
+Note that `Query.dataframe()` shortens the identifiers.
+It returns a `point_id` column with CURIEs (`wbs:RO-in-pressure`) where
 `DataObject.dataframe()` gives full `point_uri` and `ref_uri` columns.
 Pass `include_ref=True` to keep reference URIs, which you rarely need unless
 you are debugging ingestion.
@@ -149,8 +149,9 @@ stored in the matching column: numbers in `numeric_value`, everything else in
 `text_value`.
 That declaration is called `value_kind`, and it is set by whoever writes the
 data, not by the reader.
-A reading that cannot be parsed as a number falls back to the text column even
-on a numeric stream, so a bad row never corrupts the type of the rest.
+A reading that cannot be parsed as a number falls back to the text column
+even on a numeric stream, so a bad row does not affect the type of the
+others.
 
 When reading, `value_mode` decides which of those columns you get.
 
@@ -242,8 +243,8 @@ When those disagree, the values are converted for you as they are fetched, to
 the unit `units()` reports.
 If the two are not convertible, the readings come through untouched and a
 warning is logged rather than an exception raised.
-The reasoning is that a mismatch should not break a query you did not know
-involved a conversion; the warning is your signal that the model needs a fix.
+A mismatch should not break a query that did not ask for a conversion; the
+warning indicates that the model needs a fix.
 
 ## Taking the result apart
 
@@ -340,14 +341,15 @@ acq.register_streams([{
 ```
 
 `point_uri` ties the stream to a point in the semantic model.
-That link is what makes the rows reachable by the queries in this guide; a
-stream registered without one still stores rows, but no meaning-first query
-will find them.
+This link makes the rows reachable by the queries in this guide.
+A stream registered without it still stores rows, but queries will not find
+them.
 `unit`, `quantity_kind`, `medium` and `substance` accept free text or URIs,
 like everywhere else.
 
-Registration is not optional.
-Inserting to an unregistered stream is an error, not a silent stream creation:
+Registration is required before the first insert.
+Inserting to an unregistered stream raises an error; streams are never
+created implicitly:
 
 ```text
 HTTPError: 400 Client Error: Bad Request for url: http://localhost:8000/insert_timeseries;
