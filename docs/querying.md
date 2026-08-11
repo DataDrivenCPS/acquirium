@@ -209,6 +209,8 @@ shape: (36, 2)
 └──────────────────────────┴──────────────────────────────┘
 ```
 
+**TODO:** check whether the `nearest` default flips with an explicit `via=` (plain `"any"` returns nearest matches, an explicit `via` returns all) and document it here.
+
 ### direction=
 
 `direction="upstream"` or `"downstream"` follows the piping topology instead
