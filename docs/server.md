@@ -124,8 +124,8 @@ Both backends store the same logical schema: a `timeseries` table
 (`ref_uri`, `ts`, `numeric_value`, `text_value`, unique on `(ref_uri, ts)`),
 the `streams` reference table, and the logbook.
 
-`duckdb` is the default: one file under the data directory, nothing to
-install or operate.
+`duckdb` is the default: one file under the data directory, with no extra
+services to install or run.
 Reads run on their own connections, so a long scan does not block a driver's
 inserts.
 There is no compression or retention; the file grows with the data.
@@ -145,15 +145,15 @@ Two datasets are kept: the source of record (the main data graph plus one
 graph per ontology) and a query dataset holding a materialized union of the
 main graph and the ontology closure.
 Queries run against the union by default; the union is rebuilt lazily when
-something changed.
+something changes.
 
 The store keeps a version counter, exposed as `GET /graph_version` and bumped
 by every mutation.
 Clients poll it to invalidate caches; drivers and apps use it for their
 graph-change hooks.
 
-One lock guards the store, so a heavy SPARQL query delays other graph
-operations until it finishes.
+The store is guarded by a single lock, so a heavy SPARQL query delays other
+graph operations until it finishes.
 The [querying guide](querying.md#when-a-query-returns-nothing) covers how to
 keep queries bounded.
 
@@ -163,14 +163,14 @@ Free-text resolution is served by two vector indexes built at startup: one
 over the water and s223 ontologies (classes, predicates, substances,
 processes) and one over QUDT (units, quantity kinds).
 They are built from the ontologies only.
-Inserted plant data is never indexed, which is why free text resolves classes
-and units but not your instance labels.
+Inserted plant data is never indexed.
+This is why free text resolves classes and units but not instance labels.
 
 The first build is the expensive part of a first start; the QUDT index alone
 takes minutes.
 The result is cached under `data_dir/embedding_cache`, keyed by ontology
-content, so every later start reuses it and a changed ontology triggers a
-rebuild by itself.
+content, so later starts reuse it and a changed ontology triggers a rebuild
+automatically.
 `GET /embedding_status` reports the state of both indexes.
 
 ## Startup and health
@@ -186,13 +186,14 @@ Startup runs in this order:
 5. In the background: restore registered apps, then start the `[[drivers]]`
    entries.
 
-`/health` therefore means the core is up, not that drivers and apps are
-running; check `GET /drivers/list` and `GET /apps/list` for those.
+Note that `/health` only means the core is up; drivers and apps may still be
+starting.
+Check `GET /drivers/list` and `GET /apps/list` for those.
 The `Acquirium()` client constructor waits for `/health` (60 seconds by
 default) so scripts can start before the server finishes booting.
 
-A cold first start pays for the embedding build and ontology load and can
-take minutes.
+A cold first start builds the embedding indexes and loads the ontologies,
+and can take minutes.
 A warm restart with an intact data directory is much faster.
 
 ## Docker
@@ -200,8 +201,8 @@ A warm restart with an intact data directory is much faster.
 `compose.yaml` runs the server with TimescaleDB, Mosquitto and Grafana;
 `compose.minimal.yaml` is the same stack without profiles, hardcoded to
 `acquirium.docker.toml`.
-Postgres credentials and `PG_DSN` come from `.env` (see `.env.example`), which
-is also where the environment-variables-win rule from above applies.
+Postgres credentials and `PG_DSN` come from `.env` (see `.env.example`).
+Since these are environment variables, they override the toml keys.
 `compose.testing.yaml` runs the same services on offset ports (server 8010,
 Postgres 55432, MQTT 11883) for the integration test suite; the Makefile's
 `testing-up`, `test` and `wait-health` targets wrap it.
