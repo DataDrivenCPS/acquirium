@@ -15,8 +15,8 @@ A stream has three identifiers.
 | `ref_name` | which series, unique within the source | `P1-out-pressure` |
 | `ref_uri` | the canonical URI of the stream | `urn:acquirium#399ce39c-...` |
 
-`ref_uri` is computed from the other two, deterministically:
-the same `(source_id, ref_name)` pair always produces the same URI, and two
+`ref_uri` is computed from the other two.
+The same `(source_id, ref_name)` pair always produces the same URI, and two
 sources can use the same `ref_name` without colliding.
 
 ```python
@@ -24,8 +24,8 @@ acq.reference_uri("watertap-seawater-ro", "P1-out-pressure")
 # urn:acquirium#399ce39c-e18d-5ad5-bd5c-9c9d053fe04d
 ```
 
-Because the URI is computable, no lookup is needed at insert time: a driver
-that knows its `source_id` and `ref_name` already knows where its rows go.
+Since the URI is computable, no lookup is needed at insert time.
+A driver only needs its `source_id` and `ref_name` to insert rows.
 
 These stream URIs can be attached to `point_uri`s in the semantic model.
 A stream can be registered without being associated with a point, but then nothing in the model refers to
@@ -60,20 +60,20 @@ and the link between the two:
 Registration is idempotent and additive.
 Registering the same stream again with a `point_uri` does not erase metadata written earlier.
 
+**TODO:** We need to provide an interface to add, remove, replace streams. Also, auto register streams from a given graph.
+
 ## Registration and the streams table
 
-Registration has two calls with different weight.
-
-The graph is the source of truth for streams
-So the server keeps a derived index: a `streams` table in the timeseries
-store, with one row per reference node
+The graph is the source of truth for streams, so the server keeps a derived
+index: a `streams` table in the timeseries store, with one row per reference
+node
 (`ref_uri`, `point_uri`, `source_id`, `ref_name`, `value_kind`).
 After every graph insert, the server scans for nodes carrying `acq:sourceId`
 and `acq:refName` and upserts them into the table.
 This sync is why registration must precede insertion: the insert path checks
 the table, and a stream that was never registered has no row.
 
-Two details of the sync are worth stating.
+Note that this sync has two additional behaviors.
 
 A later registration never erases an earlier link.
 If a stream was first registered with a `point_uri` and later without one,
@@ -95,7 +95,7 @@ Do not mint reference URIs by hand; use `acq.reference_uri()` or let
 
 ## The write path
 
-A row travels through five steps between a driver and the store.
+A row goes through five steps between a driver and the store.
 
 1. The client normalizes the observation frame (timestamps to UTC, values to
    strings) and sends it as an Arrow table over HTTP.
@@ -110,13 +110,13 @@ A row travels through five steps between a driver and the store.
 5. The batch is written as a delete-then-insert on those pairs, in one
    transaction.
 
-Step 5 is what makes ingestion idempotent: re-inserting the same timestamps
-replaces those rows instead of duplicating them, so re-running an import or
-replaying a file is safe.
-The other side of the same behavior: an insert with changed values silently
-overwrites the history at those timestamps.
-`replace=True` on `insert_timeseries` goes further and clears the whole
-stream first.
+Step 5 makes ingestion idempotent: re-inserting the same timestamps replaces
+those rows instead of duplicating them, so re-running an import or replaying
+a file is safe.
+Note that this also means an insert with changed values silently overwrites
+the history at those timestamps.
+`replace=True` on `insert_timeseries` clears the whole stream before
+inserting.
 
 Storage is one table, `timeseries(ref_uri, ts, numeric_value, text_value)`,
 with a uniqueness constraint on `(ref_uri, ts)` and a check that only one of
@@ -124,7 +124,7 @@ the two value columns is set per row.
 
 ## The read path
 
-A query travels the same links in reverse.
+A query follows the same links in reverse.
 
 1. The query pattern compiles to SPARQL; each measurement node binds a point
    and follows its `ref:hasExternalReference` to the reference node.
@@ -137,15 +137,15 @@ A query travels the same links in reverse.
    converted during the fetch (see the
    [data guide](data.md#automatic-conversion)).
 
-So the graph answers which streams, and the timeseries store answers what
-values; the `ref_uri` is the key that joins the two.
+The graph determines which streams to read, and the timeseries store returns
+their values; `ref_uri` is the join key between the two.
 A point with no reference node yields metadata but no data.
-A reference node with no point stores data that no semantic query reaches.
+A reference node with no point stores data that semantic queries cannot find.
 
 ## How graph inserts behave
 
-Everything above writes RDF through `insert_graph`, so its semantics matter
-here.
+Everything above writes RDF through `insert_graph`, so this section
+describes how it behaves.
 
 All inserted data lands in one main graph.
 There is no per-source or per-driver separation, which is why
@@ -156,14 +156,15 @@ drivers and apps.
 The ontologies (s223, the water ontology, QUDT, the reference schema) live in
 their own graphs, separate from the main graph, and inserts never touch them.
 Queries run against a union of the main graph and the ontology closure by
-default, which is how a model that says `wbs:P1 a s223:Pump` matches a query
-for equipment: the subclass chain lives in the ontology graphs.
+default.
+This is why a model containing `wbs:P1 a s223:Pump` matches a query for
+equipment: the subclass chain lives in the ontology graphs.
 
 A model file that declares `owl:imports` triggers a recomputation of that
 closure on insert.
-Plain instance data does not, which keeps stream registration cheap; this is
-why the sync from [Registration and the streams table](#registration-and-the-streams-table)
-runs on every insert without slowing ingestion down.
+Plain instance data does not, so stream registration stays cheap and the sync
+from [Registration and the streams table](#registration-and-the-streams-table)
+can run on every insert.
 
 ## App outputs are streams too
 
@@ -171,6 +172,6 @@ When an app that produces values (a soft sensor, for instance) is registered, ea
 reference node: the app's name is the `source_id`, the output's point URI
 string is the `ref_name`, and the computed `ref_uri` follows from the pair
 as usual.
-The result is that computed values are indistinguishable from measured ones
-at query time.
+This means computed values are indistinguishable from measured ones at query
+time.
 
