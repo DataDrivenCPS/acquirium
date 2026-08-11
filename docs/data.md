@@ -30,8 +30,10 @@ d
 DataObject(lazy, ~55980 rows, range=2026-08-05T16:28:39.137381+00:00 to 2026-08-08T05:30:48.864274+00:00, aliases=['m'], entities=['Equipment'])
 ```
 
-That `~55980` is a real count from the server, not a guess, and it cost one small request.
+**TODO:** measure the overhead and scalability of this feature
+
 The data object lets you check what the query would retrieve before fetching it.
+For instance, the `~55980` figure above is a real count from the server.
 
 Values are fetched (and cached) only when you call `.dataframe()`.
 
@@ -43,18 +45,18 @@ d
 DataObject(5598 rows, aliases=['m'], entities=['Equipment'])
 ```
 
-
 ### Query.dataframe()
 
 Note that a `dataframe()` method also exists on the query object.
 This is a shortcut for `Query.data().dataframe()` for convenience.
 
+**TODO:** dataframe funcitons are not consistent with each other. make them consistent, or just remove one
+
 ## Shapes
 
 `dataframe()` returns one of two layouts.
 
-`shape="wide"` puts `time` first and one column per point, aligned on the
-timestamp.
+`shape="wide"` puts `time` first and one column per point, aligned on the timestamp.
 This shape is useful for plotting, correlating or exporting.
 
 ```python
@@ -74,8 +76,7 @@ shape: (3, 4)
 └────────────────────────────────┴───────────────────────┴────────────────────────┴──────────────────────────────────┘
 ```
 
-`shape="narrow"` is the default: one row per reading, with the point it came
-from in its own column.
+`shape="narrow"` is the default: one row per reading, with the point it came from in its own column.
 This is useful when points do not share timestamps.
 
 ```text
@@ -135,12 +136,13 @@ shape: (2, 5)
 │ 2026-08-08 05:52:16.983763 UTC ┆ 7e6                       ┆ 101325.0                   ┆ 6.8105e6                             ┆ 304.016483 │
 └────────────────────────────────┴───────────────────────────┴────────────────────────────┴──────────────────────────────────────┴────────────┘
 ```
+**TODO:** Find a better way to create the schema from aliases
 
 Note that `Query.dataframe()` shortens the identifiers.
 It returns a `point_id` column with CURIEs (`wbs:RO-in-pressure`) where
 `DataObject.dataframe()` gives full `point_uri` and `ref_uri` columns.
-Pass `include_ref=True` to keep reference URIs, which you rarely need unless
-you are debugging ingestion.
+Pass `include_ref=True` to keep reference URIs.
+This is only needed if you need to distinguish data coming from different sources for the same measurement point.
 
 ## Numbers and text
 
@@ -162,6 +164,8 @@ When reading, `value_mode` decides which of those columns you get.
 | `"text"` | text readings only, numeric rows filtered out |
 | `"coalesce"` | both, as strings, text winning where a row has both |
 
+**TODO:** I'm not sure how reliable this is, I need to check.
+
 
 ```python
 d = q.data(value_mode="numeric")
@@ -173,8 +177,6 @@ d = q.data(value_mode="numeric")
 `"float"` casts the value column to `Float64` and `"int"` casts to `Int64`.
 Anything else, including `None`, leaves the column exactly as the server sent
 it, which for a numeric stream is already `Float64`.
-
-
 
 
 ## Units
@@ -190,6 +192,7 @@ d.units()
 ```text
 {'flow': 'http://qudt.org/vocab/unit/KiloGM-PER-SEC'}
 ```
+**TODO**: I need a better visual for `.units()` and potentially, show all the units for each point
 
 `convert_to()` returns a new data object by converting the values into a target unit.
 
@@ -202,8 +205,6 @@ kg_per_min.units()
 ```
 
 Values change with it: `10.67 kg/s` becomes `640.35 kg/min`.
-
-With several aliases in one object, `alias=` converts just one of them:
 
 ```python
 d2 = (acq.query().entity(uri="wbs:RO", alias="ro")
@@ -234,11 +235,10 @@ ValueError: convert_to: no convertible unit pair for
 '.../KiloGM-PER-SEC' -> 'celsius'
 ```
 
-
 ### Automatic conversion
 
 A point can carry one unit in the graph while its stream stores another, for
-example a sensor reporting in psi under a point annotated in pascals.
+example a driver ingesting a stream in psi under a point annotated in pascals.
 When those disagree, the values are converted for you as they are fetched, to
 the unit `units()` reports.
 If the two are not convertible, the readings come through untouched and a
@@ -246,7 +246,11 @@ warning is logged rather than an exception raised.
 A mismatch should not break a query that did not ask for a conversion; the
 warning indicates that the model needs a fix.
 
+**TODO:** We need to test and even demonstrate this feature
+
 ## Taking the result apart
+
+**TODO:** This is quite ugly, think of a better way:
 
 A query that matched several points and several entities comes back as one
 object. These four methods split it up.
@@ -300,6 +304,8 @@ This is useful for per-equipment work, like fitting a model per pump.
 
 `latest(alias)` returns the newest reading.
 
+**TODO:** I think latest also can be improved or removed
+
 ```python
 d.latest("m")
 ```
@@ -348,8 +354,7 @@ them.
 like everywhere else.
 
 Registration is required before the first insert.
-Inserting to an unregistered stream raises an error; streams are never
-created implicitly:
+Inserting to an unregistered stream raises an error:
 
 ```text
 HTTPError: 400 Client Error: Bad Request for url: http://localhost:8000/insert_timeseries;

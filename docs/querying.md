@@ -12,33 +12,31 @@ can follow along.
 ## The mental model
 
 A `Query` is a description of what you are looking for.
-You chain verbs to describe a pattern (a pump, a tank near it, the measurements
-on either one), and the server finds every place in the plant model where that
+You chain verbs to describe a pattern (a pump, a tank near it, the measurements on either one, etc.), and the server finds every place in the plant model where that
 pattern matches.
-The execution is lazy.
-Nothing runs until you ask for results.
 
 `acq.query()` starts an empty `Query`.
 Every verb returns a new immutable `Query`, so you can hold on to a partial
-query and extend it in different directions; the branches never interfere.
+query and extend it in different directions.
 
-The `Query` interface is an opinionated view over the underlying plant
-knowledge graph.
-Querying it is different from querying a raw RDF graph.
-Metadata edges are folded into the nodes they describe: a measurement's unit is
-a separate node in RDF, but here it is just the measurement's `unit` attribute,
-something you filter on rather than travel to.
-For the same reason, edges whose meaning is not plant topology (class
-hierarchies, property attachment, external references) are hidden from generic
-traversal.
-So when you ask what is related to a pump, you walk pipes and membership, not
-bookkeeping.
+The `Query` interface is an opinionated view over the underlying plant knowledge graph.
+It is different from querying a raw RDF graph.
+This view treats certain edges as attributes of the source nodes.
+For instance a measurement's unit is a separate triple in RDF: `:source qudt:hasUnit :unit`, but here, it is just the measurement's `unit` attribute.
+For the same reason, edges whose meaning is not plant topology (class hierarchies, external references etc.) are hidden from generic traversal.
+
+This interface classifies nodes into two main categories.
+Every concept, system, equipment and connection is treated as an `Entity` node,
+while every measurement (i.e. `s223:Property`) is treated as a `Data` node.
+
+The `Query` interface is lazy. 
+The actual query execution will happen after the user executes certain functions like `.metadata()`, `.dataframe()` or `.facets()`.
 
 ## entity()
 
 `entity(cls)` adds a node for every instance of a class.
-The class can be a URI or free text; text is resolved by the server, so
-`"pump"` finds `s223:Pump`.
+The class can be a URI, CURIE or free text.
+Free text is matched to an actual class by the server (e.g. `"pump"` finds `s223:Pump`).
 
 ```python
 from acquirium import Acquirium
@@ -58,9 +56,7 @@ shape: (3, 1)
 └────────────┘
 ```
 
-`metadata()` is what runs the query.
-Everything before it only describes the pattern; nothing is sent until you ask
-for results.
+`metadata()` actually executes the query.
 It returns the matched items as a polars frame, one column per node, and every
 example in this doc ends with it.
 Timeseries values are requested separately, covered under
@@ -87,9 +83,10 @@ shape: (1, 1)
 
 Every node has an alias, and aliases are the column names of every result.
 The default is the text you typed (`pump`, `Equipment` above).
-A node built from `uri=` alone has nothing to derive a name from, so give it
-one: either the `alias=` keyword or the `.alias()` verb, which renames the
-node the pointer is on.
+To provide an alias: either use the `alias=` keyword or the `.alias()` method.
+
+Note that it is recommended to assign an alias to a node built from `uri=`; otherwise the column is named by the node's internal numeric id.
+
 
 ```python
 acq.query().entity(uri="wbs:RO", alias="ro")     # same thing as:
@@ -105,14 +102,14 @@ shape: (1, 1)
 ```
 
 Aliases are unique per query.
-If two nodes derive the same name, the second becomes `pump_2`; explicitly
-reusing an alias raises an error.
+If two nodes derive the same name, the second default alias becomes `pump_2`.
+Explicitly reusing an alias raises an error.
 
 ## related()
 
 `related(cls)` adds an entity connected to an existing node.
-By default it starts from the node the pointer is on and returns the *nearest*
-matches within 3 hops of any visible predicate (equal-distance ties all
+By default it starts from the node the pointer is on (see next chapter) and returns the *nearest*
+matches within 3 hops of any visible edge (equal-distance ties all
 survive).
 
 ```python
@@ -188,6 +185,7 @@ Both take the node's alias.
 ### via=
 
 `via=` controls which predicates the traversal may use.
+A list input to `via=` means "any of these".
 The default `"any"` walks every predicate except the hidden metadata ones.
 A single predicate (free text or URI) restricts the walk to it, repeated up to
 `max_depth`; prefix with `"^"` to follow it in reverse.
@@ -210,10 +208,6 @@ shape: (36, 2)
 │ wbs:posttreatment-system ┆ wbs:storage-tank-3           │
 └──────────────────────────┴──────────────────────────────┘
 ```
-
-A list of predicates means "any of these", one hop by default.
-Note the defaults flip with `via`: plain `"any"` returns nearest matches, an
-explicit `via` returns all of them (set `nearest=` to override either way).
 
 ### direction=
 
@@ -244,8 +238,8 @@ flow* rather than nearest in the graph.
 
 `max_depth` bounds the number of hops.
 The default is 3 (1 for predicate lists).
-`max_depth=0` means unbounded; it is an explicit opt-in because unbounded
-walks over a large plant can be slow.
+`max_depth=0` means unbounded.
+Be aware that unbounded walks over a large plant can be slow.
 
 
 ## measurement()
@@ -299,9 +293,8 @@ shape: (6, 1)
 
 `frm=` picks the source node by alias, same as in `related()`.
 `frm="*"` attaches a measurement node to *every* entity in the pattern.
-The result has one row per point (M+N rows, not M×N): each row carries one
-node's point and null for the others, and an entity with no data contributes
-nulls instead of emptying the whole result.
+The result has one row per point (M+N rows): each row carries one
+node's point and null for the others.
 
 ```python
 (acq.query().entity("pump").related("Pressure Exchanger")
@@ -323,6 +316,7 @@ shape: (8, 4)
 │ wbs:P1 ┆ wbs:PXR            ┆ wbs:P1-out-pressure ┆ null                            │
 └────────┴────────────────────┴─────────────────────┴─────────────────────────────────┘
 ```
+TODO: organize the metadata table to group nulls together.
 
 ### direction= and nearest=
 
@@ -345,9 +339,6 @@ shape: (1, 2)
 ```
 
 ## Getting the values
-
-`metadata()` lists the metadata (equipment, sensors, etc.) that matched.
-`dataframe()` and `data()` fetch what those points recorded.
 
 `dataframe()` returns the timeseries in one frame.
 `shape="wide"` puts `time` first and one column per point.
@@ -470,8 +461,7 @@ shape: (5, 1)
 ```
 
 `target=` reaches back to an earlier node without moving the pointer.
-Here the pointer is on `m`, but the filter lands on the equipment: only
-pressures of equipment running reverse osmosis survive.
+Here the pointer is on `m`, but the filter applies to the equipment.
 
 ```python
 q = acq.query().entity("Equipment").measurement(alias="m", quantity_kind="pressure")
@@ -656,6 +646,8 @@ its label.
 
 ## Exploring what is there
 
+TODO: More exploration/visulaization methods and __repr__ and __str__ for visualizing query object will be implemented
+
 In a new plant, the hard part is knowing what to ask for.
 `options()` and `facets()` answer that: they report the attribute values that
 actually occur in your current matches, so you can narrow down step by step.
@@ -787,8 +779,6 @@ When in doubt, run `metadata()` after each step and see where the rows
 disappear.
 `facets()` on the last surviving node shows what values actually exist there.
 
-
-
 ---
 
 ## Notes
@@ -888,6 +878,8 @@ This is the middle ground between a single `frm=` and `frm="*"`:
 `alias()` renames the current node, but the previous alias keeps working as
 an alternative handle in `target=`, `frm=` and `of=`; display uses the latest
 name.
+
+**TODO:** This might be a bad idea. Remove old aliases
 
 The terminals take `use_union=` (default `True`).
 `True` queries the union of the model and the ontology closure, which is what
