@@ -196,6 +196,8 @@ d.units()
 
 `convert_to()` returns a new data object by converting the values into a target unit.
 
+**TODO**: this method and its params should be renamed (something like: `.convert()`)
+
 ```python
 kg_per_min = d.convert_to("kg/min")
 kg_per_min.units()
@@ -205,6 +207,8 @@ kg_per_min.units()
 ```
 
 Values change with it: `10.67 kg/s` becomes `640.35 kg/min`.
+
+When the object holds several aliases, pass `alias=` to convert only one:
 
 ```python
 d2 = (acq.query().entity(uri="wbs:RO", alias="ro")
