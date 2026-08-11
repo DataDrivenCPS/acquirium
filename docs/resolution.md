@@ -20,8 +20,8 @@ acq.client.resolve("blorp", "class", min_score=0.9)
 # None
 ```
 
-`top_k` returns the ranked candidates with scores, which is the tool for
-checking a suspicious match:
+`top_k` returns the ranked candidates with scores.
+This is useful for checking a suspicious match:
 
 ```python
 acq.client.resolve("ro membrane", "class", top_k=2, min_score=0.3)
@@ -41,9 +41,9 @@ acq.client.resolve({"u": ("mg/L", "unit"), "qk": ("mass concentration", "quantit
 #  'qk': 'http://qudt.org/vocab/quantitykind/MassConcentration'}
 ```
 
-Joint resolution is more than a batch call: unit and quantity-kind fields are
-cross-checked against QUDT, so a pair that fits together beats two
-individually-best matches that do not.
+Note that this is not just a batch call.
+Unit and quantity-kind fields are cross-checked against QUDT, so a compatible
+pair is preferred over two individually best matches that are incompatible.
 
 The `kind` argument picks the vocabulary: `class`, `predicate`, `process`,
 `substance`, `unit`, `quantity_kind`.
@@ -52,11 +52,11 @@ Anything that already looks like a URI passes through unchanged.
 ## How matching works
 
 Each text is matched in two stages.
-First an exact lookup on known labels and symbols, so `"kg"` and `"mg/L"`
-resolve without similarity search.
-Then, when there is no exact hit, cosine similarity over an embedding index
-of the ontology vocabulary, which is what makes `"ro membrane"` land on
-`ReverseOsmosisMembrane`.
+The first stage is an exact lookup on known labels and symbols.
+For instance, `"kg"` and `"mg/L"` resolve without similarity search.
+When there is no exact hit, the text is matched by cosine similarity over an
+embedding index of the ontology vocabulary.
+This is how `"ro membrane"` resolves to `ReverseOsmosisMembrane`.
 
 The indexes are built from the ontologies at server startup: one over the
 water and s223 vocabularies, one over QUDT.
@@ -65,8 +65,8 @@ Instance data is not indexed; see the note in the
 
 Semantic matching returns the closest candidate above `min_score` (0.5 by
 default).
-A bad input therefore gives a wrong answer rather than an error.
-When a result surprises you, look at `top_k=3` and the scores.
+Note that this means a bad input gives a wrong answer rather than an error.
+If a match looks wrong, check the candidates and scores with `top_k=3`.
 
 ## Units and conversion
 
@@ -83,7 +83,8 @@ acq.client.resolve_unit("psi")
 picks a *convertible* pair: candidates are considered jointly, and a pair
 whose quantity kinds are incompatible is skipped in favor of one that
 converts.
-An impossible request fails with both candidate lists in the message:
+A request with no convertible pair fails, with both candidate lists in the
+message:
 
 ```python
 acq.client.resolve_conversion("bar", "celsius")
