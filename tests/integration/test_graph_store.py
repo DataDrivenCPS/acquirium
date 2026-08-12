@@ -122,15 +122,6 @@ class TestInsertExport:
         assert after["published_version"] == before["published_version"]
         assert after["is_current"] is False
 
-    def test_write_batch_schedules_one_rebuild_after_its_outermost_scope(self, graph_store):
-        with patch.object(graph_store, "_start_query_rebuild_locked") as start_rebuild:
-            with graph_store.write_batch():
-                graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
-                graph_store.insert_graph(EXTRA_TURTLE, format="turtle", replace=False)
-                start_rebuild.assert_not_called()
-
-            start_rebuild.assert_called_once()
-
     def test_insert_malformed_raises(self, graph_store):
         with pytest.raises(Exception):
             graph_store.insert_graph("this is not valid turtle {{{}}", format="turtle")

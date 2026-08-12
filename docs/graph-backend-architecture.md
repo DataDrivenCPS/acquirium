@@ -271,21 +271,9 @@ data.
   query plan or result. It is not required for ordinary one-shot API calls;
   use `published_version`/`is_current` only for monitoring, not as a substitute
   for `wait_for_fresh=True` on a query that must be current.
-
-### Server-side write batches
-
-`Manager.graph_write_batch()` is available to server-side workflows that make
-several graph writes as one logical load. It commits each write normally, but
-defers derived-cache scheduling and stream-reference synchronization until the
-outermost scope exits. It is intentionally not exposed as a client context
-manager: independent HTTP requests cannot share a reliable process-local
-scope. Remote callers should prefer one complete RDF insert where practical.
-
-```python
-with manager.graph_write_batch():
-    manager.insert_graph(plant_turtle, source_id="plant", replace=True)
-    manager.insert_graph(metadata_turtle, source_id="weather-station-1", replace=False)
-```
+- Prefer one complete RDF insert over several small ones. Each `insert_graph`
+  request synchronizes stream references against a fresh inferred view, so a
+  loop of small inserts pays for one inference pass apiece.
 
 ## Concurrency and operational constraints
 
@@ -320,10 +308,13 @@ where the desired policy or mechanism has not been settled yet.
   for deleting a source graph, its stream registrations, and possibly its
   timeseries data still needs an explicit retention and provenance policy.
 - **Inference cost and scheduling.** Rebuilds already run in one background,
-  single-flight worker; ordinary readers can use the last complete cache and
-  server-side write batches coalesce scheduling. The remaining decision is
-  whether production workloads need a bounded fresh-read deadline, a debounce
-  policy for sustained writes, or a separate worker/service boundary.
+  single-flight worker and ordinary readers can use the last complete cache.
+  There is deliberately no write-batching mechanism: every graph write arrives
+  as its own HTTP request, so a process-local scope cannot span a multi-source
+  load, and coalescing one would first need a request carrying several graphs.
+  The remaining decisions are whether production workloads need such a bulk
+  insert, a bounded fresh-read deadline, a debounce policy for sustained
+  writes, or a separate worker/service boundary.
 - **Concurrency limits.** The current lock/snapshot behavior is correct for the
   tested embedded-store setup, but operational reader/writer load testing at
   representative production sizes is still needed before changing lock scope or

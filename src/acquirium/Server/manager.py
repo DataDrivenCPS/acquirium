@@ -20,9 +20,8 @@ from acquirium.Server.config import OntologySource
 from acquirium.internals.models import LogEntry, Order, TimeIntervalModel, compute_ref_uri
 from acquirium.internals.internals_namespaces import *
 
-from contextlib import contextmanager
-from threading import Lock, RLock
-from typing import TYPE_CHECKING, Any, Iterator
+from threading import Lock
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import pyarrow as pa
@@ -200,10 +199,6 @@ class Manager:
         self.app_storage_root.mkdir(parents=True, exist_ok=True)
         self._app_runs: dict[str, dict[str, Any]] = {}
         self._app_runs_lock = Lock()
-        self._graph_write_batch_lock = RLock()
-        self._graph_write_batch_depth = 0
-        self._graph_write_batch_needs_stream_sync = False
-
 
         _emb_model = os.getenv("ACQUIRIUM_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 
@@ -571,26 +566,6 @@ class Manager:
         """Return source and derived-query generation status."""
         return self.graph_store.graph_status()
 
-    @contextmanager
-    def graph_write_batch(self) -> Iterator[None]:
-        """Coalesce rebuild and stream-reference work for server-side writes.
-
-        This is not an atomic transaction: individual writes remain durable.
-        It is intentionally a manager API rather than a remote client context
-        manager, because independent HTTP requests cannot share a scope.
-        """
-        with self._graph_write_batch_lock:
-            self._graph_write_batch_depth += 1
-            try:
-                with self.graph_store.write_batch():
-                    yield
-            finally:
-                self._graph_write_batch_depth -= 1
-                if self._graph_write_batch_depth == 0 and self._graph_write_batch_needs_stream_sync:
-                    self._graph_write_batch_needs_stream_sync = False
-                    self._sync_stream_refs_from_graph()
-
-
     def insert_graph(
         self,
         rdf_graph: str,
@@ -637,13 +612,8 @@ class Manager:
                     graph_uri=graph_uri,
                 )
             logging.info("acquirium: inserted graph into store")
-            with self._graph_write_batch_lock:
-                defer_stream_sync = self._graph_write_batch_depth > 0
-                if defer_stream_sync:
-                    self._graph_write_batch_needs_stream_sync = True
-            if not defer_stream_sync:
-                with timed_debug(logger, "insert_graph: _sync_stream_refs_from_graph"):
-                    self._sync_stream_refs_from_graph()
+            with timed_debug(logger, "insert_graph: _sync_stream_refs_from_graph"):
+                self._sync_stream_refs_from_graph()
             # Embedding corpus is the static ontoenv vocabularies, not
             # inserted data — no per-insert reindex. Stream-reference sync
             # below requires a fresh inferred view; concurrent callers share

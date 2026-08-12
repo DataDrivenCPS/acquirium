@@ -27,7 +27,7 @@ query cache. A cache is fresh exactly when `published_version` equals
 }
 ```
 
-Long-running clients may poll `version` to invalidate local query state. A
+Long-running clients may poll `source_version` to invalidate local query state. A
 caller that needs to observe current inferred data should issue its query with
 `wait_for_fresh=true`; the status endpoint is informational and does not make
 the following query atomic.

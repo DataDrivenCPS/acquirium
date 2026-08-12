@@ -67,7 +67,7 @@ class BeniciaSimulatorDriver(PollingIngestDriver):
         # Insert the model's ontology so the point nodes exist with their
         # unit / quantity-kind semantics before streams are linked to them.
         if bool(cfg.get("insert_graph", True)):
-            self.aq.insert_graph(graph.serialize(format="turtle"), format="turtle", replace=False)
+            self.insert_graph(graph.serialize(format="turtle"), format="turtle", replace=False)
 
         self.aq.register_datasource(self.source_id)
 
