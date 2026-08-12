@@ -267,8 +267,10 @@ data.
 - Call `validate_graph()` after loading/changing a model or metadata when the
   caller needs a conformance decision. It returns `conforms`, a Turtle SHACL
   report, and a human-readable result string.
-- Poll `graph_version()` only when maintaining a local cached query plan or
-  result. It is not required for ordinary one-shot API calls.
+- Poll `graph_status()["source_version"]` only when maintaining a local cached
+  query plan or result. It is not required for ordinary one-shot API calls;
+  use `published_version`/`is_current` only for monitoring, not as a substitute
+  for `wait_for_fresh=True` on a query that must be current.
 
 ### Server-side write batches
 

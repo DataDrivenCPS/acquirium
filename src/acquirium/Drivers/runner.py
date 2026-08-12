@@ -41,7 +41,7 @@ class DriverRunner:
         self.driver: Driver = driver_cls(acquirium_cli, driver_cfg)
         self.acquirium_cli = acquirium_cli
         self.interval = interval
-        self.graph_version = 0
+        self.source_version = 0
         self.logger = logging.getLogger(
             f"acquirium.driver.{type(self.driver).__name__}"
         )
@@ -61,7 +61,7 @@ class DriverRunner:
         # Seed after setup so the loop doesn't fire on_graph_change() for the
         # pre-existing graph or this driver's own setup insertions.
         try:
-            self.graph_version = self.acquirium_cli.graph_version()
+            self.source_version = int(self.acquirium_cli.graph_status()["source_version"])
         except Exception:
             pass
 
@@ -79,9 +79,9 @@ class DriverRunner:
             # Version check failures (e.g. server briefly unreachable) must
             # not skip the tick, so they are guarded separately.
             try:
-                v = self.acquirium_cli.graph_version()
-                if v != self.graph_version:
-                    self.graph_version = v
+                source_version = int(self.acquirium_cli.graph_status()["source_version"])
+                if source_version != self.source_version:
+                    self.source_version = source_version
                     try:
                         self.driver.on_graph_change()
                     except Exception:

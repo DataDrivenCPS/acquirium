@@ -73,7 +73,7 @@ class AppRunner:
         self.query: Any | None = None
         self.queries: dict[str, Any] = {}
         self.state: Any | None = None
-        self.graph_version = 0
+        self.source_version = 0
         self._params: dict[str, Any] = {}
         self._build_status = "pending"
 
@@ -135,7 +135,7 @@ class AppRunner:
 
         Removes every triple describing the app node, the virtual points it
         produces, and those points' external references, then (server-side)
-        bumps the graph version so keep-alive workers rebuild. Driven only by
+        advances the source generation so keep-alive workers rebuild. Driven only by
         the app URI, so it also cleans up triples the build phase may have
         added on the points, not just what register() wrote.
         """
@@ -345,12 +345,12 @@ class AppRunner:
         self._load_app()
         self.build_query()
         self.build_app()
-        # Seed the version the query was built against so the run phase can
-        # detect a stale query after later graph mutations.
+        # Seed the source generation the query was built against so the run
+        # phase can detect a stale query after later graph mutations.
         try:
-            self.graph_version = self.acquirium_cli.graph_version()
+            self.source_version = int(self.acquirium_cli.graph_status()["source_version"])
         except Exception:
-            self.graph_version = 0
+            self.source_version = 0
         self._build_status = "ready"
         return {
             "name": self.spec.name,
@@ -440,7 +440,7 @@ class AppRunner:
 
     async def _run_loop(self, interval: float, start, end, params: dict[str, Any]) -> None:
         """Keep-alive loop: dispatch a run each interval, rebuilding the query
-        when the server's graph version advances (mirrors DriverRunner.run).
+        when the server's source generation advances (mirrors DriverRunner.run).
         The state from build_app is reused, so the model trains once and each
         dispatched run is an inference.
         """
@@ -454,9 +454,9 @@ class AppRunner:
                 pass
             # A version poll failure must not skip the run, so guard it apart.
             try:
-                v = self.acquirium_cli.graph_version()
-                if v != self.graph_version:
-                    self.graph_version = v
+                source_version = int(self.acquirium_cli.graph_status()["source_version"])
+                if source_version != self.source_version:
+                    self.source_version = source_version
                     self.build_query()
             except Exception:
                 self.logger.exception("query refresh failed; keeping previous query")

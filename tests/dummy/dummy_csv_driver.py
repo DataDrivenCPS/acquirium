@@ -57,7 +57,7 @@ class DummyCSVDriver(CSVIngestDriver):
         streams = _build_stream_bindings(column_lookup=COLUMN_LOOKUP_PATH)
         if streams:
             self.aq.register_streams(streams)
-        self._last_registered_version = self.aq.graph_version()
+        self._last_registered_version = self.aq.graph_status()["source_version"]
 
     def skip_rows_for(self, path: Path) -> tuple[int, ...]:
         return (1,)  # row 1 is a metadata banner, not data

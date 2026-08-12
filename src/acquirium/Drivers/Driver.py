@@ -178,7 +178,7 @@ class Driver(ABC):
         """
 
     def on_graph_change(self) -> None:
-        """Called by the CLI when the server's graph version advances.
+        """Called by the runner when the server's source generation advances.
 
         Override to react to graph mutations (e.g. re-query for new streams).
         Default is a no-op. Never called during setup() — use setup() for
