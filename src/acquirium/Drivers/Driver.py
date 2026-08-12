@@ -69,16 +69,32 @@ class Driver(ABC):
     server with ``acquirium driver start acquirium.toml``.
     """
 
-    # Default datasource for single-source ingest drivers. Multi-source drivers
-    # may omit this if every observation row carries a source_id column.
-    source_id: str
-
     def __init__(self, aq: "Acquirium", config: dict) -> None:
         self.aq = aq
         # Full parsed TOML dict so drivers can read their own config sections.
         self.config = config
         # Persistent state storage
         self.state = self._init_state(config)
+        self._source_id: str | None = None
+
+    @property
+    def source_id(self) -> str:
+        """Default datasource for single-source ingest drivers.
+
+        Multi-source drivers may leave this unset if every observation row
+        carries a ``source_id`` column.
+        """
+        if self._source_id is None:
+            raise AttributeError(
+                f"{type(self).__name__}.source_id is not set yet — assign it "
+                "(e.g. `self.source_id = \"...\"`) before calling insert_graph, "
+                "register_streams, or other source-scoped helpers."
+            )
+        return self._source_id
+
+    @source_id.setter
+    def source_id(self, value: str) -> None:
+        self._source_id = value
 
     def reference_uri(self, ref_name: str) -> URIRef:
         """Return the canonical reference URI for ``self.source_id``/``ref_name``."""
