@@ -314,14 +314,15 @@ service boundary, not by sharing its database files.
 The following are not guarantees of the current implementation. They are areas
 where the desired policy or mechanism has not been settled yet.
 
-- **Source deletion and retention.** The registry can remove an entry, but the
-  public lifecycle/API for deleting a source graph, its stream registrations,
-  and possibly its timeseries data has not been designed. In particular, the
-  retention policy for a removed driver needs a product decision.
-- **Inference cost and scheduling.** Inference is rebuilt synchronously when a
-  query needs an outdated view. Whether large deployments should expose an
-  asynchronous rebuild/status API, coalesce writes, or use a background worker
-  needs measurement against real graph sizes and latency requirements.
+- **Source deletion and retention.** There is no public source-deletion API and
+  the registry deliberately retains an empty source graph. A future lifecycle
+  for deleting a source graph, its stream registrations, and possibly its
+  timeseries data still needs an explicit retention and provenance policy.
+- **Inference cost and scheduling.** Rebuilds already run in one background,
+  single-flight worker; ordinary readers can use the last complete cache and
+  server-side write batches coalesce scheduling. The remaining decision is
+  whether production workloads need a bounded fresh-read deadline, a debounce
+  policy for sustained writes, or a separate worker/service boundary.
 - **Concurrency limits.** The current lock/snapshot behavior is correct for the
   tested embedded-store setup, but operational reader/writer load testing at
   representative production sizes is still needed before changing lock scope or
