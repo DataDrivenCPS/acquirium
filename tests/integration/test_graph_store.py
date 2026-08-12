@@ -74,7 +74,7 @@ class TestInsertExport:
         result = graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
         assert result["main_triples"] > 0
 
-        exported = graph_store.export_graph(include_union=False, format="turtle")
+        exported = graph_store.export_graph(include_dependencies=False, format="turtle")
         assert "sensor1" in exported
         assert "sensor2" in exported
 
@@ -82,7 +82,7 @@ class TestInsertExport:
         graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
         result = graph_store.insert_graph(EXTRA_TURTLE, format="turtle", replace=True)
 
-        exported = graph_store.export_graph(include_union=False, format="turtle")
+        exported = graph_store.export_graph(include_dependencies=False, format="turtle")
         assert "sensor3" in exported
         # sensor1 should be gone after replace
         assert "sensor1" not in exported
@@ -91,7 +91,7 @@ class TestInsertExport:
         graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
         graph_store.insert_graph(EXTRA_TURTLE, format="turtle", replace=False)
 
-        exported = graph_store.export_graph(include_union=False, format="turtle")
+        exported = graph_store.export_graph(include_dependencies=False, format="turtle")
         assert "sensor1" in exported
         assert "sensor3" in exported
 
@@ -110,13 +110,13 @@ class TestInsertExport:
 
     def test_export_turtle_parseable(self, graph_store):
         graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
-        exported = graph_store.export_graph(include_union=False, format="turtle")
+        exported = graph_store.export_graph(include_dependencies=False, format="turtle")
         assert isinstance(exported, str)
         assert len(exported) > 0
 
     def test_export_n3(self, graph_store):
         graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
-        exported = graph_store.export_graph(include_union=False, format="n3")
+        exported = graph_store.export_graph(include_dependencies=False, format="n3")
         assert isinstance(exported, str)
         assert len(exported) > 0
 
@@ -128,7 +128,7 @@ class TestInsertExport:
             graph_uri=graph_store.source_graph_uri("test-driver"),
         )
 
-        exported = graph_store.export_graph(include_union=False, format="turtle")
+        exported = graph_store.export_graph(include_dependencies=False, format="turtle")
 
         assert "sensor1" in exported
         assert "sensor3" in exported
@@ -158,7 +158,7 @@ class TestSparql:
     def test_concurrent_fresh_readers_share_one_rebuild(self, graph_store, monkeypatch):
         graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
         query = "SELECT ?s WHERE { ?s a <http://example.org/TemperatureSensor> }"
-        graph_store.sparql_query(query, use_union=False)  # Warm the cache.
+        graph_store.sparql_query(query, include_dependencies=False)  # Warm the cache.
         graph_store.insert_graph(EXTRA_TURTLE, format="turtle", replace=False)
 
         original = graph_store._build_query_views
@@ -190,7 +190,7 @@ class TestSparql:
     ):
         graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
         query = "SELECT ?s WHERE { ?s a <http://example.org/TemperatureSensor> }"
-        graph_store.sparql_query(query, use_union=False, wait_for_fresh=True)
+        graph_store.sparql_query(query, include_dependencies=False, wait_for_fresh=True)
 
         original = graph_store._build_query_views
         started = Event()
@@ -206,7 +206,7 @@ class TestSparql:
         assert started.wait(timeout=10)
 
         # Eventual reads use the old complete cache instead of waiting here.
-        assert len(graph_store.sparql_query(query, use_union=False)["rows"]) == 1
+        assert len(graph_store.sparql_query(query, include_dependencies=False)["rows"]) == 1
         with ThreadPoolExecutor(max_workers=1) as executor:
             fresh = executor.submit(
                 graph_store.sparql_query,
@@ -221,7 +221,7 @@ class TestSparql:
     def test_write_during_rebuild_is_coalesced_to_one_follow_up(self, graph_store, monkeypatch):
         graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
         query = "SELECT ?s WHERE { ?s a <http://example.org/TemperatureSensor> }"
-        graph_store.sparql_query(query, use_union=False)  # Warm the cache.
+        graph_store.sparql_query(query, include_dependencies=False)  # Warm the cache.
         graph_store.insert_graph(EXTRA_TURTLE, format="turtle", replace=False)
 
         original = graph_store._build_query_views
@@ -257,7 +257,7 @@ class TestSparql:
 
         payload = graph_store.sparql_query_json(
             "SELECT ?s WHERE { ?s a <http://example.org/TemperatureSensor> }",
-            use_union=False,
+            include_dependencies=False,
         )
 
         assert payload is not None
@@ -269,10 +269,10 @@ class TestSparql:
         query = "SELECT ?s WHERE { ?s a <http://example.org/TemperatureSensor> }"
 
         # Build the inferred cache before starting concurrent readers.
-        assert len(graph_store.sparql_query(query, use_union=False)["rows"]) == 1
+        assert len(graph_store.sparql_query(query, include_dependencies=False)["rows"]) == 1
         with ThreadPoolExecutor(max_workers=8) as executor:
             results = list(executor.map(
-                lambda _: graph_store.sparql_query(query, use_union=False),
+                lambda _: graph_store.sparql_query(query, include_dependencies=False),
                 range(32),
             ))
 
@@ -316,7 +316,7 @@ ex:item a ex:Thing .
 
         result = graph_store.sparql_query(
             "SELECT ?o WHERE { <urn:test:item> <urn:test:derived> ?o }",
-            use_union=False,
+            include_dependencies=False,
         )
 
         assert result["rows"] == [[URIRef("urn:test:value")]]
@@ -342,7 +342,7 @@ ex:item a ex:Thing .
         graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
         result = graph_store.sparql_query(
             "SELECT ?s WHERE { ?s a <http://example.org/TemperatureSensor> }",
-            use_union=True,
+            include_dependencies=True,
         )
         assert len(result["rows"]) >= 1
 
@@ -357,7 +357,7 @@ ex:item a ex:Thing .
 
         result = graph_store.sparql_query(
             "SELECT ?s WHERE { ?s a <http://example.org/StrayType> }",
-            use_union=True,
+            include_dependencies=True,
         )
 
         assert result["rows"] == []
@@ -380,11 +380,11 @@ ex:item a ex:Thing .
 
         union = graph_store.sparql_query(
             "SELECT ?s WHERE { ?s a <http://example.org/GeneratedType> }",
-            use_union=True,
+            include_dependencies=True,
         )
         inferred_data = graph_store.sparql_query(
             "SELECT ?s WHERE { ?s a <http://example.org/GeneratedType> }",
-            use_union=False,
+            include_dependencies=False,
         )
 
         assert len(union["rows"]) == 1
@@ -402,7 +402,7 @@ ex:item a ex:Thing .
 
         result = graph_store.sparql_query(
             "SELECT ?s WHERE { ?s a <http://example.org/DriverType> }",
-            use_union=True,
+            include_dependencies=True,
         )
 
         assert len(result["rows"]) == 1

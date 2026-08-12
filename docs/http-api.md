@@ -62,7 +62,7 @@ Export the RDF graph as serialized RDF.
 
 | Parameter | Default | Description |
 | --- | --- | --- |
-| `include_union` | `true` | Include all registered deployment/source graphs plus imported ontology/shape dependencies. `false` returns all deployment/source graphs without those dependencies. |
+| `include_dependencies` | `true` | Include all registered deployment/source graphs plus imported ontology/shape dependencies. `false` returns all deployment/source graphs without those dependencies. |
 | `format` | `turtle` | Serialization format (`turtle`, `n3`, `xml`, `trig`, `nquads`) |
 
 Returns the RDF document with the appropriate content type (e.g. `text/turtle`).
@@ -82,7 +82,7 @@ Read-only [SPARQL 1.1 Protocol](https://www.w3.org/TR/sparql11-protocol/) endpoi
 | Parameter | Default | Description |
 | --- | --- | --- |
 | `query` | required | SPARQL query string |
-| `use_union` | `true` | Query inferred deployment data plus resolved ontology/shape triples. `false` queries inferred deployment data without those triples. |
+| `include_dependencies` | `true` | Query inferred deployment data plus resolved ontology/shape triples. `false` queries inferred deployment data without those triples. |
 | `wait_for_fresh` | `false` | Wait for inference after graph writes. `false` uses the last complete published derived graph. |
 
 Use HTTP `Accept` to select a response serialization. The default is `application/sparql-results+json` for `SELECT`/`ASK` and `text/turtle` for `CONSTRUCT`/`DESCRIBE`.
@@ -120,7 +120,7 @@ Legacy endpoint. Executes a SPARQL SELECT query and returns results in an intern
 | Parameter | Default | Description |
 | --- | --- | --- |
 | `query` | required | SPARQL query string |
-| `use_union` | `true` | Include ontology/shape triples in the query graph |
+| `include_dependencies` | `true` | Include ontology/shape triples in the query graph |
 | `wait_for_fresh` | `false` | If true, wait for pending inference after graph writes. Otherwise return the last complete published graph while rebuilding. |
 
 ---

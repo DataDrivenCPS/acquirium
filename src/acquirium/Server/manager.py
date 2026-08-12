@@ -299,7 +299,7 @@ class Manager:
         with timed_debug(logger, "_sync_stream_refs_from_graph: SPARQL"):
             res = self.graph_store.sparql_query(
                 q,
-                use_union=True,
+                include_dependencies=True,
                 wait_for_fresh=True,
             )
         rows = res.get("rows", [])
@@ -891,7 +891,7 @@ class Manager:
     def sparql_dict(
         self,
         query: str,
-        use_union: bool = True,
+        include_dependencies: bool = True,
         *,
         wait_for_fresh: bool = False,
     ) -> dict[str, Any]:
@@ -900,7 +900,7 @@ class Manager:
 
         Args:
             query: The SPARQL query string.
-            use_union: Whether to query the inferred graph with imported
+            include_dependencies: Whether to include imported
                 ontology/shape triples included.
             wait_for_fresh: Wait for the latest graph mutation to be inferred.
                 The default returns the last complete published graph while a
@@ -910,32 +910,32 @@ class Manager:
             A dictionary containing the query results.
             {"cols": [...], "rows": [...]}
         """
-        logger.debug("sparql_dict union=%s len=%d", use_union, len(query))
+        logger.debug("sparql_dict dependencies=%s len=%d", include_dependencies, len(query))
         return self.graph_store.sparql_query(
             query,
-            use_union=use_union,
+            include_dependencies=include_dependencies,
             wait_for_fresh=wait_for_fresh,
         )
 
     def sparql_json(
         self,
         query: str,
-        use_union: bool = True,
+        include_dependencies: bool = True,
         *,
         wait_for_fresh: bool = False,
     ) -> bytes | None:
         """Return native SPARQL JSON for SELECT queries when available."""
-        logger.debug("sparql_json union=%s len=%d", use_union, len(query))
+        logger.debug("sparql_json dependencies=%s len=%d", include_dependencies, len(query))
         return self.graph_store.sparql_query_json(
             query,
-            use_union=use_union,
+            include_dependencies=include_dependencies,
             wait_for_fresh=wait_for_fresh,
         )
 
     def sparql_serialized(
         self,
         query: str,
-        use_union: bool = True,
+        include_dependencies: bool = True,
         *,
         wait_for_fresh: bool = False,
         results_format: ox.QueryResultsFormat,
@@ -944,7 +944,7 @@ class Manager:
         """Return a SPARQL Protocol response body from the derived query view."""
         return self.graph_store.sparql_query_serialized(
             query,
-            use_union=use_union,
+            include_dependencies=include_dependencies,
             wait_for_fresh=wait_for_fresh,
             results_format=results_format,
             graph_format=graph_format,
@@ -954,8 +954,6 @@ class Manager:
         """
         Get the RDFLib NamespaceManager from the graph store.
 
-        Args:
-            use_union: Whether to get the NamespaceManager for the union graph.
         Returns:
             An RDFLib NamespaceManager instance.
         """

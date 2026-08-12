@@ -118,7 +118,7 @@ def run_profile(
     reader_count: int,
     reader_operations: int,
     writer_operations: int,
-    use_union: bool,
+    include_dependencies: bool,
     wait_for_fresh: bool,
 ) -> dict[str, object]:
     """Run readers with zero or one source-owned writer from a shared barrier."""
@@ -155,7 +155,7 @@ def run_profile(
             try:
                 rows = store.sparql_query(
                     QUERY,
-                    use_union=use_union,
+                    include_dependencies=include_dependencies,
                     wait_for_fresh=wait_for_fresh,
                 )["rows"]
                 if not rows:
@@ -217,7 +217,7 @@ def run_profile(
         "profile": profile,
         "readers": reader_count,
         "writers": writer_count,
-        "use_union": use_union,
+        "include_dependencies": include_dependencies,
         "wait_for_fresh": wait_for_fresh,
         "elapsed_s": elapsed_s,
         "operations_per_second": operations / elapsed_s if elapsed_s else 0.0,
@@ -233,7 +233,7 @@ def run_stale_read_profile(
     *,
     reader_count: int,
     stale_hold_ms: float,
-    use_union: bool,
+    include_dependencies: bool,
     wait_for_fresh: bool,
 ) -> dict[str, object]:
     """Measure one query per reader while publication of a rebuild is held.
@@ -274,7 +274,7 @@ def run_stale_read_profile(
             began = time.perf_counter_ns()
             rows = store.sparql_query(
                 QUERY,
-                use_union=use_union,
+                include_dependencies=include_dependencies,
                 wait_for_fresh=wait_for_fresh,
             )["rows"]
             if not rows:
@@ -321,7 +321,7 @@ def run_stale_read_profile(
         # The reader interval above is the measurement. Drain the held rebuild
         # afterwards so its build metric is complete and cannot affect a later
         # row; this synchronization is intentionally outside elapsed_s.
-        store.sparql_query(QUERY, use_union=use_union, wait_for_fresh=True)
+        store.sparql_query(QUERY, include_dependencies=include_dependencies, wait_for_fresh=True)
     finally:
         release_rebuild.set()
         for worker in workers:
@@ -335,7 +335,7 @@ def run_stale_read_profile(
         "profile": "stale-read",
         "readers": reader_count,
         "writers": 1,
-        "use_union": use_union,
+        "include_dependencies": include_dependencies,
         "wait_for_fresh": wait_for_fresh,
         "stale_hold_ms": stale_hold_ms,
         "elapsed_s": elapsed_s,
@@ -354,7 +354,7 @@ def print_result(result: dict[str, object]) -> None:
     assert isinstance(reader, dict) and isinstance(writer, dict) and isinstance(refresh, dict)
     print(
         f"{result['profile']:8} readers={result['readers']:>3} writers={result['writers']} "
-        f"union={result['use_union']} ops/s={result['operations_per_second']:>8.1f} "
+        f"dependencies={result['include_dependencies']} ops/s={result['operations_per_second']:>8.1f} "
         f"wait_for_fresh={result['wait_for_fresh']!s:5} "
         f"read p50/p95={reader['p50_ms']:.2f}/{reader['p95_ms']:.2f} ms "
         f"write p95={writer['p95_ms']:.2f} ms "
@@ -391,7 +391,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=50.0,
         help="how long stale-read holds the rebuild before publication",
     )
-    parser.add_argument("--use-union", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--include-dependencies",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="include ontology and shape dependencies in reader queries",
+    )
     parser.add_argument(
         "--consistencies",
         default=None,
@@ -444,19 +449,24 @@ def main() -> int:
         store.insert_graph(data_graph(args.seed_triples, prefix="plant"), replace=True)
         # Warm the same derived cache that readers will query; setup time is
         # intentionally excluded from measured profiles.
-        store.sparql_query(QUERY, use_union=args.use_union, wait_for_fresh=True)
+        store.sparql_query(
+            QUERY,
+            include_dependencies=args.include_dependencies,
+            wait_for_fresh=True,
+        )
 
         document: dict[str, object] = {
             "seed_triples": args.seed_triples,
             "reader_operations": args.reader_operations,
             "writer_operations": args.writer_operations,
-            "use_union": args.use_union,
+            "include_dependencies": args.include_dependencies,
             "consistencies": consistencies,
             "results": [],
         }
         print(
             f"seed={args.seed_triples} reader_operations={args.reader_operations} "
-            f"writer_operations={args.writer_operations} use_union={args.use_union}",
+            f"writer_operations={args.writer_operations} "
+            f"include_dependencies={args.include_dependencies}",
             flush=True,
         )
         for profile in profiles:
@@ -467,7 +477,7 @@ def main() -> int:
                             store,
                             reader_count=reader_count,
                             stale_hold_ms=args.stale_hold_ms,
-                            use_union=args.use_union,
+                            include_dependencies=args.include_dependencies,
                             wait_for_fresh=CONSISTENCIES[consistency],
                         )
                     else:
@@ -477,12 +487,16 @@ def main() -> int:
                             reader_count=reader_count,
                             reader_operations=args.reader_operations,
                             writer_operations=args.writer_operations,
-                            use_union=args.use_union,
+                            include_dependencies=args.include_dependencies,
                             wait_for_fresh=CONSISTENCIES[consistency],
                         )
                     # Do not let a still-running asynchronous rebuild bleed
                     # into the next row. This synchronization is not timed.
-                    store.sparql_query(QUERY, use_union=args.use_union, wait_for_fresh=True)
+                    store.sparql_query(
+                        QUERY,
+                        include_dependencies=args.include_dependencies,
+                        wait_for_fresh=True,
+                    )
                     document["results"].append(result)
                     print_result(result)
                     if args.json:

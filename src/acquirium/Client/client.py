@@ -213,7 +213,7 @@ class AcquiriumClient:
     def sparql_query(
         self,
         sparql: str,
-        use_union: bool = True,
+        include_dependencies: bool = True,
         *,
         wait_for_fresh: bool = False,
     ) -> dict:
@@ -222,7 +222,7 @@ class AcquiriumClient:
 
         Args:
             sparql: The SPARQL query string.
-            use_union: Whether to include ontology/shape triples.
+            include_dependencies: Whether to include ontology/shape triples.
             wait_for_fresh: Wait for pending inference instead of using the
                 last complete published graph.
 
@@ -237,7 +237,7 @@ class AcquiriumClient:
             url,
             json={
                 "query": sparql,
-                "use_union": use_union,
+                "include_dependencies": include_dependencies,
                 "wait_for_fresh": wait_for_fresh,
             },
         )

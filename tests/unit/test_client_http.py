@@ -102,7 +102,7 @@ class TestSparqlQuery:
         assert call.args[0].endswith("/sparql_json")
         assert call.kwargs["json"] == {
             "query": "SELECT * WHERE { ?s ?p ?o }",
-            "use_union": True,
+            "include_dependencies": True,
             "wait_for_fresh": False,
         }
 

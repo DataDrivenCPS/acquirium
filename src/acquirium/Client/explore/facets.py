@@ -102,7 +102,7 @@ def model_options(client, attr: Attr, version: int) -> list:
             f"WHERE {{\n  ?x ({pred_path}) ?opt .\n}}\n"
             "GROUP BY ?opt\nORDER BY DESC(?count)"
         )
-        res = client.sparql_query(sparql, use_union=True)
+        res = client.sparql_query(sparql, include_dependencies=True)
         _FACET_CACHE[key] = _rows(res, "opt", "count")
     return _FACET_CACHE[key]
 
@@ -119,7 +119,7 @@ def vocab_options(client, attr: Attr, version: int) -> list:
             f"WHERE {{\n{fragment}\n  FILTER(isIRI(?uri))\n}}\n"
             f"LIMIT {_VOCAB_LIMIT}"
         )
-        res = client.sparql_query(sparql, use_union=True)
+        res = client.sparql_query(sparql, include_dependencies=True)
         _FACET_CACHE[key] = _rows(res, "uri", None)
     return _FACET_CACHE[key]
 

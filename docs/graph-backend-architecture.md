@@ -63,11 +63,11 @@ by itself:
 
 | View | Contents | Selector |
 | --- | --- | --- |
-| Deployment graph | Inferred union of every registered deployment/source graph. | `use_union=false` for SPARQL; `include_union=false` for export. |
-| Deployment graph with dependencies | The same inferred deployment graph plus resolved ontology and shape triples. | `use_union=true` for SPARQL; `include_union=true` for export. |
+| Deployment graph | Inferred union of every registered deployment/source graph. | `include_dependencies=false` for SPARQL and export. |
+| Deployment graph with dependencies | The same inferred deployment graph plus resolved ontology and shape triples. | `include_dependencies=true` for SPARQL and export. |
 
-The plant graph remains a backwards-compatible write target when no source
-owner is supplied. It is not a public read view.
+The plant graph is the explicit reserved `source_id="plant"` write target. It
+is not a public read view.
 
 At present, deleting an app removes its registration triples from its source
 graph. There is no public API that removes a source graph or its registry entry;
@@ -97,12 +97,12 @@ registered plant, Acquirium, and source data graphs
                          ▼
               inferred_data query graph
                          │
-                         ├───────────────► `use_union=False`
+                         ├───────────────► `include_dependencies=False`
                          │
                          ▼
  inferred_data_with_shapes = inferred_data + dependency_cache
                          │
-                         └───────────────► `use_union=True` (the API default)
+                         └───────────────► `include_dependencies=True` (the API default)
 ```
 
 The dependency cache contains only the triples added by resolving imports; it
@@ -167,23 +167,22 @@ backend; no caller may treat it as a system of record.
 
 ## Query and export semantics
 
-`use_union` selects whether queries include ontology/shape triples along with
+`include_dependencies` selects whether queries include ontology/shape triples along with
 inferred deployment data. It does not mean an RDF dataset union of every
 stored graph.
 
 | API setting | Default graph queried | Use it for |
 | --- | --- | --- |
-| `use_union=False` | `inferred_data` | Operational queries over asserted and inferred deployment facts. |
-| `use_union=True` | `inferred_data_with_shapes` | The default; use when queries may need ontology hierarchy, definitions, shapes, or rules as well as inferred facts. |
+| `include_dependencies=False` | `inferred_data` | Operational queries over asserted and inferred deployment facts. |
+| `include_dependencies=True` | `inferred_data_with_shapes` | The default; use when queries may need ontology hierarchy, definitions, shapes, or rules as well as inferred facts. |
 
-`export_graph(include_union=False)` returns only the plant data graph for
-backwards compatibility. `export_graph(include_union=True)` returns the union
-of all registered deployment data plus resolved import dependencies. It is an
-export view, not the same thing as either query cache.
+`export_graph(include_dependencies=False)` returns all registered deployment
+data. `export_graph(include_dependencies=True)` adds resolved import
+dependencies. It is an export view, not the same thing as either query cache.
 
-SPARQL `CONSTRUCT`/`DESCRIBE` use the existing RDFLib conversion path. `SELECT`
-and `ASK` may use Oxigraph's native result serialization internally, but the
-public `/sparql_json` response contract remains `{"columns": [...], "rows": [...]}.`
+The standards-compatible `/sparql` endpoint serializes every supported query
+form through Oxigraph. The compatibility `/sparql_json` endpoint retains its
+`{"columns": [...], "rows": [...]}` response contract.
 
 ## How to program against the backend
 
@@ -254,7 +253,7 @@ data.
 - Use `sparql_update(update, source_id=...)` only for targeted changes to data
   owned by that source. Use the reserved `source_id="plant"` for the shared
   plant model.
-- Query with the default `use_union=True` unless it is intentional to exclude
+- Query with the default `include_dependencies=True` unless it is intentional to exclude
   ontology/shape triples. Query results already include inference.
 - Call `validate_graph()` after loading/changing a model or metadata when the
   caller needs a conformance decision. It returns `conforms`, a Turtle SHACL

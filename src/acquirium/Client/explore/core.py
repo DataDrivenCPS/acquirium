@@ -691,7 +691,7 @@ class Query:
     # ---------- faceted exploration ----------
 
     def options(self, attr_name: str, *, of: Optional[str] = None,
-                use_union: bool = True) -> pl.DataFrame:
+                include_dependencies: bool = True) -> pl.DataFrame:
         """Distinct values of one attribute across the current matches, with counts.
 
         Runs immediately (one aggregation query) and returns a polars frame
@@ -715,14 +715,14 @@ class Query:
             alias = g.aliases_reverse.get(nid, str(nid))
             raise ValueError(f"options: attribute {attr_name!r} does not apply to {role} node {alias!r}")
 
-        cache_key = f"options:{attr_name}:{nid}:{use_union}"
+        cache_key = f"options:{attr_name}:{nid}:{include_dependencies}"
         if self.cache.get(cache_key) is None:
             # Two-phase: the pattern runs once through execute() (program
             # edges BFS-resolved, result cached and shared with metadata());
             # attribute values come from a flat VALUES-anchored lookup and
             # the counting happens here. The store only does index lookups —
             # no server-side GROUP BY over the whole pattern.
-            res = self.execute(use_union=use_union)
+            res = self.execute(include_dependencies=include_dependencies)
             cols = res.get("columns", [])
             col = f"v{nid}"
             uris: List[str] = []
@@ -746,7 +746,10 @@ class Query:
                     f"SELECT ?v ?opt\nWHERE {{\n  VALUES ?v {{ {chunk} }}\n"
                     f"  ?v ({pred_path}) ?opt .\n}}"
                 )
-                lookup = self.client.sparql_query(sparql, use_union=use_union)
+                lookup = self.client.sparql_query(
+                    sparql,
+                    include_dependencies=include_dependencies,
+                )
                 lcols = lookup.get("columns", [])
                 vi = lcols.index("v") if "v" in lcols else 0
                 oi = lcols.index("opt") if "opt" in lcols else 1
@@ -762,7 +765,7 @@ class Query:
             )
         return self.cache[cache_key]
 
-    def facets(self, *, of: Optional[str] = None, use_union: bool = True) -> "FacetSummary":
+    def facets(self, *, of: Optional[str] = None, include_dependencies: bool = True) -> "FacetSummary":
         """Value counts for every attribute applicable to a node, with fallback.
 
         For each applicable registry attribute: values matched by the
@@ -791,7 +794,7 @@ class Query:
         for name, attr in REGISTRY.items():
             if role not in attr.roles:
                 continue
-            df = self.options(name, of=alias, use_union=use_union)
+            df = self.options(name, of=alias, include_dependencies=include_dependencies)
             scope = "matched"
             if df.height == 0:
                 pairs = model_options(self.client, attr, version)
@@ -813,7 +816,7 @@ class Query:
     def to_sparql(self) -> str:
         return compile_sparql(self.query_graph)
 
-    def execute(self, use_union: bool = True) -> dict:
+    def execute(self, include_dependencies: bool = True) -> dict:
         """Execute the compiled SPARQL against the metadata graph (cached).
 
         Traversal-program edges (via expressions / ``via="any"``) are
@@ -822,13 +825,17 @@ class Query:
         matches. The final result always comes from one SPARQL query with
         the matches injected as paired VALUES.
         """
-        if self.cache.get(f"execute_{use_union}") is None:
+        cache_key = f"execute_{include_dependencies}"
+        if self.cache.get(cache_key) is None:
             g = self.query_graph
             if any(getattr(e, "patterns", None) and e.value_pairs is None for e in g.edges):
                 from acquirium.Client.explore.traverse import resolve_program_edges
                 g = resolve_program_edges(g, self.client)
-            self.cache[f"execute_{use_union}"] = self.client.sparql_query(compile_sparql(g), use_union=use_union)
-        return self.cache[f"execute_{use_union}"]
+            self.cache[cache_key] = self.client.sparql_query(
+                compile_sparql(g),
+                include_dependencies=include_dependencies,
+            )
+        return self.cache[cache_key]
 
     def to_dict(self) -> dict:
         """Return a JSON-serializable representation of this query graph.
@@ -890,10 +897,10 @@ class Query:
         *,
         alias: Optional[str] = None,
         only_data_nodes: bool = False,
-        use_union: bool = True,
+        include_dependencies: bool = True,
     ) -> List[str]:
         """URIs the pattern currently matches (all nodes, one alias, or data nodes only)."""
-        res = self.execute(use_union=use_union)
+        res = self.execute(include_dependencies=include_dependencies)
         cols = res.get("columns", [])
         rows = res.get("rows", [])
 
@@ -917,16 +924,21 @@ class Query:
                     uris.add(str(val))
         return sorted(uris)
 
-    def metadata(self, *, include_internals: bool = False, use_union: bool = True) -> pl.DataFrame:
+    def metadata(
+        self,
+        *,
+        include_internals: bool = False,
+        include_dependencies: bool = True,
+    ) -> pl.DataFrame:
         """Return the pattern matches as a polars table with alias column names.
 
         The internal SPARQL columns driving ``data()`` (``ext<nid>``,
         ``unit<nid>``, ``extunit<nid>``) are hidden unless
         ``include_internals=True``.
         """
-        cache_key = f"metadata_table:{include_internals}:{use_union}"
+        cache_key = f"metadata_table:{include_internals}:{include_dependencies}"
         if self.cache.get(cache_key) is None:
-            res = self.execute(use_union=use_union)
+            res = self.execute(include_dependencies=include_dependencies)
             cols = res.get("columns", [])
             rows = res.get("rows", [])
             keep_idx = list(range(len(cols)))
@@ -961,7 +973,7 @@ class Query:
         end: datetime | None = None,
         limit: int | None = None,
         order: str = "asc",
-        use_union: bool = True,
+        include_dependencies: bool = True,
         cast_value: str | None = "float",
         value_mode: str = "default",
     ) -> "DataObject":
@@ -973,7 +985,7 @@ class Query:
             end=end,
             limit=limit,
             order=order,
-            use_union=use_union,
+            include_dependencies=include_dependencies,
             cast_value=cast_value,
             value_mode=value_mode,
         )
@@ -985,7 +997,7 @@ class Query:
         end: datetime | None = None,
         limit: int | None = None,
         order: str = "asc",
-        use_union: bool = True,
+        include_dependencies: bool = True,
         shape: str = "narrow",
         cast_value: str | None = "str",
         value_mode: str = "default",
@@ -997,7 +1009,7 @@ class Query:
             end=end,
             limit=limit,
             order=order,
-            use_union=use_union,
+            include_dependencies=include_dependencies,
             cast_value=cast_value,
             value_mode=value_mode,
         ).dataframe(shape=shape, include_ref=include_ref, compact=True)

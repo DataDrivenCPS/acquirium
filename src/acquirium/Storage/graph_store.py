@@ -605,27 +605,27 @@ class OxigraphGraphStore:
             }
 
     # -------------------- SPARQL surface --------------------
-    def _query_graph_uri(self, use_union: bool, *, wait_for_fresh: bool) -> URIRef:
+    def _query_graph_uri(self, include_dependencies: bool, *, wait_for_fresh: bool) -> URIRef:
         """Select a current query-cache graph while coordinating rebuilds."""
         graph = self._ensure_imports_union_graph_current(wait_for_fresh=wait_for_fresh)
-        if use_union:
+        if include_dependencies:
             return URIRef(graph.identifier)
         return self.inferred_data_graph_uri
 
     def sparql_query(
         self,
         query: str,
-        use_union: bool = False,
+        include_dependencies: bool = True,
         *,
         wait_for_fresh: bool = False,
     ) -> dict:
-        _logger.debug("sparql_query union=%s query=%s", use_union, query)
+        _logger.debug("sparql_query dependencies=%s query=%s", include_dependencies, query)
         # Take Oxigraph's repeatable-read snapshot while publication is locked.
         # Publication clears then bulk-loads its named graph, so starting a
         # query outside this short critical section could select that empty
         # intermediate state. Result iteration remains outside the lock.
-        graph_uri = self._query_graph_uri(use_union, wait_for_fresh=wait_for_fresh)
-        with timed_debug(_logger, "sparql_query union=%s", use_union):
+        graph_uri = self._query_graph_uri(include_dependencies, wait_for_fresh=wait_for_fresh)
+        with timed_debug(_logger, "sparql_query dependencies=%s", include_dependencies):
             dataset = self.query_dataset
             with timed_debug(_logger,"sparql_query--oxi query time:"):
                 with self._lock:
@@ -653,7 +653,7 @@ class OxigraphGraphStore:
     def sparql_query_json(
         self,
         query: str,
-        use_union: bool = False,
+        include_dependencies: bool = True,
         *,
         wait_for_fresh: bool = False,
     ) -> bytes | None:
@@ -662,8 +662,8 @@ class OxigraphGraphStore:
         Graph result forms return ``None`` because SPARQL results JSON does not
         represent RDF triples.
         """
-        graph_uri = self._query_graph_uri(use_union, wait_for_fresh=wait_for_fresh)
-        with timed_debug(_logger, "sparql_query_json union=%s", use_union):
+        graph_uri = self._query_graph_uri(include_dependencies, wait_for_fresh=wait_for_fresh)
+        with timed_debug(_logger, "sparql_query_json dependencies=%s", include_dependencies):
             with self._lock:
                 result = self.query_dataset.store._inner.query(
                     query,
@@ -678,7 +678,7 @@ class OxigraphGraphStore:
     def sparql_query_serialized(
         self,
         query: str,
-        use_union: bool = True,
+        include_dependencies: bool = True,
         *,
         wait_for_fresh: bool = False,
         results_format: ox.QueryResultsFormat = ox.QueryResultsFormat.JSON,
@@ -686,12 +686,12 @@ class OxigraphGraphStore:
     ) -> tuple[bytes, str]:
         """Run a query and return a standards-format SPARQL protocol body.
 
-        The derived inferred graph is the default dataset. ``use_union`` adds
+        The derived inferred graph is the default dataset. ``include_dependencies`` adds
         the resolved ontology/shape closure, and ``wait_for_fresh`` selects
         Acquirium's strict-versus-published cache behavior before the query's
         normal Oxigraph repeatable-read snapshot is taken.
         """
-        graph_uri = self._query_graph_uri(use_union, wait_for_fresh=wait_for_fresh)
+        graph_uri = self._query_graph_uri(include_dependencies, wait_for_fresh=wait_for_fresh)
         with self._lock:
             result = self.query_dataset.store._inner.query(
                 query,
@@ -733,16 +733,16 @@ class OxigraphGraphStore:
                 "results_text": results_text,
             }
 
-    def export_graph(self, *, include_union: bool = True, format: str = "turtle") -> str:
+    def export_graph(self, *, include_dependencies: bool = True, format: str = "turtle") -> str:
         """Serialize all deployment data, optionally with ontology dependencies.
 
-        ``include_union=False`` never means the legacy plant graph alone: it
+        ``include_dependencies=False`` never means the legacy plant graph alone: it
         includes every registered source-owned graph and Acquirium's managed
         deployment data. ``True`` adds the resolved ontology/shape closure.
         """
         fmt = (format or "turtle").lower()
         with self._lock:
-            graph = self._source_graph_with_dependencies() if include_union else self._source_data_graph()
+            graph = self._source_graph_with_dependencies() if include_dependencies else self._source_data_graph()
             return graph.serialize(format=fmt)
 
     def export_dependency_graph(self, *, format: str = "trig") -> str:

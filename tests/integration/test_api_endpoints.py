@@ -313,7 +313,7 @@ class TestSparqlEndpoints:
     def test_with_union(self):
         resp = requests.get(f"{BASE_URL}/sparql_json", params={
             "query": "SELECT (COUNT(*) AS ?c) WHERE { ?s ?p ?o }",
-            "use_union": True,
+            "include_dependencies": True,
         })
         assert resp.status_code == 200
 

@@ -388,18 +388,18 @@ def validate_graph() -> dict[str, str | bool]:
 
 
 @app.get("/export_graph")
-def export_graph(include_union: bool = True, format: str = "turtle"):
+def export_graph(include_dependencies: bool = True, format: str = "turtle"):
     """Export the RDF graph in the specified format.
 
     Args:
-        include_union: If True, includes deployment data plus all imported
+        include_dependencies: If True, includes deployment data plus all imported
                       ontology/shape triples. If False, returns all registered
                       deployment/source graphs without those dependencies.
         format: Serialization format - turtle, n3, xml, trig, etc.
     """
     try:
         content = app.state.manager.graph_store.export_graph(
-            include_union=include_union,
+            include_dependencies=include_dependencies,
             format=format,
         )
         media_types = {
@@ -706,15 +706,15 @@ def timeseries_info(req: TimeseriesInfoRequest) -> dict[str, Any]:
 
 
 @app.get("/sparql_json")
-def sparql_json(query: str, use_union: bool = True, wait_for_fresh: bool = False):
+def sparql_json(query: str, include_dependencies: bool = True, wait_for_fresh: bool = False):
     try:
         serialized = app.state.manager.sparql_json(
-            query, use_union=use_union, wait_for_fresh=wait_for_fresh,
+            query, include_dependencies=include_dependencies, wait_for_fresh=wait_for_fresh,
         )
         if serialized is not None:
             return _sparql_results_to_rows(serialized)
         result = app.state.manager.sparql_dict(
-            query, use_union=use_union, wait_for_fresh=wait_for_fresh,
+            query, include_dependencies=include_dependencies, wait_for_fresh=wait_for_fresh,
         )
         return result
     except Exception as e:
@@ -725,13 +725,13 @@ def sparql_json(query: str, use_union: bool = True, wait_for_fresh: bool = False
 def sparql(
     request: Request,
     query: Annotated[str, Query(description="SPARQL SELECT, ASK, CONSTRUCT, or DESCRIBE query")],
-    use_union: bool = True,
+    include_dependencies: bool = True,
     wait_for_fresh: bool = False,
 ) -> Response:
     """Read-only SPARQL 1.1 Protocol endpoint over Acquirium's derived graph.
 
     The default dataset is inferred deployment data plus resolved ontology and
-    shape triples. ``use_union=false`` omits that closure while retaining
+    shape triples. ``include_dependencies=false`` omits that closure while retaining
     inferred deployment data. Dataset-selection and update protocol parameters
     are deliberately not exposed by this read-only first version.
     """
@@ -739,7 +739,7 @@ def sparql(
     try:
         content, media_type = app.state.manager.sparql_serialized(
             query,
-            use_union=use_union,
+            include_dependencies=include_dependencies,
             wait_for_fresh=wait_for_fresh,
             results_format=results_format,
             graph_format=graph_format,
@@ -753,7 +753,7 @@ def sparql(
 
 class SparqlQueryRequest(BaseModel):
     query: str = Field(..., description="SPARQL SELECT/ASK/CONSTRUCT query")
-    use_union: bool = Field(True, description="Include ontology/shape triples")
+    include_dependencies: bool = Field(True, description="Include ontology/shape triples")
     wait_for_fresh: bool = Field(
         False,
         description="Wait for pending inference; default returns the last complete graph",
@@ -767,14 +767,14 @@ def sparql_json_post(req: SparqlQueryRequest):
     try:
         serialized = app.state.manager.sparql_json(
             req.query,
-            use_union=req.use_union,
+            include_dependencies=req.include_dependencies,
             wait_for_fresh=req.wait_for_fresh,
         )
         if serialized is not None:
             return _sparql_results_to_rows(serialized)
         return app.state.manager.sparql_dict(
             req.query,
-            use_union=req.use_union,
+            include_dependencies=req.include_dependencies,
             wait_for_fresh=req.wait_for_fresh,
         )
     except Exception as e:

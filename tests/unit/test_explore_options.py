@@ -23,7 +23,7 @@ def make_client(pattern_rows, lookup_rows):
     """Pattern query -> [v0, v1, ext1, ...]; lookup -> [v, opt]."""
     client = MagicMock()
 
-    def respond(sparql, use_union=True):
+    def respond(sparql, include_dependencies=True):
         if sparql.startswith("SELECT ?v ?opt"):
             return {"columns": ["v", "opt"], "rows": lookup_rows}
         return {"columns": ["v0", "v1", "ext1", "unit1", "extunit1"],
