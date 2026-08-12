@@ -199,6 +199,33 @@ def test_timeseries_text_mode_overrides_numeric_kind(store):
 
 
 @pytest.mark.unit
+def test_timeseries_mixed_unregistered_stream_keeps_one_schema(store):
+    uri = "urn:test:duck:ts_mixed_schema"
+    store.upsert_rows(uri, [(_utc(2024, 3, 8, i), float(i)) for i in range(3)], value_kind="numeric")
+    store.upsert_rows(uri, [(_utc(2024, 3, 9, i), f"state{i}") for i in range(3)], value_kind="text")
+
+    batches = list(store.timeseries(uri, batch_size=2))
+
+    assert len(batches) > 1
+    assert {b.schema.field("value").type for b in batches} == {pa.string()}
+    # Mixed streams coalesce so numeric rows are not nulled out.
+    vals = [v for b in batches for v in b.to_pydict()["value"]]
+    assert vals == ["0.0", "1.0", "2.0", "state0", "state1", "state2"]
+    pa.Table.from_batches(batches)
+
+
+@pytest.mark.unit
+def test_timeseries_numeric_unregistered_stream_reads_as_float(store):
+    uri = "urn:test:duck:ts_numeric_unregistered"
+    store.upsert_rows(uri, [(_utc(2024, 3, 10), 1.5)], value_kind="numeric")
+
+    batch = list(store.timeseries(uri))[0]
+
+    assert batch.schema.field("value").type == pa.float64()
+    assert batch.to_pydict()["value"] == [1.5]
+
+
+@pytest.mark.unit
 def test_timeseries_with_start_end(store):
     uri = "urn:test:duck:ts_range"
     store.upsert_rows(uri, [

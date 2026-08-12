@@ -418,7 +418,11 @@ class DuckDBStore:
         batch_size: int = 50_000,
         value_mode: str = "default",
     ) -> Iterator[pa.RecordBatch]:
-        """Yield PyArrow RecordBatches with schema [ts: timestamp[us,UTC], value, uri]."""
+        """Yield PyArrow RecordBatches with schema [ts: timestamp[us,UTC], value, uri].
+
+        The value column's type is fixed for the whole read — every batch of
+        one call has the same schema.
+        """
         mode = normalize_value_mode(value_mode)
         clauses = ["ref_uri = ?"]
         params: list[Any] = [ref_uri]
@@ -462,6 +466,29 @@ class DuckDBStore:
                 ref_uri, start, end, limit, order, mode,
             ):
                 value_kind = self._stream_value_kind(conn, ref_uri)
+                # Resolve the value column once for the whole read so every
+                # yielded batch has the same schema. An explicit mode wins over
+                # the stream's registered kind: a numeric read of a text-kind
+                # stream must return the numeric column it filtered on, not the
+                # (all-NULL) text column. In default mode the registered kind
+                # decides; an unregistered stream is probed over the queried
+                # range (ignoring LIMIT, so the type cannot depend on which
+                # rows a LIMIT happens to return): numeric-only reads as
+                # float64, text-only as string, and a mixed stream coalesces to
+                # string so no value is nulled out.
+                resolved = mode
+                if resolved == "default":
+                    if value_kind in ("numeric", "text"):
+                        resolved = value_kind
+                    else:
+                        has_numeric, has_text = conn.execute(
+                            f"SELECT COUNT(numeric_value) > 0, COUNT(text_value) > 0 FROM {TIMESERIES_TABLE} WHERE {where}",
+                            params,
+                        ).fetchone()
+                        if has_numeric and has_text:
+                            resolved = "coalesce"
+                        else:
+                            resolved = "numeric" if has_numeric else "text"
                 # Streamed, not materialized: batches are pulled as the caller
                 # consumes them, so an unbounded range need not fit in memory.
                 reader = conn.execute(query, params).to_arrow_reader(batch_size)
@@ -469,7 +496,7 @@ class DuckDBStore:
                 rows += batch.num_rows
                 numeric_col = batch.column("numeric_value")
                 text_col = batch.column("text_value")
-                if mode == "coalesce":
+                if resolved == "coalesce":
                     numeric_values = numeric_col.to_pylist()
                     text_values = text_col.to_pylist()
                     values = [
@@ -477,18 +504,7 @@ class DuckDBStore:
                         for numeric, text in zip(numeric_values, text_values)
                     ]
                     val_col = pa.array(values, type=pa.string())
-                # Explicit mode wins over the stream's registered kind: a
-                # numeric read of a text-kind stream must return the numeric
-                # column it filtered on, not the (all-NULL) text column.
-                elif mode == "numeric":
-                    val_col = numeric_col.cast(pa.float64())
-                elif mode == "text":
-                    val_col = text_col.cast(pa.string())
-                elif value_kind == "text":
-                    val_col = text_col.cast(pa.string())
-                elif value_kind == "numeric":
-                    val_col = numeric_col.cast(pa.float64())
-                elif numeric_col.null_count < len(numeric_col):
+                elif resolved == "numeric":
                     val_col = numeric_col.cast(pa.float64())
                 else:
                     val_col = text_col.cast(pa.string())
