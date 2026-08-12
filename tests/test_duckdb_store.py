@@ -175,6 +175,30 @@ def test_timeseries_uses_registered_text_kind_for_parseable_text(store):
 
 
 @pytest.mark.unit
+def test_timeseries_numeric_mode_overrides_text_kind(store):
+    uri = "urn:test:duck:ts_numeric_mode_text_kind"
+    store.ensure_stream_ref(None, "src-mixed", "mostly-text", ref_uri=uri, value_kind="text")
+    store.upsert_rows(uri, [(_utc(2024, 3, 6), 3.14)], value_kind="numeric")
+
+    batch = list(store.timeseries(uri, value_mode="numeric"))[0]
+
+    assert batch.schema.field("value").type == pa.float64()
+    assert batch.to_pydict()["value"] == [3.14]
+
+
+@pytest.mark.unit
+def test_timeseries_text_mode_overrides_numeric_kind(store):
+    uri = "urn:test:duck:ts_text_mode_numeric_kind"
+    store.ensure_stream_ref(None, "src-mixed", "mostly-numeric", ref_uri=uri, value_kind="numeric")
+    store.upsert_rows(uri, [(_utc(2024, 3, 7), "offline")], value_kind="text")
+
+    batch = list(store.timeseries(uri, value_mode="text"))[0]
+
+    assert batch.schema.field("value").type == pa.string()
+    assert batch.to_pydict()["value"] == ["offline"]
+
+
+@pytest.mark.unit
 def test_timeseries_with_start_end(store):
     uri = "urn:test:duck:ts_range"
     store.upsert_rows(uri, [

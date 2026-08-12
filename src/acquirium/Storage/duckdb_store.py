@@ -477,9 +477,16 @@ class DuckDBStore:
                         for numeric, text in zip(numeric_values, text_values)
                     ]
                     val_col = pa.array(values, type=pa.string())
-                elif mode == "text" or value_kind == "text":
+                # Explicit mode wins over the stream's registered kind: a
+                # numeric read of a text-kind stream must return the numeric
+                # column it filtered on, not the (all-NULL) text column.
+                elif mode == "numeric":
+                    val_col = numeric_col.cast(pa.float64())
+                elif mode == "text":
                     val_col = text_col.cast(pa.string())
-                elif mode == "numeric" or value_kind == "numeric":
+                elif value_kind == "text":
+                    val_col = text_col.cast(pa.string())
+                elif value_kind == "numeric":
                     val_col = numeric_col.cast(pa.float64())
                 elif numeric_col.null_count < len(numeric_col):
                     val_col = numeric_col.cast(pa.float64())
