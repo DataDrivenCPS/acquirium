@@ -38,8 +38,11 @@ export ACQUIRIUM_HOST_PORT
 export ACQUIRIUM_APP_NETWORK
 
 TEST_PYTEST_ENV := ACQUIRIUM_TEST_SERVER_HOST=localhost ACQUIRIUM_TEST_SERVER_PORT=8010 ACQUIRIUM_TEST_PG_DSN=postgresql://acquirium:acquirium@localhost:55432/acquirium_test
+# Number of slow test cases reported by `make test-timing`. Override with
+# `make test-timing PYTEST_DURATIONS=0` to list every test duration.
+PYTEST_DURATIONS ?= 20
 
-.PHONY: up rebuild down no-server-up no-server-down test testing-up testing-down watertap-up watertap-down logs ps benchmark-graph-store
+.PHONY: up rebuild down no-server-up no-server-down test test-timing testing-up testing-down watertap-up watertap-down logs ps benchmark-graph-store
 
 up:
 	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile server up -d --build
@@ -84,6 +87,17 @@ test:
 	$(TEST_COMPOSE) --profile server --profile test rm -sf timescaledb acquirium mosquitto testing_service >/dev/null 2>&1 || true; \
 	$(TEST_COMPOSE) --profile server --profile test up -d --build || status=$$?; \
 	if [ $$status -eq 0 ]; then $(TEST_PYTEST_ENV) uv run pytest tests || status=$$?; fi; \
+	$(MAKE) testing-down; \
+	exit $$status
+
+# Run the full compose-backed suite, then report the slowest test cases for
+# performance investigation. Override with PYTEST_DURATIONS=0 to list all.
+test-timing:
+	uv sync --locked --all-extras
+	status=0; \
+	$(TEST_COMPOSE) --profile server --profile test rm -sf timescaledb acquirium mosquitto testing_service >/dev/null 2>&1 || true; \
+	$(TEST_COMPOSE) --profile server --profile test up -d --build || status=$$?; \
+	if [ $$status -eq 0 ]; then $(TEST_PYTEST_ENV) uv run pytest tests --durations=$(PYTEST_DURATIONS) || status=$$?; fi; \
 	$(MAKE) testing-down; \
 	exit $$status
 
