@@ -12,7 +12,7 @@ class _StubGraphStore:
     def __init__(self, rows):
         self._rows = rows
 
-    def sparql_query(self, query: str, use_union: bool = True) -> dict:
+    def sparql_query(self, query: str, use_union: bool = True, **kwargs) -> dict:
         return {"rows": self._rows}
 
 

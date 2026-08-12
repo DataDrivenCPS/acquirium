@@ -50,6 +50,7 @@ dependencies = [
     "pydantic>=2.12.5",
     "pyontoenv==0.6.0",
     "pyoxigraph>=0.5.2",
+    "pyshifty>=0.3.0",
     "python-dateutil>=2.9.0.post0",
     "python-multipart>=0.0.21",
     "requests>=2.32.5",

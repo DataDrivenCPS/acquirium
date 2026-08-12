@@ -101,6 +101,16 @@ def test_build_query_before_load_raises(tmp_path):
         runner.build_query()
 
 
+def test_deregister_updates_the_app_owned_graph(tmp_path):
+    runner = make_runner(tmp_path)
+
+    runner.deregister()
+
+    runner.acquirium_cli.client.sparql_update.assert_called_once()
+    _, kwargs = runner.acquirium_cli.client.sparql_update.call_args
+    assert kwargs["source_id"] == "app:runner_test_app"
+
+
 # ─────────────────────── keep-alive query refresh ───────────────────────
 
 

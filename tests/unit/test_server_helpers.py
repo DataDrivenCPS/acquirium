@@ -3,7 +3,7 @@
 import pytest
 from datetime import datetime, timezone
 
-from acquirium.Server.app import _parse_dt
+from acquirium.Server.app import _parse_dt, _sparql_results_to_rows
 
 
 class TestParseDt:
@@ -25,6 +25,22 @@ class TestParseDt:
     def test_invalid_raises(self):
         with pytest.raises(Exception):
             _parse_dt("not-a-date")
+
+
+class TestSparqlResultsToRows:
+    def test_select_preserves_columns_rows_contract(self):
+        result = _sparql_results_to_rows(
+            b'{"head":{"vars":["s","label"]},"results":{"bindings":['
+            b'{"s":{"type":"uri","value":"urn:test"},'
+            b'"label":{"type":"literal","value":"Pump"}}]}}'
+        )
+
+        assert result == {"columns": ["s", "label"], "rows": [["urn:test", "Pump"]]}
+
+    def test_ask_preserves_rows_contract(self):
+        assert _sparql_results_to_rows(b'{"head":{},"boolean":true}') == {
+            "columns": [], "rows": [[True]],
+        }
 
 
 class TestPickConvertiblePair:

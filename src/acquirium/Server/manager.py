@@ -292,11 +292,15 @@ class Manager:
           OPTIONAL {{ ?point <{HAS_EXTERNAL_REFERENCE}> ?ref_node . }}
         }}
         """
-        # use_union=False: these acquirium-internal predicates only ever live
-        # in the main graph, so skipping the closure rebuild on the hot
-        # insert path is correct and avoids the per-insert closure refresh.
+        # Stream registrations may be completed by ontology rules, so query the
+        # fresh inferred deployment graph with shapes rather than only asserted
+        # source data. The graph store coalesces concurrent rebuilds.
         with timed_debug(logger, "_sync_stream_refs_from_graph: SPARQL"):
-            res = self.graph_store.sparql_query(q, use_union=False)
+            res = self.graph_store.sparql_query(
+                q,
+                use_union=True,
+                wait_for_fresh=True,
+            )
         rows = res.get("rows", [])
         logger.debug("_sync_stream_refs_from_graph: %d candidate rows", len(rows))
         # Validate every row first, then hand the whole batch to the store in one
@@ -569,9 +573,15 @@ class Manager:
             return self._graph_version
 
 
-    def insert_graph(self, rdf_graph: str, format: str = "turtle", replace = True) -> None:
+    def insert_graph(
+        self,
+        rdf_graph: str,
+        format: str = "turtle",
+        replace: bool = True,
+        source_id: str | None = None,
+    ) -> None:
         """
-        Insert RDF graph into the graph store's main graph.
+        Insert RDF graph into the plant graph, or a source-owned data graph.
 
         The embedding index is refreshed synchronously before returning, so
         once this call completes the just-inserted concepts are resolvable.
@@ -583,7 +593,8 @@ class Manager:
             `pathlib.Path` like object, or string. In the case of a string the string
             is the location of the source.
             format: Format of the RDF data [turtle | n3 | xml | trix]
-            replace: If True, replaces the existing main graph. If False, appends to it.
+            replace: If True, replaces the selected graph. If False, appends to it.
+            source_id: Optional data-graph owner. Omit for the legacy plant graph.
         """
 
         if isinstance(rdf_graph, Path):
@@ -598,13 +609,24 @@ class Manager:
 
         try:
             with timed_debug(logger, "insert_graph format=%s replace=%s", format, replace):
-                self.graph_store.insert_graph(rdf_graph, format=format, replace=replace)
+                graph_uri = (
+                    self.graph_store.source_graph_uri(source_id)
+                    if source_id is not None
+                    else None
+                )
+                self.graph_store.insert_graph(
+                    rdf_graph,
+                    format=format,
+                    replace=replace,
+                    graph_uri=graph_uri,
+                )
             logging.info("acquirium: inserted graph into store")
             with timed_debug(logger, "insert_graph: _sync_stream_refs_from_graph"):
                 self._sync_stream_refs_from_graph()
             # Embedding corpus is the static ontoenv vocabularies, not
-            # inserted data — no per-insert reindex. refresh_union (inside
-            # graph_store.insert_graph) keeps the data/SPARQL union current.
+            # inserted data — no per-insert reindex. Stream-reference sync
+            # below requires a fresh inferred view; concurrent callers share
+            # its single-flight rebuild.
             self._notify_graph_change()
 
         except Exception as e:
@@ -668,7 +690,12 @@ class Manager:
         g = Graph()
         g.add((node, RDF.type,   ACQUIRIUM_DATASOURCE))
         g.add((node, RDFS.label, Literal(source_id)))
-        self.graph_store.insert_graph(g, format="turtle", replace=False)
+        self.graph_store.insert_graph(
+            g,
+            format="turtle",
+            replace=False,
+            graph_uri=self.graph_store.source_graph_uri(source_id),
+        )
         return source_id
 
     def insert_timeseries(
@@ -785,7 +812,12 @@ class Manager:
         # Write bookkeeping triples but skip _notify_graph_change — log inserts
         # don't affect the ontology/concept space and would otherwise continuously
         # invalidate the embedding cache.
-        self.graph_store.insert_graph(G, format="turtle", replace=False)
+        self.graph_store.insert_graph(
+            G,
+            format="turtle",
+            replace=False,
+            graph_uri=self.graph_store.acquirium_graph_uri,
+        )
 
 
     def query_logs(
@@ -829,37 +861,82 @@ class Manager:
           ?log a <{LOGBOOK}> .
         }}
         """
-        result = self.graph_store.sparql_update(q)
+        result = self.graph_store.sparql_update(
+            q,
+            graph_uri=self.graph_store.acquirium_graph_uri,
+        )
         logger.info("Deleted all log references for point %s from graph", point_uri)
         if result.get("changed", True):
             self._notify_graph_change()
         return True
 
-    def sparql_update(self, update: str) -> dict[str, Any]:
-        """Execute a SPARQL UPDATE (INSERT/DELETE) against the main graph.
+    def sparql_update(self, update: str, source_id: str | None = None) -> dict[str, Any]:
+        """Execute a SPARQL UPDATE against plant or source-owned data.
 
         Bumps the graph version when the store reports a change so long-running
         clients (e.g. keep-alive app workers) rebuild cached queries.
+
+        ``source_id`` is intentionally optional for backwards compatibility.
+        It lets a component remove exactly the triples it registered without
+        granting updates to ontology graphs.
         """
-        result = self.graph_store.sparql_update(update)
+        graph_uri = (
+            self.graph_store.source_graph_uri(source_id)
+            if source_id is not None
+            else None
+        )
+        result = self.graph_store.sparql_update(update, graph_uri=graph_uri)
         if result.get("changed", True):
             self._notify_graph_change()
         return result
 
-    def sparql_dict(self, query: str, use_union: bool = True) -> dict[str, Any]:
+    def validate_graph(self) -> dict[str, str | bool]:
+        """Validate all registered deployment data against ontology shapes."""
+        return self.graph_store.validate()
+
+    def sparql_dict(
+        self,
+        query: str,
+        use_union: bool = True,
+        *,
+        wait_for_fresh: bool = False,
+    ) -> dict[str, Any]:
         """
         Execute a SPARQL query against the graph store and return results in dict format.
 
         Args:
             query: The SPARQL query string.
-            use_union: Whether to use the union graph for the query.
+            use_union: Whether to query the inferred graph with imported
+                ontology/shape triples included.
+            wait_for_fresh: Wait for the latest graph mutation to be inferred.
+                The default returns the last complete published graph while a
+                coalesced rebuild runs in the background.
 
         Returns:
             A dictionary containing the query results.
             {"cols": [...], "rows": [...]}
         """
         logger.debug("sparql_dict union=%s len=%d", use_union, len(query))
-        return self.graph_store.sparql_query(query, use_union=use_union)
+        return self.graph_store.sparql_query(
+            query,
+            use_union=use_union,
+            wait_for_fresh=wait_for_fresh,
+        )
+
+    def sparql_json(
+        self,
+        query: str,
+        use_union: bool = True,
+        *,
+        wait_for_fresh: bool = False,
+    ) -> bytes | None:
+        """Return native SPARQL JSON for SELECT queries when available."""
+        logger.debug("sparql_json union=%s len=%d", use_union, len(query))
+        return self.graph_store.sparql_query_json(
+            query,
+            use_union=use_union,
+            wait_for_fresh=wait_for_fresh,
+        )
 
     def namespace_manager(self) -> NamespaceManager :
         """

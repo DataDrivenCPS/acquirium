@@ -58,9 +58,15 @@ class AcquiriumClient:
         self._namespaces_cache: dict[str, str] | None = None
 
 
-    def insert_graph(self, rdf_graph: str, format: str = "turtle", replace: bool = True) -> None:
+    def insert_graph(
+        self,
+        rdf_graph: str,
+        format: str = "turtle",
+        replace: bool = True,
+        source_id: str | None = None,
+    ) -> None:
         """
-        Insert RDF graph into the graph store to the main graph.
+        Insert RDF graph into the plant graph or a source-owned data graph.
 
         The server refreshes the embedding index synchronously before
         responding, so inserted concepts are resolvable once this returns.
@@ -71,7 +77,8 @@ class AcquiriumClient:
                 - graph content as text
                 - location of the source file
             format: Format of the RDF data [turtle | n3 | xml | trix]
-            replace: If True, replaces the existing main graph. If False, appends to it.
+            replace: If True, replaces the selected graph. If False, appends to it.
+            source_id: Optional data-graph owner. Omit for the legacy plant graph.
         """
         if isinstance(rdf_graph, Path):
             if not rdf_graph.is_file():
@@ -99,6 +106,8 @@ class AcquiriumClient:
             "format": format,
             "replace": replace,
         }
+        if source_id is not None:
+            data["source_id"] = source_id
         response = requests.post(url, json=data)
         _raise_for_status(response)
 
@@ -200,13 +209,21 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
-    def sparql_query(self, sparql: str, use_union: bool = True) -> dict:
+    def sparql_query(
+        self,
+        sparql: str,
+        use_union: bool = True,
+        *,
+        wait_for_fresh: bool = False,
+    ) -> dict:
         """
         Execute a SPARQL query against the graph store.
 
         Args:
             sparql: The SPARQL query string.
-            use_union: Whether to use UNION for optional patterns.
+            use_union: Whether to include ontology/shape triples.
+            wait_for_fresh: Wait for pending inference instead of using the
+                last complete published graph.
 
         Returns:
             The SPARQL query result as a dictionary.
@@ -215,14 +232,40 @@ class AcquiriumClient:
         # VALUES blocks, and long query strings blow the server's URL limit
         # ("Invalid HTTP request received").
         url = f"{self.base_url}/sparql_json"
-        response = requests.post(url, json={"query": sparql, "use_union": use_union})
+        response = requests.post(
+            url,
+            json={
+                "query": sparql,
+                "use_union": use_union,
+                "wait_for_fresh": wait_for_fresh,
+            },
+        )
+        _raise_for_status(response)
+        payload = response.json()
+        if "boolean" in payload:
+            return {"columns": [], "rows": [[bool(payload["boolean"])]]}
+        if "head" not in payload or "results" not in payload:
+            return payload
+        columns = payload["head"].get("vars", [])
+        rows = [
+            [binding.get(column, {}).get("value") for column in columns]
+            for binding in payload["results"].get("bindings", [])
+        ]
+        return {"columns": columns, "rows": rows}
+
+    def sparql_update(self, update: str, source_id: str | None = None) -> dict:
+        """Execute a SPARQL UPDATE against plant or source-owned data."""
+        url = f"{self.base_url}/sparql_update"
+        data = {"update": update}
+        if source_id is not None:
+            data["source_id"] = source_id
+        response = requests.post(url, json=data)
         _raise_for_status(response)
         return response.json()
 
-    def sparql_update(self, update: str) -> dict:
-        """Execute a SPARQL UPDATE (INSERT/DELETE) against the graph store."""
-        url = f"{self.base_url}/sparql_update"
-        response = requests.post(url, json={"update": update})
+    def validate_graph(self) -> dict[str, str | bool]:
+        """Validate all registered deployment data against ontology shapes."""
+        response = requests.post(f"{self.base_url}/validate_graph")
         _raise_for_status(response)
         return response.json()
 

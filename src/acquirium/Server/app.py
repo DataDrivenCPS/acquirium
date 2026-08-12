@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import io
+import json
 import logging
 import os
 import threading
@@ -47,6 +48,19 @@ from acquirium.Apps.supervisor import AppSupervisor, AppAlreadyRegistered
 
 
 log = logging.getLogger("acquirium.api")
+
+
+def _sparql_results_to_rows(serialized: bytes) -> dict[str, Any]:
+    """Preserve Acquirium's SPARQL response contract without RDFLib terms."""
+    payload = json.loads(serialized)
+    if "boolean" in payload:
+        return {"columns": [], "rows": [[bool(payload["boolean"])]]}
+    columns = payload["head"].get("vars", [])
+    rows = [
+        [binding.get(column, {}).get("value") for column in columns]
+        for binding in payload["results"].get("bindings", [])
+    ]
+    return {"columns": columns, "rows": rows}
 
 
 def _self_connect_cfg(cfg: dict) -> tuple[str, int, bool]:
@@ -158,6 +172,10 @@ class InsertGraphRequest(BaseModel):
     rdf_graph: str = Field(..., description="File path or RDF text")
     format: str = "turtle"
     replace: bool = True
+    source_id: str | None = Field(
+        default=None,
+        description="Optional driver/metadata source that owns this data graph",
+    )
 
 
 class TimeseriesInfoRequest(BaseModel):
@@ -309,8 +327,17 @@ def insert_graph(req: InsertGraphRequest) -> dict[str, Any]:
             rdf_graph=req.rdf_graph,
             format=req.format,
             replace=req.replace,
+            source_id=req.source_id,
         )
         return {"ok": True, "embedding_ready": True}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/validate_graph")
+def validate_graph() -> dict[str, str | bool]:
+    try:
+        return app.state.manager.validate_graph()
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -633,9 +660,16 @@ def timeseries_info(req: TimeseriesInfoRequest) -> dict[str, Any]:
 
 
 @app.get("/sparql_json")
-def sparql_json(query: str, use_union: bool = True) -> dict[str, Any]:
+def sparql_json(query: str, use_union: bool = True, wait_for_fresh: bool = False):
     try:
-        result = app.state.manager.sparql_dict(query, use_union=use_union)
+        serialized = app.state.manager.sparql_json(
+            query, use_union=use_union, wait_for_fresh=wait_for_fresh,
+        )
+        if serialized is not None:
+            return _sparql_results_to_rows(serialized)
+        result = app.state.manager.sparql_dict(
+            query, use_union=use_union, wait_for_fresh=wait_for_fresh,
+        )
         return result
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -643,28 +677,50 @@ def sparql_json(query: str, use_union: bool = True) -> dict[str, Any]:
 
 class SparqlQueryRequest(BaseModel):
     query: str = Field(..., description="SPARQL SELECT/ASK/CONSTRUCT query")
-    use_union: bool = Field(True, description="Query the imports-union graph")
+    use_union: bool = Field(True, description="Include ontology/shape triples")
+    wait_for_fresh: bool = Field(
+        False,
+        description="Wait for pending inference; default returns the last complete graph",
+    )
 
 
 @app.post("/sparql_json")
-def sparql_json_post(req: SparqlQueryRequest) -> dict[str, Any]:
+def sparql_json_post(req: SparqlQueryRequest):
     """POST form of /sparql_json: VALUES-heavy queries (e.g. resolved
     traversal edges) exceed URL length limits, so the client posts."""
     try:
-        return app.state.manager.sparql_dict(req.query, use_union=req.use_union)
+        serialized = app.state.manager.sparql_json(
+            req.query,
+            use_union=req.use_union,
+            wait_for_fresh=req.wait_for_fresh,
+        )
+        if serialized is not None:
+            return _sparql_results_to_rows(serialized)
+        return app.state.manager.sparql_dict(
+            req.query,
+            use_union=req.use_union,
+            wait_for_fresh=req.wait_for_fresh,
+        )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
 class SparqlUpdateRequest(BaseModel):
     update: str = Field(..., description="SPARQL UPDATE (INSERT/DELETE) statement")
+    source_id: str | None = Field(
+        default=None,
+        description="Optional owner of the data graph to update",
+    )
 
 
 @app.post("/sparql_update")
 def sparql_update(req: SparqlUpdateRequest) -> dict[str, Any]:
-    """Run a SPARQL UPDATE against the main graph and bump the graph version."""
+    """Run a SPARQL UPDATE against plant or source-owned data."""
     try:
-        return {"ok": True, **app.state.manager.sparql_update(req.update)}
+        return {
+            "ok": True,
+            **app.state.manager.sparql_update(req.update, source_id=req.source_id),
+        }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

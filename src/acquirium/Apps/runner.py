@@ -113,7 +113,10 @@ class AppRunner:
         self._persist_source()
         graph = self._app_spec_graph(self.spec)
         self.acquirium_cli.insert_graph(
-            graph.serialize(format="turtle"), format="turtle", replace=False
+            graph.serialize(format="turtle"),
+            format="turtle",
+            replace=False,
+            source_id=f"app:{self.spec.name}",
         )
         self.logger.info(
             "Registered app '%s' (%d output stream(s))",
@@ -150,7 +153,12 @@ class AppRunner:
           }}
         }}
         """
-        self.acquirium_cli.client.sparql_update(query)
+        # register() writes the app description to this graph, so the cleanup
+        # must target the same owner rather than the legacy plant graph.
+        self.acquirium_cli.client.sparql_update(
+            query,
+            source_id=f"app:{self.spec.name}",
+        )
         self.logger.info("Deregistered app '%s' from the graph", self.spec.name)
         return {"name": self.spec.name}
 

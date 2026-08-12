@@ -56,9 +56,29 @@ class TestInsertGraph:
 
         assert mock_requests.post.call_args.kwargs["json"]["rdf_graph"] == rdf
 
+    @patch("acquirium.Client.client.requests")
+    def test_source_id_is_sent_when_graph_has_an_owner(self, mock_requests, client):
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_requests.post.return_value = mock_resp
+
+        client.insert_graph("@prefix ex: <urn:ex/> .", source_id="driver/a")
+
+        assert mock_requests.post.call_args.kwargs["json"]["source_id"] == "driver/a"
+
     def test_single_line_missing_path_raises(self, client):
         with pytest.raises(FileNotFoundError):
             client.insert_graph("no/such/file.ttl")
+
+    @patch("acquirium.Client.client.requests")
+    def test_validate_graph_posts_to_validation_endpoint(self, mock_requests, client):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"conforms": True, "report": "", "results_text": ""}
+        mock_resp.raise_for_status = MagicMock()
+        mock_requests.post.return_value = mock_resp
+
+        assert client.validate_graph()["conforms"] is True
+        assert mock_requests.post.call_args.args[0] == "http://localhost:8000/validate_graph"
 
 
 # ── sparql_query ───────────────────────────────────────────
@@ -68,23 +88,56 @@ class TestSparqlQuery:
     @patch("acquirium.Client.client.requests")
     def test_success_posts_json_body(self, mock_requests, client):
         mock_resp = MagicMock()
-        mock_resp.json.return_value = {"results": {"bindings": []}}
+        mock_resp.json.return_value = {
+            "head": {"vars": ["s"]},
+            "results": {"bindings": [{"s": {"type": "uri", "value": "urn:test"}}]},
+        }
         mock_resp.raise_for_status = MagicMock()
         mock_requests.post.return_value = mock_resp
 
         result = client.sparql_query("SELECT * WHERE { ?s ?p ?o }")
-        assert result == {"results": {"bindings": []}}
+        assert result == {"columns": ["s"], "rows": [["urn:test"]]}
         # POST with a JSON body: VALUES-heavy queries exceed URL length limits
         call = mock_requests.post.call_args
         assert call.args[0].endswith("/sparql_json")
-        assert call.kwargs["json"] == {"query": "SELECT * WHERE { ?s ?p ?o }",
-                                       "use_union": True}
+        assert call.kwargs["json"] == {
+            "query": "SELECT * WHERE { ?s ?p ?o }",
+            "use_union": True,
+            "wait_for_fresh": False,
+        }
+
+    @patch("acquirium.Client.client.requests")
+    def test_wait_for_fresh_is_sent_when_requested(self, mock_requests, client):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"columns": [], "rows": []}
+        mock_resp.raise_for_status = MagicMock()
+        mock_requests.post.return_value = mock_resp
+
+        client.sparql_query("SELECT * WHERE { ?s ?p ?o }", wait_for_fresh=True)
+
+        assert mock_requests.post.call_args.kwargs["json"]["wait_for_fresh"] is True
 
     @patch("acquirium.Client.client.requests")
     def test_error_propagation(self, mock_requests, client):
         mock_requests.post.side_effect = Exception("Connection refused")
         with pytest.raises(Exception, match="Connection refused"):
             client.sparql_query("SELECT * WHERE { ?s ?p ?o }")
+
+
+class TestSparqlUpdate:
+    @patch("acquirium.Client.client.requests")
+    def test_source_id_targets_an_owned_graph(self, mock_requests, client):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"ok": True}
+        mock_resp.raise_for_status = MagicMock()
+        mock_requests.post.return_value = mock_resp
+
+        client.sparql_update("DELETE WHERE { ?s ?p ?o }", source_id="app:demo")
+
+        assert mock_requests.post.call_args.kwargs["json"] == {
+            "update": "DELETE WHERE { ?s ?p ?o }",
+            "source_id": "app:demo",
+        }
 
 
 # ── resolve ────────────────────────────────────────────────

@@ -7,15 +7,19 @@ targeted at Linux CI runners.
 
 import platform
 import pytest
+import json
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event, Lock
 
-from rdflib import URIRef, Literal, RDF, RDFS
+from rdflib import Graph, URIRef, Literal, RDF, RDFS
 
 from acquirium.Storage.graph_store import OxigraphGraphStore
 from acquirium.internals.internals_namespaces import (
     DEFAULT_MAIN_GRAPH,
     ACQUIRIUM_POINT_NS,
 )
+from acquirium.Storage.graph_registry import ACQUIRIUM_GRAPH_URI
 
 # Oxigraph file locking can SIGABRT on macOS in temp directories
 pytestmark = pytest.mark.skipif(
@@ -120,6 +124,173 @@ class TestInsertExport:
 
 
 class TestSparql:
+    def test_concurrent_fresh_readers_share_one_rebuild(self, graph_store, monkeypatch):
+        graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
+        query = "SELECT ?s WHERE { ?s a <http://example.org/TemperatureSensor> }"
+        graph_store.sparql_query(query, use_union=False)  # Warm the cache.
+        graph_store.insert_graph(EXTRA_TURTLE, format="turtle", replace=False)
+
+        original = graph_store._build_query_views
+        started = Event()
+        release = Event()
+        calls = 0
+        calls_lock = Lock()
+
+        def counted_build(data, shapes):
+            nonlocal calls
+            with calls_lock:
+                calls += 1
+            started.set()
+            assert release.wait(timeout=10)
+            return original(data, shapes)
+
+        monkeypatch.setattr(graph_store, "_build_query_views", counted_build)
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = [executor.submit(graph_store.sparql_query, query, False) for _ in range(4)]
+            assert started.wait(timeout=10)
+            release.set()
+            results = [future.result(timeout=30) for future in futures]
+
+        assert calls == 1
+        assert all(len(result["rows"]) == 1 for result in results)
+
+    def test_default_query_uses_last_complete_cache_while_rebuild_runs(
+        self, graph_store, monkeypatch,
+    ):
+        graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
+        query = "SELECT ?s WHERE { ?s a <http://example.org/TemperatureSensor> }"
+        graph_store.sparql_query(query, use_union=False, wait_for_fresh=True)
+
+        original = graph_store._build_query_views
+        started = Event()
+        release = Event()
+
+        def blocked_build(data, shapes):
+            started.set()
+            assert release.wait(timeout=10)
+            return original(data, shapes)
+
+        monkeypatch.setattr(graph_store, "_build_query_views", blocked_build)
+        graph_store.insert_graph(EXTRA_TURTLE, format="turtle", replace=False)
+        assert started.wait(timeout=10)
+
+        # Eventual reads use the old complete cache instead of waiting here.
+        assert len(graph_store.sparql_query(query, use_union=False)["rows"]) == 1
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            fresh = executor.submit(
+                graph_store.sparql_query,
+                query,
+                False,
+                wait_for_fresh=True,
+            )
+            assert not fresh.done()
+            release.set()
+            assert len(fresh.result(timeout=30)["rows"]) == 1
+
+    def test_write_during_rebuild_is_coalesced_to_one_follow_up(self, graph_store, monkeypatch):
+        graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
+        query = "SELECT ?s WHERE { ?s a <http://example.org/TemperatureSensor> }"
+        graph_store.sparql_query(query, use_union=False)  # Warm the cache.
+        graph_store.insert_graph(EXTRA_TURTLE, format="turtle", replace=False)
+
+        original = graph_store._build_query_views
+        first_build_started = Event()
+        release_first_build = Event()
+        calls = 0
+
+        def counted_build(data, shapes):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                first_build_started.set()
+                assert release_first_build.wait(timeout=10)
+            return original(data, shapes)
+
+        monkeypatch.setattr(graph_store, "_build_query_views", counted_build)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                graph_store.sparql_query,
+                query,
+                False,
+                wait_for_fresh=True,
+            )
+            assert first_build_started.wait(timeout=10)
+            graph_store.insert_graph(EXTRA_TURTLE, format="turtle", replace=False)
+            release_first_build.set()
+            assert len(future.result(timeout=30)["rows"]) == 1
+
+        assert calls == 2
+
+    def test_select_can_serialize_without_rdflib_result_conversion(self, graph_store):
+        graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
+
+        payload = graph_store.sparql_query_json(
+            "SELECT ?s WHERE { ?s a <http://example.org/TemperatureSensor> }",
+            use_union=False,
+        )
+
+        assert payload is not None
+        assert json.loads(payload)["results"]["bindings"] == [{
+            "s": {"type": "uri", "value": "http://example.org/sensor1"},
+        }]
+    def test_concurrent_cached_queries_are_safe(self, graph_store):
+        graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
+        query = "SELECT ?s WHERE { ?s a <http://example.org/TemperatureSensor> }"
+
+        # Build the inferred cache before starting concurrent readers.
+        assert len(graph_store.sparql_query(query, use_union=False)["rows"]) == 1
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            results = list(executor.map(
+                lambda _: graph_store.sparql_query(query, use_union=False),
+                range(32),
+            ))
+
+        assert all(len(result["rows"]) == 1 for result in results)
+
+    def test_shacl_rules_infer_over_all_registered_data_graphs(self, graph_store):
+        shapes = Graph()
+        shapes.parse(
+            data="""\
+@prefix ex: <urn:test:> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+<urn:test:rules> a owl:Ontology .
+ex:ThingShape a sh:NodeShape ;
+    sh:targetClass ex:Thing ;
+    sh:rule [
+        a sh:TripleRule ;
+        sh:subject sh:this ;
+        sh:predicate ex:derived ;
+        sh:object ex:value
+    ] ;
+    sh:property [ sh:path ex:derived ; sh:minCount 1 ] .
+""",
+            format="turtle",
+        )
+        graph_store.env.add(shapes, fetch_imports=False)
+        graph_store.insert_graph(
+            """\
+@prefix ex: <urn:test:> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+
+<urn:test:model> owl:imports <urn:test:rules> .
+ex:item a ex:Thing .
+""",
+            format="turtle",
+            # Imports are allowed in any registered deployment-data graph,
+            # not just the legacy plant graph.
+            graph_uri=graph_store.source_graph_uri("test-driver"),
+        )
+
+        result = graph_store.sparql_query(
+            "SELECT ?o WHERE { <urn:test:item> <urn:test:derived> ?o }",
+            use_union=False,
+        )
+
+        assert result["rows"] == [[URIRef("urn:test:value")]]
+        assert graph_store.validate()["conforms"] is True
+
     def test_select_basic(self, graph_store):
         graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
         result = graph_store.sparql_query(
@@ -161,6 +332,49 @@ class TestSparql:
         assert result["rows"] == []
         assert len(graph_store.query_dataset.graph(graph_store.imports_union_graph_uri)) > 0
         assert len(graph_store.source_dataset.graph(graph_store.imports_union_graph_uri)) == 0
+
+    def test_union_graph_includes_registered_acquirium_data_graph(self, graph_store):
+        graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
+        generated = Graph()
+        generated.add((
+            URIRef("urn:test:generated"),
+            RDF.type,
+            URIRef("http://example.org/GeneratedType"),
+        ))
+        graph_store.insert_graph(
+            generated,
+            graph_uri=URIRef(ACQUIRIUM_GRAPH_URI),
+            replace=False,
+        )
+
+        union = graph_store.sparql_query(
+            "SELECT ?s WHERE { ?s a <http://example.org/GeneratedType> }",
+            use_union=True,
+        )
+        inferred_data = graph_store.sparql_query(
+            "SELECT ?s WHERE { ?s a <http://example.org/GeneratedType> }",
+            use_union=False,
+        )
+
+        assert len(union["rows"]) == 1
+        assert len(inferred_data["rows"]) == 1
+
+    def test_source_graph_is_part_of_data_union_after_registration(self, graph_store):
+        source_graph = graph_store.source_graph_uri("test-driver")
+        contributed = Graph()
+        contributed.add((
+            URIRef("urn:test:driver"),
+            RDF.type,
+            URIRef("http://example.org/DriverType"),
+        ))
+        graph_store.insert_graph(contributed, graph_uri=source_graph, replace=False)
+
+        result = graph_store.sparql_query(
+            "SELECT ?s WHERE { ?s a <http://example.org/DriverType> }",
+            use_union=True,
+        )
+
+        assert len(result["rows"]) == 1
 
     def test_update(self, graph_store):
         graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")

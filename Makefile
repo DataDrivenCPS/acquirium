@@ -39,7 +39,7 @@ export ACQUIRIUM_APP_NETWORK
 
 TEST_PYTEST_ENV := ACQUIRIUM_TEST_SERVER_HOST=localhost ACQUIRIUM_TEST_SERVER_PORT=8010 ACQUIRIUM_TEST_PG_DSN=postgresql://acquirium:acquirium@localhost:55432/acquirium_test
 
-.PHONY: up rebuild down no-server-up no-server-down test testing-up testing-down watertap-up watertap-down logs ps
+.PHONY: up rebuild down no-server-up no-server-down test testing-up testing-down watertap-up watertap-down logs ps benchmark-graph-store
 
 up:
 	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile server up -d --build
@@ -100,6 +100,9 @@ unit-test:
 
 unit-test-cov:
 	uv run pytest tests/unit/ -v --tb=short --cov=acquirium --cov-report=term-missing
+
+benchmark-graph-store:
+	uv run python benchmarks/graph_store_concurrency.py
 
 integration-test:
 	$(MAKE) testing-up

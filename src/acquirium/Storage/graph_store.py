@@ -6,10 +6,11 @@ import os
 from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import RLock
+from threading import Condition, RLock, Thread
 
 from ontoenv import OntoEnv
 import pyoxigraph as ox
+import shifty
 from pyoxigraph import NamedNode, RdfFormat
 from rdflib import Dataset, Graph, Literal, RDF, URIRef
 from rdflib.graph import DATASET_DEFAULT_GRAPH_ID
@@ -28,6 +29,7 @@ from acquirium._ontologies import (
     rename_ontology_iri,
 )
 from acquirium.Server.config import OntologySource
+from acquirium.Storage.graph_registry import ACQUIRIUM_GRAPH_URI, GraphRegistry
 
 _logger = logging.getLogger("acquirium.graph_store")
 
@@ -75,7 +77,7 @@ def _graph_affects_closure(graph: Graph) -> bool:
 
 
 _IMPORTS_UNION_GRAPH = URIRef(str(ACQUIRIUM_NS.ImportsUnionGraph))
-
+_INFERRED_DATA_GRAPH = URIRef(str(ACQUIRIUM_NS.InferredDataGraph))
 
 class _OntoenvOxigraphStore:
     """ontoenv graph-store protocol over the shared Oxigraph dataset.
@@ -177,8 +179,13 @@ class OxigraphGraphStore:
         # counters are plain ints, and refreshing a cache empties a graph
         # before reloading it, so an unguarded reader can observe the gap.
         # Reentrant because read paths (sparql_query, export_graph) refresh
-        # those caches themselves.
+        # those caches themselves. The condition uses this same lock to make
+        # derived-cache rebuilding single-flight: one thread builds while
+        # fresh readers wait for its complete publication.
         self._lock = RLock()
+        self._rebuild_condition = Condition(self._lock)
+        self._query_rebuild_in_progress = False
+        self._query_rebuild_error: Exception | None = None
         self.store_path = Path(store_path)
         self.env_root = Path(env_root)
         self.store_path.mkdir(parents=True, exist_ok=True)
@@ -197,11 +204,17 @@ class OxigraphGraphStore:
             self.query_dataset, self.query_store_path = self._open_dataset(self.query_store_path)
 
         self.main_graph_uri = main_graph_uri
+        self.graph_registry = GraphRegistry(
+            self.store_path / "graph_registry.json",
+            plant_graph_uri=str(self.main_graph_uri),
+        )
+        self.acquirium_graph_uri = URIRef(ACQUIRIUM_GRAPH_URI)
         self._source_version = self._load_source_version()
         self._closure_version = 0
         self._dependency_graph_cache: Graph | None = None
         self._dependency_graph_closure_version = -1
         self.imports_union_graph_uri = _IMPORTS_UNION_GRAPH
+        self.inferred_data_graph_uri = _INFERRED_DATA_GRAPH
         self._imports_union_graph_source_version = -1
         self._imports_union_graph_closure_version = -1
 
@@ -211,7 +224,12 @@ class OxigraphGraphStore:
         self._ontoenv_store = _OntoenvOxigraphStore(
             self.source_dataset,
             self._mark_ontology_graph_changed,
-            excluded_iris=(self.main_graph_uri, self.imports_union_graph_uri),
+            excluded_iris=(
+                self.main_graph_uri,
+                self.acquirium_graph_uri,
+                self.imports_union_graph_uri,
+                self.inferred_data_graph_uri,
+            ),
         )
         with timed_debug(_logger, "OntoEnv build env_root=%s", self.env_root):
             self.env, is_warm_start = self._build_ontoenv()
@@ -377,16 +395,19 @@ class OxigraphGraphStore:
 
     def _refresh_dependency_cache(self) -> Graph:
         with timed_debug(_logger, "_refresh_dependency_cache (closure_v=%d)", self._closure_version):
-            main_graph = self._source_main_graph()
+            # Imports may be declared by the plant or by a source-owned graph.
+            # Use the complete deployment-data union as the working graph, then
+            # retain only triples introduced by import resolution as shapes.
+            data_graph = self._source_data_graph()
             closure = Graph()
-            for triple in main_graph:
+            for triple in data_graph:
                 closure.add(triple)
             # OntoEnv mutates the working graph in place by loading imported
             # ontologies, so keep only the dependency delta in the cache.
             self.env.import_dependencies(closure)
             deps = Graph()
             for triple in closure:
-                if triple not in main_graph:
+                if triple not in data_graph:
                     deps.add(triple)
             self._dependency_graph_cache = deps
             self._dependency_graph_closure_version = self._closure_version
@@ -396,7 +417,7 @@ class OxigraphGraphStore:
     def _source_graph_with_dependencies(self) -> Graph:
         """Materialize the export view: source graph plus imported triples."""
         merged = Graph()
-        for triple in self._source_main_graph():
+        for triple in self._source_data_graph():
             merged.add(triple)
         for triple in self._ensure_dependency_cache_current():
             merged.add(triple)
@@ -405,45 +426,141 @@ class OxigraphGraphStore:
     def _imports_union_graph(self) -> Graph:
         return self.query_dataset.graph(self.imports_union_graph_uri)
 
-    def _ensure_imports_union_graph_current(self) -> Graph:
-        if (
-            self._imports_union_graph_source_version != self._source_version
-            or self._imports_union_graph_closure_version != self._closure_version
-        ):
-            return self._refresh_imports_union_graph()
-        return self._imports_union_graph()
+    def _inferred_data_graph(self) -> Graph:
+        return self.query_dataset.graph(self.inferred_data_graph_uri)
 
-    def _refresh_imports_union_graph(self) -> Graph:
-        """Materialize data graph + imports closure into one query graph."""
-        merged = self._source_graph_with_dependencies()
+    def _query_cache_is_current(self) -> bool:
+        return (
+            self._imports_union_graph_source_version == self._source_version
+            and self._imports_union_graph_closure_version == self._closure_version
+        )
+
+    @staticmethod
+    def _copy_graph(graph: Graph) -> Graph:
+        """Return an inference input snapshot detached from mutable store state."""
+        snapshot = Graph()
+        for triple in graph:
+            snapshot.add(triple)
+        return snapshot
+
+    def _snapshot_query_inputs(self) -> tuple[int, int, Graph, Graph]:
+        """Capture one consistent data/shapes generation while holding ``_lock``."""
+        with timed_debug(_logger, "derived snapshot data"):
+            data = self._source_data_graph()
+        with timed_debug(_logger, "derived snapshot shapes"):
+            shapes = self._copy_graph(self._ensure_dependency_cache_current())
+        return self._source_version, self._closure_version, data, shapes
+
+    def _build_query_views(self, data: Graph, shapes: Graph) -> tuple[Graph, Graph]:
+        """Build disposable query graphs outside the store lock."""
+        with timed_debug(
+            _logger,
+            "shifty.infer data=%d triples shapes=%d triples",
+            len(data),
+            len(shapes),
+        ):
+            inferred = shifty.infer(data, shapes).graph()
+
+        merged = self._copy_graph(inferred)
+        for triple in shapes:
+            merged.add(triple)
+        return inferred, merged
+
+    def _publish_query_views(self, inferred: Graph, merged: Graph) -> Graph:
+        """Replace both query graphs atomically while holding ``_lock``."""
+
+        inferred_graph = self._inferred_data_graph()
+        inferred_graph.remove((None, None, None))
+        if len(inferred):
+            with timed_debug(_logger, "derived publish inferred serialize"):
+                nt = inferred.serialize(format="nt", encoding="utf-8")
+            with timed_debug(_logger, "derived publish inferred load"):
+                self.query_dataset.store._inner.bulk_load(
+                    input=nt,
+                    format=RdfFormat.N_TRIPLES,
+                    to_graph=NamedNode(str(self.inferred_data_graph_uri)),
+                )
+
         graph = self._imports_union_graph()
         graph.remove((None, None, None))
         if len(merged):
-            nt = merged.serialize(format="nt", encoding="utf-8")
-            self.query_dataset.store._inner.bulk_load(
-                input=nt,
-                format=RdfFormat.N_TRIPLES,
-                to_graph=NamedNode(str(self.imports_union_graph_uri)),
-            )
+            with timed_debug(_logger, "derived publish union serialize"):
+                nt = merged.serialize(format="nt", encoding="utf-8")
+            with timed_debug(_logger, "derived publish union load"):
+                self.query_dataset.store._inner.bulk_load(
+                    input=nt,
+                    format=RdfFormat.N_TRIPLES,
+                    to_graph=NamedNode(str(self.imports_union_graph_uri)),
+                )
         self._commit_dataset(self.query_dataset)
         self._imports_union_graph_source_version = self._source_version
         self._imports_union_graph_closure_version = self._closure_version
         return graph
 
-    def _apply_main_graph_write(self, incoming: Graph, *, replace: bool) -> Graph:
-        """Apply a parsed graph write to the main source graph and return it."""
-        main = self._source_main_graph()
+    def _start_query_rebuild_locked(self) -> None:
+        """Start the sole background rebuild owner. Caller holds ``_lock``."""
+        if self._query_rebuild_in_progress or self._query_cache_is_current():
+            return
+        self._query_rebuild_in_progress = True
+        self._query_rebuild_error = None
+        Thread(target=self._rebuild_query_views, name="acquirium-derived-graph", daemon=True).start()
+
+    def _rebuild_query_views(self) -> None:
+        """Build the latest generation; writes during a build are coalesced."""
+        error: Exception | None = None
+        try:
+            while True:
+                with self._lock:
+                    source_version, closure_version, data, shapes = self._snapshot_query_inputs()
+                inferred, merged = self._build_query_views(data, shapes)
+                with self._rebuild_condition:
+                    if source_version == self._source_version and closure_version == self._closure_version:
+                        self._publish_query_views(inferred, merged)
+                        return
+                    _logger.debug("derived cache changed during rebuild; coalescing follow-up")
+        except Exception as exc:
+            error = exc
+            _logger.exception("derived cache rebuild failed")
+        finally:
+            with self._rebuild_condition:
+                self._query_rebuild_error = error
+                self._query_rebuild_in_progress = False
+                self._rebuild_condition.notify_all()
+
+    def _ensure_imports_union_graph_current(self, *, wait_for_fresh: bool) -> Graph:
+        """Return the last complete cache, optionally waiting for the latest one.
+
+        Writes schedule one background rebuild. Eventual callers get the last
+        published cache immediately; strict callers wait for the current source
+        generation. All callers wait until the first cache is published.
+        """
+        with self._rebuild_condition:
+            if self._query_cache_is_current():
+                return self._imports_union_graph()
+            self._start_query_rebuild_locked()
+            if self._imports_union_graph_source_version >= 0 and not wait_for_fresh:
+                return self._imports_union_graph()
+            while self._query_rebuild_in_progress:
+                self._rebuild_condition.wait()
+            if self._query_cache_is_current():
+                return self._imports_union_graph()
+            if self._query_rebuild_error is not None:
+                raise RuntimeError("derived cache rebuild failed") from self._query_rebuild_error
+            raise RuntimeError("derived cache remained stale after rebuild")
+
+    def _apply_graph_write(self, incoming: Graph, *, target: Graph, replace: bool) -> Graph:
+        """Apply a parsed graph write to one registered source graph."""
         if replace:
-            main.remove((None, None, None))
+            target.remove((None, None, None))
         for triple in incoming:
-            main.add(triple)
+            target.add(triple)
         # Propagate prefix bindings declared in the incoming Turtle/RDF
         # (rdflib's parser populates incoming.namespace_manager from
         # `@prefix` directives) so they survive into the stores that back
         # the public /namespace/list endpoint.
         for prefix, ns_uri in incoming.namespaces():
             try:
-                main.bind(prefix, ns_uri, override=False)
+                target.bind(prefix, ns_uri, override=False)
                 self.query_dataset.namespace_manager.bind(
                     prefix, ns_uri, override=False
                 )
@@ -451,49 +568,73 @@ class OxigraphGraphStore:
                 _logger.debug(
                     "namespace bind failed for %s=%s", prefix, ns_uri, exc_info=True
                 )
-        return main
+        return target
+
+    def _registered_data_graph(self, graph_uri: URIRef | None) -> Graph:
+        """Return a writable registered graph; default to the plant graph.
+
+        The registry is the allow-list that separates deployment data from
+        ontoenv-managed ontology graphs in the shared source dataset.
+        """
+        target_uri = graph_uri or self.main_graph_uri
+        if target_uri not in {URIRef(record.uri) for record in self.graph_registry.data_graphs()}:
+            raise ValueError(f"graph is not a registered data input: {target_uri}")
+        return self.source_dataset.graph(target_uri)
 
     def _finalize_source_write(self, *, affects_closure: bool) -> None:
-        """Persist a source-graph write and refresh only the state it invalidates."""
+        """Persist a write, mark derived state stale, and schedule its rebuild."""
         self._commit_dataset(self.source_dataset)
         self._mark_source_changed()
         if affects_closure:
             self._mark_closure_changed()
-            self._refresh_dependency_cache()
+        self._start_query_rebuild_locked()
 
     def refresh_union(self, snapshot_path: str | Path | None = None) -> dict[str, int]:
-        """Ensure the dependency closure cache reflects the current source store."""
+        """Refresh inferred query views from all data graphs and shape graphs."""
+        # Do not hold the store lock while inference runs: the single-flight
+        # coordinator owns publication, while writes may continue during the
+        # expensive build.
+        merged = self._ensure_imports_union_graph_current(wait_for_fresh=True)
         with self._lock:
-            merged = self._source_graph_with_dependencies()
             if snapshot_path:
                 snapshot_path = Path(snapshot_path)
                 snapshot_path.parent.mkdir(parents=True, exist_ok=True)
                 merged.serialize(destination=str(snapshot_path), format="turtle")
             return {
-                "main_triples": len(self._source_main_graph()),
+                "main_triples": len(self._source_data_graph()),
                 "union_triples": len(merged),
             }
 
     # -------------------- SPARQL surface --------------------
-    def sparql_query(self, query: str, use_union: bool = False) -> dict:
+    def _query_graph_uri(self, use_union: bool, *, wait_for_fresh: bool) -> URIRef:
+        """Select a current query-cache graph while coordinating rebuilds."""
+        graph = self._ensure_imports_union_graph_current(wait_for_fresh=wait_for_fresh)
+        if use_union:
+            return URIRef(graph.identifier)
+        return self.inferred_data_graph_uri
+
+    def sparql_query(
+        self,
+        query: str,
+        use_union: bool = False,
+        *,
+        wait_for_fresh: bool = False,
+    ) -> dict:
         _logger.debug("sparql_query union=%s query=%s", use_union, query)
-        # Held across the row materialization too: pyoxigraph's query() returns
-        # a lazy iterator, so the rows are still being pulled from the store
-        # while `result` is consumed below.
-        with self._lock, timed_debug(_logger, "sparql_query union=%s", use_union):
-            if use_union:
-                with timed_debug(_logger,"sparql_query--ensure imports union graph current"):
-                    dataset = self.query_dataset
-                    graph_uri = self._ensure_imports_union_graph_current().identifier
-            else:
-                dataset = self.source_dataset
-                graph_uri = self.main_graph_uri
+        # Take Oxigraph's repeatable-read snapshot while publication is locked.
+        # Publication clears then bulk-loads its named graph, so starting a
+        # query outside this short critical section could select that empty
+        # intermediate state. Result iteration remains outside the lock.
+        graph_uri = self._query_graph_uri(use_union, wait_for_fresh=wait_for_fresh)
+        with timed_debug(_logger, "sparql_query union=%s", use_union):
+            dataset = self.query_dataset
             with timed_debug(_logger,"sparql_query--oxi query time:"):
-                result = dataset.store._inner.query(
-                    query,
-                    use_default_graph_as_union=False,
-                    default_graph=ox.NamedNode(str(graph_uri)),
-                )
+                with self._lock:
+                    result = dataset.store._inner.query(
+                        query,
+                        use_default_graph_as_union=False,
+                        default_graph=ox.NamedNode(str(graph_uri)),
+                    )
             with timed_debug(_logger,"sparql_query--output processing:"):
                 if isinstance(result, ox.QueryBoolean):
                     out = {"columns": [], "rows": [[bool(result)]]}
@@ -510,13 +651,57 @@ class OxigraphGraphStore:
         _logger.debug("sparql_query: %d rows", len(out["rows"]))
         return out
 
-    def sparql_update(self, update: str) -> dict:
+    def sparql_query_json(
+        self,
+        query: str,
+        use_union: bool = False,
+        *,
+        wait_for_fresh: bool = False,
+    ) -> bytes | None:
+        """Serialize SELECT/ASK results in PyOxyGraph without RDFLib conversion.
+
+        Graph result forms return ``None`` because SPARQL results JSON does not
+        represent RDF triples.
+        """
+        graph_uri = self._query_graph_uri(use_union, wait_for_fresh=wait_for_fresh)
+        with timed_debug(_logger, "sparql_query_json union=%s", use_union):
+            with self._lock:
+                result = self.query_dataset.store._inner.query(
+                    query,
+                    use_default_graph_as_union=False,
+                    default_graph=ox.NamedNode(str(graph_uri)),
+                )
+            if not isinstance(result, (ox.QuerySolutions, ox.QueryBoolean)):
+                return None
+            serialized = result.serialize(format=ox.QueryResultsFormat.JSON)
+            return bytes(serialized) if serialized is not None else None
+
+    def sparql_update(self, update: str, *, graph_uri: URIRef | None = None) -> dict:
         _logger.debug("sparql_update: %s", update.replace("\n", " ")[:200])
         with self._lock, timed_debug(_logger, "sparql_update"):
-            main = self._source_main_graph()
-            main.update(update)
+            self._registered_data_graph(graph_uri).update(update)
             self._finalize_source_write(affects_closure=True)
         return {"message": "update applied", "changed": True}
+
+    def validate(self) -> dict[str, str | bool]:
+        """Validate the full data union against the ontology shape closure.
+
+        Shifty runs SHACL-AF inference before validation by default, so this
+        uses the same effective data and shape inputs as the inferred cache.
+        """
+        with self._lock, timed_debug(_logger, "shifty.validate"):
+            data = self._source_data_graph()
+            shapes = self._ensure_dependency_cache_current()
+            conforms, report_graph, results_text = shifty.validate(
+                data,
+                shapes,
+                graph_mode="union",
+            )
+            return {
+                "conforms": bool(conforms),
+                "report": report_graph.serialize(format="turtle"),
+                "results_text": results_text,
+            }
 
     def export_graph(self, *, include_union: bool = True, format: str = "turtle") -> str:
         """Serialize for download: the data-graph closure, or just the data."""
@@ -531,9 +716,12 @@ class OxigraphGraphStore:
         with self._lock:
             return self._ensure_dependency_cache_current().serialize(format=fmt)
 
-    def insert_graph(self, content: str | bytes | Graph, *, format: str = "turtle", replace: bool = False) -> dict[str, int | bool]:
-        """Parse incoming graph data and merge (or replace) into the main graph.
+    def insert_graph(self, content: str | bytes | Graph, *, format: str = "turtle", replace: bool = False, graph_uri: URIRef | None = None) -> dict[str, int | bool]:
+        """Parse incoming graph data and merge (or replace) into one data graph.
         format: turtle | n3 | xml | trix
+
+        ``graph_uri`` must be one of the graph registry's data inputs. Omitting
+        it preserves the legacy behavior of writing the plant graph.
         """
 
         fmt = (format or "turtle").lower()
@@ -549,12 +737,18 @@ class OxigraphGraphStore:
         # the expensive part of the call.
         affects_closure = replace or _graph_affects_closure(incoming)
         with self._lock:
-            with timed_debug(_logger, "insert_graph merge into main (replace=%s, affects_closure=%s)", replace, affects_closure):
-                main = self._apply_main_graph_write(incoming, replace=replace)
+            with timed_debug(_logger, "insert_graph merge into data graph (replace=%s, affects_closure=%s)", replace, affects_closure):
+                target = self._registered_data_graph(graph_uri)
+                self._apply_graph_write(
+                    incoming, target=target, replace=replace,
+                )
                 self._finalize_source_write(affects_closure=affects_closure)
             # Counted under the same lock as the write, so the reported totals
             # cannot include a concurrent writer's triples.
-            main_triples = len(main)
+            # ``main_triples`` is a legacy response key. With multiple data
+            # graphs it means the complete deployment-data union, matching
+            # ``refresh_union()`` rather than merely this write's target.
+            main_triples = len(self._source_data_graph())
             union_triples = main_triples + len(self._ensure_dependency_cache_current())
         return {
             "main_triples": main_triples,
@@ -582,6 +776,19 @@ class OxigraphGraphStore:
 
     def _source_main_graph(self) -> Graph:
         return self.source_dataset.graph(self.main_graph_uri)
+
+    def source_graph_uri(self, source_id: str) -> URIRef:
+        """Get the registered data graph for one driver or metadata source."""
+        with self._lock:
+            return URIRef(self.graph_registry.source_graph(source_id).uri)
+
+    def _source_data_graph(self) -> Graph:
+        """Materialize the union of registered deployment data graphs only."""
+        merged = Graph()
+        for record in self.graph_registry.data_graphs():
+            for triple in self.source_dataset.graph(URIRef(record.uri)):
+                merged.add(triple)
+        return merged
 
     @staticmethod
     def _commit_dataset(dataset: Dataset) -> None:
