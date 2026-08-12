@@ -355,9 +355,8 @@ def embedding_status():
 def graph_version() -> dict[str, int | bool]:
     """Return source and derived-query generations.
 
-    ``version`` is retained for existing pollers and equals
-    ``source_version``.  ``published_version`` identifies the source
-    generation represented by the last complete query cache.
+    ``published_version`` identifies the source generation represented by the
+    last complete query cache.
     """
     return app.state.manager.graph_status()
 

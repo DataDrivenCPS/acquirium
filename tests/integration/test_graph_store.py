@@ -121,7 +121,6 @@ class TestInsertExport:
         assert after["source_version"] == before["source_version"] + 1
         assert after["published_version"] == before["published_version"]
         assert after["is_current"] is False
-        assert after["version"] == after["source_version"]
 
     def test_write_batch_schedules_one_rebuild_after_its_outermost_scope(self, graph_store):
         with patch.object(graph_store, "_start_query_rebuild_locked") as start_rebuild:

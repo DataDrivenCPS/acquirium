@@ -475,7 +475,8 @@ class OxigraphGraphStore:
     def _replace_query_graph(self, graph: Graph, graph_uri: URIRef, *, label: str) -> None:
         """Replace one disposable query graph while publication is locked."""
         target = self.query_dataset.graph(graph_uri)
-        target.remove((None, None, None))
+        with timed_debug(_logger, "derived publish %s clear", label):
+            target.remove((None, None, None))
         if not len(graph):
             return
         with timed_debug(_logger, "derived publish %s serialize", label):
@@ -505,7 +506,8 @@ class OxigraphGraphStore:
                 label="dependencies",
             )
             self._dependency_query_graph_closure_version = self._closure_version
-        self._commit_dataset(self.query_dataset)
+        with timed_debug(_logger, "derived publish commit"):
+            self._commit_dataset(self.query_dataset)
         self._query_cache_source_version = self._source_version
         self._query_cache_closure_version = self._closure_version
 
@@ -631,9 +633,6 @@ class OxigraphGraphStore:
         """Return the source generation and the state of its derived cache."""
         with self._lock:
             return {
-                # ``version`` remains the compact compatibility field used by
-                # existing polling clients.
-                "version": self._source_version,
                 "source_version": self._source_version,
                 "published_version": self._query_cache_source_version,
                 "is_current": self._query_cache_is_current(),

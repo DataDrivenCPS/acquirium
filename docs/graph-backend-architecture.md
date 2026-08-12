@@ -170,10 +170,9 @@ backend; no caller may treat it as a system of record.
 
 For monitoring, `GET /graph_version` reports the store-owned
 `source_version`, the `published_version` contained in the last complete query
-cache, `is_current`, and `rebuild_in_progress`. Its compatibility `version`
-field equals `source_version`. The status is a snapshot, not a freshness
-guarantee for a subsequent request; use `wait_for_fresh=True` on that query
-when the query itself must be current.
+cache, `is_current`, and `rebuild_in_progress`. The status is a snapshot, not
+a freshness guarantee for a subsequent request; use `wait_for_fresh=True` on
+that query when the query itself must be current.
 
 ## Query and export semantics
 

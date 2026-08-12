@@ -15,13 +15,11 @@ Returns `{"ok": true}` when the server is running.
 ### `GET /graph_version`
 
 Returns the store-owned source-data generation and the state of the derived
-query cache. `version` is retained for existing clients and equals
-`source_version`. A cache is fresh exactly when `published_version` equals
+query cache. A cache is fresh exactly when `published_version` equals
 `source_version` and `is_current` is true.
 
 ```json
 {
-  "version": 42,
   "source_version": 42,
   "published_version": 41,
   "is_current": false,

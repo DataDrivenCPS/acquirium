@@ -432,11 +432,10 @@ class AcquiriumClient:
     def graph_version(self) -> int:
         """Return the server's current source-data generation.
 
-        This compatibility helper returns the ``version`` field from
-        :meth:`graph_status`.  Use that method when a caller also needs to
-        know whether the derived query cache has caught up.
+        Use :meth:`graph_status` when a caller also needs to know whether the
+        derived query cache has caught up.
         """
-        return int(self.graph_status()["version"])
+        return int(self.graph_status()["source_version"])
 
     def graph_status(self) -> dict[str, int | bool]:
         """Return source and derived-query cache generations from the server."""

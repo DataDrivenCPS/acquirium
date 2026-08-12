@@ -144,7 +144,6 @@ class TestGraphStatus:
     @patch("acquirium.Client.client.requests")
     def test_graph_status_and_compatibility_version(self, mock_requests, client):
         mock_requests.get.return_value = _get_resp({
-            "version": 7,
             "source_version": 7,
             "published_version": 6,
             "is_current": False,
