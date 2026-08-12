@@ -8,11 +8,15 @@ interchangeable.  Select this backend at startup via:
     ACQUIRIUM_TIMESERIES_BACKEND=duckdb  (or "timescale" for Postgres/TimescaleDB)
     ACQUIRIUM_DUCKDB_PATH=/path/to/timeseries.duckdb  (default: {data_dir}/timeseries.duckdb)
 
-**Concurrency:** DuckDB allows only one read-write connection per file at a
-time. This class opens one connection in the constructor and protects all
-write operations with a ``threading.Lock`` for in-process thread safety.
-Multi-process write access to the same ``.duckdb`` file is *not* supported.
-Use the Postgres backend when running multiple server workers.
+**Concurrency:** Every operation opens its own connection against the shared
+in-process database instance (DuckDB's Python client caches the instance per
+path, and the store holds an anchor connection so it stays cached). Reads
+therefore never wait on writes. Writes are serialised by a ``threading.Lock``
+and each runs in its own transaction; ``begin()``/``commit()``/``rollback()``
+span multiple write calls via a dedicated transaction connection. Uncommitted
+transaction writes are not visible to any read. Multi-process access to the
+same ``.duckdb`` file is *not* supported — use the Postgres backend when
+running multiple server workers.
 
 **Timestamps:** All timestamps are stored as ``TIMESTAMP`` (microseconds, UTC)
 rather than ``TIMESTAMPTZ``, avoiding a DuckDB Python-API dependency on
@@ -20,6 +24,7 @@ rather than ``TIMESTAMPTZ``, avoiding a DuckDB Python-API dependency on
 and ``_add_utc`` re-attaches ``tzinfo=UTC`` to values read back.
 """
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator
@@ -64,24 +69,76 @@ class DuckDBStore:
     def __init__(self, db_path: str | Path, *, recreate: bool = False) -> None:
         import duckdb  # lazy — not required unless duckdb backend is selected
 
-        # Kept on the instance so read paths can open their own connections
+        # Kept on the instance so operations can open their own connections
         # without importing duckdb at module scope.
         self._duckdb = duckdb
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         logger.debug("DuckDBStore.__init__: connecting to %s (recreate=%s)", self.db_path, recreate)
+        # Never used for queries: held open so the in-process database instance
+        # stays cached, making per-operation connects cheap attachments instead
+        # of full file opens (and avoiding a WAL checkpoint each time the last
+        # connection closes).
         with timed_debug(logger, "duckdb.connect(%s)", self.db_path):
-            self._conn = duckdb.connect(str(self.db_path))
-        self._in_tx = False
+            self._anchor_conn = duckdb.connect(str(self.db_path))
+        # Dedicated connection carrying a caller-scoped begin()/commit() span;
+        # None outside such a span. Guarded by self._lock.
+        self._tx_conn = None
 
         if recreate:
             logger.debug("DuckDBStore.__init__: dropping existing tables/views (recreate=True)")
-            self._conn.execute(f"DROP VIEW IF EXISTS {TIMESERIES_STREAMS_VIEW}")
-            for tbl in (TIMESERIES_TABLE, STREAMS_TABLE, LOGS_TABLE):
-                self._conn.execute(f"DROP TABLE IF EXISTS {tbl}")
+            with self._lock, self._own_conn() as conn:
+                conn.execute(f"DROP VIEW IF EXISTS {TIMESERIES_STREAMS_VIEW}")
+                for tbl in (TIMESERIES_TABLE, STREAMS_TABLE, LOGS_TABLE):
+                    conn.execute(f"DROP TABLE IF EXISTS {tbl}")
         self.ensure_table()
         logger.debug("DuckDBStore.__init__: ready at %s", self.db_path)
+
+    # ---- connections ----
+
+    def _connect(self):
+        """Open a connection to the shared in-process database instance."""
+        return self._duckdb.connect(str(self.db_path))
+
+    @contextmanager
+    def _own_conn(self):
+        """A private autocommit connection, used for reads and DDL.
+
+        Reads never block behind the write lock and see the last committed
+        state: writes inside an open begin()/commit() span are not visible
+        until that span commits. DDL also runs here, statement-by-statement:
+        DuckDB's catalog dependency tracking rejects re-creating a dropped
+        index inside an explicit transaction.
+        """
+        conn = self._connect()
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+    @contextmanager
+    def _write_conn(self):
+        """A connection with an open transaction. Call with ``self._lock`` held.
+
+        Inside a caller-scoped begin()/commit() span this yields the span's
+        connection and leaves commit/rollback to the span owner. Otherwise it
+        opens a private connection and wraps the block in its own transaction.
+        """
+        if self._tx_conn is not None:
+            yield self._tx_conn
+            return
+        conn = self._connect()
+        try:
+            conn.begin()
+            try:
+                yield conn
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
+        finally:
+            conn.close()
 
     # ---- table management ----
 
@@ -144,9 +201,9 @@ class DuckDBStore:
             f"CREATE INDEX IF NOT EXISTS idx_logs_point ON {LOGS_TABLE} (point_uri, timestamp)",
             f"CREATE INDEX IF NOT EXISTS idx_logs_obs ON {LOGS_TABLE} (observed_start, observed_end)",
         ]
-        with self._lock, timed_debug(logger, "ensure_table: %d DDL statements", len(stmts)):
+        with self._lock, timed_debug(logger, "ensure_table: %d DDL statements", len(stmts)), self._own_conn() as conn:
             for stmt in stmts:
-                self._conn.execute(stmt)
+                conn.execute(stmt)
         return "ok"
 
     # ---- timeseries mutations ----
@@ -162,7 +219,11 @@ class DuckDBStore:
         logger.debug("upsert_rows ref_uri=%s rows=%d kind=%s", ref_uri, len(rows_list), value_kind)
         if not rows_list:
             return 0
-        df = pl.DataFrame(
+        return self.bulk_insert_polars(self._rows_frame(ref_uri, rows_list, value_kind))
+
+    @staticmethod
+    def _rows_frame(ref_uri: str, rows_list: list[tuple[datetime, Any]], value_kind: str) -> pl.DataFrame:
+        return pl.DataFrame(
             {
                 "ref_uri": [ref_uri] * len(rows_list),
                 "ts": [ts for ts, _ in rows_list],
@@ -176,7 +237,6 @@ class DuckDBStore:
                 "value_kind": pl.Utf8,
             },
         )
-        return self.bulk_insert_polars(df)
 
     def replace_rows(
         self,
@@ -187,11 +247,17 @@ class DuckDBStore:
     ) -> int:
         rows_list = list(rows)
         logger.debug("replace_rows ref_uri=%s new_rows=%d kind=%s", ref_uri, len(rows_list), value_kind)
-        with self._lock, timed_debug(logger, "replace_rows DELETE ref_uri=%s", ref_uri):
-            self._conn.execute(
-                f"DELETE FROM {TIMESERIES_TABLE} WHERE ref_uri = ?", [ref_uri]
-            )
-        return self.upsert_rows(ref_uri, rows_list, value_kind=value_kind)
+        df = (
+            self._prepare_frame(self._rows_frame(ref_uri, rows_list, value_kind))
+            if rows_list
+            else pl.DataFrame()
+        )
+        # One transaction for delete + insert: a failure leaves the old rows intact.
+        with self._lock, timed_debug(logger, "replace_rows ref_uri=%s rows=%d", ref_uri, len(df)), self._write_conn() as conn:
+            conn.execute(f"DELETE FROM {TIMESERIES_TABLE} WHERE ref_uri = ?", [ref_uri])
+            if not df.is_empty():
+                self._insert_frame(conn, df)
+        return len(df)
 
     def bulk_insert_polars(self, df: pl.DataFrame) -> int:
         """Bulk-insert a Polars DataFrame with canonical or split value columns.
@@ -203,42 +269,42 @@ class DuckDBStore:
             return 0
         in_rows = len(df)
         with timed_debug(logger, "bulk_insert_polars prepare/dedupe rows=%d", in_rows):
-            df = prepare_value_columns(df).with_columns(
-                pl.col("ts").dt.convert_time_zone("UTC").dt.replace_time_zone(None)
-            )
-            df = df.unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
-        deduped = len(df)
-        logger.debug("bulk_insert_polars: %d rows after dedupe (was %d)", deduped, in_rows)
-        with self._lock, timed_debug(logger, "bulk_insert_polars DELETE+INSERT rows=%d", deduped):
-            self._conn.register("_acquirium_incoming_timeseries", df)
-            owns_transaction = not self._in_tx
-            try:
-                if owns_transaction:
-                    self._conn.execute("BEGIN TRANSACTION")
-                self._conn.execute(
-                    f"""
-                    DELETE FROM {TIMESERIES_TABLE}
-                    USING _acquirium_incoming_timeseries AS incoming
-                    WHERE {TIMESERIES_TABLE}.ref_uri = incoming.ref_uri
-                      AND {TIMESERIES_TABLE}.ts = incoming.ts
-                    """
-                )
-                self._conn.execute(
-                    f"""
-                    INSERT INTO {TIMESERIES_TABLE} (ref_uri, ts, numeric_value, text_value)
-                    SELECT ref_uri, ts, numeric_value, text_value
-                    FROM _acquirium_incoming_timeseries
-                    """
-                )
-                if owns_transaction:
-                    self._conn.execute("COMMIT")
-            except Exception:
-                if owns_transaction:
-                    self._conn.execute("ROLLBACK")
-                raise
-            finally:
-                self._conn.unregister("_acquirium_incoming_timeseries")
+            df = self._prepare_frame(df)
+        logger.debug("bulk_insert_polars: %d rows after dedupe (was %d)", len(df), in_rows)
+        with self._lock, timed_debug(logger, "bulk_insert_polars DELETE+INSERT rows=%d", len(df)), self._write_conn() as conn:
+            self._insert_frame(conn, df)
         return len(df)
+
+    @staticmethod
+    def _prepare_frame(df: pl.DataFrame) -> pl.DataFrame:
+        """Split value columns, normalise ts to naive UTC, dedupe on (ref_uri, ts)."""
+        df = prepare_value_columns(df).with_columns(
+            pl.col("ts").dt.convert_time_zone("UTC").dt.replace_time_zone(None)
+        )
+        return df.unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
+
+    @staticmethod
+    def _insert_frame(conn, df: pl.DataFrame) -> None:
+        """Upsert a prepared frame on *conn*: delete colliding (ref_uri, ts) rows, insert."""
+        conn.register("_acquirium_incoming_timeseries", df)
+        try:
+            conn.execute(
+                f"""
+                DELETE FROM {TIMESERIES_TABLE}
+                USING _acquirium_incoming_timeseries AS incoming
+                WHERE {TIMESERIES_TABLE}.ref_uri = incoming.ref_uri
+                  AND {TIMESERIES_TABLE}.ts = incoming.ts
+                """
+            )
+            conn.execute(
+                f"""
+                INSERT INTO {TIMESERIES_TABLE} (ref_uri, ts, numeric_value, text_value)
+                SELECT ref_uri, ts, numeric_value, text_value
+                FROM _acquirium_incoming_timeseries
+                """
+            )
+        finally:
+            conn.unregister("_acquirium_incoming_timeseries")
 
     # ---- stream reference registry ----
 
@@ -259,8 +325,8 @@ class DuckDBStore:
         #     "ensure_stream_ref source=%s ref_name=%s point_uri=%s kind=%s",
         #     source_id, ref_name, point_uri, value_kind,
         # )
-        with self._lock:
-            self._conn.execute(
+        with self._lock, self._write_conn() as conn:
+            conn.execute(
                 f"""
                 INSERT INTO {STREAMS_TABLE} (ref_uri, point_uri, source_id, ref_name, value_kind)
                 VALUES (?, ?, ?, ?, ?)
@@ -284,10 +350,6 @@ class DuckDBStore:
         Upserting from a registered frame rather than one statement per row is
         what makes this worth having: 1000 refs take ~16ms this way versus ~3.6s
         row-by-row.
-
-        The lock covers register/execute/unregister as a unit: the view name is
-        shared state on the write connection, so two concurrent callers would
-        otherwise overwrite each other's frame between register and insert.
         """
         prepared: dict[str, list[Any]] = {}
         for point_uri, source_id, ref_name, ref_uri, value_kind in refs:
@@ -303,10 +365,10 @@ class DuckDBStore:
             schema=["ref_uri", "point_uri", "source_id", "ref_name", "value_kind"],
             orient="row",
         )
-        with self._lock, timed_debug(logger, "ensure_stream_refs rows=%d", len(df)):
-            self._conn.register("_acquirium_incoming_refs", df)
+        with self._lock, timed_debug(logger, "ensure_stream_refs rows=%d", len(df)), self._write_conn() as conn:
+            conn.register("_acquirium_incoming_refs", df)
             try:
-                self._conn.execute(
+                conn.execute(
                     f"""
                     INSERT INTO {STREAMS_TABLE} (ref_uri, point_uri, source_id, ref_name, value_kind)
                     SELECT ref_uri, point_uri, source_id, ref_name, value_kind
@@ -319,13 +381,13 @@ class DuckDBStore:
                     """
                 )
             finally:
-                self._conn.unregister("_acquirium_incoming_refs")
+                conn.unregister("_acquirium_incoming_refs")
         return list(prepared.keys())
 
     def resolve_storage_key(self, point_uri: str) -> str:
         """Return the storage ref URI for point_uri, or point_uri itself if unregistered."""
-        with self._lock:
-            row = self._conn.execute(
+        with self._own_conn() as conn:
+            row = conn.execute(
                 f"SELECT ref_uri FROM {STREAMS_TABLE} WHERE point_uri = ?", [point_uri]
             ).fetchone()
         return point_uri if row is None else row[0]
@@ -335,8 +397,8 @@ class DuckDBStore:
         if not point_uris:
             return {}
         placeholders = ", ".join("?" * len(point_uris))
-        with self._lock, timed_debug(logger, "resolve_storage_keys n=%d", len(point_uris)):
-            d = self._conn.execute(
+        with self._own_conn() as conn, timed_debug(logger, "resolve_storage_keys n=%d", len(point_uris)):
+            d = conn.execute(
                 f"SELECT point_uri, ref_uri FROM {STREAMS_TABLE} WHERE point_uri IN ({placeholders})",
                 point_uris,
             ).to_arrow_table().to_pydict()
@@ -388,12 +450,11 @@ class DuckDBStore:
 
         # DuckDB connections are not thread-safe, and cursor() only returns another
         # handle on the same connection -- the documented pattern for parallel work
-        # is an independent connection per concurrent reader. This read opens and
-        # owns one for the life of the generator (~0.1ms against an already-open
-        # database), which keeps it correct no matter which threadpool thread
-        # advances it, and keeps the scan off the write lock so a large read cannot
-        # park a driver insert behind it.
-        conn = self._duckdb.connect(str(self.db_path))
+        # is an independent connection per concurrent reader. This generator owns
+        # its connection for its whole life (not via _own_conn, whose scope would
+        # end at the first yield), which keeps it correct no matter which
+        # threadpool thread advances it.
+        conn = self._connect()
         rows = 0
         try:
             with timed_debug(
@@ -433,8 +494,8 @@ class DuckDBStore:
             logger.debug("timeseries: ref_uri=%s rows=%d (batch_size=%d)", ref_uri, rows, batch_size)
 
     def timeseries_info(self, ref_uri: str) -> TimeseriesInfo:
-        with self._lock, timed_debug(logger, "timeseries_info ref_uri=%s", ref_uri):
-            row = self._conn.execute(
+        with self._own_conn() as conn, timed_debug(logger, "timeseries_info ref_uri=%s", ref_uri):
+            row = conn.execute(
                 f"SELECT COUNT(*), MIN(ts), MAX(ts) FROM {TIMESERIES_TABLE} WHERE ref_uri = ?",
                 [ref_uri],
             ).fetchone()
@@ -450,8 +511,8 @@ class DuckDBStore:
         if not ref_uris:
             return {}
         placeholders = ", ".join("?" * len(ref_uris))
-        with self._lock, timed_debug(logger, "timeseries_info_batch n=%d", len(ref_uris)):
-            d = self._conn.execute(
+        with self._own_conn() as conn, timed_debug(logger, "timeseries_info_batch n=%d", len(ref_uris)):
+            d = conn.execute(
                 f"""
                 SELECT ref_uri,
                        COUNT(*)   AS row_count,
@@ -484,8 +545,8 @@ class DuckDBStore:
         obs_start = self._to_utc_naive(log.period.start) if log.period and log.period.start else None
         obs_end = self._to_utc_naive(log.period.end) if log.period and log.period.end else None
         logger.debug("insert_log point_uri=%s ts=%s", log.point_uri, log.timestamp)
-        with self._lock:
-            self._conn.execute(
+        with self._lock, self._write_conn() as conn:
+            conn.execute(
                 f"""
                 INSERT INTO {LOGS_TABLE} (point_uri, timestamp, observed_start, observed_end, message)
                 VALUES (?, ?, ?, ?, ?)
@@ -537,8 +598,8 @@ class DuckDBStore:
             ORDER BY timestamp ASC
         """
         try:
-            with self._lock, timed_debug(logger, "query_logs point_uri=%s clauses=%d", point_uri, len(clauses)):
-                tbl = self._conn.execute(query, params).to_arrow_table()
+            with self._own_conn() as conn, timed_debug(logger, "query_logs point_uri=%s clauses=%d", point_uri, len(clauses)):
+                tbl = conn.execute(query, params).to_arrow_table()
         except Exception as exc:
             logger.error("query_logs failed: %s", exc)
             return []
@@ -554,8 +615,8 @@ class DuckDBStore:
 
     def delete_logs(self, point_uri: str) -> bool:
         logger.debug("delete_logs point_uri=%s", point_uri)
-        with self._lock:
-            self._conn.execute(
+        with self._lock, self._write_conn() as conn:
+            conn.execute(
                 f"DELETE FROM {LOGS_TABLE} WHERE point_uri = ?", [point_uri]
             )
         return True
@@ -563,32 +624,44 @@ class DuckDBStore:
     # ---- transaction helpers ----
 
     def begin(self) -> None:
+        """Open a transaction span: writes until commit()/rollback() are atomic.
+
+        Reads do not see the span's writes until it commits (they run on their
+        own connections against the last committed state).
+        """
         with self._lock:
-            if not self._in_tx:
+            if self._tx_conn is None:
                 logger.debug("BEGIN TRANSACTION")
-                self._conn.execute("BEGIN TRANSACTION")
-                self._in_tx = True
+                conn = self._connect()
+                conn.begin()
+                self._tx_conn = conn
 
     def commit(self) -> None:
         with self._lock:
-            if self._in_tx:
+            if self._tx_conn is not None:
                 logger.debug("COMMIT")
-                self._conn.execute("COMMIT")
-                self._in_tx = False
+                try:
+                    self._tx_conn.commit()
+                finally:
+                    self._tx_conn.close()
+                    self._tx_conn = None
 
     def rollback(self) -> None:
         with self._lock:
-            if self._in_tx:
+            if self._tx_conn is not None:
                 logger.debug("ROLLBACK")
-                self._conn.execute("ROLLBACK")
-                self._in_tx = False
+                try:
+                    self._tx_conn.rollback()
+                finally:
+                    self._tx_conn.close()
+                    self._tx_conn = None
 
     # ---- utility ----
 
     def sql_query(self, query: str) -> dict[str, Any]:
         logger.debug("sql_query: %s", query.replace("\n", " ")[:200])
-        with self._lock, timed_debug(logger, "sql_query"):
-            tbl = self._conn.execute(query).to_arrow_table()
+        with self._own_conn() as conn, timed_debug(logger, "sql_query"):
+            tbl = conn.execute(query).to_arrow_table()
         d = tbl.to_pydict()
         cols = tbl.schema.names
         return {
@@ -598,7 +671,13 @@ class DuckDBStore:
 
     def close(self) -> None:
         logger.debug("DuckDBStore.close")
-        self._conn.close()
+        with self._lock:
+            if self._tx_conn is not None:
+                # An uncommitted span at close is abandoned, not committed.
+                self._tx_conn.rollback()
+                self._tx_conn.close()
+                self._tx_conn = None
+        self._anchor_conn.close()
 
     # ---- helpers ----
 
@@ -623,12 +702,12 @@ class DuckDBStore:
         return None if val is None else str(val)
 
     def stream_value_kind(self, ref_uri: str) -> str | None:
-        with self._lock:
-            return self._stream_value_kind(self._conn, ref_uri)
+        with self._own_conn() as conn:
+            return self._stream_value_kind(conn, ref_uri)
 
     def _stream_value_kind(self, conn, ref_uri: str) -> str | None:
         """Look up a stream's value kind on *conn* — the caller's connection, so
-        readers can resolve it without touching the shared write connection."""
+        a streaming read can resolve it without opening a second connection."""
         row = conn.execute(
             f"SELECT value_kind FROM {STREAMS_TABLE} WHERE ref_uri = ?",
             [ref_uri],
