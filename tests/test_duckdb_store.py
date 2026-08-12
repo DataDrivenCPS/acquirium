@@ -116,8 +116,8 @@ def test_bulk_insert_polars_splits_numeric_and_text_values(store):
     assert store.bulk_insert_polars(df) == 4
     stored = store.sql_query(
         f"""
-        SELECT ref_uri, numeric_value, text_value
-        FROM timeseries
+        SELECT ref_uri, value_numeric, value_text
+        FROM timeseries_streams
         WHERE ref_uri IN ('{numeric_uri}', '{text_uri}')
         ORDER BY ref_uri, ts
         """
@@ -453,6 +453,75 @@ def test_sql_query(store):
     result = store.sql_query("SELECT 1 AS x")
     assert result["columns"] == ["x"]
     assert result["rows"] == [[1]]
+
+
+# ---- integer ref_id storage keys ----
+
+@pytest.mark.unit
+def test_timeseries_table_keyed_by_integer_ref_id(store):
+    uri = "urn:test:duck:ref_id_key"
+    store.upsert_rows(uri, [(_utc(2024, 1, 1), 1.0)], value_kind="numeric")
+
+    mapping = store.sql_query(
+        f"SELECT ref_id FROM ref_ids WHERE ref_uri = '{uri}'"
+    )["rows"]
+    assert len(mapping) == 1
+    ref_id = mapping[0][0]
+    assert isinstance(ref_id, int)
+
+    stored = store.sql_query(
+        f"SELECT ref_id FROM timeseries WHERE ref_id = {ref_id}"
+    )["rows"]
+    assert stored == [[ref_id]]
+
+
+@pytest.mark.unit
+def test_migrates_legacy_string_keyed_table(tmp_path):
+    import duckdb
+
+    p = tmp_path / "legacy.duckdb"
+    con = duckdb.connect(str(p))
+    con.execute(
+        """
+        CREATE TABLE timeseries (
+            ref_uri VARCHAR NOT NULL,
+            ts      TIMESTAMP NOT NULL,
+            numeric_value DOUBLE,
+            text_value    VARCHAR,
+            CHECK (numeric_value IS NULL OR text_value IS NULL),
+            UNIQUE (ref_uri, ts)
+        )
+        """
+    )
+    con.execute(
+        "INSERT INTO timeseries VALUES "
+        "('urn:legacy:a', '2024-01-01', 1.0, NULL), "
+        "('urn:legacy:a', '2024-01-02', 2.0, NULL), "
+        "('urn:legacy:b', '2024-01-01', NULL, 'on')"
+    )
+    con.close()
+
+    s = DuckDBStore(db_path=p)
+    cols = [r[0] for r in s.sql_query(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = 'timeseries'"
+    )["rows"]]
+    assert "ref_id" in cols and "ref_uri" not in cols
+
+    vals_a = [v for b in s.timeseries("urn:legacy:a") for v in b.to_pydict()["value"]]
+    vals_b = [v for b in s.timeseries("urn:legacy:b") for v in b.to_pydict()["value"]]
+    assert vals_a == [1.0, 2.0]
+    assert vals_b == ["on"]
+    assert s.timeseries_info("urn:legacy:a").row_count == 2
+
+    # New writes keep working against the migrated table.
+    s.upsert_rows("urn:legacy:a", [(_utc(2024, 1, 3), 3.0)], value_kind="numeric")
+    assert s.timeseries_info("urn:legacy:a").row_count == 3
+    s.close()
+
+    # Reopening must not migrate again or lose anything.
+    s2 = DuckDBStore(db_path=p)
+    assert s2.timeseries_info("urn:legacy:a").row_count == 3
+    s2.close()
 
 
 # ---- recreate ----

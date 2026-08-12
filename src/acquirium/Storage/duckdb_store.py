@@ -22,6 +22,15 @@ running multiple server workers.
 rather than ``TIMESTAMPTZ``, avoiding a DuckDB Python-API dependency on
 ``pytz``. The ``_to_utc`` helper normalises every input value before storage,
 and ``_add_utc`` re-attaches ``tzinfo=UTC`` to values read back.
+
+**Storage keys:** The API speaks ``ref_uri`` strings throughout, but the
+``timeseries`` table keys rows by an ``INTEGER ref_id`` — integer columns get
+far more effective zonemap (min-max) pruning than VARCHAR, and the rows are
+narrower. The ``ref_ids`` table maps each ``ref_uri`` to its ``ref_id``; ids
+are assigned from a sequence on first write and resolved inside this module,
+never exposed. The ``timeseries_streams`` view joins the string back in, so
+SQL against the view is unaffected. Databases created when ``timeseries``
+was keyed by ``ref_uri`` strings are migrated in place on first open.
 """
 
 from contextlib import contextmanager
@@ -54,7 +63,24 @@ logger = logging.getLogger(__name__)
 TIMESERIES_TABLE = "timeseries"
 STREAMS_TABLE = "streams"
 LOGS_TABLE = "logs"
+REF_IDS_TABLE = "ref_ids"
+REF_IDS_SEQ = "ref_ids_seq"
 TIMESERIES_STREAMS_VIEW = "timeseries_streams"
+
+
+def _timeseries_table_ddl(name: str) -> str:
+    # Shared by ensure_table and the legacy migration so the rebuilt table
+    # cannot drift from the canonical schema.
+    return f"""
+    CREATE TABLE IF NOT EXISTS {name} (
+        ref_id  INTEGER NOT NULL,
+        ts      TIMESTAMP NOT NULL,
+        numeric_value DOUBLE,
+        text_value    VARCHAR,
+        CHECK (numeric_value IS NULL OR text_value IS NULL),
+        UNIQUE (ref_id, ts)
+    )
+    """
 
 
 class DuckDBStore:
@@ -90,8 +116,9 @@ class DuckDBStore:
             logger.debug("DuckDBStore.__init__: dropping existing tables/views (recreate=True)")
             with self._lock, self._own_conn() as conn:
                 conn.execute(f"DROP VIEW IF EXISTS {TIMESERIES_STREAMS_VIEW}")
-                for tbl in (TIMESERIES_TABLE, STREAMS_TABLE, LOGS_TABLE):
+                for tbl in (TIMESERIES_TABLE, STREAMS_TABLE, LOGS_TABLE, REF_IDS_TABLE):
                     conn.execute(f"DROP TABLE IF EXISTS {tbl}")
+                conn.execute(f"DROP SEQUENCE IF EXISTS {REF_IDS_SEQ}")
         self.ensure_table()
         logger.debug("DuckDBStore.__init__: ready at %s", self.db_path)
 
@@ -146,27 +173,20 @@ class DuckDBStore:
         """Create tables and indexes if they do not exist. Returns a status string."""
         # Use TIMESTAMP (not TIMESTAMPTZ) to avoid a DuckDB/pytz interop issue.
         # All values are normalised to UTC before insertion via _to_utc().
-        stmts = [
+        # The ref_ids mapping must exist before the legacy migration runs, and
+        # the migration must run before CREATE TABLE IF NOT EXISTS would see
+        # (and keep) an old string-keyed timeseries table.
+        pre_stmts = [
+            f"CREATE SEQUENCE IF NOT EXISTS {REF_IDS_SEQ}",
             f"""
-            CREATE TABLE IF NOT EXISTS {TIMESERIES_TABLE} (
-                ref_uri VARCHAR NOT NULL,
-                ts      TIMESTAMP NOT NULL,
-                numeric_value DOUBLE,
-                text_value    VARCHAR,
-                CHECK (numeric_value IS NULL OR text_value IS NULL),
-                UNIQUE (ref_uri, ts)
+            CREATE TABLE IF NOT EXISTS {REF_IDS_TABLE} (
+                ref_id  INTEGER PRIMARY KEY DEFAULT nextval('{REF_IDS_SEQ}'),
+                ref_uri VARCHAR NOT NULL UNIQUE
             )
             """,
-            # No secondary indexes on the timeseries table: ART indexes are
-            # expensive to maintain on every insert and bloat the WAL, and the
-            # UNIQUE (ref_uri, ts) constraint already provides the index the
-            # point lookups use. The drops clear them from databases created
-            # before they were removed.
-            "DROP INDEX IF EXISTS idx_ts_ref",
-            "DROP INDEX IF EXISTS idx_ts_numeric_ref",
-            "DROP INDEX IF EXISTS idx_ts_text_ref",
-            "DROP INDEX IF EXISTS idx_ts_numeric_value",
-            "DROP INDEX IF EXISTS idx_ts_text_value",
+        ]
+        stmts = [
+            _timeseries_table_ddl(TIMESERIES_TABLE),
             f"""
             CREATE TABLE IF NOT EXISTS {STREAMS_TABLE} (
                 ref_uri   VARCHAR PRIMARY KEY,
@@ -181,7 +201,7 @@ class DuckDBStore:
             f"""
             CREATE OR REPLACE VIEW {TIMESERIES_STREAMS_VIEW} AS
             SELECT
-                t.ref_uri,
+                r.ref_uri,
                 s.point_uri,
                 s.source_id,
                 s.ref_name,
@@ -190,8 +210,10 @@ class DuckDBStore:
                 t.numeric_value AS value_numeric,
                 t.text_value AS value_text
             FROM {TIMESERIES_TABLE} AS t
+            JOIN {REF_IDS_TABLE} AS r
+                ON t.ref_id = r.ref_id
             LEFT JOIN {STREAMS_TABLE} AS s
-                ON t.ref_uri = s.ref_uri
+                ON r.ref_uri = s.ref_uri
             """,
             f"""
             CREATE TABLE IF NOT EXISTS {LOGS_TABLE} (
@@ -206,10 +228,55 @@ class DuckDBStore:
             f"CREATE INDEX IF NOT EXISTS idx_logs_point ON {LOGS_TABLE} (point_uri, timestamp)",
             f"CREATE INDEX IF NOT EXISTS idx_logs_obs ON {LOGS_TABLE} (observed_start, observed_end)",
         ]
-        with self._lock, timed_debug(logger, "ensure_table: %d DDL statements", len(stmts)), self._own_conn() as conn:
+        with self._lock, timed_debug(logger, "ensure_table"), self._own_conn() as conn:
+            for stmt in pre_stmts:
+                conn.execute(stmt)
+            self._migrate_legacy_timeseries(conn)
             for stmt in stmts:
                 conn.execute(stmt)
         return "ok"
+
+    def _migrate_legacy_timeseries(self, conn) -> None:
+        """Rebuild a string-keyed timeseries table onto integer ref_ids, in place.
+
+        Detects the pre-ref_id schema by its ref_uri column. The swap runs in
+        one transaction so an interrupted migration leaves the old table
+        untouched; a leftover scratch table from a crash is dropped first.
+        """
+        legacy = conn.execute(
+            "SELECT 1 FROM information_schema.columns WHERE table_name = ? AND column_name = 'ref_uri'",
+            [TIMESERIES_TABLE],
+        ).fetchone()
+        if legacy is None:
+            return
+        scratch = f"{TIMESERIES_TABLE}_migration"
+        logger.info("migrating %s to integer ref_id keys", TIMESERIES_TABLE)
+        conn.execute(f"DROP TABLE IF EXISTS {scratch}")
+        with timed_debug(logger, "migrate legacy %s", TIMESERIES_TABLE):
+            conn.begin()
+            try:
+                conn.execute(
+                    f"""
+                    INSERT INTO {REF_IDS_TABLE} (ref_uri)
+                    SELECT DISTINCT ref_uri FROM {TIMESERIES_TABLE}
+                    ON CONFLICT (ref_uri) DO NOTHING
+                    """
+                )
+                conn.execute(_timeseries_table_ddl(scratch))
+                conn.execute(
+                    f"""
+                    INSERT INTO {scratch} (ref_id, ts, numeric_value, text_value)
+                    SELECT r.ref_id, t.ts, t.numeric_value, t.text_value
+                    FROM {TIMESERIES_TABLE} AS t
+                    JOIN {REF_IDS_TABLE} AS r USING (ref_uri)
+                    """
+                )
+                conn.execute(f"DROP TABLE {TIMESERIES_TABLE}")
+                conn.execute(f"ALTER TABLE {scratch} RENAME TO {TIMESERIES_TABLE}")
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
 
     # ---- timeseries mutations ----
 
@@ -259,7 +326,13 @@ class DuckDBStore:
         )
         # One transaction for delete + insert: a failure leaves the old rows intact.
         with self._lock, timed_debug(logger, "replace_rows ref_uri=%s rows=%d", ref_uri, len(df)), self._write_conn() as conn:
-            conn.execute(f"DELETE FROM {TIMESERIES_TABLE} WHERE ref_uri = ?", [ref_uri])
+            conn.execute(
+                f"""
+                DELETE FROM {TIMESERIES_TABLE}
+                WHERE ref_id = (SELECT ref_id FROM {REF_IDS_TABLE} WHERE ref_uri = ?)
+                """,
+                [ref_uri],
+            )
             if not df.is_empty():
                 self._insert_frame(conn, df)
         return len(df)
@@ -290,22 +363,38 @@ class DuckDBStore:
 
     @staticmethod
     def _insert_frame(conn, df: pl.DataFrame) -> None:
-        """Upsert a prepared frame on *conn*: delete colliding (ref_uri, ts) rows, insert."""
+        """Upsert a prepared frame on *conn*: delete colliding (ref, ts) rows, insert.
+
+        The frame carries ref_uri strings; ids are assigned for unseen uris and
+        the rows keyed by ref_id, all inside the caller's transaction.
+        """
         conn.register("_acquirium_incoming_timeseries", df)
         try:
             conn.execute(
                 f"""
+                INSERT INTO {REF_IDS_TABLE} (ref_uri)
+                SELECT DISTINCT ref_uri FROM _acquirium_incoming_timeseries
+                ON CONFLICT (ref_uri) DO NOTHING
+                """
+            )
+            conn.execute(
+                f"""
                 DELETE FROM {TIMESERIES_TABLE}
-                USING _acquirium_incoming_timeseries AS incoming
-                WHERE {TIMESERIES_TABLE}.ref_uri = incoming.ref_uri
+                USING (
+                    SELECT r.ref_id, i.ts
+                    FROM _acquirium_incoming_timeseries AS i
+                    JOIN {REF_IDS_TABLE} AS r USING (ref_uri)
+                ) AS incoming
+                WHERE {TIMESERIES_TABLE}.ref_id = incoming.ref_id
                   AND {TIMESERIES_TABLE}.ts = incoming.ts
                 """
             )
             conn.execute(
                 f"""
-                INSERT INTO {TIMESERIES_TABLE} (ref_uri, ts, numeric_value, text_value)
-                SELECT ref_uri, ts, numeric_value, text_value
-                FROM _acquirium_incoming_timeseries
+                INSERT INTO {TIMESERIES_TABLE} (ref_id, ts, numeric_value, text_value)
+                SELECT r.ref_id, i.ts, i.numeric_value, i.text_value
+                FROM _acquirium_incoming_timeseries AS i
+                JOIN {REF_IDS_TABLE} AS r USING (ref_uri)
                 """
             )
         finally:
@@ -429,33 +518,6 @@ class DuckDBStore:
         one call has the same schema.
         """
         mode = normalize_value_mode(value_mode)
-        clauses = ["ref_uri = ?"]
-        params: list[Any] = [ref_uri]
-
-        if start:
-            clauses.append("ts >= ?")
-            params.append(self._to_utc_naive(start))
-        if end:
-            clauses.append("ts <= ?")
-            params.append(self._to_utc_naive(end))
-        if mode == "numeric":
-            clauses.append("numeric_value IS NOT NULL")
-        elif mode == "text":
-            clauses.append("text_value IS NOT NULL")
-
-        where = " AND ".join(clauses)
-        order_sql = "ASC" if order == "asc" else "DESC"
-        limit_sql = f" LIMIT {int(limit)}" if limit else ""
-
-        query = f"""
-            SELECT
-                ts,
-                numeric_value,
-                text_value
-            FROM {TIMESERIES_TABLE}
-            WHERE {where}
-            ORDER BY ts {order_sql}{limit_sql}
-        """
 
         # DuckDB connections are not thread-safe, and cursor() only returns another
         # handle on the same connection -- the documented pattern for parallel work
@@ -470,6 +532,40 @@ class DuckDBStore:
                 logger, "timeseries ref_uri=%s start=%s end=%s limit=%s order=%s mode=%s",
                 ref_uri, start, end, limit, order, mode,
             ):
+                ref_id_row = conn.execute(
+                    f"SELECT ref_id FROM {REF_IDS_TABLE} WHERE ref_uri = ?", [ref_uri]
+                ).fetchone()
+                if ref_id_row is None:
+                    # Never written to: no id, no rows.
+                    return
+
+                clauses = ["ref_id = ?"]
+                params: list[Any] = [ref_id_row[0]]
+                if start:
+                    clauses.append("ts >= ?")
+                    params.append(self._to_utc_naive(start))
+                if end:
+                    clauses.append("ts <= ?")
+                    params.append(self._to_utc_naive(end))
+                if mode == "numeric":
+                    clauses.append("numeric_value IS NOT NULL")
+                elif mode == "text":
+                    clauses.append("text_value IS NOT NULL")
+
+                where = " AND ".join(clauses)
+                order_sql = "ASC" if order == "asc" else "DESC"
+                limit_sql = f" LIMIT {int(limit)}" if limit else ""
+
+                query = f"""
+                    SELECT
+                        ts,
+                        numeric_value,
+                        text_value
+                    FROM {TIMESERIES_TABLE}
+                    WHERE {where}
+                    ORDER BY ts {order_sql}{limit_sql}
+                """
+
                 value_kind = self._stream_value_kind(conn, ref_uri)
                 # Resolve the value column once for the whole read so every
                 # yielded batch has the same schema. An explicit mode wins over
@@ -524,7 +620,12 @@ class DuckDBStore:
     def timeseries_info(self, ref_uri: str) -> TimeseriesInfo:
         with self._own_conn() as conn, timed_debug(logger, "timeseries_info ref_uri=%s", ref_uri):
             row = conn.execute(
-                f"SELECT COUNT(*), MIN(ts), MAX(ts) FROM {TIMESERIES_TABLE} WHERE ref_uri = ?",
+                f"""
+                SELECT COUNT(*), MIN(ts), MAX(ts)
+                FROM {TIMESERIES_TABLE} AS t
+                JOIN {REF_IDS_TABLE} AS r USING (ref_id)
+                WHERE r.ref_uri = ?
+                """,
                 [ref_uri],
             ).fetchone()
         cnt, earliest_raw, latest_raw = (row[0] or 0, row[1], row[2]) if row else (0, None, None)
@@ -542,13 +643,14 @@ class DuckDBStore:
         with self._own_conn() as conn, timed_debug(logger, "timeseries_info_batch n=%d", len(ref_uris)):
             d = conn.execute(
                 f"""
-                SELECT ref_uri,
+                SELECT r.ref_uri,
                        COUNT(*)   AS row_count,
                        MIN(ts)    AS earliest,
                        MAX(ts)    AS latest
-                FROM {TIMESERIES_TABLE}
-                WHERE ref_uri IN ({placeholders})
-                GROUP BY ref_uri
+                FROM {TIMESERIES_TABLE} AS t
+                JOIN {REF_IDS_TABLE} AS r USING (ref_id)
+                WHERE r.ref_uri IN ({placeholders})
+                GROUP BY r.ref_uri
                 """,
                 ref_uris,
             ).to_arrow_table().to_pydict()
