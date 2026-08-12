@@ -8,6 +8,7 @@ targeted at Linux CI runners.
 import platform
 import pytest
 import json
+import pyoxigraph as ox
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event, Lock
@@ -124,6 +125,23 @@ class TestInsertExport:
 
 
 class TestSparql:
+    def test_sparql_query_serialized_supports_results_and_graph_forms(self, graph_store):
+        graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
+
+        select, select_type = graph_store.sparql_query_serialized(
+            "SELECT ?s WHERE { ?s a <http://example.org/TemperatureSensor> }",
+            results_format=ox.QueryResultsFormat.JSON,
+        )
+        construct, construct_type = graph_store.sparql_query_serialized(
+            "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o } LIMIT 1",
+            graph_format=ox.RdfFormat.N_TRIPLES,
+        )
+
+        assert select_type == "application/sparql-results+json"
+        assert json.loads(select)["head"]["vars"] == ["s"]
+        assert construct_type == "application/n-triples"
+        assert construct
+
     def test_concurrent_fresh_readers_share_one_rebuild(self, graph_store, monkeypatch):
         graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
         query = "SELECT ?s WHERE { ?s a <http://example.org/TemperatureSensor> }"

@@ -676,6 +676,37 @@ class OxigraphGraphStore:
             serialized = result.serialize(format=ox.QueryResultsFormat.JSON)
             return bytes(serialized) if serialized is not None else None
 
+    def sparql_query_serialized(
+        self,
+        query: str,
+        use_union: bool = True,
+        *,
+        wait_for_fresh: bool = False,
+        results_format: ox.QueryResultsFormat = ox.QueryResultsFormat.JSON,
+        graph_format: ox.RdfFormat = ox.RdfFormat.TURTLE,
+    ) -> tuple[bytes, str]:
+        """Run a query and return a standards-format SPARQL protocol body.
+
+        The derived inferred graph is the default dataset. ``use_union`` adds
+        the resolved ontology/shape closure, and ``wait_for_fresh`` selects
+        Acquirium's strict-versus-published cache behavior before the query's
+        normal Oxigraph repeatable-read snapshot is taken.
+        """
+        graph_uri = self._query_graph_uri(use_union, wait_for_fresh=wait_for_fresh)
+        with self._lock:
+            result = self.query_dataset.store._inner.query(
+                query,
+                use_default_graph_as_union=False,
+                default_graph=ox.NamedNode(str(graph_uri)),
+            )
+        if isinstance(result, (ox.QuerySolutions, ox.QueryBoolean)):
+            serialized = result.serialize(format=results_format)
+            return bytes(serialized), results_format.media_type
+        if isinstance(result, ox.QueryTriples):
+            serialized = result.serialize(format=graph_format)
+            return bytes(serialized), graph_format.media_type
+        raise ValueError(f"Unexpected query result: {result!r}")
+
     def sparql_update(self, update: str, *, graph_uri: URIRef | None = None) -> dict:
         _logger.debug("sparql_update: %s", update.replace("\n", " ")[:200])
         with self._lock, timed_debug(_logger, "sparql_update"):

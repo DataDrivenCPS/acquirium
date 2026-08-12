@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 import os
 import logging
+import pyoxigraph as ox
 from time import perf_counter
 from rdflib import Graph, URIRef, Literal, RDF, RDFS, SKOS
 from rdflib.namespace import NamespaceManager
@@ -936,6 +937,24 @@ class Manager:
             query,
             use_union=use_union,
             wait_for_fresh=wait_for_fresh,
+        )
+
+    def sparql_serialized(
+        self,
+        query: str,
+        use_union: bool = True,
+        *,
+        wait_for_fresh: bool = False,
+        results_format: ox.QueryResultsFormat,
+        graph_format: ox.RdfFormat,
+    ) -> tuple[bytes, str]:
+        """Return a SPARQL Protocol response body from the derived query view."""
+        return self.graph_store.sparql_query_serialized(
+            query,
+            use_union=use_union,
+            wait_for_fresh=wait_for_fresh,
+            results_format=results_format,
+            graph_format=graph_format,
         )
 
     def namespace_manager(self) -> NamespaceManager :

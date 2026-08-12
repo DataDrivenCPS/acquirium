@@ -17,6 +17,7 @@ from typing import Annotated, Any, Optional, Iterator
 # Ray reads this flag once at import time, so it must be set before `import ray`.
 os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "0")
 import ray
+import pyoxigraph as ox
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse, Response
@@ -61,6 +62,50 @@ def _sparql_results_to_rows(serialized: bytes) -> dict[str, Any]:
         for binding in payload["results"].get("bindings", [])
     ]
     return {"columns": columns, "rows": rows}
+
+
+_SPARQL_RESULT_FORMATS = {
+    "application/sparql-results+json": ox.QueryResultsFormat.JSON,
+    "application/sparql-results+xml": ox.QueryResultsFormat.XML,
+    "text/csv": ox.QueryResultsFormat.CSV,
+    "text/tab-separated-values": ox.QueryResultsFormat.TSV,
+}
+_SPARQL_GRAPH_FORMATS = {
+    "text/turtle": ox.RdfFormat.TURTLE,
+    "application/n-triples": ox.RdfFormat.N_TRIPLES,
+    "application/rdf+xml": ox.RdfFormat.RDF_XML,
+    "application/ld+json": ox.RdfFormat.JSON_LD,
+}
+
+
+def _accepted_sparql_formats(accept: str) -> tuple[ox.QueryResultsFormat, ox.RdfFormat]:
+    """Choose supported protocol formats from an HTTP Accept header.
+
+    SELECT and ASK use the first result format accepted by the client;
+    CONSTRUCT and DESCRIBE use the first accepted RDF graph format. The
+    defaults are SPARQL Results JSON and Turtle, respectively.
+    """
+    accepted: list[tuple[float, int, str]] = []
+    for position, item in enumerate(accept.lower().split(",")):
+        media_type, *parameters = item.strip().split(";")
+        quality = 1.0
+        for parameter in parameters:
+            name, separator, value = parameter.strip().partition("=")
+            if separator and name == "q":
+                try:
+                    quality = float(value)
+                except ValueError:
+                    quality = 0.0
+        if quality:
+            accepted.append((-quality, position, media_type.strip()))
+    for _, _, media_type in sorted(accepted):
+        if media_type in _SPARQL_RESULT_FORMATS:
+            return _SPARQL_RESULT_FORMATS[media_type], _SPARQL_GRAPH_FORMATS["text/turtle"]
+        if media_type in _SPARQL_GRAPH_FORMATS:
+            return _SPARQL_RESULT_FORMATS["application/sparql-results+json"], _SPARQL_GRAPH_FORMATS[media_type]
+        if media_type in {"*/*", "application/*", "text/*"}:
+            break
+    return _SPARQL_RESULT_FORMATS["application/sparql-results+json"], _SPARQL_GRAPH_FORMATS["text/turtle"]
 
 
 def _self_connect_cfg(cfg: dict) -> tuple[str, int, bool]:
@@ -673,6 +718,36 @@ def sparql_json(query: str, use_union: bool = True, wait_for_fresh: bool = False
         return result
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/sparql")
+def sparql(
+    request: Request,
+    query: Annotated[str, Query(description="SPARQL SELECT, ASK, CONSTRUCT, or DESCRIBE query")],
+    use_union: bool = True,
+    wait_for_fresh: bool = False,
+) -> Response:
+    """Read-only SPARQL 1.1 Protocol endpoint over Acquirium's derived graph.
+
+    The default dataset is inferred deployment data plus resolved ontology and
+    shape triples. ``use_union=false`` omits that closure while retaining
+    inferred deployment data. Dataset-selection and update protocol parameters
+    are deliberately not exposed by this read-only first version.
+    """
+    results_format, graph_format = _accepted_sparql_formats(request.headers.get("accept", "*/*"))
+    try:
+        content, media_type = app.state.manager.sparql_serialized(
+            query,
+            use_union=use_union,
+            wait_for_fresh=wait_for_fresh,
+            results_format=results_format,
+            graph_format=graph_format,
+        )
+        return Response(content=content, media_type=media_type)
+    except Exception as exc:
+        # A GET endpoint accepts only SPARQL Query forms; parser and query
+        # failures are request errors under the SPARQL Protocol.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 class SparqlQueryRequest(BaseModel):

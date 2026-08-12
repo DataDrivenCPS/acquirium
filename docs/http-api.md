@@ -76,14 +76,22 @@ Returns all namespace prefix bindings in the union graph as a `{prefix: uri}` ma
 
 ### `GET /sparql`
 
-Execute a SPARQL query. Returns [SPARQL 1.1 JSON protocol](https://www.w3.org/TR/sparql11-results-json/) format.
+Read-only [SPARQL 1.1 Protocol](https://www.w3.org/TR/sparql11-protocol/) endpoint. It accepts `SELECT`, `ASK`, `CONSTRUCT`, and `DESCRIBE` queries through the required `query` URL parameter. SPARQL Update and POST protocol forms are not implemented yet.
 
 | Parameter | Default | Description |
 | --- | --- | --- |
 | `query` | required | SPARQL query string |
-| `use_union` | `true` | Query the union graph (all imports resolved) |
+| `use_union` | `true` | Query inferred deployment data plus resolved ontology/shape triples. `false` queries inferred deployment data without those triples. |
+| `wait_for_fresh` | `false` | Wait for inference after graph writes. `false` uses the last complete published derived graph. |
 
-**SELECT response**
+Use HTTP `Accept` to select a response serialization. The default is `application/sparql-results+json` for `SELECT`/`ASK` and `text/turtle` for `CONSTRUCT`/`DESCRIBE`.
+
+| Query form | Supported response media types |
+| --- | --- |
+| `SELECT`, `ASK` | `application/sparql-results+json`, `application/sparql-results+xml`, `text/csv`, `text/tab-separated-values` |
+| `CONSTRUCT`, `DESCRIBE` | `text/turtle`, `application/n-triples`, `application/rdf+xml`, `application/ld+json` |
+
+**SELECT response (`application/sparql-results+json`)**
 
 ```json
 {
@@ -103,15 +111,6 @@ Term types: `uri`, `literal`, `bnode`. Literals may include `"xml:lang"` or `"da
 ```json
 {"head": {}, "boolean": true}
 ```
-
-### `POST /sparql`
-
-Same as `GET /sparql` but accepts the query as a form body (`Content-Type: application/x-www-form-urlencoded`).
-
-| Form field | Default | Description |
-| --- | --- | --- |
-| `query` | required | SPARQL query string |
-| `use_union` | `true` | Query the union graph |
 
 ### `GET /sparql_json`
 

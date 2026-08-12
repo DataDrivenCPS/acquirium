@@ -285,12 +285,17 @@ class TestLogEndpoints:
 
 
 class TestSparqlEndpoints:
-    def test_select(self):
-        requests.post(f"{BASE_URL}/insert_graph", json={
+    @staticmethod
+    def _insert_graph():
+        response = requests.post(f"{BASE_URL}/insert_graph", json={
             "rdf_graph": MINIMAL_TURTLE,
             "format": "turtle",
             "replace": True,
         })
+        assert response.status_code == 200
+
+    def test_select(self):
+        self._insert_graph()
         resp = requests.get(f"{BASE_URL}/sparql_json", params={
             "query": "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10",
         })
@@ -311,6 +316,41 @@ class TestSparqlEndpoints:
             "query": "SELEKT * WERE { broken }",
         })
         assert resp.status_code >= 400
+
+    def test_protocol_select_returns_standard_json(self):
+        self._insert_graph()
+        resp = requests.get(f"{BASE_URL}/sparql", params={
+            "query": "SELECT ?s WHERE { ?s ?p ?o } LIMIT 1",
+        }, headers={"Accept": "application/sparql-results+json"})
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("application/sparql-results+json")
+        assert "head" in resp.json()
+
+    def test_protocol_ask_returns_standard_json(self):
+        self._insert_graph()
+        resp = requests.get(f"{BASE_URL}/sparql", params={
+            "query": "ASK { ?s ?p ?o }",
+        })
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("application/sparql-results+json")
+        assert resp.json()["boolean"] is True
+
+    def test_protocol_construct_negotiates_turtle(self):
+        self._insert_graph()
+        resp = requests.get(f"{BASE_URL}/sparql", params={
+            "query": "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o } LIMIT 1",
+        }, headers={"Accept": "text/turtle"})
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/turtle")
+        assert resp.text
+
+    def test_protocol_describe_negotiates_ntriples(self):
+        self._insert_graph()
+        resp = requests.get(f"{BASE_URL}/sparql", params={
+            "query": "DESCRIBE <urn:example:Thing>",
+        }, headers={"Accept": "application/n-triples"})
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("application/n-triples")
 
 
 # ── Text Resolution ────────────────────────────────────────
