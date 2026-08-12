@@ -81,6 +81,11 @@ def _graph_affects_closure(graph: Graph) -> bool:
 # ``inferred + dependencies`` cache instead of leaving it in the query dataset.
 _DEPENDENCY_QUERY_GRAPH = URIRef(str(ACQUIRIUM_NS.ImportsUnionGraph))
 _INFERRED_DATA_GRAPH = URIRef(str(ACQUIRIUM_NS.InferredDataGraph))
+# ``Store.load`` is much lower latency for small in-memory payloads; it avoids
+# the SST-file creation that makes ``bulk_load`` preferable only for large RDF
+# documents. The payload has already been materialized for serialization, so
+# retaining it in memory for this bounded path is not an extra copy.
+_QUERY_LOAD_THRESHOLD_BYTES = 8 * 1024 * 1024
 
 class _OntoenvOxigraphStore:
     """ontoenv graph-store protocol over the shared Oxigraph dataset.
@@ -481,8 +486,19 @@ class OxigraphGraphStore:
             return
         with timed_debug(_logger, "derived publish %s serialize", label):
             nt = graph.serialize(format="nt", encoding="utf-8")
-        with timed_debug(_logger, "derived publish %s load", label):
-            self.query_dataset.store._inner.bulk_load(
+        load_method = (
+            self.query_dataset.store._inner.load
+            if len(nt) <= _QUERY_LOAD_THRESHOLD_BYTES
+            else self.query_dataset.store._inner.bulk_load
+        )
+        with timed_debug(
+            _logger,
+            "derived publish %s %s (%d bytes)",
+            label,
+            load_method.__name__,
+            len(nt),
+        ):
+            load_method(
                 input=nt,
                 format=RdfFormat.N_TRIPLES,
                 to_graph=NamedNode(str(graph_uri)),
