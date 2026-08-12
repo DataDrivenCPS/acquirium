@@ -728,7 +728,7 @@ Optional keys:
 - `watertap_build_kwargs` passes kwargs to the build function
 - `watertap_graph_path` / `watertap_insert_graph` insert the model's s223
   ontology on setup so point nodes carry domain semantics
-- `watertap_insert_graph_replace` replaces the main graph when inserting it
+- `watertap_insert_graph_replace` replaces the WaterTAP driver's owned graph
 - `watertap_register_streams` defaults to `true`
 - `watertap_result_attr` extracts the model from an attribute when the build
   function returns a wrapper object

@@ -60,6 +60,7 @@ class TestGraphEndpoints:
             "rdf_graph": MINIMAL_TURTLE,
             "format": "turtle",
             "replace": False,
+            "source_id": "plant",
         })
         assert resp.status_code == 200
 
@@ -75,6 +76,7 @@ class TestGraphEndpoints:
             "rdf_graph": MINIMAL_TURTLE,
             "format": "turtle",
             "replace": True,
+            "source_id": "plant",
         })
         assert resp.status_code == 200
 
@@ -83,6 +85,7 @@ class TestGraphEndpoints:
             "rdf_graph": MINIMAL_TURTLE,
             "format": "turtle",
             "replace": True,
+            "source_id": "plant",
         })
         resp = requests.get(f"{BASE_URL}/export_graph", params={"format": "turtle"})
         assert resp.status_code == 200
@@ -93,6 +96,7 @@ class TestGraphEndpoints:
             "rdf_graph": "this is {{{ not valid turtle",
             "format": "turtle",
             "replace": False,
+            "source_id": "plant",
         })
         assert resp.status_code >= 400
 
@@ -121,6 +125,7 @@ class TestTimeseriesEndpoints:
             "rdf_graph": graph,
             "format": "turtle",
             "replace": False,
+            "source_id": "test-source",
         })
         assert resp.status_code == 200
 
@@ -291,6 +296,7 @@ class TestSparqlEndpoints:
             "rdf_graph": MINIMAL_TURTLE,
             "format": "turtle",
             "replace": True,
+            "source_id": "plant",
         })
         assert response.status_code == 200
 

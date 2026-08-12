@@ -104,7 +104,7 @@ def acquirium_client():
         server_port=ACQUIRIUM_TEST_SERVER_PORT,
         use_ssl=False,
     )
-    acq.insert_graph("tests/test_model_units.ttl")
+    acq.insert_graph("tests/test_model_units.ttl", source_id="plant")
     return acq
 
 

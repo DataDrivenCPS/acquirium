@@ -39,7 +39,7 @@ class TestInsertGraph:
         mock_resp.raise_for_status = MagicMock()
         mock_requests.post.return_value = mock_resp
 
-        client.insert_graph("@prefix ex: <urn:ex/> .", replace=False)
+        client.insert_graph("@prefix ex: <urn:ex/> .", replace=False, source_id="plant")
 
         mock_requests.post.assert_called_once()
         assert mock_requests.post.call_args.args[0] == "http://localhost:8000/insert_graph"
@@ -52,7 +52,7 @@ class TestInsertGraph:
         mock_requests.post.return_value = mock_resp
 
         rdf = "PREFIX ex: <urn:ex/>\nex:s ex:p ex:o ."
-        client.insert_graph(rdf, replace=False)
+        client.insert_graph(rdf, replace=False, source_id="plant")
 
         assert mock_requests.post.call_args.kwargs["json"]["rdf_graph"] == rdf
 
@@ -68,7 +68,7 @@ class TestInsertGraph:
 
     def test_single_line_missing_path_raises(self, client):
         with pytest.raises(FileNotFoundError):
-            client.insert_graph("no/such/file.ttl")
+            client.insert_graph("no/such/file.ttl", source_id="plant")
 
     @patch("acquirium.Client.client.requests")
     def test_validate_graph_posts_to_validation_endpoint(self, mock_requests, client):

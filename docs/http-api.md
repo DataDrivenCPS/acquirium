@@ -47,11 +47,12 @@ Insert or replace an RDF graph.
 {
   "rdf_graph": "<file path or RDF text>",
   "format": "turtle",
-  "replace": true
+  "replace": true,
+  "source_id": "plant"
 }
 ```
 
-`format` accepts `turtle`, `n3`, `xml`, `trig`, `nquads`. `replace: true` (default) replaces any existing graph content.
+`format` accepts `turtle`, `n3`, `xml`, `trig`, `nquads`. `source_id` is required: use the reserved `plant` source for the shared plant model, otherwise use the owning driver or app source ID. `replace: true` replaces only that owner's graph.
 
 **Response** `{"ok": true, "embedding_ready": true}`
 

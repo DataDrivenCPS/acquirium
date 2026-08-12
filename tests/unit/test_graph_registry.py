@@ -1,6 +1,7 @@
 from acquirium.Storage.graph_registry import (
     ACQUIRIUM_GRAPH_URI,
     PLANT_GRAPH_URI,
+    PLANT_SOURCE_ID,
     GraphRegistry,
 )
 
@@ -24,6 +25,15 @@ def test_source_graph_is_deterministic_and_persistent(tmp_path):
 
     assert first == second == reopened
     assert first.uri == "urn:acquirium:graph:data:source:driver%2Fa"
+
+
+def test_plant_source_id_maps_to_the_existing_plant_graph(tmp_path):
+    registry = GraphRegistry(tmp_path / "graph_registry.json")
+
+    plant = registry.source_graph(PLANT_SOURCE_ID)
+
+    assert plant.uri == PLANT_GRAPH_URI
+    assert plant.owner == "plant"
 
 
 def test_removing_source_does_not_remove_other_data_graphs(tmp_path):

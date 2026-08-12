@@ -18,6 +18,9 @@ from urllib.parse import quote
 
 # Preserve the existing main graph as the plant graph during migration.
 PLANT_GRAPH_URI = "urn:acquirium#MainGraph"
+# The plant model is a first-class deployment source. Public callers must use
+# this ID instead of relying on an omitted source owner.
+PLANT_SOURCE_ID = "plant"
 ACQUIRIUM_GRAPH_URI = "urn:acquirium:graph:data:acquirium"
 
 
@@ -52,6 +55,8 @@ class GraphRegistry:
         """Return (and persist when new) the data graph owned by ``source_id``."""
         if not source_id:
             raise ValueError("source_id must not be empty")
+        if source_id == PLANT_SOURCE_ID:
+            return self._records["plant"]
         key = f"source:{source_id}"
         with self._lock:
             existing = self._records.get(key)

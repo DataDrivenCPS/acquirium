@@ -205,10 +205,11 @@ class Acquirium:
         rdf_graph: str,
         format: str = "turtle",
         replace=True,
-        source_id: str | None = None,
+        *,
+        source_id: str,
     ) -> None:
         """
-        Insert RDF graph into the plant graph or a source-owned data graph.
+        Insert RDF graph into an explicitly owned deployment data graph.
 
         The server refreshes the embedding index synchronously before
         responding, so inserted concepts are resolvable once this returns.
@@ -220,7 +221,8 @@ class Acquirium:
                 - location of the source file
             format: Format of the RDF data [turtle | n3 | xml | trix]
             replace: If True, replaces the selected graph. If False, appends to it.
-            source_id: Optional data-graph owner. Omit for the legacy plant graph.
+            source_id: Data-graph owner. Use ``"plant"`` for the shared plant
+                model, or a component's stable source ID.
         """
         self.client.insert_graph(
             rdf_graph,
@@ -229,11 +231,11 @@ class Acquirium:
             source_id=source_id,
         )
 
-    def sparql_update(self, update: str, *, source_id: str | None = None) -> dict[str, Any]:
-        """Execute a SPARQL update against the plant or one owned data graph.
+    def sparql_update(self, update: str, *, source_id: str) -> dict[str, Any]:
+        """Execute a SPARQL update against one explicitly owned data graph.
 
-        Components with a fixed owner should use their ``self.sparql_update``
-        helper instead of passing ``source_id`` themselves.
+        Components with a fixed owner use their ``self.sparql_update`` helper
+        instead of passing ``source_id`` themselves.
         """
         return self.client.sparql_update(update, source_id=source_id)
 
@@ -447,9 +449,11 @@ class Acquirium:
         the same ``source_id`` and source-local ``ref_name``. Acquirium resolves
         those inserts to the same canonical reference URI internally.
         """
-        graphs: dict[str | None, RDFGraph] = {}
+        graphs: dict[str, RDFGraph] = {}
         for stream in streams:
             source_id = stream.get("source_id")
+            if not isinstance(source_id, str) or not source_id:
+                raise ValueError("each stream registration requires a non-empty source_id")
             graph = graphs.setdefault(source_id, RDFGraph())
             meta = {
                 f: stream.get(f)

@@ -9,6 +9,10 @@ from acquirium.internals.models import AppContext
 from acquirium.Client.explore.core import Query
 
 
+def app_source_id(name: str) -> str:
+    """Return the reserved, stable graph and stream owner for one app."""
+    return f"app:{name}"
+
 
 
 

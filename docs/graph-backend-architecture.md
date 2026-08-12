@@ -43,7 +43,7 @@ incorrect: that would accidentally include ontology graphs.
 
 | Role | Persistence | Contents | How it is written |
 | --- | --- | --- | --- |
-| Plant data graph | source dataset | The shared plant model; this is the legacy default graph target. | `insert_graph(..., source_id=None)` or an unscoped SPARQL update. |
+| Plant data graph | source dataset | The shared plant model; it is the reserved `plant` source. | `insert_graph(..., source_id="plant")` or `sparql_update(..., source_id="plant")`. |
 | Acquirium data graph | source dataset | Acquirium-owned bookkeeping, such as logs. | Server internals only. |
 | Source data graph | source dataset | RDF owned by one driver, app, or metadata source. | `insert_graph(..., source_id="...")`; source-scoped SPARQL update. |
 | Ontology/shape graph | source dataset | Ontologies, shapes, rules, and imports managed through OntoEnv. | Server configuration/startup; not application or driver writes. |
@@ -197,7 +197,7 @@ Insert the shared plant model without a source ID. Use `replace=True` only when
 the complete plant graph is being intentionally replaced.
 
 ```python
-aq.insert_graph(plant_turtle, format="turtle", replace=True)
+aq.insert_graph(plant_turtle, format="turtle", replace=True, source_id="plant")
 ```
 
 ### Driver lifecycle
@@ -252,8 +252,8 @@ data.
 - Use `insert_graph` for whole RDF documents. Prefer append mode for additive
   metadata; replacement is graph-owner scoped.
 - Use `sparql_update(update, source_id=...)` only for targeted changes to data
-  owned by that source. Omitting `source_id` updates the plant graph for
-  backwards compatibility.
+  owned by that source. Use the reserved `source_id="plant"` for the shared
+  plant model.
 - Query with the default `use_union=True` unless it is intentional to exclude
   ontology/shape triples. Query results already include inference.
 - Call `validate_graph()` after loading/changing a model or metadata when the

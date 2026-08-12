@@ -42,7 +42,7 @@ class DummyCSVDriver(CSVIngestDriver):
 
     def setup(self) -> None:
         super().setup()
-        self.aq.insert_graph(str(MODEL_PATH), replace=False)
+        self.insert_graph(str(MODEL_PATH), replace=False)
         self.source_id = SOURCE_ID
 
         self._register_streams_from_lookup()

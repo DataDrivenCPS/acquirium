@@ -21,6 +21,7 @@ from acquirium.internals._log import configure_logging, timed_debug as _timed_de
 from acquirium.internals.models import AppSpec, AppOutputSpec, AppRunRequest, compute_ref_uri
 from acquirium.internals.internals_namespaces import *
 from acquirium.internals.app_utils import app_uri_for, app_type_uri, add_literal_or_uri
+from acquirium.Apps.base import app_source_id
 from rdflib import URIRef, Graph, Literal
 
 if TYPE_CHECKING:
@@ -61,7 +62,7 @@ class AppRunner:
         self.spec = spec
         # The app's RDF registration/build state has a separate owner from
         # output stream data. Expose it on both this actor and loaded App.
-        self.source_id = f"app:{spec.name}"
+        self.source_id = app_source_id(spec.name)
         self.app_storage_root = Path(app_storage_root)
         self.acquirium_cli = acquirium_cli
         self.logger = logging.getLogger(f"acquirium.app.{spec.name}")
@@ -174,6 +175,7 @@ class AppRunner:
 
     def _app_spec_graph(self, spec: AppSpec) -> Graph:
         app_uri = URIRef(app_uri_for(spec.name))
+        source_id = app_source_id(spec.name)
         graph = Graph()
 
         graph.add((app_uri, RDF.type, APP))
@@ -193,12 +195,12 @@ class AppRunner:
 
         for out in spec.outputs:
             point_uri = URIRef(out.point_uri)
-            ref_uri = compute_ref_uri(spec.name, out.point_uri)
+            ref_uri = compute_ref_uri(source_id, out.point_uri)
 
             graph.add((app_uri, PRODUCES, point_uri))
             graph.add((point_uri, RDF.type, VIRTUAL_POINT))
             graph.add((point_uri, HAS_EXTERNAL_REFERENCE, ref_uri))
-            graph.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(spec.name)))
+            graph.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
             graph.add((ref_uri, ACQUIRIUM_REF_NAME, Literal(out.point_uri)))
             graph.add((ref_uri, RDF.type, STREAM))
             if out.kind in {"event", "trigger"}:
@@ -422,7 +424,7 @@ class AppRunner:
             # stays responsive to other runs and to stop().
             await asyncio.to_thread(
                 emit_outputs,
-                self.spec.name,
+                self.source_id,
                 outputs,
                 insert_timeseries=self.acquirium_cli.client.insert_timeseries,
                 logger=self.logger,

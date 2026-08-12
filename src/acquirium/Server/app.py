@@ -217,9 +217,9 @@ class InsertGraphRequest(BaseModel):
     rdf_graph: str = Field(..., description="File path or RDF text")
     format: str = "turtle"
     replace: bool = True
-    source_id: str | None = Field(
-        default=None,
-        description="Optional driver/metadata source that owns this data graph",
+    source_id: str = Field(
+        min_length=1,
+        description="Deployment data-graph owner; use 'plant' for the shared plant model",
     )
 
 
@@ -783,9 +783,9 @@ def sparql_json_post(req: SparqlQueryRequest):
 
 class SparqlUpdateRequest(BaseModel):
     update: str = Field(..., description="SPARQL UPDATE (INSERT/DELETE) statement")
-    source_id: str | None = Field(
-        default=None,
-        description="Optional owner of the data graph to update",
+    source_id: str = Field(
+        min_length=1,
+        description="Owner of the data graph to update; use 'plant' for the shared plant model",
     )
 
 

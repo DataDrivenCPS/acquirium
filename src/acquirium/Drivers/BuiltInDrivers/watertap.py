@@ -58,7 +58,7 @@ class WaterTAPDriver(PollingIngestDriver):
       - ``watertap_graph_path``: model s223 ontology graph to insert on setup so
         point nodes carry domain semantics (sensors, equipment, units)
       - ``watertap_insert_graph``: insert ``watertap_graph_path`` on setup, default ``false``
-      - ``watertap_insert_graph_replace``: replace main graph when inserting, default ``false``
+      - ``watertap_insert_graph_replace``: replace this driver's graph when inserting, default ``false``
       - ``watertap_register_streams``: register mapped streams on setup, default ``true``
       - ``watertap_result_attr``: attribute to read from the build fn result
     """

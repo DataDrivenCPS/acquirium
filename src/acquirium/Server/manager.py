@@ -579,10 +579,11 @@ class Manager:
         rdf_graph: str,
         format: str = "turtle",
         replace: bool = True,
-        source_id: str | None = None,
+        *,
+        source_id: str,
     ) -> None:
         """
-        Insert RDF graph into the plant graph, or a source-owned data graph.
+        Insert RDF graph into one explicitly owned deployment data graph.
 
         The embedding index is refreshed synchronously before returning, so
         once this call completes the just-inserted concepts are resolvable.
@@ -595,7 +596,8 @@ class Manager:
             is the location of the source.
             format: Format of the RDF data [turtle | n3 | xml | trix]
             replace: If True, replaces the selected graph. If False, appends to it.
-            source_id: Optional data-graph owner. Omit for the legacy plant graph.
+            source_id: Data-graph owner. Use ``"plant"`` for the shared plant
+                model, or a component's stable source ID.
         """
 
         if isinstance(rdf_graph, Path):
@@ -610,11 +612,7 @@ class Manager:
 
         try:
             with timed_debug(logger, "insert_graph format=%s replace=%s", format, replace):
-                graph_uri = (
-                    self.graph_store.source_graph_uri(source_id)
-                    if source_id is not None
-                    else None
-                )
+                graph_uri = self.graph_store.source_graph_uri(source_id)
                 self.graph_store.insert_graph(
                     rdf_graph,
                     format=format,
@@ -871,21 +869,16 @@ class Manager:
             self._notify_graph_change()
         return True
 
-    def sparql_update(self, update: str, source_id: str | None = None) -> dict[str, Any]:
-        """Execute a SPARQL UPDATE against plant or source-owned data.
+    def sparql_update(self, update: str, source_id: str) -> dict[str, Any]:
+        """Execute a SPARQL UPDATE against one explicitly owned data graph.
 
         Bumps the graph version when the store reports a change so long-running
         clients (e.g. keep-alive app workers) rebuild cached queries.
 
-        ``source_id`` is intentionally optional for backwards compatibility.
         It lets a component remove exactly the triples it registered without
         granting updates to ontology graphs.
         """
-        graph_uri = (
-            self.graph_store.source_graph_uri(source_id)
-            if source_id is not None
-            else None
-        )
+        graph_uri = self.graph_store.source_graph_uri(source_id)
         result = self.graph_store.sparql_update(update, graph_uri=graph_uri)
         if result.get("changed", True):
             self._notify_graph_change()
