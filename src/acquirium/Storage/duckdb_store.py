@@ -157,11 +157,16 @@ class DuckDBStore:
                 UNIQUE (ref_uri, ts)
             )
             """,
-            f"CREATE INDEX IF NOT EXISTS idx_ts_ref ON {TIMESERIES_TABLE} (ref_uri, ts)",
-            f"CREATE INDEX IF NOT EXISTS idx_ts_numeric_ref ON {TIMESERIES_TABLE} (ref_uri, ts, numeric_value)",
-            f"CREATE INDEX IF NOT EXISTS idx_ts_text_ref ON {TIMESERIES_TABLE} (ref_uri, ts, text_value)",
-            f"CREATE INDEX IF NOT EXISTS idx_ts_numeric_value ON {TIMESERIES_TABLE} (ref_uri, numeric_value)",
-            f"CREATE INDEX IF NOT EXISTS idx_ts_text_value ON {TIMESERIES_TABLE} (ref_uri, text_value)",
+            # No secondary indexes on the timeseries table: ART indexes are
+            # expensive to maintain on every insert and bloat the WAL, and the
+            # UNIQUE (ref_uri, ts) constraint already provides the index the
+            # point lookups use. The drops clear them from databases created
+            # before they were removed.
+            "DROP INDEX IF EXISTS idx_ts_ref",
+            "DROP INDEX IF EXISTS idx_ts_numeric_ref",
+            "DROP INDEX IF EXISTS idx_ts_text_ref",
+            "DROP INDEX IF EXISTS idx_ts_numeric_value",
+            "DROP INDEX IF EXISTS idx_ts_text_value",
             f"""
             CREATE TABLE IF NOT EXISTS {STREAMS_TABLE} (
                 ref_uri   VARCHAR PRIMARY KEY,
