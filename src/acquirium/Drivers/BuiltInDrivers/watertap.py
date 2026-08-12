@@ -95,7 +95,7 @@ class WaterTAPDriver(PollingIngestDriver):
         # carry their domain semantics (sensors, equipment, units).
         if self._insert_graph and self._graph_path:
             graph_path = _resolve_path(self._graph_path, "watertap_graph_path")
-            self.aq.insert_graph(
+            self.insert_graph(
                 graph_path.read_text(),
                 format=_guess_rdf_format(graph_path),
                 replace=self._insert_graph_replace,

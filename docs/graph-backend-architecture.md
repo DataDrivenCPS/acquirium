@@ -195,7 +195,9 @@ The typical lifecycle is:
 1. Call `register_datasource(source_id)` at startup. This creates the source
    data graph if needed and records the datasource in it. It is idempotent.
 2. If the driver owns RDF metadata or a model fragment, append it with
-   `insert_graph(..., source_id=source_id, replace=False)`. Use
+   `self.insert_graph(..., replace=False)`. The driver base class supplies
+   `self.source_id` automatically, so driver code cannot accidentally write to
+   another source graph. Use
    `replace=True` only to replace that driver's own contribution; it cannot
    replace the plant graph.
 3. Register stream metadata with `register_streams`. The high-level client
@@ -209,7 +211,7 @@ The typical lifecycle is:
 
 ```python
 aq.register_datasource("weather-station-1")
-aq.insert_graph(metadata_turtle, replace=False, source_id="weather-station-1")
+self.insert_graph(metadata_turtle, replace=False)
 aq.register_streams([
     {"source_id": "weather-station-1", "ref_name": "air_temp", "point_uri": point_uri},
 ])
@@ -223,9 +225,14 @@ aq.insert_timeseries(
 ### Apps
 
 Apps write their registration metadata to `source_id="app:<app-name>"`.
-App teardown issues a source-scoped SPARQL update against that same graph, so
-it removes only the app's registration triples. App and driver code should not
-use unscoped SPARQL updates to alter another component's data.
+`AppRunner` exposes this as `self.source_id` and binds the same value onto the
+loaded `App` instance. Both app and driver code can use
+`self.insert_graph(...)` and `self.sparql_update(...)`; these helpers always
+target that instance's owned graph and intentionally do not accept a
+`source_id` argument. App teardown issues a source-scoped SPARQL update against
+that same graph, so it removes only the app's registration triples. App and
+driver code should not use unscoped SPARQL updates to alter another component's
+data.
 
 ### Updates, queries, and validation
 

@@ -59,6 +59,9 @@ class AppRunner:
         # Ray workers don't inherit the server process's logging config.
         configure_logging()
         self.spec = spec
+        # The app's RDF registration/build state has a separate owner from
+        # output stream data. Expose it on both this actor and loaded App.
+        self.source_id = f"app:{spec.name}"
         self.app_storage_root = Path(app_storage_root)
         self.acquirium_cli = acquirium_cli
         self.logger = logging.getLogger(f"acquirium.app.{spec.name}")
@@ -112,11 +115,10 @@ class AppRunner:
         """
         self._persist_source()
         graph = self._app_spec_graph(self.spec)
-        self.acquirium_cli.insert_graph(
+        self.insert_graph(
             graph.serialize(format="turtle"),
             format="turtle",
             replace=False,
-            source_id=f"app:{self.spec.name}",
         )
         self.logger.info(
             "Registered app '%s' (%d output stream(s))",
@@ -153,14 +155,22 @@ class AppRunner:
           }}
         }}
         """
-        # register() writes the app description to this graph, so the cleanup
-        # must target the same owner rather than the legacy plant graph.
-        self.acquirium_cli.client.sparql_update(
-            query,
-            source_id=f"app:{self.spec.name}",
-        )
+        self.sparql_update(query)
         self.logger.info("Deregistered app '%s' from the graph", self.spec.name)
         return {"name": self.spec.name}
+
+    def insert_graph(self, rdf_graph: str, *, format: str = "turtle", replace: bool = False) -> None:
+        """Write RDF to this app's graph; ownership is never caller-selected."""
+        self.acquirium_cli.insert_graph(
+            rdf_graph,
+            format=format,
+            replace=replace,
+            source_id=self.source_id,
+        )
+
+    def sparql_update(self, update: str) -> dict[str, Any]:
+        """Apply a SPARQL update only to this app's graph."""
+        return self.acquirium_cli.sparql_update(update, source_id=self.source_id)
 
     def _app_spec_graph(self, spec: AppSpec) -> Graph:
         app_uri = URIRef(app_uri_for(spec.name))
@@ -264,6 +274,7 @@ class AppRunner:
             cls = candidates[0]
 
         self.app = cls()
+        self.app._bind_graph_api(self.acquirium_cli, self.source_id)
         self.logger.info("Loaded app '%s' (%s)", self.spec.name, cls.__name__)
         return self.app
 

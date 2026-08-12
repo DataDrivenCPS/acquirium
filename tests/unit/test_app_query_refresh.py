@@ -106,9 +106,22 @@ def test_deregister_updates_the_app_owned_graph(tmp_path):
 
     runner.deregister()
 
-    runner.acquirium_cli.client.sparql_update.assert_called_once()
-    _, kwargs = runner.acquirium_cli.client.sparql_update.call_args
-    assert kwargs["source_id"] == "app:runner_test_app"
+    runner.acquirium_cli.sparql_update.assert_called_once()
+    _, kwargs = runner.acquirium_cli.sparql_update.call_args
+    assert kwargs["source_id"] == runner.source_id
+
+
+def test_loaded_app_receives_source_scoped_graph_helpers(tmp_path):
+    runner = make_runner(tmp_path)
+    app = CountingApp()
+    app._bind_graph_api(runner.acquirium_cli, runner.source_id)
+
+    app.insert_graph("@prefix ex: <urn:ex:> . ex:x ex:p ex:y .")
+    app.sparql_update("DELETE WHERE { ?s ?p ?o }")
+
+    assert app.source_id == "app:runner_test_app"
+    assert runner.acquirium_cli.insert_graph.call_args.kwargs["source_id"] == app.source_id
+    assert runner.acquirium_cli.sparql_update.call_args.kwargs["source_id"] == app.source_id
 
 
 # ─────────────────────── keep-alive query refresh ───────────────────────

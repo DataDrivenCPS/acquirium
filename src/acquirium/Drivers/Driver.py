@@ -84,6 +84,24 @@ class Driver(ABC):
         """Return the canonical reference URI for ``self.source_id``/``ref_name``."""
         return compute_ref_uri(self.source_id, ref_name)
 
+    def insert_graph(self, rdf_graph: str | Path, *, format: str = "turtle", replace: bool = False) -> None:
+        """Write RDF to this driver's source-owned graph.
+
+        Driver code must not pass a source id manually: this helper always
+        uses ``self.source_id``. Multi-source drivers should use the general
+        client API only at the narrow point where they select an owner.
+        """
+        self.aq.insert_graph(
+            rdf_graph,
+            format=format,
+            replace=replace,
+            source_id=self.source_id,
+        )
+
+    def sparql_update(self, update: str) -> dict[str, Any]:
+        """Apply an update only to this driver's source-owned graph."""
+        return self.aq.sparql_update(update, source_id=self.source_id)
+
     def config_dir(self) -> Path:
         """Return the directory containing the loaded config file, if known."""
         return Path(self.config.get("__config_dir", Path.cwd()))

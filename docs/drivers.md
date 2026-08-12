@@ -27,6 +27,12 @@ without colliding. Single-source drivers usually set `self.source_id` in
 `setup()`. Multi-source drivers can omit `self.source_id` if every observation
 row includes a `source_id` column.
 
+For RDF owned by a single-source driver, use `self.insert_graph(...)` and
+`self.sparql_update(...)`. These base-class helpers automatically use
+`self.source_id`, preventing a graph write from being attributed to a different
+source. Multi-source drivers should use the general client API only where they
+deliberately select each source owner.
+
 This identity rule applies to all drivers, regardless of lifecycle. Polling
 drivers, event drivers, graph-configured drivers, and custom `Driver`
 subclasses must all register and insert streams with the same `(source_id,

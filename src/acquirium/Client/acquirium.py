@@ -229,6 +229,14 @@ class Acquirium:
             source_id=source_id,
         )
 
+    def sparql_update(self, update: str, *, source_id: str | None = None) -> dict[str, Any]:
+        """Execute a SPARQL update against the plant or one owned data graph.
+
+        Components with a fixed owner should use their ``self.sparql_update``
+        helper instead of passing ``source_id`` themselves.
+        """
+        return self.client.sparql_update(update, source_id=source_id)
+
     def query(self) -> Query:
         """Create a new empty Query (the explore builder) bound to this instance."""
         return Query(client=self.client)
