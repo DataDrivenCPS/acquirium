@@ -392,8 +392,9 @@ def export_graph(include_union: bool = True, format: str = "turtle"):
     """Export the RDF graph in the specified format.
 
     Args:
-        include_union: If True, includes the union graph with all imports resolved.
-                      If False, returns only the main graph.
+        include_union: If True, includes deployment data plus all imported
+                      ontology/shape triples. If False, returns all registered
+                      deployment/source graphs without those dependencies.
         format: Serialization format - turtle, n3, xml, trig, etc.
     """
     try:

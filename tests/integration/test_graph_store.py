@@ -120,6 +120,19 @@ class TestInsertExport:
         assert isinstance(exported, str)
         assert len(exported) > 0
 
+    def test_export_without_dependencies_includes_every_source_graph(self, graph_store):
+        graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
+        graph_store.insert_graph(
+            EXTRA_TURTLE,
+            format="turtle",
+            graph_uri=graph_store.source_graph_uri("test-driver"),
+        )
+
+        exported = graph_store.export_graph(include_union=False, format="turtle")
+
+        assert "sensor1" in exported
+        assert "sensor3" in exported
+
 
 # ── SPARQL Tests ───────────────────────────────────────────
 

@@ -61,7 +61,7 @@ Export the RDF graph as serialized RDF.
 
 | Parameter | Default | Description |
 | --- | --- | --- |
-| `include_union` | `true` | Include imported graphs via `owl:imports` resolution |
+| `include_union` | `true` | Include all registered deployment/source graphs plus imported ontology/shape dependencies. `false` returns all deployment/source graphs without those dependencies. |
 | `format` | `turtle` | Serialization format (`turtle`, `n3`, `xml`, `trig`, `nquads`) |
 
 Returns the RDF document with the appropriate content type (e.g. `text/turtle`).

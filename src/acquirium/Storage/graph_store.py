@@ -21,7 +21,6 @@ from oxrdflib.store import from_ox
 ## ALL NAMESPACES AND INTERNAL PREDICATES HERE ##
 from acquirium.internals.internals_namespaces import *
 
-from acquirium.internals.models import Point, PointCreateRequest
 from acquirium.internals._log import timed_debug
 from acquirium._ontologies import (
     BUNDLED_FILES,
@@ -735,10 +734,15 @@ class OxigraphGraphStore:
             }
 
     def export_graph(self, *, include_union: bool = True, format: str = "turtle") -> str:
-        """Serialize for download: the data-graph closure, or just the data."""
+        """Serialize all deployment data, optionally with ontology dependencies.
+
+        ``include_union=False`` never means the legacy plant graph alone: it
+        includes every registered source-owned graph and Acquirium's managed
+        deployment data. ``True`` adds the resolved ontology/shape closure.
+        """
         fmt = (format or "turtle").lower()
         with self._lock:
-            graph = self._source_graph_with_dependencies() if include_union else self._source_main_graph()
+            graph = self._source_graph_with_dependencies() if include_union else self._source_data_graph()
             return graph.serialize(format=fmt)
 
     def export_dependency_graph(self, *, format: str = "trig") -> str:
@@ -792,22 +796,6 @@ class OxigraphGraphStore:
         return self.query_dataset.namespace_manager
     
     # -------------------- helpers --------------------
-    def _materialize_point(self, subject: URIRef) -> Point:
-        with self._lock:
-            main_graph = self._source_main_graph()
-            types = [str(o) for o in main_graph.objects(subject, RDF.type)]
-            unit_literal = next(main_graph.objects(subject, QUDT.hasUnit), None)
-            last_literal = next(main_graph.objects(subject, LAST_REPORTED), None)
-        return Point(
-            uri=_external_uri(subject),
-            types=types,
-            unit=str(unit_literal) if unit_literal else None,
-            last_reported=_maybe_literal_dt(last_literal),
-        )
-
-    def _source_main_graph(self) -> Graph:
-        return self.source_dataset.graph(self.main_graph_uri)
-
     def source_graph_uri(self, source_id: str) -> URIRef:
         """Get the registered data graph for one driver or metadata source."""
         with self._lock:
@@ -831,6 +819,12 @@ class OxigraphGraphStore:
 
     def close(self) -> None:
         _logger.debug("OxigraphGraphStore.close")
+        # A rebuild owns snapshots only while it is running, but its final
+        # publication writes the query dataset. Do not close that dataset out
+        # from under the sole background rebuild owner.
+        with self._rebuild_condition:
+            while self._query_rebuild_in_progress:
+                self._rebuild_condition.wait()
         with self._lock:
             # ontoenv holds an exclusive lock on .ontoenv/store.lock for the
             # life of the environment, so it has to be released before the

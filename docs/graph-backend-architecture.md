@@ -56,6 +56,19 @@ also stable. A source graph URI is deterministic from its `source_id`; asking
 for a source graph creates and persists its registry entry when necessary. A
 source ID is therefore an ownership boundary, not merely a timeseries label.
 
+### Public graph views
+
+Public reads expose exactly two views; neither exposes the legacy plant graph
+by itself:
+
+| View | Contents | Selector |
+| --- | --- | --- |
+| Deployment graph | Inferred union of every registered deployment/source graph. | `use_union=false` for SPARQL; `include_union=false` for export. |
+| Deployment graph with dependencies | The same inferred deployment graph plus resolved ontology and shape triples. | `use_union=true` for SPARQL; `include_union=true` for export. |
+
+The plant graph remains a backwards-compatible write target when no source
+owner is supplied. It is not a public read view.
+
 At present, deleting an app removes its registration triples from its source
 graph. There is no public API that removes a source graph or its registry entry;
 an empty source graph may remain registered. Do not depend on unregistering a
