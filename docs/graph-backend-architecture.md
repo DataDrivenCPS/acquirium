@@ -48,8 +48,8 @@ incorrect: that would accidentally include ontology graphs.
 | Source data graph | source dataset | RDF owned by one driver, app, or metadata source. | `insert_graph(..., source_id="...")`; source-scoped SPARQL update. |
 | Ontology/shape graph | source dataset | Ontologies, shapes, rules, and imports managed through OntoEnv. | Server configuration/startup; not application or driver writes. |
 | Dependency cache | memory | Imports closure minus asserted deployment data. | Backend only. |
-| Inferred-data graph | query dataset | `shifty.infer` output. | Backend only. |
-| Inferred-data-with-shapes graph | query dataset | Inferred data plus the dependency cache. | Backend only. |
+| Inferred-data graph | query dataset | `shifty.infer` output. Replaced after every derived rebuild. | Backend only. |
+| Dependency query graph | query dataset | Resolved ontology/shape dependency cache. Replaced only when its imports closure changes. | Backend only. |
 
 The plant graph URI is stable (`urn:acquirium#MainGraph`). Acquirium's graph is
 also stable. A source graph URI is deterministic from its `source_id`; asking
@@ -100,9 +100,11 @@ registered plant, Acquirium, and source data graphs
                          ├───────────────► `include_dependencies=False`
                          │
                          ▼
- inferred_data_with_shapes = inferred_data + dependency_cache
+ dependency_query_graph = dependency_cache
                          │
-                         └───────────────► `include_dependencies=True` (the API default)
+                         └──── Oxigraph default-graph union with inferred_data
+                                      │
+                                      └──► `include_dependencies=True` (the API default)
 ```
 
 The dependency cache contains only the triples added by resolving imports; it
@@ -132,7 +134,8 @@ fresh query / refresh_union               ▼
                  Shifty inference runs outside the store lock
                                     │
                                     ▼
-                 publish both complete query graphs under the lock
+                 publish inferred data under the lock
+              (and dependencies only if the closure changed)
                                     │
                   generation changed while building?
                            ├── no → wake waiting readers
@@ -181,7 +184,7 @@ stored graph.
 | API setting | Default graph queried | Use it for |
 | --- | --- | --- |
 | `include_dependencies=False` | `inferred_data` | Operational queries over asserted and inferred deployment facts. |
-| `include_dependencies=True` | `inferred_data_with_shapes` | The default; use when queries may need ontology hierarchy, definitions, shapes, or rules as well as inferred facts. |
+| `include_dependencies=True` | Native union of `inferred_data` and `dependency_query_graph` | The default; use when queries may need ontology hierarchy, definitions, shapes, or rules as well as inferred facts. |
 
 `export_graph(include_dependencies=False)` returns all registered deployment
 data. `export_graph(include_dependencies=True)` adds resolved import

@@ -128,8 +128,11 @@ def run_profile(
     results_lock = threading.Lock()
     refresh_latencies_ms: list[float] = []
     refresh_lock = threading.Lock()
+    publish_latencies_ms: list[float] = []
+    publish_lock = threading.Lock()
     source_graph = store.source_graph_uri("benchmark-driver")
     original_build = store._build_query_views
+    original_publish = store._publish_query_views
 
     def timed_build(data: Graph, shapes: Graph):
         began = time.perf_counter_ns()
@@ -139,9 +142,18 @@ def run_profile(
             with refresh_lock:
                 refresh_latencies_ms.append((time.perf_counter_ns() - began) / 1_000_000)
 
+    def timed_publish(inferred: Graph, shapes: Graph):
+        began = time.perf_counter_ns()
+        try:
+            return original_publish(inferred, shapes)
+        finally:
+            with publish_lock:
+                publish_latencies_ms.append((time.perf_counter_ns() - began) / 1_000_000)
+
     # The private hook is instrumentation only. It measures actual derived-view
     # rebuilds without changing locking or query behavior.
     store._build_query_views = timed_build  # type: ignore[method-assign]
+    store._publish_query_views = timed_publish  # type: ignore[method-assign]
 
     def reader() -> WorkerResult:
         result = WorkerResult("reader", [], [])
@@ -204,6 +216,7 @@ def run_profile(
         worker.join()
     elapsed_s = time.perf_counter() - began
     store._build_query_views = original_build  # type: ignore[method-assign]
+    store._publish_query_views = original_publish  # type: ignore[method-assign]
 
     reader_latencies = [
         latency for result in results if result.kind == "reader" for latency in result.latencies_ms
@@ -224,6 +237,7 @@ def run_profile(
         "reader_latency_ms": asdict(summarize(reader_latencies)),
         "writer_latency_ms": asdict(summarize(writer_latencies)),
         "derived_refresh_latency_ms": asdict(summarize(refresh_latencies_ms)),
+        "derived_publish_latency_ms": asdict(summarize(publish_latencies_ms)),
         "errors": errors,
     }
 
@@ -249,8 +263,11 @@ def run_stale_read_profile(
     results_lock = threading.Lock()
     refresh_latencies_ms: list[float] = []
     refresh_lock = threading.Lock()
+    publish_latencies_ms: list[float] = []
+    publish_lock = threading.Lock()
     source_graph = store.source_graph_uri("benchmark-stale-read-driver")
     original_build = store._build_query_views
+    original_publish = store._publish_query_views
 
     def held_build(data: Graph, shapes: Graph):
         rebuild_started.set()
@@ -263,9 +280,18 @@ def run_stale_read_profile(
             with refresh_lock:
                 refresh_latencies_ms.append((time.perf_counter_ns() - began) / 1_000_000)
 
+    def timed_publish(inferred: Graph, shapes: Graph):
+        began = time.perf_counter_ns()
+        try:
+            return original_publish(inferred, shapes)
+        finally:
+            with publish_lock:
+                publish_latencies_ms.append((time.perf_counter_ns() - began) / 1_000_000)
+
     # This is deliberately a test hook: it holds publication before inference,
     # without changing the store's locking or read-selection behavior.
     store._build_query_views = held_build  # type: ignore[method-assign]
+    store._publish_query_views = timed_publish  # type: ignore[method-assign]
 
     def reader() -> WorkerResult:
         result = WorkerResult("reader", [], [])
@@ -327,6 +353,7 @@ def run_stale_read_profile(
         for worker in workers:
             worker.join()
         store._build_query_views = original_build  # type: ignore[method-assign]
+        store._publish_query_views = original_publish  # type: ignore[method-assign]
 
     reader_latencies = [latency for result in results for latency in result.latencies_ms]
     errors = [error for result in results for error in result.errors] + writer.errors
@@ -343,6 +370,7 @@ def run_stale_read_profile(
         "reader_latency_ms": asdict(summarize(reader_latencies)),
         "writer_latency_ms": asdict(summarize(writer.latencies_ms)),
         "derived_refresh_latency_ms": asdict(summarize(refresh_latencies_ms)),
+        "derived_publish_latency_ms": asdict(summarize(publish_latencies_ms)),
         "errors": errors,
     }
 
@@ -351,14 +379,17 @@ def print_result(result: dict[str, object]) -> None:
     reader = result["reader_latency_ms"]
     writer = result["writer_latency_ms"]
     refresh = result["derived_refresh_latency_ms"]
+    publish = result["derived_publish_latency_ms"]
     assert isinstance(reader, dict) and isinstance(writer, dict) and isinstance(refresh, dict)
+    assert isinstance(publish, dict)
     print(
         f"{result['profile']:8} readers={result['readers']:>3} writers={result['writers']} "
         f"dependencies={result['include_dependencies']} ops/s={result['operations_per_second']:>8.1f} "
         f"wait_for_fresh={result['wait_for_fresh']!s:5} "
         f"read p50/p95={reader['p50_ms']:.2f}/{reader['p95_ms']:.2f} ms "
         f"write p95={writer['p95_ms']:.2f} ms "
-        f"refreshes={refresh['count']} refresh p95={refresh['p95_ms']:.2f} ms "
+        f"refreshes={refresh['count']} infer p95={refresh['p95_ms']:.2f} ms "
+        f"publish p95={publish['p95_ms']:.2f} ms "
         f"errors={len(result['errors'])}",
         flush=True,
     )

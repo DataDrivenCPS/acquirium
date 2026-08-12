@@ -51,6 +51,13 @@ ex:sensor3 a ex:FlowSensor ;
     rdfs:label "Sensor 3" .
 """
 
+IMPORTS_WATER_TURTLE = """\
+@prefix ex: <http://example.org/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+
+ex:deployment owl:imports <urn:nawi-water-ontology> .
+"""
+
 
 @pytest.fixture
 def graph_store(tmp_path):
@@ -73,7 +80,7 @@ def graph_store(tmp_path):
 class TestInsertExport:
     def test_insert_turtle(self, graph_store):
         result = graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
-        assert result["main_triples"] > 0
+        assert result == {"replaced": False, "changed": True}
 
         exported = graph_store.export_graph(include_dependencies=False, format="turtle")
         assert "sensor1" in exported
@@ -102,8 +109,6 @@ class TestInsertExport:
 
         assert first["changed"] is True
         assert second["changed"] is True
-        assert second["main_triples"] == first["main_triples"]
-        assert second["union_triples"] == first["union_triples"]
 
     def test_graph_status_distinguishes_source_and_published_generations(self, graph_store):
         graph_store.sparql_query("ASK { ?s ?p ?o }", wait_for_fresh=True)
@@ -370,7 +375,7 @@ ex:item a ex:Thing .
         assert len(result["rows"]) >= 1
 
     def test_union_graph_excludes_unimported_named_graphs(self, graph_store):
-        graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
+        graph_store.insert_graph(SAMPLE_TURTLE + IMPORTS_WATER_TURTLE, format="turtle")
         other = graph_store.source_dataset.graph(URIRef("urn:test:unimported"))
         other.add((
             URIRef("urn:test:stray"),
@@ -384,8 +389,26 @@ ex:item a ex:Thing .
         )
 
         assert result["rows"] == []
-        assert len(graph_store.query_dataset.graph(graph_store.imports_union_graph_uri)) > 0
-        assert len(graph_store.source_dataset.graph(graph_store.imports_union_graph_uri)) == 0
+        assert len(graph_store.query_dataset.graph(graph_store.dependency_query_graph_uri)) > 0
+        assert len(graph_store.source_dataset.graph(graph_store.dependency_query_graph_uri)) == 0
+
+    def test_dependency_view_uses_the_native_query_graph_union(self, graph_store):
+        graph_store.insert_graph(SAMPLE_TURTLE + IMPORTS_WATER_TURTLE, format="turtle")
+        query = "SELECT ?ontology WHERE { ?ontology a <http://www.w3.org/2002/07/owl#Ontology> }"
+
+        with_dependencies = graph_store.sparql_query(query, include_dependencies=True)
+        without_dependencies = graph_store.sparql_query(query, include_dependencies=False)
+
+        assert with_dependencies["rows"]
+        assert without_dependencies["rows"] == []
+
+    def test_ordinary_write_does_not_republish_dependencies(self, graph_store):
+        graph_store.sparql_query("ASK { ?s ?p ?o }", wait_for_fresh=True)
+        with patch.object(graph_store, "_replace_query_graph", wraps=graph_store._replace_query_graph) as replace:
+            graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
+            graph_store.sparql_query("ASK { ?s ?p ?o }", wait_for_fresh=True)
+
+        assert [call.kwargs["label"] for call in replace.call_args_list] == ["inferred"]
 
     def test_union_graph_includes_registered_acquirium_data_graph(self, graph_store):
         graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")

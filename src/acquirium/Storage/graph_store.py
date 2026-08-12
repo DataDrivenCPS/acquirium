@@ -77,7 +77,9 @@ def _graph_affects_closure(graph: Graph) -> bool:
     )
 
 
-_IMPORTS_UNION_GRAPH = URIRef(str(ACQUIRIUM_NS.ImportsUnionGraph))
+# Kept at the old cache IRI so a warm start overwrites the former materialized
+# ``inferred + dependencies`` cache instead of leaving it in the query dataset.
+_DEPENDENCY_QUERY_GRAPH = URIRef(str(ACQUIRIUM_NS.ImportsUnionGraph))
 _INFERRED_DATA_GRAPH = URIRef(str(ACQUIRIUM_NS.InferredDataGraph))
 
 class _OntoenvOxigraphStore:
@@ -218,10 +220,11 @@ class OxigraphGraphStore:
         self._closure_version = 0
         self._dependency_graph_cache: Graph | None = None
         self._dependency_graph_closure_version = -1
-        self.imports_union_graph_uri = _IMPORTS_UNION_GRAPH
+        self.dependency_query_graph_uri = _DEPENDENCY_QUERY_GRAPH
         self.inferred_data_graph_uri = _INFERRED_DATA_GRAPH
-        self._imports_union_graph_source_version = -1
-        self._imports_union_graph_closure_version = -1
+        self._query_cache_source_version = -1
+        self._query_cache_closure_version = -1
+        self._dependency_query_graph_closure_version = -1
 
         # ontoenv shares this Oxigraph store via the graph-store protocol,
         # over the authoritative source dataset. SPARQL reads query that
@@ -232,7 +235,7 @@ class OxigraphGraphStore:
             excluded_iris=(
                 self.main_graph_uri,
                 self.acquirium_graph_uri,
-                self.imports_union_graph_uri,
+                self.dependency_query_graph_uri,
                 self.inferred_data_graph_uri,
             ),
         )
@@ -428,16 +431,17 @@ class OxigraphGraphStore:
             merged.add(triple)
         return merged
 
-    def _imports_union_graph(self) -> Graph:
-        return self.query_dataset.graph(self.imports_union_graph_uri)
+    def _dependency_query_graph(self) -> Graph:
+        """The query-dataset graph containing only import dependencies."""
+        return self.query_dataset.graph(self.dependency_query_graph_uri)
 
     def _inferred_data_graph(self) -> Graph:
         return self.query_dataset.graph(self.inferred_data_graph_uri)
 
     def _query_cache_is_current(self) -> bool:
         return (
-            self._imports_union_graph_source_version == self._source_version
-            and self._imports_union_graph_closure_version == self._closure_version
+            self._query_cache_source_version == self._source_version
+            and self._query_cache_closure_version == self._closure_version
         )
 
     @staticmethod
@@ -456,8 +460,8 @@ class OxigraphGraphStore:
             shapes = self._copy_graph(self._ensure_dependency_cache_current())
         return self._source_version, self._closure_version, data, shapes
 
-    def _build_query_views(self, data: Graph, shapes: Graph) -> tuple[Graph, Graph]:
-        """Build disposable query graphs outside the store lock."""
+    def _build_query_views(self, data: Graph, shapes: Graph) -> Graph:
+        """Build inferred deployment data outside the store lock."""
         with timed_debug(
             _logger,
             "shifty.infer data=%d triples shapes=%d triples",
@@ -466,41 +470,44 @@ class OxigraphGraphStore:
         ):
             inferred = shifty.infer(data, shapes).graph()
 
-        merged = self._copy_graph(inferred)
-        for triple in shapes:
-            merged.add(triple)
-        return inferred, merged
+        return inferred
 
-    def _publish_query_views(self, inferred: Graph, merged: Graph) -> Graph:
-        """Replace both query graphs atomically while holding ``_lock``."""
+    def _replace_query_graph(self, graph: Graph, graph_uri: URIRef, *, label: str) -> None:
+        """Replace one disposable query graph while publication is locked."""
+        target = self.query_dataset.graph(graph_uri)
+        target.remove((None, None, None))
+        if not len(graph):
+            return
+        with timed_debug(_logger, "derived publish %s serialize", label):
+            nt = graph.serialize(format="nt", encoding="utf-8")
+        with timed_debug(_logger, "derived publish %s load", label):
+            self.query_dataset.store._inner.bulk_load(
+                input=nt,
+                format=RdfFormat.N_TRIPLES,
+                to_graph=NamedNode(str(graph_uri)),
+            )
 
-        inferred_graph = self._inferred_data_graph()
-        inferred_graph.remove((None, None, None))
-        if len(inferred):
-            with timed_debug(_logger, "derived publish inferred serialize"):
-                nt = inferred.serialize(format="nt", encoding="utf-8")
-            with timed_debug(_logger, "derived publish inferred load"):
-                self.query_dataset.store._inner.bulk_load(
-                    input=nt,
-                    format=RdfFormat.N_TRIPLES,
-                    to_graph=NamedNode(str(self.inferred_data_graph_uri)),
-                )
+    def _publish_query_views(self, inferred: Graph, shapes: Graph) -> None:
+        """Publish inferred data and, when needed, the dependency graph.
 
-        graph = self._imports_union_graph()
-        graph.remove((None, None, None))
-        if len(merged):
-            with timed_debug(_logger, "derived publish union serialize"):
-                nt = merged.serialize(format="nt", encoding="utf-8")
-            with timed_debug(_logger, "derived publish union load"):
-                self.query_dataset.store._inner.bulk_load(
-                    input=nt,
-                    format=RdfFormat.N_TRIPLES,
-                    to_graph=NamedNode(str(self.imports_union_graph_uri)),
-                )
+        The dependency graph is independent of ordinary data writes. Keeping
+        it separate avoids copying and serializing the full ontology/shape
+        closure into a second merged graph after every inference rebuild.
+        Queries that include dependencies use Oxigraph's native union of the
+        two named graphs.
+        """
+
+        self._replace_query_graph(inferred, self.inferred_data_graph_uri, label="inferred")
+        if self._dependency_query_graph_closure_version != self._closure_version:
+            self._replace_query_graph(
+                shapes,
+                self.dependency_query_graph_uri,
+                label="dependencies",
+            )
+            self._dependency_query_graph_closure_version = self._closure_version
         self._commit_dataset(self.query_dataset)
-        self._imports_union_graph_source_version = self._source_version
-        self._imports_union_graph_closure_version = self._closure_version
-        return graph
+        self._query_cache_source_version = self._source_version
+        self._query_cache_closure_version = self._closure_version
 
     def _start_query_rebuild_locked(self) -> None:
         """Start the sole background rebuild owner. Caller holds ``_lock``."""
@@ -540,10 +547,10 @@ class OxigraphGraphStore:
             while True:
                 with self._lock:
                     source_version, closure_version, data, shapes = self._snapshot_query_inputs()
-                inferred, merged = self._build_query_views(data, shapes)
+                inferred = self._build_query_views(data, shapes)
                 with self._rebuild_condition:
                     if source_version == self._source_version and closure_version == self._closure_version:
-                        self._publish_query_views(inferred, merged)
+                        self._publish_query_views(inferred, shapes)
                         return
                     _logger.debug("derived cache changed during rebuild; coalescing follow-up")
         except Exception as exc:
@@ -555,8 +562,8 @@ class OxigraphGraphStore:
                 self._query_rebuild_in_progress = False
                 self._rebuild_condition.notify_all()
 
-    def _ensure_imports_union_graph_current(self, *, wait_for_fresh: bool) -> Graph:
-        """Return the last complete cache, optionally waiting for the latest one.
+    def _ensure_query_cache_current(self, *, wait_for_fresh: bool) -> None:
+        """Ensure a complete cache exists, optionally waiting for the latest one.
 
         Writes schedule one background rebuild. Eventual callers get the last
         published cache immediately; strict callers wait for the current source
@@ -564,14 +571,14 @@ class OxigraphGraphStore:
         """
         with self._rebuild_condition:
             if self._query_cache_is_current():
-                return self._imports_union_graph()
+                return
             self._start_query_rebuild_locked()
-            if self._imports_union_graph_source_version >= 0 and not wait_for_fresh:
-                return self._imports_union_graph()
+            if self._query_cache_source_version >= 0 and not wait_for_fresh:
+                return
             while self._query_rebuild_in_progress:
                 self._rebuild_condition.wait()
             if self._query_cache_is_current():
-                return self._imports_union_graph()
+                return
             if self._query_rebuild_error is not None:
                 raise RuntimeError("derived cache rebuild failed") from self._query_rebuild_error
             raise RuntimeError("derived cache remained stale after rebuild")
@@ -628,7 +635,7 @@ class OxigraphGraphStore:
                 # existing polling clients.
                 "version": self._source_version,
                 "source_version": self._source_version,
-                "published_version": self._imports_union_graph_source_version,
+                "published_version": self._query_cache_source_version,
                 "is_current": self._query_cache_is_current(),
                 "rebuild_in_progress": self._query_rebuild_in_progress,
             }
@@ -638,24 +645,36 @@ class OxigraphGraphStore:
         # Do not hold the store lock while inference runs: the single-flight
         # coordinator owns publication, while writes may continue during the
         # expensive build.
-        merged = self._ensure_imports_union_graph_current(wait_for_fresh=True)
+        self._ensure_query_cache_current(wait_for_fresh=True)
         with self._lock:
+            source_data = self._source_data_graph()
+            dependencies = self._ensure_dependency_cache_current()
             if snapshot_path:
                 snapshot_path = Path(snapshot_path)
                 snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+                merged = Graph()
+                for triple in source_data:
+                    merged.add(triple)
+                for triple in dependencies:
+                    merged.add(triple)
                 merged.serialize(destination=str(snapshot_path), format="turtle")
             return {
-                "main_triples": len(self._source_data_graph()),
-                "union_triples": len(merged),
+                "main_triples": len(source_data),
+                "union_triples": len(source_data) + len(dependencies),
             }
 
     # -------------------- SPARQL surface --------------------
-    def _query_graph_uri(self, include_dependencies: bool, *, wait_for_fresh: bool) -> URIRef:
-        """Select a current query-cache graph while coordinating rebuilds."""
-        graph = self._ensure_imports_union_graph_current(wait_for_fresh=wait_for_fresh)
+    def _query_default_graphs(
+        self, include_dependencies: bool, *, wait_for_fresh: bool
+    ) -> list[NamedNode]:
+        """Select current named graphs for a query's default graph."""
+        self._ensure_query_cache_current(wait_for_fresh=wait_for_fresh)
         if include_dependencies:
-            return URIRef(graph.identifier)
-        return self.inferred_data_graph_uri
+            return [
+                NamedNode(str(self.inferred_data_graph_uri)),
+                NamedNode(str(self.dependency_query_graph_uri)),
+            ]
+        return [NamedNode(str(self.inferred_data_graph_uri))]
 
     def sparql_query(
         self,
@@ -669,7 +688,9 @@ class OxigraphGraphStore:
         # Publication clears then bulk-loads its named graph, so starting a
         # query outside this short critical section could select that empty
         # intermediate state. Result iteration remains outside the lock.
-        graph_uri = self._query_graph_uri(include_dependencies, wait_for_fresh=wait_for_fresh)
+        default_graphs = self._query_default_graphs(
+            include_dependencies, wait_for_fresh=wait_for_fresh
+        )
         with timed_debug(_logger, "sparql_query dependencies=%s", include_dependencies):
             dataset = self.query_dataset
             with timed_debug(_logger,"sparql_query--oxi query time:"):
@@ -677,7 +698,7 @@ class OxigraphGraphStore:
                     result = dataset.store._inner.query(
                         query,
                         use_default_graph_as_union=False,
-                        default_graph=ox.NamedNode(str(graph_uri)),
+                        default_graph=default_graphs,
                     )
             with timed_debug(_logger,"sparql_query--output processing:"):
                 if isinstance(result, ox.QueryBoolean):
@@ -707,13 +728,15 @@ class OxigraphGraphStore:
         Graph result forms return ``None`` because SPARQL results JSON does not
         represent RDF triples.
         """
-        graph_uri = self._query_graph_uri(include_dependencies, wait_for_fresh=wait_for_fresh)
+        default_graphs = self._query_default_graphs(
+            include_dependencies, wait_for_fresh=wait_for_fresh
+        )
         with timed_debug(_logger, "sparql_query_json dependencies=%s", include_dependencies):
             with self._lock:
                 result = self.query_dataset.store._inner.query(
                     query,
                     use_default_graph_as_union=False,
-                    default_graph=ox.NamedNode(str(graph_uri)),
+                    default_graph=default_graphs,
                 )
             if not isinstance(result, (ox.QuerySolutions, ox.QueryBoolean)):
                 return None
@@ -736,12 +759,14 @@ class OxigraphGraphStore:
         Acquirium's strict-versus-published cache behavior before the query's
         normal Oxigraph repeatable-read snapshot is taken.
         """
-        graph_uri = self._query_graph_uri(include_dependencies, wait_for_fresh=wait_for_fresh)
+        default_graphs = self._query_default_graphs(
+            include_dependencies, wait_for_fresh=wait_for_fresh
+        )
         with self._lock:
             result = self.query_dataset.store._inner.query(
                 query,
                 use_default_graph_as_union=False,
-                default_graph=ox.NamedNode(str(graph_uri)),
+                default_graph=default_graphs,
             )
         if isinstance(result, (ox.QuerySolutions, ox.QueryBoolean)):
             serialized = result.serialize(format=results_format)
@@ -823,16 +848,7 @@ class OxigraphGraphStore:
                     incoming, target=target, replace=replace,
                 )
                 self._finalize_source_write(affects_closure=affects_closure)
-            # Counted under the same lock as the write, so the reported totals
-            # cannot include a concurrent writer's triples.
-            # ``main_triples`` is a legacy response key. With multiple data
-            # graphs it means the complete deployment-data union, matching
-            # ``refresh_union()`` rather than merely this write's target.
-            main_triples = len(self._source_data_graph())
-            union_triples = main_triples + len(self._ensure_dependency_cache_current())
         return {
-            "main_triples": main_triples,
-            "union_triples": union_triples,
             "replaced": replace,
             "changed": True,
         }
