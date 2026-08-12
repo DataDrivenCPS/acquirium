@@ -430,15 +430,20 @@ class AcquiriumClient:
         return response.json()
 
     def graph_version(self) -> int:
-        """Return the server's current graph version counter.
+        """Return the server's current source-data generation.
 
-        The counter is bumped on every graph mutation. Workers can poll this
-        to detect when their cached query needs to be rebuilt.
+        This compatibility helper returns the ``version`` field from
+        :meth:`graph_status`.  Use that method when a caller also needs to
+        know whether the derived query cache has caught up.
         """
+        return int(self.graph_status()["version"])
+
+    def graph_status(self) -> dict[str, int | bool]:
+        """Return source and derived-query cache generations from the server."""
         url = f"{self.base_url}/graph_version"
         response = requests.get(url)
         response.raise_for_status()
-        return int(response.json().get("version", 0))
+        return response.json()
 
     # -------------------- Unit conversion --------------------
 

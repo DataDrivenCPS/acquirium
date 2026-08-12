@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+from contextlib import contextmanager
 from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Condition, RLock, Thread
+from typing import Iterator
 
 from ontoenv import OntoEnv
 import pyoxigraph as ox
@@ -185,6 +187,10 @@ class OxigraphGraphStore:
         self._rebuild_condition = Condition(self._lock)
         self._query_rebuild_in_progress = False
         self._query_rebuild_error: Exception | None = None
+        # A batch delays only rebuild scheduling; each source write remains
+        # durable immediately.  This deliberately is not a transaction.
+        self._write_batch_depth = 0
+        self._write_batch_rebuild_pending = False
         self.store_path = Path(store_path)
         self.env_root = Path(env_root)
         self.store_path.mkdir(parents=True, exist_ok=True)
@@ -504,6 +510,29 @@ class OxigraphGraphStore:
         self._query_rebuild_error = None
         Thread(target=self._rebuild_query_views, name="acquirium-derived-graph", daemon=True).start()
 
+    @contextmanager
+    def write_batch(self) -> Iterator[None]:
+        """Coalesce derived-cache scheduling for a group of source writes.
+
+        Writes are still committed independently, so an exception does not
+        roll them back.  The benefit is that the outermost scope starts at
+        most one rebuild after its writes finish.  The method is intentionally
+        server-side: an HTTP client cannot use a process-local context manager
+        to span separate requests.
+        """
+        with self._lock:
+            self._write_batch_depth += 1
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._write_batch_depth -= 1
+                if self._write_batch_depth < 0:
+                    raise RuntimeError("graph write batch depth underflow")
+                if self._write_batch_depth == 0 and self._write_batch_rebuild_pending:
+                    self._write_batch_rebuild_pending = False
+                    self._start_query_rebuild_locked()
+
     def _rebuild_query_views(self) -> None:
         """Build the latest generation; writes during a build are coalesced."""
         error: Exception | None = None
@@ -586,7 +615,23 @@ class OxigraphGraphStore:
         self._mark_source_changed()
         if affects_closure:
             self._mark_closure_changed()
-        self._start_query_rebuild_locked()
+        if self._write_batch_depth:
+            self._write_batch_rebuild_pending = True
+        else:
+            self._start_query_rebuild_locked()
+
+    def graph_status(self) -> dict[str, int | bool]:
+        """Return the source generation and the state of its derived cache."""
+        with self._lock:
+            return {
+                # ``version`` remains the compact compatibility field used by
+                # existing polling clients.
+                "version": self._source_version,
+                "source_version": self._source_version,
+                "published_version": self._imports_union_graph_source_version,
+                "is_current": self._query_cache_is_current(),
+                "rebuild_in_progress": self._query_rebuild_in_progress,
+            }
 
     def refresh_union(self, snapshot_path: str | Path | None = None) -> dict[str, int]:
         """Refresh inferred query views from all data graphs and shape graphs."""

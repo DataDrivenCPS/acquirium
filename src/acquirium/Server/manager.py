@@ -20,8 +20,9 @@ from acquirium.Server.config import OntologySource
 from acquirium.internals.models import LogEntry, Order, TimeIntervalModel, compute_ref_uri
 from acquirium.internals.internals_namespaces import *
 
-from threading import Lock
-from typing import TYPE_CHECKING, Any
+from contextlib import contextmanager
+from threading import Lock, RLock
+from typing import TYPE_CHECKING, Any, Iterator
 
 if TYPE_CHECKING:
     import pyarrow as pa
@@ -199,8 +200,9 @@ class Manager:
         self.app_storage_root.mkdir(parents=True, exist_ok=True)
         self._app_runs: dict[str, dict[str, Any]] = {}
         self._app_runs_lock = Lock()
-        self._graph_version: int = 0
-        self._graph_version_lock = Lock()
+        self._graph_write_batch_lock = RLock()
+        self._graph_write_batch_depth = 0
+        self._graph_write_batch_needs_stream_sync = False
 
 
         _emb_model = os.getenv("ACQUIRIUM_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
@@ -561,17 +563,32 @@ class Manager:
     #################### API ###############
     ###########################################
 
-    def _notify_graph_change(self) -> None:
-        with self._graph_version_lock:
-            self._graph_version += 1
-
     def graph_version(self) -> int:
-        """Monotonically-increasing version bumped on every graph mutation.
+        """Return the store-owned source-data generation for legacy pollers."""
+        return int(self.graph_store.graph_status()["source_version"])
 
-        Workers can poll this to detect when their cached query becomes stale.
+    def graph_status(self) -> dict[str, int | bool]:
+        """Return source and derived-query generation status."""
+        return self.graph_store.graph_status()
+
+    @contextmanager
+    def graph_write_batch(self) -> Iterator[None]:
+        """Coalesce rebuild and stream-reference work for server-side writes.
+
+        This is not an atomic transaction: individual writes remain durable.
+        It is intentionally a manager API rather than a remote client context
+        manager, because independent HTTP requests cannot share a scope.
         """
-        with self._graph_version_lock:
-            return self._graph_version
+        with self._graph_write_batch_lock:
+            self._graph_write_batch_depth += 1
+            try:
+                with self.graph_store.write_batch():
+                    yield
+            finally:
+                self._graph_write_batch_depth -= 1
+                if self._graph_write_batch_depth == 0 and self._graph_write_batch_needs_stream_sync:
+                    self._graph_write_batch_needs_stream_sync = False
+                    self._sync_stream_refs_from_graph()
 
 
     def insert_graph(
@@ -620,14 +637,17 @@ class Manager:
                     graph_uri=graph_uri,
                 )
             logging.info("acquirium: inserted graph into store")
-            with timed_debug(logger, "insert_graph: _sync_stream_refs_from_graph"):
-                self._sync_stream_refs_from_graph()
+            with self._graph_write_batch_lock:
+                defer_stream_sync = self._graph_write_batch_depth > 0
+                if defer_stream_sync:
+                    self._graph_write_batch_needs_stream_sync = True
+            if not defer_stream_sync:
+                with timed_debug(logger, "insert_graph: _sync_stream_refs_from_graph"):
+                    self._sync_stream_refs_from_graph()
             # Embedding corpus is the static ontoenv vocabularies, not
             # inserted data — no per-insert reindex. Stream-reference sync
             # below requires a fresh inferred view; concurrent callers share
             # its single-flight rebuild.
-            self._notify_graph_change()
-
         except Exception as e:
             logging.error("acquirium: failed to insert graph: %s", e)
             raise
@@ -808,9 +828,8 @@ class Manager:
         log_uri = URIRef(f"{str(log_message.point_uri)}_log")
         G.add((URIRef(log_message.point_uri), HAS_LOG, log_uri))
         G.add((log_uri, RDF.type, LOGBOOK))
-        # Write bookkeeping triples but skip _notify_graph_change — log inserts
-        # don't affect the ontology/concept space and would otherwise continuously
-        # invalidate the embedding cache.
+        # Log writes still change the store-owned graph version, but no
+        # manager-local counter needs to be maintained.
         self.graph_store.insert_graph(
             G,
             format="turtle",
@@ -865,23 +884,16 @@ class Manager:
             graph_uri=self.graph_store.acquirium_graph_uri,
         )
         logger.info("Deleted all log references for point %s from graph", point_uri)
-        if result.get("changed", True):
-            self._notify_graph_change()
         return True
 
     def sparql_update(self, update: str, source_id: str) -> dict[str, Any]:
         """Execute a SPARQL UPDATE against one explicitly owned data graph.
-
-        Bumps the graph version when the store reports a change so long-running
-        clients (e.g. keep-alive app workers) rebuild cached queries.
 
         It lets a component remove exactly the triples it registered without
         granting updates to ontology graphs.
         """
         graph_uri = self.graph_store.source_graph_uri(source_id)
         result = self.graph_store.sparql_update(update, graph_uri=graph_uri)
-        if result.get("changed", True):
-            self._notify_graph_change()
         return result
 
     def validate_graph(self) -> dict[str, str | bool]:

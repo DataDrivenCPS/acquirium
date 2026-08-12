@@ -36,19 +36,6 @@ def test_plant_source_id_maps_to_the_existing_plant_graph(tmp_path):
     assert plant.owner == "plant"
 
 
-def test_removing_source_does_not_remove_other_data_graphs(tmp_path):
-    registry = GraphRegistry(tmp_path / "graph_registry.json")
-    removed = registry.source_graph("one")
-    retained = registry.source_graph("two")
-
-    assert registry.remove_source("one") == removed
-    assert {record.uri for record in registry.data_graphs()} == {
-        PLANT_GRAPH_URI,
-        ACQUIRIUM_GRAPH_URI,
-        retained.uri,
-    }
-
-
 def test_empty_source_id_is_rejected(tmp_path):
     registry = GraphRegistry(tmp_path / "graph_registry.json")
 

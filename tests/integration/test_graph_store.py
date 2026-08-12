@@ -12,6 +12,7 @@ import pyoxigraph as ox
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event, Lock
+from unittest.mock import patch
 
 from rdflib import Graph, URIRef, Literal, RDF, RDFS
 
@@ -103,6 +104,28 @@ class TestInsertExport:
         assert second["changed"] is True
         assert second["main_triples"] == first["main_triples"]
         assert second["union_triples"] == first["union_triples"]
+
+    def test_graph_status_distinguishes_source_and_published_generations(self, graph_store):
+        graph_store.sparql_query("ASK { ?s ?p ?o }", wait_for_fresh=True)
+        before = graph_store.graph_status()
+
+        graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
+        after = graph_store.graph_status()
+
+        assert before["is_current"] is True
+        assert after["source_version"] == before["source_version"] + 1
+        assert after["published_version"] == before["published_version"]
+        assert after["is_current"] is False
+        assert after["version"] == after["source_version"]
+
+    def test_write_batch_schedules_one_rebuild_after_its_outermost_scope(self, graph_store):
+        with patch.object(graph_store, "_start_query_rebuild_locked") as start_rebuild:
+            with graph_store.write_batch():
+                graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
+                graph_store.insert_graph(EXTRA_TURTLE, format="turtle", replace=False)
+                start_rebuild.assert_not_called()
+
+            start_rebuild.assert_called_once()
 
     def test_insert_malformed_raises(self, graph_store):
         with pytest.raises(Exception):

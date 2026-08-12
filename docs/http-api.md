@@ -14,11 +14,25 @@ Returns `{"ok": true}` when the server is running.
 
 ### `GET /graph_version`
 
-Returns a monotonically increasing counter that increments on every graph mutation. Long-running clients can poll this to detect when to invalidate cached queries.
+Returns the store-owned source-data generation and the state of the derived
+query cache. `version` is retained for existing clients and equals
+`source_version`. A cache is fresh exactly when `published_version` equals
+`source_version` and `is_current` is true.
 
 ```json
-{"version": 42}
+{
+  "version": 42,
+  "source_version": 42,
+  "published_version": 41,
+  "is_current": false,
+  "rebuild_in_progress": true
+}
 ```
+
+Long-running clients may poll `version` to invalidate local query state. A
+caller that needs to observe current inferred data should issue its query with
+`wait_for_fresh=true`; the status endpoint is informational and does not make
+the following query atomic.
 
 ### `GET /embedding_status`
 

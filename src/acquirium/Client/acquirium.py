@@ -411,8 +411,12 @@ class Acquirium:
 
 
     def graph_version(self) -> int:
-        """Return the server's current graph mutation counter."""
+        """Return the server's current source-data generation."""
         return self.client.graph_version()
+
+    def graph_status(self) -> dict[str, int | bool]:
+        """Return source and derived-query cache generations from the server."""
+        return self.client.graph_status()
 
     def validate_graph(self) -> dict[str, str | bool]:
         """Validate all registered deployment data against ontology shapes."""

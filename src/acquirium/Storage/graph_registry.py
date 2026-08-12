@@ -71,14 +71,6 @@ class GraphRegistry:
             self._write()
             return record
 
-    def remove_source(self, source_id: str) -> GraphRecord | None:
-        """Remove a source's registry entry and return its former graph record."""
-        with self._lock:
-            removed = self._records.pop(f"source:{source_id}", None)
-            if removed is not None:
-                self._write()
-            return removed
-
     def _ensure_core_graphs(self) -> None:
         changed = False
         for key, uri in (("plant", self.plant_graph_uri), ("acquirium", ACQUIRIUM_GRAPH_URI)):

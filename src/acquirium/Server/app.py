@@ -352,13 +352,14 @@ def embedding_status():
 
 
 @app.get("/graph_version")
-def graph_version() -> dict[str, int]:
-    """Return a counter that the server increments on every graph mutation.
+def graph_version() -> dict[str, int | bool]:
+    """Return source and derived-query generations.
 
-    Long-running clients (e.g. keep-alive app workers) can poll this to
-    decide when to rebuild cached queries that depend on the graph.
+    ``version`` is retained for existing pollers and equals
+    ``source_version``.  ``published_version`` identifies the source
+    generation represented by the last complete query cache.
     """
-    return {"version": app.state.manager.graph_version()}
+    return app.state.manager.graph_status()
 
 
 

@@ -165,6 +165,13 @@ deployment may use ontology rules to complete a stream-to-point association.
 The query dataset is cache storage. It may safely be deleted/rebuilt by the
 backend; no caller may treat it as a system of record.
 
+For monitoring, `GET /graph_version` reports the store-owned
+`source_version`, the `published_version` contained in the last complete query
+cache, `is_current`, and `rebuild_in_progress`. Its compatibility `version`
+field equals `source_version`. The status is a snapshot, not a freshness
+guarantee for a subsequent request; use `wait_for_fresh=True` on that query
+when the query itself must be current.
+
 ## Query and export semantics
 
 `include_dependencies` selects whether queries include ontology/shape triples along with
@@ -260,6 +267,21 @@ data.
   report, and a human-readable result string.
 - Poll `graph_version()` only when maintaining a local cached query plan or
   result. It is not required for ordinary one-shot API calls.
+
+### Server-side write batches
+
+`Manager.graph_write_batch()` is available to server-side workflows that make
+several graph writes as one logical load. It commits each write normally, but
+defers derived-cache scheduling and stream-reference synchronization until the
+outermost scope exits. It is intentionally not exposed as a client context
+manager: independent HTTP requests cannot share a reliable process-local
+scope. Remote callers should prefer one complete RDF insert where practical.
+
+```python
+with manager.graph_write_batch():
+    manager.insert_graph(plant_turtle, source_id="plant", replace=True)
+    manager.insert_graph(metadata_turtle, source_id="weather-station-1", replace=False)
+```
 
 ## Concurrency and operational constraints
 

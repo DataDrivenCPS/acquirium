@@ -140,6 +140,24 @@ class TestSparqlUpdate:
         }
 
 
+class TestGraphStatus:
+    @patch("acquirium.Client.client.requests")
+    def test_graph_status_and_compatibility_version(self, mock_requests, client):
+        mock_requests.get.return_value = _get_resp({
+            "version": 7,
+            "source_version": 7,
+            "published_version": 6,
+            "is_current": False,
+            "rebuild_in_progress": True,
+        })
+
+        status = client.graph_status()
+
+        assert status["published_version"] == 6
+        assert client.graph_version() == 7
+        assert mock_requests.get.call_args.args[0].endswith("/graph_version")
+
+
 # ── resolve ────────────────────────────────────────────────
 
 
