@@ -109,6 +109,30 @@ class TestTimeseriesEndpoints:
     TEST_REF_NAME = "api_ts_ref"
     TEST_POINT = "urn:test:api_ts_point"
 
+    @pytest.fixture(scope="class", autouse=True)
+    def _cleanup_registered_stream(self):
+        # The registered stream makes TEST_POINT a first-class data point,
+        # visible to any test that queries across all sources (e.g.
+        # find_all_data). Remove it once this class is done so it doesn't
+        # leak into unrelated tests.
+        yield
+        ref_uri = compute_ref_uri(self.TEST_SOURCE, self.TEST_REF_NAME)
+        update = f"""\
+PREFIX acq: <urn:acquirium#>
+PREFIX ref: <https://brickschema.org/schema/Brick/ref#>
+DELETE DATA {{
+  <{self.TEST_POINT}> ref:hasExternalReference <{ref_uri}> .
+  <{ref_uri}> a acq:Stream ;
+      acq:sourceId "{self.TEST_SOURCE}" ;
+      acq:refName "{self.TEST_REF_NAME}" ;
+      acq:valueKind "numeric" .
+}}
+"""
+        requests.post(f"{BASE_URL}/sparql_update", json={
+            "update": update,
+            "source_id": "test-source",
+        })
+
     def _register_stream(self):
         ref_uri = compute_ref_uri(self.TEST_SOURCE, self.TEST_REF_NAME)
         graph = f"""\
