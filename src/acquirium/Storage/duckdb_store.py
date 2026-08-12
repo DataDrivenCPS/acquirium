@@ -55,6 +55,7 @@ from acquirium.Storage.values import (
     normalize_value_kind,
     normalize_value_mode,
     prepare_value_columns,
+    typed_value_series,
 )
 from acquirium.internals._log import timed_debug
 
@@ -295,19 +296,14 @@ class DuckDBStore:
 
     @staticmethod
     def _rows_frame(ref_uri: str, rows_list: list[tuple[datetime, Any]], value_kind: str) -> pl.DataFrame:
+        n = len(rows_list)
         return pl.DataFrame(
             {
-                "ref_uri": [ref_uri] * len(rows_list),
-                "ts": [ts for ts, _ in rows_list],
-                "value": [value for _, value in rows_list],
-                "value_kind": [value_kind] * len(rows_list),
-            },
-            schema={
-                "ref_uri": pl.Utf8,
-                "ts": pl.Datetime("us", "UTC"),
-                "value": pl.Object,
-                "value_kind": pl.Utf8,
-            },
+                "ref_uri": pl.Series("ref_uri", [ref_uri] * n, dtype=pl.Utf8),
+                "ts": pl.Series("ts", [ts for ts, _ in rows_list], dtype=pl.Datetime("us", "UTC")),
+                "value": typed_value_series([value for _, value in rows_list]),
+                "value_kind": pl.Series("value_kind", [value_kind] * n, dtype=pl.Utf8),
+            }
         )
 
     def replace_rows(

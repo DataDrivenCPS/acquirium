@@ -98,6 +98,46 @@ def split_value(value: Any, value_kind: str | None = None) -> tuple[float | None
     return None, str(value)
 
 
+def typed_value_series(values: list[Any]) -> pl.Series:
+    """Build a ``value`` column with a real dtype so the split can vectorize.
+
+    Decides by an exact scan of the Python types rather than polars inference,
+    which silently coerces bools mixed into ints (True -> 1) where
+    ``split_value`` stores text "True", and rejects a type mismatch that falls
+    outside its inference window.
+
+    Only homogeneous batches get a native dtype. A batch mixing scalar types —
+    e.g. one manager call spanning numeric and text streams — is stringified
+    rather than sent to Object: ``str()`` is exactly what ``split_value``
+    stores under text kind, and floats round-trip through repr under numeric
+    kind. Non-scalar types, and ints too large for Int64, take the Object
+    (row-wise) path where their semantics are preserved exactly.
+    """
+    types = {type(v) for v in values}
+    types.discard(type(None))
+    if types == {int}:
+        try:
+            # Int64, not Float64: under text kind the cast must render "7", not "7.0".
+            return pl.Series("value", values, dtype=pl.Int64)
+        except (OverflowError, TypeError):
+            # Beyond Int64: split_value stores such values as text, so take the
+            # row-wise path rather than lose them to a lossy cast.
+            return pl.Series("value", values, dtype=pl.Object)
+    if types == {float}:
+        return pl.Series("value", values, dtype=pl.Float64)
+    if types <= {str}:  # also all-None/empty: String nulls split to (None, None)
+        return pl.Series("value", values, dtype=pl.String)
+    if types == {bool}:
+        return pl.Series("value", values, dtype=pl.Boolean)
+    if types <= {str, float, int, bool}:
+        return pl.Series(
+            "value",
+            [None if v is None else str(v) for v in values],
+            dtype=pl.String,
+        )
+    return pl.Series("value", values, dtype=pl.Object)
+
+
 def prepare_value_columns(df: pl.DataFrame) -> pl.DataFrame:
     if {"numeric_value", "text_value"}.issubset(df.columns):
         logger.debug("prepare_value_columns: already split (%d rows)", len(df))
@@ -106,6 +146,85 @@ def prepare_value_columns(df: pl.DataFrame) -> pl.DataFrame:
     if "value" not in df.columns:
         raise ValueError("timeseries dataframe must include value or numeric_value/text_value columns")
 
+    vectorized = _prepare_value_columns_vectorized(df)
+    if vectorized is not None:
+        return vectorized
+    return _prepare_value_columns_rowwise(df)
+
+
+def _prepare_value_columns_vectorized(df: pl.DataFrame) -> pl.DataFrame | None:
+    """Expression-based split for typed value columns; None when unsupported.
+
+    Matches ``split_value`` row for row, with two accepted divergences on the
+    string path: Python's ``float()`` accepts underscores ("1_000") where the
+    cast does not (such values land in text_value), and float→string formatting
+    for numeric input under text kind is polars' rather than ``str()``'s.
+    """
+    dtype = df.schema["value"]
+    value = pl.col("value")
+    kind = pl.col("_kind")
+
+    if dtype == pl.Null:
+        numeric = pl.lit(None, dtype=pl.Float64)
+        text = pl.lit(None, dtype=pl.String)
+    elif dtype == pl.Boolean:
+        # Bools are never numeric; both kinds store str(value) ("True"/"False").
+        numeric = pl.lit(None, dtype=pl.Float64)
+        text = value.cast(pl.String).str.to_titlecase()
+    elif dtype.is_numeric() or isinstance(dtype, pl.Decimal):
+        parsed = value.cast(pl.Float64)
+        numeric = pl.when(kind.eq("numeric") & parsed.is_finite()).then(parsed)
+        # str(float('nan')) is "nan"; polars renders NaN as "NaN".
+        as_text = (
+            pl.when(parsed.is_nan()).then(pl.lit("nan")).otherwise(value.cast(pl.String))
+            if dtype.is_float()
+            else value.cast(pl.String)
+        )
+        text = pl.when(kind.eq("text")).then(as_text)
+    elif dtype == pl.String:
+        stripped = value.str.strip_chars()
+        parsed = stripped.cast(pl.Float64, strict=False)
+        numeric = pl.when(kind.eq("numeric") & parsed.is_finite()).then(parsed)
+        # Numeric-kind fallback: non-blank unparseable strings keep their
+        # original text. Parseable-but-non-finite ("inf", "nan") stays
+        # (NULL, NULL), and blanks stay (NULL, NULL), matching split_value.
+        text = pl.when(
+            kind.eq("text")
+            | (kind.eq("numeric") & parsed.is_null() & stripped.str.len_chars().gt(0))
+        ).then(value)
+    else:
+        return None  # Object or exotic dtypes take the row-wise path
+
+    has_value_kind = "value_kind" in df.columns
+    with timed_debug(
+        logger, "prepare_value_columns vectorized rows=%d dtype=%s", len(df), dtype
+    ):
+        if has_value_kind:
+            # Normalise/validate the handful of distinct kinds, not n rows.
+            mapping = {u: normalize_value_kind(u) for u in df["value_kind"].unique().to_list()}
+            kind_expr = pl.col("value_kind").replace_strict(mapping, return_dtype=pl.String)
+        else:
+            kind_expr = pl.lit("text", dtype=pl.String)
+        tmp = df.with_columns(kind_expr.alias("_kind")).with_columns(
+            numeric.cast(pl.Float64).alias("numeric_value"),
+            text.cast(pl.String).alias("text_value"),
+        )
+        fallbacks = (
+            tmp.filter(kind.eq("numeric") & pl.col("text_value").is_not_null())
+            .group_by("ref_uri")
+            .len()
+        )
+    for ref_uri, count in fallbacks.iter_rows():
+        logger.warning(
+            "timeseries: stored %d unparseable numeric value(s) as text for %s",
+            count,
+            ref_uri,
+        )
+    return tmp.select(["ref_uri", "ts", "numeric_value", "text_value"])
+
+
+def _prepare_value_columns_rowwise(df: pl.DataFrame) -> pl.DataFrame:
+    """Per-row split via ``split_value`` — the fallback for Object-dtype frames."""
     has_value_kind = "value_kind" in df.columns
     selected = ["ref_uri", "ts", "value"] + (["value_kind"] if has_value_kind else [])
     rows = []
