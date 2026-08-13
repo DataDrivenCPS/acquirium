@@ -39,10 +39,46 @@ class TestInsertGraph:
         mock_resp.raise_for_status = MagicMock()
         mock_requests.post.return_value = mock_resp
 
-        client.insert_graph("@prefix ex: <urn:ex/> .", replace=False)
+        client.insert_graph("@prefix ex: <urn:ex/> .", replace=False, source_id="plant")
 
         mock_requests.post.assert_called_once()
         assert mock_requests.post.call_args.args[0] == "http://localhost:8000/insert_graph"
+
+    @patch("acquirium.Client.client.requests")
+    def test_multiline_text_without_markers_is_content(self, mock_requests, client):
+        ## regression: used to raise NameError (undefined `p`)
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_requests.post.return_value = mock_resp
+
+        rdf = "PREFIX ex: <urn:ex/>\nex:s ex:p ex:o ."
+        client.insert_graph(rdf, replace=False, source_id="plant")
+
+        assert mock_requests.post.call_args.kwargs["json"]["rdf_graph"] == rdf
+
+    @patch("acquirium.Client.client.requests")
+    def test_source_id_is_sent_when_graph_has_an_owner(self, mock_requests, client):
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_requests.post.return_value = mock_resp
+
+        client.insert_graph("@prefix ex: <urn:ex/> .", source_id="driver/a")
+
+        assert mock_requests.post.call_args.kwargs["json"]["source_id"] == "driver/a"
+
+    def test_single_line_missing_path_raises(self, client):
+        with pytest.raises(FileNotFoundError):
+            client.insert_graph("no/such/file.ttl", source_id="plant")
+
+    @patch("acquirium.Client.client.requests")
+    def test_validate_graph_posts_to_validation_endpoint(self, mock_requests, client):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"conforms": True, "report": "", "results_text": ""}
+        mock_resp.raise_for_status = MagicMock()
+        mock_requests.post.return_value = mock_resp
+
+        assert client.validate_graph()["conforms"] is True
+        assert mock_requests.post.call_args.args[0] == "http://localhost:8000/validate_graph"
 
 
 # ── sparql_query ───────────────────────────────────────────
@@ -50,62 +86,155 @@ class TestInsertGraph:
 
 class TestSparqlQuery:
     @patch("acquirium.Client.client.requests")
-    def test_success(self, mock_requests, client):
+    def test_success_posts_json_body(self, mock_requests, client):
         mock_resp = MagicMock()
-        mock_resp.json.return_value = {"results": {"bindings": []}}
+        mock_resp.json.return_value = {
+            "head": {"vars": ["s"]},
+            "results": {"bindings": [{"s": {"type": "uri", "value": "urn:test"}}]},
+        }
         mock_resp.raise_for_status = MagicMock()
-        mock_requests.get.return_value = mock_resp
+        mock_requests.post.return_value = mock_resp
 
         result = client.sparql_query("SELECT * WHERE { ?s ?p ?o }")
-        assert result == {"results": {"bindings": []}}
-        mock_requests.get.assert_called_once()
+        assert result == {"columns": ["s"], "rows": [["urn:test"]]}
+        # POST with a JSON body: VALUES-heavy queries exceed URL length limits
+        call = mock_requests.post.call_args
+        assert call.args[0].endswith("/sparql_json")
+        assert call.kwargs["json"] == {
+            "query": "SELECT * WHERE { ?s ?p ?o }",
+            "include_dependencies": True,
+            "wait_for_fresh": False,
+        }
+
+    @patch("acquirium.Client.client.requests")
+    def test_wait_for_fresh_is_sent_when_requested(self, mock_requests, client):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"columns": [], "rows": []}
+        mock_resp.raise_for_status = MagicMock()
+        mock_requests.post.return_value = mock_resp
+
+        client.sparql_query("SELECT * WHERE { ?s ?p ?o }", wait_for_fresh=True)
+
+        assert mock_requests.post.call_args.kwargs["json"]["wait_for_fresh"] is True
 
     @patch("acquirium.Client.client.requests")
     def test_error_propagation(self, mock_requests, client):
-        mock_requests.get.side_effect = Exception("Connection refused")
+        mock_requests.post.side_effect = Exception("Connection refused")
         with pytest.raises(Exception, match="Connection refused"):
             client.sparql_query("SELECT * WHERE { ?s ?p ?o }")
 
 
-# ── resolve_text ───────────────────────────────────────────
-
-
-class TestResolveText:
+class TestSparqlUpdate:
     @patch("acquirium.Client.client.requests")
-    def test_with_matches(self, mock_requests, client):
+    def test_source_id_targets_an_owned_graph(self, mock_requests, client):
         mock_resp = MagicMock()
-        mock_resp.json.return_value = {
-            "matches": [{"uri": "urn:a", "score": 0.9}]
+        mock_resp.json.return_value = {"ok": True}
+        mock_resp.raise_for_status = MagicMock()
+        mock_requests.post.return_value = mock_resp
+
+        client.sparql_update("DELETE WHERE { ?s ?p ?o }", source_id="app:demo")
+
+        assert mock_requests.post.call_args.kwargs["json"] == {
+            "update": "DELETE WHERE { ?s ?p ?o }",
+            "source_id": "app:demo",
         }
-        mock_resp.raise_for_status = MagicMock()
-        mock_requests.get.return_value = mock_resp
 
-        result = client.resolve_text("pump")
-        # resolve_text returns response.json().get("matches", []) -> a list
-        assert len(result) == 1
-        assert result[0]["uri"] == "urn:a"
+
+class TestGraphStatus:
+    @patch("acquirium.Client.client.requests")
+    def test_graph_status_and_compatibility_version(self, mock_requests, client):
+        mock_requests.get.return_value = _get_resp({
+            "source_version": 7,
+            "published_version": 6,
+            "is_current": False,
+            "rebuild_in_progress": True,
+        })
+
+        status = client.graph_status()
+
+        assert status["published_version"] == 6
+        assert client.graph_version() == 7
+        assert mock_requests.get.call_args.args[0].endswith("/graph_version")
+
+
+# ── resolve ────────────────────────────────────────────────
+
+
+def _get_resp(payload):
+    resp = MagicMock()
+    resp.json.return_value = payload
+    resp.raise_for_status = MagicMock()
+    resp.ok = True
+    return resp
+
+
+class TestResolve:
+    @patch("acquirium.Client.client.requests")
+    def test_single_text_returns_best_uri(self, mock_requests, client):
+        mock_requests.get.return_value = _get_resp(
+            {"matches": [{"uri": "urn:a", "score": 0.9}]})
+        assert client.resolve("pump", "class") == "urn:a"
+        assert "resolve_text" in mock_requests.get.call_args.args[0]
 
     @patch("acquirium.Client.client.requests")
-    def test_empty_result(self, mock_requests, client):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {"matches": []}
-        mock_resp.raise_for_status = MagicMock()
-        mock_requests.get.return_value = mock_resp
-
-        result = client.resolve_text("zzzznonexistent")
-        assert result == []
+    def test_single_text_no_match_is_none(self, mock_requests, client):
+        mock_requests.get.return_value = _get_resp({"matches": []})
+        assert client.resolve("zzzznonexistent") is None
 
     @patch("acquirium.Client.client.requests")
-    def test_with_kind_filter(self, mock_requests, client):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {"matches": []}
-        mock_resp.raise_for_status = MagicMock()
-        mock_requests.get.return_value = mock_resp
+    def test_top_k_returns_candidates(self, mock_requests, client):
+        matches = [{"uri": "urn:a", "score": 0.9}, {"uri": "urn:b", "score": 0.5}]
+        mock_requests.get.return_value = _get_resp({"matches": matches})
+        assert client.resolve("pump", "class", top_k=3) == matches
 
-        client.resolve_text("pump", kind="class")
-        call_kwargs = mock_requests.get.call_args
-        # Verify kind param was passed
-        assert "class" in str(call_kwargs)
+    @patch("acquirium.Client.client.requests")
+    def test_uri_passthrough_skips_server(self, mock_requests, client):
+        assert client.resolve("urn:a", "class") == "urn:a"
+        assert client.resolve("urn:a", top_k=3)[0]["match_stage"] == "passthrough"
+        mock_requests.get.assert_not_called()
+
+    @patch("acquirium.Client.client.requests")
+    def test_record_form_joint_resolution(self, mock_requests, client):
+        mock_requests.post.return_value = _get_resp(
+            {"matches": {"eu": [{"uri": "urn:gpm"}], "qty": []}})
+        out = client.resolve({"eu": ("gal/min", "unit"),
+                              "qty": ("flow", "quantity_kind"),
+                              "pinned": ("urn:x", "unit"),
+                              "empty": (None, "unit")})
+        assert out == {"eu": "urn:gpm", "qty": None,
+                       "pinned": "urn:x", "empty": None}
+        body = mock_requests.post.call_args.kwargs["json"]
+        # pinned/None fields never reach the server
+        assert {f["name"] for f in body["fields"]} == {"eu", "qty"}
+
+    @patch("acquirium.Client.client.requests")
+    def test_kind_param_forwarded(self, mock_requests, client):
+        mock_requests.get.return_value = _get_resp({"matches": []})
+        client.resolve("pump", "class")
+        assert mock_requests.get.call_args.kwargs["params"]["kind"] == "class"
+
+
+class TestResolveConversion:
+    @patch("acquirium.Client.client.requests")
+    def test_success(self, mock_requests, client):
+        payload = {"from": {"uri": "urn:mgL"}, "to": {"uri": "urn:gL"},
+                   "factors": {"from_uri": "urn:mgL", "to_uri": "urn:gL",
+                               "compatible": True}}
+        mock_requests.post.return_value = _get_resp(payload)
+        out = client.resolve_conversion("mg/l", "grams per liter")
+        assert out == payload
+        assert "resolve_conversion" in mock_requests.post.call_args.args[0]
+
+    @patch("acquirium.Client.client.requests")
+    def test_error_becomes_valueerror(self, mock_requests, client):
+        resp = MagicMock()
+        resp.ok = False
+        resp.headers = {"content-type": "application/json"}
+        resp.json.return_value = {"detail": "no convertible pair"}
+        mock_requests.post.return_value = resp
+        with pytest.raises(ValueError, match="no convertible pair"):
+            client.resolve_conversion("mg/l", "volts")
+
 
 
 # ── register_app / run_app / stop_app / list_app_runs ──────
@@ -142,8 +271,9 @@ class TestAppMethods:
         mock_resp.raise_for_status = MagicMock()
         mock_requests.post.return_value = mock_resp
 
-        result = client.stop_app(run_id="run456")
+        result = client.stop_app(app_id="app123")
         assert result["status"] == "stopped"
+        assert mock_requests.post.call_args.kwargs["json"] == {"app_id": "app123"}
 
     @patch("acquirium.Client.client.requests")
     def test_list_app_runs_success(self, mock_requests, client):
@@ -198,3 +328,29 @@ class TestInsertLog:
             log_message="minimal log",
         )
         assert result["status"] == "ok"
+
+
+class TestConstructorHealthGate:
+    @patch("acquirium.Client.client.requests")
+    def test_healthy_server_constructs_immediately(self, mock_requests):
+        from acquirium import Acquirium
+        resp = MagicMock()
+        resp.json.return_value = {"status": "ok"}
+        resp.raise_for_status = MagicMock()
+        mock_requests.get.return_value = resp
+        aq = Acquirium(server_url="localhost", server_port=8000)
+        assert "health" in mock_requests.get.call_args.args[0]
+        assert aq.client.base_url == "http://localhost:8000"
+
+    @patch("acquirium.Client.client.requests")
+    def test_unreachable_server_raises_connectionerror(self, mock_requests):
+        from acquirium import Acquirium
+        mock_requests.get.side_effect = OSError("connection refused")
+        with pytest.raises(ConnectionError, match=r"did not answer /health.*Is the server"):
+            Acquirium(server_url="localhost", server_port=9999, health_timeout=0.3)
+
+    @patch("acquirium.Client.client.requests")
+    def test_health_timeout_none_skips_check(self, mock_requests):
+        from acquirium import Acquirium
+        Acquirium(server_url="localhost", server_port=9999, health_timeout=None)
+        mock_requests.get.assert_not_called()

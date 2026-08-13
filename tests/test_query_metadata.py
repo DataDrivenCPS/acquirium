@@ -2,7 +2,7 @@ import pytest
 from conftest import ACQUIRIUM_TEST_SERVER_HOST, ACQUIRIUM_TEST_SERVER_PORT
 from acquirium import Acquirium
 from acquirium.internals.internals_namespaces import *
-from acquirium.Client.query import Query
+from acquirium.Client.query import Q
 import shutil
 
 @pytest.fixture
@@ -14,7 +14,7 @@ def acquirium_client():
         use_ssl=False,
     )
 
-    acq.insert_graph("tests/test_model.ttl")
+    acq.insert_graph("tests/test_model.ttl", source_id="plant")
     return acq
 
 #### FIND ENTITY TESTS ####
@@ -22,7 +22,7 @@ def acquirium_client():
 def test_find_entity(acquirium_client:Acquirium):
     """Test the find_entity method of Acquirium."""
     acq = acquirium_client
-    entity_A : Query = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
+    entity_A : Q = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
     
     assert entity_A is not None
     assert len(entity_A.query_graph.nodes) == 1
@@ -34,7 +34,7 @@ def test_find_entity(acquirium_client:Acquirium):
     assert len(result_A) == 2  
     assert len(result_A['rows']) == 4
 
-    entity_B : Query = acq.find_entity(_class=ACQUIRIUM_NS.B, alias="b")
+    entity_B : Q = acq.find_entity(_class=ACQUIRIUM_NS.B, alias="b")
 
     assert entity_B is not None
     assert len(entity_B.query_graph.nodes) == 1
@@ -80,7 +80,7 @@ def test_find_related_1(acquirium_client:Acquirium):
        Given single predicate and single hop.
     """
     acq = acquirium_client
-    entity_A : Query = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
+    entity_A : Q = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
 
     related_entities = entity_A.find_related(
         _class = ACQUIRIUM_NS.C,
@@ -104,7 +104,7 @@ def test_find_related_2(acquirium_client:Acquirium):
     Given single predicate and multiple hops.
     '''
     acq = acquirium_client
-    entity_A : Query = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
+    entity_A : Q = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
     
     related_entities = entity_A.find_related(
         _class = ACQUIRIUM_NS.C,
@@ -130,7 +130,7 @@ def test_find_related_3(acquirium_client:Acquirium):
     Given multiple predicate and single hops.
     '''
     acq = acquirium_client
-    entity_B : Query = acq.find_entity(_class=ACQUIRIUM_NS.B, alias="b")
+    entity_B : Q = acq.find_entity(_class=ACQUIRIUM_NS.B, alias="b")
     
     related_entities = entity_B.find_related(
         _class = ACQUIRIUM_NS.A,
@@ -155,7 +155,7 @@ def test_find_related_4(acquirium_client:Acquirium):
     Given no predicate and single hop.
     '''
     acq = acquirium_client
-    entity_B : Query = acq.find_entity(_class=ACQUIRIUM_NS.B, alias="b")
+    entity_B : Q = acq.find_entity(_class=ACQUIRIUM_NS.B, alias="b")
     
     related_entities = entity_B.find_related(
         _class = ACQUIRIUM_NS.A,
@@ -181,7 +181,7 @@ def test_find_related_5(acquirium_client:Acquirium):
     Given no predicate and multi hop.
     '''
     acq = acquirium_client
-    entity_A : Query = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
+    entity_A : Q = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
 
     related_entities = entity_A.find_related(
         _class = ACQUIRIUM_NS.B,
@@ -221,7 +221,7 @@ def test_find_related_6(acquirium_client:Acquirium):
     Multiple calls using current pointer, single hop
     '''
     acq = acquirium_client
-    entity_A : Query = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
+    entity_A : Q = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
 
     related_entities = entity_A.find_related(
         _class = ACQUIRIUM_NS.B,
@@ -261,7 +261,7 @@ def test_find_related_7(acquirium_client:Acquirium):
     Multiple calls using from param, single hop
     '''
     acq = acquirium_client
-    entity_A : Query = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
+    entity_A : Q = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
 
     related_entities = entity_A.find_related(
         _class = ACQUIRIUM_NS.B,
@@ -302,7 +302,7 @@ def test_find_related_8(acquirium_client:Acquirium):
     Multiple calls using from param, multi hop
     '''
     acq = acquirium_client
-    entity_A : Query = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
+    entity_A : Q = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
 
     related_entities = entity_A.find_related(
         _class = ACQUIRIUM_NS.B,
@@ -344,7 +344,7 @@ def test_find_related_9(acquirium_client:Acquirium):
     also unconnected find_entity after find_related
     '''
     acq = acquirium_client
-    entity_A : Query = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
+    entity_A : Q = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
 
     related_entities = entity_A.find_related(
         _class = ACQUIRIUM_NS.B,
@@ -385,8 +385,8 @@ def test_relate_to_1(acquirium_client:Acquirium):
     Given single predicate and single hop.
     '''
     acq = acquirium_client
-    entity_A : Query = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
-    entity_C : Query = acq.find_entity(_class=ACQUIRIUM_NS.C, alias="c")
+    entity_A : Q = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
+    entity_C : Q = acq.find_entity(_class=ACQUIRIUM_NS.C, alias="c")
 
     related_entities = entity_A.relate_to(
         other = entity_C,
@@ -410,13 +410,13 @@ def test_relate_to_2(acquirium_client:Acquirium):
     Given from parameter and single hop.
     '''
     acq = acquirium_client
-    entity_A : Query = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
+    entity_A : Q = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
     entity_AB = entity_A.find_related(
         _class = ACQUIRIUM_NS.B,
         alias="b",
         hops = 1
     )
-    entity_C : Query = acq.find_entity(_class=ACQUIRIUM_NS.C, alias="c")
+    entity_C : Q = acq.find_entity(_class=ACQUIRIUM_NS.C, alias="c")
     related_entities = entity_AB.relate_to(
         other = entity_C,
         _from = "a",

@@ -21,6 +21,7 @@ from acquirium.internals._log import configure_logging, timed_debug as _timed_de
 from acquirium.internals.models import AppSpec, AppOutputSpec, AppRunRequest, compute_ref_uri
 from acquirium.internals.internals_namespaces import *
 from acquirium.internals.app_utils import app_uri_for, app_type_uri, add_literal_or_uri
+from acquirium.Apps.base import app_source_id
 from rdflib import URIRef, Graph, Literal
 
 if TYPE_CHECKING:
@@ -59,6 +60,9 @@ class AppRunner:
         # Ray workers don't inherit the server process's logging config.
         configure_logging()
         self.spec = spec
+        # The app's RDF registration/build state has a separate owner from
+        # output stream data. Expose it on both this actor and loaded App.
+        self.source_id = app_source_id(spec.name)
         self.app_storage_root = Path(app_storage_root)
         self.acquirium_cli = acquirium_cli
         self.logger = logging.getLogger(f"acquirium.app.{spec.name}")
@@ -69,7 +73,7 @@ class AppRunner:
         self.query: Any | None = None
         self.queries: dict[str, Any] = {}
         self.state: Any | None = None
-        self.graph_version = 0
+        self.source_version = 0
         self._params: dict[str, Any] = {}
         self._build_status = "pending"
 
@@ -112,8 +116,10 @@ class AppRunner:
         """
         self._persist_source()
         graph = self._app_spec_graph(self.spec)
-        self.acquirium_cli.insert_graph(
-            graph.serialize(format="turtle"), format="turtle", replace=False
+        self.insert_graph(
+            graph.serialize(format="turtle"),
+            format="turtle",
+            replace=False,
         )
         self.logger.info(
             "Registered app '%s' (%d output stream(s))",
@@ -129,7 +135,7 @@ class AppRunner:
 
         Removes every triple describing the app node, the virtual points it
         produces, and those points' external references, then (server-side)
-        bumps the graph version so keep-alive workers rebuild. Driven only by
+        advances the source generation so keep-alive workers rebuild. Driven only by
         the app URI, so it also cleans up triples the build phase may have
         added on the points, not just what register() wrote.
         """
@@ -150,12 +156,26 @@ class AppRunner:
           }}
         }}
         """
-        self.acquirium_cli.client.sparql_update(query)
+        self.sparql_update(query)
         self.logger.info("Deregistered app '%s' from the graph", self.spec.name)
         return {"name": self.spec.name}
 
+    def insert_graph(self, rdf_graph: str, *, format: str = "turtle", replace: bool = False) -> None:
+        """Write RDF to this app's graph; ownership is never caller-selected."""
+        self.acquirium_cli.insert_graph(
+            rdf_graph,
+            format=format,
+            replace=replace,
+            source_id=self.source_id,
+        )
+
+    def sparql_update(self, update: str) -> dict[str, Any]:
+        """Apply a SPARQL update only to this app's graph."""
+        return self.acquirium_cli.sparql_update(update, source_id=self.source_id)
+
     def _app_spec_graph(self, spec: AppSpec) -> Graph:
         app_uri = URIRef(app_uri_for(spec.name))
+        source_id = app_source_id(spec.name)
         graph = Graph()
 
         graph.add((app_uri, RDF.type, APP))
@@ -175,12 +195,12 @@ class AppRunner:
 
         for out in spec.outputs:
             point_uri = URIRef(out.point_uri)
-            ref_uri = compute_ref_uri(spec.name, out.point_uri)
+            ref_uri = compute_ref_uri(source_id, out.point_uri)
 
             graph.add((app_uri, PRODUCES, point_uri))
             graph.add((point_uri, RDF.type, VIRTUAL_POINT))
             graph.add((point_uri, HAS_EXTERNAL_REFERENCE, ref_uri))
-            graph.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(spec.name)))
+            graph.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
             graph.add((ref_uri, ACQUIRIUM_REF_NAME, Literal(out.point_uri)))
             graph.add((ref_uri, RDF.type, STREAM))
             if out.kind in {"event", "trigger"}:
@@ -256,6 +276,7 @@ class AppRunner:
             cls = candidates[0]
 
         self.app = cls()
+        self.app._bind_graph_api(self.acquirium_cli, self.source_id)
         self.logger.info("Loaded app '%s' (%s)", self.spec.name, cls.__name__)
         return self.app
 
@@ -324,12 +345,12 @@ class AppRunner:
         self._load_app()
         self.build_query()
         self.build_app()
-        # Seed the version the query was built against so the run phase can
-        # detect a stale query after later graph mutations.
+        # Seed the source generation the query was built against so the run
+        # phase can detect a stale query after later graph mutations.
         try:
-            self.graph_version = self.acquirium_cli.graph_version()
+            self.source_version = int(self.acquirium_cli.graph_status()["source_version"])
         except Exception:
-            self.graph_version = 0
+            self.source_version = 0
         self._build_status = "ready"
         return {
             "name": self.spec.name,
@@ -403,7 +424,7 @@ class AppRunner:
             # stays responsive to other runs and to stop().
             await asyncio.to_thread(
                 emit_outputs,
-                self.spec.name,
+                self.source_id,
                 outputs,
                 insert_timeseries=self.acquirium_cli.client.insert_timeseries,
                 logger=self.logger,
@@ -419,7 +440,7 @@ class AppRunner:
 
     async def _run_loop(self, interval: float, start, end, params: dict[str, Any]) -> None:
         """Keep-alive loop: dispatch a run each interval, rebuilding the query
-        when the server's graph version advances (mirrors DriverRunner.run).
+        when the server's source generation advances (mirrors DriverRunner.run).
         The state from build_app is reused, so the model trains once and each
         dispatched run is an inference.
         """
@@ -433,9 +454,9 @@ class AppRunner:
                 pass
             # A version poll failure must not skip the run, so guard it apart.
             try:
-                v = self.acquirium_cli.graph_version()
-                if v != self.graph_version:
-                    self.graph_version = v
+                source_version = int(self.acquirium_cli.graph_status()["source_version"])
+                if source_version != self.source_version:
+                    self.source_version = source_version
                     self.build_query()
             except Exception:
                 self.logger.exception("query refresh failed; keeping previous query")

@@ -24,14 +24,14 @@ class _Exclude:
     value: Any
 
 @dataclass(frozen=True)
-class Query:
-    """Query builder for Acquirium.
+class Q:
+    """Legacy query builder for Acquirium (superseded by the explore ``Query``).
 
-    This object is immutable: each operation returns a **new** Query with an
+    This object is immutable: each operation returns a **new** Q with an
     updated internal QueryGraph, so you can safely keep multiple variants:
 
-        q1 = aq.query().find_entity(_class=Valve, alias="valve")
-        q2 = aq.query().find_entity(_class=Pump, alias="pump")
+        q1 = aq.find_entity(_class=Valve, alias="valve")
+        q2 = aq.find_entity(_class=Pump, alias="pump")
         q3 = q1.relate_to(q2)
     """
 
@@ -45,19 +45,19 @@ class Query:
     def _new_id(self) -> int:
         nid = self._next_id
         # IMPORTANT: must mutate the counter
-        object.__setattr__(self, "_next_id", self._next_id + 1)  # because Query is frozen
+        object.__setattr__(self, "_next_id", self._next_id + 1)  # because Q is frozen
         return nid
         
 
-    def _with_incremented_id(self) -> "Query":
-        return Query(
+    def _with_incremented_id(self) -> "Q":
+        return Q(
             client=self.client,
             query_graph=self.query_graph,
             _next_id=self._next_id + 1,
         )
 
-    def _clone_with_graph(self, new_graph: QueryGraph, *, bump_id: bool = False) -> "Query":
-        return Query(
+    def _clone_with_graph(self, new_graph: QueryGraph, *, bump_id: bool = False) -> "Q":
+        return Q(
             client=self.client,
             query_graph=new_graph,
             _next_id=self._next_id + (1 if bump_id else 0),
@@ -85,10 +85,11 @@ class Query:
         }
         if instance_uri is not None:
             constraints["instance_uri"] = instance_uri
+        if _class:
+            constraints["rdf_class"] = _class
 
         node = QueryNode(
             id=new_id,
-            rdf_class=_class or None,
             alias=alias,
             constraints=constraints,
         )
@@ -165,9 +166,7 @@ class Query:
             self._resolve_rdf("sand filter", "class")
             # -> "urn:nawi-water-ontology#SandFilter"
         """
-        uri = self.client.resolve_concept(
-            text, kind=kind, context=context, min_score=0.4
-        )
+        uri = self.client.resolve(text, kind, context=context, min_score=0.4)
         if uri is None:
             raise ValueError(f"Could not resolve '{text}' as {kind}")
         return uri
@@ -200,7 +199,7 @@ class Query:
         target_col = None
         if id_val is not None:
             target_col = f"v{id_val}"
-        query_result = self.execute(use_union=True)
+        query_result = self.execute(include_dependencies=True)
         nodes: set[URIRef] = set()
         if target_col:
             col_index = query_result["columns"].index(target_col)
@@ -221,18 +220,23 @@ class Query:
     # ----------------------------------------------------
 
 
-    @flex_query_rdf_inputs(specs=[FlexSpec("_class", "class")])
-    def find_entity(self, _class: Optional[str] = None, alias: Optional[str] = None, uri: str | URIRef | None = None) -> "Query":
+    @flex_query_rdf_inputs(specs=[FlexSpec("_class", "class"),FlexSpec("process","process")])
+    def find_entity(self, 
+                    _class: Optional[str] = None, 
+                    alias: Optional[str] = None, 
+                    uri: str | URIRef | None = None,
+                    process: str | URIRef | None = None
+                    ) -> "Q":
         """Add a new entity node to the query and set it as the current pointer.
 
         Example:
-            q = aq.query().find_entity(
+            q = aq.find_entity(
                 _class="urn:nawi-water-ontology#Valve",
                 alias="valve",
             )
 
         You can also target a specific instance by URI:
-            q = aq.query().find_entity(
+            q = aq.find_entity(
                 uri="urn:acquirium:point#MyPump_1",
                 alias="pump_1",
             )
@@ -241,13 +245,17 @@ class Query:
         """
         self.cache.clear()
         instance_uri = self._normalize_instance_uri(uri, param="uri")
-        if _class is None and instance_uri is None:
-            raise ValueError("find_entity: provide _class, uri, or both")
+        if _class is None and instance_uri is None and process is None:
+            raise ValueError("find_entity: provide _class, uri, process or both")
         node_id = self._new_id()
         constraints = {}
+        if _class is not None:
+            constraints["rdf_class"] = _class
         if instance_uri is not None:
             constraints["instance_uri"] = instance_uri
-        node = QueryNode(id=node_id, rdf_class=_class, alias=alias, constraints=constraints)
+        if process is not None:
+            constraints["process"] = process
+        node = QueryNode(id=node_id, alias=alias, constraints=constraints)
         new_graph = self.query_graph.with_node(node)
         # bump internal id counter
         return self._clone_with_graph(new_graph, bump_id=True)
@@ -264,7 +272,7 @@ class Query:
         predicates: Optional[List[str]] = None,
         multi_hop_predicates: bool = False,
         direction: Optional[str] = None,
-    ) -> "Query":
+    ) -> "Q":
         """Add a related entity node, connected from an existing node.
 
         Semantics:
@@ -289,7 +297,7 @@ class Query:
             4. tgt connectedThrough ?cp . ?cp connectsTo src             (inverse of downstream CP)
 
         Example:
-            q1 = aq.query().find_entity(_class=Valve, alias="valve")
+            q1 = aq.find_entity(_class=Valve, alias="valve")
             q1 = q1.find_related(_class=Pump, alias="related_pump", _from="valve")
 
         You can also relate to a specific instance:
@@ -316,7 +324,9 @@ class Query:
         constraints = {}
         if instance_uri is not None:
             constraints["instance_uri"] = instance_uri
-        new_node = QueryNode(id=new_id, rdf_class=_class, alias=alias, constraints=constraints)
+        if _class:
+            constraints["rdf_class"] = _class
+        new_node = QueryNode(id=new_id, alias=alias, constraints=constraints)
         g = self.query_graph.with_node(new_node)
 
         if direction is not None:
@@ -334,18 +344,18 @@ class Query:
     @flex_query_rdf_inputs(specs=[FlexSpec("_class", "class"), FlexSpec("predicates", "predicate")])
     def relate_to(
         self,
-        other: "Query",
+        other: "Q",
         _from: Optional[str] = None,
         _to: Optional[str] = None,
         *,
         hops: int = 3,
         predicates: Optional[List[str]] = None,
-    ) -> "Query":
+    ) -> "Q":
         """Relate the current pointer of this query to the current pointer of another query.
 
         Example:
-            q1 = aq.query().find_entity(_class=Valve, alias="valve")
-            q2 = aq.query().find_entity(_class=Pump, alias="pump")
+            q1 = aq.find_entity(_class=Valve, alias="valve")
+            q2 = aq.find_entity(_class=Pump, alias="pump")
             q3 = q1.relate_to(q2)
 
         Interpretation:
@@ -403,7 +413,7 @@ class Query:
         edge = QueryEdge(source_id=src_id, target_id=other_mapping[tgt_id], hops=hops, predicates=predicates)
         merged_graph = merged_graph.with_edge(edge, new_pointer=other_mapping[tgt_id])
 
-        return Query(
+        return Q(
             client=self.client,
             query_graph=merged_graph,
             _next_id=max(self._next_id, other._next_id)
@@ -437,7 +447,7 @@ class Query:
         alias: Optional[str] = None,
         hops: int = 1,
         direction: Optional[str] = None,
-    ) -> "Query":
+    ) -> "Q":
         """Find data related to an entity, optionally traversing upstream/downstream.
 
         When ``direction`` is set ("upstream" or "downstream"), ``hops`` controls
@@ -480,7 +490,7 @@ class Query:
             mid_id = self._new_id()
             src_alias = self.query_graph.aliases_reverse.get(src_id, str(src_id))
             mid_alias = f"{src_alias}_{direction}_entity"
-            mid_node = QueryNode(id=mid_id, rdf_class=None, alias=mid_alias, constraints={})
+            mid_node = QueryNode(id=mid_id, alias=mid_alias, constraints={})
             g = g.with_node(mid_node)
 
             edge = QueryEdge(source_id=src_id, target_id=mid_id, hops=hops, direction=direction)
@@ -510,7 +520,7 @@ class Query:
                 cp_filter=data_cp_filter,
             )
 
-            return Query(
+            return Q(
                 client=self.client,
                 query_graph=g,
                 _next_id=self._next_id,
@@ -537,7 +547,7 @@ class Query:
         hops: int = 1,
         filters_dict: Optional[Dict[str, Any]] = None,
         alias: Optional[str] = None,
-    ) -> "Query":
+    ) -> "Q":
         self.cache.clear()
         g = self.query_graph
         instance_uri = self._normalize_instance_uri(uri, param="uri")
@@ -584,9 +594,9 @@ class Query:
 
             # Important: advance ids as we go, since _new_id() reads _next_id
             # We do it by updating "self" logically through _next_id in a local counter:
-            self = Query(client=self.client, query_graph=last_graph, _next_id=self._next_id + created)
+            self = Q(client=self.client, query_graph=last_graph, _next_id=self._next_id + created)
 
-        return Query(
+        return Q(
             client=self.client,
             query_graph=last_graph,
             _next_id=self._next_id + created
@@ -601,7 +611,7 @@ class Query:
         hops: int = 1,
         filters_dict: Optional[Dict[str, Any]] = None,
         alias: Optional[str] = None,
-    ) -> "Query":
+    ) -> "Q":
         self.cache.clear()
         g = self.query_graph
         instance_uri = self._normalize_instance_uri(uri, param="uri")
@@ -629,7 +639,7 @@ class Query:
         end: datetime | None = None,
         limit: int | None = None,
         order: str = "asc",
-        use_union: bool = True,
+        include_dependencies: bool = True,
         shape: str = "narrow",          # "wide" or "narrow"
         cast_value: str | None = "str",  # "float", "int", or None to keep string
         value_mode: str = "default",
@@ -652,12 +662,12 @@ class Query:
             end=end,
             limit=limit,
             order=order,
-            use_union=use_union,
+            include_dependencies=include_dependencies,
             cast_value=cast_value,
             value_mode=value_mode,
         ).dataframe(shape=shape, include_ref=include_ref, compact=True)
 
-    def metadata(self, *, include_internals: bool = False, use_union=True) -> pl.DataFrame:
+    def metadata(self, *, include_internals: bool = False, include_dependencies: bool = True) -> pl.DataFrame:
         """
         Execute the SPARQL query to get the query graph results.
 
@@ -669,9 +679,9 @@ class Query:
         Returns:
             A polars table.
         """
-        cache_key = f"metadata_table:{include_internals}"
+        cache_key = f"metadata_table:{include_internals}:{include_dependencies}"
         if self.cache.get(cache_key) is None:
-            res = self.execute(use_union=use_union)
+            res = self.execute(include_dependencies=include_dependencies)
             cols = res.get("columns", [])
             rows = res.get("rows", [])
             keep_idx = list(range(len(cols)))
@@ -704,7 +714,7 @@ class Query:
     def latest_data(
         self,
         *,
-        use_union: bool = True,
+        include_dependencies: bool = True,
         limit: int = 1,
         shape: str = "wide",          # "wide" or "narrow"
         cast_value: str | None = "str",  # "float", "int", or None to keep string
@@ -716,7 +726,7 @@ class Query:
             end=None,
             limit=limit,
             order="desc",
-            use_union=use_union,
+            include_dependencies=include_dependencies,
             shape=shape,
             cast_value=cast_value,
             value_mode=value_mode,
@@ -729,7 +739,7 @@ class Query:
         end: datetime | None = None,
         limit: int | None = None,
         order: str = "asc",
-        use_union: bool = True,
+        include_dependencies: bool = True,
         cast_value: str | None = "float",
         value_mode: str = "default",
     ) -> "DataObject":
@@ -750,13 +760,16 @@ class Query:
             end=end,
             limit=limit,
             order=order,
-            use_union=use_union,
+            include_dependencies=include_dependencies,
             cast_value=cast_value,
             value_mode=value_mode,
         )
 
+    def filter_entities(
+            
+    ):
+        pass
 
-    @flex_query_rdf_inputs(specs=[FlexSpec("_class", "class")])
     def filter_data_nodes(
         self,
         *,
@@ -764,7 +777,7 @@ class Query:
         value: Any,
         _from: Optional[str] = None,
         exclude: bool = False,
-    ) -> "Query":
+    ) -> "Q":
         self.cache.clear()
         g = self.query_graph
         targets = self._select_data_node_ids(_from)
@@ -791,37 +804,37 @@ class Query:
         return self._clone_with_graph(g2, bump_id=False)
 
     @flex_query_rdf_inputs(specs=[FlexSpec("unit", "unit")])
-    def filter_by_unit(self, unit: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Query":
+    def filter_by_unit(self, unit: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Q":
         if isinstance(unit, str):
             unit = [unit]
         return self.filter_data_nodes(predicate=HAS_UNIT, value=unit, _from=_from, exclude=exclude)
 
     @flex_query_rdf_inputs(specs=[FlexSpec("medium", "class")])
-    def filter_by_medium(self, medium: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Query":
+    def filter_by_medium(self, medium: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Q":
         if isinstance(medium, str):
             medium = [medium]
         return self.filter_data_nodes(predicate=OF_MEDIUM, value=medium, _from=_from, exclude=exclude)
 
     @flex_query_rdf_inputs(specs=[FlexSpec("substance", "class")])
-    def filter_by_substance(self, substance: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Query":
+    def filter_by_substance(self, substance: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Q":
         if isinstance(substance, str):
             substance = [substance]
         return self.filter_data_nodes(predicate=OF_SUBSTANCE, value=substance, _from=_from, exclude=exclude)
 
     @flex_query_rdf_inputs(specs=[FlexSpec("qk", "quantity_kind")])
-    def filter_by_quantity_kind(self, qk: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Query":
+    def filter_by_quantity_kind(self, qk: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Q":
         if isinstance(qk, str):
             qk = [qk]
         return self.filter_data_nodes(predicate=HAS_QUANTITY_KIND, value=qk, _from=_from, exclude=exclude)
 
     @flex_query_rdf_inputs(specs=[FlexSpec("ek", "class")])
-    def filter_by_enumeration_kind(self, ek: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Query":
+    def filter_by_enumeration_kind(self, ek: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Q":
         if isinstance(ek, str):
             ek = [ek]
         return self.filter_data_nodes(predicate=HAS_ENUMERATION_KIND, value=ek, _from=_from, exclude=exclude)
 
     #TODO: Not working yet
-    # def filter_by_data_source(self, data_source: str, *, _from: Optional[str] = None) -> "Query":
+    # def filter_by_data_source(self, data_source: str, *, _from: Optional[str] = None) -> "Q":
         # return self.filter_data_nodes(predicate=DATA_SOURCE, value=data_source, _from=_from)
 
 
@@ -920,9 +933,9 @@ class Query:
         *,
         alias: Optional[str] = None,
         only_data_nodes: bool = False,
-        use_union: bool = True,
+        include_dependencies: bool = True,
     ) -> list[str]:
-        res = self.execute(use_union=use_union)
+        res = self.execute(include_dependencies=include_dependencies)
         cols = res.get("columns", [])
         rows = res.get("rows", [])
 
@@ -966,7 +979,7 @@ class Query:
             "nodes": [
                 {
                     "id": n.id,
-                    "rdf_class": n.rdf_class,
+                    "rdf_class": (n.constraints or {}).get("rdf_class"),
                     "alias": n.alias,
                     "constraints": dict(n.constraints or {}),
                 }
@@ -1221,9 +1234,10 @@ class Query:
         for nid, node in self.query_graph.nodes.items():
             v = var_map[nid]
             instance_uri = (node.constraints or {}).get("instance_uri")
+            rdf_class = (node.constraints or {}).get("rdf_class")
             if instance_uri is not None:
                 where_clauses.append(f"VALUES {v} {{ <{instance_uri}> }}")
-            if node.rdf_class:
+            if rdf_class:
                 # Anchor the subClassOf* traversal at the constant class inside
                 # a sub-SELECT. This fences the property path so Oxigraph
                 # evaluates it *backward* from <class> (a handful of nodes)
@@ -1238,7 +1252,7 @@ class Query:
                 where_clauses.append(f"{v} <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> {typ} .")
                 where_clauses.append(
                     f"{{ SELECT DISTINCT {typ} WHERE {{ "
-                    f"{typ} <http://www.w3.org/2000/01/rdf-schema#subClassOf>* <{node.rdf_class}> . "
+                    f"{typ} <http://www.w3.org/2000/01/rdf-schema#subClassOf>* <{rdf_class}> . "
                     f"}} }}"
                 )
 
@@ -1310,17 +1324,21 @@ class Query:
         return f"SELECT DISTINCT {select_vars}\nWHERE {{\n  {where_block}\n}}"
 
 
-    def execute(self,use_union = True) -> dict:
+    def execute(self, include_dependencies: bool = True) -> dict:
         """Execute this query against the metadata graph.
 
         Currently, this uses to_sparql() and OxigraphGraphStore.sparql_query().
         Later you can redirect to your VF2-based matcher.
         """
-        if self.cache.get("execute") is None:
+        cache_key = f"execute:{include_dependencies}"
+        if self.cache.get(cache_key) is None:
             sparql = self.to_sparql()
             # print("Executing SPARQL:\n",sparql)
-            self.cache["execute"] = self.client.sparql_query(sparql, use_union=use_union)
-        return self.cache["execute"]
+            self.cache[cache_key] = self.client.sparql_query(
+                sparql,
+                include_dependencies=include_dependencies,
+            )
+        return self.cache[cache_key]
 
     # ----------------------------------------------------
     # ---------- visualization / debugging ---------------
@@ -1372,7 +1390,7 @@ class Query:
             flags = []
             if node.constraints.get("is_data_node"):
                 flags.append("DATA")
-            cls = node.rdf_class or "*"
+            cls = node.constraints.get("rdf_class") or "*"
             flags_s = f" [{'|'.join(flags)}]" if flags else ""
             inst = node.constraints.get("instance_uri")
             inst_s = f"  instance={inst}" if inst else ""
@@ -1437,7 +1455,7 @@ class Query:
             ]
             cols = [cols[i] for i in keep_idx]
             rows = [[r[i] for i in keep_idx] for r in rows]
-        Query._show_head_cli(
+        Q._show_head_cli(
                 self,
                 columns=cols,
                 rows=rows,
@@ -1457,13 +1475,20 @@ class Query:
         start: datetime | None = None,
         end: datetime | None = None,
         order: str = "asc",
-        use_union: bool = True,
+        include_dependencies: bool = True,
         shape: str = "wide",
     ) -> pl.DataFrame:
         """
         Print and return the head of the time series DataFrame for this query.
         """
-        df = self.dataframe(start=start, end=end, order=order,limit=k, use_union=use_union, shape=shape)
+        df = self.dataframe(
+            start=start,
+            end=end,
+            order=order,
+            limit=k,
+            include_dependencies=include_dependencies,
+            shape=shape,
+        )
         print(df)
         return df
 

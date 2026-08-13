@@ -27,6 +27,12 @@ without colliding. Single-source drivers usually set `self.source_id` in
 `setup()`. Multi-source drivers can omit `self.source_id` if every observation
 row includes a `source_id` column.
 
+For RDF owned by a single-source driver, use `self.insert_graph(...)` and
+`self.sparql_update(...)`. These base-class helpers automatically use
+`self.source_id`, preventing a graph write from being attributed to a different
+source. Multi-source drivers should use the general client API only where they
+deliberately select each source owner.
+
 This identity rule applies to all drivers, regardless of lifecycle. Polling
 drivers, event drivers, graph-configured drivers, and custom `Driver`
 subclasses must all register and insert streams with the same `(source_id,
@@ -378,7 +384,10 @@ separate framework callback.
 
 Override `on_graph_change()` when the driver depends on graph-declared
 configuration. The runner polls `GET /graph_version` before each tick and calls
-`on_graph_change()` only when the version changes after `setup()`.
+`on_graph_change()` only when `source_version` changes after `setup()`. The
+endpoint also reports derived-cache freshness, but driver lifecycle reacts to
+source mutations; a driver that needs inferred results should request them with
+`wait_for_fresh=True` in its query.
 
 MQTT is the main example: it queries the graph for new `ref:MQTTReference`
 nodes, registers the associated streams, and subscribes to newly discovered
@@ -722,7 +731,7 @@ Optional keys:
 - `watertap_build_kwargs` passes kwargs to the build function
 - `watertap_graph_path` / `watertap_insert_graph` insert the model's s223
   ontology on setup so point nodes carry domain semantics
-- `watertap_insert_graph_replace` replaces the main graph when inserting it
+- `watertap_insert_graph_replace` replaces the WaterTAP driver's owned graph
 - `watertap_register_streams` defaults to `true`
 - `watertap_result_attr` extracts the model from an attribute when the build
   function returns a wrapper object
@@ -864,7 +873,7 @@ setup()
   v
 repeat until stopped:
   |
-  +--> check graph version
+  +--> check graph source generation
   |      |
   |      +--> on_graph_change() if changed
   |
@@ -906,5 +915,5 @@ uniform, but data flow is driven by the external event source rather than by
 the tick loop.
 
 The graph-change hook is runner-driven, not pushed by the server into the
-driver. Before each tick, the runner polls the graph version and calls
-`on_graph_change()` only if that version has advanced.
+driver. Before each tick, the runner polls `source_version` from graph status
+and calls `on_graph_change()` only if that generation has advanced.

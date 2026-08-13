@@ -10,7 +10,6 @@ running stack:
 
 Ceilings are deliberately loose: they catch order-of-magnitude regressions
 (e.g. an accidental full-graph scan added to the hit path), not micro-jitter.
-For a detailed per-tier breakdown use scripts/benchmark/resolver_latency.py.
 """
 
 from __future__ import annotations

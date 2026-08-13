@@ -233,7 +233,7 @@ class ExampleDriver(Driver):
         g.add((ref_uri, RDF.type, MQTT_REFERENCE))
         g.add((ref_uri, MQTT_BROKER, Literal("broker.local:1883")))
         g.add((ref_uri, MQTT_TOPIC, Literal("plant/temp/room1")))
-        self.aq.insert_graph(g.serialize(format="turtle"), format="turtle", replace=False)
+        self.insert_graph(g.serialize(format="turtle"), format="turtle", replace=False)
 
     def tick(self):
         rows = [...]

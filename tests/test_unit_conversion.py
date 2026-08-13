@@ -104,7 +104,7 @@ def acquirium_client():
         server_port=ACQUIRIUM_TEST_SERVER_PORT,
         use_ssl=False,
     )
-    acq.insert_graph("tests/test_model_units.ttl")
+    acq.insert_graph("tests/test_model_units.ttl", source_id="plant")
     return acq
 
 
@@ -160,10 +160,16 @@ class TestDataObjectUnits:
         converted = data.convert_to("L-PER-MIN", alias=alias_with_unit)
         converted_df = converted[alias_with_unit]
 
+        # Rows line up positionally between the two frames; text-valued points
+        # under the same alias come back as nulls, so compare the first row
+        # that actually carries a number.
+        orig_numeric = original.drop_nulls("value")
+        conv_numeric = converted_df.drop_nulls("value")
+
         # Values should be scaled by 0.001 (mL -> L)
-        if not original.is_empty() and not converted_df.is_empty():
-            orig_val = original["value"][0]
-            conv_val = converted_df["value"][0]
+        if not orig_numeric.is_empty() and not conv_numeric.is_empty():
+            orig_val = orig_numeric["value"][0]
+            conv_val = conv_numeric["value"][0]
             assert abs(conv_val - orig_val * 0.001) < 1e-6
 
     def test_convert_to_case1(self, acquirium_client):
@@ -216,19 +222,21 @@ class TestDataObjectUnits:
         assert converted is not data
 
     def test_convert_to_unresolvable_to_unit_raises(self, acquirium_client):
-        """convert_to() resolves to_unit up front and names it in the error."""
+        """A garbage to_unit fails as 'no convertible pair': the lenient
+        resolver may return fuzzy candidates, but none is compatible with
+        the source unit, and the error names both sides."""
         acq = acquirium_client
         data = acq.find_all_data().data()
 
-        with pytest.raises(ValueError, match=r"could not resolve to_unit"):
+        with pytest.raises(ValueError, match=r"no convertible unit pair for .*NoSuchUnit12345"):
             data.convert_to("NoSuchUnit12345")
 
     def test_convert_to_unresolvable_from_unit_raises(self, acquirium_client):
-        """An unresolvable from_unit is reported before any conversion runs."""
+        """A garbage from_unit is reported before any conversion runs."""
         acq = acquirium_client
         data = acq.find_all_data().data()
 
-        with pytest.raises(ValueError, match=r"could not resolve from_unit"):
+        with pytest.raises(ValueError, match=r"no convertible unit pair for 'NoSuchUnit12345'"):
             data.convert_to("L-PER-MIN", from_unit="NoSuchUnit12345")
 
     def test_convert_to_accepts_full_unit_uri(self, acquirium_client):

@@ -54,7 +54,7 @@ def flex_query_rdf_inputs(
                 and not looks_like_uri(arguments[s.arg])
             }
             resolved = (
-                self.client.resolve_record_uris(record, min_score=0.4)
+                self.client.resolve(record, min_score=0.4)
                 if record
                 else {}
             )

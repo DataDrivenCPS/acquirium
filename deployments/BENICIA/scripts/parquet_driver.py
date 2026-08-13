@@ -61,7 +61,12 @@ class BeniciaParquetDriver(ParquetIngestDriver):
 
         self.aq.register_datasource(self._source_id)
         if bool(cfg.get("insert_graph", True)):
-            self.aq.insert_graph(graph.serialize(format="turtle"), format="turtle", replace=False)
+            self.aq.insert_graph(
+                graph.serialize(format="turtle"),
+                format="turtle",
+                replace=False,
+                source_id=self._source_id,
+            )
 
         logger.info(
             "benicia parquet driver watching %s -> source_id=%s (%d known points)",

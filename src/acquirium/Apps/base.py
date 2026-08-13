@@ -6,8 +6,12 @@ from datetime import datetime, timezone
 from typing import Any, Iterable
 
 from acquirium.internals.models import AppContext
-from acquirium.Client.query import Query
+from acquirium.Client.explore.core import Query
 
+
+def app_source_id(name: str) -> str:
+    """Return the reserved, stable graph and stream owner for one app."""
+    return f"app:{name}"
 
 
 
@@ -47,14 +51,12 @@ class Output:
     @staticmethod
     def event(
         *,
-        point_uri: str | None = None,
+        point_uri: str,
         severity: str,
         message: str,
         ts: datetime | None = None,
         data: dict[str, Any] | None = None,
     ) -> "Output":
-        if point_uri is None:
-            raise ValueError("event output requires point_uri")
         ts = ts or datetime.now(timezone.utc)
         return Output(
             kind="event",
@@ -95,11 +97,30 @@ class App(ABC):
     version: str = "0.0"
     app_type: str = "soft_sensor"
     outputs: list[Any] = []
-    docker_image: str | None = None
-    entrypoint: str | None = None
-    command: str | None = None
     source_code: str | None = None
     entry_file: str | None = None
+    # Assigned by AppRunner after it instantiates the app. This owns the app's
+    # registration/build RDF graph; it is distinct from output stream ids.
+    source_id: str
+    _acquirium: Any
+
+    def _bind_graph_api(self, acquirium: Any, source_id: str) -> None:
+        """Bind the app to its source-owned graph (runner infrastructure)."""
+        self._acquirium = acquirium
+        self.source_id = source_id
+
+    def insert_graph(self, rdf_graph: str, *, format: str = "turtle", replace: bool = False) -> None:
+        """Write RDF to this app's graph without exposing owner selection."""
+        self._acquirium.insert_graph(
+            rdf_graph,
+            format=format,
+            replace=replace,
+            source_id=self.source_id,
+        )
+
+    def sparql_update(self, update: str) -> dict[str, Any]:
+        """Apply an update only to this app's graph."""
+        return self._acquirium.sparql_update(update, source_id=self.source_id)
 
     @abstractmethod
     def build_query(self, aq: Any) -> Query | dict[str, Query]:

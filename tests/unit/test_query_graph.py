@@ -8,14 +8,14 @@ from acquirium.Client.query_graph import QueryNode, QueryEdge, QueryGraph, DataN
 class TestQueryGraphWithNode:
     def test_adds_node(self):
         g = QueryGraph()
-        node = QueryNode(id=1, rdf_class="urn:test#TypeA", alias="valve")
+        node = QueryNode(id=1, alias="valve", constraints={"rdf_class": "urn:test#TypeA"})
         g2 = g.with_node(node)
         assert 1 in g2.nodes
         assert g2.nodes[1] is node
 
     def test_sets_pointer(self):
         g = QueryGraph()
-        node = QueryNode(id=1, rdf_class="urn:test#TypeA")
+        node = QueryNode(id=1, constraints={"rdf_class": "urn:test#TypeA"})
         g2 = g.with_node(node)
         assert g2.current_pointer == 1
 

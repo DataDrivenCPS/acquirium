@@ -82,6 +82,7 @@ class WaterTAPParquetDriver(ParquetIngestDriver):
                 resolved.read_text(),
                 format=_guess_rdf_format(resolved),
                 replace=bool(cfg.get("watertap_insert_graph_replace", False)),
+                source_id=self._source_id,
             )
 
         self.aq.register_streams([self._stream_spec(spec.ref_name) for spec in self._specs_by_ref.values()])

@@ -42,7 +42,7 @@ compute_handle = compute_ref_uri
 
 
 if TYPE_CHECKING:
-    from acquirium.Client.query import Query
+    from acquirium.Client.explore.core import Query
 
 class TimeseriesInfo(BaseModel):
     table: str
@@ -201,5 +201,4 @@ class AppRunRequest(BaseModel):
 
 
 class AppStopRequest(BaseModel):
-    run_id: str | None = None
-    app_id: str | None = None
+    app_id: str

@@ -1,0 +1,48 @@
+# Acquirium driver config for the WaterTAP seawater-ro-fouled
+
+[server]
+enabled = true            # connect to an already-running Acquirium server
+
+[driver]
+server_url  = "localhost"
+server_port = 8000
+interval    = 10.0
+data_dir    = ".acquirium"
+
+# ===========================================================================
+# 1) Parquet ingest, WaterTAP-aware (seawater-ro-fouled).
+#    Own namespace (urn:swro-fouled/, prefix wbsf:) so it ingests alongside
+#    the healthy seawater-ro model below without colliding ontology points.
+#    Used by notebooks/watertap/soft-sensor.ipynb (clean-vs-fouled anomaly demo).
+# ===========================================================================
+[[drivers]]
+spec                        = "../../scripts/simulation_driver.py:SimulationDriver"
+interval                    = 10.0
+watertap_source_id          = "watertap-seawater-ro"
+watertap_mapping_path       = "deployments/WATERTAP/models/seawater-ro/watertap-mapping.json"
+watertap_graph_path         = "deployments/WATERTAP/models/seawater-ro/model.ttl"
+watertap_insert_graph       = true
+watertap_build_spec         = "deployments/WATERTAP/models/seawater-ro/build-and-solve.py:build"
+watertap_change_inputs_spec = "deployments/WATERTAP/models/seawater-ro/build-and-solve.py:change_inputs"
+watertap_solve_spec         = "deployments/WATERTAP/models/seawater-ro/build-and-solve.py:solve"
+watertap_generate_spec      = "deployments/WATERTAP/models/seawater-ro/generate-values.py:generate_new_values"
+watertap_seed               = 42
+
+# ===========================================================================
+# 2) seawater-ro self-driving simulation.
+#    Generates fresh feed inputs every tick, solves, ingests mapped outputs.
+#    (Disabled: the enabled block below replays parquet snapshots instead.
+#    Both share source_id "watertap-seawater-ro", so you can enable both to
+#    merge live-sim and historical parquet data onto the same points.)
+# ===========================================================================
+# [[drivers]]
+[[drivers]]
+spec                   = "../../scripts/parquet_driver.py:WaterTAPParquetDriver"
+interval               = 120.0
+watch_dir              = "../models/seawater-ro/data"
+format                 = "wide"
+time_col               = "timestamp"
+watertap_source_id     = "watertap-seawater-ro"
+watertap_mapping_path  = "deployments/WATERTAP/models/seawater-ro/watertap-mapping.json"
+watertap_graph_path    = "deployments/WATERTAP/models/seawater-ro/model.ttl"
+watertap_insert_graph  = true

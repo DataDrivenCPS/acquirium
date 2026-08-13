@@ -40,9 +40,9 @@ def _cast_value_to_utf8(col: "pl.Series") -> "pl.Expr":
 class Driver(ABC):
     """Base class for data-collection / processing drivers.
 
-    The ``acquirium run`` CLI calls :meth:`setup` once at startup, then calls
+    The server's driver runner calls :meth:`setup` once at startup, then calls
     :meth:`tick` repeatedly, sleeping for ``interval`` seconds between calls.
-    Override :meth:`stop` for cleanup on Ctrl-C or SIGTERM.
+    Override :meth:`stop` for cleanup when the driver is stopped.
 
     Example::
 
@@ -60,14 +60,14 @@ class Driver(ABC):
                                      "ref_name": ["temp"],
                                      "value": [21.5]})
 
-    Invoke with::
+    Run it by listing it under ``[[drivers]]`` in acquirium.toml::
 
-        acquirium run my_module:MyDriver --config acquirium.toml
+        [[drivers]]
+        spec = "my_module:MyDriver"
+
+    then ``acquirium server --config acquirium.toml``, or push it to a running
+    server with ``acquirium driver start acquirium.toml``.
     """
-
-    # Default datasource for single-source ingest drivers. Multi-source drivers
-    # may omit this if every observation row carries a source_id column.
-    source_id: str
 
     def __init__(self, aq: "Acquirium", config: dict) -> None:
         self.aq = aq
@@ -75,10 +75,48 @@ class Driver(ABC):
         self.config = config
         # Persistent state storage
         self.state = self._init_state(config)
+        self._source_id: str | None = None
+
+    @property
+    def source_id(self) -> str:
+        """Default datasource for single-source ingest drivers.
+
+        Multi-source drivers may leave this unset if every observation row
+        carries a ``source_id`` column.
+        """
+        if self._source_id is None:
+            raise AttributeError(
+                f"{type(self).__name__}.source_id is not set yet — assign it "
+                "(e.g. `self.source_id = \"...\"`) before calling insert_graph, "
+                "register_streams, or other source-scoped helpers."
+            )
+        return self._source_id
+
+    @source_id.setter
+    def source_id(self, value: str) -> None:
+        self._source_id = value
 
     def reference_uri(self, ref_name: str) -> URIRef:
         """Return the canonical reference URI for ``self.source_id``/``ref_name``."""
         return compute_ref_uri(self.source_id, ref_name)
+
+    def insert_graph(self, rdf_graph: str | Path, *, format: str = "turtle", replace: bool = False) -> None:
+        """Write RDF to this driver's source-owned graph.
+
+        Driver code must not pass a source id manually: this helper always
+        uses ``self.source_id``. Multi-source drivers should use the general
+        client API only at the narrow point where they select an owner.
+        """
+        self.aq.insert_graph(
+            rdf_graph,
+            format=format,
+            replace=replace,
+            source_id=self.source_id,
+        )
+
+    def sparql_update(self, update: str) -> dict[str, Any]:
+        """Apply an update only to this driver's source-owned graph."""
+        return self.aq.sparql_update(update, source_id=self.source_id)
 
     def config_dir(self) -> Path:
         """Return the directory containing the loaded config file, if known."""
@@ -156,7 +194,7 @@ class Driver(ABC):
         """
 
     def on_graph_change(self) -> None:
-        """Called by the CLI when the server's graph version advances.
+        """Called by the runner when the server's source generation advances.
 
         Override to react to graph mutations (e.g. re-query for new streams).
         Default is a no-op. Never called during setup() — use setup() for

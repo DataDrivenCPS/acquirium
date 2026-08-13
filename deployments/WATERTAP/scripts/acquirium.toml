@@ -1,7 +1,9 @@
 # Acquirium driver config for the WaterTAP deployment models.
 #
-# Run from the REPO ROOT:
-#   acquirium run --config deployments/WATERTAP/scripts/acquirium.toml
+# Start server + drivers from the REPO ROOT:
+#   acquirium server --config deployments/WATERTAP/scripts/acquirium.toml
+# or push the [[drivers]] to an already-running server:
+#   acquirium driver start deployments/WATERTAP/scripts/acquirium.toml
 #
 # Path bases differ by setting (existing acquirium behavior):
 #   * watertap_mapping_path / watertap_graph_path / watertap_build_spec /

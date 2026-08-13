@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -29,6 +30,18 @@ def test_source_id_attribute_exists_only_when_driver_sets_default():
     driver = DummyDriver(aq=object(), config={})
     with pytest.raises(AttributeError):
         driver.source_id
+
+
+def test_graph_helpers_always_use_the_driver_source_id():
+    aq = MagicMock()
+    driver = DummyDriver(aq=aq, config={})
+    driver.setup()
+
+    driver.insert_graph("@prefix ex: <urn:ex:> . ex:x ex:p ex:y .")
+    driver.sparql_update("DELETE WHERE { ?s ?p ?o }")
+
+    assert aq.insert_graph.call_args.kwargs["source_id"] == "demo-source"
+    assert aq.sparql_update.call_args.kwargs["source_id"] == "demo-source"
 
 
 def test_config_relative_driver_spec_import(tmp_path: Path):

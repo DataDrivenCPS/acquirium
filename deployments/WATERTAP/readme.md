@@ -202,7 +202,7 @@ it introspects whatever model folder it is pointed at (via
 Run the configured drivers (from the repo root, against a running server):
 
 ```bash
-acquirium run --config deployments/WATERTAP/scripts/acquirium.toml
+acquirium driver start deployments/WATERTAP/scripts/acquirium.toml
 ```
 
 ## Changing the config (`scripts/acquirium.toml`)

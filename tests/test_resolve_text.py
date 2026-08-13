@@ -248,6 +248,13 @@ _results = {
 }
 
 
+
+def _matches(client, text, kind=None, top_k=5, min_score=0.5, **kw):
+    """Ranked-candidate form of client.resolve (these tests inspect candidates)."""
+    out = client.resolve(text, kind, top_k=max(top_k, 2), min_score=min_score, **kw)
+    return out[:top_k]
+
+
 def _write_outputs():
     """Write the failures file (overwritten) and append to stats CSV."""
     _OUTPUT_DIR.mkdir(exist_ok=True)
@@ -329,10 +336,12 @@ def acq():
     client.insert_graph(
         "deployments/BENICIA/benicia-model.ttl",
         replace=True,
+        source_id="plant",
     )
     client.insert_graph(
         str(_res_files("acquirium._ontologies") / "water.ttl"),
         replace=False,
+        source_id="plant",
     )
     # Graph index is now built; this still guards the QUDT startup index.
     _wait_for_embeddings_ready(client, timeout=60)
@@ -354,7 +363,7 @@ def test_resolve_class(acq):
     hits = 0
     misses = []
     for text, expected_uris in CLASS_PAIRS:
-        matches = acq.client.resolve_text(text, kind="class", top_k=1, min_score=MIN_SCORE)
+        matches = _matches(acq.client, text, kind="class", top_k=1, min_score=MIN_SCORE)
         if matches and matches[0]["uri"] in expected_uris:
             hits += 1
         else:
@@ -374,7 +383,7 @@ def test_resolve_predicate(acq):
     hits = 0
     misses = []
     for text, expected_uri in PREDICATE_PAIRS:
-        matches = acq.client.resolve_text(text, kind="predicate", top_k=1, min_score=MIN_SCORE)
+        matches = _matches(acq.client, text, kind="predicate", top_k=1, min_score=MIN_SCORE)
         if matches and matches[0]["uri"] == expected_uri:
             hits += 1
         else:
@@ -391,7 +400,7 @@ def test_resolve_predicate(acq):
 
 @pytest.mark.parametrize("text", NO_MATCH_PAIRS)
 def test_resolve_no_match(acq, text):
-    matches = acq.client.resolve_text(text, min_score=0.9)
+    matches = _matches(acq.client, text, min_score=0.9)
     assert len(matches) == 0, f"Expected no matches for '{text}' but got {len(matches)}"
 
 
@@ -401,7 +410,7 @@ def test_resolve_no_match(acq, text):
 
 def test_response_fields(acq):
     """Every match dict has the required keys with correct types."""
-    matches = acq.client.resolve_text("pump", top_k=3)
+    matches = _matches(acq.client, "pump", top_k=3)
     assert len(matches) >= 1
     for m in matches:
         assert isinstance(m["uri"], str)
@@ -413,22 +422,22 @@ def test_response_fields(acq):
 
 def test_kind_filtering(acq):
     """kind=class never returns predicates and vice versa."""
-    for m in acq.client.resolve_text("has", kind="class", top_k=5, min_score=0.3):
+    for m in _matches(acq.client, "has", kind="class", top_k=5, min_score=0.3):
         assert m["kind"] == "class"
-    for m in acq.client.resolve_text("pump", kind="predicate", top_k=5, min_score=0.3):
+    for m in _matches(acq.client, "pump", kind="predicate", top_k=5, min_score=0.3):
         assert m["kind"] == "predicate"
 
 
 def test_top_k_respected(acq):
     """Returned list never exceeds top_k."""
     for k in (1, 2, 3):
-        matches = acq.client.resolve_text("connection", top_k=k, min_score=0.3)
+        matches = _matches(acq.client, "connection", top_k=k, min_score=0.3)
         assert len(matches) <= k
 
 
 def test_scores_descending(acq):
     """Matches are sorted by score, highest first."""
-    matches = acq.client.resolve_text("connection point", top_k=5, min_score=0.3)
+    matches = _matches(acq.client, "connection point", top_k=5, min_score=0.3)
     scores = [m["score"] for m in matches]
     assert scores == sorted(scores, reverse=True)
 
@@ -442,7 +451,7 @@ def test_resolve_unit(acq):
     hits = 0
     misses = []
     for text, expected_uri in UNIT_PAIRS:
-        matches = acq.client.resolve_text(text, kind="unit", top_k=1, min_score=MIN_SCORE)
+        matches = _matches(acq.client, text, kind="unit", top_k=1, min_score=MIN_SCORE)
         if matches and matches[0]["uri"] == expected_uri:
             hits += 1
         else:
@@ -462,7 +471,7 @@ def test_resolve_quantity_kind(acq):
     hits = 0
     misses = []
     for text, expected_uri in QUANTITY_KIND_PAIRS:
-        matches = acq.client.resolve_text(text, kind="quantity_kind", top_k=1, min_score=MIN_SCORE)
+        matches = _matches(acq.client, text, kind="quantity_kind", top_k=1, min_score=MIN_SCORE)
         if matches and matches[0]["uri"] == expected_uri:
             hits += 1
         else:
@@ -479,15 +488,15 @@ def test_resolve_quantity_kind(acq):
 
 def test_kind_filtering_unit_qk(acq):
     """kind=unit never returns classes/predicates/QKs and vice versa."""
-    for m in acq.client.resolve_text("kilogram", kind="unit", top_k=5, min_score=0.3):
+    for m in _matches(acq.client, "kilogram", kind="unit", top_k=5, min_score=0.3):
         assert m["kind"] == "unit", f"Expected kind='unit', got '{m['kind']}' for uri={m['uri']}"
-    for m in acq.client.resolve_text("temperature", kind="quantity_kind", top_k=5, min_score=0.3):
+    for m in _matches(acq.client, "temperature", kind="quantity_kind", top_k=5, min_score=0.3):
         assert m["kind"] == "quantity_kind", f"Expected kind='quantity_kind', got '{m['kind']}' for uri={m['uri']}"
     # unit filter should not return classes
-    for m in acq.client.resolve_text("pump", kind="unit", top_k=5, min_score=0.3):
+    for m in _matches(acq.client, "pump", kind="unit", top_k=5, min_score=0.3):
         assert m["kind"] == "unit", f"Expected kind='unit', got '{m['kind']}' for uri={m['uri']}"
     # quantity_kind filter should not return predicates
-    for m in acq.client.resolve_text("has unit", kind="quantity_kind", top_k=5, min_score=0.3):
+    for m in _matches(acq.client, "has unit", kind="quantity_kind", top_k=5, min_score=0.3):
         assert m["kind"] == "quantity_kind", f"Expected kind='quantity_kind', got '{m['kind']}' for uri={m['uri']}"
 
 
@@ -510,7 +519,7 @@ EXACT_PAIRS = [
 @pytest.mark.parametrize("text,kind,expected_uri", EXACT_PAIRS)
 def test_exact_stage(acq, text, kind, expected_uri):
     """Symbols/labels resolve via the exact stage: top-1, score 1.0, stage=exact."""
-    matches = acq.client.resolve_text(text, kind=kind, top_k=3, min_score=MIN_SCORE)
+    matches = _matches(acq.client, text, kind=kind, top_k=3, min_score=MIN_SCORE)
     assert matches, f"'{text}' returned no matches"
     top = matches[0]
     assert top["uri"] == expected_uri, (
@@ -529,7 +538,7 @@ def test_recall_at_3(acq):
     ]
     misses = []
     for text, expected_uri, kind in pairs:
-        matches = acq.client.resolve_text(text, kind=kind, top_k=3, min_score=MIN_SCORE)
+        matches = _matches(acq.client, text, kind=kind, top_k=3, min_score=MIN_SCORE)
         if expected_uri not in [m["uri"] for m in matches]:
             got = [m["uri"] for m in matches] or "<no matches>"
             misses.append(f"'{text}' ({kind}): expected '{expected_uri}' in top-3, got {got}")
@@ -552,14 +561,14 @@ _UNIT_KILOGAUSS = "http://qudt.org/vocab/unit/KiloGAUSS"
 def test_context_disambiguates_ambiguous_symbol(acq):
     """'kg' (KiloGM/Mass vs KiloGAUSS/MagneticFluxDensity) resolves per the
     quantity-kind context passed in."""
-    mass = acq.client.resolve_text(
+    mass = _matches(acq.client, 
         "kg", kind="unit", top_k=1, min_score=MIN_SCORE, context=[_QK_MASS]
     )
     assert mass and mass[0]["uri"] == _UNIT_KILOGM, (
         f"'kg' + Mass context: expected KiloGM, got {mass[0]['uri'] if mass else '<none>'}"
     )
 
-    flux = acq.client.resolve_text(
+    flux = _matches(acq.client, 
         "kg", kind="unit", top_k=1, min_score=MIN_SCORE, context=[_QK_FLUX]
     )
     assert flux and flux[0]["uri"] == _UNIT_KILOGAUSS, (
@@ -569,16 +578,16 @@ def test_context_disambiguates_ambiguous_symbol(acq):
 
 def test_no_context_is_first_wins_and_stable(acq):
     """Without context, 'kg' resolves to a single result, stable across calls."""
-    a = acq.client.resolve_text("kg", kind="unit", top_k=1, min_score=MIN_SCORE)
-    b = acq.client.resolve_text("kg", kind="unit", top_k=1, min_score=MIN_SCORE)
+    a = _matches(acq.client, "kg", kind="unit", top_k=1, min_score=MIN_SCORE)
+    b = _matches(acq.client, "kg", kind="unit", top_k=1, min_score=MIN_SCORE)
     assert a and b, "'kg' should still resolve without context"
     assert a[0]["uri"] == b[0]["uri"], "no-context resolution must be deterministic"
 
 
 def test_irrelevant_context_does_not_reorder(acq):
     """Unrelated context does not change the top result."""
-    base = acq.client.resolve_text("pascal", kind="unit", top_k=1, min_score=MIN_SCORE)
-    with_junk = acq.client.resolve_text(
+    base = _matches(acq.client, "pascal", kind="unit", top_k=1, min_score=MIN_SCORE)
+    with_junk = _matches(acq.client, 
         "pascal", kind="unit", top_k=1, min_score=MIN_SCORE,
         context=["http://example.org/unrelated/Thing"],
     )
@@ -591,18 +600,18 @@ def test_irrelevant_context_does_not_reorder(acq):
 def test_resolve_qudt_uri_honors_context_over_deterministic(acq):
     """With context, resolve_concept prefers the context-aware matcher over
     the deterministic resolver (the path register_streams uses)."""
-    mass = acq.client.resolve_concept("kg", kind="unit", context=[_QK_MASS])
+    mass = acq.client.resolve("kg", kind="unit", context=[_QK_MASS])
     assert mass == _UNIT_KILOGM, (
         f"'kg' + Mass context should resolve to KiloGM, got {mass}"
     )
 
-    flux = acq.client.resolve_concept("kg", kind="unit", context=[_QK_FLUX])
+    flux = acq.client.resolve("kg", kind="unit", context=[_QK_FLUX])
     assert flux == _UNIT_KILOGAUSS, (
         f"'kg' + flux context should resolve to KiloGAUSS, got {flux}"
     )
 
     # No context: deterministic path still works and is stable.
-    plain = acq.client.resolve_concept("kg", kind="unit")
+    plain = acq.client.resolve("kg", kind="unit")
     assert plain is not None, "'kg' must still resolve without context"
 
 
@@ -610,9 +619,9 @@ def test_resolve_qudt_uri_honors_context_over_deterministic(acq):
 # Latency profile — per-tier trend tracking across commits
 # ──────────────────────────────────────────────────────────────
 #
-# Writes to resolver_bench.csv (same file scripts/benchmark/resolver_latency.py
-# uses) with a stable wide schema, rather than appending mismatched-width rows
-# to the historical stats.csv. Every test run is one latency datapoint per
+# Writes to resolver_bench.csv with a stable wide schema, rather than
+# appending mismatched-width rows to the historical stats.csv. Every test
+# run is one latency datapoint per
 # (tier, kind), tagged with the git SHA so regressions are bisectable.
 
 import subprocess  # noqa: E402
@@ -668,11 +677,11 @@ def test_latency_profile(acq):
     for group, kind, extra in probes:
         text = sample_text[group]
         # warmup
-        acq.client.resolve_text(text, kind=kind, top_k=1, min_score=MIN_SCORE, **extra)
+        _matches(acq.client, text, kind=kind, top_k=1, min_score=MIN_SCORE, **extra)
         samples, tier = [], "n/a"
         for _ in range(ITERS):
             t0 = time.perf_counter()
-            matches = acq.client.resolve_text(
+            matches = _matches(acq.client, 
                 text, kind=kind, top_k=1, min_score=MIN_SCORE, **extra
             )
             samples.append(time.perf_counter() - t0)

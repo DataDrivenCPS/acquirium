@@ -22,7 +22,7 @@ def normalize_trigger_url(url: str) -> str:
 
 
 def emit_outputs(
-    app_id: str,
+    source_id: str,
     outputs: list[Output],
     *,
     insert_timeseries: InsertTimeseries,
@@ -45,7 +45,7 @@ def emit_outputs(
             rows = out.payload["rows"]
             if logger is not None:
                 logger.debug("Output %d: persisting %d timeseries rows to %s", index, len(rows), point_uri)
-            insert_timeseries(source_id=app_id, ref_name=point_uri, rows=rows, point_uri=point_uri)
+            insert_timeseries(source_id=source_id, ref_name=point_uri, rows=rows, point_uri=point_uri)
             if logger is not None:
                 logger.info("Output %d: wrote %d timeseries rows to %s", index, len(rows), point_uri)
         elif out.kind == "event":
@@ -61,7 +61,7 @@ def emit_outputs(
                 ensure_ascii=True,
             )
             insert_timeseries(
-                source_id=app_id,
+                source_id=source_id,
                 ref_name=point_uri,
                 rows=[(ts, value)],
                 point_uri=point_uri,

@@ -1,9 +1,12 @@
 """
 Publish system metrics (CPU, RAM, disk, network) to an Acquirium backend.
 
-Usage:
-    acquirium run acquirium.Drivers.BuiltInDrivers.system_metrics:SystemMetricsDriver \\
-        --config acquirium.toml
+Usage: list it under [[drivers]] in acquirium.toml:
+
+    [[drivers]]
+    spec = "acquirium.Drivers.BuiltInDrivers.system_metrics:SystemMetricsDriver"
+
+then run `acquirium server --config acquirium.toml`.
 """
 
 import logging
@@ -112,7 +115,11 @@ class SystemMetricsDriver(PollingIngestDriver):
             g.add((s, RDF.type,   VIRTUAL_POINT))
             g.add((s, RDFS.label, Literal(label)))
 
-        self.aq.insert_graph(g.serialize(format="turtle"), format="turtle", replace=False)
+        self.insert_graph(
+            g.serialize(format="turtle"),
+            format="turtle",
+            replace=False,
+        )
 
     def _register_stream_metadata(self) -> None:
         for ref, _, unit, quantity_kind in _METRICS:

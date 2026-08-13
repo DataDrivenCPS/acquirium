@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 import os
 import logging
+import pyoxigraph as ox
 from time import perf_counter
 from rdflib import Graph, URIRef, Literal, RDF, RDFS, SKOS
 from rdflib.namespace import NamespaceManager
@@ -87,6 +88,22 @@ def _aggregate_uri_label_rows(
             "surfaces": surfaces,
             "related": [],
         })
+
+
+def pick_convertible_pair(from_candidates, to_candidates, are_compatible):
+    """Best-ranked compatible (from, to) pair from rank-ordered URI lists.
+
+    Minimizes the summed candidate ranks (ties favor the from side);
+    returns ``None`` when no pair is compatible.
+    """
+    best = None
+    for i, a in enumerate(from_candidates):
+        for j, b in enumerate(to_candidates):
+            if best is not None and i + j >= best[0]:
+                continue
+            if are_compatible(a, b):
+                best = (i + j, a, b)
+    return (best[1], best[2]) if best else None
 
 
 def _wipe_dir_contents(base: Path) -> None:
@@ -182,15 +199,16 @@ class Manager:
         self.app_storage_root.mkdir(parents=True, exist_ok=True)
         self._app_runs: dict[str, dict[str, Any]] = {}
         self._app_runs_lock = Lock()
-        self._graph_version: int = 0
-        self._graph_version_lock = Lock()
-
 
         _emb_model = os.getenv("ACQUIRIUM_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 
         # Persist the downloaded embedding model under the data dir so it
-        # survives OS temp-dir purges (fastembed defaults to $TMPDIR).
-        _model_cache = base / "embedding_cache" / "models"
+        # survives OS temp-dir purges (fastembed defaults to $TMPDIR). A
+        # pre-warmed cache (e.g. baked into the Docker image) can be pointed
+        # at with FASTEMBED_CACHE_PATH.
+        _model_cache = Path(
+            os.getenv("FASTEMBED_CACHE_PATH") or base / "embedding_cache" / "models"
+        )
 
         # Dual matchers: graph (class/predicate) and QUDT (unit/quantity_kind)
         self._graph_matcher = EmbeddingMatcher(
@@ -272,11 +290,15 @@ class Manager:
           OPTIONAL {{ ?point <{HAS_EXTERNAL_REFERENCE}> ?ref_node . }}
         }}
         """
-        # use_union=False: these acquirium-internal predicates only ever live
-        # in the main graph, so skipping the closure rebuild on the hot
-        # insert path is correct and avoids the per-insert closure refresh.
+        # Stream registrations may be completed by ontology rules, so query the
+        # fresh inferred deployment graph with shapes rather than only asserted
+        # source data. The graph store coalesces concurrent rebuilds.
         with timed_debug(logger, "_sync_stream_refs_from_graph: SPARQL"):
-            res = self.graph_store.sparql_query(q, use_union=False)
+            res = self.graph_store.sparql_query(
+                q,
+                include_dependencies=True,
+                wait_for_fresh=True,
+            )
         rows = res.get("rows", [])
         logger.debug("_sync_stream_refs_from_graph: %d candidate rows", len(rows))
         # Validate every row first, then hand the whole batch to the store in one
@@ -343,6 +365,8 @@ class Manager:
           UNION {{ ?x <{HAS_ENUMERATION_KIND}> ?uri . }}
           UNION {{ ?x <{OF_SUBSTANCE}> ?uri . }}
           UNION {{ ?x <{HAS_MEDIUM}> ?uri . }}
+          FILTER NOT EXISTS {{ ?uri (<{RDFS.subClassOf}>)* <{WATR.Process}> . }}
+          FILTER(!STRSTARTS(STR(?uri), "{WATR}Process"))
         """
         pred_where = f"""
           {{ ?uri a <{RDF_PROP}> . }}
@@ -361,11 +385,22 @@ class Manager:
           UNION {{ ?x <{HAS_MEDIUM}> ?uri . }}
           UNION {{ ?x <{OF_SUBSTANCE}> ?uri . }}
         """
+        # Constrained process space: the NAWI process taxonomy plus whatever
+        # the loaded model actually uses as a process (self-grounding, like
+        # substances). Its own kind so process filters never rank equipment
+        # classes ("reverse osmosis" must hit Process-ReverseOsmosis, not
+        # ReverseOsmosisMembrane).
+        process_where = f"""
+          {{ ?uri (<{RDFS.subClassOf}>)* <{WATR.Process}> . }}
+          UNION {{ ?x <{WATR.hasProcess}> ?uri . }}
+          UNION {{ ?uri a <{WATR.Class}> . FILTER(STRSTARTS(STR(?uri), "{WATR}Process")) }}
+        """
 
         extractions: list[tuple[str, str, str]] = [
             ("class", class_where, label_block_basic),
             ("predicate", pred_where, label_block_basic),
             ("substance", substance_where, label_block_basic),
+            ("process", process_where, label_block_basic),
         ]
 
         for kind, where, label_block in extractions:
@@ -523,22 +558,24 @@ class Manager:
     #################### API ###############
     ###########################################
 
-    def _notify_graph_change(self) -> None:
-        with self._graph_version_lock:
-            self._graph_version += 1
-
     def graph_version(self) -> int:
-        """Monotonically-increasing version bumped on every graph mutation.
+        """Return the store-owned source-data generation for legacy pollers."""
+        return int(self.graph_store.graph_status()["source_version"])
 
-        Workers can poll this to detect when their cached query becomes stale.
+    def graph_status(self) -> dict[str, int | bool]:
+        """Return source and derived-query generation status."""
+        return self.graph_store.graph_status()
+
+    def insert_graph(
+        self,
+        rdf_graph: str,
+        format: str = "turtle",
+        replace: bool = True,
+        *,
+        source_id: str,
+    ) -> None:
         """
-        with self._graph_version_lock:
-            return self._graph_version
-
-
-    def insert_graph(self, rdf_graph: str, format: str = "turtle", replace = True) -> None:
-        """
-        Insert RDF graph into the graph store's main graph.
+        Insert RDF graph into one explicitly owned deployment data graph.
 
         The embedding index is refreshed synchronously before returning, so
         once this call completes the just-inserted concepts are resolvable.
@@ -550,7 +587,9 @@ class Manager:
             `pathlib.Path` like object, or string. In the case of a string the string
             is the location of the source.
             format: Format of the RDF data [turtle | n3 | xml | trix]
-            replace: If True, replaces the existing main graph. If False, appends to it.
+            replace: If True, replaces the selected graph. If False, appends to it.
+            source_id: Data-graph owner. Use ``"plant"`` for the shared plant
+                model, or a component's stable source ID.
         """
 
         if isinstance(rdf_graph, Path):
@@ -565,15 +604,20 @@ class Manager:
 
         try:
             with timed_debug(logger, "insert_graph format=%s replace=%s", format, replace):
-                self.graph_store.insert_graph(rdf_graph, format=format, replace=replace)
+                graph_uri = self.graph_store.source_graph_uri(source_id)
+                self.graph_store.insert_graph(
+                    rdf_graph,
+                    format=format,
+                    replace=replace,
+                    graph_uri=graph_uri,
+                )
             logging.info("acquirium: inserted graph into store")
             with timed_debug(logger, "insert_graph: _sync_stream_refs_from_graph"):
                 self._sync_stream_refs_from_graph()
             # Embedding corpus is the static ontoenv vocabularies, not
-            # inserted data — no per-insert reindex. refresh_union (inside
-            # graph_store.insert_graph) keeps the data/SPARQL union current.
-            self._notify_graph_change()
-
+            # inserted data — no per-insert reindex. Stream-reference sync
+            # below requires a fresh inferred view; concurrent callers share
+            # its single-flight rebuild.
         except Exception as e:
             logging.error("acquirium: failed to insert graph: %s", e)
             raise
@@ -635,7 +679,12 @@ class Manager:
         g = Graph()
         g.add((node, RDF.type,   ACQUIRIUM_DATASOURCE))
         g.add((node, RDFS.label, Literal(source_id)))
-        self.graph_store.insert_graph(g, format="turtle", replace=False)
+        self.graph_store.insert_graph(
+            g,
+            format="turtle",
+            replace=False,
+            graph_uri=self.graph_store.source_graph_uri(source_id),
+        )
         return source_id
 
     def insert_timeseries(
@@ -750,10 +799,14 @@ class Manager:
         log_uri = URIRef(f"{str(log_message.point_uri)}_log")
         G.add((URIRef(log_message.point_uri), HAS_LOG, log_uri))
         G.add((log_uri, RDF.type, LOGBOOK))
-        # Write bookkeeping triples but skip _notify_graph_change — log inserts
-        # don't affect the ontology/concept space and would otherwise continuously
-        # invalidate the embedding cache.
-        self.graph_store.insert_graph(G, format="turtle", replace=False)
+        # Log writes still change the store-owned graph version, but no
+        # manager-local counter needs to be maintained.
+        self.graph_store.insert_graph(
+            G,
+            format="turtle",
+            replace=False,
+            graph_uri=self.graph_store.acquirium_graph_uri,
+        )
 
 
     def query_logs(
@@ -797,44 +850,93 @@ class Manager:
           ?log a <{LOGBOOK}> .
         }}
         """
-        result = self.graph_store.sparql_update(q)
+        result = self.graph_store.sparql_update(
+            q,
+            graph_uri=self.graph_store.acquirium_graph_uri,
+        )
         logger.info("Deleted all log references for point %s from graph", point_uri)
-        if result.get("changed", True):
-            self._notify_graph_change()
         return True
 
-    def sparql_update(self, update: str) -> dict[str, Any]:
-        """Execute a SPARQL UPDATE (INSERT/DELETE) against the main graph.
+    def sparql_update(self, update: str, source_id: str) -> dict[str, Any]:
+        """Execute a SPARQL UPDATE against one explicitly owned data graph.
 
-        Bumps the graph version when the store reports a change so long-running
-        clients (e.g. keep-alive app workers) rebuild cached queries.
+        It lets a component remove exactly the triples it registered without
+        granting updates to ontology graphs.
         """
-        result = self.graph_store.sparql_update(update)
-        if result.get("changed", True):
-            self._notify_graph_change()
+        graph_uri = self.graph_store.source_graph_uri(source_id)
+        result = self.graph_store.sparql_update(update, graph_uri=graph_uri)
         return result
 
-    def sparql_dict(self, query: str, use_union: bool = True) -> dict[str, Any]:
+    def validate_graph(self) -> dict[str, str | bool]:
+        """Validate all registered deployment data against ontology shapes."""
+        return self.graph_store.validate()
+
+    def sparql_dict(
+        self,
+        query: str,
+        include_dependencies: bool = True,
+        *,
+        wait_for_fresh: bool = False,
+    ) -> dict[str, Any]:
         """
         Execute a SPARQL query against the graph store and return results in dict format.
 
         Args:
             query: The SPARQL query string.
-            use_union: Whether to use the union graph for the query.
+            include_dependencies: Whether to include imported
+                ontology/shape triples included.
+            wait_for_fresh: Wait for the latest graph mutation to be inferred.
+                The default returns the last complete published graph while a
+                coalesced rebuild runs in the background.
 
         Returns:
             A dictionary containing the query results.
             {"cols": [...], "rows": [...]}
         """
-        logger.debug("sparql_dict union=%s len=%d", use_union, len(query))
-        return self.graph_store.sparql_query(query, use_union=use_union)
+        logger.debug("sparql_dict dependencies=%s len=%d", include_dependencies, len(query))
+        return self.graph_store.sparql_query(
+            query,
+            include_dependencies=include_dependencies,
+            wait_for_fresh=wait_for_fresh,
+        )
+
+    def sparql_json(
+        self,
+        query: str,
+        include_dependencies: bool = True,
+        *,
+        wait_for_fresh: bool = False,
+    ) -> bytes | None:
+        """Return native SPARQL JSON for SELECT queries when available."""
+        logger.debug("sparql_json dependencies=%s len=%d", include_dependencies, len(query))
+        return self.graph_store.sparql_query_json(
+            query,
+            include_dependencies=include_dependencies,
+            wait_for_fresh=wait_for_fresh,
+        )
+
+    def sparql_serialized(
+        self,
+        query: str,
+        include_dependencies: bool = True,
+        *,
+        wait_for_fresh: bool = False,
+        results_format: ox.QueryResultsFormat,
+        graph_format: ox.RdfFormat,
+    ) -> tuple[bytes, str]:
+        """Return a SPARQL Protocol response body from the derived query view."""
+        return self.graph_store.sparql_query_serialized(
+            query,
+            include_dependencies=include_dependencies,
+            wait_for_fresh=wait_for_fresh,
+            results_format=results_format,
+            graph_format=graph_format,
+        )
 
     def namespace_manager(self) -> NamespaceManager :
         """
         Get the RDFLib NamespaceManager from the graph store.
 
-        Args:
-            use_union: Whether to get the NamespaceManager for the union graph.
         Returns:
             An RDFLib NamespaceManager instance.
         """
@@ -867,6 +969,61 @@ class Manager:
             QUDT_UNIT_IRI, len(qudt_graph),
         )
         return self.qudt_converter
+
+    def resolve_conversion_info(
+        self,
+        from_unit: str,
+        to_unit: str,
+        top_k: int = 5,
+        min_score: float = 0.5,
+    ) -> dict[str, Any]:
+        """Resolve a from/to unit pair to a *convertible* match plus factors.
+
+        Each side may be a URI (pinned) or free text — text goes through the
+        full resolver cascade, and the best-ranked candidate pair that is
+        actually compatible for conversion wins. This closes the gap between
+        the lenient text resolver (which may top-rank a non-convertible
+        near-match) and the strict converter (which rejects anything but
+        exact symbols/labels).
+
+        Example::
+
+            resolve_conversion_info("mg/l", "grams per liter")
+            # -> {"from": {...MilliGM-PER-L...}, "to": {...GM-PER-L...},
+            #     "factors": {"from_multiplier": ..., "to_uri": ..., ...}}
+        """
+        converter = self._ensure_qudt_converter()
+
+        def candidates(identifier: str, side: str) -> list[str]:
+            s = str(identifier)
+            if s.startswith(("http://", "https://", "urn:")):
+                return [s]
+            uris = [m["uri"] for m in self.resolve_text(
+                s, kind="unit", top_k=top_k, min_score=min_score)]
+            if not uris:
+                raise ValueError(f"could not resolve {side} unit {identifier!r}")
+            return uris
+
+        from_cands = candidates(from_unit, "from")
+        to_cands = candidates(to_unit, "to")
+
+        def compat(a: str, b: str) -> bool:
+            try:
+                return converter.are_compatible(a, b)
+            except Exception:
+                return False
+
+        pair = pick_convertible_pair(from_cands, to_cands, compat)
+        if pair is None:
+            raise ValueError(
+                f"no convertible pair among the matches for {from_unit!r} -> {to_unit!r} "
+                f"(from candidates: {from_cands}, to candidates: {to_cands})"
+            )
+        return {
+            "from": self.resolve_unit_info(pair[0]),
+            "to": self.resolve_unit_info(pair[1]),
+            "factors": self.get_conversion_factors(pair[0], pair[1]),
+        }
 
     def resolve_unit_info(self, identifier: str) -> dict[str, Any]:
         """Resolve a unit identifier to its QUDT metadata (deterministic).
