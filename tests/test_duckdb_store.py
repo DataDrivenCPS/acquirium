@@ -475,55 +475,6 @@ def test_timeseries_table_keyed_by_integer_ref_id(store):
     assert stored == [[ref_id]]
 
 
-@pytest.mark.unit
-def test_migrates_legacy_string_keyed_table(tmp_path):
-    import duckdb
-
-    p = tmp_path / "legacy.duckdb"
-    con = duckdb.connect(str(p))
-    con.execute(
-        """
-        CREATE TABLE timeseries (
-            ref_uri VARCHAR NOT NULL,
-            ts      TIMESTAMP NOT NULL,
-            numeric_value DOUBLE,
-            text_value    VARCHAR,
-            CHECK (numeric_value IS NULL OR text_value IS NULL),
-            UNIQUE (ref_uri, ts)
-        )
-        """
-    )
-    con.execute(
-        "INSERT INTO timeseries VALUES "
-        "('urn:legacy:a', '2024-01-01', 1.0, NULL), "
-        "('urn:legacy:a', '2024-01-02', 2.0, NULL), "
-        "('urn:legacy:b', '2024-01-01', NULL, 'on')"
-    )
-    con.close()
-
-    s = DuckDBStore(db_path=p)
-    cols = [r[0] for r in s.sql_query(
-        "SELECT column_name FROM information_schema.columns WHERE table_name = 'timeseries'"
-    )["rows"]]
-    assert "ref_id" in cols and "ref_uri" not in cols
-
-    vals_a = [v for b in s.timeseries("urn:legacy:a") for v in b.to_pydict()["value"]]
-    vals_b = [v for b in s.timeseries("urn:legacy:b") for v in b.to_pydict()["value"]]
-    assert vals_a == [1.0, 2.0]
-    assert vals_b == ["on"]
-    assert s.timeseries_info("urn:legacy:a").row_count == 2
-
-    # New writes keep working against the migrated table.
-    s.upsert_rows("urn:legacy:a", [(_utc(2024, 1, 3), 3.0)], value_kind="numeric")
-    assert s.timeseries_info("urn:legacy:a").row_count == 3
-    s.close()
-
-    # Reopening must not migrate again or lose anything.
-    s2 = DuckDBStore(db_path=p)
-    assert s2.timeseries_info("urn:legacy:a").row_count == 3
-    s2.close()
-
-
 # ---- recreate ----
 
 @pytest.mark.unit

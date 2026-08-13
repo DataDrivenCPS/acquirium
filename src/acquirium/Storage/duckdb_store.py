@@ -29,8 +29,9 @@ far more effective zonemap (min-max) pruning than VARCHAR, and the rows are
 narrower. The ``ref_ids`` table maps each ``ref_uri`` to its ``ref_id``; ids
 are assigned from a sequence on first write and resolved inside this module,
 never exposed. The ``timeseries_streams`` view joins the string back in, so
-SQL against the view is unaffected. Databases created when ``timeseries``
-was keyed by ``ref_uri`` strings are migrated in place on first open.
+SQL against the view is unaffected. This schema is not backward compatible
+with databases whose ``timeseries`` table is keyed by ``ref_uri`` strings —
+recreate those rather than opening them in place.
 """
 
 from contextlib import contextmanager
@@ -67,21 +68,6 @@ LOGS_TABLE = "logs"
 REF_IDS_TABLE = "ref_ids"
 REF_IDS_SEQ = "ref_ids_seq"
 TIMESERIES_STREAMS_VIEW = "timeseries_streams"
-
-
-def _timeseries_table_ddl(name: str) -> str:
-    # Shared by ensure_table and the legacy migration so the rebuilt table
-    # cannot drift from the canonical schema.
-    return f"""
-    CREATE TABLE IF NOT EXISTS {name} (
-        ref_id  INTEGER NOT NULL,
-        ts      TIMESTAMP NOT NULL,
-        numeric_value DOUBLE,
-        text_value    VARCHAR,
-        CHECK (numeric_value IS NULL OR text_value IS NULL),
-        UNIQUE (ref_id, ts)
-    )
-    """
 
 
 class DuckDBStore:
@@ -174,10 +160,7 @@ class DuckDBStore:
         """Create tables and indexes if they do not exist. Returns a status string."""
         # Use TIMESTAMP (not TIMESTAMPTZ) to avoid a DuckDB/pytz interop issue.
         # All values are normalised to UTC before insertion via _to_utc().
-        # The ref_ids mapping must exist before the legacy migration runs, and
-        # the migration must run before CREATE TABLE IF NOT EXISTS would see
-        # (and keep) an old string-keyed timeseries table.
-        pre_stmts = [
+        stmts = [
             f"CREATE SEQUENCE IF NOT EXISTS {REF_IDS_SEQ}",
             f"""
             CREATE TABLE IF NOT EXISTS {REF_IDS_TABLE} (
@@ -185,9 +168,16 @@ class DuckDBStore:
                 ref_uri VARCHAR NOT NULL UNIQUE
             )
             """,
-        ]
-        stmts = [
-            _timeseries_table_ddl(TIMESERIES_TABLE),
+            f"""
+            CREATE TABLE IF NOT EXISTS {TIMESERIES_TABLE} (
+                ref_id  INTEGER NOT NULL,
+                ts      TIMESTAMP NOT NULL,
+                numeric_value DOUBLE,
+                text_value    VARCHAR,
+                CHECK (numeric_value IS NULL OR text_value IS NULL),
+                UNIQUE (ref_id, ts)
+            )
+            """,
             f"""
             CREATE TABLE IF NOT EXISTS {STREAMS_TABLE} (
                 ref_uri   VARCHAR PRIMARY KEY,
@@ -230,54 +220,9 @@ class DuckDBStore:
             f"CREATE INDEX IF NOT EXISTS idx_logs_obs ON {LOGS_TABLE} (observed_start, observed_end)",
         ]
         with self._lock, timed_debug(logger, "ensure_table"), self._own_conn() as conn:
-            for stmt in pre_stmts:
-                conn.execute(stmt)
-            self._migrate_legacy_timeseries(conn)
             for stmt in stmts:
                 conn.execute(stmt)
         return "ok"
-
-    def _migrate_legacy_timeseries(self, conn) -> None:
-        """Rebuild a string-keyed timeseries table onto integer ref_ids, in place.
-
-        Detects the pre-ref_id schema by its ref_uri column. The swap runs in
-        one transaction so an interrupted migration leaves the old table
-        untouched; a leftover scratch table from a crash is dropped first.
-        """
-        legacy = conn.execute(
-            "SELECT 1 FROM information_schema.columns WHERE table_name = ? AND column_name = 'ref_uri'",
-            [TIMESERIES_TABLE],
-        ).fetchone()
-        if legacy is None:
-            return
-        scratch = f"{TIMESERIES_TABLE}_migration"
-        logger.info("migrating %s to integer ref_id keys", TIMESERIES_TABLE)
-        conn.execute(f"DROP TABLE IF EXISTS {scratch}")
-        with timed_debug(logger, "migrate legacy %s", TIMESERIES_TABLE):
-            conn.begin()
-            try:
-                conn.execute(
-                    f"""
-                    INSERT INTO {REF_IDS_TABLE} (ref_uri)
-                    SELECT DISTINCT ref_uri FROM {TIMESERIES_TABLE}
-                    ON CONFLICT (ref_uri) DO NOTHING
-                    """
-                )
-                conn.execute(_timeseries_table_ddl(scratch))
-                conn.execute(
-                    f"""
-                    INSERT INTO {scratch} (ref_id, ts, numeric_value, text_value)
-                    SELECT r.ref_id, t.ts, t.numeric_value, t.text_value
-                    FROM {TIMESERIES_TABLE} AS t
-                    JOIN {REF_IDS_TABLE} AS r USING (ref_uri)
-                    """
-                )
-                conn.execute(f"DROP TABLE {TIMESERIES_TABLE}")
-                conn.execute(f"ALTER TABLE {scratch} RENAME TO {TIMESERIES_TABLE}")
-                conn.commit()
-            except BaseException:
-                conn.rollback()
-                raise
 
     # ---- timeseries mutations ----
 
