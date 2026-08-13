@@ -559,13 +559,17 @@ class DataObject:
         if subset.is_empty():
             return pl.DataFrame(schema={"time": pl.Datetime(time_zone="UTC"), "value": pl.Float64})
 
-        # Combine ref_uris that share the same (point_uri, time).
-        subset = subset.unique(subset=["point_uri", "time"], keep="first")
+        # Combine ref_uris that share the same (point_uri, time). maintain_order
+        # is what makes keep="first" mean the first row of _tall; without it
+        # polars picks an arbitrary duplicate and shuffles the surviving rows.
+        subset = subset.unique(subset=["point_uri", "time"], keep="first", maintain_order=True)
         subset = _restore_single_value_column(subset)
         n_points = subset["point_uri"].n_unique()
         if n_points <= 1:
             return subset.select("time", "value").sort("time")
-        return subset.select("time", "value", "point_uri").sort("time")
+        # (time, point_uri) is unique after the dedup above, so sorting on both
+        # gives a total order — repeated access returns identical frames.
+        return subset.select("time", "value", "point_uri").sort(["time", "point_uri"])
 
     # ------------------------------------------------------------------
     # Grouping
