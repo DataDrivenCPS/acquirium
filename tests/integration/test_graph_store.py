@@ -110,17 +110,43 @@ class TestInsertExport:
         assert first["changed"] is True
         assert second["changed"] is True
 
-    def test_graph_status_distinguishes_source_and_published_generations(self, graph_store):
+    def test_graph_status_distinguishes_source_and_published_generations(
+        self, graph_store, monkeypatch,
+    ):
         graph_store.sparql_query("ASK { ?s ?p ?o }", wait_for_fresh=True)
         before = graph_store.graph_status()
 
+        # Hold the rebuild inside the build step so the write's generation is
+        # observable before publication; the sample graph is small enough that
+        # an unblocked rebuild can otherwise publish before the status read.
+        original = graph_store._build_query_views
+        started = Event()
+        release = Event()
+
+        def blocked_build(data, shapes):
+            started.set()
+            assert release.wait(timeout=10)
+            return original(data, shapes)
+
+        monkeypatch.setattr(graph_store, "_build_query_views", blocked_build)
         graph_store.insert_graph(SAMPLE_TURTLE, format="turtle")
+        assert started.wait(timeout=10)
         after = graph_store.graph_status()
 
         assert before["is_current"] is True
         assert after["source_version"] == before["source_version"] + 1
         assert after["published_version"] == before["published_version"]
         assert after["is_current"] is False
+        assert after["rebuild_in_progress"] is True
+
+        # Publication is what advances the published generation.
+        release.set()
+        graph_store.sparql_query("ASK { ?s ?p ?o }", wait_for_fresh=True)
+        published = graph_store.graph_status()
+
+        assert published["published_version"] == after["source_version"]
+        assert published["is_current"] is True
+        assert published["rebuild_in_progress"] is False
 
     def test_insert_malformed_raises(self, graph_store):
         with pytest.raises(Exception):
