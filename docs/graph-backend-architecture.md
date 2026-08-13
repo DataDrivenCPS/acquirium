@@ -36,10 +36,13 @@ to actor processes.
 
 ## Persistent graph roles
 
-The source dataset contains both deployment and ontology named graphs. A small
-JSON `GraphRegistry` beside the store is the allow-list that identifies which
-named graphs count as deployment data. Enumerating all named graphs is
-incorrect: that would accidentally include ontology graphs.
+The source dataset contains both deployment and ontology named graphs.
+Deployment data graphs are recognized by URI shape, not tracked as separate
+persisted state: the plant and Acquirium graphs are two fixed URIs, and every
+source graph lives under the `urn:acquirium:graph:data:source:` prefix.
+Enumerating all named graphs by that shape is how the backend distinguishes
+them from ontology graphs, which live under unrelated, externally-defined
+namespaces (e.g. `https://qudt.org/...`).
 
 | Role | Persistence | Contents | How it is written |
 | --- | --- | --- | --- |
@@ -52,9 +55,10 @@ incorrect: that would accidentally include ontology graphs.
 | Dependency query graph | query dataset | Resolved ontology/shape dependency cache. Replaced only when its imports closure changes. | Backend only. |
 
 The plant graph URI is stable (`urn:acquirium#MainGraph`). Acquirium's graph is
-also stable. A source graph URI is deterministic from its `source_id`; asking
-for a source graph creates and persists its registry entry when necessary. A
-source ID is therefore an ownership boundary, not merely a timeseries label.
+also stable. A source graph URI is a pure function of its `source_id`; asking
+for a source graph computes that URI without any lookup, and the graph itself
+comes into existence in Oxigraph on first write. A source ID is therefore an
+ownership boundary, not merely a timeseries label.
 
 ### Public graph views
 
@@ -70,9 +74,10 @@ The plant graph is the explicit reserved `source_id="plant"` write target. It
 is not a public read view.
 
 At present, deleting an app removes its registration triples from its source
-graph. There is no public API that removes a source graph or its registry entry;
-an empty source graph may remain registered. Do not depend on unregistering a
-source as part of a normal driver shutdown.
+graph. There is no public API that removes a source graph; Oxigraph retains a
+named graph's identity even once every triple has been removed from it, so an
+empty source graph may remain around. Do not depend on unregistering a source
+as part of a normal driver shutdown.
 
 ## Derived-graph pipeline
 
@@ -196,8 +201,8 @@ form through Oxigraph. The compatibility `/sparql_json` endpoint retains its
 ## How to program against the backend
 
 Use `Acquirium`/`AcquiriumClient` from drivers, apps, and external programs.
-Do not import `OxigraphGraphStore`, access `GraphRegistry`, or choose derived
-graph URIs outside server code.
+Do not import `OxigraphGraphStore` or choose derived graph URIs outside server
+code.
 
 ### Plant model owner
 
@@ -277,9 +282,9 @@ data.
 
 ## Concurrency and operational constraints
 
-The graph store lock protects source writes, registry changes, and cache
-publication. The rebuild owner snapshots the source inputs under that lock,
-releases it while Shifty performs inference, then reacquires it for publication.
+The graph store lock protects source writes and cache publication. The
+rebuild owner snapshots the source inputs under that lock, releases it while
+Shifty performs inference, then reacquires it for publication.
 Query-cache selection is synchronized, then Oxigraph executes the query against
 a repeatable-read snapshot while publication is locked; result processing then
 continues without Acquirium's broad lock. A reader therefore observes a
@@ -303,10 +308,11 @@ service boundary, not by sharing its database files.
 The following are not guarantees of the current implementation. They are areas
 where the desired policy or mechanism has not been settled yet.
 
-- **Source deletion and retention.** There is no public source-deletion API and
-  the registry deliberately retains an empty source graph. A future lifecycle
-  for deleting a source graph, its stream registrations, and possibly its
-  timeseries data still needs an explicit retention and provenance policy.
+- **Source deletion and retention.** There is no public source-deletion API,
+  and Oxigraph retains an empty source graph's identity once created. A
+  future lifecycle for deleting a source graph, its stream registrations,
+  and possibly its timeseries data still needs an explicit retention and
+  provenance policy.
 - **Inference cost and scheduling.** Rebuilds already run in one background,
   single-flight worker and ordinary readers can use the last complete cache.
   There is deliberately no write-batching mechanism: every graph write arrives
