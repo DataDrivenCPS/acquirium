@@ -55,7 +55,7 @@ def materialize_segment(client, alternatives: tuple, version: int) -> Dict[str, 
         return cached
     body = render_alternatives(alternatives, "?s", "?t", "seg")
     sparql = f"SELECT DISTINCT ?s ?t\nWHERE {{\n  {body}\n}}"
-    res = client.sparql_query(sparql, use_union=True)
+    res = client.sparql_query(sparql, include_dependencies=True)
     cols = res.get("columns", [])
     try:
         si, ti = cols.index("s"), cols.index("t")
@@ -172,7 +172,7 @@ def _prune_target_subtree(graph: QueryGraph, edge) -> QueryGraph:
 
 
 def _fetch_source_uris(client, graph: QueryGraph, src_id: int) -> List[str]:
-    res = client.sparql_query(compile_sparql(graph), use_union=True)
+    res = client.sparql_query(compile_sparql(graph), include_dependencies=True)
     cols = res.get("columns", [])
     col = f"v{src_id}"
     if col not in cols:
@@ -210,7 +210,7 @@ def _fetch_target_accept(client, graph: QueryGraph, edge) -> Optional[Set[str]]:
         current_pointer=tid,
         data_nodes={tid: info} if info is not None else {},
     )
-    res = client.sparql_query(compile_sparql(sub), use_union=True)
+    res = client.sparql_query(compile_sparql(sub), include_dependencies=True)
     cols = res.get("columns", [])
     col = f"v{tid}"
     if col not in cols:

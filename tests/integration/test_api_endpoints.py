@@ -60,6 +60,7 @@ class TestGraphEndpoints:
             "rdf_graph": MINIMAL_TURTLE,
             "format": "turtle",
             "replace": False,
+            "source_id": "plant",
         })
         assert resp.status_code == 200
 
@@ -75,6 +76,7 @@ class TestGraphEndpoints:
             "rdf_graph": MINIMAL_TURTLE,
             "format": "turtle",
             "replace": True,
+            "source_id": "plant",
         })
         assert resp.status_code == 200
 
@@ -83,6 +85,7 @@ class TestGraphEndpoints:
             "rdf_graph": MINIMAL_TURTLE,
             "format": "turtle",
             "replace": True,
+            "source_id": "plant",
         })
         resp = requests.get(f"{BASE_URL}/export_graph", params={"format": "turtle"})
         assert resp.status_code == 200
@@ -93,6 +96,7 @@ class TestGraphEndpoints:
             "rdf_graph": "this is {{{ not valid turtle",
             "format": "turtle",
             "replace": False,
+            "source_id": "plant",
         })
         assert resp.status_code >= 400
 
@@ -104,6 +108,30 @@ class TestTimeseriesEndpoints:
     TEST_SOURCE = "test"
     TEST_REF_NAME = "api_ts_ref"
     TEST_POINT = "urn:test:api_ts_point"
+
+    @pytest.fixture(scope="class", autouse=True)
+    def _cleanup_registered_stream(self):
+        # The registered stream makes TEST_POINT a first-class data point,
+        # visible to any test that queries across all sources (e.g.
+        # find_all_data). Remove it once this class is done so it doesn't
+        # leak into unrelated tests.
+        yield
+        ref_uri = compute_ref_uri(self.TEST_SOURCE, self.TEST_REF_NAME)
+        update = f"""\
+PREFIX acq: <urn:acquirium#>
+PREFIX ref: <https://brickschema.org/schema/Brick/ref#>
+DELETE DATA {{
+  <{self.TEST_POINT}> ref:hasExternalReference <{ref_uri}> .
+  <{ref_uri}> a acq:Stream ;
+      acq:sourceId "{self.TEST_SOURCE}" ;
+      acq:refName "{self.TEST_REF_NAME}" ;
+      acq:valueKind "numeric" .
+}}
+"""
+        requests.post(f"{BASE_URL}/sparql_update", json={
+            "update": update,
+            "source_id": "test-source",
+        })
 
     def _register_stream(self):
         ref_uri = compute_ref_uri(self.TEST_SOURCE, self.TEST_REF_NAME)
@@ -121,6 +149,7 @@ class TestTimeseriesEndpoints:
             "rdf_graph": graph,
             "format": "turtle",
             "replace": False,
+            "source_id": "test-source",
         })
         assert resp.status_code == 200
 
@@ -285,12 +314,18 @@ class TestLogEndpoints:
 
 
 class TestSparqlEndpoints:
-    def test_select(self):
-        requests.post(f"{BASE_URL}/insert_graph", json={
+    @staticmethod
+    def _insert_graph():
+        response = requests.post(f"{BASE_URL}/insert_graph", json={
             "rdf_graph": MINIMAL_TURTLE,
             "format": "turtle",
             "replace": True,
+            "source_id": "plant",
         })
+        assert response.status_code == 200
+
+    def test_select(self):
+        self._insert_graph()
         resp = requests.get(f"{BASE_URL}/sparql_json", params={
             "query": "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10",
         })
@@ -302,7 +337,7 @@ class TestSparqlEndpoints:
     def test_with_union(self):
         resp = requests.get(f"{BASE_URL}/sparql_json", params={
             "query": "SELECT (COUNT(*) AS ?c) WHERE { ?s ?p ?o }",
-            "use_union": True,
+            "include_dependencies": True,
         })
         assert resp.status_code == 200
 
@@ -311,6 +346,41 @@ class TestSparqlEndpoints:
             "query": "SELEKT * WERE { broken }",
         })
         assert resp.status_code >= 400
+
+    def test_protocol_select_returns_standard_json(self):
+        self._insert_graph()
+        resp = requests.get(f"{BASE_URL}/sparql", params={
+            "query": "SELECT ?s WHERE { ?s ?p ?o } LIMIT 1",
+        }, headers={"Accept": "application/sparql-results+json"})
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("application/sparql-results+json")
+        assert "head" in resp.json()
+
+    def test_protocol_ask_returns_standard_json(self):
+        self._insert_graph()
+        resp = requests.get(f"{BASE_URL}/sparql", params={
+            "query": "ASK { ?s ?p ?o }",
+        })
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("application/sparql-results+json")
+        assert resp.json()["boolean"] is True
+
+    def test_protocol_construct_negotiates_turtle(self):
+        self._insert_graph()
+        resp = requests.get(f"{BASE_URL}/sparql", params={
+            "query": "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o } LIMIT 1",
+        }, headers={"Accept": "text/turtle"})
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/turtle")
+        assert resp.text
+
+    def test_protocol_describe_negotiates_ntriples(self):
+        self._insert_graph()
+        resp = requests.get(f"{BASE_URL}/sparql", params={
+            "query": "DESCRIBE <urn:example:Thing>",
+        }, headers={"Accept": "application/n-triples"})
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("application/n-triples")
 
 
 # ── Text Resolution ────────────────────────────────────────

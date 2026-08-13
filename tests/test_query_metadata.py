@@ -14,7 +14,7 @@ def acquirium_client():
         use_ssl=False,
     )
 
-    acq.insert_graph("tests/test_model.ttl")
+    acq.insert_graph("tests/test_model.ttl", source_id="plant")
     return acq
 
 #### FIND ENTITY TESTS ####

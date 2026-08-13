@@ -115,7 +115,11 @@ class SystemMetricsDriver(PollingIngestDriver):
             g.add((s, RDF.type,   VIRTUAL_POINT))
             g.add((s, RDFS.label, Literal(label)))
 
-        self.aq.insert_graph(g.serialize(format="turtle"), format="turtle", replace=False)
+        self.insert_graph(
+            g.serialize(format="turtle"),
+            format="turtle",
+            replace=False,
+        )
 
     def _register_stream_metadata(self) -> None:
         for ref, _, unit, quantity_kind in _METRICS:

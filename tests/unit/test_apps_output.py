@@ -97,14 +97,14 @@ class TestEmitOutputs:
         rows = [(datetime(2025, 1, 1, tzinfo=timezone.utc), 42.0)]
 
         emit_outputs(
-            "app-a",
+            "app:app-a",
             [Output.timeseries(point_uri="urn:test:p1", rows=rows)],
             insert_timeseries=lambda **kwargs: calls.append(kwargs),
         )
 
         assert calls == [
             {
-                "source_id": "app-a",
+                "source_id": "app:app-a",
                 "ref_name": "urn:test:p1",
                 "rows": rows,
                 "point_uri": "urn:test:p1",
@@ -116,7 +116,7 @@ class TestEmitOutputs:
         ts = datetime(2025, 1, 1, tzinfo=timezone.utc)
 
         emit_outputs(
-            "app-a",
+            "app:app-a",
             [
                 Output.event(
                     point_uri="urn:test:event",
@@ -129,7 +129,7 @@ class TestEmitOutputs:
             insert_timeseries=lambda **kwargs: calls.append(kwargs),
         )
 
-        assert calls[0]["source_id"] == "app-a"
+        assert calls[0]["source_id"] == "app:app-a"
         assert calls[0]["ref_name"] == "urn:test:event"
         assert calls[0]["point_uri"] == "urn:test:event"
         row_ts, row_value = calls[0]["rows"][0]

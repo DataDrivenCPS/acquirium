@@ -58,9 +58,16 @@ class AcquiriumClient:
         self._namespaces_cache: dict[str, str] | None = None
 
 
-    def insert_graph(self, rdf_graph: str, format: str = "turtle", replace: bool = True) -> None:
+    def insert_graph(
+        self,
+        rdf_graph: str,
+        format: str = "turtle",
+        replace: bool = True,
+        *,
+        source_id: str,
+    ) -> None:
         """
-        Insert RDF graph into the graph store to the main graph.
+        Insert RDF graph into an explicitly owned deployment data graph.
 
         The server refreshes the embedding index synchronously before
         responding, so inserted concepts are resolvable once this returns.
@@ -71,7 +78,9 @@ class AcquiriumClient:
                 - graph content as text
                 - location of the source file
             format: Format of the RDF data [turtle | n3 | xml | trix]
-            replace: If True, replaces the existing main graph. If False, appends to it.
+            replace: If True, replaces the selected graph. If False, appends to it.
+            source_id: Data-graph owner. Use ``"plant"`` for the shared plant
+                model, or a component's stable source ID.
         """
         if isinstance(rdf_graph, Path):
             if not rdf_graph.is_file():
@@ -99,6 +108,7 @@ class AcquiriumClient:
             "format": format,
             "replace": replace,
         }
+        data["source_id"] = source_id
         response = requests.post(url, json=data)
         _raise_for_status(response)
 
@@ -200,13 +210,21 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
-    def sparql_query(self, sparql: str, use_union: bool = True) -> dict:
+    def sparql_query(
+        self,
+        sparql: str,
+        include_dependencies: bool = True,
+        *,
+        wait_for_fresh: bool = False,
+    ) -> dict:
         """
         Execute a SPARQL query against the graph store.
 
         Args:
             sparql: The SPARQL query string.
-            use_union: Whether to use UNION for optional patterns.
+            include_dependencies: Whether to include ontology/shape triples.
+            wait_for_fresh: Wait for pending inference instead of using the
+                last complete published graph.
 
         Returns:
             The SPARQL query result as a dictionary.
@@ -215,14 +233,39 @@ class AcquiriumClient:
         # VALUES blocks, and long query strings blow the server's URL limit
         # ("Invalid HTTP request received").
         url = f"{self.base_url}/sparql_json"
-        response = requests.post(url, json={"query": sparql, "use_union": use_union})
+        response = requests.post(
+            url,
+            json={
+                "query": sparql,
+                "include_dependencies": include_dependencies,
+                "wait_for_fresh": wait_for_fresh,
+            },
+        )
+        _raise_for_status(response)
+        payload = response.json()
+        if "boolean" in payload:
+            return {"columns": [], "rows": [[bool(payload["boolean"])]]}
+        if "head" not in payload or "results" not in payload:
+            return payload
+        columns = payload["head"].get("vars", [])
+        rows = [
+            [binding.get(column, {}).get("value") for column in columns]
+            for binding in payload["results"].get("bindings", [])
+        ]
+        return {"columns": columns, "rows": rows}
+
+    def sparql_update(self, update: str, *, source_id: str) -> dict:
+        """Execute a SPARQL UPDATE against one explicitly owned data graph."""
+        url = f"{self.base_url}/sparql_update"
+        data = {"update": update}
+        data["source_id"] = source_id
+        response = requests.post(url, json=data)
         _raise_for_status(response)
         return response.json()
 
-    def sparql_update(self, update: str) -> dict:
-        """Execute a SPARQL UPDATE (INSERT/DELETE) against the graph store."""
-        url = f"{self.base_url}/sparql_update"
-        response = requests.post(url, json={"update": update})
+    def validate_graph(self) -> dict[str, str | bool]:
+        """Validate all registered deployment data against ontology shapes."""
+        response = requests.post(f"{self.base_url}/validate_graph")
         _raise_for_status(response)
         return response.json()
 
@@ -387,15 +430,19 @@ class AcquiriumClient:
         return response.json()
 
     def graph_version(self) -> int:
-        """Return the server's current graph version counter.
+        """Return the server's current source-data generation.
 
-        The counter is bumped on every graph mutation. Workers can poll this
-        to detect when their cached query needs to be rebuilt.
+        Use :meth:`graph_status` when a caller also needs to know whether the
+        derived query cache has caught up.
         """
+        return int(self.graph_status()["source_version"])
+
+    def graph_status(self) -> dict[str, int | bool]:
+        """Return source and derived-query cache generations from the server."""
         url = f"{self.base_url}/graph_version"
         response = requests.get(url)
         response.raise_for_status()
-        return int(response.json().get("version", 0))
+        return response.json()
 
     # -------------------- Unit conversion --------------------
 

@@ -199,7 +199,7 @@ class Q:
         target_col = None
         if id_val is not None:
             target_col = f"v{id_val}"
-        query_result = self.execute(use_union=True)
+        query_result = self.execute(include_dependencies=True)
         nodes: set[URIRef] = set()
         if target_col:
             col_index = query_result["columns"].index(target_col)
@@ -639,7 +639,7 @@ class Q:
         end: datetime | None = None,
         limit: int | None = None,
         order: str = "asc",
-        use_union: bool = True,
+        include_dependencies: bool = True,
         shape: str = "narrow",          # "wide" or "narrow"
         cast_value: str | None = "str",  # "float", "int", or None to keep string
         value_mode: str = "default",
@@ -662,12 +662,12 @@ class Q:
             end=end,
             limit=limit,
             order=order,
-            use_union=use_union,
+            include_dependencies=include_dependencies,
             cast_value=cast_value,
             value_mode=value_mode,
         ).dataframe(shape=shape, include_ref=include_ref, compact=True)
 
-    def metadata(self, *, include_internals: bool = False, use_union=True) -> pl.DataFrame:
+    def metadata(self, *, include_internals: bool = False, include_dependencies: bool = True) -> pl.DataFrame:
         """
         Execute the SPARQL query to get the query graph results.
 
@@ -679,9 +679,9 @@ class Q:
         Returns:
             A polars table.
         """
-        cache_key = f"metadata_table:{include_internals}"
+        cache_key = f"metadata_table:{include_internals}:{include_dependencies}"
         if self.cache.get(cache_key) is None:
-            res = self.execute(use_union=use_union)
+            res = self.execute(include_dependencies=include_dependencies)
             cols = res.get("columns", [])
             rows = res.get("rows", [])
             keep_idx = list(range(len(cols)))
@@ -714,7 +714,7 @@ class Q:
     def latest_data(
         self,
         *,
-        use_union: bool = True,
+        include_dependencies: bool = True,
         limit: int = 1,
         shape: str = "wide",          # "wide" or "narrow"
         cast_value: str | None = "str",  # "float", "int", or None to keep string
@@ -726,7 +726,7 @@ class Q:
             end=None,
             limit=limit,
             order="desc",
-            use_union=use_union,
+            include_dependencies=include_dependencies,
             shape=shape,
             cast_value=cast_value,
             value_mode=value_mode,
@@ -739,7 +739,7 @@ class Q:
         end: datetime | None = None,
         limit: int | None = None,
         order: str = "asc",
-        use_union: bool = True,
+        include_dependencies: bool = True,
         cast_value: str | None = "float",
         value_mode: str = "default",
     ) -> "DataObject":
@@ -760,7 +760,7 @@ class Q:
             end=end,
             limit=limit,
             order=order,
-            use_union=use_union,
+            include_dependencies=include_dependencies,
             cast_value=cast_value,
             value_mode=value_mode,
         )
@@ -933,9 +933,9 @@ class Q:
         *,
         alias: Optional[str] = None,
         only_data_nodes: bool = False,
-        use_union: bool = True,
+        include_dependencies: bool = True,
     ) -> list[str]:
-        res = self.execute(use_union=use_union)
+        res = self.execute(include_dependencies=include_dependencies)
         cols = res.get("columns", [])
         rows = res.get("rows", [])
 
@@ -1324,17 +1324,21 @@ class Q:
         return f"SELECT DISTINCT {select_vars}\nWHERE {{\n  {where_block}\n}}"
 
 
-    def execute(self,use_union = True) -> dict:
+    def execute(self, include_dependencies: bool = True) -> dict:
         """Execute this query against the metadata graph.
 
         Currently, this uses to_sparql() and OxigraphGraphStore.sparql_query().
         Later you can redirect to your VF2-based matcher.
         """
-        if self.cache.get("execute") is None:
+        cache_key = f"execute:{include_dependencies}"
+        if self.cache.get(cache_key) is None:
             sparql = self.to_sparql()
             # print("Executing SPARQL:\n",sparql)
-            self.cache["execute"] = self.client.sparql_query(sparql, use_union=use_union)
-        return self.cache["execute"]
+            self.cache[cache_key] = self.client.sparql_query(
+                sparql,
+                include_dependencies=include_dependencies,
+            )
+        return self.cache[cache_key]
 
     # ----------------------------------------------------
     # ---------- visualization / debugging ---------------
@@ -1471,13 +1475,20 @@ class Q:
         start: datetime | None = None,
         end: datetime | None = None,
         order: str = "asc",
-        use_union: bool = True,
+        include_dependencies: bool = True,
         shape: str = "wide",
     ) -> pl.DataFrame:
         """
         Print and return the head of the time series DataFrame for this query.
         """
-        df = self.dataframe(start=start, end=end, order=order,limit=k, use_union=use_union, shape=shape)
+        df = self.dataframe(
+            start=start,
+            end=end,
+            order=order,
+            limit=k,
+            include_dependencies=include_dependencies,
+            shape=shape,
+        )
         print(df)
         return df
 
