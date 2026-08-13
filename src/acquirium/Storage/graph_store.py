@@ -28,7 +28,8 @@ from acquirium._ontologies import (
     rename_ontology_iri,
 )
 from acquirium.Server.config import OntologySource
-from acquirium.Storage.graph_registry import ACQUIRIUM_GRAPH_URI, GraphRegistry
+from acquirium.Storage.graph_registry import ACQUIRIUM_GRAPH_URI, SOURCE_GRAPH_PREFIX
+from acquirium.Storage.graph_registry import source_graph_uri as _compute_source_graph_uri
 
 _logger = logging.getLogger("acquirium.graph_store")
 
@@ -94,11 +95,15 @@ class _OntoenvOxigraphStore:
     fired on any add/remove so the owner can invalidate its cached
     data-graph closure.
 
-    ``excluded_iris`` names the graphs acquirium owns in that shared
-    dataset. ontoenv syncs its catalog from ``graph_ids()``, so anything
-    left in there gets catalogued as an ontology — the main data graph and
-    rdflib's default graph would otherwise show up as (empty, and with
-    their non-absolute IRIs resolved against the cwd) bogus ontologies.
+    ``excluded_iris`` names the fixed non-source graphs acquirium owns in
+    that shared dataset (the query-cache graphs, which never actually live
+    here but are excluded defensively). ``is_data_graph`` recognizes every
+    other acquirium-owned graph — including source graphs registered after
+    this store was constructed — by URI shape rather than a static list.
+    ontoenv syncs its catalog from ``graph_ids()``, so anything left in
+    there gets catalogued as an ontology — the main data graph and rdflib's
+    default graph would otherwise show up as (empty, and with their
+    non-absolute IRIs resolved against the cwd) bogus ontologies.
     """
 
     def __init__(
@@ -107,12 +112,14 @@ class _OntoenvOxigraphStore:
         on_change: Callable[[], None],
         *,
         excluded_iris: Iterable[URIRef] = (),
+        is_data_graph: Callable[[URIRef], bool] = lambda uri: False,
     ) -> None:
         self._ds = dataset
         self._on_change = on_change
         self._excluded = {str(iri) for iri in excluded_iris} | {
             str(DATASET_DEFAULT_GRAPH_ID)
         }
+        self._is_data_graph = is_data_graph
 
     def add_graph(self, iri: str, graph: Graph, overwrite: bool = False) -> None:
         ctx = self._ds.graph(URIRef(iri))
@@ -146,7 +153,11 @@ class _OntoenvOxigraphStore:
         self._on_change()
 
     def _ontology_graphs(self) -> list[Graph]:
-        return [g for g in self._ds.graphs() if str(g.identifier) not in self._excluded]
+        return [
+            g for g in self._ds.graphs()
+            if str(g.identifier) not in self._excluded
+            and not self._is_data_graph(g.identifier)
+        ]
 
     def graph_ids(self) -> list[str]:
         return [str(g.identifier) for g in self._ontology_graphs()]
@@ -210,10 +221,6 @@ class OxigraphGraphStore:
             self.query_dataset, self.query_store_path = self._open_dataset(self.query_store_path)
 
         self.main_graph_uri = main_graph_uri
-        self.graph_registry = GraphRegistry(
-            self.store_path / "graph_registry.json",
-            plant_graph_uri=str(self.main_graph_uri),
-        )
         self.acquirium_graph_uri = URIRef(ACQUIRIUM_GRAPH_URI)
         self._source_version = self._load_source_version()
         self._closure_version = 0
@@ -232,11 +239,10 @@ class OxigraphGraphStore:
             self.source_dataset,
             self._mark_ontology_graph_changed,
             excluded_iris=(
-                self.main_graph_uri,
-                self.acquirium_graph_uri,
                 self.dependency_query_graph_uri,
                 self.inferred_data_graph_uri,
             ),
+            is_data_graph=self._is_registered_data_graph_uri,
         )
         with timed_debug(_logger, "OntoEnv build env_root=%s", self.env_root):
             self.env, is_warm_start = self._build_ontoenv()
@@ -607,14 +613,25 @@ class OxigraphGraphStore:
                 )
         return target
 
-    def _registered_data_graph(self, graph_uri: URIRef | None) -> Graph:
-        """Return a writable registered graph; default to the plant graph.
+    def _is_registered_data_graph_uri(self, uri: URIRef) -> bool:
+        """Recognize an acquirium-owned deployment data graph by its URI shape.
 
-        The registry is the allow-list that separates deployment data from
-        ontoenv-managed ontology graphs in the shared source dataset.
+        Separates deployment data from ontoenv-managed ontology graphs in the
+        shared source dataset without tracking ownership as separate state:
+        the plant and acquirium graphs are fixed URIs, and every source graph
+        lives under ``SOURCE_GRAPH_PREFIX``.
         """
+        s = str(uri)
+        return (
+            s == str(self.main_graph_uri)
+            or s == str(self.acquirium_graph_uri)
+            or s.startswith(SOURCE_GRAPH_PREFIX)
+        )
+
+    def _registered_data_graph(self, graph_uri: URIRef | None) -> Graph:
+        """Return a writable registered graph; default to the plant graph."""
         target_uri = graph_uri or self.main_graph_uri
-        if target_uri not in {URIRef(record.uri) for record in self.graph_registry.data_graphs()}:
+        if not self._is_registered_data_graph_uri(target_uri):
             raise ValueError(f"graph is not a registered data input: {target_uri}")
         return self.source_dataset.graph(target_uri)
 
@@ -858,15 +875,16 @@ class OxigraphGraphStore:
     
     # -------------------- helpers --------------------
     def source_graph_uri(self, source_id: str) -> URIRef:
-        """Get the registered data graph for one driver or metadata source."""
-        with self._lock:
-            return URIRef(self.graph_registry.source_graph(source_id).uri)
+        """Get the data graph for one driver or metadata source."""
+        return _compute_source_graph_uri(source_id, plant_graph_uri=str(self.main_graph_uri))
 
     def _source_data_graph(self) -> Graph:
         """Materialize the union of registered deployment data graphs only."""
         merged = Graph()
-        for record in self.graph_registry.data_graphs():
-            for triple in self.source_dataset.graph(URIRef(record.uri)):
+        for context in self.source_dataset.graphs():
+            if not self._is_registered_data_graph_uri(context.identifier):
+                continue
+            for triple in context:
                 merged.add(triple)
         return merged
 

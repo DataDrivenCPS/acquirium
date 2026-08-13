@@ -417,10 +417,12 @@ ex:item a ex:Thing .
         union = graph_store.sparql_query(
             "SELECT ?s WHERE { ?s a <http://example.org/GeneratedType> }",
             include_dependencies=True,
+            wait_for_fresh=True,
         )
         inferred_data = graph_store.sparql_query(
             "SELECT ?s WHERE { ?s a <http://example.org/GeneratedType> }",
             include_dependencies=False,
+            wait_for_fresh=True,
         )
 
         assert len(union["rows"]) == 1
