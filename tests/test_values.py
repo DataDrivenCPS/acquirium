@@ -124,19 +124,32 @@ def test_typed_value_series_dtypes():
     s = typed_value_series([1.5, None, 2])
     assert s.dtype == pl.String
     assert s.to_list() == ["1.5", None, "2"]
-    # int beyond float range: Object, so the row-wise path keeps text semantics.
+    # Any int past Int64 forces Object, so the row-wise path keeps text
+    # semantics — including when it is mixed with other scalar types.
     assert typed_value_series([10**400]).dtype == pl.Object
+    assert typed_value_series([10**20]).dtype == pl.Object
+    assert typed_value_series([10**400, "abc"]).dtype == pl.Object
+    assert typed_value_series([10**400, 1.5]).dtype == pl.Object
     # Exotic types stay Object.
     assert typed_value_series([datetime(2024, 1, 1)]).dtype == pl.Object
 
 
 @pytest.mark.unit
-def test_huge_int_in_homogeneous_batch_stored_as_text():
-    out = prepare_value_columns(
-        _frame(typed_value_series([10**400]), ["numeric"])
-    )
-    assert out["numeric_value"].to_list() == [None]
-    assert out["text_value"].to_list() == [str(10**400)]
+def test_huge_int_stored_as_text():
+    """An int past float range keeps its digits, as split_value does.
+
+    Stringifying such a batch would parse it back to inf and drop it, so this
+    holds for mixed batches too, not just homogeneous ones.
+    """
+    for values, kinds in [
+        ([10**400], ["numeric"]),
+        ([10**400, "abc"], ["numeric", "numeric"]),
+        ([10**400, 1.5], ["numeric", "numeric"]),
+    ]:
+        out = prepare_value_columns(_frame(typed_value_series(values), kinds))
+        assert out["numeric_value"].to_list()[0] is None
+        assert out["text_value"].to_list()[0] == str(10**400)
+        _assert_matches_rowwise(values, kinds)
 
 
 @pytest.mark.unit

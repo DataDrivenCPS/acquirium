@@ -110,19 +110,23 @@ def typed_value_series(values: list[Any]) -> pl.Series:
     e.g. one manager call spanning numeric and text streams — is stringified
     rather than sent to Object: ``str()`` is exactly what ``split_value``
     stores under text kind, and floats round-trip through repr under numeric
-    kind. Non-scalar types, and ints too large for Int64, take the Object
-    (row-wise) path where their semantics are preserved exactly.
+    kind. Non-scalar types, and any batch holding an int too large for Int64,
+    take the Object (row-wise) path where their semantics are preserved
+    exactly.
     """
     types = {type(v) for v in values}
     types.discard(type(None))
+    if int in types and any(
+        type(v) is int and not -(2**63) <= v < 2**63 for v in values
+    ):
+        # An int past Int64 has no native column to live in. Stringifying it
+        # would be lossy: one past float range parses back to inf, and the
+        # split drops non-finite values, where split_value stores the digits
+        # as text. The row-wise path keeps that behaviour.
+        return pl.Series("value", values, dtype=pl.Object)
     if types == {int}:
-        try:
-            # Int64, not Float64: under text kind the cast must render "7", not "7.0".
-            return pl.Series("value", values, dtype=pl.Int64)
-        except (OverflowError, TypeError):
-            # Beyond Int64: split_value stores such values as text, so take the
-            # row-wise path rather than lose them to a lossy cast.
-            return pl.Series("value", values, dtype=pl.Object)
+        # Int64, not Float64: under text kind the cast must render "7", not "7.0".
+        return pl.Series("value", values, dtype=pl.Int64)
     if types == {float}:
         return pl.Series("value", values, dtype=pl.Float64)
     if types <= {str}:  # also all-None/empty: String nulls split to (None, None)
