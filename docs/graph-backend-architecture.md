@@ -324,9 +324,7 @@ where the desired policy or mechanism has not been settled yet.
 - **Concurrency limits.** The current lock/snapshot behavior is correct for the
   tested embedded-store setup, but operational reader/writer load testing at
   representative production sizes is still needed before changing lock scope or
-  promising throughput targets. Use
-  [`graph_store_concurrency.py`](../benchmarks/graph_store_concurrency.py) for
-  the Acquirium-level workload and record its raw JSON with any conclusion.
+  promising throughput targets.
 - **Remote graph service.** A separate service may be appropriate for
   multi-host scaling, but it would need an explicit deployment, persistence,
   failure-recovery, authentication, and API design. A Ray actor by itself does

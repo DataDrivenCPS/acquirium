@@ -42,7 +42,7 @@ TEST_PYTEST_ENV := ACQUIRIUM_TEST_SERVER_HOST=localhost ACQUIRIUM_TEST_SERVER_PO
 # `make test-timing PYTEST_DURATIONS=0` to list every test duration.
 PYTEST_DURATIONS ?= 20
 
-.PHONY: up rebuild down no-server-up no-server-down test test-timing testing-up testing-down watertap-up watertap-down logs ps benchmark-graph-store
+.PHONY: up rebuild down no-server-up no-server-down test test-timing testing-up testing-down watertap-up watertap-down logs ps
 
 up:
 	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile server up -d --build
@@ -114,9 +114,6 @@ unit-test:
 
 unit-test-cov:
 	uv run pytest tests/unit/ -v --tb=short --cov=acquirium --cov-report=term-missing
-
-benchmark-graph-store:
-	uv run python benchmarks/graph_store_concurrency.py
 
 integration-test:
 	$(MAKE) testing-up
