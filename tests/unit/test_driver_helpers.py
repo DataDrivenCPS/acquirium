@@ -80,4 +80,7 @@ def test_csv_watch_dir_resolves_relative_to_config_dir(tmp_path: Path):
         },
     )
     driver.setup()
-    assert driver._watch_dir == (config_dir / "raw").resolve()
+    assert driver.watch_dir == (config_dir / "raw").resolve()
+    # A watch dir that does not exist yet is not an error; it simply yields no
+    # files until something creates it.
+    assert list(driver.watch_dir.rglob("*.csv")) == []

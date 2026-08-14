@@ -2,73 +2,76 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
 import polars as pl
 
-from acquirium.Drivers.BuiltInDrivers.tabular_base import TabularIngestBase
-from acquirium.internals._log import timed_debug
+from acquirium.Drivers.Driver import FileIngestDriver, safe_stream_name
+from acquirium.Drivers.BuiltInDrivers.tabular import to_observations
 
 logger = logging.getLogger("acquirium.xlsx_ingest")
 
 
-class XLSXIngestDriver(TabularIngestBase):
-    """Watches a directory for Excel (XLSX) files and ingests new rows into Acquirium.
+class XLSXIngestDriver(FileIngestDriver):
+    """Watches a directory for Excel (XLSX) files and ingests new rows.
 
-    Row positions are tracked in memory so only rows added since the last tick
-    are inserted.  Files are never moved or deleted.
-
-    Wide and narrow formats are supported — see ``CSVIngestDriver`` for details.
-    When multiple sheets are specified they are concatenated before parsing.
+    Each file becomes its own datasource, named after its path. Wide and narrow
+    layouts are supported — see ``CSVIngestDriver``. Multiple sheets are
+    concatenated before reshaping.
 
     Config keys (all optional, under ``self.config["driver"]``):
 
     .. code-block:: toml
 
         [[drivers]]
-        spec         = "acquirium.Drivers.BuiltInDrivers.xlsx_ingest:XLSXIngestDriver"
-        interval     = 5.0
-        watch_dir    = "./data/incoming"
-        format       = "auto"        # "auto" | "wide" | "narrow"
-        time_col     = "time"
-        id_col       = "id"          # narrow only
-        value_col    = "value"       # narrow only
-        skip_cols    = ["notes"]     # optional columns to ignore entirely
-        date_format  = "%m/%d/%Y"    # optional; only needed for non-ISO date strings
-        sheets       = ["Sheet1"]    # omit to read the first sheet only
-
-    Override ``read_frame()`` to handle custom layouts::
-
-        class MyDriver(XLSXIngestDriver):
-            def read_frame(self, path, row_offset=0):
-                df = pl.read_excel(path, sheet_name="Data", engine="calamine")
-                df = df.slice(row_offset).rename({"Timestamp": "time"})
-                return df, len(df)
+        spec        = "acquirium.Drivers.BuiltInDrivers.xlsx_ingest:XLSXIngestDriver"
+        interval    = 5.0
+        watch_dir   = "./data/incoming"
+        format      = "auto"        # "auto" | "wide" | "narrow"
+        time_col    = "time"
+        id_col      = "id"          # narrow only
+        value_col   = "value"       # narrow only
+        skip_cols   = ["notes"]     # columns to ignore entirely
+        date_format = "%m/%d/%Y"    # only needed for non-ISO date strings
+        sheets      = ["Sheet1"]    # omit to read the first sheet only
     """
 
-    _glob_patterns = ("*.xlsx",)
+    glob = "*.xlsx"
 
-    def configure_tabular_driver(self) -> None:
-        raw_sheets = self.config.get("driver", {}).get("sheets", None)
-        self._sheets: list[str] | None = list(raw_sheets) if raw_sheets else None
-        logger.info("xlsx_ingest watching %s", self._watch_dir)
+    def read(self, path: Path, cursor: Any) -> tuple[pl.DataFrame, Any]:
+        offset = cursor or 0
+        cfg = self.config.get("driver", {})
 
-    def read_frame(self, path: Path, row_offset: int = 0) -> tuple[pl.DataFrame, int]:
-        df = self._read_excel(path, row_offset)
-        return df, len(df)
+        sheets = cfg.get("sheets") or None
+        if sheets:
+            result = pl.read_excel(path, sheet_name=list(sheets), engine="calamine")
+            frames = list(result.values()) if isinstance(result, dict) else [result]
+            df = pl.concat(frames, how="diagonal_relaxed") if len(frames) > 1 else frames[0]
+        else:
+            df = pl.read_excel(path, engine="calamine")
 
-    def _read_excel(self, path: Path, row_offset: int) -> pl.DataFrame:
-        """Read an Excel workbook, merging requested sheets into one DataFrame."""
-        with timed_debug(logger, "xlsx read path=%s sheets=%s offset=%d", path.name, self._sheets, row_offset):
-            if self._sheets:
-                result = pl.read_excel(path, sheet_name=self._sheets, engine="calamine")
-                if isinstance(result, dict):
-                    frames = list(result.values())
-                    df = pl.concat(frames, how="diagonal_relaxed") if len(frames) > 1 else frames[0]
-                else:
-                    df = result
-            else:
-                df = pl.read_excel(path, engine="calamine")
-            skip_cols = set(self.skip_cols(path, [str(name) for name in df.columns]))
-            if skip_cols:
-                df = df.drop(list(skip_cols))
-        return df.slice(row_offset)
+        skip_cols = cfg.get("skip_cols", [])
+        skip_cols = [skip_cols] if isinstance(skip_cols, str) else list(skip_cols)
+        drop = [c for c in skip_cols if c in df.columns]
+        if drop:
+            df = df.drop(drop)
+
+        df = df.slice(offset)
+        if df.is_empty():
+            return df, cursor
+
+        # One datasource for the whole directory when the driver has one —
+        # from `source_id` in config, or assigned by a subclass in setup() —
+        # else one per file so identical column names stay distinct.
+        source_id = self._source_id or safe_stream_name(str(path))
+        observations = to_observations(
+            df,
+            time_col=cfg.get("time_col", "time"),
+            id_col=cfg.get("id_col", "id"),
+            value_col=cfg.get("value_col", "value"),
+            layout=cfg.get("format", "auto"),
+            date_format=cfg.get("date_format"),
+        )
+        for name in observations["ref_name"].unique():
+            self.declare(name, source_id=source_id)
+        return observations.with_columns(pl.lit(source_id).alias("source_id")), offset + len(df)

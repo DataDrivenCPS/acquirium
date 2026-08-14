@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import threading
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,9 +13,28 @@ from rdflib import URIRef
 
 from acquirium.DriverState import DriverState
 from acquirium.internals.models import compute_ref_uri
+from acquirium.Storage.values import assign_stream_value_kind
 from acquirium.internals._log import timed_debug
 
 logger = logging.getLogger("acquirium.driver")
+
+# Spaces and characters that break URIs / RDF IRIs, mapped to safe replacements
+_URI_UNSAFE = str.maketrans({
+    "\n": "_", "\r": "_", "\t": "_",
+    " ": "_", "(": "", ")": "",
+    "#": "", "?": "", "<": "", ">": "",
+    '"': "", "'": "", "\\": "", "`": "",
+})
+
+
+def safe_stream_name(s: str) -> str:
+    """Normalize a raw column/header name into a URI-safe stream name.
+
+    This is the naming contract stored ref URIs are minted from, so every
+    driver must use it to keep producing the same stream identity for the
+    same source-side name.
+    """
+    return " ".join(s.split()).translate(_URI_UNSAFE)
 
 if TYPE_CHECKING:
     import polars as pl
@@ -46,7 +66,6 @@ class Driver(ABC):
 
     Example::
 
-        import polars as pl
         from acquirium.Drivers.Driver import PollingIngestDriver
 
         class MyDriver(PollingIngestDriver):
@@ -55,10 +74,8 @@ class Driver(ABC):
                 self.aq.register_datasource(self.source_id)
                 self.aq.register_streams([{"source_id": self.source_id, "ref_name": "temp"}])
 
-            def collect(self):
-                return pl.DataFrame({"ts": [datetime.now(timezone.utc)],
-                                     "ref_name": ["temp"],
-                                     "value": [21.5]})
+            def read(self):
+                self.add("temp", 21.5)
 
     Run it by listing it under ``[[drivers]]`` in acquirium.toml::
 
@@ -86,9 +103,11 @@ class Driver(ABC):
         """
         if self._source_id is None:
             raise AttributeError(
-                f"{type(self).__name__}.source_id is not set yet — assign it "
-                "(e.g. `self.source_id = \"...\"`) before calling insert_graph, "
-                "register_streams, or other source-scoped helpers."
+                f"{type(self).__name__}.source_id is not set yet. Set "
+                "`source_id` under the driver's config, or assign "
+                "`self.source_id` in setup() when it has to be derived at "
+                "runtime — it is needed by insert_graph, declare, "
+                "register_streams, and other source-scoped helpers."
             )
         return self._source_id
 
@@ -100,7 +119,7 @@ class Driver(ABC):
         """Return the canonical reference URI for ``self.source_id``/``ref_name``."""
         return compute_ref_uri(self.source_id, ref_name)
 
-    def insert_graph(self, rdf_graph: str | Path, *, format: str = "turtle", replace: bool = False) -> None:
+    def insert_graph(self, rdf_graph: str | Path, *, format: str | None = None, replace: bool = False) -> None:
         """Write RDF to this driver's source-owned graph.
 
         Driver code must not pass a source id manually: this helper always
@@ -225,12 +244,227 @@ def _sanitize_filename(name: str) -> str:
 class IngestDriver(Driver):
     """Driver base for sources that emit canonical timeseries observations.
 
-    Observations are represented as a Polars DataFrame with required columns
-    ``ts``, ``ref_name``, and ``value``. Each stream must have a ``source_id``:
-    either include a ``source_id`` column for multi-source frames or set
+    Most drivers should report readings one at a time with :meth:`add`; the
+    buffered rows are inserted by :meth:`flush`, which the tick lifecycle calls
+    for you. Drivers that already hold their data in bulk can instead pass a
+    Polars DataFrame to :meth:`insert_observations` directly, with required
+    columns ``ts``, ``ref_name``, and ``value``.
+
+    Either way each stream must have a ``source_id``: pass one per observation
+    (or include a ``source_id`` column) for multi-source drivers, or set
     ``self.source_id`` as the default for single-source drivers. Drivers must
     register each stream, including its value kind, before inserting rows.
     """
+
+    #: Safety valve, not a tuning knob. The buffer never holds more than this
+    #: many observations. Reaching it normally means the driver is doing bulk
+    #: work through :meth:`add` and should return a frame from ``collect()``
+    #: instead; while inserts are failing it instead bounds the retry backlog.
+    max_buffered_rows: int = 100_000
+
+    def __init__(self, aq: "Acquirium", config: dict) -> None:
+        super().__init__(aq, config)
+        # Event drivers add from broker callback threads, so the buffer is
+        # guarded even though polling drivers only touch it from the tick.
+        self._pending: list[tuple[str | None, datetime, str, Any]] = []
+        self._pending_lock = threading.Lock()
+        self._flush_failed = False
+        # Streams declared but not yet written to the graph, and those already
+        # written — identity and value kind are tracked separately because the
+        # kind is only knowable once values have been seen.
+        self._undeclared: dict[tuple[str | None, str], dict[str, Any]] = {}
+        self._declared: set[tuple[str | None, str]] = set()
+        self._kinded: set[tuple[str | None, str]] = set()
+
+    def declare(self, ref_name: str, *, source_id: str | None = None, **metadata: Any) -> None:
+        """Declare a stream's identity and semantics.
+
+        Idempotent and batched: call it for every stream every time you read a
+        source, and it costs nothing after the first. The declaration is written
+        to the graph just before the next insert, so streams always exist before
+        their observations do.
+
+        ``metadata`` accepts the same keys as ``Acquirium.register_streams`` —
+        ``point_uri``, ``unit``, ``quantity_kind``, ``label``, and so on.
+        ``value_kind`` is inferred from observed values when you omit it.
+
+        ``source_id`` defaults to the driver's own. Pass it only for drivers
+        spanning several datasources, and then pass it consistently: streams are
+        identified by the ``(source_id, ref_name)`` pair, matching how their
+        observations are identified.
+        """
+        # Resolve against the driver's own source so declarations from setup()
+        # and from read() name the same stream whether or not each passed one.
+        key = (source_id if source_id is not None else self._source_id, ref_name)
+        if key in self._declared:
+            return
+        pending = self._undeclared.setdefault(key, {})
+        conflicts = {
+            key: (pending[key], value)
+            for key, value in metadata.items()
+            if key in pending and pending[key] != value
+        }
+        if conflicts:
+            raise ValueError(
+                f"conflicting declarations for stream {ref_name!r}: "
+                + ", ".join(f"{k} was {was!r}, now {now!r}" for k, (was, now) in conflicts.items())
+                + ". Two sources cannot share one stream name."
+            )
+        pending.update(metadata)
+
+    def register_declared(self, observations: "pl.DataFrame | None" = None) -> None:
+        """Write pending declarations, inferring value kinds from *observations*.
+
+        Streams seen in ``observations`` but never declared are registered from
+        their data alone, so a driver that never calls :meth:`declare` still
+        produces well-formed streams.
+        """
+        import polars as pl
+
+        specs: dict[tuple[str | None, str], dict[str, Any]] = {
+            key: dict(meta)
+            for key, meta in self._undeclared.items()
+            if key not in self._declared
+        }
+
+        unkinded: set[tuple[str | None, str]] = set()
+        if observations is not None and not observations.is_empty():
+            multi = "source_id" in observations.columns
+            group = ["source_id", "ref_name"] if multi else ["ref_name"]
+            by_stream = observations.group_by(group).agg(pl.col("value"))
+            for row in by_stream.iter_rows(named=True):
+                key = (row["source_id"], row["ref_name"]) if multi else (None, row["ref_name"])
+                if key in self._kinded or "value_kind" in specs.get(key, {}):
+                    continue
+                specs.setdefault(key, {})["value_kind"] = assign_stream_value_kind(row["value"])
+                unkinded.add(key)
+
+        if not specs:
+            return
+        self.aq.register_streams([
+            {"source_id": source_id or self.source_id, "ref_name": name, **meta}
+            for (source_id, name), meta in specs.items()
+        ])
+        self._declared |= set(self._undeclared)
+        self._undeclared.clear()
+        # An explicitly declared kind counts as known, so the next batch of
+        # observations does not re-infer and re-register it.
+        self._kinded |= unkinded | {k for k, meta in specs.items() if "value_kind" in meta}
+
+    def add(
+        self,
+        ref_name: str,
+        value: Any,
+        ts: datetime | None = None,
+        *,
+        source_id: str | None = None,
+    ) -> None:
+        """Buffer a single observation for insertion.
+
+        ``ts`` defaults to the current UTC time; naive datetimes are read as
+        UTC. ``source_id`` defaults to ``self.source_id`` at flush time and only
+        needs passing by drivers that span several datasources.
+
+        Buffered rows are inserted by :meth:`flush` at the end of each tick.
+        """
+        if ts is None:
+            ts = datetime.now(timezone.utc)
+        elif ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+
+        with self._pending_lock:
+            self._pending.append((source_id, ts, str(ref_name), value))
+            if len(self._pending) <= self.max_buffered_rows:
+                return
+            # Over the ceiling. While inserts are failing we retry on the tick
+            # rather than per-add, so make room instead of attempting a flush.
+            dropped = self._trim_locked() if self._flush_failed else 0
+            failing = self._flush_failed
+
+        if failing:
+            if dropped:
+                logger.warning(
+                    "%s: dropped %d buffered observation(s) — inserts are failing "
+                    "and the buffer is at max_buffered_rows=%d",
+                    type(self).__name__, dropped, self.max_buffered_rows,
+                )
+            return
+
+        logger.warning(
+            "%s: %d observations buffered within one tick — flushing early. "
+            "Drivers producing data in bulk should return a frame from collect() "
+            "rather than calling add() per row.",
+            type(self).__name__, self.max_buffered_rows,
+        )
+        self.flush()
+
+    def flush(self) -> dict[str, Any]:
+        """Insert everything buffered by :meth:`add` and clear the buffer.
+
+        Called for you at the end of every tick. On insert failure the rows are
+        put back and the exception propagates; they are not retried until the
+        next tick, so a failing server is polled at the driver's interval rather
+        than on every :meth:`add`.
+        """
+        with self._pending_lock:
+            if not self._pending:
+                self._flush_failed = False
+                return {"ok": True, "rows_inserted": 0}
+            rows, self._pending = self._pending, []
+
+        frame = self._pending_frame(rows)
+        try:
+            self.register_declared(frame)
+            result = self.insert_observations(frame)
+        except Exception:
+            self._restore_pending(rows)
+            raise
+
+        with self._pending_lock:
+            self._flush_failed = False
+        return result
+
+    def _restore_pending(self, rows: list[tuple[str | None, datetime, str, Any]]) -> None:
+        with self._pending_lock:
+            self._flush_failed = True
+            self._pending[:0] = rows
+            dropped = self._trim_locked()
+        if dropped:
+            logger.warning(
+                "%s: dropped %d buffered observation(s) — insert failed and the "
+                "retry backlog is at max_buffered_rows=%d",
+                type(self).__name__, dropped, self.max_buffered_rows,
+            )
+
+    def _trim_locked(self) -> int:
+        """Drop oldest rows past the ceiling. Caller must hold the lock."""
+        overflow = len(self._pending) - self.max_buffered_rows
+        if overflow > 0:
+            del self._pending[:overflow]
+            return overflow
+        return 0
+
+    def _pending_frame(self, rows: list[tuple[str | None, datetime, str, Any]]) -> "pl.DataFrame":
+        import polars as pl
+
+        columns = {
+            "ts": pl.Series("ts", [row[1] for row in rows]),
+            "ref_name": pl.Series("ref_name", [row[2] for row in rows], dtype=pl.Utf8),
+            "value": pl.Series("value", [row[3] for row in rows], dtype=pl.Object),
+        }
+        if any(row[0] is not None for row in rows):
+            # Rows that didn't name a source fall back to the driver default,
+            # which raises a clear error when it was never assigned.
+            default = self.source_id if any(row[0] is None for row in rows) else None
+            columns = {
+                "source_id": pl.Series(
+                    "source_id",
+                    [default if row[0] is None else row[0] for row in rows],
+                    dtype=pl.Utf8,
+                ),
+                **columns,
+            }
+        return pl.DataFrame(columns)
 
     def insert_observations(self, observations: "pl.DataFrame | None") -> dict[str, Any]:
         import polars as pl
@@ -357,18 +591,140 @@ class IngestDriver(Driver):
 
 
 class PollingIngestDriver(IngestDriver):
-    """Ingest driver whose data is pulled by the runner on each tick."""
+    """Ingest driver whose data is pulled by the runner on each tick.
+
+    Implement :meth:`read` and report each value with ``self.add(...)``::
+
+        class MyDriver(PollingIngestDriver):
+            def read(self):
+                self.add("temp", read_sensor())
+
+    Drivers that already hold a tick's worth of data in bulk — a file read, a
+    model solve — can implement :meth:`collect` instead and return a frame.
+    """
+
+    def __init__(self, aq: "Acquirium", config: dict) -> None:
+        super().__init__(aq, config)
+        cls = type(self)
+        if cls.read is PollingIngestDriver.read and cls.collect is PollingIngestDriver.collect:
+            raise TypeError(
+                f"{cls.__name__} must implement read() (reporting values with "
+                "self.add) or collect() (returning an observation frame)"
+            )
 
     def tick(self) -> None:
-        self.insert_observations(self.collect())
+        self.read()
+        observations = self.collect()
+        if observations is not None:
+            self.insert_observations(observations)
+        self.flush()
 
-    @abstractmethod
-    def collect(self) -> "pl.DataFrame":
-        """Return canonical observations for the current tick."""
+    def read(self) -> None:
+        """Sample the source, reporting each value with ``self.add(...)``."""
+
+    def collect(self) -> "pl.DataFrame | None":
+        """Return this tick's observations in bulk, or ``None`` when using :meth:`read`."""
+        return None
+
+
+class FileIngestDriver(IngestDriver):
+    """Ingest driver that pages through files appearing in a watched directory.
+
+    Set :attr:`glob` and implement :meth:`read`. The framework owns discovery,
+    per-file cursors persisted across restarts, stream registration, insertion,
+    and error isolation so one unreadable file cannot stall the rest.
+
+    Example::
+
+        class MyDriver(FileIngestDriver):
+            glob = "*.csv"
+
+            def read(self, path, cursor):
+                df = pl.read_csv(path, skip_rows_after_header=cursor or 0)
+                for column in df.columns:
+                    self.declare(column)
+                observations = df.unpivot(index="ts", variable_name="ref_name",
+                                          value_name="value")
+                return observations, (cursor or 0) + len(df)
+
+    Config keys: ``watch_dir`` (default ``.``, resolved against the config
+    directory) and ``source_id``.
+    """
+
+    #: Filename pattern(s) matched recursively under ``watch_dir``.
+    glob: str | tuple[str, ...] = "*"
+
+    def setup(self) -> None:
+        """Adopt the configured ``source_id``.
+
+        Override for one-time work — registering a datasource, loading a model
+        — calling ``super().setup()`` first. Assign ``self.source_id`` yourself
+        instead when it has to be derived at runtime rather than configured.
+        """
+        source_id = self.config.get("driver", {}).get("source_id")
+        if source_id:
+            self.source_id = source_id
+
+    def read(self, path: Path, cursor: Any) -> tuple["pl.DataFrame", Any]:
+        """Return observations from *path*, plus the cursor to resume from.
+
+        ``cursor`` is whatever this method returned for *path* last time, or
+        ``None`` on first sight. It is opaque to the framework, which only
+        persists it — a row offset, a byte position, and a timestamp are all
+        equally valid.
+
+        Observations are a frame of ``ts``, ``ref_name``, ``value``. Return an
+        unchanged cursor to signal there was nothing new.
+        """
+        raise NotImplementedError
+
+    # ------------------------------------------------------------ framework
+
+    def __init__(self, aq: "Acquirium", config: dict) -> None:
+        super().__init__(aq, config)
+        watch_dir = Path(config.get("driver", {}).get("watch_dir", "."))
+        self.watch_dir = (
+            watch_dir if watch_dir.is_absolute()
+            else (self.config_dir() / watch_dir).resolve()
+        )
+        self._cursors: dict[str, Any] = self.state.get("cursors", {})
+
+    def tick(self) -> None:
+        # Declarations made during setup() reach the graph even before any file
+        # shows up, so a model's bindings are complete from the first tick.
+        self.register_declared()
+
+        patterns = (self.glob,) if isinstance(self.glob, str) else self.glob
+        for path in sorted({p for pat in patterns for p in self.watch_dir.rglob(pat)}):
+            key = str(path)
+            cursor = self._cursors.get(key)
+            try:
+                observations, next_cursor = self.read(path, cursor)
+            except Exception:
+                logger.exception("%s: failed to read %s", type(self).__name__, path.name)
+                continue
+            if next_cursor == cursor:
+                continue
+
+            if observations is not None and not observations.is_empty():
+                self.register_declared(observations)
+                result = self.insert_observations(observations)
+                logger.info(
+                    "%s: %s — inserted %d observation(s)",
+                    type(self).__name__, path.name, result.get("rows_inserted", 0),
+                )
+
+            self._cursors[key] = next_cursor
+            self.state.set("cursors", self._cursors)
 
 
 class EventIngestDriver(IngestDriver):
-    """Ingest driver whose data arrives asynchronously and is pushed by callbacks."""
+    """Ingest driver whose data arrives asynchronously and is pushed by callbacks.
+
+    Callbacks report values with ``self.add(...)``; the buffer is flushed on
+    each tick, so observations are batched at the driver's configured interval
+    rather than inserted one round-trip at a time.
+    """
 
     def tick(self) -> None:
-        return None
+        self.flush()

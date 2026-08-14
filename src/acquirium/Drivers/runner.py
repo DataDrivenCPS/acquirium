@@ -3,6 +3,8 @@ from typing import TYPE_CHECKING, Any
 
 import asyncio
 import logging
+import time
+
 import ray
 
 from acquirium.internals._log import configure_logging, timed_debug as _timed_debug
@@ -13,6 +15,13 @@ if TYPE_CHECKING:
     from acquirium.Drivers.Driver import Driver
 
 logger = logging.getLogger("acquirium.driver.runner")
+
+# Floor for graph-change polling when a driver ticks faster than this. Ticking
+# is the driver's own cadence — for ingest drivers it is also how often buffered
+# observations are inserted — while graph changes are rare, so a fast tick must
+# not turn into a fast poll of the server.
+DEFAULT_GRAPH_POLL_INTERVAL = 10.0
+
 
 @ray.remote
 class DriverRunner:
@@ -41,6 +50,13 @@ class DriverRunner:
         self.driver: Driver = driver_cls(acquirium_cli, driver_cfg)
         self.acquirium_cli = acquirium_cli
         self.interval = interval
+        configured_poll = driver_cfg.get("driver", {}).get("graph_poll_interval")
+        self.graph_poll_interval = (
+            float(configured_poll)
+            if configured_poll is not None
+            else max(interval, DEFAULT_GRAPH_POLL_INTERVAL)
+        )
+        self._last_graph_poll = 0.0
         self.source_version = 0
         self.logger = logging.getLogger(
             f"acquirium.driver.{type(self.driver).__name__}"
@@ -60,6 +76,7 @@ class DriverRunner:
         self.driver.setup()
         # Seed after setup so the loop doesn't fire on_graph_change() for the
         # pre-existing graph or this driver's own setup insertions.
+        self._last_graph_poll = time.monotonic()
         try:
             self.source_version = int(self.acquirium_cli.graph_status()["source_version"])
         except Exception:
@@ -76,18 +93,7 @@ class DriverRunner:
                 break
             except asyncio.TimeoutError:
                 pass
-            # Version check failures (e.g. server briefly unreachable) must
-            # not skip the tick, so they are guarded separately.
-            try:
-                source_version = int(self.acquirium_cli.graph_status()["source_version"])
-                if source_version != self.source_version:
-                    self.source_version = source_version
-                    try:
-                        self.driver.on_graph_change()
-                    except Exception:
-                        self.logger.exception("on_graph_change error")
-            except Exception:
-                pass
+            self._poll_graph_version()
             self._tick()
         self.logger.debug("driver loop exit: %s", name)
         try:
@@ -107,6 +113,30 @@ class DriverRunner:
         else:
             # run() hasn't captured the loop yet; no coroutine is waiting.
             self._stop_event.set()
+
+    def _poll_graph_version(self) -> None:
+        """Fire on_graph_change() when the server's source generation advances.
+
+        Polled on its own cadence rather than every tick: graph mutations are
+        rare, while the tick interval is the driver's data cadence and may be
+        far shorter. Version check failures (e.g. server briefly unreachable)
+        must not skip the tick, so everything here is guarded.
+        """
+        now = time.monotonic()
+        if now - self._last_graph_poll < self.graph_poll_interval:
+            return
+        self._last_graph_poll = now
+        try:
+            source_version = int(self.acquirium_cli.graph_status()["source_version"])
+        except Exception:
+            return
+        if source_version == self.source_version:
+            return
+        self.source_version = source_version
+        try:
+            self.driver.on_graph_change()
+        except Exception:
+            self.logger.exception("on_graph_change error")
 
     def _tick(self) -> None:
         try:

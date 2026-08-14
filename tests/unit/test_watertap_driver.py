@@ -131,9 +131,11 @@ def test_setup_can_insert_model_graph(tmp_path):
 
     driver.setup()
 
+    # The path is handed over as-is; the client reads it and infers the format
+    # from the suffix, so the driver never has to name a serialisation.
     driver.aq.insert_graph.assert_called_once_with(
-        model_ttl.read_text(),
-        format="turtle",
+        model_ttl.resolve(),
+        format=None,
         replace=True,
         source_id="watertap",
     )

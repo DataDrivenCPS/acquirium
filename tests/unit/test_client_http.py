@@ -354,3 +354,52 @@ class TestConstructorHealthGate:
         from acquirium import Acquirium
         Acquirium(server_url="localhost", server_port=9999, health_timeout=None)
         mock_requests.get.assert_not_called()
+
+
+# ------------------------------------------------------------------ insert_graph
+
+
+@pytest.mark.parametrize("suffix,expected", [
+    (".ttl", "turtle"),
+    (".n3", "n3"),
+    (".xml", "xml"),
+    (".trix", "trix"),
+    (".unknown", "turtle"),
+])
+def test_insert_graph_infers_format_from_a_path(tmp_path, suffix, expected):
+    path = tmp_path / f"model{suffix}"
+    path.write_text("@prefix ex: <urn:ex#> .\nex:a a ex:B .\n")
+    client = AcquiriumClient()
+
+    with patch("acquirium.Client.client.requests.post") as post:
+        post.return_value = MagicMock(status_code=200)
+        client.insert_graph(path, source_id="s")
+
+    body = post.call_args.kwargs["json"]
+    assert body["format"] == expected
+    assert body["rdf_graph"] == path.read_text()
+
+
+def test_insert_graph_explicit_format_is_not_overridden(tmp_path):
+    path = tmp_path / "model.ttl"
+    path.write_text("@prefix ex: <urn:ex#> .\nex:a a ex:B .\n")
+    client = AcquiriumClient()
+
+    with patch("acquirium.Client.client.requests.post") as post:
+        post.return_value = MagicMock(status_code=200)
+        client.insert_graph(path, format="n3", source_id="s")
+
+    assert post.call_args.kwargs["json"]["format"] == "n3"
+
+
+def test_insert_graph_text_content_defaults_to_turtle():
+    client = AcquiriumClient()
+    turtle = "@prefix ex: <urn:ex#> .\nex:a a ex:B .\n"
+
+    with patch("acquirium.Client.client.requests.post") as post:
+        post.return_value = MagicMock(status_code=200)
+        client.insert_graph(turtle, source_id="s")
+
+    body = post.call_args.kwargs["json"]
+    assert body["format"] == "turtle"
+    assert body["rdf_graph"] == turtle

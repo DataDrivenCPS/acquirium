@@ -83,7 +83,8 @@ interval = 10.0
 # Uncomment to enable MQTT ingestion as a default driver:
 # [[drivers]]
 # spec           = "acquirium.Drivers.BuiltInDrivers.mqtt_ingestion:MQTTIngestDriver"
-# interval       = 5.0
+# interval       = 1.0              # how often buffered messages are inserted
+# graph_poll_interval = 30.0        # how often to look for newly declared topics
 # mqtt_source_id = "my_mqtt_data"   # datasource name used for all MQTT streams
 
 [[drivers]]

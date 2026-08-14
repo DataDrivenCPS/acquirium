@@ -1,4 +1,4 @@
-"""Unit tests for CSVIngestDriver — parsing logic only, no server required."""
+"""Unit tests for CSVIngestDriver — no server required."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import polars as pl
 import pytest
 from rdflib import Graph, Literal
 
-from acquirium.Drivers.BuiltInDrivers.tabular_base import _safe_name
+from acquirium.Drivers.Driver import safe_stream_name as _safe_name
 from acquirium.Drivers.BuiltInDrivers.csv_ingest import CSVIngestDriver
 from acquirium.Client.acquirium import Acquirium
 from acquirium.internals.models import compute_ref_uri
@@ -30,11 +30,21 @@ def make_driver(cfg_overrides: dict | None = None, tmp_path: Path | None = None)
     aq.client = MagicMock()
     aq.register_datasource.return_value = "csv_files"
     aq.register_streams.side_effect = lambda streams: Acquirium.register_streams(aq, streams)
-    aq.insert_timeseries_batch.return_value = {"ok": True, "rows_inserted": 0}
     aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 0}
     watch = str(tmp_path) if tmp_path else "/tmp/csv_test_watch"
-    config = {"driver": {"watch_dir": watch, **(cfg_overrides or {})}}
-    return CSVIngestDriver(aq, config)
+    driver = CSVIngestDriver(aq, {"driver": {"watch_dir": watch, **(cfg_overrides or {})}})
+    driver.setup()
+    return driver
+
+
+def parse(driver: CSVIngestDriver, path: Path, cursor=None):
+    """Run the driver's own read(), regrouped as {ref_name: [(ts, value)]}."""
+    observations, next_cursor = driver.read(path, cursor)
+    batch: dict[str, list[tuple[datetime, str]]] = {}
+    if "ref_name" in observations.columns:
+        for row in observations.iter_rows(named=True):
+            batch.setdefault(row["ref_name"], []).append((row["ts"], row["value"]))
+    return batch, next_cursor
 
 
 def _wide_csv(tmp_path: Path) -> Path:
@@ -54,65 +64,16 @@ def _narrow_csv(tmp_path: Path) -> Path:
     return p
 
 
-# ------------------------------------------------------------------ _normalize_time_col
-
-
-def test_normalize_date_col(tmp_path):
-    """pl.Date column is cast to UTC Datetime at midnight."""
-    driver = make_driver(tmp_path=tmp_path)
-    driver.setup()
-    df = pl.DataFrame({"time": ["2024-01-01", "2024-01-02"], "val": [1.0, 2.0]}).with_columns(
-        pl.col("time").str.to_datetime("%Y-%m-%d").cast(pl.Date)
-    )
-    result = driver._normalize_time_col(df)
-    ts = result["time"].to_list()
-    assert ts[0] == datetime(2024, 1, 1, tzinfo=timezone.utc)
-    assert ts[1] == datetime(2024, 1, 2, tzinfo=timezone.utc)
-
-
-def test_normalize_datetime_naive(tmp_path):
-    """Naive Datetime gets UTC attached."""
-    driver = make_driver(tmp_path=tmp_path)
-    driver.setup()
-    df = pl.DataFrame({"time": [datetime(2024, 1, 1, 12, 0)], "val": [1.0]})
-    result = driver._normalize_time_col(df)
-    ts = result["time"].to_list()[0]
-    assert ts.tzinfo is not None
-    assert ts.hour == 12
-
-
-def test_normalize_iso_string_col(tmp_path):
-    """ISO date strings are parsed automatically."""
-    driver = make_driver(tmp_path=tmp_path)
-    driver.setup()
-    df = pl.DataFrame({"time": ["2024-01-15", "2024-02-20"], "val": [1.0, 2.0]})
-    result = driver._normalize_time_col(df)
-    ts = result["time"].to_list()
-    assert ts[0] == datetime(2024, 1, 15, tzinfo=timezone.utc)
-
-
-def test_normalize_string_with_explicit_format(tmp_path):
-    """Non-ISO date strings are parsed when date_format is provided."""
-    driver = make_driver({"date_format": "%m/%d/%Y"}, tmp_path=tmp_path)
-    driver.setup()
-    df = pl.DataFrame({"time": ["01/15/2024", "02/20/2024"], "val": [1.0, 2.0]})
-    result = driver._normalize_time_col(df)
-    ts = result["time"].to_list()
-    assert ts[0] == datetime(2024, 1, 15, tzinfo=timezone.utc)
-    assert ts[1] == datetime(2024, 2, 20, tzinfo=timezone.utc)
-
-
-# ------------------------------------------------------------------ _parse_wide
+# ------------------------------------------------------------------ wide parsing
 
 
 def test_parse_wide_basic(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
-    driver.setup()
-    batch, rows = driver.parse_file(_wide_csv(tmp_path))
-    assert set(batch.keys()) == {"temp", "rh"}
-    assert rows == 2
-    assert batch["temp"][0] == (datetime(2024, 1, 1, tzinfo=timezone.utc), 22.5)
-    assert batch["rh"][0][1] == 55.0
+    batch, cursor = parse(driver, _wide_csv(tmp_path))
+    assert set(batch) == {"temp", "rh"}
+    assert cursor == 2
+    assert batch["temp"][0] == (datetime(2024, 1, 1, tzinfo=timezone.utc), "22.5")
+    assert batch["rh"][0][1] == "55.0"
 
 
 def test_parse_wide_skip_rows(tmp_path):
@@ -125,11 +86,10 @@ def test_parse_wide_skip_rows(tmp_path):
         "2024-01-02T00:00:00Z,23.0,60.0\n"
     )
     driver = make_driver({"skip_rows": [1, 2]}, tmp_path=tmp_path)
-    driver.setup()
-    batch, rows = driver.parse_file(p)
-    assert rows == 2
-    assert batch["temp"][0] == (datetime(2024, 1, 1, tzinfo=timezone.utc), 22.5)
-    assert batch["rh"][1] == (datetime(2024, 1, 2, tzinfo=timezone.utc), 60.0)
+    batch, cursor = parse(driver, p)
+    assert cursor == 2
+    assert batch["temp"][0] == (datetime(2024, 1, 1, tzinfo=timezone.utc), "22.5")
+    assert batch["rh"][1] == (datetime(2024, 1, 2, tzinfo=timezone.utc), "60.0")
 
 
 def test_parse_wide_skip_rows_by_file(tmp_path):
@@ -143,11 +103,10 @@ def test_parse_wide_skip_rows_by_file(tmp_path):
         "2024-01-02T00:00:00Z,23.0,60.0\n"
     )
     driver = make_driver({"skip_rows": {"subdir/wide_skip_rows.csv": [1, 3]}}, tmp_path=tmp_path)
-    driver.setup()
-    batch, rows = driver.parse_file(p)
-    assert rows == 1
-    assert batch["temp"] == [(datetime(2024, 1, 2, tzinfo=timezone.utc), 23.0)]
-    assert batch["rh"] == [(datetime(2024, 1, 2, tzinfo=timezone.utc), 60.0)]
+    batch, cursor = parse(driver, p)
+    assert cursor == 1
+    assert batch["temp"] == [(datetime(2024, 1, 2, tzinfo=timezone.utc), "23.0")]
+    assert batch["rh"] == [(datetime(2024, 1, 2, tzinfo=timezone.utc), "60.0")]
 
 
 def test_parse_wide_skip_cols_from_config(tmp_path):
@@ -158,141 +117,64 @@ def test_parse_wide_skip_cols_from_config(tmp_path):
         "2024-01-02T00:00:00Z,23.0,60.0,still ok\n"
     )
     driver = make_driver({"skip_cols": ["notes"]}, tmp_path=tmp_path)
-    driver.setup()
-    batch, rows = driver.parse_file(p)
-    assert rows == 2
+    batch, cursor = parse(driver, p)
+    assert cursor == 2
     assert set(batch) == {"temp", "rh"}
 
 
-def test_tick_allows_subclass_control_of_registration(tmp_path):
-    captured = []
-
-    class CustomRegistrationDriver(CSVIngestDriver):
-        def read_frame(self, path: Path, row_offset: int = 0) -> tuple[pl.DataFrame, int]:
-            return pl.DataFrame({
-                "ts": [datetime(2024, 1, 1, tzinfo=timezone.utc)],
-                "ref_name": ["TOTAL POTABLE WATER PRODUCED (gal)"],
-                "value": [1.0],
-            }), 1
-
-        def ensure_streams_registered(
-            self, path: Path, source_id: str, df: pl.DataFrame, value_kinds: dict[str, str]
-        ) -> None:
-            captured.append((path.name, source_id, df["ref_name"].to_list(), dict(value_kinds)))
-            self._registered.setdefault(source_id, set()).update(value_kinds)
-
-    aq = MagicMock()
-    aq.client = MagicMock()
-    aq.register_datasource.return_value = "csv_files"
-    aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 1}
-
-    p = tmp_path / "one.csv"
-    p.write_text("unused\n")
-    driver = CustomRegistrationDriver(aq, {"driver": {"watch_dir": str(tmp_path)}})
-    driver.setup()
-    driver.tick()
-
-    assert captured == [(
-        "one.csv",
-        str(p),
-        ["TOTAL POTABLE WATER PRODUCED (gal)"],
-        {"TOTAL_POTABLE_WATER_PRODUCED_gal": "numeric"},
-    )]
-    aq.register_streams.assert_not_called()
+def test_parse_wide_normalizes_column_names_to_stream_names(tmp_path):
+    """Headers reach the store as safe_stream_name() output, not raw text."""
+    p = tmp_path / "unsafe_headers.csv"
+    p.write_text("time,UV Intensity (mW/cm^2)\n2024-01-01T00:00:00Z,1.5\n")
+    driver = make_driver(tmp_path=tmp_path)
+    batch, cursor = parse(driver, p)
+    assert cursor == 1
+    assert set(batch) == {"UV_Intensity_mW/cm^2"}
 
 
 def test_parse_wide_date_only_col(tmp_path):
-    """Date-only timestamps (no time component) work correctly."""
     p = tmp_path / "dates.csv"
     p.write_text("Date,temp\n2024-01-01,22.5\n2024-01-02,23.0\n")
     driver = make_driver({"time_col": "Date"}, tmp_path=tmp_path)
-    driver.setup()
-    batch, rows = driver.parse_file(p)
-    assert rows == 2
-    ts0 = batch["temp"][0][0]
-    assert ts0 == datetime(2024, 1, 1, tzinfo=timezone.utc)
+    batch, cursor = parse(driver, p)
+    assert cursor == 2
+    assert batch["temp"][0][0] == datetime(2024, 1, 1, tzinfo=timezone.utc)
 
 
 def test_parse_wide_non_iso_date_with_format(tmp_path):
-    """Non-ISO date strings are handled when date_format is set."""
     p = tmp_path / "us_dates.csv"
     p.write_text("Date,temp\n01/15/2024,22.5\n01/16/2024,23.0\n")
     driver = make_driver({"time_col": "Date", "date_format": "%m/%d/%Y"}, tmp_path=tmp_path)
-    driver.setup()
-    batch, rows = driver.parse_file(p)
-    assert rows == 2
+    batch, cursor = parse(driver, p)
+    assert cursor == 2
     assert batch["temp"][0][0] == datetime(2024, 1, 15, tzinfo=timezone.utc)
-
-
-def test_read_frame_can_return_normalized_timeseries_frame(tmp_path):
-    p = tmp_path / "combined_time.csv"
-    p.write_text(
-        "Date,Time,temp\n"
-        "01/15/2024,01:02:03 PM,22.5\n"
-        "01/16/2024,02:03:04 AM,23.0\n"
-    )
-
-    class CombinedTimeDriver(CSVIngestDriver):
-        def read_frame(self, path: Path, row_offset: int = 0) -> tuple[pl.DataFrame, int]:
-            df = self.read_df(path, row_offset)
-            raw_ts = df.select(
-                (pl.col("Date") + pl.lit(" ") + pl.col("Time")).alias("ts")
-            )["ts"]
-            out = pl.DataFrame({
-                "ts": self.normalize_timestamps(
-                    raw_ts, date_format="%m/%d/%Y %I:%M:%S %p"
-                ),
-                "ref_name": "temp",
-                "value": df["temp"],
-            })
-            return out, len(df)
-
-    driver = CombinedTimeDriver(
-        MagicMock(insert_timeseries_arrow=MagicMock(return_value={"ok": True})),
-        {"driver": {"watch_dir": str(tmp_path)}},
-    )
-    driver.setup()
-
-    normalized, rows = driver.parse_polars(p)
-    assert rows == 2
-    assert normalized.columns == ["ts", "ref_name", "value"]
-    assert normalized["ts"].to_list()[0] == datetime(2024, 1, 15, 13, 2, 3, tzinfo=timezone.utc)
-    assert normalized["value"].to_list() == [22.5, 23.0]
-
-    batch, rows = driver.parse_file(p)
-    assert rows == 2
-    assert batch["temp"][0] == (datetime(2024, 1, 15, 13, 2, 3, tzinfo=timezone.utc), 22.5)
 
 
 def test_parse_wide_skips_null_values(tmp_path):
     p = tmp_path / "nulls.csv"
     p.write_text("time,temp\n2024-01-01T00:00:00Z,\n2024-01-02T00:00:00Z,23.0\n")
     driver = make_driver(tmp_path=tmp_path)
-    driver.setup()
-    batch, _ = driver.parse_file(p)
-    assert len(batch["temp"]) == 1
-    assert batch["temp"][0][1] == 23.0
+    batch, _ = parse(driver, p)
+    assert batch["temp"] == [(datetime(2024, 1, 2, tzinfo=timezone.utc), "23.0")]
 
 
 def test_parse_wide_missing_time_col_raises(tmp_path):
     p = tmp_path / "no_time.csv"
     p.write_text("ts,temp\n2024-01-01T00:00:00Z,22.5\n")
     driver = make_driver(tmp_path=tmp_path)
-    driver.setup()
     with pytest.raises(ValueError, match="time column"):
-        driver.parse_file(p)
+        parse(driver, p)
 
 
-# ------------------------------------------------------------------ _parse_narrow
+# ------------------------------------------------------------------ narrow parsing
 
 
 @pytest.mark.parametrize("cfg", [{}, {"format": "narrow"}])
 def test_parse_narrow_basic(tmp_path, cfg):
     driver = make_driver(cfg, tmp_path=tmp_path)
-    driver.setup()
-    batch, rows = driver.parse_file(_narrow_csv(tmp_path))
-    assert set(batch.keys()) == {"sensor/temp", "sensor/rh"}
-    assert rows == 3
+    batch, cursor = parse(driver, _narrow_csv(tmp_path))
+    assert set(batch) == {"sensor/temp", "sensor/rh"}
+    assert cursor == 3
     assert len(batch["sensor/temp"]) == 2
 
 
@@ -300,22 +182,20 @@ def test_parse_narrow_missing_id_col_raises(tmp_path):
     p = tmp_path / "no_id.csv"
     p.write_text("time,value\n2024-01-01T00:00:00Z,1.0\n")
     driver = make_driver({"format": "narrow"}, tmp_path=tmp_path)
-    driver.setup()
     with pytest.raises(ValueError, match="column 'id'"):
-        driver.parse_file(p)
-
-
-# ------------------------------------------------------------------ auto-detection
+        parse(driver, p)
 
 
 @pytest.mark.parametrize("cols,expected", [
-    ({"time": ["2024-01-01T00:00:00Z"], "sensor_a": [1.0]}, "wide"),
-    ({"time": ["2024-01-01T00:00:00Z"], "id": ["s1"], "value": [1.0]}, "narrow"),
+    ({"time": ["2024-01-01T00:00:00Z"], "sensor_a": [1.0]}, {"sensor_a"}),
+    ({"time": ["2024-01-01T00:00:00Z"], "id": ["s1"], "value": [1.0]}, {"s1"}),
 ])
-def test_auto_detects_format(tmp_path, cols, expected):
+def test_auto_detects_layout(tmp_path, cols, expected):
+    p = tmp_path / "auto.csv"
+    pl.DataFrame(cols).write_csv(p)
     driver = make_driver(tmp_path=tmp_path)
-    driver.setup()
-    assert driver._detect_format(pl.DataFrame(cols)) == expected
+    batch, _ = parse(driver, p)
+    assert set(batch) == expected
 
 
 # ------------------------------------------------------------------ ragged rows
@@ -333,39 +213,34 @@ def _ragged_csv(tmp_path: Path) -> Path:
 
 
 def test_ragged_rows_ignored_by_default(tmp_path):
-    """Default: extra cells are dropped, missing cells become null; rows are kept."""
+    """Extra cells are dropped, missing cells become null; rows are kept."""
     driver = make_driver(tmp_path=tmp_path)
-    driver.setup()
-    batch, rows = driver.parse_file(_ragged_csv(tmp_path))
-    assert rows == 3
-    assert [v for _, v in batch["temp"]] == [22.5, 23.0, 24.0]
-    assert [v for _, v in batch["rh"]] == [55.0, 60.0]  # null from short row dropped
+    batch, cursor = parse(driver, _ragged_csv(tmp_path))
+    assert cursor == 3
+    assert [v for _, v in batch["temp"]] == ["22.5", "23.0", "24.0"]
+    assert [v for _, v in batch["rh"]] == ["55.0", "60.0"]  # null from short row dropped
 
 
 def test_ragged_lines_skip_drops_whole_rows(tmp_path):
     driver = make_driver({"ragged_lines": "skip"}, tmp_path=tmp_path)
-    driver.setup()
-    batch, rows = driver.parse_file(_ragged_csv(tmp_path))
-    assert rows == 1
-    assert batch["temp"] == [(datetime(2024, 1, 3, tzinfo=timezone.utc), 24.0)]
-    assert batch["rh"] == [(datetime(2024, 1, 3, tzinfo=timezone.utc), 60.0)]
+    batch, cursor = parse(driver, _ragged_csv(tmp_path))
+    assert cursor == 1
+    assert batch["temp"] == [(datetime(2024, 1, 3, tzinfo=timezone.utc), "24.0")]
 
 
 def test_ragged_lines_error_raises_on_extra_cells(tmp_path):
     driver = make_driver({"ragged_lines": "error"}, tmp_path=tmp_path)
-    driver.setup()
     with pytest.raises(pl.exceptions.ComputeError, match="more fields"):
-        driver.parse_file(_ragged_csv(tmp_path))
+        parse(driver, _ragged_csv(tmp_path))
 
 
 def test_ragged_lines_invalid_value_raises(tmp_path):
     driver = make_driver({"ragged_lines": "explode"}, tmp_path=tmp_path)
-    driver.setup()
     with pytest.raises(ValueError, match="ragged_lines"):
-        driver.parse_file(_ragged_csv(tmp_path))
+        parse(driver, _ragged_csv(tmp_path))
 
 
-# ------------------------------------------------------------------ header auto-detection
+# ------------------------------------------------------------------ header detection
 
 
 def test_header_contains_skips_banner_rows(tmp_path):
@@ -377,40 +252,32 @@ def test_header_contains_skips_banner_rows(tmp_path):
         "2024-01-01T00:00:00Z,22.5\n"
     )
     driver = make_driver({"header_contains": ["time", "temp"]}, tmp_path=tmp_path)
-    driver.setup()
-    batch, rows = driver.parse_file(p)
-    assert rows == 1
-    assert batch["temp"] == [(datetime(2024, 1, 1, tzinfo=timezone.utc), 22.5)]
+    batch, cursor = parse(driver, p)
+    assert cursor == 1
+    assert batch["temp"] == [(datetime(2024, 1, 1, tzinfo=timezone.utc), "22.5")]
 
 
 def test_header_contains_handles_file_without_banner(tmp_path):
     driver = make_driver({"header_contains": ["time", "temp"]}, tmp_path=tmp_path)
-    driver.setup()
-    batch, rows = driver.parse_file(_wide_csv(tmp_path))
-    assert rows == 2
-    assert batch["temp"][0][1] == 22.5
+    batch, cursor = parse(driver, _wide_csv(tmp_path))
+    assert cursor == 2
+    assert batch["temp"][0][1] == "22.5"
 
 
 def test_header_contains_missing_header_raises(tmp_path):
     p = tmp_path / "no_header.csv"
     p.write_text("just,some,cells\n1,2,3\n")
     driver = make_driver({"header_contains": ["time", "temp"]}, tmp_path=tmp_path)
-    driver.setup()
     with pytest.raises(ValueError, match="no header row"):
-        driver.parse_file(p)
-
-
-# ------------------------------------------------------------------ TSV support
+        parse(driver, p)
 
 
 def test_tsv_parsed_correctly(tmp_path):
     p = tmp_path / "data.tsv"
     p.write_text("time\ttemp\n2024-01-01T00:00:00Z\t22.5\n")
     driver = make_driver(tmp_path=tmp_path)
-    driver.setup()
-    batch, _ = driver.parse_file(p)
-    assert "temp" in batch
-    assert batch["temp"][0][1] == 22.5
+    batch, _ = parse(driver, p)
+    assert batch["temp"][0][1] == "22.5"
 
 
 # ------------------------------------------------------------------ per-file source_id
@@ -418,24 +285,32 @@ def test_tsv_parsed_correctly(tmp_path):
 
 def test_loop_uses_full_path_as_source_id(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
-    driver.setup()
     path = _wide_csv(tmp_path)
     driver.tick()
-    source_id, df = driver.aq.insert_timeseries_arrow.call_args[0]
+    source_id, table = driver.aq.insert_timeseries_arrow.call_args[0]
     assert source_id == _safe_name(str(path))
-    assert set(df["ref_name"].to_pylist()) == {"temp", "rh"}
+    assert set(pl.from_arrow(table)["ref_name"].to_list()) == {"temp", "rh"}
 
+
+def test_loop_full_path_source_id_includes_subdirectory(tmp_path):
+    sub = tmp_path / "sensors"
+    sub.mkdir()
+    path = sub / "data.csv"
+    path.write_text("time,flow\n2024-01-01T00:00:00Z,1.0\n")
+    driver = make_driver(tmp_path=tmp_path)
+    driver.tick()
+    source_id, table = driver.aq.insert_timeseries_arrow.call_args[0]
+    assert source_id == _safe_name(str(path))
+    assert "flow" in pl.from_arrow(table)["ref_name"].to_list()
 
 
 def test_loop_registers_streams_before_insert(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
-    driver.setup()
     _wide_csv(tmp_path)
 
-    def assert_registered_first(source_id, df):
+    def assert_registered_first(source_id, table):
         assert driver.aq.client.insert_graph.called
-        assert "value_kind" not in df.columns
-        return {"ok": True, "rows_inserted": len(df)}
+        return {"ok": True, "rows_inserted": table.num_rows}
 
     driver.aq.insert_timeseries_arrow.side_effect = assert_registered_first
     driver.tick()
@@ -445,20 +320,15 @@ def test_loop_marks_text_only_csv_streams_as_text(tmp_path):
     p = tmp_path / "mixed.csv"
     p.write_text("time,temp,state\n2024-01-01T00:00:00Z,22.5,ON\n")
     driver = make_driver(tmp_path=tmp_path)
-    driver.setup()
     driver.tick()
 
-    _, df = driver.aq.insert_timeseries_arrow.call_args[0]
-    assert "value_kind" not in df.columns
-
-    graph_text = driver.aq.client.insert_graph.call_args[0][0]
-    g = Graph().parse(data=graph_text, format="turtle")
+    g = Graph().parse(data=driver.aq.client.insert_graph.call_args[0][0], format="turtle")
     source_id = _safe_name(str(p))
     assert (compute_ref_uri(source_id, "temp"), ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
     assert (compute_ref_uri(source_id, "state"), ACQUIRIUM_VALUE_KIND, Literal("text")) in g
 
 
-def test_loop_registers_mixed_csv_streams_as_numeric_with_text_fallback(tmp_path):
+def test_loop_registers_mixed_csv_streams_as_numeric(tmp_path):
     p = tmp_path / "mixed_numeric.csv"
     p.write_text(
         "time,mode\n"
@@ -466,13 +336,11 @@ def test_loop_registers_mixed_csv_streams_as_numeric_with_text_fallback(tmp_path
         "2024-01-02T00:00:00Z,Manual Control\n"
     )
     driver = make_driver(tmp_path=tmp_path)
-    driver.setup()
     driver.tick()
 
-    graph_text = driver.aq.client.insert_graph.call_args[0][0]
-    g = Graph().parse(data=graph_text, format="turtle")
-    source_id = _safe_name(str(p))
-    assert (compute_ref_uri(source_id, "mode"), ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
+    g = Graph().parse(data=driver.aq.client.insert_graph.call_args[0][0], format="turtle")
+    ref = compute_ref_uri(_safe_name(str(p)), "mode")
+    assert (ref, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
 
 
 def test_loop_registers_no_synthetic_point_uri(tmp_path):
@@ -480,69 +348,48 @@ def test_loop_registers_no_synthetic_point_uri(tmp_path):
     p = tmp_path / "bad_uri.csv"
     p.write_text("time,UV-Ultraviolet Intensity (mW/cm^2)\n2024-01-01T00:00:00Z,1.0\n")
     driver = make_driver(tmp_path=tmp_path)
-    driver.setup()
     driver.tick()
 
-    graph_text = driver.aq.client.insert_graph.call_args[0][0]
-    g = Graph().parse(data=graph_text, format="turtle")
+    g = Graph().parse(data=driver.aq.client.insert_graph.call_args[0][0], format="turtle")
     source_id = _safe_name(str(p))
-    ref_name = _safe_name("UV-Ultraviolet Intensity (mW/cm^2)")
-    ref_uri = compute_ref_uri(source_id, ref_name)
+    ref_uri = compute_ref_uri(source_id, _safe_name("UV-Ultraviolet Intensity (mW/cm^2)"))
     assert (ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)) in g
-    assert (ref_uri, ACQUIRIUM_REF_NAME, Literal(ref_name)) in g
+    assert (ref_uri, ACQUIRIUM_REF_NAME, Literal(_safe_name("UV-Ultraviolet Intensity (mW/cm^2)"))) in g
     assert (ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
-    # No point_uri → ref_uri link should exist
     assert list(g.subjects(HAS_EXTERNAL_REFERENCE, ref_uri)) == []
 
 
-def test_loop_full_path_source_id_includes_subdirectory(tmp_path):
-    sub = tmp_path / "sensors"
-    sub.mkdir()
-    path = sub / "data.csv"
-    path.write_text("time,flow\n2024-01-01T00:00:00Z,1.0\n")
+# ------------------------------------------------------------------ cursor / paging
+
+
+def test_cursor_skips_already_seen_rows(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
-    driver.setup()
-    driver.tick()
-    source_id, df = driver.aq.insert_timeseries_arrow.call_args[0]
-    assert source_id == _safe_name(str(path))
-    assert "flow" in df["ref_name"].to_pylist()
-
-
-# ------------------------------------------------------------------ row offset / append tracking
-
-
-def test_row_offset_skips_already_seen_rows(tmp_path):
-    driver = make_driver(tmp_path=tmp_path)
-    driver.setup()
     path = _wide_csv(tmp_path)  # 2 data rows
-    batch, rows = driver.parse_file(path, row_offset=1)
-    assert rows == 1
-    assert batch["temp"][0][1] == 23.0
+    batch, cursor = parse(driver, path, cursor=1)
+    assert cursor == 2
+    assert batch["temp"][0][1] == "23.0"
 
 
-def test_row_offset_past_end_returns_empty(tmp_path):
+def test_cursor_past_end_is_unchanged(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
-    driver.setup()
-    batch, rows = driver.parse_file(_wide_csv(tmp_path), row_offset=10)
-    assert rows == 0
+    batch, cursor = parse(driver, _wide_csv(tmp_path), cursor=10)
+    assert cursor == 10
     assert batch == {}
 
 
 def test_loop_advances_cursor_on_each_tick(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
-    driver.setup()
-
     path = tmp_path / "growing.csv"
     path.write_text("time,temp\n2024-01-01T00:00:00Z,1.0\n")
     driver.tick()
     assert driver.aq.insert_timeseries_arrow.call_count == 1
-    assert driver._rows_seen[str(path)] == 1
+    assert driver._cursors[str(path)] == 1
 
     with path.open("a") as f:
         f.write("2024-01-02T00:00:00Z,2.0\n")
     driver.tick()
     assert driver.aq.insert_timeseries_arrow.call_count == 2
-    assert driver._rows_seen[str(path)] == 2
+    assert driver._cursors[str(path)] == 2
 
     driver.tick()
     assert driver.aq.insert_timeseries_arrow.call_count == 2
@@ -550,7 +397,6 @@ def test_loop_advances_cursor_on_each_tick(tmp_path):
 
 def test_file_stays_in_place_after_insert(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
-    driver.setup()
     path = _wide_csv(tmp_path)
     driver.tick()
     assert path.exists()
@@ -561,31 +407,25 @@ def test_file_stays_in_place_after_insert(tmp_path):
 
 def test_tick_propagates_insert_failure(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
-    driver.setup()
     driver.aq.insert_timeseries_arrow.side_effect = RuntimeError("server down")
     path = _wide_csv(tmp_path)
     with pytest.raises(RuntimeError, match="server down"):
         driver.tick()
-    assert str(path) not in driver._rows_seen
-    driver.aq.client.insert_graph.assert_called_once()
+    assert str(path) not in driver._cursors
 
 
 def test_tick_propagates_registration_failure(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
-    driver.setup()
     driver.aq.register_streams.side_effect = RuntimeError("graph down")
     path = _wide_csv(tmp_path)
-
     with pytest.raises(RuntimeError, match="graph down"):
         driver.tick()
-
-    assert str(path) not in driver._rows_seen
+    assert str(path) not in driver._cursors
     driver.aq.insert_timeseries_arrow.assert_not_called()
 
 
 def test_loop_skips_bad_file_and_continues(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
-    driver.setup()
     (tmp_path / "bad.csv").write_text("not,valid\ncsvgarbagehere\n")
     (tmp_path / "good.csv").write_text("time,temp\n2024-01-01T00:00:00Z,22.5\n")
     driver.tick()

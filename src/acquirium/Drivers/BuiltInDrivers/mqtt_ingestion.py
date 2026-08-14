@@ -9,7 +9,6 @@ import ast
 import json
 import logging
 
-import polars as pl
 import paho.mqtt.client as mqtt
 
 from acquirium.Drivers.Driver import EventIngestDriver
@@ -248,13 +247,10 @@ class MQTTIngestDriver(EventIngestDriver):
                     return
                 for spec in specs:
                     ts, value = self.decode_payload(msg.payload, spec)
-                    self.insert_observations(
-                        pl.DataFrame({
-                            "ts": [ts],
-                            "ref_name": [spec.ref_name],
-                            "value": [value],
-                        })
-                    )
+                    # Buffered, not inserted: the tick flushes the batch, so a
+                    # busy topic costs one round-trip per interval rather than
+                    # one per message.
+                    self.add(spec.ref_name, value, ts)
             except Exception as exc:
                 logger.warning("mqtt decode failed client=%s topic=%s err=%s", client_key, topic, exc)
         return on_message

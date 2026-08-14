@@ -45,6 +45,10 @@ def _raise_for_status(response: requests.Response) -> None:
         ) from exc
 
 
+#: RDF serialisations Acquirium accepts, keyed by file suffix.
+RDF_FORMATS = {".ttl": "turtle", ".n3": "n3", ".xml": "xml", ".trix": "trix"}
+
+
 class AcquiriumClient:
     def __init__(self,
                  server_url: str = "localhost",
@@ -61,7 +65,7 @@ class AcquiriumClient:
     def insert_graph(
         self,
         rdf_graph: str,
-        format: str = "turtle",
+        format: str | None = None,
         replace: bool = True,
         *,
         source_id: str,
@@ -77,16 +81,18 @@ class AcquiriumClient:
             In the case of a string the string it can be either:
                 - graph content as text
                 - location of the source file
-            format: Format of the RDF data [turtle | n3 | xml | trix]
+            format: Format of the RDF data [turtle | n3 | xml | trix]. Inferred
+                from the file suffix when a path is given, else ``"turtle"``.
             replace: If True, replaces the selected graph. If False, appends to it.
             source_id: Data-graph owner. Use ``"plant"`` for the shared plant
                 model, or a component's stable source ID.
         """
+        source_path: Path | None = None
         if isinstance(rdf_graph, Path):
             if not rdf_graph.is_file():
                 raise FileNotFoundError(f"Graph file not found: {rdf_graph}")
-            with open(rdf_graph, "r") as f:
-                rdf_graph = f.read()
+            source_path = rdf_graph
+            rdf_graph = rdf_graph.read_text()
         elif isinstance(rdf_graph, str):
             if rdf_graph.strip().startswith(("<", "@", "#")) or "\n" in rdf_graph:
                 # RDF content: starts with an RDF marker or spans multiple lines
@@ -95,11 +101,15 @@ class AcquiriumClient:
                 # Single line without RDF markers: treat as a file path
                 p = Path(rdf_graph)
                 if p.is_file():
+                    source_path = p
                     rdf_graph = p.read_text()
                 else:
                     raise FileNotFoundError(f"Graph file not found: {rdf_graph}")
         else:
             raise ValueError("rdf_graph must be a string or Path object")
+
+        if format is None:
+            format = RDF_FORMATS.get(source_path.suffix.lower(), "turtle") if source_path else "turtle"
 
 
         url = f"{self.base_url}/insert_graph"

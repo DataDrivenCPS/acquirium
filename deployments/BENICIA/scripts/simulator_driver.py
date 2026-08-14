@@ -34,7 +34,6 @@ from datetime import datetime, timezone
 import polars as pl
 import rdflib
 
-from acquirium.Drivers.BuiltInDrivers.watertap import _guess_rdf_format
 from acquirium.Drivers.Driver import PollingIngestDriver
 
 from benicia_generator import (
@@ -61,7 +60,7 @@ class BeniciaSimulatorDriver(PollingIngestDriver):
         model_path = self.config_dir() / str(cfg.get("model", "benicia-model-100.ttl"))
         if not model_path.exists():
             raise FileNotFoundError(f"Benicia model not found: {model_path}")
-        graph = rdflib.Graph().parse(model_path, format=_guess_rdf_format(model_path))
+        graph = rdflib.Graph().parse(model_path)
         self._properties = get_properties(graph)
 
         # Insert the model's ontology so the point nodes exist with their

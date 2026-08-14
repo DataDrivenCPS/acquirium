@@ -56,6 +56,5 @@ watch_dir    = "../data/historical"
 format       = "wide"
 time_col     = "timestamp"
 source_id    = "benicia-historical"
-namespace    = "urn:ex/"
 model        = "../benicia-model-100.ttl"
 insert_graph = true

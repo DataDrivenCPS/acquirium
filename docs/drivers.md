@@ -84,9 +84,12 @@ In most drivers, you do **not** implement `tick()` directly.
 
 Use this rule:
 
-- Polling source: subclass `PollingIngestDriver` and implement `collect()`.
-- Event source: subclass `EventIngestDriver` and call `insert_observations()`
-  from callbacks or subscription handlers.
+- Polling source: subclass `PollingIngestDriver` and implement `read()`,
+  reporting each value with `self.add(...)`.
+- Event source: subclass `EventIngestDriver` and call `self.add(...)` from
+  callbacks or subscription handlers.
+- Bulk source: implement `collect()` instead of `read()` when a tick's data
+  already arrives as a whole frame — a file read, a model solve, a batch query.
 - Special lifecycle source: subclass `Driver` or `IngestDriver` and implement
   `tick()` directly only when neither built-in lifecycle fits.
 
@@ -95,8 +98,15 @@ polling drivers, `PollingIngestDriver.tick()` is already implemented as:
 
 ```python
 def tick(self):
-    self.insert_observations(self.collect())
+    self.read()
+    observations = self.collect()
+    if observations is not None:
+        self.insert_observations(observations)
+    self.flush()
 ```
+
+A polling driver must implement `read()` or `collect()`; implementing neither
+is rejected when the driver is constructed.
 
 ## Polling Drivers
 
@@ -104,10 +114,6 @@ Use `PollingIngestDriver` when the source is sampled on each tick, such as a
 file directory, system metrics, an HTTP API, or a model solve.
 
 ```python
-from datetime import datetime, timezone
-
-import polars as pl
-
 from acquirium import PollingIngestDriver
 
 
@@ -121,18 +127,68 @@ class TemperatureDriver(PollingIngestDriver):
             value_kind="numeric",
         )
 
-    def collect(self):
-        return pl.DataFrame({
-            "ts": [datetime.now(timezone.utc)],
-            "ref_name": ["temp/room1"],
-            "value": [read_sensor()],
-        })
+    def read(self):
+        self.add("temp/room1", read_sensor())
 ```
 
-The base `tick()` implementation calls `collect()` and passes its frame to
-`insert_observations()`. `insert_observations()` normalizes the frame and calls
-`insert_timeseries_arrow()`, which serializes the data as Arrow IPC and sends it
-to the server in one round-trip.
+### Reporting values with `add()`
+
+```python
+self.add(ref_name, value, ts=None, *, source_id=None)
+```
+
+- `ts` defaults to the current UTC time. Naive datetimes are read as UTC.
+- `source_id` defaults to `self.source_id`, and only needs passing by drivers
+  that span several datasources.
+- `value` may be numeric or text; the stream's `value_kind` is what you
+  declared at registration.
+
+`add()` buffers; it does not insert. **Buffered observations are inserted at the
+end of every tick** — that is the whole rule, for both polling and event
+drivers. A flush hands the batch to `insert_observations()`, which normalizes it
+and calls `insert_timeseries_arrow()` — one Arrow IPC round-trip for the whole
+batch, no matter how many `add()` calls produced it.
+
+So `interval` is your insert cadence: for an event driver it is how long a
+message may wait before it is queryable, and for a polling driver it is simply
+the sampling period it already was.
+
+Call `self.flush()` explicitly only when a driver needs a specific insert
+boundary; the lifecycle already flushes for you.
+
+If a flush fails, the rows stay buffered and the exception propagates. They are
+**not** retried until the next tick, so an unreachable server is retried at the
+driver's interval rather than on every `add()`.
+
+`max_buffered_rows` (default 100,000) is a safety valve, not a tuning knob: the
+buffer never holds more than that many observations. You can reach it two ways,
+and both warn:
+
+- **Within one tick** — you are producing data in bulk through `add()`. The
+  buffer flushes early so it cannot grow without bound, but the fix is to return
+  a frame from `collect()` instead (see below).
+- **While inserts are failing** — the oldest rows are dropped to bound the retry
+  backlog.
+
+Normal drivers never reach either case and should not set this in config.
+
+### Bulk ticks with `collect()`
+
+When a tick's data already exists as a frame, implement `collect()` instead and
+return it with `ts`, `ref_name`, and `value` columns (plus an optional
+`source_id` column for multi-source frames):
+
+```python
+def collect(self):
+    return pl.DataFrame({
+        "ts": [...],
+        "ref_name": [...],
+        "value": [...],
+    })
+```
+
+This avoids taking a frame apart only for `add()` to rebuild it. The two are
+not exclusive — a driver may implement both — but most drivers want one.
 
 Rules:
 
@@ -344,12 +400,10 @@ Default behavior:
 ## Event Drivers
 
 Use `EventIngestDriver` when data arrives asynchronously, such as MQTT messages
-or serial callbacks. `tick()` is a no-op; the driver pushes observations when
-events arrive.
+or serial callbacks. Callbacks report values with `self.add(...)`; `tick()`
+flushes whatever has accumulated.
 
 ```python
-import polars as pl
-
 from acquirium import EventIngestDriver
 
 
@@ -366,15 +420,19 @@ class CallbackDriver(EventIngestDriver):
             ref_name=name,
             value_kind="text",
         )
-        self.insert_observations(pl.DataFrame({
-            "ts": [ts],
-            "ref_name": [name],
-            "value": [value],
-        }))
+        self.add(name, value, ts)
 
     def stop(self):
         self.client.stop()
 ```
+
+Because the flush happens on the tick, observations are batched at the driver's
+configured `interval` rather than costing one round-trip per event. Set
+`interval` to the arrival-to-queryable latency you want — 1s is a reasonable
+starting point for a live feed — and set `graph_poll_interval` separately so a
+fast tick doesn't also mean polling the server for graph changes at that rate.
+
+`add()` is safe to call from broker callback threads.
 
 `register_stream()` is expected to be idempotent, so drivers can call it when a
 stream is discovered instead of coordinating stream declarations through a
@@ -383,11 +441,17 @@ separate framework callback.
 ## Graph Changes
 
 Override `on_graph_change()` when the driver depends on graph-declared
-configuration. The runner polls `GET /graph_version` before each tick and calls
+configuration. The runner polls `GET /graph_version` and calls
 `on_graph_change()` only when `source_version` changes after `setup()`. The
 endpoint also reports derived-cache freshness, but driver lifecycle reacts to
 source mutations; a driver that needs inferred results should request them with
 `wait_for_fresh=True` in its query.
+
+Polling runs on its own cadence, set by `graph_poll_interval` and defaulting to
+`max(interval, 10.0)`. Graph mutations are rare while `interval` is the driver's
+data cadence, so the two are deliberately separate — a driver ticking every
+second still checks for graph changes every ten. Lower `graph_poll_interval`
+when a driver must react to graph edits quickly; raise it to cut server chatter.
 
 MQTT is the main example: it queries the graph for new `ref:MQTTReference`
 nodes, registers the associated streams, and subscribes to newly discovered
@@ -424,6 +488,20 @@ def setup(self):
     cfg = self.config.get("driver", {})
     self.source_id = cfg.get("my_source_id", "default-source")
     self.aq.register_datasource(self.source_id)
+```
+
+Two keys are read by the framework rather than by driver code:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `interval` | `10.0` | Tick period: how often `read()`/`collect()` runs and buffered observations are inserted. |
+| `graph_poll_interval` | `max(interval, 10.0)` | How often the runner checks for graph changes and may call `on_graph_change()`. |
+
+```toml
+[[drivers]]
+spec                = "acquirium.Drivers.BuiltInDrivers.mqtt_ingestion:MQTTIngestDriver"
+interval            = 1.0     # insert buffered messages every second
+graph_poll_interval = 30.0    # but only look for new topics every 30s
 ```
 
 ## Persistent State
@@ -646,17 +724,23 @@ interval = 2.0            # overrides [driver].interval for this entry only
 ## Built-In MQTT Driver
 
 `acquirium.Drivers.BuiltInDrivers.mqtt_ingestion:MQTTIngestDriver` is an event driver.
-It subscribes to MQTT topics declared in the graph and pushes observations from
-the MQTT message callback.
+It subscribes to MQTT topics declared in the graph and reports observations from
+the MQTT message callback with `add()`, so a busy topic costs one insert per
+tick rather than one per message.
 
 ```toml
 [[drivers]]
 spec = "acquirium.Drivers.BuiltInDrivers.mqtt_ingestion:MQTTIngestDriver"
-interval = 5.0
+interval = 1.0               # insert buffered messages every second
+graph_poll_interval = 30.0   # but only look for newly declared topics every 30s
 mqtt_source_id = "mqtt"
 mqtt_qos = 0
 mqtt_value_kind = "text"     # default for graph refs without acq:valueKind
 ```
+
+`interval` is the message batching window: a message is queryable within that
+long of arriving. Lower it for tighter latency, raise it for fewer, larger
+inserts.
 
 Each stream is discovered from `ref:MQTTReference` nodes. The reference declares
 the broker and topic; optional `ref:timeKey` and `ref:valueKey` fields identify

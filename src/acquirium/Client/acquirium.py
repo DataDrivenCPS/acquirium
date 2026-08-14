@@ -74,14 +74,19 @@ def _build_stream_triples(
     label = stream.get("label")
     source_id = stream.get("source_id")
     ref_name = stream.get("ref_name")
-    value_kind = normalize_value_kind(stream.get("value_kind"))
-
     ref_uri = None
     if ref_name is not None and source_id is not None:
         ref_uri = compute_ref_uri(source_id, ref_name)
         g.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
         g.add((ref_uri, ACQUIRIUM_REF_NAME,  Literal(ref_name)))
-        g.add((ref_uri, ACQUIRIUM_VALUE_KIND, Literal(value_kind)))
+        # Only assert a value kind the caller supplied; a default would
+        # contradict a later data-derived kind on the same reference node.
+        if stream.get("value_kind") is not None:
+            g.add((
+                ref_uri,
+                ACQUIRIUM_VALUE_KIND,
+                Literal(normalize_value_kind(stream["value_kind"])),
+            ))
         g.add((ref_uri, STORED_AT,           ACQUIRIUM_DB_URI))
         g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
 
@@ -203,7 +208,7 @@ class Acquirium:
     def insert_graph(
         self,
         rdf_graph: str,
-        format: str = "turtle",
+        format: str | None = None,
         replace=True,
         *,
         source_id: str,
