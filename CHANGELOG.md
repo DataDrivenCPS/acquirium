@@ -10,6 +10,13 @@ change in any release.
 
 ## [Unreleased]
 
+### Changed
+- File-driver configuration is centralized under `[[drivers]]`: `source_id`,
+  `watch_dir`, and `glob` are explicit and required. CSV/XLSX/Parquet layout is
+  also explicit; stream names are preserved exactly rather than sanitized.
+- Driver graph polling has its own cadence, independent of data ticks. Graph
+  content and graph-file insertion use separate APIs.
+
 ### Added
 - **Explicit driver-author contract.** Ingest drivers declare streams with
   `declare()` before reporting observations; the platform owns datasource and
@@ -20,6 +27,23 @@ change in any release.
   native/ISO/common timestamp parsing, split date/time columns, Unix epochs,
   timezone handling, conservative column-name discovery, and explicit
   `date_format` / `day_first` controls.
+
+### Removed
+- **Breaking:** `TabularIngestBase`, implicit per-file datasource identity,
+  automatic wide/narrow layout selection, and implicit graph path detection.
+  Specialized file drivers now implement `read(path, cursor)` explicitly and
+  may call the plain tabular conversion helpers.
+
+## [0.4.0a1] - 2026-08-14
+
+### Added
+- **Source-owned graph writes.** Every deployment graph write names its owner: `insert_graph(..., source_id=...)` and `sparql_update(..., source_id=...)` on both `Acquirium` and `AcquiriumClient`, and a `source_id` field on `POST /insert_graph` / `POST /sparql_update`. `"plant"` is the reserved owner of the shared plant model; every other source writes its own graph, whose URI is a pure function of the source ID (`urn:acquirium:graph:data:source:<id>`). Components do not pass an owner themselves: `Driver.insert_graph()` / `Driver.sparql_update()` and `App.insert_graph()` / `App.sparql_update()` always write the component's own graph, and an app's graph owner is `app:<name>` (`acquirium.Apps.base.app_source_id`).
+- **Derived query cache with explicit freshness.** The server keeps the inferred graph and the resolved ontology/shape closure in a separate, disposable query dataset. A graph write marks it stale and schedules a single-flight background rebuild; reads return the last complete published generation instead of blocking. `wait_for_fresh=true` (on `/sparql`, `/sparql_json`, and `AcquiriumClient.sparql_query`) waits for pending inference instead.
+- **Graph freshness status.** `GET /graph_version` returns `{version, source_version, published_version, is_current, rebuild_in_progress}`; `version` is retained for existing pollers and equals `source_version`. New `Acquirium.graph_status()` / `AcquiriumClient.graph_status()` return the whole document; `graph_version()` still returns the counter.
+- **Read-only SPARQL 1.1 Protocol endpoint** `GET /sparql`, accepting SELECT, ASK, CONSTRUCT, and DESCRIBE. The response serialization comes from the `Accept` header (SPARQL Results JSON/XML, CSV, TSV; Turtle, N-Triples, RDF/XML, JSON-LD), defaulting to Results JSON for SELECT/ASK and Turtle for CONSTRUCT/DESCRIBE. Dataset-selection and update protocol parameters are deliberately not exposed.
+- `POST /validate_graph`, with `Acquirium.validate_graph()` / `AcquiriumClient.validate_graph()` — SHACL validation of all registered deployment data against the ontology shape closure.
+- `docs/graph-backend-architecture.md` and `docs/http-api.md`.
+- `make test-timing` — the compose-backed suite plus the slowest test cases (`PYTEST_DURATIONS=0` lists all).
 - **Explore query interface.** `acq.explore()` builds the new `Query`: `entity()` / `related()` / `measurement()` pattern verbs; one attribute vocabulary (type, process, cp_type, medium, substance, quantity_kind, unit, enumeration_kind, data_source) shared by `where()` filtering (with `Not()` exclusion and lists-as-OR), `include()` / `drop()` / `with_columns()` column controls (invertible, dotted `"alias.attr"` targeting, `required=`), and `options()` / `facets()` faceted exploration; `alias()` / `refocus()` pointer control; `to_sparql()` / `execute()` / `metadata()` / `data()` / `dataframe()` terminals. Attribute tables are generated into the docstrings of every attribute-taking method.
 - **Client-side multi-hop traversal.** `related`/`measurement` traversal runs as client-side BFS instead of join-explosive SPARQL property paths. `via=` takes a predicate, a predicate list, `"any"`/`"all"`, or a step-pattern constant; `direction="upstream"/"downstream"` maps to inspectable constants (`UPSTREAM_EQUIPMENT`, `DOWNSTREAM_EQUIPMENT`, `UPSTREAM_PROPERTY`, `DOWNSTREAM_PROPERTY`); `nearest=` returns closest matches per source; `max_depth` defaults to 3 (`0` = unbounded). Attribute predicates plus `rdfs:subClassOf`, `s223:hasProperty`, `ref:hasExternalReference`, and `s223:cnx` are hidden from `via="any"` by default (`hide()` / `unhide()` / `hidden_predicates()`).
 - **Multi-measurement UNION compilation.** Queries with several measurement nodes compile as UNION branches: M+N rows with nulls where a node has no data, instead of a cross product that empties the whole result.
@@ -30,11 +54,19 @@ change in any release.
 - `include(required=True)` drops rows lacking the attribute instead of binding null.
 
 ### Changed
-- File-driver configuration is centralized under `[[drivers]]`: `source_id`,
-  `watch_dir`, and `glob` are explicit and required. CSV/XLSX/Parquet layout is
-  also explicit; stream names are preserved exactly rather than sanitized.
-- Driver graph polling has its own cadence, independent of data ticks. Graph
-  content and graph-file insertion use separate APIs.
+- **Breaking: `use_union` / `include_union` renamed to `include_dependencies`** everywhere it selects the ontology/shape closure — `Query.execute()`, `metadata()`, `dataframe()`, `data()`, `options()`, `facets()`, `AcquiriumClient.sparql_query()`, `GET`/`POST /sparql_json`, `GET /sparql`, and `GET /export_graph`. The default stays `True`.
+- **Breaking: `source_id` is required on graph writes.** `insert_graph()` and `sparql_update()` take it as a keyword-only argument with no default, and each entry passed to `register_streams()` must carry a non-empty `source_id`.
+- **Public graph read views.** Reads expose the deployment graph — the inferred union of every registered source graph — with or without ontology/shape dependencies. Neither view is the plant graph alone; `export_graph(include_dependencies=False)` returns all deployment data rather than just the plant graph.
+- App and driver runners poll `graph_status()["source_version"]` instead of `graph_version()` to decide when to rebuild their queries.
+- **DuckDB timeseries rows are keyed by an `INTEGER ref_id`** resolved through a new `ref_ids` table, instead of the `ref_uri` string (integer columns prune far better on min-max zonemaps, and the rows are narrower). The API still speaks `ref_uri` and the `timeseries_streams` view joins the string back in, so SQL against the view is unaffected. **Breaking on disk:** a database whose `timeseries` table is keyed by `ref_uri` cannot be opened by this version — recreate it.
+- **DuckDB opens a connection per operation** against the shared in-process database instance, so reads no longer wait on writes. Writes are serialised by a lock and each runs in its own transaction; `begin()` / `commit()` / `rollback()` spans use a dedicated transaction connection, and their uncommitted writes are invisible to reads.
+- DuckDB keeps no secondary indexes on the `timeseries` table: the `UNIQUE (ref_id, ts)` constraint already serves the point lookups, and ART index maintenance cost every insert and bloated the WAL.
+- An explicit `value_mode` now wins over the stream's registered `value_kind`, so a numeric read of a text-kind stream returns the numeric column it filtered on rather than an all-NULL text column.
+- The numeric/text value split is vectorized in `acquirium.Storage.values` (`typed_value_series`) instead of running per row — 27–54× faster on bulk insert. Mixed-type batches and ints outside Int64 still take the row-wise path, which preserves their exact semantics.
+- Derived-cache publication uses Oxigraph's low-latency `load` for payloads up to 8 MiB and `bulk_load` above it, avoiding SST-file creation for small caches.
+- The dependency closure is published as its own query graph unioned at query time, instead of being duplicated into a second combined graph.
+- The explore query cache key accounts for `include_dependencies`, so results from the two views no longer collide.
+- Explore aliases must be unique: a duplicate explicit `alias()` is rejected, and derived aliases are uniquified.
 - The explore builder is the main `Query` interface; the legacy query class is renamed to `Q`.
 - `stop_app` takes a required `app_id=`; the never-implemented `run_id=` parameter is gone.
 - `Output.event` requires `point_uri` in its signature (it always raised without one).
@@ -44,6 +76,12 @@ change in any release.
 - pyontoenv upgraded to 0.6.0.
 
 ### Fixed
+- Derived-cache rebuild race: publication released the store lock before retiring the rebuild owner, so a write landing in that window scheduled no follow-up and left the cache a generation behind for every later read (or raised "derived cache remained stale after rebuild" on a read-only query).
+- `validate()` snapshots its inputs under the store lock and runs SHACL outside it; holding the lock across a full validation stalled every concurrent query and write.
+- Ontology-graph exclusion is now a live check on graph-URI shape rather than a set frozen at construction, so a source graph registered after startup can no longer be catalogued by OntoEnv as an ontology.
+- The value column's type could flip between batches of a single DuckDB read; it is now resolved once per read, probed over the queried range and independent of `LIMIT`.
+- `DataObject` alias access returns a stable row order: deduplication maintains order and rows sort on `(time, point_uri)`, which is total. Deployment reads union every source graph, so an alias can cover points registered by several components, and the old time-only sort let a text-valued point land on any row.
+- `Driver.source_id` raises a clear error when read before it is set, instead of Python's generic attribute message.
 - `AcquiriumClient.insert_graph` raised `NameError` for multi-line RDF text not starting with `<`, `@`, or `#`.
 - The embedding model cache honors `FASTEMBED_CACHE_PATH`, so a pre-warmed cache (e.g. in the Docker image) is actually used.
 - BENICIA deployment config: `model` and `watch_dir` resolved against the wrong base and the committed historical parquet sat outside the watched directory; the shipped config now replays it.
@@ -51,10 +89,6 @@ change in any release.
 - Traversal pruning crash when `include()` was combined with a traversal edge.
 
 ### Removed
-- **Breaking:** `TabularIngestBase`, implicit per-file datasource identity,
-  automatic wide/narrow layout selection, and implicit graph path detection.
-  Specialized file drivers now implement `read(path, cursor)` explicitly and
-  may call the plain tabular conversion helpers.
 - The `via=` shortcut system; direction step patterns became inspectable constants.
 - `App.docker_image` / `App.entrypoint` / `App.command` (dead since apps moved to Ray actors) and the stale `python -m acquirium.Apps.worker` references in example apps.
 - `scripts/benchmark/` (stale; cited files that no longer exist).
@@ -265,7 +299,8 @@ change in any release.
 - Text matcher backed by FastEmbed with QUDT and graph indexes.
 - Grafana dashboard helpers.
 
-[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a0...HEAD
+[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a1...HEAD
+[0.4.0a1]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a0...v0.4.0a1
 [0.4.0a0]: https://github.com/DataDrivenCPS/acquirium/compare/v0.3.1...v0.4.0a0
 [0.3.1]: https://github.com/DataDrivenCPS/acquirium/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/DataDrivenCPS/acquirium/compare/v0.2.0...v0.3.0
