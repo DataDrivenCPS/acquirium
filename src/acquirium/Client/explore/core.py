@@ -837,12 +837,18 @@ class Query:
             )
         return self.cache[cache_key]
 
-    def to_dict(self) -> dict:
+    def to_dict(self, *, strict: bool = False) -> dict:
         """Return a JSON-serializable representation of this query graph.
 
         Used by app registration (:meth:`Acquirium.register_app`) to store
-        the query alongside the app spec. ``Not`` markers serialize as
-        ``{"not": value}``; via-programs serialize as nested lists.
+        the query alongside the app spec, and inverted by :meth:`from_dict`.
+        ``Not`` markers serialize as ``{"not": value}``; via-programs and
+        ``value_pairs`` serialize as nested lists.
+
+        With ``strict=True`` a value that would fall back to ``str()`` (and
+        therefore not survive :meth:`from_dict`) raises instead of being
+        silently stringified — use it when the dict is persisted for later
+        rehydration rather than for display.
         """
         def safe(v: Any) -> Any:
             if isinstance(v, Not):
@@ -853,6 +859,13 @@ class Query:
                 return {str(k): safe(x) for k, x in v.items()}
             if v is None or isinstance(v, (str, int, float, bool)):
                 return v
+            if isinstance(v, URIRef):
+                return str(v)
+            if strict:
+                raise ValueError(
+                    f"to_dict(strict=True): {type(v).__name__} value {v!r} "
+                    f"cannot be serialized losslessly"
+                )
             return str(v)
 
         g = self.query_graph
@@ -873,8 +886,13 @@ class Query:
                     "hops": e.hops,
                     "predicates": list(e.predicates) if e.predicates else None,
                     "direction": e.direction,
+                    "cp_filter": e.cp_filter,
+                    "cp_union": e.cp_union,
                     "patterns": safe(e.patterns) if e.patterns else None,
                     "nearest": e.nearest,
+                    # None (unresolved) and () (resolved, no matches) differ:
+                    # execute() re-resolves only when value_pairs is None.
+                    "value_pairs": safe(e.value_pairs) if e.value_pairs is not None else None,
                 }
                 for e in g.edges
             ],
@@ -891,6 +909,84 @@ class Query:
                 for nid, info in g.data_nodes.items()
             ],
         }
+
+    @classmethod
+    def from_dict(cls, data: dict, *, client: "AcquiriumClient | None" = None) -> "Query":
+        """Rebuild a :class:`Query` from :meth:`to_dict` output.
+
+        Safe across a JSON round-trip: ``aliases_reverse`` keys are cast back
+        to ``int`` (JSON stringifies them, and every consumer looks nodes up
+        by int id), ``selects`` entries and via-program ``patterns`` /
+        ``value_pairs`` are rebuilt as tuples (``with_select`` dedup and
+        edge-resolution checks rely on tuple identity), and ``{"not": ...}``
+        markers become :class:`Not` again.
+
+        All URIs were resolved when the query was first built, so
+        reconstruction needs no server round-trips; ``client`` is only
+        required to *execute* the rebuilt query.
+        """
+        def revive(v: Any) -> Any:
+            if isinstance(v, dict):
+                if set(v) == {"not"}:
+                    return Not(revive(v["not"]))
+                return {k: revive(x) for k, x in v.items()}
+            if isinstance(v, list):
+                return [revive(x) for x in v]
+            return v
+
+        def deep_tuple(v: Any) -> Any:
+            if isinstance(v, list):
+                return tuple(deep_tuple(x) for x in v)
+            return v
+
+        nodes: Dict[int, QueryNode] = {}
+        for nd in data.get("nodes", []):
+            nid = int(nd["id"])
+            nodes[nid] = QueryNode(
+                id=nid,
+                alias=nd.get("alias"),
+                constraints=revive(nd.get("constraints") or {}),
+            )
+
+        edges = [
+            QueryEdge(
+                source_id=int(ed["source_id"]),
+                target_id=int(ed["target_id"]),
+                hops=int(ed.get("hops", 3)),
+                predicates=list(ed["predicates"]) if ed.get("predicates") else None,
+                direction=ed.get("direction"),
+                cp_filter=ed.get("cp_filter"),
+                patterns=deep_tuple(ed["patterns"]) if ed.get("patterns") else None,
+                nearest=bool(ed.get("nearest", False)),
+                value_pairs=(
+                    deep_tuple(ed["value_pairs"])
+                    if ed.get("value_pairs") is not None else None
+                ),
+                cp_union=bool(ed.get("cp_union", True)),
+            )
+            for ed in data.get("edges", [])
+        ]
+
+        current_pointer = data.get("current_pointer")
+        graph = QueryGraph(
+            nodes=nodes,
+            edges=edges,
+            aliases={str(k): int(v) for k, v in (data.get("aliases") or {}).items()},
+            aliases_reverse={
+                int(k): str(v) for k, v in (data.get("aliases_reverse") or {}).items()
+            },
+            current_pointer=int(current_pointer) if current_pointer is not None else None,
+            data_nodes={
+                int(d["id"]): DataNodeInfo(
+                    node_id=int(d["id"]), filters=revive(d.get("filters") or {})
+                )
+                for d in data.get("data_nodes", [])
+            },
+            selects=tuple(
+                (int(n), str(a), bool(r)) for n, a, r in (data.get("selects") or ())
+            ),
+        )
+        return cls(client=client, query_graph=graph)
 
     def resolved_nodes(
         self,
