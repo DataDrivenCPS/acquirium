@@ -286,7 +286,7 @@ def restore_app_specs(manager) -> list[AppSpec]:
     """
     def rows(q: str) -> list:
         start = time.perf_counter()
-        result = manager.graph_store.sparql_query(q, use_union=False).get("rows", [])
+        result = manager.graph_store.sparql_query(q, include_dependencies=False).get("rows", [])
         logger.debug(
             "App restore: SPARQL query returned %d row(s) in %.1f ms",
             len(result), (time.perf_counter() - start) * 1000.0,

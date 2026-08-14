@@ -22,7 +22,7 @@ class FakeGraphStore:
     def __init__(self, graph):
         self.graph = graph
 
-    def sparql_query(self, query: str, use_union: bool = False) -> dict:
+    def sparql_query(self, query: str, include_dependencies: bool = False) -> dict:
         return {"rows": [list(row) for row in self.graph.query(query)]}
 
 

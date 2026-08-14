@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 def _parse_sparql_bindings(
     query: Query,
+    *,
+    include_dependencies: bool,
 ) -> tuple[
     list[tuple[int, str, str]],          # (nid, point_uri, ref_uri) — unique data bindings
     dict[tuple[int, str, str], list[dict[str, str]]],  # data_key -> list of entity context dicts
@@ -32,7 +34,7 @@ def _parse_sparql_bindings(
         property_units: mapping from data key to property unit URI (or None)
         ref_units: mapping from data key to external reference unit URI (or None)
     """
-    res = query.execute(use_union=True)
+    res = query.execute(include_dependencies=include_dependencies)
     cols: list[str] = res.get("columns", [])
     rows: list[list[Any]] = res.get("rows", [])
 
@@ -287,7 +289,7 @@ class DataObject:
         end=None,
         limit: int | None = None,
         order: str = "asc",
-        use_union: bool = True,
+        include_dependencies: bool = True,
         cast_value: str | None = "float",
         value_mode: str = "default",
     ) -> DataObject:
@@ -296,7 +298,10 @@ class DataObject:
         if not getattr(qg, "data_nodes", None):
             return cls._empty(qg, cast_value=cast_value, client=query.client)
 
-        point_ref_uris, entity_context, prop_units, ext_ref_units = _parse_sparql_bindings(query)
+        point_ref_uris, entity_context, prop_units, ext_ref_units = _parse_sparql_bindings(
+            query,
+            include_dependencies=include_dependencies,
+        )
 
         if not point_ref_uris:
             return cls._empty(qg, cast_value=cast_value, client=query.client)
@@ -554,13 +559,17 @@ class DataObject:
         if subset.is_empty():
             return pl.DataFrame(schema={"time": pl.Datetime(time_zone="UTC"), "value": pl.Float64})
 
-        # Combine ref_uris that share the same (point_uri, time).
-        subset = subset.unique(subset=["point_uri", "time"], keep="first")
+        # Combine ref_uris that share the same (point_uri, time). maintain_order
+        # is what makes keep="first" mean the first row of _tall; without it
+        # polars picks an arbitrary duplicate and shuffles the surviving rows.
+        subset = subset.unique(subset=["point_uri", "time"], keep="first", maintain_order=True)
         subset = _restore_single_value_column(subset)
         n_points = subset["point_uri"].n_unique()
         if n_points <= 1:
             return subset.select("time", "value").sort("time")
-        return subset.select("time", "value", "point_uri").sort("time")
+        # (time, point_uri) is unique after the dedup above, so sorting on both
+        # gives a total order — repeated access returns identical frames.
+        return subset.select("time", "value", "point_uri").sort(["time", "point_uri"])
 
     # ------------------------------------------------------------------
     # Grouping

@@ -135,6 +135,7 @@ def test_setup_can_insert_model_graph(tmp_path):
         model_ttl.read_text(),
         format="turtle",
         replace=True,
+        source_id="watertap",
     )
 
 

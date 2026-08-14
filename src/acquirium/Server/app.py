@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import io
+import json
 import logging
 import os
 import threading
@@ -16,6 +17,7 @@ from typing import Annotated, Any, Optional, Iterator
 # Ray reads this flag once at import time, so it must be set before `import ray`.
 os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "0")
 import ray
+import pyoxigraph as ox
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse, Response
@@ -47,6 +49,63 @@ from acquirium.Apps.supervisor import AppSupervisor, AppAlreadyRegistered
 
 
 log = logging.getLogger("acquirium.api")
+
+
+def _sparql_results_to_rows(serialized: bytes) -> dict[str, Any]:
+    """Preserve Acquirium's SPARQL response contract without RDFLib terms."""
+    payload = json.loads(serialized)
+    if "boolean" in payload:
+        return {"columns": [], "rows": [[bool(payload["boolean"])]]}
+    columns = payload["head"].get("vars", [])
+    rows = [
+        [binding.get(column, {}).get("value") for column in columns]
+        for binding in payload["results"].get("bindings", [])
+    ]
+    return {"columns": columns, "rows": rows}
+
+
+_SPARQL_RESULT_FORMATS = {
+    "application/sparql-results+json": ox.QueryResultsFormat.JSON,
+    "application/sparql-results+xml": ox.QueryResultsFormat.XML,
+    "text/csv": ox.QueryResultsFormat.CSV,
+    "text/tab-separated-values": ox.QueryResultsFormat.TSV,
+}
+_SPARQL_GRAPH_FORMATS = {
+    "text/turtle": ox.RdfFormat.TURTLE,
+    "application/n-triples": ox.RdfFormat.N_TRIPLES,
+    "application/rdf+xml": ox.RdfFormat.RDF_XML,
+    "application/ld+json": ox.RdfFormat.JSON_LD,
+}
+
+
+def _accepted_sparql_formats(accept: str) -> tuple[ox.QueryResultsFormat, ox.RdfFormat]:
+    """Choose supported protocol formats from an HTTP Accept header.
+
+    SELECT and ASK use the first result format accepted by the client;
+    CONSTRUCT and DESCRIBE use the first accepted RDF graph format. The
+    defaults are SPARQL Results JSON and Turtle, respectively.
+    """
+    accepted: list[tuple[float, int, str]] = []
+    for position, item in enumerate(accept.lower().split(",")):
+        media_type, *parameters = item.strip().split(";")
+        quality = 1.0
+        for parameter in parameters:
+            name, separator, value = parameter.strip().partition("=")
+            if separator and name == "q":
+                try:
+                    quality = float(value)
+                except ValueError:
+                    quality = 0.0
+        if quality:
+            accepted.append((-quality, position, media_type.strip()))
+    for _, _, media_type in sorted(accepted):
+        if media_type in _SPARQL_RESULT_FORMATS:
+            return _SPARQL_RESULT_FORMATS[media_type], _SPARQL_GRAPH_FORMATS["text/turtle"]
+        if media_type in _SPARQL_GRAPH_FORMATS:
+            return _SPARQL_RESULT_FORMATS["application/sparql-results+json"], _SPARQL_GRAPH_FORMATS[media_type]
+        if media_type in {"*/*", "application/*", "text/*"}:
+            break
+    return _SPARQL_RESULT_FORMATS["application/sparql-results+json"], _SPARQL_GRAPH_FORMATS["text/turtle"]
 
 
 def _self_connect_cfg(cfg: dict) -> tuple[str, int, bool]:
@@ -158,6 +217,10 @@ class InsertGraphRequest(BaseModel):
     rdf_graph: str = Field(..., description="File path or RDF text")
     format: str = "turtle"
     replace: bool = True
+    source_id: str = Field(
+        min_length=1,
+        description="Deployment data-graph owner; use 'plant' for the shared plant model",
+    )
 
 
 class TimeseriesInfoRequest(BaseModel):
@@ -289,13 +352,13 @@ def embedding_status():
 
 
 @app.get("/graph_version")
-def graph_version() -> dict[str, int]:
-    """Return a counter that the server increments on every graph mutation.
+def graph_version() -> dict[str, int | bool]:
+    """Return source and derived-query generations.
 
-    Long-running clients (e.g. keep-alive app workers) can poll this to
-    decide when to rebuild cached queries that depend on the graph.
+    ``published_version`` identifies the source generation represented by the
+    last complete query cache.
     """
-    return {"version": app.state.manager.graph_version()}
+    return app.state.manager.graph_status()
 
 
 
@@ -309,24 +372,34 @@ def insert_graph(req: InsertGraphRequest) -> dict[str, Any]:
             rdf_graph=req.rdf_graph,
             format=req.format,
             replace=req.replace,
+            source_id=req.source_id,
         )
         return {"ok": True, "embedding_ready": True}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.post("/validate_graph")
+def validate_graph() -> dict[str, str | bool]:
+    try:
+        return app.state.manager.validate_graph()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.get("/export_graph")
-def export_graph(include_union: bool = True, format: str = "turtle"):
+def export_graph(include_dependencies: bool = True, format: str = "turtle"):
     """Export the RDF graph in the specified format.
 
     Args:
-        include_union: If True, includes the union graph with all imports resolved.
-                      If False, returns only the main graph.
+        include_dependencies: If True, includes deployment data plus all imported
+                      ontology/shape triples. If False, returns all registered
+                      deployment/source graphs without those dependencies.
         format: Serialization format - turtle, n3, xml, trig, etc.
     """
     try:
         content = app.state.manager.graph_store.export_graph(
-            include_union=include_union,
+            include_dependencies=include_dependencies,
             format=format,
         )
         media_types = {
@@ -633,38 +706,97 @@ def timeseries_info(req: TimeseriesInfoRequest) -> dict[str, Any]:
 
 
 @app.get("/sparql_json")
-def sparql_json(query: str, use_union: bool = True) -> dict[str, Any]:
+def sparql_json(query: str, include_dependencies: bool = True, wait_for_fresh: bool = False):
     try:
-        result = app.state.manager.sparql_dict(query, use_union=use_union)
+        serialized = app.state.manager.sparql_json(
+            query, include_dependencies=include_dependencies, wait_for_fresh=wait_for_fresh,
+        )
+        if serialized is not None:
+            return _sparql_results_to_rows(serialized)
+        result = app.state.manager.sparql_dict(
+            query, include_dependencies=include_dependencies, wait_for_fresh=wait_for_fresh,
+        )
         return result
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.get("/sparql")
+def sparql(
+    request: Request,
+    query: Annotated[str, Query(description="SPARQL SELECT, ASK, CONSTRUCT, or DESCRIBE query")],
+    include_dependencies: bool = True,
+    wait_for_fresh: bool = False,
+) -> Response:
+    """Read-only SPARQL 1.1 Protocol endpoint over Acquirium's derived graph.
+
+    The default dataset is inferred deployment data plus resolved ontology and
+    shape triples. ``include_dependencies=false`` omits that closure while retaining
+    inferred deployment data. Dataset-selection and update protocol parameters
+    are deliberately not exposed by this read-only first version.
+    """
+    results_format, graph_format = _accepted_sparql_formats(request.headers.get("accept", "*/*"))
+    try:
+        content, media_type = app.state.manager.sparql_serialized(
+            query,
+            include_dependencies=include_dependencies,
+            wait_for_fresh=wait_for_fresh,
+            results_format=results_format,
+            graph_format=graph_format,
+        )
+        return Response(content=content, media_type=media_type)
+    except Exception as exc:
+        # A GET endpoint accepts only SPARQL Query forms; parser and query
+        # failures are request errors under the SPARQL Protocol.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 class SparqlQueryRequest(BaseModel):
     query: str = Field(..., description="SPARQL SELECT/ASK/CONSTRUCT query")
-    use_union: bool = Field(True, description="Query the imports-union graph")
+    include_dependencies: bool = Field(True, description="Include ontology/shape triples")
+    wait_for_fresh: bool = Field(
+        False,
+        description="Wait for pending inference; default returns the last complete graph",
+    )
 
 
 @app.post("/sparql_json")
-def sparql_json_post(req: SparqlQueryRequest) -> dict[str, Any]:
+def sparql_json_post(req: SparqlQueryRequest):
     """POST form of /sparql_json: VALUES-heavy queries (e.g. resolved
     traversal edges) exceed URL length limits, so the client posts."""
     try:
-        return app.state.manager.sparql_dict(req.query, use_union=req.use_union)
+        serialized = app.state.manager.sparql_json(
+            req.query,
+            include_dependencies=req.include_dependencies,
+            wait_for_fresh=req.wait_for_fresh,
+        )
+        if serialized is not None:
+            return _sparql_results_to_rows(serialized)
+        return app.state.manager.sparql_dict(
+            req.query,
+            include_dependencies=req.include_dependencies,
+            wait_for_fresh=req.wait_for_fresh,
+        )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
 class SparqlUpdateRequest(BaseModel):
     update: str = Field(..., description="SPARQL UPDATE (INSERT/DELETE) statement")
+    source_id: str = Field(
+        min_length=1,
+        description="Owner of the data graph to update; use 'plant' for the shared plant model",
+    )
 
 
 @app.post("/sparql_update")
 def sparql_update(req: SparqlUpdateRequest) -> dict[str, Any]:
-    """Run a SPARQL UPDATE against the main graph and bump the graph version."""
+    """Run a SPARQL UPDATE against plant or source-owned data."""
     try:
-        return {"ok": True, **app.state.manager.sparql_update(req.update)}
+        return {
+            "ok": True,
+            **app.state.manager.sparql_update(req.update, source_id=req.source_id),
+        }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

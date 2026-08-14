@@ -205,9 +205,11 @@ class Acquirium:
         rdf_graph: str,
         format: str = "turtle",
         replace=True,
+        *,
+        source_id: str,
     ) -> None:
         """
-        Insert RDF graph into the graph store's main graph.
+        Insert RDF graph into an explicitly owned deployment data graph.
 
         The server refreshes the embedding index synchronously before
         responding, so inserted concepts are resolvable once this returns.
@@ -218,9 +220,24 @@ class Acquirium:
                 - graph content as text
                 - location of the source file
             format: Format of the RDF data [turtle | n3 | xml | trix]
-            replace: If True, replaces the existing main graph. If False, appends to it.
+            replace: If True, replaces the selected graph. If False, appends to it.
+            source_id: Data-graph owner. Use ``"plant"`` for the shared plant
+                model, or a component's stable source ID.
         """
-        self.client.insert_graph(rdf_graph, format=format, replace=replace)
+        self.client.insert_graph(
+            rdf_graph,
+            format=format,
+            replace=replace,
+            source_id=source_id,
+        )
+
+    def sparql_update(self, update: str, *, source_id: str) -> dict[str, Any]:
+        """Execute a SPARQL update against one explicitly owned data graph.
+
+        Components with a fixed owner use their ``self.sparql_update`` helper
+        instead of passing ``source_id`` themselves.
+        """
+        return self.client.sparql_update(update, source_id=source_id)
 
     def query(self) -> Query:
         """Create a new empty Query (the explore builder) bound to this instance."""
@@ -394,8 +411,16 @@ class Acquirium:
 
 
     def graph_version(self) -> int:
-        """Return the server's current graph mutation counter."""
+        """Return the server's current source-data generation."""
         return self.client.graph_version()
+
+    def graph_status(self) -> dict[str, int | bool]:
+        """Return source and derived-query cache generations from the server."""
+        return self.client.graph_status()
+
+    def validate_graph(self) -> dict[str, str | bool]:
+        """Validate all registered deployment data against ontology shapes."""
+        return self.client.validate_graph()
 
     def reference_uri(self, source_id: str, ref_name: str) -> URIRef:
         """Return the canonical Acquirium reference URI for ``(source_id, ref_name)``."""
@@ -428,17 +453,27 @@ class Acquirium:
         the same ``source_id`` and source-local ``ref_name``. Acquirium resolves
         those inserts to the same canonical reference URI internally.
         """
-        g = RDFGraph()
+        graphs: dict[str, RDFGraph] = {}
         for stream in streams:
+            source_id = stream.get("source_id")
+            if not isinstance(source_id, str) or not source_id:
+                raise ValueError("each stream registration requires a non-empty source_id")
+            graph = graphs.setdefault(source_id, RDFGraph())
             meta = {
                 f: stream.get(f)
                 for f in POINT_FIELD_KINDS
                 if stream.get(f) is not None
             }
             resolved = self.resolve_point_metadata(meta) if meta else {}
-            _build_stream_triples(g, stream, resolved)
-        if len(g):
-            self.client.insert_graph(g.serialize(format="turtle"), format="turtle", replace=False)
+            _build_stream_triples(graph, stream, resolved)
+        for source_id, graph in graphs.items():
+            if len(graph):
+                self.client.insert_graph(
+                    graph.serialize(format="turtle"),
+                    format="turtle",
+                    replace=False,
+                    source_id=source_id,
+                )
 
     # ------------------------------------------------------------------
     # ACQUIRIUM APPS API

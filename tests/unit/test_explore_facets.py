@@ -37,7 +37,7 @@ def make_client(responder):
     return client
 
 
-def empty_res(sparql, use_union=True):
+def empty_res(sparql, include_dependencies=True):
     if "?opt" in sparql:
         return {"columns": ["opt", "count"], "rows": []}
     return {"columns": ["uri"], "rows": []}
@@ -61,7 +61,7 @@ class TestFallbackChain:
     def test_matched_wins(self):
         nodes = [f"urn:p#m{i}" for i in range(4)]
 
-        def responder(sparql, use_union=True):
+        def responder(sparql, include_dependencies=True):
             if sparql.startswith("SELECT ?v ?opt"):
                 if "ofMedium" in sparql:  # medium lookup: all four carry Water
                     return {"columns": ["v", "opt"],
@@ -78,7 +78,7 @@ class TestFallbackChain:
         assert f["medium"]["count"].to_list() == [4]
 
     def test_model_fallback_when_pattern_empty(self):
-        def responder(sparql, use_union=True):
+        def responder(sparql, include_dependencies=True):
             if "COUNT(DISTINCT ?v1)" in sparql:
                 return {"columns": ["opt", "count"], "rows": []}
             if "COUNT(DISTINCT ?x)" in sparql:
@@ -90,7 +90,7 @@ class TestFallbackChain:
         assert f["medium"]["medium"].to_list() == ["Brine"]
 
     def test_vocab_fallback_last(self):
-        def responder(sparql, use_union=True):
+        def responder(sparql, include_dependencies=True):
             if "SELECT DISTINCT ?uri" in sparql:
                 return {"columns": ["uri"], "rows": [["urn:m#Seawater"]]}
             return {"columns": ["opt", "count"], "rows": []}
@@ -106,7 +106,9 @@ class TestFallbackChain:
 
 class TestModuleCache:
     def test_model_options_cached_by_version(self):
-        client = make_client(lambda s, use_union=True: {"columns": ["opt", "count"], "rows": []})
+        client = make_client(
+            lambda s, include_dependencies=True: {"columns": ["opt", "count"], "rows": []},
+        )
         attr = REGISTRY["unit"]
         model_options(client, attr, 1)
         model_options(client, attr, 1)
@@ -127,7 +129,7 @@ class TestSummaryObject:
     def test_repr_and_indexing(self):
         nodes = [f"urn:p#m{i}" for i in range(3)]
 
-        def responder(sparql, use_union=True):
+        def responder(sparql, include_dependencies=True):
             if sparql.startswith("SELECT ?v ?opt"):
                 if "hasQuantityKind" in sparql:
                     return {"columns": ["v", "opt"],

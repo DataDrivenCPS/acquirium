@@ -336,10 +336,12 @@ def acq():
     client.insert_graph(
         "deployments/BENICIA/benicia-model.ttl",
         replace=True,
+        source_id="plant",
     )
     client.insert_graph(
         str(_res_files("acquirium._ontologies") / "water.ttl"),
         replace=False,
+        source_id="plant",
     )
     # Graph index is now built; this still guards the QUDT startup index.
     _wait_for_embeddings_ready(client, timeout=60)

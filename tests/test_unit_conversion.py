@@ -104,7 +104,7 @@ def acquirium_client():
         server_port=ACQUIRIUM_TEST_SERVER_PORT,
         use_ssl=False,
     )
-    acq.insert_graph("tests/test_model_units.ttl")
+    acq.insert_graph("tests/test_model_units.ttl", source_id="plant")
     return acq
 
 
@@ -160,10 +160,16 @@ class TestDataObjectUnits:
         converted = data.convert_to("L-PER-MIN", alias=alias_with_unit)
         converted_df = converted[alias_with_unit]
 
+        # Rows line up positionally between the two frames; text-valued points
+        # under the same alias come back as nulls, so compare the first row
+        # that actually carries a number.
+        orig_numeric = original.drop_nulls("value")
+        conv_numeric = converted_df.drop_nulls("value")
+
         # Values should be scaled by 0.001 (mL -> L)
-        if not original.is_empty() and not converted_df.is_empty():
-            orig_val = original["value"][0]
-            conv_val = converted_df["value"][0]
+        if not orig_numeric.is_empty() and not conv_numeric.is_empty():
+            orig_val = orig_numeric["value"][0]
+            conv_val = conv_numeric["value"][0]
             assert abs(conv_val - orig_val * 0.001) < 1e-6
 
     def test_convert_to_case1(self, acquirium_client):
