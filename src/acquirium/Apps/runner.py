@@ -21,12 +21,18 @@ from acquirium.internals._log import configure_logging, timed_debug as _timed_de
 from acquirium.internals.app_utils import app_uri_for, app_spec_graph
 from acquirium.internals.internals_namespaces import *
 from acquirium.internals.models import AppSpec
+from acquirium.internals.scheduling import IntervalScheduler
 
 if TYPE_CHECKING:
     from acquirium.Client.acquirium import Acquirium
     from acquirium.Drivers.Driver import Driver
 
 logger = logging.getLogger("acquirium.apps.runner")
+
+# Floor for graph-change polling when an app runs faster than this. Mirrors
+# the driver runner: graph mutations are rare, so a fast run cadence must not
+# turn into a fast poll of the server.
+DEFAULT_GRAPH_POLL_INTERVAL = 10.0
 
 
 @ray.remote
@@ -84,6 +90,15 @@ class AppRunner:
         # Captured when run() starts so the sync stop() can flip the event on
         # the loop thread via call_soon_threadsafe.
         self._loop: asyncio.AbstractEventLoop | None = None
+        # Overrun policy (set per run request) and the live scheduler.
+        self._max_in_flight = 1
+        self._run_timeout: float | None = None
+        self._scheduler: IntervalScheduler | None = None
+        # Graph-change polling runs on its own cadence, not per tick: a fast
+        # data cadence must not become a fast poll of the server. None means
+        # "derive from the interval" (max(interval, DEFAULT_GRAPH_POLL_INTERVAL)).
+        self.graph_poll_interval: float | None = None
+        self._last_graph_poll = 0.0
 
     @staticmethod
     def _safe_entry_file(entry_file: str | None) -> str:
@@ -308,9 +323,16 @@ class AppRunner:
         restores the app from the graph.
         """
         self._params = params if params is not None else dict(self.spec.params)
-        self._load_app()
-        self.build_query()
-        self.build_app()
+        try:
+            self._load_app()
+            self.build_query()
+            self.build_app()
+        except Exception:
+            # Surface the failure in status() instead of leaving "pending"
+            # forever; the supervisor logs the exception and keeps the app
+            # registered so a later run can retry the build.
+            self._build_status = "failed"
+            raise
         # Seed the source generation the query was built against so the run
         # phase can detect a stale query after later graph mutations.
         try:
@@ -333,17 +355,24 @@ class AppRunner:
         params: dict[str, Any] | None = None,
         keep_alive: bool = False,
         interval: float = 10.0,
+        max_in_flight: int = 1,
+        run_timeout: float | None = None,
     ) -> dict[str, Any]:
         """Schedule execution and return immediately.
 
         One-shot: dispatch a single run task and return its ``run_id``.
         Keep-alive: start a background loop that dispatches a run every
-        ``interval`` seconds until :meth:`stop`. In both cases the actual
-        ``app.run`` executes in a stateless Ray task; this actor only
-        schedules and monitors it.
+        ``interval`` seconds until :meth:`stop`, keeping at most
+        ``max_in_flight`` runs in flight — an interval tick that would exceed
+        that is skipped and counted, never queued. ``run_timeout`` bounds one
+        run's wall clock; an overrunning task is cancelled and recorded as
+        "timeout". In both cases the actual ``app.run`` executes in a
+        stateless Ray task; this actor only schedules and monitors it.
         """
         self._loop = asyncio.get_running_loop()
         params = params or {}
+        self._max_in_flight = max(1, int(max_in_flight))
+        self._run_timeout = run_timeout
         if self.app is None:
             # Build never completed (e.g. failed at registration); retry once.
             self.setup(params)
@@ -384,7 +413,10 @@ class AppRunner:
 
         record = self._runs[run_id]
         try:
-            outputs = await ref
+            if self._run_timeout is not None:
+                outputs = await asyncio.wait_for(ref, timeout=self._run_timeout)
+            else:
+                outputs = await ref
             # emit_outputs does blocking I/O (timeseries inserts, webhook
             # posts); run it off the event-loop thread so the actor's loop
             # stays responsive to other runs and to stop().
@@ -397,6 +429,18 @@ class AppRunner:
             )
             record["status"] = "done"
             record["outputs"] = len(outputs)
+        except asyncio.TimeoutError:
+            record["status"] = "timeout"
+            record["error"] = f"run exceeded run_timeout={self._run_timeout}s"
+            # force=True: a stuck user function never reaches a cancellation
+            # point, so only killing the worker actually frees the slot.
+            try:
+                ray.cancel(ref, force=True)
+            except Exception:
+                self.logger.debug("ray.cancel failed for %s", run_id, exc_info=True)
+            self.logger.warning(
+                "run %s cancelled after %.1fs run_timeout", run_id, self._run_timeout,
+            )
         except Exception as exc:
             record["status"] = "failed"
             record["error"] = str(exc)
@@ -404,29 +448,61 @@ class AppRunner:
         finally:
             record["finished_at"] = datetime.now(timezone.utc).isoformat()
 
-    async def _run_loop(self, interval: float, start, end, params: dict[str, Any]) -> None:
-        """Keep-alive loop: dispatch a run each interval, rebuilding the query
-        when the server's source generation advances (mirrors DriverRunner.run).
-        The state from build_app is reused, so the model trains once and each
-        dispatched run is an inference.
+    def _maybe_refresh_query(self) -> None:
+        """Rebuild the query when the server's source generation advances.
+
+        Runs on its own cadence (``graph_poll_interval``), not per tick.
+        A poll or rebuild failure must never skip the run, so everything is
+        guarded; a rebuild failure keeps the previous query.
         """
-        self.logger.info("keep-alive loop start '%s' (interval=%.1fs)", self.spec.name, interval)
-        self._dispatch_run(start, end, params)
-        while not self._stop_event.is_set():
-            try:
-                await asyncio.wait_for(self._stop_event.wait(), timeout=interval)
-                break
-            except asyncio.TimeoutError:
-                pass
-            # A version poll failure must not skip the run, so guard it apart.
-            try:
-                source_version = int(self.acquirium_cli.graph_status()["source_version"])
-                if source_version != self.source_version:
-                    self.source_version = source_version
-                    self.build_query()
-            except Exception:
-                self.logger.exception("query refresh failed; keeping previous query")
-            self._dispatch_run(start, end, params)
+        now = time.monotonic()
+        if now - self._last_graph_poll < (self.graph_poll_interval or 0.0):
+            return
+        self._last_graph_poll = now
+        try:
+            source_version = int(self.acquirium_cli.graph_status()["source_version"])
+            if source_version != self.source_version:
+                self.source_version = source_version
+                self.build_query()
+        except Exception:
+            self.logger.exception("query refresh failed; keeping previous query")
+
+    async def _scheduled_dispatch(self, start, end, params: dict[str, Any]) -> None:
+        """One keep-alive tick: refresh the query if stale, run, await the end.
+
+        Awaiting the monitor task makes the scheduler's in-flight count span
+        the run's full duration (including output emission) — that is what
+        skip-on-overrun measures against.
+        """
+        self._maybe_refresh_query()
+        run_id = self._dispatch_run(start, end, params)
+        monitor = self._runs.get(run_id, {}).get("_monitor")
+        if monitor is not None:
+            await monitor
+
+    async def _run_loop(self, interval: float, start, end, params: dict[str, Any]) -> None:
+        """Keep-alive loop, driven by :class:`IntervalScheduler`.
+
+        The scheduler owns the deadline grid and the overrun policy (skip and
+        count, bounded in-flight); this method wires it to the app's dispatch
+        and to the actor's stop event. The state from build_app is reused, so
+        the model trains once and each dispatched run is an inference.
+        """
+        self.logger.info(
+            "keep-alive loop start '%s' (interval=%.1fs, max_in_flight=%d)",
+            self.spec.name, interval, self._max_in_flight,
+        )
+        if self.graph_poll_interval is None:
+            self.graph_poll_interval = max(float(interval), DEFAULT_GRAPH_POLL_INTERVAL)
+        scheduler = IntervalScheduler(
+            interval,
+            lambda: self._scheduled_dispatch(start, end, params),
+            max_in_flight=self._max_in_flight,
+            name=f"app:{self.spec.name}",
+            stop_event=self._stop_event,
+        )
+        self._scheduler = scheduler
+        await scheduler.run()
         self._keep_alive = False
         self.logger.info("keep-alive loop exit '%s'", self.spec.name)
 
@@ -455,12 +531,18 @@ class AppRunner:
 
     def status(self) -> dict[str, Any]:
         """Report build/run status for this app (the actor answers directly)."""
+        sched = self._scheduler.status() if self._scheduler is not None else {}
         return {
             "name": self.spec.name,
             "build": self._build_status,
             "queries": list(self.queries.keys()),
             "state": type(self.state).__name__ if self.state is not None else None,
             "keep_alive": self._keep_alive,
+            # Overrun visibility: skipped rises when runs outlast the interval.
+            "in_flight": sched.get("in_flight", 0),
+            "dispatched": sched.get("dispatched", 0),
+            "skipped": sched.get("skipped", 0),
+            "last_duration": sched.get("last_duration"),
             "runs": [
                 {k: v for k, v in r.items() if not k.startswith("_")}
                 for r in self._runs.values()

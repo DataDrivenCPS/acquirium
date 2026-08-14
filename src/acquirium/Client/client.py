@@ -548,6 +548,8 @@ class AcquiriumClient:
         params: Optional[dict] = None,
         keep_alive: bool = False,
         interval: float = 10.0,
+        max_in_flight: int = 1,
+        run_timeout: Optional[float] = None,
     ) -> dict:
         url = f"{self.base_url}/apps/run"
         req = AppRunRequest(
@@ -557,6 +559,8 @@ class AcquiriumClient:
             params=params or {},
             keep_alive=keep_alive,
             interval=interval,
+            max_in_flight=max_in_flight,
+            run_timeout=run_timeout,
         )
         response = requests.post(url, json=req.model_dump(mode="json"))
         response.raise_for_status()

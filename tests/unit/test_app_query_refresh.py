@@ -64,6 +64,10 @@ def run_loop_ticks(runner, ticks: int = 2, interval: float = 0.01):
     """Drive _run_loop, stopping after `ticks` dispatches; return the calls."""
     calls: list[tuple] = []
 
+    # Graph polling has its own cadence with a 10s floor; test intervals are
+    # milliseconds, so force a poll before every dispatch.
+    runner.graph_poll_interval = 0.0
+
     def fake_dispatch(start, end, params):
         calls.append((start, end, params))
         if len(calls) >= ticks:
@@ -179,3 +183,85 @@ def test_keeps_query_when_rebuild_fails(tmp_path):
     assert runner.query is initial_query
     # the failure did not skip the run
     assert len(calls) == 2
+
+
+def test_graph_poll_floor_limits_polling(tmp_path):
+    # At a fast run cadence the version poll must not fire every tick: with
+    # the poll interval left at its floor, ~ms ticks poll at most once.
+    runner = make_runner(tmp_path, version_value=5)
+    runner.build_query()
+    runner.source_version = 5
+
+    calls: list[tuple] = []
+
+    def fake_dispatch(start, end, params):
+        calls.append((start, end, params))
+        if len(calls) >= 3:
+            runner._stop_event.set()
+        return f"run-{len(calls)}"
+
+    runner._dispatch_run = fake_dispatch
+    asyncio.run(runner._run_loop(0.01, None, None, {}))
+    assert len(calls) == 3
+    # graph_poll_interval derived as max(interval, 10s) -> only the first
+    # dispatch polled.
+    assert runner.acquirium_cli.graph_status.call_count == 1
+
+
+# ─────────────────────── overrun policy ───────────────────────
+
+
+def test_overrun_skips_ticks_and_reports(tmp_path):
+    runner = make_runner(tmp_path, version_value=0)
+    runner.build_query()
+    runner.source_version = 0
+    runner.graph_poll_interval = 1e9  # no polls in this test
+
+    calls: list[tuple] = []
+
+    def fake_dispatch(start, end, params):
+        calls.append((start, end, params))
+
+        async def slow_monitor():
+            await asyncio.sleep(0.08)
+
+        run_id = f"run-{len(calls)}"
+        runner._runs[run_id] = {"_monitor": asyncio.create_task(slow_monitor())}
+        return run_id
+
+    runner._dispatch_run = fake_dispatch
+
+    async def drive():
+        loop_task = asyncio.create_task(runner._run_loop(0.02, None, None, {}))
+        await asyncio.sleep(0.07)
+        runner._stop_event.set()
+        await loop_task
+        await runner._scheduler.drain()
+
+    asyncio.run(drive())
+    # One run in flight the whole time; every tick during it was skipped.
+    assert len(calls) == 1
+    status = runner.status()
+    assert status["dispatched"] == 1
+    assert status["skipped"] >= 2
+    assert status["in_flight"] == 0
+    assert status["last_duration"] is not None
+
+
+def test_status_before_any_loop_has_zero_counters(tmp_path):
+    runner = make_runner(tmp_path)
+    status = runner.status()
+    assert (status["in_flight"], status["dispatched"], status["skipped"]) == (0, 0, 0)
+    assert status["last_duration"] is None
+
+
+# ─────────────────────── build status ───────────────────────
+
+
+def test_setup_failure_marks_build_failed(tmp_path):
+    # No source was persisted under the app dir, so _load_app raises.
+    runner = make_runner(tmp_path)
+    assert runner._build_status == "pending"
+    with pytest.raises(Exception):
+        runner.setup()
+    assert runner._build_status == "failed"

@@ -48,6 +48,7 @@ class IntervalScheduler:
         *,
         max_in_flight: int = 1,
         name: str = "",
+        stop_event: asyncio.Event | None = None,
     ):
         if interval <= 0:
             raise ValueError("interval must be greater than zero")
@@ -57,7 +58,9 @@ class IntervalScheduler:
         self.max_in_flight = int(max_in_flight)
         self.name = name
         self._dispatch = dispatch
-        self._stop_event = asyncio.Event()
+        # An injected event lets a host share its existing stop signal (the
+        # app runner's sync stop() already flips one via the loop).
+        self._stop_event = stop_event if stop_event is not None else asyncio.Event()
         self._in_flight = 0
         self._dispatched = 0
         self._skipped = 0

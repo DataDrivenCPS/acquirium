@@ -216,6 +216,12 @@ class AppRunRequest(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
     keep_alive: bool = False
     interval: float = 10.0
+    # Overrun policy: at most this many runs in flight; an interval tick that
+    # would exceed it is skipped and counted, never queued.
+    max_in_flight: int = Field(default=1, ge=1)
+    # Optional per-run wall-clock bound; an overrunning task is cancelled and
+    # its run recorded as "timeout".
+    run_timeout: float | None = Field(default=None, gt=0)
 
 
 class AppStopRequest(BaseModel):

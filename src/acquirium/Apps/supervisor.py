@@ -192,7 +192,10 @@ class AppSupervisor:
         now = datetime.now(timezone.utc).isoformat()
         with _timed_debug(logger, "run_app actor.run app=%s", req.app_id):
             run_message = ray.get(
-                actor.run.remote(req.start, req.end, req.params, req.keep_alive, req.interval)
+                actor.run.remote(
+                    req.start, req.end, req.params, req.keep_alive, req.interval,
+                    req.max_in_flight, req.run_timeout,
+                )
             )
         with self._lock:
             record = self._apps.get(req.app_id)

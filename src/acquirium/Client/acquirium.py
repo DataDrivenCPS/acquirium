@@ -579,8 +579,17 @@ class Acquirium:
         params: dict[str, Any] | None = None,
         keep_alive: bool = False,
         interval: float = 10.0,
+        max_in_flight: int = 1,
+        run_timeout: float | None = None,
     ) -> dict[str, Any]:
-        """Trigger an app execution in its own container via the server."""
+        """Trigger an app execution on the server.
+
+        Keep-alive runs hold at most ``max_in_flight`` runs in flight — an
+        interval tick that would exceed it is skipped and counted (visible as
+        ``skipped`` in the app's status). ``run_timeout`` bounds one run's
+        wall clock; an overrunning run is cancelled and recorded as
+        ``timeout``.
+        """
         return AppsResponse(self.client.run_app(
             app_id,
             start=start,
@@ -588,6 +597,8 @@ class Acquirium:
             params=params or {},
             keep_alive=keep_alive,
             interval=interval,
+            max_in_flight=max_in_flight,
+            run_timeout=run_timeout,
         ))
 
     def stop_app(self, *, app_id: str) -> dict[str, Any]:
