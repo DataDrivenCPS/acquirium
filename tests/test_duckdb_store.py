@@ -475,6 +475,106 @@ def test_timeseries_table_keyed_by_integer_ref_id(store):
     assert stored == [[ref_id]]
 
 
+# ---- hot/cold tiering ----
+
+@pytest.fixture
+def tiered_store(tmp_path):
+    """Store with a tiny flush threshold so tiering is exercisable."""
+    s = DuckDBStore(db_path=tmp_path / "tiered.duckdb", recreate=True, hot_flush_rows=5)
+    yield s
+    s.close()
+
+
+def _values(store, uri, **kwargs):
+    return [v for b in store.timeseries(uri, **kwargs) for v in b.to_pydict()["value"]]
+
+
+@pytest.mark.unit
+def test_writes_land_in_hot_until_flushed(tiered_store):
+    s = tiered_store
+    s.upsert_rows("urn:t:a", [(_utc(2024, 1, 1), 1.0)], value_kind="numeric")
+    assert s.tier_counts() == {"hot": 1, "cold": 0}
+
+    assert s.flush_hot() == 1
+    assert s.tier_counts() == {"hot": 0, "cold": 1}
+    assert _values(s, "urn:t:a") == [1.0]
+
+
+@pytest.mark.unit
+def test_rewrite_within_hot_keeps_newest(tiered_store):
+    s = tiered_store
+    s.upsert_rows("urn:t:a", [(_utc(2024, 1, 1), 1.0)], value_kind="numeric")
+    s.upsert_rows("urn:t:a", [(_utc(2024, 1, 1), 2.0)], value_kind="numeric")
+
+    # Both writes are still physically present; the view resolves to the newest.
+    assert s.tier_counts()["hot"] == 2
+    assert _values(s, "urn:t:a") == [2.0]
+    assert s.timeseries_info("urn:t:a").row_count == 1
+
+
+@pytest.mark.unit
+def test_hot_row_shadows_cold_row_then_collapses_on_flush(tiered_store):
+    s = tiered_store
+    s.upsert_rows("urn:t:a", [(_utc(2024, 1, 1), 1.0)], value_kind="numeric")
+    s.flush_hot()
+    s.upsert_rows("urn:t:a", [(_utc(2024, 1, 1), 9.0)], value_kind="numeric")
+
+    assert s.tier_counts() == {"hot": 1, "cold": 1}
+    assert _values(s, "urn:t:a") == [9.0]
+    assert s.timeseries_info("urn:t:a").row_count == 1
+
+    s.flush_hot()
+    assert s.tier_counts() == {"hot": 0, "cold": 1}
+    assert _values(s, "urn:t:a") == [9.0]
+    assert s.timeseries_info("urn:t:a").row_count == 1
+
+
+@pytest.mark.unit
+def test_auto_flush_at_threshold(tiered_store):
+    s = tiered_store
+    for day in range(1, 7):
+        s.upsert_rows("urn:t:a", [(_utc(2024, 1, day), float(day))], value_kind="numeric")
+
+    counts = s.tier_counts()
+    assert counts["cold"] >= 5 and counts["hot"] < 5
+    assert _values(s, "urn:t:a") == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+
+
+@pytest.mark.unit
+def test_reads_span_tiers(tiered_store):
+    s = tiered_store
+    for day in range(1, 5):
+        s.upsert_rows("urn:t:a", [(_utc(2024, 1, day), float(day))], value_kind="numeric")
+    s.flush_hot()
+    for day in range(5, 8):
+        s.upsert_rows("urn:t:a", [(_utc(2024, 1, day), float(day))], value_kind="numeric")
+
+    assert s.tier_counts() == {"hot": 3, "cold": 4}
+    assert _values(s, "urn:t:a") == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]
+    assert _values(s, "urn:t:a", order="desc") == [7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0]
+    assert _values(s, "urn:t:a", start=_utc(2024, 1, 3), end=_utc(2024, 1, 6)) == [3.0, 4.0, 5.0, 6.0]
+    assert len(_values(s, "urn:t:a", limit=3)) == 3
+    assert s.timeseries_info("urn:t:a").row_count == 7
+    assert s.timeseries_info_batch(["urn:t:a"])["urn:t:a"].row_count == 7
+
+
+@pytest.mark.unit
+def test_replace_rows_clears_both_tiers(tiered_store):
+    s = tiered_store
+    s.upsert_rows("urn:t:a", [(_utc(2024, 1, 1), 1.0)], value_kind="numeric")
+    s.flush_hot()
+    s.upsert_rows("urn:t:a", [(_utc(2024, 1, 2), 2.0)], value_kind="numeric")
+
+    s.replace_rows("urn:t:a", [(_utc(2024, 1, 9), 9.0)], value_kind="numeric")
+    assert _values(s, "urn:t:a") == [9.0]
+    assert s.timeseries_info("urn:t:a").row_count == 1
+
+
+@pytest.mark.unit
+def test_flush_is_a_noop_when_hot_is_empty(tiered_store):
+    assert tiered_store.flush_hot() == 0
+
+
 # ---- recreate ----
 
 @pytest.mark.unit

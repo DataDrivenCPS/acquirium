@@ -62,7 +62,13 @@ from acquirium.internals._log import timed_debug
 
 logger = logging.getLogger(__name__)
 
+# Reads go through TIMESERIES_TABLE, which is a view over the two physical
+# tables below; writes land in the hot one. See _hot_cold_ddl.
 TIMESERIES_TABLE = "timeseries"
+TIMESERIES_HOT_TABLE = "timeseries_hot"
+TIMESERIES_COLD_TABLE = "timeseries_cold"
+HOT_BATCH_SEQ = "timeseries_hot_batch_seq"
+DEFAULT_HOT_FLUSH_ROWS = 10_000_000
 STREAMS_TABLE = "streams"
 LOGS_TABLE = "logs"
 REF_IDS_TABLE = "ref_ids"
@@ -79,12 +85,19 @@ class DuckDBStore:
     instead of a Postgres ``tstzrange``.
     """
 
-    def __init__(self, db_path: str | Path, *, recreate: bool = False) -> None:
+    def __init__(
+        self,
+        db_path: str | Path,
+        *,
+        recreate: bool = False,
+        hot_flush_rows: int = DEFAULT_HOT_FLUSH_ROWS,
+    ) -> None:
         import duckdb  # lazy — not required unless duckdb backend is selected
 
         # Kept on the instance so operations can open their own connections
         # without importing duckdb at module scope.
         self._duckdb = duckdb
+        self.hot_flush_rows = hot_flush_rows
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
@@ -102,10 +115,18 @@ class DuckDBStore:
         if recreate:
             logger.debug("DuckDBStore.__init__: dropping existing tables/views (recreate=True)")
             with self._lock, self._own_conn() as conn:
-                conn.execute(f"DROP VIEW IF EXISTS {TIMESERIES_STREAMS_VIEW}")
-                for tbl in (TIMESERIES_TABLE, STREAMS_TABLE, LOGS_TABLE, REF_IDS_TABLE):
+                for view in (TIMESERIES_STREAMS_VIEW, TIMESERIES_TABLE):
+                    conn.execute(f"DROP VIEW IF EXISTS {view}")
+                for tbl in (
+                    TIMESERIES_HOT_TABLE,
+                    TIMESERIES_COLD_TABLE,
+                    STREAMS_TABLE,
+                    LOGS_TABLE,
+                    REF_IDS_TABLE,
+                ):
                     conn.execute(f"DROP TABLE IF EXISTS {tbl}")
-                conn.execute(f"DROP SEQUENCE IF EXISTS {REF_IDS_SEQ}")
+                for seq in (REF_IDS_SEQ, HOT_BATCH_SEQ):
+                    conn.execute(f"DROP SEQUENCE IF EXISTS {seq}")
         self.ensure_table()
         logger.debug("DuckDBStore.__init__: ready at %s", self.db_path)
 
@@ -168,15 +189,52 @@ class DuckDBStore:
                 ref_uri VARCHAR NOT NULL UNIQUE
             )
             """,
+            # Cold: the bulk of the data, rewritten in (ref_id, ts) order on
+            # every flush so zonemaps prune tightly. No constraints — the flush
+            # does the deduplication explicitly.
             f"""
-            CREATE TABLE IF NOT EXISTS {TIMESERIES_TABLE} (
+            CREATE TABLE IF NOT EXISTS {TIMESERIES_COLD_TABLE} (
                 ref_id  INTEGER NOT NULL,
                 ts      TIMESTAMP NOT NULL,
                 numeric_value DOUBLE,
                 text_value    VARCHAR,
-                CHECK (numeric_value IS NULL OR text_value IS NULL),
-                UNIQUE (ref_id, ts)
+                CHECK (numeric_value IS NULL OR text_value IS NULL)
             )
+            """,
+            # Hot: append-only landing area, no constraints and no indexes, so
+            # an insert is a pure append. `batch` orders repeat writes of the
+            # same (ref_id, ts) — highest wins, in the view and at flush time.
+            f"CREATE SEQUENCE IF NOT EXISTS {HOT_BATCH_SEQ}",
+            f"""
+            CREATE TABLE IF NOT EXISTS {TIMESERIES_HOT_TABLE} (
+                ref_id  INTEGER NOT NULL,
+                ts      TIMESTAMP NOT NULL,
+                numeric_value DOUBLE,
+                text_value    VARCHAR,
+                batch   BIGINT NOT NULL,
+                CHECK (numeric_value IS NULL OR text_value IS NULL)
+            )
+            """,
+            # Read surface. Cold rows superseded by a hot row are dropped by the
+            # anti-join; hot rows are deduped by row_number(). The window runs
+            # only over the bounded hot table, never over cold.
+            f"""
+            CREATE OR REPLACE VIEW {TIMESERIES_TABLE} AS
+            SELECT c.ref_id, c.ts, c.numeric_value, c.text_value
+            FROM {TIMESERIES_COLD_TABLE} AS c
+            WHERE NOT EXISTS (
+                SELECT 1 FROM {TIMESERIES_HOT_TABLE} AS h
+                WHERE h.ref_id = c.ref_id AND h.ts = c.ts
+            )
+            UNION ALL
+            SELECT ref_id, ts, numeric_value, text_value
+            FROM (
+                SELECT *, row_number() OVER (
+                    PARTITION BY ref_id, ts ORDER BY batch DESC
+                ) AS _rn
+                FROM {TIMESERIES_HOT_TABLE}
+            )
+            WHERE _rn = 1
             """,
             f"""
             CREATE TABLE IF NOT EXISTS {STREAMS_TABLE} (
@@ -267,15 +325,17 @@ class DuckDBStore:
         )
         # One transaction for delete + insert: a failure leaves the old rows intact.
         with self._lock, timed_debug(logger, "replace_rows ref_uri=%s rows=%d", ref_uri, len(df)), self._write_conn() as conn:
-            conn.execute(
-                f"""
-                DELETE FROM {TIMESERIES_TABLE}
-                WHERE ref_id = (SELECT ref_id FROM {REF_IDS_TABLE} WHERE ref_uri = ?)
-                """,
-                [ref_uri],
-            )
+            for table in (TIMESERIES_COLD_TABLE, TIMESERIES_HOT_TABLE):
+                conn.execute(
+                    f"""
+                    DELETE FROM {table}
+                    WHERE ref_id = (SELECT ref_id FROM {REF_IDS_TABLE} WHERE ref_uri = ?)
+                    """,
+                    [ref_uri],
+                )
             if not df.is_empty():
                 self._insert_frame(conn, df)
+                self._maybe_flush_hot(conn)
         return len(df)
 
     def bulk_insert_polars(self, df: pl.DataFrame) -> int:
@@ -290,8 +350,9 @@ class DuckDBStore:
         with timed_debug(logger, "bulk_insert_polars prepare/dedupe rows=%d", in_rows):
             df = self._prepare_frame(df)
         logger.debug("bulk_insert_polars: %d rows after dedupe (was %d)", len(df), in_rows)
-        with self._lock, timed_debug(logger, "bulk_insert_polars DELETE+INSERT rows=%d", len(df)), self._write_conn() as conn:
+        with self._lock, timed_debug(logger, "bulk_insert_polars APPEND rows=%d", len(df)), self._write_conn() as conn:
             self._insert_frame(conn, df)
+            self._maybe_flush_hot(conn)
         return len(df)
 
     @staticmethod
@@ -304,10 +365,12 @@ class DuckDBStore:
 
     @staticmethod
     def _insert_frame(conn, df: pl.DataFrame) -> None:
-        """Upsert a prepared frame on *conn*: delete colliding (ref, ts) rows, insert.
+        """Append a prepared frame to the hot table on *conn*.
 
         The frame carries ref_uri strings; ids are assigned for unseen uris and
-        the rows keyed by ref_id, all inside the caller's transaction.
+        the rows keyed by ref_id, all inside the caller's transaction. No
+        delete-then-insert: a repeat write of an existing (ref_id, ts) simply
+        lands with a higher batch number and wins in the view and at flush.
         """
         conn.register("_acquirium_incoming_timeseries", df)
         try:
@@ -318,28 +381,79 @@ class DuckDBStore:
                 ON CONFLICT (ref_uri) DO NOTHING
                 """
             )
+            # One batch number per insert, not per row.
+            batch = conn.execute(f"SELECT nextval('{HOT_BATCH_SEQ}')").fetchone()[0]
             conn.execute(
                 f"""
-                DELETE FROM {TIMESERIES_TABLE}
-                USING (
-                    SELECT r.ref_id, i.ts
-                    FROM _acquirium_incoming_timeseries AS i
-                    JOIN {REF_IDS_TABLE} AS r USING (ref_uri)
-                ) AS incoming
-                WHERE {TIMESERIES_TABLE}.ref_id = incoming.ref_id
-                  AND {TIMESERIES_TABLE}.ts = incoming.ts
-                """
-            )
-            conn.execute(
-                f"""
-                INSERT INTO {TIMESERIES_TABLE} (ref_id, ts, numeric_value, text_value)
-                SELECT r.ref_id, i.ts, i.numeric_value, i.text_value
+                INSERT INTO {TIMESERIES_HOT_TABLE} (ref_id, ts, numeric_value, text_value, batch)
+                SELECT r.ref_id, i.ts, i.numeric_value, i.text_value, {int(batch)}
                 FROM _acquirium_incoming_timeseries AS i
                 JOIN {REF_IDS_TABLE} AS r USING (ref_uri)
                 """
             )
         finally:
             conn.unregister("_acquirium_incoming_timeseries")
+
+    # ---- hot/cold tiering ----
+
+    def _maybe_flush_hot(self, conn) -> int:
+        """Flush when the hot table reaches the threshold. Call with the lock held."""
+        rows = conn.execute(f"SELECT COUNT(*) FROM {TIMESERIES_HOT_TABLE}").fetchone()[0]
+        if rows < self.hot_flush_rows:
+            return 0
+        return self._flush_hot(conn, rows)
+
+    def _flush_hot(self, conn, rows: int | None = None) -> int:
+        """Move every hot row into cold, newest write per (ref_id, ts) winning.
+
+        Runs on the caller's connection inside its transaction, so a failure
+        leaves both tables as they were.
+        """
+        if rows is None:
+            rows = conn.execute(f"SELECT COUNT(*) FROM {TIMESERIES_HOT_TABLE}").fetchone()[0]
+        if not rows:
+            return 0
+        with timed_debug(logger, "flush_hot rows=%d", rows):
+            # Drop cold rows the hot table supersedes, then land the deduped
+            # hot rows in (ref_id, ts) order to keep cold clustered.
+            conn.execute(
+                f"""
+                DELETE FROM {TIMESERIES_COLD_TABLE}
+                USING (SELECT DISTINCT ref_id, ts FROM {TIMESERIES_HOT_TABLE}) AS incoming
+                WHERE {TIMESERIES_COLD_TABLE}.ref_id = incoming.ref_id
+                  AND {TIMESERIES_COLD_TABLE}.ts = incoming.ts
+                """
+            )
+            conn.execute(
+                f"""
+                INSERT INTO {TIMESERIES_COLD_TABLE} (ref_id, ts, numeric_value, text_value)
+                SELECT ref_id, ts, numeric_value, text_value
+                FROM (
+                    SELECT *, row_number() OVER (
+                        PARTITION BY ref_id, ts ORDER BY batch DESC
+                    ) AS _rn
+                    FROM {TIMESERIES_HOT_TABLE}
+                )
+                WHERE _rn = 1
+                ORDER BY ref_id, ts
+                """
+            )
+            conn.execute(f"DELETE FROM {TIMESERIES_HOT_TABLE}")
+        logger.info("flushed %d hot row(s) into %s", rows, TIMESERIES_COLD_TABLE)
+        return rows
+
+    def flush_hot(self) -> int:
+        """Force a hot->cold flush now. Returns the number of hot rows moved."""
+        with self._lock, self._write_conn() as conn:
+            return self._flush_hot(conn)
+
+    def tier_counts(self) -> dict[str, int]:
+        """Row counts of the physical tiers — for tuning and tests."""
+        with self._own_conn() as conn:
+            return {
+                "hot": conn.execute(f"SELECT COUNT(*) FROM {TIMESERIES_HOT_TABLE}").fetchone()[0],
+                "cold": conn.execute(f"SELECT COUNT(*) FROM {TIMESERIES_COLD_TABLE}").fetchone()[0],
+            }
 
     # ---- stream reference registry ----
 
