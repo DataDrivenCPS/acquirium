@@ -16,7 +16,6 @@ from acquirium.internals.internals_namespaces import (
     APP_PARAMS,
     APP_QUERY,
     DATA_SOURCE,
-    DEPENDS_ON,
     ENV_SPEC,
     EVENT_STREAM,
     HAS_EXTERNAL_REFERENCE,
@@ -84,7 +83,6 @@ def app_spec_graph(spec: "AppSpec") -> Graph:
     actor state — because the app runner, the task host, and actor-less
     registration paths all write the same shape.
     """
-    from acquirium.internals.internals_namespaces import IS_CALCULATED_FROM
     from acquirium.internals.models import compute_ref_uri
 
     app_uri = URIRef(app_uri_for(spec.name))
@@ -112,9 +110,6 @@ def app_spec_graph(spec: "AppSpec") -> Graph:
             json.dumps(spec.env.model_dump(), sort_keys=True, ensure_ascii=True)
         )))
 
-    for dep in spec.depends_on:
-        graph.add((app_uri, DEPENDS_ON, URIRef(dep)))
-
     for out in spec.outputs:
         point_uri = URIRef(out.point_uri)
         ref_uri = compute_ref_uri(source_id, out.point_uri)
@@ -138,6 +133,4 @@ def app_spec_graph(spec: "AppSpec") -> Graph:
         add_literal_or_uri(graph, point_uri, HAS_QUANTITY_KIND, out.quantity_kind)
         add_literal_or_uri(graph, point_uri, HAS_UNIT, out.unit)
         add_literal_or_uri(graph, point_uri, DATA_SOURCE, out.data_source)
-        for dep in spec.depends_on:
-            graph.add((point_uri, IS_CALCULATED_FROM, URIRef(dep)))
     return graph

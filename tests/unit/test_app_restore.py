@@ -45,7 +45,6 @@ def make_spec(name: str = "restore_test_app") -> AppSpec:
             ),
             AppOutputSpec(kind="event", point_uri="urn:test:out2"),
         ],
-        depends_on=["urn:test:in1", "urn:test:in2"],
     )
 
 
@@ -63,7 +62,6 @@ def test_round_trip(tmp_path):
     assert restored.version == spec.version
     assert restored.app_type == spec.app_type
     assert restored.queries == spec.queries
-    assert restored.depends_on == sorted(spec.depends_on)
     # Source and load metadata live on disk (app.json), not in the graph.
     assert restored.source_code is None and restored.app_class is None
 
@@ -141,4 +139,4 @@ def test_minimal_spec_defaults(tmp_path):
     spec.version = "0.0"
     restored, = restore_app_specs(make_manager(spec, tmp_path))
     assert (restored.name, restored.version, restored.app_type) == ("bare_app", "0.0", "soft_sensor")
-    assert restored.queries == {} and restored.outputs == [] and restored.depends_on == []
+    assert restored.queries == {} and restored.outputs == []

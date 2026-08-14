@@ -308,7 +308,7 @@ def restore_app_specs(manager) -> list[AppSpec]:
         }}"""):
         entry = apps.setdefault(str(app_uri), {
             "name": None, "version": None, "app_type": None, "kind": "app",
-            "queries": {}, "params": {}, "outputs": [], "depends_on": set(),
+            "queries": {}, "params": {}, "outputs": [],
             "run_mode": None, "interval": None, "env": None,
         })
         if label is not None:
@@ -343,12 +343,6 @@ def restore_app_specs(manager) -> list[AppSpec]:
     for (app_uri,) in rows(f"SELECT ?app WHERE {{ ?app a <{TASK}> }}"):
         if str(app_uri) in apps:
             apps[str(app_uri)]["kind"] = "task"
-
-    for app_uri, dep in rows(
-        f"SELECT ?app ?dep WHERE {{ ?app a <{APP}> ; <{DEPENDS_ON}> ?dep }}"
-    ):
-        if str(app_uri) in apps:
-            apps[str(app_uri)]["depends_on"].add(str(dep))
 
     # Refs carry Stream plus exactly one of EventStream/TimeseriesStream, so
     # the FILTER IN yields one row per output.
@@ -398,7 +392,6 @@ def restore_app_specs(manager) -> list[AppSpec]:
             app_type=entry["app_type"] or "soft_sensor",
             queries=entry["queries"],
             outputs=entry["outputs"],
-            depends_on=sorted(entry["depends_on"]),
             params=entry["params"],
             run_mode=(entry["run_mode"]
                       if entry["run_mode"] in ("manual", "interval", "on_change")

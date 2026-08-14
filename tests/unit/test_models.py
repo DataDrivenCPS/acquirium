@@ -156,7 +156,6 @@ class TestAppSpec:
         assert spec.name == "my_app"
         assert spec.version == "0.0"
         assert spec.outputs == []
-        assert spec.depends_on == []
 
     def test_with_outputs(self):
         out = AppOutputSpec(kind="timeseries", point_uri="urn:test:p1")

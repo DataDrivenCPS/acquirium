@@ -503,8 +503,6 @@ class Acquirium:
         *,
         app_type: str | None = None,
         outputs: list[AppOutputSpec | dict[str, Any]] | None = None,
-        depends_on: list[str] | None = None,
-        resolve_dependencies: bool = True,
         queries: dict[str, Query] | None = None,
         params: dict[str, Any] | None = None,
         replace: bool = False,
@@ -527,13 +525,6 @@ class Acquirium:
             query_bundle = {"default": query_bundle}
 
         query_specs = {name: q.to_dict() for name, q in query_bundle.items()}
-
-        deps = depends_on or []
-        if not depends_on and resolve_dependencies:
-            dep_set: set[str] = set()
-            for q in query_bundle.values():
-                dep_set.update(q.resolved_nodes())
-            deps = sorted(dep_set)
 
         output_specs: list[AppOutputSpec] = []
         output_items = outputs if outputs is not None else list(getattr(app, "outputs", []) or [])
@@ -570,7 +561,6 @@ class Acquirium:
             entry_file=entry_file,
             queries=query_specs,
             outputs=output_specs,
-            depends_on=deps,
             params=params or {},
         )
         return self.client.register_app(spec, replace=replace)
