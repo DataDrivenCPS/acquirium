@@ -831,11 +831,64 @@ class Query:
             if any(getattr(e, "patterns", None) and e.value_pairs is None for e in g.edges):
                 from acquirium.Client.explore.traverse import resolve_program_edges
                 g = resolve_program_edges(g, self.client)
+            sparql = compile_sparql(g)
+            # Program edges resolve into a graph that differs from
+            # self.query_graph (value_pairs filled by BFS), so to_sparql()
+            # is not what actually ran. Keep both for provenance.
+            self.cache["resolved_graph"] = g
+            self.cache["executed_sparql"] = sparql
             self.cache[cache_key] = self.client.sparql_query(
-                compile_sparql(g),
+                sparql,
                 include_dependencies=include_dependencies,
             )
         return self.cache[cache_key]
+
+    def provenance(self, *, include_dependencies: bool = True) -> dict:
+        """Execute (cached) and report exactly what the pattern resolved to.
+
+        Returns::
+
+            {
+              "query_spec":      to_dict() form of the declarative pattern,
+              "executed_sparql": the SPARQL text that actually ran (program
+                                 edges resolved; differs from to_sparql()),
+              "points": [
+                {"point_uri": ..., "ref_uri": ..., "alias": ...,
+                 "entity_contexts": [{"entity__<alias>": uri, ...}, ...]},
+                ...
+              ],
+            }
+
+        One entry per matched measurement binding: ``ref_uri`` is the stream
+        the values live in, ``entity_contexts`` the entity paths that
+        justified the match. This is the input side of app provenance
+        (``acq:mayUse``) — available before any run has consumed data.
+        """
+        from acquirium.Client.data_object import (
+            _deduplicate_contexts,
+            _parse_sparql_bindings,
+        )
+
+        point_refs, contexts, _, _ = _parse_sparql_bindings(
+            self, include_dependencies=include_dependencies
+        )
+        aliases_reverse = self.query_graph.aliases_reverse
+        points = [
+            {
+                "point_uri": point_uri,
+                "ref_uri": ref_uri,
+                "alias": aliases_reverse.get(nid, str(nid)),
+                "entity_contexts": _deduplicate_contexts(
+                    contexts.get((nid, point_uri, ref_uri), [])
+                ),
+            }
+            for nid, point_uri, ref_uri in point_refs
+        ]
+        return {
+            "query_spec": self.to_dict(),
+            "executed_sparql": self.cache.get("executed_sparql"),
+            "points": points,
+        }
 
     def to_dict(self, *, strict: bool = False) -> dict:
         """Return a JSON-serializable representation of this query graph.
