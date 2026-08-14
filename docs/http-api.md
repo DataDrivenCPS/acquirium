@@ -1,6 +1,9 @@
-# HTTP API Reference
+# HTTP API reference
 
-All endpoints are served by the Acquirium FastAPI server (default `http://localhost:8000`).
+This is a reference for the HTTP endpoints the acquirium server exposes
+(default `http://localhost:8000`).
+The Python client covers all of these; use the raw endpoints when scripting
+against the server directly.
 
 Timestamps are ISO 8601 strings (e.g. `2026-01-01T00:00:00Z`). Errors return HTTP 400 with a JSON body `{"detail": "<message>"}`.
 
@@ -15,8 +18,9 @@ Returns `{"ok": true}` when the server is running.
 ### `GET /graph_version`
 
 Returns the store-owned source-data generation and the state of the derived
-query cache. A cache is fresh exactly when `published_version` equals
-`source_version` and `is_current` is true.
+query cache.
+The cache is fresh when `published_version` equals `source_version` and
+`is_current` is true.
 
 ```json
 {
@@ -27,10 +31,10 @@ query cache. A cache is fresh exactly when `published_version` equals
 }
 ```
 
-Long-running clients may poll `source_version` to invalidate local query state. A
-caller that needs to observe current inferred data should issue its query with
-`wait_for_fresh=true`; the status endpoint is informational and does not make
-the following query atomic.
+Long-running clients can poll `source_version` to invalidate local query
+state.
+Note that this endpoint is informational; a query that must see the current
+inferred data should pass `wait_for_fresh=true` itself.
 
 ### `GET /embedding_status`
 
@@ -47,7 +51,7 @@ Returns the current state of the semantic embedding indexes.
 
 ---
 
-## Knowledge Graph
+## Knowledge graph
 
 ### `POST /insert_graph`
 
@@ -137,7 +141,7 @@ Legacy endpoint. Executes a SPARQL SELECT query and returns results in an intern
 
 ---
 
-## Timeseries Ingestion
+## Timeseries ingestion
 
 ### `POST /register_datasource`
 
@@ -188,7 +192,7 @@ High-throughput insert via Apache Arrow IPC stream. The request body is a binary
 
 ---
 
-## Timeseries Query
+## Timeseries query
 
 ### `GET /timeseries`
 
@@ -205,7 +209,8 @@ Read timeseries data for a single stream. Returns an Apache Arrow IPC stream (`a
 
 The Arrow schema is `(ts: timestamp[us, UTC], value: float64 or utf8, uri: utf8)`.
 
-See [data-api.md](data-api.md#value_mode) for a full description of `value_mode` options.
+See the [data guide](data.md#numbers-and-text) for a full description of the
+`value_mode` options.
 
 ### `POST /timeseries_info`
 
@@ -217,7 +222,7 @@ Return metadata for a list of stream URIs.
 
 ---
 
-## Semantic Resolution
+## Semantic resolution
 
 ### `GET /resolve_text`
 
@@ -255,7 +260,7 @@ Resolve multiple fields of a structured record to semantic concepts in a single 
 
 ---
 
-## Unit Conversion
+## Unit conversion
 
 ### `POST /resolve_unit`
 
