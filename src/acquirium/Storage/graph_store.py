@@ -28,7 +28,11 @@ from acquirium._ontologies import (
     rename_ontology_iri,
 )
 from acquirium.Server.config import OntologySource
-from acquirium.Storage.graph_registry import ACQUIRIUM_GRAPH_URI, SOURCE_GRAPH_PREFIX
+from acquirium.Storage.graph_registry import (
+    ACQUIRIUM_GRAPH_URI,
+    SOURCE_GRAPH_PREFIX,
+    is_provenance_graph_uri,
+)
 from acquirium.Storage.graph_registry import source_graph_uri as _compute_source_graph_uri
 
 _logger = logging.getLogger("acquirium.graph_store")
@@ -223,6 +227,7 @@ class OxigraphGraphStore:
         self.main_graph_uri = main_graph_uri
         self.acquirium_graph_uri = URIRef(ACQUIRIUM_GRAPH_URI)
         self._source_version = self._load_source_version()
+        self._data_version = self._load_data_version()
         self._closure_version = 0
         self._dependency_graph_cache: Graph | None = None
         self._dependency_graph_closure_version = -1
@@ -376,14 +381,49 @@ class OxigraphGraphStore:
         value = raw.get("version") if isinstance(raw, dict) else 0
         return int(value) if isinstance(value, int) else 0
 
-    def _write_source_version(self) -> None:
-        self._source_state_path().write_text(json.dumps({"version": self._source_version}))
+    def _load_data_version(self) -> int:
+        path = self._source_state_path()
+        if not path.exists():
+            return 0
+        try:
+            raw = json.loads(path.read_text())
+        except (OSError, ValueError):
+            return 0
+        if not isinstance(raw, dict):
+            return 0
+        value = raw.get("data_version")
+        if isinstance(value, int):
+            return value
+        # State written before data_version existed: every recorded write was
+        # a data write, so the counters start out equal.
+        fallback = raw.get("version")
+        return int(fallback) if isinstance(fallback, int) else 0
 
-    def _mark_source_changed(self) -> None:
+    def _write_source_version(self) -> None:
+        self._source_state_path().write_text(json.dumps({
+            "version": self._source_version,
+            "data_version": self._data_version,
+        }))
+
+    def _mark_source_changed(self, graph_uri: URIRef | None = None) -> None:
+        """Advance the write generation(s) for a write to ``graph_uri``.
+
+        ``_source_version`` counts every write — it keys the derived query
+        cache. ``_data_version`` counts only *data* writes: provenance graphs
+        are derived bookkeeping, so rewriting them must not wake pollers of
+        the data generation (that feedback is how an app writing its own
+        provenance would loop forever). ``graph_uri=None`` (ontology callback,
+        legacy callers) counts as a data write.
+        """
         self._source_version += 1
+        if graph_uri is None or not is_provenance_graph_uri(graph_uri):
+            self._data_version += 1
         self._write_source_version()
 
     def _mark_ontology_graph_changed(self) -> None:
+        # Ontology/SHACL changes reshape the inferred graph that every query
+        # reads, so they must advance the data generation too — this path
+        # bypasses _finalize_source_write (ontoenv's change callback).
         self._mark_source_changed()
         self._mark_closure_changed()
 
@@ -635,10 +675,15 @@ class OxigraphGraphStore:
             raise ValueError(f"graph is not a registered data input: {target_uri}")
         return self.source_dataset.graph(target_uri)
 
-    def _finalize_source_write(self, *, affects_closure: bool) -> None:
-        """Persist a write, mark derived state stale, and schedule its rebuild."""
+    def _finalize_source_write(self, *, affects_closure: bool, graph_uri: URIRef | None = None) -> None:
+        """Persist a write, mark derived state stale, and schedule its rebuild.
+
+        ``graph_uri`` is the write's target graph (None means the default
+        plant graph); it decides whether the data generation advances — see
+        :meth:`_mark_source_changed`.
+        """
         self._commit_dataset(self.source_dataset)
-        self._mark_source_changed()
+        self._mark_source_changed(graph_uri)
         if affects_closure:
             self._mark_closure_changed()
         self._start_query_rebuild_locked()
@@ -648,6 +693,10 @@ class OxigraphGraphStore:
         with self._lock:
             return {
                 "source_version": self._source_version,
+                # Data-write generation: excludes provenance-graph writes, so
+                # app/driver pollers watching it don't wake on (or loop over)
+                # derived bookkeeping.
+                "data_version": self._data_version,
                 "published_version": self._query_cache_source_version,
                 "is_current": self._query_cache_is_current(),
                 "rebuild_in_progress": self._query_rebuild_in_progress,
@@ -793,7 +842,7 @@ class OxigraphGraphStore:
         _logger.debug("sparql_update: %s", update.replace("\n", " ")[:200])
         with self._lock, timed_debug(_logger, "sparql_update"):
             self._registered_data_graph(graph_uri).update(update)
-            self._finalize_source_write(affects_closure=True)
+            self._finalize_source_write(affects_closure=True, graph_uri=graph_uri)
         return {"message": "update applied", "changed": True}
 
     def validate(self) -> dict[str, str | bool]:
@@ -864,7 +913,7 @@ class OxigraphGraphStore:
                 self._apply_graph_write(
                     incoming, target=target, replace=replace,
                 )
-                self._finalize_source_write(affects_closure=affects_closure)
+                self._finalize_source_write(affects_closure=affects_closure, graph_uri=graph_uri)
         return {
             "replaced": replace,
             "changed": True,

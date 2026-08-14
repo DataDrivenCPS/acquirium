@@ -11,7 +11,7 @@ SHACL inference or validation.
 
 from __future__ import annotations
 
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from rdflib import URIRef
 
@@ -22,6 +22,32 @@ PLANT_GRAPH_URI = "urn:acquirium#MainGraph"
 PLANT_SOURCE_ID = "plant"
 ACQUIRIUM_GRAPH_URI = "urn:acquirium:graph:data:acquirium"
 SOURCE_GRAPH_PREFIX = "urn:acquirium:graph:data:source:"
+
+
+# Source-id suffix reserving a source's provenance graph. Provenance is
+# derived bookkeeping (which streams an app read), not deployment data:
+# watchers of the data generation must not wake when it is rewritten.
+PROVENANCE_SUFFIX = ":prov"
+
+
+def provenance_source_id(source_id: str) -> str:
+    """Return the reserved provenance source for ``source_id``.
+
+    The result maps to its own graph under ``SOURCE_GRAPH_PREFIX`` via
+    :func:`source_graph_uri`, so provenance writes need no new storage
+    plumbing — only the version accounting treats them specially.
+    """
+    if not source_id:
+        raise ValueError("source_id must not be empty")
+    return f"{source_id}{PROVENANCE_SUFFIX}"
+
+
+def is_provenance_graph_uri(uri) -> bool:
+    """True when ``uri`` is a provenance graph (see :data:`PROVENANCE_SUFFIX`)."""
+    s = str(uri)
+    if not s.startswith(SOURCE_GRAPH_PREFIX):
+        return False
+    return unquote(s[len(SOURCE_GRAPH_PREFIX):]).endswith(PROVENANCE_SUFFIX)
 
 
 def source_graph_uri(source_id: str, *, plant_graph_uri: str = PLANT_GRAPH_URI) -> URIRef:
