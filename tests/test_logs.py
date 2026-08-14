@@ -16,7 +16,7 @@ def acquirium_client_nodata():
         server_port=ACQUIRIUM_TEST_SERVER_PORT,
         use_ssl=False,
     )
-    acq.insert_graph("tests/test_model_nodata.ttl", source_id="plant")
+    acq.insert_graph_file("tests/test_model_nodata.ttl", source_id="plant")
     time.sleep(1)
     result = acq.client.delete_logs(point_uri="urn:ex/Pump1-out")
     assert result["ok"] is True

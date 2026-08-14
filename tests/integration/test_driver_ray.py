@@ -129,6 +129,7 @@ spec = "{DRIVER_SPEC}"
 name = "{DRIVER_NAME}"
 interval = 1.0
 watch_dir = "{watch_dir.as_posix()}"
+glob = "*.csv"
 """
     )
 
@@ -231,6 +232,7 @@ class TestRayDriver:
                     "server_port": PORT,
                     "interval": 1.0,
                     "watch_dir": server["watch_dir"].as_posix(),
+                    "glob": "*.csv",
                 },
             },
         }

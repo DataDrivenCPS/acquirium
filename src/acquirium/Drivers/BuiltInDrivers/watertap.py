@@ -12,7 +12,6 @@ import polars as pl
 
 from acquirium.Drivers.Driver import PollingIngestDriver
 from acquirium.internals.internals_namespaces import HAS_PYOMO_VAR
-from acquirium.internals.models import compute_ref_uri
 
 logger = logging.getLogger("acquirium.watertap")
 
@@ -20,7 +19,6 @@ logger = logging.getLogger("acquirium.watertap")
 @dataclass(frozen=True)
 class WaterTAPPointSpec:
     point_uri: str
-    ref_uri: str
     ref_name: str
     pyomo_var: str
 
@@ -49,7 +47,7 @@ class WaterTAPDriver(PollingIngestDriver):
         applied as ``solve(model)`` after build
 
     Optional keys:
-      - ``watertap_source_id``: datasource id, default ``"watertap"``
+      - ``source_id``: datasource id, default ``"watertap"``
       - ``watertap_build_kwargs``: TOML table of kwargs passed to the build fn
       - ``watertap_change_inputs_spec``: ``module:callable`` resolving to
         ``change_inputs``, applied as ``change_inputs(model, inputs)`` after build
@@ -59,14 +57,13 @@ class WaterTAPDriver(PollingIngestDriver):
         point nodes carry domain semantics (sensors, equipment, units)
       - ``watertap_insert_graph``: insert ``watertap_graph_path`` on setup, default ``false``
       - ``watertap_insert_graph_replace``: replace this driver's graph when inserting, default ``false``
-      - ``watertap_register_streams``: register mapped streams on setup, default ``true``
       - ``watertap_result_attr``: attribute to read from the build fn result
     """
 
     def setup(self) -> None:
         cfg = self.config.get("driver", {})
-        self.source_id = str(cfg.get("watertap_source_id", "watertap"))
-        self._mapping_path = _resolve_path(
+        self.source_id = str(cfg.get("source_id", "watertap"))
+        self._mapping_path = resolve_path(
             cfg.get("watertap_mapping_path"), "watertap_mapping_path"
         )
         self._build_spec = str(_require_config(cfg.get("watertap_build_spec"), "watertap_build_spec"))
@@ -77,7 +74,6 @@ class WaterTAPDriver(PollingIngestDriver):
         self._graph_path = cfg.get("watertap_graph_path")
         self._insert_graph = bool(cfg.get("watertap_insert_graph", False))
         self._insert_graph_replace = bool(cfg.get("watertap_insert_graph_replace", False))
-        self._register_streams = bool(cfg.get("watertap_register_streams", True))
         self._result_attr = cfg.get("watertap_result_attr")
 
         self._build_fn = _load_callable(self._build_spec)
@@ -89,32 +85,24 @@ class WaterTAPDriver(PollingIngestDriver):
         # an ontology point URI to the Pyomo path the driver reads each tick.
         self._point_specs = _load_point_specs_from_mapping(self._mapping_path, self.source_id)
 
-        self.aq.register_datasource(self.source_id)
-
         # Optionally insert the model's s223 ontology graph so the point nodes
         # carry their domain semantics (sensors, equipment, units).
         if self._insert_graph and self._graph_path:
-            graph_path = _resolve_path(self._graph_path, "watertap_graph_path")
-            self.insert_graph(
-                graph_path.read_text(),
-                format=_guess_rdf_format(graph_path),
+            self.insert_graph_file(
+                resolve_path(self._graph_path, "watertap_graph_path"),
                 replace=self._insert_graph_replace,
             )
 
         # Registering streams writes each point's external reference, its Pyomo
         # variable, and the hasExternalReference link straight from the mapping,
         # using Acquirium's insert-graph interface under the hood.
-        if self._register_streams:
-            self.aq.register_streams([
-                {
-                    "source_id": self.source_id,
-                    "ref_name": spec.ref_name,
-                    "point_uri": spec.point_uri,
-                    "value_kind": "numeric",
-                    "properties": {HAS_PYOMO_VAR: spec.pyomo_var},
-                }
-                for spec in self._point_specs
-            ])
+        for spec in self._point_specs:
+            self.declare(
+                spec.ref_name,
+                point_uri=spec.point_uri,
+                value_kind="numeric",
+                properties={HAS_PYOMO_VAR: spec.pyomo_var},
+            )
 
     def collect(self) -> pl.DataFrame:
         logger.debug("watertap collect: building model via %s", self._build_spec)
@@ -238,11 +226,9 @@ def _load_point_specs_from_mapping(
             if namespace and point_uri.startswith(namespace)
             else point_uri
         )
-        ref_uri = str(compute_ref_uri(source_id, ref_name))
         point_specs.append(
             WaterTAPPointSpec(
                 point_uri=str(point_uri),
-                ref_uri=ref_uri,
                 ref_name=str(ref_name),
                 pyomo_var=str(pyomo_var),
             )
@@ -300,23 +286,18 @@ def _load_component_uid() -> Callable[[str], Any] | None:
     return ComponentUID
 
 
-def _guess_rdf_format(path: Path) -> str:
-    suffix = path.suffix.lower()
-    return {
-        ".ttl": "turtle",
-        ".n3": "n3",
-        ".xml": "xml",
-        ".trix": "trix",
-    }.get(suffix, "turtle")
-
-
 def _require_config(value: Any, key: str) -> Any:
     if value in (None, ""):
         raise ValueError(f"Missing required config key: {key}")
     return value
 
 
-def _resolve_path(raw_path: Any, key: str) -> Path:
+def resolve_path(raw_path: Any, key: str) -> Path:
+    """Resolve a required file path from driver config, naming *key* on failure.
+
+    Relative paths resolve against the current working directory. Raises
+    ValueError when the key is missing, FileNotFoundError when the file is not.
+    """
     value = _require_config(raw_path, key)
     path = Path(str(value)).expanduser()
     if not path.is_absolute():

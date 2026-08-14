@@ -9,10 +9,9 @@ import ast
 import json
 import logging
 
-import polars as pl
 import paho.mqtt.client as mqtt
 
-from acquirium.Drivers.Driver import EventIngestDriver
+from acquirium.Drivers.Driver import DriverBufferFull, EventIngestDriver
 from acquirium.Storage.values import normalize_value_kind
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_REF_NAME,
@@ -61,26 +60,33 @@ class MQTTIngestDriver(EventIngestDriver):
 
     List it in acquirium.toml under [[drivers]] for auto-start:
         [[drivers]]
-        spec           = "acquirium.Drivers.BuiltInDrivers.mqtt_ingestion:MQTTIngestDriver"
-        interval       = 5.0
-        mqtt_source_id = "mqtt"
+        spec      = "acquirium.Drivers.BuiltInDrivers.mqtt_ingestion:MQTTIngestDriver"
+        interval  = 5.0
+        source_id = "mqtt"
     then run `acquirium server --config acquirium.toml`, or push it to a
-    running server with `acquirium driver start acquirium.toml`.
+        running server with `acquirium driver start acquirium.toml`.
     """
 
     def setup(self) -> None:
         driver_cfg = self.config.get("driver", {})
-        self.source_id: str = driver_cfg.get("mqtt_source_id", "mqtt")
+        source_id = driver_cfg.get("source_id")
+        if not source_id:
+            raise ValueError("MQTT ingestion requires driver.source_id")
+        self.source_id = str(source_id)
         self.qos: int = int(driver_cfg.get("mqtt_qos", 0))
         self.default_value_kind: str = normalize_value_kind(driver_cfg.get("mqtt_value_kind"))
-        logger.debug("mqtt setup source=%s qos=%d default_kind=%s", self.source_id, self.qos, self.default_value_kind)
+        logger.debug(
+            "mqtt setup source=%s qos=%d default_kind=%s",
+            self.source_id,
+            self.qos,
+            self.default_value_kind,
+        )
 
         self._clients: dict[str, mqtt.Client] = {}
         self._topic_specs: dict[str, dict[str, list[MQTTStreamSpec]]] = {}
         self._spec_keys: set[str] = set()
         self._clients_lock = Lock()
 
-        self.aq.register_datasource(self.source_id)
         self._sync_subscriptions()
 
     def on_graph_change(self) -> None:
@@ -88,15 +94,19 @@ class MQTTIngestDriver(EventIngestDriver):
 
     def stop(self) -> None:
         with self._clients_lock:
-            for client in self._clients.values():
-                try:
-                    client.loop_stop()
-                except Exception:
-                    pass
-                try:
-                    client.disconnect()
-                except Exception:
-                    pass
+            clients = list(self._clients.values())
+        # Do not hold _clients_lock while waiting for network loops: an active
+        # callback may need the same lock before loop_stop can return.
+        for client in clients:
+            try:
+                client.loop_stop()
+            except Exception:
+                pass
+            try:
+                client.disconnect()
+            except Exception:
+                pass
+        with self._clients_lock:
             self._clients.clear()
             self._topic_specs.clear()
             self._spec_keys.clear()
@@ -150,11 +160,8 @@ class MQTTIngestDriver(EventIngestDriver):
             if self._spec_key(spec) in self._spec_keys:
                 continue
             try:
-                self.aq.register_streams([{
-                    "source_id": self.source_id,
-                    "ref_name": ref_name_s,
-                    "value_kind": spec.value_kind,
-                }])
+                self.declare(ref_name_s, value_kind=spec.value_kind)
+                self.register_declared()
             except Exception:
                 logger.warning("mqtt: failed to register stream %s", ref_uri, exc_info=True)
                 continue
@@ -195,7 +202,17 @@ class MQTTIngestDriver(EventIngestDriver):
         return f"{broker}|{port}"
 
     def _spec_key(self, spec: MQTTStreamSpec) -> str:
-        return f"{spec.point_uri}|{spec.ref_uri}|{spec.ref_name}|{spec.broker}|{spec.port}|{spec.topic}|{spec.time_key}|{spec.value_key}|{spec.value_kind}"
+        return "|".join((
+            spec.point_uri,
+            spec.ref_uri,
+            spec.ref_name,
+            spec.broker,
+            str(spec.port),
+            spec.topic,
+            spec.time_key,
+            spec.value_key,
+            spec.value_kind,
+        ))
 
     def _on_connect(self, client_key: str):
         def on_connect(client: mqtt.Client, userdata, flags, rc):
@@ -248,13 +265,18 @@ class MQTTIngestDriver(EventIngestDriver):
                     return
                 for spec in specs:
                     ts, value = self.decode_payload(msg.payload, spec)
-                    self.insert_observations(
-                        pl.DataFrame({
-                            "ts": [ts],
-                            "ref_name": [spec.ref_name],
-                            "value": [value],
-                        })
-                    )
+                    # Buffered, not inserted: the tick flushes the batch, so a
+                    # busy topic costs one round-trip per interval rather than
+                    # one per message.
+                    self.add(spec.ref_name, value, ts)
+            except DriverBufferFull as exc:
+                logger.error(
+                    "mqtt observation rejected: driver buffer is full "
+                    "client=%s topic=%s err=%s",
+                    client_key,
+                    topic,
+                    exc,
+                )
             except Exception as exc:
                 logger.warning("mqtt decode failed client=%s topic=%s err=%s", client_key, topic, exc)
         return on_message

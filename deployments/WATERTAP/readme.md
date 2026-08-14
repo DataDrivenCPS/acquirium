@@ -228,7 +228,7 @@ Per-driver keys live in each `[[drivers]]` entry (merged over the shared
 | `watertap_generate_spec` | `file.py:generate_new_values` (simulation driver) |
 | `watertap_inputs` | static input dict (base `WaterTAPDriver`) |
 | `watertap_graph_path` + `watertap_insert_graph` | insert the model's `model.ttl` so point nodes carry domain semantics |
-| `watertap_source_id` | datasource id under which streams register |
+| `source_id` | datasource id under which streams register |
 
 **Path bases differ by setting** (existing Acquirium behavior, noted in the TOML
 header):
@@ -238,4 +238,3 @@ header):
   the repo root).
 - driver `spec`, parquet `watch_dir`, GUI `gui_script_path` /
   `watertap_inputs_path` → relative to **the config file's directory**.
-

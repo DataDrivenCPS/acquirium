@@ -34,7 +34,6 @@ from datetime import datetime, timezone
 import polars as pl
 import rdflib
 
-from acquirium.Drivers.BuiltInDrivers.watertap import _guess_rdf_format
 from acquirium.Drivers.Driver import PollingIngestDriver
 
 from benicia_generator import (
@@ -61,15 +60,13 @@ class BeniciaSimulatorDriver(PollingIngestDriver):
         model_path = self.config_dir() / str(cfg.get("model", "benicia-model-100.ttl"))
         if not model_path.exists():
             raise FileNotFoundError(f"Benicia model not found: {model_path}")
-        graph = rdflib.Graph().parse(model_path, format=_guess_rdf_format(model_path))
+        graph = rdflib.Graph().parse(model_path)
         self._properties = get_properties(graph)
 
         # Insert the model's ontology so the point nodes exist with their
         # unit / quantity-kind semantics before streams are linked to them.
         if bool(cfg.get("insert_graph", True)):
             self.insert_graph(graph.serialize(format="turtle"), format="turtle", replace=False)
-
-        self.aq.register_datasource(self.source_id)
 
         # Per-property state (None for enumeration properties, which emit 0/1).
         self._states = {}
@@ -84,15 +81,12 @@ class BeniciaSimulatorDriver(PollingIngestDriver):
                 )
 
         # Register every stream with its point URI so rows link to the model.
-        self.aq.register_streams([
-            {
-                "source_id": self.source_id,
-                "ref_name": local_name(prop),
-                "point_uri": str(prop),
-                "value_kind": "numeric",
-            }
-            for prop in self._properties
-        ])
+        for prop in self._properties:
+            self.declare(
+                local_name(prop),
+                point_uri=str(prop),
+                value_kind="numeric",
+            )
 
         logger.info(
             "benicia simulator ready: source_id=%s, %d properties (%d series, %d enums) from %s",

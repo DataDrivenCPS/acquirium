@@ -331,14 +331,14 @@ def acq():
         server_port=ACQUIRIUM_TEST_SERVER_PORT,
         use_ssl=False,
     )
-    # insert_graph refreshes the graph embedding index synchronously before
-    # returning, so the inserted concepts are resolvable immediately.
-    client.insert_graph(
+    # insert_graph_file refreshes the graph embedding index synchronously
+    # before returning, so the inserted concepts are resolvable immediately.
+    client.insert_graph_file(
         "deployments/BENICIA/benicia-model.ttl",
         replace=True,
         source_id="plant",
     )
-    client.insert_graph(
+    client.insert_graph_file(
         str(_res_files("acquirium._ontologies") / "water.ttl"),
         replace=False,
         source_id="plant",

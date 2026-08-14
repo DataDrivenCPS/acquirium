@@ -1,35 +1,33 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
+import json
 import logging
 import os
+import shutil
+import sys
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-
-import ray
-import json
-import shutil
-import sys
-import time
-import importlib.util
-
 from urllib.parse import unquote
 
-from acquirium.internals._log import configure_logging, timed_debug as _timed_debug
-from acquirium.internals.models import AppSpec, AppOutputSpec, AppRunRequest, compute_ref_uri
-from acquirium.internals.internals_namespaces import *
-from acquirium.internals.app_utils import app_uri_for, app_type_uri, add_literal_or_uri
+import ray
+from rdflib import Graph, Literal, URIRef
+
 from acquirium.Apps.base import app_source_id
-from rdflib import URIRef, Graph, Literal
+from acquirium.internals._log import configure_logging, timed_debug as _timed_debug
+from acquirium.internals.app_utils import app_uri_for, app_type_uri, add_literal_or_uri
+from acquirium.internals.internals_namespaces import *
+from acquirium.internals.models import AppOutputSpec, AppRunRequest, AppSpec, compute_ref_uri
 
 if TYPE_CHECKING:
     from acquirium.Client.acquirium import Acquirium
     from acquirium.Drivers.Driver import Driver
 
 logger = logging.getLogger("acquirium.apps.runner")
-
 
 
 @ray.remote
@@ -164,6 +162,21 @@ class AppRunner:
         """Write RDF to this app's graph; ownership is never caller-selected."""
         self.acquirium_cli.insert_graph(
             rdf_graph,
+            format=format,
+            replace=replace,
+            source_id=self.source_id,
+        )
+
+    def insert_graph_file(
+        self,
+        path: str | Path,
+        *,
+        format: str | None = None,
+        replace: bool = False,
+    ) -> None:
+        """Read an RDF file into this app's graph; ownership is fixed."""
+        self.acquirium_cli.insert_graph_file(
+            path,
             format=format,
             replace=replace,
             source_id=self.source_id,
