@@ -178,8 +178,24 @@ class AppOutputSpec(BaseModel):
     storage_backend: str | None = None
 
 
+class EnvSpec(BaseModel):
+    """Per-app/driver execution environment, resolved to a Ray runtime_env.
+
+    Declared at registration and persisted with the spec so a restart
+    rebuilds the same environment. ``setup_commands`` run once per node via
+    the worker setup hook (guarded by a marker file) — for prerequisites
+    like ``idaes get-extensions`` that install outside the venv.
+    """
+
+    pip: list[str] = Field(default_factory=list)
+    env_vars: dict[str, str] = Field(default_factory=dict)
+    setup_commands: list[str] = Field(default_factory=list)
+    py_modules: list[str] = Field(default_factory=list)
+
+
 class AppSpec(BaseModel):
     name: str
+    kind: Literal["app", "task"] = "app"
     version: str = "0.0"
     app_type: str = "soft_sensor"
     app_class: str | None = None
@@ -189,6 +205,9 @@ class AppSpec(BaseModel):
     outputs: list[AppOutputSpec] = Field(default_factory=list)
     depends_on: list[str] = Field(default_factory=list)
     params: dict[str, Any] = Field(default_factory=dict)
+    run_mode: Literal["manual", "interval", "on_change"] = "manual"
+    interval: float | None = None
+    env: EnvSpec | None = None
 
 
 class AppRunRequest(BaseModel):

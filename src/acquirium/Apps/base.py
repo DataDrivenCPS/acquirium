@@ -7,12 +7,8 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from acquirium.internals.models import AppContext
+from acquirium.internals.app_utils import app_source_id  # noqa: F401  (canonical home moved)
 from acquirium.Client.explore.core import Query
-
-
-def app_source_id(name: str) -> str:
-    """Return the reserved, stable graph and stream owner for one app."""
-    return f"app:{name}"
 
 
 @dataclass

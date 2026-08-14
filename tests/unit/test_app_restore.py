@@ -1,6 +1,6 @@
 """Round-trip tests for restoring registered apps after a server restart.
 
-``AppRunner._app_spec_graph`` writes an app's registration triples;
+``app_spec_graph`` writes an app's registration triples;
 ``restore_app_specs`` reads them back into AppSpecs. These tests check the
 two stay inverses, using an rdflib graph as a stand-in for the oxigraph
 store (same {"rows": [...]} result shape).
@@ -11,11 +11,10 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-from acquirium.Apps.runner import AppRunner
 from acquirium.Apps.supervisor import restore_app_specs
-from acquirium.internals.models import AppSpec, AppOutputSpec
-
-AppRunnerCls = AppRunner.__ray_actor_class__
+from acquirium.internals.app_utils import app_spec_graph
+from acquirium.internals.internals_namespaces import OUTPUT_KIND
+from acquirium.internals.models import AppSpec, AppOutputSpec, EnvSpec
 
 
 class FakeGraphStore:
@@ -50,8 +49,8 @@ def make_spec(name: str = "restore_test_app") -> AppSpec:
     )
 
 
-def make_manager(spec: AppSpec, tmp_path):
-    graph = AppRunnerCls._app_spec_graph(None, spec)
+def make_manager(spec: AppSpec, tmp_path, graph=None):
+    graph = graph if graph is not None else app_spec_graph(spec)
     (tmp_path / spec.name).mkdir(parents=True, exist_ok=True)
     return SimpleNamespace(graph_store=FakeGraphStore(graph), app_storage_root=tmp_path)
 
@@ -77,14 +76,55 @@ def test_round_trip(tmp_path):
     assert by_point["urn:test:out2"].kind == "event"
 
 
-def test_trigger_outputs_restore_as_event(tmp_path):
-    # Registration writes event and trigger outputs identically, so the
-    # distinction is lost on restore — behavior-neutral (kind is only used
-    # when writing the registration graph, which the restore path skips).
+def test_trigger_outputs_round_trip(tmp_path):
     spec = make_spec()
     spec.outputs = [AppOutputSpec(kind="trigger", point_uri="urn:test:out3")]
     restored, = restore_app_specs(make_manager(spec, tmp_path))
+    assert restored.outputs[0].kind == "trigger"
+
+
+def test_legacy_graph_without_output_kind_falls_back_to_event(tmp_path):
+    # Graphs written before acq:outputKind encode event and trigger outputs
+    # identically (both EventStream) — the stream type cannot distinguish
+    # them, so such a trigger restores as event.
+    spec = make_spec()
+    spec.outputs = [AppOutputSpec(kind="trigger", point_uri="urn:test:out3")]
+    graph = app_spec_graph(spec)
+    for s, o in list(graph.subject_objects(OUTPUT_KIND)):
+        graph.remove((s, OUTPUT_KIND, o))
+    restored, = restore_app_specs(make_manager(spec, tmp_path, graph=graph))
     assert restored.outputs[0].kind == "event"
+
+
+def test_new_spec_fields_round_trip(tmp_path):
+    spec = make_spec("full_fields_app")
+    spec.kind = "task"
+    spec.run_mode = "on_change"
+    spec.interval = 42.5
+    spec.env = EnvSpec(
+        pip=["paho-mqtt>=2.1.0"],
+        env_vars={"IDAES_DIR": "/opt/idaes"},
+        setup_commands=["idaes get-extensions"],
+        py_modules=[],
+    )
+    restored, = restore_app_specs(make_manager(spec, tmp_path))
+    assert restored.kind == "task"
+    assert restored.run_mode == "on_change"
+    assert restored.interval == 42.5
+    assert restored.env == spec.env
+    # And the pre-existing fields still ride along unchanged.
+    assert restored.app_type == spec.app_type
+    assert restored.queries == spec.queries
+
+
+def test_field_defaults_round_trip(tmp_path):
+    # A spec with default kind/run_mode/interval/env restores to the same
+    # defaults (nothing invented by the graph round-trip).
+    restored, = restore_app_specs(make_manager(make_spec(), tmp_path))
+    assert restored.kind == "app"
+    assert restored.run_mode == "manual"
+    assert restored.interval is None
+    assert restored.env is None
 
 
 def test_missing_source_dir_is_skipped(tmp_path):

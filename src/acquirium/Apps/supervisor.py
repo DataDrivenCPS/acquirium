@@ -15,7 +15,7 @@ import shutil
 from rdflib import URIRef
 
 from acquirium.internals._log import timed_debug as _timed_debug
-from acquirium.internals.models import AppSpec, AppOutputSpec, AppRunRequest
+from acquirium.internals.models import AppSpec, AppOutputSpec, AppRunRequest, EnvSpec
 from acquirium.internals.internals_namespaces import *
 from acquirium.Apps.runner import AppRunner
 
@@ -271,18 +271,17 @@ def _app_type_name(type_uri: URIRef) -> str:
 def restore_app_specs(manager) -> list[AppSpec]:
     """Rebuild the AppSpecs of apps registered by a previous server run.
 
-    Inverts :meth:`AppRunner._app_spec_graph`: enumerates ``?app a acq:App``
+    Inverts :func:`acquirium.internals.app_utils.app_spec_graph`: enumerates ``?app a acq:App``
     in the persistent graph and reads scalar fields, outputs, and
     dependencies back out. Source code is not in the graph — it lives under
     the app storage dir (with app.json carrying entry_file/app_class), where
     ``AppRunner._load_app`` reads it — so specs are returned without source
     and apps whose storage dir is gone are skipped.
 
-    One lossy corner: registration writes ``event`` and ``trigger`` outputs
-    identically (both as EventStream), so a restored trigger output comes
-    back as kind="event". Output kind is only used when writing the
-    registration graph, which the restore path skips, so behavior is
-    unaffected.
+    Legacy corner: graphs written before ``acq:outputKind`` existed encode
+    ``event`` and ``trigger`` outputs identically (both as EventStream), so
+    a trigger output from such a graph restores as kind="event". Newly
+    registered specs round-trip the declared kind exactly.
     """
     def rows(q: str) -> list:
         start = time.perf_counter()
@@ -295,18 +294,22 @@ def restore_app_specs(manager) -> list[AppSpec]:
 
     logger.debug("App restore: reading registered apps from the persistent graph")
     apps: dict[str, dict[str, Any]] = {}
-    for app_uri, label, version, queries, params, rdf_type in rows(f"""
-        SELECT ?app ?label ?version ?queries ?params ?type WHERE {{
+    for app_uri, label, version, queries, params, rdf_type, run_mode, interval, env in rows(f"""
+        SELECT ?app ?label ?version ?queries ?params ?type ?run_mode ?interval ?env WHERE {{
           ?app a <{APP}> .
           OPTIONAL {{ ?app <{RDFS.label}> ?label }}
           OPTIONAL {{ ?app <{HAS_VERSION}> ?version }}
           OPTIONAL {{ ?app <{APP_QUERY}> ?queries }}
           OPTIONAL {{ ?app <{APP_PARAMS}> ?params }}
-          OPTIONAL {{ ?app a ?type . FILTER(?type != <{APP}>) }}
+          OPTIONAL {{ ?app a ?type . FILTER(?type NOT IN (<{APP}>, <{TASK}>)) }}
+          OPTIONAL {{ ?app <{RUN_MODE}> ?run_mode }}
+          OPTIONAL {{ ?app <{RUN_INTERVAL}> ?interval }}
+          OPTIONAL {{ ?app <{ENV_SPEC}> ?env }}
         }}"""):
         entry = apps.setdefault(str(app_uri), {
-            "name": None, "version": None, "app_type": None,
+            "name": None, "version": None, "app_type": None, "kind": "app",
             "queries": {}, "params": {}, "outputs": [], "depends_on": set(),
+            "run_mode": None, "interval": None, "env": None,
         })
         if label is not None:
             entry["name"] = str(label)
@@ -314,6 +317,18 @@ def restore_app_specs(manager) -> list[AppSpec]:
             entry["version"] = str(version)
         if rdf_type is not None:
             entry["app_type"] = _app_type_name(URIRef(str(rdf_type)))
+        if run_mode is not None:
+            entry["run_mode"] = str(run_mode)
+        if interval is not None:
+            try:
+                entry["interval"] = float(str(interval))
+            except ValueError:
+                logger.warning("App %s: unparseable runInterval in graph; dropped", app_uri)
+        if env is not None:
+            try:
+                entry["env"] = EnvSpec(**json.loads(str(env)))
+            except (json.JSONDecodeError, TypeError, ValueError):
+                logger.warning("App %s: unparseable envSpec in graph; dropped", app_uri)
         if queries is not None:
             try:
                 entry["queries"] = json.loads(str(queries))
@@ -325,6 +340,10 @@ def restore_app_specs(manager) -> list[AppSpec]:
             except json.JSONDecodeError:
                 logger.warning("App %s: unparseable paramSpec in graph; dropped", app_uri)
 
+    for (app_uri,) in rows(f"SELECT ?app WHERE {{ ?app a <{TASK}> }}"):
+        if str(app_uri) in apps:
+            apps[str(app_uri)]["kind"] = "task"
+
     for app_uri, dep in rows(
         f"SELECT ?app ?dep WHERE {{ ?app a <{APP}> ; <{DEPENDS_ON}> ?dep }}"
     ):
@@ -333,11 +352,12 @@ def restore_app_specs(manager) -> list[AppSpec]:
 
     # Refs carry Stream plus exactly one of EventStream/TimeseriesStream, so
     # the FILTER IN yields one row per output.
-    for app_uri, point, ref, qk, unit, ds, backend, rtype in rows(f"""
-        SELECT ?app ?point ?ref ?qk ?unit ?ds ?backend ?rtype WHERE {{
+    for app_uri, point, ref, qk, unit, ds, backend, rtype, okind in rows(f"""
+        SELECT ?app ?point ?ref ?qk ?unit ?ds ?backend ?rtype ?okind WHERE {{
           ?app a <{APP}> ; <{PRODUCES}> ?point .
           ?point <{HAS_EXTERNAL_REFERENCE}> ?ref .
           ?ref a ?rtype . FILTER(?rtype IN (<{EVENT_STREAM}>, <{TIMESERIES_STREAM}>))
+          OPTIONAL {{ ?ref <{OUTPUT_KIND}> ?okind }}
           OPTIONAL {{ ?point <{HAS_QUANTITY_KIND}> ?qk }}
           OPTIONAL {{ ?point <{HAS_UNIT}> ?unit }}
           OPTIONAL {{ ?point <{DATA_SOURCE}> ?ds }}
@@ -345,8 +365,14 @@ def restore_app_specs(manager) -> list[AppSpec]:
         }}"""):
         if str(app_uri) not in apps:
             continue
+        if okind is not None and str(okind) in ("timeseries", "event", "trigger"):
+            kind = str(okind)
+        else:
+            # Legacy graph without acq:outputKind — fall back to the stream
+            # type, which cannot distinguish trigger from event.
+            kind = "event" if URIRef(str(rtype)) == EVENT_STREAM else "timeseries"
         apps[str(app_uri)]["outputs"].append(AppOutputSpec(
-            kind="event" if URIRef(str(rtype)) == EVENT_STREAM else "timeseries",
+            kind=kind,
             point_uri=str(point),
             ref_uri=str(ref),
             quantity_kind=str(qk) if qk is not None else None,
@@ -367,12 +393,18 @@ def restore_app_specs(manager) -> list[AppSpec]:
             continue
         specs.append(AppSpec(
             name=name,
+            kind=entry["kind"],
             version=entry["version"] or "0.0",
             app_type=entry["app_type"] or "soft_sensor",
             queries=entry["queries"],
             outputs=entry["outputs"],
             depends_on=sorted(entry["depends_on"]),
             params=entry["params"],
+            run_mode=(entry["run_mode"]
+                      if entry["run_mode"] in ("manual", "interval", "on_change")
+                      else "manual"),
+            interval=entry["interval"],
+            env=entry["env"],
         ))
     logger.debug(
         "App restore: rebuilt %d spec(s) from %d registered app record(s)",

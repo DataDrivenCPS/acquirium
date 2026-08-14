@@ -31,8 +31,18 @@ IS_CALCULATED_FROM = ACQUIRIUM_NS.isCalculatedFrom
 
 # App metadata
 APP = ACQUIRIUM_NS.App
+# Class-less registered functions; always typed alongside acq:App so one
+# enumeration finds both kinds.
+TASK = ACQUIRIUM_NS.Task
 APP_QUERY = ACQUIRIUM_NS.querySpec
 APP_PARAMS = ACQUIRIUM_NS.paramSpec
+RUN_MODE = ACQUIRIUM_NS.runMode            # "manual" | "interval" | "on_change"
+RUN_INTERVAL = ACQUIRIUM_NS.runInterval    # seconds between keep-alive runs
+ENV_SPEC = ACQUIRIUM_NS.envSpec            # JSON EnvSpec (pip/env_vars/...)
+# Declared output kind on the ref ("timeseries" | "event" | "trigger") —
+# event and trigger share the EventStream rdf:type, so the stream type alone
+# cannot restore a trigger output.
+OUTPUT_KIND = ACQUIRIUM_NS.outputKind
 HAS_IMAGE = ACQUIRIUM_NS.hasImage
 HAS_ENTRYPOINT = ACQUIRIUM_NS.hasEntrypoint
 HAS_COMMAND = ACQUIRIUM_NS.hasCommand

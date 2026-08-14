@@ -15,13 +15,12 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote
 
 import ray
-from rdflib import Graph, Literal, URIRef
 
 from acquirium.Apps.base import app_source_id
 from acquirium.internals._log import configure_logging, timed_debug as _timed_debug
-from acquirium.internals.app_utils import app_uri_for, app_type_uri, add_literal_or_uri
+from acquirium.internals.app_utils import app_uri_for, app_spec_graph
 from acquirium.internals.internals_namespaces import *
-from acquirium.internals.models import AppOutputSpec, AppRunRequest, AppSpec, compute_ref_uri
+from acquirium.internals.models import AppSpec
 
 if TYPE_CHECKING:
     from acquirium.Client.acquirium import Acquirium
@@ -113,7 +112,7 @@ class AppRunner:
         serialized by the supervisor's lock — before registration returns.
         """
         self._persist_source()
-        graph = self._app_spec_graph(self.spec)
+        graph = app_spec_graph(self.spec)
         self.insert_graph(
             graph.serialize(format="turtle"),
             format="turtle",
@@ -185,52 +184,6 @@ class AppRunner:
     def sparql_update(self, update: str) -> dict[str, Any]:
         """Apply a SPARQL update only to this app's graph."""
         return self.acquirium_cli.sparql_update(update, source_id=self.source_id)
-
-    def _app_spec_graph(self, spec: AppSpec) -> Graph:
-        app_uri = URIRef(app_uri_for(spec.name))
-        source_id = app_source_id(spec.name)
-        graph = Graph()
-
-        graph.add((app_uri, RDF.type, APP))
-        graph.add((app_uri, RDFS.label, Literal(spec.name)))
-        if spec.app_type:
-            graph.add((app_uri, RDF.type, app_type_uri(spec.app_type)))
-
-        if spec.version:
-            graph.add((app_uri, HAS_VERSION, Literal(spec.version)))
-        if spec.queries:
-            graph.add((app_uri, APP_QUERY, Literal(json.dumps(spec.queries, sort_keys=True, ensure_ascii=True))))
-        if spec.params:
-            graph.add((app_uri, APP_PARAMS, Literal(json.dumps(spec.params, sort_keys=True, ensure_ascii=True))))
-
-        for dep in spec.depends_on:
-            graph.add((app_uri, DEPENDS_ON, URIRef(dep)))
-
-        for out in spec.outputs:
-            point_uri = URIRef(out.point_uri)
-            ref_uri = compute_ref_uri(source_id, out.point_uri)
-
-            graph.add((app_uri, PRODUCES, point_uri))
-            graph.add((point_uri, RDF.type, VIRTUAL_POINT))
-            graph.add((point_uri, HAS_EXTERNAL_REFERENCE, ref_uri))
-            graph.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
-            graph.add((ref_uri, ACQUIRIUM_REF_NAME, Literal(out.point_uri)))
-            graph.add((ref_uri, RDF.type, STREAM))
-            if out.kind in {"event", "trigger"}:
-                graph.add((ref_uri, RDF.type, EVENT_STREAM))
-                graph.add((ref_uri, ACQUIRIUM_VALUE_KIND, Literal("text")))
-            else:
-                graph.add((ref_uri, RDF.type, TIMESERIES_STREAM))
-                graph.add((ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")))
-
-            graph.add((ref_uri, STORAGE_BACKEND, Literal(out.storage_backend or "timescale")))
-
-            add_literal_or_uri(graph, point_uri, HAS_QUANTITY_KIND, out.quantity_kind)
-            add_literal_or_uri(graph, point_uri, HAS_UNIT, out.unit)
-            add_literal_or_uri(graph, point_uri, DATA_SOURCE, out.data_source)
-            for dep in spec.depends_on:
-                graph.add((point_uri, IS_CALCULATED_FROM, URIRef(dep)))
-        return graph
 
     # ─────────────────────── build phase ───────────────────────
 
