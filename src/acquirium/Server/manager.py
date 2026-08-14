@@ -736,14 +736,15 @@ class Manager:
         if not ref_uris:
             return 0
 
+        from acquirium.Storage.values import typed_value_series
+
         df = pl.DataFrame(
-            {"ref_uri": ref_uris, "ts": timestamps, "value": values, "value_kind": value_kinds},
-            schema={
-                "ref_uri": pl.Utf8,
-                "ts": pl.Datetime("us", "UTC"),
-                "value": pl.Object,
-                "value_kind": pl.Utf8,
-            },
+            {
+                "ref_uri": pl.Series("ref_uri", ref_uris, dtype=pl.Utf8),
+                "ts": pl.Series("ts", timestamps, dtype=pl.Datetime("us", "UTC")),
+                "value": typed_value_series(values),
+                "value_kind": pl.Series("value_kind", value_kinds, dtype=pl.Utf8),
+            }
         )
         return self.timescale.bulk_insert_polars(df)
 

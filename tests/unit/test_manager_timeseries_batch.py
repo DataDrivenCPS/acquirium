@@ -6,6 +6,7 @@ import polars as pl
 import pytest
 
 from acquirium.Server.manager import Manager
+from acquirium.Storage.values import prepare_value_columns
 from acquirium.internals.models import compute_ref_uri
 
 
@@ -64,7 +65,12 @@ def test_insert_timeseries_batch_uses_computed_ref_uris_in_one_bulk_insert():
         str(compute_ref_uri("source/file.csv", "temp")),
         str(compute_ref_uri("source/file.csv", "state/value")),
     }
-    assert {row["value"] for row in rows} == {72.4, "OK", None}
+    # A batch mixing scalar types is stringified so the split can vectorize;
+    # the values still survive intact through prepare_value_columns.
+    assert {row["value"] for row in rows} == {"72.4", "OK", None}
+    split = prepare_value_columns(store.frames[0]).sort("ts")
+    assert split.get_column("numeric_value").to_list() == [72.4, None, None]
+    assert split.get_column("text_value").to_list() == [None, "OK", None]
     assert store.frames[0].get_column("value_kind").to_list() == ["numeric", "text", "text"]
     assert store.refs == []
 
