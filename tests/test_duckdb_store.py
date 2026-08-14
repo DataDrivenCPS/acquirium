@@ -116,8 +116,8 @@ def test_bulk_insert_polars_splits_numeric_and_text_values(store):
     assert store.bulk_insert_polars(df) == 4
     stored = store.sql_query(
         f"""
-        SELECT ref_uri, numeric_value, text_value
-        FROM timeseries
+        SELECT ref_uri, value_numeric, value_text
+        FROM timeseries_streams
         WHERE ref_uri IN ('{numeric_uri}', '{text_uri}')
         ORDER BY ref_uri, ts
         """
@@ -172,6 +172,57 @@ def test_timeseries_uses_registered_text_kind_for_parseable_text(store):
 
     assert batch.schema.field("value").type == pa.string()
     assert batch.to_pydict()["value"] == ["1.5"]
+
+
+@pytest.mark.unit
+def test_timeseries_numeric_mode_overrides_text_kind(store):
+    uri = "urn:test:duck:ts_numeric_mode_text_kind"
+    store.ensure_stream_ref(None, "src-mixed", "mostly-text", ref_uri=uri, value_kind="text")
+    store.upsert_rows(uri, [(_utc(2024, 3, 6), 3.14)], value_kind="numeric")
+
+    batch = list(store.timeseries(uri, value_mode="numeric"))[0]
+
+    assert batch.schema.field("value").type == pa.float64()
+    assert batch.to_pydict()["value"] == [3.14]
+
+
+@pytest.mark.unit
+def test_timeseries_text_mode_overrides_numeric_kind(store):
+    uri = "urn:test:duck:ts_text_mode_numeric_kind"
+    store.ensure_stream_ref(None, "src-mixed", "mostly-numeric", ref_uri=uri, value_kind="numeric")
+    store.upsert_rows(uri, [(_utc(2024, 3, 7), "offline")], value_kind="text")
+
+    batch = list(store.timeseries(uri, value_mode="text"))[0]
+
+    assert batch.schema.field("value").type == pa.string()
+    assert batch.to_pydict()["value"] == ["offline"]
+
+
+@pytest.mark.unit
+def test_timeseries_mixed_unregistered_stream_keeps_one_schema(store):
+    uri = "urn:test:duck:ts_mixed_schema"
+    store.upsert_rows(uri, [(_utc(2024, 3, 8, i), float(i)) for i in range(3)], value_kind="numeric")
+    store.upsert_rows(uri, [(_utc(2024, 3, 9, i), f"state{i}") for i in range(3)], value_kind="text")
+
+    batches = list(store.timeseries(uri, batch_size=2))
+
+    assert len(batches) > 1
+    assert {b.schema.field("value").type for b in batches} == {pa.string()}
+    # Mixed streams coalesce so numeric rows are not nulled out.
+    vals = [v for b in batches for v in b.to_pydict()["value"]]
+    assert vals == ["0.0", "1.0", "2.0", "state0", "state1", "state2"]
+    pa.Table.from_batches(batches)
+
+
+@pytest.mark.unit
+def test_timeseries_numeric_unregistered_stream_reads_as_float(store):
+    uri = "urn:test:duck:ts_numeric_unregistered"
+    store.upsert_rows(uri, [(_utc(2024, 3, 10), 1.5)], value_kind="numeric")
+
+    batch = list(store.timeseries(uri))[0]
+
+    assert batch.schema.field("value").type == pa.float64()
+    assert batch.to_pydict()["value"] == [1.5]
 
 
 @pytest.mark.unit
@@ -402,6 +453,26 @@ def test_sql_query(store):
     result = store.sql_query("SELECT 1 AS x")
     assert result["columns"] == ["x"]
     assert result["rows"] == [[1]]
+
+
+# ---- integer ref_id storage keys ----
+
+@pytest.mark.unit
+def test_timeseries_table_keyed_by_integer_ref_id(store):
+    uri = "urn:test:duck:ref_id_key"
+    store.upsert_rows(uri, [(_utc(2024, 1, 1), 1.0)], value_kind="numeric")
+
+    mapping = store.sql_query(
+        f"SELECT ref_id FROM ref_ids WHERE ref_uri = '{uri}'"
+    )["rows"]
+    assert len(mapping) == 1
+    ref_id = mapping[0][0]
+    assert isinstance(ref_id, int)
+
+    stored = store.sql_query(
+        f"SELECT ref_id FROM timeseries WHERE ref_id = {ref_id}"
+    )["rows"]
+    assert stored == [[ref_id]]
 
 
 # ---- recreate ----
