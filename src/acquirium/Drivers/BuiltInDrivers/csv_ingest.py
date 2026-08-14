@@ -8,8 +8,8 @@ from typing import Any
 
 import polars as pl
 
-from acquirium.Drivers.Driver import FileIngestDriver, safe_stream_name
-from acquirium.Drivers.BuiltInDrivers.tabular import to_observations
+from acquirium.Drivers.Driver import FileBatch, FileIngestDriver
+from acquirium.Drivers.tabular import to_observations
 
 logger = logging.getLogger("acquirium.csv_ingest")
 
@@ -21,9 +21,8 @@ RAGGED_MODES = ("ignore", "skip", "error")
 class CSVIngestDriver(FileIngestDriver):
     """Watches a directory for CSV and TSV files and ingests new rows.
 
-    Each file becomes its own datasource, named after its path, so two files
-    with the same column name produce distinct streams. Only rows added since
-    the last tick are read; files are never moved or deleted.
+    All files use the required configured datasource. Only rows added since the
+    last tick are read; files are never moved or deleted.
 
     **Wide** — one column per stream, one row per timestamp::
 
@@ -35,7 +34,8 @@ class CSVIngestDriver(FileIngestDriver):
         time,              id,          value
         2024-01-01T00:00Z, sensor/temp, 22.5
 
-    Config keys (all optional, under ``self.config["driver"]``):
+    Config keys under ``self.config["driver"]``. ``source_id``, ``watch_dir``,
+    ``glob``, and ``format`` are required; the remaining keys are optional:
 
     .. code-block:: toml
 
@@ -43,12 +43,18 @@ class CSVIngestDriver(FileIngestDriver):
         spec         = "acquirium.Drivers.BuiltInDrivers.csv_ingest:CSVIngestDriver"
         interval     = 5.0
         watch_dir    = "./data/incoming"
-        format       = "auto"        # "auto" | "wide" | "narrow"
+        format       = "wide"        # required: "wide" | "narrow"
+        source_id    = "incoming-csv"
+        glob         = ["*.csv", "*.tsv"]
         time_col     = "time"
+        # date_col   = "Date"        # alternative split timestamp
+        # clock_col  = "Time"
         id_col       = "id"          # narrow only
         value_col    = "value"       # narrow only
         skip_cols    = ["notes"]     # columns to ignore entirely
-        date_format  = "%m/%d/%Y"    # only needed for non-ISO date strings
+        date_format  = "%m/%d/%Y"    # optional override for timestamp parsing
+        timezone     = "UTC"         # timezone of naive source timestamps
+        day_first    = false          # prefer DD/MM over MM/DD when ambiguous
         skip_rows    = [1, 3]        # or { "subdir/data.csv" = [2, 5] }
         encoding     = "utf8-lossy"  # "utf8", "utf8-lossy", "latin1", ...
         ragged_lines = "ignore"      # "ignore" | "skip" | "error"
@@ -66,9 +72,7 @@ class CSVIngestDriver(FileIngestDriver):
     :meth:`read` — see ``FileIngestDriver``.
     """
 
-    glob = ("*.csv", "*.tsv")
-
-    def read(self, path: Path, cursor: Any) -> tuple[pl.DataFrame, Any]:
+    def read(self, path: Path, cursor: Any) -> FileBatch:
         offset = cursor or 0
         cfg = self.config.get("driver", {})
         separator = "\t" if path.suffix.lower() == ".tsv" else ","
@@ -98,7 +102,9 @@ class CSVIngestDriver(FileIngestDriver):
         df = pl.read_csv(
             StringIO(text),
             separator=separator,
-            try_parse_dates=True,
+            # Timestamp parsing happens after column discovery. Letting the CSV
+            # reader guess here can irreversibly interpret 12/1 as 12 January.
+            try_parse_dates=False,
             skip_rows_after_header=offset,
             encoding=encoding,
             truncate_ragged_lines=ragged != "error",
@@ -107,23 +113,26 @@ class CSVIngestDriver(FileIngestDriver):
         if skip_cols:
             df = df.drop(skip_cols)
         if df.is_empty():
-            return df, cursor
+            return FileBatch(None, cursor)
 
-        # One datasource for the whole directory when the driver has one —
-        # from `source_id` in config, or assigned by a subclass in setup() —
-        # else one per file so identical column names stay distinct.
-        source_id = self._source_id or safe_stream_name(str(path))
+        layout = cfg.get("format")
+        if layout is None:
+            raise ValueError("CSV ingestion requires driver.format = 'wide' or 'narrow'")
         observations = to_observations(
             df,
-            time_col=cfg.get("time_col", "time"),
+            time_col=cfg.get("time_col"),
+            date_col=cfg.get("date_col"),
+            clock_col=cfg.get("clock_col"),
             id_col=cfg.get("id_col", "id"),
             value_col=cfg.get("value_col", "value"),
-            layout=cfg.get("format", "auto"),
+            layout=layout,
             date_format=cfg.get("date_format"),
+            timezone=cfg.get("timezone", "UTC"),
+            day_first=bool(cfg.get("day_first", False)),
         )
         for name in observations["ref_name"].unique():
-            self.declare(name, source_id=source_id)
-        return observations.with_columns(pl.lit(source_id).alias("source_id")), offset + len(df)
+            self.declare(name)
+        return FileBatch(observations, offset + len(df))
 
 
 # ------------------------------------------------------------------ helpers

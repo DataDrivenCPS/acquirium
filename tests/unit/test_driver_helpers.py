@@ -76,7 +76,10 @@ def test_csv_watch_dir_resolves_relative_to_config_dir(tmp_path: Path):
         aq,
         {
             "__config_dir": str(config_dir),
-            "driver": {"watch_dir": "./raw"},
+            "driver": {
+                "watch_dir": "./raw", "glob": "*.csv",
+                "source_id": "csv", "format": "wide",
+            },
         },
     )
     driver.setup()

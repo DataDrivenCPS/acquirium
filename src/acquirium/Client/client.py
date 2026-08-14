@@ -46,7 +46,13 @@ def _raise_for_status(response: requests.Response) -> None:
 
 
 #: RDF serialisations Acquirium accepts, keyed by file suffix.
-RDF_FORMATS = {".ttl": "turtle", ".n3": "n3", ".xml": "xml", ".trix": "trix"}
+RDF_FORMATS = {
+    ".ttl": "turtle",
+    ".n3": "n3",
+    ".xml": "xml",
+    ".rdf": "xml",
+    ".trix": "trix",
+}
 
 
 class AcquiriumClient:
@@ -61,11 +67,10 @@ class AcquiriumClient:
         )
         self._namespaces_cache: dict[str, str] | None = None
 
-
     def insert_graph(
         self,
         rdf_graph: str,
-        format: str | None = None,
+        format: str = "turtle",
         replace: bool = True,
         *,
         source_id: str,
@@ -77,41 +82,17 @@ class AcquiriumClient:
         responding, so inserted concepts are resolvable once this returns.
 
         Args:
-            :param rdf_graph: `pathlib.Path` like object, or string.
-            In the case of a string the string it can be either:
-                - graph content as text
-                - location of the source file
-            format: Format of the RDF data [turtle | n3 | xml | trix]. Inferred
-                from the file suffix when a path is given, else ``"turtle"``.
+            rdf_graph: RDF graph content as text.
+            format: Format of the RDF data [turtle | n3 | xml | trix].
             replace: If True, replaces the selected graph. If False, appends to it.
             source_id: Data-graph owner. Use ``"plant"`` for the shared plant
                 model, or a component's stable source ID.
         """
-        source_path: Path | None = None
-        if isinstance(rdf_graph, Path):
-            if not rdf_graph.is_file():
-                raise FileNotFoundError(f"Graph file not found: {rdf_graph}")
-            source_path = rdf_graph
-            rdf_graph = rdf_graph.read_text()
-        elif isinstance(rdf_graph, str):
-            if rdf_graph.strip().startswith(("<", "@", "#")) or "\n" in rdf_graph:
-                # RDF content: starts with an RDF marker or spans multiple lines
-                pass
-            else:
-                # Single line without RDF markers: treat as a file path
-                p = Path(rdf_graph)
-                if p.is_file():
-                    source_path = p
-                    rdf_graph = p.read_text()
-                else:
-                    raise FileNotFoundError(f"Graph file not found: {rdf_graph}")
-        else:
-            raise ValueError("rdf_graph must be a string or Path object")
-
-        if format is None:
-            format = RDF_FORMATS.get(source_path.suffix.lower(), "turtle") if source_path else "turtle"
-
-
+        if not isinstance(rdf_graph, str):
+            raise TypeError(
+                "rdf_graph must be RDF content as a string; "
+                "use insert_graph_file() for paths"
+            )
         url = f"{self.base_url}/insert_graph"
         data = {
             "rdf_graph": rdf_graph,
@@ -122,6 +103,29 @@ class AcquiriumClient:
         response = requests.post(url, json=data)
         _raise_for_status(response)
 
+    def insert_graph_file(
+        self,
+        path: str | Path,
+        format: str | None = None,
+        replace: bool = True,
+        *,
+        source_id: str,
+    ) -> None:
+        """Read RDF from *path* and insert it into an explicitly owned graph."""
+        source_path = Path(path)
+        if not source_path.is_file():
+            raise FileNotFoundError(f"Graph file not found: {source_path}")
+        resolved_format = format or RDF_FORMATS.get(source_path.suffix.lower())
+        if resolved_format is None:
+            raise ValueError(
+                f"cannot infer RDF format from {source_path.suffix!r}; pass format explicitly"
+            )
+        self.insert_graph(
+            source_path.read_text(),
+            format=resolved_format,
+            replace=replace,
+            source_id=source_id,
+        )
 
     def timeseries_df(
         self,

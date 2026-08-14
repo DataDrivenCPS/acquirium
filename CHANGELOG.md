@@ -11,6 +11,15 @@ change in any release.
 ## [Unreleased]
 
 ### Added
+- **Explicit driver-author contract.** Ingest drivers declare streams with
+  `declare()` before reporting observations; the platform owns datasource and
+  stream registration, value-kind inference, lossless buffering, retry
+  retention, and final shutdown flushes. File reads return `FileBatch`, whose
+  cursor advances only after successful insertion.
+- Public `to_timestamp()` and `to_observations()` driver helpers, including
+  native/ISO/common timestamp parsing, split date/time columns, Unix epochs,
+  timezone handling, conservative column-name discovery, and explicit
+  `date_format` / `day_first` controls.
 - **Explore query interface.** `acq.explore()` builds the new `Query`: `entity()` / `related()` / `measurement()` pattern verbs; one attribute vocabulary (type, process, cp_type, medium, substance, quantity_kind, unit, enumeration_kind, data_source) shared by `where()` filtering (with `Not()` exclusion and lists-as-OR), `include()` / `drop()` / `with_columns()` column controls (invertible, dotted `"alias.attr"` targeting, `required=`), and `options()` / `facets()` faceted exploration; `alias()` / `refocus()` pointer control; `to_sparql()` / `execute()` / `metadata()` / `data()` / `dataframe()` terminals. Attribute tables are generated into the docstrings of every attribute-taking method.
 - **Client-side multi-hop traversal.** `related`/`measurement` traversal runs as client-side BFS instead of join-explosive SPARQL property paths. `via=` takes a predicate, a predicate list, `"any"`/`"all"`, or a step-pattern constant; `direction="upstream"/"downstream"` maps to inspectable constants (`UPSTREAM_EQUIPMENT`, `DOWNSTREAM_EQUIPMENT`, `UPSTREAM_PROPERTY`, `DOWNSTREAM_PROPERTY`); `nearest=` returns closest matches per source; `max_depth` defaults to 3 (`0` = unbounded). Attribute predicates plus `rdfs:subClassOf`, `s223:hasProperty`, `ref:hasExternalReference`, and `s223:cnx` are hidden from `via="any"` by default (`hide()` / `unhide()` / `hidden_predicates()`).
 - **Multi-measurement UNION compilation.** Queries with several measurement nodes compile as UNION branches: M+N rows with nulls where a node has no data, instead of a cross product that empties the whole result.
@@ -21,6 +30,11 @@ change in any release.
 - `include(required=True)` drops rows lacking the attribute instead of binding null.
 
 ### Changed
+- File-driver configuration is centralized under `[[drivers]]`: `source_id`,
+  `watch_dir`, and `glob` are explicit and required. CSV/XLSX/Parquet layout is
+  also explicit; stream names are preserved exactly rather than sanitized.
+- Driver graph polling has its own cadence, independent of data ticks. Graph
+  content and graph-file insertion use separate APIs.
 - The explore builder is the main `Query` interface; the legacy query class is renamed to `Q`.
 - `stop_app` takes a required `app_id=`; the never-implemented `run_id=` parameter is gone.
 - `Output.event` requires `point_uri` in its signature (it always raised without one).
@@ -37,6 +51,10 @@ change in any release.
 - Traversal pruning crash when `include()` was combined with a traversal edge.
 
 ### Removed
+- **Breaking:** `TabularIngestBase`, implicit per-file datasource identity,
+  automatic wide/narrow layout selection, and implicit graph path detection.
+  Specialized file drivers now implement `read(path, cursor)` explicitly and
+  may call the plain tabular conversion helpers.
 - The `via=` shortcut system; direction step patterns became inspectable constants.
 - `App.docker_image` / `App.entrypoint` / `App.command` (dead since apps moved to Ray actors) and the stale `python -m acquirium.Apps.worker` references in example apps.
 - `scripts/benchmark/` (stale; cited files that no longer exist).

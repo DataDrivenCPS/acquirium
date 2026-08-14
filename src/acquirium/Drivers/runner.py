@@ -8,7 +8,6 @@ import time
 import ray
 
 from acquirium.internals._log import configure_logging, timed_debug as _timed_debug
-from acquirium.internals.internals_namespaces import *
 
 if TYPE_CHECKING:
     from acquirium.Client.acquirium import Acquirium
@@ -49,13 +48,17 @@ class DriverRunner:
         configure_logging()
         self.driver: Driver = driver_cls(acquirium_cli, driver_cfg)
         self.acquirium_cli = acquirium_cli
-        self.interval = interval
+        self.interval = float(interval)
+        if self.interval <= 0:
+            raise ValueError("driver interval must be greater than zero")
         configured_poll = driver_cfg.get("driver", {}).get("graph_poll_interval")
         self.graph_poll_interval = (
             float(configured_poll)
             if configured_poll is not None
-            else max(interval, DEFAULT_GRAPH_POLL_INTERVAL)
+            else max(self.interval, DEFAULT_GRAPH_POLL_INTERVAL)
         )
+        if self.graph_poll_interval <= 0:
+            raise ValueError("graph_poll_interval must be greater than zero")
         self._last_graph_poll = 0.0
         self.source_version = 0
         self.logger = logging.getLogger(
@@ -74,6 +77,7 @@ class DriverRunner:
         across setup for exactly this reason).
         """
         self.driver.setup()
+        self.driver._after_setup()
         # Seed after setup so the loop doesn't fire on_graph_change() for the
         # pre-existing graph or this driver's own setup insertions.
         self._last_graph_poll = time.monotonic()
@@ -87,19 +91,29 @@ class DriverRunner:
         name = type(self.driver).__name__
         self.logger.info("Starting driver runner for %s", name)
         self._tick()
+        next_tick = time.monotonic() + self.interval
+        next_graph_poll = self._last_graph_poll + self.graph_poll_interval
         while not self._stop_event.is_set():
+            now = time.monotonic()
+            timeout = max(0.0, min(next_tick, next_graph_poll) - now)
             try:
-                await asyncio.wait_for(self._stop_event.wait(), timeout=self.interval)
+                await asyncio.wait_for(self._stop_event.wait(), timeout=timeout)
                 break
             except asyncio.TimeoutError:
                 pass
-            self._poll_graph_version()
-            self._tick()
+            now = time.monotonic()
+            if now >= next_graph_poll:
+                self._poll_graph_version()
+                next_graph_poll = time.monotonic() + self.graph_poll_interval
+            if now >= next_tick:
+                self._tick()
+                next_tick = time.monotonic() + self.interval
         self.logger.debug("driver loop exit: %s", name)
         try:
-            self.driver.stop()
+            self.driver._shutdown()
         except Exception:
-            self.logger.exception("stop error")
+            self.logger.exception("shutdown error")
+            raise
 
     def stop(self) -> None:
         """Signal run() to exit; driver.stop() cleanup happens there.

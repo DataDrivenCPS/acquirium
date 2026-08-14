@@ -10,7 +10,6 @@ import polars as pl
 import pytest
 from rdflib import Graph, Literal
 
-from acquirium.Drivers.Driver import safe_stream_name as _safe_name
 from acquirium.Drivers.BuiltInDrivers.csv_ingest import CSVIngestDriver
 from acquirium.Client.acquirium import Acquirium
 from acquirium.internals.models import compute_ref_uri
@@ -32,16 +31,21 @@ def make_driver(cfg_overrides: dict | None = None, tmp_path: Path | None = None)
     aq.register_streams.side_effect = lambda streams: Acquirium.register_streams(aq, streams)
     aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 0}
     watch = str(tmp_path) if tmp_path else "/tmp/csv_test_watch"
-    driver = CSVIngestDriver(aq, {"driver": {"watch_dir": watch, **(cfg_overrides or {})}})
+    driver = CSVIngestDriver(aq, {"driver": {
+        "watch_dir": watch, "glob": ["*.csv", "*.tsv"],
+        "source_id": "csv_files", "format": "wide",
+        **(cfg_overrides or {}),
+    }})
     driver.setup()
     return driver
 
 
 def parse(driver: CSVIngestDriver, path: Path, cursor=None):
     """Run the driver's own read(), regrouped as {ref_name: [(ts, value)]}."""
-    observations, next_cursor = driver.read(path, cursor)
+    result = driver.read(path, cursor)
+    observations, next_cursor = result.observations, result.next_cursor
     batch: dict[str, list[tuple[datetime, str]]] = {}
-    if "ref_name" in observations.columns:
+    if observations is not None:
         for row in observations.iter_rows(named=True):
             batch.setdefault(row["ref_name"], []).append((row["ts"], row["value"]))
     return batch, next_cursor
@@ -122,14 +126,13 @@ def test_parse_wide_skip_cols_from_config(tmp_path):
     assert set(batch) == {"temp", "rh"}
 
 
-def test_parse_wide_normalizes_column_names_to_stream_names(tmp_path):
-    """Headers reach the store as safe_stream_name() output, not raw text."""
+def test_parse_wide_preserves_column_names(tmp_path):
     p = tmp_path / "unsafe_headers.csv"
     p.write_text("time,UV Intensity (mW/cm^2)\n2024-01-01T00:00:00Z,1.5\n")
     driver = make_driver(tmp_path=tmp_path)
     batch, cursor = parse(driver, p)
     assert cursor == 1
-    assert set(batch) == {"UV_Intensity_mW/cm^2"}
+    assert set(batch) == {"UV Intensity (mW/cm^2)"}
 
 
 def test_parse_wide_date_only_col(tmp_path):
@@ -158,20 +161,31 @@ def test_parse_wide_skips_null_values(tmp_path):
     assert batch["temp"] == [(datetime(2024, 1, 2, tzinfo=timezone.utc), "23.0")]
 
 
-def test_parse_wide_missing_time_col_raises(tmp_path):
+def test_parse_wide_discovers_ts_column(tmp_path):
     p = tmp_path / "no_time.csv"
     p.write_text("ts,temp\n2024-01-01T00:00:00Z,22.5\n")
     driver = make_driver(tmp_path=tmp_path)
-    with pytest.raises(ValueError, match="time column"):
-        parse(driver, p)
+    batch, cursor = parse(driver, p)
+    assert cursor == 1
+    assert batch["temp"] == [(datetime(2024, 1, 1, tzinfo=timezone.utc), "22.5")]
+
+
+def test_parse_wide_discovers_split_date_and_time(tmp_path):
+    p = tmp_path / "split_timestamp.csv"
+    p.write_text("Date,Time,temp\n12/1/2024,5:32:52 PM,22.5\n")
+    driver = make_driver(tmp_path=tmp_path)
+    batch, cursor = parse(driver, p)
+    assert cursor == 1
+    assert batch["temp"] == [
+        (datetime(2024, 12, 1, 17, 32, 52, tzinfo=timezone.utc), "22.5")
+    ]
 
 
 # ------------------------------------------------------------------ narrow parsing
 
 
-@pytest.mark.parametrize("cfg", [{}, {"format": "narrow"}])
-def test_parse_narrow_basic(tmp_path, cfg):
-    driver = make_driver(cfg, tmp_path=tmp_path)
+def test_parse_narrow_basic(tmp_path):
+    driver = make_driver({"format": "narrow"}, tmp_path=tmp_path)
     batch, cursor = parse(driver, _narrow_csv(tmp_path))
     assert set(batch) == {"sensor/temp", "sensor/rh"}
     assert cursor == 3
@@ -184,18 +198,6 @@ def test_parse_narrow_missing_id_col_raises(tmp_path):
     driver = make_driver({"format": "narrow"}, tmp_path=tmp_path)
     with pytest.raises(ValueError, match="column 'id'"):
         parse(driver, p)
-
-
-@pytest.mark.parametrize("cols,expected", [
-    ({"time": ["2024-01-01T00:00:00Z"], "sensor_a": [1.0]}, {"sensor_a"}),
-    ({"time": ["2024-01-01T00:00:00Z"], "id": ["s1"], "value": [1.0]}, {"s1"}),
-])
-def test_auto_detects_layout(tmp_path, cols, expected):
-    p = tmp_path / "auto.csv"
-    pl.DataFrame(cols).write_csv(p)
-    driver = make_driver(tmp_path=tmp_path)
-    batch, _ = parse(driver, p)
-    assert set(batch) == expected
 
 
 # ------------------------------------------------------------------ ragged rows
@@ -283,16 +285,16 @@ def test_tsv_parsed_correctly(tmp_path):
 # ------------------------------------------------------------------ per-file source_id
 
 
-def test_loop_uses_full_path_as_source_id(tmp_path):
+def test_loop_uses_explicit_source_id(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     path = _wide_csv(tmp_path)
     driver.tick()
     source_id, table = driver.aq.insert_timeseries_arrow.call_args[0]
-    assert source_id == _safe_name(str(path))
+    assert source_id == "csv_files"
     assert set(pl.from_arrow(table)["ref_name"].to_list()) == {"temp", "rh"}
 
 
-def test_loop_full_path_source_id_includes_subdirectory(tmp_path):
+def test_loop_source_id_is_stable_across_subdirectories(tmp_path):
     sub = tmp_path / "sensors"
     sub.mkdir()
     path = sub / "data.csv"
@@ -300,7 +302,7 @@ def test_loop_full_path_source_id_includes_subdirectory(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     driver.tick()
     source_id, table = driver.aq.insert_timeseries_arrow.call_args[0]
-    assert source_id == _safe_name(str(path))
+    assert source_id == "csv_files"
     assert "flow" in pl.from_arrow(table)["ref_name"].to_list()
 
 
@@ -323,7 +325,7 @@ def test_loop_marks_text_only_csv_streams_as_text(tmp_path):
     driver.tick()
 
     g = Graph().parse(data=driver.aq.client.insert_graph.call_args[0][0], format="turtle")
-    source_id = _safe_name(str(p))
+    source_id = "csv_files"
     assert (compute_ref_uri(source_id, "temp"), ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
     assert (compute_ref_uri(source_id, "state"), ACQUIRIUM_VALUE_KIND, Literal("text")) in g
 
@@ -339,7 +341,7 @@ def test_loop_registers_mixed_csv_streams_as_numeric(tmp_path):
     driver.tick()
 
     g = Graph().parse(data=driver.aq.client.insert_graph.call_args[0][0], format="turtle")
-    ref = compute_ref_uri(_safe_name(str(p)), "mode")
+    ref = compute_ref_uri("csv_files", "mode")
     assert (ref, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
 
 
@@ -351,10 +353,11 @@ def test_loop_registers_no_synthetic_point_uri(tmp_path):
     driver.tick()
 
     g = Graph().parse(data=driver.aq.client.insert_graph.call_args[0][0], format="turtle")
-    source_id = _safe_name(str(p))
-    ref_uri = compute_ref_uri(source_id, _safe_name("UV-Ultraviolet Intensity (mW/cm^2)"))
+    source_id = "csv_files"
+    ref_name = "UV-Ultraviolet Intensity (mW/cm^2)"
+    ref_uri = compute_ref_uri(source_id, ref_name)
     assert (ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)) in g
-    assert (ref_uri, ACQUIRIUM_REF_NAME, Literal(_safe_name("UV-Ultraviolet Intensity (mW/cm^2)"))) in g
+    assert (ref_uri, ACQUIRIUM_REF_NAME, Literal(ref_name)) in g
     assert (ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
     assert list(g.subjects(HAS_EXTERNAL_REFERENCE, ref_uri)) == []
 
@@ -412,6 +415,54 @@ def test_tick_propagates_insert_failure(tmp_path):
     with pytest.raises(RuntimeError, match="server down"):
         driver.tick()
     assert str(path) not in driver._cursors
+
+
+def test_tick_does_not_advance_cursor_on_false_insert_result(tmp_path):
+    driver = make_driver(tmp_path=tmp_path)
+    driver.aq.insert_timeseries_arrow.return_value = {"ok": False, "rows_inserted": 0}
+    path = _wide_csv(tmp_path)
+    with pytest.raises(RuntimeError, match="reported failure"):
+        driver.tick()
+    assert str(path) not in driver._cursors
+
+
+def test_setup_requires_explicit_source_id(tmp_path):
+    driver = CSVIngestDriver(MagicMock(), {"driver": {
+        "watch_dir": str(tmp_path), "glob": "*.csv", "format": "wide",
+    }})
+    with pytest.raises(ValueError, match="require driver.source_id"):
+        driver.setup()
+
+
+def test_setup_requires_explicit_glob(tmp_path):
+    driver = CSVIngestDriver(MagicMock(), {"driver": {
+        "watch_dir": str(tmp_path), "source_id": "csv_files", "format": "wide",
+    }})
+    with pytest.raises(ValueError, match="require driver.glob"):
+        driver.setup()
+
+
+def test_setup_requires_explicit_watch_dir(tmp_path):
+    driver = CSVIngestDriver(MagicMock(), {"driver": {
+        "source_id": "csv_files", "glob": "*.csv", "format": "wide",
+    }})
+    with pytest.raises(ValueError, match="require driver.watch_dir"):
+        driver.setup()
+
+
+def test_configured_glob_controls_file_discovery(tmp_path):
+    (tmp_path / "ignored.csv").write_text(
+        "time,temp\n2024-01-01T00:00:00Z,1.0\n"
+    )
+    (tmp_path / "selected.export").write_text(
+        "time,temp\n2024-01-01T00:00:00Z,2.0\n"
+    )
+    driver = make_driver({"glob": "*.export"}, tmp_path=tmp_path)
+    driver.tick()
+
+    driver.aq.insert_timeseries_arrow.assert_called_once()
+    _, table = driver.aq.insert_timeseries_arrow.call_args.args
+    assert pl.from_arrow(table)["value"].to_list() == ["2.0"]
 
 
 def test_tick_propagates_registration_failure(tmp_path):

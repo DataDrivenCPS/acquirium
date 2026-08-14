@@ -68,8 +68,6 @@ class BeniciaSimulatorDriver(PollingIngestDriver):
         if bool(cfg.get("insert_graph", True)):
             self.insert_graph(graph.serialize(format="turtle"), format="turtle", replace=False)
 
-        self.aq.register_datasource(self.source_id)
-
         # Per-property state (None for enumeration properties, which emit 0/1).
         self._states = {}
         self._enums = []
@@ -83,15 +81,12 @@ class BeniciaSimulatorDriver(PollingIngestDriver):
                 )
 
         # Register every stream with its point URI so rows link to the model.
-        self.aq.register_streams([
-            {
-                "source_id": self.source_id,
-                "ref_name": local_name(prop),
-                "point_uri": str(prop),
-                "value_kind": "numeric",
-            }
-            for prop in self._properties
-        ])
+        for prop in self._properties:
+            self.declare(
+                local_name(prop),
+                point_uri=str(prop),
+                value_kind="numeric",
+            )
 
         logger.info(
             "benicia simulator ready: source_id=%s, %d properties (%d series, %d enums) from %s",

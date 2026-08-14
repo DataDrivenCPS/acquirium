@@ -53,6 +53,7 @@ step_frac      = 0.02
 spec         = "parquet_driver.py:BeniciaParquetDriver"
 interval     = 5.0
 watch_dir    = "../data/historical"
+glob         = ["*.parquet", "*.pq"]
 format       = "wide"
 time_col     = "timestamp"
 source_id    = "benicia-historical"

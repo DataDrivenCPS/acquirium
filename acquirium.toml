@@ -82,10 +82,10 @@ interval = 10.0
 
 # Uncomment to enable MQTT ingestion as a default driver:
 # [[drivers]]
-# spec           = "acquirium.Drivers.BuiltInDrivers.mqtt_ingestion:MQTTIngestDriver"
-# interval       = 1.0              # how often buffered messages are inserted
+# spec                = "acquirium.Drivers.BuiltInDrivers.mqtt_ingestion:MQTTIngestDriver"
+# interval            = 1.0         # how often buffered messages are inserted
 # graph_poll_interval = 30.0        # how often to look for newly declared topics
-# mqtt_source_id = "my_mqtt_data"   # datasource name used for all MQTT streams
+# source_id           = "mqtt"      # datasource used for all MQTT streams
 
 [[drivers]]
 spec     = "acquirium.Drivers.BuiltInDrivers.system_metrics:SystemMetricsDriver"
@@ -95,9 +95,13 @@ interval = 30.0
 # [[drivers]]
 # spec         = "acquirium.Drivers.BuiltInDrivers.csv_ingest:CSVIngestDriver"
 # interval     = 5.0
+# source_id    = "csv-exports"
 # watch_dir    = "./data"
-# format       = "wide"        # "auto" | "wide" | "narrow"
-# time_col     = "Date"        # name of the timestamp column
+# glob         = ["*.csv", "*.tsv"]
+# format       = "wide"        # required: "wide" | "narrow"
+# time_col     = "timestamp"   # optional; common names are discovered
+# date_col     = "Date"        # alternative split timestamp
+# clock_col    = "Time"
 # id_col       = "id"          # narrow format: stream ID column
 # value_col    = "value"       # narrow format: value column
 
@@ -105,9 +109,13 @@ interval = 30.0
 # [[drivers]]
 # spec         = "acquirium.Drivers.BuiltInDrivers.xlsx_ingest:XLSXIngestDriver"
 # interval     = 5.0
+# source_id    = "xlsx-exports"
 # watch_dir    = "./data"
-# format       = "wide"        # "auto" | "wide" | "narrow"
-# time_col     = "Date"        # name of the timestamp column
+# glob         = "*.xlsx"
+# format       = "wide"        # required: "wide" | "narrow"
+# time_col     = "timestamp"   # optional; common names are discovered
+# date_col     = "Date"        # alternative split timestamp
+# clock_col    = "Time"
 # id_col       = "id"          # narrow format: stream ID column
 # value_col    = "value"       # narrow format: value column
 # sheets       = ["Sheet1"]    # omit to read the first sheet only
@@ -118,12 +126,11 @@ interval = 30.0
 # [[drivers]]
 # spec                        = "acquirium.Drivers.BuiltInDrivers.watertap:WaterTAPDriver"
 # interval                    = 30.0
-# watertap_source_id          = "watertap"
+# source_id                   = "watertap"
 # watertap_mapping_path       = "deployments/WATERTAP/models/seawater-ro/watertap-mapping.json"
 # watertap_graph_path         = "deployments/WATERTAP/models/seawater-ro/model.ttl"
 # watertap_build_spec         = "deployments/WATERTAP/models/seawater-ro/build-and-solve.py:build"
 # watertap_change_inputs_spec = "deployments/WATERTAP/models/seawater-ro/build-and-solve.py:change_inputs"
 # watertap_solve_spec         = "deployments/WATERTAP/models/seawater-ro/build-and-solve.py:solve"
 # watertap_insert_graph       = true
-# watertap_register_streams   = true
 # watertap_inputs             = { flow_vol = 0.3092, conc_tds = 35.0, conc_tss = 0.03, temperature = 298.0 }

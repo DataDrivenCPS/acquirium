@@ -4,10 +4,30 @@ import pytest
 from datetime import datetime, timezone, timedelta
 
 from acquirium.Drivers.BuiltInDrivers.mqtt_ingestion import (
+    MQTTIngestDriver,
     decode_mqtt_payload,
     parse_mqtt_broker,
     parse_mqtt_timestamp,
 )
+
+
+def test_mqtt_driver_requires_explicit_source_id(tmp_path):
+    driver = MQTTIngestDriver(object(), {
+        "__config_dir": str(tmp_path),
+        "driver": {},
+    })
+    with pytest.raises(ValueError, match="requires driver.source_id"):
+        driver.setup()
+
+
+def test_mqtt_driver_uses_standard_source_id_config(tmp_path, monkeypatch):
+    monkeypatch.setattr(MQTTIngestDriver, "_sync_subscriptions", lambda self: None)
+    driver = MQTTIngestDriver(object(), {
+        "__config_dir": str(tmp_path),
+        "driver": {"source_id": "building-mqtt"},
+    })
+    driver.setup()
+    assert driver.source_id == "building-mqtt"
 
 
 # ── decode_mqtt_payload ────────────────────────────────────

@@ -6,6 +6,7 @@ so the polling logic can be tested without standing up Ray.
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import MagicMock
 
 from acquirium.Drivers.Driver import Driver
@@ -18,12 +19,13 @@ class RecordingDriver(Driver):
     def __init__(self, aq, config):
         super().__init__(aq, config)
         self.graph_changes = 0
+        self.ticks = 0
 
     def setup(self) -> None:
         self.source_id = "demo"
 
     def tick(self) -> None:
-        return None
+        self.ticks += 1
 
     def on_graph_change(self) -> None:
         self.graph_changes += 1
@@ -121,3 +123,22 @@ def test_on_graph_change_failure_does_not_propagate():
 
     runner._poll_graph_version()
     assert runner.source_version == 5
+
+
+def test_graph_poll_can_run_before_a_slower_tick():
+    runner = make_runner(
+        interval=0.2,
+        config={"driver": {"graph_poll_interval": 0.02}},
+    )
+    runner.setup()
+    runner.acquirium_cli.graph_status.reset_mock()
+
+    async def exercise() -> None:
+        task = asyncio.create_task(runner.run())
+        await asyncio.sleep(0.07)
+        runner.stop()
+        await task
+
+    asyncio.run(exercise())
+    assert runner.driver.ticks == 1
+    assert runner.acquirium_cli.graph_status.call_count >= 2

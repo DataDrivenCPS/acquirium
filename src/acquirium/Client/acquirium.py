@@ -208,7 +208,7 @@ class Acquirium:
     def insert_graph(
         self,
         rdf_graph: str,
-        format: str | None = None,
+        format: str = "turtle",
         replace=True,
         *,
         source_id: str,
@@ -220,10 +220,7 @@ class Acquirium:
         responding, so inserted concepts are resolvable once this returns.
 
         Args:
-            :param rdf_graph: `pathlib.Path` like object, or string.
-            In the case of a string the string it can be either:
-                - graph content as text
-                - location of the source file
+            rdf_graph: RDF graph content as text.
             format: Format of the RDF data [turtle | n3 | xml | trix]
             replace: If True, replaces the selected graph. If False, appends to it.
             source_id: Data-graph owner. Use ``"plant"`` for the shared plant
@@ -231,6 +228,22 @@ class Acquirium:
         """
         self.client.insert_graph(
             rdf_graph,
+            format=format,
+            replace=replace,
+            source_id=source_id,
+        )
+
+    def insert_graph_file(
+        self,
+        path: str | Path,
+        format: str | None = None,
+        replace: bool = True,
+        *,
+        source_id: str,
+    ) -> None:
+        """Read RDF from a file and insert it into an explicitly owned graph."""
+        self.client.insert_graph_file(
+            path,
             format=format,
             replace=replace,
             source_id=source_id,
