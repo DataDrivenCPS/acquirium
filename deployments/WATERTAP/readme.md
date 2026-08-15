@@ -33,19 +33,20 @@ setups below.
 
 uv manages the virtual environment and the right Python version for you.
 
-1. Install Acquirium with the WaterTAP extra (uv fetches Python 3.12 if needed):
+1. Install Acquirium (uv fetches Python 3.12 if needed):
     ```bash
-    uv sync --extra watertap
+    uv sync
     ```
-2. Install the native solver extensions WaterTAP needs (IDAES/IPOPT binaries):
-    ```bash
-    uv run idaes get-extensions
-    ```
-3. Start the server (plus any drivers listed in the config):
+    The WaterTAP driver's own dependencies (watertap, pyomo, the native
+    IDAES/IPOPT solvers) are declared in its `[[drivers]]` config entry via
+    `env = { pip = [...], setup_commands = ["idaes get-extensions"] }` — the
+    server builds the driver its own environment on first start, so nothing
+    WaterTAP-specific is installed here.
+2. Start the server (plus any drivers listed in the config):
     ```bash
     uv run acquirium server --config deployments/WATERTAP/scripts/acquirium.toml
     ```
-4. Run the example notebooks (in a second terminal, repo still the working dir):
+3. Run the example notebooks (in a second terminal, repo still the working dir):
     ```bash
     uv run --with jupyter jupyter lab
     ```
@@ -61,19 +62,20 @@ uv manages the virtual environment and the right Python version for you.
     source .venv/bin/activate          # Linux/macOS
     # .venv\Scripts\activate           # Windows (PowerShell/cmd)
     ```
-2. Install Acquirium (from the clone) with the WaterTAP extra:
+2. Install Acquirium (from the clone), plus `virtualenv` so the server can
+    build per-driver environments:
     ```bash
-    pip install -e ".[watertap]"
+    pip install -e . "virtualenv<21"
     ```
-3. Install the native solver extensions WaterTAP needs (IDAES/IPOPT binaries):
-    ```bash
-    idaes get-extensions
-    ```
-4. Start the server (plus any drivers listed in the config):
+    As in Option A, WaterTAP's packages and the native IDAES/IPOPT solver
+    install are declared in the driver's `[[drivers]]` config entry
+    (`env = { pip = [...], setup_commands = ["idaes get-extensions"] }`) and
+    installed into the driver's own environment on first start.
+3. Start the server (plus any drivers listed in the config):
     ```bash
     acquirium server --config deployments/WATERTAP/scripts/acquirium.toml
     ```
-5. Run the example notebooks. With the `.venv` active:
+4. Run the example notebooks. With the `.venv` active:
     ```bash
     pip install jupyterlab
     jupyter lab

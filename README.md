@@ -11,13 +11,25 @@ From PyPI:
 pip install acquirium
 ```
 
-Optional extras for specific drivers:
+Drivers with extra dependencies declare them in their config entry; the
+server builds each driver its own environment (a Ray runtime env), so the
+server installation itself never needs them:
 
-```bash
-pip install "acquirium[mqtt]"       # MQTT ingestion driver
-pip install "acquirium[xlsx]"       # Excel ingestion driver
-pip install "acquirium[watertap]"   # WaterTAP simulation driver
+```toml
+[[drivers]]
+spec = "acquirium.Drivers.BuiltInDrivers.mqtt_ingestion:MQTTIngestDriver"
+env = { pip = ["paho-mqtt>=2.1.0"] }
+
+[[drivers]]
+spec = "acquirium.Drivers.BuiltInDrivers.watertap:WaterTAPDriver"
+env = { pip = ["pyomo>=6", "watertap"], setup_commands = ["idaes get-extensions"] }
 ```
+
+`setup_commands` run once per node (guarded by a marker file) for
+prerequisites that live outside the venv, like IDAES's native solvers.
+Apps declare the same thing with `App.env` or `register_app(env=...)`.
+Omitting `env` keeps the zero-cost path: the driver or app inherits the
+server's environment.
 
 Or with [uv](https://docs.astral.sh/uv/):
 
@@ -97,14 +109,18 @@ starting point** — it walks you through cloning the repo, installing (uv **or*
 pip), and running Acquirium against physically realistic simulated plant data,
 with example notebooks. Start there.
 
-In short, the `watertap` extra installs the Python packages needed for the
-built-in WaterTAP driver, plus a one-time install of native solver extensions:
+In short, the WaterTAP driver's config entry declares everything it needs —
+Python packages and the one-time native solver install — and the server
+builds the driver its own environment on first start:
+
+```toml
+[[drivers]]
+spec = "acquirium.Drivers.BuiltInDrivers.watertap:WaterTAPDriver"
+env = { pip = ["pyomo>=6", "watertap"], setup_commands = ["idaes get-extensions"] }
+```
 
 ```bash
-pip install "acquirium[watertap]"
-idaes get-extensions                        # native IDAES/IPOPT solver binaries
-# with uv: uv sync --extra watertap && uv run idaes get-extensions
-acquirium server --config acquirium.toml    # with a [[drivers]] entry for WaterTAP
+acquirium server --config acquirium.toml
 ```
 
 For a full demo (WaterTAP + streaming simulator + API examples):

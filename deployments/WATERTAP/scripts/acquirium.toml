@@ -188,6 +188,9 @@ watertap_insert_graph  = true
 # ===========================================================================
 [[drivers]]
 spec                        = "simulation_driver.py:SimulationDriver"
+# The solver stack lives in the driver's own environment (built by the
+# server on first start); idaes get-extensions runs once per node.
+env                         = { pip = ["pyomo>=6", "watertap"], setup_commands = ["idaes get-extensions"] }
 interval                    = 10.0
 source_id          = "watertap-seawater-ro"
 watertap_mapping_path       = "deployments/WATERTAP/models/seawater-ro/watertap-mapping.json"

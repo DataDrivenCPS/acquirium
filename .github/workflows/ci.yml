@@ -49,7 +49,7 @@ jobs:
             uv-${{ runner.os }}-py${{ matrix.python-version }}-
 
       - name: Install dependencies
-        run: uv sync --python ${{ matrix.python-version }} --locked --all-extras
+        run: uv sync --python ${{ matrix.python-version }} --locked
 
       - name: Run unit tests with coverage
         run: |
@@ -106,7 +106,7 @@ jobs:
             uv-${{ runner.os }}-py${{ matrix.python-version }}-
 
       - name: Install dependencies
-        run: uv sync --python ${{ matrix.python-version }} --locked --all-extras
+        run: uv sync --python ${{ matrix.python-version }} --locked
 
       - name: Check Docker Compose
         run: docker compose version

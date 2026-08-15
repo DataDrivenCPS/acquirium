@@ -59,22 +59,6 @@ dependencies = [
     "ray>=2.56.0",
 ]
 
-[project.optional-dependencies]
-# these provide support for different drivers, which
-# often require external dependencies.
-mqtt = [
-    "paho-mqtt>=2.1.0",
-]
-xlsx = [
-    "fastexcel>=0.11.0",
-]
-watertap = [
-    "pyomo>=6",
-    "watertap",
-    "streamlit",
-]
-
-
 [project.scripts]
 acquirium = "acquirium.cli:main"
 

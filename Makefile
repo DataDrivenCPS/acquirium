@@ -82,7 +82,7 @@ no-server-down:
 
 # Always tear down even on failure
 test:
-	uv sync --locked --all-extras
+	uv sync --locked
 	status=0; \
 	$(TEST_COMPOSE) --profile server --profile test rm -sf timescaledb acquirium mosquitto testing_service >/dev/null 2>&1 || true; \
 	$(TEST_COMPOSE) --profile server --profile test up -d --build || status=$$?; \
@@ -93,7 +93,7 @@ test:
 # Run the full compose-backed suite, then report the slowest test cases for
 # performance investigation. Override with PYTEST_DURATIONS=0 to list all.
 test-timing:
-	uv sync --locked --all-extras
+	uv sync --locked
 	status=0; \
 	$(TEST_COMPOSE) --profile server --profile test rm -sf timescaledb acquirium mosquitto testing_service >/dev/null 2>&1 || true; \
 	$(TEST_COMPOSE) --profile server --profile test up -d --build || status=$$?; \
