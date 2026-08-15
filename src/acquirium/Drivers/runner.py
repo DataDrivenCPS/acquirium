@@ -27,9 +27,12 @@ class DriverRunner:
     """Run one driver's tick loop in its own Ray actor.
 
     The driver is constructed inside the actor so its state (DriverState,
-    client connections) never crosses the process boundary. Lifecycle:
+    client connections) never crosses the process boundary. A spec string
+    (``path/to/file.py:Cls`` / ``my.module:Cls``) is also *imported* here, in
+    the actor — never in the server process — so the driver's dependencies
+    only need to exist in this worker's environment. Lifecycle:
 
-        runner = DriverRunner.remote(driver_cls, cfg, aq, interval)
+        runner = DriverRunner.remote("mod:Cls", cfg, aq, interval)
         ray.get(runner.setup.remote())   # serially across actors
         run_ref = runner.run.remote()
         ...
@@ -39,13 +42,24 @@ class DriverRunner:
 
     def __init__(
         self,
-        driver_cls: type[Driver],
+        driver: "type[Driver] | str",
         driver_cfg: dict,
         acquirium_cli: Acquirium,
         interval: float,
+        base_dir: str | None = None,
     ):
         # Ray workers don't inherit the server process's logging config.
         configure_logging()
+        if isinstance(driver, str):
+            from pathlib import Path
+
+            from acquirium.cli import _import_driver_class
+
+            driver_cls, _ = _import_driver_class(
+                driver, base_dir=Path(base_dir) if base_dir else None
+            )
+        else:
+            driver_cls = driver
         self.driver: Driver = driver_cls(acquirium_cli, driver_cfg)
         self.acquirium_cli = acquirium_cli
         self.interval = float(interval)

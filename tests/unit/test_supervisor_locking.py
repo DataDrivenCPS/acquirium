@@ -21,7 +21,6 @@ import ray
 import acquirium.Apps.supervisor as app_sup_mod
 import acquirium.Drivers.supervisor as drv_sup_mod
 import acquirium.Client.acquirium as aq_mod
-import acquirium.cli as cli_mod
 from acquirium.internals.models import AppSpec
 
 
@@ -90,8 +89,10 @@ def app_sup(stub_ray, monkeypatch, tmp_path):
 
 @pytest.fixture
 def drv_sup(stub_ray, monkeypatch):
+    # "pkg.mod:Cls" is a module spec: _driver_source_dir resolves it without
+    # importing, so nothing needs stubbing — the import happens in the
+    # (stubbed) actor.
     monkeypatch.setattr(drv_sup_mod, "DriverRunner", FakeRunnerCls)
-    monkeypatch.setattr(cli_mod, "_import_driver_class", lambda spec, base_dir=None: (object, None))
     return drv_sup_mod.DriverSupervisor(server_url="localhost", server_port=1)
 
 

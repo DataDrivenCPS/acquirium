@@ -64,7 +64,7 @@ class DriverSupervisor:
         interval: float | None = None,
         name: str | None = None,
     ) -> dict[str, Any]:
-        from acquirium.cli import _import_driver_class
+        from acquirium.cli import _driver_source_dir
         from acquirium.Client.acquirium import Acquirium
 
         driver_section = config.get("driver", {})
@@ -88,7 +88,9 @@ class DriverSupervisor:
 
         try:
             base_dir = Path(config.get("__config_dir", Path.cwd()))
-            driver_cls, source_dir = _import_driver_class(spec, base_dir=base_dir)
+            # Path resolution only — the import itself happens inside the
+            # actor, so the server process never needs the driver's deps.
+            source_dir = _driver_source_dir(spec, base_dir=base_dir)
             aq = Acquirium(
                 server_url=self.server_url,
                 server_port=self.server_port,
@@ -103,12 +105,18 @@ class DriverSupervisor:
             # Setup-time graph writes of concurrent driver starts serialize on
             # the build lock (never the record lock — see class docstring).
             with self._build_lock:
-                runner = runner_cls.remote(driver_cls, config, aq, effective_interval)
+                runner = runner_cls.remote(spec, config, aq, effective_interval, str(base_dir))
                 try:
                     ray.get(runner.setup.remote())
-                except Exception:
+                except Exception as exc:
                     ray.kill(runner)
-                    raise
+                    # Import/setup failures arrive wrapped in RayActorError;
+                    # surface the underlying cause so the HTTP detail reads
+                    # like the real error, not an actor traceback dump.
+                    cause = getattr(exc, "cause", None)
+                    raise RuntimeError(
+                        f"Driver '{driver_name}' failed to start: {cause or exc}"
+                    ) from exc
             run_ref = runner.run.remote()
         except Exception:
             with self._lock:

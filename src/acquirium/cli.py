@@ -17,6 +17,7 @@ Subcommands:
   acquirium driver stop --name X   Stop a running driver.
 """
 
+import hashlib
 import importlib
 import importlib.util
 import inspect
@@ -99,46 +100,81 @@ def _apply_server_env(cfg: dict) -> None:
 # Driver import helpers
 # ---------------------------------------------------------------------------
 
+def _driver_spec_file(driver_spec: str, *, base_dir: Path | None = None) -> Path | None:
+    """Resolve a spec's file path without importing anything.
+
+    Returns the absolute file for a ``path/to/file.py:ClassName`` spec
+    (validated to exist), or ``None`` for a ``my.module:ClassName`` spec.
+    Raises ``ValueError`` on a malformed spec or a missing file.
+    """
+    if ":" not in driver_spec:
+        raise ValueError(
+            f"driver spec must include a class name (e.g. my_driver.py:MyDriver), got {driver_spec!r}"
+        )
+    path_part, _ = driver_spec.rsplit(":", 1)
+    is_file = "/" in path_part or path_part.endswith(".py") or Path(path_part).exists()
+    if not is_file:
+        return None
+    file_path = Path(path_part)
+    if not file_path.is_absolute():
+        file_path = ((base_dir or Path.cwd()) / file_path).resolve()
+    if not file_path.exists():
+        raise ValueError(f"driver file not found: {path_part}")
+    return file_path
+
+
+def _driver_source_dir(driver_spec: str, *, base_dir: Path | None = None) -> str | None:
+    """A file spec's directory (for worker PYTHONPATH), import-free.
+
+    The supervisor uses this to build a runner's runtime_env before the
+    import happens inside the actor — the server process never imports the
+    driver, so per-driver environments can actually isolate its dependencies.
+    Module specs return ``None``.
+    """
+    file_path = _driver_spec_file(driver_spec, base_dir=base_dir)
+    return None if file_path is None else str(file_path.parent)
+
+
 def _import_driver_class(
     driver_spec: str, *, base_dir: Path | None = None
 ) -> tuple[type, str | None]:
     """Resolve a ``path/to/file.py:ClassName`` or ``my.module:ClassName`` spec to a Driver subclass.
 
     Returns the class and, for a file spec, the directory added to ``sys.path``
-    so the file's sibling modules resolve. Callers that ship the class to
-    another process must put that directory on the target's ``PYTHONPATH``:
-    siblings imported by name pickle by reference, so the receiving process has
-    to be able to import them itself. Module specs return ``None`` — already
-    importable anywhere.
+    so the file's sibling modules resolve. Runs inside the DriverRunner actor
+    (the server only resolves :func:`_driver_source_dir`); each file spec gets
+    its own module name, so two file drivers loaded in one process never
+    clobber each other's module.
 
     Raises ``ValueError`` on any resolution failure so callers in background
     threads see a real exception rather than a silent ``SystemExit``.
     """
     from acquirium.Drivers.Driver import Driver as _Driver
 
-    if ":" not in driver_spec:
-        raise ValueError(
-            f"driver spec must include a class name (e.g. my_driver.py:MyDriver), got {driver_spec!r}"
-        )
-
+    file_path = _driver_spec_file(driver_spec, base_dir=base_dir)
     path_part, class_name = driver_spec.rsplit(":", 1)
 
     source_dir: str | None = None
-    is_file = "/" in path_part or path_part.endswith(".py") or Path(path_part).exists()
-    if is_file:
-        file_path = Path(path_part)
-        if not file_path.is_absolute():
-            file_path = ((base_dir or Path.cwd()) / file_path).resolve()
-        if not file_path.exists():
-            raise ValueError(f"driver file not found: {path_part}")
-        spec = importlib.util.spec_from_file_location("_acquirium_driver_module", file_path)
-        if spec is None or spec.loader is None:
-            raise ValueError(f"could not load file: {path_part}")
+    if file_path is not None:
+        module_name = f"_acquirium_driver_{hashlib.sha1(str(file_path).encode()).hexdigest()[:10]}"
         source_dir = str(file_path.parent)
-        if source_dir not in sys.path:
-            sys.path.insert(0, source_dir)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)  # type: ignore[union-attr]
+        if module_name in sys.modules:
+            mod = sys.modules[module_name]
+        else:
+            spec = importlib.util.spec_from_file_location(module_name, file_path)
+            if spec is None or spec.loader is None:
+                raise ValueError(f"could not load file: {path_part}")
+            if source_dir not in sys.path:
+                sys.path.insert(0, source_dir)
+            mod = importlib.util.module_from_spec(spec)
+            # Registered before exec so the module is reachable by name during
+            # its own import (dataclasses, pickling, self-references).
+            sys.modules[module_name] = mod
+            try:
+                spec.loader.exec_module(mod)  # type: ignore[union-attr]
+            except BaseException:
+                sys.modules.pop(module_name, None)
+                raise
     else:
         try:
             mod = importlib.import_module(path_part)
