@@ -33,8 +33,15 @@ class DriverSupervisor:
 
     Lives in the FastAPI process. start_driver() imports the driver class,
     spawns a DriverRunner actor that connects back to this server over HTTP,
-    runs setup, and starts the tick loop. The internal lock is held across
-    setup so two drivers' setup-time graph writes can never race.
+    runs setup, and starts the tick loop.
+
+    Locking discipline mirrors AppSupervisor: ``_lock`` guards only the
+    ``_drivers`` dict and is never held across an actor call (setup re-enters
+    this server over HTTP — register_datasource, graph writes — and would
+    deadlock a saturated request threadpool contending on the same lock).
+    The name is reserved with a placeholder record instead, and concurrent
+    setups serialize their graph writes via ``_build_lock``, which no request
+    path takes.
     """
 
     def __init__(self, server_url: str, server_port: int, use_ssl: bool = False):
@@ -43,6 +50,7 @@ class DriverSupervisor:
         self.use_ssl = bool(use_ssl)
         self._drivers: dict[str, dict[str, Any]] = {}
         self._lock = threading.Lock()
+        self._build_lock = threading.Lock()
 
     @property
     def base_url(self) -> str:
@@ -65,10 +73,20 @@ class DriverSupervisor:
         )
         driver_name = name or spec.rsplit(":", 1)[-1]
 
+        placeholder = {
+            "name": driver_name,
+            "spec": spec,
+            "interval": effective_interval,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "actor": None,
+            "run_ref": None,
+        }
         with self._lock:
             if driver_name in self._drivers:
                 raise ValueError(f"Driver '{driver_name}' is already running")
+            self._drivers[driver_name] = placeholder
 
+        try:
             base_dir = Path(config.get("__config_dir", Path.cwd()))
             driver_cls, source_dir = _import_driver_class(spec, base_dir=base_dir)
             aq = Acquirium(
@@ -82,31 +100,44 @@ class DriverSupervisor:
                 runner_cls = DriverRunner.options(
                     runtime_env={"env_vars": {"PYTHONPATH": _worker_pythonpath(source_dir)}}
                 )
-            runner = runner_cls.remote(driver_cls, config, aq, effective_interval)
-            try:
-                ray.get(runner.setup.remote())
-            except Exception:
-                ray.kill(runner)
-                raise
+            # Setup-time graph writes of concurrent driver starts serialize on
+            # the build lock (never the record lock — see class docstring).
+            with self._build_lock:
+                runner = runner_cls.remote(driver_cls, config, aq, effective_interval)
+                try:
+                    ray.get(runner.setup.remote())
+                except Exception:
+                    ray.kill(runner)
+                    raise
             run_ref = runner.run.remote()
+        except Exception:
+            with self._lock:
+                if self._drivers.get(driver_name) is placeholder:
+                    del self._drivers[driver_name]
+            raise
 
-            record = {
-                "name": driver_name,
-                "spec": spec,
-                "interval": effective_interval,
-                "started_at": datetime.now(timezone.utc).isoformat(),
-                "actor": runner,
-                "run_ref": run_ref,
-            }
-            self._drivers[driver_name] = record
-            logger.info("Started driver '%s' (%s, interval=%.1fs)", driver_name, spec, effective_interval)
-            return self._public_info(record)
+        record = {**placeholder, "actor": runner, "run_ref": run_ref}
+        with self._lock:
+            superseded = self._drivers.get(driver_name) is not placeholder
+            if not superseded:
+                self._drivers[driver_name] = record
+        if superseded:
+            # stop_all (or a shutdown) cleared the reservation while setup was
+            # in flight — this driver must not outlive it.
+            runner.stop.remote()
+            ray.kill(runner)
+            raise RuntimeError(f"Driver '{driver_name}' was stopped during startup")
+        logger.info("Started driver '%s' (%s, interval=%.1fs)", driver_name, spec, effective_interval)
+        return self._public_info(record)
 
     def stop_driver(self, name: str, *, timeout: float = 10.0) -> dict[str, Any]:
         with self._lock:
-            record = self._drivers.pop(name, None)
-        if record is None:
-            raise KeyError(f"No running driver named '{name}'")
+            record = self._drivers.get(name)
+            if record is None:
+                raise KeyError(f"No running driver named '{name}'")
+            if record.get("actor") is None:
+                raise ValueError(f"Driver '{name}' is still starting; retry shortly")
+            self._drivers.pop(name)
 
         record["actor"].stop.remote()
         try:
@@ -137,6 +168,12 @@ class DriverSupervisor:
         # Signal every driver to exit first, then join them in one window, so
         # N drivers' shutdown timeouts overlap instead of stacking serially the
         # way a loop over stop_driver() would.
+        # Reservation placeholders (actor still being built) have nothing to
+        # stop; their start path will find the record gone and clean up.
+        records = [r for r in records if r.get("actor") is not None]
+        if not records:
+            return
+
         for record in records:
             try:
                 record["actor"].stop.remote()
@@ -161,6 +198,14 @@ class DriverSupervisor:
             logger.info("Stopped driver '%s'", record["name"])
 
     def _public_info(self, record: dict[str, Any]) -> dict[str, Any]:
+        if record.get("run_ref") is None:
+            return {
+                "name": record["name"],
+                "spec": record["spec"],
+                "interval": record["interval"],
+                "started_at": record["started_at"],
+                "status": "starting",
+            }
         ready, _ = ray.wait([record["run_ref"]], timeout=0)
         if not ready:
             status = "running"

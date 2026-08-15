@@ -28,10 +28,22 @@ class AppSupervisor:
     """Owns the AppRunner actors of one server process, keyed by app name.
 
     Lives in the FastAPI process. ``register_app()`` spawns an AppRunner actor
-    for the app, connects it back to this server over HTTP, and runs its
-    ``register()`` step synchronously under a lock so apps' registration graph
-    writes cannot race each other.
+    for the app and connects it back to this server over HTTP.
+
+    Locking discipline: ``_lock`` protects only the ``_apps`` dict and is
+    **never held across an actor call**. Actor calls (``register``/``setup``/
+    ``stop``/``deregister``) re-enter this server over HTTP; every sync
+    endpoint shares one bounded request threadpool, so a thread holding
+    ``_lock`` while waiting on such a call can deadlock the server the moment
+    other requests pile up on the same lock. Registration reserves the app
+    name with a placeholder record instead, and concurrent registrations
+    serialize their build-time graph writes via ``_build_lock`` — which no
+    request path ever takes.
     """
+
+    #: Bound on teardown-time actor calls; a wedged actor is killed instead
+    #: of stalling delete/replace forever.
+    TEARDOWN_TIMEOUT = 10.0
 
     def __init__(
         self,
@@ -45,52 +57,79 @@ class AppSupervisor:
         self.server_port = int(server_port)
         self.use_ssl = bool(use_ssl)
         self._lock = threading.Lock()
+        self._build_lock = threading.Lock()
         self._apps: dict[str, dict[str, Any]] = {}
+
+    def _placeholder(self, spec: AppSpec) -> dict[str, Any]:
+        """A record that reserves an app name while its actor is being built."""
+        return {
+            "name": spec.name,
+            "spec": spec,
+            "actor": None,
+            "registered_at": datetime.now(timezone.utc).isoformat(),
+            "started_at": None,
+            "stopped_at": None,
+            "running": False,
+        }
 
     def register_app(self, spec: AppSpec, *, replace: bool = False) -> dict[str, Any]:
         from acquirium.Client.acquirium import Acquirium
 
+        placeholder = self._placeholder(spec)
         with self._lock:
-            replaced = spec.name in self._apps
-            if replaced:
-                if not replace:
-                    raise AppAlreadyRegistered(spec.name)
-                # Gracefully dispose the existing app (stop, clean its graph
+            existing = self._apps.get(spec.name)
+            if existing is not None and not replace:
+                raise AppAlreadyRegistered(spec.name)
+            self._apps[spec.name] = placeholder
+        replaced = existing is not None
+
+        try:
+            if existing is not None:
+                # Gracefully dispose the replaced app (stop, clean its graph
                 # registration, kill the actor) before spawning the new one.
-                self._teardown_app(self._apps.pop(spec.name), remove_source=False)
+                self._teardown_app(existing, remove_source=False)
 
             aq = Acquirium(
                 server_url=self.server_url,
                 server_port=self.server_port,
                 use_ssl=self.use_ssl,
             )
-            actor = AppRunner.remote(spec, self.app_storage_root, aq)
-            try:
-                info = ray.get(actor.register.remote())
-            except Exception:
-                ray.kill(actor)
-                raise
+            # Build-time graph reads/writes of concurrent registrations
+            # serialize on the build lock (not the record lock — see class
+            # docstring).
+            with self._build_lock:
+                actor = AppRunner.remote(spec, self.app_storage_root, aq)
+                try:
+                    info = ray.get(actor.register.remote())
+                except Exception:
+                    ray.kill(actor)
+                    raise
+                # A build failure is non-fatal — the app stays registered and
+                # the run phase can rebuild — so registration itself stays
+                # robust.
+                try:
+                    info = {**info, **ray.get(actor.setup.remote())}
+                except Exception:
+                    logger.exception("Build phase failed for app '%s'", spec.name)
+        except Exception:
+            with self._lock:
+                if self._apps.get(spec.name) is placeholder:
+                    del self._apps[spec.name]
+            raise
 
-            # Build phase (load app, build_query, build_app) runs serially
-            # under this lock so build-time graph reads/writes can't race.
-            # A build failure is non-fatal — the app stays registered and the
-            # run phase can rebuild — so registration itself stays robust.
-            try:
-                info = {**info, **ray.get(actor.setup.remote())}
-            except Exception:
-                logger.exception("Build phase failed for app '%s'", spec.name)
+        record = {**placeholder, "actor": actor}
+        with self._lock:
+            superseded = self._apps.get(spec.name) is not placeholder
+            if not superseded:
+                self._apps[spec.name] = record
+        if superseded:
+            # A concurrent replace won the name while we were building;
+            # dispose what we built and report the conflict.
+            self._teardown_app(record, remove_source=False)
+            raise AppAlreadyRegistered(spec.name)
 
-            self._apps[spec.name] = {
-                "name": spec.name,
-                "spec": spec,
-                "actor": actor,
-                "registered_at": datetime.now(timezone.utc).isoformat(),
-                "started_at": None,
-                "stopped_at": None,
-                "running" : False
-            }
-            logger.info("%s app '%s'", "Replaced" if replaced else "Registered", spec.name)
-            return {**info, "replaced": replaced}
+        logger.info("%s app '%s'", "Replaced" if replaced else "Registered", spec.name)
+        return {**info, "replaced": replaced}
 
     def restore_app(self, spec: AppSpec) -> dict[str, Any]:
         """Respawn the actor of an app registered by a previous server run.
@@ -102,33 +141,44 @@ class AppSupervisor:
         """
         from acquirium.Client.acquirium import Acquirium
 
+        placeholder = self._placeholder(spec)
         with self._lock:
-            if spec.name in self._apps:
-                self._teardown_app(self._apps.pop(spec.name), remove_source=False)
+            existing = self._apps.get(spec.name)
+            self._apps[spec.name] = placeholder
+        info: dict[str, Any] = {"name": spec.name}
+
+        try:
+            if existing is not None:
+                self._teardown_app(existing, remove_source=False)
 
             aq = Acquirium(
                 server_url=self.server_url,
                 server_port=self.server_port,
                 use_ssl=self.use_ssl,
             )
-            actor = AppRunner.remote(spec, self.app_storage_root, aq)
-            info: dict[str, Any] = {"name": spec.name}
-            try:
-                with _timed_debug(logger, "restore_app setup app=%s", spec.name):
-                    info = {**info, **ray.get(actor.setup.remote())}
-            except Exception:
-                logger.exception("Build phase failed for restored app '%s'", spec.name)
+            with self._build_lock:
+                actor = AppRunner.remote(spec, self.app_storage_root, aq)
+                try:
+                    with _timed_debug(logger, "restore_app setup app=%s", spec.name):
+                        info = {**info, **ray.get(actor.setup.remote())}
+                except Exception:
+                    logger.exception("Build phase failed for restored app '%s'", spec.name)
+        except Exception:
+            with self._lock:
+                if self._apps.get(spec.name) is placeholder:
+                    del self._apps[spec.name]
+            raise
 
-            self._apps[spec.name] = {
-                "name": spec.name,
-                "spec": spec,
-                "actor": actor,
-                "registered_at": datetime.now(timezone.utc).isoformat(),
-                "started_at": None,
-                "stopped_at": None,
-                "running": False,
-            }
-            return info
+        record = {**placeholder, "actor": actor}
+        with self._lock:
+            superseded = self._apps.get(spec.name) is not placeholder
+            if not superseded:
+                self._apps[spec.name] = record
+        if superseded:
+            # The name was re-registered (or shut down) while the restore was
+            # in flight; the newer owner wins — dispose what we built.
+            self._teardown_app(record, remove_source=False)
+        return info
 
     def _teardown_app(self, record: dict[str, Any], *, remove_source: bool = False) -> None:
         """Gracefully dispose one app's actor. Does NOT touch ``self._apps`` or
@@ -139,17 +189,37 @@ class AppSupervisor:
         triples from the graph, kill the actor, then (optionally) delete its
         persisted source.
         """
-        actor = record["actor"]
+        actor = record.get("actor")
         name = record["name"]
+        if actor is None:
+            # A reservation placeholder — nothing was built yet.
+            return
+        wedged = False
         if record.get("running"):
             try:
-                ray.get(actor.stop.remote())
+                ray.get(actor.stop.remote(), timeout=self.TEARDOWN_TIMEOUT)
+            except ray.exceptions.GetTimeoutError:
+                wedged = True
+                logger.warning(
+                    "App '%s' did not stop within %.0fs; killing its actor "
+                    "(graph registration is left in place)",
+                    name, self.TEARDOWN_TIMEOUT,
+                )
             except Exception:
                 logger.exception("Failed to stop app '%s' before teardown", name)
-        try:
-            ray.get(actor.deregister.remote())
-        except Exception:
-            logger.exception("Failed to deregister app '%s' from the graph", name)
+        if not wedged:
+            # A wedged actor cannot serve deregister either — skip straight
+            # to the kill rather than stalling another timeout.
+            try:
+                ray.get(actor.deregister.remote(), timeout=self.TEARDOWN_TIMEOUT)
+            except ray.exceptions.GetTimeoutError:
+                logger.warning(
+                    "App '%s' deregister timed out after %.0fs; its "
+                    "registration triples remain in the graph",
+                    name, self.TEARDOWN_TIMEOUT,
+                )
+            except Exception:
+                logger.exception("Failed to deregister app '%s' from the graph", name)
         try:
             ray.kill(actor)
         except Exception:
@@ -184,6 +254,8 @@ class AppSupervisor:
             record = self._apps.get(app_id)
         if record is None:
             raise KeyError(f"Unknown app: {app_id}")
+        if record.get("actor") is None:
+            raise RuntimeError(f"App '{app_id}' is still registering; retry shortly")
         return record["actor"]
 
     def run_app(self, req: AppRunRequest) -> dict[str, Any]:
@@ -199,18 +271,21 @@ class AppSupervisor:
             )
         with self._lock:
             record = self._apps.get(req.app_id)
-            if record is None:
-                raise KeyError(f"Unknown app: {req.app_id}")
-            # A one-shot run (keep_alive=False) has already been dispatched by
-            # the time actor.run returns, so the app isn't in a running state —
-            # only a keep-alive loop keeps it "running".
-            record["started_at"] = now
-            if req.keep_alive:
-                record["running"] = True
-                record["stopped_at"] = None
-            else:
-                record["running"] = False
-                record["stopped_at"] = datetime.now(timezone.utc).isoformat()
+            if record is not None:
+                # A one-shot run (keep_alive=False) has already been dispatched
+                # by the time actor.run returns, so the app isn't in a running
+                # state — only a keep-alive loop keeps it "running".
+                record["started_at"] = now
+                if req.keep_alive:
+                    record["running"] = True
+                    record["stopped_at"] = None
+                else:
+                    record["running"] = False
+                    record["stopped_at"] = datetime.now(timezone.utc).isoformat()
+        if record is None:
+            # Deleted concurrently after the run was already dispatched; the
+            # run itself happened, only the bookkeeping is moot.
+            logger.warning("App '%s' was deleted while run_app was in flight", req.app_id)
         logger.info(
             "App '%s' started (keep_alive=%s, interval=%s)",
             req.app_id, req.keep_alive, req.interval,
@@ -237,10 +312,9 @@ class AppSupervisor:
             stop_message = ray.get(actor.stop.remote())
         with self._lock:
             record = self._apps.get(app_id)
-            if record is None:
-                raise KeyError(f"Unknown app: {app_id}")
-            record["running"] = False
-            record["stopped_at"] = datetime.now(timezone.utc).isoformat()
+            if record is not None:
+                record["running"] = False
+                record["stopped_at"] = datetime.now(timezone.utc).isoformat()
         logger.info("App '%s' stopped", app_id)
         return stop_message
 
@@ -254,6 +328,8 @@ class AppSupervisor:
             records = list(self._apps.values())
             self._apps.clear()
         for record in records:
+            if record.get("actor") is None:
+                continue
             try:
                 ray.kill(record["actor"])
                 logger.info("Stopped app '%s'", record["name"])
