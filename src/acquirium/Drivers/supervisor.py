@@ -9,7 +9,7 @@ from typing import Any
 import ray
 
 from acquirium.Drivers.runner import DriverRunner
-from acquirium.internals.env_spec import build_runtime_env
+from acquirium.internals.env_spec import DEFAULT_ENV_STORAGE_ROOT, build_runtime_env, ensure_env
 from acquirium.internals.models import EnvSpec
 
 
@@ -32,10 +32,17 @@ class DriverSupervisor:
     path takes.
     """
 
-    def __init__(self, server_url: str, server_port: int, use_ssl: bool = False):
+    def __init__(
+        self,
+        server_url: str,
+        server_port: int,
+        use_ssl: bool = False,
+        env_storage_root: Path | str | None = None,
+    ):
         self.server_url = server_url
         self.server_port = int(server_port)
         self.use_ssl = bool(use_ssl)
+        self.env_storage_root = Path(env_storage_root) if env_storage_root else DEFAULT_ENV_STORAGE_ROOT
         self._drivers: dict[str, dict[str, Any]] = {}
         self._lock = threading.Lock()
         self._build_lock = threading.Lock()
@@ -90,11 +97,16 @@ class DriverSupervisor:
             #   spec = "...mqtt_ingestion:MQTTIngestDriver"
             #   env = { pip = ["paho-mqtt>=2.1.0"] }
             # Undeclared drivers keep the zero-cost inherit path (file specs
-            # still get their directory on the worker PYTHONPATH).
+            # still get their directory on the worker PYTHONPATH). The env is
+            # materialized OUTSIDE both locks: a cold build downloads for
+            # minutes and must never stall unrelated drivers' starts.
             env_cfg = driver_section.get("env")
             env_spec = EnvSpec(**env_cfg) if isinstance(env_cfg, dict) else None
+            py_executable = ensure_env(env_spec, self.env_storage_root)
             runner_cls = DriverRunner
-            runtime_env = build_runtime_env(env_spec, source_dir=source_dir)
+            runtime_env = build_runtime_env(
+                env_spec, source_dir=source_dir, py_executable=py_executable,
+            )
             if runtime_env is not None:
                 runner_cls = DriverRunner.options(runtime_env=runtime_env)
             # Setup-time graph writes of concurrent driver starts serialize on

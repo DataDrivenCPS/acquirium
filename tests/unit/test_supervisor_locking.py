@@ -73,10 +73,16 @@ def stub_ray(monkeypatch):
     def fake_get(ref, timeout=None):
         return ref.fn()
 
+    def fake_ensure_env(spec, root, **kw):
+        return "/fake/envs/python" if spec is not None and spec.pip else None
+
     monkeypatch.setattr(ray, "get", fake_get)
     monkeypatch.setattr(ray, "kill", killed.append)
     monkeypatch.setattr(ray, "wait", lambda refs, **k: ([], list(refs)))
     monkeypatch.setattr(aq_mod, "Acquirium", lambda **kw: SimpleNamespace())
+    # Never materialize a real venv in unit tests.
+    monkeypatch.setattr(app_sup_mod, "ensure_env", fake_ensure_env)
+    monkeypatch.setattr(drv_sup_mod, "ensure_env", fake_ensure_env)
     FakeRunnerCls.next_actor = None
     FakeRunnerCls.last_options = None
     return killed
@@ -173,7 +179,10 @@ class TestEnvSpecWiring:
 
         app_sup.register_app(AppSpec(name="x", env=EnvSpec(pip=["paho-mqtt>=2.1.0"])))
         runtime_env = FakeRunnerCls.last_options["runtime_env"]
-        assert runtime_env["pip"] == ["paho-mqtt>=2.1.0"]
+        # The declared packages live in a materialized persistent env; ray's
+        # session-scoped pip path is not used.
+        assert runtime_env["py_executable"] == "/fake/envs/python"
+        assert "pip" not in runtime_env
 
     def test_undeclared_app_env_uses_no_options(self, app_sup):
         app_sup.register_app(spec())
@@ -183,7 +192,7 @@ class TestEnvSpecWiring:
         from acquirium.internals.models import EnvSpec
 
         app_sup.restore_app(AppSpec(name="x", env=EnvSpec(pip=["pkg"])))
-        assert FakeRunnerCls.last_options["runtime_env"]["pip"] == ["pkg"]
+        assert FakeRunnerCls.last_options["runtime_env"]["py_executable"] == "/fake/envs/python"
 
     def test_driver_config_env_reaches_the_actor_options(self, drv_sup):
         drv_sup.start_driver(
@@ -192,7 +201,7 @@ class TestEnvSpecWiring:
                                        "setup_commands": ["echo hi"]}}},
         )
         runtime_env = FakeRunnerCls.last_options["runtime_env"]
-        assert runtime_env["pip"] == ["paho-mqtt>=2.1.0"]
+        assert runtime_env["py_executable"] == "/fake/envs/python"
         assert "worker_process_setup_hook" in runtime_env
 
     def test_driver_bad_env_config_fails_start_and_frees_name(self, drv_sup):
@@ -202,6 +211,38 @@ class TestEnvSpecWiring:
                 config={"driver": {"env": {"pip": "not-a-list"}}},
             )
         assert "Cls" not in drv_sup._drivers
+
+    def test_slow_env_build_does_not_block_other_drivers(self, drv_sup, monkeypatch):
+        # The parquet-driver regression: one driver's cold env build (minutes
+        # of downloads) must not stall an env-less driver's start.
+        building = threading.Event()
+        release = threading.Event()
+
+        def slow_ensure_env(spec, root, **kw):
+            if spec is not None and spec.pip:
+                building.set()
+                assert release.wait(5)
+                return "/fake/envs/python"
+            return None
+
+        monkeypatch.setattr(drv_sup_mod, "ensure_env", slow_ensure_env)
+        t = threading.Thread(
+            target=lambda: drv_sup.start_driver(
+                spec="pkg.heavy:Solver",
+                config={"driver": {"env": {"pip": ["watertap"]}}},
+            ),
+            daemon=True,
+        )
+        t.start()
+        assert building.wait(5)
+
+        # While the heavy env builds, the env-less driver starts to completion.
+        info = drv_sup.start_driver(spec="pkg.light:Parquet", config={})
+        assert info["status"] == "running"
+
+        release.set()
+        t.join(5)
+        assert drv_sup._drivers["Solver"]["actor"] is not None
 
 
 class TestAppTeardown:

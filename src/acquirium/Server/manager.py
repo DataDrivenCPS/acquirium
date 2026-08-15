@@ -197,6 +197,11 @@ class Manager:
             os.getenv("ACQUIRIUM_APP_STORAGE_ROOT", str(self.data_dir / "apps"))
         )
         self.app_storage_root.mkdir(parents=True, exist_ok=True)
+        # Persistent per-EnvSpec environments (overlay venvs) live with the
+        # deployment's data so they survive server and Ray restarts.
+        self.env_storage_root = Path(
+            os.getenv("ACQUIRIUM_ENV_STORAGE_ROOT", str(self.data_dir / "envs"))
+        )
         self._app_runs: dict[str, dict[str, Any]] = {}
         self._app_runs_lock = Lock()
 

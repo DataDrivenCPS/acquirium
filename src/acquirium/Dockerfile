@@ -18,9 +18,10 @@ RUN uv sync --locked --no-dev --no-install-project
 # and are installed with the package — no separate ontologies/ copy needed.
 COPY src ./src
 
-# Install the project itself into the already-populated venv. pip and
-# virtualenv (Ray's runtime-env prerequisites) come with the base
-# dependencies, so no image-specific install is needed.
+# Install the project itself into the already-populated venv. Per-driver/app
+# environments are overlay venvs the server materializes itself under the
+# data dir (env_spec.ensure_env) — Ray's pip runtime envs are not used, so
+# no pip/virtualenv special-casing is needed here.
 RUN uv sync --locked --no-dev
 
 # Copy config last so edits don't invalidate the layers above.

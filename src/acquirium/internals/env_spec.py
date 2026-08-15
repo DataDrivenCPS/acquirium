@@ -1,8 +1,19 @@
 """Resolve an :class:`~acquirium.internals.models.EnvSpec` to a Ray runtime_env.
 
-Pure dict construction — no ``ray`` import — so the same builder serves the
-server supervisors, the task host, and local (edge) runners, and stays unit
-testable without a cluster.
+Declared pip dependencies are materialized by :func:`ensure_env` into a
+**persistent overlay venv** under the acquirium data dir
+(``<data_dir>/envs/<fingerprint>/``) and handed to Ray as
+``runtime_env["py_executable"]``. Ray's own ``pip`` runtime envs are
+deliberately not used: their cache lives in the Ray *session* temp dir, so
+every server restart re-cloned the venv and re-downloaded everything.
+An overlay venv is created with ``--system-site-packages``, so it inherits
+the server environment (acquirium, ray, polars, ...) and only the declared
+packages are installed into it — built once, reused across restarts, shared
+by every driver/app with the same declaration.
+
+Dict construction itself stays ``ray``-free, so the same code serves the
+server supervisors, the task host, and local (edge) runners, and tests
+without a cluster.
 
 Ray behaviours this module encodes (verified against ray 2.57):
 
@@ -12,10 +23,9 @@ Ray behaviours this module encodes (verified against ray 2.57):
 - An unresolved ``${VAR}`` inside a value silently expands to ``""`` in the
   worker — declare such variables explicitly rather than relying on
   substitution.
-- A ``pip`` list is installed into a clone of the active venv, cached per
-  node by the hash of the list, and rebuilt after every Ray restart. A pip
-  list that drags in a different ``ray`` fails the env build, so declaring
-  ``ray`` is rejected here with a readable error instead.
+- A declared ``ray`` requirement is rejected with a readable error: the
+  overlay inherits the cluster's ray, and installing a different one breaks
+  the worker.
 """
 from __future__ import annotations
 
@@ -23,20 +33,21 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from acquirium.internals.models import EnvSpec
 
 logger = logging.getLogger("acquirium.env_spec")
 
-#: Ceiling for building one runtime env. A pip env build clones the venv and
-#: downloads packages; the Ray default (10 min) is tight for heavy stacks
-#: like WaterTAP on a cold cache.
-DEFAULT_SETUP_TIMEOUT_SECONDS = 1800.0
+#: Default home for materialized environments when no data dir is wired in
+#: (local/edge runners); the server passes ``<data_dir>/envs``.
+DEFAULT_ENV_STORAGE_ROOT = Path.home() / ".cache" / "acquirium" / "envs"
 
 #: env_vars carrying the declared setup commands into the worker, where the
 #: setup hook reads them (the hook is referenced by import path, so it takes
@@ -135,33 +146,136 @@ def _reject_ray_requirement(pip: list[str]) -> None:
         ):
             raise ValueError(
                 f"EnvSpec.pip must not declare ray ({req!r}): the worker "
-                "inherits the cluster's ray, and a different version fails "
-                "the environment build"
+                "inherits the cluster's ray, and a different version breaks it"
             )
+
+
+def env_fingerprint(spec: "EnvSpec") -> str:
+    """Stable key for one pip declaration on one interpreter version."""
+    payload = json.dumps({
+        "pip": list(spec.pip),
+        "python": f"{sys.version_info.major}.{sys.version_info.minor}",
+    }, sort_keys=True, ensure_ascii=True)
+    return hashlib.sha1(payload.encode()).hexdigest()[:16]
+
+
+def _create_overlay_venv(env_dir: Path) -> Path:
+    """Create a venv that sees the server's site-packages; return its python."""
+    result = subprocess.run(
+        [sys.executable, "-m", "venv", "--system-site-packages", str(env_dir)],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"venv creation failed (exit {result.returncode}): "
+            f"{(result.stderr or result.stdout or '').strip()[-2000:]}"
+        )
+    return env_dir / "bin" / "python"
+
+
+def _default_installer(env_dir: Path, pip: list[str]) -> None:
+    """Overlay venv + install the declared packages (uv when available)."""
+    python = _create_overlay_venv(env_dir)
+    uv = shutil.which("uv")
+    if uv:
+        cmd = [uv, "pip", "install", "--python", str(python), *pip]
+    else:
+        cmd = [str(python), "-m", "pip", "install", *pip]
+    logger.info("building env %s: %s", env_dir.name, " ".join(cmd))
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"env install failed (exit {result.returncode}) for {pip}: "
+            f"{(result.stderr or result.stdout or '').strip()[-2000:]}"
+        )
+
+
+def ensure_env(
+    spec: "EnvSpec | None",
+    envs_root: Path | str | None = None,
+    *,
+    installer: "Callable[[Path, list[str]], None] | None" = None,
+) -> str | None:
+    """Materialize the persistent env for ``spec.pip``; return its python.
+
+    Idempotent and cheap in steady state (one stat on the ``.ready``
+    marker). Builds are guarded by a file lock so concurrent registrations
+    of the same declaration wait instead of racing; a failed build removes
+    the half-built dir, so the next attempt retries cleanly. ``None`` when
+    the spec declares no pip packages — the caller then spawns on the
+    inherit path. **Call outside any supervisor lock**: a cold build can
+    download for minutes and must never block unrelated drivers/apps.
+    """
+    if spec is None or not spec.pip:
+        return None
+    _reject_ray_requirement(spec.pip)
+    import fcntl  # POSIX-only, as is Ray's worker model here
+
+    root = Path(envs_root) if envs_root is not None else DEFAULT_ENV_STORAGE_ROOT
+    key = env_fingerprint(spec)
+    env_dir = root / key
+    python = env_dir / "bin" / "python"
+    ready = env_dir / ".ready"
+    if ready.exists():
+        return str(python)
+
+    root.mkdir(parents=True, exist_ok=True)
+    with open(root / f"{key}.lock", "w") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            if ready.exists():
+                # Another registration built it while we waited on the lock.
+                return str(python)
+            if env_dir.exists():
+                shutil.rmtree(env_dir)  # half-built leftover from a crash
+            try:
+                (installer or _default_installer)(env_dir, list(spec.pip))
+            except BaseException:
+                shutil.rmtree(env_dir, ignore_errors=True)
+                raise
+            ready.write_text(json.dumps({
+                "pip": list(spec.pip),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }))
+            return str(python)
+        finally:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
 
 
 def build_runtime_env(
     spec: "EnvSpec | None",
     *,
     source_dir: str | None = None,
-    setup_timeout_seconds: float = DEFAULT_SETUP_TIMEOUT_SECONDS,
+    py_executable: str | None = None,
 ) -> dict[str, Any] | None:
     """Build the Ray runtime_env dict for one app/driver.
 
     ``None`` in, ``None`` out (plus no ``source_dir``): an undeclared
-    environment keeps today's zero-cost inherit-the-server-env path — no
-    venv clone, no cache, nothing.
+    environment keeps today's zero-cost inherit-the-server-env path.
+
+    ``py_executable`` is the interpreter of the env :func:`ensure_env`
+    materialized for the spec's pip declaration; passing a spec that
+    declares pip packages *without* one raises — silently spawning on the
+    inherit path would fake isolation.
 
     ``source_dir`` is a file-spec driver's directory; it lands on the
     worker's PYTHONPATH (merged with the inherited value) so sibling imports
     resolve. A user-supplied ``PYTHONPATH`` in ``env_vars`` is merged the
     same way rather than clobbered.
     """
-    if spec is None and source_dir is None:
+    if spec is not None and spec.pip and py_executable is None:
+        raise ValueError(
+            "EnvSpec declares pip packages but no materialized environment "
+            "was provided — call ensure_env(spec, ...) first"
+        )
+    if spec is None and source_dir is None and py_executable is None:
         return None
 
     env: dict[str, Any] = {}
     env_vars: dict[str, str] = {}
+
+    if py_executable is not None:
+        env["py_executable"] = str(py_executable)
 
     if spec is not None and spec.env_vars:
         env_vars.update({str(k): str(v) for k, v in spec.env_vars.items()})
@@ -183,12 +297,6 @@ def build_runtime_env(
 
     if env_vars:
         env["env_vars"] = env_vars
-
-    if spec is not None and spec.pip:
-        _reject_ray_requirement(spec.pip)
-        env["pip"] = list(spec.pip)
-        # Only pip envs pay a build; the timeout ceiling is theirs.
-        env["config"] = {"setup_timeout_seconds": int(setup_timeout_seconds)}
 
     if spec is not None and spec.py_modules:
         env["py_modules"] = list(spec.py_modules)

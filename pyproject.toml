@@ -51,18 +51,11 @@ dependencies = [
     "pyontoenv==0.6.0",
     "pyoxigraph>=0.5.2",
     "pyshifty>=0.3.0",
-    # Ray builds per-driver/app pip runtime envs by cloning the active venv
-    # and pip-installing on top; its PipProcessor hard-requires virtualenv
-    # importable in the base env, and the clone needs pip inside the venv
-    # (uv-managed venvs ship neither). virtualenv stays <21: newer releases
-    # drop the clone entry point Ray uses.
-    "pip>=24.0",
     "python-dateutil>=2.9.0.post0",
     "python-multipart>=0.0.21",
     "requests>=2.32.5",
     "rich>=14.2.0",
     "uvicorn>=0.38.0",
-    "virtualenv>=20,<21",
     "ray>=2.56.0",
 ]
 

@@ -15,7 +15,7 @@ import shutil
 from rdflib import URIRef
 
 from acquirium.internals._log import timed_debug as _timed_debug
-from acquirium.internals.env_spec import build_runtime_env
+from acquirium.internals.env_spec import DEFAULT_ENV_STORAGE_ROOT, build_runtime_env, ensure_env
 from acquirium.internals.models import AppSpec, AppOutputSpec, AppRunRequest, EnvSpec
 from acquirium.internals.internals_namespaces import *
 from acquirium.Apps.runner import AppRunner
@@ -52,11 +52,13 @@ class AppSupervisor:
         server_url: str,
         server_port: int,
         use_ssl: bool = False,
+        env_storage_root: Path | str | None = None,
     ):
         self.app_storage_root = Path(app_storage_root)
         self.server_url = server_url
         self.server_port = int(server_port)
         self.use_ssl = bool(use_ssl)
+        self.env_storage_root = Path(env_storage_root) if env_storage_root else DEFAULT_ENV_STORAGE_ROOT
         self._lock = threading.Lock()
         self._build_lock = threading.Lock()
         self._apps: dict[str, dict[str, Any]] = {}
@@ -97,8 +99,10 @@ class AppSupervisor:
             )
             # A declared env gives this app's actor (and its run workers,
             # which inherit the actor's env) its own dependencies; undeclared
-            # apps keep the zero-cost inherit path.
-            runtime_env = build_runtime_env(spec.env)
+            # apps keep the zero-cost inherit path. Materialized OUTSIDE both
+            # locks — a cold build must never stall other registrations.
+            py_executable = ensure_env(spec.env, self.env_storage_root)
+            runtime_env = build_runtime_env(spec.env, py_executable=py_executable)
             runner_cls = (
                 AppRunner if runtime_env is None
                 else AppRunner.options(runtime_env=runtime_env)
@@ -165,7 +169,8 @@ class AppSupervisor:
                 server_port=self.server_port,
                 use_ssl=self.use_ssl,
             )
-            runtime_env = build_runtime_env(spec.env)
+            py_executable = ensure_env(spec.env, self.env_storage_root)
+            runtime_env = build_runtime_env(spec.env, py_executable=py_executable)
             runner_cls = (
                 AppRunner if runtime_env is None
                 else AppRunner.options(runtime_env=runtime_env)

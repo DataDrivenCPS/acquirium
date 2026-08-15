@@ -10,7 +10,10 @@ from acquirium.internals.env_spec import (
     SETUP_COMMANDS_ENV_VAR,
     SETUP_HOOK,
     SETUP_MARKER_DIR_ENV_VAR,
+    _create_overlay_venv,
     build_runtime_env,
+    ensure_env,
+    env_fingerprint,
     run_setup_commands,
     run_setup_commands_hook,
     worker_pythonpath,
@@ -30,12 +33,19 @@ def test_source_dir_alone_sets_pythonpath(monkeypatch):
     assert env == {"env_vars": {"PYTHONPATH": f"/drivers/x{os.pathsep}/inherited"}}
 
 
-def test_pip_env_carries_packages_and_timeout():
-    env = build_runtime_env(EnvSpec(pip=["paho-mqtt>=2.1.0"]))
-    assert env["pip"] == ["paho-mqtt>=2.1.0"]
-    assert env["config"]["setup_timeout_seconds"] == 1800
-    env2 = build_runtime_env(EnvSpec(pip=["x"]), setup_timeout_seconds=60)
-    assert env2["config"]["setup_timeout_seconds"] == 60
+def test_pip_spec_requires_materialized_env():
+    # Silently spawning a pip-declaring spec on the inherit path would fake
+    # isolation — build_runtime_env refuses instead.
+    with pytest.raises(ValueError, match="ensure_env"):
+        build_runtime_env(EnvSpec(pip=["paho-mqtt>=2.1.0"]))
+
+
+def test_py_executable_carries_through():
+    env = build_runtime_env(
+        EnvSpec(pip=["paho-mqtt>=2.1.0"]), py_executable="/data/envs/abc/bin/python",
+    )
+    assert env["py_executable"] == "/data/envs/abc/bin/python"
+    assert "pip" not in env  # ray's session-scoped pip path is not used
 
 
 def test_env_vars_pass_through_and_pythonpath_merges(monkeypatch):
@@ -63,14 +73,17 @@ def test_py_modules_pass_through():
 
 
 @pytest.mark.parametrize("req", ["ray", "ray==2.56.0", "ray>=2", "ray[default]", "Ray "])
-def test_ray_requirement_rejected(req):
+def test_ray_requirement_rejected(req, tmp_path):
     with pytest.raises(ValueError, match="must not declare ray"):
-        build_runtime_env(EnvSpec(pip=[req]))
+        ensure_env(EnvSpec(pip=[req]), tmp_path, installer=lambda d, p: None)
 
 
-def test_raylike_names_are_not_rejected():
-    env = build_runtime_env(EnvSpec(pip=["rayon", "raytools>=1"]))
-    assert env["pip"] == ["rayon", "raytools>=1"]
+def test_raylike_names_are_not_rejected(tmp_path):
+    python = ensure_env(
+        EnvSpec(pip=["rayon", "raytools>=1"]), tmp_path,
+        installer=lambda d, p: d.mkdir(parents=True),
+    )
+    assert python is not None
 
 
 def test_worker_pythonpath_dedup(monkeypatch):
@@ -132,3 +145,82 @@ def test_hook_reads_env_var(tmp_path, monkeypatch):
 def test_hook_without_commands_is_a_noop(monkeypatch):
     monkeypatch.delenv(SETUP_COMMANDS_ENV_VAR, raising=False)
     run_setup_commands_hook()  # must not raise
+
+
+# ─────────────────────── persistent env store ───────────────────────
+
+
+def make_installer(calls):
+    def installer(env_dir, pip):
+        calls.append(list(pip))
+        (env_dir / "bin").mkdir(parents=True)
+        (env_dir / "bin" / "python").write_text("")
+    return installer
+
+
+def test_ensure_env_builds_once_and_reuses(tmp_path):
+    calls = []
+    spec = EnvSpec(pip=["watertap", "pyomo>=6"])
+    p1 = ensure_env(spec, tmp_path, installer=make_installer(calls))
+    p2 = ensure_env(spec, tmp_path, installer=make_installer(calls))
+    assert p1 == p2
+    assert calls == [["watertap", "pyomo>=6"]]        # built exactly once
+    assert (tmp_path / env_fingerprint(spec) / ".ready").exists()
+
+
+def test_ensure_env_none_without_pip(tmp_path):
+    assert ensure_env(None, tmp_path) is None
+    assert ensure_env(EnvSpec(setup_commands=["echo hi"]), tmp_path) is None
+
+
+def test_distinct_declarations_get_distinct_envs(tmp_path):
+    calls = []
+    inst = make_installer(calls)
+    p1 = ensure_env(EnvSpec(pip=["a"]), tmp_path, installer=inst)
+    p2 = ensure_env(EnvSpec(pip=["b"]), tmp_path, installer=inst)
+    assert p1 != p2
+    assert len(calls) == 2
+
+
+def test_failed_build_is_removed_and_retried(tmp_path):
+    spec = EnvSpec(pip=["pkg"])
+
+    def failing(env_dir, pip):
+        (env_dir / "bin").mkdir(parents=True)   # half-built
+        raise RuntimeError("download died")
+
+    with pytest.raises(RuntimeError, match="download died"):
+        ensure_env(spec, tmp_path, installer=failing)
+    assert not (tmp_path / env_fingerprint(spec)).exists()  # cleaned up
+
+    calls = []
+    assert ensure_env(spec, tmp_path, installer=make_installer(calls)) is not None
+    assert len(calls) == 1                                   # retry succeeded
+
+
+def test_concurrent_builds_share_one_install(tmp_path):
+    calls = []
+    spec = EnvSpec(pip=["pkg"])
+
+    def slow_installer(env_dir, pip):
+        import time
+        time.sleep(0.1)
+        make_installer(calls)(env_dir, pip)
+
+    threads = [
+        threading.Thread(target=ensure_env, args=(spec, tmp_path),
+                         kwargs={"installer": slow_installer})
+        for _ in range(4)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+    assert len(calls) == 1
+
+
+def test_overlay_venv_sees_system_site_packages(tmp_path):
+    python = _create_overlay_venv(tmp_path / "env")
+    assert python.exists()
+    cfg = (tmp_path / "env" / "pyvenv.cfg").read_text()
+    assert "include-system-site-packages = true" in cfg

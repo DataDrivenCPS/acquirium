@@ -169,18 +169,20 @@ async def _start_config_drivers(supervisor: DriverSupervisor, cfg: dict) -> None
     """Start every [[drivers]] entry from the config as a Ray actor.
 
     The caller must wait for /health first (_wait_until_healthy) — driver
-    actors talk to this server over HTTP. Setup ordering stays serial because
-    DriverSupervisor.start_driver holds its lock across setup.
+    actors talk to this server over HTTP. Entries start concurrently: a
+    driver with a cold env build (minutes of downloads) must not delay the
+    others. Setup-time graph writes still can't race — the supervisor
+    serializes them on its build lock, which env building happens outside of.
     """
     entries = cfg.get("drivers", [])
     if not entries:
         return
 
-    for entry in entries:
+    async def start_one(entry: dict) -> None:
         spec = entry.get("spec")
         if not spec:
             log.warning("[[drivers]] entry missing 'spec'; skipping")
-            continue
+            return
         overrides = {k: v for k, v in entry.items() if k not in ("spec", "name")}
         merged_cfg = {**cfg, "driver": {**cfg.get("driver", {}), **overrides}}
         interval = float(overrides.get("interval", cfg.get("driver", {}).get("interval", 10.0)))
@@ -195,6 +197,8 @@ async def _start_config_drivers(supervisor: DriverSupervisor, cfg: dict) -> None
             log.info("Started config driver '%s' (%s)", info["name"], spec)
         except Exception:
             log.exception("Config driver %s failed to start", spec)
+
+    await asyncio.gather(*(start_one(entry) for entry in entries))
 
 
 class Health(BaseModel):
@@ -268,13 +272,17 @@ async def lifespan(app: FastAPI):
     # Drivers run as Ray actors that connect back over HTTP.
     ray.init(ignore_reinit_error=True)
     _host, _port, _use_ssl = _self_connect_cfg(_cfg)
-    supervisor = DriverSupervisor(server_url=_host, server_port=_port, use_ssl=_use_ssl)
+    supervisor = DriverSupervisor(
+        server_url=_host, server_port=_port, use_ssl=_use_ssl,
+        env_storage_root=m.env_storage_root,
+    )
     app.state.drivers = supervisor
     # Apps also run as Ray actors (one AppRunner per app) that connect back
     # over HTTP; the supervisor spawns and tracks them.
     app_supervisor = AppSupervisor(
         app_storage_root=m.app_storage_root,
         server_url=_host, server_port=_port, use_ssl=_use_ssl,
+        env_storage_root=m.env_storage_root,
     )
     app.state.apps = app_supervisor
     # Once the server answers /health: respawn apps persisted by a previous
