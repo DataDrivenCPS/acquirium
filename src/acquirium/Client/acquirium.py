@@ -109,7 +109,7 @@ def _build_stream_triples(
             _add_triple(g, target, pred, value)
 from acquirium.Client.client import AcquiriumClient
 from acquirium.Apps.base import App
-from acquirium.internals.models import AppOutputSpec, AppSpec, compute_ref_uri
+from acquirium.internals.models import AppOutputSpec, AppSpec, EnvSpec, compute_ref_uri
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_DB_URI,
     ACQUIRIUM_REF_NAME,
@@ -505,6 +505,7 @@ class Acquirium:
         outputs: list[AppOutputSpec | dict[str, Any]] | None = None,
         queries: dict[str, Query] | None = None,
         params: dict[str, Any] | None = None,
+        env: EnvSpec | dict[str, Any] | None = None,
         replace: bool = False,
     ) -> dict[str, Any]:
         """Register an Acquirium App with the server.
@@ -525,6 +526,12 @@ class Acquirium:
             query_bundle = {"default": query_bundle}
 
         query_specs = {name: q.to_dict() for name, q in query_bundle.items()}
+
+        # The app's execution environment: the kwarg wins, else the class
+        # attribute; a plain dict is accepted for convenience.
+        env_spec = env if env is not None else getattr(app, "env", None)
+        if isinstance(env_spec, dict):
+            env_spec = EnvSpec(**env_spec)
 
         output_specs: list[AppOutputSpec] = []
         output_items = outputs if outputs is not None else list(getattr(app, "outputs", []) or [])
@@ -562,6 +569,7 @@ class Acquirium:
             queries=query_specs,
             outputs=output_specs,
             params=params or {},
+            env=env_spec,
         )
         return self.client.register_app(spec, replace=replace)
 

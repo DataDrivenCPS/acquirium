@@ -96,6 +96,10 @@ class App(ABC):
     version: str = "0.0"
     app_type: str = "soft_sensor"
     outputs: list[Any] = []
+    # Optional execution environment (EnvSpec or plain dict): pip deps,
+    # env vars, and setup commands the app's Ray workers need. None keeps
+    # the zero-cost inherit-the-server-env path.
+    env: Any = None
     source_code: str | None = None
     entry_file: str | None = None
     # Assigned by AppRunner after it instantiates the app. This owns the app's

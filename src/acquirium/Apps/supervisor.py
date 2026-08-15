@@ -15,6 +15,7 @@ import shutil
 from rdflib import URIRef
 
 from acquirium.internals._log import timed_debug as _timed_debug
+from acquirium.internals.env_spec import build_runtime_env
 from acquirium.internals.models import AppSpec, AppOutputSpec, AppRunRequest, EnvSpec
 from acquirium.internals.internals_namespaces import *
 from acquirium.Apps.runner import AppRunner
@@ -94,11 +95,19 @@ class AppSupervisor:
                 server_port=self.server_port,
                 use_ssl=self.use_ssl,
             )
+            # A declared env gives this app's actor (and its run workers,
+            # which inherit the actor's env) its own dependencies; undeclared
+            # apps keep the zero-cost inherit path.
+            runtime_env = build_runtime_env(spec.env)
+            runner_cls = (
+                AppRunner if runtime_env is None
+                else AppRunner.options(runtime_env=runtime_env)
+            )
             # Build-time graph reads/writes of concurrent registrations
             # serialize on the build lock (not the record lock — see class
             # docstring).
             with self._build_lock:
-                actor = AppRunner.remote(spec, self.app_storage_root, aq)
+                actor = runner_cls.remote(spec, self.app_storage_root, aq)
                 try:
                     info = ray.get(actor.register.remote())
                 except Exception:
@@ -156,8 +165,13 @@ class AppSupervisor:
                 server_port=self.server_port,
                 use_ssl=self.use_ssl,
             )
+            runtime_env = build_runtime_env(spec.env)
+            runner_cls = (
+                AppRunner if runtime_env is None
+                else AppRunner.options(runtime_env=runtime_env)
+            )
             with self._build_lock:
-                actor = AppRunner.remote(spec, self.app_storage_root, aq)
+                actor = runner_cls.remote(spec, self.app_storage_root, aq)
                 try:
                     with _timed_debug(logger, "restore_app setup app=%s", spec.name):
                         info = {**info, **ray.get(actor.setup.remote())}

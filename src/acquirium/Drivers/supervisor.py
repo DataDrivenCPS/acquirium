@@ -10,6 +10,7 @@ import ray
 
 from acquirium.Drivers.runner import DriverRunner
 from acquirium.internals.env_spec import build_runtime_env
+from acquirium.internals.models import EnvSpec
 
 
 logger = logging.getLogger("acquirium.driver.supervis")
@@ -84,8 +85,16 @@ class DriverSupervisor:
                 use_ssl=self.use_ssl,
                 insert_batch_rows=int(driver_section.get("insert_batch_rows", 50_000)),
             )
+            # A driver's environment comes from its config section, e.g.
+            #   [[drivers]]
+            #   spec = "...mqtt_ingestion:MQTTIngestDriver"
+            #   env = { pip = ["paho-mqtt>=2.1.0"] }
+            # Undeclared drivers keep the zero-cost inherit path (file specs
+            # still get their directory on the worker PYTHONPATH).
+            env_cfg = driver_section.get("env")
+            env_spec = EnvSpec(**env_cfg) if isinstance(env_cfg, dict) else None
             runner_cls = DriverRunner
-            runtime_env = build_runtime_env(None, source_dir=source_dir)
+            runtime_env = build_runtime_env(env_spec, source_dir=source_dir)
             if runtime_env is not None:
                 runner_cls = DriverRunner.options(runtime_env=runtime_env)
             # Setup-time graph writes of concurrent driver starts serialize on

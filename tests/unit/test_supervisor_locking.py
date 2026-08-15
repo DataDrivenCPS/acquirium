@@ -52,6 +52,7 @@ class FakeRunnerCls:
     """Stub for AppRunner/DriverRunner: .remote() hands out the next actor."""
 
     next_actor: FakeActor | None = None
+    last_options: dict | None = None
 
     @classmethod
     def remote(cls, *a, **k):
@@ -61,6 +62,7 @@ class FakeRunnerCls:
 
     @classmethod
     def options(cls, **k):
+        cls.last_options = k
         return cls
 
 
@@ -76,6 +78,7 @@ def stub_ray(monkeypatch):
     monkeypatch.setattr(ray, "wait", lambda refs, **k: ([], list(refs)))
     monkeypatch.setattr(aq_mod, "Acquirium", lambda **kw: SimpleNamespace())
     FakeRunnerCls.next_actor = None
+    FakeRunnerCls.last_options = None
     return killed
 
 
@@ -162,6 +165,43 @@ class TestAppRegistration:
     def test_restore_publishes_record(self, app_sup):
         app_sup.restore_app(spec())
         assert app_sup._apps["x"]["actor"] is not None
+
+
+class TestEnvSpecWiring:
+    def test_declared_app_env_reaches_the_actor_options(self, app_sup):
+        from acquirium.internals.models import EnvSpec
+
+        app_sup.register_app(AppSpec(name="x", env=EnvSpec(pip=["paho-mqtt>=2.1.0"])))
+        runtime_env = FakeRunnerCls.last_options["runtime_env"]
+        assert runtime_env["pip"] == ["paho-mqtt>=2.1.0"]
+
+    def test_undeclared_app_env_uses_no_options(self, app_sup):
+        app_sup.register_app(spec())
+        assert FakeRunnerCls.last_options is None
+
+    def test_restored_env_reaches_the_actor_options(self, app_sup):
+        from acquirium.internals.models import EnvSpec
+
+        app_sup.restore_app(AppSpec(name="x", env=EnvSpec(pip=["pkg"])))
+        assert FakeRunnerCls.last_options["runtime_env"]["pip"] == ["pkg"]
+
+    def test_driver_config_env_reaches_the_actor_options(self, drv_sup):
+        drv_sup.start_driver(
+            spec="pkg.mod:Cls",
+            config={"driver": {"env": {"pip": ["paho-mqtt>=2.1.0"],
+                                       "setup_commands": ["echo hi"]}}},
+        )
+        runtime_env = FakeRunnerCls.last_options["runtime_env"]
+        assert runtime_env["pip"] == ["paho-mqtt>=2.1.0"]
+        assert "worker_process_setup_hook" in runtime_env
+
+    def test_driver_bad_env_config_fails_start_and_frees_name(self, drv_sup):
+        with pytest.raises(Exception):
+            drv_sup.start_driver(
+                spec="pkg.mod:Cls",
+                config={"driver": {"env": {"pip": "not-a-list"}}},
+            )
+        assert "Cls" not in drv_sup._drivers
 
 
 class TestAppTeardown:
