@@ -65,6 +65,7 @@ xlsx = [
 [package.dev-dependencies]
 dev = [
     { name = "openpyxl" },
+    { name = "paho-mqtt" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "q" },
@@ -106,6 +107,7 @@ provides-extras = ["mqtt", "xlsx", "watertap"]
 [package.metadata.requires-dev]
 dev = [
     { name = "openpyxl", specifier = ">=3.1.5" },
+    { name = "paho-mqtt", specifier = ">=2.1.0" },
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "pytest-cov", specifier = ">=6.0" },
     { name = "q", specifier = ">=2.7" },
@@ -2146,7 +2148,7 @@ name = "pexpect"
 version = "4.9.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "ptyprocess" },
+    { name = "ptyprocess", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/42/92/cc564bf6381ff43ce1f4d06852fc19a2f11d180f23dc32d9588bee2f149d/pexpect-4.9.0.tar.gz", hash = "sha256:ee7d41123f3c9911050ea2c2dac107568dc43b2d3b0c7557a33212c398ead30f", size = 166450, upload-time = "2023-11-25T09:07:26.339Z" }
 wheels = [

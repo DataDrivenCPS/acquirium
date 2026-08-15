@@ -4,12 +4,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from threading import Lock
-from typing import Any
+from typing import Any, TYPE_CHECKING
 import ast
 import json
 import logging
 
-import paho.mqtt.client as mqtt
+if TYPE_CHECKING:
+    # paho-mqtt is an optional runtime dependency (the driver's EnvSpec
+    # installs it in its own Ray env). Deferred so importing this module —
+    # which happens in the server process at driver start — never requires
+    # it; only creating a client does.
+    import paho.mqtt.client as mqtt
 
 from acquirium.Drivers.Driver import DriverBufferFull, EventIngestDriver
 from acquirium.Storage.values import normalize_value_kind
@@ -169,6 +174,8 @@ class MQTTIngestDriver(EventIngestDriver):
 
     def _ensure_subscribed(self, spec: MQTTStreamSpec) -> None:
         client_key = self._client_key(spec.broker, spec.port)
+
+        import paho.mqtt.client as mqtt
 
         with self._clients_lock:
             client = self._clients.get(client_key)

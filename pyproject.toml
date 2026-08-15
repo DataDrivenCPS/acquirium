@@ -103,6 +103,9 @@ include = [
 [dependency-groups]
 dev = [
     "openpyxl>=3.1.5",
+    # Driver-optional deps the unit tests exercise directly (the drivers
+    # themselves get them via their EnvSpec runtime environments).
+    "paho-mqtt>=2.1.0",
     "q>=2.7",
     "pytest>=9.0.2",
     "pytest-cov>=6.0",
