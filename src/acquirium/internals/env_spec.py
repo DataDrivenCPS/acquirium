@@ -150,9 +150,15 @@ def _reject_ray_requirement(pip: list[str]) -> None:
             )
 
 
+#: Bumped when the overlay layout changes; part of the fingerprint, so envs
+#: built by an older layout are ignored (never reused) rather than migrated.
+_ENV_LAYOUT_VERSION = 2
+
+
 def env_fingerprint(spec: "EnvSpec") -> str:
     """Stable key for one pip declaration on one interpreter version."""
     payload = json.dumps({
+        "layout": _ENV_LAYOUT_VERSION,
         "pip": list(spec.pip),
         "python": f"{sys.version_info.major}.{sys.version_info.minor}",
     }, sort_keys=True, ensure_ascii=True)
@@ -160,9 +166,19 @@ def env_fingerprint(spec: "EnvSpec") -> str:
 
 
 def _create_overlay_venv(env_dir: Path) -> Path:
-    """Create a venv that sees the server's site-packages; return its python."""
+    """Create a venv that layers on the *server's* environment; return its python.
+
+    ``--system-site-packages`` is deliberately not used: a venv created from
+    a venv chains to the base interpreter (for uv-managed pythons, a bare
+    CPython with empty site-packages), so the overlay would see nothing —
+    not even ray. Inheritance is explicit instead: a ``.pth`` hook runs
+    ``site.addsitedir`` on the server venv's site-packages, which appends
+    them *after* the overlay's own (declared packages shadow the server's)
+    and processes the server's ``.pth`` files, so editable installs like a
+    dev checkout of acquirium resolve too.
+    """
     result = subprocess.run(
-        [sys.executable, "-m", "venv", "--system-site-packages", str(env_dir)],
+        [sys.executable, "-m", "venv", str(env_dir)],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
@@ -170,6 +186,15 @@ def _create_overlay_venv(env_dir: Path) -> Path:
             f"venv creation failed (exit {result.returncode}): "
             f"{(result.stderr or result.stdout or '').strip()[-2000:]}"
         )
+    import sysconfig
+
+    base_site = sysconfig.get_paths()["purelib"]
+    site_dirs = list((env_dir / "lib").glob("python*/site-packages"))
+    if not site_dirs:
+        raise RuntimeError(f"no site-packages dir in created venv {env_dir}")
+    (site_dirs[0] / "_acquirium_base_env.pth").write_text(
+        f"import site; site.addsitedir({base_site!r})\n"
+    )
     return env_dir / "bin" / "python"
 
 
@@ -279,6 +304,13 @@ def build_runtime_env(
 
     if spec is not None and spec.env_vars:
         env_vars.update({str(k): str(v) for k, v in spec.env_vars.items()})
+
+    if py_executable is not None:
+        # Console scripts installed into the overlay (e.g. `idaes` for
+        # setup_commands) must be findable by the worker's subprocesses —
+        # prepend the overlay's bin to the user-declared or inherited PATH.
+        base_path = env_vars.get("PATH") or os.environ.get("PATH", "")
+        env_vars["PATH"] = str(Path(py_executable).parent) + os.pathsep + base_path
 
     if spec is not None and spec.setup_commands:
         env_vars[SETUP_COMMANDS_ENV_VAR] = json.dumps(

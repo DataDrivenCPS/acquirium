@@ -219,8 +219,42 @@ def test_concurrent_builds_share_one_install(tmp_path):
     assert len(calls) == 1
 
 
-def test_overlay_venv_sees_system_site_packages(tmp_path):
+def test_overlay_venv_inherits_the_server_environment(tmp_path):
+    # The mechanism that broke in the field: venv-from-venv chains to the
+    # bare base interpreter, so --system-site-packages saw an empty python
+    # (workers died with "No module named 'ray'"). The overlay must instead
+    # see the *server venv's* site-packages via its .pth hook — appended
+    # after its own (declared packages shadow), with the server's .pth files
+    # processed (editable installs resolve).
+    import subprocess
+    import sysconfig
+
     python = _create_overlay_venv(tmp_path / "env")
     assert python.exists()
-    cfg = (tmp_path / "env" / "pyvenv.cfg").read_text()
-    assert "include-system-site-packages = true" in cfg
+
+    base_site = sysconfig.get_paths()["purelib"]
+    result = subprocess.run(
+        [str(python), "-c",
+         "import sys, pyoxigraph; print('\\n'.join(sys.path))"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    paths = result.stdout.splitlines()
+    assert base_site in paths                       # server env inherited
+    own_site = str(next((tmp_path / "env" / "lib").glob("python*/site-packages")))
+    assert paths.index(own_site) < paths.index(base_site)  # overlay shadows
+
+
+def test_path_carries_the_overlay_bin(monkeypatch):
+    monkeypatch.setenv("PATH", "/usr/bin")
+    env = build_runtime_env(
+        EnvSpec(pip=["pkg"]), py_executable="/data/envs/abc/bin/python",
+    )
+    assert env["env_vars"]["PATH"] == f"/data/envs/abc/bin{os.pathsep}/usr/bin"
+
+    # A user-declared PATH is prepended to, not clobbered.
+    env2 = build_runtime_env(
+        EnvSpec(pip=["pkg"], env_vars={"PATH": "/custom"}),
+        py_executable="/data/envs/abc/bin/python",
+    )
+    assert env2["env_vars"]["PATH"] == f"/data/envs/abc/bin{os.pathsep}/custom"
