@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,23 +9,11 @@ from typing import Any
 import ray
 
 from acquirium.Drivers.runner import DriverRunner
+from acquirium.internals.env_spec import build_runtime_env
 
 
 logger = logging.getLogger("acquirium.driver.supervis")
 
-
-def _worker_pythonpath(source_dir: str) -> str:
-    """Prepend ``source_dir`` to this process's PYTHONPATH for a Ray worker.
-
-    runtime_env env_vars replace rather than extend, so the inherited value has
-    to be carried over explicitly or the worker loses it.
-    """
-    inherited = os.environ.get("PYTHONPATH", "")
-    if not inherited:
-        return source_dir
-    if source_dir in inherited.split(os.pathsep):
-        return inherited
-    return source_dir + os.pathsep + inherited
 
 class DriverSupervisor:
     """Owns the DriverRunner actors of one server process, keyed by name.
@@ -98,10 +85,9 @@ class DriverSupervisor:
                 insert_batch_rows=int(driver_section.get("insert_batch_rows", 50_000)),
             )
             runner_cls = DriverRunner
-            if source_dir is not None:
-                runner_cls = DriverRunner.options(
-                    runtime_env={"env_vars": {"PYTHONPATH": _worker_pythonpath(source_dir)}}
-                )
+            runtime_env = build_runtime_env(None, source_dir=source_dir)
+            if runtime_env is not None:
+                runner_cls = DriverRunner.options(runtime_env=runtime_env)
             # Setup-time graph writes of concurrent driver starts serialize on
             # the build lock (never the record lock — see class docstring).
             with self._build_lock:
