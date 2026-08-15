@@ -21,6 +21,15 @@ COPY src ./src
 # Install the project itself into the already-populated venv.
 RUN uv sync --locked --no-dev
 
+# Ray per-app/driver runtime environments clone this venv and pip-install
+# the declared packages on top. That path hard-requires `virtualenv`
+# importable in the base env (ray's PipProcessor imports it even when only
+# cloning) and pip inside the venv — uv-managed venvs ship neither, so
+# without this line every pip runtime_env fails to build in the image.
+# virtualenv is pinned <21: newer releases drop the clone entry point Ray
+# uses.
+RUN uv pip install pip "virtualenv<21"
+
 # Copy config last so edits don't invalidate the layers above.
 COPY acquirium.docker.toml ./acquirium.toml
 
