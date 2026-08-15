@@ -62,10 +62,9 @@ uv manages the virtual environment and the right Python version for you.
     source .venv/bin/activate          # Linux/macOS
     # .venv\Scripts\activate           # Windows (PowerShell/cmd)
     ```
-2. Install Acquirium (from the clone), plus `virtualenv` so the server can
-    build per-driver environments:
+2. Install Acquirium (from the clone):
     ```bash
-    pip install -e . "virtualenv<21"
+    pip install -e .
     ```
     As in Option A, WaterTAP's packages and the native IDAES/IPOPT solver
     install are declared in the driver's `[[drivers]]` config entry
