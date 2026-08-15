@@ -1,10 +1,20 @@
 """Tests for internals.env_spec.build_runtime_env."""
 
+import json
 import os
+import threading
 
 import pytest
 
-from acquirium.internals.env_spec import build_runtime_env, worker_pythonpath
+from acquirium.internals.env_spec import (
+    SETUP_COMMANDS_ENV_VAR,
+    SETUP_HOOK,
+    SETUP_MARKER_DIR_ENV_VAR,
+    build_runtime_env,
+    run_setup_commands,
+    run_setup_commands_hook,
+    worker_pythonpath,
+)
 from acquirium.internals.models import EnvSpec
 
 
@@ -67,3 +77,58 @@ def test_worker_pythonpath_dedup(monkeypatch):
     monkeypatch.setenv("PYTHONPATH", f"/a{os.pathsep}/b")
     assert worker_pythonpath("/a") == f"/a{os.pathsep}/b"
     assert worker_pythonpath("/c") == f"/c{os.pathsep}/a{os.pathsep}/b"
+
+
+# ─────────────────────── setup commands ───────────────────────
+
+
+def test_setup_commands_join_the_runtime_env():
+    env = build_runtime_env(EnvSpec(setup_commands=["idaes get-extensions"]))
+    assert env["worker_process_setup_hook"] == SETUP_HOOK
+    assert json.loads(env["env_vars"][SETUP_COMMANDS_ENV_VAR]) == ["idaes get-extensions"]
+
+
+def test_setup_commands_run_once_per_node(tmp_path):
+    log = tmp_path / "log"
+    cmds = [f"echo ran >> {log}"]
+    assert run_setup_commands(cmds, marker_dir=tmp_path) is True
+    assert run_setup_commands(cmds, marker_dir=tmp_path) is False  # marker hit
+    assert log.read_text().count("ran") == 1
+    # A different command list is a different marker.
+    assert run_setup_commands([f"echo other >> {log}"], marker_dir=tmp_path) is True
+
+
+def test_concurrent_workers_run_commands_once(tmp_path):
+    log = tmp_path / "log"
+    cmds = [f"sleep 0.1 && echo ran >> {log}"]
+    threads = [
+        threading.Thread(target=run_setup_commands, args=(cmds,),
+                         kwargs={"marker_dir": tmp_path})
+        for _ in range(4)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+    assert log.read_text().count("ran") == 1
+
+
+def test_failing_command_raises_with_stderr(tmp_path):
+    with pytest.raises(RuntimeError, match="no-such-binary"):
+        run_setup_commands(["no-such-binary-xyz --flag"], marker_dir=tmp_path)
+    # No marker was written: the next worker retries instead of skipping.
+    assert run_setup_commands([f"echo ok >> {tmp_path}/log"], marker_dir=tmp_path)
+
+
+def test_hook_reads_env_var(tmp_path, monkeypatch):
+    log = tmp_path / "log"
+    monkeypatch.setenv(SETUP_MARKER_DIR_ENV_VAR, str(tmp_path))
+    monkeypatch.setenv(SETUP_COMMANDS_ENV_VAR, json.dumps([f"echo hook >> {log}"]))
+    run_setup_commands_hook()
+    run_setup_commands_hook()
+    assert log.read_text().count("hook") == 1
+
+
+def test_hook_without_commands_is_a_noop(monkeypatch):
+    monkeypatch.delenv(SETUP_COMMANDS_ENV_VAR, raising=False)
+    run_setup_commands_hook()  # must not raise
