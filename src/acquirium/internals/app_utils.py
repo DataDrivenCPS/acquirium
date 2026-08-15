@@ -62,6 +62,8 @@ def app_type_uri(app_type: str) -> URIRef:
         return ALARM
     if norm == "report":
         return REPORT
+    if norm == "task":
+        return TASK
     if "://" in app_type or app_type.startswith("urn:"):
         return URIRef(app_type)
     return URIRef(str(ACQUIRIUM_NS[app_type]))

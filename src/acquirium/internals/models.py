@@ -209,6 +209,44 @@ class AppSpec(BaseModel):
     env: EnvSpec | None = None
 
 
+class TaskSpec(BaseModel):
+    """A class-less registered function: one query, one ``fn(ctx)``.
+
+    Tasks are the light tier: no build phase, no state, and — by contract —
+    no dependencies beyond the acquirium package, so every task shares one
+    host actor. ``fn_source`` is the authoritative persisted form (exec'd on
+    restore); ``fn_blob`` (cloudpickle) is a fast path used only when the
+    server's Python matches ``python_version`` — cloudpickle is not portable
+    across interpreter versions and is not meant for long-term storage.
+    """
+
+    name: str
+    query: dict = Field(default_factory=dict)          # Query.to_dict() form
+    fn_name: str
+    fn_source: str
+    fn_blob: bytes | None = None
+    python_version: str | None = None                  # "3.12"
+    outputs: list[AppOutputSpec] = Field(default_factory=list)
+    params: dict[str, Any] = Field(default_factory=dict)
+    run_mode: Literal["manual", "interval", "on_change"] = "manual"
+    interval: float | None = None
+    version: str = "0.0"
+
+    def to_app_spec(self) -> "AppSpec":
+        """The registration-graph view of this task (shared graph shape)."""
+        return AppSpec(
+            name=self.name,
+            kind="task",
+            version=self.version,
+            app_type="task",
+            queries={"default": self.query} if self.query else {},
+            outputs=self.outputs,
+            params=self.params,
+            run_mode=self.run_mode,
+            interval=self.interval,
+        )
+
+
 class AppRunRequest(BaseModel):
     app_id: str
     start: datetime | None = None

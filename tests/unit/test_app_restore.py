@@ -140,3 +140,20 @@ def test_minimal_spec_defaults(tmp_path):
     restored, = restore_app_specs(make_manager(spec, tmp_path))
     assert (restored.name, restored.version, restored.app_type) == ("bare_app", "0.0", "soft_sensor")
     assert restored.queries == {} and restored.outputs == []
+
+
+def test_task_kind_round_trips(tmp_path):
+    from acquirium.internals.models import TaskSpec
+
+    task = TaskSpec(
+        name="tds_task", query={"nodes": [], "edges": []},
+        fn_name="f", fn_source="def f(ctx): return []",
+        outputs=[AppOutputSpec(kind="trigger", point_uri="urn:t")],
+        run_mode="interval", interval=5.0,
+    )
+    restored, = restore_app_specs(make_manager(task.to_app_spec(), tmp_path))
+    assert restored.kind == "task"
+    assert restored.app_type == "task"
+    assert restored.queries == {"default": {"nodes": [], "edges": []}}
+    assert restored.outputs[0].kind == "trigger"
+    assert (restored.run_mode, restored.interval) == ("interval", 5.0)

@@ -358,7 +358,8 @@ class AppSupervisor:
 
 def _app_type_name(type_uri: URIRef) -> str:
     """Inverse of :func:`app_type_uri` for the graph→spec restore path."""
-    known = {SOFT_SENSOR: "soft_sensor", THRESHOLD: "threshold", ALARM: "alarm", REPORT: "report"}
+    known = {SOFT_SENSOR: "soft_sensor", THRESHOLD: "threshold", ALARM: "alarm",
+             REPORT: "report", TASK: "task"}
     if type_uri in known:
         return known[type_uri]
     ns = str(ACQUIRIUM_NS)
@@ -441,6 +442,9 @@ def restore_app_specs(manager) -> list[AppSpec]:
     for (app_uri,) in rows(f"SELECT ?app WHERE {{ ?app a <{TASK}> }}"):
         if str(app_uri) in apps:
             apps[str(app_uri)]["kind"] = "task"
+            # acq:Task doubles as the app_type (excluded from the ?type
+            # column above so it doesn't shadow a real app's type).
+            apps[str(app_uri)]["app_type"] = apps[str(app_uri)]["app_type"] or "task"
 
     # Refs carry Stream plus exactly one of EventStream/TimeseriesStream, so
     # the FILTER IN yields one row per output.
