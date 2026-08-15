@@ -46,6 +46,7 @@ dependencies = [
     "numpy==2.3.5",
     "polars>=1.36.1",
     "psycopg[binary]>=3.3.1",
+    "psycopg-pool>=3.2.0",
     "pyarrow>=22.0.0",
     "pydantic>=2.12.5",
     "pyontoenv==0.6.0",

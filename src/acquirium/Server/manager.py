@@ -136,6 +136,7 @@ class Manager:
         qudt_graph: Graph | None = None,
         qudt_converter: QUDTUnitConverter | None = None,
         recreate: bool = False,
+        pool_max_size: int = 10,
     ):
         if not logging.getLogger().handlers:
             from acquirium.internals._log import configure_logging
@@ -169,7 +170,10 @@ class Manager:
                 if not _effective_dsn:
                     raise ValueError("PG_DSN required for timescale backend. Set pg_dsn or PG_DSN env var.")
                 timescale = create_timeseries_store(
-                    "timescale", pg_dsn=_effective_dsn, recreate=recreate
+                    "timescale",
+                    pg_dsn=_effective_dsn,
+                    recreate=recreate,
+                    pool_max_size=pool_max_size,
                 )
 
         # Caller-supplied converter or graph wins; otherwise the converter
@@ -264,6 +268,7 @@ class Manager:
             ontoenv_root=os.getenv("ACQUIRIUM_ONTOENV_ROOT"),
             ontology_sources=list(ont_cfg.sources) or None,
             recreate=os.getenv("ACQUIRIUM_RECREATE", "false").lower() == "true",
+            pool_max_size=int(os.getenv("ACQUIRIUM_PG_POOL_MAX_SIZE", "10")),
         )
 
     def _sync_stream_refs_from_graph(self) -> int:
