@@ -108,8 +108,23 @@ class TestEmitOutputs:
                 "ref_name": "urn:test:p1",
                 "rows": rows,
                 "point_uri": "urn:test:p1",
+                "cascade": False,
             }
         ]
+
+    def test_cascade_marks_every_insert(self):
+        calls = []
+        ts = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        emit_outputs(
+            "app:app-a",
+            [
+                Output.timeseries(point_uri="urn:test:p1", rows=[(ts, 1.0)]),
+                Output.event(point_uri="urn:test:e1", severity="info", message="m", ts=ts),
+            ],
+            insert_timeseries=lambda **kwargs: calls.append(kwargs),
+            cascade=True,
+        )
+        assert [c["cascade"] for c in calls] == [True, True]
 
     def test_event_output_serializes_json_text_row(self):
         calls = []

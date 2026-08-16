@@ -70,6 +70,7 @@ class _Task:
         self.run_counter = 0
         self.keep_alive = False
         self.provenance: ProvenanceWriter | None = None
+        self.next_reason = "interval"
 
 
 def _task_dir(root: Path, name: str) -> Path:
@@ -234,14 +235,19 @@ class TaskHost:
             queries={"default": t.query} if t.query is not None else {},
         )
 
-    async def _run_once(self, t: _Task, params: dict[str, Any], start=None, end=None) -> str:
-        """Execute the body inline and emit outputs. Records the run."""
+    async def _run_once(
+        self, t: _Task, params: dict[str, Any], start=None, end=None, reason: str = "manual",
+    ) -> str:
+        """Execute the body inline and emit outputs. Records the run.
+
+        A ``cascade`` run's outputs are marked so they trigger nothing further.
+        """
         from acquirium.Apps.output_emission import emit_outputs
 
         t.run_counter += 1
         run_id = f"{t.spec.name}-{t.run_counter}"
         record: dict[str, Any] = {
-            "run_id": run_id, "status": "running",
+            "run_id": run_id, "status": "running", "reason": reason,
             "started_at": datetime.now(timezone.utc).isoformat(),
             "finished_at": None, "outputs": None, "error": None,
         }
@@ -259,7 +265,7 @@ class TaskHost:
             await asyncio.to_thread(
                 emit_outputs, self._source_id(t.spec.name), list(outputs),
                 insert_timeseries=self.acquirium_cli.client.insert_timeseries,
-                logger=self.logger,
+                logger=self.logger, cascade=(reason == "cascade"),
             )
             record["status"] = "done"
             record["outputs"] = len(outputs)
@@ -301,8 +307,48 @@ class TaskHost:
                     self.logger.exception("task '%s': query refresh failed; keeping previous", t.spec.name)
 
     async def _tick(self, t: _Task, params: dict[str, Any], start, end) -> None:
+        reason, t.next_reason = t.next_reason, "interval"
         self._maybe_refresh_queries()
-        await self._run_once(t, params, start, end)
+        await self._run_once(t, params, start, end, reason=reason)
+
+    def trigger(self, name: str, reason: str = "change") -> dict[str, Any]:
+        """Auto-run entry: a data change touched a stream this task reads.
+
+        Enters the task's own single-flight scheduler (never races an
+        interval tick; in-flight => counted skip). Without a live keep-alive
+        loop, falls back to a one-shot. Sync method: driven onto the loop.
+        """
+        t = self._tasks.get(name)
+        if t is None:
+            raise KeyError(f"Unknown task: {name}")
+        loop = self._loop
+        if loop is None:
+            return {"name": name, "dispatched": False, "why": "host loop not running"}
+        if t.scheduler is None or not t.keep_alive:
+            fut = asyncio.run_coroutine_threadsafe(
+                self._run_once(t, {}, reason=reason), loop,
+            )
+            return {"name": name, "dispatched": True, "run_id": fut.result(timeout=30)}
+
+        def _fire():
+            t.next_reason = reason
+            if not t.scheduler.trigger(reason):
+                t.next_reason = "interval"
+                return False
+            return True
+
+        fut = asyncio.run_coroutine_threadsafe(self._call_on_loop(_fire), loop)
+        return {"name": name, "dispatched": bool(fut.result(timeout=30))}
+
+    async def _call_on_loop(self, fn):
+        return fn()
+
+    def watched_streams(self, name: str) -> list[str]:
+        """Streams auto-run should subscribe this task to (declared ∪ observed)."""
+        t = self._tasks.get(name)
+        if t is None or t.provenance is None:
+            return []
+        return sorted(t.provenance.may_use | t.provenance.used)
 
     async def run(
         self, name: str, *, start=None, end=None, params: dict[str, Any] | None = None,
@@ -315,7 +361,7 @@ class TaskHost:
             raise KeyError(f"Unknown task: {name}")
         params = params or {}
         if not keep_alive:
-            run_id = await self._run_once(t, params, start, end)
+            run_id = await self._run_once(t, params, start, end, reason="manual")
             return {"name": name, "run_id": run_id}
 
         if t.loop_task is not None and not t.loop_task.done():

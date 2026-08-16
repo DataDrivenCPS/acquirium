@@ -27,6 +27,7 @@ def emit_outputs(
     *,
     insert_timeseries: InsertTimeseries,
     logger: logging.Logger | None = None,
+    cascade: bool = False,
 ) -> None:
     """Emit app outputs through the supplied timeseries insertion function.
 
@@ -38,6 +39,10 @@ def emit_outputs(
     The caller owns transport and storage details. This helper owns the common
     app-output contract: timeseries outputs write their rows, event outputs are
     serialized as one text row, and trigger outputs execute an HTTP webhook.
+
+    ``cascade=True`` marks the inserted rows as the outputs of a
+    change-triggered run, so they cannot trigger further runs (auto-run
+    cascade depth 1; see Apps.change_feed).
     """
     for index, out in enumerate(outputs, start=1):
         if out.kind == "timeseries":
@@ -45,7 +50,7 @@ def emit_outputs(
             rows = out.payload["rows"]
             if logger is not None:
                 logger.debug("Output %d: persisting %d timeseries rows to %s", index, len(rows), point_uri)
-            insert_timeseries(source_id=source_id, ref_name=point_uri, rows=rows, point_uri=point_uri)
+            insert_timeseries(source_id=source_id, ref_name=point_uri, rows=rows, point_uri=point_uri, cascade=cascade)
             if logger is not None:
                 logger.info("Output %d: wrote %d timeseries rows to %s", index, len(rows), point_uri)
         elif out.kind == "event":
@@ -65,6 +70,7 @@ def emit_outputs(
                 ref_name=point_uri,
                 rows=[(ts, value)],
                 point_uri=point_uri,
+                cascade=cascade,
             )
             if logger is not None:
                 logger.info("Output %d: emitted %s event to %s", index, severity, point_uri)

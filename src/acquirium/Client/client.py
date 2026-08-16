@@ -604,6 +604,7 @@ class AcquiriumClient:
         rows: list[tuple[datetime, Any]],
         point_uri: Optional[str] = None,
         replace: bool = False,
+        cascade: bool = False,
     ) -> dict:
         url = f"{self.base_url}/insert_timeseries"
         body = StreamInsert(
@@ -612,6 +613,7 @@ class AcquiriumClient:
             point_uri=point_uri,
             replace=replace,
             values=rows,
+            cascade=cascade,
         )
         response = requests.post(url, json=[body.model_dump(mode="json")])
         _raise_for_status(response)

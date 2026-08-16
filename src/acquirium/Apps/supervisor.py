@@ -20,10 +20,16 @@ from acquirium.internals.models import AppSpec, AppOutputSpec, AppRunRequest, En
 from acquirium.internals.internals_namespaces import *
 from acquirium.Apps.runner import AppRunner
 from acquirium.Apps.task_host import TaskHost, load_persisted_task
+from acquirium.Apps.change_feed import ChangeFeed
 
 
 
 logger = logging.getLogger("acquirium.apps.supervisor")
+
+#: Keep-alive interval for run_mode="on_change": long enough that the
+#: interval loop is effectively a heartbeat, short enough that a stream that
+#: never changes still gets a periodic run.
+ON_CHANGE_HEARTBEAT = 3600.0
 
 
 class AppSupervisor:
@@ -67,6 +73,11 @@ class AppSupervisor:
         # the app name space and the app routes; records carry kind="task").
         self._task_host = None
         self._task_host_lock = threading.Lock()
+        # Auto-run: data changes -> debounced, cycle-safe dispatch. Its
+        # notify() is what Manager.change_hook points at (enqueue-only on the
+        # insert thread); dispatch happens on the feed's own worker.
+        self.change_feed = ChangeFeed(self._dispatch_change)
+        self.change_feed.start()
 
     def _placeholder(self, spec: AppSpec) -> dict[str, Any]:
         """A record that reserves an app name while its actor is being built."""
@@ -110,6 +121,82 @@ class AppSupervisor:
             "running": False,
         }
 
+    # ─────────────────────── auto-run ───────────────────────
+
+    def _dispatch_change(self, app_name: str, reason: str) -> bool:
+        """ChangeFeed's dispatch target: run ``app_name`` because a stream it
+        reads changed. Called on the feed's worker thread — a Ray call is
+        fine here, a supervisor-lock hold across it is not (we take it only
+        to read the record). Enters the target's single-flight scheduler."""
+        with self._lock:
+            record = self._apps.get(app_name)
+        if record is None:
+            self.change_feed.unsubscribe(app_name)
+            return False
+        try:
+            if record.get("kind") == "task":
+                result = ray.get(self._host().trigger.remote(app_name, reason), timeout=30)
+            else:
+                actor = record.get("actor")
+                if actor is None:
+                    return False
+                result = ray.get(actor.trigger.remote(reason), timeout=30)
+        except Exception:
+            logger.exception("auto-run dispatch failed for '%s'", app_name)
+            return False
+        return bool(result.get("dispatched"))
+
+    def refresh_subscriptions(self, app_name: str) -> list[str]:
+        """Re-read what ``app_name`` reads (declared ∪ observed provenance)
+        and subscribe it to those streams. Called after registration/restore
+        and cheap to call again whenever provenance may have changed."""
+        with self._lock:
+            record = self._apps.get(app_name)
+        if record is None:
+            return []
+        try:
+            if record.get("kind") == "task":
+                streams = ray.get(self._host().watched_streams.remote(app_name), timeout=30)
+            else:
+                actor = record.get("actor")
+                streams = ray.get(actor.watched_streams.remote(), timeout=30) if actor else []
+        except Exception:
+            logger.debug("watched_streams unavailable for '%s'", app_name, exc_info=True)
+            return []
+        # An on_change app subscribes; interval/manual apps do not — the
+        # feed would otherwise dispatch runs the user never asked for.
+        spec = record.get("spec")
+        if getattr(spec, "run_mode", "manual") == "on_change":
+            self.change_feed.subscribe(app_name, streams)
+        else:
+            self.change_feed.unsubscribe(app_name)
+        return list(streams)
+
+    def _resume_if_configured(self, app_name: str) -> None:
+        """Honor a persisted run_mode after registration/restore.
+
+        interval  -> start keep-alive at the spec's interval.
+        on_change -> start keep-alive at a very long interval (so a scheduler
+                     exists for change triggers to enter) and subscribe.
+        manual    -> nothing.
+        """
+        with self._lock:
+            record = self._apps.get(app_name)
+        if record is None:
+            return
+        spec = record.get("spec")
+        mode = getattr(spec, "run_mode", "manual")
+        if mode == "manual":
+            return
+        interval = float(getattr(spec, "interval", None) or 10.0)
+        if mode == "on_change":
+            interval = ON_CHANGE_HEARTBEAT
+        try:
+            self.run_app(AppRunRequest(app_id=app_name, keep_alive=True, interval=interval))
+            self.refresh_subscriptions(app_name)
+        except Exception:
+            logger.exception("auto-start (%s) failed for '%s'", mode, app_name)
+
     def register_task(self, spec: TaskSpec, *, replace: bool = False) -> dict[str, Any]:
         """Register a class-less task on the shared host.
 
@@ -134,6 +221,7 @@ class AppSupervisor:
                     del self._apps[spec.name]
             raise
         logger.info("%s task '%s'", "Replaced" if replaced else "Registered", spec.name)
+        self._resume_if_configured(spec.name)
         return {**info, "replaced": replaced}
 
     def restore_task(self, spec: AppSpec) -> dict[str, Any]:
@@ -156,6 +244,7 @@ class AppSupervisor:
                 if self._apps.get(spec.name) is record:
                     del self._apps[spec.name]
             raise
+        self._resume_if_configured(spec.name)
         return info
 
     def register_app(self, spec: AppSpec, *, replace: bool = False) -> dict[str, Any]:
@@ -173,6 +262,7 @@ class AppSupervisor:
             if existing is not None:
                 # Gracefully dispose the replaced app (stop, clean its graph
                 # registration, kill the actor) before spawning the new one.
+                self.change_feed.unsubscribe(spec.name)
                 self._teardown_app(existing, remove_source=False)
 
             aq = Acquirium(
@@ -225,6 +315,7 @@ class AppSupervisor:
             raise AppAlreadyRegistered(spec.name)
 
         logger.info("%s app '%s'", "Replaced" if replaced else "Registered", spec.name)
+        self._resume_if_configured(spec.name)
         return {**info, "replaced": replaced}
 
     def restore_app(self, spec: AppSpec) -> dict[str, Any]:
@@ -280,6 +371,8 @@ class AppSupervisor:
             # The name was re-registered (or shut down) while the restore was
             # in flight; the newer owner wins — dispose what we built.
             self._teardown_app(record, remove_source=False)
+            return info
+        self._resume_if_configured(spec.name)
         return info
 
     def _teardown_app(self, record: dict[str, Any], *, remove_source: bool = False) -> None:
@@ -351,6 +444,7 @@ class AppSupervisor:
             record = self._apps.pop(app_id, None)
         if record is None:
             raise KeyError(f"Unknown app: {app_id}")
+        self.change_feed.unsubscribe(app_id)
         self._teardown_app(record, remove_source=remove_source)
         logger.info("Deleted app '%s'", app_id)
         return {"name": app_id, "deleted": True}
@@ -461,6 +555,7 @@ class AppSupervisor:
         return ray.get(self._actor(app_id).status.remote())
 
     def stop_all_apps(self) -> None:
+        self.change_feed.stop()
         with self._lock:
             records = list(self._apps.values())
             self._apps.clear()

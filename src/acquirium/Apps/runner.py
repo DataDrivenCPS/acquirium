@@ -105,6 +105,7 @@ class AppRunner:
         self._max_in_flight = 1
         self._run_timeout: float | None = None
         self._scheduler: IntervalScheduler | None = None
+        self._next_reason = "interval"
         # Graph-change polling runs on its own cadence, not per tick: a fast
         # data cadence must not become a fast poll of the server. None means
         # "derive from the interval" (max(interval, DEFAULT_GRAPH_POLL_INTERVAL)).
@@ -414,8 +415,12 @@ class AppRunner:
         run_id = self._dispatch_run(start, end, params)
         return {"name": self.spec.name, "run_id": run_id}
 
-    def _dispatch_run(self, start, end, params: dict[str, Any]) -> str:
-        """Launch a stateless run task and monitor it in the background."""
+    def _dispatch_run(self, start, end, params: dict[str, Any], reason: str = "manual") -> str:
+        """Launch a stateless run task and monitor it in the background.
+
+        ``reason`` is ``manual`` / ``interval`` / ``change`` / ``cascade``;
+        a cascade run's outputs are marked so they trigger nothing further.
+        """
         self._run_counter += 1
         run_id = f"{self.spec.name}-{self._run_counter}"
         ctx = self._make_context(params=params, start=start, end=end)
@@ -423,17 +428,20 @@ class AppRunner:
         record: dict[str, Any] = {
             "run_id": run_id,
             "status": "running",
+            "reason": reason,
             "started_at": datetime.now(timezone.utc).isoformat(),
             "finished_at": None,
             "outputs": None,
             "error": None,
         }
         self._runs[run_id] = record
-        record["_monitor"] = asyncio.create_task(self._monitor_run(run_id, ref))
+        record["_monitor"] = asyncio.create_task(
+            self._monitor_run(run_id, ref, cascade=(reason == "cascade"))
+        )
         self._trim_runs()
         return run_id
 
-    async def _monitor_run(self, run_id: str, ref) -> None:
+    async def _monitor_run(self, run_id: str, ref, *, cascade: bool = False) -> None:
         """Await a run task, emit its outputs, and record the outcome."""
         from acquirium.Apps.output_emission import emit_outputs
 
@@ -454,6 +462,7 @@ class AppRunner:
                 outputs,
                 insert_timeseries=self.acquirium_cli.client.insert_timeseries,
                 logger=self.logger,
+                cascade=cascade,
             )
             record["status"] = "done"
             record["outputs"] = len(outputs)
@@ -506,17 +515,59 @@ class AppRunner:
             self.logger.exception("query refresh failed; keeping previous query")
 
     async def _scheduled_dispatch(self, start, end, params: dict[str, Any]) -> None:
-        """One keep-alive tick: refresh the query if stale, run, await the end.
+        """One tick: refresh the query if stale, run, await the end.
 
         Awaiting the monitor task makes the scheduler's in-flight count span
         the run's full duration (including output emission) — that is what
-        skip-on-overrun measures against.
+        skip-on-overrun measures against. The reason is whatever the caller
+        parked in ``_next_reason`` (interval ticks leave it at "interval";
+        :meth:`trigger` sets change/cascade before entering the scheduler).
         """
+        reason, self._next_reason = self._next_reason, "interval"
         self._maybe_refresh_query()
-        run_id = self._dispatch_run(start, end, params)
+        run_id = self._dispatch_run(start, end, params, reason=reason)
         monitor = self._runs.get(run_id, {}).get("_monitor")
         if monitor is not None:
             await monitor
+
+    def trigger(self, reason: str = "change") -> dict[str, Any]:
+        """Out-of-band run request (auto-run): a data change touched a
+        stream this app reads.
+
+        Enters the same single-flight scheduler as interval ticks, so a
+        change-triggered run and an interval run can never race this actor;
+        an in-flight run makes this a counted skip. Without a live keep-alive
+        loop (run_mode on_change apps are started with keep_alive but a
+        huge interval, so there always is one), falls back to a one-shot.
+        Sync method: runs off the actor's loop thread, so the scheduler is
+        driven through call_soon_threadsafe.
+        """
+        loop = self._loop
+        sched = self._scheduler
+        if sched is None or loop is None or not self._keep_alive:
+            if loop is None:
+                return {"name": self.spec.name, "dispatched": False, "why": "not running"}
+            fut = asyncio.run_coroutine_threadsafe(
+                self._one_shot(reason), loop,
+            )
+            return {"name": self.spec.name, "dispatched": True, "run_id": fut.result(timeout=30)}
+
+        def _fire():
+            self._next_reason = reason
+            if not sched.trigger(reason):
+                self._next_reason = "interval"
+                return False
+            return True
+
+        fut = asyncio.run_coroutine_threadsafe(self._call_on_loop(_fire), loop)
+        dispatched = bool(fut.result(timeout=30))
+        return {"name": self.spec.name, "dispatched": dispatched}
+
+    async def _call_on_loop(self, fn):
+        return fn()
+
+    async def _one_shot(self, reason: str) -> str:
+        return self._dispatch_run(None, None, dict(self._params), reason=reason)
 
     async def _run_loop(self, interval: float, start, end, params: dict[str, Any]) -> None:
         """Keep-alive loop, driven by :class:`IntervalScheduler`.
@@ -566,6 +617,11 @@ class AppRunner:
             # run() hasn't captured the loop yet; no coroutine is waiting.
             self._stop_event.set()
         return {"name": self.spec.name, "stopped": True}
+
+    def watched_streams(self) -> list[str]:
+        """The stream URIs auto-run should subscribe this app to: declared
+        (acq:mayUse) ∪ observed (prov:used)."""
+        return sorted(self.provenance.may_use | self.provenance.used)
 
     def status(self) -> dict[str, Any]:
         """Report build/run status for this app (the actor answers directly)."""

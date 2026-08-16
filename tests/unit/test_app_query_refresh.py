@@ -68,7 +68,7 @@ def run_loop_ticks(runner, ticks: int = 2, interval: float = 0.01):
     # milliseconds, so force a poll before every dispatch.
     runner.graph_poll_interval = 0.0
 
-    def fake_dispatch(start, end, params):
+    def fake_dispatch(start, end, params, reason="interval"):
         calls.append((start, end, params))
         if len(calls) >= ticks:
             runner._stop_event.set()
@@ -194,7 +194,7 @@ def test_graph_poll_floor_limits_polling(tmp_path):
 
     calls: list[tuple] = []
 
-    def fake_dispatch(start, end, params):
+    def fake_dispatch(start, end, params, reason="interval"):
         calls.append((start, end, params))
         if len(calls) >= 3:
             runner._stop_event.set()
@@ -219,7 +219,7 @@ def test_overrun_skips_ticks_and_reports(tmp_path):
 
     calls: list[tuple] = []
 
-    def fake_dispatch(start, end, params):
+    def fake_dispatch(start, end, params, reason="interval"):
         calls.append((start, end, params))
 
         async def slow_monitor():

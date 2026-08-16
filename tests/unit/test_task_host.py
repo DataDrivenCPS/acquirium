@@ -159,9 +159,9 @@ class TestRunning:
         # scheduler's in-flight window spans the awaited tick).
         original_run_once = host._run_once
 
-        async def slow_run_once(t, params, start=None, end=None):
+        async def slow_run_once(t, params, start=None, end=None, reason="interval"):
             await asyncio.sleep(0.08)
-            return await original_run_once(t, params, start, end)
+            return await original_run_once(t, params, start, end, reason=reason)
 
         host._run_once = slow_run_once
 

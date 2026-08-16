@@ -44,8 +44,22 @@ class FakeMethod:
 
 class FakeActor:
     def __init__(self, **behaviors):
-        for tag in ("register", "setup", "stop", "deregister", "status", "run"):
-            self.__dict__[tag] = FakeMethod(tag, behaviors.get(tag, lambda *a, **k: {}))
+        self.calls: list[tuple] = []
+        for tag in ("register", "setup", "stop", "deregister", "status", "run",
+                    "trigger", "watched_streams"):
+            self.__dict__[tag] = FakeMethod(tag, self._wrap(tag, behaviors.get(tag)))
+
+    def _wrap(self, tag, fn):
+        def call(*a, **k):
+            self.calls.append((tag, a, k))
+            if fn is not None:
+                return fn(*a, **k)
+            if tag == "trigger":
+                return {"dispatched": True}
+            if tag == "watched_streams":
+                return ["urn:stream:1"]
+            return {}
+        return call
 
 
 class FakeRunnerCls:
@@ -91,9 +105,16 @@ def stub_ray(monkeypatch):
 @pytest.fixture
 def app_sup(stub_ray, monkeypatch, tmp_path):
     monkeypatch.setattr(app_sup_mod, "AppRunner", FakeRunnerCls)
-    return app_sup_mod.AppSupervisor(
+    sup = app_sup_mod.AppSupervisor(
         app_storage_root=tmp_path, server_url="localhost", server_port=1,
     )
+    # Deterministic auto-run in tests: no debounce/floor, and no worker
+    # thread racing flush_now() — dispatch is driven explicitly.
+    sup.change_feed.stop()
+    sup.change_feed.debounce_seconds = 0.0
+    sup.change_feed.min_interval = 0.0
+    yield sup
+    sup.change_feed.stop()
 
 
 @pytest.fixture
@@ -360,7 +381,8 @@ class FakeHost:
 
     def __init__(self):
         self.calls: list[tuple] = []
-        for tag in ("register", "restore", "deregister", "run", "stop", "status"):
+        for tag in ("register", "restore", "deregister", "run", "stop", "status",
+                    "trigger", "watched_streams"):
             self.__dict__[tag] = FakeMethod(tag, self._make(tag))
 
     def _make(self, tag):
@@ -372,6 +394,10 @@ class FakeHost:
                 return {"name": a[0], "kind": "task", "runs": []}
             if tag == "run":
                 return {"name": a[0], "run_id": f"{a[0]}-1"}
+            if tag == "trigger":
+                return {"dispatched": True}
+            if tag == "watched_streams":
+                return ["urn:stream:t"]
             return {"name": a[0] if a else None}
         return fn
 
@@ -457,3 +483,71 @@ class TestTaskRouting:
         task_sup.stop_all_apps()
         assert FakeHostCls.instance in stub_ray
         assert task_sup._task_host is None
+
+
+# ─────────────────────── auto-run wiring ───────────────────────
+
+
+class TestAutoRun:
+    def test_on_change_app_starts_heartbeat_and_subscribes(self, app_sup):
+        from acquirium.internals.models import AppSpec as _AppSpec
+        actor = FakeActor()
+        FakeRunnerCls.next_actor = actor
+        app_sup.register_app(_AppSpec(name="x", run_mode="on_change"))
+        # keep-alive started (heartbeat interval), subscriptions read.
+        run_calls = [c for c in actor.calls if c[0] == "run"]
+        assert run_calls and run_calls[0][1][3] is True                # keep_alive
+        assert run_calls[0][1][4] == app_sup_mod.ON_CHANGE_HEARTBEAT   # interval
+        assert app_sup.change_feed.subscribers("urn:stream:1") == {"x"}
+        assert app_sup._apps["x"]["running"] is True
+
+    def test_interval_app_resumes_at_its_interval(self, app_sup):
+        from acquirium.internals.models import AppSpec as _AppSpec
+        actor = FakeActor()
+        FakeRunnerCls.next_actor = actor
+        app_sup.register_app(_AppSpec(name="x", run_mode="interval", interval=42.0))
+        run_calls = [c for c in actor.calls if c[0] == "run"]
+        assert run_calls[0][1][3] is True and run_calls[0][1][4] == 42.0
+        # interval apps do NOT subscribe: change dispatch is opt-in.
+        assert app_sup.change_feed.subscribers("urn:stream:1") == set()
+
+    def test_manual_app_does_nothing(self, app_sup):
+        actor = FakeActor()
+        FakeRunnerCls.next_actor = actor
+        app_sup.register_app(spec("x"))
+        assert not [c for c in actor.calls if c[0] == "run"]
+        assert app_sup._apps["x"]["running"] is False
+
+    def test_change_dispatch_goes_through_trigger(self, app_sup):
+        from acquirium.internals.models import AppSpec as _AppSpec
+        actor = FakeActor()
+        FakeRunnerCls.next_actor = actor
+        app_sup.register_app(_AppSpec(name="x", run_mode="on_change"))
+        app_sup.change_feed.notify("driver", ["urn:stream:1"])
+        assert app_sup.change_feed.flush_now() == ["x"]
+        trig = [c for c in actor.calls if c[0] == "trigger"]
+        assert trig and trig[0][1] == ("change",)
+
+    def test_task_change_dispatch_and_subscription(self, task_sup):
+        from acquirium.internals.models import TaskSpec
+        task_sup.register_task(TaskSpec(name="t", fn_name="f", fn_source="def f(ctx): return []",
+                                        run_mode="on_change"))
+        assert task_sup.change_feed.subscribers("urn:stream:t") == {"t"}
+        task_sup.change_feed.notify("driver", ["urn:stream:t"])
+        assert task_sup.change_feed.flush_now() == ["t"]
+        assert ("trigger", ("t", "change"), {}) in FakeHostCls.instance.calls
+
+    def test_delete_unsubscribes(self, app_sup):
+        from acquirium.internals.models import AppSpec as _AppSpec
+        FakeRunnerCls.next_actor = FakeActor()
+        app_sup.register_app(_AppSpec(name="x", run_mode="on_change"))
+        assert app_sup.change_feed.subscribers("urn:stream:1") == {"x"}
+        app_sup.delete_app("x")
+        assert app_sup.change_feed.subscribers("urn:stream:1") == set()
+
+    def test_hook_is_installed_on_the_manager(self):
+        # The lifespan wires Manager.change_hook to the feed's notify — check
+        # the notify signature matches how the manager calls it.
+        import inspect
+        params = list(inspect.signature(app_sup_mod.ChangeFeed.notify).parameters)
+        assert params[1:4] == ["source_id", "ref_uris", "cascade"]

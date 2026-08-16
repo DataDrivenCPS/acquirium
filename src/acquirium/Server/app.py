@@ -289,6 +289,9 @@ async def lifespan(app: FastAPI):
         env_storage_root=m.env_storage_root,
     )
     app.state.apps = app_supervisor
+    # Auto-run: every timeseries insert notifies the change feed
+    # (enqueue-only on the request thread; dispatch on the feed's worker).
+    m.change_hook = app_supervisor.change_feed.notify
     # Once the server answers /health: respawn apps persisted by a previous
     # run, then start the config's [[drivers]]. Apps restore first so their
     # build-phase graph reads/writes don't interleave with driver setup.

@@ -102,7 +102,7 @@ class ChangeFeed:
 
     # ─────────────────────── the hook ───────────────────────
 
-    def notify(self, source_id: str, ref_uris: Iterable[str], *, cascade: bool = False) -> None:
+    def notify(self, source_id: str, ref_uris: Iterable[str], cascade: bool = False) -> None:
         """Record that streams changed. Enqueue-only; safe on any thread.
 
         ``source_id`` is the inserting datasource. If it is an app
