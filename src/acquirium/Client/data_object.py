@@ -410,6 +410,10 @@ class DataObject:
             self._materialized = True
             return
 
+        # Observed provenance: these streams are about to be read for real.
+        from acquirium.internals.read_recorder import record_reads
+        record_reads(b.ref_uri for b in self._bindings)
+
         start = self._query_params.get("start")
         end = self._query_params.get("end")
         limit = self._query_params.get("limit")

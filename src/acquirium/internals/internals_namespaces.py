@@ -15,6 +15,7 @@ WATR = Namespace("urn:nawi-water-ontology#")
 BRICK = Namespace("https://brickschema.org/schema/Brick#")
 BRICK_REF = Namespace("https://brickschema.org/schema/Brick/ref#")
 OWL = Namespace("http://www.w3.org/2002/07/owl#")
+PROV = Namespace("http://www.w3.org/ns/prov#")
 
 
 # Internal predicates for scaffold-only metadata
@@ -42,6 +43,22 @@ ENV_SPEC = ACQUIRIUM_NS.envSpec            # JSON EnvSpec (pip/env_vars/...)
 # event and trigger share the EventStream rdf:type, so the stream type alone
 # cannot restore a trigger output.
 OUTPUT_KIND = ACQUIRIUM_NS.outputKind
+
+# App provenance (written to the app's own provenance graph, see
+# graph_registry.provenance_source_id). Two honest, app-level relations:
+#   <app> acq:mayUse <ref>  — the query resolved to this stream (declared,
+#                              available before any run)
+#   <app> prov:used  <ref>  — a run actually read values from this stream
+#                              (observed, unioned across runs)
+# plus <output-point> prov:wasGeneratedBy <app>. Per-output derivation is
+# deliberately never written: which read fed which output lives inside the
+# app's Python body and is not recoverable without taint tracking.
+MAY_USE = ACQUIRIUM_NS.mayUse
+PROV_USED = PROV.used
+PROV_WAS_GENERATED_BY = PROV.wasGeneratedBy
+PROV_ACTIVITY = PROV.Activity
+PROV_ENTITY = PROV.Entity
+PROVENANCE_HASH = ACQUIRIUM_NS.provenanceHash
 HAS_IMAGE = ACQUIRIUM_NS.hasImage
 HAS_ENTRYPOINT = ACQUIRIUM_NS.hasEntrypoint
 HAS_COMMAND = ACQUIRIUM_NS.hasCommand
