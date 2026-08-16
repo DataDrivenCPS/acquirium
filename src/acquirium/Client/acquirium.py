@@ -109,7 +109,7 @@ def _build_stream_triples(
             _add_triple(g, target, pred, value)
 from acquirium.Client.client import AcquiriumClient
 from acquirium.Apps.base import App
-from acquirium.internals.models import AppOutputSpec, AppSpec, EnvSpec, compute_ref_uri
+from acquirium.internals.models import AppOutputSpec, AppSpec, EnvSpec, TaskSpec, compute_ref_uri
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_DB_URI,
     ACQUIRIUM_REF_NAME,
@@ -533,16 +533,9 @@ class Acquirium:
         if isinstance(env_spec, dict):
             env_spec = EnvSpec(**env_spec)
 
-        output_specs: list[AppOutputSpec] = []
-        output_items = outputs if outputs is not None else list(getattr(app, "outputs", []) or [])
-        for item in output_items:
-            if isinstance(item, AppOutputSpec):
-                spec_item = item
-            elif isinstance(item, dict):
-                spec_item = AppOutputSpec(**item)
-            else:
-                raise TypeError("outputs must be AppOutputSpec or dict")
-            output_specs.append(spec_item)
+        output_specs = self._output_specs(
+            outputs if outputs is not None else list(getattr(app, "outputs", []) or [])
+        )
 
         # The app's Python source is shipped to the server so its AppRunner
         # actor can load and run the class. Prefer an explicit override on the
@@ -571,7 +564,75 @@ class Acquirium:
             params=params or {},
             env=env_spec,
         )
-        return self.client.register_app(spec, replace=replace)
+        return AppsResponse(self.client.register_app(spec, replace=replace))
+
+    @staticmethod
+    def _output_specs(items: Iterable[AppOutputSpec | dict[str, Any]] | None) -> list[AppOutputSpec]:
+        out: list[AppOutputSpec] = []
+        for item in items or []:
+            if isinstance(item, AppOutputSpec):
+                out.append(item)
+            elif isinstance(item, dict):
+                out.append(AppOutputSpec(**item))
+            else:
+                raise TypeError("outputs must be AppOutputSpec or dict")
+        return out
+
+    def register_task(
+        self,
+        fn: Callable,
+        *,
+        query: Query | None = None,
+        name: str | None = None,
+        outputs: list[AppOutputSpec | dict[str, Any]] | None = None,
+        params: dict[str, Any] | None = None,
+        interval: float | None = None,
+        run_mode: str = "manual",
+        version: str = "0.0",
+        replace: bool = False,
+    ) -> dict[str, Any]:
+        """Register a class-less task: one query plus ``fn(ctx) -> list[Output]``.
+
+        Tasks are the light tier — no build phase, no state, and by contract
+        no dependencies beyond the acquirium package — and every task shares
+        one server-side host actor instead of costing an actor each. The
+        body receives the same ``ctx`` an ``App.run`` does (``ctx.query``,
+        ``ctx.params``); anything else it needs must be imported inside it.
+
+        ``fn`` is shipped as source (authoritative; works from a notebook
+        cell or a file, not an interactive prompt) plus a pickled fast path.
+        ``name`` defaults to the function name. Tasks share the app name
+        space: use ``replace=True`` to overwrite an existing app or task.
+        """
+        from acquirium.Apps.task_fn import ship_function
+
+        shipped = ship_function(fn)
+        spec = TaskSpec(
+            name=name or fn.__name__,
+            query=query.to_dict(strict=True) if query is not None else {},
+            outputs=self._output_specs(outputs),
+            params=params or {},
+            interval=interval,
+            run_mode=run_mode,
+            version=version,
+            **shipped,
+        )
+        return AppsResponse(self.client.register_task(spec, replace=replace))
+
+    def task(self, *, query: Query | None = None, name: str | None = None, **kwargs: Any) -> Callable:
+        """Decorator form of :meth:`register_task`::
+
+            @aq.task(query=q, outputs=[...], interval=10)
+            def check_tds(ctx):
+                ...
+
+        Registers on definition and returns the function unchanged, so it
+        stays callable locally for testing.
+        """
+        def decorate(fn: Callable) -> Callable:
+            self.register_task(fn, query=query, name=name, **kwargs)
+            return fn
+        return decorate
 
     def delete_app(self, app_id: str) -> dict[str, Any]:
         """Gracefully delete a registered app (stop it, clean up its graph

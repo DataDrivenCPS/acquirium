@@ -11,6 +11,7 @@ from acquirium.internals.models import (
     AppSpec,
     AppRunRequest,
     AppStopRequest,
+    TaskSpec,
     StreamInsert,
     RegisterDatasourceRequest,
     looks_like_uri,
@@ -527,6 +528,14 @@ class AcquiriumClient:
 
     def register_app(self, spec: AppSpec, *, replace: bool = False) -> dict:
         url = f"{self.base_url}/apps/register"
+        response = requests.post(
+            url, json=spec.model_dump(mode="json"), params={"replace": replace}
+        )
+        _raise_for_status(response)
+        return response.json()
+
+    def register_task(self, spec: TaskSpec, *, replace: bool = False) -> dict:
+        url = f"{self.base_url}/apps/register_task"
         response = requests.post(
             url, json=spec.model_dump(mode="json"), params={"replace": replace}
         )

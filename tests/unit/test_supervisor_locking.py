@@ -77,7 +77,7 @@ def stub_ray(monkeypatch):
         return "/fake/envs/python" if spec is not None and spec.pip else None
 
     monkeypatch.setattr(ray, "get", fake_get)
-    monkeypatch.setattr(ray, "kill", killed.append)
+    monkeypatch.setattr(ray, "kill", lambda actor, **kw: killed.append(actor))
     monkeypatch.setattr(ray, "wait", lambda refs, **k: ([], list(refs)))
     monkeypatch.setattr(aq_mod, "Acquirium", lambda **kw: SimpleNamespace())
     # Never materialize a real venv in unit tests.
@@ -350,3 +350,110 @@ class TestDriverStart:
         assert "stopped during startup" in result["error"]
         assert len(stub_ray) == 1       # the late runner was killed
         assert drv_sup._drivers == {}
+
+
+# ─────────────────────── task routing ───────────────────────
+
+
+class FakeHost:
+    """Stand-in for the TaskHost actor: records calls, answers like the host."""
+
+    def __init__(self):
+        self.calls: list[tuple] = []
+        for tag in ("register", "restore", "deregister", "run", "stop", "status"):
+            self.__dict__[tag] = FakeMethod(tag, self._make(tag))
+
+    def _make(self, tag):
+        def fn(*a, **k):
+            self.calls.append((tag, a, k))
+            if tag == "register":
+                return {"name": a[0].name, "outputs": [], "load_error": None}
+            if tag == "status":
+                return {"name": a[0], "kind": "task", "runs": []}
+            if tag == "run":
+                return {"name": a[0], "run_id": f"{a[0]}-1"}
+            return {"name": a[0] if a else None}
+        return fn
+
+
+class FakeHostCls:
+    instance: FakeHost | None = None
+
+    @classmethod
+    def remote(cls, *a, **k):
+        cls.instance = FakeHost()
+        return cls.instance
+
+
+@pytest.fixture
+def task_sup(app_sup, monkeypatch):
+    monkeypatch.setattr(app_sup_mod, "TaskHost", FakeHostCls)
+    FakeHostCls.instance = None
+    return app_sup
+
+
+def task_spec(name="t"):
+    from acquirium.internals.models import TaskSpec
+    return TaskSpec(name=name, fn_name="f", fn_source="def f(ctx): return []")
+
+
+class TestTaskRouting:
+    def test_register_task_spawns_host_lazily_and_records_kind(self, task_sup):
+        assert FakeHostCls.instance is None
+        info = task_sup.register_task(task_spec())
+        assert info["replaced"] is False
+        assert FakeHostCls.instance.calls[0][0] == "register"
+        rec = task_sup._apps["t"]
+        assert rec["kind"] == "task" and rec["actor"] is None
+        assert task_sup.list_apps()[0]["kind"] == "task"
+
+    def test_task_and_app_share_the_name_space(self, task_sup):
+        task_sup.register_task(task_spec("x"))
+        with pytest.raises(app_sup_mod.AppAlreadyRegistered):
+            task_sup.register_app(spec("x"))
+        # replace=True tears the task down (host.deregister) and installs the app.
+        task_sup.register_app(spec("x"), replace=True)
+        assert ("deregister", ("x",), {"remove_source": False}) in FakeHostCls.instance.calls
+        assert task_sup._apps["x"]["kind"] == "app"
+
+    def test_run_stop_status_route_to_the_host(self, task_sup):
+        from acquirium.internals.models import AppRunRequest
+
+        task_sup.register_task(task_spec())
+        task_sup.run_app(AppRunRequest(app_id="t", keep_alive=True, interval=5.0))
+        assert task_sup._apps["t"]["running"] is True
+        task_sup.app_status("t")
+        task_sup.stop_app("t")
+        tags = [c[0] for c in FakeHostCls.instance.calls]
+        assert tags == ["register", "run", "status", "stop"]
+        run_call = FakeHostCls.instance.calls[1]
+        assert run_call[1] == ("t",) and run_call[2]["interval"] == 5.0
+
+    def test_delete_task_deregisters_on_the_host(self, task_sup, stub_ray):
+        task_sup.register_task(task_spec())
+        task_sup.delete_app("t")
+        assert "t" not in task_sup._apps
+        assert ("deregister", ("t",), {"remove_source": True}) in FakeHostCls.instance.calls
+        assert stub_ray == []  # no actor of its own to kill
+
+    def test_actor_lookup_refuses_tasks(self, task_sup):
+        task_sup.register_task(task_spec())
+        with pytest.raises(RuntimeError, match="is a task"):
+            task_sup._actor("t")
+
+    def test_register_failure_frees_the_name(self, task_sup, monkeypatch):
+        task_sup.register_task(task_spec("ok"))   # spawn the host
+        host = FakeHostCls.instance
+
+        def boom(*a, **k):
+            raise RuntimeError("host exploded")
+        host.register = FakeMethod("register", boom)
+        with pytest.raises(RuntimeError):
+            task_sup.register_task(task_spec("bad"))
+        assert "bad" not in task_sup._apps
+
+    def test_stop_all_kills_the_host(self, task_sup, stub_ray):
+        task_sup.register_task(task_spec())
+        task_sup.stop_all_apps()
+        assert FakeHostCls.instance in stub_ray
+        assert task_sup._task_host is None

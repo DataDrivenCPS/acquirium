@@ -33,6 +33,7 @@ from acquirium.internals.models import (
     AppSpec,
     AppRunRequest,
     AppStopRequest,
+    TaskSpec,
     StreamInsert,
     RegisterDatasourceRequest,
 )
@@ -159,10 +160,13 @@ async def _restore_registered_apps(app_supervisor: AppSupervisor, manager: Manag
         return
     for spec in specs:
         try:
-            await asyncio.to_thread(app_supervisor.restore_app, spec)
-            log.info("Restored app '%s' from the persistent store", spec.name)
+            if spec.kind == "task":
+                await asyncio.to_thread(app_supervisor.restore_task, spec)
+            else:
+                await asyncio.to_thread(app_supervisor.restore_app, spec)
+            log.info("Restored %s '%s' from the persistent store", spec.kind, spec.name)
         except Exception:
-            log.exception("Failed to restore app '%s'", spec.name)
+            log.exception("Failed to restore %s '%s'", spec.kind, spec.name)
 
 
 async def _start_config_drivers(supervisor: DriverSupervisor, cfg: dict) -> None:
@@ -448,6 +452,20 @@ def register_app(spec: AppSpec, replace: bool = False) -> dict[str, Any]:
         raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
         log.exception("register_app failed")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/apps/register_task")
+def register_task(spec: TaskSpec, replace: bool = False) -> dict[str, Any]:
+    """Register a class-less task on the shared task host. Tasks share the
+    app name space and the other /apps routes (run/stop/delete/list)."""
+    try:
+        info = app.state.apps.register_task(spec, replace=replace)
+        return {"ok": True, **info}
+    except AppAlreadyRegistered as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Exception as e:
+        log.exception("register_task failed")
         raise HTTPException(status_code=400, detail=str(e))
 
 

@@ -16,9 +16,10 @@ from rdflib import URIRef
 
 from acquirium.internals._log import timed_debug as _timed_debug
 from acquirium.internals.env_spec import DEFAULT_ENV_STORAGE_ROOT, build_runtime_env, ensure_env
-from acquirium.internals.models import AppSpec, AppOutputSpec, AppRunRequest, EnvSpec
+from acquirium.internals.models import AppSpec, AppOutputSpec, AppRunRequest, EnvSpec, TaskSpec
 from acquirium.internals.internals_namespaces import *
 from acquirium.Apps.runner import AppRunner
+from acquirium.Apps.task_host import TaskHost, load_persisted_task
 
 
 
@@ -62,11 +63,16 @@ class AppSupervisor:
         self._lock = threading.Lock()
         self._build_lock = threading.Lock()
         self._apps: dict[str, dict[str, Any]] = {}
+        # The single shared task actor, created on first use (tasks share
+        # the app name space and the app routes; records carry kind="task").
+        self._task_host = None
+        self._task_host_lock = threading.Lock()
 
     def _placeholder(self, spec: AppSpec) -> dict[str, Any]:
         """A record that reserves an app name while its actor is being built."""
         return {
             "name": spec.name,
+            "kind": "app",
             "spec": spec,
             "actor": None,
             "registered_at": datetime.now(timezone.utc).isoformat(),
@@ -74,6 +80,83 @@ class AppSupervisor:
             "stopped_at": None,
             "running": False,
         }
+
+    # ─────────────────────── task host ───────────────────────
+
+    def _host(self):
+        """The shared TaskHost actor, spawned lazily (never under _lock)."""
+        with self._task_host_lock:
+            if self._task_host is None:
+                from acquirium.Client.acquirium import Acquirium
+
+                aq = Acquirium(
+                    server_url=self.server_url,
+                    server_port=self.server_port,
+                    use_ssl=self.use_ssl,
+                )
+                self._task_host = TaskHost.remote(self.app_storage_root, aq)
+                logger.info("Spawned the shared task host")
+            return self._task_host
+
+    def _task_record(self, spec: TaskSpec) -> dict[str, Any]:
+        return {
+            "name": spec.name,
+            "kind": "task",
+            "spec": spec,
+            "actor": None,
+            "registered_at": datetime.now(timezone.utc).isoformat(),
+            "started_at": None,
+            "stopped_at": None,
+            "running": False,
+        }
+
+    def register_task(self, spec: TaskSpec, *, replace: bool = False) -> dict[str, Any]:
+        """Register a class-less task on the shared host.
+
+        Same name space as apps: a task cannot take a registered app's name
+        (or vice versa) without ``replace=True``.
+        """
+        record = self._task_record(spec)
+        with self._lock:
+            existing = self._apps.get(spec.name)
+            if existing is not None and not replace:
+                raise AppAlreadyRegistered(spec.name)
+            self._apps[spec.name] = record
+        replaced = existing is not None
+        try:
+            if existing is not None:
+                self._teardown_app(existing, remove_source=False)
+            with self._build_lock:
+                info = ray.get(self._host().register.remote(spec), timeout=self.TEARDOWN_TIMEOUT * 6)
+        except Exception:
+            with self._lock:
+                if self._apps.get(spec.name) is record:
+                    del self._apps[spec.name]
+            raise
+        logger.info("%s task '%s'", "Replaced" if replaced else "Registered", spec.name)
+        return {**info, "replaced": replaced}
+
+    def restore_task(self, spec: AppSpec) -> dict[str, Any]:
+        """Re-attach a persisted task after a server restart.
+
+        The registration graph gave us the AppSpec view; the function itself
+        lives on disk (task.json + fn.pkl), which is what the host loads.
+        """
+        task = load_persisted_task(self.app_storage_root, spec.name)
+        if task is None:
+            raise FileNotFoundError(f"task '{spec.name}' has no persisted function under {self.app_storage_root}")
+        record = self._task_record(task)
+        with self._lock:
+            self._apps[spec.name] = record
+        try:
+            with self._build_lock:
+                info = ray.get(self._host().restore.remote(task), timeout=self.TEARDOWN_TIMEOUT * 6)
+        except Exception:
+            with self._lock:
+                if self._apps.get(spec.name) is record:
+                    del self._apps[spec.name]
+            raise
+        return info
 
     def register_app(self, spec: AppSpec, *, replace: bool = False) -> dict[str, Any]:
         from acquirium.Client.acquirium import Acquirium
@@ -210,6 +293,17 @@ class AppSupervisor:
         """
         actor = record.get("actor")
         name = record["name"]
+        if record.get("kind") == "task":
+            # Tasks live on the shared host: stop + deregister there; the
+            # host itself outlives any single task.
+            try:
+                ray.get(
+                    self._host().deregister.remote(name, remove_source=remove_source),
+                    timeout=self.TEARDOWN_TIMEOUT,
+                )
+            except Exception:
+                logger.exception("Failed to deregister task '%s'", name)
+            return
         if actor is None:
             # A reservation placeholder — nothing was built yet.
             return
@@ -265,29 +359,47 @@ class AppSupervisor:
         with self._lock:
             records = list(self._apps.values())
         return [
-            {"name": r["name"],"running": r["running"], "started_at": r["started_at"],"stopped_at":r["stopped_at"]} for r in records
+            {"name": r["name"], "kind": r.get("kind", "app"), "running": r["running"],
+             "started_at": r["started_at"], "stopped_at": r["stopped_at"]}
+            for r in records
         ]
 
-    def _actor(self, app_id: str):
+    def _record(self, app_id: str) -> dict[str, Any]:
         with self._lock:
             record = self._apps.get(app_id)
         if record is None:
             raise KeyError(f"Unknown app: {app_id}")
+        return record
+
+    def _actor(self, app_id: str):
+        record = self._record(app_id)
+        if record.get("kind") == "task":
+            raise RuntimeError(f"'{app_id}' is a task; it has no actor of its own")
         if record.get("actor") is None:
             raise RuntimeError(f"App '{app_id}' is still registering; retry shortly")
         return record["actor"]
 
     def run_app(self, req: AppRunRequest) -> dict[str, Any]:
-        """Route a run request to the app's actor, which schedules it."""
-        actor = self._actor(req.app_id)
+        """Route a run request to the app's actor (or the task host)."""
+        record = self._record(req.app_id)
         now = datetime.now(timezone.utc).isoformat()
         with _timed_debug(logger, "run_app actor.run app=%s", req.app_id):
-            run_message = ray.get(
-                actor.run.remote(
-                    req.start, req.end, req.params, req.keep_alive, req.interval,
-                    req.max_in_flight, req.run_timeout,
+            if record.get("kind") == "task":
+                run_message = ray.get(
+                    self._host().run.remote(
+                        req.app_id, start=req.start, end=req.end, params=req.params,
+                        keep_alive=req.keep_alive, interval=req.interval,
+                        max_in_flight=req.max_in_flight,
+                    )
                 )
-            )
+            else:
+                actor = self._actor(req.app_id)
+                run_message = ray.get(
+                    actor.run.remote(
+                        req.start, req.end, req.params, req.keep_alive, req.interval,
+                        req.max_in_flight, req.run_timeout,
+                    )
+                )
         with self._lock:
             record = self._apps.get(req.app_id)
             if record is not None:
@@ -323,12 +435,16 @@ class AppSupervisor:
             if record is None:
                 raise KeyError(f"Unknown app: {app_id}")
             actor = record["actor"]
+            is_task = record.get("kind") == "task"
             if not record.get("running"):
                 logger.info("App '%s' is not running; stop is a no-op", app_id)
                 return {"name": app_id, "stopped": False, "running": False}
 
         with _timed_debug(logger, "stop_app actor.stop app=%s", app_id):
-            stop_message = ray.get(actor.stop.remote())
+            if is_task:
+                stop_message = ray.get(self._host().stop.remote(app_id))
+            else:
+                stop_message = ray.get(actor.stop.remote())
         with self._lock:
             record = self._apps.get(app_id)
             if record is not None:
@@ -338,9 +454,11 @@ class AppSupervisor:
         return stop_message
 
     def app_status(self, app_id: str) -> dict[str, Any]:
-        """Ask the app's actor to report its build/run status."""
-        actor = self._actor(app_id)
-        return ray.get(actor.status.remote())
+        """Ask the app's actor (or the task host) to report build/run status."""
+        record = self._record(app_id)
+        if record.get("kind") == "task":
+            return ray.get(self._host().status.remote(app_id))
+        return ray.get(self._actor(app_id).status.remote())
 
     def stop_all_apps(self) -> None:
         with self._lock:
@@ -354,6 +472,16 @@ class AppSupervisor:
                 logger.info("Stopped app '%s'", record["name"])
             except Exception:
                 logger.exception("Failed to stop app '%s'", record["name"])
+        with self._task_host_lock:
+            host, self._task_host = self._task_host, None
+        if host is not None:
+            try:
+                # Plain kill, no deregister: like apps, task registrations
+                # stay in the graph so the next start restores them.
+                ray.kill(host, no_restart=True)
+                logger.info("Stopped the shared task host")
+            except Exception:
+                logger.exception("Failed to stop the task host")
 
 
 def _app_type_name(type_uri: URIRef) -> str:

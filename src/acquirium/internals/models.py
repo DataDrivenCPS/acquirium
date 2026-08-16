@@ -220,6 +220,10 @@ class TaskSpec(BaseModel):
     across interpreter versions and is not meant for long-term storage.
     """
 
+    # bytes serialize as base64 in JSON (pydantic's default assumes UTF-8,
+    # which a pickle is not) — the wire and the on-disk task.json share this.
+    model_config = ConfigDict(ser_json_bytes="base64", val_json_bytes="base64")
+
     name: str
     query: dict = Field(default_factory=dict)          # Query.to_dict() form
     fn_name: str
