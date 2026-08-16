@@ -265,3 +265,18 @@ def test_setup_failure_marks_build_failed(tmp_path):
     with pytest.raises(Exception):
         runner.setup()
     assert runner._build_status == "failed"
+
+
+# ─────────────────────── registration ───────────────────────
+
+
+def test_register_registers_the_datasource_before_the_graph(tmp_path):
+    runner = make_runner(tmp_path)
+    runner.spec.source_code = "class X: pass"
+    runner.register()
+    aq = runner.acquirium_cli
+    aq.register_datasource.assert_called_once_with("app:runner_test_app")
+    # Datasource first, then the registration graph under the same owner.
+    names = [c[0] for c in aq.method_calls]
+    assert names.index("register_datasource") < names.index("insert_graph")
+    assert aq.insert_graph.call_args.kwargs["source_id"] == "app:runner_test_app"

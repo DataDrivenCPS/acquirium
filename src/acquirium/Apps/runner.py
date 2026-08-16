@@ -127,6 +127,10 @@ class AppRunner:
         serialized by the supervisor's lock — before registration returns.
         """
         self._persist_source()
+        # The app owns its graph and output streams under this source id —
+        # register it like every driver does, so the server's datasource
+        # registry knows the owner (the task host already does the same).
+        self.acquirium_cli.register_datasource(self.source_id)
         graph = app_spec_graph(self.spec)
         self.insert_graph(
             graph.serialize(format="turtle"),
