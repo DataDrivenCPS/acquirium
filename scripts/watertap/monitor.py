@@ -13,12 +13,11 @@ class SeawaterTDSmonitor(App):
     ]
 
     def build_query(self, aq: Acquirium):
-        return (aq.find_entity(_class="reverse osmosis membrane", alias="ro")
-                  .find_related(_class="ConnectionPoint", alias=f"RO_cp", hops=1)
-                  .find_related(_class="Water-Seawater", alias=f"RO_CP_medium", hops=1)
-                  .find_data(_from="RO_cp",alias="ro-tds")
-                  .filter_by_quantity_kind("flow mass")
-                  .filter_by_substance("constituent salt")
+        return (aq.query().entity("reverse osmosis membrane", alias="ro")
+                  .related("ConnectionPoint", alias="RO_cp", max_depth=1)
+                  .related("Water-Seawater", alias="RO_CP_medium", max_depth=1)
+                  .measurement(frm="RO_cp", alias="ro-tds",
+                               quantity_kind="flow mass", substance="constituent salt")
                   )
 
     def run(self, ctx: AppContext) -> list[Output]:

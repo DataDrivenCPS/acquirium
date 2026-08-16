@@ -59,16 +59,22 @@ class MembraneFoulingSoftSensor(App):
     ]
 
     def build_query(self, aq: Acquirium):
-        ro_q =  aq.find_entity(_class="reverse osmosis membrane", alias="ro")
-        ro_cp_q =  ro_q.find_related(_class="ConnectionPoint", alias=f"ro_cp", hops=1)
-        ro_feed_q = (ro_cp_q.find_related(_class="Water-Seawater", alias=f"feed_medium", _from=f"ro_cp", hops=1)
-                     .find_data(alias=f"feed", _from=f"ro_cp"))
-        ro_perm_q = (ro_q.find_related(_class="outlet Connection Point", alias=f"RO_out", hops=1)
-                     .find_data(alias=f"permeate",_from="RO_out")
-                     .filter_by_quantity_kind("mass flow rate")
-                     .filter_by_medium("fluid water")
-                     .filter_by_medium("brine",exclude="True")
-                     .filter_by_substance("constituent salt",exclude=True)
+        from acquirium.Client.explore.attributes import Not
+
+        ro_q = aq.query().entity("reverse osmosis membrane", alias="ro")
+        ro_cp_q = ro_q.related("ConnectionPoint", alias="ro_cp", max_depth=1)
+        ro_feed_q = (ro_cp_q.related("Water-Seawater", alias="feed_medium", frm="ro_cp", max_depth=1)
+                     .measurement(alias="feed", frm="ro_cp"))
+        # Two branches from the shared root: permeate hangs off ro_q, not ro_cp_q.
+        # The original chained filter_by_medium("fluid water") and then
+        # filter_by_medium("brine", exclude=True); the second silently
+        # replaced the first (filters are keyed per attribute), so only the
+        # brine exclusion ever applied. Ported to that effective behaviour.
+        ro_perm_q = (ro_q.related("outlet Connection Point", alias="RO_out", max_depth=1)
+                     .measurement(alias="permeate", frm="RO_out",
+                                  quantity_kind="mass flow rate",
+                                  medium=Not("brine"),
+                                  substance=Not("constituent salt"))
                      )
         return {
             "feed": ro_feed_q,

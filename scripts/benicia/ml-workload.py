@@ -62,15 +62,15 @@ class SecondaryTreatmentSoftSensor(App):
     ]
 
     def build_query(self, aq: Acquirium):
-        pump_q = aq.find_entity(_class="pump", alias="pump")
-        influent_q = (pump_q.find_related(_class="inlet Connection Point", alias=f"inf_cp", hops=1)
-                      .find_related(_class="fluid water", alias=f"inf_medium", _from=f"inf_cp", hops=1)
-                      .find_data(alias=f"influent", _from=f"inf_cp"))
-        effluent_q = (pump_q.find_related(_class="outlet Connection Point", alias=f"eff_cp", hops=1)
-                      .find_data(alias=f"effluent",_from="eff_cp")
-                      .filter_by_quantity_kind("concentration")
-                      .filter_by_medium("fluid water")
-                      .filter_by_substance("oxygen")
+        pump_q = aq.query().entity("pump", alias="pump")
+        influent_q = (pump_q.related("inlet Connection Point", alias="inf_cp", max_depth=1)
+                      .related("fluid water", alias="inf_medium", frm="inf_cp", max_depth=1)
+                      .measurement(alias="influent", frm="inf_cp"))
+        # Two branches from the shared root: effluent hangs off pump_q.
+        effluent_q = (pump_q.related("outlet Connection Point", alias="eff_cp", max_depth=1)
+                      .measurement(alias="effluent", frm="eff_cp",
+                                   quantity_kind="concentration",
+                                   medium="fluid water", substance="oxygen")
                       )
         return {
             "influent": influent_q,

@@ -13,12 +13,11 @@ class EffluentChlorineMonitor(App):
     ]
 
     def build_query(self, aq: Acquirium):
-        return (aq.find_entity(_class="pump", alias="effluent")
-                  .find_related(_class="outlet Connection Point", alias=f"eff_cp", hops=1)
-                  .find_related(_class="fluid water", alias=f"eff_cp_medium", hops=1)
-                  .find_data(_from="eff_cp",alias="eff-cl2")
-                  .filter_by_quantity_kind("concentration")
-                  .filter_by_substance("chlorine")
+        return (aq.query().entity("pump", alias="effluent")
+                  .related("outlet Connection Point", alias="eff_cp", max_depth=1)
+                  .related("fluid water", alias="eff_cp_medium", max_depth=1)
+                  .measurement(frm="eff_cp", alias="eff-cl2",
+                               quantity_kind="concentration", substance="chlorine")
                   )
 
     def run(self, ctx: AppContext) -> list[Output]:
