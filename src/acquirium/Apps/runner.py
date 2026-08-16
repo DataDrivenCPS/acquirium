@@ -100,10 +100,37 @@ class AppRunner:
         app_dir.mkdir(parents=True, exist_ok=True)
         if self.spec.source_code:
             (app_dir / entry_file).write_text(self.spec.source_code)
-        meta = {"entry_file": entry_file, "app_class": self.spec.app_class}
+        meta = {
+            "entry_file": entry_file,
+            "app_class": self.spec.app_class,
+            "source_spec": self.spec.source_spec,
+        }
         (app_dir / "app.json").write_text(
             json.dumps(meta, ensure_ascii=True, sort_keys=True)
         )
+
+    def _persist_run_state(
+        self,
+        *,
+        active: bool,
+        interval: float = 10.0,
+        start=None,
+        end=None,
+        params: dict[str, Any] | None = None,
+    ) -> None:
+        """Persist whether this app should resume its keep-alive loop."""
+        app_dir = self.app_storage_root / self.spec.name
+        app_dir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "keep_alive": active,
+            "interval": float(interval),
+            "start": start.isoformat() if isinstance(start, datetime) else start,
+            "end": end.isoformat() if isinstance(end, datetime) else end,
+            "params": params or {},
+        }
+        temp_path = app_dir / "run.json.tmp"
+        temp_path.write_text(json.dumps(payload, ensure_ascii=True, sort_keys=True))
+        temp_path.replace(app_dir / "run.json")
 
     def register(self) -> dict[str, Any]:
         """Persist the app's source and write its registration graph.
@@ -208,27 +235,28 @@ class AppRunner:
 
         for out in spec.outputs:
             point_uri = URIRef(out.point_uri)
-            ref_uri = compute_ref_uri(source_id, out.point_uri)
+            ref_name = out.ref_name or out.point_uri
+            ref_uri = compute_ref_uri(source_id, ref_name)
 
             graph.add((app_uri, PRODUCES, point_uri))
             graph.add((point_uri, RDF.type, VIRTUAL_POINT))
             graph.add((point_uri, HAS_EXTERNAL_REFERENCE, ref_uri))
             graph.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
-            graph.add((ref_uri, ACQUIRIUM_REF_NAME, Literal(out.point_uri)))
+            graph.add((ref_uri, ACQUIRIUM_REF_NAME, Literal(ref_name)))
             graph.add((ref_uri, RDF.type, STREAM))
             if out.kind in {"event", "trigger"}:
                 graph.add((ref_uri, RDF.type, EVENT_STREAM))
-                graph.add((ref_uri, ACQUIRIUM_VALUE_KIND, Literal("text")))
+                graph.add((ref_uri, ACQUIRIUM_VALUE_KIND, Literal(out.value_kind or "text")))
             else:
                 graph.add((ref_uri, RDF.type, TIMESERIES_STREAM))
-                graph.add((ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")))
+                graph.add((ref_uri, ACQUIRIUM_VALUE_KIND, Literal(out.value_kind or "numeric")))
 
             graph.add((ref_uri, STORAGE_BACKEND, Literal(out.storage_backend or "timescale")))
 
             add_literal_or_uri(graph, point_uri, HAS_QUANTITY_KIND, out.quantity_kind)
             add_literal_or_uri(graph, point_uri, HAS_UNIT, out.unit)
             add_literal_or_uri(graph, point_uri, DATA_SOURCE, out.data_source)
-            for dep in spec.depends_on:
+            for dep in out.depends_on or spec.depends_on:
                 graph.add((point_uri, IS_CALCULATED_FROM, URIRef(dep)))
         return graph
 
@@ -289,6 +317,7 @@ class AppRunner:
             cls = candidates[0]
 
         self.app = cls()
+        self.app.validate_definition()
         self.app._bind_graph_api(self.acquirium_cli, self.source_id)
         self.logger.info("Loaded app '%s' (%s)", self.spec.name, cls.__name__)
         return self.app
@@ -324,6 +353,38 @@ class AppRunner:
             "Built %d query/queries for app '%s'", len(self.queries), self.spec.name
         )
 
+    def _sync_dynamic_outputs(self) -> None:
+        """Discover and register newly matched outputs of a mapped app."""
+        if self.app is None:
+            return
+        resolver = getattr(self.app, "resolve_output_specs", None)
+        if not callable(resolver):
+            return
+        from acquirium.Apps.execution import normalize_output_specs
+
+        resolved = normalize_output_specs(resolver(self.queries))
+        existing = {out.point_uri for out in self.spec.outputs}
+        additions = [out for out in resolved if out.point_uri not in existing]
+        if not additions:
+            return
+        self.spec.outputs.extend(additions)
+        self.spec.depends_on = sorted({
+            *self.spec.depends_on,
+            *(dep for out in additions for dep in out.depends_on),
+        })
+        # Registration is additive: historical derived streams remain valid
+        # even if a later graph version no longer matches their input.
+        self.insert_graph(
+            self._app_spec_graph(self.spec).serialize(format="turtle"),
+            format="turtle",
+            replace=False,
+        )
+        self.logger.info(
+            "Registered %d newly mapped output stream(s) for '%s'",
+            len(additions),
+            self.spec.name,
+        )
+
     def build_app(self) -> None:
         """Run the app's one-time build phase and cache whatever it returns.
 
@@ -356,7 +417,15 @@ class AppRunner:
         """
         self._params = params if params is not None else dict(self.spec.params)
         self._load_app()
+        # The shipped source is authoritative for runtime validation. This is
+        # especially important for apps restored from older registration
+        # graphs, where trigger and event declarations were indistinguishable.
+        from acquirium.Apps.execution import output_specs
+        source_outputs = output_specs(self.app)
+        if self.spec.source_code is None and source_outputs:
+            self.spec.outputs = source_outputs
         self.build_query()
+        self._sync_dynamic_outputs()
         self.build_app()
         # Seed the source generation the query was built against so the run
         # phase can detect a stale query after later graph mutations.
@@ -396,10 +465,19 @@ class AppRunner:
             self.setup(params)
 
         if keep_alive:
+            if interval <= 0:
+                raise ValueError("keep-alive interval must be greater than zero")
             if self._loop_task is not None and not self._loop_task.done():
                 raise RuntimeError(f"App '{self.spec.name}' is already running keep-alive")
             self._keep_alive = True
             self._stop_event.clear()
+            self._persist_run_state(
+                active=True,
+                interval=interval,
+                start=start,
+                end=end,
+                params=params,
+            )
             self._loop_task = asyncio.create_task(self._run_loop(interval, start, end, params))
             return {"name": self.spec.name, "keep_alive": True, "interval": interval}
 
@@ -427,20 +505,22 @@ class AppRunner:
 
     async def _monitor_run(self, run_id: str, ref) -> None:
         """Await a run task, emit its outputs, and record the outcome."""
-        from acquirium.Apps.output_emission import emit_outputs
+        from acquirium.Apps.execution import validate_outputs
+        from acquirium.Apps.output_emission import PersistSink
 
         record = self._runs[run_id]
         try:
-            outputs = await ref
+            outputs = validate_outputs(await ref, self.spec.outputs)
             # emit_outputs does blocking I/O (timeseries inserts, webhook
             # posts); run it off the event-loop thread so the actor's loop
             # stays responsive to other runs and to stop().
             await asyncio.to_thread(
-                emit_outputs,
+                PersistSink(
+                    insert_timeseries=self.acquirium_cli.client.insert_timeseries,
+                    logger=self.logger,
+                ).emit,
                 self.source_id,
                 outputs,
-                insert_timeseries=self.acquirium_cli.client.insert_timeseries,
-                logger=self.logger,
             )
             record["status"] = "done"
             record["outputs"] = len(outputs)
@@ -471,6 +551,7 @@ class AppRunner:
                 if source_version != self.source_version:
                     self.source_version = source_version
                     self.build_query()
+                    self._sync_dynamic_outputs()
             except Exception:
                 self.logger.exception("query refresh failed; keeping previous query")
             self._dispatch_run(start, end, params)
@@ -492,6 +573,7 @@ class AppRunner:
         Sync methods run off the actor's event-loop thread, so the
         asyncio.Event must be set via the loop rather than touched directly.
         """
+        self._persist_run_state(active=False)
         loop = self._loop
         if loop is not None:
             loop.call_soon_threadsafe(self._stop_event.set)
@@ -504,10 +586,21 @@ class AppRunner:
         """Report build/run status for this app (the actor answers directly)."""
         return {
             "name": self.spec.name,
+            "spec": self.spec.source_spec,
             "build": self._build_status,
             "queries": list(self.queries.keys()),
             "state": type(self.state).__name__ if self.state is not None else None,
             "keep_alive": self._keep_alive,
+            "mappings": [
+                {
+                    "input_point_uri": dependency,
+                    "input_ref_uri": None,
+                    "output_point_uri": output.point_uri,
+                    "output_ref_name": output.ref_name,
+                }
+                for output in self.spec.outputs
+                for dependency in output.depends_on
+            ],
             "runs": [
                 {k: v for k, v in r.items() if not k.startswith("_")}
                 for r in self._runs.values()

@@ -15,16 +15,20 @@ Subcommands:
   acquirium driver start CONFIG    Submit the config's [[drivers]] to a server.
   acquirium driver list            List drivers running on a server.
   acquirium driver stop --name X   Stop a running driver.
+  acquirium app check SPEC         Validate an app class and its declarations.
+  acquirium app run SPEC [--dry-run]  Preview or deploy and run an app class.
 """
 
 import importlib
 import importlib.util
+import hashlib
 import inspect
 import json
 import os
 import signal
 import sys
 import tomllib
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -32,7 +36,7 @@ import typer
 
 app = typer.Typer(
     name="acquirium",
-    help="Acquirium CLI — start the server or run drivers from a config file.",
+    help="Acquirium CLI — run the server and manage drivers and apps.",
     add_completion=False,
 )
 
@@ -151,6 +155,72 @@ def _import_driver_class(
     if not (inspect.isclass(cls) and issubclass(cls, _Driver) and cls is not _Driver):
         raise ValueError(f"'{class_name}' is not a Driver subclass")
     return cls, source_dir
+
+
+def _import_app_class(app_spec: str, *, base_dir: Path | None = None) -> type:
+    """Resolve a file/module ``:ClassName`` spec to an App subclass."""
+    from acquirium.Apps.base import App as _App
+
+    if ":" not in app_spec:
+        raise ValueError(
+            f"app spec must include a class name (e.g. my_app.py:MyApp), got {app_spec!r}"
+        )
+    path_part, class_name = app_spec.rsplit(":", 1)
+    is_file = "/" in path_part or path_part.endswith(".py") or Path(path_part).exists()
+    if is_file:
+        file_path = Path(path_part)
+        if not file_path.is_absolute():
+            file_path = ((base_dir or Path.cwd()) / file_path).resolve()
+        if not file_path.exists():
+            raise ValueError(f"app file not found: {path_part}")
+        source_dir = str(file_path.parent)
+        if source_dir not in sys.path:
+            sys.path.insert(0, source_dir)
+        module_suffix = hashlib.sha256(str(file_path).encode()).hexdigest()[:12]
+        spec = importlib.util.spec_from_file_location(
+            f"_acquirium_app_{module_suffix}", file_path
+        )
+        if spec is None or spec.loader is None:
+            raise ValueError(f"could not load file: {path_part}")
+        mod = importlib.util.module_from_spec(spec)
+        # inspect.getsourcefile(), used by register_app to package the class,
+        # requires the defining module to be reachable by name. Without this,
+        # CLI-imported apps register with no source and fail server-side when
+        # AppRunner falls back to a nonexistent app.py.
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    else:
+        try:
+            mod = importlib.import_module(path_part)
+        except ModuleNotFoundError as exc:
+            raise ValueError(f"could not import module '{path_part}': {exc}") from exc
+
+    cls = getattr(mod, class_name, None)
+    if cls is None:
+        raise ValueError(f"'{class_name}' not found in {path_part}")
+    if not (inspect.isclass(cls) and issubclass(cls, _App) and cls is not _App):
+        raise ValueError(f"'{class_name}' is not an App subclass")
+    return cls
+
+
+def _json_object(value: str, *, option: str) -> dict:
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{option} must be valid JSON: {exc.msg}") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{option} must be a JSON object")
+    return parsed
+
+
+def _iso_datetime(value: str | None, *, option: str) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{option} must be an ISO 8601 datetime") from exc
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
 
 
 def _driver_connect_cfg(
@@ -324,6 +394,251 @@ def driver_stop(
 
 
 # ---------------------------------------------------------------------------
+# App development
+# ---------------------------------------------------------------------------
+
+app_app = typer.Typer(help="Check, preview, deploy, and run Acquirium apps.", add_completion=False)
+app.add_typer(app_app, name="app")
+
+
+@app_app.command("check")
+def app_check(
+    spec: Annotated[str, typer.Argument(help="App spec: module:Class or path.py:Class")],
+) -> None:
+    """Import an app and validate its static output declarations."""
+    from acquirium.Apps.execution import output_specs
+
+    try:
+        cls = _import_app_class(spec)
+        instance = cls()
+        if not isinstance(getattr(instance, "name", None), str) or not instance.name:
+            raise ValueError("app must define a non-empty string name")
+        instance.validate_definition()
+        outputs = output_specs(instance)
+    except Exception as exc:
+        typer.echo(f"App check failed: {exc}", err=True)
+        raise typer.Exit(1)
+    output_count = "dynamic" if callable(getattr(instance, "resolve_output_specs", None)) else str(len(outputs))
+    typer.echo(f"OK  {instance.name}  class={cls.__name__}  outputs={output_count}")
+
+
+@app_app.command("mappings")
+def app_mappings(
+    target: Annotated[str, typer.Argument(help="Registered app name, module:Class, or path.py:Class")],
+    config: Annotated[Optional[Path], typer.Option("--config", "-c", help="Path to acquirium.toml (for server address)")] = None,
+    server_url: _ServerUrlOpt = None,
+    server_port: _ServerPortOpt = None,
+    json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON")] = False,
+) -> None:
+    """Show every resolved input/output stream pair for an app."""
+    try:
+        cfg = _load_config(config)
+        host, port, use_ssl, _ = _driver_connect_cfg(cfg.get("driver", {}))
+        from acquirium.Client.acquirium import Acquirium
+
+        aq = Acquirium(
+            server_url=server_url or host,
+            server_port=server_port or port,
+            use_ssl=use_ssl,
+        )
+        if ":" in target:
+            cls = _import_app_class(
+                target,
+                base_dir=Path(cfg.get("__config_dir", Path.cwd())),
+            )
+            rows = [mapping.to_dict() for mapping in aq.app_mappings(cls())]
+        else:
+            status = aq.list_app_runs(app_id=target)
+            rows = list(status.get("mappings", []))
+    except Exception as exc:
+        typer.echo(f"Could not resolve app mappings: {exc}", err=True)
+        raise typer.Exit(1)
+
+    if json_output:
+        typer.echo(json.dumps(rows, indent=2, ensure_ascii=False))
+        return
+    if not rows:
+        typer.echo("No input/output stream mappings resolved.")
+        return
+
+    columns = (
+        ("INPUT POINT", "input_point_uri"),
+        ("INPUT REF", "input_ref_uri"),
+        ("OUTPUT POINT", "output_point_uri"),
+        ("OUTPUT REF", "output_ref_name"),
+    )
+    widths = [
+        max(len(label), *(len(str(row.get(key) or "—")) for row in rows))
+        for label, key in columns
+    ]
+    typer.echo("  ".join(label.ljust(width) for (label, _), width in zip(columns, widths)))
+    for row in rows:
+        typer.echo("  ".join(
+            str(row.get(key) or "—").ljust(width)
+            for (_, key), width in zip(columns, widths)
+        ))
+
+
+@app_app.command("list")
+def app_list(
+    name: Annotated[Optional[str], typer.Option("--name", help="Show one app and its runs")] = None,
+    config: Annotated[Optional[Path], typer.Option("--config", "-c", help="Path to acquirium.toml (for server address)")] = None,
+    server_url: _ServerUrlOpt = None,
+    server_port: _ServerPortOpt = None,
+) -> None:
+    """List registered apps, or inspect one app with --name."""
+    try:
+        cfg = _load_config(config)
+        host, port, use_ssl, _ = _driver_connect_cfg(cfg.get("driver", {}))
+        from acquirium.Client.acquirium import Acquirium
+
+        aq = Acquirium(
+            server_url=server_url or host,
+            server_port=server_port or port,
+            use_ssl=use_ssl,
+        )
+        result = aq.list_app_runs(app_id=name)
+    except Exception as exc:
+        typer.echo(f"Could not list apps: {exc}", err=True)
+        raise typer.Exit(1)
+    typer.echo(repr(result))
+
+
+@app_app.command("deregister")
+def app_deregister(
+    name: Annotated[str, typer.Argument(help="Registered app name")],
+    config: Annotated[Optional[Path], typer.Option("--config", "-c", help="Path to acquirium.toml (for server address)")] = None,
+    server_url: _ServerUrlOpt = None,
+    server_port: _ServerPortOpt = None,
+) -> None:
+    """Stop and remove an app, its graph registration, and persisted source."""
+    try:
+        cfg = _load_config(config)
+        host, port, use_ssl, _ = _driver_connect_cfg(cfg.get("driver", {}))
+        from acquirium.Client.acquirium import Acquirium
+
+        aq = Acquirium(
+            server_url=server_url or host,
+            server_port=server_port or port,
+            use_ssl=use_ssl,
+        )
+        aq.delete_app(name)
+    except Exception as exc:
+        typer.echo(f"Could not deregister app '{name}': {exc}", err=True)
+        raise typer.Exit(1)
+    typer.echo(f"Deregistered app '{name}'")
+
+
+@app_app.command("debug")
+def app_debug(
+    spec: Annotated[str, typer.Argument(help="App spec: module:Class or path.py:Class")],
+    config: Annotated[Optional[Path], typer.Option("--config", "-c", help="Path to acquirium.toml (for server address)")] = None,
+    server_url: _ServerUrlOpt = None,
+    server_port: _ServerPortOpt = None,
+    start: Annotated[Optional[str], typer.Option("--start", help="Input window start (ISO 8601)")] = None,
+    end: Annotated[Optional[str], typer.Option("--end", help="Input window end (ISO 8601)")] = None,
+    build_params: Annotated[str, typer.Option("--build-params", help="JSON object passed to build_app")] = "{}",
+    params: Annotated[str, typer.Option("--params", help="JSON object passed to transform/run")] = "{}",
+) -> None:
+    """Open a read-only Python shell with an app's live inputs and context."""
+    try:
+        cfg = _load_config(config)
+        host, port, use_ssl, _ = _driver_connect_cfg(cfg.get("driver", {}))
+        cls = _import_app_class(spec, base_dir=Path(cfg.get("__config_dir", Path.cwd())))
+        from acquirium.Client.acquirium import Acquirium
+
+        aq = Acquirium(
+            server_url=server_url or host,
+            server_port=server_port or port,
+            use_ssl=use_ssl,
+        )
+        session = aq.prepare_app_debug(
+            cls(),
+            start=_iso_datetime(start, option="--start"),
+            end=_iso_datetime(end, option="--end"),
+            build_params=_json_object(build_params, option="--build-params"),
+            params=_json_object(params, option="--params"),
+        )
+    except Exception as exc:
+        typer.echo(f"App debug setup failed: {exc}", err=True)
+        raise typer.Exit(1)
+
+    import code
+
+    banner = (
+        f"Acquirium app debug: {session.app.name} "
+        f"({len(session.streams)} mapped stream(s))\n"
+        "Available: app, aq, ctx, queries, query, state, streams, stream, "
+        "transform(), run()\n"
+        "Examples: stream.values; transform(); transform(streams[1]); run()\n"
+        "This session is read-only; outputs are returned but never persisted."
+    )
+    code.interact(banner=banner, local=session.namespace(), exitmsg="Leaving app debug.")
+
+
+@app_app.command("run")
+def app_run(
+    spec: Annotated[str, typer.Argument(help="App spec: module:Class or path.py:Class")],
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Run without graph/data writes or webhooks")] = False,
+    config: Annotated[Optional[Path], typer.Option("--config", "-c", help="Path to acquirium.toml (for server address)")] = None,
+    server_url: _ServerUrlOpt = None,
+    server_port: _ServerPortOpt = None,
+    start: Annotated[Optional[str], typer.Option("--start", help="Input window start (ISO 8601)")] = None,
+    end: Annotated[Optional[str], typer.Option("--end", help="Input window end (ISO 8601)")] = None,
+    build_params: Annotated[str, typer.Option("--build-params", help="JSON object passed to build_app")] = "{}",
+    params: Annotated[str, typer.Option("--params", help="JSON object passed to run")] = "{}",
+    max_rows: Annotated[int, typer.Option("--max-rows", min=0, help="Maximum rows shown per output")] = 20,
+    replace: Annotated[bool, typer.Option("--replace", help="Replace an existing app registration")] = False,
+    keep_alive: Annotated[bool, typer.Option("--keep-alive", help="Run repeatedly until stopped")] = False,
+    interval: Annotated[float, typer.Option("--interval", min=0.001, help="Keep-alive interval in seconds")] = 10.0,
+) -> None:
+    """Preview an app, or register it and start a run."""
+    try:
+        cfg = _load_config(config)
+        host, port, use_ssl, _ = _driver_connect_cfg(cfg.get("driver", {}))
+        host = server_url or host
+        port = server_port or port
+        cls = _import_app_class(spec, base_dir=Path(cfg.get("__config_dir", Path.cwd())))
+        from acquirium.Client.acquirium import Acquirium
+
+        aq = Acquirium(server_url=host, server_port=port, use_ssl=use_ssl)
+        instance = cls()
+        parsed_start = _iso_datetime(start, option="--start")
+        parsed_end = _iso_datetime(end, option="--end")
+        parsed_build_params = _json_object(build_params, option="--build-params")
+        parsed_params = _json_object(params, option="--params")
+        if dry_run:
+            result = aq.preview_app(
+                instance,
+                start=parsed_start,
+                end=parsed_end,
+                build_params=parsed_build_params,
+                params=parsed_params,
+                max_rows=max_rows,
+            ).to_dict()
+        else:
+            registration = aq.register_app(
+                instance,
+                params=parsed_build_params,
+                replace=replace,
+            )
+            run = aq.run_app(
+                instance.name,
+                start=parsed_start,
+                end=parsed_end,
+                params=parsed_params,
+                keep_alive=keep_alive,
+                interval=interval,
+            )
+            result = {"registration": dict(registration), "run": dict(run)}
+    except Exception as exc:
+        mode = "dry-run" if dry_run else "run"
+        typer.echo(f"App {mode} failed: {exc}", err=True)
+        raise typer.Exit(1)
+    typer.echo(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+
+
+# ---------------------------------------------------------------------------
 # server subcommand
 # ---------------------------------------------------------------------------
 
@@ -336,7 +651,7 @@ def server_cmd(
     workers: Annotated[Optional[int], typer.Option("--workers", "-w", help="Uvicorn worker processes; must be 1 — the embedded Oxigraph graph store is single-process on every backend")] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Enable DEBUG logs in acquirium.* (server, storage, drivers)")] = False,
 ) -> None:
-    """Start the Acquirium server and any [[drivers]] declared in the config.
+    """Start the server and configured drivers and apps.
 
     Set ``[server] enabled = false`` in the config to skip the HTTP server
     and submit the [[drivers]] to the remote server from the [driver]
