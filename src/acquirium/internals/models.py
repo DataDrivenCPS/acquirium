@@ -171,17 +171,21 @@ class AppContext:
 class AppOutputSpec(BaseModel):
     kind: Literal["timeseries", "event", "trigger"]
     point_uri: str
+    ref_name: str | None = None
     ref_uri: str | None = None
+    value_kind: Literal["numeric", "text"] | None = None
     quantity_kind: str | None = None
     unit: str | None = None
     data_source: str | None = None
     storage_backend: str | None = None
+    depends_on: list[str] = Field(default_factory=list)
 
 
 class AppSpec(BaseModel):
     name: str
     version: str = "0.0"
     app_type: str = "soft_sensor"
+    source_spec: str | None = None
     app_class: str | None = None
     source_code: str | None = None
     entry_file: str | None = None
@@ -189,6 +193,11 @@ class AppSpec(BaseModel):
     outputs: list[AppOutputSpec] = Field(default_factory=list)
     depends_on: list[str] = Field(default_factory=list)
     params: dict[str, Any] = Field(default_factory=dict)
+    resume_keep_alive: bool = False
+    run_interval: float = 10.0
+    run_start: datetime | None = None
+    run_end: datetime | None = None
+    run_params: dict[str, Any] = Field(default_factory=dict)
 
 
 class AppRunRequest(BaseModel):

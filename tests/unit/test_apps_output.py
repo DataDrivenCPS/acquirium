@@ -111,6 +111,24 @@ class TestEmitOutputs:
             }
         ]
 
+    def test_timeseries_output_can_use_separate_ref_name(self):
+        calls = []
+        rows = [(datetime(2025, 1, 1, tzinfo=timezone.utc), 42.0)]
+
+        emit_outputs(
+            "app:mapped",
+            [Output.timeseries(
+                point_uri="urn:test:derived:p1",
+                ref_name="average/abc123",
+                rows=rows,
+            )],
+            insert_timeseries=lambda **kwargs: calls.append(kwargs),
+        )
+
+        assert calls[0]["source_id"] == "app:mapped"
+        assert calls[0]["ref_name"] == "average/abc123"
+        assert calls[0]["point_uri"] == "urn:test:derived:p1"
+
     def test_event_output_serializes_json_text_row(self):
         calls = []
         ts = datetime(2025, 1, 1, tzinfo=timezone.utc)

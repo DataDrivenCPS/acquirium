@@ -271,12 +271,18 @@ App outputs get the same managed-stream treatment, but the reference node also c
 ```turtle
 <ref_uri>
     a acq:Stream, acq:TimeseriesStream ;
-    acq:sourceId "my-app" ;
+    acq:sourceId "app:my-app" ;
     acq:refName  "urn:output:predicted_flow" ;
     acq:storageBackend "timescale" .
 ```
 
 The `acq:produces` and `acq:isCalculatedFrom` triples on the output point URI record the app that generated the stream and the inputs it depended on.
+
+Static app outputs use the point URI as their default `ref_name` for backward
+compatibility. `MappedApp` outputs use a separate deterministic name such as
+`average/3a21...`, derived from the output template and input point URI. The
+semantic output point URI and source-local storage name therefore remain
+distinct in the same way they do for driver streams.
 
 At runtime, app outputs are emitted through a single shared output sink used by
 both server-side `AppRunner` execution and external app workers:

@@ -176,7 +176,14 @@ class AppSupervisor:
         with self._lock:
             records = list(self._apps.values())
         return [
-            {"name": r["name"],"running": r["running"], "started_at": r["started_at"],"stopped_at":r["stopped_at"]} for r in records
+            {
+                "name": r["name"],
+                "spec": r["spec"].source_spec,
+                "running": r["running"],
+                "started_at": r["started_at"],
+                "stopped_at": r["stopped_at"],
+            }
+            for r in records
         ]
 
     def _actor(self, app_id: str):
@@ -274,9 +281,9 @@ def restore_app_specs(manager) -> list[AppSpec]:
     Inverts :meth:`AppRunner._app_spec_graph`: enumerates ``?app a acq:App``
     in the persistent graph and reads scalar fields, outputs, and
     dependencies back out. Source code is not in the graph — it lives under
-    the app storage dir (with app.json carrying entry_file/app_class), where
-    ``AppRunner._load_app`` reads it — so specs are returned without source
-    and apps whose storage dir is gone are skipped.
+    the app storage dir. Load metadata, including the original copy-pasteable
+    source spec, is restored from ``app.json``. Apps whose storage directory is
+    gone are skipped.
 
     One lossy corner: registration writes ``event`` and ``trigger`` outputs
     identically (both as EventStream), so a restored trigger output comes
@@ -333,11 +340,14 @@ def restore_app_specs(manager) -> list[AppSpec]:
 
     # Refs carry Stream plus exactly one of EventStream/TimeseriesStream, so
     # the FILTER IN yields one row per output.
-    for app_uri, point, ref, qk, unit, ds, backend, rtype in rows(f"""
-        SELECT ?app ?point ?ref ?qk ?unit ?ds ?backend ?rtype WHERE {{
+    output_by_point: dict[tuple[str, str], AppOutputSpec] = {}
+    for app_uri, point, ref, ref_name, value_kind, qk, unit, ds, backend, rtype in rows(f"""
+        SELECT ?app ?point ?ref ?refName ?valueKind ?qk ?unit ?ds ?backend ?rtype WHERE {{
           ?app a <{APP}> ; <{PRODUCES}> ?point .
           ?point <{HAS_EXTERNAL_REFERENCE}> ?ref .
           ?ref a ?rtype . FILTER(?rtype IN (<{EVENT_STREAM}>, <{TIMESERIES_STREAM}>))
+          OPTIONAL {{ ?ref <{ACQUIRIUM_REF_NAME}> ?refName }}
+          OPTIONAL {{ ?ref <{ACQUIRIUM_VALUE_KIND}> ?valueKind }}
           OPTIONAL {{ ?point <{HAS_QUANTITY_KIND}> ?qk }}
           OPTIONAL {{ ?point <{HAS_UNIT}> ?unit }}
           OPTIONAL {{ ?point <{DATA_SOURCE}> ?ds }}
@@ -345,15 +355,28 @@ def restore_app_specs(manager) -> list[AppSpec]:
         }}"""):
         if str(app_uri) not in apps:
             continue
-        apps[str(app_uri)]["outputs"].append(AppOutputSpec(
+        output = AppOutputSpec(
             kind="event" if URIRef(str(rtype)) == EVENT_STREAM else "timeseries",
             point_uri=str(point),
+            ref_name=str(ref_name) if ref_name is not None else None,
             ref_uri=str(ref),
+            value_kind=str(value_kind) if value_kind is not None else None,
             quantity_kind=str(qk) if qk is not None else None,
             unit=str(unit) if unit is not None else None,
             data_source=str(ds) if ds is not None else None,
             storage_backend=str(backend) if backend is not None else None,
-        ))
+        )
+        apps[str(app_uri)]["outputs"].append(output)
+        output_by_point[(str(app_uri), str(point))] = output
+
+    for app_uri, point, dep in rows(f"""
+        SELECT ?app ?point ?dep WHERE {{
+          ?app a <{APP}> ; <{PRODUCES}> ?point .
+          ?point <{IS_CALCULATED_FROM}> ?dep .
+        }}"""):
+        output = output_by_point.get((str(app_uri), str(point)))
+        if output is not None and str(dep) not in output.depends_on:
+            output.depends_on.append(str(dep))
 
     specs: list[AppSpec] = []
     for app_uri, entry in apps.items():
@@ -365,14 +388,36 @@ def restore_app_specs(manager) -> list[AppSpec]:
                 name, app_dir,
             )
             continue
+        load_meta: dict[str, Any] = {}
+        meta_path = app_dir / "app.json"
+        if meta_path.exists():
+            try:
+                load_meta = json.loads(meta_path.read_text())
+            except (json.JSONDecodeError, OSError):
+                logger.warning("App '%s': could not read %s", name, meta_path)
+        run_state: dict[str, Any] = {}
+        run_path = app_dir / "run.json"
+        if run_path.exists():
+            try:
+                run_state = json.loads(run_path.read_text())
+            except (json.JSONDecodeError, OSError):
+                logger.warning("App '%s': could not read %s", name, run_path)
         specs.append(AppSpec(
             name=name,
             version=entry["version"] or "0.0",
             app_type=entry["app_type"] or "soft_sensor",
+            source_spec=load_meta.get("source_spec"),
+            app_class=load_meta.get("app_class"),
+            entry_file=load_meta.get("entry_file"),
             queries=entry["queries"],
             outputs=entry["outputs"],
             depends_on=sorted(entry["depends_on"]),
             params=entry["params"],
+            resume_keep_alive=bool(run_state.get("keep_alive", False)),
+            run_interval=float(run_state.get("interval", 10.0)),
+            run_start=run_state.get("start"),
+            run_end=run_state.get("end"),
+            run_params=run_state.get("params", {}),
         ))
     logger.debug(
         "App restore: rebuilt %d spec(s) from %d registered app record(s)",

@@ -13,10 +13,12 @@ common early mistake:
 |---|---|---|
 | Job | pull data from a source into the server | compute derived values from stored data |
 | Defined by | subclassing `Driver` | subclassing `App` |
-| Deployed by | a `[[drivers]]` block in `acquirium.toml` | `aq.register_app(...)` in Python |
+| Deployed by | a `[[drivers]]` block in `acquirium.toml` | `acquirium app run`, `[[apps]]`, or `aq.register_app(...)` |
 
-There is no CLI command and no config section for apps. You deploy one by
-running a Python script that calls the client.
+Apps are deployed by running Python that calls the client. The CLI also has
+development commands for checking and previewing an app before deployment.
+For a worked introduction, start with
+[Building soft sensors without rebuilding the plumbing](building-soft-sensors.md).
 
 ## The App class
 
@@ -168,6 +170,196 @@ Whatever `build_app` returns is handed to every subsequent `run` as
 `ctx.state`. That is how a trained model gets from the build phase to the run
 phase without retraining on every tick.
 
+## Check and preview an app
+
+Check that an app can be imported and that its output declarations are valid:
+
+```bash
+acquirium app check path/to/my_app.py:MyApp
+```
+
+Run the app once against data from a live Acquirium server without registering
+it, writing output rows, changing the graph, or calling `Output.trigger`
+webhooks:
+
+```bash
+acquirium app run path/to/my_app.py:MyApp --dry-run \
+  --start 2026-08-01T00:00:00Z \
+  --end 2026-08-02T00:00:00Z \
+  --build-params '{"baseline_days": 14}' \
+  --params '{"window": 48}'
+```
+
+The JSON result contains:
+
+- the streams matched by each semantic query;
+- summaries of the outputs returned by `run`;
+- the timeseries inserts, event inserts, and webhook requests that would occur;
+- query, build, run, and emission timings;
+- contract errors for malformed, undeclared, or kind-mismatched outputs.
+
+The Python API exposes the same execution path:
+
+```python
+result = acq.preview_app(
+    MyApp(),
+    start=start,
+    end=end,
+    build_params={"baseline_days": 14},
+    params={"window": 48},
+)
+print(result.to_dict())
+```
+
+Preview makes the Acquirium API available to the app as read-only and replaces
+output persistence with a recording sink. It cannot sandbox arbitrary side
+effects written directly by app code, such as calling `requests.post` or
+writing a local file; external effects should be represented as `Output`
+objects so the framework can suppress and display them.
+
+The same command without `--dry-run` registers the class and starts a run:
+
+```bash
+acquirium app run path/to/my_app.py:MyApp \
+  --replace \
+  --keep-alive \
+  --interval 60 \
+  --build-params '{"baseline_days": 14}' \
+  --params '{"window": 48}'
+```
+
+Without `--keep-alive`, the command registers the app and dispatches one run.
+`--replace` is required only when the app name is already registered.
+An active keep-alive run persists its interval, window, and run parameters.
+After a server restart Acquirium rebuilds the app and resumes that loop
+automatically. `aq.stop_app(...)` (or replacement/deregistration) clears the
+resume marker, so intentionally stopped apps stay stopped.
+
+List all registrations, inspect one app's runs, or deregister it:
+
+```bash
+acquirium app list
+acquirium app list --name temperature_average
+acquirium app deregister temperature_average
+```
+
+The list includes each app's original `path.py:Class` spec, normalized to an
+absolute path, so it can be copied directly into `app mappings`, `app debug`,
+or `app run`.
+
+`deregister` stops a keep-alive run, removes the app's registration graph, and
+deletes the source copy persisted by the server. It does not delete observations
+the app emitted previously.
+
+Resolve a local app's selector and display every input/output stream pair
+without building or running the app:
+
+```bash
+acquirium app mappings temperature_average
+acquirium app mappings path/to/my_app.py:MyApp
+acquirium app mappings path/to/my_app.py:MyApp --json
+```
+
+Pass a registered app name to inspect the mappings held by the running server,
+or pass a local class spec to resolve its selector live. For mapped apps, each
+row includes the input point and the deterministic output point/reference.
+Locally resolved mappings also include the input storage reference. `--json`
+is useful for piping the mapping into other tooling.
+
+## Debug transforms interactively
+
+Prepare the same live inputs and context used by a run, then enter a read-only
+Python REPL:
+
+```bash
+acquirium app debug path/to/my_app.py:MyApp \
+  --params '{"window": 5}'
+```
+
+Mapped apps expose `streams` and set `stream` to the first match. The helper
+`transform()` calls `app.transform(stream, ctx)` without saving its return
+value; pass a different stream as `transform(streams[1])`. Useful expressions
+include:
+
+```python
+len(streams)
+stream.input_point_uri
+stream.values
+transform()
+run()
+```
+
+The shell also exposes `app`, `aq`, `ctx`, `queries`, `query`, and `state`.
+`run()` evaluates the complete output contract without emitting anything.
+Known Acquirium mutations are blocked, as in `--dry-run`; arbitrary filesystem
+or network calls made directly by app code cannot be sandboxed.
+
+## Map one calculation over many streams
+
+Use `MappedApp` when one semantic selector can match any number of input points
+and the same calculation should produce one derived stream for each input. A
+running average is the canonical example. A directly runnable version lives at
+[`scripts/examples/running_average.py`](../scripts/examples/running_average.py):
+
+```python
+import polars as pl
+
+from acquirium import MappedApp, MappedStream, OutputTemplate
+
+
+class TemperatureAverage(MappedApp):
+    name = "temperature_average"
+    input_alias = "sensor"
+    fetch_limit = 12
+    output = OutputTemplate(
+        name="average",
+        value_kind="numeric",
+        unit="same_as_input",
+    )
+
+    def build_query(self, aq):
+        return aq.query().measurement(
+            alias=self.input_alias,
+            quantity_kind="Temperature",
+        )
+
+    def transform(self, stream: MappedStream, ctx):
+        # fetch_limit gives the newest 12 input samples, sorted oldest-first
+        # before transform. Emit only the newest complete calculation.
+        return (
+            stream.values
+            .with_columns(
+                pl.col("value").rolling_mean(window_size=12).alias("value")
+            )
+            .drop_nulls("value")
+            .tail(1)
+        )
+```
+
+`stream.values` is a Polars `DataFrame[time, value]`. The stream object also
+provides `input_point_uri`, `input_ref_uri`, `input_unit`,
+`output_point_uri`, and `output_ref_name` for source-specific calculations.
+`transform` may return a `DataFrame[time, value]`, an iterable of
+`(datetime, value)` rows, an `Output`, or `None` to skip that input.
+
+For every matched input, the framework:
+
+- derives a stable output identity from the app name, template name, and input
+  point URI;
+- registers the output with the app's source ID and copies the input unit when
+  `unit="same_as_input"`;
+- writes a direct `output acq:isCalculatedFrom input` lineage edge;
+- applies `transform` independently and validates its destination;
+- discovers and registers additional outputs after source-graph changes;
+- excludes this app's own derived outputs to prevent a selector feedback loop.
+
+Output discovery is additive: an output remains registered when its input stops
+matching, preserving its history and lineage. `fetch_limit` is a stateless
+lookback, not a persistent cursor. Re-running a mapped app may upsert the same
+`(stream, timestamp)` rows safely, but applications requiring late-data
+watermarks or exactly-once incremental processing still need an explicit
+checkpoint policy; that is not yet part of `MappedApp`.
+
 ## Deploying
 
 Start the server, with at least one driver feeding it data:
@@ -189,6 +381,46 @@ acq.run_app("my_app", keep_alive=True, interval=60)
 tears down an existing app of the same name first; without it, re-registering
 is an error. `run_app` with `keep_alive=True` runs `run` every `interval`
 seconds until stopped; without it, it runs once.
+
+### Deploy from `acquirium.toml`
+
+Apps can be registered and started with the server alongside `[[drivers]]`:
+
+```toml
+[[apps]]
+spec = "scripts/examples/running_average.py:RunningAverage"
+
+# Config is desired state, so source is replaced on server restart by default.
+replace = true
+
+# Both default to true. Set autostart=false to register/build without running.
+autostart = true
+keep_alive = true
+interval = 60
+
+build_params = {}
+params = { window = 5 }
+```
+
+Paths are resolved relative to the TOML file. On startup Acquirium waits until
+its HTTP API is healthy, restores persisted apps, starts all configured drivers,
+and then processes `[[apps]]`. That ordering lets app selectors see streams and
+graph metadata declared during driver setup.
+
+Available fields are:
+
+| Field | Default | Meaning |
+|---|---:|---|
+| `spec` | required | `module:Class` or `path.py:Class` |
+| `enabled` | `true` | Skip the entry when false |
+| `name` | class `name` | Optional assertion that config and class names agree |
+| `replace` | `true` | Upload source again; false reuses a restored registration |
+| `autostart` | `true` | Start the app after registration |
+| `keep_alive` | `true` | Run on an interval instead of once |
+| `interval` | `10.0` | Seconds between keep-alive runs |
+| `build_params` | `{}` | Parameters passed to `build_app` |
+| `params` | `{}` | Parameters passed to each `run` |
+| `start`, `end` | unset | Optional fixed input window |
 
 Managing a deployed app:
 

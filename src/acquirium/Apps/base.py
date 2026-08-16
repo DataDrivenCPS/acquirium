@@ -24,6 +24,7 @@ class Output:
     def timeseries(
         *,
         point_uri: str,
+        ref_name: str | None = None,
         rows: Iterable[tuple[datetime, Any]] | None = None,
         series: Any | None = None,
         time_index: Iterable[datetime] | None = None,
@@ -49,7 +50,10 @@ class Output:
                 if len(times) != len(values):
                     raise ValueError("time_index length must match series length")
                 rows = list(zip(times, values))
-        return Output(kind="timeseries", payload={"point_uri": point_uri, "rows": list(rows)})
+        return Output(
+            kind="timeseries",
+            payload={"point_uri": point_uri, "ref_name": ref_name, "rows": list(rows)},
+        )
 
     @staticmethod
     def event(
@@ -100,6 +104,7 @@ class App(ABC):
     version: str = "0.0"
     app_type: str = "soft_sensor"
     outputs: list[Any] = []
+    source_spec: str | None = None
     source_code: str | None = None
     entry_file: str | None = None
     # Assigned by AppRunner after it instantiates the app. This owns the app's
@@ -111,6 +116,9 @@ class App(ABC):
         """Bind the app to its source-owned graph (runner infrastructure)."""
         self._acquirium = acquirium
         self.source_id = source_id
+
+    def validate_definition(self) -> None:
+        """Validate static author configuration without contacting a server."""
 
     def insert_graph(self, rdf_graph: str, *, format: str = "turtle", replace: bool = False) -> None:
         """Write RDF to this app's graph without exposing owner selection."""

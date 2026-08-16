@@ -109,6 +109,16 @@ def _build_stream_triples(
             _add_triple(g, target, pred, value)
 from acquirium.Client.client import AcquiriumClient
 from acquirium.Apps.base import App
+from acquirium.Apps.execution import (
+    AppDebugSession,
+    AppExecutionResult,
+    normalize_output_specs,
+    prepare_app_debug,
+    preview_app as execute_app_preview,
+    resolve_stream_mappings,
+)
+from acquirium.Apps.mapped import StreamMapping
+from acquirium.Apps.output_emission import PreviewSink
 from acquirium.internals.models import AppOutputSpec, AppSpec, compute_ref_uri
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_DB_URI,
@@ -507,6 +517,7 @@ class Acquirium:
         resolve_dependencies: bool = True,
         queries: dict[str, Query] | None = None,
         params: dict[str, Any] | None = None,
+        source_spec: str | None = None,
         replace: bool = False,
     ) -> dict[str, Any]:
         """Register an Acquirium App with the server.
@@ -521,6 +532,7 @@ class Acquirium:
         configuration — training windows, thresholds — lives with the
         registration rather than the run.
         """
+        app.validate_definition()
         query_bundle = queries if queries is not None else app.build_query(self)
         if not isinstance(query_bundle, dict):
             # a single Query (or legacy Q) builder
@@ -535,36 +547,49 @@ class Acquirium:
                 dep_set.update(q.resolved_nodes())
             deps = sorted(dep_set)
 
-        output_specs: list[AppOutputSpec] = []
-        output_items = outputs if outputs is not None else list(getattr(app, "outputs", []) or [])
-        for item in output_items:
-            if isinstance(item, AppOutputSpec):
-                spec_item = item
-            elif isinstance(item, dict):
-                spec_item = AppOutputSpec(**item)
-            else:
-                raise TypeError("outputs must be AppOutputSpec or dict")
-            output_specs.append(spec_item)
+        if outputs is not None:
+            output_items = outputs
+        else:
+            resolver = getattr(app, "resolve_output_specs", None)
+            output_items = (
+                resolver(query_bundle)
+                if callable(resolver)
+                else list(getattr(app, "outputs", []) or [])
+            )
+        output_specs = normalize_output_specs(output_items)
 
         # The app's Python source is shipped to the server so its AppRunner
         # actor can load and run the class. Prefer an explicit override on the
         # app; otherwise read the class's defining module file.
         source_code = getattr(app, "source_code", None)
         entry_file = getattr(app, "entry_file", None)
+        source_spec = source_spec or getattr(app, "source_spec", None)
+        src_path: str | None = None
+        try:
+            src_path = inspect.getsourcefile(app.__class__)
+        except (OSError, TypeError):
+            pass
+        if src_path and source_spec is None:
+            source_spec = f"{Path(src_path).resolve()}:{app.__class__.__name__}"
         if source_code is None:
             try:
-                src_path = inspect.getsourcefile(app.__class__)
                 if src_path:
                     source_code = Path(src_path).read_text()
                     if entry_file is None:
                         entry_file = Path(src_path).name
             except Exception:
                 source_code = None
+        if source_code is None:
+            raise ValueError(
+                f"Could not locate source for {app.__class__.__name__}; define the "
+                "class in a Python file or set app.source_code and app.entry_file explicitly"
+            )
 
         spec = AppSpec(
             name=app.name,
             version=getattr(app, "version", "0.0"),
             app_type=app_type or getattr(app, "app_type", "soft_sensor"),
+            source_spec=source_spec,
             app_class=app.__class__.__name__,
             source_code=source_code,
             entry_file=entry_file,
@@ -574,6 +599,58 @@ class Acquirium:
             params=params or {},
         )
         return self.client.register_app(spec, replace=replace)
+
+    def preview_app(
+        self,
+        app: App,
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        build_params: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        max_rows: int = 20,
+    ) -> AppExecutionResult:
+        """Execute an app once without persisting outputs or calling webhooks.
+
+        Queries and timeseries reads use this client's server. Known Acquirium
+        mutations are rejected during query/build/run, and the returned result
+        describes the writes and webhook calls that production would perform.
+        ``build_params`` are passed to ``build_app``; ``params`` are passed to
+        ``run``, mirroring registration-time and run-time configuration.
+        """
+        app.validate_definition()
+        return execute_app_preview(
+            app,
+            self,
+            start=start,
+            end=end,
+            build_params=build_params,
+            params=params,
+            sink=PreviewSink(max_rows=max_rows),
+        )
+
+    def prepare_app_debug(
+        self,
+        app: App,
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        build_params: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> AppDebugSession:
+        """Prepare read-only app state and live inputs for interactive debugging."""
+        return prepare_app_debug(
+            app,
+            self,
+            start=start,
+            end=end,
+            build_params=build_params,
+            params=params,
+        )
+
+    def app_mappings(self, app: App) -> list[StreamMapping]:
+        """Resolve input/output stream pairs without building or running the app."""
+        return resolve_stream_mappings(app, self)
 
     def delete_app(self, app_id: str) -> dict[str, Any]:
         """Gracefully delete a registered app (stop it, clean up its graph

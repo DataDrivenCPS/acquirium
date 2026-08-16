@@ -147,8 +147,9 @@ async def _restore_registered_apps(app_supervisor: AppSupervisor, manager: Manag
     register_app() persisted each app's source under the app storage dir and
     its registration triples in the graph; a restart only loses the
     supervisor's in-memory records. Rebuild the specs from graph + disk and
-    respawn the actors without re-writing the graph. Restored apps come back
-    registered but not running — keep-alive state is not persisted.
+    respawn the actors without re-writing the graph. Apps whose last active
+    run was keep-alive are restarted with their saved interval, window, and
+    run parameters.
     """
     from acquirium.Apps.supervisor import restore_app_specs
 
@@ -161,6 +162,23 @@ async def _restore_registered_apps(app_supervisor: AppSupervisor, manager: Manag
         try:
             await asyncio.to_thread(app_supervisor.restore_app, spec)
             log.info("Restored app '%s' from the persistent store", spec.name)
+            if spec.resume_keep_alive:
+                await asyncio.to_thread(
+                    app_supervisor.run_app,
+                    AppRunRequest(
+                        app_id=spec.name,
+                        start=spec.run_start,
+                        end=spec.run_end,
+                        params=spec.run_params,
+                        keep_alive=True,
+                        interval=spec.run_interval,
+                    ),
+                )
+                log.info(
+                    "Resumed keep-alive app '%s' (interval=%.1fs)",
+                    spec.name,
+                    spec.run_interval,
+                )
         except Exception:
             log.exception("Failed to restore app '%s'", spec.name)
 
@@ -195,6 +213,88 @@ async def _start_config_drivers(supervisor: DriverSupervisor, cfg: dict) -> None
             log.info("Started config driver '%s' (%s)", info["name"], spec)
         except Exception:
             log.exception("Config driver %s failed to start", spec)
+
+
+async def _start_config_apps(supervisor: AppSupervisor, cfg: dict) -> None:
+    """Register and optionally start every enabled ``[[apps]]`` entry.
+
+    This runs only after the server is healthy and config drivers have finished
+    setup, so app selectors can resolve graph metadata contributed by drivers.
+    Config apps are declarative desired state: ``replace`` defaults to true so
+    source changes take effect on restart. Set it false to reuse a restored
+    registration without uploading it again.
+    """
+    entries = cfg.get("apps", [])
+    if not entries:
+        return
+
+    from acquirium.Client.acquirium import Acquirium
+    from acquirium.cli import _import_app_class
+
+    host, port, use_ssl = _self_connect_cfg(cfg)
+    aq = await asyncio.to_thread(
+        Acquirium,
+        server_url=host,
+        server_port=port,
+        use_ssl=use_ssl,
+    )
+    base_dir = Path(cfg.get("__config_dir", Path.cwd()))
+
+    for entry in entries:
+        if not entry.get("enabled", True):
+            continue
+        spec = entry.get("spec")
+        if not spec:
+            log.warning("[[apps]] entry missing 'spec'; skipping")
+            continue
+        try:
+            cls = _import_app_class(spec, base_dir=base_dir)
+            instance = cls()
+            configured_name = entry.get("name")
+            if configured_name is not None and configured_name != instance.name:
+                raise ValueError(
+                    f"configured app name {configured_name!r} does not match "
+                    f"{cls.__name__}.name {instance.name!r}"
+                )
+
+            build_params = entry.get("build_params", {})
+            run_params = entry.get("params", {})
+            if not isinstance(build_params, dict) or not isinstance(run_params, dict):
+                raise TypeError("app build_params and params must be TOML tables/objects")
+
+            replace = bool(entry.get("replace", True))
+            existing = {item["name"] for item in supervisor.list_apps()}
+            if replace or instance.name not in existing:
+                await asyncio.to_thread(
+                    aq.register_app,
+                    instance,
+                    params=build_params,
+                    replace=replace,
+                )
+                log.info("Registered config app '%s' (%s)", instance.name, spec)
+            else:
+                log.info("Reusing restored config app '%s'", instance.name)
+
+            if entry.get("autostart", True):
+                keep_alive = bool(entry.get("keep_alive", True))
+                interval = float(entry.get("interval", 10.0))
+                await asyncio.to_thread(
+                    aq.run_app,
+                    instance.name,
+                    start=entry.get("start"),
+                    end=entry.get("end"),
+                    params=run_params,
+                    keep_alive=keep_alive,
+                    interval=interval,
+                )
+                log.info(
+                    "Started config app '%s' (keep_alive=%s, interval=%.1fs)",
+                    instance.name,
+                    keep_alive,
+                    interval,
+                )
+        except Exception:
+            log.exception("Config app %s failed to register/start", spec)
 
 
 class Health(BaseModel):
@@ -278,17 +378,19 @@ async def lifespan(app: FastAPI):
     )
     app.state.apps = app_supervisor
     # Once the server answers /health: respawn apps persisted by a previous
-    # run, then start the config's [[drivers]]. Apps restore first so their
-    # build-phase graph reads/writes don't interleave with driver setup.
+    # run, then start the config's [[drivers]] and [[apps]]. Restored apps come
+    # first; config apps run after driver setup so their selectors can see the
+    # graph and streams declared by those drivers.
     async def _startup_actors() -> None:
         if not await _wait_until_healthy(supervisor.base_url):
             log.error(
-                "Server never became healthy at %s; skipping app restore and [[drivers]]",
+                "Server never became healthy at %s; skipping app restore, [[drivers]], and [[apps]]",
                 supervisor.base_url,
             )
             return
         await _restore_registered_apps(app_supervisor, m)
         await _start_config_drivers(supervisor, _cfg)
+        await _start_config_apps(app_supervisor, _cfg)
 
     startup_task = asyncio.create_task(_startup_actors())
 
