@@ -220,3 +220,51 @@ class TestRunning:
                     "last_duration", "runs"):
             assert key in s
         assert s["kind"] == "task"
+
+
+# ─────────────────────── provenance ───────────────────────
+
+
+def read_and_emit(ctx):
+    from acquirium import Output
+    from acquirium.internals.read_recorder import record_reads
+    record_reads(["urn:refA"])          # stands in for ctx.query.data().latest()
+    return [Output.event(point_uri="urn:t:out", severity="info", message="x")]
+
+
+class TestProvenance:
+    def test_observed_reads_are_recorded_and_flushed(self, tmp_path):
+        aq = make_client()
+        aq.client.sparql_query.return_value = {"rows": []}
+        host = make_host(tmp_path, aq)
+        host.register(make_spec(fn=read_and_emit))
+        host._tasks["t"].provenance.min_write_interval = 0
+        asyncio.run(host.run("t"))
+        prov = host.status("t")["provenance"]
+        assert prov["used"] == 1 and prov["outputs"] == 1 and prov["pending"] is False
+        # Written to the task's own provenance graph, never via sparql_update.
+        prov_writes = [c for c in aq.insert_graph.call_args_list
+                       if c.kwargs.get("source_id") == "app:t:prov"]
+        assert prov_writes and prov_writes[-1].kwargs["replace"] is True
+
+    def test_scopes_do_not_leak_between_tasks(self, tmp_path):
+        aq = make_client()
+        aq.client.sparql_query.return_value = {"rows": []}
+        host = make_host(tmp_path, aq)
+        host.register(make_spec("reader", fn=read_and_emit))
+        host.register(make_spec("quiet", fn=emit_count))
+        for t in host._tasks.values():
+            t.provenance.min_write_interval = 0
+        asyncio.run(host.run("reader"))
+        asyncio.run(host.run("quiet"))
+        assert host._tasks["reader"].provenance.used == {"urn:refA"}
+        assert host._tasks["quiet"].provenance.used == set()
+
+    def test_deregister_drops_the_prov_graph(self, tmp_path):
+        aq = make_client()
+        host = make_host(tmp_path, aq)
+        host.register(make_spec())
+        host.deregister("t")
+        wipes = [c for c in aq.insert_graph.call_args_list
+                 if c.kwargs.get("source_id") == "app:t:prov" and c.kwargs.get("replace")]
+        assert wipes and wipes[-1].args[0] == ""

@@ -41,6 +41,8 @@ from acquirium.internals.app_utils import (
 )
 from acquirium.internals.models import AppContext, TaskSpec
 from acquirium.internals.scheduling import IntervalScheduler
+from acquirium.internals.read_recorder import recording_reads
+from acquirium.Apps.provenance import ProvenanceWriter
 
 if TYPE_CHECKING:
     from acquirium.Client.acquirium import Acquirium
@@ -67,6 +69,7 @@ class _Task:
         self.runs: dict[str, dict[str, Any]] = {}
         self.run_counter = 0
         self.keep_alive = False
+        self.provenance: ProvenanceWriter | None = None
 
 
 def _task_dir(root: Path, name: str) -> Path:
@@ -139,6 +142,8 @@ class TaskHost:
         from acquirium.Client.explore.core import Query
 
         t = _Task(spec)
+        t.provenance = ProvenanceWriter(spec.name, self.acquirium_cli)
+        t.provenance.set_outputs(o.point_uri for o in spec.outputs)
         try:
             t.fn = load_function(
                 fn_name=spec.fn_name, fn_source=spec.fn_source,
@@ -152,7 +157,20 @@ class TaskHost:
             t.load_error = str(exc)
             self.logger.exception("task '%s' failed to load", spec.name)
         self._tasks[spec.name] = t
+        self._record_declared_provenance(t)
         return t
+
+    def _record_declared_provenance(self, t: _Task) -> None:
+        """acq:mayUse — every stream the task's query resolves to."""
+        if t.query is None or t.provenance is None:
+            return
+        try:
+            refs = {p["ref_uri"] for p in t.query.provenance()["points"]}
+        except Exception:
+            self.logger.debug("task '%s': declared provenance unavailable", t.spec.name, exc_info=True)
+            return
+        t.provenance.set_declared(refs)
+        t.provenance.flush()
 
     def _source_id(self, name: str) -> str:
         return app_source_id(name)
@@ -190,6 +208,13 @@ class TaskHost:
         self.acquirium_cli.sparql_update(
             app_deregister_update(name), source_id=self._source_id(name),
         )
+        try:
+            self.acquirium_cli.insert_graph(
+                "", format="turtle", replace=True,
+                source_id=ProvenanceWriter(name, self.acquirium_cli).source_id,
+            )
+        except Exception:
+            self.logger.warning("provenance graph cleanup failed for task '%s'", name, exc_info=True)
         if remove_source:
             import shutil
             d = _task_dir(self.app_storage_root, name)
@@ -225,7 +250,10 @@ class TaskHost:
         try:
             if t.fn is None:
                 raise RuntimeError(t.load_error or "task function not loaded")
-            outputs = t.fn(self._make_context(t, params, start, end)) or []
+            with recording_reads() as reads:
+                outputs = t.fn(self._make_context(t, params, start, end)) or []
+            if t.provenance is not None:
+                t.provenance.add_observed(reads)
             # Output emission does HTTP; keep it off the loop so other tasks'
             # ticks and stop() stay responsive during a slow insert.
             await asyncio.to_thread(
@@ -235,6 +263,8 @@ class TaskHost:
             )
             record["status"] = "done"
             record["outputs"] = len(outputs)
+            if t.provenance is not None:
+                await asyncio.to_thread(t.provenance.flush)
         except Exception as exc:
             record["status"] = "failed"
             record["error"] = str(exc)
@@ -266,6 +296,7 @@ class TaskHost:
             if t.spec.query:
                 try:
                     t.query = Query.from_dict(t.spec.query, client=self.acquirium_cli.client)
+                    self._record_declared_provenance(t)
                 except Exception:
                     self.logger.exception("task '%s': query refresh failed; keeping previous", t.spec.name)
 
@@ -344,6 +375,7 @@ class TaskHost:
             "dispatched": sched.get("dispatched", 0),
             "skipped": sched.get("skipped", 0),
             "last_duration": sched.get("last_duration"),
+            "provenance": t.provenance.status() if t.provenance is not None else None,
             "runs": list(t.runs.values()),
         }
 

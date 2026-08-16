@@ -22,6 +22,7 @@ from acquirium.internals.app_utils import app_deregister_update, app_spec_graph
 from acquirium.internals.internals_namespaces import *
 from acquirium.internals.models import AppSpec
 from acquirium.internals.scheduling import IntervalScheduler
+from acquirium.Apps.provenance import ProvenanceWriter
 
 if TYPE_CHECKING:
     from acquirium.Client.acquirium import Acquirium
@@ -36,12 +37,18 @@ DEFAULT_GRAPH_POLL_INTERVAL = 10.0
 
 
 @ray.remote
-def _app_run_task(app: Any, ctx: Any) -> list:
+def _app_run_task(app: Any, ctx: Any) -> tuple[list, list[str]]:
     """Execute one app run. Stateless: reads ``ctx`` (which carries the built
-    state) and returns outputs without mutating the actor. Dispatched by
-    :class:`AppRunner` so runs can execute in parallel off the actor thread.
+    state) and returns ``(outputs, observed_reads)`` without mutating the
+    actor. Dispatched by :class:`AppRunner` so runs can execute in parallel
+    off the actor thread. The read-recording scope opens *here*, in the
+    worker where the values are actually fetched.
     """
-    return app.run(ctx)
+    from acquirium.internals.read_recorder import recording_reads
+
+    with recording_reads() as reads:
+        outputs = app.run(ctx)
+    return outputs, sorted(reads)
 
 
 @ray.remote
@@ -90,6 +97,10 @@ class AppRunner:
         # Captured when run() starts so the sync stop() can flip the event on
         # the loop thread via call_soon_threadsafe.
         self._loop: asyncio.AbstractEventLoop | None = None
+        # Declared + observed provenance, written loop-safely to the app's
+        # own provenance graph (see Apps.provenance).
+        self.provenance = ProvenanceWriter(spec.name, acquirium_cli)
+        self.provenance.set_outputs(o.point_uri for o in spec.outputs)
         # Overrun policy (set per run request) and the live scheduler.
         self._max_in_flight = 1
         self._run_timeout: float | None = None
@@ -156,6 +167,14 @@ class AppRunner:
         added on the points, not just what register() wrote.
         """
         self.sparql_update(app_deregister_update(self.spec.name))
+        # The provenance graph is a separate source; the DELETE above only
+        # knows the registration triples.
+        try:
+            self.acquirium_cli.insert_graph(
+                "", format="turtle", replace=True, source_id=self.provenance.source_id,
+            )
+        except Exception:
+            self.logger.warning("provenance graph cleanup failed for '%s'", self.spec.name, exc_info=True)
         self.logger.info("Deregistered app '%s' from the graph", self.spec.name)
         return {"name": self.spec.name}
 
@@ -278,6 +297,26 @@ class AppRunner:
         self.logger.info(
             "Built %d query/queries for app '%s'", len(self.queries), self.spec.name
         )
+        self._record_declared_provenance()
+
+    def _record_declared_provenance(self) -> None:
+        """acq:mayUse — every stream the query bundle resolves to.
+
+        Uses Query.provenance() (executes the pattern, cached); a query that
+        can't be resolved right now simply contributes nothing this time.
+        Written through the loop-safe writer, so this never wakes pollers.
+        """
+        refs: set[str] = set()
+        for q in self.queries.values():
+            prov = getattr(q, "provenance", None)
+            if prov is None:
+                continue
+            try:
+                refs.update(p["ref_uri"] for p in prov()["points"])
+            except Exception:
+                self.logger.debug("declared provenance unavailable for a query", exc_info=True)
+        self.provenance.set_declared(refs)
+        self.provenance.flush()
 
     def build_app(self) -> None:
         """Run the app's one-time build phase and cache whatever it returns.
@@ -323,7 +362,7 @@ class AppRunner:
         # Seed the source generation the query was built against so the run
         # phase can detect a stale query after later graph mutations.
         try:
-            self.source_version = int(self.acquirium_cli.graph_status()["source_version"])
+            self.source_version = self._data_generation()
         except Exception:
             self.source_version = 0
         self._build_status = "ready"
@@ -401,9 +440,11 @@ class AppRunner:
         record = self._runs[run_id]
         try:
             if self._run_timeout is not None:
-                outputs = await asyncio.wait_for(ref, timeout=self._run_timeout)
+                result = await asyncio.wait_for(ref, timeout=self._run_timeout)
             else:
-                outputs = await ref
+                result = await ref
+            outputs, reads = result
+            self.provenance.add_observed(reads)
             # emit_outputs does blocking I/O (timeseries inserts, webhook
             # posts); run it off the event-loop thread so the actor's loop
             # stays responsive to other runs and to stop().
@@ -416,6 +457,8 @@ class AppRunner:
             )
             record["status"] = "done"
             record["outputs"] = len(outputs)
+            # Off the loop: a provenance write is an HTTP call.
+            await asyncio.to_thread(self.provenance.flush)
         except asyncio.TimeoutError:
             record["status"] = "timeout"
             record["error"] = f"run exceeded run_timeout={self._run_timeout}s"
@@ -435,6 +478,14 @@ class AppRunner:
         finally:
             record["finished_at"] = datetime.now(timezone.utc).isoformat()
 
+    def _data_generation(self) -> int:
+        """The write generation this app watches: data_version — bumped by
+        every graph write *except* provenance-graph writes — so an app
+        (this one included) writing provenance never triggers a rebuild.
+        Falls back to source_version against an older server."""
+        status = self.acquirium_cli.graph_status()
+        return int(status.get("data_version", status.get("source_version", 0)))
+
     def _maybe_refresh_query(self) -> None:
         """Rebuild the query when the server's source generation advances.
 
@@ -447,7 +498,7 @@ class AppRunner:
             return
         self._last_graph_poll = now
         try:
-            source_version = int(self.acquirium_cli.graph_status()["source_version"])
+            source_version = self._data_generation()
             if source_version != self.source_version:
                 self.source_version = source_version
                 self.build_query()
@@ -530,6 +581,7 @@ class AppRunner:
             "dispatched": sched.get("dispatched", 0),
             "skipped": sched.get("skipped", 0),
             "last_duration": sched.get("last_duration"),
+            "provenance": self.provenance.status(),
             "runs": [
                 {k: v for k, v in r.items() if not k.startswith("_")}
                 for r in self._runs.values()

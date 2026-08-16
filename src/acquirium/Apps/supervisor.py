@@ -633,7 +633,56 @@ def restore_app_specs(manager) -> list[AppSpec]:
         "App restore: rebuilt %d spec(s) from %d registered app record(s)",
         len(specs), len(apps),
     )
+    _sweep_legacy_provenance(manager, [s.name for s in specs], rows)
     return specs
+
+
+# The pre-provenance-backend trial wrote these; deregister only runs on
+# replace/delete, so restored apps would carry them forever.
+_LEGACY_PROV_TERMS = (
+    URIRef(str(ACQUIRIUM_NS) + "dependsOn"),
+    URIRef(str(ACQUIRIUM_NS) + "isCalculatedFrom"),
+)
+
+
+def _sweep_legacy_provenance(manager, app_names: list[str], rows) -> None:
+    """One-time cleanup of stale acq:dependsOn / acq:isCalculatedFrom triples.
+
+    Checked with one SELECT first: sparql_update forces a closure rebuild
+    per call, so the DELETE only runs for apps that actually still carry
+    the legacy terms (i.e. once, on the first start after the upgrade).
+    """
+    if not app_names:
+        return
+    from acquirium.internals.app_utils import app_source_id, app_uri_for
+
+    terms = " ".join(f"<{t}>" for t in _LEGACY_PROV_TERMS)
+    try:
+        stale = {
+            str(app) for (app,) in rows(f"""
+                SELECT DISTINCT ?app WHERE {{
+                  ?app a <{APP}> .
+                  {{ ?app ?p ?o . }} UNION {{ ?app <{PRODUCES}> ?pt . ?pt ?p ?o . }}
+                  VALUES ?p {{ {terms} }}
+                }}""")
+        }
+    except Exception:
+        logger.debug("legacy provenance sweep: probe failed", exc_info=True)
+        return
+    for name in app_names:
+        if app_uri_for(name) not in stale:
+            continue
+        try:
+            manager.sparql_update(f"""
+                DELETE {{ ?s ?p ?o }} WHERE {{
+                  VALUES ?app {{ <{app_uri_for(name)}> }}
+                  {{ ?app ?p ?o . BIND(?app AS ?s) }}
+                  UNION {{ ?app <{PRODUCES}> ?s . ?s ?p ?o . }}
+                  VALUES ?p {{ {terms} }}
+                }}""", source_id=app_source_id(name))
+            logger.info("App '%s': swept legacy dependsOn/isCalculatedFrom triples", name)
+        except Exception:
+            logger.warning("App '%s': legacy provenance sweep failed", name, exc_info=True)
 
 
 class AppAlreadyRegistered(ValueError):

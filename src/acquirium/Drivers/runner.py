@@ -96,7 +96,7 @@ class DriverRunner:
         # pre-existing graph or this driver's own setup insertions.
         self._last_graph_poll = time.monotonic()
         try:
-            self.source_version = int(self.acquirium_cli.graph_status()["source_version"])
+            self.source_version = self._data_generation()
         except Exception:
             pass
 
@@ -142,6 +142,14 @@ class DriverRunner:
             # run() hasn't captured the loop yet; no coroutine is waiting.
             self._stop_event.set()
 
+    def _data_generation(self) -> int:
+        """The generation drivers watch: data_version, which excludes app
+        provenance-graph writes (derived bookkeeping that must not fire
+        on_graph_change across every driver). Falls back to source_version
+        against an older server."""
+        status = self.acquirium_cli.graph_status()
+        return int(status.get("data_version", status.get("source_version", 0)))
+
     def _poll_graph_version(self) -> None:
         """Fire on_graph_change() when the server's source generation advances.
 
@@ -155,7 +163,7 @@ class DriverRunner:
             return
         self._last_graph_poll = now
         try:
-            source_version = int(self.acquirium_cli.graph_status()["source_version"])
+            source_version = self._data_generation()
         except Exception:
             return
         if source_version == self.source_version:

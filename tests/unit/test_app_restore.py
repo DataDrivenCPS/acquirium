@@ -157,3 +157,33 @@ def test_task_kind_round_trips(tmp_path):
     assert restored.queries == {"default": {"nodes": [], "edges": []}}
     assert restored.outputs[0].kind == "trigger"
     assert (restored.run_mode, restored.interval) == ("interval", 5.0)
+
+
+def test_legacy_provenance_triples_are_swept_once(tmp_path):
+    from rdflib import URIRef
+    from acquirium.internals.app_utils import app_uri_for
+    from acquirium.internals.internals_namespaces import ACQUIRIUM_NS, PRODUCES
+
+    spec = make_spec("legacy_app")
+    graph = app_spec_graph(spec)
+    app = URIRef(app_uri_for("legacy_app"))
+    graph.add((app, ACQUIRIUM_NS.dependsOn, URIRef("urn:test:in1")))
+    for point in graph.objects(app, PRODUCES):
+        graph.add((point, ACQUIRIUM_NS.isCalculatedFrom, URIRef("urn:test:in1")))
+    manager = make_manager(spec, tmp_path, graph=graph)
+    manager.sparql_update = lambda update, source_id: graph.update(update)
+
+    restore_app_specs(manager)
+    assert not list(graph.triples((None, ACQUIRIUM_NS.dependsOn, None)))
+    assert not list(graph.triples((None, ACQUIRIUM_NS.isCalculatedFrom, None)))
+    # The registration itself is untouched.
+    assert (app, PRODUCES, None) in graph
+
+
+def test_no_sweep_when_nothing_is_stale(tmp_path):
+    spec = make_spec("clean_app")
+    manager = make_manager(spec, tmp_path)
+    calls = []
+    manager.sparql_update = lambda update, source_id: calls.append(source_id)
+    restore_app_specs(manager)
+    assert calls == []            # no closure-rebuilding update issued

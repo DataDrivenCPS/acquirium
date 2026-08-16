@@ -280,3 +280,70 @@ def test_register_registers_the_datasource_before_the_graph(tmp_path):
     names = [c[0] for c in aq.method_calls]
     assert names.index("register_datasource") < names.index("insert_graph")
     assert aq.insert_graph.call_args.kwargs["source_id"] == "app:runner_test_app"
+
+
+# ─────────────────────── provenance ───────────────────────
+
+
+def test_watches_data_version_not_source_version(tmp_path):
+    runner = make_runner(tmp_path)
+    runner.build_query()
+    runner.source_version = 1
+    runner.graph_poll_interval = 0.0
+    # Provenance-only churn: source_version moves, data_version doesn't.
+    runner.acquirium_cli.graph_status.return_value = {"source_version": 9, "data_version": 1}
+    runner._maybe_refresh_query()
+    assert runner.app.build_count == 1                 # no rebuild
+    runner.acquirium_cli.graph_status.return_value = {"source_version": 10, "data_version": 2}
+    runner._maybe_refresh_query()
+    assert runner.app.build_count == 2                 # real data write rebuilds
+
+
+def test_build_query_records_declared_provenance(tmp_path):
+    runner = make_runner(tmp_path)
+    runner.provenance.min_write_interval = 0
+    fake_query = SimpleNamespace(
+        tag="q", provenance=lambda: {"points": [{"ref_uri": "urn:ref1"}, {"ref_uri": "urn:ref2"}]},
+    )
+    runner.app.build_query = lambda aq: fake_query
+    runner.build_query()
+    assert runner.provenance.may_use == {"urn:ref1", "urn:ref2"}
+    # Written to the app's own provenance graph, replace=True, never sparql_update.
+    aq = runner.acquirium_cli
+    kw = aq.insert_graph.call_args.kwargs
+    assert kw["source_id"] == "app:runner_test_app:prov" and kw["replace"] is True
+
+
+def test_run_task_returns_outputs_and_reads():
+    from acquirium.Apps.runner import _app_run_task
+    from acquirium.internals.read_recorder import record_reads
+
+    class Reader:
+        def run(self, ctx):
+            record_reads(["urn:refA"])
+            return ["out"]
+
+    fn = _app_run_task.__wrapped__ if hasattr(_app_run_task, "__wrapped__") else _app_run_task._function
+    outputs, reads = fn(Reader(), None)
+    assert outputs == ["out"] and reads == ["urn:refA"]
+
+
+def test_monitor_records_observed_reads_and_flushes(tmp_path):
+    runner = make_runner(tmp_path)
+    runner.provenance.min_write_interval = 0
+    runner.provenance.set_declared(["urn:refA", "urn:refB"])
+    runner.acquirium_cli.insert_graph.reset_mock()
+
+    async def fake_ref():
+        return (["o1", "o2"], ["urn:refA"])
+
+    async def drive():
+        runner._runs["r1"] = {"status": "running"}
+        await runner._monitor_run("r1", fake_ref())
+
+    with __import__("unittest.mock").mock.patch("acquirium.Apps.output_emission.emit_outputs"):
+        asyncio.run(drive())
+    assert runner._runs["r1"]["status"] == "done"
+    assert runner.provenance.used == {"urn:refA"}
+    assert runner.acquirium_cli.insert_graph.call_args.kwargs["source_id"] == "app:runner_test_app:prov"
+    assert runner.status()["provenance"] == {"may_use": 2, "used": 1, "outputs": 0, "pending": False}

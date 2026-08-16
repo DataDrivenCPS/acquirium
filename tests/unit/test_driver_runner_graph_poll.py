@@ -142,3 +142,23 @@ def test_graph_poll_can_run_before_a_slower_tick():
     asyncio.run(exercise())
     assert runner.driver.ticks == 1
     assert runner.acquirium_cli.graph_status.call_count >= 2
+
+
+# ------------------------------------------------------- data_version
+
+
+def test_watches_data_version_not_source_version():
+    # An app writing its provenance bumps source_version but not
+    # data_version; drivers must not fire on_graph_change for that.
+    runner = make_runner(interval=1.0)
+    runner.acquirium_cli.graph_status.return_value = {"source_version": 1, "data_version": 1}
+    runner.setup()
+    assert runner.source_version == 1
+    runner._last_graph_poll = 0.0
+    runner.acquirium_cli.graph_status.return_value = {"source_version": 7, "data_version": 1}
+    runner._poll_graph_version()
+    assert runner.driver.graph_changes == 0            # provenance-only churn ignored
+    runner._last_graph_poll = 0.0
+    runner.acquirium_cli.graph_status.return_value = {"source_version": 8, "data_version": 2}
+    runner._poll_graph_version()
+    assert runner.driver.graph_changes == 1            # a real data write fires
