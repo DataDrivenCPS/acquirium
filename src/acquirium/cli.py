@@ -13,6 +13,8 @@ Subcommands:
       ``[driver]`` section (server_url / server_port) instead.
 
   acquirium driver start CONFIG    Submit the config's [[drivers]] to a server.
+  acquirium driver run CONFIG      Run the config's [[drivers]] on THIS machine
+                                   against a remote server (edge mode).
   acquirium driver list            List drivers running on a server.
   acquirium driver stop --name X   Stop a running driver.
 """
@@ -302,6 +304,53 @@ def driver_start(
     """Start the drivers declared in the config on the server and exit."""
     cfg = _load_config(config)
     _push_drivers_to_server(cfg, server_url, server_port)
+
+
+@driver_app.command("run")
+def driver_run(
+    config: Annotated[Path, typer.Argument(help="Path to acquirium.toml with [[drivers]] entries")],
+    server_url: _ServerUrlOpt = None,
+    server_port: _ServerPortOpt = None,
+    env_dir: Annotated[Optional[Path], typer.Option("--env-dir", help="Where per-driver environments are materialized on this machine (default: [driver] data_dir/envs or ~/.cache/acquirium/envs)")] = None,
+    insert_batch_rows: Annotated[Optional[int], typer.Option("--insert-batch-rows", help="Rows per insert request (default: [driver] insert_batch_rows or 50000). Lower it on slow links so one request stays small.")] = None,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Enable DEBUG logs")] = False,
+) -> None:
+    """Run the config's [[drivers]] on THIS machine against a remote server.
+
+    Edge mode: the driver process sits next to the data source and writes to
+    the server over HTTP. Ctrl-C / SIGTERM stops the drivers cleanly
+    (buffered rows are flushed). Contrast with 'driver start', which asks the
+    server to run the drivers itself.
+    """
+    import threading
+
+    from acquirium.Drivers.local_runner import install_stop_signals, run_drivers_locally
+
+    if verbose:
+        os.environ["ACQUIRIUM_VERBOSE"] = "1"
+    from acquirium.internals._log import configure_logging
+    configure_logging()
+
+    cfg = _load_config(config)
+    if insert_batch_rows is not None:
+        cfg.setdefault("driver", {})["insert_batch_rows"] = int(insert_batch_rows)
+    host, port, use_ssl, _ = _driver_connect_cfg(cfg.get("driver", {}))
+    host = server_url or host
+    port = server_port or port
+    envs = env_dir
+    if envs is None:
+        data_dir = cfg.get("driver", {}).get("data_dir") or cfg.get("server", {}).get("data_dir")
+        if data_dir:
+            envs = Path(cfg["__config_dir"]) / data_dir / "envs" if not Path(data_dir).is_absolute() else Path(data_dir) / "envs"
+
+    stop = threading.Event()
+    install_stop_signals(stop)
+    typer.echo(f"Running {len(cfg.get('drivers', []))} driver(s) locally against {host}:{port} (Ctrl-C to stop)")
+    code = run_drivers_locally(
+        cfg, server_url=host, server_port=port, use_ssl=use_ssl,
+        env_storage_root=envs, stop_event=stop,
+    )
+    raise typer.Exit(code)
 
 
 @driver_app.command("list")
