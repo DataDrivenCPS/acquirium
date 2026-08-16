@@ -77,6 +77,35 @@ def add_literal_or_uri(graph: Graph, subj: URIRef, pred: URIRef, value: Any) -> 
         graph.add((subj, pred, Literal(value)))
 
 
+def app_deregister_update(name: str) -> str:
+    """SPARQL UPDATE stripping one app/task's registration triples.
+
+    Inverse of :func:`app_spec_graph`, driven only by the app URI: removes
+    the app node, the virtual points it produces, and those points'
+    external references — including triples a build phase may have added on
+    the points, not just what registration wrote. Applied to the app's own
+    graph by whoever owns it (the runner, the task host, or an actor-less
+    server path).
+    """
+    app_uri = app_uri_for(name)
+    return f"""
+    DELETE {{
+      ?app ?ap ?ao .
+      ?point ?pp ?po .
+      ?ref ?rp ?ro .
+    }} WHERE {{
+      VALUES ?app {{ <{app_uri}> }}
+      {{ ?app ?ap ?ao . }}
+      UNION {{ ?app <{PRODUCES}> ?point . ?point ?pp ?po . }}
+      UNION {{
+        ?app <{PRODUCES}> ?point .
+        ?point <{HAS_EXTERNAL_REFERENCE}> ?ref .
+        ?ref ?rp ?ro .
+      }}
+    }}
+    """
+
+
 def app_spec_graph(spec: "AppSpec") -> Graph:
     """Build the registration graph for one app/task spec.
 

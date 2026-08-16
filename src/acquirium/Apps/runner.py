@@ -18,7 +18,7 @@ import ray
 
 from acquirium.Apps.base import app_source_id
 from acquirium.internals._log import configure_logging, timed_debug as _timed_debug
-from acquirium.internals.app_utils import app_uri_for, app_spec_graph
+from acquirium.internals.app_utils import app_deregister_update, app_spec_graph
 from acquirium.internals.internals_namespaces import *
 from acquirium.internals.models import AppSpec
 from acquirium.internals.scheduling import IntervalScheduler
@@ -151,24 +151,7 @@ class AppRunner:
         the app URI, so it also cleans up triples the build phase may have
         added on the points, not just what register() wrote.
         """
-        app_uri = app_uri_for(self.spec.name)
-        query = f"""
-        DELETE {{
-          ?app ?ap ?ao .
-          ?point ?pp ?po .
-          ?ref ?rp ?ro .
-        }} WHERE {{
-          VALUES ?app {{ <{app_uri}> }}
-          {{ ?app ?ap ?ao . }}
-          UNION {{ ?app <{PRODUCES}> ?point . ?point ?pp ?po . }}
-          UNION {{
-            ?app <{PRODUCES}> ?point .
-            ?point <{HAS_EXTERNAL_REFERENCE}> ?ref .
-            ?ref ?rp ?ro .
-          }}
-        }}
-        """
-        self.sparql_update(query)
+        self.sparql_update(app_deregister_update(self.spec.name))
         self.logger.info("Deregistered app '%s' from the graph", self.spec.name)
         return {"name": self.spec.name}
 
