@@ -605,12 +605,14 @@ def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[st
         individual_streams: list[StreamInsert] = []
         for s in streams:
             if s.point_uri is None and not s.replace:
-                bulk_streams.setdefault(s.source_id, {})[s.ref_name] = s.values
+                bulk_streams.setdefault((s.source_id, s.cascade), {})[s.ref_name] = s.values
             else:
                 individual_streams.append(s)
 
-        for source_id, source_streams in bulk_streams.items():
-            total += app.state.manager.insert_timeseries_batch(source_id, source_streams)
+        for (source_id, cascade), source_streams in bulk_streams.items():
+            total += app.state.manager.insert_timeseries_batch(
+                source_id, source_streams, cascade=cascade,
+            )
         for s in individual_streams:
             total += app.state.manager.insert_timeseries(
                 source_id=s.source_id,
@@ -618,6 +620,7 @@ def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[st
                 rows=s.values,
                 point_uri=s.point_uri,
                 replace=s.replace,
+                cascade=s.cascade,
             )
         insert_stats.record(
             origin="http",

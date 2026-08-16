@@ -147,3 +147,59 @@ def test_insert_timeseries_batch_does_not_register_streams_when_bulk_insert_fail
 
     assert len(store.frames) == 1
     assert store.refs == []
+
+
+# ─────────────────────── change hook ───────────────────────
+
+
+class _HookStore(_BulkStore):
+    def upsert_rows(self, ref_uri, rows, value_kind="numeric"):
+        return len(rows)
+
+    def replace_rows(self, ref_uri, rows, value_kind="numeric"):
+        return len(rows)
+
+
+def _hooked_manager():
+    mgr = Manager.__new__(Manager)
+    mgr.timescale = _HookStore()
+    calls: list[tuple] = []
+    mgr.change_hook = lambda source_id, refs, cascade: calls.append((source_id, sorted(refs), cascade))
+    return mgr, calls
+
+
+def test_change_hook_fires_from_all_three_insert_paths():
+    mgr, calls = _hooked_manager()
+    ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    r = lambda name: str(compute_ref_uri("src", name))
+
+    mgr.insert_timeseries(source_id="src", ref_name="a", rows=[(ts, 1.0)])
+    mgr.insert_timeseries_batch("src", {"b": [(ts, 1.0)], "c": [(ts, 2.0), (ts, 3.0)]})
+    import pyarrow as pa
+    table = pa.table({"ts": [ts, ts], "ref_name": ["d", "d"], "value": [1.0, 2.0]})
+    mgr.insert_timeseries_arrow("src", table)
+
+    assert calls == [
+        ("src", [r("a")], False),
+        ("src", sorted([r("b"), r("c")]), False),          # de-duplicated per stream
+        ("src", [r("d")], False),
+    ]
+
+
+def test_change_hook_carries_cascade_and_survives_failure():
+    mgr, calls = _hooked_manager()
+    ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    mgr.insert_timeseries(source_id="app:x", ref_name="out", rows=[(ts, 1.0)], cascade=True)
+    assert calls[-1][0] == "app:x" and calls[-1][2] is True
+
+    mgr.change_hook = lambda *a: (_ for _ in ()).throw(RuntimeError("feed down"))
+    # A broken hook must never fail the insert.
+    assert mgr.insert_timeseries(source_id="src", ref_name="a", rows=[(ts, 1.0)]) == 1
+
+
+def test_no_hook_is_a_noop():
+    mgr = Manager.__new__(Manager)
+    mgr.timescale = _HookStore()
+    mgr.change_hook = None
+    ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    assert mgr.insert_timeseries(source_id="src", ref_name="a", rows=[(ts, 1.0)]) == 1

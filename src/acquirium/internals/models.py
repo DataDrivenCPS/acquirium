@@ -90,6 +90,9 @@ class StreamInsert(BaseModel):
     point_uri: str | None = None
     replace: bool = False
     values: list[tuple[datetime, float | int | str | None]]
+    # True when these rows are the outputs of a change-triggered app run;
+    # such inserts never trigger further runs (auto-run cascade depth 1).
+    cascade: bool = False
 
 
 Order = Literal["asc", "desc"]

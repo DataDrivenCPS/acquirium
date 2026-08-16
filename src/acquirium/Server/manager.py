@@ -21,7 +21,7 @@ from acquirium.internals.models import LogEntry, Order, TimeIntervalModel, compu
 from acquirium.internals.internals_namespaces import *
 
 from threading import Lock
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     import pyarrow as pa
@@ -202,6 +202,10 @@ class Manager:
         self.env_storage_root = Path(
             os.getenv("ACQUIRIUM_ENV_STORAGE_ROOT", str(self.data_dir / "envs"))
         )
+        # Auto-run hook: called with (source_id, [ref_uri, ...], cascade)
+        # after every timeseries insert. Must be enqueue-only (see
+        # Apps.change_feed) — it runs on the request thread. None disables.
+        self.change_hook: Callable[[str, list[str], bool], None] | None = None
         self._app_runs: dict[str, dict[str, Any]] = {}
         self._app_runs_lock = Lock()
 
@@ -700,6 +704,7 @@ class Manager:
         rows: list[tuple[datetime, Any]],
         point_uri: str | None = None,
         replace: bool = False,
+        cascade: bool = False,
     ) -> int:
         ref_uri = str(compute_ref_uri(source_id, ref_name))
         value_kind = self._registered_value_kind(ref_uri)
@@ -711,12 +716,24 @@ class Manager:
             n = self.timescale.replace_rows(ref_uri, rows, value_kind=value_kind)
         else:
             n = self.timescale.upsert_rows(ref_uri, rows, value_kind=value_kind)
+        self._notify_change(source_id, [ref_uri], cascade)
         return n
+
+    def _notify_change(self, source_id: str, ref_uris: list[str], cascade: bool = False) -> None:
+        hook = getattr(self, "change_hook", None)
+        if hook is None or not ref_uris:
+            return
+        try:
+            hook(source_id, ref_uris, cascade)
+        except Exception:
+            logger.exception("change hook failed (source=%s)", source_id)
 
     def insert_timeseries_batch(
         self,
         source_id: str,
         streams: dict[str, list[tuple[datetime, Any]]],
+        *,
+        cascade: bool = False,
     ) -> int:
         """Insert multiple source-local streams in one storage operation."""
         import polars as pl
@@ -751,9 +768,11 @@ class Manager:
                 "value_kind": pl.Series("value_kind", value_kinds, dtype=pl.Utf8),
             }
         )
-        return self.timescale.bulk_insert_polars(df)
+        n = self.timescale.bulk_insert_polars(df)
+        self._notify_change(source_id, sorted(set(ref_uris)), cascade)
+        return n
 
-    def insert_timeseries_arrow(self, source_id: str, table: "pa.Table") -> int:
+    def insert_timeseries_arrow(self, source_id: str, table: "pa.Table", *, cascade: bool = False) -> int:
         """Insert a melted (ts, ref_name, value) Arrow table, computing ref_uris vectorized."""
         import polars as pl
 
@@ -789,6 +808,7 @@ class Manager:
             inserted,
             source_id,
         )
+        self._notify_change(source_id, sorted(ref_uri_map.values()), cascade)
         return inserted
 
     def _registered_value_kind(self, ref_uri: str) -> str:
