@@ -169,9 +169,10 @@ can run on every insert.
 ## App outputs are streams too
 
 When an app that produces values (a soft sensor, for instance) is registered, each declared output becomes a point and a
-reference node: the app's name is the `source_id`, the output's point URI
+reference node: `app:<name>` is the `source_id`, the output's point URI
 string is the `ref_name`, and the computed `ref_uri` follows from the pair
 as usual.
+See the [apps guide](apps.md#outputs).
 This means computed values are indistinguishable from measured ones at query
 time.
 

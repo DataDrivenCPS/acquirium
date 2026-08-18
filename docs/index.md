@@ -52,10 +52,10 @@ model.
 | [Querying](querying.md) | finding equipment, topology and measurements; the `Query` interface |
 | [Working with data](data.md) | fetching timeseries, shapes, units, writing data |
 | [Building drivers](drivers.md) | feeding plant data in on a schedule |
+| [Building apps](apps.md) | computing on plant data server-side, writing results back |
 | [The data stream lifecycle](data-stream-lifecycle.md) | how streams are identified, stored and found again |
 | [Running the server](server.md) | config, storage backends, ontologies, HTTP API |
 | [Text resolution](resolution.md) | free text to URIs; unit conversion |
-| [Apps](apps.md) | computing on plant data server-side |
 
 The `docs/agents/` directory holds compact per-topic references written for
 coding agents; point your agent at them instead of the prose guides.

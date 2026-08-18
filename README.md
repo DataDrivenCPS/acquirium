@@ -64,6 +64,7 @@ The guides live in [docs/](./docs/index.md):
 | [Querying](./docs/querying.md) | finding equipment, topology and measurements |
 | [Working with data](./docs/data.md) | fetching timeseries, shapes, units, writing data |
 | [Building drivers](./docs/drivers.md) | feeding plant data in on a schedule |
+| [Building apps](./docs/apps.md) | computing on plant data server-side, writing results back |
 | [The data stream lifecycle](./docs/data-stream-lifecycle.md) | how streams are identified, stored and found |
 | [Running the server](./docs/server.md) | config, storage backends, ontologies, HTTP API |
 | [Text resolution](./docs/resolution.md) | free text to URIs; unit conversion |
