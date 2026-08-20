@@ -10,7 +10,6 @@ from typing import Any
 import ray
 
 from acquirium.Drivers.runner import DriverRunner
-from acquirium.internals.internals_namespaces import *
 
 
 logger = logging.getLogger("acquirium.driver.supervis")
@@ -28,9 +27,6 @@ def _worker_pythonpath(source_dir: str) -> str:
     if source_dir in inherited.split(os.pathsep):
         return inherited
     return source_dir + os.pathsep + inherited
-
-
-
 
 class DriverSupervisor:
     """Owns the DriverRunner actors of one server process, keyed by name.
@@ -115,8 +111,13 @@ class DriverSupervisor:
         record["actor"].stop.remote()
         try:
             ray.get(record["run_ref"], timeout=timeout)
-        except Exception:
+        except ray.exceptions.GetTimeoutError:
             logger.warning("Driver '%s' did not exit within %.1fs; killing actor", name, timeout)
+            ray.kill(record["actor"])
+            return {"name": name, "stopped": False, "error": "shutdown timed out"}
+        except Exception as exc:
+            ray.kill(record["actor"])
+            raise RuntimeError(f"Driver '{name}' shutdown failed: {exc}") from exc
         ray.kill(record["actor"])
         logger.info("Stopped driver '%s'", name)
         return {"name": name, "stopped": True}
@@ -143,7 +144,12 @@ class DriverSupervisor:
                 logger.exception("Failed to signal stop for driver '%s'", record["name"])
 
         by_ref = {record["run_ref"]: record for record in records}
-        _, not_ready = ray.wait(list(by_ref), num_returns=len(by_ref), timeout=timeout)
+        ready, not_ready = ray.wait(list(by_ref), num_returns=len(by_ref), timeout=timeout)
+        for ref in ready:
+            try:
+                ray.get(ref)
+            except Exception:
+                logger.exception("Driver '%s' shutdown failed", by_ref[ref]["name"])
         for ref in not_ready:
             logger.warning(
                 "Driver '%s' did not exit within %.1fs; killing actor",
@@ -172,16 +178,3 @@ class DriverSupervisor:
             "started_at": record["started_at"],
             "status": status,
         }
-
-
-
-
-
-
-
-
-
-
-
-
-

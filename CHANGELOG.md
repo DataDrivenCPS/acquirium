@@ -10,6 +10,30 @@ change in any release.
 
 ## [Unreleased]
 
+### Changed
+- File-driver configuration is centralized under `[[drivers]]`: `source_id`,
+  `watch_dir`, and `glob` are explicit and required. CSV/XLSX/Parquet layout is
+  also explicit; stream names are preserved exactly rather than sanitized.
+- Driver graph polling has its own cadence, independent of data ticks. Graph
+  content and graph-file insertion use separate APIs.
+
+### Added
+- **Explicit driver-author contract.** Ingest drivers declare streams with
+  `declare()` before reporting observations; the platform owns datasource and
+  stream registration, value-kind inference, lossless buffering, retry
+  retention, and final shutdown flushes. File reads return `FileBatch`, whose
+  cursor advances only after successful insertion.
+- Public `to_timestamp()` and `to_observations()` driver helpers, including
+  native/ISO/common timestamp parsing, split date/time columns, Unix epochs,
+  timezone handling, conservative column-name discovery, and explicit
+  `date_format` / `day_first` controls.
+
+### Removed
+- **Breaking:** `TabularIngestBase`, implicit per-file datasource identity,
+  automatic wide/narrow layout selection, and implicit graph path detection.
+  Specialized file drivers now implement `read(path, cursor)` explicitly and
+  may call the plain tabular conversion helpers.
+
 ## [0.4.0a1] - 2026-08-14
 
 ### Added

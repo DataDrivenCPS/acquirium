@@ -60,9 +60,15 @@ class SystemMetricsDriver(PollingIngestDriver):
         self._host_uri = URIRef(f"urn:host:{hostname}")
         logger.debug("system_metrics setup: hostname=%s source=%s", hostname, self.source_id)
 
-        self.aq.register_datasource(self.source_id)
         self._insert_host_graph(hostname)
-        self._register_stream_metadata()
+        for ref, _, unit, quantity_kind in _METRICS:
+            self.declare(
+                ref,
+                point_uri=str(self._stream_uri(ref)),
+                unit=unit,
+                quantity_kind=quantity_kind,
+                value_kind="numeric",
+            )
         psutil.cpu_percent(interval=None)  # first call always returns 0.0; discard it
 
     def collect(self) -> pl.DataFrame:
@@ -120,14 +126,3 @@ class SystemMetricsDriver(PollingIngestDriver):
             format="turtle",
             replace=False,
         )
-
-    def _register_stream_metadata(self) -> None:
-        for ref, _, unit, quantity_kind in _METRICS:
-            self.aq.register_streams([{
-                "point_uri": self._stream_uri(ref),
-                "unit": unit,
-                "quantity_kind": quantity_kind,
-                "source_id": self.source_id,
-                "ref_name": ref,
-                "value_kind": "numeric",
-            }])

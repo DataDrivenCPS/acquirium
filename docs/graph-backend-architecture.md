@@ -211,8 +211,9 @@ code.
 
 ### Plant model owner
 
-Insert the shared plant model without a source ID. Use `replace=True` only when
-the complete plant graph is being intentionally replaced.
+Insert the shared plant model with the reserved `source_id="plant"`. Use
+`replace=True` only when the complete plant graph is being intentionally
+replaced.
 
 ```python
 aq.insert_graph(plant_turtle, format="turtle", replace=True, source_id="plant")
@@ -223,35 +224,35 @@ aq.insert_graph(plant_turtle, format="turtle", replace=True, source_id="plant")
 Use one stable, non-empty `source_id` for the lifetime of a driver deployment.
 The typical lifecycle is:
 
-1. Call `register_datasource(source_id)` at startup. This creates the source
-   data graph if needed and records the datasource in it. It is idempotent.
+1. Assign `self.source_id` and call `self.declare(...)` for every stream during
+   setup or discovery. The platform registers the datasource and declarations
+   before observations are inserted.
 2. If the driver owns RDF metadata or a model fragment, append it with
    `self.insert_graph(..., replace=False)`. The driver base class supplies
    `self.source_id` automatically, so driver code cannot accidentally write to
    another source graph. Use
    `replace=True` only to replace that driver's own contribution; it cannot
    replace the plant graph.
-3. Register stream metadata with `register_streams`. The high-level client
-   groups registrations by `source_id` and writes each group to its matching
-   source graph. Stream identity is the pair `(source_id, ref_name)`.
-4. Insert observations with `insert_timeseries(source_id=..., ref_name=...)`.
-   Timeseries rows live in the timeseries backend; graph registration is what
-   provides their semantic linkage and value kind.
-5. On restart, repeat steps 1–3 safely. On ordinary shutdown, stop ingesting;
-   there is currently no general source-graph deletion lifecycle.
+3. Report observations with `add()` or return a canonical observation frame.
+   The platform batches insertion and retains accepted rows across recoverable
+   insertion failures.
+4. On shutdown, quiesce external producers in `stop()`; the platform performs
+   a final flush afterward.
 
 ```python
-aq.register_datasource("weather-station-1")
-self.insert_graph(metadata_turtle, replace=False)
-aq.register_streams([
-    {"source_id": "weather-station-1", "ref_name": "air_temp", "point_uri": point_uri},
-])
-aq.insert_timeseries(
-    source_id="weather-station-1",
-    ref_name="air_temp",
-    values=observations,
+self.source_id = "weather-station-1"
+self.declare(
+    "air_temp",
+    point_uri=point_uri,
+    value_kind="numeric",
 )
+self.insert_graph(metadata_turtle, replace=False)
+self.add("air_temp", value, timestamp)
 ```
+
+External programs can still call `register_datasource()`, `register_streams()`,
+and `insert_timeseries()` directly. Those are lower-level client operations,
+not extra lifecycle work required of driver authors.
 
 ### Apps
 

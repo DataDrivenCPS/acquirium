@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Iterable
 
 from acquirium.internals.models import AppContext
@@ -12,8 +13,6 @@ from acquirium.Client.explore.core import Query
 def app_source_id(name: str) -> str:
     """Return the reserved, stable graph and stream owner for one app."""
     return f"app:{name}"
-
-
 
 
 @dataclass
@@ -33,7 +32,11 @@ class Output:
             if series is None:
                 raise ValueError("timeseries output requires rows or series")
             series_list = list(series) if isinstance(series, Iterable) else None
-            if series_list is not None and series_list and all(isinstance(v, tuple) and len(v) == 2 for v in series_list):
+            if (
+                series_list is not None
+                and series_list
+                and all(isinstance(v, tuple) and len(v) == 2 for v in series_list)
+            ):
                 rows = series_list
             else:
                 values = series.to_list() if hasattr(series, "to_list") else (series_list or list(series))
@@ -118,6 +121,21 @@ class App(ABC):
             source_id=self.source_id,
         )
 
+    def insert_graph_file(
+        self,
+        path: str | Path,
+        *,
+        format: str | None = None,
+        replace: bool = False,
+    ) -> None:
+        """Read an RDF file into this app's source-owned graph."""
+        self._acquirium.insert_graph_file(
+            path,
+            format=format,
+            replace=replace,
+            source_id=self.source_id,
+        )
+
     def sparql_update(self, update: str) -> dict[str, Any]:
         """Apply an update only to this app's graph."""
         return self._acquirium.sparql_update(update, source_id=self.source_id)
@@ -125,8 +143,8 @@ class App(ABC):
     @abstractmethod
     def build_query(self, aq: Any) -> Query | dict[str, Query]:
         raise NotImplementedError
-    
-    def build_app(self, ctx:AppContext) -> Any:
+
+    def build_app(self, ctx: AppContext) -> Any:
         return None
 
     @abstractmethod
