@@ -114,13 +114,32 @@ def normalize_value(v: Any) -> tuple[list[Any], bool]:
     return values, negated
 
 
+#: Display name for each node role, in the order roles are listed.
+_ROLE_LABELS: dict[str, str] = {
+    "entity": "entity",
+    "data": "measurement",
+    "stream": "stream",
+}
+
+
+def _roles_label(roles: frozenset[str]) -> str:
+    """Render a role set for display.
+
+    Computed from the set rather than looked up by exact frozenset, so adding
+    a role or a new role combination cannot raise at import time.
+    """
+    if roles == ENTITY | DATA:
+        return "both"
+    names = [_ROLE_LABELS.get(r, r) for r in _ROLE_LABELS if r in roles]
+    names += sorted(r for r in roles if r not in _ROLE_LABELS)
+    return "/".join(names) if names else "-"
+
+
 def attributes_doc(indent: int = 8) -> str:
     """The registry rendered as a docstring block (single source of truth)."""
     pad = " " * indent
-    role = {frozenset({"entity"}): "entity", frozenset({"data"}): "measurement",
-            BOTH: "both"}
     width = max(len(n) for n in REGISTRY) + 2
     lines = [f"{pad}Attributes (usable on):"]
     for a in REGISTRY.values():
-        lines.append(f"{pad}  {a.name:<{width}}{role[a.roles]:<12}{a.doc}")
+        lines.append(f"{pad}  {a.name:<{width}}{_roles_label(a.roles):<12}{a.doc}")
     return "\n".join(lines)

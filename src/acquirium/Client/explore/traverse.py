@@ -158,7 +158,11 @@ def _prune_target_subtree(graph: QueryGraph, edge) -> QueryGraph:
             return replace(node, constraints=c)
         return node
 
-    return QueryGraph(
+    # Every per-node collection has to be filtered by ``removed``; a new one
+    # added to QueryGraph must be filtered here too, or it keeps entries for
+    # nodes this subgraph no longer has.
+    return replace(
+        graph,
         nodes={k: (_undropped(v) if k == edge.source_id else v)
                for k, v in graph.nodes.items() if k not in removed},
         edges=[e for e in graph.edges
@@ -202,6 +206,9 @@ def _fetch_target_accept(client, graph: QueryGraph, edge) -> Optional[Set[str]]:
     c = dict(node.constraints or {})
     if c.pop("dropped", None):
         node = replace(node, constraints=c)
+    # Built from scratch rather than copied: this is the target node alone,
+    # stripped of the rest of the pattern. A new per-node collection on
+    # QueryGraph must be carried over here explicitly, like data_nodes is.
     sub = QueryGraph(
         nodes={tid: node},
         edges=[],
@@ -245,13 +252,7 @@ def resolve_program_edges(graph: QueryGraph, client) -> QueryGraph:
             for src, targets in matches.items():
                 pairs.extend((src, tgt) for tgt in sorted(targets))
         resolved_edge = replace(edge, value_pairs=tuple(pairs))
-        graph = QueryGraph(
-            nodes=dict(graph.nodes),
-            edges=[resolved_edge if e is edge else e for e in graph.edges],
-            aliases=dict(graph.aliases),
-            aliases_reverse=dict(graph.aliases_reverse),
-            current_pointer=graph.current_pointer,
-            data_nodes=dict(graph.data_nodes),
-            selects=graph.selects,
+        graph = replace(
+            graph, edges=[resolved_edge if e is edge else e for e in graph.edges]
         )
     return graph

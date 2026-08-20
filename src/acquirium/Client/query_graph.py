@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Dict, List, Optional, Any
 
 @dataclass(frozen=True)
@@ -70,15 +70,7 @@ class QueryGraph:
     def with_data_node(self, info: DataNodeInfo) -> "QueryGraph":
         dn = dict(self.data_nodes)
         dn[info.node_id] = info
-        return QueryGraph(
-            nodes=dict(self.nodes),
-            edges=list(self.edges),
-            aliases=dict(self.aliases),
-            aliases_reverse=dict(self.aliases_reverse),
-            current_pointer=self.current_pointer,
-            data_nodes=dn,
-            selects=self.selects,
-        )
+        return replace(self, data_nodes=dn)
 
     def with_node(self, node: QueryNode) -> "QueryGraph":
         """Return a new graph with an added/updated node and alias."""
@@ -87,35 +79,24 @@ class QueryGraph:
 
         aliases = dict(self.aliases)
         aliases_reverse = dict(self.aliases_reverse)
-        if node.alias:
-            aliases[node.alias] = node.id
-            aliases_reverse[node.id] = node.alias
-        else:
-            aliases[str(node.id)] = node.id
-            aliases_reverse[node.id] = str(node.id)
+        name = node.alias or str(node.id)
+        aliases[name] = node.id
+        aliases_reverse[node.id] = name
 
-        return QueryGraph(
+        return replace(
+            self,
             nodes=nodes,
-            edges=list(self.edges),
             aliases=aliases,
             aliases_reverse=aliases_reverse,
             current_pointer=node.id,
-            data_nodes=dict(self.data_nodes),
-            selects=self.selects,
         )
 
     def with_edge(self, edge: QueryEdge, *, new_pointer: Optional[int] = None) -> "QueryGraph":
         """Return a new graph with an added edge and (optionally) new pointer."""
-        edges = list(self.edges)
-        edges.append(edge)
-        return QueryGraph(
-            nodes=dict(self.nodes),
-            edges=edges,
-            aliases=dict(self.aliases),
-            aliases_reverse=dict(self.aliases_reverse),
+        return replace(
+            self,
+            edges=[*self.edges, edge],
             current_pointer=new_pointer if new_pointer is not None else self.current_pointer,
-            data_nodes=dict(self.data_nodes),
-            selects=self.selects,
         )
 
     def with_select(self, node_id: int, attr_name: str, required: bool = False) -> "QueryGraph":
@@ -127,28 +108,23 @@ class QueryGraph:
         if entry in self.selects:
             return self
         if any(n == node_id and a == attr_name for n, a, _ in self.selects):
-            return QueryGraph(
-                nodes=dict(self.nodes),
-                edges=list(self.edges),
-                aliases=dict(self.aliases),
-                aliases_reverse=dict(self.aliases_reverse),
-                current_pointer=self.current_pointer,
-                data_nodes=dict(self.data_nodes),
-                selects=tuple(entry if (n == node_id and a == attr_name) else (n, a, r)
-                              for n, a, r in self.selects),
-            )
-        return QueryGraph(
-            nodes=dict(self.nodes),
-            edges=list(self.edges),
-            aliases=dict(self.aliases),
-            aliases_reverse=dict(self.aliases_reverse),
-            current_pointer=self.current_pointer,
-            data_nodes=dict(self.data_nodes),
-            selects=self.selects + (entry,),
-        )
+            return replace(self, selects=tuple(
+                entry if (n == node_id and a == attr_name) else (n, a, r)
+                for n, a, r in self.selects
+            ))
+        return replace(self, selects=self.selects + (entry,))
 
     def resolve_alias(self, alias_or_none: Optional[str]) -> Optional[int]:
         """Resolve an alias or use current pointer when None."""
         if alias_or_none is None:
             return self.current_pointer
         return self.aliases.get(alias_or_none)
+
+    def node_role(self, node_id: int) -> str:
+        """Which attribute role a node plays: ``"data"`` or ``"entity"``.
+
+        The single place this is decided. Attribute applicability
+        (``Attr.roles``) is checked against it by ``where``/``include``/
+        ``options``/``facets``.
+        """
+        return "data" if node_id in self.data_nodes else "entity"

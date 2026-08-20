@@ -108,14 +108,7 @@ class Q:
                     new_pointer=new_id,
                 )
         else:
-            g2 = QueryGraph(
-                nodes=dict(g2.nodes),
-                edges=list(g2.edges),
-                aliases=dict(g2.aliases),
-                aliases_reverse=dict(g2.aliases_reverse),
-                current_pointer=new_id,
-                data_nodes=dict(getattr(g2, "data_nodes", {})),
-            )
+            g2 = replace(g2, current_pointer=new_id)
 
         info = DataNodeInfo(
             node_id=new_id,
@@ -401,6 +394,10 @@ class Q:
             merged_aliases[alias_name] = other_mapping[nid]
             merged_aliases_reverse = {v: k for k, v in merged_aliases.items()}
 
+        # Built from scratch, not copied: both operands' node ids are remapped,
+        # so no per-node collection carries over unchanged. Note this drops
+        # data_nodes and selects from both sides — a pre-existing limitation of
+        # relate_to, not introduced here.
         merged_graph = QueryGraph(
             nodes=merged_nodes,
             edges=merged_edges,
@@ -793,15 +790,7 @@ class Q:
             new_filters[predicate] = stored_value
             dn2[nid] = replace(info, filters=new_filters)
 
-        g2 = QueryGraph(
-            nodes=dict(g.nodes),
-            edges=list(g.edges),
-            aliases=dict(g.aliases),
-            aliases_reverse=dict(g.aliases_reverse),
-            current_pointer=g.current_pointer,
-            data_nodes=dn2,
-        )
-        return self._clone_with_graph(g2, bump_id=False)
+        return self._clone_with_graph(replace(g, data_nodes=dn2), bump_id=False)
 
     @flex_query_rdf_inputs(specs=[FlexSpec("unit", "unit")])
     def filter_by_unit(self, unit: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Q":

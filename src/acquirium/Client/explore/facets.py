@@ -36,6 +36,7 @@ from acquirium.internals.internals_namespaces import (
     WATR,
 )
 from acquirium.Client.explore.attributes import Attr
+from acquirium.Client.explore.compile import attr_pred_path
 
 # Vocabulary fragments lifted from Server/manager.py (_extract_concepts_for
 # _embedding); ?uri is the projected variable.
@@ -96,7 +97,9 @@ def model_options(client, attr: Attr, version: int) -> list:
     """Model-wide (pattern-independent) value counts for one attribute."""
     key = (_server_key(client), "model", attr.name, version)
     if key not in _FACET_CACHE:
-        pred_path = "|".join(f"<{p}>" for p in attr.predicates)
+        # Model-wide, so no single node role applies; use the most permissive
+        # one so values reachable only through a reference are still counted.
+        pred_path = attr_pred_path(attr, "data")
         sparql = (
             "SELECT ?opt (COUNT(DISTINCT ?x) AS ?count)\n"
             f"WHERE {{\n  ?x ({pred_path}) ?opt .\n}}\n"

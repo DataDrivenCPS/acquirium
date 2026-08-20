@@ -86,7 +86,22 @@ def render_alternatives(alts, prev: str, obj: str, uid: str) -> str:
     return "{ " + " UNION ".join("{ " + r + " }" for r in rendered) + " }"
 
 
-def _attr_clauses(var: str, attr: Attr, value: Any) -> List[str]:
+def attr_paths(attr: Attr, role: str) -> List[str]:
+    """Bracketed SPARQL property paths matching one attribute, in match order.
+
+    The single place an attribute's predicates become path syntax. Returned
+    paths are ready to drop into a triple pattern as-is (already bracketed),
+    so callers never re-wrap them.
+    """
+    return [f"<{p}>" for p in attr.predicates]
+
+
+def attr_pred_path(attr: Attr, role: str) -> str:
+    """``attr_paths`` as a single alternation, for use in a property path."""
+    return "|".join(attr_paths(attr, role))
+
+
+def _attr_clauses(var: str, attr: Attr, value: Any, role: str = "entity") -> List[str]:
     """WHERE clauses for one registry attribute constraint on ``var``.
 
     Subclass-matched attrs use the same anchored sub-SELECT fence as
@@ -99,7 +114,7 @@ def _attr_clauses(var: str, attr: Attr, value: Any) -> List[str]:
     clauses: List[str] = []
 
     if attr.via_subclass:
-        pred_path = "|".join(f"<{p}>" for p in attr.predicates)
+        pred_path = attr_pred_path(attr, role)
         if negated:
             # Anchored at the constant class on the right, so no fence needed.
             step = f"<{_RDF_TYPE}>/<{_SUBCLASS}>*" if _RDF_TYPE in attr.predicates \
@@ -122,13 +137,13 @@ def _attr_clauses(var: str, attr: Attr, value: Any) -> List[str]:
         clauses.append(f"{{ SELECT DISTINCT {fence_var} WHERE {{ {inner}}} }}")
         return clauses
 
-    combos = [(p, _term(x)) for p in attr.predicates for x in values]
+    combos = [(path, _term(x)) for path in attr_paths(attr, role) for x in values]
     if len(combos) == 1:
-        p, t = combos[0]
-        triple = f"{var} <{p}> {t} ."
+        path, t = combos[0]
+        triple = f"{var} {path} {t} ."
         clauses.append(f"FILTER NOT EXISTS {{ {triple} }}" if negated else triple)
     else:
-        union = " UNION ".join(f"{{ {var} <{p}> {t} . }}" for p, t in combos)
+        union = " UNION ".join(f"{{ {var} {path} {t} . }}" for path, t in combos)
         clauses.append(f"FILTER NOT EXISTS {{ {union} }}" if negated else f"{{ {union} }}")
     return clauses
 
@@ -415,7 +430,7 @@ def _node_constraint_clauses(v: str, node) -> List[str]:
             f"}} }}"
         )
     for name, aval in ((node.constraints or {}).get("attrs") or {}).items():
-        clauses.extend(_attr_clauses(v, REGISTRY[name], aval))
+        clauses.extend(_attr_clauses(v, REGISTRY[name], aval, "entity"))
     return clauses
 
 
@@ -429,7 +444,7 @@ def _data_node_clauses(v: str, nid: int, info) -> List[str]:
         if val is None:
             continue
         if isinstance(pred, str) and pred in REGISTRY:
-            clauses.extend(_attr_clauses(v, REGISTRY[pred], val))
+            clauses.extend(_attr_clauses(v, REGISTRY[pred], val, "data"))
             continue
         negate = isinstance(val, Not)
         if negate:
@@ -458,10 +473,10 @@ def _data_node_clauses(v: str, nid: int, info) -> List[str]:
     return clauses
 
 
-def _attr_select_clause(v: str, nid: int, name: str, required: bool) -> tuple:
+def _attr_select_clause(v: str, nid: int, name: str, required: bool, role: str = "entity") -> tuple:
     attr = REGISTRY[name]
     avar = f"?attr{nid}_{name}"
-    pred_path = "|".join(f"<{p}>" for p in attr.predicates)
+    pred_path = attr_pred_path(attr, role)
     clause = f"{v} ({pred_path}) {avar} ."
     return (clause if required else f"OPTIONAL {{ {clause} }}"), avar
 
@@ -510,7 +525,7 @@ def compile_parts(graph: QueryGraph) -> tuple:
                 f"}} }}"
             )
         for name, aval in ((node.constraints or {}).get("attrs") or {}).items():
-            where_clauses.extend(_attr_clauses(v, REGISTRY[name], aval))
+            where_clauses.extend(_attr_clauses(v, REGISTRY[name], aval, "entity"))
 
     # edge constraints
     for edge_idx, edge in enumerate(graph.edges):
@@ -545,7 +560,7 @@ def compile_parts(graph: QueryGraph) -> tuple:
             # Registry-attribute keys expand via the attribute definition;
             # anything else is a raw predicate URI (legacy-shaped filters).
             if isinstance(pred, str) and pred in REGISTRY:
-                where_clauses.extend(_attr_clauses(v, REGISTRY[pred], val))
+                where_clauses.extend(_attr_clauses(v, REGISTRY[pred], val, "data"))
                 continue
 
             # Unwrap negation marker
@@ -584,11 +599,10 @@ def compile_parts(graph: QueryGraph) -> tuple:
     # so DataObject's column parsing ignores them)
     attr_var_pairs: List[tuple] = []  # (node_id, var) in selects order
     for nid, name, required in getattr(graph, "selects", ()):
-        attr = REGISTRY[name]
-        avar = f"?attr{nid}_{name}"
-        pred_path = "|".join(f"<{p}>" for p in attr.predicates)
-        clause = f"{var_map[nid]} ({pred_path}) {avar} ."
-        where_clauses.append(clause if required else f"OPTIONAL {{ {clause} }}")
+        clause, avar = _attr_select_clause(
+            var_map[nid], nid, name, required, graph.node_role(nid)
+        )
+        where_clauses.append(clause)
         attr_var_pairs.append((nid, avar))
 
     # drop(): nodes stay in the pattern (WHERE) but leave the projection —
@@ -643,7 +657,7 @@ def _compile_parts_multi(graph: QueryGraph) -> tuple:
     for nid, name, required in getattr(graph, "selects", ()):
         if nid in data_ids:
             continue
-        clause, avar = _attr_select_clause(var_map[nid], nid, name, required)
+        clause, avar = _attr_select_clause(var_map[nid], nid, name, required, "entity")
         where_clauses.append(clause)
         attr_var_pairs.append((nid, avar))
 
@@ -660,7 +674,7 @@ def _compile_parts_multi(graph: QueryGraph) -> tuple:
         # the unbound variable would turn the binding into an open pattern
         for snid, name, required in getattr(graph, "selects", ()):
             if snid == nid:
-                clause, avar = _attr_select_clause(v, nid, name, required)
+                clause, avar = _attr_select_clause(v, nid, name, required, "data")
                 b.append(clause)
                 attr_var_pairs.append((nid, avar))
         branches.append("{ " + " ".join(b) + " }")

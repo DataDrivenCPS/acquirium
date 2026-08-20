@@ -26,7 +26,7 @@ import polars as pl
 from rdflib import URIRef
 
 from acquirium.Client.explore.attributes import REGISTRY, Not, attributes_doc, normalize_value
-from acquirium.Client.explore.compile import compile_sparql
+from acquirium.Client.explore.compile import attr_pred_path, compile_sparql
 from acquirium.Client.explore.directions import EQUIPMENT_STEPS, PROPERTY_STEPS
 from acquirium.Client.query_graph import DataNodeInfo, QueryEdge, QueryGraph, QueryNode
 from acquirium.internals.internals_namespaces import S223
@@ -201,13 +201,12 @@ class Query:
         """Store resolved attribute constraints on the given nodes (role-checked)."""
         ptr = g.current_pointer
         for nid in node_ids:
-            is_data = nid in g.data_nodes
-            role = "data" if is_data else "entity"
+            role = g.node_role(nid)
             for name in resolved:
                 if role not in REGISTRY[name].roles:
                     alias = g.aliases_reverse.get(nid, str(nid))
                     raise ValueError(f"attribute {name!r} does not apply to {role} node {alias!r}")
-            if is_data:
+            if role == "data":
                 info = g.data_nodes[nid]
                 filters = dict(info.filters)
                 filters.update(resolved)
@@ -621,7 +620,7 @@ class Query:
                 g = self._set_dropped(g, target[1], False)
                 continue
             _, nid, attr_name = target
-            role = "data" if nid in g.data_nodes else "entity"
+            role = g.node_role(nid)
             if role not in REGISTRY[attr_name].roles:
                 alias = g.aliases_reverse.get(nid, str(nid))
                 raise ValueError(
@@ -710,7 +709,7 @@ class Query:
                 else "options: no current node (start with entity())"
             )
         attr = REGISTRY[attr_name]
-        role = "data" if nid in g.data_nodes else "entity"
+        role = g.node_role(nid)
         if role not in attr.roles:
             alias = g.aliases_reverse.get(nid, str(nid))
             raise ValueError(f"options: attribute {attr_name!r} does not apply to {role} node {alias!r}")
@@ -738,7 +737,7 @@ class Query:
                         seen.add(s)
                         uris.append(s)
 
-            pred_path = "|".join(f"<{p}>" for p in attr.predicates)
+            pred_path = attr_pred_path(attr, role)
             counts_by_value: Dict[str, set] = {}
             for i in range(0, len(uris), 500):
                 chunk = " ".join(f"<{u}>" for u in uris[i:i + 500])
@@ -786,7 +785,7 @@ class Query:
                 f"facets: unknown alias {of!r}" if of is not None
                 else "facets: no current node (start with entity())"
             )
-        role = "data" if nid in g.data_nodes else "entity"
+        role = g.node_role(nid)
         alias = g.aliases_reverse.get(nid, str(nid))
         version = self.client.graph_version()
 
