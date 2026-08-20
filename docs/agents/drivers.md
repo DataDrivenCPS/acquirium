@@ -9,86 +9,139 @@ human_doc: ../drivers.md
 
 A driver is a class the SERVER runs as a Ray actor on its own host. It talks
 back over HTTP via `self.aq`, a normal `Acquirium` client. Lifecycle:
-`setup()` once → `tick()` immediately → every `interval` s: [graph changed →
-`on_graph_change()`] → `tick()` → on shutdown `stop()`.
+`setup()` once → platform registers declarations → `tick()` immediately →
+every `interval` s: [graph changed → `on_graph_change()`] → `tick()` → on
+shutdown `stop()` then a final flush.
+
+You provide identity + declarations + reading code. The platform owns
+scheduling, registration, batching, insertion and shutdown.
 
 ## Contract
 
 ```python
-from acquirium.Drivers.Driver import Driver, PollingIngestDriver, EventIngestDriver
-from acquirium.Drivers.BuiltInDrivers.tabular_base import TabularIngestBase
+from acquirium import (Driver, PollingIngestDriver, EventIngestDriver,
+                       FileIngestDriver, FileBatch,
+                       DriverBufferFull, UndeclaredStreamError)
 
-class MyDriver(PollingIngestDriver):        # pick a base, not Driver directly
-    def setup(self):                        # required; register here
-        self.source_id = "src"              # no default; set it
-    def collect(self) -> pl.DataFrame:      # PollingIngestDriver's hook
-        ...
+class MyDriver(PollingIngestDriver):        # pick an ingest base, not Driver
+    def setup(self):                        # required; declare here
+        self.source_id = "src"              # no default; set it (or config source_id)
+        self.declare("temp", value_kind="numeric", point_uri="urn:p:temp")
+    def read(self):                         # report values one at a time
+        self.add("temp", read_sensor())
 ```
 
 Provided on `self`: `aq` (client), `config` (full parsed toml; entry keys
 under `config["driver"]`), `state` (persistent store). Helpers:
-`config_dir()`, `data_dir()`, `reference_uri(ref_name)`.
+`config_dir()`, `data_dir()`, `reference_uri(ref_name)`, `insert_graph()`,
+`insert_graph_file()`, `sparql_update()`, `declare()`, `add()`,
+`is_declared()`, `flush()`.
 
 `self.state` is METHOD-BASED: `state.set(k, v)`, `state.get(k)`, `delete`,
 `keys`, `update`, `clear`. `state[k] = v` raises TypeError. Persists to JSON
-per `driver_id` (default: class name).
+per `driver_id` (default: derived from the spec).
+
+## declare() / add()
+
+```python
+self.declare(ref_name, *, source_id=None, value_kind=None, point_uri=None,
+             label=None, unit=None, quantity_kind=None, medium=None,
+             substance=None, data_source=None, properties=None)
+self.add(ref_name, value, ts=None, *, source_id=None)
+```
+
+- Stream identity is the exact pair `(source_id, ref_name)`. NOT sanitized,
+  normalized or rewritten — `"Sample Point 3"` stays exactly that.
+- `declare` is idempotent and cheap: call it every read. Identical repeat =
+  no-op; changed metadata for an existing pair = `ValueError`.
+- Omit `value_kind` to have it inferred from the first meaningful values.
+- `add` is thread-safe, does NO network I/O — safe from broker callbacks.
+  `ts` defaults to now UTC; naive datetimes are read as UTC.
+- Declarations reach the graph just before the next insert.
 
 ## Base choice
 
 | source | base | implement |
 |---|---|---|
-| poll every tick | `PollingIngestDriver` | `collect() -> frame` |
-| pushed via callback | `EventIngestDriver` | call `insert_observations(frame)` from the callback |
-| files in a directory | `TabularIngestBase` (or CSV/XLSX/Parquet built-ins) | hooks only |
+| pulled every tick | `PollingIngestDriver` | `read()` + `add()` |
+| pulled every tick, already bulk | `PollingIngestDriver` | `collect() -> frame` |
+| pushed via callback | `EventIngestDriver` | the callback, calling `add()` |
+| files in a directory | `FileIngestDriver` | `read(path, cursor) -> FileBatch` |
 
 Ready-made, config-only: `CSVIngestDriver`, `XLSXIngestDriver` (`[xlsx]`),
 `ParquetIngestDriver`, `MQTTIngestDriver` (`[mqtt]`), `WaterTAPDriver`
 (`[watertap]`), `SystemMetricsDriver` — all under
 `acquirium.Drivers.BuiltInDrivers`.
 
-## The observation frame
+## The observation frame (collect / insert_observations)
 
 Columns `ts`, `ref_name`, `value` (+ optional `source_id` for multi-source;
-frame is split per source). Normalization on insert: `ts` → Datetime(us, UTC),
-strings parsed, naive assumed UTC; `value` → string on transfer, real type
-restored from the registered `value_kind`; null `ts`/`ref_name` rows dropped.
-Missing column: `ValueError: Observation frames must include columns ts,
-ref_name, value; missing [...]`.
+frame is split per source). Normalization on insert: `ts` → Datetime(us, UTC);
+`ref_name`/`value` → Utf8; null `ts`/`ref_name` rows dropped. `value` is
+transferred as a string regardless of type; the server picks the storage
+column from the registered `value_kind`. Missing column: `ValueError:
+Observation frames must include columns ts, ref_name, value; missing [...]`.
 
 ## Hard rules
 
-- NEVER `insert_graph(..., replace=True)` from a driver. One main graph;
-  `replace=True` clears everyone's triples. The client default IS `True`, so
-  always pass `replace=False` explicitly.
-- Register streams BEFORE the first insert (`register_datasource` +
-  `register_streams` in `setup()`), with `point_uri` set; otherwise rows are
-  stored but unreachable by semantic queries. Insert to an unregistered
-  stream → HTTP 400 `stream urn:acquirium#<uuid> is not registered`.
+- Declare BEFORE reporting. An undeclared pair raises
+  `UndeclaredStreamError`, on `add()` and on frame insert alike.
+- Use `self.insert_graph()` / `self.insert_graph_file()`, NEVER
+  `self.aq.insert_graph(...)`. The helpers are scoped to the driver's own
+  graph and default `replace=False`; the raw client call takes a `source_id`
+  and defaults `replace=True` for that owner's graph.
+- `add()` accepted ≠ stored. Rows sit in memory until the tick's flush.
+  A failed insert puts them back and the NEXT tick retries. A process crash
+  loses them.
+- `max_buffered_rows` (100_000) caps the buffer; `add()` then raises
+  `DriverBufferFull` — apply backpressure, do not swallow it.
 - Tick exceptions are logged and SWALLOWED; status stays `running`. Check
   the `acquirium.driver.<ClassName>` logs, not `/drivers/list`.
 - `failed: <error>` status means the actor died (usually `setup()`).
-- Only tabular drivers replay after a failed upload (file offset advances on
-  success only). A polling driver's failed tick is lost unless `collect()`
-  re-reads from a watermark kept in `self.state`.
+- `FileIngestDriver`: call `super().setup()` when overriding `setup()` (it
+  validates `source_id`/`watch_dir`/`glob`). `FileBatch.next_cursor` must be
+  JSON-serializable and is saved ONLY after registration + insertion succeed.
+  Return the cursor unchanged to signal nothing new.
+- Tabular built-ins REQUIRE `format = "wide"|"narrow"`; layout is never
+  inferred.
 - Two `[[drivers]]` entries of the same class share one state file unless
   each sets a distinct `driver_id`.
 - File specs (`spec = "file.py:Class"`) resolve on the SERVER's filesystem,
   relative to the config file's directory. Sibling modules are importable.
 - `watertap_*` paths resolve against the process CWD, not the config dir.
-- A graph write inside `on_graph_change()` re-triggers it next tick; guard
-  or the driver loops.
-- Do not override `setup()`/`tick()` on `TabularIngestBase`; use
-  `configure_tabular_driver()` / `after_tabular_setup()` and the hooks.
+  `watch_dir` resolves against the config dir.
+- `on_graph_change()` never fires for the initial graph — do the first query
+  in `setup()`. A graph write inside it re-triggers it next tick; guard or
+  the driver loops.
+- Never `while True` / `sleep()` in a driver; the runner owns scheduling.
+  `stop()` is for quiescing producers only.
+
+## Error → cause
+
+| symptom | cause |
+|---|---|
+| `UndeclaredStreamError: observation stream ('src','x') was not declared` | `add()`/frame for a pair never passed to `declare()` |
+| `ValueError: conflicting declaration for stream ...` | same pair declared twice with different metadata |
+| `DriverBufferFull` | source outruns the flush; raise `max_buffered_rows` or slow the source |
+| `AttributeError: X.source_id is not set yet` | no `self.source_id` and no `source_id` in config |
+| `ValueError: file ingest drivers require driver.watch_dir` (or `source_id`/`glob`) | missing key, or `setup()` overridden without `super().setup()` |
+| `TypeError: X.read() must return FileBatch` | returned a bare frame |
+| `ValueError: CSV ingestion requires driver.format = 'wide' or 'narrow'` | `format` not set |
+| `TypeError: ... must implement read() or collect()` | `PollingIngestDriver` subclass implements neither |
+| rows stored but no semantic query finds them | declared without `point_uri` |
+| status `running`, no data | tick raising; read the driver logs |
 
 ## Config
 
 ```toml
 [driver]                 # defaults for all drivers
 interval = 10.0
+graph_poll_interval = 30.0     # default max(interval, 10.0)
 
 [[drivers]]              # one driver; any key overrides [driver] and is
 spec      = "probe_driver.py:ProbeDriver"   # visible as config["driver"][key]
 name      = "probe-lab"  # registry name, unique; defaults to class name
+source_id = "probe-lab"
 interval  = 5.0
 ```
 
@@ -97,47 +150,69 @@ Start: `acquirium server --config X.toml` (runs server + drivers) or
 Manage: `acquirium driver list` / `acquirium driver stop --name N`
 (HTTP: `GET /drivers/list`, `POST /drivers/start`, `POST /drivers/stop`).
 
-## Canonical snippet
+## Canonical snippets
+
+Polling:
 
 ```python
-import polars as pl
-from datetime import datetime, timezone
-from acquirium.Drivers.Driver import PollingIngestDriver
+from acquirium import PollingIngestDriver
 
 class ProbeDriver(PollingIngestDriver):
     def setup(self):
         self.source_id = "probe-1"
-        self.aq.register_datasource(self.source_id)
-        self.aq.register_streams([{
-            "source_id": self.source_id, "ref_name": "effluent-tds",
-            "value_kind": "numeric", "point_uri": "urn:swro/effluent-tds",
-            "unit": "mg/L", "quantity_kind": "mass concentration",
-        }])
+        self.declare("effluent-tds", value_kind="numeric",
+                     point_uri="urn:swro/effluent-tds",
+                     unit="mg/L", quantity_kind="mass concentration")
 
-    def collect(self) -> pl.DataFrame:
-        return pl.DataFrame({"ts": [datetime.now(timezone.utc)],
-                             "ref_name": ["effluent-tds"],
-                             "value": [read_probe()]})
-        # empty frame = nothing new this tick
+    def read(self):
+        self.add("effluent-tds", read_probe())
 ```
 
-Tabular customization: override `stream_specs_for_names()` to attach
-`point_uri`s (default registers name-only, semantically unreachable) and
-`read_frame()` for file cleanup (may return wide, narrow, or normalized
-`(ts, ref_name, value)`). Reference implementations:
-`deployments/WATERTAP/scripts/parquet_driver.py`,
+File:
+
+```python
+from pathlib import Path
+from typing import Any
+import polars as pl
+from acquirium import FileBatch, FileIngestDriver
+
+class PlantParquetDriver(FileIngestDriver):
+    def setup(self):
+        super().setup()                       # validates source_id/watch_dir/glob
+        self.declare("flow", value_kind="numeric", point_uri="urn:plant:flow")
+
+    def read(self, path: Path, cursor: Any) -> FileBatch:
+        offset = cursor or 0
+        frame = pl.read_parquet(path).slice(offset)
+        if frame.is_empty():
+            return FileBatch(None, cursor)
+        obs = frame.select(pl.col("timestamp").alias("ts"),
+                           pl.lit("flow").alias("ref_name"),
+                           pl.col("flow").alias("value"))
+        return FileBatch(obs, offset + len(frame))
+```
+
+Reference implementations: `deployments/WATERTAP/scripts/parquet_driver.py`,
 `deployments/BENICIA/scripts/parquet_driver.py`.
+Shared helpers: `from acquirium import to_observations, to_timestamp`.
 
 ## Anti-patterns
 
 ```python
-self.aq.insert_graph(model)                  # WRONG: replace defaults to True
-self.aq.insert_graph(model, replace=False)   # right
+self.aq.insert_graph(model, source_id=self.source_id)  # WRONG: replace=True
+self.insert_graph_file(model_path)                     # right
 
 self.state["k"] = v                          # WRONG: TypeError
 self.state.set("k", v)                       # right
 
-class Mine(TabularIngestBase):
-    def setup(self): ...                     # WRONG: breaks the base's setup
-    def configure_tabular_driver(self): ...  # right
+def read(self):
+    self.add("temp", 21.5)                   # WRONG if never declared
+def setup(self):
+    self.declare("temp", value_kind="numeric")   # right
+
+class Mine(FileIngestDriver):
+    def setup(self):
+        self.declare("x")                    # WRONG: skipped super().setup()
+    def setup(self):
+        super().setup(); self.declare("x")   # right
 ```
