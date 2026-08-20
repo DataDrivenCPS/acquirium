@@ -25,7 +25,6 @@ from pathlib import Path
 import polars as pl
 import rdflib
 
-from acquirium.Drivers.BuiltInDrivers.watertap import _guess_rdf_format
 
 from benicia_generator import (
     build_state_for_property,
@@ -78,7 +77,7 @@ def main(argv=None) -> None:
         raise SystemExit("--step-frac must be positive.")
 
     model_path = Path(args.model)
-    graph = rdflib.Graph().parse(model_path, format=_guess_rdf_format(model_path))
+    graph = rdflib.Graph().parse(model_path)
     properties = get_properties(graph)
 
     rng = random.Random(args.seed)

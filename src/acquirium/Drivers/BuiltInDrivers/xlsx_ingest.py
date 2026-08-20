@@ -2,73 +2,84 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
 import polars as pl
 
-from acquirium.Drivers.BuiltInDrivers.tabular_base import TabularIngestBase
-from acquirium.internals._log import timed_debug
+from acquirium.Drivers.Driver import FileBatch, FileIngestDriver
+from acquirium.Drivers.tabular import to_observations
 
 logger = logging.getLogger("acquirium.xlsx_ingest")
 
 
-class XLSXIngestDriver(TabularIngestBase):
-    """Watches a directory for Excel (XLSX) files and ingests new rows into Acquirium.
+class XLSXIngestDriver(FileIngestDriver):
+    """Watches a directory for Excel (XLSX) files and ingests new rows.
 
-    Row positions are tracked in memory so only rows added since the last tick
-    are inserted.  Files are never moved or deleted.
+    All files use the required configured datasource. Wide and narrow layouts
+    are supported — see ``CSVIngestDriver``. Multiple sheets are concatenated
+    before reshaping.
 
-    Wide and narrow formats are supported — see ``CSVIngestDriver`` for details.
-    When multiple sheets are specified they are concatenated before parsing.
-
-    Config keys (all optional, under ``self.config["driver"]``):
+    Config keys under ``self.config["driver"]``. ``source_id``, ``watch_dir``,
+    ``glob``, and ``format`` are required; the remaining keys are optional:
 
     .. code-block:: toml
 
         [[drivers]]
-        spec         = "acquirium.Drivers.BuiltInDrivers.xlsx_ingest:XLSXIngestDriver"
-        interval     = 5.0
-        watch_dir    = "./data/incoming"
-        format       = "auto"        # "auto" | "wide" | "narrow"
-        time_col     = "time"
-        id_col       = "id"          # narrow only
-        value_col    = "value"       # narrow only
-        skip_cols    = ["notes"]     # optional columns to ignore entirely
-        date_format  = "%m/%d/%Y"    # optional; only needed for non-ISO date strings
-        sheets       = ["Sheet1"]    # omit to read the first sheet only
-
-    Override ``read_frame()`` to handle custom layouts::
-
-        class MyDriver(XLSXIngestDriver):
-            def read_frame(self, path, row_offset=0):
-                df = pl.read_excel(path, sheet_name="Data", engine="calamine")
-                df = df.slice(row_offset).rename({"Timestamp": "time"})
-                return df, len(df)
+        spec        = "acquirium.Drivers.BuiltInDrivers.xlsx_ingest:XLSXIngestDriver"
+        interval    = 5.0
+        watch_dir   = "./data/incoming"
+        format      = "wide"        # required: "wide" | "narrow"
+        source_id   = "incoming-xlsx"
+        glob        = "*.xlsx"
+        time_col    = "time"
+        # date_col  = "Date"        # alternative split timestamp
+        # clock_col = "Time"
+        id_col      = "id"          # narrow only
+        value_col   = "value"       # narrow only
+        skip_cols   = ["notes"]     # columns to ignore entirely
+        date_format = "%m/%d/%Y"    # optional override for timestamp parsing
+        timezone    = "UTC"
+        day_first   = false
+        sheets      = ["Sheet1"]    # omit to read the first sheet only
     """
 
-    _glob_patterns = ("*.xlsx",)
+    def read(self, path: Path, cursor: Any) -> FileBatch:
+        offset = cursor or 0
+        cfg = self.config.get("driver", {})
 
-    def configure_tabular_driver(self) -> None:
-        raw_sheets = self.config.get("driver", {}).get("sheets", None)
-        self._sheets: list[str] | None = list(raw_sheets) if raw_sheets else None
-        logger.info("xlsx_ingest watching %s", self._watch_dir)
+        sheets = cfg.get("sheets") or None
+        if sheets:
+            result = pl.read_excel(path, sheet_name=list(sheets), engine="calamine")
+            frames = list(result.values()) if isinstance(result, dict) else [result]
+            df = pl.concat(frames, how="diagonal_relaxed") if len(frames) > 1 else frames[0]
+        else:
+            df = pl.read_excel(path, engine="calamine")
 
-    def read_frame(self, path: Path, row_offset: int = 0) -> tuple[pl.DataFrame, int]:
-        df = self._read_excel(path, row_offset)
-        return df, len(df)
+        skip_cols = cfg.get("skip_cols", [])
+        skip_cols = [skip_cols] if isinstance(skip_cols, str) else list(skip_cols)
+        drop = [c for c in skip_cols if c in df.columns]
+        if drop:
+            df = df.drop(drop)
 
-    def _read_excel(self, path: Path, row_offset: int) -> pl.DataFrame:
-        """Read an Excel workbook, merging requested sheets into one DataFrame."""
-        with timed_debug(logger, "xlsx read path=%s sheets=%s offset=%d", path.name, self._sheets, row_offset):
-            if self._sheets:
-                result = pl.read_excel(path, sheet_name=self._sheets, engine="calamine")
-                if isinstance(result, dict):
-                    frames = list(result.values())
-                    df = pl.concat(frames, how="diagonal_relaxed") if len(frames) > 1 else frames[0]
-                else:
-                    df = result
-            else:
-                df = pl.read_excel(path, engine="calamine")
-            skip_cols = set(self.skip_cols(path, [str(name) for name in df.columns]))
-            if skip_cols:
-                df = df.drop(list(skip_cols))
-        return df.slice(row_offset)
+        df = df.slice(offset)
+        if df.is_empty():
+            return FileBatch(None, cursor)
+
+        layout = cfg.get("format")
+        if layout is None:
+            raise ValueError("XLSX ingestion requires driver.format = 'wide' or 'narrow'")
+        observations = to_observations(
+            df,
+            time_col=cfg.get("time_col"),
+            date_col=cfg.get("date_col"),
+            clock_col=cfg.get("clock_col"),
+            id_col=cfg.get("id_col", "id"),
+            value_col=cfg.get("value_col", "value"),
+            layout=layout,
+            date_format=cfg.get("date_format"),
+            timezone=cfg.get("timezone", "UTC"),
+            day_first=bool(cfg.get("day_first", False)),
+        )
+        for name in observations["ref_name"].unique():
+            self.declare(name)
+        return FileBatch(observations, offset + len(df))

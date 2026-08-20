@@ -241,7 +241,7 @@ can resolve anything. That is the driver's job.
 `deployments/WATERTAP/scripts/acquirium.toml` has a parquet driver with:
 
 ```toml
-watertap_source_id     = "watertap-seawater-ro-fouled"
+source_id              = "watertap-seawater-ro-fouled"
 watertap_graph_path    = "deployments/WATERTAP/models/seawater-ro-fouled/model.ttl"
 watertap_insert_graph  = true
 ```

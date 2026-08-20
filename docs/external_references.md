@@ -203,44 +203,38 @@ Acquirium does not require:
 ## Driver example
 
 ```python
-from rdflib import Graph, Literal, URIRef
 from rdflib.namespace import RDF
 
-from acquirium import Driver
+from acquirium import EventIngestDriver
 from acquirium.internals.internals_namespaces import (
-    ACQUIRIUM_REF_NAME,
-    ACQUIRIUM_SOURCE_ID,
-    HAS_EXTERNAL_REFERENCE,
     MQTT_BROKER,
     MQTT_REFERENCE,
     MQTT_TOPIC,
 )
 
-class ExampleDriver(Driver):
+
+class ExampleDriver(EventIngestDriver):
     def setup(self):
-        self._source_id = "mqtt"
-        self.aq.register_datasource(self._source_id)
+        self.source_id = "mqtt"
+        self.declare(
+            "temp-room-1",
+            point_uri="urn:point:temp",
+            value_kind="numeric",
+            properties={
+                RDF.type: MQTT_REFERENCE,
+                MQTT_BROKER: "broker.local:1883",
+                MQTT_TOPIC: "plant/temp/room1",
+            },
+        )
 
-        point_uri = URIRef("urn:point:temp")
-        ref_name = "temp-room-1"
-        ref_uri = self.reference_uri(ref_name)
-
-        g = Graph()
-        g.add((point_uri, HAS_EXTERNAL_REFERENCE, ref_uri))
-        g.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(self.source_id())))
-        g.add((ref_uri, ACQUIRIUM_REF_NAME, Literal(ref_name)))
-        g.add((ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")))
-        g.add((ref_uri, RDF.type, MQTT_REFERENCE))
-        g.add((ref_uri, MQTT_BROKER, Literal("broker.local:1883")))
-        g.add((ref_uri, MQTT_TOPIC, Literal("plant/temp/room1")))
-        self.insert_graph(g.serialize(format="turtle"), format="turtle", replace=False)
-
-    def tick(self):
-        rows = [...]
-        self.aq.insert_timeseries_batch(self.source_id, {
-            "temp-room-1": rows,
-        })
+    def on_message(self, timestamp, value):
+        self.add("temp-room-1", value, timestamp)
 ```
+
+The driver declares identity and metadata; the platform creates the datasource
+and canonical reference node before inserting its observations. Code outside a
+driver can use `register_datasource()` and `register_streams()` directly when
+it needs the lower-level client API.
 
 ## Notes
 

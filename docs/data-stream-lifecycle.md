@@ -119,6 +119,10 @@ The `ref_uri` node (the UUID5 URI) is intentionally thin. It is an indirection n
 
 ## How data flows in
 
+The steps below describe the low-level client API. Driver authors normally use
+`self.declare(...)`; the driver platform performs datasource and stream
+registration before inserting observations. See [Drivers](drivers.md).
+
 ### Step 1 — register the datasource
 
 ```python
@@ -230,11 +234,15 @@ Each driver type adds its own provenance triples to the `ref_uri` node. This rec
 
 ### Tabular drivers (CSV, XLSX)
 
-Tabular drivers register streams with `source_id`, `ref_name`, and `value_kind` only — no additional provenance triples are written to the reference node. The datasource ID and stream names are enough for the standard managed-stream lookup.
+The generic tabular drivers declare `source_id`, the exact column or ID value as
+`ref_name`, and an inferred `value_kind`. They do not invent semantic point
+URIs or additional provenance. A specialized tabular driver may explicitly add
+point bindings or extension properties from source-specific metadata.
 
 ### MQTT driver
 
-Written when `register_stream` is called from `_sync_subscriptions`:
+Written when the driver's declarations discovered by `_sync_subscriptions` are
+registered:
 
 ```turtle
 <ref_uri>

@@ -6,8 +6,11 @@ timeseries data. For the identity model behind these APIs, see
 
 ## Writing Observations
 
-Drivers and applications normally write observations by `source_id` and
-`ref_name`; they do not need to compute or store `ref_uri` themselves.
+External programs write observations by `source_id` and `ref_name`; they do not
+need to compute or store `ref_uri` themselves. Driver authors use `declare()`
+and `add()` (or return a canonical observation frame), as described in
+[`drivers.md`](drivers.md); the platform performs the equivalent registration
+and insertion calls.
 
 ```python
 aq.register_stream(

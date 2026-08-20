@@ -105,6 +105,7 @@ def test_setup_registers_datasource_and_streams_from_mapping(tmp_path):
     driver = _make_driver(tmp_path)
 
     driver.setup()
+    driver._after_setup()
 
     driver.aq.register_datasource.assert_called_once_with("watertap")
     # Streams are registered in one batch, straight from the mapping.
@@ -131,9 +132,11 @@ def test_setup_can_insert_model_graph(tmp_path):
 
     driver.setup()
 
-    driver.aq.insert_graph.assert_called_once_with(
-        model_ttl.read_text(),
-        format="turtle",
+    # The path is handed over as-is; the client reads it and infers the format
+    # from the suffix, so the driver never has to name a serialisation.
+    driver.aq.insert_graph_file.assert_called_once_with(
+        model_ttl.resolve(),
+        format=None,
         replace=True,
         source_id="watertap",
     )
