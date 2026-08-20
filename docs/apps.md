@@ -203,40 +203,6 @@ with a build phase.
 Registering a name that already exists fails with `409` unless
 `replace=True`, which stops and deregisters the old app first.
 
-### What registration writes to the graph
-
-```turtle
-<urn:acquirium#app/my_app>
-    a               acq:App, acq:SoftSensor ;
-    rdfs:label      "my_app" ;
-    acq:hasVersion  "0.1" ;
-    acq:querySpec   "{...json...}" ;
-    acq:paramSpec   "{...json...}" ;
-    acq:dependsOn   <urn:swro/RO-in-flow> ;
-    acq:produces    <urn:derived:my_value> .
-
-<urn:derived:my_value>
-    a                        acq:VirtualPoint ;
-    ref:hasExternalReference <urn:acquirium#...> ;
-    acq:isCalculatedFrom     <urn:swro/RO-in-flow> .
-
-<urn:acquirium#...>
-    a             acq:Stream, acq:TimeseriesStream ;
-    acq:sourceId       "app:my_app" ;
-    acq:refName        "urn:derived:my_value" ;
-    acq:valueKind      "numeric" ;
-    acq:storageBackend "timescale" .
-```
-
-The dependency links are how provenance is recorded: `acq:isCalculatedFrom`
-points every produced point at the points the app read.
-
-All of this lives in the app's own graph, owned by `source_id="app:<name>"`.
-An app can add to that graph from `build_app` or `run` with
-`self.insert_graph(turtle)` and `self.sparql_update(update)`.
-These always target the app's graph; they cannot write to the plant model or
-another app's graph.
-
 ## Running
 
 ```python
@@ -343,3 +309,39 @@ The app storage root is `<data_dir>/apps`, or `$ACQUIRIUM_APP_STORAGE_ROOT`.
 `ctx.query.data()` and `ctx.query.dataframe()` in `run` behave exactly as in
 the [data guide](data.md); the query is a normal `Query` bound to the actor's
 client.
+
+### What registration writes to the graph
+
+These must change for robust provenance
+
+```turtle
+<urn:acquirium#app/my_app>
+    a               acq:App, acq:SoftSensor ;
+    rdfs:label      "my_app" ;
+    acq:hasVersion  "0.1" ;
+    acq:querySpec   "{...json...}" ;
+    acq:paramSpec   "{...json...}" ;
+    acq:dependsOn   <urn:swro/RO-in-flow> ;
+    acq:produces    <urn:derived:my_value> .
+
+<urn:derived:my_value>
+    a                        acq:VirtualPoint ;
+    ref:hasExternalReference <urn:acquirium#...> ;
+    acq:isCalculatedFrom     <urn:swro/RO-in-flow> .
+
+<urn:acquirium#...>
+    a             acq:Stream, acq:TimeseriesStream ;
+    acq:sourceId       "app:my_app" ;
+    acq:refName        "urn:derived:my_value" ;
+    acq:valueKind      "numeric" ;
+    acq:storageBackend "timescale" .
+```
+
+The dependency links are how provenance is recorded: `acq:isCalculatedFrom`
+points every produced point at the points the app read.
+
+All of this lives in the app's own graph, owned by `source_id="app:<name>"`.
+An app can add to that graph from `build_app` or `run` with
+`self.insert_graph(turtle)` and `self.sparql_update(update)`.
+These always target the app's graph; they cannot write to the plant model or
+another app's graph.
