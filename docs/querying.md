@@ -211,6 +211,12 @@ shape: (36, 2)
 
 **TODO:** check whether the `nearest` default flips with an explicit `via=` (plain `"any"` returns nearest matches, an explicit `via` returns all) and document it here.
 
+Note that `nearest` follows `via`.
+Plain `via="any"` with no direction returns the nearest matches.
+An explicit predicate, a predicate list or a `direction=` returns all matches
+within `max_depth`.
+Set `nearest=` to override either way.
+
 ### direction=
 
 `direction="upstream"` or `"downstream"` follows the piping topology instead
