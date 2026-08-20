@@ -95,6 +95,11 @@ Do not mint reference URIs by hand; use `acq.reference_uri()` or let
 
 ## The write path
 
+Note that driver authors do not call this path directly.
+A driver declares its streams with `self.declare(...)` and reports values with
+`self.add(...)`; the platform registers and inserts for it.
+See the [drivers guide](drivers.md#declaring-streams).
+
 A row goes through five steps between a driver and the store.
 
 1. The client normalizes the observation frame (timestamps to UTC, values to

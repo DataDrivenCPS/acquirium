@@ -342,6 +342,7 @@ points every produced point at the points the app read.
 
 All of this lives in the app's own graph, owned by `source_id="app:<name>"`.
 An app can add to that graph from `build_app` or `run` with
-`self.insert_graph(turtle)` and `self.sparql_update(update)`.
+`self.insert_graph(turtle)`, `self.insert_graph_file(path)` and
+`self.sparql_update(update)`.
 These always target the app's graph; they cannot write to the plant model or
 another app's graph.
