@@ -71,7 +71,7 @@ The guides live in [docs/](./docs/index.md):
 | [Graph backend](./docs/graph-backend-architecture.md) | graph ownership, inference, query views |
 | [HTTP API](./docs/http-api.md) | the raw endpoints, for scripting against the server |
 
-Working with a coding agent? Point it at [AGENTS.md](./AGENTS.md).
+Working with a coding agent? Point it at [AGENTS.md](./AGENTS.md). (Coming Soon!)
 
 ## Docker stack (optional)
 
@@ -93,7 +93,7 @@ The `watertap` extra installs the Python packages for the built-in WaterTAP driv
 pip install "acquirium[watertap]"
 idaes get-extensions                        # native IDAES/IPOPT solver binaries
 # with uv: uv sync --extra watertap && uv run idaes get-extensions
-acquirium server --config deployments/WATERTAP/models/seawater-ro/acquirium.toml
+acquirium server --config deployments/WATERTAP/scripts/acquirium.toml
 ```
 
 The [WaterTAP deployment readme](./deployments/WATERTAP/readme.md) covers the models, the data generator, and the example notebooks under [notebooks/watertap/](./notebooks/watertap/).
@@ -105,7 +105,7 @@ Free text anywhere in the API (class names, units, quantity kinds) is matched to
 ## Tests
 
 ```bash
-pytest tests/unit            # unit tests only
+uv run pytest tests/unit     # unit tests only (or: make unit-test)
 make test                    # full suite (Docker required)
 ```
 
