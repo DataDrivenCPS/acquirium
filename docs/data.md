@@ -76,8 +76,12 @@ shape: (3, 4)
 └────────────────────────────────┴───────────────────────┴────────────────────────┴──────────────────────────────────┘
 ```
 
-`shape="narrow"` is the default: one row per reading, with the point it came from in its own column.
+`shape="narrow"` gives one row per reading, with the point it came from in its own column.
 This is useful when points do not share timestamps.
+
+Be aware that the two entry points default differently.
+`Query.dataframe()` defaults to narrow, `DataObject.dataframe()` to wide.
+Pass `shape=` explicitly and the question does not arise.
 
 ```text
 shape: (4, 7)
@@ -177,6 +181,10 @@ d = q.data(value_mode="numeric")
 `"float"` casts the value column to `Float64` and `"int"` casts to `Int64`.
 Anything else, including `None`, leaves the column exactly as the server sent
 it, which for a numeric stream is already `Float64`.
+
+These defaults differ too: `Query.data()` casts to `"float"`, while
+`Query.dataframe()` passes `"str"`, which is one of the values that does
+nothing.
 
 
 ## Units

@@ -68,6 +68,8 @@ The guides live in [docs/](./docs/index.md):
 | [The data stream lifecycle](./docs/data-stream-lifecycle.md) | how streams are identified, stored and found |
 | [Running the server](./docs/server.md) | config, storage backends, ontologies, HTTP API |
 | [Text resolution](./docs/resolution.md) | free text to URIs; unit conversion |
+| [Graph backend](./docs/graph-backend-architecture.md) | graph ownership, inference, query views |
+| [HTTP API](./docs/http-api.md) | the raw endpoints, for scripting against the server |
 
 Working with a coding agent? Point it at [AGENTS.md](./AGENTS.md).
 

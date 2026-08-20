@@ -56,6 +56,8 @@ model.
 | [The data stream lifecycle](data-stream-lifecycle.md) | how streams are identified, stored and found again |
 | [Running the server](server.md) | config, storage backends, ontologies, HTTP API |
 | [Text resolution](resolution.md) | free text to URIs; unit conversion |
+| [Graph backend](graph-backend-architecture.md) | graph ownership, inference, query views |
+| [HTTP API](http-api.md) | the raw endpoints, for scripting against the server |
 
 The `docs/agents/` directory holds compact per-topic references written for
 coding agents; point your agent at them instead of the prose guides.
@@ -72,5 +74,7 @@ coding agents; point your agent at them instead of the prose guides.
 | reference node | the RDF node linking a point to its stream (`ref:hasExternalReference`) |
 | datasource | who writes a set of streams: a driver, an import, an app |
 | driver | a class the server runs on a schedule to ingest data |
+| source | the owner of a set of streams and its own graph, named by `source_id` |
 | app | a class the server runs to compute on data and write results back |
-| union graph | the model plus the ontology closure; what queries run against |
+| deployment graph | the inferred union of every source's data; what queries run against |
+| dependencies | the resolved ontology and shape triples queried alongside it (`include_dependencies`) |

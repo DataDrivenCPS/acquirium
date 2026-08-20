@@ -120,9 +120,13 @@ environment variable.
 
 ## Storage backends
 
-Both backends store the same logical schema: a `timeseries` table
-(`ref_uri`, `ts`, `numeric_value`, `text_value`, unique on `(ref_uri, ts)`),
+Both backends store the same logical schema: a `timeseries` table (one row
+per stream and timestamp, with a `numeric_value` and a `text_value` column),
 the `streams` reference table, and the logbook.
+They key the rows differently.
+Timescale uses `ref_uri` directly; duckdb uses an integer `ref_id` and maps it
+back through a `ref_ids` table.
+Reads expose `ref_uri` either way.
 
 `duckdb` is the default: one file under the data directory, with no extra
 services to install or run.
@@ -141,14 +145,20 @@ Switching the timeseries backend does not lift the single-process constraint.
 ## The graph store
 
 The semantic model lives in an embedded Oxigraph store under `graph_path`.
-Two datasets are kept: the source of record (the main data graph plus one
-graph per ontology) and a query dataset holding a materialized union of the
-main graph and the ontology closure.
-Queries run against the union by default; the union is rebuilt lazily when
-something changes.
+Two datasets are kept: the source of record (one graph per data owner plus one
+per ontology) and a query dataset holding the inferred deployment data and the
+resolved ontology and shape triples.
+Queries run against both by default; the derived data is rebuilt in the
+background when something changes, and a reader gets the last complete version
+until it is ready.
+Pass `wait_for_fresh=True` when a query must see the current generation.
+The [graph backend guide](graph-backend-architecture.md) covers this in
+full.
 
-The store keeps a version counter, exposed as `GET /graph_version` and bumped
-by every mutation.
+The store keeps a source-data generation, exposed as `GET /graph_version`
+along with the state of the derived query cache (`source_version`,
+`published_version`, `is_current`, `rebuild_in_progress`).
+`source_version` advances on every mutation.
 Clients poll it to invalidate caches; drivers and apps use it for their
 graph-change hooks.
 
@@ -215,7 +225,8 @@ scripting against the server directly.
 | area | endpoints |
 |---|---|
 | liveness | `GET /health`, `GET /graph_version`, `GET /embedding_status` |
-| graph | `POST /insert_graph`, `GET /export_graph`, `GET\|POST /sparql_json`, `POST /sparql_update`, `GET /namespace/list` |
+| graph | `POST /insert_graph`, `GET /export_graph`, `POST /sparql_update`, `POST /validate_graph`, `GET /namespace/list` |
+| sparql | `GET /sparql` (standards-compatible), `GET\|POST /sparql_json` (legacy `{columns, rows}`) |
 | timeseries | `POST /register_datasource`, `POST /insert_timeseries`, `POST /insert_timeseries_arrow`, `GET /timeseries`, `POST /timeseries_info` |
 | resolution | `GET /resolve_text`, `POST /resolve_record`, `POST /resolve_unit`, `POST /resolve_conversion`, `POST /conversion_factors` |
 | drivers | `POST /drivers/start`, `POST /drivers/stop`, `GET /drivers/list` |
@@ -230,3 +241,8 @@ Three conventions:
 - `GET /timeseries` streams Arrow record batches, not JSON.
 - `/sparql_json` accepts POST with a JSON body because resolved traversal
   queries exceed URL length limits; the client always POSTs.
+- `GET /sparql` is the SPARQL 1.1 endpoint for outside tools, with content
+  negotiation on `Accept`. `/sparql_json` stays for the Python client's
+  `{columns, rows}` contract.
+- Graph reads take `include_dependencies` (default true) and `wait_for_fresh`
+  (default false).
