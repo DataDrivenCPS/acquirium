@@ -69,6 +69,155 @@ REF_IDS_TABLE = "ref_ids"
 REF_IDS_SEQ = "ref_ids_seq"
 TIMESERIES_STREAMS_VIEW = "timeseries_streams"
 
+# Continuous-batch tables (continuous_batch.md; DDL details in
+# continuous_batch_plan.md Phase 1a). Keyed by the integer ``ref_id`` used
+# throughout this backend, not by ``ref_uri`` strings -- see
+# ``Storage/continuous/duckdb.py`` for the id-resolution boundary. Created
+# here (rather than lazily by the continuous layer) so a plain DuckDBStore
+# always has a schema the continuous layer can attach to without a separate
+# migration step.
+STREAM_HEADS_TABLE = "stream_heads"
+STREAM_PUBLICATIONS_TABLE = "stream_publications"
+STREAM_PUBLICATIONS_SEQ = "stream_publications_seq"
+STREAM_CHANGE_KEYS_TABLE = "stream_change_keys"
+APP_RUNTIME_TABLE = "app_runtime"
+APP_SUBSCRIPTIONS_TABLE = "app_subscriptions"
+APP_BATCH_COMMITS_TABLE = "app_batch_commits"
+APP_BATCH_INPUTS_TABLE = "app_batch_inputs"
+APP_BOOTSTRAPS_TABLE = "app_bootstraps"
+APP_BOOTSTRAP_STREAMS_TABLE = "app_bootstrap_streams"
+APP_BOOTSTRAP_ROWS_TABLE = "app_bootstrap_rows"
+APP_BOOTSTRAP_OUTPUTS_TABLE = "app_bootstrap_outputs"
+APP_WEBHOOK_INTENTS_TABLE = "app_webhook_intents"
+
+CONTINUOUS_BATCH_DDL = [
+    f"CREATE SEQUENCE IF NOT EXISTS {STREAM_PUBLICATIONS_SEQ}",
+    f"""
+    CREATE TABLE IF NOT EXISTS {STREAM_HEADS_TABLE} (
+        ref_id INTEGER PRIMARY KEY,
+        current_version BIGINT NOT NULL,
+        retained_from_version BIGINT NOT NULL
+    )
+    """,
+    f"""
+    CREATE TABLE IF NOT EXISTS {STREAM_PUBLICATIONS_TABLE} (
+        publication_seq BIGINT PRIMARY KEY DEFAULT nextval('{STREAM_PUBLICATIONS_SEQ}'),
+        publication_id VARCHAR UNIQUE NOT NULL,
+        payload_hash VARCHAR NOT NULL,
+        row_count BIGINT NOT NULL,
+        versions_json VARCHAR NOT NULL,
+        committed_at TIMESTAMP NOT NULL
+    )
+    """,
+    f"""
+    CREATE TABLE IF NOT EXISTS {STREAM_CHANGE_KEYS_TABLE} (
+        publication_seq BIGINT NOT NULL,
+        publication_row INTEGER NOT NULL,
+        ref_id INTEGER NOT NULL,
+        stream_version BIGINT NOT NULL,
+        ts TIMESTAMP NOT NULL,
+        PRIMARY KEY (publication_seq, publication_row)
+    )
+    """,
+    f"CREATE INDEX IF NOT EXISTS idx_stream_change_keys_ref_version ON {STREAM_CHANGE_KEYS_TABLE} (ref_id, stream_version)",
+    f"""
+    CREATE TABLE IF NOT EXISTS {APP_RUNTIME_TABLE} (
+        app_id VARCHAR PRIMARY KEY,
+        generation BIGINT NOT NULL,
+        status VARCHAR NOT NULL,
+        topology_version BIGINT NOT NULL,
+        updated_at TIMESTAMP NOT NULL
+    )
+    """,
+    f"""
+    CREATE TABLE IF NOT EXISTS {APP_SUBSCRIPTIONS_TABLE} (
+        app_id VARCHAR NOT NULL,
+        generation BIGINT NOT NULL,
+        ref_id INTEGER NOT NULL,
+        stream_version BIGINT NOT NULL,
+        PRIMARY KEY (app_id, generation, ref_id)
+    )
+    """,
+    f"CREATE INDEX IF NOT EXISTS idx_app_subscriptions_ref ON {APP_SUBSCRIPTIONS_TABLE} (ref_id)",
+    f"""
+    CREATE TABLE IF NOT EXISTS {APP_BATCH_COMMITS_TABLE} (
+        app_id VARCHAR NOT NULL,
+        generation BIGINT NOT NULL,
+        batch_id VARCHAR NOT NULL,
+        batch_kind VARCHAR NOT NULL,
+        rows_inserted BIGINT NOT NULL,
+        output_versions_json VARCHAR NOT NULL,
+        committed_at TIMESTAMP NOT NULL,
+        PRIMARY KEY (app_id, generation, batch_id)
+    )
+    """,
+    f"""
+    CREATE TABLE IF NOT EXISTS {APP_BATCH_INPUTS_TABLE} (
+        app_id VARCHAR NOT NULL,
+        generation BIGINT NOT NULL,
+        batch_id VARCHAR NOT NULL,
+        ref_id INTEGER NOT NULL,
+        from_version BIGINT NOT NULL,
+        to_version BIGINT NOT NULL,
+        PRIMARY KEY (app_id, generation, batch_id, ref_id)
+    )
+    """,
+    f"""
+    CREATE TABLE IF NOT EXISTS {APP_BOOTSTRAPS_TABLE} (
+        bootstrap_id VARCHAR PRIMARY KEY,
+        app_id VARCHAR NOT NULL,
+        generation BIGINT NOT NULL,
+        status VARCHAR NOT NULL,
+        next_ordinal BIGINT NOT NULL
+    )
+    """,
+    f"""
+    CREATE TABLE IF NOT EXISTS {APP_BOOTSTRAP_STREAMS_TABLE} (
+        bootstrap_id VARCHAR NOT NULL,
+        ref_id INTEGER NOT NULL,
+        stream_version BIGINT NOT NULL,
+        PRIMARY KEY (bootstrap_id, ref_id)
+    )
+    """,
+    f"""
+    CREATE TABLE IF NOT EXISTS {APP_BOOTSTRAP_ROWS_TABLE} (
+        bootstrap_id VARCHAR NOT NULL,
+        ordinal BIGINT NOT NULL,
+        ref_id INTEGER NOT NULL,
+        ts TIMESTAMP NOT NULL,
+        numeric_value DOUBLE,
+        text_value VARCHAR,
+        PRIMARY KEY (bootstrap_id, ordinal)
+    )
+    """,
+    f"""
+    CREATE TABLE IF NOT EXISTS {APP_BOOTSTRAP_OUTPUTS_TABLE} (
+        bootstrap_id VARCHAR NOT NULL,
+        ordinal BIGINT NOT NULL,
+        output_ref_uri VARCHAR NOT NULL,
+        ts TIMESTAMP NOT NULL,
+        operation VARCHAR NOT NULL,
+        numeric_value DOUBLE,
+        text_value VARCHAR,
+        PRIMARY KEY (bootstrap_id, ordinal)
+    )
+    """,
+    f"""
+    CREATE TABLE IF NOT EXISTS {APP_WEBHOOK_INTENTS_TABLE} (
+        app_id VARCHAR NOT NULL,
+        generation BIGINT NOT NULL,
+        batch_id VARCHAR NOT NULL,
+        seq INTEGER NOT NULL,
+        url VARCHAR NOT NULL,
+        payload_json VARCHAR NOT NULL,
+        status VARCHAR NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at TIMESTAMP,
+        PRIMARY KEY (app_id, generation, batch_id, seq)
+    )
+    """,
+]
+
 
 class DuckDBStore:
     """DuckDB implementation of the TimeseriesStore protocol.
@@ -103,9 +252,27 @@ class DuckDBStore:
             logger.debug("DuckDBStore.__init__: dropping existing tables/views (recreate=True)")
             with self._lock, self._own_conn() as conn:
                 conn.execute(f"DROP VIEW IF EXISTS {TIMESERIES_STREAMS_VIEW}")
-                for tbl in (TIMESERIES_TABLE, STREAMS_TABLE, LOGS_TABLE, REF_IDS_TABLE):
+                for tbl in (
+                    APP_WEBHOOK_INTENTS_TABLE,
+                    APP_BOOTSTRAP_OUTPUTS_TABLE,
+                    APP_BOOTSTRAP_ROWS_TABLE,
+                    APP_BOOTSTRAP_STREAMS_TABLE,
+                    APP_BOOTSTRAPS_TABLE,
+                    APP_BATCH_INPUTS_TABLE,
+                    APP_BATCH_COMMITS_TABLE,
+                    APP_SUBSCRIPTIONS_TABLE,
+                    APP_RUNTIME_TABLE,
+                    STREAM_CHANGE_KEYS_TABLE,
+                    STREAM_PUBLICATIONS_TABLE,
+                    STREAM_HEADS_TABLE,
+                    TIMESERIES_TABLE,
+                    STREAMS_TABLE,
+                    LOGS_TABLE,
+                    REF_IDS_TABLE,
+                ):
                     conn.execute(f"DROP TABLE IF EXISTS {tbl}")
                 conn.execute(f"DROP SEQUENCE IF EXISTS {REF_IDS_SEQ}")
+                conn.execute(f"DROP SEQUENCE IF EXISTS {STREAM_PUBLICATIONS_SEQ}")
         self.ensure_table()
         logger.debug("DuckDBStore.__init__: ready at %s", self.db_path)
 
@@ -174,6 +341,16 @@ class DuckDBStore:
                 ts      TIMESTAMP NOT NULL,
                 numeric_value DOUBLE,
                 text_value    VARCHAR,
+                -- Continuous-batch columns (see continuous_batch.md and
+                -- Storage/continuous/duckdb.py). ``deleted`` marks a physical
+                -- tombstone: the row is kept (not removed) so its
+                -- last_stream_version remains resolvable by a batch reader.
+                -- ``last_stream_version`` is the stream_heads version at which
+                -- this row was last written; next_app_batch uses it to defer
+                -- a key to a later batch when a newer write has already
+                -- superseded it within the same snapshot.
+                deleted BOOLEAN NOT NULL DEFAULT FALSE,
+                last_stream_version BIGINT NOT NULL DEFAULT 0,
                 CHECK (numeric_value IS NULL OR text_value IS NULL),
                 UNIQUE (ref_id, ts)
             )
@@ -205,6 +382,7 @@ class DuckDBStore:
                 ON t.ref_id = r.ref_id
             LEFT JOIN {STREAMS_TABLE} AS s
                 ON r.ref_uri = s.ref_uri
+            WHERE NOT t.deleted
             """,
             f"""
             CREATE TABLE IF NOT EXISTS {LOGS_TABLE} (
@@ -218,6 +396,7 @@ class DuckDBStore:
             """,
             f"CREATE INDEX IF NOT EXISTS idx_logs_point ON {LOGS_TABLE} (point_uri, timestamp)",
             f"CREATE INDEX IF NOT EXISTS idx_logs_obs ON {LOGS_TABLE} (observed_start, observed_end)",
+            *CONTINUOUS_BATCH_DDL,
         ]
         with self._lock, timed_debug(logger, "ensure_table"), self._own_conn() as conn:
             for stmt in stmts:
@@ -480,7 +659,11 @@ class DuckDBStore:
                     # Never written to: no id, no rows.
                     return
 
-                clauses = ["ref_id = ?"]
+                # Normal reads hide tombstones -- see continuous_batch.md's
+                # "Canonical values and version heads": a deleted row is kept
+                # physically (its last_stream_version stays resolvable by a
+                # batch reader) but is invisible to this API.
+                clauses = ["ref_id = ?", "NOT deleted"]
                 params: list[Any] = [ref_id_row[0]]
                 if start:
                     clauses.append("ts >= ?")
@@ -565,7 +748,7 @@ class DuckDBStore:
                 SELECT COUNT(*), MIN(ts), MAX(ts)
                 FROM {TIMESERIES_TABLE} AS t
                 JOIN {REF_IDS_TABLE} AS r USING (ref_id)
-                WHERE r.ref_uri = ?
+                WHERE r.ref_uri = ? AND NOT t.deleted
                 """,
                 [ref_uri],
             ).fetchone()
@@ -590,7 +773,7 @@ class DuckDBStore:
                        MAX(ts)    AS latest
                 FROM {TIMESERIES_TABLE} AS t
                 JOIN {REF_IDS_TABLE} AS r USING (ref_id)
-                WHERE r.ref_uri IN ({placeholders})
+                WHERE r.ref_uri IN ({placeholders}) AND NOT t.deleted
                 GROUP BY r.ref_uri
                 """,
                 ref_uris,

@@ -31,6 +31,150 @@ STREAMS_TABLE = "streams"
 LOGS_TABLE = "logs"
 TIMESERIES_STREAMS_VIEW = "timeseries_streams"
 
+# Continuous-batch tables (continuous_batch.md; DDL details in
+# continuous_batch_plan.md Phase 1a). Keyed directly by ``ref_uri`` text,
+# unlike the DuckDB backend's integer ``ref_id`` -- see
+# ``Storage/continuous/postgres.py``.
+STREAM_HEADS_TABLE = "stream_heads"
+STREAM_PUBLICATIONS_TABLE = "stream_publications"
+STREAM_CHANGE_KEYS_TABLE = "stream_change_keys"
+APP_RUNTIME_TABLE = "app_runtime"
+APP_SUBSCRIPTIONS_TABLE = "app_subscriptions"
+APP_BATCH_COMMITS_TABLE = "app_batch_commits"
+APP_BATCH_INPUTS_TABLE = "app_batch_inputs"
+APP_BOOTSTRAPS_TABLE = "app_bootstraps"
+APP_BOOTSTRAP_STREAMS_TABLE = "app_bootstrap_streams"
+APP_BOOTSTRAP_ROWS_TABLE = "app_bootstrap_rows"
+APP_BOOTSTRAP_OUTPUTS_TABLE = "app_bootstrap_outputs"
+APP_WEBHOOK_INTENTS_TABLE = "app_webhook_intents"
+
+CONTINUOUS_BATCH_DDL = [
+    f"""
+    CREATE TABLE IF NOT EXISTS {STREAM_HEADS_TABLE} (
+        ref_uri TEXT PRIMARY KEY,
+        current_version BIGINT NOT NULL,
+        retained_from_version BIGINT NOT NULL
+    );
+    """,
+    f"""
+    CREATE TABLE IF NOT EXISTS {STREAM_PUBLICATIONS_TABLE} (
+        publication_seq BIGSERIAL PRIMARY KEY,
+        publication_id TEXT UNIQUE NOT NULL,
+        payload_hash TEXT NOT NULL,
+        row_count BIGINT NOT NULL,
+        versions_json JSONB NOT NULL,
+        committed_at TIMESTAMPTZ NOT NULL
+    );
+    """,
+    f"""
+    CREATE TABLE IF NOT EXISTS {STREAM_CHANGE_KEYS_TABLE} (
+        publication_seq BIGINT NOT NULL,
+        publication_row INTEGER NOT NULL,
+        ref_uri TEXT NOT NULL,
+        stream_version BIGINT NOT NULL,
+        ts TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (publication_seq, publication_row)
+    );
+    """,
+    f"CREATE INDEX IF NOT EXISTS idx_stream_change_keys_ref_version ON {STREAM_CHANGE_KEYS_TABLE} (ref_uri, stream_version);",
+    f"""
+    CREATE TABLE IF NOT EXISTS {APP_RUNTIME_TABLE} (
+        app_id TEXT PRIMARY KEY,
+        generation BIGINT NOT NULL,
+        status TEXT NOT NULL,
+        topology_version BIGINT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL
+    );
+    """,
+    f"""
+    CREATE TABLE IF NOT EXISTS {APP_SUBSCRIPTIONS_TABLE} (
+        app_id TEXT NOT NULL,
+        generation BIGINT NOT NULL,
+        ref_uri TEXT NOT NULL,
+        stream_version BIGINT NOT NULL,
+        PRIMARY KEY (app_id, generation, ref_uri)
+    );
+    """,
+    f"CREATE INDEX IF NOT EXISTS idx_app_subscriptions_ref ON {APP_SUBSCRIPTIONS_TABLE} (ref_uri);",
+    f"""
+    CREATE TABLE IF NOT EXISTS {APP_BATCH_COMMITS_TABLE} (
+        app_id TEXT NOT NULL,
+        generation BIGINT NOT NULL,
+        batch_id TEXT NOT NULL,
+        batch_kind TEXT NOT NULL,
+        rows_inserted BIGINT NOT NULL,
+        output_versions_json JSONB NOT NULL,
+        committed_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (app_id, generation, batch_id)
+    );
+    """,
+    f"""
+    CREATE TABLE IF NOT EXISTS {APP_BATCH_INPUTS_TABLE} (
+        app_id TEXT NOT NULL,
+        generation BIGINT NOT NULL,
+        batch_id TEXT NOT NULL,
+        ref_uri TEXT NOT NULL,
+        from_version BIGINT NOT NULL,
+        to_version BIGINT NOT NULL,
+        PRIMARY KEY (app_id, generation, batch_id, ref_uri)
+    );
+    """,
+    f"""
+    CREATE TABLE IF NOT EXISTS {APP_BOOTSTRAPS_TABLE} (
+        bootstrap_id TEXT PRIMARY KEY,
+        app_id TEXT NOT NULL,
+        generation BIGINT NOT NULL,
+        status TEXT NOT NULL,
+        next_ordinal BIGINT NOT NULL
+    );
+    """,
+    f"""
+    CREATE TABLE IF NOT EXISTS {APP_BOOTSTRAP_STREAMS_TABLE} (
+        bootstrap_id TEXT NOT NULL,
+        ref_uri TEXT NOT NULL,
+        stream_version BIGINT NOT NULL,
+        PRIMARY KEY (bootstrap_id, ref_uri)
+    );
+    """,
+    f"""
+    CREATE TABLE IF NOT EXISTS {APP_BOOTSTRAP_ROWS_TABLE} (
+        bootstrap_id TEXT NOT NULL,
+        ordinal BIGINT NOT NULL,
+        ref_uri TEXT NOT NULL,
+        ts TIMESTAMPTZ NOT NULL,
+        numeric_value DOUBLE PRECISION,
+        text_value TEXT,
+        PRIMARY KEY (bootstrap_id, ordinal)
+    );
+    """,
+    f"""
+    CREATE TABLE IF NOT EXISTS {APP_BOOTSTRAP_OUTPUTS_TABLE} (
+        bootstrap_id TEXT NOT NULL,
+        ordinal BIGINT NOT NULL,
+        output_ref_uri TEXT NOT NULL,
+        ts TIMESTAMPTZ NOT NULL,
+        operation TEXT NOT NULL,
+        numeric_value DOUBLE PRECISION,
+        text_value TEXT,
+        PRIMARY KEY (bootstrap_id, ordinal)
+    );
+    """,
+    f"""
+    CREATE TABLE IF NOT EXISTS {APP_WEBHOOK_INTENTS_TABLE} (
+        app_id TEXT NOT NULL,
+        generation BIGINT NOT NULL,
+        batch_id TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        url TEXT NOT NULL,
+        payload_json JSONB NOT NULL,
+        status TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at TIMESTAMPTZ,
+        PRIMARY KEY (app_id, generation, batch_id, seq)
+    );
+    """,
+]
+
 
 class TimescaleStore(TimeseriesStore):
     def __init__(
@@ -51,9 +195,24 @@ class TimescaleStore(TimeseriesStore):
             logger.debug("TimescaleStore.__init__: dropping existing tables/views")
             with self.conn.cursor() as cur:
                 cur.execute(sql.SQL("DROP VIEW IF EXISTS {} CASCADE").format(sql.Identifier(TIMESERIES_STREAMS_VIEW)))
-                cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(TIMESERIES_TABLE)))
-                cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(STREAMS_TABLE)))
-                cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(LOGS_TABLE)))
+                for tbl in (
+                    APP_WEBHOOK_INTENTS_TABLE,
+                    APP_BOOTSTRAP_OUTPUTS_TABLE,
+                    APP_BOOTSTRAP_ROWS_TABLE,
+                    APP_BOOTSTRAP_STREAMS_TABLE,
+                    APP_BOOTSTRAPS_TABLE,
+                    APP_BATCH_INPUTS_TABLE,
+                    APP_BATCH_COMMITS_TABLE,
+                    APP_SUBSCRIPTIONS_TABLE,
+                    APP_RUNTIME_TABLE,
+                    STREAM_CHANGE_KEYS_TABLE,
+                    STREAM_PUBLICATIONS_TABLE,
+                    STREAM_HEADS_TABLE,
+                    TIMESERIES_TABLE,
+                    STREAMS_TABLE,
+                    LOGS_TABLE,
+                ):
+                    cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(tbl)))
         self.ensure_table()
         logger.debug("TimescaleStore.__init__: ready")
 
@@ -68,6 +227,15 @@ class TimescaleStore(TimeseriesStore):
                     ts TIMESTAMPTZ NOT NULL,
                     numeric_value DOUBLE PRECISION,
                     text_value TEXT,
+                    -- Continuous-batch columns (see continuous_batch.md and
+                    -- Storage/continuous/postgres.py). ``deleted`` marks a
+                    -- physical tombstone, kept rather than removed so its
+                    -- last_stream_version stays resolvable by a batch reader.
+                    -- ``last_stream_version`` is the stream_heads version at
+                    -- which this row was last written; next_app_batch uses it
+                    -- to defer a key already superseded within the snapshot.
+                    deleted BOOLEAN NOT NULL DEFAULT FALSE,
+                    last_stream_version BIGINT NOT NULL DEFAULT 0,
                     CHECK (numeric_value IS NULL OR text_value IS NULL)
                 );
                 """
@@ -99,24 +267,12 @@ class TimescaleStore(TimeseriesStore):
             cur.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_timeseries_text_value ON {TIMESERIES_TABLE} (ref_uri, text_value) WHERE text_value IS NOT NULL;"
             )
-            # Segment compressed chunks by stream and order newest-first within
-            # each stream. This matches the common "latest values" read path
-            # while still supporting ascending scans via reverse index scans.
-            cur.execute(
-                f"""
-                ALTER TABLE {TIMESERIES_TABLE}
-                SET (
-                    timescaledb.compress,
-                    timescaledb.compress_segmentby = 'ref_uri',
-                    timescaledb.compress_orderby = 'ts DESC'
-                );
-                """
-            )
-            cur.execute(
-                sql.SQL("SELECT add_compression_policy({}, INTERVAL '7 days', if_not_exists => TRUE);").format(
-                    sql.Literal(TIMESERIES_TABLE)
-                )
-            )
+            # Compression is intentionally NOT enabled in v1 (see
+            # continuous_batch_plan.md Decision 3 / Finding 1): the
+            # continuous-batch protocol upserts corrections and updates
+            # last_stream_version on rows of any age, which compressed
+            # TimescaleDB chunks restrict. Revisit together with a retention
+            # policy once corrections have their own aging story.
             cur.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {STREAMS_TABLE} (
@@ -151,7 +307,8 @@ class TimescaleStore(TimeseriesStore):
                     t.text_value AS value_text
                 FROM {TIMESERIES_TABLE} AS t
                 LEFT JOIN {STREAMS_TABLE} AS s
-                    ON t.ref_uri = s.ref_uri;
+                    ON t.ref_uri = s.ref_uri
+                WHERE NOT t.deleted;
                 """
             )
             cur.execute(
@@ -172,6 +329,8 @@ class TimescaleStore(TimeseriesStore):
             cur.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_logs_observed ON {LOGS_TABLE} USING GIST (observed);"
             )
+            for stmt in CONTINUOUS_BATCH_DDL:
+                cur.execute(stmt)
         if not self._in_tx:
             self.conn.commit()
         return TIMESERIES_TABLE
@@ -199,7 +358,8 @@ class TimescaleStore(TimeseriesStore):
                 VALUES (%s, %s, %s, %s)
                 ON CONFLICT (ref_uri, ts) DO UPDATE SET
                     numeric_value = EXCLUDED.numeric_value,
-                    text_value = EXCLUDED.text_value
+                    text_value = EXCLUDED.text_value,
+                    deleted = FALSE
                 """,
                 payload,
             )
@@ -259,7 +419,8 @@ class TimescaleStore(TimeseriesStore):
                     SELECT ref_uri, ts, numeric_value, text_value FROM {random_string}
                     ON CONFLICT (ref_uri, ts) DO UPDATE SET
                         numeric_value = EXCLUDED.numeric_value,
-                        text_value = EXCLUDED.text_value;
+                        text_value = EXCLUDED.text_value,
+                        deleted = FALSE;
                     """
                 )
             logger.info(f"acquirium: bulk inserted {rows_affected} rows into {TIMESERIES_TABLE}")
@@ -409,7 +570,9 @@ class TimescaleStore(TimeseriesStore):
         Returns an iterator over the time series data for the given ref URI.
         '''
         mode = normalize_value_mode(value_mode)
-        clauses = ["ref_uri = %s"]
+        # Normal reads hide tombstones -- see continuous_batch.md's "Canonical
+        # values and version heads".
+        clauses = ["ref_uri = %s", "NOT deleted"]
         params: list[Any] = [ref_uri]
 
         if start:
@@ -490,7 +653,7 @@ class TimescaleStore(TimeseriesStore):
     def timeseries_info(self, ref_uri: str) -> TimeseriesInfo:
         with timed_debug(logger, "timeseries_info ref_uri=%s", ref_uri), self.conn.cursor() as cur:
             cur.execute(
-                f"SELECT COUNT(*), MIN(ts), MAX(ts) FROM {TIMESERIES_TABLE} WHERE ref_uri=%s",
+                f"SELECT COUNT(*), MIN(ts), MAX(ts) FROM {TIMESERIES_TABLE} WHERE ref_uri=%s AND NOT deleted",
                 (ref_uri,),
             )
             cnt, earliest, latest = cur.fetchone()
@@ -502,7 +665,7 @@ class TimescaleStore(TimeseriesStore):
             return {}
         with timed_debug(logger, "timeseries_info_batch n=%d", len(ref_uris)), self.conn.cursor() as cur:
             cur.execute(
-                f"SELECT ref_uri, COUNT(*), MIN(ts), MAX(ts) FROM {TIMESERIES_TABLE} WHERE ref_uri = ANY(%s) GROUP BY ref_uri",
+                f"SELECT ref_uri, COUNT(*), MIN(ts), MAX(ts) FROM {TIMESERIES_TABLE} WHERE ref_uri = ANY(%s) AND NOT deleted GROUP BY ref_uri",
                 (ref_uris,),
             )
             rows = cur.fetchall()
