@@ -78,6 +78,9 @@ latest(alias) -> pl.DataFrame                  # fetches the WHOLE window first
 ## Writing
 
 ```python
+# NOTE: from inside a driver use self.declare(...) instead — the platform
+# calls register_datasource/register_streams for you. This is the direct form,
+# for backfills, imports and notebooks.
 acq.register_datasource("src-id")                      # once, idempotent
 acq.register_streams([{                                # once per stream, BEFORE insert
     "source_id": "src-id", "ref_name": "series-name",

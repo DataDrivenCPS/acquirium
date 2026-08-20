@@ -68,8 +68,9 @@ acq.list_app_runs(app_id=None)      # None -> all apps; app_id -> build/runs sta
 - `build_app` is NOT re-run on graph change; only `build_query` is (keep-alive).
 - Imports must exist in the SERVER's environment. Only the entry file ships;
   sibling-module imports fail on the server.
-- `self.insert_graph` / `self.sparql_update` inside an app write ONLY the
-  app's own graph (`source_id="app:<name>"`); never the plant model.
+- `self.insert_graph` / `self.insert_graph_file` / `self.sparql_update`
+  inside an app write ONLY the app's own graph (`source_id="app:<name>"`);
+  never the plant model. They take no owner argument, by design.
 - `replace=True` on re-register, else 409. `stop_app` is a no-op unless the
   app is in keep-alive.
 - After a server restart apps are registered+built but NOT running; call

@@ -29,6 +29,8 @@ with_columns(*specs, of=None, required=False)   # "name" includes, "-name" drops
 options(attr_name, *, of=None) -> pl.DataFrame          # runs now
 facets(*, of=None) -> FacetSummary                      # runs now
 metadata(*, include_internals=False) -> pl.DataFrame    # runs now
+# every terminal also takes include_dependencies=True (ontology/shape triples;
+# False = deployment data only, faster, breaks subclass matching)
 data(*, start=None, end=None, limit=None, order="asc",
      cast_value="float", value_mode="default") -> DataObject
 dataframe(*, start=None, end=None, limit=None, order="asc",
