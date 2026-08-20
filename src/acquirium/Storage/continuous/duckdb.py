@@ -383,6 +383,26 @@ class ContinuousDuckDB:
             )
         return new_generation
 
+    def has_subscriptions(self, app_id: str, generation: int) -> bool:
+        with self._store._own_conn() as conn:
+            row = conn.execute(
+                f"SELECT 1 FROM {APP_SUBSCRIPTIONS_TABLE} WHERE app_id = ? AND generation = ? LIMIT 1",
+                [app_id, generation],
+            ).fetchone()
+        return row is not None
+
+    def resumable(self, app_id: str, generation: int) -> bool:
+        with self._store._own_conn() as conn:
+            row = conn.execute(
+                f"""
+                SELECT COUNT(*) FROM {APP_SUBSCRIPTIONS_TABLE} s
+                JOIN {STREAM_HEADS_TABLE} h ON h.ref_id = s.ref_id
+                WHERE s.app_id = ? AND s.generation = ? AND s.stream_version < h.retained_from_version
+                """,
+                [app_id, generation],
+            ).fetchone()
+        return (row[0] if row else 0) == 0
+
     def delete_app_runtime(self, app_id: str) -> None:
         with self._store._lock, self._store._write_conn() as conn:
             conn.execute(
@@ -461,6 +481,8 @@ class ContinuousDuckDB:
             has_more=page.has_more,
             inputs=[],
             rows=rows,
+            bootstrap_id=page.bootstrap_id,
+            end_ordinal=page.end_ordinal,
         )
 
     def _snapshot(self):

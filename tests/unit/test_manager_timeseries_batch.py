@@ -20,6 +20,7 @@ def mgr(tmp_path):
     m = Manager.__new__(Manager)
     m.timescale = store
     m.continuous = ContinuousDuckDB(store)
+    m.router = None
     yield m
     store.close()
 

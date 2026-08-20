@@ -134,6 +134,14 @@ class AppBatch:
     still be committed. ``has_more`` is True when more pending work exists
     beyond this batch's target-key budget, so the caller should call
     ``next_app_batch`` again after committing this one.
+
+    For ``batch_kind == "bootstrap"``, ``inputs`` is empty (a bootstrap page
+    isn't derived from stream version ranges) and ``bootstrap_id``/
+    ``end_ordinal`` carry what :meth:`ContinuousStore.commit_bootstrap_page`
+    needs; the caller commits via that method (with ``batch_id`` as its
+    ``page_id``) rather than :meth:`ContinuousStore.commit_app_batch`, and
+    calls :meth:`ContinuousStore.finalize_bootstrap` once ``has_more`` goes
+    False after a successful commit.
     """
 
     batch_id: str
@@ -142,6 +150,8 @@ class AppBatch:
     has_more: bool
     inputs: list[BatchInputRange]
     rows: pa.Table
+    bootstrap_id: str | None = None
+    end_ordinal: int | None = None
 
 
 @dataclass(frozen=True)
@@ -319,6 +329,25 @@ class ContinuousStore(Protocol):
 
     def reset_app(self, app_id: str) -> int:
         """Start a new generation for an app (reset/topology replace); returns it."""
+        ...
+
+    def has_subscriptions(self, app_id: str, generation: int) -> bool:
+        """True if the app has ever bootstrapped (has subscription rows) at
+        *generation*. Distinguishes a never-started app (bootstrap) from a
+        stopped one (resume or reconcile, per :meth:`resumable`)."""
+        ...
+
+    def resumable(self, app_id: str, generation: int) -> bool:
+        """True if every subscribed ref's version is still covered by the
+        retained manifest floor (``stream_version >= retained_from_version``).
+
+        A stopped app whose subscriptions fall below the floor cannot resume
+        via ``next_app_batch`` -- the change-key rows it would need were
+        already compacted away, per continuous_batch.md's "Compacted stopped
+        cursors cause canonical reconciliation." An app with no subscriptions
+        at all (never bootstrapped) is vacuously resumable; the caller
+        distinguishes that case to bootstrap instead of resume.
+        """
         ...
 
     def delete_app_runtime(self, app_id: str) -> None:

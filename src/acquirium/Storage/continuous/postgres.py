@@ -276,6 +276,26 @@ class ContinuousPostgres:
             )
         return new_generation
 
+    def has_subscriptions(self, app_id: str, generation: int) -> bool:
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                f"SELECT 1 FROM {APP_SUBSCRIPTIONS_TABLE} WHERE app_id = %s AND generation = %s LIMIT 1",
+                [app_id, generation],
+            ).fetchone()
+        return row is not None
+
+    def resumable(self, app_id: str, generation: int) -> bool:
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                f"""
+                SELECT COUNT(*) FROM {APP_SUBSCRIPTIONS_TABLE} s
+                JOIN {STREAM_HEADS_TABLE} h ON h.ref_uri = s.ref_uri
+                WHERE s.app_id = %s AND s.generation = %s AND s.stream_version < h.retained_from_version
+                """,
+                [app_id, generation],
+            ).fetchone()
+        return (row[0] if row else 0) == 0
+
     def delete_app_runtime(self, app_id: str) -> None:
         with self._pool.connection() as conn, conn.transaction():
             conn.execute(
@@ -350,6 +370,7 @@ class ContinuousPostgres:
         return AppBatch(
             batch_id=page.page_id, batch_kind="bootstrap", generation=generation,
             has_more=page.has_more, inputs=[], rows=rows,
+            bootstrap_id=page.bootstrap_id, end_ordinal=page.end_ordinal,
         )
 
     def _next_tail_batch(self, app_id: str, generation: int, target_keys: int) -> AppBatch | None:

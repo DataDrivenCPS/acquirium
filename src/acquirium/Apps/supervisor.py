@@ -253,6 +253,18 @@ class AppSupervisor:
         actor = self._actor(app_id)
         return ray.get(actor.status.remote())
 
+    async def dispatch_pending(self, app_id: str) -> dict[str, Any]:
+        """Run one continuous-batch turn on *app_id*'s actor.
+
+        The router's dispatch callback (Server/router.py): called with no
+        Ray dependency of its own, so the router can be unit-tested without
+        a Ray cluster. Awaiting the actor's ``process_pending.remote()``
+        ObjectRef directly works because this coroutine always runs inside
+        the FastAPI event loop, where Ray's asyncio integration is active.
+        """
+        actor = self._actor(app_id)
+        return await actor.process_pending.remote()
+
     def stop_all_apps(self) -> None:
         with self._lock:
             records = list(self._apps.values())

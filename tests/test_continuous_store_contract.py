@@ -499,6 +499,35 @@ def test_compaction_advances_floor_and_retains_receipts(contract_store, p):
     assert retry.deduplicated
 
 
+def test_has_subscriptions_and_resumable(contract_store, p):
+    cs, _ = contract_store
+    s1 = uri(p, "s1")
+    app_id = f"{p}:app"
+    cs.register_app_runtime(app_id)
+    runtime = cs.app_runtime(app_id)
+    assert cs.has_subscriptions(app_id, runtime.generation) is False
+    assert cs.resumable(app_id, runtime.generation) is True  # vacuously, no subs
+
+    gen = _start_app(cs, app_id, s1)
+    assert cs.has_subscriptions(app_id, gen) is True
+    assert cs.resumable(app_id, gen) is True
+
+    # Advance far enough that compaction can move the floor past this app's
+    # subscription, then verify resumable() flips to False.
+    cs.publish(PublicationRequest(f"{p}:up", mutation_table([("upsert", s1, _utc(2026, 1, 1), 1.0, None)])))
+    batch = cs.next_app_batch(app_id, gen)
+    cs.commit_app_batch(CommitRequest(
+        app_id=app_id, generation=gen, batch_id=batch.batch_id, batch_kind="tail",
+        inputs=batch.inputs, outputs=mutation_table([]),
+    ))
+    cs.set_app_status(app_id, "stopped")  # not active/bootstrapping -> not counted by compact()
+    # Advance the head past what the stopped app consumed, so compaction has
+    # somewhere to move the floor to.
+    cs.publish(PublicationRequest(f"{p}:up2", mutation_table([("upsert", s1, _utc(2026, 1, 2), 2.0, None)])))
+    cs.compact()
+    assert cs.resumable(app_id, gen) is False
+
+
 def test_stopped_app_below_retained_floor_requires_reset(contract_store, p):
     """continuous_batch.md: a cursor below a retained floor is invalid to
     resume from directly -- reset_app starts a fresh generation instead."""

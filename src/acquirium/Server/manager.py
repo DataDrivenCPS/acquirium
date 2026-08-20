@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import pyarrow as pa
+    from acquirium.Server.router import ChangeRouter
 import shutil
 from acquirium.TextMatch.embedding_matcher import EmbeddingMatcher, _split_local_name
 from acquirium.TextMatch.qudt_store import QUDTStore
@@ -206,6 +207,11 @@ class Manager:
         self.timescale = timescale
         self.graph_store = graph
         self.continuous = continuous
+        # Set by the FastAPI lifespan once the router exists (it in turn
+        # depends on the AppSupervisor, which is built after the Manager).
+        # None is a valid, safe state: wake_router() is then a no-op and the
+        # router's own periodic safety scan is what apps fall back on.
+        self.router: "ChangeRouter | None" = None
         self.qudt_converter = converter
         self.backend = _backend
 
@@ -719,7 +725,21 @@ class Manager:
         ``ContinuousStore.publish`` for free.
         """
         pub_id = publication_id or str(uuid.uuid4())
-        return self.continuous.publish(PublicationRequest(pub_id, mutations))
+        receipt = self.continuous.publish(PublicationRequest(pub_id, mutations))
+        self.wake_router(receipt.versions.keys())
+        return receipt
+
+    def wake_router(self, ref_uris) -> None:
+        """Notify the change router that *ref_uris* may have pending work.
+
+        A no-op before the router is wired up (server startup ordering) or
+        for a caller that mutated storage through ``ContinuousStore``
+        directly (e.g. an app's output commit or a bootstrap finalize, both
+        of which publish inside their own transaction rather than through
+        this Manager) -- those callers invoke this explicitly afterward.
+        """
+        if self.router is not None:
+            self.router.wake(ref_uris)
 
     @staticmethod
     def _mutation_table(df: "Any", *, operation: str = "upsert") -> "pa.Table":
