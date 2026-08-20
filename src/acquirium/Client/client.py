@@ -591,6 +591,7 @@ class AcquiriumClient:
         rows: list[tuple[datetime, Any]],
         point_uri: Optional[str] = None,
         replace: bool = False,
+        publication_id: Optional[str] = None,
     ) -> dict:
         url = f"{self.base_url}/insert_timeseries"
         body = StreamInsert(
@@ -599,6 +600,7 @@ class AcquiriumClient:
             point_uri=point_uri,
             replace=replace,
             values=rows,
+            publication_id=publication_id,
         )
         response = requests.post(url, json=[body.model_dump(mode="json")])
         _raise_for_status(response)
@@ -628,7 +630,9 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
-    def insert_timeseries_arrow(self, source_id: str, table: "pa.Table") -> dict[str, Any]:
+    def insert_timeseries_arrow(
+        self, source_id: str, table: "pa.Table", *, publication_id: Optional[str] = None
+    ) -> dict[str, Any]:
         import io
         import pyarrow as pa
         table_with_sid = table.append_column("source_id", pa.repeat(source_id, len(table)))
@@ -636,10 +640,13 @@ class AcquiriumClient:
         with ipc.new_stream(buf, table_with_sid.schema) as writer:
             writer.write_table(table_with_sid)
         buf.seek(0)
+        headers = {"Content-Type": "application/vnd.apache.arrow.stream"}
+        if publication_id is not None:
+            headers["X-Acquirium-Publication-Id"] = publication_id
         response = requests.post(
             f"{self.base_url}/insert_timeseries_arrow",
             data=buf,
-            headers={"Content-Type": "application/vnd.apache.arrow.stream"},
+            headers=headers,
         )
         response.raise_for_status()
         return response.json()

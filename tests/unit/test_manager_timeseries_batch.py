@@ -2,54 +2,40 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-import polars as pl
 import pytest
 
 from acquirium.Server.manager import Manager
-from acquirium.Storage.values import prepare_value_columns
+from acquirium.Storage.continuous.duckdb import ContinuousDuckDB
+from acquirium.Storage.continuous.types import PublicationConflict
+from acquirium.Storage.duckdb_store import DuckDBStore
 from acquirium.internals.models import compute_ref_uri
 
 
-class _BulkStore:
-    def __init__(self) -> None:
-        self.frames = []
-        self.refs = []
-
-    def ensure_stream_ref(self, point_uri, source_id, ref_name, ref_uri=None, value_kind="text"):
-        self.refs.append(
-            {
-                "point_uri": point_uri,
-                "source_id": source_id,
-                "ref_name": ref_name,
-                "ref_uri": str(ref_uri),
-                "value_kind": value_kind,
-            }
-        )
-        return str(ref_uri)
-
-    def bulk_insert_polars(self, df):
-        self.frames.append(df)
-        return len(df)
-
-    def stream_value_kind(self, ref_uri):
-        if ref_uri == str(compute_ref_uri("source/file.csv", "state/value")):
-            return "text"
-        return "numeric"
+@pytest.fixture
+def mgr(tmp_path):
+    """A real Manager-shaped object with only the timeseries/continuous
+    layers wired -- enough to exercise insert_timeseries* end to end without
+    the full Manager.__init__ (graph store, embedding indexes, ...)."""
+    store = DuckDBStore(tmp_path / "mgr.duckdb", recreate=True)
+    m = Manager.__new__(Manager)
+    m.timescale = store
+    m.continuous = ContinuousDuckDB(store)
+    yield m
+    store.close()
 
 
-class _FailingBulkStore(_BulkStore):
-    def bulk_insert_polars(self, df):
-        self.frames.append(df)
-        raise RuntimeError("bulk insert failed")
+def _register(mgr, source_id: str, ref_name: str, value_kind: str) -> str:
+    ref_uri = str(compute_ref_uri(source_id, ref_name))
+    mgr.timescale.ensure_stream_ref(None, source_id, ref_name, ref_uri, value_kind=value_kind)
+    return ref_uri
 
 
-def test_insert_timeseries_batch_uses_computed_ref_uris_in_one_bulk_insert():
-    mgr = Manager.__new__(Manager)
-    store = _BulkStore()
-    mgr.timescale = store
+def test_insert_timeseries_batch_publishes_one_atomic_mutation_set(mgr):
+    temp_uri = _register(mgr, "source/file.csv", "temp", "numeric")
+    state_uri = _register(mgr, "source/file.csv", "state/value", "text")
 
     ts = datetime(2026, 4, 28, tzinfo=timezone.utc)
-    count = mgr.insert_timeseries_batch(
+    receipt = mgr.insert_timeseries_batch(
         "source/file.csv",
         {
             "temp": [(ts, 72.4)],
@@ -57,33 +43,25 @@ def test_insert_timeseries_batch_uses_computed_ref_uris_in_one_bulk_insert():
         },
     )
 
-    assert count == 3
-    assert len(store.frames) == 1
-    rows = store.frames[0].sort(["ref_uri", "ts"]).to_dicts()
-    assert store.frames[0].columns == ["ref_uri", "ts", "value", "value_kind"]
-    assert {row["ref_uri"] for row in rows} == {
-        str(compute_ref_uri("source/file.csv", "temp")),
-        str(compute_ref_uri("source/file.csv", "state/value")),
-    }
-    # A batch mixing scalar types is stringified so the split can vectorize;
-    # the values still survive intact through prepare_value_columns.
-    assert {row["value"] for row in rows} == {"72.4", "OK", None}
-    split = prepare_value_columns(store.frames[0]).sort("ts")
-    assert split.get_column("numeric_value").to_list() == [72.4, None, None]
-    assert split.get_column("text_value").to_list() == [None, "OK", None]
-    assert store.frames[0].get_column("value_kind").to_list() == ["numeric", "text", "text"]
-    assert store.refs == []
+    assert receipt.row_count == 3
+    assert set(receipt.versions) == {temp_uri, state_uri}
+
+    temp_values = [v for b in mgr.timescale.timeseries(temp_uri) for v in b.column("value").to_pylist()]
+    assert temp_values == [72.4]
+    state_values = [v for b in mgr.timescale.timeseries(state_uri) for v in b.column("value").to_pylist()]
+    assert sorted(state_values, key=lambda v: v or "") == [None, "OK"]
 
 
-def test_insert_timeseries_uses_computed_ref_uris_in_one_bulk_insert():
-    mgr = Manager.__new__(Manager)
-    store = _BulkStore()
-    mgr.timescale = store
+def test_insert_timeseries_arrow_publishes_computed_ref_uris(mgr):
+    import polars as pl
+
+    temp_uri = _register(mgr, "source/file.csv", "temp", "numeric")
+    state_uri = _register(mgr, "source/file.csv", "state/value", "text")
 
     ts = datetime(2026, 4, 28, tzinfo=timezone.utc)
     df = pl.DataFrame(
         {
-            "ts": [ts, ts.replace(hour=1), ts],
+            "ts": [ts, ts.replace(hour=1), ts.replace(hour=2)],
             "ref_name": ["temp", "state/value", "temp"],
             "value": ["72.4", "OK", "73.1"],
             "value_kind": ["numeric", "text", "numeric"],
@@ -96,25 +74,20 @@ def test_insert_timeseries_uses_computed_ref_uris_in_one_bulk_insert():
         },
     )
 
-    count = mgr.insert_timeseries_arrow("source/file.csv", df.to_arrow())
+    receipt = mgr.insert_timeseries_arrow("source/file.csv", df.to_arrow())
 
-    assert count == 3
-    assert len(store.frames) == 1
-    rows = store.frames[0].sort(["ref_uri", "ts"]).to_dicts()
-    assert store.frames[0].columns == ["ref_uri", "ts", "value", "value_kind"]
-    assert {row["ref_uri"] for row in rows} == {
-        str(compute_ref_uri("source/file.csv", "temp")),
-        str(compute_ref_uri("source/file.csv", "state/value")),
-    }
-    assert {row["value"] for row in rows} == {"72.4", "73.1", "OK"}
-    assert store.frames[0].sort(["ref_uri", "ts"]).get_column("value_kind").to_list() == ["text", "numeric", "numeric"]
-    assert store.refs == []
+    assert receipt.row_count == 3
+    assert set(receipt.versions) == {temp_uri, state_uri}
+    temp_values = {v for b in mgr.timescale.timeseries(temp_uri) for v in b.column("value").to_pylist()}
+    assert temp_values == {72.4, 73.1}
 
 
-def test_insert_timeseries_ignores_input_value_kind_column():
-    mgr = Manager.__new__(Manager)
-    store = _BulkStore()
-    mgr.timescale = store
+def test_insert_timeseries_arrow_ignores_input_value_kind_column(mgr):
+    """The stream's *registered* value_kind wins over an incoming value_kind
+    column -- a writer cannot silently retype an already-registered stream."""
+    import polars as pl
+
+    state_uri = _register(mgr, "source/file.csv", "state", "numeric")
 
     ts = datetime(2026, 4, 28, tzinfo=timezone.utc)
     df = pl.DataFrame(
@@ -132,18 +105,84 @@ def test_insert_timeseries_ignores_input_value_kind_column():
         },
     )
 
-    assert mgr.insert_timeseries_arrow("source/file.csv", df.to_arrow()) == 2
-    assert store.frames[0].get_column("value_kind").to_list() == ["numeric", "numeric"]
+    receipt = mgr.insert_timeseries_arrow("source/file.csv", df.to_arrow())
+    assert receipt.row_count == 2
+    # "ON" is not parseable as numeric, so it falls back to text storage even
+    # under the registered "numeric" kind; value_mode="coalesce" surfaces
+    # both the numeric and the text-fallback column on one read.
+    values = {
+        v for b in mgr.timescale.timeseries(state_uri, value_mode="coalesce")
+        for v in b.column("value").to_pylist()
+    }
+    assert values == {"1.0", "ON"}
 
 
-def test_insert_timeseries_batch_does_not_register_streams_when_bulk_insert_fails():
-    mgr = Manager.__new__(Manager)
-    store = _FailingBulkStore()
-    mgr.timescale = store
+def test_insert_timeseries_replace_tombstones_stale_rows_atomically(mgr):
+    ref_uri = _register(mgr, "source/file.csv", "temp", "numeric")
+    t0, t1, t2 = (
+        datetime(2026, 4, 28, hour=h, tzinfo=timezone.utc) for h in (0, 1, 2)
+    )
+    mgr.insert_timeseries(source_id="source/file.csv", ref_name="temp", rows=[(t0, 1.0), (t1, 2.0)])
 
+    receipt = mgr.insert_timeseries(
+        source_id="source/file.csv", ref_name="temp", rows=[(t1, 20.0), (t2, 3.0)], replace=True,
+    )
+    # One atomic publication for the whole replace: 2 upserts + 1 tombstone.
+    assert receipt.row_count == 3
+
+    rows = sorted(
+        (ts, v)
+        for b in mgr.timescale.timeseries(ref_uri)
+        for ts, v in zip(b.column("ts").to_pylist(), b.column("value").to_pylist())
+    )
+    assert rows == [(t1, 20.0), (t2, 3.0)]
+
+
+def test_delete_timeseries_explicit_timestamps(mgr):
+    ref_uri = _register(mgr, "source/file.csv", "temp", "numeric")
+    t0, t1 = (datetime(2026, 4, 28, hour=h, tzinfo=timezone.utc) for h in (0, 1))
+    mgr.insert_timeseries(source_id="source/file.csv", ref_name="temp", rows=[(t0, 1.0), (t1, 2.0)])
+
+    receipt = mgr.delete_timeseries(ref_uri, timestamps=[t0])
+    assert receipt.row_count == 1
+
+    remaining = [
+        ts for b in mgr.timescale.timeseries(ref_uri) for ts in b.column("ts").to_pylist()
+    ]
+    assert remaining == [t1]
+
+
+def test_delete_timeseries_range(mgr):
+    ref_uri = _register(mgr, "source/file.csv", "temp", "numeric")
+    t0, t1, t2 = (
+        datetime(2026, 4, 28, hour=h, tzinfo=timezone.utc) for h in (0, 1, 2)
+    )
+    mgr.insert_timeseries(
+        source_id="source/file.csv", ref_name="temp", rows=[(t0, 1.0), (t1, 2.0), (t2, 3.0)],
+    )
+
+    receipt = mgr.delete_timeseries(ref_uri, start=t0, end=t1)
+    assert receipt.row_count == 2
+
+    remaining = [
+        ts for b in mgr.timescale.timeseries(ref_uri) for ts in b.column("ts").to_pylist()
+    ]
+    assert remaining == [t2]
+
+
+def test_insert_timeseries_batch_publication_conflict_leaves_no_partial_state(mgr):
+    """Reusing a publication_id with a different payload rejects the whole
+    write; a fresh publish for the same stream afterwards is unaffected."""
+    ref_uri = _register(mgr, "source/file.csv", "temp", "numeric")
     ts = datetime(2026, 4, 28, tzinfo=timezone.utc)
-    with pytest.raises(RuntimeError, match="bulk insert failed"):
-        mgr.insert_timeseries_batch("source/file.csv", {"temp": [(ts, 72.4)]})
 
-    assert len(store.frames) == 1
-    assert store.refs == []
+    mgr.insert_timeseries_batch(
+        "source/file.csv", {"temp": [(ts, 1.0)]}, publication_id="dup-id",
+    )
+    with pytest.raises(PublicationConflict):
+        mgr.insert_timeseries_batch(
+            "source/file.csv", {"temp": [(ts, 2.0)]}, publication_id="dup-id",
+        )
+
+    values = [v for b in mgr.timescale.timeseries(ref_uri) for v in b.column("value").to_pylist()]
+    assert values == [1.0]

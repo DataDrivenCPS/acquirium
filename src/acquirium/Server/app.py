@@ -680,13 +680,16 @@ def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[st
         bulk_streams: dict[str, dict[str, list[tuple[datetime, Any]]]] = {}
         individual_streams: list[StreamInsert] = []
         for s in streams:
-            if s.point_uri is None and not s.replace:
+            # A stream needing its own publication_id, point_uri registration,
+            # or replace semantics can't share one bulk publication with its
+            # source-id siblings, so it always takes the individual path.
+            if s.point_uri is None and not s.replace and s.publication_id is None:
                 bulk_streams.setdefault(s.source_id, {})[s.ref_name] = s.values
             else:
                 individual_streams.append(s)
 
         for source_id, source_streams in bulk_streams.items():
-            total += app.state.manager.insert_timeseries_batch(source_id, source_streams)
+            total += app.state.manager.insert_timeseries_batch(source_id, source_streams).row_count
         for s in individual_streams:
             total += app.state.manager.insert_timeseries(
                 source_id=s.source_id,
@@ -694,7 +697,8 @@ def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[st
                 rows=s.values,
                 point_uri=s.point_uri,
                 replace=s.replace,
-            )
+                publication_id=s.publication_id,
+            ).row_count
         insert_stats.record(
             origin="http",
             rows=sum(len(s.values) for s in streams),
@@ -714,11 +718,22 @@ async def insert_timeseries_arrow(request: Request):
         df = pl.from_arrow(reader.read_all())
         log.debug("/insert_timeseries_arrow: parsed Arrow stream into df rows=%d", len(df))
 
+        # A caller-supplied publication_id makes a retried flush idempotent
+        # (see continuous_batch_plan.md Decision 5/1d): reused verbatim
+        # against ContinuousStore.publish, whose id-plus-hash check returns
+        # the original receipt instead of re-applying the mutation. One
+        # request can span multiple source_ids, each its own atomic
+        # publication, so the base id is namespaced per source.
+        base_publication_id = request.headers.get("X-Acquirium-Publication-Id")
+
         total = 0
         for key, source_df in df.partition_by("source_id", as_dict=True).items():
             sid = key[0] if isinstance(key, tuple) else key
             log.debug("/insert_timeseries_arrow: dispatching source=%s rows=%d", sid, len(source_df))
-            total += app.state.manager.insert_timeseries_arrow(str(sid), source_df.drop("source_id").to_arrow())
+            pub_id = f"{base_publication_id}:{sid}" if base_publication_id else None
+            total += app.state.manager.insert_timeseries_arrow(
+                str(sid), source_df.drop("source_id").to_arrow(), publication_id=pub_id
+            ).row_count
 
         return {"ok": True, "rows_inserted": total}
     except Exception as e:

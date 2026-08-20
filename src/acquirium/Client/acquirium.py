@@ -313,6 +313,7 @@ class Acquirium:
         *,
         point_uri: Optional[str] = None,
         replace: bool = False,
+        publication_id: Optional[str] = None,
     ) -> dict[str, Any]:
         """Insert timeseries data for a single stream.
 
@@ -324,6 +325,10 @@ class Acquirium:
             point_uri: Semantic URI of the measurement point. When provided,
                 a ref_uri mapping is registered in the streams table.
             replace: If True, replaces any existing data for this stream.
+            publication_id: A stable id for this atomic mutation set. Reusing
+                it on retry (same rows) replays the original receipt instead
+                of re-applying the write; reusing it with different rows is
+                rejected as a publication conflict.
 
         Returns:
             dict with ``{"ok": True, "rows_inserted": N}``.
@@ -334,6 +339,7 @@ class Acquirium:
             rows=rows,
             point_uri=point_uri,
             replace=replace,
+            publication_id=publication_id,
         )
 
     def insert_timeseries_batch(
@@ -365,9 +371,15 @@ class Acquirium:
             chunk_count += 1
         return {"ok": True, "rows_inserted": total, "batches": chunk_count}
 
-    def insert_timeseries_arrow(self, source_id: str, table: "pa.Table") -> dict[str, Any]:
-        """Insert a (ts, ref_name, value) Arrow table."""
-        return self.client.insert_timeseries_arrow(source_id, table)
+    def insert_timeseries_arrow(
+        self, source_id: str, table: "pa.Table", *, publication_id: Optional[str] = None
+    ) -> dict[str, Any]:
+        """Insert a (ts, ref_name, value) Arrow table.
+
+        ``publication_id``, when given, makes a retried call idempotent (see
+        :meth:`insert_timeseries`).
+        """
+        return self.client.insert_timeseries_arrow(source_id, table, publication_id=publication_id)
 
     @staticmethod
     def _json_safe_value(value: Any) -> Any:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +15,7 @@ from acquirium.Storage import (
     TimeseriesStore,
     create_timeseries_store,
 )
+from acquirium.Storage.continuous.types import ContinuousStore, PublicationReceipt, PublicationRequest
 from acquirium.Storage.values import normalize_value_kind
 from acquirium.internals.qudt_units import QUDTUnitConverter
 from acquirium.Server.config import OntologySource
@@ -120,6 +122,7 @@ def _wipe_dir_contents(base: Path) -> None:
 class Manager:
     timescale: TimeseriesStore
     graph_store: OxigraphGraphStore
+    continuous: ContinuousStore
     qudt_converter: QUDTUnitConverter | None = None
     backend: str = "timescale"
 
@@ -164,6 +167,12 @@ class Manager:
                 timescale: TimeseriesStore = create_timeseries_store(
                     "duckdb", duckdb_path=_effective_duckdb_path, recreate=recreate
                 )
+                # The continuous layer shares DuckDBStore's connection factory
+                # and write lock rather than opening a second writer (see
+                # Storage/continuous/duckdb.py's module docstring).
+                from acquirium.Storage.continuous.duckdb import ContinuousDuckDB
+
+                continuous: ContinuousStore = ContinuousDuckDB(timescale)
             else:
                 _effective_dsn = pg_dsn or os.getenv("PG_DSN")
                 if not _effective_dsn:
@@ -171,6 +180,13 @@ class Manager:
                 timescale = create_timeseries_store(
                     "timescale", pg_dsn=_effective_dsn, recreate=recreate
                 )
+                # A dedicated connection pool, not TimescaleStore's single
+                # connection: continuous-batch transactions (router-driven
+                # actor batches, the compactor) run concurrently with
+                # ordinary ingest against the same database.
+                from acquirium.Storage.continuous.postgres import ContinuousPostgres
+
+                continuous = ContinuousPostgres(_effective_dsn)
 
         # Caller-supplied converter or graph wins; otherwise the converter
         # is built lazily in _ensure_qudt_converter from the QUDT unit
@@ -189,6 +205,7 @@ class Manager:
 
         self.timescale = timescale
         self.graph_store = graph
+        self.continuous = continuous
         self.qudt_converter = converter
         self.backend = _backend
 
@@ -687,6 +704,37 @@ class Manager:
         )
         return source_id
 
+    def publish(
+        self, mutations: "pa.Table", *, publication_id: str | None = None
+    ) -> PublicationReceipt:
+        """Publish a mutation set through the continuous-batch protocol.
+
+        Every write to canonical timeseries storage -- driver ingest, app
+        output commits, explicit deletes -- goes through this one path so
+        stream versions and changed-key manifests stay authoritative (see
+        continuous_batch.md's "Canonical timeseries as the only value
+        authority"). Assigns a fresh uuid4 ``publication_id`` when the
+        caller doesn't supply a stable one; a caller reusing the same id
+        across a retried request gets the idempotent-replay path in
+        ``ContinuousStore.publish`` for free.
+        """
+        pub_id = publication_id or str(uuid.uuid4())
+        return self.continuous.publish(PublicationRequest(pub_id, mutations))
+
+    @staticmethod
+    def _mutation_table(df: "Any", *, operation: str = "upsert") -> "pa.Table":
+        """Split ``value``/``value_kind`` columns and tag every row with
+        *operation*, producing a table matching MUTATION_SCHEMA's column set."""
+        import polars as pl
+        from acquirium.Storage.values import prepare_value_columns
+
+        split = prepare_value_columns(df)
+        return (
+            split.with_columns(pl.lit(operation).alias("operation"))
+            .select(["operation", "ref_uri", "ts", "numeric_value", "text_value"])
+            .to_arrow()
+        )
+
     def insert_timeseries(
         self,
         *,
@@ -695,25 +743,63 @@ class Manager:
         rows: list[tuple[datetime, Any]],
         point_uri: str | None = None,
         replace: bool = False,
-    ) -> int:
+        publication_id: str | None = None,
+    ) -> PublicationReceipt:
+        import polars as pl
+        from acquirium.Storage.values import typed_value_series
+
         ref_uri = str(compute_ref_uri(source_id, ref_name))
         value_kind = self._registered_value_kind(ref_uri)
         logger.debug(
             "insert_timeseries source=%s ref_name=%s rows=%d kind=%s replace=%s",
             source_id, ref_name, len(rows), value_kind, replace,
         )
+        n = len(rows)
+        df = pl.DataFrame(
+            {
+                "ref_uri": pl.Series("ref_uri", [ref_uri] * n, dtype=pl.Utf8),
+                "ts": pl.Series("ts", [ts for ts, _ in rows], dtype=pl.Datetime("us", "UTC")),
+                "value": typed_value_series([v for _, v in rows]),
+                "value_kind": pl.Series("value_kind", [value_kind] * n, dtype=pl.Utf8),
+            }
+        )
+        upserts = pl.from_arrow(self._mutation_table(df))
+
+        mutations = upserts
         if replace:
-            n = self.timescale.replace_rows(ref_uri, rows, value_kind=value_kind)
-        else:
-            n = self.timescale.upsert_rows(ref_uri, rows, value_kind=value_kind)
-        return n
+            # Atomic replace: tombstone every existing timestamp not present
+            # in the new rows, in the *same* publication as the upserts, so
+            # the replacement is one writer-defined atomic mutation set
+            # rather than a separate delete-then-insert pair.
+            new_ts = set(upserts["ts"].to_list())
+            existing_ts = [
+                ts
+                for batch in self.timescale.timeseries(ref_uri)
+                for ts in batch.column("ts").to_pylist()
+            ]
+            stale_ts = [ts for ts in existing_ts if ts not in new_ts]
+            if stale_ts:
+                tombstones = pl.DataFrame(
+                    {
+                        "operation": pl.Series(["delete"] * len(stale_ts), dtype=pl.Utf8),
+                        "ref_uri": pl.Series([ref_uri] * len(stale_ts), dtype=pl.Utf8),
+                        "ts": pl.Series(stale_ts, dtype=pl.Datetime("us", "UTC")),
+                        "numeric_value": pl.Series([None] * len(stale_ts), dtype=pl.Float64),
+                        "text_value": pl.Series([None] * len(stale_ts), dtype=pl.Utf8),
+                    }
+                )
+                mutations = pl.concat([upserts, tombstones], how="vertical_relaxed")
+
+        return self.publish(mutations.to_arrow(), publication_id=publication_id)
 
     def insert_timeseries_batch(
         self,
         source_id: str,
         streams: dict[str, list[tuple[datetime, Any]]],
-    ) -> int:
-        """Insert multiple source-local streams in one storage operation."""
+        *,
+        publication_id: str | None = None,
+    ) -> PublicationReceipt:
+        """Publish multiple source-local streams as one atomic mutation set."""
         import polars as pl
 
         ref_uris: list[str] = []
@@ -734,7 +820,10 @@ class Manager:
             source_id, len(ref_uris), len(streams),
         )
         if not ref_uris:
-            return 0
+            return PublicationReceipt(
+                publication_id=publication_id or str(uuid.uuid4()),
+                payload_hash="", row_count=0, versions={},
+            )
 
         from acquirium.Storage.values import typed_value_series
 
@@ -746,15 +835,20 @@ class Manager:
                 "value_kind": pl.Series("value_kind", value_kinds, dtype=pl.Utf8),
             }
         )
-        return self.timescale.bulk_insert_polars(df)
+        return self.publish(self._mutation_table(df), publication_id=publication_id)
 
-    def insert_timeseries_arrow(self, source_id: str, table: "pa.Table") -> int:
-        """Insert a melted (ts, ref_name, value) Arrow table, computing ref_uris vectorized."""
+    def insert_timeseries_arrow(
+        self, source_id: str, table: "pa.Table", *, publication_id: str | None = None
+    ) -> PublicationReceipt:
+        """Publish a melted (ts, ref_name, value) Arrow table as one atomic mutation set."""
         import polars as pl
 
         logger.debug("insert_timeseries_arrow source=%s arrow_rows=%d", source_id, len(table))
         if len(table) == 0:
-            return 0
+            return PublicationReceipt(
+                publication_id=publication_id or str(uuid.uuid4()),
+                payload_hash="", row_count=0, versions={},
+            )
         df = pl.from_arrow(table)
         stream_count = df["ref_name"].n_unique()
         logger.info(
@@ -778,13 +872,51 @@ class Manager:
             .drop("ref_name")
             .select(["ref_uri", "ts", "value", "value_kind"])
         )
-        inserted = self.timescale.bulk_insert_polars(df)
+        receipt = self.publish(self._mutation_table(df), publication_id=publication_id)
         logger.info(
             "acquirium: insert_timeseries_arrow wrote %d row(s) for source_id=%s",
-            inserted,
+            receipt.row_count,
             source_id,
         )
-        return inserted
+        return receipt
+
+    def delete_timeseries(
+        self,
+        ref_uri: str,
+        *,
+        timestamps: list[datetime] | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        publication_id: str | None = None,
+    ) -> PublicationReceipt:
+        """Publish tombstones for explicit timestamps, or every timestamp in
+        ``[start, end]`` (resolved by reading current live rows -- deletion
+        is itself an explicit mutation set, not a range predicate stored in
+        the manifest)."""
+        import polars as pl
+
+        if timestamps is None:
+            timestamps = [
+                ts
+                for batch in self.timescale.timeseries(ref_uri, start=start, end=end)
+                for ts in batch.column("ts").to_pylist()
+            ]
+        if not timestamps:
+            return PublicationReceipt(
+                publication_id=publication_id or str(uuid.uuid4()),
+                payload_hash="", row_count=0, versions={},
+            )
+        n = len(timestamps)
+        mutations = pl.DataFrame(
+            {
+                "operation": pl.Series(["delete"] * n, dtype=pl.Utf8),
+                "ref_uri": pl.Series([ref_uri] * n, dtype=pl.Utf8),
+                "ts": pl.Series(timestamps, dtype=pl.Datetime("us", "UTC")),
+                "numeric_value": pl.Series([None] * n, dtype=pl.Float64),
+                "text_value": pl.Series([None] * n, dtype=pl.Utf8),
+            }
+        ).to_arrow()
+        return self.publish(mutations, publication_id=publication_id)
 
     def _registered_value_kind(self, ref_uri: str) -> str:
         value_kind = self.timescale.stream_value_kind(ref_uri)
@@ -1071,6 +1203,11 @@ class Manager:
         # App teardown belongs to AppSupervisor, which the server lifespan stops
         # before it closes the manager.
         logger.debug("Manager.close: shutting down")
+        # ContinuousDuckDB shares DuckDBStore's connections and owns nothing
+        # to close itself; ContinuousPostgres owns a separate pool.
+        close_continuous = getattr(self.continuous, "close", None)
+        if callable(close_continuous):
+            close_continuous()
         self.timescale.close()
         self.graph_store.close()
         logger.debug("Manager.close: done")

@@ -90,6 +90,7 @@ class StreamInsert(BaseModel):
     point_uri: str | None = None
     replace: bool = False
     values: list[tuple[datetime, float | int | str | None]]
+    publication_id: str | None = None
 
 
 Order = Literal["asc", "desc"]

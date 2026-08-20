@@ -86,6 +86,7 @@ APP_BATCH_COMMITS_TABLE = "app_batch_commits"
 APP_BATCH_INPUTS_TABLE = "app_batch_inputs"
 APP_BOOTSTRAPS_TABLE = "app_bootstraps"
 APP_BOOTSTRAP_STREAMS_TABLE = "app_bootstrap_streams"
+APP_BOOTSTRAP_OUTPUT_TARGETS_TABLE = "app_bootstrap_output_targets"
 APP_BOOTSTRAP_ROWS_TABLE = "app_bootstrap_rows"
 APP_BOOTSTRAP_OUTPUTS_TABLE = "app_bootstrap_outputs"
 APP_WEBHOOK_INTENTS_TABLE = "app_webhook_intents"
@@ -179,6 +180,20 @@ CONTINUOUS_BATCH_DDL = [
         PRIMARY KEY (bootstrap_id, ref_id)
     )
     """,
+    # Declared output targets for this bootstrap, captured at begin_bootstrap
+    # time. finalize_bootstrap anti-joins this list against what actually
+    # landed in app_bootstrap_outputs to tombstone an output stream a
+    # narrower/changed selector no longer produces (continuous_batch.md
+    # "The actor transforms staged history..."). Not part of the design
+    # doc's logical schema list; added because finalize's reconciliation step
+    # needs it.
+    f"""
+    CREATE TABLE IF NOT EXISTS {APP_BOOTSTRAP_OUTPUT_TARGETS_TABLE} (
+        bootstrap_id VARCHAR NOT NULL,
+        output_ref_id INTEGER NOT NULL,
+        PRIMARY KEY (bootstrap_id, output_ref_id)
+    )
+    """,
     f"""
     CREATE TABLE IF NOT EXISTS {APP_BOOTSTRAP_ROWS_TABLE} (
         bootstrap_id VARCHAR NOT NULL,
@@ -256,6 +271,7 @@ class DuckDBStore:
                     APP_WEBHOOK_INTENTS_TABLE,
                     APP_BOOTSTRAP_OUTPUTS_TABLE,
                     APP_BOOTSTRAP_ROWS_TABLE,
+                    APP_BOOTSTRAP_OUTPUT_TARGETS_TABLE,
                     APP_BOOTSTRAP_STREAMS_TABLE,
                     APP_BOOTSTRAPS_TABLE,
                     APP_BATCH_INPUTS_TABLE,

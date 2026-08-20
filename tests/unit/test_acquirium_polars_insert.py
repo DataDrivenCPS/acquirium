@@ -11,9 +11,10 @@ def test_insert_timeseries_arrow_delegates_to_client():
     captured: dict = {}
 
     class _FakeClient:
-        def insert_timeseries_arrow(self, source_id, table):
+        def insert_timeseries_arrow(self, source_id, table, *, publication_id=None):
             captured["source_id"] = source_id
             captured["table"] = table
+            captured["publication_id"] = publication_id
             return {"ok": True, "rows_inserted": len(table)}
 
     aq.client = _FakeClient()
