@@ -883,11 +883,12 @@ name.
 
 **TODO:** This might be a bad idea. Remove old aliases
 
-The terminals take `use_union=` (default `True`).
-`True` queries the union of the model and the ontology closure, which is what
-makes subclass matching work.
-`False` restricts the query to the model graph alone; it is faster and
+The terminals take `include_dependencies=` (default `True`).
+`True` queries the deployment data together with the resolved ontology and
+shape triples, which is what makes subclass matching work.
+`False` restricts the query to the deployment data alone; it is faster and
 correct only for queries that need no ontology terms.
+See the [graph backend guide](graph-backend-architecture.md#query-and-export-semantics).
 
 ---
 
