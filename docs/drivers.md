@@ -386,8 +386,6 @@ They take no owner argument, so a driver cannot write into the plant model or
 another driver's graph by accident.
 `replace=True` therefore replaces only this driver's contribution.
 
-**TODO:** We will implement named graphs
-
 
 `on_graph_change()` runs before the next tick whenever anything modified the graph.
 
