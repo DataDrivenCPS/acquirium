@@ -31,6 +31,14 @@ actors for drivers and apps. `acquirium server --config acquirium.toml`.
 - Replacing a bundled ontology requires the `{ source, as }` form; a plain
   string at an already-populated IRI is skipped.
 - Relative paths in `[server]` resolve against the config file's directory.
+- `insert_graph` / `sparql_update` REQUIRE a `source_id`; triples land in that
+  owner's graph (`plant` for the shared model, `app:<name>`, or a driver's
+  source). `replace=True` replaces only that owner's graph. Driver and app
+  code uses `self.insert_graph(...)`, which fixes the owner and defaults
+  `replace=False`.
+- Graph reads take `include_dependencies` (default true: inferred deployment
+  data + ontology/shape triples) and `wait_for_fresh` (default false: serve the
+  last complete cache while a rebuild runs).
 
 ## Config skeleton
 
@@ -56,9 +64,11 @@ spec = "..."
 ## Backend choice
 
 duckdb (default): one file, zero ops, own connection per read, no
-compression. timescale: Postgres + TimescaleDB extension via `pg_dsn`,
-hypertable with automatic 7-day chunk compression, needed when other tools
-must reach the data. Same schema either way.
+compression; keys `timeseries` rows by an integer `ref_id` via a `ref_ids`
+table. timescale: Postgres + TimescaleDB extension via `pg_dsn`, hypertable
+with automatic 7-day chunk compression, keyed by `ref_uri` directly, needed
+when other tools must reach the data. Same logical schema either way; reads
+expose `ref_uri` on both.
 
 ## Startup order (what to expect in logs)
 
@@ -66,6 +76,10 @@ config → stores open + ontologies load → embedding indexes (cold build takes
 minutes, cached by ontology content afterward) → streams-table sync (can
 abort) → HTTP serves (`/health` up) → background: app restore, `[[drivers]]`
 start.
+
+Note the streams-table sync runs against the FRESH inferred graph, so every
+`insert_graph` request pays for one inference pass. Batch registrations into
+one call rather than looping.
 
 Client side: `Acquirium()` blocks on `/health` up to 60 s
 (`health_timeout=None` to skip).
@@ -76,19 +90,25 @@ Client side: `Acquirium()` blocks on `/health` up to 60 s
   `acquirium.api`, `.manager`, `.graph_store`, `.storage`,
   `acquirium.driver.<ClassName>`, `.apps.supervisor`.
 - `GET /embedding_status`: per-index build state when resolution misbehaves.
-- `GET /graph_version`: bumps on every graph mutation; unchanged version =
-  the write did not happen.
+- `GET /graph_version`: returns `source_version`, `published_version`,
+  `is_current`, `rebuild_in_progress`. `source_version` bumps on every
+  mutation; unchanged = the write did not happen. The cache is fresh when
+  `published_version == source_version` and `is_current`.
 - Nearly every API failure is a 400 with the reason in `detail`; 404 =
   unknown driver/app, 409 = duplicate app name.
 - `GET /timeseries` streams Arrow, not JSON; do not parse it as JSON.
 - Long SPARQL goes to `POST /sparql_json` (URL length limits on GET).
+  `GET /sparql` is the standards-compatible endpoint for outside tools
+  (SELECT/ASK/CONSTRUCT/DESCRIBE, `Accept`-negotiated); `/sparql_json` keeps
+  the client's `{columns, rows}` contract.
 
 ## Endpoints
 
 | area | endpoints |
 |---|---|
 | liveness | `GET /health`, `/graph_version`, `/embedding_status` |
-| graph | `POST /insert_graph`, `GET /export_graph`, `GET\|POST /sparql_json`, `POST /sparql_update`, `GET /namespace/list` |
+| graph | `POST /insert_graph` (needs `source_id`), `GET /export_graph`, `POST /sparql_update`, `POST /validate_graph`, `GET /namespace/list` |
+| sparql | `GET /sparql` (standards), `GET\|POST /sparql_json` (legacy `{columns, rows}`) |
 | timeseries | `POST /register_datasource`, `POST /insert_timeseries`, `POST /insert_timeseries_arrow`, `GET /timeseries`, `POST /timeseries_info` |
 | resolution | `GET /resolve_text`, `POST /resolve_record`, `/resolve_unit`, `/resolve_conversion`, `/conversion_factors` |
 | drivers | `POST /drivers/start`, `POST /drivers/stop`, `GET /drivers/list` |
