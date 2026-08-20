@@ -34,6 +34,8 @@ it, and semantic queries will not find it.
 ## What registration writes to the graph
 
 `register_streams()` writes two connected pieces of RDF.
+Each stream needs a `source_id`, and its triples go into that source's own
+graph.
 
 For the stream itself, a reference node under the computed `ref_uri`:
 
@@ -60,6 +62,13 @@ and the link between the two:
 Registration is idempotent and additive.
 Registering the same stream again with a `point_uri` does not erase metadata written earlier.
 
+Note that driver authors do not call `register_streams()` themselves.
+A driver calls `self.declare(...)` per stream, and the platform calls
+`register_datasource()` and `register_streams()` for it just before the next
+insert.
+`register_streams()` is the direct form, for backfills, imports and notebooks.
+See the [drivers guide](drivers.md#declaring-streams).
+
 **TODO:** We need to provide an interface to add, remove, replace streams. Also, auto register streams from a given graph.
 
 ## Registration and the streams table
@@ -70,6 +79,9 @@ node
 (`ref_uri`, `point_uri`, `source_id`, `ref_name`, `value_kind`).
 After every graph insert, the server scans for nodes carrying `acq:sourceId`
 and `acq:refName` and upserts them into the table.
+The scan reads the inferred graph together with the ontologies, not just the
+triples as written, so an ontology or SHACL rule can complete a stream-to-point
+link that no insert stated directly.
 This sync is why registration must precede insertion: the insert path checks
 the table, and a stream that was never registered has no row.
 
@@ -123,9 +135,13 @@ the history at those timestamps.
 `replace=True` on `insert_timeseries` clears the whole stream before
 inserting.
 
-Storage is one table, `timeseries(ref_uri, ts, numeric_value, text_value)`,
-with a uniqueness constraint on `(ref_uri, ts)` and a check that only one of
-the two value columns is set per row.
+Storage is one `timeseries` table holding `ts`, `numeric_value` and
+`text_value`, with one row per stream and timestamp and a check that only one
+of the two value columns is set.
+The backends key it differently.
+Timescale keys rows by `ref_uri` directly.
+DuckDB keys them by an integer `ref_id` and maps it back through a `ref_ids`
+table, which keeps the column narrow; reads expose `ref_uri` either way.
 
 ## The read path
 
@@ -152,24 +168,27 @@ A reference node with no point stores data that semantic queries cannot find.
 Everything above writes RDF through `insert_graph`, so this section
 describes how it behaves.
 
-All inserted data lands in one main graph.
-There is no per-source or per-driver separation, which is why
-`replace=True` (the client default) is dangerous outside of loading a fresh
-model: it clears the entire main graph, including streams registered by other
-drivers and apps.
+Every write names an owner.
+`insert_graph` requires a `source_id`, and the triples land in that owner's
+graph: the reserved `plant` source for the shared model, `app:<name>` for an
+app, or the driver's own source.
+`replace=True` therefore replaces only that owner's graph, never the plant
+model or another driver's streams.
 
 The ontologies (s223, the water ontology, QUDT, the reference schema) live in
-their own graphs, separate from the main graph, and inserts never touch them.
-Queries run against a union of the main graph and the ontology closure by
-default.
+their own graphs, managed separately, and inserts never touch them.
+Queries run against the inferred deployment data plus the resolved ontology
+and shape triples by default.
 This is why a model containing `wbs:P1 a s223:Pump` matches a query for
 equipment: the subclass chain lives in the ontology graphs.
+The [graph backend guide](graph-backend-architecture.md) covers the ownership
+rules and the derived-graph pipeline in full.
 
-A model file that declares `owl:imports` triggers a recomputation of that
-closure on insert.
-Plain instance data does not, so stream registration stays cheap and the sync
-from [Registration and the streams table](#registration-and-the-streams-table)
-can run on every insert.
+Be aware that a graph insert is not cheap.
+The sync from [Registration and the streams table](#registration-and-the-streams-table)
+waits for a fresh inferred view, so every `insert_graph` request pays for one
+inference pass.
+Register many streams in one call rather than looping over single ones.
 
 ## App outputs are streams too
 
