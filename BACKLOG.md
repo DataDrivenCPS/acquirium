@@ -18,16 +18,17 @@ in phase order so the replacement can be delivered incrementally.
 
 ## Next
 
-- [ ] Add `Storage/materialization` range-manifest request/result types, IDs,
-  and DuckDB/PostgreSQL implementations.
-- [ ] Characterize PostgreSQL parity and concurrent-writer behavior for the
-  new range manifests; DuckDB publication behavior has focused coverage.
-- [ ] Persist definitions, deployments, bindings, and graph revision/rebind
+- [x] Add `Storage/materialization` range-manifest request/result types, IDs,
+  and DuckDB/PostgreSQL implementations. Canonical publications emit the same
+  queryable half-open ranges on both backends.
+- [x] Characterize PostgreSQL parity and concurrent-writer behavior for the
+  new range manifests. The shared backend contract checks canonical range
+  emission/query behavior and opposite-order concurrent writers.
+- [x] Persist definitions, deployments, bindings, and graph revision/rebind
   requests (Phase 2). DuckDB and PostgreSQL definition/deployment/staging-
   binding persistence, graph revision recording, rebind-request insertion,
-  rebind leasing, explicit binding resolution, and pure topology validation
-  are now in place. Built-in selector expansion and atomic topology activation
-  remain deferred to Phase 5.
+  rebind leasing, explicit binding resolution, selector expansion, topology
+  validation, and atomic activation are implemented through Phase 5.
 - [x] Phase 3: durable plans/partitions, range-manifest safety scans,
   impact-aware stale rejection, leases/retries, Arrow snapshots, replacement
   commits/tombstones, receipts/progress, bounded scheduler execution, and
@@ -53,8 +54,16 @@ in phase order so the replacement can be delivered incrementally.
   atomic active-pointer swap. Direct, per-input, by-entity, single, empty, and
   manually reconciled declarations are covered; PostgreSQL promotion has a
   live smoke test.
-- [ ] Stateful artifacts/training, experiments, services, effects, and old
-  continuous-runtime removal (Phases 6–9).
+- [x] Phase 6 generic artifact-backed state: content-addressed, digest-verified
+  filesystem artifacts; generic producer request/lease/complete/fail and
+  promotion endpoints; candidate and active revisions; DuckDB/PostgreSQL
+  lifecycle persistence; pinned plans; promotion invalidations; worker-local
+  class/artifact caches; and age-guarded orphan collection are implemented.
+  The public generic calibration example and DuckDB/PostgreSQL storage/worker
+  restart recovery show that durable artifacts, rather than worker memory,
+  reproduce class transformations.
+- [ ] Experiments, services, effects, and old continuous-runtime removal
+  (Phases 7–9).
 
 ## Notes
 

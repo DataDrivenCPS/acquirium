@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import io
 import json
@@ -9,7 +10,7 @@ import os
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Any, Optional, Iterator
+from typing import Annotated, Any, Iterator, Literal, Optional
 
 # When the server is launched via `uv run`, Ray's uv hook would give every
 # worker a fresh env resolved from pyproject.toml — dropping optional extras
@@ -28,6 +29,8 @@ from datetime import datetime
 from acquirium.Server.manager import Manager
 from acquirium.Materialization.definitions import MaterializationDefinition
 from acquirium.Materialization.impact import ImpactPolicy
+from acquirium.Materialization.impact import TimeRange
+from acquirium.Materialization.state import ArtifactCandidate, ArtifactRequest
 
 from acquirium.internals.models import (
     LogEntry,
@@ -578,6 +581,42 @@ class TransformationRegistration(BaseModel):
     parameters_schema: dict[str, Any] = Field(default_factory=dict)
 
 
+class StateRevisionPromotion(BaseModel):
+    policy: Literal["prospective", "recompute_all", "recompute_from"] = "prospective"
+    effective_from: datetime | None = None
+
+
+class ArtifactRequestSubmission(BaseModel):
+    request_id: str
+    kind: str
+    deployment_name: str
+    binding_id: str
+    input_versions: dict[str, int] = Field(default_factory=dict)
+    start: datetime
+    end: datetime
+    previous_revision: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ArtifactLeaseRequest(BaseModel):
+    owner: str
+
+
+class ArtifactCompletion(BaseModel):
+    owner: str
+    attempt: int
+    data_base64: str
+    media_type: str = "application/octet-stream"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+
+
+class ArtifactFailure(BaseModel):
+    owner: str
+    attempt: int
+    error: dict[str, Any]
+
+
 @app.post("/transformations/register")
 def register_transformation(request: TransformationRegistration) -> dict[str, Any]:
     """Register trusted local transformation metadata; execution is scheduled separately."""
@@ -590,6 +629,55 @@ def register_transformation(request: TransformationRegistration) -> dict[str, An
         return {"ok": True, **app.state.manager.register_transformation(definition)}
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error))
+
+
+@app.post("/artifact-requests")
+def create_artifact_request(request: ArtifactRequestSubmission) -> dict[str, Any]:
+    try:
+        artifact_request = ArtifactRequest(request.request_id, request.kind, request.deployment_name,
+            request.binding_id, request.input_versions, TimeRange(request.start, request.end),
+            request.previous_revision, request.metadata)
+        return {"ok": True, "request_id": app.state.manager.materialization.create_artifact_request(artifact_request)}
+    except (TypeError, ValueError) as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+
+@app.post("/artifact-requests/lease")
+def lease_artifact_request(request: ArtifactLeaseRequest) -> dict[str, Any]:
+    lease = app.state.manager.materialization.lease_artifact_request(request.owner)
+    if lease is None:
+        return {"ok": True, "lease": None}
+    item = lease.request
+    return {"ok": True, "lease": {"request_id": item.request_id, "kind": item.kind,
+        "deployment_name": item.deployment_name, "binding_id": item.binding_id,
+        "input_versions": dict(item.input_versions), "start": item.interval.start,
+        "end": item.interval.end, "previous_revision": item.previous_revision,
+        "metadata": dict(item.metadata), "owner": lease.owner, "attempt": lease.attempt,
+        "expires_at": lease.expires_at}}
+
+
+@app.post("/artifact-requests/{request_id}/complete")
+def complete_artifact_request(request_id: str, request: ArtifactCompletion) -> dict[str, Any]:
+    try:
+        payload = base64.b64decode(request.data_base64, validate=True)
+        lease = app.state.manager.materialization.leased_artifact_request(request_id, request.owner, request.attempt)
+        candidate = ArtifactCandidate(payload, request.media_type, request.metadata, request.metrics)
+        artifact = app.state.manager.materialization_artifacts.put(payload, media_type=request.media_type,
+            metadata=request.metadata)
+        revision = app.state.manager.materialization.complete_artifact_request(lease, artifact, candidate)
+        return {"ok": True, "revision_id": revision.revision_id, "status": revision.status}
+    except (KeyError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error))
+
+
+@app.post("/artifact-requests/{request_id}/fail")
+def fail_artifact_request(request_id: str, request: ArtifactFailure) -> dict[str, Any]:
+    try:
+        lease = app.state.manager.materialization.leased_artifact_request(request_id, request.owner, request.attempt)
+        app.state.manager.materialization.fail_artifact_request(lease, request.error)
+        return {"ok": True}
+    except (KeyError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error))
 
 
 def _set_transformation_status(name: str, status: str) -> dict[str, Any]:
@@ -661,6 +749,20 @@ def preview_transformation(name: str):
         raise HTTPException(status_code=409, detail="no pending partition is available for preview")
     table, metadata = result
     return _arrow_response(table, "acquirium-materialization-preview", {f"x-acquirium-{key.replace('_', '-')}": str(value) for key, value in metadata.items()})
+
+
+@app.post("/state-revisions/{revision_id}/promote")
+def promote_state_revision(revision_id: str, request: StateRevisionPromotion) -> dict[str, Any]:
+    try:
+        revision = app.state.manager.materialization.promote_state_revision(
+            revision_id, policy=request.policy, effective_from=request.effective_from
+        )
+        return {"ok": True, "revision_id": revision.revision_id, "status": revision.status,
+                "policy": revision.policy, "effective_from": revision.effective_from}
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"unknown state revision {revision_id!r}")
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
 
 
 @app.post("/apps/register")

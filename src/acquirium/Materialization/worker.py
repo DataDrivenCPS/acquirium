@@ -19,6 +19,10 @@ class DefinitionCache:
         self._items.clear()
 
 
+class ArtifactCache(DefinitionCache):
+    """Worker-local decoded-artifact cache, always keyed by immutable digest."""
+
+
 def load_entrypoint(entrypoint: str):
     """Load trusted local ``module:qualname`` code without serializing objects."""
     try:

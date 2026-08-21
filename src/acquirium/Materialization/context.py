@@ -12,6 +12,7 @@ class TransformContext:
     interval: TimeRange
     input_versions: Mapping[str, int]
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    state_revision: str | None = None
 
 @dataclass(frozen=True)
 class ComputeRequest:
@@ -19,3 +20,4 @@ class ComputeRequest:
     context: TransformContext
     output_refs: frozenset[str]
     scalar: bool = False
+    artifact_bytes: bytes | None = None

@@ -13,13 +13,39 @@ from acquirium.Materialization.definitions import definition_for
 from acquirium.Materialization.impact import pointwise
 from acquirium.Server.manager import Manager
 from acquirium.Materialization.context import ComputeRequest, TransformContext
+from acquirium.Materialization.api import StatefulTransformation, stateful
 from acquirium.Materialization.executor import LocalExecutorPool
 from acquirium.Materialization.compute import PythonArrowAdapter
 from acquirium.Materialization.validation import OutputValidationError
 from acquirium.Materialization.worker import DefinitionCache
+from acquirium.Materialization.state import ArtifactCandidate, ArtifactRequest
+from acquirium.Storage.artifacts import FilesystemArtifactStore
 from acquirium.Materialization.scheduler import MaterializationScheduler
 from acquirium.Materialization.rebinding import MaterializationRebinder, resolve_bindings
 UTC = timezone.utc
+
+
+@stateful(inputs="input", outputs={"mode": "per_input"})
+class DurableOffsetTransformation(StatefulTransformation):
+    """Importable fixture proving persisted artifacts, not class memory, drive output."""
+    setup_calls = 0
+    load_calls = 0
+
+    def setup_worker(self):
+        type(self).setup_calls += 1
+        return object()
+
+    def load_artifact(self, artifact, worker):
+        type(self).load_calls += 1
+        return {"offset": float(artifact.decode().split(":", 1)[0]), "uses": 0}
+
+    def transform(self, batch, state, context):
+        state["uses"] += 1  # A worker-local mutation must not become durable state.
+        return pa.table({"ref_uri": [context.metadata["output_ref"]] * batch.num_rows,
+                         "ts": batch.column("ts"),
+                         "numeric_value": [value + state["offset"] + state["uses"]
+                                           for value in batch.column("numeric_value").to_pylist()],
+                         "text_value": [None] * batch.num_rows})
 
 def test_ranges_are_half_open_and_adjacent_ranges_coalesce():
     start = datetime(2026, 1, 1, tzinfo=UTC)
@@ -835,4 +861,278 @@ def test_thousand_idle_bindings_share_a_bounded_executor_pool(tmp_path):
         assert pool._executor._max_workers == 2
     finally:
         pool.close()
+        store.close()
+
+
+def test_generic_artifact_production_is_durable_idempotent_and_promotable(tmp_path):
+    store = DuckDBStore(tmp_path / "artifact-state.duckdb", recreate=True)
+    artifacts = FilesystemArtifactStore(tmp_path / "artifacts")
+    try:
+        runtime = MaterializationDuckDB(store)
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        request = ArtifactRequest("produce-1", "calibration", "demo", "binding", {"urn:in": 1},
+                                  TimeRange(start, start + timedelta(hours=1)), metadata={"source": "operator"})
+        assert runtime.create_artifact_request(request) == request.request_id
+        assert runtime.create_artifact_request(request) == request.request_id
+        lease = runtime.lease_artifact_request("worker")
+        assert lease is not None
+        candidate = ArtifactCandidate(b"calibration-v1", media_type="application/x-calibration", metrics={"rmse": 0.1})
+        revision = runtime.complete_artifact_request(lease, artifacts.put(candidate.data, media_type=candidate.media_type), candidate)
+        assert runtime.complete_artifact_request(lease, artifacts.put(candidate.data, media_type=candidate.media_type), candidate).revision_id == revision.revision_id
+        assert runtime.promote_state_revision(revision.revision_id).status == "active"
+        assert artifacts.get(revision.artifact.digest) == b"calibration-v1"
+    finally:
+        store.close()
+
+
+def test_artifact_files_are_digest_verified(tmp_path):
+    artifacts = FilesystemArtifactStore(tmp_path / "artifacts")
+    record = artifacts.put(b"immutable")
+    assert artifacts.get(record.digest) == b"immutable"
+    artifacts._path(record.digest).write_bytes(b"corrupt")
+    import pytest
+    with pytest.raises(ValueError, match="digest verification"):
+        artifacts.get(record.digest)
+
+
+def test_artifact_sweeper_removes_only_abandoned_temporary_files(tmp_path):
+    artifacts = FilesystemArtifactStore(tmp_path / "artifacts")
+    record = artifacts.put(b"retain")
+    temporary = artifacts.root / ".tmp-abandoned"
+    temporary.write_bytes(b"temporary")
+    assert artifacts.sweep_temporary_files(older_than_seconds=-1) == 1
+    assert artifacts.get(record.digest) == b"retain"
+
+
+def test_artifact_sweeper_preserves_durable_references_and_collects_orphans(tmp_path):
+    artifacts = FilesystemArtifactStore(tmp_path / "artifacts")
+    retained = artifacts.put(b"retained")
+    orphan = artifacts.put(b"orphan")
+    assert artifacts.sweep_orphans({retained.digest}, older_than_seconds=-1) == 1
+    assert artifacts.get(retained.digest) == b"retained"
+    import pytest
+    with pytest.raises(KeyError):
+        artifacts.get(orphan.digest)
+
+
+def test_stateful_adapter_caches_ephemeral_worker_and_decoded_artifact():
+    calls = {"setup": 0, "load": 0}
+    class Offset(StatefulTransformation):
+        def setup_worker(self):
+            calls["setup"] += 1
+            return object()
+        def load_artifact(self, artifact, worker):
+            calls["load"] += 1
+            return float(artifact.decode())
+        def transform(self, batch, state, context):
+            return pa.table({"ref_uri": ["urn:out"], "ts": [context.interval.start],
+                             "numeric_value": [state], "text_value": [None]})
+    request = _compute_request()
+    request = ComputeRequest(request.inputs, TransformContext("binding", "run", request.context.interval, {}, state_revision="revision-1"), request.output_refs, artifact_bytes=b"3")
+    adapter = PythonArrowAdapter()
+    assert adapter.execute(Offset, request).column("numeric_value").to_pylist() == [3.0]
+    assert adapter.execute(Offset, request).column("numeric_value").to_pylist() == [3.0]
+    assert calls == {"setup": 1, "load": 1}
+
+
+def test_stateful_decorator_creates_a_normal_durable_definition():
+    @stateful(inputs="input", outputs={"mode": "per_input"})
+    class Offset(StatefulTransformation):
+        def transform(self, batch, state, context):
+            return pa.table({"ref_uri": [], "ts": [], "numeric_value": [], "text_value": []})
+
+    definition = Offset.__acquirium_definition__
+    assert definition.name == "Offset"
+    assert definition.entrypoint.endswith(".Offset")
+    assert definition.impact == pointwise()
+
+
+def test_prospective_promotion_pins_old_and_new_plans_to_their_revisions(tmp_path):
+    store = DuckDBStore(tmp_path / "pinned-revisions.duckdb", recreate=True)
+    artifacts = FilesystemArtifactStore(tmp_path / "artifacts")
+    try:
+        runtime = MaterializationDuckDB(store)
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        def produce(request_id, payload):
+            request = ArtifactRequest(request_id, "calibration", "deployment", "binding", {},
+                                      TimeRange(start, start + timedelta(minutes=1)), metadata={"tag": request_id})
+            runtime.create_artifact_request(request)
+            lease = runtime.lease_artifact_request("worker")
+            candidate = ArtifactCandidate(payload)
+            return runtime.complete_artifact_request(lease, artifacts.put(payload), candidate)
+        first = produce("first", b"one")
+        runtime.promote_state_revision(first.revision_id)
+        old_plan, _ = runtime.create_plan(binding_id="binding", generation=1, graph_revision=1,
+            input_vector={}, ranges=(TimeRange(start, start + timedelta(minutes=1)),), reason={},
+            maximum_partition_duration=timedelta(minutes=1))
+        second = produce("second", b"two")
+        runtime.promote_state_revision(second.revision_id)
+        new_plan, _ = runtime.create_plan(binding_id="binding", generation=1, graph_revision=1,
+            input_vector={}, ranges=(TimeRange(start + timedelta(minutes=1), start + timedelta(minutes=2)),), reason={},
+            maximum_partition_duration=timedelta(minutes=1))
+        with store._own_conn() as conn:
+            rows = dict(conn.execute("SELECT plan_id, state_revision FROM materialization_plans WHERE plan_id IN (?, ?)", [old_plan, new_plan]).fetchall())
+        assert rows == {old_plan: first.revision_id, new_plan: second.revision_id}
+    finally:
+        store.close()
+
+
+def test_recompute_promotion_records_a_durable_state_invalidation(tmp_path):
+    store = DuckDBStore(tmp_path / "state-invalidation.duckdb", recreate=True)
+    artifacts = FilesystemArtifactStore(tmp_path / "artifacts")
+    try:
+        runtime = MaterializationDuckDB(store); start = datetime(2026, 1, 1, tzinfo=UTC)
+        request = ArtifactRequest("invalidate", "calibration", "deployment", "binding", {}, TimeRange(start, start + timedelta(minutes=1)))
+        runtime.create_artifact_request(request); lease = runtime.lease_artifact_request("worker")
+        candidate = ArtifactCandidate(b"revision")
+        revision = runtime.complete_artifact_request(lease, artifacts.put(candidate.data), candidate)
+        runtime.promote_state_revision(revision.revision_id, policy="recompute_from", effective_from=start)
+        with store._own_conn() as conn:
+            assert conn.execute("SELECT binding_id, policy FROM materialization_state_invalidations").fetchone() == ("binding", "recompute_from")
+    finally:
+        store.close()
+
+
+def test_recompute_promotion_supersedes_uncommitted_old_state_work(tmp_path):
+    store = DuckDBStore(tmp_path / "superseded-state-work.duckdb", recreate=True)
+    artifacts = FilesystemArtifactStore(tmp_path / "artifacts")
+    try:
+        runtime = MaterializationDuckDB(store)
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        def produce(request_id, payload):
+            request = ArtifactRequest(request_id, "calibration", "deployment", "binding", {},
+                                      TimeRange(start, start + timedelta(minutes=1)), metadata={"revision": request_id})
+            runtime.create_artifact_request(request)
+            lease = runtime.lease_artifact_request("worker")
+            candidate = ArtifactCandidate(payload)
+            return runtime.complete_artifact_request(lease, artifacts.put(payload), candidate)
+
+        first = produce("old", b"old")
+        runtime.promote_state_revision(first.revision_id)
+        plan_id, _ = runtime.create_plan(binding_id="binding", generation=1, graph_revision=1,
+            input_vector={}, ranges=(TimeRange(start, start + timedelta(minutes=1)),), reason={},
+            maximum_partition_duration=timedelta(minutes=1))
+        second = produce("new", b"new")
+        runtime.promote_state_revision(second.revision_id, policy="recompute_all")
+        with store._own_conn() as conn:
+            assert conn.execute("SELECT status FROM materialization_plan_partitions WHERE plan_id = ?", [plan_id]).fetchone() == ("superseded",)
+        assert runtime.lease_partition("worker") is None
+    finally:
+        store.close()
+
+
+def test_recompute_from_invalidation_creates_a_bounded_durable_plan(tmp_path):
+    store = DuckDBStore(tmp_path / "invalidation-plan.duckdb", recreate=True)
+    artifacts = FilesystemArtifactStore(tmp_path / "artifacts")
+    try:
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        ContinuousDuckDB(store).publish(PublicationRequest("input", pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:state:in", "ts": start, "numeric_value": 1.0, "text_value": None},
+            {"operation": "upsert", "ref_uri": "urn:state:in", "ts": start + timedelta(minutes=2), "numeric_value": 2.0, "text_value": None},
+        ], schema=MUTATION_SCHEMA)))
+        runtime = MaterializationDuckDB(store)
+        definition = definition_for(abs, inputs="in", outputs="out", impact=pointwise())
+        definition_id = runtime.register_definition(definition); generation = runtime.deploy("state", definition_id)
+        binding = BindingSpec("one", {"input": ("urn:state:in",)}, {"output": ("urn:state:out",)},
+                              {"output_ref": "urn:state:out"})
+        runtime.persist_bindings("state", generation, 1, definition_id, (binding,)); runtime.activate_bindings("state", generation)
+        request = ArtifactRequest("recompute", "calibration", "state", binding.binding_id(definition_id), {}, TimeRange(start, start + timedelta(minutes=3)))
+        runtime.create_artifact_request(request); lease = runtime.lease_artifact_request("worker")
+        candidate = ArtifactCandidate(b"v1")
+        revision = runtime.complete_artifact_request(lease, artifacts.put(candidate.data), candidate)
+        runtime.promote_state_revision(revision.revision_id, policy="recompute_from", effective_from=start + timedelta(minutes=1))
+        plans = MaterializationScheduler(runtime).plan_state_invalidations(maximum_partition_duration=timedelta(hours=1))
+        assert len(plans) == 1
+        with store._own_conn() as conn:
+            begin, end = conn.execute("SELECT start_ts, end_ts FROM materialization_plan_partitions").fetchone()
+        assert begin.replace(tzinfo=UTC) == start + timedelta(minutes=1)
+        assert end.replace(tzinfo=UTC) == start + timedelta(minutes=2, microseconds=1)
+
+        all_request = ArtifactRequest("recompute-all", "calibration", "state", binding.binding_id(definition_id), {},
+                                      TimeRange(start, start + timedelta(minutes=3)), metadata={"revision": "all"})
+        runtime.create_artifact_request(all_request)
+        all_lease = runtime.lease_artifact_request("worker")
+        all_candidate = ArtifactCandidate(b"v2")
+        all_revision = runtime.complete_artifact_request(all_lease, artifacts.put(all_candidate.data), all_candidate)
+        runtime.promote_state_revision(all_revision.revision_id, policy="recompute_all")
+        all_plans = MaterializationScheduler(runtime).plan_state_invalidations(maximum_partition_duration=timedelta(hours=1))
+        assert len(all_plans) == 1
+        with store._own_conn() as conn:
+            begin, end = conn.execute("SELECT start_ts, end_ts FROM materialization_plan_partitions WHERE plan_id = ?", [all_plans[0]]).fetchone()
+        assert begin.replace(tzinfo=UTC) == start
+        assert end.replace(tzinfo=UTC) == start + timedelta(minutes=2, microseconds=1)
+    finally:
+        store.close()
+
+
+def test_stateful_transform_recovers_after_storage_and_worker_restart(tmp_path):
+    database = tmp_path / "stateful-restart.duckdb"
+    artifacts = FilesystemArtifactStore(tmp_path / "artifacts")
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    DurableOffsetTransformation.setup_calls = 0
+    DurableOffsetTransformation.load_calls = 0
+
+    store = DuckDBStore(database, recreate=True)
+    try:
+        ContinuousDuckDB(store).publish(PublicationRequest("first", pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:state:in", "ts": start,
+             "numeric_value": 1.0, "text_value": None},
+        ], schema=MUTATION_SCHEMA)))
+        runtime = MaterializationDuckDB(store)
+        definition = DurableOffsetTransformation.__acquirium_definition__
+        definition_id = runtime.register_definition(definition)
+        generation = runtime.deploy("stateful-restart", definition_id, graph_revision=1)
+        binding = BindingSpec("one", {"input": ("urn:state:in",)}, {"output": ("urn:state:out",)},
+                              {"output_ref": "urn:state:out"})
+        binding_id = binding.binding_id(definition_id)
+        runtime.persist_bindings("stateful-restart", generation, 1, definition_id, (binding,))
+        runtime.activate_bindings("stateful-restart", generation)
+        runtime.set_deployment_status("stateful-restart", "active")
+        request = ArtifactRequest("offset-v1", "calibration", "stateful-restart", binding_id, {"urn:state:in": 1},
+                                  TimeRange(start, start + timedelta(minutes=2)))
+        runtime.create_artifact_request(request)
+        artifact_lease = runtime.lease_artifact_request("producer")
+        candidate = ArtifactCandidate(b"2")
+        revision = runtime.complete_artifact_request(artifact_lease, artifacts.put(candidate.data), candidate)
+        runtime.promote_state_revision(revision.revision_id)
+        runtime.create_plan(binding_id=binding_id, generation=generation, graph_revision=1,
+            input_vector={"urn:state:in": 1}, ranges=(TimeRange(start, start + timedelta(minutes=1)),), reason={},
+            maximum_partition_duration=timedelta(minutes=1))
+        scheduler = MaterializationScheduler(runtime)
+        executor = LocalExecutorPool(workers=1)
+        try:
+            assert scheduler.run_next_registered("worker-a", executor=executor)
+        finally:
+            executor.close()
+    finally:
+        store.close()
+
+    # This is the server/storage and fixed worker-pool restart boundary.
+    store = DuckDBStore(database)
+    try:
+        ContinuousDuckDB(store).publish(PublicationRequest("second", pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:state:in", "ts": start + timedelta(minutes=1),
+             "numeric_value": 5.0, "text_value": None},
+        ], schema=MUTATION_SCHEMA)))
+        runtime = MaterializationDuckDB(store)
+        runtime.create_plan(binding_id=binding_id, generation=generation, graph_revision=1,
+            input_vector={"urn:state:in": 2}, ranges=(TimeRange(start + timedelta(minutes=1), start + timedelta(minutes=2)),), reason={},
+            maximum_partition_duration=timedelta(minutes=1))
+        executor = LocalExecutorPool(workers=1)
+        try:
+            assert MaterializationScheduler(runtime).run_next_registered("worker-b", executor=executor)
+        finally:
+            executor.close()
+        with store._own_conn() as conn:
+            values = conn.execute("""SELECT value.numeric_value FROM timeseries value
+                JOIN ref_ids refs ON refs.ref_id = value.ref_id
+                WHERE refs.ref_uri = 'urn:state:out' AND NOT value.deleted ORDER BY value.ts""").fetchall()
+            receipts = conn.execute("SELECT DISTINCT state_revision FROM materialization_execution_receipts").fetchall()
+        assert values == [(4.0,), (8.0,)]
+        assert receipts == [(revision.revision_id,)]
+        # The recreated worker decodes the immutable bytes again, so the local
+        # ``uses`` mutation from the old worker cannot be authoritative.
+        assert DurableOffsetTransformation.setup_calls == 2
+        assert DurableOffsetTransformation.load_calls == 2
+    finally:
         store.close()

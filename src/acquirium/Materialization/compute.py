@@ -1,16 +1,54 @@
 """First compute adapter: trusted Python code over Arrow tables."""
 from __future__ import annotations
 from typing import Any, Callable, Protocol
+from threading import Lock, get_ident
 import pyarrow as pa
 from acquirium.Materialization.context import ComputeRequest
 from acquirium.Materialization.validation import validate_output
+from acquirium.Materialization.api import StatefulTransformation
 
 class ComputeAdapter(Protocol):
     def execute(self, target: Callable[..., Any], request: ComputeRequest) -> pa.Table: ...
 
 class PythonArrowAdapter:
     """Execute either an explicit Arrow function or scalar pointwise callable."""
+    def __init__(self) -> None:
+        self._state_lock = Lock()
+        # The adapter is shared by a pool, but these values are deliberately
+        # local to the physical worker thread.  They are performance caches,
+        # never durable state: a replacement thread reconstructs them from
+        # the revision artifact supplied with its request.
+        self._state_instances: dict[tuple[int, type], StatefulTransformation] = {}
+        self._worker_resources: dict[tuple[int, type], object] = {}
+        self._decoded_artifacts: dict[tuple[int, type, str], object] = {}
+
     def execute(self, target: Callable[..., Any], request: ComputeRequest) -> pa.Table:
+        if isinstance(target, type) and issubclass(target, StatefulTransformation):
+            if request.artifact_bytes is None:
+                raise ValueError("stateful transformations require a pinned artifact")
+            digest = request.context.state_revision
+            if digest is None:
+                raise ValueError("stateful transformations require a pinned state revision")
+            with self._state_lock:
+                worker_key = get_ident()
+                instance_key = (worker_key, target)
+                instance = self._state_instances.get(instance_key)
+                if instance is None:
+                    instance = target()
+                    self._state_instances[instance_key] = instance
+                worker = self._worker_resources.get(instance_key)
+                if worker is None:
+                    worker = instance.setup_worker()
+                    self._worker_resources[instance_key] = worker
+                artifact_key = (worker_key, target, digest)
+                state = self._decoded_artifacts.get(artifact_key)
+                if state is None:
+                    state = instance.load_artifact(request.artifact_bytes, worker)
+                    self._decoded_artifacts[artifact_key] = state
+            result = instance.transform(request.inputs, state, request.context)
+            if not isinstance(result, pa.Table):
+                raise TypeError("stateful transformations must return a pyarrow.Table")
+            return validate_output(result, request)
         if request.scalar:
             result = self._scalar(target, request)
         else:

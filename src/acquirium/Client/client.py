@@ -1,5 +1,6 @@
 from typing import Optional, Iterator, Any, TYPE_CHECKING
 from datetime import datetime, timezone
+import base64
 import json
 import requests
 from requests import HTTPError
@@ -538,6 +539,34 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
+    def create_artifact_request(self, request: dict) -> dict:
+        response = requests.post(f"{self.base_url}/artifact-requests", json=request)
+        _raise_for_status(response)
+        return response.json()
+
+    def lease_artifact_request(self, owner: str) -> dict | None:
+        response = requests.post(f"{self.base_url}/artifact-requests/lease", json={"owner": owner})
+        _raise_for_status(response)
+        return response.json()["lease"]
+
+    def complete_artifact_request(self, request_id: str, *, owner: str, attempt: int,
+                                  data: bytes, media_type: str = "application/octet-stream",
+                                  metadata: dict | None = None, metrics: dict | None = None) -> dict:
+        response = requests.post(f"{self.base_url}/artifact-requests/{request_id}/complete", json={
+            "owner": owner, "attempt": attempt,
+            "data_base64": base64.b64encode(data).decode("ascii"), "media_type": media_type,
+            "metadata": metadata or {}, "metrics": metrics or {},
+        })
+        _raise_for_status(response)
+        return response.json()
+
+    def fail_artifact_request(self, request_id: str, *, owner: str, attempt: int, error: dict) -> dict:
+        response = requests.post(f"{self.base_url}/artifact-requests/{request_id}/fail", json={
+            "owner": owner, "attempt": attempt, "error": error,
+        })
+        _raise_for_status(response)
+        return response.json()
+
     def set_transformation_status(self, name: str, status: str) -> dict:
         if status not in {"active", "paused"}:
             raise ValueError("transformation status must be active or paused")
@@ -569,6 +598,13 @@ class AcquiriumClient:
         response = requests.post(f"{self.base_url}/transformations/{name}/preview")
         _raise_for_status(response)
         return ipc.open_stream(response.content).read_all()
+
+    def promote_state_revision(self, revision_id: str, *, policy: str = "prospective",
+                               effective_from: str | None = None) -> dict:
+        payload = {"policy": policy, "effective_from": effective_from}
+        response = requests.post(f"{self.base_url}/state-revisions/{revision_id}/promote", json=payload)
+        _raise_for_status(response)
+        return response.json()
 
     def delete_app(self, app_id: str) -> dict:
         url = f"{self.base_url}/apps/delete"

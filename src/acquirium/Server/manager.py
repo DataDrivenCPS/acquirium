@@ -227,6 +227,10 @@ class Manager:
         self.backend = _backend
 
         self.data_dir = base
+        from acquirium.Storage.artifacts import FilesystemArtifactStore
+        self.materialization_artifacts = FilesystemArtifactStore(
+            self.data_dir / "materialization-artifacts"
+        )
         self.app_storage_root = Path(
             os.getenv("ACQUIRIUM_APP_STORAGE_ROOT", str(self.data_dir / "apps"))
         )
@@ -681,12 +685,19 @@ class Manager:
 
     def run_materialization_once(self, owner: str = "manager") -> bool:
         """Execute one durable materialization partition, if any is pending."""
+        invalidation_plans = self.materialization_scheduler.plan_state_invalidations()
         ran_work = self.materialization_scheduler.run_next_registered(
             owner, executor=self.materialization_executor
         )
         self.materialization_scheduler.discover_all()
         activated = self.materialization.activate_ready_bindings()
-        return ran_work or bool(activated)
+        return ran_work or bool(invalidation_plans) or bool(activated)
+
+    def collect_materialization_artifacts(self, *, older_than_seconds: float = 86400) -> int:
+        """Collect aged local blobs that no durable state revision references."""
+        return self.materialization_artifacts.sweep_orphans(
+            self.materialization.artifact_digests(), older_than_seconds=older_than_seconds
+        )
 
     def preview_transformation(self, name: str) -> tuple["pa.Table", dict[str, object]] | None:
         return self.materialization_scheduler.preview_registered(

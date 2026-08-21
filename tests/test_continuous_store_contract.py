@@ -31,6 +31,8 @@ from acquirium.Storage.continuous.types import (
     WebhookIntent,
 )
 from acquirium.Storage.duckdb_store import DuckDBStore
+from acquirium.Storage.materialization.duckdb import MaterializationDuckDB
+from acquirium.Storage.materialization.postgres import MaterializationPostgres
 from acquirium.Storage.timescale_store import TimescaleStore
 
 
@@ -185,6 +187,31 @@ def test_overlapping_concurrent_writers_no_deadlock(contract_store, p):
     t1.join(timeout=30); t2.join(timeout=30)
     assert not t1.is_alive() and not t2.is_alive(), "writers deadlocked or hung"
     assert results == [None, None]
+
+
+def test_range_manifests_are_queryable_with_the_same_contract(contract_store, p, pg_dsn):
+    """Canonical publication emits scheduler-readable half-open ranges on both backends."""
+    cs, store = contract_store
+    source = uri(p, "range-source")
+    timestamp = _utc(2026, 1, 1, 12, 0, 5)
+    receipt = cs.publish(PublicationRequest(f"{p}:ranges", mutation_table([
+        ("upsert", source, timestamp, 1.0, None),
+        ("delete", source, timestamp.replace(second=35), None, None),
+    ])))
+    runtime = MaterializationDuckDB(store) if isinstance(store, DuckDBStore) else MaterializationPostgres(pg_dsn)
+    try:
+        ranges = runtime.change_ranges(source, after_version=0, through_version=receipt.versions[source])
+    finally:
+        if isinstance(runtime, MaterializationPostgres):
+            runtime.close()
+    assert len(ranges) == 1
+    item = ranges[0]
+    assert item.ref_uri == source
+    assert item.stream_version == receipt.versions[source]
+    assert item.change_kind == "mixed"
+    assert item.row_count == 2
+    assert item.interval.start == _utc(2026, 1, 1, 12)
+    assert item.interval.end == _utc(2026, 1, 1, 12, 1)
 
 
 # ---------------------------------------------------------------------------

@@ -12,9 +12,11 @@ from acquirium.Materialization.bindings import BindingSpec, validate_binding_top
 from acquirium.Materialization.definitions import MaterializationDefinition, definition_spec
 from acquirium.Materialization.impact import TimeRange
 from acquirium.Storage.materialization.ids import materialization_id, partition_ranges
-from acquirium.Storage.materialization.types import PlanPartition, WorkLease
+from acquirium.Storage.materialization.types import PlanPartition, StreamChangeRange, WorkLease
 from acquirium.Storage.materialization.types import InputSnapshot
 from acquirium.Storage.continuous.types import MUTATION_SCHEMA
+from acquirium.Storage.artifacts import ArtifactRecord
+from acquirium.Materialization.state import ArtifactCandidate, ArtifactLease, ArtifactRequest, StateRevision
 
 
 class MaterializationPostgres:
@@ -53,6 +55,7 @@ class MaterializationPostgres:
                 plan_id TEXT PRIMARY KEY, binding_id TEXT NOT NULL, generation BIGINT NOT NULL,
                 graph_revision BIGINT NOT NULL, input_vector_json JSONB NOT NULL, reason_json JSONB NOT NULL,
                 status TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL, completed_at TIMESTAMPTZ)""")
+            conn.execute("ALTER TABLE materialization_plans ADD COLUMN IF NOT EXISTS state_revision TEXT")
             conn.execute("""CREATE TABLE IF NOT EXISTS materialization_plan_partitions (
                 partition_id TEXT PRIMARY KEY, plan_id TEXT NOT NULL, start_ts TIMESTAMPTZ NOT NULL,
                 end_ts TIMESTAMPTZ NOT NULL, status TEXT NOT NULL, attempt INTEGER NOT NULL DEFAULT 0,
@@ -62,6 +65,7 @@ class MaterializationPostgres:
                 execution_id TEXT PRIMARY KEY, partition_id TEXT NOT NULL, attempt INTEGER NOT NULL,
                 input_vector_json JSONB NOT NULL, output_publication_id TEXT, status TEXT NOT NULL,
                 rows_read BIGINT NOT NULL, rows_written BIGINT NOT NULL, error_json JSONB, finished_at TIMESTAMPTZ NOT NULL)""")
+            conn.execute("ALTER TABLE materialization_execution_receipts ADD COLUMN IF NOT EXISTS state_revision TEXT")
             conn.execute("""CREATE TABLE IF NOT EXISTS materialization_binding_progress (
                 binding_id TEXT NOT NULL, generation BIGINT NOT NULL, ref_uri TEXT NOT NULL,
                 stream_version BIGINT NOT NULL, PRIMARY KEY (binding_id, generation, ref_uri))""")
@@ -75,9 +79,56 @@ class MaterializationPostgres:
             conn.execute("""CREATE TABLE IF NOT EXISTS materialization_attempt_snapshots (
                 partition_id TEXT NOT NULL, attempt INTEGER NOT NULL, input_vector_json JSONB NOT NULL,
                 rows_read BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL, PRIMARY KEY (partition_id, attempt))""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS materialization_artifacts (
+                digest TEXT PRIMARY KEY, uri TEXT NOT NULL, size_bytes BIGINT NOT NULL,
+                media_type TEXT NOT NULL, metadata_json JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS materialization_artifact_requests (
+                request_id TEXT PRIMARY KEY, semantic_digest TEXT UNIQUE NOT NULL, kind TEXT NOT NULL,
+                deployment_name TEXT NOT NULL, binding_id TEXT NOT NULL, previous_revision TEXT,
+                input_vector_json JSONB NOT NULL, range_start TIMESTAMPTZ NOT NULL, range_end TIMESTAMPTZ NOT NULL,
+                metadata_json JSONB NOT NULL, status TEXT NOT NULL, attempt INTEGER NOT NULL DEFAULT 0,
+                lease_owner TEXT, lease_expires_at TIMESTAMPTZ, result_revision TEXT, error_json JSONB,
+                created_at TIMESTAMPTZ NOT NULL, completed_at TIMESTAMPTZ)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS materialization_state_revisions (
+                revision_id TEXT PRIMARY KEY, deployment_name TEXT NOT NULL, binding_id TEXT NOT NULL,
+                parent_revision TEXT, artifact_digest TEXT NOT NULL, request_id TEXT NOT NULL, policy TEXT,
+                effective_from TIMESTAMPTZ, status TEXT NOT NULL, metrics_json JSONB NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL, activated_at TIMESTAMPTZ)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS materialization_state_invalidations (
+                revision_id TEXT PRIMARY KEY, binding_id TEXT NOT NULL, policy TEXT NOT NULL,
+                effective_from TIMESTAMPTZ, status TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL)""")
 
     def close(self) -> None:
         self._pool.close()
+
+    def record_change_ranges(self, ranges: Sequence[StreamChangeRange]) -> None:
+        """Persist ranges for callers that use the materialization store directly.
+
+        Canonical ``ContinuousPostgres.publish`` writes these in its own
+        transaction; this method makes the backend-neutral range-manifest
+        contract complete for import/recovery tooling as well.
+        """
+        if not ranges:
+            return
+        with self._pool.connection() as conn, conn.transaction(), conn.cursor() as cur:
+            cur.executemany("""INSERT INTO stream_change_ranges
+                (ref_uri, stream_version, publication_id, start_ts, end_ts, change_kind, row_count)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (ref_uri, stream_version, start_ts, end_ts) DO NOTHING""",
+                [(item.ref_uri, item.stream_version, item.publication_id, item.interval.start,
+                  item.interval.end, item.change_kind, item.row_count) for item in ranges])
+
+    def change_ranges(self, ref_uri: str, *, after_version: int,
+                      through_version: int) -> tuple[StreamChangeRange, ...]:
+        """Read the canonical durable invalidation ranges used by the scheduler."""
+        with self._pool.connection() as conn:
+            rows = conn.execute("""SELECT ref_uri, stream_version, publication_id, start_ts, end_ts,
+                change_kind, row_count FROM stream_change_ranges
+                WHERE ref_uri = %s AND stream_version > %s AND stream_version <= %s
+                ORDER BY stream_version, start_ts""", [ref_uri, after_version, through_version]).fetchall()
+        return tuple(StreamChangeRange(ref, version, publication,
+                                       TimeRange(start, end), kind, row_count)
+                     for ref, version, publication, start, end, kind, row_count in rows)
 
     def register_definition(self, definition: MaterializationDefinition) -> str:
         spec = definition_spec(definition)
@@ -325,9 +376,11 @@ class MaterializationPostgres:
                                      [(item.start.isoformat(), item.end.isoformat()) for item in normalized], json.dumps(reason, sort_keys=True))
         partitions = tuple(PlanPartition(materialization_id(plan_id, item.start.isoformat(), item.end.isoformat()), plan_id, item) for item in normalized)
         with self._pool.connection() as conn, conn.transaction():
-            conn.execute("""INSERT INTO materialization_plans VALUES (%s, %s, %s, %s, %s, %s, 'pending', %s, NULL)
-                ON CONFLICT (plan_id) DO NOTHING""", [plan_id, binding_id, generation, graph_revision,
-                json.dumps(input_vector), json.dumps(reason), datetime.now(timezone.utc)])
+            state = conn.execute("SELECT revision_id FROM materialization_state_revisions WHERE binding_id = %s AND status = 'active' ORDER BY activated_at DESC LIMIT 1", [binding_id]).fetchone()
+            conn.execute("""INSERT INTO materialization_plans
+                (plan_id, binding_id, generation, graph_revision, input_vector_json, reason_json, status, created_at, completed_at, state_revision)
+                VALUES (%s, %s, %s, %s, %s, %s, 'pending', %s, NULL, %s) ON CONFLICT (plan_id) DO NOTHING""",
+                [plan_id, binding_id, generation, graph_revision, json.dumps(input_vector), json.dumps(reason), datetime.now(timezone.utc), state[0] if state else None])
             with conn.cursor() as cursor:
                 cursor.executemany("""INSERT INTO materialization_plan_partitions
                     (partition_id, plan_id, start_ts, end_ts, status) VALUES (%s, %s, %s, %s, 'pending') ON CONFLICT DO NOTHING""",
@@ -361,7 +414,7 @@ class MaterializationPostgres:
                 JOIN materialization_plans plan ON plan.plan_id = part.plan_id
                 JOIN materialization_bindings binding ON binding.binding_id = plan.binding_id AND binding.generation = plan.generation
                 JOIN materialization_deployments deployment ON deployment.name = binding.deployment_name
-                WHERE part.status = 'pending' AND deployment.status = 'active' AND (%s IS NULL OR deployment.name = %s)
+                WHERE part.status = 'pending' AND deployment.status = 'active' AND (%s::text IS NULL OR deployment.name = %s)
                 ORDER BY part.start_ts, part.partition_id FOR UPDATE OF part SKIP LOCKED LIMIT 1""", [deployment_name, deployment_name]).fetchone()
             if row is None:
                 return None
@@ -432,6 +485,19 @@ class MaterializationPostgres:
         if isinstance(spec, str):
             spec = json.loads(spec)
         return {"source_digest": digest, "entrypoint": entrypoint, "spec": spec}
+
+    def partition_binding_metadata(self, partition_id: str) -> dict[str, object]:
+        """Return the immutable resolved metadata captured with this binding generation."""
+        with self._pool.connection() as conn:
+            row = conn.execute("""SELECT binding.resolved_metadata_json FROM materialization_plan_partitions part
+                JOIN materialization_plans plan ON plan.plan_id = part.plan_id
+                JOIN materialization_bindings binding ON binding.binding_id = plan.binding_id
+                    AND binding.generation = plan.generation
+                WHERE part.partition_id = %s""", [partition_id]).fetchone()
+        if row is None:
+            raise KeyError(partition_id)
+        metadata = row[0]
+        return json.loads(metadata) if isinstance(metadata, str) else metadata
 
     def leased_partition(self, partition_id: str, owner: str, attempt: int) -> WorkLease:
         with self._pool.connection() as conn:
@@ -506,8 +572,14 @@ class MaterializationPostgres:
                     publication_id = f"materialization:{execution_id}"
                     ContinuousPostgres.__new__(ContinuousPostgres)._apply_publication(cur, publication_id, pa.Table.from_pylist(mutations, schema=MUTATION_SCHEMA))
             cur.execute("UPDATE materialization_plan_partitions SET status = 'committed', committed_output_id = %s, lease_owner = NULL, lease_expires_at = NULL WHERE partition_id = %s", [publication_id, snapshot.lease.partition.partition_id])
-            cur.execute("""INSERT INTO materialization_execution_receipts VALUES (%s, %s, %s, %s, %s, 'committed', %s, %s, NULL, %s)
-                ON CONFLICT DO NOTHING""", [execution_id, snapshot.lease.partition.partition_id, snapshot.lease.attempt, json.dumps(snapshot.input_versions), publication_id, snapshot.inputs.num_rows, len(rows), datetime.now(timezone.utc)])
+            pinned = cur.execute("SELECT state_revision FROM materialization_plans WHERE plan_id = %s", [snapshot.lease.partition.plan_id]).fetchone()[0]
+            cur.execute("""INSERT INTO materialization_execution_receipts
+                (execution_id, partition_id, attempt, input_vector_json, output_publication_id,
+                 status, rows_read, rows_written, error_json, finished_at, state_revision)
+                VALUES (%s, %s, %s, %s, %s, 'committed', %s, %s, NULL, %s, %s)
+                ON CONFLICT DO NOTHING""", [execution_id, snapshot.lease.partition.partition_id,
+                snapshot.lease.attempt, json.dumps(snapshot.input_versions), publication_id,
+                snapshot.inputs.num_rows, len(rows), datetime.now(timezone.utc), pinned])
             if cur.execute("SELECT count(*) FROM materialization_plan_partitions WHERE plan_id = %s AND status != 'committed'", [snapshot.lease.partition.plan_id]).fetchone()[0] == 0:
                 cur.execute("UPDATE materialization_plans SET status = 'committed', completed_at = %s WHERE plan_id = %s", [datetime.now(timezone.utc), snapshot.lease.partition.plan_id])
                 binding, generation, captured = cur.execute("SELECT binding_id, generation, input_vector_json FROM materialization_plans WHERE plan_id = %s", [snapshot.lease.partition.plan_id]).fetchone()
@@ -516,3 +588,184 @@ class MaterializationPostgres:
                     cur.execute("""INSERT INTO materialization_binding_progress VALUES (%s, %s, %s, %s)
                         ON CONFLICT (binding_id, generation, ref_uri) DO UPDATE SET stream_version = greatest(materialization_binding_progress.stream_version, excluded.stream_version)""", [binding, generation, ref, version])
         return publication_id
+
+    def create_artifact_request(self, request: ArtifactRequest) -> str:
+        with self._pool.connection() as conn, conn.transaction():
+            row = conn.execute("SELECT request_id FROM materialization_artifact_requests WHERE semantic_digest = %s", [request.semantic_digest]).fetchone()
+            if row:
+                return row[0]
+            conn.execute("""INSERT INTO materialization_artifact_requests
+                (request_id, semantic_digest, kind, deployment_name, binding_id, previous_revision,
+                 input_vector_json, range_start, range_end, metadata_json, status, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s)""",
+                [request.request_id, request.semantic_digest, request.kind, request.deployment_name,
+                 request.binding_id, request.previous_revision, json.dumps(dict(request.input_versions)),
+                 request.interval.start, request.interval.end, json.dumps(dict(request.metadata)), datetime.now(timezone.utc)])
+        return request.request_id
+
+    def lease_artifact_request(self, owner: str, *, duration: timedelta = timedelta(minutes=15)) -> ArtifactLease | None:
+        now = datetime.now(timezone.utc); expires = now + duration
+        with self._pool.connection() as conn, conn.transaction():
+            conn.execute("UPDATE materialization_artifact_requests SET status = 'pending', lease_owner = NULL, lease_expires_at = NULL WHERE status = 'leased' AND lease_expires_at <= %s", [now])
+            row = conn.execute("""SELECT request_id, kind, deployment_name, binding_id, previous_revision,
+                input_vector_json, range_start, range_end, metadata_json, attempt FROM materialization_artifact_requests
+                WHERE status = 'pending' ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1""").fetchone()
+            if row is None:
+                return None
+            request_id, kind, deployment, binding, previous, vector, start, end, metadata, attempt = row
+            attempt += 1
+            conn.execute("UPDATE materialization_artifact_requests SET status = 'leased', attempt = %s, lease_owner = %s, lease_expires_at = %s WHERE request_id = %s", [attempt, owner, expires, request_id])
+        return ArtifactLease(ArtifactRequest(request_id, kind, deployment, binding,
+            json.loads(vector) if isinstance(vector, str) else vector, TimeRange(start, end), previous,
+            json.loads(metadata) if isinstance(metadata, str) else metadata), owner, attempt, expires)
+
+    def leased_artifact_request(self, request_id: str, owner: str, attempt: int) -> ArtifactLease:
+        with self._pool.connection() as conn:
+            row = conn.execute("""SELECT kind, deployment_name, binding_id, previous_revision,
+                input_vector_json, range_start, range_end, metadata_json, lease_expires_at
+                FROM materialization_artifact_requests WHERE request_id = %s AND status = 'leased'
+                AND lease_owner = %s AND attempt = %s""", [request_id, owner, attempt]).fetchone()
+        if row is None:
+            raise ValueError("artifact lease is stale")
+        kind, deployment, binding, previous, vector, start, end, metadata, expires = row
+        return ArtifactLease(ArtifactRequest(request_id, kind, deployment, binding,
+            json.loads(vector) if isinstance(vector, str) else vector, TimeRange(start, end), previous,
+            json.loads(metadata) if isinstance(metadata, str) else metadata), owner, attempt, expires)
+
+    def complete_artifact_request(self, lease: ArtifactLease, artifact: ArtifactRecord,
+                                  candidate: ArtifactCandidate) -> StateRevision:
+        if artifact.digest != candidate.digest:
+            raise ValueError("artifact digest does not match produced bytes")
+        revision_id = materialization_id("artifact", lease.request.binding_id,
+                                        lease.request.request_id, artifact.digest)
+        now = datetime.now(timezone.utc)
+        with self._pool.connection() as conn, conn.transaction():
+            row = conn.execute("""SELECT status, lease_owner, attempt, result_revision
+                FROM materialization_artifact_requests WHERE request_id = %s FOR UPDATE""",
+                [lease.request.request_id]).fetchone()
+            if row is None:
+                raise KeyError(lease.request.request_id)
+            if row[0] == "completed":
+                return self.state_revision(row[3])
+            if row[:3] != ("leased", lease.owner, lease.attempt):
+                raise ValueError("artifact lease is stale")
+            conn.execute("""INSERT INTO materialization_artifacts
+                VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""",
+                [artifact.digest, artifact.uri, artifact.size_bytes, artifact.media_type,
+                 json.dumps(dict(artifact.metadata)), now])
+            conn.execute("""INSERT INTO materialization_state_revisions
+                (revision_id, deployment_name, binding_id, parent_revision, artifact_digest,
+                 request_id, status, metrics_json, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, 'candidate', %s, %s)
+                ON CONFLICT DO NOTHING""",
+                [revision_id, lease.request.deployment_name, lease.request.binding_id,
+                 lease.request.previous_revision, artifact.digest, lease.request.request_id,
+                 json.dumps(dict(candidate.metrics)), now])
+            conn.execute("""UPDATE materialization_artifact_requests SET status = 'completed',
+                result_revision = %s, lease_owner = NULL, lease_expires_at = NULL, completed_at = %s
+                WHERE request_id = %s""", [revision_id, now, lease.request.request_id])
+        return self.state_revision(revision_id)
+
+    def fail_artifact_request(self, lease: ArtifactLease, error: dict) -> None:
+        with self._pool.connection() as conn, conn.transaction():
+            conn.execute("UPDATE materialization_artifact_requests SET status = 'pending', "
+                "lease_owner = NULL, lease_expires_at = NULL, error_json = %s "
+                "WHERE request_id = %s AND status = 'leased' AND lease_owner = %s AND attempt = %s",
+                [json.dumps(error, sort_keys=True), lease.request.request_id, lease.owner, lease.attempt])
+
+    def state_revision(self, revision_id: str) -> StateRevision:
+        with self._pool.connection() as conn:
+            row = conn.execute("SELECT r.revision_id, r.deployment_name, r.binding_id, "
+                "r.parent_revision, a.digest, a.uri, a.size_bytes, a.media_type, a.metadata_json, "
+                "r.status, r.policy, r.effective_from, r.metrics_json "
+                "FROM materialization_state_revisions r JOIN materialization_artifacts a "
+                "ON a.digest = r.artifact_digest WHERE r.revision_id = %s", [revision_id]).fetchone()
+        if row is None:
+            raise KeyError(revision_id)
+        identifier, deployment, binding, parent, digest, uri, size, media, metadata, status, policy, effective, metrics = row
+        return StateRevision(identifier, deployment, binding,
+            ArtifactRecord(digest, uri, size, media, json.loads(metadata) if isinstance(metadata, str) else metadata),
+            status, parent, policy, effective, json.loads(metrics) if isinstance(metrics, str) else metrics)
+
+    def promote_state_revision(self, revision_id: str, *, policy: str = "prospective",
+                               effective_from: datetime | None = None) -> StateRevision:
+        if policy not in {"prospective", "recompute_all", "recompute_from"}:
+            raise ValueError("unknown promotion policy")
+        if policy == "recompute_from" and effective_from is None:
+            raise ValueError("recompute_from requires effective_from")
+        with self._pool.connection() as conn, conn.transaction():
+            row = conn.execute("SELECT binding_id, status FROM materialization_state_revisions WHERE revision_id = %s FOR UPDATE", [revision_id]).fetchone()
+            if row is None:
+                raise KeyError(revision_id)
+            if row[1] not in {"candidate", "active"}:
+                raise ValueError("only candidate revisions may be promoted")
+            conn.execute("UPDATE materialization_state_revisions SET status = 'retired' "
+                         "WHERE binding_id = %s AND status = 'active' AND revision_id != %s",
+                         [row[0], revision_id])
+            conn.execute("UPDATE materialization_state_revisions SET status = 'active', policy = %s, "
+                         "effective_from = %s, activated_at = %s WHERE revision_id = %s",
+                [policy, effective_from, datetime.now(timezone.utc), revision_id])
+            if policy != "prospective":
+                conn.execute("""INSERT INTO materialization_state_invalidations
+                    VALUES (%s, %s, %s, %s, 'pending', %s) ON CONFLICT (revision_id) DO NOTHING""",
+                    [revision_id, row[0], policy, effective_from, datetime.now(timezone.utc)])
+                affected = "" if policy == "recompute_all" else " AND part.end_ts > %s"
+                parameters: list[object] = [row[0], revision_id]
+                if policy == "recompute_from":
+                    parameters.append(effective_from)
+                conn.execute("""UPDATE materialization_plan_partitions AS part SET status = 'superseded',
+                    lease_owner = NULL, lease_expires_at = NULL
+                    FROM materialization_plans AS plan
+                    WHERE part.plan_id = plan.plan_id AND plan.binding_id = %s
+                    AND coalesce(plan.state_revision, '') <> %s
+                    AND part.status IN ('pending', 'leased')""" + affected, parameters)
+        return self.state_revision(revision_id)
+
+    def active_state_revision(self, binding_id: str) -> StateRevision | None:
+        with self._pool.connection() as conn:
+            row = conn.execute("SELECT revision_id FROM materialization_state_revisions WHERE binding_id = %s AND status = 'active' ORDER BY activated_at DESC LIMIT 1", [binding_id]).fetchone()
+        return self.state_revision(row[0]) if row else None
+
+    def partition_state_revision(self, partition_id: str) -> StateRevision | None:
+        with self._pool.connection() as conn:
+            row = conn.execute("SELECT plan.state_revision FROM materialization_plans plan JOIN materialization_plan_partitions part ON part.plan_id = plan.plan_id WHERE part.partition_id = %s", [partition_id]).fetchone()
+        return self.state_revision(row[0]) if row and row[0] else None
+
+    def pending_state_invalidations(self) -> tuple[dict[str, object], ...]:
+        """Return retained input ranges that a promoted state revision must rebuild."""
+        with self._pool.connection() as conn:
+            rows = conn.execute("""SELECT i.revision_id, i.binding_id, i.policy, i.effective_from,
+                b.generation, b.graph_revision, r.ref_uri, coalesce(h.current_version, 0), min(t.ts), max(t.ts)
+                FROM materialization_state_invalidations i
+                JOIN materialization_bindings b ON b.binding_id = i.binding_id AND b.status = 'active'
+                JOIN materialization_binding_refs r ON r.binding_id = b.binding_id
+                    AND r.generation = b.generation AND r.direction = 'input'
+                LEFT JOIN stream_heads h ON h.ref_uri = r.ref_uri
+                LEFT JOIN timeseries t ON t.ref_uri = r.ref_uri AND NOT t.deleted
+                WHERE i.status = 'pending'
+                GROUP BY i.revision_id, i.binding_id, i.policy, i.effective_from,
+                    b.generation, b.graph_revision, r.ref_uri, h.current_version""").fetchall()
+        grouped: dict[str, dict[str, object]] = {}
+        for revision, binding, policy, effective, generation, graph, ref, head, start, end in rows:
+            item = grouped.setdefault(revision, {"revision_id": revision, "binding_id": binding,
+                "policy": policy, "effective_from": effective, "generation": generation,
+                "graph_revision": graph, "heads": {}, "ranges": []})
+            item["heads"][ref] = head
+            if start is not None:
+                range_start = start
+                if policy == "recompute_from" and effective is not None:
+                    range_start = max(range_start, effective)
+                if range_start <= end:
+                    item["ranges"].append(TimeRange(range_start, end + timedelta(microseconds=1)))
+        return tuple(grouped.values())
+
+    def complete_state_invalidation(self, revision_id: str) -> None:
+        with self._pool.connection() as conn, conn.transaction():
+            conn.execute("UPDATE materialization_state_invalidations SET status = 'planned' "
+                         "WHERE revision_id = %s AND status = 'pending'", [revision_id])
+
+    def artifact_digests(self) -> set[str]:
+        """Return every artifact retained by a durable candidate or revision."""
+        with self._pool.connection() as conn:
+            rows = conn.execute("SELECT DISTINCT artifact_digest FROM materialization_state_revisions").fetchall()
+        return {row[0] for row in rows}

@@ -8,8 +8,10 @@ trigger the app's (heavy: ontology/embedding) lifespan startup.
 from __future__ import annotations
 
 import json
+import base64
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
+from types import SimpleNamespace
 
 import pyarrow as pa
 import pyarrow.ipc as ipc
@@ -29,6 +31,8 @@ from acquirium.Storage.continuous.types import (
 )
 from acquirium.Materialization.impact import TimeRange
 from acquirium.Storage.materialization.types import InputSnapshot, PlanPartition, WorkLease
+from acquirium.Materialization.state import ArtifactLease, ArtifactRequest, StateRevision
+from acquirium.Storage.artifacts import ArtifactRecord
 
 
 @pytest.fixture
@@ -106,6 +110,31 @@ def test_materialization_commit_and_fail_transport(client, fake_manager):
     response = client.post("/internal/materializations/partition/fail", json={"owner": "worker", "attempt": 2, "error": {"message": "bad"}})
     assert response.status_code == 200
     fake_manager.materialization.fail_partition.assert_called_once_with(lease, {"message": "bad"})
+
+
+def test_generic_artifact_request_transport(client, fake_manager):
+    timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    request = ArtifactRequest("artifact-request", "calibration", "demo", "binding", {"urn:in": 3},
+                              TimeRange(timestamp, timestamp.replace(minute=1)))
+    lease = ArtifactLease(request, "producer", 2, timestamp.replace(minute=5))
+    fake_manager.materialization.create_artifact_request.return_value = request.request_id
+    fake_manager.materialization.lease_artifact_request.return_value = lease
+    record = ArtifactRecord("a" * 64, "file:///artifact", 3, "application/octet-stream", {})
+    revision = StateRevision("revision", "demo", "binding", record, "candidate")
+    fake_manager.materialization.leased_artifact_request.return_value = lease
+    fake_manager.materialization.complete_artifact_request.return_value = revision
+
+    create = client.post("/artifact-requests", json={"request_id": request.request_id, "kind": request.kind,
+        "deployment_name": request.deployment_name, "binding_id": request.binding_id,
+        "input_versions": dict(request.input_versions), "start": request.interval.start.isoformat(),
+        "end": request.interval.end.isoformat()})
+    assert create.status_code == 200 and create.json()["request_id"] == request.request_id
+    leased = client.post("/artifact-requests/lease", json={"owner": "producer"})
+    assert leased.status_code == 200 and leased.json()["lease"]["attempt"] == 2
+    fake_manager.materialization_artifacts.put.return_value = record
+    complete = client.post(f"/artifact-requests/{request.request_id}/complete", json={"owner": "producer",
+        "attempt": 2, "data_base64": base64.b64encode(b"abc").decode()})
+    assert complete.status_code == 200 and complete.json()["revision_id"] == "revision"
 
 
 # ---------------------------------------------------------------------------
@@ -366,3 +395,15 @@ def test_finalize_bootstrap_404_for_unknown_id(client, fake_manager):
     fake_manager.continuous.finalize_bootstrap.side_effect = KeyError("unknown bootstrap")
     resp = client.post("/internal/bootstrap/nope/finalize")
     assert resp.status_code == 404
+
+
+def test_promote_state_revision_forwards_explicit_policy(client, fake_manager):
+    fake_manager.materialization.promote_state_revision.return_value = SimpleNamespace(
+        revision_id="revision", status="active", policy="prospective", effective_from=None
+    )
+    response = client.post("/state-revisions/revision/promote", json={"policy": "prospective"})
+    assert response.status_code == 200
+    assert response.json()["revision_id"] == "revision"
+    fake_manager.materialization.promote_state_revision.assert_called_once_with(
+        "revision", policy="prospective", effective_from=None
+    )

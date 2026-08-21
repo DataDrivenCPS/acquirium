@@ -1,7 +1,10 @@
 """Durable reconciliation-plan creation from range manifests and progress."""
 from __future__ import annotations
 from datetime import timedelta
+from hashlib import sha256
+from pathlib import Path
 from typing import Callable, Mapping
+from urllib.parse import urlparse
 import pyarrow as pa
 from acquirium.Materialization.impact import ImpactPolicy, TimeRange, coalesce_ranges
 from acquirium.Materialization.context import ComputeRequest, TransformContext
@@ -83,6 +86,22 @@ class MaterializationScheduler:
             plans.append(plan_id)
         return tuple(plans)
 
+    def plan_state_invalidations(self, *, maximum_partition_duration: timedelta = timedelta(minutes=15)) -> tuple[str, ...]:
+        """Turn promoted recompute policies into ordinary durable work plans."""
+        if not hasattr(self._storage, "pending_state_invalidations"):
+            return ()
+        plans = []
+        for item in self._storage.pending_state_invalidations():
+            ranges = coalesce_ranges(item["ranges"])
+            if ranges:
+                plan_id, _ = self._storage.create_plan(binding_id=item["binding_id"], generation=item["generation"],
+                    graph_revision=item["graph_revision"], input_vector=item["heads"], ranges=ranges,
+                    reason={"kind": "state_invalidation", "revision_id": item["revision_id"], "policy": item["policy"]},
+                    maximum_partition_duration=maximum_partition_duration)
+                plans.append(plan_id)
+            self._storage.complete_state_invalidation(item["revision_id"])
+        return tuple(plans)
+
     def run_registered_once(self, owner: str, *, executor, source_digest: str, entrypoint: str,
                             scalar: bool, metadata: Mapping[str, object] | None = None) -> bool:
         """Lease and execute one partition using a digest-cached definition."""
@@ -103,9 +122,9 @@ class MaterializationScheduler:
             raise
         return True
 
-    def run_next_registered(self, owner: str, *, executor) -> bool:
+    def run_next_registered(self, owner: str, *, executor, deployment_name: str | None = None) -> bool:
         """Execute next partition using its deployment's persisted definition."""
-        lease = self._storage.lease_registered_partition(owner)
+        lease = self._storage.lease_registered_partition(owner, deployment_name=deployment_name)
         if lease is None:
             return False
         bundle = self._storage.partition_definition(lease.partition.partition_id)
@@ -115,10 +134,23 @@ class MaterializationScheduler:
         inputs, output_refs = self._storage.partition_refs(lease.partition.partition_id)
         try:
             snapshot = self._storage.snapshot_partition(lease, inputs)
+            metadata = (self._storage.partition_binding_metadata(lease.partition.partition_id)
+                        if hasattr(self._storage, "partition_binding_metadata") else {})
+            state = self._storage.partition_state_revision(lease.partition.partition_id) if hasattr(self._storage, "partition_state_revision") else None
+            artifact_bytes = None
+            if state is not None:
+                uri = urlparse(state.artifact.uri)
+                if uri.scheme != "file":
+                    raise ValueError("only filesystem state artifacts are supported")
+                artifact_bytes = Path(uri.path).read_bytes()
+                if sha256(artifact_bytes).hexdigest() != state.artifact.digest:
+                    raise ValueError("state artifact failed digest verification")
             request = ComputeRequest(snapshot.inputs, TransformContext(
                 binding_id=lease.partition.plan_id, execution_id=f"{lease.partition.partition_id}:{lease.attempt}",
                 interval=lease.partition.interval, input_versions=snapshot.input_versions,
-            ), frozenset(output_refs), scalar=scalar)
+                metadata=metadata,
+                state_revision=state.revision_id if state else None,
+            ), frozenset(output_refs), scalar=scalar, artifact_bytes=artifact_bytes)
             replacement = executor.submit_entrypoint(digest=bundle["source_digest"], entrypoint=bundle["entrypoint"], request=request).result()
             self._storage.commit_replacement(snapshot, input_refs=inputs, output_refs=output_refs, replacement=replacement)
         except Exception as error:
@@ -138,9 +170,12 @@ class MaterializationScheduler:
             scalar = isinstance(outputs_spec, dict) and outputs_spec.get("mode") == "per_input"
             inputs, output_refs = self._storage.partition_refs(lease.partition.partition_id)
             snapshot = self._storage.snapshot_partition(lease, inputs)
+            metadata = (self._storage.partition_binding_metadata(lease.partition.partition_id)
+                        if hasattr(self._storage, "partition_binding_metadata") else {})
             request = ComputeRequest(snapshot.inputs, TransformContext(
                 binding_id=lease.partition.plan_id, execution_id=f"preview:{lease.partition.partition_id}:{lease.attempt}",
                 interval=lease.partition.interval, input_versions=snapshot.input_versions,
+                metadata=metadata,
             ), frozenset(output_refs), scalar=scalar)
             replacement = executor.submit_entrypoint(digest=bundle["source_digest"], entrypoint=bundle["entrypoint"], request=request).result()
             return replacement, {"partition_id": lease.partition.partition_id, "plan_id": lease.partition.plan_id,
