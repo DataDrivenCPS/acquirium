@@ -86,29 +86,35 @@ def render_alternatives(alts, prev: str, obj: str, uid: str) -> str:
     return "{ " + " UNION ".join("{ " + r + " }" for r in rendered) + " }"
 
 
-def attr_paths(attr: Attr, role: str) -> List[str]:
-    """Bracketed SPARQL property paths matching one attribute, in match order.
+def attr_path_groups(attr: Attr, role: str) -> tuple[List[str], List[str]]:
+    """One attribute's paths, split into ``(on the node, through its reference)``.
 
-    The single place an attribute's predicates become path syntax. Returned
-    paths are ready to drop into a triple pattern as-is (already bracketed),
-    so callers never re-wrap them.
+    The single place an attribute's predicates become path syntax. Paths come
+    back already bracketed, ready to drop into a triple pattern.
 
-    For a ``via_ref`` attribute on a measurement node the list also carries
-    the same predicates one hop through ``ref:hasExternalReference``. Stream
-    registration writes semantics on the reference while a user's model puts
-    them on the point, and a query should find either. Point-side paths come
-    first so a projection takes the point's value when both are bound.
+    A ``via_ref`` attribute on a measurement node also matches one hop through
+    ``ref:hasExternalReference``: stream registration writes semantics on the
+    reference while a user's model puts them on the point, and a query should
+    find either. Everything else has an empty second group.
     """
-    paths = [f"<{p}>" for p in attr.predicates]
+    direct = [f"<{p}>" for p in attr.predicates]
     if attr.via_ref and role == "data":
-        paths += [
-            f"<{HAS_EXTERNAL_REFERENCE}>/<{p}>" for p in attr.predicates
-        ]
-    return paths
+        return direct, [f"<{HAS_EXTERNAL_REFERENCE}>/<{p}>" for p in attr.predicates]
+    return direct, []
+
+
+def attr_paths(attr: Attr, role: str) -> List[str]:
+    """Every path matching one attribute, node-side first."""
+    direct, through_ref = attr_path_groups(attr, role)
+    return direct + through_ref
 
 
 def attr_pred_path(attr: Attr, role: str) -> str:
-    """``attr_paths`` as a single alternation, for use in a property path."""
+    """``attr_paths`` as a single alternation, for use in a property path.
+
+    Right for *filtering*, where matching either side is the whole point.
+    Wrong for *projection* — see ``_attr_select_clause``.
+    """
     return "|".join(attr_paths(attr, role))
 
 
@@ -484,12 +490,39 @@ def _data_node_clauses(v: str, nid: int, info) -> List[str]:
     return clauses
 
 
-def _attr_select_clause(v: str, nid: int, name: str, required: bool, role: str = "entity") -> tuple:
+def _attr_select_clause(
+    v: str, nid: int, name: str, required: bool, role: str = "entity"
+) -> tuple[List[str], str]:
+    """Clauses projecting one attribute as ``?attr{nid}_{name}``.
+
+    A ``via_ref`` attribute cannot project as a plain alternation: when the
+    point and its reference both carry a value the alternation binds twice and
+    the measurement comes back as two rows. Reconciliation deliberately allows
+    exactly that — a convertible pair such as a point in Celsius against a
+    reference in Fahrenheit is accepted at registration — so it is a case the
+    read path has to handle, not a hypothetical.
+
+    Each side is bound separately and COALESCEd instead, which yields one row
+    and makes the point win. That matches ``DataObject._resolve_effective_units``,
+    which reads the point's unit in preference to the reference's.
+    """
     attr = REGISTRY[name]
     avar = f"?attr{nid}_{name}"
-    pred_path = attr_pred_path(attr, role)
-    clause = f"{v} ({pred_path}) {avar} ."
-    return (clause if required else f"OPTIONAL {{ {clause} }}"), avar
+    direct, through_ref = attr_path_groups(attr, role)
+
+    if not through_ref:
+        clause = f"{v} ({'|'.join(direct)}) {avar} ."
+        return [clause if required else f"OPTIONAL {{ {clause} }}"], avar
+
+    point_var, ref_var = f"{avar}__point", f"{avar}__ref"
+    clauses = [
+        f"OPTIONAL {{ {v} ({'|'.join(direct)}) {point_var} . }}",
+        f"OPTIONAL {{ {v} ({'|'.join(through_ref)}) {ref_var} . }}",
+        f"BIND(COALESCE({point_var}, {ref_var}) AS {avar})",
+    ]
+    if required:
+        clauses.append(f"FILTER(BOUND({avar}))")
+    return clauses, avar
 
 
 def compile_parts(graph: QueryGraph) -> tuple:
@@ -610,10 +643,10 @@ def compile_parts(graph: QueryGraph) -> tuple:
     # so DataObject's column parsing ignores them)
     attr_var_pairs: List[tuple] = []  # (node_id, var) in selects order
     for nid, name, required in getattr(graph, "selects", ()):
-        clause, avar = _attr_select_clause(
+        clauses, avar = _attr_select_clause(
             var_map[nid], nid, name, required, graph.node_role(nid)
         )
-        where_clauses.append(clause)
+        where_clauses.extend(clauses)
         attr_var_pairs.append((nid, avar))
 
     # drop(): nodes stay in the pattern (WHERE) but leave the projection —
@@ -668,8 +701,8 @@ def _compile_parts_multi(graph: QueryGraph) -> tuple:
     for nid, name, required in getattr(graph, "selects", ()):
         if nid in data_ids:
             continue
-        clause, avar = _attr_select_clause(var_map[nid], nid, name, required, "entity")
-        where_clauses.append(clause)
+        clauses, avar = _attr_select_clause(var_map[nid], nid, name, required, "entity")
+        where_clauses.extend(clauses)
         attr_var_pairs.append((nid, avar))
 
     branches: List[str] = []
@@ -685,8 +718,8 @@ def _compile_parts_multi(graph: QueryGraph) -> tuple:
         # the unbound variable would turn the binding into an open pattern
         for snid, name, required in getattr(graph, "selects", ()):
             if snid == nid:
-                clause, avar = _attr_select_clause(v, nid, name, required, "data")
-                b.append(clause)
+                clauses, avar = _attr_select_clause(v, nid, name, required, "data")
+                b.extend(clauses)
                 attr_var_pairs.append((nid, avar))
         branches.append("{ " + " ".join(b) + " }")
     where_clauses.append(" UNION ".join(branches))

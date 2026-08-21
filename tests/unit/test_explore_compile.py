@@ -231,8 +231,11 @@ class TestMultiMeasurementUnion:
              .include("unit", of="pump_data"))
         body = b.to_sparql()
         body = body[body.index("WHERE"):]
-        bind = body.index("?attr2_unit .")
-        assert body.index("?ext2") < bind < body.index("?ext3")  # inside pump_data's branch
+        # The BIND resolving the attribute has to sit inside pump_data's own
+        # UNION branch: outside it, its per-side variables are unbound and the
+        # branch would degenerate into an open pattern.
+        bind = body.index("AS ?attr2_unit)")
+        assert body.index("?ext2") < bind < body.index("?ext3")
 
     def test_single_measurement_unchanged(self):
         from acquirium.Client.explore.core import Query

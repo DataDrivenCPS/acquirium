@@ -376,18 +376,27 @@ class DataObject:
 
         Returns {alias: effective_unit_uri_or_None}.
         """
-        alias_units: dict[str, str | None] = {}
+        return {alias: unit for alias, (unit, _source) in self._unit_provenance().items()}
+
+    def _unit_provenance(self) -> dict[str, tuple[str | None, str]]:
+        """``{alias: (effective unit, where it came from)}``.
+
+        Source is ``"point"``, ``"reference"`` or ``"none"``. The point wins
+        when both carry a unit — registration permits that for a convertible
+        pair — and the reference fills in when the point is silent, which is
+        the usual case for a stream with no model behind it.
+        """
+        provenance: dict[str, tuple[str | None, str]] = {}
         for b in self._bindings:
-            if b.alias in alias_units:
+            if b.alias in provenance:
                 continue
             if b.property_unit:
-                alias_units[b.alias] = b.property_unit
+                provenance[b.alias] = (b.property_unit, "point")
             elif b.ref_unit:
-                # Case 3.2: no property unit, adopt ref_unit
-                alias_units[b.alias] = b.ref_unit
+                provenance[b.alias] = (b.ref_unit, "reference")
             else:
-                alias_units[b.alias] = None
-        return alias_units
+                provenance[b.alias] = (None, "none")
+        return provenance
 
     def _materialize(self) -> None:
         """Fetch all time-series data and populate _tall. Idempotent."""
@@ -886,9 +895,21 @@ class DataObject:
 
         The effective unit considers property annotations and external
         reference annotations (Case 3.2: ref_unit adopted when property
-        has no unit).
+        has no unit). Use :meth:`unit_sources` to see which of the two a
+        given alias's unit came from.
         """
         return self._resolve_effective_units()
+
+    def unit_sources(self) -> dict[str, str]:
+        """Return ``{alias: "point" | "reference" | "none"}``.
+
+        Where each alias's effective unit came from. Worth checking when a
+        series is not in the unit you expected: a stream registered without a
+        model takes its unit from the reference, while a point in a model
+        graph overrides it — and values are converted into the point's unit
+        when the two differ and are convertible.
+        """
+        return {alias: source for alias, (_unit, source) in self._unit_provenance().items()}
 
     def convert_to(
         self,

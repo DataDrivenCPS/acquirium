@@ -13,16 +13,26 @@ HAS_QK = "http://qudt.org/schema/qudt/hasQuantityKind"
 REF = "https://brickschema.org/schema/Brick/ref#hasExternalReference"
 
 
-def via_ref(*predicates: str) -> str:
-    """The alternation a via_ref attribute compiles to on a measurement node.
+def via_ref_projection(var: str, name: str, *predicates: str, required: bool = False) -> list[str]:
+    """Clauses a via_ref attribute projects to on a measurement node.
 
-    Semantics may sit on the point or on its external reference, so each
-    predicate is matched both directly and one hop through the reference.
-    Point-side paths come first, so a projection prefers the point's value.
+    Semantics may sit on the point or on its external reference. Each side
+    binds separately and the two are COALESCEd rather than matched as one
+    alternation — an alternation binds twice when both sides carry a value,
+    splitting the measurement across two rows. COALESCE also makes the point
+    win, matching DataObject's effective-unit rule.
     """
-    direct = [f"<{p}>" for p in predicates]
-    through = [f"<{REF}>/<{p}>" for p in predicates]
-    return "|".join(direct + through)
+    avar = f"?attr{var.lstrip('?v')}_{name}"
+    direct = "|".join(f"<{p}>" for p in predicates)
+    through = "|".join(f"<{REF}>/<{p}>" for p in predicates)
+    clauses = [
+        f"OPTIONAL {{ {var} ({direct}) {avar}__point . }}",
+        f"OPTIONAL {{ {var} ({through}) {avar}__ref . }}",
+        f"BIND(COALESCE({avar}__point, {avar}__ref) AS {avar})",
+    ]
+    if required:
+        clauses.append(f"FILTER(BOUND({avar}))")
+    return clauses
 
 
 def q() -> Query:
@@ -70,9 +80,15 @@ class TestSelectStorage:
 class TestSelectSparql:
     def test_optional_binding_and_projection(self):
         s = base().include("quantity_kind").to_sparql()
-        assert f"OPTIONAL {{ ?v1 ({via_ref(HAS_QK)}) ?attr1_quantity_kind . }}" in s
+        for clause in via_ref_projection("?v1", "quantity_kind", HAS_QK):
+            assert clause in s
         # attr columns directly follow their node's column
         assert "?v1 ?attr1_quantity_kind" in s.splitlines()[0]
+
+    def test_per_side_helper_vars_stay_out_of_the_projection(self):
+        header = base().include("unit").to_sparql().splitlines()[0]
+        assert "?attr1_unit" in header
+        assert "__point" not in header and "__ref" not in header
 
     def test_attr_columns_interleave_per_node(self):
         b = (q().entity(CLS_A, alias="a").include("medium")
@@ -82,19 +98,30 @@ class TestSelectSparql:
 
     def test_multi_predicate_attr_binds_path_union(self):
         s = base().include("medium").to_sparql()
-        assert f"OPTIONAL {{ ?v1 ({via_ref(OF_MEDIUM, HAS_MEDIUM)}) ?attr1_medium . }}" in s
+        for clause in via_ref_projection("?v1", "medium", OF_MEDIUM, HAS_MEDIUM):
+            assert clause in s
 
     def test_no_selects_means_no_attr_vars(self):
         assert "attr" not in base().to_sparql()
 
-    def test_required_binds_without_optional(self):
+    def test_required_filters_on_the_coalesced_value(self):
+        """Both sides still bind optionally; "required" means the *result*
+        must be bound, i.e. a value came from one side or the other."""
         s = base().include("unit", required=True).to_sparql()
-        assert f"?v1 ({via_ref(HAS_UNIT)}) ?attr1_unit ." in s
-        assert f"OPTIONAL {{ ?v1 ({via_ref(HAS_UNIT)})" not in s
+        for clause in via_ref_projection("?v1", "unit", HAS_UNIT, required=True):
+            assert clause in s
 
     def test_default_stays_optional(self):
         s = base().include("unit").to_sparql()
-        assert f"OPTIONAL {{ ?v1 ({via_ref(HAS_UNIT)}) ?attr1_unit . }}" in s
+        for clause in via_ref_projection("?v1", "unit", HAS_UNIT):
+            assert clause in s
+        assert "FILTER(BOUND(?attr1_unit))" not in s
+
+    def test_entity_attr_keeps_the_plain_single_binding(self):
+        """No reference to reach through, so no COALESCE machinery."""
+        s = q().entity(CLS_A, alias="e").include("process").to_sparql()
+        assert "?v0 (<urn:nawi-water-ontology#hasProcess>) ?attr0_process ." in s
+        assert "COALESCE" not in s
 
 
 class TestColumnNaming:
