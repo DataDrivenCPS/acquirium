@@ -14,6 +14,9 @@ from typing import Any
 from rdflib.namespace import RDF
 
 from acquirium.internals.internals_namespaces import (
+    ACQUIRIUM_REF_NAME,
+    ACQUIRIUM_SOURCE_ID,
+    ACQUIRIUM_VALUE_KIND,
     CONNECTION_POINT,
     DATA_SOURCE,
     HAS_ENUMERATION_KIND,
@@ -27,7 +30,11 @@ from acquirium.internals.internals_namespaces import (
 
 ENTITY = frozenset({"entity"})
 DATA = frozenset({"data"})
+#: A stream node binds the external reference itself, rather than a point
+#: that links to one. Attributes written by stream registration apply here.
+STREAM = frozenset({"stream"})
 BOTH = ENTITY | DATA
+DATA_STREAM = DATA | STREAM
 
 
 @dataclass(frozen=True)
@@ -88,22 +95,33 @@ REGISTRY: dict[str, Attr] = {
              doc='class of one of the entity\'s connection points ("outlet connection point")'),
         # Properties carry s223:ofMedium; connection points carry
         # s223:hasMedium. One attribute, OR-union of both predicates.
-        Attr("medium", (str(OF_MEDIUM), str(HAS_MEDIUM)), "substance", BOTH,
-             via_ref=True,
+        Attr("medium", (str(OF_MEDIUM), str(HAS_MEDIUM)), "substance",
+             BOTH | STREAM, via_ref=True,
              doc='carried medium: ofMedium|hasMedium ("fluid water", "air", "brine")'),
-        Attr("substance", (str(OF_SUBSTANCE),), "substance", DATA, via_ref=True,
-             doc='measured substance/constituent ("chlorine", "organics", "ammonia")'),
-        Attr("quantity_kind", (str(HAS_QUANTITY_KIND),), "quantity_kind", DATA,
+        Attr("substance", (str(OF_SUBSTANCE),), "substance", DATA_STREAM,
              via_ref=True,
+             doc='measured substance/constituent ("chlorine", "organics", "ammonia")'),
+        Attr("quantity_kind", (str(HAS_QUANTITY_KIND),), "quantity_kind",
+             DATA_STREAM, via_ref=True,
              doc='QUDT quantity kind ("volume flow rate", "turbidity", "acidity")'),
-        Attr("unit", (str(HAS_UNIT),), "unit", DATA, via_ref=True,
+        Attr("unit", (str(HAS_UNIT),), "unit", DATA_STREAM, via_ref=True,
              doc='QUDT unit ("mg/l", "PSI", "NTU")'),
         Attr("enumeration_kind", (str(HAS_ENUMERATION_KIND),), "class", DATA,
              doc='enumeration kind of a state/enum property ("on off", "run status")'),
         # Origin tag literal on a reference node (e.g. "Lab", "SCADA").
-        Attr("data_source", (str(DATA_SOURCE),), "any", DATA, literal=True,
-             via_ref=True,
+        Attr("data_source", (str(DATA_SOURCE),), "any", DATA_STREAM,
+             literal=True, via_ref=True,
              doc='origin tag literal, matched verbatim ("Lab", "SCADA")'),
+        # Written on the reference by stream registration, so they identify a
+        # stream regardless of whether any point links to it.
+        Attr("source_id", (str(ACQUIRIUM_SOURCE_ID),), "any", STREAM,
+             literal=True,
+             doc='datasource that produced the stream ("svcw-scada")'),
+        Attr("ref_name", (str(ACQUIRIUM_REF_NAME),), "any", STREAM, literal=True,
+             doc='source-local stream name, verbatim ("AB_ANA_DOX_16101.ScldAnlgS")'),
+        Attr("value_kind", (str(ACQUIRIUM_VALUE_KIND),), "any", STREAM,
+             literal=True,
+             doc='how values are stored: "numeric" or "text"'),
     )
 }
 
@@ -148,8 +166,12 @@ def _roles_label(roles: frozenset[str]) -> str:
 def attributes_doc(indent: int = 8) -> str:
     """The registry rendered as a docstring block (single source of truth)."""
     pad = " " * indent
-    width = max(len(n) for n in REGISTRY) + 2
+    labels = {a.name: _roles_label(a.roles) for a in REGISTRY.values()}
+    name_width = max(len(n) for n in REGISTRY) + 2
+    role_width = max(len(r) for r in labels.values()) + 2
     lines = [f"{pad}Attributes (usable on):"]
     for a in REGISTRY.values():
-        lines.append(f"{pad}  {a.name:<{width}}{_roles_label(a.roles):<12}{a.doc}")
+        lines.append(
+            f"{pad}  {a.name:<{name_width}}{labels[a.name]:<{role_width}}{a.doc}"
+        )
     return "\n".join(lines)

@@ -7,6 +7,24 @@ class DataNodeInfo:
     filters: Dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class StreamNodeInfo:
+    """A node bound to an external reference rather than to a point.
+
+    A measurement node matches a point that *has* a reference; a stream node
+    matches the reference itself, so it finds streams that no point links to
+    — which is most of them when data is ingested without a model.
+
+    - ``source_id``: node this stream hangs off, when the query chained one
+      (``entity(...).measurement().streams()``). ``None`` for the root form.
+    - ``filters``: same shape as ``DataNodeInfo.filters``.
+    """
+
+    node_id: int
+    source_id: Optional[int] = None
+    filters: Dict[str, Any] = field(default_factory=dict)
+
+
 
 @dataclass(frozen=True)
 class QueryNode:
@@ -62,6 +80,7 @@ class QueryGraph:
     current_pointer: Optional[int] = None
 
     data_nodes: Dict[int, DataNodeInfo] = field(default_factory=dict)
+    stream_nodes: Dict[int, StreamNodeInfo] = field(default_factory=dict)
 
     # Projected attribute columns: (node_id, attr_name, required) triples,
     # in order. required=True filters rows lacking the attribute.
@@ -71,6 +90,11 @@ class QueryGraph:
         dn = dict(self.data_nodes)
         dn[info.node_id] = info
         return replace(self, data_nodes=dn)
+
+    def with_stream_node(self, info: StreamNodeInfo) -> "QueryGraph":
+        sn = dict(self.stream_nodes)
+        sn[info.node_id] = info
+        return replace(self, stream_nodes=sn)
 
     def with_node(self, node: QueryNode) -> "QueryGraph":
         """Return a new graph with an added/updated node and alias."""
@@ -121,10 +145,14 @@ class QueryGraph:
         return self.aliases.get(alias_or_none)
 
     def node_role(self, node_id: int) -> str:
-        """Which attribute role a node plays: ``"data"`` or ``"entity"``.
+        """Which attribute role a node plays: stream, data or entity.
 
         The single place this is decided. Attribute applicability
         (``Attr.roles``) is checked against it by ``where``/``include``/
         ``options``/``facets``.
         """
-        return "data" if node_id in self.data_nodes else "entity"
+        if node_id in self.stream_nodes:
+            return "stream"
+        if node_id in self.data_nodes:
+            return "data"
+        return "entity"

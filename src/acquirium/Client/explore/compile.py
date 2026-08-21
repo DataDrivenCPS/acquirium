@@ -22,6 +22,7 @@ from acquirium.Client.explore.attributes import REGISTRY, Attr, Not, normalize_v
 from acquirium.Client.explore.hidden import hidden_predicates
 from acquirium.Client.query_graph import QueryEdge, QueryGraph
 from acquirium.internals.internals_namespaces import (
+    ACQUIRIUM_SOURCE_ID,
     CONNECTED_THROUGH,
     CONNECTION_POINT,
     CONNECTS_FROM,
@@ -451,17 +452,19 @@ def _node_constraint_clauses(v: str, node) -> List[str]:
     return clauses
 
 
-def _data_node_clauses(v: str, nid: int, info) -> List[str]:
-    """ext-ref triple, unit OPTIONALs, and filters for one data node."""
-    clauses: List[str] = [f"{v} <{HAS_EXTERNAL_REFERENCE}> ?ext{nid} ."]
-    clauses.append(f"OPTIONAL {{ {v} <{HAS_UNIT}> ?unit{nid} . }}")
-    clauses.append(f"OPTIONAL {{ ?ext{nid} <{HAS_UNIT}> ?extunit{nid} . }}")
+def _filter_clauses(v: str, filters: dict | None, role: str) -> List[str]:
+    """WHERE clauses for a data or stream node's filters.
 
-    for pred, val in (info.filters or {}).items():
+    A key naming a registry attribute expands through its definition; anything
+    else is a raw predicate URI, which the legacy builder allowed and app
+    specs may still carry.
+    """
+    clauses: List[str] = []
+    for pred, val in (filters or {}).items():
         if val is None:
             continue
         if isinstance(pred, str) and pred in REGISTRY:
-            clauses.extend(_attr_clauses(v, REGISTRY[pred], val, "data"))
+            clauses.extend(_attr_clauses(v, REGISTRY[pred], val, role))
             continue
         negate = isinstance(val, Not)
         if negate:
@@ -487,6 +490,55 @@ def _data_node_clauses(v: str, nid: int, info) -> List[str]:
                 clauses.append(f'FILTER NOT EXISTS {{ {v} <{pred}> "{val}" . }}')
             else:
                 clauses.append(f'{v} <{pred}> "{val}" .')
+    return clauses
+
+
+def _data_node_clauses(v: str, nid: int, info) -> List[str]:
+    """ext-ref triple, unit OPTIONALs, and filters for one data node."""
+    return [
+        f"{v} <{HAS_EXTERNAL_REFERENCE}> ?ext{nid} .",
+        f"OPTIONAL {{ {v} <{HAS_UNIT}> ?unit{nid} . }}",
+        f"OPTIONAL {{ ?ext{nid} <{HAS_UNIT}> ?extunit{nid} . }}",
+        *_filter_clauses(v, info.filters, "data"),
+    ]
+
+
+def _stream_node_clauses(
+    v: str, nid: int, info, src_var: str | None, src_ext_var: str | None
+) -> List[str]:
+    """Anchor, point OPTIONAL, unit OPTIONALs and filters for one stream node.
+
+    ``v`` binds the external reference itself, so registration-written
+    attributes apply to it directly and a stream with no point still matches.
+    ``acq:sourceId`` is the anchor: every Acquirium-managed reference carries
+    it, and it is what ``_sync_stream_refs_from_graph`` treats as canonical.
+
+    Chaining off a measurement node reuses that node's already-bound
+    ``?ext`` rather than re-walking ``hasExternalReference``, which would
+    self-join the same triples. Chaining off an entity walks the edge.
+    """
+    clauses: List[str] = []
+    point = f"?pt{nid}"
+
+    if src_ext_var is not None:
+        # The source measurement already bound this reference and its point.
+        clauses.append(f"BIND({src_ext_var} AS {v})")
+        clauses.append(f"BIND({src_var} AS {point})")
+        clauses.append(f"{v} <{ACQUIRIUM_SOURCE_ID}> ?sid{nid} .")
+        clauses.append(f"OPTIONAL {{ {point} <{HAS_UNIT}> ?unit{nid} . }}")
+    else:
+        if src_var is not None:
+            clauses.append(f"{src_var} <{HAS_EXTERNAL_REFERENCE}> {v} .")
+        clauses.append(f"{v} <{ACQUIRIUM_SOURCE_ID}> ?sid{nid} .")
+        # A point is optional; its unit only means anything when it exists, so
+        # nest rather than leaving ?pt unbound in a sibling OPTIONAL.
+        clauses.append(
+            f"OPTIONAL {{ {point} <{HAS_EXTERNAL_REFERENCE}> {v} . "
+            f"OPTIONAL {{ {point} <{HAS_UNIT}> ?unit{nid} . }} }}"
+        )
+
+    clauses.append(f"OPTIONAL {{ {v} <{HAS_UNIT}> ?extunit{nid} . }}")
+    clauses.extend(_filter_clauses(v, info.filters, "stream"))
     return clauses
 
 
@@ -535,6 +587,10 @@ def compile_parts(graph: QueryGraph) -> tuple:
     pattern, so results are the union of the per-node matches (M+N rows,
     empty nodes contribute None columns) instead of a cross-product join.
     """
+    # Several measurement nodes must union rather than cross-product. A stream
+    # node never triggers this: chained, it refines one measurement and belongs
+    # in the same block; standalone, it is the only such node. Query.streams()
+    # refuses the combination the multi path could not express.
     if len(graph.data_nodes) > 1:
         return _compile_parts_multi(graph)
     # node id -> ?v{id}
@@ -597,46 +653,21 @@ def compile_parts(graph: QueryGraph) -> tuple:
         where_clauses.append(f"OPTIONAL {{ {v} <{HAS_UNIT}> {uvar} . }}")
         where_clauses.append(f"OPTIONAL {{ {ext} <{HAS_UNIT}> {euvar} . }}")
 
-        for pred, val in (info.filters or {}).items():
-            if val is None:
-                continue
+        where_clauses.extend(_filter_clauses(v, info.filters, "data"))
 
-            # Registry-attribute keys expand via the attribute definition;
-            # anything else is a raw predicate URI (legacy-shaped filters).
-            if isinstance(pred, str) and pred in REGISTRY:
-                where_clauses.extend(_attr_clauses(v, REGISTRY[pred], val, "data"))
-                continue
-
-            # Unwrap negation marker
-            negate = isinstance(val, Not)
-            if negate:
-                val = val.value
-
-            # Build the triple pattern(s)
-            if isinstance(val, str) and ("://" in val or val.startswith("urn:")):
-                if negate:
-                    where_clauses.append(f"FILTER NOT EXISTS {{ {v} <{pred}> <{val}> . }}")
-                else:
-                    where_clauses.append(f"{v} <{pred}> <{val}> .")
-
-            elif isinstance(val, list):
-                items = [x for x in val if x is not None]
-                if negate:
-                    # Exclude any that match: FILTER NOT EXISTS with UNION
-                    if len(items) == 1:
-                        where_clauses.append(f"FILTER NOT EXISTS {{ {v} <{pred}> {_term(items[0])} . }}")
-                    else:
-                        union_block = " UNION ".join(f"{{ {v} <{pred}> {_term(x)} . }}" for x in items)
-                        where_clauses.append(f"FILTER NOT EXISTS {{ {union_block} }}")
-                else:
-                    union_block = " UNION ".join(f"{{ {v} <{pred}> {_term(x)} . }}" for x in items)
-                    where_clauses.append(f"{{ {union_block} }}")
-
-            else:
-                if negate:
-                    where_clauses.append(f'FILTER NOT EXISTS {{ {v} <{pred}> "{val}" . }}')
-                else:
-                    where_clauses.append(f'{v} <{pred}> "{val}" .')
+    # stream node constraints — the reference itself, with an optional point
+    point_vars: dict[int, str] = {}
+    for nid, info in graph.stream_nodes.items():
+        v = var_map[nid]
+        src_id = info.source_id
+        src_var = var_map[src_id] if src_id is not None else None
+        src_ext = ext_vars.get(src_id) if src_id is not None else None
+        where_clauses.extend(_stream_node_clauses(v, nid, info, src_var, src_ext))
+        # No ext var: the stream node *is* the reference, so DataObject reads
+        # it straight off ?v{nid} and only needs the point projected.
+        point_vars[nid] = f"?pt{nid}"
+        unit_vars[nid] = f"?unit{nid}"
+        extunit_vars[nid] = f"?extunit{nid}"
 
     # projected attribute columns (?attr<N>_<name>, OPTIONAL so rows without
     # the attribute survive; the prefix is disjoint from v/ext/unit/extunit
@@ -661,7 +692,8 @@ def compile_parts(graph: QueryGraph) -> tuple:
             select_parts.append(v)
         select_parts.extend(avar for anid, avar in attr_var_pairs if anid == nid)
     select_parts += (
-        [v for nid, v in ext_vars.items() if nid not in dropped]
+        [v for nid, v in point_vars.items() if nid not in dropped]
+        + [v for nid, v in ext_vars.items() if nid not in dropped]
         + [v for nid, v in unit_vars.items() if nid not in dropped]
         + [v for nid, v in extunit_vars.items() if nid not in dropped]
     )

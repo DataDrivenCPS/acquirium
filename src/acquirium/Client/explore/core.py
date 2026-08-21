@@ -28,7 +28,13 @@ from rdflib import URIRef
 from acquirium.Client.explore.attributes import REGISTRY, Not, attributes_doc, normalize_value
 from acquirium.Client.explore.compile import attr_pred_path, compile_sparql
 from acquirium.Client.explore.directions import EQUIPMENT_STEPS, PROPERTY_STEPS
-from acquirium.Client.query_graph import DataNodeInfo, QueryEdge, QueryGraph, QueryNode
+from acquirium.Client.query_graph import (
+    DataNodeInfo,
+    QueryEdge,
+    QueryGraph,
+    QueryNode,
+    StreamNodeInfo,
+)
 from acquirium.internals.internals_namespaces import S223
 
 if TYPE_CHECKING:
@@ -211,6 +217,11 @@ class Query:
                 filters = dict(info.filters)
                 filters.update(resolved)
                 g = g.with_data_node(replace(info, filters=filters))
+            elif role == "stream":
+                stream = g.stream_nodes[nid]
+                filters = dict(stream.filters)
+                filters.update(resolved)
+                g = g.with_stream_node(replace(stream, filters=filters))
             else:
                 node = g.nodes[nid]
                 constraints = dict(node.constraints)
@@ -511,6 +522,68 @@ class Query:
 
         if attrs:
             g = self._apply_attrs(g, created, self._resolve_attr_values(attrs))
+        return self._with_graph(g)
+
+    def streams(self, *, frm: Optional[str] = None, alias: Optional[str] = None,
+                **attrs: Any) -> "Query":
+        """Attach a registered stream (an external reference) and point at it.
+
+        Where ``measurement()`` matches a *point* that has a reference,
+        ``streams()`` matches the reference itself — so it finds streams no
+        point links to, which is all of them when data is ingested without a
+        model. On an empty query it is the root form, every registered stream
+        in the deployment::
+
+            aq.query().streams()                          # everything
+            aq.query().streams(data_source="SCADA")       # one source system
+            aq.query().streams(unit="mg/L").data()        # straight to values
+
+        Chained after a measurement, it narrows to that point's own
+        references — the way to pick one when a point has several::
+
+            (aq.query().entity("aeration basin")
+                       .measurement()
+                       .streams(data_source="SCADA")
+                       .data(start=t0, end=t1))
+
+        Attribute filters accept the stream-role attributes (``source_id``,
+        ``ref_name``, ``value_kind``) alongside the semantic ones. Streams
+        carry their own semantics, so a stream node needs no point to be
+        filtered by unit or medium.
+        """
+        g = self.query_graph
+        if g.stream_nodes:
+            raise ValueError(
+                "streams: a query can carry only one stream node; call streams() "
+                "once, or build a second query"
+            )
+        if len(g.data_nodes) > 1:
+            raise ValueError(
+                "streams: cannot narrow several measurement nodes at once — they "
+                "compile as separate union branches. Attach streams() to one "
+                f"measurement (frm={sorted(g.aliases_reverse[n] for n in g.data_nodes)!r})"
+            )
+
+        # Root form on an empty query; otherwise it refines the current node.
+        src_id: Optional[int] = None
+        if frm is not None:
+            src_id = self._source_id(frm, verb="streams")
+        elif g.current_pointer is not None:
+            src_id = g.current_pointer
+
+        if alias is not None:
+            alias = self._require_free_alias(g, alias, verb="streams")
+        elif src_id is not None:
+            alias = self._unique_alias(g, f"{self._src_alias(src_id)}_streams")
+        else:
+            alias = "streams"
+
+        new_id = self._next_id()
+        g = g.with_node(QueryNode(id=new_id, alias=alias,
+                                  constraints={"is_stream_node": True}))
+        g = g.with_stream_node(StreamNodeInfo(node_id=new_id, source_id=src_id))
+        if attrs:
+            g = self._apply_attrs(g, [new_id], self._resolve_attr_values(attrs))
         return self._with_graph(g)
 
     def alias(self, name: str) -> "Query":
@@ -889,6 +962,15 @@ class Query:
                 }
                 for nid, info in g.data_nodes.items()
             ],
+            "stream_nodes": [
+                {
+                    "id": nid,
+                    "alias": g.aliases_reverse.get(nid, f"v{nid}"),
+                    "source_id": info.source_id,
+                    "filters": safe(dict(info.filters or {})),
+                }
+                for nid, info in g.stream_nodes.items()
+            ],
         }
 
     def resolved_nodes(
@@ -1031,6 +1113,13 @@ class Query:
                 return col_name
             base_alias = self.query_graph.aliases_reverse.get(node_id, col_name)
             return f"{base_alias}_ref"
+        if col_name.startswith("pt"):
+            try:
+                node_id = int(col_name[2:])
+            except ValueError:
+                return col_name
+            base_alias = self.query_graph.aliases_reverse.get(node_id, col_name)
+            return f"{base_alias}_point"
         if not col_name.startswith("v"):
             return col_name
         try:
@@ -1048,7 +1137,7 @@ class Query:
 
 # Append the attribute registry (single source of truth) to every method
 # that accepts attributes, so help(Query.where) etc. always list the current set.
-for _fn in (Query.entity, Query.related, Query.measurement, Query.where, Query.include, Query.drop,
-            Query.with_columns, Query.options, Query.facets):
+for _fn in (Query.entity, Query.related, Query.measurement, Query.streams, Query.where,
+            Query.include, Query.drop, Query.with_columns, Query.options, Query.facets):
     _fn.__doc__ = (_fn.__doc__ or "") + "\n" + attributes_doc(indent=8) + "\n"
 del _fn

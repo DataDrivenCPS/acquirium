@@ -40,9 +40,11 @@ def _parse_sparql_bindings(
 
     qg = query.query_graph
     data_node_ids = set(qg.data_nodes.keys())
+    stream_node_ids = set(getattr(qg, "stream_nodes", {}).keys())
 
-    # Map column index -> node id for v<N>, ext<N>, unit<N>, extunit<N> columns
+    # Map column index -> node id for v<N>, pt<N>, ext<N>, unit<N>, extunit<N>
     col_to_id: dict[int, int] = {}
+    point_col_to_id: dict[int, int] = {}
     ext_ref_col_to_id: dict[int, int] = {}
     unit_col_to_id: dict[int, int] = {}
     extunit_col_to_id: dict[int, int] = {}
@@ -64,6 +66,11 @@ def _parse_sparql_bindings(
                 unit_col_to_id[i] = int(c[4:])
             except ValueError:
                 pass
+        elif c.startswith("pt"):
+            try:
+                point_col_to_id[i] = int(c[2:])
+            except ValueError:
+                pass
         elif c.startswith("v"):
             try:
                 col_to_id[i] = int(c[1:])
@@ -71,27 +78,42 @@ def _parse_sparql_bindings(
                 pass
 
     nid_to_ext_ref_col: dict[int, int] = {v: k for k, v in ext_ref_col_to_id.items()}
+    nid_to_point_col: dict[int, int] = {v: k for k, v in point_col_to_id.items()}
     nid_to_unit_col: dict[int, int] = {v: k for k, v in unit_col_to_id.items()}
     nid_to_extunit_col: dict[int, int] = {v: k for k, v in extunit_col_to_id.items()}
+    nid_to_v_col: dict[int, int] = {v: k for k, v in col_to_id.items()}
 
-    data_col_indices = [i for i, nid in col_to_id.items() if nid in data_node_ids]
-    ref_col_indices = [i for i, nid in ext_ref_col_to_id.items() if nid in data_node_ids]
+    # Where each binding's point and reference come from. A measurement binds a
+    # point in ?v and its reference in ?ext; a stream binds the reference
+    # itself in ?v, with a point only if one happens to link to it.
+    binding_cols: dict[int, tuple[int | None, int]] = {}
+    for nid in data_node_ids:
+        if nid in nid_to_v_col and nid in nid_to_ext_ref_col:
+            binding_cols[nid] = (nid_to_v_col[nid], nid_to_ext_ref_col[nid])
+    for nid in stream_node_ids:
+        if nid in nid_to_v_col:
+            binding_cols[nid] = (nid_to_point_col.get(nid), nid_to_v_col[nid])
 
-    # Identify entity columns (non-data v<N> columns)
+    # Identify entity columns (v<N> columns that are neither kind of binding)
     entity_col_indices: list[tuple[int, int]] = []  # (col_index, node_id)
     for i, nid in col_to_id.items():
-        if nid not in data_node_ids:
+        if nid not in data_node_ids and nid not in stream_node_ids:
             entity_col_indices.append((i, nid))
 
-    # Collect unique data bindings, entity contexts, and unit info
-    point_ref_uris: list[tuple[int, str, str]] = []
-    seen: set[tuple[int, str, str]] = set()
-    entity_context: dict[tuple[int, str, str], list[dict[str, str]]] = {}
-    property_units: dict[tuple[int, str, str], str | None] = {}
-    ref_units: dict[tuple[int, str, str], str | None] = {}
+    # Collect unique bindings, entity contexts, and unit info
+    point_ref_uris: list[tuple[int, str | None, str]] = []
+    seen: set[tuple[int, str | None, str]] = set()
+    entity_context: dict[tuple[int, str | None, str], list[dict[str, str]]] = {}
+    property_units: dict[tuple[int, str | None, str], str | None] = {}
+    ref_units: dict[tuple[int, str | None, str], str | None] = {}
 
-    if not data_col_indices or not ref_col_indices:
+    if not binding_cols:
         return [], {}, {}, {}
+
+    def _cell(row: list[Any], idx: int | None) -> str | None:
+        if idx is None or idx >= len(row) or row[idx] is None:
+            return None
+        return str(row[idx])
 
     for r in rows:
         # Build entity context for this row
@@ -101,36 +123,20 @@ def _parse_sparql_bindings(
                 alias = qg.aliases_reverse.get(nid, str(nid))
                 row_entities[f"entity__{alias}"] = str(r[col_idx])
 
-        for i in data_col_indices:
-            nid = col_to_id[i]
-            uri = r[i]
-            if uri is None:
+        for nid, (point_col, ref_col) in binding_cols.items():
+            # The reference is what data is stored against, so it is required;
+            # the point is not, which is what lets a model-less stream bind.
+            ref_uri_s = _cell(r, ref_col)
+            if ref_uri_s is None:
                 continue
-            uri_s = str(uri)
-            if nid not in nid_to_ext_ref_col:
-                continue
-            ref_col_idx = nid_to_ext_ref_col[nid]
-            if ref_col_idx >= len(r):
-                continue
-            ref_uri = r[ref_col_idx]
-            if ref_uri is None:
-                continue
-            ref_uri_s = str(ref_uri)
-            key = (nid, uri_s, ref_uri_s)
+            point_uri_s = _cell(r, point_col)
+            key = (nid, point_uri_s, ref_uri_s)
             if key not in seen:
                 seen.add(key)
                 point_ref_uris.append(key)
                 # Extract unit URIs (first non-None wins for each key)
-                unit_col = nid_to_unit_col.get(nid)
-                if unit_col is not None and unit_col < len(r) and r[unit_col] is not None:
-                    property_units[key] = str(r[unit_col])
-                else:
-                    property_units[key] = None
-                extunit_col = nid_to_extunit_col.get(nid)
-                if extunit_col is not None and extunit_col < len(r) and r[extunit_col] is not None:
-                    ref_units[key] = str(r[extunit_col])
-                else:
-                    ref_units[key] = None
+                property_units[key] = _cell(r, nid_to_unit_col.get(nid))
+                ref_units[key] = _cell(r, nid_to_extunit_col.get(nid))
             entity_context.setdefault(key, []).append(row_entities)
 
     return point_ref_uris, entity_context, property_units, ref_units
@@ -211,9 +217,14 @@ def _pivot_split_values(tall: pl.DataFrame, pivot_key: str) -> pl.DataFrame:
 
 @dataclass(frozen=True)
 class BindingInfo:
-    """Lightweight metadata for a single (nid, point_uri, ref_uri) data binding."""
+    """Lightweight metadata for a single (nid, point_uri, ref_uri) data binding.
+
+    ``point_uri`` is ``None`` for a stream matched by ``streams()`` that no
+    point links to — the usual case for data ingested without a model. Use
+    :attr:`series_uri` wherever a binding needs a stable identity.
+    """
     nid: int
-    point_uri: str
+    point_uri: str | None
     ref_uri: str
     alias: str
     entity_contexts: list[dict[str, str]]
@@ -222,6 +233,17 @@ class BindingInfo:
     latest: datetime | None = None
     property_unit: str | None = None    # unit URI from qudt:hasUnit on the property
     ref_unit: str | None = None         # unit URI from qudt:hasUnit on the ext reference
+
+    @property
+    def series_uri(self) -> str:
+        """Identity for deduplication and pivoting.
+
+        The point when there is one, so several references on the same point
+        stay distinguishable from each other only by alias — matching how
+        measurement-based queries have always behaved — and the reference
+        otherwise, which keeps point-less streams from collapsing into one.
+        """
+        return self.point_uri or self.ref_uri
 
 
 @dataclass
@@ -271,6 +293,7 @@ class DataObject:
                 schema={
                     "data_alias": pl.Utf8,
                     "point_uri": pl.Utf8,
+                    "series_key": pl.Utf8,
                     "ref_uri": pl.Utf8,
                     "time": pl.Datetime(time_zone="UTC"),
                     "value_numeric": pl.Float64,
@@ -295,7 +318,7 @@ class DataObject:
     ) -> DataObject:
         qg = query.query_graph
 
-        if not getattr(qg, "data_nodes", None):
+        if not getattr(qg, "data_nodes", None) and not getattr(qg, "stream_nodes", None):
             return cls._empty(qg, cast_value=cast_value, client=query.client)
 
         point_ref_uris, entity_context, prop_units, ext_ref_units = _parse_sparql_bindings(
@@ -410,6 +433,7 @@ class DataObject:
                 schema={
                     "data_alias": pl.Utf8,
                     "point_uri": pl.Utf8,
+                    "series_key": pl.Utf8,
                     "ref_uri": pl.Utf8,
                     "time": pl.Datetime(time_zone="UTC"),
                     "value_numeric": pl.Float64,
@@ -463,7 +487,10 @@ class DataObject:
                     logger.warning("DataObject: casting value to int failed for ref %s", binding.ref_uri)
             df = df.with_columns(
                 pl.lit(binding.alias).alias("data_alias"),
-                pl.lit(binding.point_uri).alias("point_uri"),
+                # Explicit dtype: a bare pl.lit(None) yields a Null column and
+                # breaks the concat schema when other bindings have a point.
+                pl.lit(binding.point_uri, dtype=pl.Utf8).alias("point_uri"),
+                pl.lit(binding.series_uri, dtype=pl.Utf8).alias("series_key"),
             )
             # Drop the ref_uri from timeseries (use the one from SPARQL)
             df = df.drop("ref_uri")
@@ -521,6 +548,7 @@ class DataObject:
             schema: dict[str, Any] = {
                 "data_alias": pl.Utf8,
                 "point_uri": pl.Utf8,
+                "series_key": pl.Utf8,
                 "ref_uri": pl.Utf8,
                 "time": pl.Datetime(time_zone="UTC"),
                 "value_numeric": pl.Float64,
@@ -558,7 +586,7 @@ class DataObject:
                 )
 
         # Reorder columns for consistency
-        base_cols = ["data_alias", "point_uri", "ref_uri"] + self._entity_columns + ["time", "value_numeric", "value_text"]
+        base_cols = ["data_alias", "point_uri", "series_key", "ref_uri"] + self._entity_columns + ["time", "value_numeric", "value_text"]
         existing = [c for c in base_cols if c in tall.columns]
         self._tall = tall.select(existing)
         self._materialized = True
@@ -570,28 +598,29 @@ class DataObject:
     def __getitem__(self, alias: str) -> pl.DataFrame:
         """Return time-series for a data alias.
 
-        Multiple ref_uris that share the same point_uri are combined
-        (first-wins). If the alias resolves to a single point_uri the result
-        is ``[time, value]``; if several point_uris share the alias the
-        result is ``[time, value, point_uri]`` so the caller can
-        disambiguate.
+        Series sharing an identity are combined (first-wins). If the alias
+        resolves to a single series the result is ``[time, value]``; if
+        several share the alias the result is ``[time, value, point_uri]`` so
+        the caller can disambiguate — carrying the reference URI instead for
+        streams that no point links to.
         """
         self._materialize()
         subset = self._tall.filter(pl.col("data_alias") == alias)
         if subset.is_empty():
             return pl.DataFrame(schema={"time": pl.Datetime(time_zone="UTC"), "value": pl.Float64})
 
-        # Combine ref_uris that share the same (point_uri, time). maintain_order
-        # is what makes keep="first" mean the first row of _tall; without it
+        # Combine series sharing the same (identity, time). maintain_order is
+        # what makes keep="first" mean the first row of _tall; without it
         # polars picks an arbitrary duplicate and shuffles the surviving rows.
-        subset = subset.unique(subset=["point_uri", "time"], keep="first", maintain_order=True)
+        subset = subset.unique(subset=["series_key", "time"], keep="first", maintain_order=True)
         subset = _restore_single_value_column(subset)
-        n_points = subset["point_uri"].n_unique()
-        if n_points <= 1:
+        if subset["series_key"].n_unique() <= 1:
             return subset.select("time", "value").sort("time")
-        # (time, point_uri) is unique after the dedup above, so sorting on both
+        # (time, series_key) is unique after the dedup above, so sorting on both
         # gives a total order — repeated access returns identical frames.
-        return subset.select("time", "value", "point_uri").sort(["time", "point_uri"])
+        return (subset.select("time", "value",
+                              pl.col("series_key").alias("point_uri"))
+                      .sort(["time", "point_uri"]))
 
     # ------------------------------------------------------------------
     # Grouping
@@ -691,7 +720,7 @@ class DataObject:
 
         # Combine ref_uris sharing the same (data_alias, point_uri, time):
         # we want one row per point_uri at each timestamp.
-        tall = tall.unique(subset=["data_alias", "point_uri", "time"], keep="first")
+        tall = tall.unique(subset=["data_alias", "series_key", "time"], keep="first")
 
         # Count distinct point_uris per alias from the bindings (i.e. the
         # query's metadata view, not just whichever bindings produced rows).
@@ -699,7 +728,7 @@ class DataObject:
         # data within the requested window.
         points_per_alias: dict[str, set[str]] = {}
         for b in self._bindings:
-            points_per_alias.setdefault(b.alias, set()).add(b.point_uri)
+            points_per_alias.setdefault(b.alias, set()).add(b.series_uri)
 
         def _pivot_key(alias: str, point_uri: str) -> str:
             pts = points_per_alias.get(alias, set())
@@ -713,9 +742,9 @@ class DataObject:
 
 
         tall = tall.with_columns(
-            pl.struct(["data_alias", "point_uri"])
+            pl.struct(["data_alias", "series_key"])
             .map_elements(
-                lambda s: _pivot_key(s["data_alias"], s["point_uri"]),
+                lambda s: _pivot_key(s["data_alias"], s["series_key"]),
                 return_dtype=pl.Utf8,
             )
             .alias("_pivot_key")
@@ -738,13 +767,13 @@ class DataObject:
 
         # Combine ref_uris sharing the same (data_alias, point_uri, time).
         tall = self._tall.clone().unique(
-            subset=["data_alias", "point_uri", "time"], keep="first"
+            subset=["data_alias", "series_key", "time"], keep="first"
         )
 
         points_per_alias: dict[str, set[str]] = {}
         auto_aliases: set[str] = set()
         for b in self._bindings:
-            points_per_alias.setdefault(b.alias, set()).add(b.point_uri)
+            points_per_alias.setdefault(b.alias, set()).add(b.series_uri)
             if b.alias == str(b.nid):
                 auto_aliases.add(b.alias)
 
@@ -756,9 +785,9 @@ class DataObject:
             return alias
 
         tall = tall.with_columns(
-            pl.struct(["data_alias", "point_uri"])
+            pl.struct(["data_alias", "series_key"])
             .map_elements(
-                lambda s: _label(s["data_alias"], s["point_uri"]),
+                lambda s: _label(s["data_alias"], s["series_key"]),
                 return_dtype=pl.Utf8,
             )
             .alias("_label")
@@ -767,7 +796,7 @@ class DataObject:
         if shape == "narrow":
             out = tall.with_columns(
                 pl.col("_label").alias("data_alias"),
-                pl.col("point_uri").map_elements(_compact, return_dtype=pl.Utf8).alias("point_id"),
+                pl.col("series_key").map_elements(_compact, return_dtype=pl.Utf8).alias("point_id"),
             )
             cols = ["data_alias", "point_id", "time", "value_numeric", "value_text"]
             if include_ref:
@@ -785,13 +814,17 @@ class DataObject:
     # ------------------------------------------------------------------
 
     def iter(self, alias: str) -> Iterator[tuple[str, pl.DataFrame]]:
-        """Iterate ``(point_uri, DataFrame[time, value])`` pairs for a data alias."""
+        """Iterate ``(series, DataFrame[time, value])`` pairs for a data alias.
+
+        The series identifier is the point URI, or the reference URI for a
+        stream no point links to.
+        """
         self._materialize()
         subset = self._tall.filter(pl.col("data_alias") == alias)
-        for point_uri in subset["point_uri"].unique().sort().to_list():
-            point_df = subset.filter(pl.col("point_uri") == point_uri)
-            point_df = _restore_single_value_column(point_df)
-            yield point_uri, point_df.select("time", "value").sort("time")
+        for series in subset["series_key"].unique().sort().to_list():
+            series_df = subset.filter(pl.col("series_key") == series)
+            series_df = _restore_single_value_column(series_df)
+            yield series, series_df.select("time", "value").sort("time")
 
     # ------------------------------------------------------------------
     # Metadata & introspection (no materialization needed)
