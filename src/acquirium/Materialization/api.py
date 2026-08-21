@@ -61,6 +61,16 @@ def experiment(*, name: str | None = None, parameters_schema: dict[str, Any] | N
     return decorate
 
 
+def service(*, name: str | None = None, parameters_schema: dict[str, Any] | None = None) -> Callable[[type], type]:
+    """Declare a persistent service class with an immutable definition bundle."""
+    def decorate(target: type) -> type:
+        definition = definition_for(target, name=name or target.__name__, kind="service",
+                                    parameters_schema=parameters_schema or {})
+        setattr(target, "__acquirium_definition__", definition)
+        return target
+    return decorate
+
+
 def stateful(*, name: str | None = None, inputs: object | None = None, bind: object | None = None,
              outputs: object | None = None, impact: ImpactPolicy | None = None,
              parameters_schema: dict[str, Any] | None = None) -> Callable[[type], type]:
