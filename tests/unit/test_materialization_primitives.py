@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import threading
 from acquirium.Materialization.bindings import BindingSpec, diff_bindings, validate_binding_topology
 from acquirium.Materialization.impact import TimeRange, coalesce_ranges, lookback, window
 from acquirium.Storage.materialization.ids import normalize_change_ranges
@@ -705,3 +706,133 @@ def test_definition_cache_reuses_digest_and_reloads_after_clear():
     cache.clear()
     cache.load("digest", lambda: calls.append(3) or object())
     assert calls == [1, 3]
+
+
+def test_long_backfill_compute_does_not_hold_the_canonical_write_lock(tmp_path):
+    """A singleton publication can commit while a materialization computes."""
+    store = DuckDBStore(tmp_path / "nonblocking-backfill.duckdb", recreate=True)
+    entered = threading.Event()
+    release = threading.Event()
+    completed = threading.Event()
+    errors = []
+    try:
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        continuous = ContinuousDuckDB(store)
+        row_count = 10_000
+        continuous.publish(PublicationRequest("backfill-input", pa.table({
+            "operation": ["upsert"] * row_count,
+            "ref_uri": ["urn:backfill:in"] * row_count,
+            "ts": [start + timedelta(microseconds=index) for index in range(row_count)],
+            "numeric_value": [1.0] * row_count,
+            "text_value": [None] * row_count,
+        }, schema=MUTATION_SCHEMA)))
+        runtime = MaterializationDuckDB(store)
+        definition = definition_for(abs, inputs="in", outputs="out", impact=pointwise())
+        definition_id = runtime.register_definition(definition)
+        generation = runtime.deploy("backfill", definition_id)
+        binding = BindingSpec("one", {"input": ("urn:backfill:in",)}, {"output": ("urn:backfill:out",)})
+        runtime.persist_bindings("backfill", generation, 1, definition_id, (binding,))
+        MaterializationScheduler(runtime).create_plan_for_binding(
+            binding_id=binding.binding_id(definition_id), generation=generation, graph_revision=1,
+            progress={"urn:backfill:in": 0}, heads={"urn:backfill:in": 1}, impact=pointwise(),
+            reason={}, maximum_partition_duration=timedelta(minutes=1),
+        )
+
+        def compute(snapshot, outputs):
+            entered.set()
+            assert release.wait(timeout=5)
+            return pa.table({"ref_uri": [outputs[0]], "ts": [start], "numeric_value": [1.0], "text_value": [None]})
+
+        def run_backfill():
+            try:
+                MaterializationScheduler(runtime).run_once("backfill-worker", compute)
+            except Exception as error:  # surfaced by the main test thread
+                errors.append(error)
+            finally:
+                completed.set()
+
+        worker = threading.Thread(target=run_backfill)
+        worker.start()
+        assert entered.wait(timeout=5)
+        # This would block until ``release`` if Python compute held the write lock.
+        receipt = continuous.publish(PublicationRequest("singleton-ingest", pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:singleton", "ts": start,
+             "numeric_value": 2.0, "text_value": None},
+        ], schema=MUTATION_SCHEMA)))
+        assert receipt.row_count == 1
+        assert not completed.is_set()
+        release.set()
+        worker.join(timeout=5)
+        assert completed.is_set() and not errors
+    finally:
+        release.set()
+        store.close()
+
+
+def test_two_hop_registered_transformations_converge_from_durable_progress(tmp_path):
+    """A derived output becomes input to the next active deployment."""
+    store = DuckDBStore(tmp_path / "two-hop.duckdb", recreate=True)
+    pool = LocalExecutorPool(workers=1)
+    try:
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        continuous = ContinuousDuckDB(store)
+        continuous.publish(PublicationRequest("two-hop-source", pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:hop:source", "ts": start,
+             "numeric_value": -7.0, "text_value": None},
+        ], schema=MUTATION_SCHEMA)))
+        runtime = MaterializationDuckDB(store)
+        scheduler = MaterializationScheduler(runtime)
+        first = definition_for(abs, name="first-hop", inputs="in", outputs={"mode": "per_input"}, impact=pointwise())
+        first_id = runtime.register_definition(first)
+        first_generation = runtime.deploy("first-hop", first_id)
+        first_binding = BindingSpec("first", {"input": ("urn:hop:source",)}, {"output": ("urn:hop:middle",)})
+        runtime.persist_bindings("first-hop", first_generation, 1, first_id, (first_binding,))
+        runtime.activate_bindings("first-hop", first_generation)
+        runtime.set_deployment_status("first-hop", "active")
+        scheduler.create_plan_for_binding(
+            binding_id=first_binding.binding_id(first_id), generation=first_generation, graph_revision=1,
+            progress={"urn:hop:source": 0}, heads={"urn:hop:source": 1}, impact=pointwise(),
+            reason={}, maximum_partition_duration=timedelta(minutes=1),
+        )
+        assert scheduler.run_next_registered("first-worker", executor=pool)
+
+        second = definition_for(abs, name="second-hop", inputs="in", outputs={"mode": "per_input"}, impact=pointwise())
+        second_id = runtime.register_definition(second)
+        second_generation = runtime.deploy("second-hop", second_id)
+        second_binding = BindingSpec("second", {"input": ("urn:hop:middle",)}, {"output": ("urn:hop:final",)})
+        runtime.persist_bindings("second-hop", second_generation, 1, second_id, (second_binding,))
+        runtime.activate_bindings("second-hop", second_generation)
+        runtime.set_deployment_status("second-hop", "active")
+        assert scheduler.discover_all()
+        assert scheduler.run_next_registered("second-worker", executor=pool)
+        assert [batch.column("value").to_pylist() for batch in store.timeseries("urn:hop:final")] == [[7.0]]
+    finally:
+        pool.close()
+        store.close()
+
+
+def test_thousand_idle_bindings_share_a_bounded_executor_pool(tmp_path):
+    """Logical bindings are durable rows, not executor workers or Ray actors."""
+    store = DuckDBStore(tmp_path / "thousand-bindings.duckdb", recreate=True)
+    pool = LocalExecutorPool(workers=2)
+    try:
+        runtime = MaterializationDuckDB(store)
+        definition = definition_for(abs, name="thousand", inputs="in", outputs="out", impact=pointwise())
+        definition_id = runtime.register_definition(definition)
+        generation = runtime.deploy("thousand", definition_id)
+        bindings = tuple(
+            BindingSpec(str(index), {"input": (f"urn:thousand:in:{index}",)},
+                        {"output": (f"urn:thousand:out:{index}",)})
+            for index in range(1_000)
+        )
+        runtime.persist_bindings("thousand", generation, 1, definition_id, bindings)
+        runtime.activate_bindings("thousand", generation)
+        with store._own_conn() as conn:
+            assert conn.execute("SELECT count(*) FROM materialization_bindings").fetchone() == (1_000,)
+        # ThreadPoolExecutor lazily creates workers; idle bindings create none.
+        assert not [thread for thread in threading.enumerate()
+                    if thread.name.startswith("acquirium-materialization")]
+        assert pool._executor._max_workers == 2
+    finally:
+        pool.close()
+        store.close()
