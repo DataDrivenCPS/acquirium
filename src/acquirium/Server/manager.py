@@ -681,18 +681,20 @@ class Manager:
 
     def run_materialization_once(self, owner: str = "manager") -> bool:
         """Execute one durable materialization partition, if any is pending."""
-        return self.materialization_scheduler.run_next_registered(
+        ran_work = self.materialization_scheduler.run_next_registered(
             owner, executor=self.materialization_executor
         )
+        self.materialization_scheduler.discover_all()
+        activated = self.materialization.activate_ready_bindings()
+        return ran_work or bool(activated)
 
     def run_rebind_once(self, owner: str = "manager") -> bool:
         """Resolve one published-graph rebind and create its manifest plans."""
         result = self.materialization_rebinder.run_once(owner)
         if result is None:
             return False
-        self.materialization_scheduler.discover_and_plan(
-            impact=result.impact, deployment_name=result.deployment_name
-        )
+        self.materialization_scheduler.bootstrap_staged(deployment_name=result.deployment_name,
+            generation=result.generation, graph_revision=result.graph_revision, impact=result.impact)
         return True
     
     def timeseries_batch(

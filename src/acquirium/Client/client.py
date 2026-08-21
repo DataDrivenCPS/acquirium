@@ -560,6 +560,11 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
+    def reconcile_transformation(self, name: str) -> dict:
+        response = requests.post(f"{self.base_url}/transformations/{name}/reconcile")
+        _raise_for_status(response)
+        return response.json()
+
     def delete_app(self, app_id: str) -> dict:
         url = f"{self.base_url}/apps/delete"
         response = requests.post(url, json={"app_id": app_id})

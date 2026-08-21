@@ -620,6 +620,19 @@ def rebind_transformation(name: str) -> dict[str, Any]:
     return {"ok": True, "name": name, "graph_revision": revision}
 
 
+@app.post("/transformations/{name}/reconcile")
+def reconcile_transformation(name: str) -> dict[str, Any]:
+    """Force a fresh staged topology resolution against the published graph."""
+    deployment = app.state.manager.materialization.deployment_status(name)
+    if deployment is None:
+        raise HTTPException(status_code=404, detail=f"unknown transformation {name!r}")
+    revision = int(app.state.manager.graph_store.graph_status()["published_version"])
+    if revision < 0:
+        raise HTTPException(status_code=409, detail="no published query graph is available")
+    app.state.manager.materialization.request_rebind(name, revision, force=True)
+    return {"ok": True, "name": name, "graph_revision": revision, "reconcile": True}
+
+
 @app.get("/transformations")
 def transformations() -> dict[str, Any]:
     return {"ok": True, "transformations": app.state.manager.materialization.deployments()}

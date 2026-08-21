@@ -36,23 +36,29 @@ def _binding(value: Mapping[str, object], *, default_key: str = "default") -> Bi
 
 
 def _selector_refs(selector: Mapping[str, object], graph: object) -> tuple[str, ...]:
+    return tuple(ref for _, ref in _selector_rows(selector, graph, entity_alias="ref_uri"))
+
+
+def _selector_rows(selector: Mapping[str, object], graph: object, *, entity_alias: str) -> tuple[tuple[str, str], ...]:
     criteria = selector.get("criteria", selector)
     if not isinstance(criteria, Mapping):
         raise ValueError("selector criteria must be a mapping")
     direct = criteria.get("ref_uris", criteria.get("ref_uri"))
     if isinstance(direct, str):
-        return (direct,)
+        return ((direct, direct),)
     if isinstance(direct, (list, tuple)) and all(isinstance(ref, str) for ref in direct):
-        return tuple(sorted(direct))
+        return tuple((ref, ref) for ref in sorted(direct))
     query = criteria.get("sparql")
     if not isinstance(query, str):
         raise ValueError("selector requires ref_uri(s) or a SPARQL query selecting ?ref_uri")
     result = graph.sparql_query(query, include_dependencies=True, wait_for_fresh=True)
     try:
-        column = result["columns"].index("ref_uri")
+        ref_column = result["columns"].index("ref_uri")
+        entity_column = result["columns"].index(entity_alias)
     except ValueError as error:
-        raise ValueError("selector SPARQL must select a ?ref_uri column") from error
-    return tuple(sorted(str(row[column]) for row in result["rows"] if row[column] is not None))
+        raise ValueError(f"selector SPARQL must select ?ref_uri and ?{entity_alias}") from error
+    return tuple(sorted((str(row[entity_column]), str(row[ref_column])) for row in result["rows"]
+                        if row[entity_column] is not None and row[ref_column] is not None))
 
 
 def _per_input(selector: Mapping[str, object], outputs: Mapping[str, object], graph: object) -> tuple[BindingSpec, ...]:
@@ -64,8 +70,29 @@ def _per_input(selector: Mapping[str, object], outputs: Mapping[str, object], gr
     for ref in _selector_refs(selector, graph):
         token = sha256(ref.encode()).hexdigest()[:20]
         bindings.append(BindingSpec(ref, {"input": (ref,)}, {"output": (f"{prefix}:{name}:{token}",)}, {"input_ref": ref}))
-    if not bindings:
-        raise ValueError("selector matched no stream references")
+    return tuple(bindings)
+
+
+def _by_entity(selectors: Mapping[str, object], outputs: Mapping[str, object], graph: object,
+               *, entity_alias: str) -> tuple[BindingSpec, ...]:
+    name = outputs.get("name")
+    if not isinstance(name, str) or not name:
+        raise ValueError("by_entity outputs require a non-empty name")
+    prefix = str(outputs.get("prefix", "urn:acquirium:derived"))
+    roles: dict[str, dict[str, list[str]]] = {}
+    for role, selector in selectors.items():
+        if not isinstance(selector, Mapping):
+            raise ValueError(f"selector for role {role!r} must be a mapping")
+        grouped: dict[str, list[str]] = {}
+        for entity, ref in _selector_rows(selector, graph, entity_alias=entity_alias):
+            grouped.setdefault(entity, []).append(ref)
+        roles[str(role)] = grouped
+    entities = set.intersection(*(set(values) for values in roles.values())) if roles else set()
+    bindings = []
+    for entity in sorted(entities):
+        token = sha256(entity.encode()).hexdigest()[:20]
+        bindings.append(BindingSpec(entity, {role: tuple(sorted(values[entity])) for role, values in roles.items()},
+            {"output": (f"{prefix}:{name}:{token}",)}, {entity_alias: entity}))
     return tuple(bindings)
 
 
@@ -80,6 +107,9 @@ def resolve_bindings(spec: Mapping[str, object], graph: object) -> tuple[Binding
     """
     declaration = spec.get("bind")
     resolved: Iterable[BindingSpec | Mapping[str, object]]
+    if isinstance(declaration, Mapping) and isinstance(declaration.get("selectors"), Mapping) and isinstance(spec.get("outputs"), Mapping):
+        return _by_entity(declaration["selectors"], spec["outputs"], graph,
+                          entity_alias=str(declaration.get("entity_alias", "entity")))
     if isinstance(declaration, Mapping) and "selector" in declaration and isinstance(spec.get("outputs"), Mapping):
         return _per_input(declaration["selector"], spec["outputs"], graph)
     if declaration is None and isinstance(spec.get("inputs"), Mapping) and "criteria" in spec["inputs"] and isinstance(spec.get("outputs"), Mapping):
@@ -88,6 +118,8 @@ def resolve_bindings(spec: Mapping[str, object], graph: object) -> tuple[Binding
         resolved = load_entrypoint(declaration["resolver"])(graph)
     elif isinstance(declaration, Mapping) and isinstance(declaration.get("bindings"), list):
         resolved = declaration["bindings"]
+    elif isinstance(declaration, Mapping) and "inputs" in declaration and isinstance(spec.get("outputs"), Mapping):
+        resolved = ({"inputs": declaration["inputs"], "outputs": spec["outputs"]},)
     elif isinstance(declaration, Mapping) and "inputs" in declaration and "outputs" in declaration:
         resolved = (declaration,)
     elif declaration is None:
@@ -97,7 +129,7 @@ def resolve_bindings(spec: Mapping[str, object], graph: object) -> tuple[Binding
     else:
         raise ValueError("bind must declare explicit bindings or a trusted resolver entrypoint")
     bindings = tuple(item if isinstance(item, BindingSpec) else _binding(item) for item in resolved)
-    if not bindings:
+    if not bindings and not (isinstance(declaration, Mapping) and "selector" in declaration):
         raise ValueError("binding resolver returned no bindings")
     return bindings
 

@@ -105,6 +105,9 @@ def test_newer_rebind_supersedes_old_work_and_failure_preserves_staging(tmp_path
         assert rows == [(1, "superseded"), (2, "failed")]
         runtime.request_rebind("deployment", 2)
         assert runtime.lease_rebind("retry") == ("deployment", 2)
+        runtime.finish_rebind("deployment", 2)
+        runtime.request_rebind("deployment", 2, force=True)
+        assert runtime.lease_rebind("forced") == ("deployment", 2)
     finally:
         store.close()
 
@@ -318,6 +321,31 @@ def test_rebind_worker_persists_direct_binding_and_plans_current_lag(tmp_path):
     finally:
         store.close()
 
+def test_staged_bootstrap_plans_all_retained_input_history(tmp_path):
+    store = DuckDBStore(tmp_path / "bootstrap-history.duckdb", recreate=True)
+    try:
+        start = datetime(2020, 1, 1, tzinfo=UTC)
+        ContinuousDuckDB(store).publish(PublicationRequest("history", pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:history", "ts": start, "numeric_value": 1.0, "text_value": None},
+            {"operation": "upsert", "ref_uri": "urn:history", "ts": start + timedelta(days=365), "numeric_value": 2.0, "text_value": None},
+        ], schema=MUTATION_SCHEMA)))
+        runtime = MaterializationDuckDB(store)
+        definition = definition_for(abs, inputs="in", outputs="out", impact=pointwise())
+        definition_id = runtime.register_definition(definition); generation = runtime.deploy("history", definition_id)
+        binding = BindingSpec("one", {"input": ("urn:history",)}, {"output": ("urn:derived",)})
+        generation = runtime.stage_bindings("history", 1, definition_id, (binding,))
+        plans = MaterializationScheduler(runtime).bootstrap_staged(deployment_name="history", generation=generation, graph_revision=1, impact=pointwise(), maximum_partition_duration=timedelta(days=400))
+        assert len(plans) == 1
+        with store._own_conn() as conn:
+            start_ts, end_ts = conn.execute("SELECT start_ts, end_ts FROM materialization_plan_partitions").fetchone()
+            reason = conn.execute("SELECT reason_json FROM materialization_plans").fetchone()[0]
+        assert start_ts.replace(tzinfo=UTC) == start
+        assert end_ts.replace(tzinfo=UTC) == start + timedelta(days=365, microseconds=1)
+        import json
+        assert json.loads(reason)["retained_from"] == start.isoformat()
+    finally:
+        store.close()
+
 def test_per_input_selector_expands_published_graph_rows_deterministically():
     class Graph:
         def sparql_query(self, query, **kwargs):
@@ -329,6 +357,27 @@ def test_per_input_selector_expands_published_graph_rows_deterministically():
     }, Graph())
     assert [binding.logical_key for binding in bindings] == ["urn:a", "urn:b"]
     assert all(binding.outputs["output"][0].startswith("urn:acquirium:derived:celsius:") for binding in bindings)
+
+def test_by_entity_selector_joins_roles_on_the_published_entity_alias():
+    class Graph:
+        def sparql_query(self, query, **kwargs):
+            rows = {
+                "temperature": [["urn:ahu-1", "urn:temp-1"], ["urn:ahu-2", "urn:temp-2"]],
+                "humidity": [["urn:ahu-1", "urn:humidity-1"], ["urn:ahu-3", "urn:humidity-3"]],
+            }
+            return {"columns": ["entity", "ref_uri"], "rows": rows[query]}
+    bindings = resolve_bindings({"bind": {"entity_alias": "entity", "selectors": {
+        "temperature": {"criteria": {"sparql": "temperature"}},
+        "humidity": {"criteria": {"sparql": "humidity"}},
+    }}, "outputs": {"name": "comfort"}}, Graph())
+    assert len(bindings) == 1
+    assert bindings[0].logical_key == "urn:ahu-1"
+    assert bindings[0].inputs == {"temperature": ("urn:temp-1",), "humidity": ("urn:humidity-1",)}
+
+def test_single_binding_declaration_uses_its_explicit_input_roles():
+    bindings = resolve_bindings({"bind": {"inputs": {"temperature": "urn:temp", "humidity": "urn:humidity"}},
+                                 "outputs": {"output": "urn:comfort"}}, object())
+    assert bindings == (BindingSpec("default", {"temperature": ("urn:temp",), "humidity": ("urn:humidity",)}, {"output": ("urn:comfort",)}),)
 
 def test_binding_activation_is_atomic_and_rejects_active_output_conflicts(tmp_path):
     store = DuckDBStore(tmp_path / "activation.duckdb", recreate=True)
@@ -367,6 +416,84 @@ def test_staged_generation_keeps_active_pointer_until_atomic_activation(tmp_path
     finally:
         store.close()
 
+def test_pending_staged_plan_does_not_replace_active_topology(tmp_path):
+    store = DuckDBStore(tmp_path / "pending-staged-topology.duckdb", recreate=True)
+    try:
+        runtime = MaterializationDuckDB(store)
+        definition = definition_for(abs, inputs="urn:in", outputs="urn:out", impact=pointwise())
+        definition_id = runtime.register_definition(definition); active = runtime.deploy("convert", definition_id)
+        old = BindingSpec("old", {"input": ("urn:old",)}, {"output": ("urn:old-out",)})
+        runtime.persist_bindings("convert", active, 1, definition_id, (old,))
+        runtime.activate_bindings("convert", active)
+        staged = runtime.stage_bindings("convert", 2, definition_id, (BindingSpec("new", {"input": ("urn:new",)}, {"output": ("urn:new-out",)}),))
+        runtime.set_deployment_status("convert", "active")
+        runtime.create_plan(binding_id=BindingSpec("new", {"input": ("urn:new",)}, {"output": ("urn:new-out",)}).binding_id(definition_id), generation=staged, graph_revision=2,
+            input_vector={}, ranges=(TimeRange(datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 1, 0, 1, tzinfo=UTC)),), reason={}, maximum_partition_duration=timedelta(minutes=1))
+        assert runtime.activate_ready_bindings() == ()
+        with store._own_conn() as conn:
+            assert conn.execute("SELECT generation FROM materialization_deployments WHERE name = 'convert'").fetchone() == (active,)
+            assert conn.execute("SELECT status FROM materialization_bindings WHERE logical_key = 'old'").fetchone() == ("active",)
+    finally:
+        store.close()
+
+def test_activation_retracts_outputs_owned_only_by_retired_bindings(tmp_path):
+    store = DuckDBStore(tmp_path / "retire-output.duckdb", recreate=True)
+    try:
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        runtime = MaterializationDuckDB(store)
+        definition = definition_for(abs, inputs="urn:in", outputs="urn:out", impact=pointwise())
+        definition_id = runtime.register_definition(definition); generation = runtime.deploy("convert", definition_id)
+        runtime.persist_bindings("convert", generation, 1, definition_id, (BindingSpec("old", {"input": ("urn:in",)}, {"output": ("urn:retired",)}),))
+        runtime.activate_bindings("convert", generation)
+        ContinuousDuckDB(store).publish(PublicationRequest("old-output", pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:retired", "ts": start, "numeric_value": 1.0, "text_value": None},
+        ], schema=MUTATION_SCHEMA)))
+        runtime.stage_bindings("convert", 2, definition_id, (BindingSpec("new", {"input": ("urn:in",)}, {"output": ("urn:replacement",)}),))
+        runtime.set_deployment_status("convert", "active")
+        assert runtime.activate_ready_bindings() == ("convert",)
+        assert list(store.timeseries("urn:retired")) == []
+    finally:
+        store.close()
+
+def test_empty_selector_result_is_a_valid_retiring_topology(tmp_path):
+    class Graph:
+        def sparql_query(self, *args, **kwargs):
+            return {"columns": ["ref_uri"], "rows": []}
+    assert resolve_bindings({"bind": {"selector": {"criteria": {"sparql": "SELECT ?ref_uri WHERE {}"}}},
+                             "outputs": {"mode": "per_input", "name": "derived"}}, Graph()) == ()
+    store = DuckDBStore(tmp_path / "empty-topology.duckdb", recreate=True)
+    try:
+        runtime = MaterializationDuckDB(store)
+        definition = definition_for(abs, inputs="urn:in", outputs="urn:out", impact=pointwise())
+        definition_id = runtime.register_definition(definition); generation = runtime.deploy("convert", definition_id)
+        runtime.persist_bindings("convert", generation, 1, definition_id, (BindingSpec("old", {"input": ("urn:in",)}, {"output": ("urn:out",)}),))
+        runtime.activate_bindings("convert", generation)
+        staged = runtime.stage_bindings("convert", 2, definition_id, ())
+        runtime.set_deployment_status("convert", "active")
+        assert runtime.activate_ready_bindings() == ("convert",)
+        with store._own_conn() as conn:
+            assert conn.execute("SELECT status FROM materialization_bindings WHERE logical_key = 'old'").fetchone() == ("retiring",)
+    finally:
+        store.close()
+
+def test_code_replacement_stages_new_definition_without_moving_active_pointer(tmp_path):
+    store = DuckDBStore(tmp_path / "code-replacement.duckdb", recreate=True)
+    try:
+        runtime = MaterializationDuckDB(store)
+        first = definition_for(abs, name="convert", inputs="urn:in", outputs="urn:out", impact=pointwise())
+        first_id = runtime.register_definition(first); active = runtime.deploy("convert", first_id)
+        runtime.persist_bindings("convert", active, 1, first_id, (BindingSpec("old", {"input": ("urn:in",)}, {"output": ("urn:out",)}),))
+        runtime.activate_bindings("convert", active)
+        second = definition_for(round, name="convert", inputs="urn:in", outputs="urn:out", impact=pointwise())
+        second_id = runtime.register_definition(second); staged = runtime.deploy("convert", second_id)
+        _, partitions = runtime.create_plan(binding_id=BindingSpec("old", {"input": ("urn:in",)}, {"output": ("urn:out",)}).binding_id(first_id), generation=active,
+            graph_revision=1, input_vector={}, ranges=(TimeRange(datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 1, 0, 1, tzinfo=UTC)),), reason={}, maximum_partition_duration=timedelta(minutes=1))
+        assert runtime.partition_definition(partitions[0].partition_id)["entrypoint"] == "builtins:abs"
+        with store._own_conn() as conn:
+            assert conn.execute("SELECT definition_id, generation, staged_definition_id, staged_generation FROM materialization_deployments WHERE name = 'convert'").fetchone() == (first_id, active, second_id, staged)
+    finally:
+        store.close()
+
 def test_staging_execution_writes_isolated_rows_not_canonical_output(tmp_path):
     store = DuckDBStore(tmp_path / "staged-output.duckdb", recreate=True)
     pool = LocalExecutorPool(workers=1)
@@ -379,7 +506,7 @@ def test_staging_execution_writes_isolated_rows_not_canonical_output(tmp_path):
         definition = definition_for(abs, name="stage", inputs="in", outputs={"mode": "per_input"}, impact=pointwise())
         definition_id = runtime.register_definition(definition); generation = runtime.deploy("stage", definition_id)
         binding = BindingSpec("one", {"input": ("urn:stage:in",)}, {"output": ("urn:stage:out",)})
-        runtime.persist_bindings("stage", generation, 1, definition_id, (binding,))
+        generation = runtime.stage_bindings("stage", 1, definition_id, (binding,))
         runtime.set_deployment_status("stage", "active")
         MaterializationScheduler(runtime).create_plan_for_binding(binding_id=binding.binding_id(definition_id), generation=generation, graph_revision=1,
             progress={"urn:stage:in": 0}, heads={"urn:stage:in": 1}, impact=pointwise(), reason={}, maximum_partition_duration=timedelta(minutes=1))
@@ -387,6 +514,10 @@ def test_staging_execution_writes_isolated_rows_not_canonical_output(tmp_path):
         assert list(store.timeseries("urn:stage:out")) == []
         with store._own_conn() as conn:
             assert conn.execute("SELECT numeric_value FROM materialization_staged_outputs").fetchone() == (2.0,)
+        assert runtime.activate_ready_bindings() == ("stage",)
+        assert [batch.column("value").to_pylist() for batch in store.timeseries("urn:stage:out")] == [[2.0]]
+        with store._own_conn() as conn:
+            assert conn.execute("SELECT count(*) FROM materialization_staged_outputs").fetchone() == (0,)
     finally:
         pool.close(); store.close()
 

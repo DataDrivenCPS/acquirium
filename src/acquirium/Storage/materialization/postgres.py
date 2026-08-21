@@ -31,11 +31,13 @@ class MaterializationPostgres:
                 name TEXT PRIMARY KEY, definition_id TEXT NOT NULL, generation BIGINT NOT NULL,
                 status TEXT NOT NULL, current_graph_revision BIGINT, updated_at TIMESTAMPTZ NOT NULL)""")
             conn.execute("ALTER TABLE materialization_deployments ADD COLUMN IF NOT EXISTS staged_generation BIGINT")
+            conn.execute("ALTER TABLE materialization_deployments ADD COLUMN IF NOT EXISTS staged_definition_id TEXT")
             conn.execute("""CREATE TABLE IF NOT EXISTS materialization_bindings (
                 binding_id TEXT NOT NULL, deployment_name TEXT NOT NULL, generation BIGINT NOT NULL,
                 logical_key TEXT NOT NULL, content_digest TEXT NOT NULL, graph_revision BIGINT NOT NULL,
                 resolved_metadata_json JSONB NOT NULL, status TEXT NOT NULL,
                 PRIMARY KEY (binding_id, generation))""")
+            conn.execute("ALTER TABLE materialization_bindings ADD COLUMN IF NOT EXISTS definition_id TEXT")
             conn.execute("""CREATE TABLE IF NOT EXISTS materialization_binding_refs (
                 binding_id TEXT NOT NULL, generation BIGINT NOT NULL, ref_uri TEXT NOT NULL,
                 role TEXT NOT NULL, direction TEXT NOT NULL,
@@ -67,6 +69,9 @@ class MaterializationPostgres:
                 binding_id TEXT NOT NULL, generation BIGINT NOT NULL, partition_id TEXT NOT NULL,
                 ref_uri TEXT NOT NULL, ts TIMESTAMPTZ NOT NULL, numeric_value DOUBLE PRECISION, text_value TEXT,
                 PRIMARY KEY (binding_id, generation, ref_uri, ts))""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS materialization_staged_partitions (
+                binding_id TEXT NOT NULL, generation BIGINT NOT NULL, partition_id TEXT NOT NULL,
+                PRIMARY KEY (binding_id, generation, partition_id))""")
             conn.execute("""CREATE TABLE IF NOT EXISTS materialization_attempt_snapshots (
                 partition_id TEXT NOT NULL, attempt INTEGER NOT NULL, input_vector_json JSONB NOT NULL,
                 rows_read BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL, PRIMARY KEY (partition_id, attempt))""")
@@ -85,9 +90,15 @@ class MaterializationPostgres:
 
     def deploy(self, name: str, definition_id: str, *, graph_revision: int | None = None) -> int:
         with self._pool.connection() as conn, conn.transaction():
-            row = conn.execute("SELECT generation, definition_id FROM materialization_deployments WHERE name = %s FOR UPDATE", [name]).fetchone()
+            row = conn.execute("SELECT generation, definition_id, staged_generation FROM materialization_deployments WHERE name = %s FOR UPDATE", [name]).fetchone()
+            if row is not None and row[1] != definition_id and conn.execute("SELECT 1 FROM materialization_bindings WHERE deployment_name = %s AND status = 'active'", [name]).fetchone():
+                generation = max(row[0], row[2] or row[0]) + 1
+                conn.execute("UPDATE materialization_deployments SET staged_generation = %s, staged_definition_id = %s, updated_at = %s WHERE name = %s", [generation, definition_id, datetime.now(timezone.utc), name])
+                return generation
             generation = 1 if row is None else row[0] if row[1] == definition_id else row[0] + 1
-            conn.execute("""INSERT INTO materialization_deployments VALUES (%s, %s, %s, 'registered', %s, %s)
+            conn.execute("""INSERT INTO materialization_deployments
+                (name, definition_id, generation, status, current_graph_revision, updated_at)
+                VALUES (%s, %s, %s, 'registered', %s, %s)
                 ON CONFLICT (name) DO UPDATE SET definition_id = excluded.definition_id,
                 generation = excluded.generation, status = excluded.status,
                 current_graph_revision = excluded.current_graph_revision, updated_at = excluded.updated_at""",
@@ -99,11 +110,13 @@ class MaterializationPostgres:
         with self._pool.connection() as conn, conn.transaction():
             for binding in bindings:
                 binding_id = binding.binding_id(definition_id)
-                conn.execute("""INSERT INTO materialization_bindings VALUES (%s, %s, %s, %s, %s, %s, %s, 'staging')
+                conn.execute("""INSERT INTO materialization_bindings
+                    (binding_id, deployment_name, generation, logical_key, content_digest, graph_revision, resolved_metadata_json, definition_id, status)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'staging')
                     ON CONFLICT (binding_id, generation) DO UPDATE SET content_digest = excluded.content_digest,
-                    graph_revision = excluded.graph_revision, resolved_metadata_json = excluded.resolved_metadata_json""",
+                    graph_revision = excluded.graph_revision, resolved_metadata_json = excluded.resolved_metadata_json, definition_id = excluded.definition_id""",
                     [binding_id, deployment_name, generation, binding.logical_key, binding.content_digest,
-                     graph_revision, json.dumps(binding.metadata)])
+                     graph_revision, json.dumps(binding.metadata), definition_id])
                 for direction, roles in (("input", binding.inputs), ("output", binding.outputs)):
                     for role, refs in roles.items():
                         with conn.cursor() as cursor:
@@ -131,7 +144,8 @@ class MaterializationPostgres:
         """Atomically publish a fully staged binding generation."""
         with self._pool.connection() as conn, conn.transaction():
             staged = conn.execute("SELECT count(*) FROM materialization_bindings WHERE deployment_name = %s AND generation = %s AND status = 'staging'", [deployment_name, generation]).fetchone()[0]
-            if not staged:
+            staged_pointer = conn.execute("SELECT staged_generation FROM materialization_deployments WHERE name = %s", [deployment_name]).fetchone()
+            if not staged and (staged_pointer is None or staged_pointer[0] != generation):
                 raise ValueError("no staged bindings to activate")
             conflicts = conn.execute("""SELECT refs.ref_uri FROM materialization_binding_refs refs
                 JOIN materialization_bindings binding ON binding.binding_id = refs.binding_id AND binding.generation = refs.generation
@@ -141,21 +155,71 @@ class MaterializationPostgres:
                     WHERE new_refs.direction = 'output' AND new_binding.deployment_name = %s AND new_refs.generation = %s) LIMIT 1""", [deployment_name, deployment_name, generation]).fetchone()
             if conflicts:
                 raise ValueError(f"output {conflicts[0]!r} is owned by another active deployment")
+            active_generation = conn.execute("SELECT generation FROM materialization_deployments WHERE name = %s", [deployment_name]).fetchone()[0]
+            has_active = conn.execute("SELECT 1 FROM materialization_bindings WHERE deployment_name = %s AND status = 'active'", [deployment_name]).fetchone() is not None
+            incomplete = conn.execute("""SELECT count(*) FROM materialization_plans
+                WHERE binding_id IN (SELECT binding_id FROM materialization_bindings
+                    WHERE deployment_name = %s AND generation = %s) AND generation = %s AND status != 'committed'""",
+                [deployment_name, generation, generation]).fetchone()[0]
+            if incomplete and (has_active or active_generation != generation):
+                raise ValueError("staged binding plans have not completed")
+            from acquirium.Storage.continuous.postgres import ContinuousPostgres
+            mutations: list[dict] = []
+            retiring_refs = [row[0] for row in conn.execute("""SELECT DISTINCT refs.ref_uri
+                FROM materialization_binding_refs refs JOIN materialization_bindings binding
+                ON binding.binding_id = refs.binding_id AND binding.generation = refs.generation
+                WHERE binding.deployment_name = %s AND binding.status = 'active' AND binding.generation != %s AND refs.direction = 'output'""", [deployment_name, generation]).fetchall()]
+            if retiring_refs:
+                retiring_rows = conn.execute("SELECT ref_uri, ts FROM timeseries WHERE ref_uri = ANY(%s::text[]) AND NOT deleted", [retiring_refs]).fetchall()
+                mutations.extend({"operation": "delete", "ref_uri": ref, "ts": ts, "numeric_value": None, "text_value": None} for ref, ts in retiring_rows)
+            partitions = conn.execute("""SELECT staged.binding_id, staged.partition_id, part.start_ts, part.end_ts
+                FROM materialization_staged_partitions staged
+                JOIN materialization_plan_partitions part ON part.partition_id = staged.partition_id
+                JOIN materialization_bindings binding ON binding.binding_id = staged.binding_id AND binding.generation = staged.generation
+                WHERE staged.generation = %s AND binding.deployment_name = %s""", [generation, deployment_name]).fetchall()
+            for binding_id, partition_id, start, end in partitions:
+                refs = [row[0] for row in conn.execute("SELECT ref_uri FROM materialization_binding_refs WHERE binding_id = %s AND generation = %s AND direction = 'output'", [binding_id, generation]).fetchall()]
+                if not refs:
+                    continue
+                existing = conn.execute("SELECT ref_uri, ts FROM timeseries WHERE ref_uri = ANY(%s::text[]) AND ts >= %s AND ts < %s AND NOT deleted", [refs, start, end]).fetchall()
+                staged_rows = conn.execute("SELECT ref_uri, ts, numeric_value, text_value FROM materialization_staged_outputs WHERE binding_id = %s AND generation = %s AND partition_id = %s", [binding_id, generation, partition_id]).fetchall()
+                keys = {(ref, ts) for ref, ts, _, _ in staged_rows}
+                mutations.extend({"operation": "delete", "ref_uri": ref, "ts": ts, "numeric_value": None, "text_value": None} for ref, ts in existing if (ref, ts) not in keys)
+                mutations.extend({"operation": "upsert", "ref_uri": ref, "ts": ts, "numeric_value": numeric, "text_value": text} for ref, ts, numeric, text in staged_rows)
+            if mutations:
+                publication_id = f"materialization:activate:{deployment_name}:{generation}"
+                ContinuousPostgres.__new__(ContinuousPostgres)._apply_publication(conn.cursor(), publication_id, pa.Table.from_pylist(mutations, schema=MUTATION_SCHEMA))
+            conn.execute("DELETE FROM materialization_staged_outputs WHERE generation = %s AND binding_id IN (SELECT binding_id FROM materialization_bindings WHERE deployment_name = %s AND generation = %s)", [generation, deployment_name, generation])
+            conn.execute("DELETE FROM materialization_staged_partitions WHERE generation = %s AND binding_id IN (SELECT binding_id FROM materialization_bindings WHERE deployment_name = %s AND generation = %s)", [generation, deployment_name, generation])
             conn.execute("UPDATE materialization_bindings SET status = 'retiring' WHERE deployment_name = %s AND status = 'active' AND generation != %s", [deployment_name, generation])
             conn.execute("UPDATE materialization_bindings SET status = 'active' WHERE deployment_name = %s AND generation = %s AND status = 'staging'", [deployment_name, generation])
-            conn.execute("UPDATE materialization_deployments SET generation = %s, staged_generation = NULL, current_graph_revision = (SELECT max(graph_revision) FROM materialization_bindings WHERE deployment_name = %s AND generation = %s), updated_at = %s WHERE name = %s", [generation, deployment_name, generation, datetime.now(timezone.utc), deployment_name])
+            conn.execute("UPDATE materialization_deployments SET definition_id = coalesce(staged_definition_id, definition_id), staged_definition_id = NULL, generation = %s, staged_generation = NULL, current_graph_revision = (SELECT max(graph_revision) FROM materialization_bindings WHERE deployment_name = %s AND generation = %s), updated_at = %s WHERE name = %s", [generation, deployment_name, generation, datetime.now(timezone.utc), deployment_name])
+
+    def activate_ready_bindings(self) -> tuple[str, ...]:
+        with self._pool.connection() as conn:
+            rows = conn.execute("""SELECT deployment.name, deployment.staged_generation
+                FROM materialization_deployments deployment
+                WHERE deployment.staged_generation IS NOT NULL AND deployment.status = 'active'
+                AND NOT EXISTS (SELECT 1 FROM materialization_plans plan
+                    JOIN materialization_bindings binding ON binding.binding_id = plan.binding_id AND binding.generation = plan.generation
+                    WHERE binding.deployment_name = deployment.name AND plan.generation = deployment.staged_generation AND plan.status != 'committed')""").fetchall()
+        activated = []
+        for name, generation in rows:
+            self.activate_bindings(name, generation)
+            activated.append(name)
+        return tuple(activated)
 
     def record_graph_revision(self, graph_revision: int, source_version: int, content_digest: str) -> None:
         with self._pool.connection() as conn, conn.transaction():
             conn.execute("INSERT INTO materialization_graph_revisions VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
                          [graph_revision, source_version, content_digest, datetime.now(timezone.utc)])
 
-    def request_rebind(self, deployment_name: str, graph_revision: int) -> None:
+    def request_rebind(self, deployment_name: str, graph_revision: int, *, force: bool = False) -> None:
         with self._pool.connection() as conn, conn.transaction():
             conn.execute("""INSERT INTO materialization_rebind_requests (deployment_name, graph_revision, status)
                 VALUES (%s, %s, 'pending') ON CONFLICT (deployment_name, graph_revision) DO UPDATE SET
                     status = 'pending', error_json = NULL
-                WHERE materialization_rebind_requests.status = 'failed'""", [deployment_name, graph_revision])
+                WHERE materialization_rebind_requests.status = 'failed' OR %s""", [deployment_name, graph_revision, force])
 
     def lease_rebind(self, owner: str) -> tuple[str, int] | None:
         with self._pool.connection() as conn, conn.transaction():
@@ -185,9 +249,9 @@ class MaterializationPostgres:
     def deployment_definition(self, name: str) -> dict[str, object]:
         """Return the current immutable bundle and generation for rebinding."""
         with self._pool.connection() as conn:
-            row = conn.execute("""SELECT d.definition_id, deployment.generation, d.spec_json
+            row = conn.execute("""SELECT d.definition_id, coalesce(deployment.staged_generation, deployment.generation), d.spec_json
                 FROM materialization_deployments deployment
-                JOIN materialization_definitions d ON d.definition_id = deployment.definition_id
+                JOIN materialization_definitions d ON d.definition_id = coalesce(deployment.staged_definition_id, deployment.definition_id)
                 WHERE deployment.name = %s""", [name]).fetchone()
         if row is None:
             raise KeyError(name)
@@ -199,18 +263,38 @@ class MaterializationPostgres:
     def stale_bindings(self) -> tuple[dict[str, object], ...]:
         with self._pool.connection() as conn:
             rows = conn.execute("""SELECT b.binding_id, b.deployment_name, b.generation, b.graph_revision, r.ref_uri,
-                h.current_version, coalesce(p.stream_version, 0) AS progress
+                h.current_version, coalesce(p.stream_version, 0) AS progress, d.spec_json
                 FROM materialization_bindings b
+                JOIN materialization_deployments deployment ON deployment.name = b.deployment_name
+                JOIN materialization_definitions d ON d.definition_id = coalesce(deployment.staged_definition_id, deployment.definition_id)
                 JOIN materialization_binding_refs r ON r.binding_id = b.binding_id AND r.generation = b.generation AND r.direction = 'input'
                 JOIN stream_heads h ON h.ref_uri = r.ref_uri
                 LEFT JOIN materialization_binding_progress p ON p.binding_id = b.binding_id AND p.generation = b.generation AND p.ref_uri = r.ref_uri
                 WHERE b.status IN ('active', 'staging') AND h.current_version > coalesce(p.stream_version, 0)
                 ORDER BY b.binding_id, r.ref_uri""").fetchall()
         grouped: dict[tuple[str, int, int], dict[str, object]] = {}
-        for binding, deployment_name, generation, graph, ref, head, progress in rows:
-            item = grouped.setdefault((binding, generation, graph), {"binding_id": binding, "deployment_name": deployment_name, "generation": generation, "graph_revision": graph, "heads": {}, "progress": {}})
+        for binding, deployment_name, generation, graph, ref, head, progress, spec in rows:
+            item = grouped.setdefault((binding, generation, graph), {"binding_id": binding, "deployment_name": deployment_name, "generation": generation, "graph_revision": graph, "impact": (json.loads(spec) if isinstance(spec, str) else spec)["impact"], "heads": {}, "progress": {}})
             item["heads"][ref] = head
             item["progress"][ref] = progress
+        return tuple(grouped.values())
+
+    def bootstrap_bindings(self, deployment_name: str, generation: int) -> tuple[dict[str, object], ...]:
+        with self._pool.connection() as conn:
+            rows = conn.execute("""SELECT binding.binding_id, refs.ref_uri, coalesce(head.current_version, 0),
+                min(value.ts), max(value.ts)
+                FROM materialization_bindings binding
+                JOIN materialization_binding_refs refs ON refs.binding_id = binding.binding_id AND refs.generation = binding.generation AND refs.direction = 'input'
+                LEFT JOIN stream_heads head ON head.ref_uri = refs.ref_uri
+                LEFT JOIN timeseries value ON value.ref_uri = refs.ref_uri AND NOT value.deleted
+                WHERE binding.deployment_name = %s AND binding.generation = %s AND binding.status = 'staging'
+                GROUP BY binding.binding_id, refs.ref_uri, head.current_version""", [deployment_name, generation]).fetchall()
+        grouped: dict[str, dict[str, object]] = {}
+        for binding_id, ref, head, start, end in rows:
+            item = grouped.setdefault(binding_id, {"binding_id": binding_id, "generation": generation, "heads": {}, "ranges": []})
+            item["heads"][ref] = head
+            if start is not None:
+                item["ranges"].append((start, end))
         return tuple(grouped.values())
 
     def set_deployment_status(self, name: str, status: str) -> None:
@@ -333,8 +417,7 @@ class MaterializationPostgres:
             row = conn.execute("""SELECT d.source_digest, d.entrypoint, d.spec_json FROM materialization_plan_partitions part
                 JOIN materialization_plans plan ON plan.plan_id = part.plan_id
                 JOIN materialization_bindings binding ON binding.binding_id = plan.binding_id AND binding.generation = plan.generation
-                JOIN materialization_deployments deployment ON deployment.name = binding.deployment_name
-                JOIN materialization_definitions d ON d.definition_id = deployment.definition_id
+                JOIN materialization_definitions d ON d.definition_id = binding.definition_id
                 WHERE part.partition_id = %s""", [partition_id]).fetchone()
         if row is None:
             raise KeyError(partition_id)
@@ -381,6 +464,11 @@ class MaterializationPostgres:
                 return row[0] if row else None
             if state != ("leased", snapshot.lease.owner, snapshot.lease.attempt):
                 raise ValueError("partition lease is stale")
+            binding = cur.execute("""SELECT plan.binding_id, plan.generation, binding.status
+                FROM materialization_plans plan JOIN materialization_bindings binding
+                ON binding.binding_id = plan.binding_id AND binding.generation = plan.generation
+                WHERE plan.plan_id = %s""", [snapshot.lease.partition.plan_id]).fetchone()
+            binding_id, generation, binding_status = binding or (None, None, "active")
             reason = cur.execute("SELECT reason_json FROM materialization_plans WHERE plan_id = %s", [snapshot.lease.partition.plan_id]).fetchone()[0]
             from acquirium.Materialization.impact import ImpactPolicy
             # Keep policy expansion in Python so DuckDB/PostgreSQL have identical semantics.
@@ -389,15 +477,27 @@ class MaterializationPostgres:
                 for start, end in cur.execute("SELECT start_ts, end_ts FROM stream_change_ranges WHERE ref_uri = %s AND stream_version > %s", [ref, version]).fetchall():
                     if impact.affected(TimeRange(start, end)).intersects(interval):
                         raise StaleAttemptError("a newer intersecting input change exists")
-            existing_rows = cur.execute("""SELECT ref_uri, ts FROM timeseries WHERE ref_uri = ANY(%s::text[])
-                AND ts >= %s AND ts < %s AND NOT deleted""", [list(output_refs), interval.start, interval.end]).fetchall() if output_refs else []
-            keys = {(row["ref_uri"], row["ts"]) for row in rows}
-            mutations = ([{"operation": "delete", "ref_uri": ref, "ts": ts, "numeric_value": None, "text_value": None} for ref, ts in existing_rows if (ref, ts) not in keys]
-                         + [{"operation": "upsert", **row} for row in rows])
-            publication_id = None
-            if mutations:
-                publication_id = f"materialization:{execution_id}"
-                ContinuousPostgres.__new__(ContinuousPostgres)._apply_publication(cur, publication_id, pa.Table.from_pylist(mutations, schema=MUTATION_SCHEMA))
+            if binding_status == "staging":
+                cur.execute("INSERT INTO materialization_staged_partitions VALUES (%s, %s, %s) ON CONFLICT DO NOTHING", [binding_id, generation, snapshot.lease.partition.partition_id])
+                cur.execute("""DELETE FROM materialization_staged_outputs WHERE binding_id = %s AND generation = %s
+                    AND ref_uri IN (SELECT ref_uri FROM materialization_binding_refs WHERE binding_id = %s AND generation = %s AND direction = 'output')
+                    AND ts >= %s AND ts < %s""", [binding_id, generation, binding_id, generation, interval.start, interval.end])
+                if rows:
+                    cur.executemany("""INSERT INTO materialization_staged_outputs VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (binding_id, generation, ref_uri, ts) DO UPDATE SET partition_id = excluded.partition_id,
+                        numeric_value = excluded.numeric_value, text_value = excluded.text_value""",
+                        [(binding_id, generation, snapshot.lease.partition.partition_id, row["ref_uri"], row["ts"], row["numeric_value"], row["text_value"]) for row in rows])
+                publication_id = f"staged:{execution_id}"
+            else:
+                existing_rows = cur.execute("""SELECT ref_uri, ts FROM timeseries WHERE ref_uri = ANY(%s::text[])
+                    AND ts >= %s AND ts < %s AND NOT deleted""", [list(output_refs), interval.start, interval.end]).fetchall() if output_refs else []
+                keys = {(row["ref_uri"], row["ts"]) for row in rows}
+                mutations = ([{"operation": "delete", "ref_uri": ref, "ts": ts, "numeric_value": None, "text_value": None} for ref, ts in existing_rows if (ref, ts) not in keys]
+                             + [{"operation": "upsert", **row} for row in rows])
+                publication_id = None
+                if mutations:
+                    publication_id = f"materialization:{execution_id}"
+                    ContinuousPostgres.__new__(ContinuousPostgres)._apply_publication(cur, publication_id, pa.Table.from_pylist(mutations, schema=MUTATION_SCHEMA))
             cur.execute("UPDATE materialization_plan_partitions SET status = 'committed', committed_output_id = %s, lease_owner = NULL, lease_expires_at = NULL WHERE partition_id = %s", [publication_id, snapshot.lease.partition.partition_id])
             cur.execute("""INSERT INTO materialization_execution_receipts VALUES (%s, %s, %s, %s, %s, 'committed', %s, %s, NULL, %s)
                 ON CONFLICT DO NOTHING""", [execution_id, snapshot.lease.partition.partition_id, snapshot.lease.attempt, json.dumps(snapshot.input_versions), publication_id, snapshot.inputs.num_rows, len(rows), datetime.now(timezone.utc)])

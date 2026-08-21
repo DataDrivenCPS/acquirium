@@ -42,11 +42,12 @@ in phase order so the replacement can be delivered incrementally.
   immutable execution context, and output ownership/range validation.
 - [x] Phase 4 registration surface: transformation registration, status,
   start/pause, listing, and explicit rebind endpoints plus client methods.
-- [ ] Atomic staging topology activation (Phase 5).
-  The deployment now has an active and staged generation pointer, and staged
-  bindings can be atomically promoted. Remaining: generation-isolated output
-  rows plus canonical-publication promotion (including derived-ref
-  registration) before staged partitions may execute automatically.
+- [x] Phase 5: generation-scoped graph reconciliation. Staged bindings and
+  definitions use isolated output rows, retained-history bootstrap plans,
+  manifest-driven tail safety scans, canonical promotion/tombstones, and an
+  atomic active-pointer swap. Direct, per-input, by-entity, single, empty, and
+  manually reconciled declarations are covered; PostgreSQL promotion has a
+  live smoke test.
 - [ ] Stateful artifacts/training, experiments, services, effects, and old
   continuous-runtime removal (Phases 6–9).
 

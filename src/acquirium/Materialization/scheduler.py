@@ -55,6 +55,34 @@ class MaterializationScheduler:
             plan_ids.append(plan_id)
         return tuple(plan_ids)
 
+    def bootstrap_staged(self, *, deployment_name: str, generation: int, graph_revision: int,
+                         impact: ImpactPolicy, maximum_partition_duration: timedelta = timedelta(minutes=15)) -> tuple[str, ...]:
+        """Plan all retained input history for a newly staged topology."""
+        plan_ids = []
+        for binding in self._storage.bootstrap_bindings(deployment_name, generation):
+            ranges = tuple(TimeRange(start, end + timedelta(microseconds=1)) for start, end in binding["ranges"])
+            if not ranges:
+                continue
+            normalized = coalesce_ranges(ranges)
+            plan_id, _ = self._storage.create_plan(binding_id=binding["binding_id"], generation=generation,
+                graph_revision=graph_revision, input_vector=binding["heads"], ranges=normalized,
+                reason={"kind": "bootstrap", "impact": impact.to_json(),
+                        "retained_from": min(item.start for item in normalized).isoformat()},
+                maximum_partition_duration=maximum_partition_duration)
+            plan_ids.append(plan_id)
+        return tuple(plan_ids)
+
+    def discover_all(self, *, maximum_partition_duration: timedelta = timedelta(minutes=15)) -> tuple[str, ...]:
+        """Safety-scan every binding using its persisted declaration impact."""
+        plans = []
+        for binding in self._storage.stale_bindings():
+            impact = ImpactPolicy.from_json(binding["impact"])
+            plan_id, _ = self.create_plan_for_binding(binding_id=binding["binding_id"], generation=binding["generation"],
+                graph_revision=binding["graph_revision"], progress=binding["progress"], heads=binding["heads"], impact=impact,
+                reason={"kind": "safety_scan"}, maximum_partition_duration=maximum_partition_duration)
+            plans.append(plan_id)
+        return tuple(plans)
+
     def run_registered_once(self, owner: str, *, executor, source_digest: str, entrypoint: str,
                             scalar: bool, metadata: Mapping[str, object] | None = None) -> bool:
         """Lease and execute one partition using a digest-cached definition."""
