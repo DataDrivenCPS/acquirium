@@ -17,6 +17,7 @@ from acquirium.Materialization.compute import PythonArrowAdapter
 from acquirium.Materialization.validation import OutputValidationError
 from acquirium.Materialization.worker import DefinitionCache
 from acquirium.Materialization.scheduler import MaterializationScheduler
+from acquirium.Materialization.rebinding import MaterializationRebinder
 UTC = timezone.utc
 
 def test_ranges_are_half_open_and_adjacent_ranges_coalesce():
@@ -80,6 +81,9 @@ def test_duckdb_persists_definition_and_staging_bindings(tmp_path):
             return value - 273.15
         definition = definition_for(convert, inputs="temperature", outputs="celsius", impact=pointwise())
         definition_id = runtime.register_definition(definition)
+        with store._own_conn() as conn:
+            spec = conn.execute("SELECT spec_json FROM materialization_definitions").fetchone()[0]
+        assert '"outputs": "celsius"' in spec
         generation = runtime.deploy("convert-temperature", definition_id, graph_revision=7)
         runtime.persist_bindings("convert-temperature", generation, 7, definition_id,
                                  (BindingSpec("sensor", {"input": ("urn:in",)}, {"output": ("urn:out",)}),))
@@ -99,6 +103,8 @@ def test_newer_rebind_supersedes_old_work_and_failure_preserves_staging(tmp_path
         with store._own_conn() as conn:
             rows = conn.execute("SELECT graph_revision, status FROM materialization_rebind_requests ORDER BY graph_revision").fetchall()
         assert rows == [(1, "superseded"), (2, "failed")]
+        runtime.request_rebind("deployment", 2)
+        assert runtime.lease_rebind("retry") == ("deployment", 2)
     finally:
         store.close()
 
@@ -260,6 +266,53 @@ def test_scheduler_discovers_progress_lag_from_durable_binding_state(tmp_path):
         binding = BindingSpec("one", {"input": ("urn:discover:in",)}, {"output": ("urn:discover:out",)})
         runtime.persist_bindings("discover", gen, 1, did, (binding,))
         plans = MaterializationScheduler(runtime).discover_and_plan(impact=pointwise(), maximum_partition_duration=timedelta(minutes=1))
+        assert len(plans) == 1
+    finally:
+        store.close()
+
+def test_registered_entrypoint_executes_through_cached_local_pool(tmp_path):
+    store = DuckDBStore(tmp_path / "registered-execution.duckdb", recreate=True)
+    pool = LocalExecutorPool(workers=1)
+    try:
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        ContinuousDuckDB(store).publish(PublicationRequest("registered-input", pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:registered:in", "ts": start, "numeric_value": 2.0, "text_value": None}], schema=MUTATION_SCHEMA)))
+        runtime = MaterializationDuckDB(store)
+        definition = definition_for(abs, inputs="in", outputs={"mode": "per_input"}, impact=pointwise())
+        did = runtime.register_definition(definition); generation = runtime.deploy("registered", did)
+        binding = BindingSpec("one", {"input": ("urn:registered:in",)}, {"output": ("urn:registered:out",)})
+        runtime.persist_bindings("registered", generation, 1, did, (binding,))
+        MaterializationScheduler(runtime).create_plan_for_binding(binding_id=binding.binding_id(did), generation=generation, graph_revision=1,
+            progress={"urn:registered:in": 0}, heads={"urn:registered:in": 1}, impact=pointwise(), reason={}, maximum_partition_duration=timedelta(minutes=1))
+        assert not MaterializationScheduler(runtime).run_next_registered("worker", executor=pool)
+        runtime.set_deployment_status("registered", "active")
+        assert MaterializationScheduler(runtime).run_next_registered("worker", executor=pool)
+        assert [batch.column("value").to_pylist() for batch in store.timeseries("urn:registered:out")] == [[2.0]]
+    finally:
+        pool.close(); store.close()
+
+def test_rebind_worker_persists_direct_binding_and_plans_current_lag(tmp_path):
+    store = DuckDBStore(tmp_path / "rebind-worker.duckdb", recreate=True)
+    try:
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        ContinuousDuckDB(store).publish(PublicationRequest("input", pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:rebind:in", "ts": start, "numeric_value": 3.0, "text_value": None},
+        ], schema=MUTATION_SCHEMA)))
+        runtime = MaterializationDuckDB(store)
+        definition = definition_for(abs, name="rebindable", inputs={"input": "urn:rebind:in"},
+                                    outputs={"output": "urn:rebind:out"}, impact=pointwise())
+        definition_id = runtime.register_definition(definition)
+        runtime.deploy("rebindable", definition_id, graph_revision=1)
+        runtime.request_rebind("rebindable", 1)
+        result = MaterializationRebinder(runtime, object()).run_once("worker")
+        assert result and result.deployment_name == "rebindable"
+        with store._own_conn() as conn:
+            assert conn.execute("SELECT status FROM materialization_rebind_requests").fetchone() == ("completed",)
+            assert conn.execute("SELECT count(*) FROM materialization_bindings").fetchone() == (1,)
+        plans = MaterializationScheduler(runtime).discover_and_plan(
+            impact=result.impact, deployment_name=result.deployment_name,
+            maximum_partition_duration=timedelta(minutes=1),
+        )
         assert len(plans) == 1
     finally:
         store.close()

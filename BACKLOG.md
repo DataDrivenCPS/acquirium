@@ -25,8 +25,9 @@ in phase order so the replacement can be delivered incrementally.
 - [ ] Persist definitions, deployments, bindings, and graph revision/rebind
   requests (Phase 2). DuckDB and PostgreSQL definition/deployment/staging-
   binding persistence, graph revision recording, rebind-request insertion,
-  and pure topology validation are now in place. Rebind leasing/resolution
-  against the published graph remains.
+  rebind leasing, explicit binding resolution, and pure topology validation
+  are now in place. Built-in selector expansion and atomic topology activation
+  remain deferred to Phase 5.
 - [x] Phase 3: durable plans/partitions, range-manifest safety scans,
   impact-aware stale rejection, leases/retries, Arrow snapshots, replacement
   commits/tombstones, receipts/progress, bounded scheduler execution, and
@@ -34,7 +35,9 @@ in phase order so the replacement can be delivered incrementally.
 
 ## Deferred by design
 
-- [ ] Fixed local/Ray executor pool and Arrow execution (Phase 4).
+- [ ] Phase 4 executor runtime: bounded local pool, durable-definition
+  execution, active-deployment server drain loop, and preview/debug remain in
+  progress. Ray workers and restart/recovery characterization remain pending.
 - [x] Phase 4 foundation: bounded local executor, scalar/Arrow compute adapter,
   immutable execution context, and output ownership/range validation.
 - [x] Phase 4 registration surface: transformation registration, status,

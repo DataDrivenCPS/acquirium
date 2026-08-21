@@ -378,6 +378,26 @@ async def lifespan(app: FastAPI):
     await router.start()
     await compactor.start()
 
+    async def _materialization_loop() -> None:
+        """Drain active durable transformation work without blocking requests."""
+        owner = f"server-{os.getpid()}"
+        idle_seconds = float(server_cfg.get("materialization_poll_seconds", 0.25))
+        while True:
+            try:
+                rebound = await asyncio.to_thread(m.run_rebind_once, owner)
+                ran_work = await asyncio.to_thread(m.run_materialization_once, owner)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # The scheduler recorded the failed attempt as retryable; keep
+                # the server healthy and retry after the normal idle delay.
+                log.exception("Materialization execution failed")
+                rebound = ran_work = False
+            await asyncio.sleep(0 if rebound or ran_work else idle_seconds)
+
+    materialization_task = asyncio.create_task(_materialization_loop())
+    app.state.materialization_task = materialization_task
+
     # Once the server answers /health: respawn apps persisted by a previous
     # run, then start the config's [[drivers]] and [[apps]]. Restored apps come
     # first; config apps run after driver setup so their selectors can see the
@@ -411,6 +431,9 @@ async def lifespan(app: FastAPI):
         startup_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await startup_task
+        materialization_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await materialization_task
         await router.stop()
         await compactor.stop()
         try:

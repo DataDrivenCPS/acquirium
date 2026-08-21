@@ -15,7 +15,7 @@ import pyarrow as pa
 from acquirium.Storage.materialization.types import StreamChangeRange
 from acquirium.Storage.duckdb_store import DuckDBStore
 from acquirium.Materialization.bindings import BindingSpec
-from acquirium.Materialization.definitions import MaterializationDefinition
+from acquirium.Materialization.definitions import MaterializationDefinition, definition_spec
 from acquirium.Materialization.impact import TimeRange
 from acquirium.Storage.materialization.ids import materialization_id, partition_ranges
 from acquirium.Storage.materialization.types import PlanPartition, WorkLease
@@ -117,9 +117,7 @@ class MaterializationDuckDB:
 
     def register_definition(self, definition: MaterializationDefinition) -> str:
         """Persist an immutable definition; identical registration is idempotent."""
-        spec = json.dumps({"inputs": str(definition.inputs), "bind": str(definition.bind),
-                           "outputs": str(definition.outputs), "impact": definition.impact.to_json() if definition.impact else None,
-                           "parameters_schema": definition.parameters_schema}, sort_keys=True)
+        spec = json.dumps(definition_spec(definition), sort_keys=True)
         with self._store._lock, self._store._write_conn() as conn:
             conn.execute("""INSERT INTO materialization_definitions
                 (definition_id, name, kind, source_digest, entrypoint, spec_json, created_at)
@@ -170,7 +168,9 @@ class MaterializationDuckDB:
         with self._store._lock, self._store._write_conn() as conn:
             conn.execute("""INSERT INTO materialization_rebind_requests
                 (deployment_name, graph_revision, status) VALUES (?, ?, 'pending')
-                ON CONFLICT (deployment_name, graph_revision) DO NOTHING""",
+                ON CONFLICT (deployment_name, graph_revision) DO UPDATE SET
+                    status = 'pending', error_json = NULL
+                WHERE materialization_rebind_requests.status = 'failed'""",
                 [deployment_name, graph_revision])
 
     def lease_rebind(self, owner: str) -> tuple[str, int] | None:
@@ -201,11 +201,23 @@ class MaterializationDuckDB:
                 "SELECT name FROM materialization_deployments WHERE status != 'failed' ORDER BY name"
             ).fetchall())
 
+    def deployment_definition(self, name: str) -> dict[str, object]:
+        """Return the current immutable bundle and generation for rebinding."""
+        with self._store._own_conn() as conn:
+            row = conn.execute("""SELECT d.definition_id, deployment.generation, d.spec_json
+                FROM materialization_deployments deployment
+                JOIN materialization_definitions d ON d.definition_id = deployment.definition_id
+                WHERE deployment.name = ?""", [name]).fetchone()
+        if row is None:
+            raise KeyError(name)
+        definition_id, generation, spec = row
+        return {"definition_id": definition_id, "generation": generation, "spec": json.loads(spec)}
+
     def stale_bindings(self) -> tuple[dict[str, object], ...]:
         """Return active/staging bindings whose persisted input progress trails heads."""
         from acquirium.Storage.duckdb_store import REF_IDS_TABLE, STREAM_HEADS_TABLE
         with self._store._own_conn() as conn:
-            rows = conn.execute(f"""SELECT b.binding_id, b.generation, b.graph_revision, r.ref_uri,
+            rows = conn.execute(f"""SELECT b.binding_id, b.deployment_name, b.generation, b.graph_revision, r.ref_uri,
                 h.current_version, coalesce(p.stream_version, 0) AS progress
                 FROM materialization_bindings b
                 JOIN materialization_binding_refs r ON r.binding_id = b.binding_id AND r.generation = b.generation AND r.direction = 'input'
@@ -215,8 +227,8 @@ class MaterializationDuckDB:
                 WHERE b.status IN ('active', 'staging') AND h.current_version > coalesce(p.stream_version, 0)
                 ORDER BY b.binding_id, r.ref_uri""").fetchall()
         grouped: dict[tuple[str, int, int], dict[str, object]] = {}
-        for binding, generation, graph, ref, head, progress in rows:
-            item = grouped.setdefault((binding, generation, graph), {"binding_id": binding, "generation": generation, "graph_revision": graph, "heads": {}, "progress": {}})
+        for binding, deployment_name, generation, graph, ref, head, progress in rows:
+            item = grouped.setdefault((binding, generation, graph), {"binding_id": binding, "deployment_name": deployment_name, "generation": generation, "graph_revision": graph, "heads": {}, "progress": {}})
             item["heads"][ref] = head
             item["progress"][ref] = progress
         return tuple(grouped.values())
@@ -266,6 +278,29 @@ class MaterializationDuckDB:
                 WHERE status = 'leased' AND lease_expires_at <= ?""", [now])
             row = conn.execute("""SELECT partition_id, plan_id, start_ts, end_ts, attempt FROM materialization_plan_partitions
                 WHERE status = 'pending' ORDER BY start_ts, partition_id LIMIT 1""").fetchone()
+            if row is None:
+                return None
+            partition_id, plan_id, start, end, prior_attempt = row
+            attempt = prior_attempt + 1
+            conn.execute("""UPDATE materialization_plan_partitions SET status = 'leased', attempt = ?, lease_owner = ?, lease_expires_at = ?
+                WHERE partition_id = ? AND status = 'pending'""", [attempt, owner, expires, partition_id])
+        partition = PlanPartition(partition_id, plan_id, TimeRange(start.replace(tzinfo=timezone.utc), end.replace(tzinfo=timezone.utc)), "leased")
+        return WorkLease(partition, owner, attempt, expires.replace(tzinfo=timezone.utc))
+
+    def lease_registered_partition(self, owner: str, *, duration: timedelta = timedelta(minutes=5)) -> WorkLease | None:
+        """Lease pending work only when its deployment has been started."""
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        expires = now + duration
+        with self._store._lock, self._store._write_conn() as conn:
+            conn.execute("""UPDATE materialization_plan_partitions SET status = 'pending', lease_owner = NULL, lease_expires_at = NULL
+                WHERE status = 'leased' AND lease_expires_at <= ?""", [now])
+            row = conn.execute("""SELECT part.partition_id, part.plan_id, part.start_ts, part.end_ts, part.attempt
+                FROM materialization_plan_partitions part
+                JOIN materialization_plans plan ON plan.plan_id = part.plan_id
+                JOIN materialization_bindings binding ON binding.binding_id = plan.binding_id AND binding.generation = plan.generation
+                JOIN materialization_deployments deployment ON deployment.name = binding.deployment_name AND deployment.generation = plan.generation
+                WHERE part.status = 'pending' AND deployment.status = 'active'
+                ORDER BY part.start_ts, part.partition_id LIMIT 1""").fetchone()
             if row is None:
                 return None
             partition_id, plan_id, start, end, prior_attempt = row
@@ -328,6 +363,20 @@ class MaterializationDuckDB:
                 JOIN materialization_binding_refs refs ON refs.binding_id = plan.binding_id AND refs.generation = plan.generation
                 WHERE part.partition_id = ? ORDER BY refs.direction, refs.ref_uri""", [partition_id]).fetchall()
         return (tuple(ref for direction, ref in rows if direction == "input"), tuple(ref for direction, ref in rows if direction == "output"))
+
+    def partition_definition(self, partition_id: str) -> dict[str, object]:
+        """Resolve the immutable definition bundle owned by a leased partition."""
+        with self._store._own_conn() as conn:
+            row = conn.execute("""SELECT d.source_digest, d.entrypoint, d.spec_json FROM materialization_plan_partitions part
+                JOIN materialization_plans plan ON plan.plan_id = part.plan_id
+                JOIN materialization_bindings binding ON binding.binding_id = plan.binding_id AND binding.generation = plan.generation
+                JOIN materialization_deployments deployment ON deployment.name = binding.deployment_name AND deployment.generation = plan.generation
+                JOIN materialization_definitions d ON d.definition_id = deployment.definition_id
+                WHERE part.partition_id = ?""", [partition_id]).fetchone()
+        if row is None:
+            raise KeyError(partition_id)
+        digest, entrypoint, spec = row
+        return {"source_digest": digest, "entrypoint": entrypoint, "spec": json.loads(spec)}
 
     def leased_partition(self, partition_id: str, owner: str, attempt: int) -> WorkLease:
         with self._store._own_conn() as conn:

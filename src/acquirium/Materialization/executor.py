@@ -6,6 +6,7 @@ import pyarrow as pa
 from acquirium.Materialization.compute import PythonArrowAdapter
 from acquirium.Materialization.context import ComputeRequest
 from acquirium.Materialization.worker import DefinitionCache
+from acquirium.Materialization.worker import load_entrypoint
 
 class LocalExecutorPool:
     def __init__(self, workers: int = 2, *, adapter: PythonArrowAdapter | None = None) -> None:
@@ -16,5 +17,8 @@ class LocalExecutorPool:
         self.definitions = DefinitionCache()
     def submit(self, target: Callable[..., Any], request: ComputeRequest) -> Future[pa.Table]:
         return self._executor.submit(self._adapter.execute, target, request)
+    def submit_entrypoint(self, *, digest: str, entrypoint: str, request: ComputeRequest) -> Future[pa.Table]:
+        target = self.definitions.load(digest, lambda: load_entrypoint(entrypoint))
+        return self.submit(target, request)
     def close(self) -> None:
         self._executor.shutdown(wait=True, cancel_futures=False)

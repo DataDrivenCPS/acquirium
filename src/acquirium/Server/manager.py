@@ -212,6 +212,12 @@ class Manager:
         self.graph_store = graph
         self.continuous = continuous
         self.materialization = materialization
+        from acquirium.Materialization.executor import LocalExecutorPool
+        from acquirium.Materialization.rebinding import MaterializationRebinder
+        from acquirium.Materialization.scheduler import MaterializationScheduler
+        self.materialization_scheduler = MaterializationScheduler(materialization)
+        self.materialization_rebinder = MaterializationRebinder(materialization, graph)
+        self.materialization_executor = LocalExecutorPool()
         # Set by the FastAPI lifespan once the router exists (it in turn
         # depends on the AppSupervisor, which is built after the Manager).
         # None is a valid, safe state: wake_router() is then a no-op and the
@@ -672,6 +678,22 @@ class Manager:
         if graph_revision >= 0:
             self.materialization.request_rebind(definition.name, graph_revision)
         return {"name": definition.name, "definition_id": definition_id, "generation": generation, "status": "registered"}
+
+    def run_materialization_once(self, owner: str = "manager") -> bool:
+        """Execute one durable materialization partition, if any is pending."""
+        return self.materialization_scheduler.run_next_registered(
+            owner, executor=self.materialization_executor
+        )
+
+    def run_rebind_once(self, owner: str = "manager") -> bool:
+        """Resolve one published-graph rebind and create its manifest plans."""
+        result = self.materialization_rebinder.run_once(owner)
+        if result is None:
+            return False
+        self.materialization_scheduler.discover_and_plan(
+            impact=result.impact, deployment_name=result.deployment_name
+        )
+        return True
     
     def timeseries_batch(
         self,
@@ -1251,6 +1273,9 @@ class Manager:
         # App teardown belongs to AppSupervisor, which the server lifespan stops
         # before it closes the manager.
         logger.debug("Manager.close: shutting down")
+        executor = getattr(self, "materialization_executor", None)
+        if executor is not None:
+            executor.close()
         # ContinuousDuckDB shares DuckDBStore's connections and owns nothing
         # to close itself; ContinuousPostgres owns a separate pool.
         close_continuous = getattr(self.continuous, "close", None)

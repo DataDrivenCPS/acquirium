@@ -15,6 +15,30 @@ def _json(value: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
 
 
+def _persistable(value: object) -> object:
+    """Convert definition metadata to stable JSON without losing mappings."""
+    if isinstance(value, Mapping):
+        return {str(key): _persistable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_persistable(item) for item in value]
+    if hasattr(value, "__dataclass_fields__"):
+        return _persistable(asdict(value))
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    return str(value)
+
+
+def definition_spec(definition: "MaterializationDefinition") -> dict[str, object]:
+    """The durable, JSON-compatible portion of an immutable definition."""
+    return {
+        "inputs": _persistable(definition.inputs),
+        "bind": _persistable(definition.bind),
+        "outputs": _persistable(definition.outputs),
+        "impact": definition.impact.to_json() if definition.impact else None,
+        "parameters_schema": _persistable(definition.parameters_schema),
+    }
+
+
 def source_digest(target: object) -> str:
     """Digest source rather than a mutable object instance or its address."""
     try:
