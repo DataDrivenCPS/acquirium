@@ -80,6 +80,7 @@ STREAM_HEADS_TABLE = "stream_heads"
 STREAM_PUBLICATIONS_TABLE = "stream_publications"
 STREAM_PUBLICATIONS_SEQ = "stream_publications_seq"
 STREAM_CHANGE_KEYS_TABLE = "stream_change_keys"
+STREAM_CHANGE_RANGES_TABLE = "stream_change_ranges"
 APP_RUNTIME_TABLE = "app_runtime"
 APP_SUBSCRIPTIONS_TABLE = "app_subscriptions"
 APP_BATCH_COMMITS_TABLE = "app_batch_commits"
@@ -121,6 +122,19 @@ CONTINUOUS_BATCH_DDL = [
     )
     """,
     f"CREATE INDEX IF NOT EXISTS idx_stream_change_keys_ref_version ON {STREAM_CHANGE_KEYS_TABLE} (ref_id, stream_version)",
+    f"""
+    CREATE TABLE IF NOT EXISTS {STREAM_CHANGE_RANGES_TABLE} (
+        ref_uri VARCHAR NOT NULL,
+        stream_version BIGINT NOT NULL,
+        publication_id VARCHAR NOT NULL,
+        start_ts TIMESTAMP NOT NULL,
+        end_ts TIMESTAMP NOT NULL,
+        change_kind VARCHAR NOT NULL,
+        row_count BIGINT NOT NULL,
+        PRIMARY KEY (ref_uri, stream_version, start_ts, end_ts)
+    )
+    """,
+    f"CREATE INDEX IF NOT EXISTS idx_stream_change_ranges_ref_version ON {STREAM_CHANGE_RANGES_TABLE} (ref_uri, stream_version)",
     f"""
     CREATE TABLE IF NOT EXISTS {APP_RUNTIME_TABLE} (
         app_id VARCHAR PRIMARY KEY,

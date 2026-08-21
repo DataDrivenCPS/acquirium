@@ -172,8 +172,10 @@ class Manager:
                 # and write lock rather than opening a second writer (see
                 # Storage/continuous/duckdb.py's module docstring).
                 from acquirium.Storage.continuous.duckdb import ContinuousDuckDB
+                from acquirium.Storage.materialization.duckdb import MaterializationDuckDB
 
                 continuous: ContinuousStore = ContinuousDuckDB(timescale)
+                materialization = MaterializationDuckDB(timescale)
             else:
                 _effective_dsn = pg_dsn or os.getenv("PG_DSN")
                 if not _effective_dsn:
@@ -186,8 +188,10 @@ class Manager:
                 # actor batches, the compactor) run concurrently with
                 # ordinary ingest against the same database.
                 from acquirium.Storage.continuous.postgres import ContinuousPostgres
+                from acquirium.Storage.materialization.postgres import MaterializationPostgres
 
                 continuous = ContinuousPostgres(_effective_dsn)
+                materialization = MaterializationPostgres(_effective_dsn)
 
         # Caller-supplied converter or graph wins; otherwise the converter
         # is built lazily in _ensure_qudt_converter from the QUDT unit
@@ -207,6 +211,7 @@ class Manager:
         self.timescale = timescale
         self.graph_store = graph
         self.continuous = continuous
+        self.materialization = materialization
         # Set by the FastAPI lifespan once the router exists (it in turn
         # depends on the AppSupervisor, which is built after the Manager).
         # None is a valid, safe state: wake_router() is then a no-op and the
@@ -637,6 +642,7 @@ class Manager:
             logging.info("acquirium: inserted graph into store")
             with timed_debug(logger, "insert_graph: _sync_stream_refs_from_graph"):
                 self._sync_stream_refs_from_graph()
+            self._record_materialization_graph_revision()
             # Embedding corpus is the static ontoenv vocabularies, not
             # inserted data — no per-insert reindex. Stream-reference sync
             # below requires a fresh inferred view; concurrent callers share
@@ -644,6 +650,28 @@ class Manager:
         except Exception as e:
             logging.error("acquirium: failed to insert graph: %s", e)
             raise
+
+    def _record_materialization_graph_revision(self) -> None:
+        """Durably couple a completed query-graph publication to rebind work."""
+        status = self.graph_store.graph_status()
+        graph_revision = int(status["published_version"])
+        if graph_revision < 0:
+            return
+        self.materialization.record_graph_revision(
+            graph_revision, int(status["source_version"]), self.graph_store.published_query_digest()
+        )
+        for deployment_name in self.materialization.deployment_names():
+            self.materialization.request_rebind(deployment_name, graph_revision)
+
+    def register_transformation(self, definition) -> dict[str, Any]:
+        """Persist a transformation declaration and enqueue its first rebind."""
+        definition_id = self.materialization.register_definition(definition)
+        status = self.graph_store.graph_status()
+        graph_revision = int(status["published_version"])
+        generation = self.materialization.deploy(definition.name, definition_id, graph_revision=graph_revision)
+        if graph_revision >= 0:
+            self.materialization.request_rebind(definition.name, graph_revision)
+        return {"name": definition.name, "definition_id": definition_id, "generation": generation, "status": "registered"}
     
     def timeseries_batch(
         self,
@@ -1228,6 +1256,9 @@ class Manager:
         close_continuous = getattr(self.continuous, "close", None)
         if callable(close_continuous):
             close_continuous()
+        close_materialization = getattr(self.materialization, "close", None)
+        if callable(close_materialization):
+            close_materialization()
         self.timescale.close()
         self.graph_store.close()
         logger.debug("Manager.close: done")

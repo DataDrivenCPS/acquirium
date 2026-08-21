@@ -77,6 +77,26 @@ class Output:
         )
 
     @staticmethod
+    def delete(
+        *,
+        point_uri: str,
+        ref_name: str | None = None,
+        timestamps: Iterable[datetime],
+    ) -> "Output":
+        """Retract values at specific timestamps on a declared output stream.
+
+        Propagated automatically by the continuous runtime when an input
+        delete maps to this output (continuous_batch.md's "Explicit
+        deletion/retraction so downstream state converges"); an app may
+        also return one directly to retract values its own logic decides
+        are no longer valid.
+        """
+        return Output(
+            kind="delete",
+            payload={"point_uri": point_uri, "ref_name": ref_name, "timestamps": list(timestamps)},
+        )
+
+    @staticmethod
     def trigger(
         *,
         url: str,

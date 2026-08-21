@@ -27,6 +27,8 @@ from acquirium.Storage.continuous.types import (
     MUTATION_SCHEMA,
     PublicationReceipt,
 )
+from acquirium.Materialization.impact import TimeRange
+from acquirium.Storage.materialization.types import InputSnapshot, PlanPartition, WorkLease
 
 
 @pytest.fixture
@@ -67,6 +69,43 @@ def _arrow_body(table: pa.Table, key: bytes, metadata: dict) -> bytes:
     with ipc.new_stream(sink, tagged.schema) as writer:
         writer.write_table(tagged)
     return sink.getvalue().to_pybytes()
+
+
+def test_materialization_lease_and_snapshot_arrow_transport(client, fake_manager):
+    timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    lease = WorkLease(PlanPartition("partition", "plan", TimeRange(timestamp, timestamp.replace(minute=1)), "leased"), "worker", 1, timestamp.replace(minute=5))
+    table = _mutation_table([("upsert", "urn:in", timestamp, 1.0, None)])
+    fake_manager.materialization.lease_partition.return_value = lease
+    fake_manager.materialization.leased_partition.return_value = lease
+    fake_manager.materialization.partition_refs.return_value = (("urn:in",), ("urn:out",))
+    fake_manager.materialization.snapshot_partition.return_value = InputSnapshot(lease, table, {"urn:in": 1})
+    response = client.post("/internal/materializations/lease", json={"owner": "worker"})
+    assert response.status_code == 200 and response.json()["lease"]["partition_id"] == "partition"
+    response = client.post("/internal/materializations/partition/snapshot", json={"owner": "worker", "attempt": 1})
+    assert response.status_code == 200
+    reader = ipc.RecordBatchStreamReader(pa.BufferReader(response.content)); result = reader.read_all()
+    metadata = json.loads(result.schema.metadata[b"acquirium-materialization-snapshot"])
+    assert result.num_rows == 1 and metadata["output_refs"] == ["urn:out"]
+
+
+def test_materialization_commit_and_fail_transport(client, fake_manager):
+    timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    lease = WorkLease(PlanPartition("partition", "plan", TimeRange(timestamp, timestamp.replace(minute=1)), "leased"), "worker", 2, timestamp.replace(minute=5))
+    snapshot = InputSnapshot(lease, _mutation_table([("upsert", "urn:in", timestamp, 1.0, None)]), {"urn:in": 1})
+    fake_manager.materialization.leased_partition.return_value = lease
+    fake_manager.materialization.partition_refs.return_value = (("urn:in",), ("urn:out",))
+    fake_manager.materialization.snapshot_partition.return_value = snapshot
+    fake_manager.materialization.commit_replacement.return_value = "publication"
+    output = pa.table({"ref_uri": ["urn:out"], "ts": [timestamp], "numeric_value": [2.0], "text_value": [None]})
+    sink = pa.BufferOutputStream()
+    with ipc.new_stream(sink, output.schema) as writer:
+        writer.write_table(output)
+    response = client.post("/internal/materializations/partition/commit?owner=worker&attempt=2", content=sink.getvalue().to_pybytes())
+    assert response.status_code == 200 and response.json()["output_publication_id"] == "publication"
+    fake_manager.materialization.commit_replacement.assert_called_once()
+    response = client.post("/internal/materializations/partition/fail", json={"owner": "worker", "attempt": 2, "error": {"message": "bad"}})
+    assert response.status_code == 200
+    fake_manager.materialization.fail_partition.assert_called_once_with(lease, {"message": "bad"})
 
 
 # ---------------------------------------------------------------------------
@@ -270,3 +309,60 @@ def test_set_app_status_calls_through(client, fake_manager):
     resp = client.post("/internal/apps/app1/status", json={"status": "failed"})
     assert resp.status_code == 200
     fake_manager.continuous.set_app_status.assert_called_once_with("app1", "failed")
+
+
+# ---------------------------------------------------------------------------
+# resume_status / reset / bootstrap begin+finalize
+# ---------------------------------------------------------------------------
+
+
+def test_resume_status(client, fake_manager):
+    fake_manager.continuous.has_subscriptions.return_value = True
+    fake_manager.continuous.resumable.return_value = False
+    resp = client.get("/internal/apps/app1/resume_status", params={"generation": 2})
+    assert resp.status_code == 200
+    assert resp.json() == {"has_subscriptions": True, "resumable": False}
+    fake_manager.continuous.has_subscriptions.assert_called_once_with("app1", 2)
+    fake_manager.continuous.resumable.assert_called_once_with("app1", 2)
+
+
+def test_reset_app_returns_new_generation(client, fake_manager):
+    fake_manager.continuous.reset_app.return_value = 4
+    resp = client.post("/internal/apps/app1/reset")
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True, "app_id": "app1", "generation": 4}
+
+
+def test_reset_app_404_when_unregistered(client, fake_manager):
+    fake_manager.continuous.reset_app.side_effect = KeyError("no runtime state")
+    resp = client.post("/internal/apps/app1/reset")
+    assert resp.status_code == 404
+
+
+def test_begin_bootstrap_roundtrip(client, fake_manager):
+    from acquirium.Storage.continuous.types import BootstrapState
+
+    fake_manager.continuous.begin_bootstrap.return_value = BootstrapState(
+        bootstrap_id="boot-1", app_id="app1", generation=1, streams={"s1": 3},
+    )
+    resp = client.post(
+        "/internal/apps/app1/bootstrap/begin",
+        json={"input_ref_uris": ["s1"], "output_ref_uris": ["out1"]},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "bootstrap_id": "boot-1", "app_id": "app1", "generation": 1, "streams": {"s1": 3},
+    }
+    fake_manager.continuous.begin_bootstrap.assert_called_once_with("app1", ["s1"], ["out1"])
+
+
+def test_finalize_bootstrap_roundtrip(client, fake_manager):
+    resp = client.post("/internal/bootstrap/boot-1/finalize")
+    assert resp.status_code == 200
+    fake_manager.continuous.finalize_bootstrap.assert_called_once_with("boot-1")
+
+
+def test_finalize_bootstrap_404_for_unknown_id(client, fake_manager):
+    fake_manager.continuous.finalize_bootstrap.side_effect = KeyError("unknown bootstrap")
+    resp = client.post("/internal/bootstrap/nope/finalize")
+    assert resp.status_code == 404

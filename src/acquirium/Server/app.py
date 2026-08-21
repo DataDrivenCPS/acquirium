@@ -26,12 +26,13 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 
 from acquirium.Server.manager import Manager
+from acquirium.Materialization.definitions import MaterializationDefinition
+from acquirium.Materialization.impact import ImpactPolicy
 
 from acquirium.internals.models import (
     LogEntry,
     TimeIntervalModel,
     AppSpec,
-    AppRunRequest,
     AppStopRequest,
     StreamInsert,
     RegisterDatasourceRequest,
@@ -146,10 +147,13 @@ async def _restore_registered_apps(app_supervisor: AppSupervisor, manager: Manag
 
     register_app() persisted each app's source under the app storage dir and
     its registration triples in the graph; a restart only loses the
-    supervisor's in-memory records. Rebuild the specs from graph + disk and
-    respawn the actors without re-writing the graph. Apps whose last active
-    run was keep-alive are restarted with their saved interval, window, and
-    run parameters.
+    supervisor's in-memory records (Ray actor state), not durable
+    continuous-batch state. Rebuild the specs from graph + disk and respawn
+    the actors -- restore_app() reruns setup() (build_query/build_app and
+    mapping resolution), which is all a resumed app needs. No explicit
+    start() call: app_runtime.status is durable, and the lifespan's
+    router.trigger() pass (after this function returns) wakes any
+    active/bootstrapping app to resume processing.
     """
     from acquirium.Apps.supervisor import restore_app_specs
 
@@ -162,23 +166,6 @@ async def _restore_registered_apps(app_supervisor: AppSupervisor, manager: Manag
         try:
             await asyncio.to_thread(app_supervisor.restore_app, spec)
             log.info("Restored app '%s' from the persistent store", spec.name)
-            if spec.resume_keep_alive:
-                await asyncio.to_thread(
-                    app_supervisor.run_app,
-                    AppRunRequest(
-                        app_id=spec.name,
-                        start=spec.run_start,
-                        end=spec.run_end,
-                        params=spec.run_params,
-                        keep_alive=True,
-                        interval=spec.run_interval,
-                    ),
-                )
-                log.info(
-                    "Resumed keep-alive app '%s' (interval=%.1fs)",
-                    spec.name,
-                    spec.run_interval,
-                )
         except Exception:
             log.exception("Failed to restore app '%s'", spec.name)
 
@@ -276,23 +263,8 @@ async def _start_config_apps(supervisor: AppSupervisor, cfg: dict) -> None:
                 log.info("Reusing restored config app '%s'", instance.name)
 
             if entry.get("autostart", True):
-                keep_alive = bool(entry.get("keep_alive", True))
-                interval = float(entry.get("interval", 10.0))
-                await asyncio.to_thread(
-                    aq.run_app,
-                    instance.name,
-                    start=entry.get("start"),
-                    end=entry.get("end"),
-                    params=run_params,
-                    keep_alive=keep_alive,
-                    interval=interval,
-                )
-                log.info(
-                    "Started config app '%s' (keep_alive=%s, interval=%.1fs)",
-                    instance.name,
-                    keep_alive,
-                    interval,
-                )
+                await asyncio.to_thread(aq.start_app, instance.name, params=run_params)
+                log.info("Started config app '%s'", instance.name)
         except Exception:
             log.exception("Config app %s failed to register/start", spec)
 
@@ -570,6 +542,74 @@ def list_namespaces() -> dict[str, str]:
 #### APPS API ENDPOINTS ####
 
 
+class TransformationRegistration(BaseModel):
+    name: str
+    source_digest: str
+    entrypoint: str
+    inputs: dict[str, Any] | None = None
+    bind: dict[str, Any] | None = None
+    outputs: dict[str, Any]
+    impact: dict[str, Any]
+    parameters_schema: dict[str, Any] = Field(default_factory=dict)
+
+
+@app.post("/transformations/register")
+def register_transformation(request: TransformationRegistration) -> dict[str, Any]:
+    """Register trusted local transformation metadata; execution is scheduled separately."""
+    try:
+        definition = MaterializationDefinition(
+            name=request.name, source_digest=request.source_digest, entrypoint=request.entrypoint,
+            inputs=request.inputs, bind=request.bind, outputs=request.outputs,
+            impact=ImpactPolicy.from_json(request.impact), parameters_schema=request.parameters_schema,
+        )
+        return {"ok": True, **app.state.manager.register_transformation(definition)}
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+
+def _set_transformation_status(name: str, status: str) -> dict[str, Any]:
+    try:
+        app.state.manager.materialization.set_deployment_status(name, status)
+        return {"ok": True, **app.state.manager.materialization.deployment_status(name)}
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"unknown transformation {name!r}")
+
+
+@app.post("/transformations/{name}/start")
+def start_transformation(name: str) -> dict[str, Any]:
+    return _set_transformation_status(name, "active")
+
+
+@app.post("/transformations/{name}/pause")
+def pause_transformation(name: str) -> dict[str, Any]:
+    return _set_transformation_status(name, "paused")
+
+
+@app.post("/transformations/{name}/rebind")
+def rebind_transformation(name: str) -> dict[str, Any]:
+    deployment = app.state.manager.materialization.deployment_status(name)
+    if deployment is None:
+        raise HTTPException(status_code=404, detail=f"unknown transformation {name!r}")
+    revision = int(app.state.manager.graph_store.graph_status()["published_version"])
+    if revision < 0:
+        raise HTTPException(status_code=409, detail="no published query graph is available")
+    app.state.manager.materialization.request_rebind(name, revision)
+    return {"ok": True, "name": name, "graph_revision": revision}
+
+
+@app.get("/transformations")
+def transformations() -> dict[str, Any]:
+    return {"ok": True, "transformations": app.state.manager.materialization.deployments()}
+
+
+@app.get("/transformations/{name}")
+def transformation_status(name: str) -> dict[str, Any]:
+    result = app.state.manager.materialization.deployment_status(name)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"unknown transformation {name!r}")
+    return {"ok": True, **result}
+
+
 @app.post("/apps/register")
 def register_app(spec: AppSpec, replace: bool = False) -> dict[str, Any]:
     """Register an app. Fails with 409 if the name already exists unless
@@ -609,13 +649,21 @@ def delete_app(req: AppDeleteRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@app.post("/apps/run")
-def run_app(req: AppRunRequest) -> dict[str, Any]:
+class AppStartRequest(BaseModel):
+    app_id: str
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+@app.post("/apps/start")
+def start_app(req: AppStartRequest) -> dict[str, Any]:
+    """Start (or resume) a continuous app: bootstrap, resume, or reconcile
+    depending on its durable state (continuous_batch.md's ``start_app``)."""
     try:
-        result = app.state.apps.run_app(req)
+        result = app.state.apps.start_app(req.app_id, params=req.params)
+        app.state.router.trigger(req.app_id)
         return {"ok": True, **result}
     except Exception as e:
-        log.exception("run_app failed")
+        log.exception("start_app failed")
         raise HTTPException(status_code=400, detail=str(e))
 
 
@@ -626,6 +674,23 @@ def stop_app(req: AppStopRequest) -> dict[str, Any]:
         return {"ok": True, **result}
     except Exception as e:
         log.exception("stop_app failed")
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class AppResetRequest(BaseModel):
+    app_id: str
+
+
+@app.post("/apps/reset")
+def reset_app(req: AppResetRequest) -> dict[str, Any]:
+    """Start a new generation for the app and reconcile it from canonical
+    history (topology change, code replace, or an explicit reset)."""
+    try:
+        result = app.state.apps.reset_app(req.app_id)
+        app.state.router.trigger(req.app_id)
+        return {"ok": True, **result}
+    except Exception as e:
+        log.exception("reset_app failed")
         raise HTTPException(status_code=400, detail=str(e))
 
 
@@ -666,6 +731,75 @@ def _arrow_response(table: "pa.Table", metadata_key: str, metadata: dict[str, An
     )
 
 
+class MaterializationLeaseRequest(BaseModel):
+    owner: str
+
+
+class MaterializationSnapshotRequest(BaseModel):
+    owner: str
+    attempt: int
+
+
+@app.post("/internal/materializations/lease")
+def internal_materialization_lease(request: MaterializationLeaseRequest) -> dict[str, Any]:
+    lease = app.state.manager.materialization.lease_partition(request.owner)
+    if lease is None:
+        return {"lease": None}
+    return {"lease": {"partition_id": lease.partition.partition_id, "plan_id": lease.partition.plan_id,
+            "start": lease.partition.interval.start.isoformat(), "end": lease.partition.interval.end.isoformat(),
+            "attempt": lease.attempt, "expires_at": lease.expires_at.isoformat()}}
+
+
+@app.post("/internal/materializations/{partition_id}/snapshot")
+def internal_materialization_snapshot(partition_id: str, request: MaterializationSnapshotRequest):
+    try:
+        storage = app.state.manager.materialization
+        lease = storage.leased_partition(partition_id, request.owner, request.attempt)
+        inputs, outputs = storage.partition_refs(partition_id)
+        snapshot = storage.snapshot_partition(lease, inputs)
+        return _arrow_response(snapshot.inputs, "acquirium-materialization-snapshot", {
+            "partition_id": partition_id, "plan_id": lease.partition.plan_id, "attempt": lease.attempt,
+            "input_versions": snapshot.input_versions, "input_refs": inputs, "output_refs": outputs,
+            "start": lease.partition.interval.start.isoformat(), "end": lease.partition.interval.end.isoformat(),
+        })
+    except (KeyError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error))
+
+
+@app.post("/internal/materializations/{partition_id}/commit")
+async def internal_materialization_commit(partition_id: str, request: Request, owner: str, attempt: int):
+    try:
+        body = await request.body()
+        replacement = ipc.open_stream(pa.py_buffer(body)).read_all()
+        storage = app.state.manager.materialization
+        lease = storage.leased_partition(partition_id, owner, attempt)
+        inputs, outputs = storage.partition_refs(partition_id)
+        snapshot = storage.snapshot_partition(lease, inputs)
+        output_publication_id = storage.commit_replacement(snapshot, input_refs=inputs, output_refs=outputs, replacement=replacement)
+        return {"ok": True, "output_publication_id": output_publication_id}
+    except Exception as error:
+        raise HTTPException(status_code=409, detail=str(error))
+
+
+class MaterializationFailureRequest(BaseModel):
+    owner: str
+    attempt: int
+    error: dict[str, Any] = Field(default_factory=dict)
+
+
+@app.post("/internal/materializations/{partition_id}/fail")
+def internal_materialization_fail(partition_id: str, request: MaterializationFailureRequest) -> dict[str, Any]:
+    # A failed attempt becomes pending again; the attempt count remains durable.
+    try:
+        storage = app.state.manager.materialization
+        lease = storage.leased_partition(partition_id, request.owner, request.attempt)
+        if hasattr(storage, "fail_partition"):
+            storage.fail_partition(lease, request.error)
+        else:
+            raise RuntimeError("materialization backend lacks failure transitions")
+        return {"ok": True}
+    except Exception as error:
+        raise HTTPException(status_code=409, detail=str(error))
 class NextBatchRequest(BaseModel):
     generation: int
     target_keys: int = 50_000
@@ -775,6 +909,63 @@ def internal_set_app_status(app_id: str, req: SetAppStatusRequest) -> dict[str, 
     return {"ok": True, "app_id": app_id, "status": req.status}
 
 
+@app.get("/internal/apps/{app_id}/resume_status")
+def internal_resume_status(app_id: str, generation: int) -> dict[str, Any]:
+    """Tell the actor's ``start()`` whether to bootstrap, resume, or
+    reconcile (continuous_batch_plan.md's start_app decision rule)."""
+    continuous = app.state.manager.continuous
+    return {
+        "has_subscriptions": continuous.has_subscriptions(app_id, generation),
+        "resumable": continuous.resumable(app_id, generation),
+    }
+
+
+@app.post("/internal/apps/{app_id}/reset")
+def internal_reset_app(app_id: str) -> dict[str, Any]:
+    try:
+        generation = app.state.manager.continuous.reset_app(app_id)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"ok": True, "app_id": app_id, "generation": generation}
+
+
+class BeginBootstrapRequest(BaseModel):
+    input_ref_uris: list[str]
+    output_ref_uris: list[str]
+
+
+@app.post("/internal/apps/{app_id}/bootstrap/begin")
+def internal_begin_bootstrap(app_id: str, req: BeginBootstrapRequest) -> dict[str, Any]:
+    try:
+        state = app.state.manager.continuous.begin_bootstrap(
+            app_id, req.input_ref_uris, req.output_ref_uris
+        )
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {
+        "bootstrap_id": state.bootstrap_id,
+        "app_id": state.app_id,
+        "generation": state.generation,
+        "streams": state.streams,
+    }
+
+
+@app.post("/internal/bootstrap/{bootstrap_id}/finalize")
+def internal_finalize_bootstrap(bootstrap_id: str) -> dict[str, Any]:
+    try:
+        app.state.manager.continuous.finalize_bootstrap(bootstrap_id)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    # A finalize publishes a replacement for the app's output streams
+    # directly through ContinuousStore (not through Manager.publish), so it
+    # must wake the router itself. It doesn't know which refs changed
+    # without another read, but the app's own outputs are exactly its
+    # declared output streams -- cheaper to let the safety scan pick this
+    # up than to plumb the versions back through this response, since
+    # finalize is a rare, one-time-per-bootstrap event.
+    return {"ok": True, "bootstrap_id": bootstrap_id}
+
+
 #### DRIVERS API ENDPOINTS ####
 
 
@@ -844,6 +1035,22 @@ def register_datasource(req: RegisterDatasourceRequest) -> dict[str, Any]:
     try:
         source_id = app.state.manager.register_datasource(req.source_id)
         return {"ok": True, "source_id": source_id}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class ResolveStorageKeysRequest(BaseModel):
+    uris: list[str]
+
+
+@app.post("/resolve_storage_keys")
+def resolve_storage_keys(req: ResolveStorageKeysRequest) -> dict[str, str]:
+    """Map each semantic point_uri (or already-canonical ref_uri) in *uris*
+    to its canonical storage key. An app resolves its declared input
+    point_uris to ref_uris with this before subscribing to them (used by
+    the actor's default, non-MappedApp mapping resolution)."""
+    try:
+        return app.state.manager.timescale.resolve_storage_keys(req.uris)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

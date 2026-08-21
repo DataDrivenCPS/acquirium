@@ -576,7 +576,7 @@ def app_debug(
     code.interact(banner=banner, local=session.namespace(), exitmsg="Leaving app debug.")
 
 
-@app_app.command("run")
+@app_app.command("start")
 def app_run(
     spec: Annotated[str, typer.Argument(help="App spec: module:Class or path.py:Class")],
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Run without graph/data writes or webhooks")] = False,
@@ -589,10 +589,8 @@ def app_run(
     params: Annotated[str, typer.Option("--params", help="JSON object passed to run")] = "{}",
     max_rows: Annotated[int, typer.Option("--max-rows", min=0, help="Maximum rows shown per output")] = 20,
     replace: Annotated[bool, typer.Option("--replace", help="Replace an existing app registration")] = False,
-    keep_alive: Annotated[bool, typer.Option("--keep-alive", help="Run repeatedly until stopped")] = False,
-    interval: Annotated[float, typer.Option("--interval", min=0.001, help="Keep-alive interval in seconds")] = 10.0,
 ) -> None:
-    """Preview an app, or register it and start a run."""
+    """Preview an app, or register it and start continuous execution."""
     try:
         cfg = _load_config(config)
         host, port, use_ssl, _ = _driver_connect_cfg(cfg.get("driver", {}))
@@ -622,15 +620,8 @@ def app_run(
                 params=parsed_build_params,
                 replace=replace,
             )
-            run = aq.run_app(
-                instance.name,
-                start=parsed_start,
-                end=parsed_end,
-                params=parsed_params,
-                keep_alive=keep_alive,
-                interval=interval,
-            )
-            result = {"registration": dict(registration), "run": dict(run)}
+            started = aq.start_app(instance.name, params=parsed_params)
+            result = {"registration": dict(registration), "start": dict(started)}
     except Exception as exc:
         mode = "dry-run" if dry_run else "run"
         typer.echo(f"App {mode} failed: {exc}", err=True)

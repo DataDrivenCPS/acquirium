@@ -57,6 +57,7 @@ from acquirium.Storage.timescale_store import (
     APP_SUBSCRIPTIONS_TABLE,
     APP_WEBHOOK_INTENTS_TABLE,
     STREAM_CHANGE_KEYS_TABLE,
+    STREAM_CHANGE_RANGES_TABLE,
     STREAM_HEADS_TABLE,
     STREAM_PUBLICATIONS_TABLE,
     TIMESERIES_TABLE,
@@ -206,6 +207,25 @@ class ContinuousPostgres:
             FROM unnest(%s::text[], %s::bigint[], %s::timestamptz[]) AS t(ref_uri, stream_version, ts)
             """,
             [publication_seq, df["ref_uri"].to_list(), df["last_stream_version"].to_list(), df["ts"].to_list()],
+        )
+
+        from acquirium.Storage.materialization.ids import normalize_change_ranges
+        ranges = normalize_change_ranges(
+            publication_id=publication_id,
+            stream_versions=versions,
+            changes=zip(
+                normalized.column("ref_uri").to_pylist(),
+                normalized.column("ts").to_pylist(),
+                normalized.column("operation").to_pylist(),
+            ),
+        )
+        cur.executemany(
+            f"""INSERT INTO {STREAM_CHANGE_RANGES_TABLE}
+            (ref_uri, stream_version, publication_id, start_ts, end_ts, change_kind, row_count)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+            [(item.ref_uri, item.stream_version, item.publication_id,
+              item.interval.start, item.interval.end, item.change_kind, item.row_count)
+             for item in ranges],
         )
 
         return PublicationReceipt(

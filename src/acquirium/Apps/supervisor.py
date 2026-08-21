@@ -15,7 +15,7 @@ import shutil
 from rdflib import URIRef
 
 from acquirium.internals._log import timed_debug as _timed_debug
-from acquirium.internals.models import AppSpec, AppOutputSpec, AppRunRequest
+from acquirium.internals.models import AppSpec, AppOutputSpec
 from acquirium.internals.internals_namespaces import *
 from acquirium.Apps.runner import AppRunner
 
@@ -193,60 +193,49 @@ class AppSupervisor:
             raise KeyError(f"Unknown app: {app_id}")
         return record["actor"]
 
-    def run_app(self, req: AppRunRequest) -> dict[str, Any]:
-        """Route a run request to the app's actor, which schedules it."""
-        actor = self._actor(req.app_id)
-        now = datetime.now(timezone.utc).isoformat()
-        with _timed_debug(logger, "run_app actor.run app=%s", req.app_id):
-            run_message = ray.get(
-                actor.run.remote(req.start, req.end, req.params, req.keep_alive, req.interval)
-            )
+    def start_app(self, app_id: str, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Start (or resume) continuous execution: the actor decides
+        bootstrap vs. resume vs. reconcile from durable state
+        (:meth:`~acquirium.Apps.runner.AppRunner.start`)."""
+        actor = self._actor(app_id)
+        with _timed_debug(logger, "start_app actor.start app=%s", app_id):
+            result = ray.get(actor.start.remote(params or {}))
         with self._lock:
-            record = self._apps.get(req.app_id)
-            if record is None:
-                raise KeyError(f"Unknown app: {req.app_id}")
-            # A one-shot run (keep_alive=False) has already been dispatched by
-            # the time actor.run returns, so the app isn't in a running state —
-            # only a keep-alive loop keeps it "running".
-            record["started_at"] = now
-            if req.keep_alive:
+            record = self._apps.get(app_id)
+            if record is not None:
                 record["running"] = True
+                record["started_at"] = datetime.now(timezone.utc).isoformat()
                 record["stopped_at"] = None
-            else:
-                record["running"] = False
-                record["stopped_at"] = datetime.now(timezone.utc).isoformat()
-        logger.info(
-            "App '%s' started (keep_alive=%s, interval=%s)",
-            req.app_id, req.keep_alive, req.interval,
-        )
-        return run_message
+        logger.info("App '%s' started (status=%s)", app_id, result.get("status"))
+        return result
 
     def stop_app(self, app_id: str) -> dict[str, Any]:
-        """Ask the app's actor to stop its keep-alive loop.
-
-        A no-op for an app that isn't in a running state (e.g. one that only
-        ever did a one-shot run): the actor has no keep-alive loop to stop, so
-        we return early without clobbering ``stopped_at`` or logging a stop.
-        """
+        """Ask the app's actor to stop durably at its next transaction boundary."""
+        actor = self._actor(app_id)
+        with _timed_debug(logger, "stop_app actor.request_stop app=%s", app_id):
+            stop_message = ray.get(actor.request_stop.remote())
         with self._lock:
             record = self._apps.get(app_id)
-            if record is None:
-                raise KeyError(f"Unknown app: {app_id}")
-            actor = record["actor"]
-            if not record.get("running"):
-                logger.info("App '%s' is not running; stop is a no-op", app_id)
-                return {"name": app_id, "stopped": False, "running": False}
-
-        with _timed_debug(logger, "stop_app actor.stop app=%s", app_id):
-            stop_message = ray.get(actor.stop.remote())
-        with self._lock:
-            record = self._apps.get(app_id)
-            if record is None:
-                raise KeyError(f"Unknown app: {app_id}")
-            record["running"] = False
-            record["stopped_at"] = datetime.now(timezone.utc).isoformat()
+            if record is not None:
+                record["running"] = False
+                record["stopped_at"] = datetime.now(timezone.utc).isoformat()
         logger.info("App '%s' stopped", app_id)
         return stop_message
+
+    def reset_app(self, app_id: str) -> dict[str, Any]:
+        """Start a new generation for the app and begin reconciling it from
+        canonical history."""
+        actor = self._actor(app_id)
+        with _timed_debug(logger, "reset_app actor.request_reset app=%s", app_id):
+            result = ray.get(actor.request_reset.remote())
+        with self._lock:
+            record = self._apps.get(app_id)
+            if record is not None:
+                record["running"] = True
+                record["started_at"] = datetime.now(timezone.utc).isoformat()
+                record["stopped_at"] = None
+        logger.info("App '%s' reset (status=%s)", app_id, result.get("status"))
+        return result
 
     def app_status(self, app_id: str) -> dict[str, Any]:
         """Ask the app's actor to report its build/run status."""

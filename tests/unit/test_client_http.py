@@ -237,7 +237,7 @@ class TestResolveConversion:
 
 
 
-# ── register_app / run_app / stop_app / list_app_runs ──────
+# ── register_app / start_app / stop_app / reset_app / list_app_runs ──────
 
 
 class TestAppMethods:
@@ -255,14 +255,14 @@ class TestAppMethods:
         assert result["app_id"] == "app123"
 
     @patch("acquirium.Client.client.requests")
-    def test_run_app_success(self, mock_requests, client):
+    def test_start_app_success(self, mock_requests, client):
         mock_resp = MagicMock()
-        mock_resp.json.return_value = {"run_id": "run456"}
-        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"status": "bootstrapping", "generation": 1}
         mock_requests.post.return_value = mock_resp
 
-        result = client.run_app("app123")
-        assert result["run_id"] == "run456"
+        result = client.start_app("app123")
+        assert result["status"] == "bootstrapping"
+        assert mock_requests.post.call_args.kwargs["json"] == {"app_id": "app123", "params": {}}
 
     @patch("acquirium.Client.client.requests")
     def test_stop_app_success(self, mock_requests, client):
@@ -273,6 +273,16 @@ class TestAppMethods:
 
         result = client.stop_app(app_id="app123")
         assert result["status"] == "stopped"
+        assert mock_requests.post.call_args.kwargs["json"] == {"app_id": "app123"}
+
+    @patch("acquirium.Client.client.requests")
+    def test_reset_app_success(self, mock_requests, client):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"status": "bootstrapping", "generation": 2}
+        mock_requests.post.return_value = mock_resp
+
+        result = client.reset_app("app123")
+        assert result["generation"] == 2
         assert mock_requests.post.call_args.kwargs["json"] == {"app_id": "app123"}
 
     @patch("acquirium.Client.client.requests")

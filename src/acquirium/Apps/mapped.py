@@ -234,25 +234,49 @@ class MappedApp(App):
         outputs: list[Output] = []
         for stream in self.streams(ctx):
             transformed = self.transform(stream, ctx)
-            if transformed is None:
-                continue
-            if isinstance(transformed, Output):
-                outputs.append(transformed)
-                continue
-            if hasattr(transformed, "select") and hasattr(transformed, "iter_rows"):
-                missing = {"time", "value"} - set(transformed.columns)
-                if missing:
-                    raise ValueError(
-                        f"MappedApp.transform DataFrame is missing columns {sorted(missing)}"
-                    )
-                rows: Iterable[tuple[Any, Any]] = transformed.select(
-                    "time", "value"
-                ).iter_rows()
-            else:
-                rows = transformed
-            outputs.append(Output.timeseries(
-                point_uri=stream.output_point_uri,
-                ref_name=stream.output_ref_name,
-                rows=rows,
-            ))
+            out = self.wrap_transform_result(stream, transformed)
+            if out is not None:
+                outputs.append(out)
         return outputs
+
+    def wrap_transform_result(self, stream: MappedStream, transformed: Any) -> Output | None:
+        """Normalize one ``transform()`` return value into an ``Output``.
+
+        Shared by the preview ``run()`` path above and the continuous
+        runtime's per-stream dispatch (``AppRunner._transform_mapped``), so
+        both accept the same three return shapes: ``None`` (skip), an
+        ``Output`` returned directly, or rows / a ``[time, value]`` Polars
+        DataFrame wrapped into a timeseries output on this stream's
+        deterministic destination.
+        """
+        if transformed is None:
+            return None
+        if isinstance(transformed, Output):
+            return transformed
+        if hasattr(transformed, "select") and hasattr(transformed, "iter_rows"):
+            missing = {"time", "value"} - set(transformed.columns)
+            if missing:
+                raise ValueError(
+                    f"MappedApp.transform DataFrame is missing columns {sorted(missing)}"
+                )
+            rows: Iterable[tuple[Any, Any]] = transformed.select("time", "value").iter_rows()
+        else:
+            rows = transformed
+        return Output.timeseries(
+            point_uri=stream.output_point_uri,
+            ref_name=stream.output_ref_name,
+            rows=rows,
+        )
+
+    def resolve_deletes(self, stream: MappedStream, deleted_timestamps: list[Any]) -> list[Output]:
+        """Continuous-runtime hook: how an input delete propagates to this
+        stream's output. Default: retract the same timestamps on the
+        output (continuous_batch.md's "Mapped transformations propagate
+        deletes unless explicitly resolved otherwise"). Override to
+        suppress propagation (return ``[]``) or transform it differently.
+        """
+        return [Output.delete(
+            point_uri=stream.output_point_uri,
+            ref_name=stream.output_ref_name,
+            timestamps=deleted_timestamps,
+        )]

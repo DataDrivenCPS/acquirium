@@ -1,0 +1,402 @@
+from datetime import datetime, timedelta, timezone
+from acquirium.Materialization.bindings import BindingSpec, diff_bindings, validate_binding_topology
+from acquirium.Materialization.impact import TimeRange, coalesce_ranges, lookback, window
+from acquirium.Storage.materialization.ids import normalize_change_ranges
+from acquirium.Storage.materialization.duckdb import MaterializationDuckDB
+from acquirium.Storage.materialization.duckdb import StaleAttemptError
+from acquirium.Storage.continuous.duckdb import ContinuousDuckDB
+from acquirium.Storage.continuous.types import MUTATION_SCHEMA, PublicationRequest
+from acquirium.Storage.duckdb_store import DuckDBStore
+import pyarrow as pa
+from acquirium.Materialization.definitions import definition_for
+from acquirium.Materialization.impact import pointwise
+from acquirium.Server.manager import Manager
+from acquirium.Materialization.context import ComputeRequest, TransformContext
+from acquirium.Materialization.executor import LocalExecutorPool
+from acquirium.Materialization.compute import PythonArrowAdapter
+from acquirium.Materialization.validation import OutputValidationError
+from acquirium.Materialization.worker import DefinitionCache
+from acquirium.Materialization.scheduler import MaterializationScheduler
+UTC = timezone.utc
+
+def test_ranges_are_half_open_and_adjacent_ranges_coalesce():
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    assert coalesce_ranges((TimeRange(start, start + timedelta(seconds=1)), TimeRange(start + timedelta(seconds=1), start + timedelta(seconds=2)))) == (TimeRange(start, start + timedelta(seconds=2)),)
+
+def test_impact_expands_exact_boundaries():
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    changed = TimeRange(start, start + timedelta(seconds=1))
+    assert lookback(timedelta(minutes=5)).affected(changed) == TimeRange(start, start + timedelta(minutes=5, seconds=1))
+    assert window(before=timedelta(minutes=2), after=timedelta(minutes=3)).affected(changed) == TimeRange(start - timedelta(minutes=3), start + timedelta(minutes=2, seconds=1))
+
+def test_binding_identity_is_stable_but_content_digest_changes():
+    first = BindingSpec("ahu-1", {"temperature": ("in",)}, {"out": ("out",)}, {"unit": "K"})
+    second = BindingSpec("ahu-1", {"temperature": ("in",)}, {"out": ("out",)}, {"unit": "Cel"})
+    assert first.binding_id("definition") == second.binding_id("definition")
+    assert first.content_digest != second.content_digest
+
+def test_binding_diff_and_topology_validation():
+    first = BindingSpec("a", {"in": ("source",)}, {"out": ("derived-a",)})
+    changed = BindingSpec("a", {"in": ("source",)}, {"out": ("derived-a",)}, {"unit": "Cel"})
+    second = BindingSpec("b", {"in": ("derived-a",)}, {"out": ("derived-b",)})
+    diff = diff_bindings("definition", (first,), (changed, second))
+    assert diff.changed == (changed,)
+    assert diff.added == (second,)
+    validate_binding_topology((first, second), definition_id="definition")
+    cyclic_first = BindingSpec("cycle-a", {"in": ("cycle-b",)}, {"out": ("cycle-a",)})
+    cyclic_second = BindingSpec("cycle-b", {"in": ("cycle-a",)}, {"out": ("cycle-b",)})
+    import pytest
+    with pytest.raises(ValueError, match="cycle"):
+        validate_binding_topology((cyclic_first, cyclic_second), definition_id="definition")
+
+def test_range_manifests_bucket_and_coalesce_changes():
+    start = datetime(2026, 1, 1, 12, 0, 5, tzinfo=UTC)
+    manifests = normalize_change_ranges(publication_id="p1", stream_versions={"input": 3}, changes=(("input", start, "upsert"), ("input", start + timedelta(seconds=30), "delete")))
+    assert len(manifests) == 1
+    assert manifests[0].change_kind == "mixed"
+    assert manifests[0].interval == TimeRange(start.replace(second=0, microsecond=0), start.replace(second=0, microsecond=0) + timedelta(minutes=1))
+
+def test_canonical_duckdb_publication_dual_writes_range_manifest(tmp_path):
+    store = DuckDBStore(tmp_path / "ranges.duckdb", recreate=True)
+    try:
+        timestamp = datetime(2026, 1, 1, 12, 0, 5, tzinfo=UTC)
+        mutations = pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:input", "ts": timestamp, "numeric_value": 1.0, "text_value": None},
+            {"operation": "delete", "ref_uri": "urn:input", "ts": timestamp + timedelta(seconds=30), "numeric_value": None, "text_value": None},
+        ], schema=MUTATION_SCHEMA)
+        ContinuousDuckDB(store).publish(PublicationRequest("range-publication", mutations))
+        ranges = MaterializationDuckDB(store).change_ranges("urn:input", after_version=0, through_version=1)
+        assert len(ranges) == 1
+        assert ranges[0].change_kind == "mixed"
+        assert ranges[0].row_count == 2
+    finally:
+        store.close()
+
+def test_duckdb_persists_definition_and_staging_bindings(tmp_path):
+    store = DuckDBStore(tmp_path / "definitions.duckdb", recreate=True)
+    try:
+        runtime = MaterializationDuckDB(store)
+        def convert(value: float) -> float:
+            return value - 273.15
+        definition = definition_for(convert, inputs="temperature", outputs="celsius", impact=pointwise())
+        definition_id = runtime.register_definition(definition)
+        generation = runtime.deploy("convert-temperature", definition_id, graph_revision=7)
+        runtime.persist_bindings("convert-temperature", generation, 7, definition_id,
+                                 (BindingSpec("sensor", {"input": ("urn:in",)}, {"output": ("urn:out",)}),))
+        with store._own_conn() as conn:
+            assert conn.execute("SELECT status FROM materialization_bindings").fetchone() == ("staging",)
+    finally:
+        store.close()
+
+def test_newer_rebind_supersedes_old_work_and_failure_preserves_staging(tmp_path):
+    store = DuckDBStore(tmp_path / "rebinds.duckdb", recreate=True)
+    try:
+        runtime = MaterializationDuckDB(store)
+        runtime.request_rebind("deployment", 1)
+        runtime.request_rebind("deployment", 2)
+        assert runtime.lease_rebind("worker") == ("deployment", 2)
+        runtime.finish_rebind("deployment", 2, error={"message": "resolver failed"})
+        with store._own_conn() as conn:
+            rows = conn.execute("SELECT graph_revision, status FROM materialization_rebind_requests ORDER BY graph_revision").fetchall()
+        assert rows == [(1, "superseded"), (2, "failed")]
+    finally:
+        store.close()
+
+def test_completed_graph_publication_records_revision_and_queues_every_deployment():
+    class Graph:
+        def graph_status(self):
+            return {"source_version": 9, "published_version": 8}
+        def published_query_digest(self):
+            return "published-digest"
+    class Runtime:
+        def __init__(self):
+            self.revision = None
+            self.requests = []
+        def record_graph_revision(self, *args):
+            self.revision = args
+        def deployment_names(self):
+            return ("one", "two")
+        def request_rebind(self, *args):
+            self.requests.append(args)
+    manager = Manager.__new__(Manager)
+    manager.graph_store, manager.materialization = Graph(), Runtime()
+    manager._record_materialization_graph_revision()
+    assert manager.materialization.revision == (8, 9, "published-digest")
+    assert manager.materialization.requests == [("one", 8), ("two", 8)]
+
+def test_plan_partitions_lease_retry_and_commit_idempotently(tmp_path):
+    store = DuckDBStore(tmp_path / "plans.duckdb", recreate=True)
+    try:
+        runtime = MaterializationDuckDB(store)
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        plan_id, partitions = runtime.create_plan(
+            binding_id="binding", generation=1, graph_revision=1, input_vector={"urn:in": 4},
+            ranges=(TimeRange(start, start + timedelta(minutes=5)),), reason={"kind": "data"},
+            maximum_partition_duration=timedelta(minutes=2),
+        )
+        assert len(partitions) == 3
+        leases = [runtime.lease_partition("worker") for _ in partitions]
+        assert [lease.partition.plan_id for lease in leases if lease] == [plan_id] * 3
+        assert runtime.commit_partition(leases[0], output_publication_id="output-1")
+        assert not runtime.commit_partition(leases[0], output_publication_id="output-1")
+        assert runtime.commit_partition(leases[1], output_publication_id="output-2")
+        assert runtime.commit_partition(leases[2], output_publication_id="output-3")
+        with store._own_conn() as conn:
+            assert conn.execute("SELECT status FROM materialization_plans WHERE plan_id = ?", [plan_id]).fetchone() == ("committed",)
+    finally:
+        store.close()
+
+def test_expired_lease_is_retried_and_old_attempt_cannot_commit(tmp_path):
+    store = DuckDBStore(tmp_path / "lease-expiry.duckdb", recreate=True)
+    try:
+        runtime = MaterializationDuckDB(store)
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        runtime.create_plan(binding_id="binding", generation=1, graph_revision=1, input_vector={},
+                            ranges=(TimeRange(start, start + timedelta(seconds=1)),), reason={},
+                            maximum_partition_duration=timedelta(minutes=1))
+        expired = runtime.lease_partition("first", duration=-timedelta(microseconds=1))
+        retried = runtime.lease_partition("second")
+        assert retried and retried.attempt == expired.attempt + 1
+        import pytest
+        with pytest.raises(ValueError, match="stale"):
+            runtime.commit_partition(expired, output_publication_id="old")
+        assert runtime.commit_partition(retried, output_publication_id="new")
+    finally:
+        store.close()
+
+def test_partitioning_preserves_disjoint_and_adjacent_dirty_ranges(tmp_path):
+    store = DuckDBStore(tmp_path / "partition-algebra.duckdb", recreate=True)
+    try:
+        runtime = MaterializationDuckDB(store)
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        _, partitions = runtime.create_plan(binding_id="binding", generation=1, graph_revision=1, input_vector={},
+            ranges=(TimeRange(start, start + timedelta(minutes=2)), TimeRange(start + timedelta(minutes=2), start + timedelta(minutes=4)), TimeRange(start + timedelta(minutes=10), start + timedelta(minutes=11))),
+            reason={}, maximum_partition_duration=timedelta(minutes=1))
+        intervals = [partition.interval for partition in partitions]
+        assert intervals == [TimeRange(start + timedelta(minutes=index), start + timedelta(minutes=index + 1)) for index in (0, 1, 2, 3, 10)]
+    finally:
+        store.close()
+
+def test_semantically_identical_plan_is_idempotent(tmp_path):
+    store = DuckDBStore(tmp_path / "plan-idempotency.duckdb", recreate=True)
+    try:
+        runtime = MaterializationDuckDB(store)
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        kwargs = dict(binding_id="binding", generation=1, graph_revision=1, input_vector={"input": 1},
+                      ranges=(TimeRange(start, start + timedelta(minutes=2)),), reason={"kind": "tail"},
+                      maximum_partition_duration=timedelta(minutes=1))
+        assert runtime.create_plan(**kwargs) == runtime.create_plan(**kwargs)
+        with store._own_conn() as conn:
+            assert conn.execute("SELECT count(*) FROM materialization_plans").fetchone() == (1,)
+            assert conn.execute("SELECT count(*) FROM materialization_plan_partitions").fetchone() == (2,)
+    finally:
+        store.close()
+
+def test_snapshot_pins_live_arrow_rows_and_current_input_vector(tmp_path):
+    store = DuckDBStore(tmp_path / "snapshot.duckdb", recreate=True)
+    try:
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        mutations = pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:in", "ts": start, "numeric_value": 1.0, "text_value": None},
+            {"operation": "delete", "ref_uri": "urn:in", "ts": start + timedelta(seconds=1), "numeric_value": None, "text_value": None},
+        ], schema=MUTATION_SCHEMA)
+        ContinuousDuckDB(store).publish(PublicationRequest("snapshot-input", mutations))
+        runtime = MaterializationDuckDB(store)
+        _, partitions = runtime.create_plan(binding_id="binding", generation=1, graph_revision=1, input_vector={"urn:in": 1},
+            ranges=(TimeRange(start, start + timedelta(minutes=1)),), reason={}, maximum_partition_duration=timedelta(minutes=1))
+        lease = runtime.lease_partition("worker")
+        snapshot = runtime.snapshot_partition(lease, ("urn:in",))
+        assert snapshot.input_versions == {"urn:in": 1}
+        assert snapshot.inputs.column("numeric_value").to_pylist() == [1.0]
+        assert snapshot.inputs.schema == MUTATION_SCHEMA
+    finally:
+        store.close()
+
+def test_scheduler_creates_coalesced_manifest_driven_plan(tmp_path):
+    store = DuckDBStore(tmp_path / "scheduler.duckdb", recreate=True)
+    try:
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        rows = pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:in", "ts": start, "numeric_value": 1.0, "text_value": None},
+            {"operation": "upsert", "ref_uri": "urn:in", "ts": start + timedelta(seconds=30), "numeric_value": 2.0, "text_value": None},
+        ], schema=MUTATION_SCHEMA)
+        ContinuousDuckDB(store).publish(PublicationRequest("schedule-input", rows))
+        runtime = MaterializationDuckDB(store)
+        scheduler = MaterializationScheduler(runtime)
+        plan, partitions = scheduler.create_plan_for_binding(binding_id="binding", generation=1, graph_revision=1,
+            progress={"urn:in": 0}, heads={"urn:in": 1}, impact=pointwise(), reason={"kind": "tail"}, maximum_partition_duration=timedelta(minutes=1))
+        assert plan and len(partitions) == 1
+        assert partitions[0].interval == TimeRange(start.replace(second=0, microsecond=0), start.replace(second=0, microsecond=0) + timedelta(minutes=1))
+    finally:
+        store.close()
+
+def test_scheduler_runs_one_partition_and_retries_failures(tmp_path):
+    store = DuckDBStore(tmp_path / "scheduler-run.duckdb", recreate=True)
+    try:
+        runtime = MaterializationDuckDB(store)
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        # Persist a binding so partition_refs derives ownership durably.
+        definition = definition_for(lambda value: value, inputs="input", outputs="output", impact=pointwise())
+        did = runtime.register_definition(definition); generation = runtime.deploy("run", did)
+        binding = BindingSpec("one", {"input": ("urn:in",)}, {"output": ("urn:out",)})
+        runtime.persist_bindings("run", generation, 1, did, (binding,))
+        runtime.create_plan(binding_id=binding.binding_id(did), generation=generation, graph_revision=1, input_vector={}, ranges=(TimeRange(start, start + timedelta(minutes=1)),), reason={}, maximum_partition_duration=timedelta(minutes=1))
+        scheduler = MaterializationScheduler(runtime)
+        import pytest
+        with pytest.raises(RuntimeError):
+            scheduler.run_once("worker", lambda snapshot, outputs: (_ for _ in ()).throw(RuntimeError("bad transform")))
+        assert scheduler.run_once("worker", lambda snapshot, outputs: pa.table({"ref_uri": [], "ts": pa.array([], type=pa.timestamp("us", tz="UTC")), "numeric_value": [], "text_value": []}))
+    finally:
+        store.close()
+
+def test_scheduler_discovers_progress_lag_from_durable_binding_state(tmp_path):
+    store = DuckDBStore(tmp_path / "discover.duckdb", recreate=True)
+    try:
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        ContinuousDuckDB(store).publish(PublicationRequest("discover-input", pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:discover:in", "ts": start, "numeric_value": 1.0, "text_value": None}], schema=MUTATION_SCHEMA)))
+        runtime = MaterializationDuckDB(store)
+        definition = definition_for(lambda value: value, inputs="in", outputs="out", impact=pointwise()); did = runtime.register_definition(definition); gen = runtime.deploy("discover", did)
+        binding = BindingSpec("one", {"input": ("urn:discover:in",)}, {"output": ("urn:discover:out",)})
+        runtime.persist_bindings("discover", gen, 1, did, (binding,))
+        plans = MaterializationScheduler(runtime).discover_and_plan(impact=pointwise(), maximum_partition_duration=timedelta(minutes=1))
+        assert len(plans) == 1
+    finally:
+        store.close()
+
+def test_pending_work_recovers_after_storage_reopen(tmp_path):
+    path = tmp_path / "recovery.duckdb"
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    first_store = DuckDBStore(path, recreate=True)
+    runtime = MaterializationDuckDB(first_store)
+    runtime.create_plan(binding_id="recovery", generation=1, graph_revision=1, input_vector={},
+                        ranges=(TimeRange(start, start + timedelta(minutes=1)),), reason={}, maximum_partition_duration=timedelta(minutes=1))
+    runtime.lease_partition("lost-worker", duration=-timedelta(microseconds=1))
+    first_store.close()
+    second_store = DuckDBStore(path)
+    try:
+        recovered = MaterializationDuckDB(second_store).lease_partition("new-worker")
+        assert recovered is not None and recovered.attempt == 2
+    finally:
+        second_store.close()
+
+def test_range_commit_replaces_missing_rows_and_rejects_stale_snapshot(tmp_path):
+    store = DuckDBStore(tmp_path / "range-commit.duckdb", recreate=True)
+    try:
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        continuous = ContinuousDuckDB(store)
+        input_table = pa.Table.from_pylist([{"operation": "upsert", "ref_uri": "urn:in", "ts": start, "numeric_value": 1.0, "text_value": None}], schema=MUTATION_SCHEMA)
+        continuous.publish(PublicationRequest("input-1", input_table))
+        runtime = MaterializationDuckDB(store)
+        def lease_snapshot(*, duration=timedelta(minutes=5)):
+            runtime.create_plan(binding_id="binding", generation=1, graph_revision=1, input_vector={"urn:in": 1}, ranges=(TimeRange(start, start + timedelta(minutes=1)),), reason={}, maximum_partition_duration=timedelta(minutes=1))
+            return runtime.snapshot_partition(runtime.lease_partition("worker", duration=duration), ("urn:in",))
+        stale = lease_snapshot(duration=-timedelta(microseconds=1))
+        continuous.publish(PublicationRequest("input-2", input_table))
+        output = pa.table({"ref_uri": ["urn:out"], "ts": [start], "numeric_value": [10.0], "text_value": [None]})
+        import pytest
+        with pytest.raises(StaleAttemptError):
+            runtime.commit_replacement(stale, input_refs=("urn:in",), output_refs=("urn:out",), replacement=output)
+        # A fresh plan commits a complete replacement. An empty later result
+        # tombstones that prior owned key in the same range.
+        fresh = lease_snapshot()
+        runtime.commit_replacement(fresh, input_refs=("urn:in",), output_refs=("urn:out",), replacement=output)
+        runtime.create_plan(binding_id="binding-2", generation=1, graph_revision=1, input_vector={"urn:in": 2}, ranges=(TimeRange(start, start + timedelta(minutes=1)),), reason={}, maximum_partition_duration=timedelta(minutes=1))
+        empty = runtime.snapshot_partition(runtime.lease_partition("worker"), ("urn:in",))
+        runtime.commit_replacement(empty, input_refs=("urn:in",), output_refs=("urn:out",), replacement=pa.table({"ref_uri": [], "ts": pa.array([], type=pa.timestamp("us", tz="UTC")), "numeric_value": [], "text_value": []}))
+        assert list(store.timeseries("urn:out")) == []
+        with store._own_conn() as conn:
+            assert conn.execute("SELECT stream_version FROM materialization_binding_progress WHERE binding_id = 'binding'").fetchone() == (1,)
+            assert conn.execute("SELECT count(*) FROM materialization_execution_receipts WHERE status = 'committed'").fetchone() == (2,)
+    finally:
+        store.close()
+
+def test_lookback_stale_check_only_rejects_changes_that_affect_partition(tmp_path):
+    store = DuckDBStore(tmp_path / "lookback-stale.duckdb", recreate=True)
+    try:
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        initial = pa.Table.from_pylist([{"operation": "upsert", "ref_uri": "urn:in", "ts": start, "numeric_value": 1.0, "text_value": None}], schema=MUTATION_SCHEMA)
+        ContinuousDuckDB(store).publish(PublicationRequest("lookback-1", initial))
+        runtime = MaterializationDuckDB(store)
+        scheduler = MaterializationScheduler(runtime)
+        _, parts = scheduler.create_plan_for_binding(binding_id="binding", generation=1, graph_revision=1, progress={"urn:in": 0}, heads={"urn:in": 1}, impact=lookback(timedelta(minutes=5)), reason={}, maximum_partition_duration=timedelta(minutes=10))
+        snapshot = runtime.snapshot_partition(runtime.lease_partition("worker"), ("urn:in",))
+        # A newer source change ten minutes later cannot affect the owned output range.
+        later = pa.Table.from_pylist([{"operation": "upsert", "ref_uri": "urn:in", "ts": start + timedelta(minutes=10), "numeric_value": 2.0, "text_value": None}], schema=MUTATION_SCHEMA)
+        ContinuousDuckDB(store).publish(PublicationRequest("lookback-2", later))
+        runtime.commit_replacement(snapshot, input_refs=("urn:in",), output_refs=("urn:out",), replacement=pa.table({"ref_uri": [], "ts": pa.array([], type=pa.timestamp("us", tz="UTC")), "numeric_value": [], "text_value": []}))
+    finally:
+        store.close()
+
+def _compute_request(*, refs=frozenset({"urn:out"})):
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    inputs = pa.table({"ref_uri": ["urn:in", "urn:in"], "ts": [start, start + timedelta(seconds=1)],
+                       "numeric_value": [273.15, 274.15], "text_value": [None, None]})
+    return ComputeRequest(inputs, TransformContext("binding", "execution", TimeRange(start, start + timedelta(minutes=1)), {}), refs)
+
+def test_scalar_arrow_adapter_and_bounded_pool():
+    request = _compute_request()
+    with_pool = LocalExecutorPool(workers=1)
+    try:
+        result = with_pool.submit(lambda value: value - 273.15, ComputeRequest(request.inputs, request.context, request.output_refs, scalar=True)).result()
+    finally:
+        with_pool.close()
+    assert result.column("numeric_value").to_pylist() == [0.0, 1.0]
+
+def test_batch_adapter_rejects_out_of_range_or_unowned_output():
+    request = _compute_request()
+    def invalid(batch, context):
+        return pa.table({"ref_uri": ["urn:not-owned"], "ts": [context.interval.end], "numeric_value": [1.0], "text_value": [None]})
+    import pytest
+    with pytest.raises(OutputValidationError):
+        PythonArrowAdapter().execute(invalid, request)
+
+def test_scalar_adapter_handles_text_and_null_and_rejects_bad_return_values():
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    inputs = pa.table({"ref_uri": ["urn:in", "urn:in"], "ts": [start, start + timedelta(seconds=1)],
+                       "numeric_value": [None, None], "text_value": ["open", None]})
+    request = ComputeRequest(inputs, TransformContext("binding", "execution", TimeRange(start, start + timedelta(minutes=1)), {}), frozenset({"urn:out"}), scalar=True)
+    result = PythonArrowAdapter().execute(lambda value: None if value is None else value.upper(), request)
+    assert result.column("text_value").to_pylist() == ["OPEN", None]
+    import pytest
+    with pytest.raises(TypeError, match="scalar transformations"):
+        PythonArrowAdapter().execute(lambda value: {"invalid": value}, request)
+
+def test_batch_adapter_selects_required_schema_and_rejects_missing_columns():
+    request = _compute_request()
+    def valid(batch, context):
+        return pa.table({"ref_uri": ["urn:out"], "ts": [context.interval.start], "numeric_value": [2.0], "text_value": [None], "debug": ["ignored"]})
+    result = PythonArrowAdapter().execute(valid, request)
+    assert result.column_names == ["ref_uri", "ts", "numeric_value", "text_value"]
+    import pytest
+    with pytest.raises(OutputValidationError, match="missing"):
+        PythonArrowAdapter().execute(lambda batch, context: pa.table({"ref_uri": [], "ts": []}), request)
+
+def test_pool_is_bounded_and_recovers_after_a_failed_transform():
+    import threading
+    request = _compute_request()
+    pool = LocalExecutorPool(workers=2)
+    thread_ids = set()
+    def work(batch, context):
+        thread_ids.add(threading.get_ident())
+        return pa.table({"ref_uri": ["urn:out"], "ts": [context.interval.start], "numeric_value": [1.0], "text_value": [None]})
+    try:
+        futures = [pool.submit(work, request) for _ in range(20)]
+        assert all(future.result().num_rows == 1 for future in futures)
+        failed = pool.submit(lambda batch, context: (_ for _ in ()).throw(RuntimeError("boom")), request)
+        import pytest
+        with pytest.raises(RuntimeError, match="boom"):
+            failed.result()
+        assert pool.submit(work, request).result().num_rows == 1
+    finally:
+        pool.close()
+    assert len(thread_ids) <= 2
+
+def test_definition_cache_reuses_digest_and_reloads_after_clear():
+    cache = DefinitionCache()
+    calls = []
+    assert cache.load("digest", lambda: calls.append(1) or object()) is cache.load("digest", lambda: calls.append(2) or object())
+    assert calls == [1]
+    cache.clear()
+    cache.load("digest", lambda: calls.append(3) or object())
+    assert calls == [1, 3]

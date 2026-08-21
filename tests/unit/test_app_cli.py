@@ -46,9 +46,9 @@ class FakeAcquirium:
         self.register_calls.append((app, kwargs))
         return {"ok": True, "name": app.name}
 
-    def run_app(self, app_id, **kwargs):
+    def start_app(self, app_id, **kwargs):
         self.run_calls.append((app_id, kwargs))
-        return {"ok": True, "run_id": "cli-app-1"}
+        return {"ok": True, "status": "bootstrapping", "generation": 1}
 
     def list_app_runs(self, **kwargs):
         self.list_calls.append(kwargs)
@@ -92,10 +92,10 @@ def install_fakes(monkeypatch):
     monkeypatch.setattr("acquirium.Client.acquirium.Acquirium", FakeAcquirium)
 
 
-def test_app_run_dry_run_only_previews(monkeypatch):
+def test_app_start_dry_run_only_previews(monkeypatch):
     install_fakes(monkeypatch)
     result = CliRunner().invoke(app, [
-        "app", "run", "fake.py:CliApp",
+        "app", "start", "fake.py:CliApp",
         "--dry-run",
         "--params", '{"window": 5}',
     ])
@@ -109,13 +109,11 @@ def test_app_run_dry_run_only_previews(monkeypatch):
     assert aq.run_calls == []
 
 
-def test_app_run_registers_and_runs_without_dry_run(monkeypatch):
+def test_app_start_registers_and_starts_without_dry_run(monkeypatch):
     install_fakes(monkeypatch)
     result = CliRunner().invoke(app, [
-        "app", "run", "fake.py:CliApp",
+        "app", "start", "fake.py:CliApp",
         "--replace",
-        "--keep-alive",
-        "--interval", "30",
         "--build-params", '{"training": 10}',
         "--params", '{"window": 5}',
     ])
@@ -128,16 +126,7 @@ def test_app_run_registers_and_runs_without_dry_run(monkeypatch):
         "params": {"training": 10},
         "replace": True,
     }
-    assert aq.run_calls == [(
-        "cli-app",
-        {
-            "start": None,
-            "end": None,
-            "params": {"window": 5},
-            "keep_alive": True,
-            "interval": 30.0,
-        },
-    )]
+    assert aq.run_calls == [("cli-app", {"params": {"window": 5}})]
 
 
 def test_app_list_and_deregister(monkeypatch):

@@ -167,6 +167,10 @@ class AppContext:
     queries: dict[str, Query] | None = None
     data: Any | None = None
     state: Any | None = None
+    # Materialized input rows for one continuous-batch turn (an InputBatch;
+    # typed Any here to avoid a Client -> Apps import). None outside
+    # continuous execution (preview/debug, bounded runs).
+    inputs: Any | None = None
 
 
 class AppOutputSpec(BaseModel):

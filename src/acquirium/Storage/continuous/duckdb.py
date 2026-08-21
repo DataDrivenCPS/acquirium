@@ -66,6 +66,7 @@ from acquirium.Storage.duckdb_store import (
     DuckDBStore,
     REF_IDS_TABLE,
     STREAM_CHANGE_KEYS_TABLE,
+    STREAM_CHANGE_RANGES_TABLE,
     STREAM_HEADS_TABLE,
     STREAM_PUBLICATIONS_SEQ,
     STREAM_PUBLICATIONS_TABLE,
@@ -297,6 +298,27 @@ class ContinuousDuckDB:
             conn.execute(f"INSERT INTO {STREAM_CHANGE_KEYS_TABLE} SELECT * FROM _acq_cont_changekeys")
         finally:
             conn.unregister("_acq_cont_changekeys")
+
+        # The old exact-key manifest remains dual-written during migration,
+        # while range manifests are the new durable invalidation contract.
+        from acquirium.Storage.materialization.ids import normalize_change_ranges
+        ranges = normalize_change_ranges(
+            publication_id=publication_id,
+            stream_versions={ref: new_version[ref_id_map[ref]] for ref in ref_uris},
+            changes=zip(
+                normalized.column("ref_uri").to_pylist(),
+                normalized.column("ts").to_pylist(),
+                normalized.column("operation").to_pylist(),
+            ),
+        )
+        conn.executemany(
+            f"""INSERT INTO {STREAM_CHANGE_RANGES_TABLE}
+            (ref_uri, stream_version, publication_id, start_ts, end_ts, change_kind, row_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            [(item.ref_uri, item.stream_version, item.publication_id,
+              item.interval.start.replace(tzinfo=None), item.interval.end.replace(tzinfo=None),
+              item.change_kind, item.row_count) for item in ranges],
+        )
 
         versions = {ref_uri: new_version[ref_id_map[ref_uri]] for ref_uri in ref_id_map}
         conn.execute(

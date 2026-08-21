@@ -669,28 +669,25 @@ class Acquirium:
         registration, and remove its persisted source)."""
         return AppsResponse(self.client.delete_app(app_id))
 
-    def run_app(
-        self,
-        app_id: str,
-        *,
-        start: datetime | None = None,
-        end: datetime | None = None,
-        params: dict[str, Any] | None = None,
-        keep_alive: bool = False,
-        interval: float = 10.0,
-    ) -> dict[str, Any]:
-        """Trigger an app execution in its own container via the server."""
-        return AppsResponse(self.client.run_app(
-            app_id,
-            start=start,
-            end=end,
-            params=params or {},
-            keep_alive=keep_alive,
-            interval=interval,
-        ))
+    def start_app(self, app_id: str, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Start (or resume) continuous execution for a registered app.
+
+        Bootstraps over full retained history on first start, resumes from
+        its durable cursor if stopped and not yet compacted past, or
+        reconciles from canonical history otherwise
+        (continuous_batch.md's ``start_app``). Idempotent while already
+        active or bootstrapping.
+        """
+        return AppsResponse(self.client.start_app(app_id, params=params or {}))
+
+    def reset_app(self, app_id: str) -> dict[str, Any]:
+        """Start a new generation for the app and reconcile it from
+        canonical history (topology change, code replace, or an explicit
+        reset)."""
+        return AppsResponse(self.client.reset_app(app_id))
 
     def stop_app(self, *, app_id: str) -> dict[str, Any]:
-        """Stop an app's keep-alive loop."""
+        """Stop an app's continuous execution at its next transaction boundary."""
         return AppsResponse(self.client.stop_app(app_id=app_id))
 
     def list_app_runs(self, *, app_id: str | None = None) -> dict[str, Any]:

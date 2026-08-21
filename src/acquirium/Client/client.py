@@ -10,7 +10,6 @@ from acquirium.internals.models import (
     Order,
     LogEntry,
     AppSpec,
-    AppRunRequest,
     AppStopRequest,
     StreamInsert,
     RegisterDatasourceRequest,
@@ -534,33 +533,37 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
+    def register_transformation(self, definition: dict) -> dict:
+        response = requests.post(f"{self.base_url}/transformations/register", json=definition)
+        _raise_for_status(response)
+        return response.json()
+
+    def set_transformation_status(self, name: str, status: str) -> dict:
+        if status not in {"active", "paused"}:
+            raise ValueError("transformation status must be active or paused")
+        response = requests.post(f"{self.base_url}/transformations/{name}/{'start' if status == 'active' else 'pause'}")
+        _raise_for_status(response)
+        return response.json()
+
+    def transformation_status(self, name: str) -> dict:
+        response = requests.get(f"{self.base_url}/transformations/{name}")
+        _raise_for_status(response)
+        return response.json()
+
+    def list_transformations(self) -> dict:
+        response = requests.get(f"{self.base_url}/transformations")
+        _raise_for_status(response)
+        return response.json()
+
+    def rebind_transformation(self, name: str) -> dict:
+        response = requests.post(f"{self.base_url}/transformations/{name}/rebind")
+        _raise_for_status(response)
+        return response.json()
+
     def delete_app(self, app_id: str) -> dict:
         url = f"{self.base_url}/apps/delete"
         response = requests.post(url, json={"app_id": app_id})
         _raise_for_status(response)
-        return response.json()
-
-    def run_app(
-        self,
-        app_id: str,
-        *,
-        start: Optional[datetime] = None,
-        end: Optional[datetime] = None,
-        params: Optional[dict] = None,
-        keep_alive: bool = False,
-        interval: float = 10.0,
-    ) -> dict:
-        url = f"{self.base_url}/apps/run"
-        req = AppRunRequest(
-            app_id=app_id,
-            start=start,
-            end=end,
-            params=params or {},
-            keep_alive=keep_alive,
-            interval=interval,
-        )
-        response = requests.post(url, json=req.model_dump(mode="json"))
-        response.raise_for_status()
         return response.json()
 
     def stop_app(self, *, app_id: str) -> dict:
@@ -604,6 +607,40 @@ class AcquiriumClient:
         (e.g. ``failed`` after repeated batch errors)."""
         url = f"{self.base_url}/internal/apps/{app_id}/status"
         response = requests.post(url, json={"status": status})
+        _raise_for_status(response)
+        return response.json()
+
+    def resume_status(self, app_id: str, generation: int) -> dict:
+        """``{"has_subscriptions", "resumable"}`` -- tells an actor's start()
+        whether to bootstrap, resume, or reconcile."""
+        url = f"{self.base_url}/internal/apps/{app_id}/resume_status"
+        response = requests.get(url, params={"generation": generation})
+        _raise_for_status(response)
+        return response.json()
+
+    def reset_app_runtime(self, app_id: str) -> dict:
+        """Start a new generation for *app_id* at the storage layer.
+        Returns ``{"generation": ...}``."""
+        url = f"{self.base_url}/internal/apps/{app_id}/reset"
+        response = requests.post(url)
+        _raise_for_status(response)
+        return response.json()
+
+    def begin_bootstrap(
+        self, app_id: str, *, input_ref_uris: list[str], output_ref_uris: list[str]
+    ) -> dict:
+        """Snapshot input history into staging; returns
+        ``{"bootstrap_id", "app_id", "generation", "streams"}``."""
+        url = f"{self.base_url}/internal/apps/{app_id}/bootstrap/begin"
+        response = requests.post(
+            url, json={"input_ref_uris": input_ref_uris, "output_ref_uris": output_ref_uris}
+        )
+        _raise_for_status(response)
+        return response.json()
+
+    def finalize_bootstrap(self, bootstrap_id: str) -> dict:
+        url = f"{self.base_url}/internal/bootstrap/{bootstrap_id}/finalize"
+        response = requests.post(url)
         _raise_for_status(response)
         return response.json()
 
@@ -681,6 +718,15 @@ class AcquiriumClient:
         params = {"app_id": app_id} if app_id else None
         response = requests.get(url, params=params)
         response.raise_for_status()
+        return response.json()
+
+    def resolve_storage_keys(self, uris: list[str]) -> dict[str, str]:
+        """Map each point_uri (or already-canonical ref_uri) to its storage key."""
+        if not uris:
+            return {}
+        url = f"{self.base_url}/resolve_storage_keys"
+        response = requests.post(url, json={"uris": uris})
+        _raise_for_status(response)
         return response.json()
 
     def register_datasource(self, source_id: str) -> str:
