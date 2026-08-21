@@ -1,0 +1,79 @@
+# Unit-vocabulary extension for the SVCW deployment.
+#
+# Merged into the QUDT unit vocabulary by
+#   [ontologies] unit_extensions = ["./units.ttl"]
+# in acquirium.toml. It is NOT registered as a standalone ontology and the
+# bundled qudt_unit.ttl is never modified.
+#
+# Two jobs:
+#   1. Alias existing QUDT units so plant-floor abbreviations resolve.
+#      Use qudt:symbol, NOT skos:altLabel — QUDTUnitConverter.resolve_unit
+#      searches [rdfs:label, skos:prefLabel, qudt:symbol, qudt:ucumCode,
+#      qudt:uneceCommonCode] and would miss an altLabel, while the embedding
+#      index reads altLabel and would not. Using symbol keeps the
+#      deterministic converter and the matcher in agreement.
+#   2. Define units QUDT's bundled subset lacks, with enough metadata
+#      (multiplier + dimension vector + quantity kind) for conversion and
+#      compatibility checking to work.
+
+@prefix owl:          <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs:         <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:          <http://www.w3.org/2001/XMLSchema#> .
+@prefix qudt:         <http://qudt.org/schema/qudt/> .
+@prefix unit:         <http://qudt.org/vocab/unit/> .
+@prefix quantitykind: <http://qudt.org/vocab/quantitykind/> .
+@prefix dimension:    <http://qudt.org/vocab/dimensionvector/> .
+@prefix aqunit:       <urn:acquirium:unit#> .
+
+<urn:acquirium:unit> a owl:Ontology ;
+    rdfs:label "Acquirium unit extensions (SVCW)" .
+
+#################################################################
+# 1. Aliases for existing QUDT units
+#################################################################
+
+# qudt:symbol is multi-valued, so these add to the unit's existing symbol
+# rather than replacing it.
+unit:SCF-PER-MIN    qudt:symbol "SCFM" .
+unit:GAL_US-PER-MIN qudt:symbol "GPM" .
+unit:A              qudt:symbol "Amps" .
+
+#################################################################
+# 2. Units absent from the bundled QUDT subset
+#################################################################
+
+# Million US gallons per day. The bundled subset has GAL_US-PER-DAY but no
+# mega-gallon unit at all, and MGD is the unit of five SVCW flow columns.
+#
+# Multiplier is exactly 1e6 x unit:GAL_US-PER-DAY's
+# (4.381263638888...e-8), carried at QUDT's own precision so a round trip
+# through MGD does not lose digits. Dimension vector and quantity kinds are
+# copied from GAL_US-PER-DAY, which makes MGD convertible with every other
+# volumetric flow unit and incompatible with everything else.
+#
+# Deliberately namespaced urn:acquirium:unit# rather than per-deployment, so
+# two sites that both define MGD get the same URI and their streams compare
+# equal.
+aqunit:MGD a qudt:Unit ;
+    rdfs:label "Million US Gallons per Day"@en ;
+    qudt:symbol "MGD" ;
+    qudt:hasQuantityKind quantitykind:VolumeFlowRate ;
+    qudt:hasQuantityKind quantitykind:VolumePerTime ;
+    qudt:hasDimensionVector dimension:A0E0L3I0M0H0T-1D0 ;
+    qudt:conversionMultiplier
+        "0.04381263638888888888888888888888887"^^xsd:decimal ;
+    qudt:conversionOffset "0.0"^^xsd:decimal .
+
+# Million US gallons — the totalized counterpart of MGD, used by
+# AS_RAS_Flow_Tot.PV. NOTE: SVCW's export labels that tag "MG", which QUDT
+# already indexes as the symbol of unit:MilliGM (milligram). The mapping file
+# therefore leaves that tag's unit unset with review = true rather than
+# risking the wrong match; this definition exists so it can be filled in
+# explicitly as "million gallons" once confirmed.
+aqunit:MegaGAL_US a qudt:Unit ;
+    rdfs:label "Million US Gallons"@en ;
+    qudt:symbol "MMgal" ;
+    qudt:hasQuantityKind quantitykind:Volume ;
+    qudt:hasDimensionVector dimension:A0E0L3I0M0H0T0D0 ;
+    qudt:conversionMultiplier "3785.411784"^^xsd:decimal ;
+    qudt:conversionOffset "0.0"^^xsd:decimal .

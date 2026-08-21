@@ -190,6 +190,7 @@ class OxigraphGraphStore:
         env_root: str | Path,
         main_graph_uri: URIRef = DEFAULT_MAIN_GRAPH,
         extra_ontology_sources: list[OntologySource] | None = None,
+        unit_extension_sources: list[str] | None = None,
     ):
         # Serializes the public surface below. Oxigraph's own core is
         # thread-safe, but the derived state around it is not: the version
@@ -271,6 +272,21 @@ class OxigraphGraphStore:
                     "ontoenv: failed to register user ontology source %s: %s",
                     src.source, exc,
                 )
+        # Unit-vocabulary extensions are parsed once here rather than
+        # registered as ontoenv graphs: they are merged into the QUDT unit
+        # vocabulary (see unit_vocabulary), not standalone ontologies, and
+        # nothing should resolve owl:imports against them.
+        self._unit_extensions: list[Graph] = []
+        for path in unit_extension_sources or []:
+            try:
+                g = Graph()
+                g.parse(path)
+                self._unit_extensions.append(g)
+                _logger.info("unit vocabulary: loaded extension %s (%d triples)", path, len(g))
+            except Exception as exc:
+                _logger.error("unit vocabulary: failed to load extension %s: %s", path, exc)
+        self._unit_vocabulary_cache: Graph | None = None
+
         self._commit_dataset(self.source_dataset)
         _logger.debug(
             "OxigraphGraphStore.__init__: ready (main_graph=%s, source_version=%d)",
@@ -287,6 +303,37 @@ class OxigraphGraphStore:
         """
         with self._lock:
             return self.env.get_graph(iri)
+
+    def unit_vocabulary(self) -> Graph:
+        """The QUDT unit graph merged with any configured unit extensions.
+
+        This is what the unit converter and the QUDT embedding index read,
+        so a deployment can define its own units — and add ``qudt:symbol``
+        aliases to existing ones — without replacing the bundled QUDT graph.
+
+        With no extensions configured this is exactly ``named_graph``'s
+        read-only view, so the common case costs nothing. With extensions it
+        is a merged copy, cached until ontology state changes.
+        """
+        from acquirium._ontologies import QUDT_UNIT_IRI
+
+        with self._lock:
+            if not self._unit_extensions:
+                return self.env.get_graph(QUDT_UNIT_IRI)
+            if self._unit_vocabulary_cache is not None:
+                return self._unit_vocabulary_cache
+            merged = Graph()
+            for triple in self.env.get_graph(QUDT_UNIT_IRI):
+                merged.add(triple)
+            for extension in self._unit_extensions:
+                for triple in extension:
+                    merged.add(triple)
+            _logger.info(
+                "unit vocabulary: %d triples (%d extension file(s) merged)",
+                len(merged), len(self._unit_extensions),
+            )
+            self._unit_vocabulary_cache = merged
+            return merged
 
 # -------------------- source + dependency cache coordination --------------------
     def _source_state_path(self) -> Path:

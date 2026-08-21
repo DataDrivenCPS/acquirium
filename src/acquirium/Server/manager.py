@@ -133,6 +133,7 @@ class Manager:
         graph_path: str | Path | None = None,
         ontoenv_root: str | Path | None = None,
         ontology_sources: list["OntologySource"] | None = None,
+        unit_extensions: list[str] | None = None,
         qudt_graph: Graph | None = None,
         qudt_converter: QUDTUnitConverter | None = None,
         recreate: bool = False,
@@ -185,6 +186,7 @@ class Manager:
                 store_path=graph_path,
                 env_root=ontoenv_root,
                 extra_ontology_sources=ontology_sources,
+                unit_extension_sources=unit_extensions,
             )
 
         self.timescale = timescale
@@ -263,6 +265,7 @@ class Manager:
             graph_path=os.getenv("ACQUIRIUM_GRAPH_PATH"),
             ontoenv_root=os.getenv("ACQUIRIUM_ONTOENV_ROOT"),
             ontology_sources=list(ont_cfg.sources) or None,
+            unit_extensions=list(ont_cfg.unit_extensions) or None,
             recreate=os.getenv("ACQUIRIUM_RECREATE", "false").lower() == "true",
         )
 
@@ -447,9 +450,7 @@ class Manager:
         vocabularies. Graphs are read out of ontoenv by IRI (owl:imports
         not followed); no inserted data is embedded.
         """
-        from acquirium._ontologies import (
-            WATER_IRI, S223_IRI, QUDT_UNIT_IRI, QUDT_QK_IRI,
-        )
+        from acquirium._ontologies import WATER_IRI, S223_IRI, QUDT_QK_IRI
 
         self._update_embedding_status("graph", state="building")
         t0 = perf_counter()
@@ -477,8 +478,11 @@ class Manager:
         try:
             qc: list[dict[str, Any]] = []
             with timed_debug(logger, "qudt embedding: extract Unit concepts"):
+                # unit_vocabulary, not the bare named graph, so units and
+                # symbol aliases from [ontologies] unit_extensions are indexed
+                # alongside the bundled QUDT ones.
                 qc += QUDTStore.extract_concepts(
-                    self.graph_store.named_graph(QUDT_UNIT_IRI), str(QUDT.Unit)
+                    self.graph_store.unit_vocabulary(), str(QUDT.Unit)
                 )
             with timed_debug(logger, "qudt embedding: extract QuantityKind concepts"):
                 qc += QUDTStore.extract_concepts(
@@ -950,23 +954,23 @@ class Manager:
     # -------------------- Unit conversion --------------------
 
     def _ensure_qudt_converter(self) -> QUDTUnitConverter:
-        """Lazily initialize the QUDT converter from the in-store QUDT graph.
+        """Lazily initialize the QUDT converter from the in-store unit vocabulary.
 
-        Pulling the QUDT unit graph through ontoenv (rather than re-reading
-        the bundled TTL) means a user-supplied override at the QUDT unit
-        IRI in ``[ontologies] sources`` is honored automatically: the
-        converter sees whatever graph ontoenv currently has registered
-        at that IRI, bundled or replaced.
+        Pulling the unit graph through ontoenv (rather than re-reading the
+        bundled TTL) means a user-supplied override at the QUDT unit IRI in
+        ``[ontologies] sources`` is honored automatically. Going through
+        ``unit_vocabulary`` rather than the named graph directly also picks up
+        ``[ontologies] unit_extensions``, so a deployment can define its own
+        units without replacing the bundled QUDT graph.
         """
         if self.qudt_converter is not None:
             return self.qudt_converter
-        from acquirium._ontologies import QUDT_UNIT_IRI
 
-        qudt_graph = self.graph_store.named_graph(QUDT_UNIT_IRI)
+        qudt_graph = self.graph_store.unit_vocabulary()
         self.qudt_converter = QUDTUnitConverter(qudt_graph)
         logger.info(
-            "Lazily loaded QUDTUnitConverter from ontoenv graph %s (%d triples)",
-            QUDT_UNIT_IRI, len(qudt_graph),
+            "Lazily loaded QUDTUnitConverter from unit vocabulary (%d triples)",
+            len(qudt_graph),
         )
         return self.qudt_converter
 

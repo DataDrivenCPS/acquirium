@@ -19,6 +19,11 @@ Config shape::
         { source = "https://qudt.org/3.3.0/vocab/unit",
           as = "https://qudt.org/vocab/unit" },
     ]
+    # Merged *into* the QUDT unit vocabulary instead of being registered
+    # as a standalone ontology. Use this to define site-specific units
+    # and to alias existing ones, without replacing the bundled QUDT
+    # graph. See OxigraphGraphStore.unit_vocabulary.
+    unit_extensions = ["./svcw-units.ttl"]
 
 Relative file paths are resolved against the directory containing the
 toml file. URLs and ``urn:`` IRIs are passed through unchanged.
@@ -52,6 +57,9 @@ class OntologySource:
 @dataclass(frozen=True)
 class OntologyConfig:
     sources: tuple[OntologySource, ...] = ()
+    #: Files merged *into* the QUDT unit vocabulary rather than registered
+    #: as standalone ontologies. See ``[ontologies] unit_extensions``.
+    unit_extensions: tuple[str, ...] = ()
 
 
 def _resolve_source(src: str, base_dir: Path) -> str:
@@ -106,8 +114,20 @@ def load_ontology_config() -> OntologyConfig:
         return OntologyConfig()
 
     base_dir = cfg_path.resolve().parent
-    raw_sources = data.get("ontologies", {}).get("sources", [])
+    ontologies = data.get("ontologies", {})
+    raw_sources = ontologies.get("sources", [])
     parsed = (
         s for s in (_parse_entry(e, base_dir) for e in raw_sources) if s is not None
     )
-    return OntologyConfig(sources=tuple(parsed))
+
+    raw_extensions = ontologies.get("unit_extensions", [])
+    if isinstance(raw_extensions, str):
+        raw_extensions = [raw_extensions]
+    extensions: list[str] = []
+    for entry in raw_extensions:
+        if not isinstance(entry, str):
+            _logger.warning("ontologies.unit_extensions: ignoring non-string %r", entry)
+            continue
+        extensions.append(_resolve_source(entry, base_dir))
+
+    return OntologyConfig(sources=tuple(parsed), unit_extensions=tuple(extensions))
