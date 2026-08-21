@@ -388,18 +388,26 @@ async def lifespan(app: FastAPI):
         """Drain active durable transformation work without blocking requests."""
         owner = f"server-{os.getpid()}"
         idle_seconds = float(server_cfg.get("materialization_poll_seconds", 0.25))
+        safety_scan_seconds = float(server_cfg.get("service_safety_scan_seconds", 1.0))
+        next_service_scan = 0.0
         while True:
             try:
                 rebound = await asyncio.to_thread(m.run_rebind_once, owner)
                 ran_work = await asyncio.to_thread(m.run_materialization_once, owner)
+                ran_service = await asyncio.to_thread(m.run_service_once)
+                ran_effect = await asyncio.to_thread(m.run_effect_once, owner)
+                now = asyncio.get_running_loop().time()
+                if now >= next_service_scan:
+                    await asyncio.to_thread(m.service_safety_scan)
+                    next_service_scan = now + safety_scan_seconds
             except asyncio.CancelledError:
                 raise
             except Exception:
                 # The scheduler recorded the failed attempt as retryable; keep
                 # the server healthy and retry after the normal idle delay.
                 log.exception("Materialization execution failed")
-                rebound = ran_work = False
-            await asyncio.sleep(0 if rebound or ran_work else idle_seconds)
+                rebound = ran_work = ran_service = ran_effect = False
+            await asyncio.sleep(0 if rebound or ran_work or ran_service or ran_effect else idle_seconds)
 
     materialization_task = asyncio.create_task(_materialization_loop())
     app.state.materialization_task = materialization_task
@@ -582,6 +590,13 @@ class TransformationRegistration(BaseModel):
     parameters_schema: dict[str, Any] = Field(default_factory=dict)
 
 
+class ServiceRegistration(BaseModel):
+    name: str
+    source_digest: str
+    entrypoint: str
+    parameters_schema: dict[str, Any] = Field(default_factory=dict)
+
+
 class StateRevisionPromotion(BaseModel):
     policy: Literal["prospective", "recompute_all", "recompute_from"] = "prospective"
     effective_from: datetime | None = None
@@ -663,6 +678,47 @@ def register_transformation(request: TransformationRegistration) -> dict[str, An
         return {"ok": True, **app.state.manager.register_transformation(definition)}
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error))
+
+
+def _service_response(service) -> dict[str, Any]:
+    return {"name": service.name, "definition_id": service.definition_id, "status": service.status,
+            "health": service.health, "updated_at": service.updated_at}
+
+
+@app.post("/services/register")
+def register_service(request: ServiceRegistration) -> dict[str, Any]:
+    try:
+        definition = MaterializationDefinition(name=request.name, source_digest=request.source_digest,
+            entrypoint=request.entrypoint, kind="service", parameters_schema=request.parameters_schema)
+        return {"ok": True, **app.state.manager.register_service(definition)}
+    except (KeyError, ValueError) as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+
+@app.post("/services/{name}/start")
+def start_service(name: str) -> dict[str, Any]:
+    try:
+        return {"ok": True, **_service_response(app.state.manager.start_service(name))}
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"unknown service {name!r}")
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+
+
+@app.post("/services/{name}/stop")
+def stop_service(name: str) -> dict[str, Any]:
+    try:
+        return {"ok": True, **_service_response(app.state.manager.service_supervisor.stop(name))}
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"unknown service {name!r}")
+
+
+@app.get("/services/{name}")
+def service_status(name: str) -> dict[str, Any]:
+    try:
+        return {"ok": True, **_service_response(app.state.manager.materialization.service(name))}
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"unknown service {name!r}")
 
 
 @app.post("/artifact-requests")

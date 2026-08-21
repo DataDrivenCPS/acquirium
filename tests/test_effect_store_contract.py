@@ -32,14 +32,14 @@ def test_effect_intents_deduplicate_retry_and_dead_letter(effect_store):
         "https://example.test/hook", {}, intent.idempotency_key)) == intent.effect_id
     lease = effect_store.lease_effect_intent("worker")
     assert lease is not None and lease.attempts == 1
-    effect_store.fail_effect_intent(lease.effect_id, {"message": "temporary"}, retry_after=timedelta(0))
+    effect_store.fail_effect_intent(lease.effect_id, "worker", {"message": "temporary"}, retry_after=timedelta(0))
     retry = effect_store.lease_effect_intent("replacement")
     assert retry is not None and retry.attempts == 2
-    effect_store.complete_effect_intent(retry.effect_id)
+    effect_store.complete_effect_intent(retry.effect_id, "replacement")
     assert effect_store.lease_effect_intent("worker") is None
 
     dead = EffectIntent(f"dead:{marker}", "execution", "webhook", "https://example.test/dead", {}, f"dead:{marker}")
     effect_store.create_effect_intent(dead)
     leased_dead = effect_store.lease_effect_intent("worker")
-    effect_store.fail_effect_intent(leased_dead.effect_id, {"message": "permanent"})
+    effect_store.fail_effect_intent(leased_dead.effect_id, "worker", {"message": "permanent"})
     assert effect_store.lease_effect_intent("worker") is None

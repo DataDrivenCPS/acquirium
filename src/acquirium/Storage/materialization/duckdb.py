@@ -142,10 +142,20 @@ class MaterializationDuckDB:
             conn.execute("""CREATE TABLE IF NOT EXISTS materialization_effect_intents (
                 effect_id VARCHAR PRIMARY KEY, execution_id VARCHAR NOT NULL, kind VARCHAR NOT NULL,
                 destination VARCHAR NOT NULL, payload_json VARCHAR NOT NULL, idempotency_key VARCHAR UNIQUE NOT NULL,
-                status VARCHAR NOT NULL, attempts INTEGER NOT NULL, next_attempt_at TIMESTAMP, error_json VARCHAR)""")
+                status VARCHAR NOT NULL, attempts INTEGER NOT NULL, next_attempt_at TIMESTAMP, error_json VARCHAR,
+                lease_owner VARCHAR, lease_expires_at TIMESTAMP)""")
+            conn.execute("ALTER TABLE materialization_effect_intents ADD COLUMN IF NOT EXISTS lease_owner VARCHAR")
+            conn.execute("ALTER TABLE materialization_effect_intents ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMP")
             conn.execute("""CREATE TABLE IF NOT EXISTS materialization_services (
                 name VARCHAR PRIMARY KEY, definition_id VARCHAR NOT NULL, status VARCHAR NOT NULL,
-                health VARCHAR NOT NULL, updated_at TIMESTAMP NOT NULL)""")
+                health VARCHAR NOT NULL, updated_at TIMESTAMP NOT NULL, last_data_versions_json VARCHAR NOT NULL DEFAULT '{}',
+                last_graph_revision BIGINT)""")
+            # DuckDB cannot add a constrained column to an existing table.
+            # The creation path has the default; old databases are backfilled
+            # below and treated identically by the read path.
+            conn.execute("ALTER TABLE materialization_services ADD COLUMN IF NOT EXISTS last_data_versions_json VARCHAR")
+            conn.execute("ALTER TABLE materialization_services ADD COLUMN IF NOT EXISTS last_graph_revision BIGINT")
+            conn.execute("UPDATE materialization_services SET last_data_versions_json = '{}' WHERE last_data_versions_json IS NULL")
             conn.execute("""CREATE TABLE IF NOT EXISTS materialization_service_hints (
                 service_name VARCHAR PRIMARY KEY, token VARCHAR NOT NULL, data_versions_json VARCHAR NOT NULL,
                 graph_revision BIGINT, created_at TIMESTAMP NOT NULL)""")
@@ -193,6 +203,54 @@ class MaterializationDuckDB:
         if row is None: raise KeyError(definition_id)
         if row[2] != "experiment": raise ValueError("definition is not an experiment")
         return {"source_digest": row[0], "entrypoint": row[1]}
+
+    def service_definition(self, definition_id: str) -> dict[str, object]:
+        with self._store._own_conn() as conn:
+            row = conn.execute("SELECT source_digest, entrypoint, kind FROM materialization_definitions WHERE definition_id = ?", [definition_id]).fetchone()
+        if row is None: raise KeyError(definition_id)
+        if row[2] != "service": raise ValueError("definition is not a service")
+        return {"source_digest": row[0], "entrypoint": row[1]}
+
+    def stream_versions(self, refs: Sequence[str]) -> dict[str, int]:
+        if not refs: return {}
+        from acquirium.Storage.duckdb_store import REF_IDS_TABLE, STREAM_HEADS_TABLE
+        with self._store._own_conn() as conn:
+            conn.register("_acq_service_refs", pa.table({"ref_uri": list(refs)}))
+            try:
+                rows = conn.execute(f"""SELECT requested.ref_uri, COALESCE(head.current_version, 0)
+                    FROM _acq_service_refs requested LEFT JOIN {REF_IDS_TABLE} ids ON ids.ref_uri = requested.ref_uri
+                    LEFT JOIN {STREAM_HEADS_TABLE} head ON head.ref_id = ids.ref_id ORDER BY requested.ref_uri""").fetchall()
+            finally:
+                conn.unregister("_acq_service_refs")
+        return dict(rows)
+
+    def all_stream_versions(self) -> dict[str, int]:
+        from acquirium.Storage.duckdb_store import REF_IDS_TABLE, STREAM_HEADS_TABLE
+        with self._store._own_conn() as conn:
+            return dict(conn.execute(f"""SELECT ids.ref_uri, head.current_version FROM {STREAM_HEADS_TABLE} head
+                JOIN {REF_IDS_TABLE} ids ON ids.ref_id = head.ref_id ORDER BY ids.ref_uri""").fetchall())
+
+    def service_input_snapshot(self, refs: Sequence[str]) -> tuple[dict[str, int], pa.Table]:
+        """Read canonical service inputs without exposing backend internals."""
+        from acquirium.Storage.duckdb_store import REF_IDS_TABLE, STREAM_HEADS_TABLE, TIMESERIES_TABLE
+        with self._store._own_conn() as conn:
+            conn.register("_acq_service_snapshot_refs", pa.table({"ref_uri": list(refs)}))
+            try:
+                versions = dict(conn.execute(f"""SELECT requested.ref_uri, COALESCE(head.current_version, 0)
+                    FROM _acq_service_snapshot_refs requested LEFT JOIN {REF_IDS_TABLE} ids ON ids.ref_uri = requested.ref_uri
+                    LEFT JOIN {STREAM_HEADS_TABLE} head ON head.ref_id = ids.ref_id""").fetchall())
+                rows = conn.execute(f"""SELECT ids.ref_uri, value.ts, value.numeric_value, value.text_value
+                    FROM {TIMESERIES_TABLE} value JOIN {REF_IDS_TABLE} ids ON ids.ref_id = value.ref_id
+                    WHERE ids.ref_uri IN (SELECT ref_uri FROM _acq_service_snapshot_refs) AND NOT value.deleted
+                    ORDER BY ids.ref_uri, value.ts""").fetchall()
+            finally:
+                conn.unregister("_acq_service_snapshot_refs")
+        return versions, pa.table({
+            "ref_uri": [row[0] for row in rows],
+            "ts": pa.array([row[1].replace(tzinfo=timezone.utc) for row in rows], type=pa.timestamp("us", tz="UTC")),
+            "numeric_value": pa.array([row[2] for row in rows], type=pa.float64()),
+            "text_value": pa.array([row[3] for row in rows], type=pa.string()),
+        })
 
     def deploy(self, name: str, definition_id: str, *, graph_revision: int | None = None) -> int:
         with self._store._lock, self._store._write_conn() as conn:
@@ -968,42 +1026,119 @@ class MaterializationDuckDB:
         with self._store._lock, self._store._write_conn() as conn:
             row = conn.execute("SELECT effect_id FROM materialization_effect_intents WHERE idempotency_key = ?", [intent.idempotency_key]).fetchone()
             if row: return row[0]
-            conn.execute("INSERT INTO materialization_effect_intents VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, NULL, NULL)", [intent.effect_id, intent.execution_id, intent.kind, intent.destination, json.dumps(dict(intent.payload), sort_keys=True), intent.idempotency_key])
+            conn.execute("""INSERT INTO materialization_effect_intents
+                (effect_id, execution_id, kind, destination, payload_json, idempotency_key, status, attempts)
+                VALUES (?, ?, ?, ?, ?, ?, 'pending', 0)""", [intent.effect_id, intent.execution_id,
+                intent.kind, intent.destination, json.dumps(dict(intent.payload), sort_keys=True), intent.idempotency_key])
         return intent.effect_id
 
     def lease_effect_intent(self, owner: str, *, duration: timedelta = timedelta(minutes=5)) -> EffectIntent | None:
+        if not owner:
+            raise ValueError("effect lease owner is required")
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         with self._store._lock, self._store._write_conn() as conn:
-            row = conn.execute("SELECT effect_id, execution_id, kind, destination, payload_json, idempotency_key, attempts FROM materialization_effect_intents WHERE status = 'pending' AND (next_attempt_at IS NULL OR next_attempt_at <= ?) ORDER BY effect_id LIMIT 1", [now]).fetchone()
+            # A process can die after acquiring a lease.  Lease expiry is the
+            # recovery mechanism; notifications and worker memory are never
+            # correctness requirements for an external effect.
+            conn.execute("""UPDATE materialization_effect_intents SET status = 'pending', lease_owner = NULL,
+                lease_expires_at = NULL, next_attempt_at = ?
+                WHERE status = 'leased' AND lease_expires_at <= ?""", [now, now])
+            row = conn.execute("""SELECT effect_id, execution_id, kind, destination, payload_json,
+                idempotency_key, attempts FROM materialization_effect_intents
+                WHERE status = 'pending' AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+                ORDER BY effect_id LIMIT 1""", [now]).fetchone()
             if row is None: return None
-            conn.execute("UPDATE materialization_effect_intents SET status = 'leased', attempts = attempts + 1, next_attempt_at = ? WHERE effect_id = ?", [(now + duration), row[0]])
-        return EffectIntent(row[0], row[1], row[2], row[3], json.loads(row[4]), row[5], "leased", row[6] + 1, now + duration)
+            expires = now + duration
+            conn.execute("""UPDATE materialization_effect_intents SET status = 'leased', attempts = attempts + 1,
+                lease_owner = ?, lease_expires_at = ?, next_attempt_at = NULL WHERE effect_id = ?""", [owner, expires, row[0]])
+        return EffectIntent(row[0], row[1], row[2], row[3], json.loads(row[4]), row[5], "leased", row[6] + 1,
+                            None, None, owner, expires)
 
-    def complete_effect_intent(self, effect_id: str) -> None:
+    def complete_effect_intent(self, effect_id: str, owner: str) -> None:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         with self._store._lock, self._store._write_conn() as conn:
-            conn.execute("UPDATE materialization_effect_intents SET status = 'delivered', next_attempt_at = NULL WHERE effect_id = ? AND status = 'leased'", [effect_id])
+            held = conn.execute("""SELECT 1 FROM materialization_effect_intents WHERE effect_id = ?
+                AND status = 'leased' AND lease_owner = ? AND lease_expires_at > ?""", [effect_id, owner, now]).fetchone()
+            if held is None: raise ValueError("effect lease is not held by this owner")
+            conn.execute("""UPDATE materialization_effect_intents SET status = 'delivered', next_attempt_at = NULL,
+                lease_owner = NULL, lease_expires_at = NULL WHERE effect_id = ?""", [effect_id])
 
-    def fail_effect_intent(self, effect_id: str, error: dict, *, retry_after: timedelta | None = None) -> None:
+    def fail_effect_intent(self, effect_id: str, owner: str, error: dict, *, retry_after: timedelta | None = None) -> None:
         status = 'pending' if retry_after is not None else 'dead_letter'
         when = (datetime.now(timezone.utc).replace(tzinfo=None) + retry_after) if retry_after else None
         with self._store._lock, self._store._write_conn() as conn:
-            conn.execute("UPDATE materialization_effect_intents SET status = ?, next_attempt_at = ?, error_json = ? WHERE effect_id = ? AND status = 'leased'", [status, when, json.dumps(error, sort_keys=True), effect_id])
+            held = conn.execute("""SELECT 1 FROM materialization_effect_intents WHERE effect_id = ?
+                AND status = 'leased' AND lease_owner = ?""", [effect_id, owner]).fetchone()
+            if held is None: raise ValueError("effect lease is not held by this owner")
+            conn.execute("""UPDATE materialization_effect_intents SET status = ?, next_attempt_at = ?,
+                error_json = ?, lease_owner = NULL, lease_expires_at = NULL WHERE effect_id = ?""",
+                [status, when, json.dumps(error, sort_keys=True), effect_id])
 
-    def register_service(self, name: str, definition_id: str) -> None:
-        with self._store._lock, self._store._write_conn() as conn:
-            conn.execute("INSERT INTO materialization_services VALUES (?, ?, 'registered', 'unknown', ?) ON CONFLICT (name) DO UPDATE SET definition_id = excluded.definition_id", [name, definition_id, datetime.now(timezone.utc).replace(tzinfo=None)])
+    def effect_intent(self, effect_id: str) -> EffectIntent:
+        with self._store._own_conn() as conn:
+            row = conn.execute("""SELECT effect_id, execution_id, kind, destination, payload_json, idempotency_key,
+                status, attempts, next_attempt_at, error_json, lease_owner, lease_expires_at
+                FROM materialization_effect_intents WHERE effect_id = ?""", [effect_id]).fetchone()
+        if row is None: raise KeyError(effect_id)
+        return EffectIntent(row[0], row[1], row[2], row[3], json.loads(row[4]), row[5], row[6], row[7],
+            row[8].replace(tzinfo=timezone.utc) if row[8] else None, json.loads(row[9]) if row[9] else None,
+            row[10], row[11].replace(tzinfo=timezone.utc) if row[11] else None)
 
-    def set_service_status(self, name: str, status: str, health: str = 'healthy') -> None:
+    def register_service(self, name: str, definition_id: str):
+        if not name: raise ValueError("service name is required")
         with self._store._lock, self._store._write_conn() as conn:
-            if conn.execute("UPDATE materialization_services SET status = ?, health = ?, updated_at = ? WHERE name = ?", [status, health, datetime.now(timezone.utc).replace(tzinfo=None), name]).rowcount == 0: raise KeyError(name)
+            definition = conn.execute("SELECT kind FROM materialization_definitions WHERE definition_id = ?", [definition_id]).fetchone()
+            if definition is None: raise KeyError(definition_id)
+            if definition[0] != "service": raise ValueError("definition is not a service")
+            conn.execute("""INSERT INTO materialization_services (name, definition_id, status, health, updated_at)
+                VALUES (?, ?, 'registered', 'unknown', ?) ON CONFLICT (name) DO UPDATE SET definition_id = excluded.definition_id""",
+                [name, definition_id, datetime.now(timezone.utc).replace(tzinfo=None)])
+        return self.service(name)
+
+    def set_service_status(self, name: str, status: str, health: str = 'healthy'):
+        if status not in {"registered", "running", "stopped", "failed"}: raise ValueError("invalid service status")
+        with self._store._lock, self._store._write_conn() as conn:
+            if conn.execute("SELECT 1 FROM materialization_services WHERE name = ?", [name]).fetchone() is None: raise KeyError(name)
+            conn.execute("UPDATE materialization_services SET status = ?, health = ?, updated_at = ? WHERE name = ?", [status, health, datetime.now(timezone.utc).replace(tzinfo=None), name])
+        return self.service(name)
+
+    def service(self, name: str):
+        from acquirium.Materialization.services import ServiceRecord
+        with self._store._own_conn() as conn:
+            row = conn.execute("SELECT name, definition_id, status, health, updated_at FROM materialization_services WHERE name = ?", [name]).fetchone()
+        if row is None: raise KeyError(name)
+        return ServiceRecord(row[0], row[1], row[2], row[3], row[4].replace(tzinfo=timezone.utc))
+
+    def services(self, *, status: str | None = None):
+        with self._store._own_conn() as conn:
+            rows = conn.execute("SELECT name FROM materialization_services WHERE (? IS NULL OR status = ?) ORDER BY name", [status, status]).fetchall()
+        return tuple(self.service(row[0]) for row in rows)
+
+    def services_needing_hint(self, data_versions: dict[str, int], graph_revision: int | None):
+        with self._store._own_conn() as conn:
+            rows = conn.execute("SELECT name, last_data_versions_json, last_graph_revision FROM materialization_services WHERE status = 'running'").fetchall()
+        return tuple(name for name, versions, graph in rows
+                     if json.loads(versions) != data_versions or graph != graph_revision)
 
     def coalesce_service_hint(self, hint: ChangeHint) -> None:
         with self._store._lock, self._store._write_conn() as conn:
-            conn.execute("INSERT INTO materialization_service_hints VALUES (?, ?, ?, ?, ?) ON CONFLICT (service_name) DO UPDATE SET token = excluded.token, data_versions_json = excluded.data_versions_json, graph_revision = excluded.graph_revision, created_at = excluded.created_at", [hint.service_name, hint.token, json.dumps(dict(hint.data_versions), sort_keys=True), hint.graph_revision, hint.created_at.replace(tzinfo=None)])
+            if conn.execute("SELECT 1 FROM materialization_services WHERE name = ?", [hint.service_name]).fetchone() is None: raise KeyError(hint.service_name)
+            existing = conn.execute("SELECT data_versions_json, graph_revision FROM materialization_service_hints WHERE service_name = ?", [hint.service_name]).fetchone()
+            versions = dict(hint.data_versions)
+            graph_revision = hint.graph_revision
+            if existing is not None:
+                prior = json.loads(existing[0])
+                versions = {key: max(int(prior.get(key, value)), int(value)) for key, value in ({**prior, **versions}).items()}
+                graph_revision = max(item for item in (existing[1], graph_revision) if item is not None) if existing[1] is not None or graph_revision is not None else None
+            conn.execute("INSERT INTO materialization_service_hints VALUES (?, ?, ?, ?, ?) ON CONFLICT (service_name) DO UPDATE SET token = excluded.token, data_versions_json = excluded.data_versions_json, graph_revision = excluded.graph_revision, created_at = excluded.created_at", [hint.service_name, hint.token, json.dumps(versions, sort_keys=True), graph_revision, hint.created_at.replace(tzinfo=None)])
 
     def next_service_hint(self, name: str) -> ChangeHint | None:
         with self._store._own_conn() as conn: row = conn.execute("SELECT token, data_versions_json, graph_revision, created_at FROM materialization_service_hints WHERE service_name = ?", [name]).fetchone()
         return ChangeHint(name, row[0], json.loads(row[1]), row[2], row[3].replace(tzinfo=timezone.utc)) if row else None
 
     def acknowledge_service_hint(self, name: str, token: str) -> None:
-        with self._store._lock, self._store._write_conn() as conn: conn.execute("DELETE FROM materialization_service_hints WHERE service_name = ? AND token = ?", [name, token])
+        with self._store._lock, self._store._write_conn() as conn:
+            hint = conn.execute("SELECT data_versions_json, graph_revision FROM materialization_service_hints WHERE service_name = ? AND token = ?", [name, token]).fetchone()
+            if hint is None: return
+            conn.execute("UPDATE materialization_services SET last_data_versions_json = ?, last_graph_revision = ?, updated_at = ? WHERE name = ?", [hint[0], hint[1], datetime.now(timezone.utc).replace(tzinfo=None), name])
+            conn.execute("DELETE FROM materialization_service_hints WHERE service_name = ? AND token = ?", [name, token])

@@ -1,5 +1,6 @@
 from acquirium.Client.acquirium import Acquirium
 from acquirium.Materialization.api import StatefulTransformation, experiment, outputs, select, service, stateful, transform
+from acquirium.Materialization.services import ChangeHint, ServiceSnapshot
 from acquirium.Materialization import bindings, impact
 from acquirium.Apps.base import App, Output
 from acquirium.Apps.execution import (

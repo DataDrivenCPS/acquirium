@@ -539,6 +539,26 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
+    def register_service(self, definition: dict) -> dict:
+        response = requests.post(f"{self.base_url}/services/register", json=definition)
+        _raise_for_status(response)
+        return response.json()
+
+    def start_service(self, name: str) -> dict:
+        response = requests.post(f"{self.base_url}/services/{name}/start")
+        _raise_for_status(response)
+        return response.json()
+
+    def stop_service(self, name: str) -> dict:
+        response = requests.post(f"{self.base_url}/services/{name}/stop")
+        _raise_for_status(response)
+        return response.json()
+
+    def service_status(self, name: str) -> dict:
+        response = requests.get(f"{self.base_url}/services/{name}")
+        _raise_for_status(response)
+        return response.json()
+
     def create_artifact_request(self, request: dict) -> dict:
         response = requests.post(f"{self.base_url}/artifact-requests", json=request)
         _raise_for_status(response)

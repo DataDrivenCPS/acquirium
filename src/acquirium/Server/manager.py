@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import os
 import logging
@@ -218,6 +218,11 @@ class Manager:
         self.materialization_scheduler = MaterializationScheduler(materialization)
         self.materialization_rebinder = MaterializationRebinder(materialization, graph)
         self.materialization_executor = LocalExecutorPool()
+        from acquirium.Materialization.service_runtime import ServiceSupervisor
+        from acquirium.Materialization.effect_worker import EffectDispatcher
+        from acquirium.Server.effect_worker import deliver_effect
+        self.service_supervisor = ServiceSupervisor(materialization, self.service_snapshot)
+        self.effect_dispatcher = EffectDispatcher(materialization, deliver_effect)
         # Set by the FastAPI lifespan once the router exists (it in turn
         # depends on the AppSupervisor, which is built after the Manager).
         # None is a valid, safe state: wake_router() is then a no-op and the
@@ -672,6 +677,7 @@ class Manager:
         )
         for deployment_name in self.materialization.deployment_names():
             self.materialization.request_rebind(deployment_name, graph_revision)
+        self.notify_service_changes({}, graph_revision=graph_revision)
 
     def register_transformation(self, definition) -> dict[str, Any]:
         """Persist a transformation declaration and enqueue its first rebind."""
@@ -682,6 +688,59 @@ class Manager:
         if graph_revision >= 0:
             self.materialization.request_rebind(definition.name, graph_revision)
         return {"name": definition.name, "definition_id": definition_id, "generation": generation, "status": "registered"}
+
+    def register_service(self, definition) -> dict[str, Any]:
+        """Register an immutable service package without granting stream ownership."""
+        if definition.kind != "service":
+            raise ValueError("service registration requires a service definition")
+        if definition.inputs is not None or definition.bind is not None or definition.outputs is not None:
+            raise ValueError("services cannot declare materialized stream inputs or outputs")
+        definition_id = self.materialization.register_definition(definition)
+        service = self.materialization.register_service(definition.name, definition_id)
+        return {"name": service.name, "definition_id": service.definition_id,
+                "status": service.status, "health": service.health}
+
+    def notify_service_changes(self, versions: dict[str, int], *, graph_revision: int | None = None) -> None:
+        """Persist a latest-state wake-up for every service, coalescing bursts."""
+        from acquirium.Materialization.services import ChangeHint
+        now = datetime.now(timezone.utc)
+        for service in self.materialization.services():
+            self.materialization.coalesce_service_hint(ChangeHint(
+                service.name, str(uuid.uuid4()), dict(versions), graph_revision, now,
+            ))
+
+    def service_safety_scan(self) -> None:
+        """Recover missed process-local notifications from canonical stream heads."""
+        from acquirium.Materialization.services import ChangeHint
+        graph_revision = int(self.graph_store.graph_status()["published_version"])
+        graph_revision = graph_revision if graph_revision >= 0 else None
+        versions = self.materialization.all_stream_versions()
+        now = datetime.now(timezone.utc)
+        for name in self.materialization.services_needing_hint(versions, graph_revision):
+            self.materialization.coalesce_service_hint(ChangeHint(name, str(uuid.uuid4()), versions, graph_revision, now))
+
+    def start_service(self, name: str):
+        service = self.service_supervisor.start(name)
+        self.service_safety_scan()
+        return service
+
+    def run_service_once(self) -> bool:
+        return self.service_supervisor.run_next()
+
+    def run_effect_once(self, owner: str = "manager") -> bool:
+        return self.effect_dispatcher.deliver_once(owner)
+
+    def service_snapshot(self, refs: tuple[str, ...]):
+        """Return a read whose before/after head vectors prove one current snapshot."""
+        from acquirium.Materialization.services import ServiceSnapshot, snapshot_token
+        for _ in range(3):
+            before, inputs = self.materialization.service_input_snapshot(refs)
+            after = self.materialization.stream_versions(refs)
+            if before == after:
+                graph = int(self.graph_store.graph_status()["published_version"])
+                return ServiceSnapshot(snapshot_token(after, graph if graph >= 0 else None), after,
+                                       graph if graph >= 0 else None, inputs)
+        raise RuntimeError("canonical inputs changed continuously while taking service snapshot")
 
     def run_materialization_once(self, owner: str = "manager") -> bool:
         """Execute one durable materialization partition, if any is pending."""
@@ -801,6 +860,7 @@ class Manager:
         pub_id = publication_id or str(uuid.uuid4())
         receipt = self.continuous.publish(PublicationRequest(pub_id, mutations))
         self.wake_router(receipt.versions.keys())
+        self.notify_service_changes(dict(receipt.versions))
         return receipt
 
     def wake_router(self, ref_uris) -> None:
@@ -1300,6 +1360,9 @@ class Manager:
         executor = getattr(self, "materialization_executor", None)
         if executor is not None:
             executor.close()
+        services = getattr(self, "service_supervisor", None)
+        if services is not None:
+            services.close()
         # ContinuousDuckDB shares DuckDBStore's connections and owns nothing
         # to close itself; ContinuousPostgres owns a separate pool.
         close_continuous = getattr(self.continuous, "close", None)

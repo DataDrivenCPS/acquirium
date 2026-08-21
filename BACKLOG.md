@@ -68,7 +68,16 @@ in phase order so the replacement can be delivered incrementally.
   status records, metadata filtering, rerun, keep/collection, and DuckDB /
   PostgreSQL persistence are implemented. The load-shifting-style example uses
   the run context rather than hand-written provenance bookkeeping.
-- [ ] Services, effects, and old continuous-runtime removal (Phases 8–9).
+- [x] Phase 8: services and effect delivery. Immutable service packages have
+  durable registration/start/stop/health state, a dedicated bounded executor,
+  merged at-least-once data/graph hints, current authoritative Arrow snapshots
+  with version tokens, safety-scan recovery, and an effect-only context.
+  Webhook effects are leased, retried with exponential backoff, deduplicated by
+  idempotency key, and terminally dead-lettered. The streaming-dashboard
+  example uses these APIs without polling backend internals.
+- [ ] Phase 9: remove the superseded continuous app runtime, then complete
+  naming/schema diagnostics, benchmark characterization, and documentation
+  cleanup after replacement feature coverage is accepted.
 
 ## Notes
 

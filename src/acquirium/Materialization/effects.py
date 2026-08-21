@@ -1,7 +1,7 @@
 """Durable idempotent external-effect intents."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 import json
 from typing import Mapping
@@ -19,6 +19,8 @@ class EffectIntent:
     attempts: int = 0
     next_attempt_at: datetime | None = None
     error: Mapping[str, object] | None = None
+    lease_owner: str | None = None
+    lease_expires_at: datetime | None = None
 
     def __post_init__(self) -> None:
         if not all((self.effect_id, self.execution_id, self.kind, self.destination, self.idempotency_key)):

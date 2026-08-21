@@ -669,6 +669,23 @@ class Acquirium:
         registration, and remove its persisted source)."""
         return AppsResponse(self.client.delete_app(app_id))
 
+    def register_service(self, target: object) -> dict[str, Any]:
+        """Register a class decorated with :func:`acquirium.service`."""
+        definition = getattr(target, "__acquirium_definition__", None)
+        if definition is None or definition.kind != "service":
+            raise ValueError("register_service expects an @acquirium.service definition")
+        return self.client.register_service({"name": definition.name, "source_digest": definition.source_digest,
+            "entrypoint": definition.entrypoint, "parameters_schema": dict(definition.parameters_schema)})
+
+    def start_service(self, name: str) -> dict[str, Any]:
+        return self.client.start_service(name)
+
+    def stop_service(self, name: str) -> dict[str, Any]:
+        return self.client.stop_service(name)
+
+    def service_status(self, name: str) -> dict[str, Any]:
+        return self.client.service_status(name)
+
     def start_app(self, app_id: str, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """Start (or resume) continuous execution for a registered app.
 

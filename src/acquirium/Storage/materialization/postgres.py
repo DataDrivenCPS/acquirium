@@ -119,10 +119,16 @@ class MaterializationPostgres:
             conn.execute("""CREATE TABLE IF NOT EXISTS materialization_effect_intents (
                 effect_id TEXT PRIMARY KEY, execution_id TEXT NOT NULL, kind TEXT NOT NULL,
                 destination TEXT NOT NULL, payload_json JSONB NOT NULL, idempotency_key TEXT UNIQUE NOT NULL,
-                status TEXT NOT NULL, attempts INTEGER NOT NULL, next_attempt_at TIMESTAMPTZ, error_json JSONB)""")
+                status TEXT NOT NULL, attempts INTEGER NOT NULL, next_attempt_at TIMESTAMPTZ, error_json JSONB,
+                lease_owner TEXT, lease_expires_at TIMESTAMPTZ)""")
+            conn.execute("ALTER TABLE materialization_effect_intents ADD COLUMN IF NOT EXISTS lease_owner TEXT")
+            conn.execute("ALTER TABLE materialization_effect_intents ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ")
             conn.execute("""CREATE TABLE IF NOT EXISTS materialization_services (
                 name TEXT PRIMARY KEY, definition_id TEXT NOT NULL, status TEXT NOT NULL,
-                health TEXT NOT NULL, updated_at TIMESTAMPTZ NOT NULL)""")
+                health TEXT NOT NULL, updated_at TIMESTAMPTZ NOT NULL, last_data_versions_json JSONB NOT NULL DEFAULT '{}',
+                last_graph_revision BIGINT)""")
+            conn.execute("ALTER TABLE materialization_services ADD COLUMN IF NOT EXISTS last_data_versions_json JSONB NOT NULL DEFAULT '{}'")
+            conn.execute("ALTER TABLE materialization_services ADD COLUMN IF NOT EXISTS last_graph_revision BIGINT")
             conn.execute("""CREATE TABLE IF NOT EXISTS materialization_service_hints (
                 service_name TEXT PRIMARY KEY, token TEXT NOT NULL, data_versions_json JSONB NOT NULL,
                 graph_revision BIGINT, created_at TIMESTAMPTZ NOT NULL)""")
@@ -174,6 +180,39 @@ class MaterializationPostgres:
         if row is None: raise KeyError(definition_id)
         if row[2] != "experiment": raise ValueError("definition is not an experiment")
         return {"source_digest": row[0], "entrypoint": row[1]}
+
+    def service_definition(self, definition_id: str) -> dict[str, object]:
+        with self._pool.connection() as conn:
+            row = conn.execute("SELECT source_digest, entrypoint, kind FROM materialization_definitions WHERE definition_id = %s", [definition_id]).fetchone()
+        if row is None: raise KeyError(definition_id)
+        if row[2] != "service": raise ValueError("definition is not a service")
+        return {"source_digest": row[0], "entrypoint": row[1]}
+
+    def stream_versions(self, refs: Sequence[str]) -> dict[str, int]:
+        if not refs: return {}
+        with self._pool.connection() as conn:
+            rows = conn.execute("""SELECT requested.ref_uri, COALESCE(head.current_version, 0)
+                FROM unnest(%s::text[]) AS requested(ref_uri) LEFT JOIN stream_heads head
+                ON head.ref_uri = requested.ref_uri ORDER BY requested.ref_uri""", [list(refs)]).fetchall()
+        return dict(rows)
+
+    def all_stream_versions(self) -> dict[str, int]:
+        with self._pool.connection() as conn:
+            return dict(conn.execute("SELECT ref_uri, current_version FROM stream_heads ORDER BY ref_uri").fetchall())
+
+    def service_input_snapshot(self, refs: Sequence[str]) -> tuple[dict[str, int], pa.Table]:
+        with self._pool.connection() as conn:
+            versions = dict(conn.execute("""SELECT requested.ref_uri, COALESCE(head.current_version, 0)
+                FROM unnest(%s::text[]) AS requested(ref_uri) LEFT JOIN stream_heads head
+                ON head.ref_uri = requested.ref_uri""", [list(refs)]).fetchall())
+            rows = conn.execute("""SELECT ref_uri, ts, numeric_value, text_value FROM timeseries
+                WHERE ref_uri = ANY(%s::text[]) AND NOT deleted ORDER BY ref_uri, ts""", [list(refs)]).fetchall()
+        return versions, pa.table({
+            "ref_uri": [row[0] for row in rows],
+            "ts": pa.array([row[1] for row in rows], type=pa.timestamp("us", tz="UTC")),
+            "numeric_value": pa.array([row[2] for row in rows], type=pa.float64()),
+            "text_value": pa.array([row[3] for row in rows], type=pa.string()),
+        })
 
     def deploy(self, name: str, definition_id: str, *, graph_revision: int | None = None) -> int:
         with self._pool.connection() as conn, conn.transaction():
@@ -903,38 +942,107 @@ class MaterializationPostgres:
         with self._pool.connection() as conn, conn.transaction():
             row = conn.execute("SELECT effect_id FROM materialization_effect_intents WHERE idempotency_key = %s", [intent.idempotency_key]).fetchone()
             if row: return row[0]
-            conn.execute("INSERT INTO materialization_effect_intents VALUES (%s, %s, %s, %s, %s, %s, 'pending', 0, NULL, NULL)", [intent.effect_id, intent.execution_id, intent.kind, intent.destination, json.dumps(dict(intent.payload)), intent.idempotency_key])
+            conn.execute("""INSERT INTO materialization_effect_intents
+                (effect_id, execution_id, kind, destination, payload_json, idempotency_key, status, attempts)
+                VALUES (%s, %s, %s, %s, %s, %s, 'pending', 0)""", [intent.effect_id, intent.execution_id,
+                intent.kind, intent.destination, json.dumps(dict(intent.payload)), intent.idempotency_key])
         return intent.effect_id
 
     def lease_effect_intent(self, owner: str, *, duration: timedelta = timedelta(minutes=5)) -> EffectIntent | None:
+        if not owner: raise ValueError("effect lease owner is required")
         now = datetime.now(timezone.utc)
         with self._pool.connection() as conn, conn.transaction():
-            row = conn.execute("SELECT effect_id, execution_id, kind, destination, payload_json, idempotency_key, attempts FROM materialization_effect_intents WHERE status = 'pending' AND (next_attempt_at IS NULL OR next_attempt_at <= %s) ORDER BY effect_id FOR UPDATE SKIP LOCKED LIMIT 1", [now]).fetchone()
+            conn.execute("""UPDATE materialization_effect_intents SET status = 'pending', lease_owner = NULL,
+                lease_expires_at = NULL, next_attempt_at = %s WHERE status = 'leased' AND lease_expires_at <= %s""", [now, now])
+            row = conn.execute("""SELECT effect_id, execution_id, kind, destination, payload_json, idempotency_key,
+                attempts FROM materialization_effect_intents WHERE status = 'pending' AND
+                (next_attempt_at IS NULL OR next_attempt_at <= %s) ORDER BY effect_id FOR UPDATE SKIP LOCKED LIMIT 1""", [now]).fetchone()
             if row is None: return None
-            conn.execute("UPDATE materialization_effect_intents SET status = 'leased', attempts = attempts + 1, next_attempt_at = %s WHERE effect_id = %s", [now + duration, row[0]])
+            expires = now + duration
+            conn.execute("""UPDATE materialization_effect_intents SET status = 'leased', attempts = attempts + 1,
+                lease_owner = %s, lease_expires_at = %s, next_attempt_at = NULL WHERE effect_id = %s""", [owner, expires, row[0]])
         payload = json.loads(row[4]) if isinstance(row[4], str) else row[4]
-        return EffectIntent(row[0], row[1], row[2], row[3], payload, row[5], "leased", row[6] + 1, now + duration)
+        return EffectIntent(row[0], row[1], row[2], row[3], payload, row[5], "leased", row[6] + 1, None, None, owner, expires)
 
-    def complete_effect_intent(self, effect_id: str) -> None:
-        with self._pool.connection() as conn, conn.transaction(): conn.execute("UPDATE materialization_effect_intents SET status = 'delivered', next_attempt_at = NULL WHERE effect_id = %s AND status = 'leased'", [effect_id])
+    def complete_effect_intent(self, effect_id: str, owner: str) -> None:
+        with self._pool.connection() as conn, conn.transaction():
+            changed = conn.execute("""UPDATE materialization_effect_intents SET status = 'delivered', next_attempt_at = NULL,
+                lease_owner = NULL, lease_expires_at = NULL WHERE effect_id = %s AND status = 'leased'
+                AND lease_owner = %s AND lease_expires_at > %s""", [effect_id, owner, datetime.now(timezone.utc)]).rowcount
+            if not changed: raise ValueError("effect lease is not held by this owner")
 
-    def fail_effect_intent(self, effect_id: str, error: dict, *, retry_after: timedelta | None = None) -> None:
+    def fail_effect_intent(self, effect_id: str, owner: str, error: dict, *, retry_after: timedelta | None = None) -> None:
         status = 'pending' if retry_after is not None else 'dead_letter'; when = datetime.now(timezone.utc) + retry_after if retry_after else None
-        with self._pool.connection() as conn, conn.transaction(): conn.execute("UPDATE materialization_effect_intents SET status = %s, next_attempt_at = %s, error_json = %s WHERE effect_id = %s AND status = 'leased'", [status, when, json.dumps(error), effect_id])
+        with self._pool.connection() as conn, conn.transaction():
+            changed = conn.execute("""UPDATE materialization_effect_intents SET status = %s, next_attempt_at = %s,
+                error_json = %s, lease_owner = NULL, lease_expires_at = NULL WHERE effect_id = %s
+                AND status = 'leased' AND lease_owner = %s""", [status, when, json.dumps(error), effect_id, owner]).rowcount
+            if not changed: raise ValueError("effect lease is not held by this owner")
 
-    def register_service(self, name: str, definition_id: str) -> None:
-        with self._pool.connection() as conn, conn.transaction(): conn.execute("INSERT INTO materialization_services VALUES (%s, %s, 'registered', 'unknown', %s) ON CONFLICT (name) DO UPDATE SET definition_id = excluded.definition_id", [name, definition_id, datetime.now(timezone.utc)])
+    def effect_intent(self, effect_id: str) -> EffectIntent:
+        with self._pool.connection() as conn:
+            row = conn.execute("""SELECT effect_id, execution_id, kind, destination, payload_json, idempotency_key,
+                status, attempts, next_attempt_at, error_json, lease_owner, lease_expires_at
+                FROM materialization_effect_intents WHERE effect_id = %s""", [effect_id]).fetchone()
+        if row is None: raise KeyError(effect_id)
+        parse = lambda value: json.loads(value) if isinstance(value, str) else value
+        return EffectIntent(row[0], row[1], row[2], row[3], parse(row[4]), row[5], row[6], row[7], row[8],
+                            parse(row[9]) if row[9] else None, row[10], row[11])
 
-    def set_service_status(self, name: str, status: str, health: str = 'healthy') -> None:
+    def register_service(self, name: str, definition_id: str):
+        if not name: raise ValueError("service name is required")
+        with self._pool.connection() as conn, conn.transaction():
+            definition = conn.execute("SELECT kind FROM materialization_definitions WHERE definition_id = %s", [definition_id]).fetchone()
+            if definition is None: raise KeyError(definition_id)
+            if definition[0] != "service": raise ValueError("definition is not a service")
+            conn.execute("""INSERT INTO materialization_services (name, definition_id, status, health, updated_at)
+                VALUES (%s, %s, 'registered', 'unknown', %s) ON CONFLICT (name) DO UPDATE SET definition_id = excluded.definition_id""",
+                [name, definition_id, datetime.now(timezone.utc)])
+        return self.service(name)
+
+    def set_service_status(self, name: str, status: str, health: str = 'healthy'):
+        if status not in {"registered", "running", "stopped", "failed"}: raise ValueError("invalid service status")
         with self._pool.connection() as conn, conn.transaction():
             if conn.execute("UPDATE materialization_services SET status = %s, health = %s, updated_at = %s WHERE name = %s", [status, health, datetime.now(timezone.utc), name]).rowcount == 0: raise KeyError(name)
+        return self.service(name)
+
+    def service(self, name: str):
+        from acquirium.Materialization.services import ServiceRecord
+        with self._pool.connection() as conn:
+            row = conn.execute("SELECT name, definition_id, status, health, updated_at FROM materialization_services WHERE name = %s", [name]).fetchone()
+        if row is None: raise KeyError(name)
+        return ServiceRecord(*row)
+
+    def services(self, *, status: str | None = None):
+        with self._pool.connection() as conn:
+            rows = conn.execute("SELECT name FROM materialization_services WHERE (%s::text IS NULL OR status = %s) ORDER BY name", [status, status]).fetchall()
+        return tuple(self.service(row[0]) for row in rows)
+
+    def services_needing_hint(self, data_versions: dict[str, int], graph_revision: int | None):
+        with self._pool.connection() as conn:
+            rows = conn.execute("SELECT name, last_data_versions_json, last_graph_revision FROM materialization_services WHERE status = 'running'").fetchall()
+        return tuple(name for name, versions, graph in rows
+                     if (json.loads(versions) if isinstance(versions, str) else versions) != data_versions or graph != graph_revision)
 
     def coalesce_service_hint(self, hint: ChangeHint) -> None:
-        with self._pool.connection() as conn, conn.transaction(): conn.execute("INSERT INTO materialization_service_hints VALUES (%s, %s, %s, %s, %s) ON CONFLICT (service_name) DO UPDATE SET token = excluded.token, data_versions_json = excluded.data_versions_json, graph_revision = excluded.graph_revision, created_at = excluded.created_at", [hint.service_name, hint.token, json.dumps(dict(hint.data_versions)), hint.graph_revision, hint.created_at])
+        with self._pool.connection() as conn, conn.transaction():
+            if conn.execute("SELECT 1 FROM materialization_services WHERE name = %s", [hint.service_name]).fetchone() is None: raise KeyError(hint.service_name)
+            existing = conn.execute("SELECT data_versions_json, graph_revision FROM materialization_service_hints WHERE service_name = %s FOR UPDATE", [hint.service_name]).fetchone()
+            versions = dict(hint.data_versions)
+            graph_revision = hint.graph_revision
+            if existing is not None:
+                prior = json.loads(existing[0]) if isinstance(existing[0], str) else existing[0]
+                versions = {key: max(int(prior.get(key, value)), int(value)) for key, value in ({**prior, **versions}).items()}
+                graph_revision = max(item for item in (existing[1], graph_revision) if item is not None) if existing[1] is not None or graph_revision is not None else None
+            conn.execute("INSERT INTO materialization_service_hints VALUES (%s, %s, %s, %s, %s) ON CONFLICT (service_name) DO UPDATE SET token = excluded.token, data_versions_json = excluded.data_versions_json, graph_revision = excluded.graph_revision, created_at = excluded.created_at", [hint.service_name, hint.token, json.dumps(versions), graph_revision, hint.created_at])
 
     def next_service_hint(self, name: str) -> ChangeHint | None:
         with self._pool.connection() as conn: row = conn.execute("SELECT token, data_versions_json, graph_revision, created_at FROM materialization_service_hints WHERE service_name = %s", [name]).fetchone()
         return ChangeHint(name, row[0], json.loads(row[1]) if isinstance(row[1], str) else row[1], row[2], row[3]) if row else None
 
     def acknowledge_service_hint(self, name: str, token: str) -> None:
-        with self._pool.connection() as conn, conn.transaction(): conn.execute("DELETE FROM materialization_service_hints WHERE service_name = %s AND token = %s", [name, token])
+        with self._pool.connection() as conn, conn.transaction():
+            hint = conn.execute("SELECT data_versions_json, graph_revision FROM materialization_service_hints WHERE service_name = %s AND token = %s", [name, token]).fetchone()
+            if hint is None: return
+            conn.execute("UPDATE materialization_services SET last_data_versions_json = %s, last_graph_revision = %s, updated_at = %s WHERE name = %s", [json.dumps(hint[0]) if not isinstance(hint[0], str) else hint[0], hint[1], datetime.now(timezone.utc), name])
+            conn.execute("DELETE FROM materialization_service_hints WHERE service_name = %s AND token = %s", [name, token])
