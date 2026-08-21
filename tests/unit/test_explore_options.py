@@ -15,6 +15,17 @@ CLS_A = "urn:test#TypeA"
 OF_MEDIUM = "http://data.ashrae.org/standard223#ofMedium"
 HAS_MEDIUM = "http://data.ashrae.org/standard223#hasMedium"
 QK_PRED = "http://qudt.org/schema/qudt/hasQuantityKind"
+REF = "https://brickschema.org/schema/Brick/ref#hasExternalReference"
+
+
+def via_ref(*predicates: str) -> str:
+    """The alternation a via_ref attribute compiles to on a measurement node.
+
+    Semantics may live on the point or on its external reference, so options()
+    counts values reachable either way.
+    """
+    return "|".join([f"<{p}>" for p in predicates]
+                    + [f"<{REF}>/<{p}>" for p in predicates])
 
 M1, M2 = "urn:p#m1", "urn:p#m2"
 
@@ -57,14 +68,14 @@ class TestOptionsQueries:
         lookup = client.sparql_query.call_args.args[0]
         assert lookup.startswith("SELECT ?v ?opt")
         assert f"VALUES ?v {{ <{M1}> <{M2}> }}" in lookup
-        assert f"?v (<{QK_PRED}>) ?opt ." in lookup
+        assert f"?v ({via_ref(QK_PRED)}) ?opt ." in lookup
         assert "GROUP BY" not in lookup and "count" not in lookup.lower()
 
     def test_multi_predicate_attr_unions(self):
         client = make_client([pattern_row(M1)], [])
         base(client).options("medium")
         lookup = client.sparql_query.call_args.args[0]
-        assert f"(<{OF_MEDIUM}>|<{HAS_MEDIUM}>)" in lookup
+        assert f"({via_ref(OF_MEDIUM, HAS_MEDIUM)})" in lookup
 
     def test_of_targets_entity_node(self):
         client = make_client([pattern_row(M1)], [])

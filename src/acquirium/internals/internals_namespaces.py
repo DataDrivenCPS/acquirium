@@ -74,6 +74,11 @@ ACQUIRIUM_SOURCE_ID  = ACQUIRIUM_NS.sourceId   # the registered datasource name
 ACQUIRIUM_REF_NAME   = ACQUIRIUM_NS.refName    # the source-local stream identifier
 ACQUIRIUM_VALUE_KIND = ACQUIRIUM_NS.valueKind  # "numeric" or "text"
 
+# Set true on a reference whose unit was knowingly registered as
+# irreconcilable with its linked point's. Registration refuses such a pair
+# without it; with it, reads return the point's unit unconverted and warn.
+UNIT_MISMATCH_ALLOWED = ACQUIRIUM_NS.unitMismatchAllowed
+
 # Class for registered datasource nodes
 ACQUIRIUM_DATASOURCE = ACQUIRIUM_NS.DataSourceRegistry
 

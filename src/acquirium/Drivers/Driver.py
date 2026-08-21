@@ -310,6 +310,7 @@ class IngestDriver(Driver):
         substance: str | URIRef | None = None,
         data_source: str | URIRef | None = None,
         properties: dict[Any, Any] | None = None,
+        allow_unit_mismatch: bool = False,
     ) -> None:
         """Declare a stream's identity and semantics.
 
@@ -318,9 +319,23 @@ class IngestDriver(Driver):
         to the graph just before the next insert, so streams always exist before
         their observations do.
 
+        ``unit``, ``quantity_kind``, ``medium`` and ``substance`` accept free
+        text — ``unit="gal/min"``, ``substance="chlorine"`` — resolved
+        server-side, so a driver never has to look up a URI. They are recorded
+        on the stream's external reference, not on ``point_uri``.
+
         ``value_kind`` is inferred from the first observed values when omitted.
         Repeating an identical declaration is a no-op; changing any metadata
         for an existing identity raises an error, even after registration.
+
+        When ``point_uri`` names a point that already carries its own
+        semantics, the two are reconciled at registration: an agreeing or
+        one-sided pair is fine, a convertible unit difference is converted at
+        read time into the point's unit, and an irreconcilable one is refused.
+        Pass ``allow_unit_mismatch=True`` to register such a stream anyway —
+        reads then return the point's unit, unconverted, and warn. It covers
+        ``unit`` only; a ``medium`` or ``substance`` disagreement has no
+        automated remedy and always raises.
 
         ``source_id`` defaults to the driver's own. Pass it only for drivers
         spanning several datasources, and then pass it consistently: streams are
@@ -346,6 +361,8 @@ class IngestDriver(Driver):
             }.items()
             if value is not None
         }
+        if allow_unit_mismatch:
+            metadata["allow_unit_mismatch"] = True
         key = (source, name)
         with self._declaration_lock:
             previous = self._declarations.get(key)

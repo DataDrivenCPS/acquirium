@@ -40,6 +40,20 @@ def make_driver(cfg_overrides: dict | None = None, tmp_path: Path | None = None)
     return driver
 
 
+def registered(driver: CSVIngestDriver) -> dict[str, dict]:
+    """Every stream spec the driver registered, keyed by ref_name.
+
+    Reads the payload posted to the server rather than parsing turtle: the
+    triples are built server-side now, and this is what the driver actually
+    controls.
+    """
+    specs: dict[str, dict] = {}
+    for call in driver.aq.client.register_streams.call_args_list:
+        for spec in call.args[0]:
+            specs[spec["ref_name"]] = spec
+    return specs
+
+
 def parse(driver: CSVIngestDriver, path: Path, cursor=None):
     """Run the driver's own read(), regrouped as {ref_name: [(ts, value)]}."""
     result = driver.read(path, cursor)
@@ -311,7 +325,7 @@ def test_loop_registers_streams_before_insert(tmp_path):
     _wide_csv(tmp_path)
 
     def assert_registered_first(source_id, table):
-        assert driver.aq.client.insert_graph.called
+        assert driver.aq.client.register_streams.called
         return {"ok": True, "rows_inserted": table.num_rows}
 
     driver.aq.insert_timeseries_arrow.side_effect = assert_registered_first
@@ -324,10 +338,9 @@ def test_loop_marks_text_only_csv_streams_as_text(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     driver.tick()
 
-    g = Graph().parse(data=driver.aq.client.insert_graph.call_args[0][0], format="turtle")
-    source_id = "csv_files"
-    assert (compute_ref_uri(source_id, "temp"), ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
-    assert (compute_ref_uri(source_id, "state"), ACQUIRIUM_VALUE_KIND, Literal("text")) in g
+    specs = registered(driver)
+    assert specs["temp"]["value_kind"] == "numeric"
+    assert specs["state"]["value_kind"] == "text"
 
 
 def test_loop_registers_mixed_csv_streams_as_numeric(tmp_path):
@@ -340,9 +353,7 @@ def test_loop_registers_mixed_csv_streams_as_numeric(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     driver.tick()
 
-    g = Graph().parse(data=driver.aq.client.insert_graph.call_args[0][0], format="turtle")
-    ref = compute_ref_uri("csv_files", "mode")
-    assert (ref, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
+    assert registered(driver)["mode"]["value_kind"] == "numeric"
 
 
 def test_loop_registers_no_synthetic_point_uri(tmp_path):
@@ -352,14 +363,12 @@ def test_loop_registers_no_synthetic_point_uri(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     driver.tick()
 
-    g = Graph().parse(data=driver.aq.client.insert_graph.call_args[0][0], format="turtle")
-    source_id = "csv_files"
     ref_name = "UV-Ultraviolet Intensity (mW/cm^2)"
-    ref_uri = compute_ref_uri(source_id, ref_name)
-    assert (ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)) in g
-    assert (ref_uri, ACQUIRIUM_REF_NAME, Literal(ref_name)) in g
-    assert (ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
-    assert list(g.subjects(HAS_EXTERNAL_REFERENCE, ref_uri)) == []
+    spec = registered(driver)[ref_name]
+    assert spec["source_id"] == "csv_files"
+    assert spec["ref_name"] == ref_name  # awkward characters preserved verbatim
+    assert spec["value_kind"] == "numeric"
+    assert spec.get("point_uri") is None
 
 
 # ------------------------------------------------------------------ cursor / paging

@@ -163,7 +163,7 @@ class TestResolution:
              .where(quantity_kind="mass flow rate", medium=Not("brine")))
         client.resolve.assert_called_once_with(
             {"quantity_kind_0": ("mass flow rate", "quantity_kind"),
-             "medium_0": ("brine", "class")},
+             "medium_0": ("brine", "substance")},
             min_score=0.4,
         )
         f = b.query_graph.data_nodes[1].filters
@@ -191,7 +191,7 @@ class TestResolution:
              .where(medium=["brine", "urn:test#M2x".replace("x", "")]))
         # second element is already a URI: only the text goes to the resolver
         record = client.resolve.call_args.args[0]
-        assert record == {"medium_0": ("brine", "class")}
+        assert record == {"medium_0": ("brine", "substance")}
         assert b.query_graph.data_nodes[1].filters["medium"] == [MEDIUM_URI, "urn:test#M2"]
 
 

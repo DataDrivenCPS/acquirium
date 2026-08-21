@@ -27,86 +27,13 @@ def _dt_to_iso(v: "str | datetime | None") -> "str | None":
     return v.isoformat() if isinstance(v, datetime) else v
 
 
-def _add_triple(g: "RDFGraph", subj: "URIRef", pred: "URIRef", value: "str | URIRef | None") -> None:
-    if value is None:
-        return
+def _json_safe(value: "Any") -> "Any":
+    """Coerce a property value for JSON transport, keeping URIs as strings."""
     if isinstance(value, URIRef):
-        g.add((subj, pred, value))
-    elif "://" in str(value) or str(value).startswith("urn:"):
-        g.add((subj, pred, URIRef(str(value))))
-    else:
-        g.add((subj, pred, Literal(value)))
-
-
-def _coerce_resolved(
-    resolved: dict[str, "str | None"], name: str, value: "Any",
-) -> "str | URIRef | None":
-    """Map a raw field value to its resolved URIRef.
-
-    Passes ``None``/``URIRef`` through; warns and keeps the literal when
-    plain text did not resolve.
-    """
-    if value is None:
-        return None
-    if isinstance(value, URIRef):
-        return value
-    uri = resolved.get(name)
-    if uri is None:
-        warnings.warn(
-            f"Could not resolve {name!r} value {value!r} to a QUDT URI; "
-            "storing as a plain literal.",
-            stacklevel=3,
-        )
-        return value
-    return URIRef(uri)
-
-
-def _build_stream_triples(
-    g: "RDFGraph", stream: dict, resolved: dict[str, "str | None"],
-) -> None:
-    """Write one stream's reference/point/metadata triples into ``g``.
-
-    ``resolved`` is the precomputed ``field -> URI-or-None`` map for this
-    stream's semantic fields (typically from ``resolve_point_metadata``);
-    pass ``{}`` when there is nothing to resolve.
-    """
-    point_uri_raw = stream.get("point_uri")
-    label = stream.get("label")
-    source_id = stream.get("source_id")
-    ref_name = stream.get("ref_name")
-    ref_uri = None
-    if ref_name is not None and source_id is not None:
-        ref_uri = compute_ref_uri(source_id, ref_name)
-        g.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
-        g.add((ref_uri, ACQUIRIUM_REF_NAME,  Literal(ref_name)))
-        # Only assert a value kind the caller supplied; a default would
-        # contradict a later data-derived kind on the same reference node.
-        if stream.get("value_kind") is not None:
-            g.add((
-                ref_uri,
-                ACQUIRIUM_VALUE_KIND,
-                Literal(normalize_value_kind(stream["value_kind"])),
-            ))
-        g.add((ref_uri, STORED_AT,           ACQUIRIUM_DB_URI))
-        g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
-
-    if point_uri_raw is not None:
-        subj = URIRef(str(point_uri_raw))
-        g.add((subj, RDF.type, VIRTUAL_POINT))
-        if label is not None:
-            g.add((subj, RDFS.label, Literal(label)))
-        _add_triple(g, subj, HAS_UNIT,          _coerce_resolved(resolved, "unit", stream.get("unit")))
-        _add_triple(g, subj, HAS_QUANTITY_KIND, _coerce_resolved(resolved, "quantity_kind", stream.get("quantity_kind")))
-        _add_triple(g, subj, HAS_MEDIUM,        _coerce_resolved(resolved, "medium", stream.get("medium")))
-        _add_triple(g, subj, OF_SUBSTANCE,      _coerce_resolved(resolved, "substance", stream.get("substance")))
-        _add_triple(g, subj, DATA_SOURCE, stream.get("data_source"))
-        if ref_uri is not None:
-            g.add((subj, HAS_EXTERNAL_REFERENCE, ref_uri))
-
-    target = ref_uri if ref_uri is not None else (URIRef(str(point_uri_raw)) if point_uri_raw is not None else None)
-    if target is not None:
-        for pred, value in (stream.get("properties") or {}).items():
-            _add_triple(g, target, pred, value)
+        return str(value)
+    if isinstance(value, Literal):
+        return value.toPython()
+    return value
 from acquirium.Client.client import AcquiriumClient
 from acquirium.Apps.base import App
 from acquirium.internals.models import AppOutputSpec, AppSpec, compute_ref_uri
@@ -125,15 +52,13 @@ from acquirium.internals.internals_namespaces import (
     DATA_SOURCE,
 )
 from acquirium.Storage.values import normalize_value_kind
+from acquirium.internals.stream_graph import FIELD_KINDS
 
 # Known point-metadata fields → the resolver ``kind`` each is resolved as.
 # The field name is the semantic role, so callers supply no ``kind``.
-POINT_FIELD_KINDS: dict[str, str] = {
-    "unit": "unit",
-    "quantity_kind": "quantity_kind",
-    "medium": "substance",
-    "substance": "substance",
-}
+# Aliased to the canonical table used by stream registration so the two
+# cannot drift; kept under this name because it is public API.
+POINT_FIELD_KINDS: dict[str, str] = FIELD_KINDS
 
 
 @dataclass
@@ -447,51 +372,59 @@ class Acquirium:
     def register_streams(
         self,
         streams: Iterable[dict[str, Any]],
-    ) -> None:
-        """Declare one or more streams' semantic metadata in one graph insert.
+        *,
+        min_score: float = 0.6,
+    ) -> dict[str, Any]:
+        """Declare one or more streams' identity and semantics.
 
         Each stream item is a dictionary with these commonly used keys:
 
-        - ``point_uri``: optional semantic URI. When provided, a point node is
-          created and linked to the external reference. When omitted, only the
-          external reference node is written.
-        - ``source_id`` and ``ref_name``: source-local stream identity. When
-          both are present, Acquirium mints the canonical reference URI and
-          writes ``acq:sourceId``, ``acq:refName``, and ``ref:storedAt`` on it.
-        - ``label``: optional ``rdfs:label`` written on ``point_uri``.
-        - ``data_source``: optional datasource marker written on the point.
-        - ``properties``: optional mapping of predicate URIRefs to values,
-          written on the reference node (or ``point_uri`` when no ref node exists).
+        - ``source_id`` and ``ref_name``: source-local stream identity.
+          Acquirium mints the canonical reference URI from the pair and writes
+          ``acq:sourceId``, ``acq:refName`` and ``ref:storedAt`` on it.
+        - ``unit``, ``quantity_kind``, ``medium``, ``substance``: the stream's
+          semantics, written **on the reference**. Free text (``"mg/L"``,
+          ``"volume flow rate"``) is resolved server-side against the text
+          matcher, so callers never need a URI; URIs pass through. Text that
+          does not resolve is an error rather than a silent literal.
+        - ``point_uri``: optional. When given, a point node is created and
+          linked to the reference, and the two are reconciled — see
+          ``allow_unit_mismatch``. Semantics are never written on the point.
+        - ``label``: ``rdfs:label``, on the point when there is one, otherwise
+          on the reference.
+        - ``data_source``: origin tag literal, on the reference.
+        - ``properties``: mapping of predicate URI to value, on the reference.
+        - ``allow_unit_mismatch``: register even though this stream's unit
+          cannot be reconciled with its point's. Reads then return the point's
+          unit, unconverted, and warn.
 
-        Plain strings for ``unit``/``quantity_kind``/``medium``/``substance``
-        are resolved jointly per stream via :meth:`resolve_point_metadata`;
-        URI / URIRef / None values pass through.
+        Resolution and reconciliation both happen server-side: only the server
+        can see whether a point already carries contradicting semantics.
+        Raises :class:`StreamMetadataConflict` if any stream in the batch
+        conflicts — in which case nothing is written.
 
         Drivers should still insert rows with ``insert_timeseries_arrow`` using
         the same ``source_id`` and source-local ``ref_name``. Acquirium resolves
         those inserts to the same canonical reference URI internally.
         """
-        graphs: dict[str, RDFGraph] = {}
-        for stream in streams:
+        payload = [dict(stream) for stream in streams]
+        for stream in payload:
             source_id = stream.get("source_id")
             if not isinstance(source_id, str) or not source_id:
                 raise ValueError("each stream registration requires a non-empty source_id")
-            graph = graphs.setdefault(source_id, RDFGraph())
-            meta = {
-                f: stream.get(f)
-                for f in POINT_FIELD_KINDS
-                if stream.get(f) is not None
-            }
-            resolved = self.resolve_point_metadata(meta) if meta else {}
-            _build_stream_triples(graph, stream, resolved)
-        for source_id, graph in graphs.items():
-            if len(graph):
-                self.client.insert_graph(
-                    graph.serialize(format="turtle"),
-                    format="turtle",
-                    replace=False,
-                    source_id=source_id,
-                )
+            # Predicate URIs arrive as URIRef keys/values; JSON needs strings.
+            properties = stream.get("properties")
+            if properties:
+                stream["properties"] = {str(k): _json_safe(v) for k, v in properties.items()}
+            for field in ("unit", "quantity_kind", "medium", "substance", "point_uri"):
+                if stream.get(field) is not None:
+                    stream[field] = str(stream[field])
+        if not payload:
+            return {"ok": True, "registered": 0, "warnings": []}
+        result = self.client.register_streams(payload, min_score=min_score)
+        for message in result.get("warnings", []):
+            warnings.warn(message, stacklevel=2)
+        return result
 
     # ------------------------------------------------------------------
     # ACQUIRIUM APPS API

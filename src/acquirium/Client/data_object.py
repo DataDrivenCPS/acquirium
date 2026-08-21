@@ -468,8 +468,21 @@ class DataObject:
                 try:
                     df = df.with_columns(pl.col("value").cast(pl.Float64))
                     factors = _get_factors(binding.ref_unit, target_unit)
-                    if factors.get("compatible", False):
+                    # Branch on `verdict`, not `compatible`: the latter is True
+                    # for "unknown" as well, and converting on no dimensional
+                    # evidence silently rescales the series. Values are left in
+                    # the reference's own unit instead, and the caller is told.
+                    verdict = factors.get("verdict", "unknown")
+                    if verdict in ("match", "convertible"):
                         df = self._apply_conversion(df, factors)
+                    elif verdict == "unknown":
+                        logger.warning(
+                            "DataObject: cannot tell whether %s and %s are "
+                            "compatible (neither carries a dimension vector or "
+                            "quantity kind); leaving ref %s unconverted in %s",
+                            binding.ref_unit, target_unit, binding.ref_uri,
+                            binding.ref_unit,
+                        )
                     else:
                         logger.warning(
                             "DataObject: incompatible units for auto-conversion "

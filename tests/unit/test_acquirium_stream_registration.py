@@ -1,110 +1,143 @@
+"""What ``Acquirium.register_streams`` sends to the server.
+
+Triple building moved server-side (see ``test_stream_graph.py``); the client's
+job is now to normalise the batch and post it, so that is what is asserted
+here.
+"""
 from __future__ import annotations
 
+import warnings
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
-from rdflib import Graph, Literal, URIRef
-from rdflib.namespace import RDF
+import pytest
+from rdflib import Literal, URIRef
 
 from acquirium.Client.acquirium import Acquirium
-from acquirium.internals.models import compute_ref_uri
-from acquirium.internals.internals_namespaces import (
-    ACQUIRIUM_DB_URI,
-    ACQUIRIUM_REF_NAME,
-    ACQUIRIUM_SOURCE_ID,
-    ACQUIRIUM_VALUE_KIND,
-    DATA_SOURCE,
-    HAS_EXTERNAL_REFERENCE,
-    STORED_AT,
-    VIRTUAL_POINT,
-)
 
 _TEST_PROP = URIRef("urn:test:prop:fileLocation")
 
 
-def test_register_streams_inserts_one_graph_for_multiple_streams():
+def _aq() -> Acquirium:
     aq = Acquirium.__new__(Acquirium)
     aq.client = MagicMock()
-
-    aq.register_streams(
-        [
-            {
-                "point_uri": "urn:test:point:temp",
-                "source_id": "demo-source",
-                "ref_name": "temp",
-                "value_kind": "numeric",
-                "data_source": "CSV",
-                "properties": {_TEST_PROP: Literal("demo.csv")},
-            },
-            {
-                "point_uri": "urn:test:point:rh",
-                "source_id": "demo-source",
-                "ref_name": "rh",
-                "value_kind": "numeric",
-                "data_source": "CSV",
-                "properties": {_TEST_PROP: Literal("demo.csv")},
-            },
-        ]
-    )
-
-    aq.client.insert_graph.assert_called_once()
-    graph_text = aq.client.insert_graph.call_args[0][0]
-    g = Graph().parse(data=graph_text, format="turtle")
-
-    for ref_name in ("temp", "rh"):
-        point_uri = URIRef(f"urn:test:point:{ref_name}")
-        ref_uri = compute_ref_uri("demo-source", ref_name)
-        assert (point_uri, RDF.type, VIRTUAL_POINT) in g
-        assert (point_uri, HAS_EXTERNAL_REFERENCE, ref_uri) in g
-        assert (point_uri, DATA_SOURCE, Literal("CSV")) in g
-        assert (ref_uri, ACQUIRIUM_SOURCE_ID, Literal("demo-source")) in g
-        assert (ref_uri, ACQUIRIUM_REF_NAME, Literal(ref_name)) in g
-        assert (ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
-        assert (ref_uri, STORED_AT, ACQUIRIUM_DB_URI) in g
-        assert (ref_uri, _TEST_PROP, Literal("demo.csv")) in g
+    aq.client.register_streams.return_value = {
+        "ok": True, "registered": 0, "warnings": [],
+    }
+    return aq
 
 
-def test_register_stream_without_point_uri_writes_only_ref_node():
-    aq = Acquirium.__new__(Acquirium)
-    aq.client = MagicMock()
-
-    aq.register_streams([{"source_id": "demo-source", "ref_name": "cpu_percent", "value_kind": "numeric"}])
-
-    aq.client.insert_graph.assert_called_once()
-    graph_text = aq.client.insert_graph.call_args[0][0]
-    g = Graph().parse(data=graph_text, format="turtle")
-    ref_uri = compute_ref_uri("demo-source", "cpu_percent")
-
-    assert (ref_uri, ACQUIRIUM_SOURCE_ID, Literal("demo-source")) in g
-    assert (ref_uri, ACQUIRIUM_REF_NAME, Literal("cpu_percent")) in g
-    assert (ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
-    assert (ref_uri, STORED_AT, ACQUIRIUM_DB_URI) in g
-    assert list(g.subjects(RDF.type, VIRTUAL_POINT)) == []
-    assert list(g.subjects(HAS_EXTERNAL_REFERENCE, ref_uri)) == []
+def _posted(aq: Acquirium) -> list[dict]:
+    aq.client.register_streams.assert_called_once()
+    return aq.client.register_streams.call_args.args[0]
 
 
-def test_register_streams_without_point_uri_writes_only_ref_nodes():
-    aq = Acquirium.__new__(Acquirium)
-    aq.client = MagicMock()
-
+def test_register_streams_posts_one_batch():
+    aq = _aq()
     aq.register_streams([
         {"source_id": "demo-source", "ref_name": "temp", "value_kind": "numeric"},
         {"source_id": "demo-source", "ref_name": "rh", "value_kind": "numeric"},
     ])
+    assert [s["ref_name"] for s in _posted(aq)] == ["temp", "rh"]
 
-    aq.client.insert_graph.assert_called_once()
-    graph_text = aq.client.insert_graph.call_args[0][0]
-    g = Graph().parse(data=graph_text, format="turtle")
 
-    for ref_name in ("temp", "rh"):
-        ref_uri = compute_ref_uri("demo-source", ref_name)
-        assert (ref_uri, ACQUIRIUM_SOURCE_ID, Literal("demo-source")) in g
-        assert (ref_uri, ACQUIRIUM_REF_NAME, Literal(ref_name)) in g
-        assert (ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
-        assert (ref_uri, STORED_AT, ACQUIRIUM_DB_URI) in g
+def test_register_streams_batches_across_sources():
+    """One request, not one per source — reconciliation is batch-scoped."""
+    aq = _aq()
+    aq.register_streams([
+        {"source_id": "a", "ref_name": "x"},
+        {"source_id": "b", "ref_name": "y"},
+    ])
+    assert {s["source_id"] for s in _posted(aq)} == {"a", "b"}
 
-    assert list(g.subjects(RDF.type, VIRTUAL_POINT)) == []
-    assert list(g.subjects(HAS_EXTERNAL_REFERENCE, None)) == []
+
+def test_free_text_semantics_are_sent_unresolved():
+    """The whole point of the endpoint: the client does not resolve."""
+    aq = _aq()
+    aq.register_streams([{
+        "source_id": "demo-source", "ref_name": "flow",
+        "unit": "gal/min", "quantity_kind": "volume flow rate",
+        "medium": "water", "substance": "chlorine",
+    }])
+    spec = _posted(aq)[0]
+    assert spec["unit"] == "gal/min"
+    assert spec["quantity_kind"] == "volume flow rate"
+    assert spec["medium"] == "water"
+    assert spec["substance"] == "chlorine"
+    aq.client.resolve.assert_not_called()
+
+
+def test_uriref_values_are_stringified_for_json():
+    aq = _aq()
+    aq.register_streams([{
+        "source_id": "demo-source", "ref_name": "temp",
+        "unit": URIRef("http://qudt.org/vocab/unit/DEG_C"),
+        "point_uri": URIRef("urn:test:point:temp"),
+    }])
+    spec = _posted(aq)[0]
+    assert spec["unit"] == "http://qudt.org/vocab/unit/DEG_C"
+    assert spec["point_uri"] == "urn:test:point:temp"
+    assert isinstance(spec["unit"], str)
+
+
+def test_property_keys_and_values_are_json_safe():
+    aq = _aq()
+    aq.register_streams([{
+        "source_id": "demo-source", "ref_name": "temp",
+        "properties": {_TEST_PROP: Literal("demo.csv")},
+    }])
+    assert _posted(aq)[0]["properties"] == {str(_TEST_PROP): "demo.csv"}
+
+
+def test_allow_unit_mismatch_is_forwarded():
+    aq = _aq()
+    aq.register_streams([{
+        "source_id": "demo-source", "ref_name": "temp",
+        "unit": "mg/L", "point_uri": "urn:test:point:temp",
+        "allow_unit_mismatch": True,
+    }])
+    assert _posted(aq)[0]["allow_unit_mismatch"] is True
+
+
+def test_caller_dicts_are_not_mutated():
+    aq = _aq()
+    original = {
+        "source_id": "demo-source", "ref_name": "temp",
+        "unit": URIRef("http://qudt.org/vocab/unit/DEG_C"),
+    }
+    aq.register_streams([original])
+    assert original["unit"] == URIRef("http://qudt.org/vocab/unit/DEG_C")
+
+
+def test_empty_batch_makes_no_request():
+    aq = _aq()
+    assert aq.register_streams([]) == {"ok": True, "registered": 0, "warnings": []}
+    aq.client.register_streams.assert_not_called()
+
+
+def test_missing_source_id_raises_before_any_request():
+    aq = _aq()
+    with pytest.raises(ValueError, match="non-empty source_id"):
+        aq.register_streams([{"ref_name": "temp"}])
+    aq.client.register_streams.assert_not_called()
+
+
+def test_server_warnings_are_surfaced_to_the_caller():
+    """A reconciliation that was allowed rather than refused must not be silent."""
+    aq = _aq()
+    aq.client.register_streams.return_value = {
+        "ok": True, "registered": 1,
+        "warnings": ["stream ('s', 'x'): unit ... registered anyway"],
+    }
+    with pytest.warns(UserWarning, match="registered anyway"):
+        aq.register_streams([{"source_id": "s", "ref_name": "x"}])
+
+
+def test_no_warning_when_the_server_reports_none():
+    aq = _aq()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        aq.register_streams([{"source_id": "s", "ref_name": "x"}])
 
 
 def test_insert_timeseries_batch_chunks_at_acquirium_facade():

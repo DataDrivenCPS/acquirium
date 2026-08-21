@@ -54,6 +54,12 @@ class Attr:
       ``rdf:type``/``rdfs:subClassOf*`` (compiled with the anchored
       sub-SELECT fence; see ``Query.to_sparql``).
     - ``literal``: the value is a plain literal (never resolved to a URI).
+    - ``via_ref``: on a measurement node, also match the value through
+      ``ref:hasExternalReference``. Stream semantics are written on the
+      external reference, while a user's model may put them on the point —
+      matching both means a query finds either without the caller having to
+      know which. The point still wins when both are present and disagree
+      (see ``DataObject._resolve_effective_units``).
     """
 
     name: str
@@ -62,6 +68,7 @@ class Attr:
     roles: frozenset[str]
     via_subclass: bool = False
     literal: bool = False
+    via_ref: bool = False
     doc: str = ""  # one-liner for generated docstrings / facet displays
 
 
@@ -81,18 +88,21 @@ REGISTRY: dict[str, Attr] = {
              doc='class of one of the entity\'s connection points ("outlet connection point")'),
         # Properties carry s223:ofMedium; connection points carry
         # s223:hasMedium. One attribute, OR-union of both predicates.
-        Attr("medium", (str(OF_MEDIUM), str(HAS_MEDIUM)), "class", BOTH,
+        Attr("medium", (str(OF_MEDIUM), str(HAS_MEDIUM)), "substance", BOTH,
+             via_ref=True,
              doc='carried medium: ofMedium|hasMedium ("fluid water", "air", "brine")'),
-        Attr("substance", (str(OF_SUBSTANCE),), "substance", DATA,
+        Attr("substance", (str(OF_SUBSTANCE),), "substance", DATA, via_ref=True,
              doc='measured substance/constituent ("chlorine", "organics", "ammonia")'),
         Attr("quantity_kind", (str(HAS_QUANTITY_KIND),), "quantity_kind", DATA,
+             via_ref=True,
              doc='QUDT quantity kind ("volume flow rate", "turbidity", "acidity")'),
-        Attr("unit", (str(HAS_UNIT),), "unit", DATA,
+        Attr("unit", (str(HAS_UNIT),), "unit", DATA, via_ref=True,
              doc='QUDT unit ("mg/l", "PSI", "NTU")'),
         Attr("enumeration_kind", (str(HAS_ENUMERATION_KIND),), "class", DATA,
              doc='enumeration kind of a state/enum property ("on off", "run status")'),
         # Origin tag literal on a reference node (e.g. "Lab", "SCADA").
         Attr("data_source", (str(DATA_SOURCE),), "any", DATA, literal=True,
+             via_ref=True,
              doc='origin tag literal, matched verbatim ("Lab", "SCADA")'),
     )
 }

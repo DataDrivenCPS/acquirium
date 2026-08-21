@@ -92,8 +92,19 @@ def attr_paths(attr: Attr, role: str) -> List[str]:
     The single place an attribute's predicates become path syntax. Returned
     paths are ready to drop into a triple pattern as-is (already bracketed),
     so callers never re-wrap them.
+
+    For a ``via_ref`` attribute on a measurement node the list also carries
+    the same predicates one hop through ``ref:hasExternalReference``. Stream
+    registration writes semantics on the reference while a user's model puts
+    them on the point, and a query should find either. Point-side paths come
+    first so a projection takes the point's value when both are bound.
     """
-    return [f"<{p}>" for p in attr.predicates]
+    paths = [f"<{p}>" for p in attr.predicates]
+    if attr.via_ref and role == "data":
+        paths += [
+            f"<{HAS_EXTERNAL_REFERENCE}>/<{p}>" for p in attr.predicates
+        ]
+    return paths
 
 
 def attr_pred_path(attr: Attr, role: str) -> str:

@@ -8,6 +8,21 @@ from acquirium.Client.query_graph import QueryGraph, QueryNode
 CLS_A = "urn:test#TypeA"
 OF_MEDIUM = "http://data.ashrae.org/standard223#ofMedium"
 HAS_MEDIUM = "http://data.ashrae.org/standard223#hasMedium"
+HAS_UNIT = "http://qudt.org/schema/qudt/hasUnit"
+HAS_QK = "http://qudt.org/schema/qudt/hasQuantityKind"
+REF = "https://brickschema.org/schema/Brick/ref#hasExternalReference"
+
+
+def via_ref(*predicates: str) -> str:
+    """The alternation a via_ref attribute compiles to on a measurement node.
+
+    Semantics may sit on the point or on its external reference, so each
+    predicate is matched both directly and one hop through the reference.
+    Point-side paths come first, so a projection prefers the point's value.
+    """
+    direct = [f"<{p}>" for p in predicates]
+    through = [f"<{REF}>/<{p}>" for p in predicates]
+    return "|".join(direct + through)
 
 
 def q() -> Query:
@@ -55,7 +70,7 @@ class TestSelectStorage:
 class TestSelectSparql:
     def test_optional_binding_and_projection(self):
         s = base().include("quantity_kind").to_sparql()
-        assert "OPTIONAL { ?v1 (<http://qudt.org/schema/qudt/hasQuantityKind>) ?attr1_quantity_kind . }" in s
+        assert f"OPTIONAL {{ ?v1 ({via_ref(HAS_QK)}) ?attr1_quantity_kind . }}" in s
         # attr columns directly follow their node's column
         assert "?v1 ?attr1_quantity_kind" in s.splitlines()[0]
 
@@ -67,19 +82,19 @@ class TestSelectSparql:
 
     def test_multi_predicate_attr_binds_path_union(self):
         s = base().include("medium").to_sparql()
-        assert f"OPTIONAL {{ ?v1 (<{OF_MEDIUM}>|<{HAS_MEDIUM}>) ?attr1_medium . }}" in s
+        assert f"OPTIONAL {{ ?v1 ({via_ref(OF_MEDIUM, HAS_MEDIUM)}) ?attr1_medium . }}" in s
 
     def test_no_selects_means_no_attr_vars(self):
         assert "attr" not in base().to_sparql()
 
     def test_required_binds_without_optional(self):
         s = base().include("unit", required=True).to_sparql()
-        assert "?v1 (<http://qudt.org/schema/qudt/hasUnit>) ?attr1_unit ." in s
-        assert "OPTIONAL { ?v1 (<http://qudt.org/schema/qudt/hasUnit>)" not in s
+        assert f"?v1 ({via_ref(HAS_UNIT)}) ?attr1_unit ." in s
+        assert f"OPTIONAL {{ ?v1 ({via_ref(HAS_UNIT)})" not in s
 
     def test_default_stays_optional(self):
         s = base().include("unit").to_sparql()
-        assert "OPTIONAL { ?v1 (<http://qudt.org/schema/qudt/hasUnit>) ?attr1_unit . }" in s
+        assert f"OPTIONAL {{ ?v1 ({via_ref(HAS_UNIT)}) ?attr1_unit . }}" in s
 
 
 class TestColumnNaming:

@@ -35,7 +35,9 @@ from acquirium.internals.models import (
     AppStopRequest,
     StreamInsert,
     RegisterDatasourceRequest,
+    RegisterStreamsRequest,
 )
+from acquirium.internals.reconcile import StreamMetadataConflict
 from acquirium.internals.internals_namespaces import PLANT_URI
 
 import pyarrow.ipc as ipc
@@ -549,6 +551,24 @@ def list_drivers() -> dict[str, Any]:
 
 
 ##### TIMESERIES INGESTION API ENDPOINTS ####
+
+
+@app.post("/register_streams")
+def register_streams(req: RegisterStreamsRequest) -> dict[str, Any]:
+    """Resolve, reconcile and register a batch of streams.
+
+    409 when a stream's semantics contradict its linked point's; 400 for a
+    malformed request or unresolvable free text. Nothing is written unless
+    every stream in the batch validates.
+    """
+    try:
+        return app.state.manager.register_streams(
+            [s.model_dump() for s in req.streams], min_score=req.min_score
+        )
+    except StreamMetadataConflict as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/register_datasource")

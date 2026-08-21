@@ -425,7 +425,7 @@ class Q:
             FlexSpec("unit", "unit"),
             FlexSpec("data_source", "class"),
             FlexSpec("substance", "class"),
-            FlexSpec("medium", "class"),
+            FlexSpec("medium", "substance"),
         ]
     )
     def find_related_data(
@@ -798,7 +798,7 @@ class Q:
             unit = [unit]
         return self.filter_data_nodes(predicate=HAS_UNIT, value=unit, _from=_from, exclude=exclude)
 
-    @flex_query_rdf_inputs(specs=[FlexSpec("medium", "class")])
+    @flex_query_rdf_inputs(specs=[FlexSpec("medium", "substance")])
     def filter_by_medium(self, medium: str | list, *, _from: Optional[str] = None, exclude: bool = False) -> "Q":
         if isinstance(medium, str):
             medium = [medium]

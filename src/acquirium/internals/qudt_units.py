@@ -226,19 +226,20 @@ class QUDTUnitConverter:
         Uses dimension vectors (most reliable), then falls back to
         quantity kind overlap.
         """
-        try:
-            a = self.resolve_unit(unit_a)
-        except UnitNotFound:
-            a = self.infer_unit(str(unit_a))
-        try:
-            b = self.resolve_unit(unit_b)
-        except UnitNotFound:
-            b = self.infer_unit(str(unit_b))
-        return self._check_compatible(a, b)
+        return self._check_compatible(
+            self._resolve_or_infer(unit_a), self._resolve_or_infer(unit_b)
+        )
 
     @staticmethod
     def _check_compatible(src: UnitDefinition, tgt: UnitDefinition) -> bool:
-        """Check compatibility using dimension vectors first, then quantity kind overlap."""
+        """Check compatibility using dimension vectors first, then quantity kind overlap.
+
+        Lenient by design: returns True when compatibility cannot be
+        determined, so a conversion is attempted rather than refused. Callers
+        that must distinguish "compatible" from "no evidence either way"
+        should use :meth:`compatibility_verdict` instead — see the warning
+        there about what this fail-open costs.
+        """
         # Dimension vector is the most reliable check
         if src.dimension_vector and tgt.dimension_vector:
             return src.dimension_vector == tgt.dimension_vector
@@ -250,6 +251,45 @@ class QUDTUnitConverter:
             return src.quantity_kind == tgt.quantity_kind
         # If we can't determine, allow the conversion (may fail at math level)
         return True
+
+    def compatibility_verdict(
+        self, unit_a: str | URIRef, unit_b: str | URIRef
+    ) -> str:
+        """Classify two units as ``match``/``convertible``/``incompatible``/``unknown``.
+
+        The four-valued counterpart to :meth:`are_compatible`, which collapses
+        ``incompatible`` and ``unknown`` differently: it answers True whenever
+        the two units never *both* carry the same tier of evidence, not merely
+        when both are evidence-free. So a fully described unit paired with an
+        under-described one reads as compatible and its conversion factor is
+        applied — silently rescaling the data. For example ``unit:GAL_US``
+        (dimension vector, multiplier 0.00378) against a unit with no
+        dimension vector and no quantity kind answers True, and converting
+        multiplies every value by 0.0038.
+
+        Reconciliation and query-time conversion must therefore branch on this
+        verdict, treating ``unknown`` as "do not convert". ``are_compatible``
+        is left as it is because ``pick_convertible_pair`` relies on the
+        lenient behaviour to choose among ranked text matches.
+        """
+        src = self._resolve_or_infer(unit_a)
+        tgt = self._resolve_or_infer(unit_b)
+        if src.uri == tgt.uri:
+            return "match"
+        if src.dimension_vector and tgt.dimension_vector:
+            return "convertible" if src.dimension_vector == tgt.dimension_vector else "incompatible"
+        if src.quantity_kinds and tgt.quantity_kinds:
+            return "convertible" if set(src.quantity_kinds) & set(tgt.quantity_kinds) else "incompatible"
+        if src.quantity_kind and tgt.quantity_kind:
+            return "convertible" if src.quantity_kind == tgt.quantity_kind else "incompatible"
+        return "unknown"
+
+    def _resolve_or_infer(self, identifier: str | URIRef) -> UnitDefinition:
+        """``resolve_unit``, falling back to ``infer_unit`` — as ``are_compatible`` does."""
+        try:
+            return self.resolve_unit(identifier)
+        except UnitNotFound:
+            return self.infer_unit(str(identifier))
 
     def convert(self, value: float, from_unit: str | URIRef, to_unit: str | URIRef) -> float:
         """Convert ``value`` from ``from_unit`` into ``to_unit``.

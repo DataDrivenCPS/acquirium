@@ -17,7 +17,23 @@ from acquirium.Storage import (
 from acquirium.Storage.values import normalize_value_kind
 from acquirium.internals.qudt_units import QUDTUnitConverter
 from acquirium.Server.config import OntologySource
-from acquirium.internals.models import LogEntry, Order, TimeIntervalModel, compute_ref_uri
+from acquirium.internals.models import (
+    LogEntry,
+    Order,
+    TimeIntervalModel,
+    compute_ref_uri,
+    looks_like_uri,
+)
+from acquirium.internals.reconcile import (
+    Conflict,
+    StreamMetadataConflict,
+    reconcile_stream,
+)
+from acquirium.internals.stream_graph import (
+    FIELD_KINDS,
+    SEMANTIC_PREDICATES,
+    build_stream_triples,
+)
 from acquirium.internals.internals_namespaces import *
 
 from threading import Lock
@@ -691,6 +707,147 @@ class Manager:
         )
         return source_id
 
+    def register_streams(
+        self, streams: list[dict[str, Any]], *, min_score: float = 0.6
+    ) -> dict[str, Any]:
+        """Resolve, reconcile and write a batch of stream registrations.
+
+        Free-text semantic fields are resolved here rather than by the caller,
+        so a driver declares ``unit="mg/L"`` and never handles a URI. Each
+        stream's fields are resolved together, letting a quantity kind
+        disambiguate an ambiguous unit and vice versa.
+
+        Every stream is validated before anything is written: if any conflicts
+        with an existing point, the whole batch is rejected and the graph is
+        untouched. Returns the resolutions applied and any warnings raised.
+        """
+        if not streams:
+            return {"ok": True, "registered": 0, "warnings": []}
+
+        # Identity first: it costs nothing and everything below assumes it.
+        for stream in streams:
+            for key in ("source_id", "ref_name"):
+                value = stream.get(key)
+                if not isinstance(value, str) or not value:
+                    raise ValueError(
+                        f"each stream registration requires a non-empty {key}"
+                    )
+
+        resolutions = [self._resolve_stream_fields(s, min_score) for s in streams]
+        point_metadata = self._point_metadata(
+            [s["point_uri"] for s in streams if s.get("point_uri")]
+        )
+
+        converter = self._ensure_qudt_converter()
+        conflicts: list[Conflict] = []
+        warnings: list[str] = []
+        for stream, resolved in zip(streams, resolutions):
+            point_uri = stream.get("point_uri")
+            outcome = reconcile_stream(
+                source_id=stream["source_id"],
+                ref_name=stream["ref_name"],
+                point_uri=point_uri,
+                ref_values={
+                    field: (resolved.get(field) or stream.get(field))
+                    for field in SEMANTIC_PREDICATES
+                },
+                point_values=point_metadata.get(str(point_uri), {}) if point_uri else {},
+                verdict=converter.compatibility_verdict,
+                allow_unit_mismatch=bool(stream.get("allow_unit_mismatch")),
+            )
+            conflicts.extend(outcome.conflicts)
+            warnings.extend(outcome.warnings)
+
+        if conflicts:
+            raise StreamMetadataConflict(conflicts)
+
+        graphs: dict[str, Graph] = {}
+        for stream, resolved in zip(streams, resolutions):
+            graph = graphs.setdefault(stream["source_id"], Graph())
+            build_stream_triples(graph, stream, resolved)
+
+        for source_id, graph in graphs.items():
+            if len(graph):
+                self.insert_graph(graph, format="turtle", replace=False, source_id=source_id)
+
+        for message in warnings:
+            logger.warning("register_streams: %s", message)
+        return {"ok": True, "registered": len(streams), "warnings": warnings}
+
+    def _resolve_stream_fields(
+        self, stream: dict[str, Any], min_score: float
+    ) -> dict[str, str | None]:
+        """Resolve one stream's free-text semantic fields to URIs, jointly.
+
+        Raises when text does not resolve: the caller passed prose expecting
+        it to be understood, so quietly storing the raw string as a literal
+        would hide the failure until a query mysteriously matched nothing.
+        """
+        record = {
+            field: (value, FIELD_KINDS[field])
+            for field, value in ((f, stream.get(f)) for f in SEMANTIC_PREDICATES)
+            if value is not None
+        }
+        if not record:
+            return {}
+        resolved = self.resolve_record(record, top_k=1, min_score=min_score)
+        out: dict[str, str | None] = {}
+        unresolved: list[str] = []
+        for field, (raw, _kind) in record.items():
+            if looks_like_uri(raw):
+                out[field] = str(raw)
+                continue
+            matches = resolved.get(field) or []
+            if not matches:
+                unresolved.append(f"{field}={raw!r}")
+                continue
+            out[field] = matches[0]["uri"]
+        if unresolved:
+            raise ValueError(
+                f"stream ({stream.get('source_id')!r}, {stream.get('ref_name')!r}): "
+                f"could not resolve {', '.join(unresolved)}. Pass a URI, or use a "
+                "term the ontology knows — see /resolve_text."
+            )
+        return out
+
+    def _point_metadata(self, point_uris: list[str]) -> dict[str, dict[str, str]]:
+        """Current semantics of each point, from the inferred graph.
+
+        One VALUES-anchored query for the whole batch — a per-stream query
+        would force a graph rebuild each time. ``wait_for_fresh`` because a
+        point's unit may be produced by an ontology rule rather than asserted.
+        """
+        if not point_uris:
+            return {}
+        values = " ".join(f"<{uri}>" for uri in sorted(set(point_uris)))
+        bindings = " ".join(
+            f"OPTIONAL {{ ?point <{predicate}> ?{field} . }}"
+            for field, predicate in SEMANTIC_PREDICATES.items()
+        )
+        fields = list(SEMANTIC_PREDICATES)
+        query = (
+            f"SELECT ?point {' '.join('?' + f for f in fields)} WHERE {{ "
+            f"VALUES ?point {{ {values} }} {bindings} }}"
+        )
+        result = self.graph_store.sparql_query(
+            query, include_dependencies=True, wait_for_fresh=True
+        )
+        columns = result.get("columns", [])
+        out: dict[str, dict[str, str]] = {}
+        for row in result.get("rows", []):
+            record = dict(zip(columns, row))
+            point = self._sparql_value(record.get("point"))
+            if not point:
+                continue
+            current = out.setdefault(point, {})
+            for field in fields:
+                value = self._sparql_value(record.get(field))
+                # First non-null wins; a point with two units is already
+                # ill-formed and reconciliation will flag whichever we see.
+                if value and field not in current:
+                    current[field] = value
+        return out
+
     def insert_timeseries(
         self,
         *,
@@ -1056,11 +1213,17 @@ class Manager:
         """Return pre-computed conversion factors between two units.
 
         The client can apply: result = ((value + src_offset) * src_mult / tgt_mult) - tgt_offset
+
+        ``compatible`` is the lenient answer, kept for callers that already
+        depend on it. ``verdict`` is the four-valued one
+        (match/convertible/incompatible/unknown) and is what a caller should
+        branch on before actually applying the factors: ``compatible`` is True
+        for ``unknown`` too, and converting on no evidence silently rescales
+        the data.
         """
         converter = self._ensure_qudt_converter()
         src = converter.resolve_unit(from_unit)
         tgt = converter.resolve_unit(to_unit)
-        compatible = converter._check_compatible(src, tgt)
         return {
             "from_uri": str(src.uri),
             "to_uri": str(tgt.uri),
@@ -1068,7 +1231,8 @@ class Manager:
             "from_offset": src.offset,
             "to_multiplier": tgt.multiplier,
             "to_offset": tgt.offset,
-            "compatible": compatible,
+            "compatible": converter._check_compatible(src, tgt),
+            "verdict": converter.compatibility_verdict(src.uri, tgt.uri),
         }
 
     def close(self) -> None:

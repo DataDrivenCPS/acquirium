@@ -92,6 +92,41 @@ class StreamInsert(BaseModel):
     values: list[tuple[datetime, float | int | str | None]]
 
 
+class StreamRegistration(BaseModel):
+    """One stream's identity and semantics, as sent to ``/register_streams``.
+
+    The semantic fields accept free text (``"mg/L"``, ``"volume flow rate"``,
+    ``"chlorine"``) or a URI. Free text is resolved server-side against the
+    text matcher, so a caller never has to look a URI up — that is the point
+    of the endpoint. Unresolvable text is an error, not a silent fallback.
+
+    ``point_uri`` is optional. When given, the point is linked to the
+    reference and the two are reconciled; the semantics themselves are always
+    written on the reference.
+    """
+
+    source_id: str
+    ref_name: str
+    point_uri: str | None = None
+    value_kind: str | None = None
+    label: str | None = None
+    unit: str | None = None
+    quantity_kind: str | None = None
+    medium: str | None = None
+    substance: str | None = None
+    data_source: str | None = None
+    properties: dict[str, Any] | None = None
+    #: Register even though this stream's unit cannot be reconciled with its
+    #: point's. Reads then return the point's unit, unconverted, and warn.
+    #: Covers ``unit`` only — a medium or substance mismatch has no remedy.
+    allow_unit_mismatch: bool = False
+
+
+class RegisterStreamsRequest(BaseModel):
+    streams: list[StreamRegistration]
+    min_score: float = 0.6
+
+
 Order = Literal["asc", "desc"]
 
 @dataclass(frozen=True)

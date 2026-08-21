@@ -16,6 +16,7 @@ from acquirium.internals.models import (
     looks_like_uri,
 )
 from acquirium.internals.internals_namespaces import *
+from acquirium.internals.reconcile import StreamMetadataConflict
 from acquirium.Grafana.grafana_dashboard_creator import GrafanaDashboardCreator
 from rdflib import Graph, URIRef
 from rdflib.namespace import NamespaceManager
@@ -24,6 +25,15 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     import pyarrow as pa
+
+def _detail(response: requests.Response) -> str:
+    """The server's error message: FastAPI's ``detail`` field, else the body."""
+    try:
+        parsed = response.json()
+    except ValueError:
+        return response.text
+    return str(parsed.get("detail", parsed)) if isinstance(parsed, dict) else response.text
+
 
 def _raise_for_status(response: requests.Response) -> None:
     """Like response.raise_for_status(), but enriches the HTTPError message with the
@@ -582,6 +592,26 @@ class AcquiriumClient:
         response = requests.post(url, json=RegisterDatasourceRequest(source_id=source_id).model_dump())
         response.raise_for_status()
         return response.json()["source_id"]
+
+    def register_streams(
+        self, streams: list[dict], *, min_score: float = 0.6
+    ) -> dict:
+        """Register streams, resolving free-text semantics server-side.
+
+        Raises ``StreamMetadataConflict`` when a stream's semantics
+        contradict its linked point's (HTTP 409), and ``ValueError`` for a
+        malformed batch or text that did not resolve (HTTP 400). Nothing is
+        written unless the whole batch validates.
+        """
+        url = f"{self.base_url}/register_streams"
+        response = requests.post(
+            url, json={"streams": streams, "min_score": min_score}
+        )
+        if response.status_code == 409:
+            raise StreamMetadataConflict.from_detail(_detail(response))
+        if not response.ok:
+            raise ValueError(f"register_streams failed: {_detail(response)}")
+        return response.json()
 
     def insert_timeseries(
         self,
