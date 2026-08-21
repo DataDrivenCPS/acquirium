@@ -17,7 +17,7 @@ from acquirium.Materialization.compute import PythonArrowAdapter
 from acquirium.Materialization.validation import OutputValidationError
 from acquirium.Materialization.worker import DefinitionCache
 from acquirium.Materialization.scheduler import MaterializationScheduler
-from acquirium.Materialization.rebinding import MaterializationRebinder
+from acquirium.Materialization.rebinding import MaterializationRebinder, resolve_bindings
 UTC = timezone.utc
 
 def test_ranges_are_half_open_and_adjacent_ranges_coalesce():
@@ -314,6 +314,55 @@ def test_rebind_worker_persists_direct_binding_and_plans_current_lag(tmp_path):
             maximum_partition_duration=timedelta(minutes=1),
         )
         assert len(plans) == 1
+    finally:
+        store.close()
+
+def test_per_input_selector_expands_published_graph_rows_deterministically():
+    class Graph:
+        def sparql_query(self, query, **kwargs):
+            assert query == "SELECT ?ref_uri WHERE {}"
+            return {"columns": ["ref_uri"], "rows": [["urn:b"], ["urn:a"]]}
+    bindings = resolve_bindings({
+        "inputs": {"criteria": {"sparql": "SELECT ?ref_uri WHERE {}"}},
+        "outputs": {"mode": "per_input", "name": "celsius"},
+    }, Graph())
+    assert [binding.logical_key for binding in bindings] == ["urn:a", "urn:b"]
+    assert all(binding.outputs["output"][0].startswith("urn:acquirium:derived:celsius:") for binding in bindings)
+
+def test_binding_activation_is_atomic_and_rejects_active_output_conflicts(tmp_path):
+    store = DuckDBStore(tmp_path / "activation.duckdb", recreate=True)
+    try:
+        runtime = MaterializationDuckDB(store)
+        first = definition_for(abs, name="first", inputs="urn:in", outputs="urn:out", impact=pointwise())
+        first_id = runtime.register_definition(first); first_gen = runtime.deploy("first", first_id)
+        runtime.persist_bindings("first", first_gen, 1, first_id, (BindingSpec("one", {"input": ("urn:in",)}, {"output": ("urn:out",)}),))
+        runtime.activate_bindings("first", first_gen)
+        second = definition_for(abs, name="second", inputs="urn:other", outputs="urn:out", impact=pointwise())
+        second_id = runtime.register_definition(second); second_gen = runtime.deploy("second", second_id)
+        runtime.persist_bindings("second", second_gen, 1, second_id, (BindingSpec("two", {"input": ("urn:other",)}, {"output": ("urn:out",)}),))
+        import pytest
+        with pytest.raises(ValueError, match="owned"):
+            runtime.activate_bindings("second", second_gen)
+        with store._own_conn() as conn:
+            assert conn.execute("SELECT status FROM materialization_bindings WHERE deployment_name = 'second'").fetchone() == ("staging",)
+    finally:
+        store.close()
+
+def test_staged_generation_keeps_active_pointer_until_atomic_activation(tmp_path):
+    store = DuckDBStore(tmp_path / "generations.duckdb", recreate=True)
+    try:
+        runtime = MaterializationDuckDB(store)
+        definition = definition_for(abs, inputs="urn:in", outputs="urn:out", impact=pointwise())
+        definition_id = runtime.register_definition(definition); generation = runtime.deploy("convert", definition_id)
+        runtime.persist_bindings("convert", generation, 1, definition_id, (BindingSpec("old", {"input": ("urn:in",)}, {"output": ("urn:out",)}),))
+        runtime.activate_bindings("convert", generation)
+        staged = runtime.stage_bindings("convert", 2, definition_id, (BindingSpec("new", {"input": ("urn:new",)}, {"output": ("urn:new-out",)}),))
+        assert staged == generation + 1
+        with store._own_conn() as conn:
+            assert conn.execute("SELECT generation, staged_generation FROM materialization_deployments WHERE name = 'convert'").fetchone() == (generation, staged)
+        runtime.activate_bindings("convert", staged)
+        with store._own_conn() as conn:
+            assert conn.execute("SELECT generation, staged_generation FROM materialization_deployments WHERE name = 'convert'").fetchone() == (staged, None)
     finally:
         store.close()
 

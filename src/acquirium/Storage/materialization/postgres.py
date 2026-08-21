@@ -30,6 +30,7 @@ class MaterializationPostgres:
             conn.execute("""CREATE TABLE IF NOT EXISTS materialization_deployments (
                 name TEXT PRIMARY KEY, definition_id TEXT NOT NULL, generation BIGINT NOT NULL,
                 status TEXT NOT NULL, current_graph_revision BIGINT, updated_at TIMESTAMPTZ NOT NULL)""")
+            conn.execute("ALTER TABLE materialization_deployments ADD COLUMN IF NOT EXISTS staged_generation BIGINT")
             conn.execute("""CREATE TABLE IF NOT EXISTS materialization_bindings (
                 binding_id TEXT NOT NULL, deployment_name TEXT NOT NULL, generation BIGINT NOT NULL,
                 logical_key TEXT NOT NULL, content_digest TEXT NOT NULL, graph_revision BIGINT NOT NULL,
@@ -106,6 +107,39 @@ class MaterializationPostgres:
                                 "INSERT INTO materialization_binding_refs VALUES (%s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
                                 [(binding_id, generation, ref, role, direction) for ref in refs],
                             )
+
+    def stage_bindings(self, deployment_name: str, graph_revision: int, definition_id: str,
+                       bindings: Sequence[BindingSpec]) -> int:
+        """Create the next invisible topology generation without moving the active pointer."""
+        with self._pool.connection() as conn, conn.transaction():
+            row = conn.execute("SELECT generation, staged_generation FROM materialization_deployments WHERE name = %s FOR UPDATE", [deployment_name]).fetchone()
+            if row is None:
+                raise KeyError(deployment_name)
+            active, staged = row
+            generation = max(active, staged or active) + 1
+            if not conn.execute("SELECT 1 FROM materialization_bindings WHERE deployment_name = %s AND generation = %s AND status = 'active'", [deployment_name, active]).fetchone():
+                generation = active
+            conn.execute("UPDATE materialization_deployments SET staged_generation = %s, updated_at = %s WHERE name = %s", [generation, datetime.now(timezone.utc), deployment_name])
+        self.persist_bindings(deployment_name, generation, graph_revision, definition_id, bindings)
+        return generation
+
+    def activate_bindings(self, deployment_name: str, generation: int) -> None:
+        """Atomically publish a fully staged binding generation."""
+        with self._pool.connection() as conn, conn.transaction():
+            staged = conn.execute("SELECT count(*) FROM materialization_bindings WHERE deployment_name = %s AND generation = %s AND status = 'staging'", [deployment_name, generation]).fetchone()[0]
+            if not staged:
+                raise ValueError("no staged bindings to activate")
+            conflicts = conn.execute("""SELECT refs.ref_uri FROM materialization_binding_refs refs
+                JOIN materialization_bindings binding ON binding.binding_id = refs.binding_id AND binding.generation = refs.generation
+                WHERE refs.direction = 'output' AND binding.status = 'active' AND binding.deployment_name != %s
+                AND refs.ref_uri IN (SELECT new_refs.ref_uri FROM materialization_binding_refs new_refs
+                    JOIN materialization_bindings new_binding ON new_binding.binding_id = new_refs.binding_id AND new_binding.generation = new_refs.generation
+                    WHERE new_refs.direction = 'output' AND new_binding.deployment_name = %s AND new_refs.generation = %s) LIMIT 1""", [deployment_name, deployment_name, generation]).fetchone()
+            if conflicts:
+                raise ValueError(f"output {conflicts[0]!r} is owned by another active deployment")
+            conn.execute("UPDATE materialization_bindings SET status = 'retiring' WHERE deployment_name = %s AND status = 'active' AND generation != %s", [deployment_name, generation])
+            conn.execute("UPDATE materialization_bindings SET status = 'active' WHERE deployment_name = %s AND generation = %s AND status = 'staging'", [deployment_name, generation])
+            conn.execute("UPDATE materialization_deployments SET generation = %s, staged_generation = NULL, current_graph_revision = (SELECT max(graph_revision) FROM materialization_bindings WHERE deployment_name = %s AND generation = %s), updated_at = %s WHERE name = %s", [generation, deployment_name, generation, datetime.now(timezone.utc), deployment_name])
 
     def record_graph_revision(self, graph_revision: int, source_version: int, content_digest: str) -> None:
         with self._pool.connection() as conn, conn.transaction():

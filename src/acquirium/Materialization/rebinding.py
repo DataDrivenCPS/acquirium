@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha256
 from typing import Any, Iterable, Mapping
 
 from acquirium.Materialization.bindings import BindingSpec
@@ -34,6 +35,40 @@ def _binding(value: Mapping[str, object], *, default_key: str = "default") -> Bi
     )
 
 
+def _selector_refs(selector: Mapping[str, object], graph: object) -> tuple[str, ...]:
+    criteria = selector.get("criteria", selector)
+    if not isinstance(criteria, Mapping):
+        raise ValueError("selector criteria must be a mapping")
+    direct = criteria.get("ref_uris", criteria.get("ref_uri"))
+    if isinstance(direct, str):
+        return (direct,)
+    if isinstance(direct, (list, tuple)) and all(isinstance(ref, str) for ref in direct):
+        return tuple(sorted(direct))
+    query = criteria.get("sparql")
+    if not isinstance(query, str):
+        raise ValueError("selector requires ref_uri(s) or a SPARQL query selecting ?ref_uri")
+    result = graph.sparql_query(query, include_dependencies=True, wait_for_fresh=True)
+    try:
+        column = result["columns"].index("ref_uri")
+    except ValueError as error:
+        raise ValueError("selector SPARQL must select a ?ref_uri column") from error
+    return tuple(sorted(str(row[column]) for row in result["rows"] if row[column] is not None))
+
+
+def _per_input(selector: Mapping[str, object], outputs: Mapping[str, object], graph: object) -> tuple[BindingSpec, ...]:
+    name = outputs.get("name")
+    if not isinstance(name, str) or not name:
+        raise ValueError("per_input outputs require a non-empty name")
+    prefix = str(outputs.get("prefix", "urn:acquirium:derived"))
+    bindings = []
+    for ref in _selector_refs(selector, graph):
+        token = sha256(ref.encode()).hexdigest()[:20]
+        bindings.append(BindingSpec(ref, {"input": (ref,)}, {"output": (f"{prefix}:{name}:{token}",)}, {"input_ref": ref}))
+    if not bindings:
+        raise ValueError("selector matched no stream references")
+    return tuple(bindings)
+
+
 def resolve_bindings(spec: Mapping[str, object], graph: object) -> tuple[BindingSpec, ...]:
     """Resolve the explicit v1 binding contract against the published graph.
 
@@ -45,6 +80,10 @@ def resolve_bindings(spec: Mapping[str, object], graph: object) -> tuple[Binding
     """
     declaration = spec.get("bind")
     resolved: Iterable[BindingSpec | Mapping[str, object]]
+    if isinstance(declaration, Mapping) and "selector" in declaration and isinstance(spec.get("outputs"), Mapping):
+        return _per_input(declaration["selector"], spec["outputs"], graph)
+    if declaration is None and isinstance(spec.get("inputs"), Mapping) and "criteria" in spec["inputs"] and isinstance(spec.get("outputs"), Mapping):
+        return _per_input(spec["inputs"], spec["outputs"], graph)
     if isinstance(declaration, Mapping) and isinstance(declaration.get("resolver"), str):
         resolved = load_entrypoint(declaration["resolver"])(graph)
     elif isinstance(declaration, Mapping) and isinstance(declaration.get("bindings"), list):
@@ -67,6 +106,7 @@ def resolve_bindings(spec: Mapping[str, object], graph: object) -> tuple[Binding
 class RebindResult:
     deployment_name: str
     graph_revision: int
+    generation: int
     impact: ImpactPolicy
 
 
@@ -85,13 +125,12 @@ class MaterializationRebinder:
         try:
             bundle = self._storage.deployment_definition(deployment_name)
             bindings = resolve_bindings(bundle["spec"], self._graph)
-            self._storage.persist_bindings(
-                deployment_name, int(bundle["generation"]), graph_revision,
-                str(bundle["definition_id"]), bindings,
+            generation = self._storage.stage_bindings(
+                deployment_name, graph_revision, str(bundle["definition_id"]), bindings
             )
             self._storage.finish_rebind(deployment_name, graph_revision)
             impact = ImpactPolicy.from_json(bundle["spec"]["impact"])
-            return RebindResult(deployment_name, graph_revision, impact)
+            return RebindResult(deployment_name, graph_revision, generation, impact)
         except Exception as error:
             self._storage.finish_rebind(deployment_name, graph_revision, error={
                 "type": type(error).__name__, "message": str(error),

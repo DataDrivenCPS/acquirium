@@ -43,6 +43,10 @@ in phase order so the replacement can be delivered incrementally.
 - [x] Phase 4 registration surface: transformation registration, status,
   start/pause, listing, and explicit rebind endpoints plus client methods.
 - [ ] Atomic staging topology activation (Phase 5).
+  The deployment now has an active and staged generation pointer, and staged
+  bindings can be atomically promoted. Remaining: generation-isolated output
+  rows plus canonical-publication promotion (including derived-ref
+  registration) before staged partitions may execute automatically.
 - [ ] Stateful artifacts/training, experiments, services, effects, and old
   continuous-runtime removal (Phases 6–9).
 
