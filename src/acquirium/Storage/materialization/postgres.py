@@ -17,6 +17,7 @@ from acquirium.Storage.materialization.types import InputSnapshot
 from acquirium.Storage.continuous.types import MUTATION_SCHEMA
 from acquirium.Storage.artifacts import ArtifactRecord
 from acquirium.Materialization.state import ArtifactCandidate, ArtifactLease, ArtifactRequest, StateRevision
+from acquirium.Materialization.experiments import ExperimentArtifact, ExperimentRun, ExperimentRunRequest, run_output_ref
 
 
 class MaterializationPostgres:
@@ -97,6 +98,22 @@ class MaterializationPostgres:
             conn.execute("""CREATE TABLE IF NOT EXISTS materialization_state_invalidations (
                 revision_id TEXT PRIMARY KEY, binding_id TEXT NOT NULL, policy TEXT NOT NULL,
                 effective_from TIMESTAMPTZ, status TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS experiment_runs (
+                run_id TEXT PRIMARY KEY, definition_id TEXT NOT NULL, graph_revision BIGINT NOT NULL,
+                start_ts TIMESTAMPTZ NOT NULL, end_ts TIMESTAMPTZ NOT NULL, status TEXT NOT NULL,
+                params_json JSONB NOT NULL, params_schema_json JSONB NOT NULL, metadata_json JSONB NOT NULL,
+                input_vector_json JSONB NOT NULL, binding_snapshot_json JSONB NOT NULL, state_revision TEXT,
+                started_at TIMESTAMPTZ NOT NULL, finished_at TIMESTAMPTZ, error_json JSONB,
+                keep_reason TEXT, collected_at TIMESTAMPTZ)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS experiment_run_metrics (
+                run_id TEXT NOT NULL, name TEXT NOT NULL, value_json JSONB NOT NULL,
+                recorded_at TIMESTAMPTZ NOT NULL, PRIMARY KEY (run_id, name))""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS experiment_run_artifacts (
+                run_id TEXT NOT NULL, name TEXT NOT NULL, artifact_digest TEXT NOT NULL,
+                metadata_json JSONB NOT NULL, PRIMARY KEY (run_id, name))""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS experiment_run_outputs (
+                run_id TEXT NOT NULL, name TEXT NOT NULL, ref_uri TEXT NOT NULL,
+                PRIMARY KEY (run_id, name), UNIQUE (ref_uri))""")
 
     def close(self) -> None:
         self._pool.close()
@@ -138,6 +155,13 @@ class MaterializationPostgres:
                 [definition.definition_id, definition.name, definition.kind, definition.source_digest,
                  definition.entrypoint, json.dumps(spec), datetime.now(timezone.utc)])
         return definition.definition_id
+
+    def experiment_definition(self, definition_id: str) -> dict[str, object]:
+        with self._pool.connection() as conn:
+            row = conn.execute("SELECT source_digest, entrypoint, kind FROM materialization_definitions WHERE definition_id = %s", [definition_id]).fetchone()
+        if row is None: raise KeyError(definition_id)
+        if row[2] != "experiment": raise ValueError("definition is not an experiment")
+        return {"source_digest": row[0], "entrypoint": row[1]}
 
     def deploy(self, name: str, definition_id: str, *, graph_revision: int | None = None) -> int:
         with self._pool.connection() as conn, conn.transaction():
@@ -769,3 +793,96 @@ class MaterializationPostgres:
         with self._pool.connection() as conn:
             rows = conn.execute("SELECT DISTINCT artifact_digest FROM materialization_state_revisions").fetchall()
         return {row[0] for row in rows}
+
+    def start_experiment(self, request: ExperimentRunRequest) -> ExperimentRun:
+        now = datetime.now(timezone.utc)
+        with self._pool.connection() as conn, conn.transaction():
+            conn.execute("""INSERT INTO experiment_runs
+                (run_id, definition_id, graph_revision, start_ts, end_ts, status, params_json,
+                 params_schema_json, metadata_json, input_vector_json, binding_snapshot_json,
+                 state_revision, started_at, finished_at, error_json, keep_reason, collected_at)
+                VALUES (%s, %s, %s, %s, %s, 'running', %s, %s, %s, %s, %s, %s, %s, NULL, NULL, NULL, NULL)
+                ON CONFLICT (run_id) DO NOTHING""", [request.run_id, request.definition_id, request.graph_revision,
+                request.interval.start, request.interval.end, json.dumps(dict(request.params)),
+                json.dumps(dict(request.params_schema)), json.dumps(dict(request.metadata)),
+                json.dumps(dict(request.input_versions)), json.dumps(list(request.binding_snapshot)),
+                request.state_revision, now])
+        return self.experiment_run(request.run_id)
+
+    def experiment_run(self, run_id: str) -> ExperimentRun:
+        with self._pool.connection() as conn:
+            row = conn.execute("SELECT run_id, definition_id, graph_revision, start_ts, end_ts, status, params_json, params_schema_json, metadata_json, input_vector_json, binding_snapshot_json, state_revision, started_at, finished_at, error_json, keep_reason, collected_at FROM experiment_runs WHERE run_id = %s", [run_id]).fetchone()
+        if row is None: raise KeyError(run_id)
+        parse = lambda value: json.loads(value) if isinstance(value, str) else value
+        return ExperimentRun(row[0], row[1], row[2], TimeRange(row[3], row[4]), row[5], parse(row[6]), parse(row[7]),
+            parse(row[8]), parse(row[9]), parse(row[10]), row[11], row[12], row[13], parse(row[14]) if row[14] else None,
+            row[15], row[16])
+
+    def finish_experiment(self, run_id: str, *, status: str, error: dict | None = None) -> ExperimentRun:
+        if status not in {"succeeded", "failed", "cancelled"}: raise ValueError("invalid experiment completion status")
+        with self._pool.connection() as conn, conn.transaction():
+            changed = conn.execute("UPDATE experiment_runs SET status = %s, error_json = %s, finished_at = %s WHERE run_id = %s AND status = 'running'", [status, json.dumps(error) if error else None, datetime.now(timezone.utc), run_id]).rowcount
+            if changed == 0 and not conn.execute("SELECT 1 FROM experiment_runs WHERE run_id = %s", [run_id]).fetchone(): raise KeyError(run_id)
+        return self.experiment_run(run_id)
+
+    def record_experiment_metric(self, run_id: str, name: str, value: object) -> None:
+        if not name: raise ValueError("experiment metric name is required")
+        try: encoded = json.dumps(value, sort_keys=True)
+        except (TypeError, ValueError) as error: raise ValueError("experiment metric must be JSON-serializable") from error
+        with self._pool.connection() as conn, conn.transaction():
+            if not conn.execute("SELECT 1 FROM experiment_runs WHERE run_id = %s", [run_id]).fetchone(): raise KeyError(run_id)
+            conn.execute("INSERT INTO experiment_run_metrics VALUES (%s, %s, %s, %s) ON CONFLICT (run_id, name) DO UPDATE SET value_json = excluded.value_json, recorded_at = excluded.recorded_at", [run_id, name, encoded, datetime.now(timezone.utc)])
+
+    def attach_experiment_artifact(self, run_id: str, artifact: ExperimentArtifact) -> None:
+        with self._pool.connection() as conn, conn.transaction():
+            if not conn.execute("SELECT 1 FROM experiment_runs WHERE run_id = %s", [run_id]).fetchone(): raise KeyError(run_id)
+            if not conn.execute("SELECT 1 FROM materialization_artifacts WHERE digest = %s", [artifact.digest]).fetchone(): raise KeyError(artifact.digest)
+            conn.execute("INSERT INTO experiment_run_artifacts VALUES (%s, %s, %s, %s) ON CONFLICT (run_id, name) DO UPDATE SET artifact_digest = excluded.artifact_digest, metadata_json = excluded.metadata_json", [run_id, artifact.name, artifact.digest, json.dumps(dict(artifact.metadata))])
+
+    def declare_experiment_output(self, run_id: str, name: str) -> str:
+        ref_uri = run_output_ref(run_id, name)
+        with self._pool.connection() as conn, conn.transaction():
+            if not conn.execute("SELECT 1 FROM experiment_runs WHERE run_id = %s", [run_id]).fetchone(): raise KeyError(run_id)
+            conn.execute("INSERT INTO experiment_run_outputs VALUES (%s, %s, %s) ON CONFLICT (run_id, name) DO NOTHING", [run_id, name, ref_uri])
+        return ref_uri
+
+    def keep_experiment(self, run_id: str, reason: str) -> ExperimentRun:
+        if not reason: raise ValueError("a retention reason is required")
+        with self._pool.connection() as conn, conn.transaction():
+            if conn.execute("UPDATE experiment_runs SET keep_reason = %s WHERE run_id = %s", [reason, run_id]).rowcount == 0: raise KeyError(run_id)
+        return self.experiment_run(run_id)
+
+    def collect_experiment(self, run_id: str) -> ExperimentRun:
+        with self._pool.connection() as conn, conn.transaction():
+            row = conn.execute("SELECT keep_reason FROM experiment_runs WHERE run_id = %s", [run_id]).fetchone()
+            if row is None: raise KeyError(run_id)
+            if row[0] is not None: raise ValueError("a kept experiment cannot be collected")
+            conn.execute("DELETE FROM experiment_run_artifacts WHERE run_id = %s", [run_id])
+            conn.execute("DELETE FROM experiment_run_outputs WHERE run_id = %s", [run_id])
+            conn.execute("UPDATE experiment_runs SET status = 'collected', collected_at = %s WHERE run_id = %s", [datetime.now(timezone.utc), run_id])
+        return self.experiment_run(run_id)
+
+    def list_experiments(self, *, status: str | None = None, metadata: dict[str, object] | None = None) -> tuple[ExperimentRun, ...]:
+        with self._pool.connection() as conn:
+            rows = conn.execute("SELECT run_id FROM experiment_runs WHERE (%s::text IS NULL OR status = %s) ORDER BY started_at DESC", [status, status]).fetchall()
+        runs = tuple(self.experiment_run(row[0]) for row in rows)
+        return tuple(run for run in runs if metadata is None or all(run.metadata.get(key) == value for key, value in metadata.items()))
+
+    def rerun_experiment(self, run_id: str, new_run_id: str) -> ExperimentRun:
+        previous = self.experiment_run(run_id)
+        if previous.status == "collected": raise ValueError("a collected experiment cannot be rerun")
+        return self.start_experiment(ExperimentRunRequest(new_run_id, previous.definition_id, previous.graph_revision,
+            previous.interval, previous.params, previous.params_schema, previous.metadata, previous.input_versions,
+            previous.binding_snapshot, previous.state_revision))
+
+    def experiment_metrics(self, run_id: str) -> dict[str, object]:
+        with self._pool.connection() as conn:
+            if not conn.execute("SELECT 1 FROM experiment_runs WHERE run_id = %s", [run_id]).fetchone(): raise KeyError(run_id)
+            rows = conn.execute("SELECT name, value_json FROM experiment_run_metrics WHERE run_id = %s ORDER BY name", [run_id]).fetchall()
+        return {name: json.loads(value) if isinstance(value, str) else value for name, value in rows}
+
+    def experiment_artifacts(self, run_id: str) -> tuple[ExperimentArtifact, ...]:
+        with self._pool.connection() as conn:
+            if not conn.execute("SELECT 1 FROM experiment_runs WHERE run_id = %s", [run_id]).fetchone(): raise KeyError(run_id)
+            rows = conn.execute("SELECT name, artifact_digest, metadata_json FROM experiment_run_artifacts WHERE run_id = %s ORDER BY name", [run_id]).fetchall()
+        return tuple(ExperimentArtifact(name, digest, json.loads(metadata) if isinstance(metadata, str) else metadata) for name, digest, metadata in rows)

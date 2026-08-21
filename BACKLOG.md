@@ -62,8 +62,13 @@ in phase order so the replacement can be delivered incrementally.
   The public generic calibration example and DuckDB/PostgreSQL storage/worker
   restart recovery show that durable artifacts, rather than worker memory,
   reproduce class transformations.
-- [ ] Experiments, services, effects, and old continuous-runtime removal
-  (Phases 7–9).
+- [x] Phase 7: bounded experiments and provenance. Immutable definitions,
+  schema-validated frozen run snapshots, nested metadata, metrics, immutable
+  artifact references, run-owned output identities, bounded execution, terminal
+  status records, metadata filtering, rerun, keep/collection, and DuckDB /
+  PostgreSQL persistence are implemented. The load-shifting-style example uses
+  the run context rather than hand-written provenance bookkeeping.
+- [ ] Services, effects, and old continuous-runtime removal (Phases 8–9).
 
 ## Notes
 

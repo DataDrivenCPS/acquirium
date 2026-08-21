@@ -23,6 +23,7 @@ from acquirium.Storage.materialization.types import InputSnapshot
 from acquirium.Storage.continuous.types import MUTATION_SCHEMA, PublicationRequest
 from acquirium.Storage.artifacts import ArtifactRecord
 from acquirium.Materialization.state import ArtifactCandidate, ArtifactLease, ArtifactRequest, StateRevision
+from acquirium.Materialization.experiments import ExperimentArtifact, ExperimentRun, ExperimentRunRequest, run_output_ref
 
 
 STREAM_CHANGE_RANGES_TABLE = "stream_change_ranges"
@@ -120,6 +121,22 @@ class MaterializationDuckDB:
             conn.execute("""CREATE TABLE IF NOT EXISTS materialization_state_invalidations (
                 revision_id VARCHAR PRIMARY KEY, binding_id VARCHAR NOT NULL, policy VARCHAR NOT NULL,
                 effective_from TIMESTAMP, status VARCHAR NOT NULL, created_at TIMESTAMP NOT NULL)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS experiment_runs (
+                run_id VARCHAR PRIMARY KEY, definition_id VARCHAR NOT NULL, graph_revision BIGINT NOT NULL,
+                start_ts TIMESTAMP NOT NULL, end_ts TIMESTAMP NOT NULL, status VARCHAR NOT NULL,
+                params_json VARCHAR NOT NULL, params_schema_json VARCHAR NOT NULL, metadata_json VARCHAR NOT NULL,
+                input_vector_json VARCHAR NOT NULL, binding_snapshot_json VARCHAR NOT NULL, state_revision VARCHAR,
+                started_at TIMESTAMP NOT NULL, finished_at TIMESTAMP, error_json VARCHAR,
+                keep_reason VARCHAR, collected_at TIMESTAMP)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS experiment_run_metrics (
+                run_id VARCHAR NOT NULL, name VARCHAR NOT NULL, value_json VARCHAR NOT NULL,
+                recorded_at TIMESTAMP NOT NULL, PRIMARY KEY (run_id, name))""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS experiment_run_artifacts (
+                run_id VARCHAR NOT NULL, name VARCHAR NOT NULL, artifact_digest VARCHAR NOT NULL,
+                metadata_json VARCHAR NOT NULL, PRIMARY KEY (run_id, name))""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS experiment_run_outputs (
+                run_id VARCHAR NOT NULL, name VARCHAR NOT NULL, ref_uri VARCHAR NOT NULL,
+                PRIMARY KEY (run_id, name), UNIQUE (ref_uri))""")
 
     def record_change_ranges(self, ranges: Sequence[StreamChangeRange]) -> None:
         if not ranges:
@@ -157,6 +174,13 @@ class MaterializationDuckDB:
                 [definition.definition_id, definition.name, definition.kind, definition.source_digest,
                  definition.entrypoint, spec, datetime.now(timezone.utc).replace(tzinfo=None)])
         return definition.definition_id
+
+    def experiment_definition(self, definition_id: str) -> dict[str, object]:
+        with self._store._own_conn() as conn:
+            row = conn.execute("SELECT source_digest, entrypoint, kind FROM materialization_definitions WHERE definition_id = ?", [definition_id]).fetchone()
+        if row is None: raise KeyError(definition_id)
+        if row[2] != "experiment": raise ValueError("definition is not an experiment")
+        return {"source_digest": row[0], "entrypoint": row[1]}
 
     def deploy(self, name: str, definition_id: str, *, graph_revision: int | None = None) -> int:
         with self._store._lock, self._store._write_conn() as conn:
@@ -823,3 +847,107 @@ class MaterializationDuckDB:
         with self._store._own_conn() as conn:
             rows = conn.execute("SELECT DISTINCT artifact_digest FROM materialization_state_revisions").fetchall()
         return {row[0] for row in rows}
+
+    def start_experiment(self, request: ExperimentRunRequest) -> ExperimentRun:
+        """Persist an immutable experiment snapshot before any user code runs."""
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        with self._store._lock, self._store._write_conn() as conn:
+            conn.execute("""INSERT INTO experiment_runs
+                (run_id, definition_id, graph_revision, start_ts, end_ts, status, params_json,
+                 params_schema_json, metadata_json, input_vector_json, binding_snapshot_json,
+                 state_revision, started_at, finished_at, error_json, keep_reason, collected_at)
+                VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)
+                ON CONFLICT (run_id) DO NOTHING""", [request.run_id, request.definition_id,
+                request.graph_revision, request.interval.start.replace(tzinfo=None), request.interval.end.replace(tzinfo=None),
+                json.dumps(dict(request.params), sort_keys=True), json.dumps(dict(request.params_schema), sort_keys=True),
+                json.dumps(dict(request.metadata), sort_keys=True), json.dumps(dict(request.input_versions), sort_keys=True),
+                json.dumps(list(request.binding_snapshot), sort_keys=True), request.state_revision, now])
+        return self.experiment_run(request.run_id)
+
+    def experiment_run(self, run_id: str) -> ExperimentRun:
+        with self._store._own_conn() as conn:
+            row = conn.execute("SELECT run_id, definition_id, graph_revision, start_ts, end_ts, status, params_json, "
+                "params_schema_json, metadata_json, input_vector_json, binding_snapshot_json, state_revision, "
+                "started_at, finished_at, error_json, keep_reason, collected_at FROM experiment_runs WHERE run_id = ?", [run_id]).fetchone()
+        if row is None:
+            raise KeyError(run_id)
+        return ExperimentRun(row[0], row[1], row[2], TimeRange(row[3].replace(tzinfo=timezone.utc), row[4].replace(tzinfo=timezone.utc)),
+            row[5], json.loads(row[6]), json.loads(row[7]), json.loads(row[8]), json.loads(row[9]), json.loads(row[10]), row[11],
+            row[12].replace(tzinfo=timezone.utc), row[13].replace(tzinfo=timezone.utc) if row[13] else None,
+            json.loads(row[14]) if row[14] else None, row[15], row[16].replace(tzinfo=timezone.utc) if row[16] else None)
+
+    def finish_experiment(self, run_id: str, *, status: str, error: dict | None = None) -> ExperimentRun:
+        if status not in {"succeeded", "failed", "cancelled"}:
+            raise ValueError("experiment completion status must be succeeded, failed, or cancelled")
+        with self._store._lock, self._store._write_conn() as conn:
+            changed = conn.execute("UPDATE experiment_runs SET status = ?, error_json = ?, finished_at = ? "
+                "WHERE run_id = ? AND status = 'running'", [status, json.dumps(error, sort_keys=True) if error else None,
+                datetime.now(timezone.utc).replace(tzinfo=None), run_id]).rowcount
+            if changed == 0 and not conn.execute("SELECT 1 FROM experiment_runs WHERE run_id = ?", [run_id]).fetchone():
+                raise KeyError(run_id)
+        return self.experiment_run(run_id)
+
+    def record_experiment_metric(self, run_id: str, name: str, value: object) -> None:
+        if not name: raise ValueError("experiment metric name is required")
+        try: encoded = json.dumps(value, sort_keys=True)
+        except (TypeError, ValueError) as error: raise ValueError("experiment metric must be JSON-serializable") from error
+        with self._store._lock, self._store._write_conn() as conn:
+            if not conn.execute("SELECT 1 FROM experiment_runs WHERE run_id = ?", [run_id]).fetchone(): raise KeyError(run_id)
+            conn.execute("INSERT INTO experiment_run_metrics VALUES (?, ?, ?, ?) ON CONFLICT (run_id, name) DO UPDATE SET value_json = excluded.value_json, recorded_at = excluded.recorded_at", [run_id, name, encoded, datetime.now(timezone.utc).replace(tzinfo=None)])
+
+    def attach_experiment_artifact(self, run_id: str, artifact: ExperimentArtifact) -> None:
+        with self._store._lock, self._store._write_conn() as conn:
+            if not conn.execute("SELECT 1 FROM experiment_runs WHERE run_id = ?", [run_id]).fetchone(): raise KeyError(run_id)
+            if not conn.execute("SELECT 1 FROM materialization_artifacts WHERE digest = ?", [artifact.digest]).fetchone(): raise KeyError(artifact.digest)
+            conn.execute("INSERT INTO experiment_run_artifacts VALUES (?, ?, ?, ?) ON CONFLICT (run_id, name) DO UPDATE SET artifact_digest = excluded.artifact_digest, metadata_json = excluded.metadata_json", [run_id, artifact.name, artifact.digest, json.dumps(dict(artifact.metadata), sort_keys=True)])
+
+    def declare_experiment_output(self, run_id: str, name: str) -> str:
+        ref_uri = run_output_ref(run_id, name)
+        with self._store._lock, self._store._write_conn() as conn:
+            if not conn.execute("SELECT 1 FROM experiment_runs WHERE run_id = ?", [run_id]).fetchone(): raise KeyError(run_id)
+            conn.execute("INSERT INTO experiment_run_outputs VALUES (?, ?, ?) ON CONFLICT (run_id, name) DO NOTHING", [run_id, name, ref_uri])
+        return ref_uri
+
+    def keep_experiment(self, run_id: str, reason: str) -> ExperimentRun:
+        if not reason: raise ValueError("a retention reason is required")
+        with self._store._lock, self._store._write_conn() as conn:
+            if conn.execute("UPDATE experiment_runs SET keep_reason = ? WHERE run_id = ?", [reason, run_id]).rowcount == 0: raise KeyError(run_id)
+        return self.experiment_run(run_id)
+
+    def collect_experiment(self, run_id: str) -> ExperimentRun:
+        with self._store._lock, self._store._write_conn() as conn:
+            row = conn.execute("SELECT keep_reason FROM experiment_runs WHERE run_id = ?", [run_id]).fetchone()
+            if row is None: raise KeyError(run_id)
+            if row[0] is not None: raise ValueError("a kept experiment cannot be collected")
+            # Keep the small run/metric tombstone, but release its expensive
+            # attachment and output registrations. Canonical output values are
+            # owned by the normal publication retention policy.
+            conn.execute("DELETE FROM experiment_run_artifacts WHERE run_id = ?", [run_id])
+            conn.execute("DELETE FROM experiment_run_outputs WHERE run_id = ?", [run_id])
+            conn.execute("UPDATE experiment_runs SET status = 'collected', collected_at = ? WHERE run_id = ?", [datetime.now(timezone.utc).replace(tzinfo=None), run_id])
+        return self.experiment_run(run_id)
+
+    def list_experiments(self, *, status: str | None = None, metadata: dict[str, object] | None = None) -> tuple[ExperimentRun, ...]:
+        with self._store._own_conn() as conn:
+            rows = conn.execute("SELECT run_id FROM experiment_runs WHERE (? IS NULL OR status = ?) ORDER BY started_at DESC", [status, status]).fetchall()
+        runs = tuple(self.experiment_run(row[0]) for row in rows)
+        return tuple(run for run in runs if metadata is None or all(run.metadata.get(key) == value for key, value in metadata.items()))
+
+    def rerun_experiment(self, run_id: str, new_run_id: str) -> ExperimentRun:
+        previous = self.experiment_run(run_id)
+        if previous.status == "collected": raise ValueError("a collected experiment cannot be rerun")
+        return self.start_experiment(ExperimentRunRequest(new_run_id, previous.definition_id, previous.graph_revision,
+            previous.interval, previous.params, previous.params_schema, previous.metadata, previous.input_versions,
+            previous.binding_snapshot, previous.state_revision))
+
+    def experiment_metrics(self, run_id: str) -> dict[str, object]:
+        with self._store._own_conn() as conn:
+            if not conn.execute("SELECT 1 FROM experiment_runs WHERE run_id = ?", [run_id]).fetchone(): raise KeyError(run_id)
+            rows = conn.execute("SELECT name, value_json FROM experiment_run_metrics WHERE run_id = ? ORDER BY name", [run_id]).fetchall()
+        return {name: json.loads(value) for name, value in rows}
+
+    def experiment_artifacts(self, run_id: str) -> tuple[ExperimentArtifact, ...]:
+        with self._store._own_conn() as conn:
+            if not conn.execute("SELECT 1 FROM experiment_runs WHERE run_id = ?", [run_id]).fetchone(): raise KeyError(run_id)
+            rows = conn.execute("SELECT name, artifact_digest, metadata_json FROM experiment_run_artifacts WHERE run_id = ? ORDER BY name", [run_id]).fetchall()
+        return tuple(ExperimentArtifact(name, digest, json.loads(metadata)) for name, digest, metadata in rows)

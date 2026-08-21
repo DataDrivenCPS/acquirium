@@ -567,6 +567,72 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
+    def start_experiment(self, request: dict) -> dict:
+        response = requests.post(f"{self.base_url}/experiments/runs", json=request)
+        _raise_for_status(response)
+        return response.json()
+
+    def experiment_run(self, run_id: str) -> dict:
+        response = requests.get(f"{self.base_url}/experiments/runs/{run_id}")
+        _raise_for_status(response)
+        return response.json()
+
+    def list_experiments(self, *, status: str | None = None, metadata_key: str | None = None,
+                         metadata_value: object | None = None) -> dict:
+        params = {"status": status, "metadata_key": metadata_key,
+                  "metadata_value": json.dumps(metadata_value) if metadata_key is not None else None}
+        response = requests.get(f"{self.base_url}/experiments/runs", params={key: value for key, value in params.items() if value is not None})
+        _raise_for_status(response)
+        return response.json()
+
+    def rerun_experiment(self, run_id: str, new_run_id: str) -> dict:
+        response = requests.post(f"{self.base_url}/experiments/runs/{run_id}/rerun/{new_run_id}")
+        _raise_for_status(response)
+        return response.json()
+
+    def execute_experiment(self, run_id: str) -> dict:
+        response = requests.post(f"{self.base_url}/experiments/runs/{run_id}/execute")
+        _raise_for_status(response)
+        return response.json()
+
+    def finish_experiment(self, run_id: str, status: str = "succeeded", error: dict | None = None) -> dict:
+        response = requests.post(f"{self.base_url}/experiments/runs/{run_id}/finish", json={"status": status, "error": error})
+        _raise_for_status(response)
+        return response.json()
+
+    def record_experiment_metric(self, run_id: str, name: str, value: object) -> dict:
+        response = requests.post(f"{self.base_url}/experiments/runs/{run_id}/metrics/{name}", json={"value": value})
+        _raise_for_status(response)
+        return response.json()
+
+    def experiment_metrics(self, run_id: str) -> dict:
+        response = requests.get(f"{self.base_url}/experiments/runs/{run_id}/metrics")
+        _raise_for_status(response)
+        return response.json()
+
+    def experiment_artifacts(self, run_id: str) -> dict:
+        response = requests.get(f"{self.base_url}/experiments/runs/{run_id}/artifacts")
+        _raise_for_status(response)
+        return response.json()
+
+    def attach_experiment_artifact(self, run_id: str, name: str, digest: str,
+                                   metadata: dict | None = None) -> dict:
+        response = requests.post(f"{self.base_url}/experiments/runs/{run_id}/artifacts", json={
+            "name": name, "digest": digest, "metadata": metadata or {},
+        })
+        _raise_for_status(response)
+        return response.json()
+
+    def keep_experiment(self, run_id: str, reason: str) -> dict:
+        response = requests.post(f"{self.base_url}/experiments/runs/{run_id}/keep", json={"reason": reason})
+        _raise_for_status(response)
+        return response.json()
+
+    def collect_experiment(self, run_id: str) -> dict:
+        response = requests.post(f"{self.base_url}/experiments/runs/{run_id}/collect")
+        _raise_for_status(response)
+        return response.json()
+
     def set_transformation_status(self, name: str, status: str) -> dict:
         if status not in {"active", "paused"}:
             raise ValueError("transformation status must be active or paused")

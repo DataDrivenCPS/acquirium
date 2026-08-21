@@ -33,6 +33,7 @@ from acquirium.Materialization.impact import TimeRange
 from acquirium.Storage.materialization.types import InputSnapshot, PlanPartition, WorkLease
 from acquirium.Materialization.state import ArtifactLease, ArtifactRequest, StateRevision
 from acquirium.Storage.artifacts import ArtifactRecord
+from acquirium.Materialization.experiments import ExperimentRun
 
 
 @pytest.fixture
@@ -135,6 +136,27 @@ def test_generic_artifact_request_transport(client, fake_manager):
     complete = client.post(f"/artifact-requests/{request.request_id}/complete", json={"owner": "producer",
         "attempt": 2, "data_base64": base64.b64encode(b"abc").decode()})
     assert complete.status_code == 200 and complete.json()["revision_id"] == "revision"
+
+
+def test_experiment_run_transport(client, fake_manager):
+    timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    run = ExperimentRun("run", "definition", 2, TimeRange(timestamp, timestamp.replace(hour=1)), "running",
+                        {"limit": 2}, {"type": "object"}, {"nested": {"ok": True}}, {"urn:in": 1}, [], None, timestamp)
+    fake_manager.materialization.start_experiment.return_value = run
+    fake_manager.materialization.experiment_run.return_value = run
+    response = client.post("/experiments/runs", json={"run_id": "run", "definition_id": "definition",
+        "graph_revision": 2, "start": timestamp.isoformat(), "end": timestamp.replace(hour=1).isoformat(),
+        "params": {"limit": 2}, "params_schema": {"type": "object"}, "metadata": {"nested": {"ok": True}},
+        "input_versions": {"urn:in": 1}, "binding_snapshot": []})
+    assert response.status_code == 200 and response.json()["metadata"] == {"nested": {"ok": True}}
+    response = client.get("/experiments/runs/run")
+    assert response.status_code == 200 and response.json()["status"] == "running"
+    fake_manager.materialization.experiment_metrics.return_value = {"objective": {"cost": 1.0}}
+    response = client.get("/experiments/runs/run/metrics")
+    assert response.status_code == 200 and response.json()["metrics"] == {"objective": {"cost": 1.0}}
+    response = client.post("/experiments/runs/run/artifacts", json={"name": "report", "digest": "a" * 64,
+        "metadata": {"format": "json"}})
+    assert response.status_code == 200
 
 
 # ---------------------------------------------------------------------------

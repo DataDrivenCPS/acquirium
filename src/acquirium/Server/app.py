@@ -31,6 +31,7 @@ from acquirium.Materialization.definitions import MaterializationDefinition
 from acquirium.Materialization.impact import ImpactPolicy
 from acquirium.Materialization.impact import TimeRange
 from acquirium.Materialization.state import ArtifactCandidate, ArtifactRequest
+from acquirium.Materialization.experiments import ExperimentArtifact, ExperimentRunRequest, ExperimentRunner
 
 from acquirium.internals.models import (
     LogEntry,
@@ -617,6 +618,39 @@ class ArtifactFailure(BaseModel):
     error: dict[str, Any]
 
 
+class ExperimentStart(BaseModel):
+    run_id: str
+    definition_id: str
+    graph_revision: int
+    start: datetime
+    end: datetime
+    params: dict[str, Any] = Field(default_factory=dict)
+    params_schema: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    input_versions: dict[str, int] = Field(default_factory=dict)
+    binding_snapshot: list[dict[str, Any]] = Field(default_factory=list)
+    state_revision: str | None = None
+
+
+class ExperimentFinish(BaseModel):
+    status: Literal["succeeded", "failed", "cancelled"]
+    error: dict[str, Any] | None = None
+
+
+class ExperimentMetric(BaseModel):
+    value: Any
+
+
+class ExperimentKeep(BaseModel):
+    reason: str
+
+
+class ExperimentArtifactAttachment(BaseModel):
+    name: str
+    digest: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 @app.post("/transformations/register")
 def register_transformation(request: TransformationRegistration) -> dict[str, Any]:
     """Register trusted local transformation metadata; execution is scheduled separately."""
@@ -678,6 +712,116 @@ def fail_artifact_request(request_id: str, request: ArtifactFailure) -> dict[str
         return {"ok": True}
     except (KeyError, ValueError) as error:
         raise HTTPException(status_code=409, detail=str(error))
+
+
+def _experiment_response(run) -> dict[str, Any]:
+    return {"run_id": run.run_id, "definition_id": run.definition_id, "graph_revision": run.graph_revision,
+            "status": run.status, "start": run.interval.start, "end": run.interval.end,
+            "params": dict(run.params), "params_schema": dict(run.params_schema),
+            "metadata": dict(run.metadata), "input_versions": dict(run.input_versions),
+            "binding_snapshot": list(run.binding_snapshot), "state_revision": run.state_revision,
+            "started_at": run.started_at, "finished_at": run.finished_at, "error": run.error,
+            "keep_reason": run.keep_reason, "collected_at": run.collected_at}
+
+
+@app.post("/experiments/runs")
+def start_experiment(request: ExperimentStart) -> dict[str, Any]:
+    try:
+        run = app.state.manager.materialization.start_experiment(ExperimentRunRequest(
+            request.run_id, request.definition_id, request.graph_revision, TimeRange(request.start, request.end),
+            request.params, request.params_schema, request.metadata, request.input_versions,
+            request.binding_snapshot, request.state_revision))
+        return {"ok": True, **_experiment_response(run)}
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+
+@app.get("/experiments/runs/{run_id}")
+def experiment_run(run_id: str) -> dict[str, Any]:
+    try: return {"ok": True, **_experiment_response(app.state.manager.materialization.experiment_run(run_id))}
+    except KeyError: raise HTTPException(status_code=404, detail=f"unknown experiment run {run_id!r}")
+
+
+@app.get("/experiments/runs")
+def list_experiments(status: str | None = None, metadata_key: str | None = None,
+                     metadata_value: str | None = None) -> dict[str, Any]:
+    metadata = {metadata_key: json.loads(metadata_value) if metadata_value else None} if metadata_key else None
+    try:
+        runs = app.state.manager.materialization.list_experiments(status=status, metadata=metadata)
+        return {"ok": True, "runs": [_experiment_response(run) for run in runs]}
+    except json.JSONDecodeError as error:
+        raise HTTPException(status_code=400, detail=f"metadata_value must be JSON: {error}")
+
+
+@app.post("/experiments/runs/{run_id}/rerun/{new_run_id}")
+def rerun_experiment(run_id: str, new_run_id: str) -> dict[str, Any]:
+    try: return {"ok": True, **_experiment_response(app.state.manager.materialization.rerun_experiment(run_id, new_run_id))}
+    except KeyError: raise HTTPException(status_code=404, detail=f"unknown experiment run {run_id!r}")
+    except ValueError as error: raise HTTPException(status_code=409, detail=str(error))
+
+
+@app.post("/experiments/runs/{run_id}/execute")
+def execute_experiment(run_id: str) -> dict[str, Any]:
+    try:
+        result = ExperimentRunner(app.state.manager.materialization, app.state.manager.materialization_executor).run(run_id)
+        return {"ok": True, "result": result, **_experiment_response(app.state.manager.materialization.experiment_run(run_id))}
+    except KeyError: raise HTTPException(status_code=404, detail=f"unknown experiment run {run_id!r}")
+    except ValueError as error: raise HTTPException(status_code=409, detail=str(error))
+    except Exception as error: raise HTTPException(status_code=500, detail=str(error))
+
+
+@app.post("/experiments/runs/{run_id}/finish")
+def finish_experiment(run_id: str, request: ExperimentFinish) -> dict[str, Any]:
+    try: return {"ok": True, **_experiment_response(app.state.manager.materialization.finish_experiment(run_id, status=request.status, error=request.error))}
+    except KeyError: raise HTTPException(status_code=404, detail=f"unknown experiment run {run_id!r}")
+    except ValueError as error: raise HTTPException(status_code=400, detail=str(error))
+
+
+@app.post("/experiments/runs/{run_id}/metrics/{name}")
+def record_experiment_metric(run_id: str, name: str, request: ExperimentMetric) -> dict[str, Any]:
+    try:
+        app.state.manager.materialization.record_experiment_metric(run_id, name, request.value)
+        return {"ok": True}
+    except KeyError: raise HTTPException(status_code=404, detail=f"unknown experiment run {run_id!r}")
+    except ValueError as error: raise HTTPException(status_code=400, detail=str(error))
+
+
+@app.get("/experiments/runs/{run_id}/metrics")
+def experiment_metrics(run_id: str) -> dict[str, Any]:
+    try: return {"ok": True, "metrics": app.state.manager.materialization.experiment_metrics(run_id)}
+    except KeyError: raise HTTPException(status_code=404, detail=f"unknown experiment run {run_id!r}")
+
+
+@app.get("/experiments/runs/{run_id}/artifacts")
+def experiment_artifacts(run_id: str) -> dict[str, Any]:
+    try:
+        artifacts = app.state.manager.materialization.experiment_artifacts(run_id)
+        return {"ok": True, "artifacts": [{"name": item.name, "digest": item.digest, "metadata": dict(item.metadata)} for item in artifacts]}
+    except KeyError: raise HTTPException(status_code=404, detail=f"unknown experiment run {run_id!r}")
+
+
+@app.post("/experiments/runs/{run_id}/artifacts")
+def attach_experiment_artifact(run_id: str, request: ExperimentArtifactAttachment) -> dict[str, Any]:
+    try:
+        app.state.manager.materialization.attach_experiment_artifact(
+            run_id, ExperimentArtifact(request.name, request.digest, request.metadata)
+        )
+        return {"ok": True}
+    except KeyError as error: raise HTTPException(status_code=404, detail=f"unknown run or artifact {error.args[0]!r}")
+
+
+@app.post("/experiments/runs/{run_id}/keep")
+def keep_experiment(run_id: str, request: ExperimentKeep) -> dict[str, Any]:
+    try: return {"ok": True, **_experiment_response(app.state.manager.materialization.keep_experiment(run_id, request.reason))}
+    except KeyError: raise HTTPException(status_code=404, detail=f"unknown experiment run {run_id!r}")
+    except ValueError as error: raise HTTPException(status_code=400, detail=str(error))
+
+
+@app.post("/experiments/runs/{run_id}/collect")
+def collect_experiment(run_id: str) -> dict[str, Any]:
+    try: return {"ok": True, **_experiment_response(app.state.manager.materialization.collect_experiment(run_id))}
+    except KeyError: raise HTTPException(status_code=404, detail=f"unknown experiment run {run_id!r}")
+    except ValueError as error: raise HTTPException(status_code=409, detail=str(error))
 
 
 def _set_transformation_status(name: str, status: str) -> dict[str, Any]:

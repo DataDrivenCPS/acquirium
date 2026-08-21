@@ -20,6 +20,10 @@ class LocalExecutorPool:
     def submit_entrypoint(self, *, digest: str, entrypoint: str, request: ComputeRequest) -> Future[pa.Table]:
         target = self.definitions.load(digest, lambda: load_entrypoint(entrypoint))
         return self.submit(target, request)
+    def submit_callable_entrypoint(self, *, digest: str, entrypoint: str, argument: Any) -> Future[Any]:
+        """Run bounded non-materialization work from an immutable entrypoint."""
+        target = self.definitions.load(digest, lambda: load_entrypoint(entrypoint))
+        return self._executor.submit(target, argument)
     def close(self) -> None:
         self._executor.shutdown(wait=True, cancel_futures=False)
 

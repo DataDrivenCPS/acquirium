@@ -51,6 +51,16 @@ def transform(*, name: str | None = None, inputs: object | None = None, bind: ob
     return decorate
 
 
+def experiment(*, name: str | None = None, parameters_schema: dict[str, Any] | None = None) -> Callable[[F], F]:
+    """Declare a bounded experiment entrypoint with a JSON-schema parameter contract."""
+    def decorate(function: F) -> F:
+        definition = definition_for(function, name=name or function.__name__, kind="experiment",
+                                    parameters_schema=parameters_schema or {})
+        setattr(function, "__acquirium_definition__", definition)
+        return function
+    return decorate
+
+
 def stateful(*, name: str | None = None, inputs: object | None = None, bind: object | None = None,
              outputs: object | None = None, impact: ImpactPolicy | None = None,
              parameters_schema: dict[str, Any] | None = None) -> Callable[[type], type]:
