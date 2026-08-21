@@ -23,13 +23,15 @@ def bucket_range(timestamp: datetime, bucket: timedelta) -> TimeRange:
     return TimeRange(start, start + bucket)
 
 def normalize_change_ranges(*, publication_id: str, stream_versions: dict[str, int], changes: Iterable[tuple[str, datetime, str]], bucket: timedelta = timedelta(minutes=1)) -> tuple[StreamChangeRange, ...]:
-    changes = tuple(changes)
     per_stream: dict[str, list[TimeRange]] = defaultdict(list)
+    bucket_counts: dict[str, dict[datetime, int]] = defaultdict(lambda: defaultdict(int))
     operations: dict[str, set[str]] = defaultdict(set)
     for ref_uri, timestamp, operation in changes:
         if operation not in {"upsert", "delete"}:
             raise ValueError(f"unknown mutation operation {operation!r}")
-        per_stream[ref_uri].append(bucket_range(timestamp, bucket))
+        interval = bucket_range(timestamp, bucket)
+        per_stream[ref_uri].append(interval)
+        bucket_counts[ref_uri][interval.start] += 1
         operations[ref_uri].add(operation)
     result: list[StreamChangeRange] = []
     for ref_uri, intervals in per_stream.items():
@@ -37,7 +39,10 @@ def normalize_change_ranges(*, publication_id: str, stream_versions: dict[str, i
             raise ValueError(f"missing stream version for {ref_uri!r}")
         kind: ChangeKind = "mixed" if len(operations[ref_uri]) > 1 else next(iter(operations[ref_uri]))  # type: ignore[assignment]
         for interval in coalesce_ranges(intervals):
-            count = sum(1 for changed_ref, timestamp, _ in changes if changed_ref == ref_uri and interval.start <= bucket_range(timestamp, bucket).start < interval.end)
+            count = sum(
+                count for start, count in bucket_counts[ref_uri].items()
+                if interval.start <= start < interval.end
+            )
             result.append(StreamChangeRange(ref_uri, stream_versions[ref_uri], publication_id, interval, kind, count))
     return tuple(sorted(result, key=lambda item: (item.ref_uri, item.interval.start)))
 

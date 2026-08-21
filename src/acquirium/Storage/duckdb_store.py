@@ -247,6 +247,17 @@ CONTINUOUS_BATCH_DDL = [
     """,
 ]
 
+# Only these canonical publication tables are part of the active schema.
+# The preceding legacy app-runtime DDL is retained temporarily as migration
+# history and is not executed by a new store.
+PUBLICATION_DDL = [
+    f"CREATE SEQUENCE IF NOT EXISTS {STREAM_PUBLICATIONS_SEQ}",
+    f"CREATE TABLE IF NOT EXISTS {STREAM_HEADS_TABLE} (ref_id INTEGER PRIMARY KEY, current_version BIGINT NOT NULL, retained_from_version BIGINT NOT NULL)",
+    f"CREATE TABLE IF NOT EXISTS {STREAM_PUBLICATIONS_TABLE} (publication_seq BIGINT PRIMARY KEY DEFAULT nextval('{STREAM_PUBLICATIONS_SEQ}'), publication_id VARCHAR UNIQUE NOT NULL, payload_hash VARCHAR NOT NULL, row_count BIGINT NOT NULL, versions_json VARCHAR NOT NULL, committed_at TIMESTAMP NOT NULL)",
+    f"CREATE TABLE IF NOT EXISTS {STREAM_CHANGE_RANGES_TABLE} (ref_uri VARCHAR NOT NULL, stream_version BIGINT NOT NULL, publication_id VARCHAR NOT NULL, start_ts TIMESTAMP NOT NULL, end_ts TIMESTAMP NOT NULL, change_kind VARCHAR NOT NULL, row_count BIGINT NOT NULL, PRIMARY KEY (ref_uri, stream_version, start_ts, end_ts))",
+    f"CREATE INDEX IF NOT EXISTS idx_stream_change_ranges_ref_version ON {STREAM_CHANGE_RANGES_TABLE} (ref_uri, stream_version)",
+]
+
 
 class DuckDBStore:
     """DuckDB implementation of the TimeseriesStore protocol.
@@ -277,6 +288,14 @@ class DuckDBStore:
         # None outside such a span. Guarded by self._lock.
         self._tx_conn = None
 
+        if not recreate and self._has_legacy_runtime_schema():
+            self._anchor_conn.close()
+            raise RuntimeError(
+                "This DuckDB database contains the retired continuous app runtime "
+                "schema (app_runtime). Create a fresh database or start once with "
+                "ACQUIRIUM_RECREATE=1; automatic migration is not supported."
+            )
+
         if recreate:
             logger.debug("DuckDBStore.__init__: dropping existing tables/views (recreate=True)")
             with self._lock, self._own_conn() as conn:
@@ -305,6 +324,12 @@ class DuckDBStore:
                 conn.execute(f"DROP SEQUENCE IF EXISTS {STREAM_PUBLICATIONS_SEQ}")
         self.ensure_table()
         logger.debug("DuckDBStore.__init__: ready at %s", self.db_path)
+
+    def _has_legacy_runtime_schema(self) -> bool:
+        return self._anchor_conn.execute(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema = 'main' AND table_name = 'app_runtime'"
+        ).fetchone() is not None
 
     # ---- connections ----
 
@@ -426,7 +451,7 @@ class DuckDBStore:
             """,
             f"CREATE INDEX IF NOT EXISTS idx_logs_point ON {LOGS_TABLE} (point_uri, timestamp)",
             f"CREATE INDEX IF NOT EXISTS idx_logs_obs ON {LOGS_TABLE} (observed_start, observed_end)",
-            *CONTINUOUS_BATCH_DDL,
+            *PUBLICATION_DDL,
         ]
         with self._lock, timed_debug(logger, "ensure_table"), self._own_conn() as conn:
             for stmt in stmts:

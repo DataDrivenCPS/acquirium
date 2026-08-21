@@ -1,0 +1,46 @@
+"""Canonical publication contract after removal of the legacy app runtime."""
+from datetime import datetime, timezone
+
+import pyarrow as pa
+import pytest
+
+from acquirium.Storage.duckdb_store import DuckDBStore
+from acquirium.Storage.materialization.duckdb import MaterializationDuckDB
+from acquirium.Storage.publication.duckdb import PublicationDuckDB
+from acquirium.Storage.publication.types import MUTATION_SCHEMA, PublicationConflict, PublicationRequest
+
+
+def test_publication_is_idempotent_and_emits_range_manifest(tmp_path):
+    store = DuckDBStore(tmp_path / "publication.duckdb", recreate=True)
+    try:
+        materialization = MaterializationDuckDB(store)
+        publisher = PublicationDuckDB(store)
+        mutations = pa.table({"operation": ["upsert"], "ref_uri": ["urn:input"],
+            "ts": pa.array([datetime(2026, 1, 1, tzinfo=timezone.utc)], type=pa.timestamp("us", tz="UTC")),
+            "numeric_value": [1.0], "text_value": [None]}, schema=MUTATION_SCHEMA)
+        first = publisher.publish(PublicationRequest("publication", mutations))
+        assert first.versions == {"urn:input": 1}
+        assert publisher.publish(PublicationRequest("publication", mutations)).deduplicated
+        assert materialization.change_ranges("urn:input", after_version=0, through_version=1)
+        changed = mutations.set_column(3, "numeric_value", pa.array([2.0], type=pa.float64()))
+        try:
+            publisher.publish(PublicationRequest("publication", changed))
+        except PublicationConflict:
+            pass
+        else:
+            raise AssertionError("conflicting retry was accepted")
+    finally:
+        store.close()
+
+
+def test_duckdb_rejects_a_retired_app_runtime_schema(tmp_path):
+    path = tmp_path / "retired-runtime.duckdb"
+    store = DuckDBStore(path, recreate=True)
+    try:
+        with store._own_conn() as conn:
+            conn.execute("CREATE TABLE app_runtime (app_id VARCHAR PRIMARY KEY)")
+    finally:
+        store.close()
+
+    with pytest.raises(RuntimeError, match="retired continuous app runtime"):
+        DuckDBStore(path)

@@ -15,8 +15,6 @@ Subcommands:
   acquirium driver start CONFIG    Submit the config's [[drivers]] to a server.
   acquirium driver list            List drivers running on a server.
   acquirium driver stop --name X   Stop a running driver.
-  acquirium app check SPEC         Validate an app class and its declarations.
-  acquirium app run SPEC [--dry-run]  Preview or deploy and run an app class.
 """
 
 import importlib
@@ -155,52 +153,6 @@ def _import_driver_class(
     if not (inspect.isclass(cls) and issubclass(cls, _Driver) and cls is not _Driver):
         raise ValueError(f"'{class_name}' is not a Driver subclass")
     return cls, source_dir
-
-
-def _import_app_class(app_spec: str, *, base_dir: Path | None = None) -> type:
-    """Resolve a file/module ``:ClassName`` spec to an App subclass."""
-    from acquirium.Apps.base import App as _App
-
-    if ":" not in app_spec:
-        raise ValueError(
-            f"app spec must include a class name (e.g. my_app.py:MyApp), got {app_spec!r}"
-        )
-    path_part, class_name = app_spec.rsplit(":", 1)
-    is_file = "/" in path_part or path_part.endswith(".py") or Path(path_part).exists()
-    if is_file:
-        file_path = Path(path_part)
-        if not file_path.is_absolute():
-            file_path = ((base_dir or Path.cwd()) / file_path).resolve()
-        if not file_path.exists():
-            raise ValueError(f"app file not found: {path_part}")
-        source_dir = str(file_path.parent)
-        if source_dir not in sys.path:
-            sys.path.insert(0, source_dir)
-        module_suffix = hashlib.sha256(str(file_path).encode()).hexdigest()[:12]
-        spec = importlib.util.spec_from_file_location(
-            f"_acquirium_app_{module_suffix}", file_path
-        )
-        if spec is None or spec.loader is None:
-            raise ValueError(f"could not load file: {path_part}")
-        mod = importlib.util.module_from_spec(spec)
-        # inspect.getsourcefile(), used by register_app to package the class,
-        # requires the defining module to be reachable by name. Without this,
-        # CLI-imported apps register with no source and fail server-side when
-        # AppRunner falls back to a nonexistent app.py.
-        sys.modules[spec.name] = mod
-        spec.loader.exec_module(mod)  # type: ignore[union-attr]
-    else:
-        try:
-            mod = importlib.import_module(path_part)
-        except ModuleNotFoundError as exc:
-            raise ValueError(f"could not import module '{path_part}': {exc}") from exc
-
-    cls = getattr(mod, class_name, None)
-    if cls is None:
-        raise ValueError(f"'{class_name}' not found in {path_part}")
-    if not (inspect.isclass(cls) and issubclass(cls, _App) and cls is not _App):
-        raise ValueError(f"'{class_name}' is not an App subclass")
-    return cls
 
 
 def _json_object(value: str, *, option: str) -> dict:
@@ -398,28 +350,6 @@ def driver_stop(
 # ---------------------------------------------------------------------------
 
 app_app = typer.Typer(help="Check, preview, deploy, and run Acquirium apps.", add_completion=False)
-app.add_typer(app_app, name="app")
-
-
-@app_app.command("check")
-def app_check(
-    spec: Annotated[str, typer.Argument(help="App spec: module:Class or path.py:Class")],
-) -> None:
-    """Import an app and validate its static output declarations."""
-    from acquirium.Apps.execution import output_specs
-
-    try:
-        cls = _import_app_class(spec)
-        instance = cls()
-        if not isinstance(getattr(instance, "name", None), str) or not instance.name:
-            raise ValueError("app must define a non-empty string name")
-        instance.validate_definition()
-        outputs = output_specs(instance)
-    except Exception as exc:
-        typer.echo(f"App check failed: {exc}", err=True)
-        raise typer.Exit(1)
-    output_count = "dynamic" if callable(getattr(instance, "resolve_output_specs", None)) else str(len(outputs))
-    typer.echo(f"OK  {instance.name}  class={cls.__name__}  outputs={output_count}")
 
 
 @app_app.command("mappings")

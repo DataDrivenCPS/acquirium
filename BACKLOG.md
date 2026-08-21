@@ -75,9 +75,12 @@ in phase order so the replacement can be delivered incrementally.
   Webhook effects are leased, retried with exponential backoff, deduplicated by
   idempotency key, and terminally dead-lettered. The streaming-dashboard
   example uses these APIs without polling backend internals.
-- [ ] Phase 9: remove the superseded continuous app runtime, then complete
+- [x] Phase 9: remove the superseded continuous app runtime, then complete
   naming/schema diagnostics, benchmark characterization, and documentation
-  cleanup after replacement feature coverage is accepted.
+  cleanup after replacement feature coverage is accepted. DuckDB canonical
+  publication baseline: 10,000 rows across 100 streams completed in 4.146s
+  (~2,412 rows/s); after linearizing range normalization, 100,000 rows across
+  100 streams completed in 24.648s (~4,057 rows/s).
 
 ## Notes
 

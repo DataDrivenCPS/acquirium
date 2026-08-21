@@ -15,19 +15,17 @@ from acquirium.Storage import (
     TimeseriesStore,
     create_timeseries_store,
 )
-from acquirium.Storage.continuous.types import ContinuousStore, PublicationReceipt, PublicationRequest
+from acquirium.Storage.publication.types import PublicationReceipt, PublicationRequest, PublicationStore
 from acquirium.Storage.values import normalize_value_kind
 from acquirium.internals.qudt_units import QUDTUnitConverter
 from acquirium.Server.config import OntologySource
 from acquirium.internals.models import LogEntry, Order, TimeIntervalModel, compute_ref_uri
 from acquirium.internals.internals_namespaces import *
 
-from threading import Lock
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import pyarrow as pa
-    from acquirium.Server.router import ChangeRouter
 import shutil
 from acquirium.TextMatch.embedding_matcher import EmbeddingMatcher, _split_local_name
 from acquirium.TextMatch.qudt_store import QUDTStore
@@ -123,7 +121,7 @@ def _wipe_dir_contents(base: Path) -> None:
 class Manager:
     timescale: TimeseriesStore
     graph_store: OxigraphGraphStore
-    continuous: ContinuousStore
+    publication: PublicationStore
     qudt_converter: QUDTUnitConverter | None = None
     backend: str = "timescale"
 
@@ -168,13 +166,10 @@ class Manager:
                 timescale: TimeseriesStore = create_timeseries_store(
                     "duckdb", duckdb_path=_effective_duckdb_path, recreate=recreate
                 )
-                # The continuous layer shares DuckDBStore's connection factory
-                # and write lock rather than opening a second writer (see
-                # Storage/continuous/duckdb.py's module docstring).
-                from acquirium.Storage.continuous.duckdb import ContinuousDuckDB
+                from acquirium.Storage.publication.duckdb import PublicationDuckDB
                 from acquirium.Storage.materialization.duckdb import MaterializationDuckDB
 
-                continuous: ContinuousStore = ContinuousDuckDB(timescale)
+                publication: PublicationStore = PublicationDuckDB(timescale)
                 materialization = MaterializationDuckDB(timescale)
             else:
                 _effective_dsn = pg_dsn or os.getenv("PG_DSN")
@@ -183,14 +178,10 @@ class Manager:
                 timescale = create_timeseries_store(
                     "timescale", pg_dsn=_effective_dsn, recreate=recreate
                 )
-                # A dedicated connection pool, not TimescaleStore's single
-                # connection: continuous-batch transactions (router-driven
-                # actor batches, the compactor) run concurrently with
-                # ordinary ingest against the same database.
-                from acquirium.Storage.continuous.postgres import ContinuousPostgres
+                from acquirium.Storage.publication.postgres import PublicationPostgres
                 from acquirium.Storage.materialization.postgres import MaterializationPostgres
 
-                continuous = ContinuousPostgres(_effective_dsn)
+                publication = PublicationPostgres(_effective_dsn)
                 materialization = MaterializationPostgres(_effective_dsn)
 
         # Caller-supplied converter or graph wins; otherwise the converter
@@ -210,7 +201,7 @@ class Manager:
 
         self.timescale = timescale
         self.graph_store = graph
-        self.continuous = continuous
+        self.publication = publication
         self.materialization = materialization
         from acquirium.Materialization.executor import LocalExecutorPool
         from acquirium.Materialization.rebinding import MaterializationRebinder
@@ -223,11 +214,6 @@ class Manager:
         from acquirium.Server.effect_worker import deliver_effect
         self.service_supervisor = ServiceSupervisor(materialization, self.service_snapshot)
         self.effect_dispatcher = EffectDispatcher(materialization, deliver_effect)
-        # Set by the FastAPI lifespan once the router exists (it in turn
-        # depends on the AppSupervisor, which is built after the Manager).
-        # None is a valid, safe state: wake_router() is then a no-op and the
-        # router's own periodic safety scan is what apps fall back on.
-        self.router: "ChangeRouter | None" = None
         self.qudt_converter = converter
         self.backend = _backend
 
@@ -236,12 +222,6 @@ class Manager:
         self.materialization_artifacts = FilesystemArtifactStore(
             self.data_dir / "materialization-artifacts"
         )
-        self.app_storage_root = Path(
-            os.getenv("ACQUIRIUM_APP_STORAGE_ROOT", str(self.data_dir / "apps"))
-        )
-        self.app_storage_root.mkdir(parents=True, exist_ok=True)
-        self._app_runs: dict[str, dict[str, Any]] = {}
-        self._app_runs_lock = Lock()
 
         _emb_model = os.getenv("ACQUIRIUM_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 
@@ -846,7 +826,7 @@ class Manager:
     def publish(
         self, mutations: "pa.Table", *, publication_id: str | None = None
     ) -> PublicationReceipt:
-        """Publish a mutation set through the continuous-batch protocol.
+        """Atomically publish canonical mutations with stable retry identity.
 
         Every write to canonical timeseries storage -- driver ingest, app
         output commits, explicit deletes -- goes through this one path so
@@ -858,22 +838,9 @@ class Manager:
         ``ContinuousStore.publish`` for free.
         """
         pub_id = publication_id or str(uuid.uuid4())
-        receipt = self.continuous.publish(PublicationRequest(pub_id, mutations))
-        self.wake_router(receipt.versions.keys())
+        receipt = self.publication.publish(PublicationRequest(pub_id, mutations))
         self.notify_service_changes(dict(receipt.versions))
         return receipt
-
-    def wake_router(self, ref_uris) -> None:
-        """Notify the change router that *ref_uris* may have pending work.
-
-        A no-op before the router is wired up (server startup ordering) or
-        for a caller that mutated storage through ``ContinuousStore``
-        directly (e.g. an app's output commit or a bootstrap finalize, both
-        of which publish inside their own transaction rather than through
-        this Manager) -- those callers invoke this explicitly afterward.
-        """
-        if self.router is not None:
-            self.router.wake(ref_uris)
 
     @staticmethod
     def _mutation_table(df: "Any", *, operation: str = "upsert") -> "pa.Table":
@@ -1354,8 +1321,6 @@ class Manager:
         }
 
     def close(self) -> None:
-        # App teardown belongs to AppSupervisor, which the server lifespan stops
-        # before it closes the manager.
         logger.debug("Manager.close: shutting down")
         executor = getattr(self, "materialization_executor", None)
         if executor is not None:
@@ -1363,11 +1328,9 @@ class Manager:
         services = getattr(self, "service_supervisor", None)
         if services is not None:
             services.close()
-        # ContinuousDuckDB shares DuckDBStore's connections and owns nothing
-        # to close itself; ContinuousPostgres owns a separate pool.
-        close_continuous = getattr(self.continuous, "close", None)
-        if callable(close_continuous):
-            close_continuous()
+        close_publication = getattr(self.publication, "close", None)
+        if callable(close_publication):
+            close_publication()
         close_materialization = getattr(self.materialization, "close", None)
         if callable(close_materialization):
             close_materialization()

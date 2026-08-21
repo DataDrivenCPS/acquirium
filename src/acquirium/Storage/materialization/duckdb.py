@@ -20,7 +20,7 @@ from acquirium.Materialization.impact import TimeRange
 from acquirium.Storage.materialization.ids import materialization_id, partition_ranges
 from acquirium.Storage.materialization.types import PlanPartition, WorkLease
 from acquirium.Storage.materialization.types import InputSnapshot
-from acquirium.Storage.continuous.types import MUTATION_SCHEMA, PublicationRequest
+from acquirium.Storage.publication.types import MUTATION_SCHEMA
 from acquirium.Storage.artifacts import ArtifactRecord
 from acquirium.Materialization.state import ArtifactCandidate, ArtifactLease, ArtifactRequest, StateRevision
 from acquirium.Materialization.experiments import ExperimentArtifact, ExperimentRun, ExperimentRunRequest, run_output_ref
@@ -329,7 +329,7 @@ class MaterializationDuckDB:
                 [deployment_name, generation, generation]).fetchone()[0]
             if incomplete and (has_active or active_generation != generation):
                 raise ValueError("staged binding plans have not completed")
-            from acquirium.Storage.continuous.duckdb import ContinuousDuckDB
+            from acquirium.Storage.publication.duckdb import PublicationDuckDB
             from acquirium.Storage.duckdb_store import REF_IDS_TABLE, TIMESERIES_TABLE
             mutations: list[dict] = []
             retiring_refs = [row[0] for row in conn.execute("""SELECT DISTINCT refs.ref_uri
@@ -372,7 +372,7 @@ class MaterializationDuckDB:
                     for ref, ts, numeric, text in staged_rows)
             if mutations:
                 publication_id = f"materialization:activate:{deployment_name}:{generation}"
-                ContinuousDuckDB(self._store)._apply_publication(conn, publication_id, pa.Table.from_pylist(mutations, schema=MUTATION_SCHEMA))
+                PublicationDuckDB(self._store)._apply_publication(conn, publication_id, pa.Table.from_pylist(mutations, schema=MUTATION_SCHEMA))
             conn.execute("DELETE FROM materialization_staged_outputs WHERE generation = ? AND binding_id IN (SELECT binding_id FROM materialization_bindings WHERE deployment_name = ? AND generation = ?)", [generation, deployment_name, generation])
             conn.execute("DELETE FROM materialization_staged_partitions WHERE generation = ? AND binding_id IN (SELECT binding_id FROM materialization_bindings WHERE deployment_name = ? AND generation = ?)", [generation, deployment_name, generation])
             conn.execute("UPDATE materialization_bindings SET status = 'retiring' WHERE deployment_name = ? AND status = 'active' AND generation != ?", [deployment_name, generation])
@@ -681,7 +681,7 @@ class MaterializationDuckDB:
         manifest intersecting the owned range rejects the attempt. Wider
         impact expansion is applied by the scheduler before this commit path.
         """
-        from acquirium.Storage.continuous.duckdb import ContinuousDuckDB
+        from acquirium.Storage.publication.duckdb import PublicationDuckDB
         from acquirium.Storage.duckdb_store import REF_IDS_TABLE, TIMESERIES_TABLE
         required = {"ref_uri", "ts", "numeric_value", "text_value"}
         if not required.issubset(replacement.column_names):
@@ -750,7 +750,7 @@ class MaterializationDuckDB:
                 mutations = existing + [{"operation": "upsert", **row} for row in rows]
                 if mutations:
                     publication_id = f"materialization:{execution_id}"
-                    ContinuousDuckDB(self._store)._apply_publication(conn, publication_id, pa.Table.from_pylist(mutations, schema=MUTATION_SCHEMA))
+                    PublicationDuckDB(self._store)._apply_publication(conn, publication_id, pa.Table.from_pylist(mutations, schema=MUTATION_SCHEMA))
             conn.execute("""UPDATE materialization_plan_partitions SET status = 'committed', committed_output_id = ?,
                 lease_owner = NULL, lease_expires_at = NULL WHERE partition_id = ?""", [publication_id, snapshot.lease.partition.partition_id])
             pinned = conn.execute("SELECT state_revision FROM materialization_plans WHERE plan_id = ?", [snapshot.lease.partition.plan_id]).fetchone()[0]

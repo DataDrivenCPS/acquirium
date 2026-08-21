@@ -10,8 +10,6 @@ import pyarrow.ipc as ipc
 from acquirium.internals.models import (
     Order,
     LogEntry,
-    AppSpec,
-    AppStopRequest,
     StreamInsert,
     RegisterDatasourceRequest,
     looks_like_uri,
@@ -526,14 +524,6 @@ class AcquiriumClient:
         response.raise_for_status()
         return response.json()
 
-    def register_app(self, spec: AppSpec, *, replace: bool = False) -> dict:
-        url = f"{self.base_url}/apps/register"
-        response = requests.post(
-            url, json=spec.model_dump(mode="json"), params={"replace": replace}
-        )
-        _raise_for_status(response)
-        return response.json()
-
     def register_transformation(self, definition: dict) -> dict:
         response = requests.post(f"{self.base_url}/transformations/register", json=definition)
         _raise_for_status(response)
@@ -690,166 +680,6 @@ class AcquiriumClient:
         payload = {"policy": policy, "effective_from": effective_from}
         response = requests.post(f"{self.base_url}/state-revisions/{revision_id}/promote", json=payload)
         _raise_for_status(response)
-        return response.json()
-
-    def delete_app(self, app_id: str) -> dict:
-        url = f"{self.base_url}/apps/delete"
-        response = requests.post(url, json={"app_id": app_id})
-        _raise_for_status(response)
-        return response.json()
-
-    def stop_app(self, *, app_id: str) -> dict:
-        url = f"{self.base_url}/apps/stop"
-        req = AppStopRequest(app_id=app_id)
-        response = requests.post(url, json=req.model_dump(mode="json"))
-        response.raise_for_status()
-        return response.json()
-
-    def start_app(self, app_id: str, *, params: Optional[dict] = None) -> dict:
-        """Start (or resume) a continuous app: bootstrap, resume, or
-        reconcile depending on its durable state (continuous_batch.md's
-        ``start_app``). Returns ``{"status": ..., "generation": ...}``."""
-        url = f"{self.base_url}/apps/start"
-        response = requests.post(url, json={"app_id": app_id, "params": params or {}})
-        _raise_for_status(response)
-        return response.json()
-
-    def reset_app(self, app_id: str) -> dict:
-        """Start a new generation for an app and reconcile it from canonical
-        history (topology change, code replace, or an explicit reset)."""
-        url = f"{self.base_url}/apps/reset"
-        response = requests.post(url, json={"app_id": app_id})
-        _raise_for_status(response)
-        return response.json()
-
-    # ---- internal continuous-batch endpoints (actor-facing) ----
-
-    def app_runtime(self, app_id: str) -> Optional[dict]:
-        """Return ``{"status", "generation", "topology_version"}`` for *app_id*,
-        or None if it has never been registered."""
-        url = f"{self.base_url}/internal/apps/{app_id}/runtime"
-        response = requests.get(url)
-        if response.status_code == 404:
-            return None
-        _raise_for_status(response)
-        return response.json()
-
-    def set_app_status(self, app_id: str, status: str) -> dict:
-        """Report a lifecycle status transition an actor makes on its own
-        (e.g. ``failed`` after repeated batch errors)."""
-        url = f"{self.base_url}/internal/apps/{app_id}/status"
-        response = requests.post(url, json={"status": status})
-        _raise_for_status(response)
-        return response.json()
-
-    def resume_status(self, app_id: str, generation: int) -> dict:
-        """``{"has_subscriptions", "resumable"}`` -- tells an actor's start()
-        whether to bootstrap, resume, or reconcile."""
-        url = f"{self.base_url}/internal/apps/{app_id}/resume_status"
-        response = requests.get(url, params={"generation": generation})
-        _raise_for_status(response)
-        return response.json()
-
-    def reset_app_runtime(self, app_id: str) -> dict:
-        """Start a new generation for *app_id* at the storage layer.
-        Returns ``{"generation": ...}``."""
-        url = f"{self.base_url}/internal/apps/{app_id}/reset"
-        response = requests.post(url)
-        _raise_for_status(response)
-        return response.json()
-
-    def begin_bootstrap(
-        self, app_id: str, *, input_ref_uris: list[str], output_ref_uris: list[str]
-    ) -> dict:
-        """Snapshot input history into staging; returns
-        ``{"bootstrap_id", "app_id", "generation", "streams"}``."""
-        url = f"{self.base_url}/internal/apps/{app_id}/bootstrap/begin"
-        response = requests.post(
-            url, json={"input_ref_uris": input_ref_uris, "output_ref_uris": output_ref_uris}
-        )
-        _raise_for_status(response)
-        return response.json()
-
-    def finalize_bootstrap(self, bootstrap_id: str) -> dict:
-        url = f"{self.base_url}/internal/bootstrap/{bootstrap_id}/finalize"
-        response = requests.post(url)
-        _raise_for_status(response)
-        return response.json()
-
-    def next_app_batch(
-        self, app_id: str, generation: int, *, target_keys: int = 50_000
-    ) -> Optional[dict]:
-        """Return the next pending batch, or None when nothing is pending.
-
-        The dict carries ``rows`` (an Arrow table) plus the batch's
-        ``batch_id``/``batch_kind``/``generation``/``has_more``/``inputs``
-        and, for a bootstrap page, ``bootstrap_id``/``end_ordinal`` --
-        exactly the ``acquirium_batch`` schema metadata the server attaches
-        (continuous_batch_plan.md Decision 6).
-        """
-        import pyarrow as pa
-
-        url = f"{self.base_url}/internal/apps/{app_id}/batches/next"
-        response = requests.post(url, json={"generation": generation, "target_keys": target_keys})
-        if response.status_code == 204:
-            return None
-        _raise_for_status(response)
-        reader = ipc.RecordBatchStreamReader(pa.BufferReader(response.content))
-        table = reader.read_all()
-        meta_raw = (table.schema.metadata or {}).get(b"acquirium_batch")
-        if meta_raw is None:
-            raise ValueError("batch response is missing acquirium_batch schema metadata")
-        return {"rows": table, **json.loads(meta_raw)}
-
-    def commit_app_batch(
-        self,
-        app_id: str,
-        batch_id: str,
-        *,
-        generation: int,
-        batch_kind: str,
-        rows: "pa.Table",
-        inputs: Optional[list[dict]] = None,
-        bootstrap_id: Optional[str] = None,
-        end_ordinal: Optional[int] = None,
-        webhook_intents: Optional[list[dict]] = None,
-    ) -> dict:
-        """Commit one processed batch's output ``rows``.
-
-        For ``batch_kind="tail"``, ``inputs`` (the batch's consumed ranges)
-        and ``webhook_intents`` are required; for ``"bootstrap"``,
-        ``bootstrap_id``/``end_ordinal`` (from the :meth:`next_app_batch`
-        response) are required instead.
-        """
-        import io
-
-        metadata: dict[str, Any] = {"generation": generation, "batch_kind": batch_kind}
-        if batch_kind == "bootstrap":
-            metadata["bootstrap_id"] = bootstrap_id
-            metadata["end_ordinal"] = end_ordinal
-        else:
-            metadata["inputs"] = inputs or []
-            metadata["webhook_intents"] = webhook_intents or []
-
-        table = rows.replace_schema_metadata(
-            {b"acquirium_commit": json.dumps(metadata).encode("utf-8")}
-        )
-        buf = io.BytesIO()
-        with ipc.new_stream(buf, table.schema) as writer:
-            writer.write_table(table)
-        buf.seek(0)
-        url = f"{self.base_url}/internal/apps/{app_id}/batches/{batch_id}/commit"
-        response = requests.post(
-            url, data=buf, headers={"Content-Type": "application/vnd.apache.arrow.stream"}
-        )
-        _raise_for_status(response)
-        return response.json()
-
-    def list_app_runs(self, *, app_id: Optional[str] = None) -> dict:
-        url = f"{self.base_url}/apps/list"
-        params = {"app_id": app_id} if app_id else None
-        response = requests.get(url, params=params)
-        response.raise_for_status()
         return response.json()
 
     def resolve_storage_keys(self, uris: list[str]) -> dict[str, str]:

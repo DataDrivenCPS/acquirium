@@ -7,8 +7,8 @@ import pyarrow as pa
 
 from acquirium.Materialization.services import ChangeHint
 from acquirium.Materialization.definitions import MaterializationDefinition
-from acquirium.Storage.continuous.types import PublicationRequest, MUTATION_SCHEMA
-from acquirium.Storage.continuous.duckdb import ContinuousDuckDB
+from acquirium.Storage.publication.types import PublicationRequest, MUTATION_SCHEMA
+from acquirium.Storage.publication.duckdb import PublicationDuckDB as ContinuousDuckDB
 from acquirium.Storage.duckdb_store import DuckDBStore
 from acquirium.Storage.materialization.duckdb import MaterializationDuckDB
 from acquirium.Storage.materialization.postgres import MaterializationPostgres

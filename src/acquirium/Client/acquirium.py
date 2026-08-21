@@ -18,7 +18,6 @@ import warnings
 
 from acquirium.Client.explore.core import Query
 from acquirium.Client.query import Q
-from acquirium.Client.app_display import AppsResponse
 
 
 def _dt_to_iso(v: "str | datetime | None") -> "str | None":
@@ -108,18 +107,7 @@ def _build_stream_triples(
         for pred, value in (stream.get("properties") or {}).items():
             _add_triple(g, target, pred, value)
 from acquirium.Client.client import AcquiriumClient
-from acquirium.Apps.base import App
-from acquirium.Apps.execution import (
-    AppDebugSession,
-    AppExecutionResult,
-    normalize_output_specs,
-    prepare_app_debug,
-    preview_app as execute_app_preview,
-    resolve_stream_mappings,
-)
-from acquirium.Apps.mapped import StreamMapping
-from acquirium.Apps.output_emission import PreviewSink
-from acquirium.internals.models import AppOutputSpec, AppSpec, compute_ref_uri
+from acquirium.internals.models import compute_ref_uri
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_DB_URI,
     ACQUIRIUM_REF_NAME,
@@ -515,160 +503,6 @@ class Acquirium:
                     source_id=source_id,
                 )
 
-    # ------------------------------------------------------------------
-    # ACQUIRIUM APPS API
-    # ------------------------------------------------------------------
-
-    def register_app(
-        self,
-        app: App,
-        *,
-        app_type: str | None = None,
-        outputs: list[AppOutputSpec | dict[str, Any]] | None = None,
-        depends_on: list[str] | None = None,
-        resolve_dependencies: bool = True,
-        queries: dict[str, Query] | None = None,
-        params: dict[str, Any] | None = None,
-        source_spec: str | None = None,
-        replace: bool = False,
-    ) -> dict[str, Any]:
-        """Register an Acquirium App with the server.
-
-        If an app with the same name is already registered, the server rejects
-        the request unless ``replace=True``, which gracefully tears down the
-        existing app (stopping it and cleaning up its graph registration)
-        before registering this one.
-
-        ``params`` are stored with the app and passed to ``build_app`` via
-        ``ctx.params`` during the (one-time) build phase, so build-time
-        configuration — training windows, thresholds — lives with the
-        registration rather than the run.
-        """
-        app.validate_definition()
-        query_bundle = queries if queries is not None else app.build_query(self)
-        if not isinstance(query_bundle, dict):
-            # a single Query (or legacy Q) builder
-            query_bundle = {"default": query_bundle}
-
-        query_specs = {name: q.to_dict() for name, q in query_bundle.items()}
-
-        deps = depends_on or []
-        if not depends_on and resolve_dependencies:
-            dep_set: set[str] = set()
-            for q in query_bundle.values():
-                dep_set.update(q.resolved_nodes())
-            deps = sorted(dep_set)
-
-        if outputs is not None:
-            output_items = outputs
-        else:
-            resolver = getattr(app, "resolve_output_specs", None)
-            output_items = (
-                resolver(query_bundle)
-                if callable(resolver)
-                else list(getattr(app, "outputs", []) or [])
-            )
-        output_specs = normalize_output_specs(output_items)
-
-        # The app's Python source is shipped to the server so its AppRunner
-        # actor can load and run the class. Prefer an explicit override on the
-        # app; otherwise read the class's defining module file.
-        source_code = getattr(app, "source_code", None)
-        entry_file = getattr(app, "entry_file", None)
-        source_spec = source_spec or getattr(app, "source_spec", None)
-        src_path: str | None = None
-        try:
-            src_path = inspect.getsourcefile(app.__class__)
-        except (OSError, TypeError):
-            pass
-        if src_path and source_spec is None:
-            source_spec = f"{Path(src_path).resolve()}:{app.__class__.__name__}"
-        if source_code is None:
-            try:
-                if src_path:
-                    source_code = Path(src_path).read_text()
-                    if entry_file is None:
-                        entry_file = Path(src_path).name
-            except Exception:
-                source_code = None
-        if source_code is None:
-            raise ValueError(
-                f"Could not locate source for {app.__class__.__name__}; define the "
-                "class in a Python file or set app.source_code and app.entry_file explicitly"
-            )
-
-        spec = AppSpec(
-            name=app.name,
-            version=getattr(app, "version", "0.0"),
-            app_type=app_type or getattr(app, "app_type", "soft_sensor"),
-            source_spec=source_spec,
-            app_class=app.__class__.__name__,
-            source_code=source_code,
-            entry_file=entry_file,
-            queries=query_specs,
-            outputs=output_specs,
-            depends_on=deps,
-            params=params or {},
-        )
-        return self.client.register_app(spec, replace=replace)
-
-    def preview_app(
-        self,
-        app: App,
-        *,
-        start: datetime | None = None,
-        end: datetime | None = None,
-        build_params: dict[str, Any] | None = None,
-        params: dict[str, Any] | None = None,
-        max_rows: int = 20,
-    ) -> AppExecutionResult:
-        """Execute an app once without persisting outputs or calling webhooks.
-
-        Queries and timeseries reads use this client's server. Known Acquirium
-        mutations are rejected during query/build/run, and the returned result
-        describes the writes and webhook calls that production would perform.
-        ``build_params`` are passed to ``build_app``; ``params`` are passed to
-        ``run``, mirroring registration-time and run-time configuration.
-        """
-        app.validate_definition()
-        return execute_app_preview(
-            app,
-            self,
-            start=start,
-            end=end,
-            build_params=build_params,
-            params=params,
-            sink=PreviewSink(max_rows=max_rows),
-        )
-
-    def prepare_app_debug(
-        self,
-        app: App,
-        *,
-        start: datetime | None = None,
-        end: datetime | None = None,
-        build_params: dict[str, Any] | None = None,
-        params: dict[str, Any] | None = None,
-    ) -> AppDebugSession:
-        """Prepare read-only app state and live inputs for interactive debugging."""
-        return prepare_app_debug(
-            app,
-            self,
-            start=start,
-            end=end,
-            build_params=build_params,
-            params=params,
-        )
-
-    def app_mappings(self, app: App) -> list[StreamMapping]:
-        """Resolve input/output stream pairs without building or running the app."""
-        return resolve_stream_mappings(app, self)
-
-    def delete_app(self, app_id: str) -> dict[str, Any]:
-        """Gracefully delete a registered app (stop it, clean up its graph
-        registration, and remove its persisted source)."""
-        return AppsResponse(self.client.delete_app(app_id))
-
     def register_service(self, target: object) -> dict[str, Any]:
         """Register a class decorated with :func:`acquirium.service`."""
         definition = getattr(target, "__acquirium_definition__", None)
@@ -685,31 +519,6 @@ class Acquirium:
 
     def service_status(self, name: str) -> dict[str, Any]:
         return self.client.service_status(name)
-
-    def start_app(self, app_id: str, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Start (or resume) continuous execution for a registered app.
-
-        Bootstraps over full retained history on first start, resumes from
-        its durable cursor if stopped and not yet compacted past, or
-        reconciles from canonical history otherwise
-        (continuous_batch.md's ``start_app``). Idempotent while already
-        active or bootstrapping.
-        """
-        return AppsResponse(self.client.start_app(app_id, params=params or {}))
-
-    def reset_app(self, app_id: str) -> dict[str, Any]:
-        """Start a new generation for the app and reconcile it from
-        canonical history (topology change, code replace, or an explicit
-        reset)."""
-        return AppsResponse(self.client.reset_app(app_id))
-
-    def stop_app(self, *, app_id: str) -> dict[str, Any]:
-        """Stop an app's continuous execution at its next transaction boundary."""
-        return AppsResponse(self.client.stop_app(app_id=app_id))
-
-    def list_app_runs(self, *, app_id: str | None = None) -> dict[str, Any]:
-        """List registered apps, or one app's build/run status if app_id is given."""
-        return AppsResponse(self.client.list_app_runs(app_id=app_id))
 
     def generate_grafana_dashboard(self, grafana_server, api_key):
         return self.client.generate_grafana_dashboard(grafana_server, api_key)

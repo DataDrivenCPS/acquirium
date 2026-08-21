@@ -203,6 +203,13 @@ CONTINUOUS_BATCH_DDL = [
     """,
 ]
 
+PUBLICATION_DDL = [
+    f"CREATE TABLE IF NOT EXISTS {STREAM_HEADS_TABLE} (ref_uri TEXT PRIMARY KEY, current_version BIGINT NOT NULL, retained_from_version BIGINT NOT NULL);",
+    f"CREATE TABLE IF NOT EXISTS {STREAM_PUBLICATIONS_TABLE} (publication_seq BIGSERIAL PRIMARY KEY, publication_id TEXT UNIQUE NOT NULL, payload_hash TEXT NOT NULL, row_count BIGINT NOT NULL, versions_json JSONB NOT NULL, committed_at TIMESTAMPTZ NOT NULL);",
+    f"CREATE TABLE IF NOT EXISTS {STREAM_CHANGE_RANGES_TABLE} (ref_uri TEXT NOT NULL, stream_version BIGINT NOT NULL, publication_id TEXT NOT NULL, start_ts TIMESTAMPTZ NOT NULL, end_ts TIMESTAMPTZ NOT NULL, change_kind TEXT NOT NULL, row_count BIGINT NOT NULL, PRIMARY KEY (ref_uri, stream_version, start_ts, end_ts));",
+    f"CREATE INDEX IF NOT EXISTS idx_stream_change_ranges_ref_version ON {STREAM_CHANGE_RANGES_TABLE} (ref_uri, stream_version);",
+]
+
 
 class TimescaleStore(TimeseriesStore):
     def __init__(
@@ -219,6 +226,13 @@ class TimescaleStore(TimeseriesStore):
         with timed_debug(logger, "psycopg.connect"):
             self.conn = psycopg.connect(self.dsn, autocommit=True, connect_timeout=connect_timeout)
         self._in_tx = False
+        if not recreate and self._has_legacy_runtime_schema():
+            self.conn.close()
+            raise RuntimeError(
+                "This PostgreSQL database contains the retired continuous app runtime "
+                "schema (app_runtime). Create a fresh database or start once with "
+                "ACQUIRIUM_RECREATE=1; automatic migration is not supported."
+            )
         if recreate:
             logger.debug("TimescaleStore.__init__: dropping existing tables/views")
             with self.conn.cursor() as cur:
@@ -244,6 +258,11 @@ class TimescaleStore(TimeseriesStore):
                     cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(tbl)))
         self.ensure_table()
         logger.debug("TimescaleStore.__init__: ready")
+
+    def _has_legacy_runtime_schema(self) -> bool:
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT to_regclass('public.app_runtime')")
+            return cur.fetchone()[0] is not None
 
     # -------------------- table management --------------------
     def ensure_table(self) -> str:
@@ -358,7 +377,7 @@ class TimescaleStore(TimeseriesStore):
             cur.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_logs_observed ON {LOGS_TABLE} USING GIST (observed);"
             )
-            for stmt in CONTINUOUS_BATCH_DDL:
+            for stmt in PUBLICATION_DDL:
                 cur.execute(stmt)
         if not self._in_tx:
             self.conn.commit()

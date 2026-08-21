@@ -10,8 +10,8 @@ from acquirium.Materialization.state import ArtifactCandidate, ArtifactRequest
 from acquirium.Materialization.bindings import BindingSpec
 from acquirium.Materialization.executor import LocalExecutorPool
 from acquirium.Materialization.scheduler import MaterializationScheduler
-from acquirium.Storage.continuous.postgres import ContinuousPostgres
-from acquirium.Storage.continuous.types import MUTATION_SCHEMA, PublicationRequest
+from acquirium.Storage.publication.postgres import PublicationPostgres as ContinuousPostgres
+from acquirium.Storage.publication.types import MUTATION_SCHEMA, PublicationRequest
 from acquirium.Storage.artifacts import FilesystemArtifactStore
 from acquirium.Storage.duckdb_store import DuckDBStore
 from acquirium.Storage.materialization.duckdb import MaterializationDuckDB

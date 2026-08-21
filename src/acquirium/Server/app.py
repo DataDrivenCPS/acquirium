@@ -36,8 +36,6 @@ from acquirium.Materialization.experiments import ExperimentArtifact, Experiment
 from acquirium.internals.models import (
     LogEntry,
     TimeIntervalModel,
-    AppSpec,
-    AppStopRequest,
     StreamInsert,
     RegisterDatasourceRequest,
 )
@@ -49,7 +47,6 @@ import polars as pl
 
 from acquirium.Server.insert_stats import insert_stats, start_insert_summary_thread
 from acquirium.Drivers.supervisor import DriverSupervisor
-from acquirium.Apps.supervisor import AppSupervisor, AppAlreadyRegistered
 
 
 
@@ -146,34 +143,6 @@ async def _wait_until_healthy(base_url: str) -> bool:
     return False
 
 
-async def _restore_registered_apps(app_supervisor: AppSupervisor, manager: Manager) -> None:
-    """Respawn apps registered by a previous server run.
-
-    register_app() persisted each app's source under the app storage dir and
-    its registration triples in the graph; a restart only loses the
-    supervisor's in-memory records (Ray actor state), not durable
-    continuous-batch state. Rebuild the specs from graph + disk and respawn
-    the actors -- restore_app() reruns setup() (build_query/build_app and
-    mapping resolution), which is all a resumed app needs. No explicit
-    start() call: app_runtime.status is durable, and the lifespan's
-    router.trigger() pass (after this function returns) wakes any
-    active/bootstrapping app to resume processing.
-    """
-    from acquirium.Apps.supervisor import restore_app_specs
-
-    try:
-        specs = await asyncio.to_thread(restore_app_specs, manager)
-    except Exception:
-        log.exception("App restore: failed to rebuild specs from the graph")
-        return
-    for spec in specs:
-        try:
-            await asyncio.to_thread(app_supervisor.restore_app, spec)
-            log.info("Restored app '%s' from the persistent store", spec.name)
-        except Exception:
-            log.exception("Failed to restore app '%s'", spec.name)
-
-
 async def _start_config_drivers(supervisor: DriverSupervisor, cfg: dict) -> None:
     """Start every [[drivers]] entry from the config as a Ray actor.
 
@@ -204,73 +173,6 @@ async def _start_config_drivers(supervisor: DriverSupervisor, cfg: dict) -> None
             log.info("Started config driver '%s' (%s)", info["name"], spec)
         except Exception:
             log.exception("Config driver %s failed to start", spec)
-
-
-async def _start_config_apps(supervisor: AppSupervisor, cfg: dict) -> None:
-    """Register and optionally start every enabled ``[[apps]]`` entry.
-
-    This runs only after the server is healthy and config drivers have finished
-    setup, so app selectors can resolve graph metadata contributed by drivers.
-    Config apps are declarative desired state: ``replace`` defaults to true so
-    source changes take effect on restart. Set it false to reuse a restored
-    registration without uploading it again.
-    """
-    entries = cfg.get("apps", [])
-    if not entries:
-        return
-
-    from acquirium.Client.acquirium import Acquirium
-    from acquirium.cli import _import_app_class
-
-    host, port, use_ssl = _self_connect_cfg(cfg)
-    aq = await asyncio.to_thread(
-        Acquirium,
-        server_url=host,
-        server_port=port,
-        use_ssl=use_ssl,
-    )
-    base_dir = Path(cfg.get("__config_dir", Path.cwd()))
-
-    for entry in entries:
-        if not entry.get("enabled", True):
-            continue
-        spec = entry.get("spec")
-        if not spec:
-            log.warning("[[apps]] entry missing 'spec'; skipping")
-            continue
-        try:
-            cls = _import_app_class(spec, base_dir=base_dir)
-            instance = cls()
-            configured_name = entry.get("name")
-            if configured_name is not None and configured_name != instance.name:
-                raise ValueError(
-                    f"configured app name {configured_name!r} does not match "
-                    f"{cls.__name__}.name {instance.name!r}"
-                )
-
-            build_params = entry.get("build_params", {})
-            run_params = entry.get("params", {})
-            if not isinstance(build_params, dict) or not isinstance(run_params, dict):
-                raise TypeError("app build_params and params must be TOML tables/objects")
-
-            replace = bool(entry.get("replace", True))
-            existing = {item["name"] for item in supervisor.list_apps()}
-            if replace or instance.name not in existing:
-                await asyncio.to_thread(
-                    aq.register_app,
-                    instance,
-                    params=build_params,
-                    replace=replace,
-                )
-                log.info("Registered config app '%s' (%s)", instance.name, spec)
-            else:
-                log.info("Reusing restored config app '%s'", instance.name)
-
-            if entry.get("autostart", True):
-                await asyncio.to_thread(aq.start_app, instance.name, params=run_params)
-                log.info("Started config app '%s'", instance.name)
-        except Exception:
-            log.exception("Config app %s failed to register/start", spec)
 
 
 class Health(BaseModel):
@@ -323,6 +225,12 @@ async def lifespan(app: FastAPI):
     from acquirium.cli import _load_config
     _config_path = os.environ.get("ACQUIRIUM_CONFIG")
     _cfg = _load_config(Path(_config_path) if _config_path else None)
+    if _cfg.get("apps"):
+        raise RuntimeError(
+            "[[apps]] configuration is no longer supported. "
+            "Deploy durable @transform definitions through the transformations API "
+            "or use @service for long-running reactive work."
+        )
 
     m = Manager.from_env()
     app.state.manager = m
@@ -348,41 +256,7 @@ async def lifespan(app: FastAPI):
     _host, _port, _use_ssl = _self_connect_cfg(_cfg)
     supervisor = DriverSupervisor(server_url=_host, server_port=_port, use_ssl=_use_ssl)
     app.state.drivers = supervisor
-    # Apps also run as Ray actors (one AppRunner per app) that connect back
-    # over HTTP; the supervisor spawns and tracks them.
-    app_supervisor = AppSupervisor(
-        app_storage_root=m.app_storage_root,
-        server_url=_host, server_port=_port, use_ssl=_use_ssl,
-    )
-    app.state.apps = app_supervisor
-
-    # Change router + compactor (continuous_batch.md): the router turns
-    # publication wake-ups into coalesced process_pending dispatch, and the
-    # compactor periodically trims change-key manifests. Both are inert
-    # until an app actually reaches active/bootstrapping status (Phase 3
-    # wires the actor side that gets it there), but are started here so
-    # Manager.publish's wake() calls always have somewhere to go.
-    from acquirium.Server.router import ChangeRouter
-    from acquirium.Server.compactor import Compactor
-
     server_cfg = _cfg.get("server", {})
-    router = ChangeRouter(
-        subscription_index=m.continuous.subscription_index,
-        lagging_apps=m.continuous.lagging_apps,
-        dispatch=app_supervisor.dispatch_pending,
-        coalesce_seconds=float(server_cfg.get("router_coalesce_ms", 50)) / 1000.0,
-        safety_scan_seconds=float(server_cfg.get("router_safety_scan_s", 1.0)),
-    )
-    m.router = router
-    app.state.router = router
-    compactor = Compactor(
-        m.continuous,
-        interval_seconds=float(server_cfg.get("compaction_interval_s", 60.0)),
-        chunk_rows=int(server_cfg.get("compaction_chunk_rows", 100_000)),
-    )
-    app.state.compactor = compactor
-    await router.start()
-    await compactor.start()
 
     async def _materialization_loop() -> None:
         """Drain active durable transformation work without blocking requests."""
@@ -412,29 +286,14 @@ async def lifespan(app: FastAPI):
     materialization_task = asyncio.create_task(_materialization_loop())
     app.state.materialization_task = materialization_task
 
-    # Once the server answers /health: respawn apps persisted by a previous
-    # run, then start the config's [[drivers]] and [[apps]]. Restored apps come
-    # first; config apps run after driver setup so their selectors can see the
-    # graph and streams declared by those drivers.
+    # Once the server answers /health, start configured drivers. Durable
+    # transformations and services are restored by their own storage-backed
+    # schedulers rather than a configuration-time app actor.
     async def _startup_actors() -> None:
         if not await _wait_until_healthy(supervisor.base_url):
-            log.error(
-                "Server never became healthy at %s; skipping app restore, [[drivers]], and [[apps]]",
-                supervisor.base_url,
-            )
+            log.error("Server never became healthy at %s; skipping configured drivers", supervisor.base_url)
             return
-        await _restore_registered_apps(app_supervisor, m)
         await _start_config_drivers(supervisor, _cfg)
-        await _start_config_apps(app_supervisor, _cfg)
-        # Router/actor state is disposable; durable app_runtime status is
-        # what a restart resumes from (continuous_batch.md's "on startup
-        # the router triggers active and bootstrapping apps").
-        try:
-            for app_id, info in m.continuous.metrics().get("apps", {}).items():
-                if info.get("status") in ("active", "bootstrapping"):
-                    router.trigger(app_id)
-        except Exception:
-            log.exception("Failed to trigger active/bootstrapping apps on startup")
 
     startup_task = asyncio.create_task(_startup_actors())
 
@@ -448,16 +307,10 @@ async def lifespan(app: FastAPI):
         materialization_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await materialization_task
-        await router.stop()
-        await compactor.stop()
         try:
             await asyncio.to_thread(supervisor.stop_all)
         except Exception:
             log.exception("Error stopping drivers during shutdown")
-        try:
-            await asyncio.to_thread(app_supervisor.stop_all_apps)
-        except Exception:
-            log.exception("Error stopping apps during shutdown")
         ray.shutdown()
         try:
             m.close()
@@ -965,115 +818,8 @@ def promote_state_revision(revision_id: str, request: StateRevisionPromotion) ->
         raise HTTPException(status_code=400, detail=str(error))
 
 
-@app.post("/apps/register")
-def register_app(spec: AppSpec, replace: bool = False) -> dict[str, Any]:
-    """Register an app. Fails with 409 if the name already exists unless
-    ``replace=True``, in which case the existing app is gracefully torn down
-    (stopped, its graph registration cleaned up) and replaced."""
-    try:
-        info = app.state.apps.register_app(spec, replace=replace)
-        # Durable continuous-batch lifecycle state (status=registered): safe
-        # to call on every register, including a replace, since it's a
-        # plain ON CONFLICT DO NOTHING at generation 1 -- an existing app's
-        # generation/status is untouched (replace/reset advance it via a
-        # dedicated call, not this one).
-        app.state.manager.continuous.register_app_runtime(spec.name)
-        return {"ok": True, **info}
-    except AppAlreadyRegistered as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    except Exception as e:
-        log.exception("register_app failed")
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-class AppDeleteRequest(BaseModel):
-    app_id: str
-
-
-@app.post("/apps/delete")
-def delete_app(req: AppDeleteRequest) -> dict[str, Any]:
-    """Gracefully delete a registered app: stop it, strip its registration
-    triples from the graph, kill its actor, and remove its persisted source."""
-    try:
-        result = app.state.apps.delete_app(req.app_id)
-        return {"ok": True, **result}
-    except KeyError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        log.exception("delete_app failed")
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-class AppStartRequest(BaseModel):
-    app_id: str
-    params: dict[str, Any] = Field(default_factory=dict)
-
-
-@app.post("/apps/start")
-def start_app(req: AppStartRequest) -> dict[str, Any]:
-    """Start (or resume) a continuous app: bootstrap, resume, or reconcile
-    depending on its durable state (continuous_batch.md's ``start_app``)."""
-    try:
-        result = app.state.apps.start_app(req.app_id, params=req.params)
-        app.state.router.trigger(req.app_id)
-        return {"ok": True, **result}
-    except Exception as e:
-        log.exception("start_app failed")
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@app.post("/apps/stop")
-def stop_app(req: AppStopRequest) -> dict[str, Any]:
-    try:
-        result = app.state.apps.stop_app(req.app_id)
-        return {"ok": True, **result}
-    except Exception as e:
-        log.exception("stop_app failed")
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-class AppResetRequest(BaseModel):
-    app_id: str
-
-
-@app.post("/apps/reset")
-def reset_app(req: AppResetRequest) -> dict[str, Any]:
-    """Start a new generation for the app and reconcile it from canonical
-    history (topology change, code replace, or an explicit reset)."""
-    try:
-        result = app.state.apps.reset_app(req.app_id)
-        app.state.router.trigger(req.app_id)
-        return {"ok": True, **result}
-    except Exception as e:
-        log.exception("reset_app failed")
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@app.get("/apps/list")
-def list_app_runs(app_id: Optional[str] = None) -> dict[str, Any]:
-    try:
-        if app_id:
-            return {"ok": True, **app.state.apps.app_status(app_id)}
-        return {"ok": True, "apps": app.state.apps.list_apps()}
-    except Exception as e:
-        log.exception("list_app_runs failed")
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-#### INTERNAL CONTINUOUS-BATCH ENDPOINTS (actor-facing only) ####
-#
-# These are the only storage access an app actor has (continuous_batch.md:
-# "Actors never open backend databases"). They are thin Arrow/JSON wrappers
-# around ContinuousStore; see continuous_batch_plan.md Phase 2a for the wire
-# contract and Storage/continuous/types.py for the semantics each call
-# implements.
-
-
 def _arrow_response(table: "pa.Table", metadata_key: str, metadata: dict[str, Any]) -> Response:
-    """Serialize *table* to an Arrow IPC stream carrying *metadata* under
-    ``metadata_key`` in the schema's metadata (continuous_batch_plan.md
-    Decision 6: batch/commit metadata rides in schema metadata, not a
-    second request)."""
+    """Serialize a materialization table and metadata as an Arrow IPC stream."""
     tagged = table.replace_schema_metadata(
         {**(table.schema.metadata or {}), metadata_key.encode("utf-8"): json.dumps(metadata).encode("utf-8")}
     )
@@ -1155,172 +901,6 @@ def internal_materialization_fail(partition_id: str, request: MaterializationFai
         return {"ok": True}
     except Exception as error:
         raise HTTPException(status_code=409, detail=str(error))
-class NextBatchRequest(BaseModel):
-    generation: int
-    target_keys: int = 50_000
-
-
-@app.post("/internal/apps/{app_id}/batches/next")
-def internal_next_app_batch(app_id: str, req: NextBatchRequest):
-    from acquirium.Storage.continuous.types import GenerationMismatch
-
-    try:
-        batch = app.state.manager.continuous.next_app_batch(app_id, req.generation, req.target_keys)
-    except GenerationMismatch as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    if batch is None:
-        return Response(status_code=204)
-    metadata: dict[str, Any] = {
-        "batch_id": batch.batch_id,
-        "batch_kind": batch.batch_kind,
-        "generation": batch.generation,
-        "has_more": batch.has_more,
-        "inputs": [
-            {"ref_uri": r.ref_uri, "from_version": r.from_version, "to_version": r.to_version}
-            for r in batch.inputs
-        ],
-        "bootstrap_id": batch.bootstrap_id,
-        "end_ordinal": batch.end_ordinal,
-    }
-    return _arrow_response(batch.rows, "acquirium_batch", metadata)
-
-
-@app.post("/internal/apps/{app_id}/batches/{batch_id}/commit")
-async def internal_commit_app_batch(app_id: str, batch_id: str, request: Request):
-    from acquirium.Storage.continuous.types import (
-        BatchIdMismatch,
-        BatchInputRange,
-        CommitRequest,
-        GenerationMismatch,
-        WebhookIntent,
-    )
-
-    body = await request.body()
-    try:
-        reader = ipc.RecordBatchStreamReader(pa.BufferReader(body))
-        table = reader.read_all()
-        meta_raw = (table.schema.metadata or {}).get(b"acquirium_commit")
-        if meta_raw is None:
-            raise ValueError("missing acquirium_commit schema metadata")
-        meta = json.loads(meta_raw)
-        generation = int(meta["generation"])
-        batch_kind = meta["batch_kind"]
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"malformed commit request: {e}")
-
-    try:
-        if batch_kind == "bootstrap":
-            app.state.manager.continuous.commit_bootstrap_page(
-                meta["bootstrap_id"], batch_id, int(meta["end_ordinal"]), table
-            )
-            return {"rows_inserted": table.num_rows, "already_committed": False, "output_versions": {}}
-
-        inputs = [BatchInputRange(**r) for r in meta.get("inputs", [])]
-        webhook_intents = [WebhookIntent(**w) for w in meta.get("webhook_intents", [])]
-        req = CommitRequest(
-            app_id=app_id,
-            generation=generation,
-            batch_id=batch_id,
-            batch_kind=batch_kind,
-            inputs=inputs,
-            outputs=table,
-            webhook_intents=webhook_intents,
-        )
-        result = app.state.manager.continuous.commit_app_batch(req)
-    except GenerationMismatch as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    except BatchIdMismatch as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    if result.output_versions:
-        app.state.manager.wake_router(result.output_versions.keys())
-    return {
-        "rows_inserted": result.rows_inserted,
-        "already_committed": result.already_committed,
-        "output_versions": result.output_versions,
-    }
-
-
-@app.get("/internal/apps/{app_id}/runtime")
-def internal_app_runtime(app_id: str) -> dict[str, Any]:
-    runtime = app.state.manager.continuous.app_runtime(app_id)
-    if runtime is None:
-        raise HTTPException(status_code=404, detail=f"app {app_id!r} has no runtime state")
-    return {
-        "app_id": runtime.app_id,
-        "generation": runtime.generation,
-        "status": runtime.status,
-        "topology_version": runtime.topology_version,
-    }
-
-
-class SetAppStatusRequest(BaseModel):
-    status: str
-
-
-@app.post("/internal/apps/{app_id}/status")
-def internal_set_app_status(app_id: str, req: SetAppStatusRequest) -> dict[str, Any]:
-    app.state.manager.continuous.set_app_status(app_id, req.status)
-    return {"ok": True, "app_id": app_id, "status": req.status}
-
-
-@app.get("/internal/apps/{app_id}/resume_status")
-def internal_resume_status(app_id: str, generation: int) -> dict[str, Any]:
-    """Tell the actor's ``start()`` whether to bootstrap, resume, or
-    reconcile (continuous_batch_plan.md's start_app decision rule)."""
-    continuous = app.state.manager.continuous
-    return {
-        "has_subscriptions": continuous.has_subscriptions(app_id, generation),
-        "resumable": continuous.resumable(app_id, generation),
-    }
-
-
-@app.post("/internal/apps/{app_id}/reset")
-def internal_reset_app(app_id: str) -> dict[str, Any]:
-    try:
-        generation = app.state.manager.continuous.reset_app(app_id)
-    except KeyError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    return {"ok": True, "app_id": app_id, "generation": generation}
-
-
-class BeginBootstrapRequest(BaseModel):
-    input_ref_uris: list[str]
-    output_ref_uris: list[str]
-
-
-@app.post("/internal/apps/{app_id}/bootstrap/begin")
-def internal_begin_bootstrap(app_id: str, req: BeginBootstrapRequest) -> dict[str, Any]:
-    try:
-        state = app.state.manager.continuous.begin_bootstrap(
-            app_id, req.input_ref_uris, req.output_ref_uris
-        )
-    except KeyError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    return {
-        "bootstrap_id": state.bootstrap_id,
-        "app_id": state.app_id,
-        "generation": state.generation,
-        "streams": state.streams,
-    }
-
-
-@app.post("/internal/bootstrap/{bootstrap_id}/finalize")
-def internal_finalize_bootstrap(bootstrap_id: str) -> dict[str, Any]:
-    try:
-        app.state.manager.continuous.finalize_bootstrap(bootstrap_id)
-    except KeyError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    # A finalize publishes a replacement for the app's output streams
-    # directly through ContinuousStore (not through Manager.publish), so it
-    # must wake the router itself. It doesn't know which refs changed
-    # without another read, but the app's own outputs are exactly its
-    # declared output streams -- cheaper to let the safety scan pick this
-    # up than to plumb the versions back through this response, since
-    # finalize is a rare, one-time-per-bootstrap event.
-    return {"ok": True, "bootstrap_id": bootstrap_id}
-
-
 #### DRIVERS API ENDPOINTS ####
 
 

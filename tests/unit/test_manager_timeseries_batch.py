@@ -5,22 +5,22 @@ from datetime import datetime, timezone
 import pytest
 
 from acquirium.Server.manager import Manager
-from acquirium.Storage.continuous.duckdb import ContinuousDuckDB
-from acquirium.Storage.continuous.types import PublicationConflict
+from acquirium.Storage.publication.duckdb import PublicationDuckDB
+from acquirium.Storage.publication.types import PublicationConflict
 from acquirium.Storage.duckdb_store import DuckDBStore
 from acquirium.internals.models import compute_ref_uri
 
 
 @pytest.fixture
 def mgr(tmp_path):
-    """A real Manager-shaped object with only the timeseries/continuous
+    """A real Manager-shaped object with only the timeseries/publication
     layers wired -- enough to exercise insert_timeseries* end to end without
     the full Manager.__init__ (graph store, embedding indexes, ...)."""
     store = DuckDBStore(tmp_path / "mgr.duckdb", recreate=True)
     m = Manager.__new__(Manager)
     m.timescale = store
-    m.continuous = ContinuousDuckDB(store)
-    m.router = None
+    m.publication = PublicationDuckDB(store)
+    m.notify_service_changes = lambda *args, **kwargs: None
     yield m
     store.close()
 

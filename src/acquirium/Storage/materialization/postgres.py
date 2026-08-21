@@ -14,7 +14,7 @@ from acquirium.Materialization.impact import TimeRange
 from acquirium.Storage.materialization.ids import materialization_id, partition_ranges
 from acquirium.Storage.materialization.types import PlanPartition, StreamChangeRange, WorkLease
 from acquirium.Storage.materialization.types import InputSnapshot
-from acquirium.Storage.continuous.types import MUTATION_SCHEMA
+from acquirium.Storage.publication.types import MUTATION_SCHEMA
 from acquirium.Storage.artifacts import ArtifactRecord
 from acquirium.Materialization.state import ArtifactCandidate, ArtifactLease, ArtifactRequest, StateRevision
 from acquirium.Materialization.experiments import ExperimentArtifact, ExperimentRun, ExperimentRunRequest, run_output_ref
@@ -289,7 +289,7 @@ class MaterializationPostgres:
                 [deployment_name, generation, generation]).fetchone()[0]
             if incomplete and (has_active or active_generation != generation):
                 raise ValueError("staged binding plans have not completed")
-            from acquirium.Storage.continuous.postgres import ContinuousPostgres
+            from acquirium.Storage.publication.postgres import PublicationPostgres
             mutations: list[dict] = []
             retiring_refs = [row[0] for row in conn.execute("""SELECT DISTINCT refs.ref_uri
                 FROM materialization_binding_refs refs JOIN materialization_bindings binding
@@ -314,7 +314,7 @@ class MaterializationPostgres:
                 mutations.extend({"operation": "upsert", "ref_uri": ref, "ts": ts, "numeric_value": numeric, "text_value": text} for ref, ts, numeric, text in staged_rows)
             if mutations:
                 publication_id = f"materialization:activate:{deployment_name}:{generation}"
-                ContinuousPostgres.__new__(ContinuousPostgres)._apply_publication(conn.cursor(), publication_id, pa.Table.from_pylist(mutations, schema=MUTATION_SCHEMA))
+                PublicationPostgres.__new__(PublicationPostgres)._apply_publication(conn.cursor(), publication_id, pa.Table.from_pylist(mutations, schema=MUTATION_SCHEMA))
             conn.execute("DELETE FROM materialization_staged_outputs WHERE generation = %s AND binding_id IN (SELECT binding_id FROM materialization_bindings WHERE deployment_name = %s AND generation = %s)", [generation, deployment_name, generation])
             conn.execute("DELETE FROM materialization_staged_partitions WHERE generation = %s AND binding_id IN (SELECT binding_id FROM materialization_bindings WHERE deployment_name = %s AND generation = %s)", [generation, deployment_name, generation])
             conn.execute("UPDATE materialization_bindings SET status = 'retiring' WHERE deployment_name = %s AND status = 'active' AND generation != %s", [deployment_name, generation])
@@ -590,7 +590,7 @@ class MaterializationPostgres:
                 [json.dumps(error), lease.partition.partition_id, lease.owner, lease.attempt])
 
     def commit_replacement(self, snapshot: InputSnapshot, *, input_refs: Sequence[str], output_refs: Sequence[str], replacement: pa.Table) -> str | None:
-        from acquirium.Storage.continuous.postgres import ContinuousPostgres
+        from acquirium.Storage.publication.postgres import PublicationPostgres
         from acquirium.Storage.materialization.duckdb import StaleAttemptError
         required = {"ref_uri", "ts", "numeric_value", "text_value"}
         if not required.issubset(replacement.column_names):
@@ -645,7 +645,7 @@ class MaterializationPostgres:
                 publication_id = None
                 if mutations:
                     publication_id = f"materialization:{execution_id}"
-                    ContinuousPostgres.__new__(ContinuousPostgres)._apply_publication(cur, publication_id, pa.Table.from_pylist(mutations, schema=MUTATION_SCHEMA))
+                    PublicationPostgres.__new__(PublicationPostgres)._apply_publication(cur, publication_id, pa.Table.from_pylist(mutations, schema=MUTATION_SCHEMA))
             cur.execute("UPDATE materialization_plan_partitions SET status = 'committed', committed_output_id = %s, lease_owner = NULL, lease_expires_at = NULL WHERE partition_id = %s", [publication_id, snapshot.lease.partition.partition_id])
             pinned = cur.execute("SELECT state_revision FROM materialization_plans WHERE plan_id = %s", [snapshot.lease.partition.plan_id]).fetchone()[0]
             cur.execute("""INSERT INTO materialization_execution_receipts

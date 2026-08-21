@@ -5,8 +5,8 @@ from acquirium.Materialization.impact import TimeRange, coalesce_ranges, lookbac
 from acquirium.Storage.materialization.ids import normalize_change_ranges
 from acquirium.Storage.materialization.duckdb import MaterializationDuckDB
 from acquirium.Storage.materialization.duckdb import StaleAttemptError
-from acquirium.Storage.continuous.duckdb import ContinuousDuckDB
-from acquirium.Storage.continuous.types import MUTATION_SCHEMA, PublicationRequest
+from acquirium.Storage.publication.duckdb import PublicationDuckDB as ContinuousDuckDB
+from acquirium.Storage.publication.types import MUTATION_SCHEMA, PublicationRequest
 from acquirium.Storage.duckdb_store import DuckDBStore
 import pyarrow as pa
 from acquirium.Materialization.definitions import definition_for
@@ -152,6 +152,8 @@ def test_completed_graph_publication_records_revision_and_queues_every_deploymen
             self.revision = args
         def deployment_names(self):
             return ("one", "two")
+        def services(self):
+            return ()
         def request_rebind(self, *args):
             self.requests.append(args)
     manager = Manager.__new__(Manager)
