@@ -286,6 +286,7 @@ def test_registered_entrypoint_executes_through_cached_local_pool(tmp_path):
             progress={"urn:registered:in": 0}, heads={"urn:registered:in": 1}, impact=pointwise(), reason={}, maximum_partition_duration=timedelta(minutes=1))
         assert not MaterializationScheduler(runtime).run_next_registered("worker", executor=pool)
         runtime.set_deployment_status("registered", "active")
+        runtime.activate_bindings("registered", generation)
         assert MaterializationScheduler(runtime).run_next_registered("worker", executor=pool)
         assert [batch.column("value").to_pylist() for batch in store.timeseries("urn:registered:out")] == [[2.0]]
     finally:
@@ -365,6 +366,29 @@ def test_staged_generation_keeps_active_pointer_until_atomic_activation(tmp_path
             assert conn.execute("SELECT generation, staged_generation FROM materialization_deployments WHERE name = 'convert'").fetchone() == (staged, None)
     finally:
         store.close()
+
+def test_staging_execution_writes_isolated_rows_not_canonical_output(tmp_path):
+    store = DuckDBStore(tmp_path / "staged-output.duckdb", recreate=True)
+    pool = LocalExecutorPool(workers=1)
+    try:
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        ContinuousDuckDB(store).publish(PublicationRequest("input", pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:stage:in", "ts": start, "numeric_value": -2.0, "text_value": None},
+        ], schema=MUTATION_SCHEMA)))
+        runtime = MaterializationDuckDB(store)
+        definition = definition_for(abs, name="stage", inputs="in", outputs={"mode": "per_input"}, impact=pointwise())
+        definition_id = runtime.register_definition(definition); generation = runtime.deploy("stage", definition_id)
+        binding = BindingSpec("one", {"input": ("urn:stage:in",)}, {"output": ("urn:stage:out",)})
+        runtime.persist_bindings("stage", generation, 1, definition_id, (binding,))
+        runtime.set_deployment_status("stage", "active")
+        MaterializationScheduler(runtime).create_plan_for_binding(binding_id=binding.binding_id(definition_id), generation=generation, graph_revision=1,
+            progress={"urn:stage:in": 0}, heads={"urn:stage:in": 1}, impact=pointwise(), reason={}, maximum_partition_duration=timedelta(minutes=1))
+        assert MaterializationScheduler(runtime).run_next_registered("worker", executor=pool)
+        assert list(store.timeseries("urn:stage:out")) == []
+        with store._own_conn() as conn:
+            assert conn.execute("SELECT numeric_value FROM materialization_staged_outputs").fetchone() == (2.0,)
+    finally:
+        pool.close(); store.close()
 
 def test_pending_work_recovers_after_storage_reopen(tmp_path):
     path = tmp_path / "recovery.duckdb"

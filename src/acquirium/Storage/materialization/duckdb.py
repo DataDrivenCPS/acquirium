@@ -89,6 +89,10 @@ class MaterializationDuckDB:
             conn.execute("""CREATE TABLE IF NOT EXISTS materialization_binding_progress (
                 binding_id VARCHAR NOT NULL, generation BIGINT NOT NULL, ref_uri VARCHAR NOT NULL,
                 stream_version BIGINT NOT NULL, PRIMARY KEY (binding_id, generation, ref_uri))""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS materialization_staged_outputs (
+                binding_id VARCHAR NOT NULL, generation BIGINT NOT NULL, partition_id VARCHAR NOT NULL,
+                ref_uri VARCHAR NOT NULL, ts TIMESTAMP NOT NULL, numeric_value DOUBLE, text_value VARCHAR,
+                PRIMARY KEY (binding_id, generation, ref_uri, ts))""")
 
     def record_change_ranges(self, ranges: Sequence[StreamChangeRange]) -> None:
         if not ranges:
@@ -335,7 +339,7 @@ class MaterializationDuckDB:
                 FROM materialization_plan_partitions part
                 JOIN materialization_plans plan ON plan.plan_id = part.plan_id
                 JOIN materialization_bindings binding ON binding.binding_id = plan.binding_id AND binding.generation = plan.generation
-                JOIN materialization_deployments deployment ON deployment.name = binding.deployment_name AND deployment.generation = plan.generation
+                JOIN materialization_deployments deployment ON deployment.name = binding.deployment_name
                 WHERE part.status = 'pending' AND deployment.status = 'active'
                 ORDER BY part.start_ts, part.partition_id LIMIT 1""").fetchone()
             if row is None:
@@ -407,7 +411,7 @@ class MaterializationDuckDB:
             row = conn.execute("""SELECT d.source_digest, d.entrypoint, d.spec_json FROM materialization_plan_partitions part
                 JOIN materialization_plans plan ON plan.plan_id = part.plan_id
                 JOIN materialization_bindings binding ON binding.binding_id = plan.binding_id AND binding.generation = plan.generation
-                JOIN materialization_deployments deployment ON deployment.name = binding.deployment_name AND deployment.generation = plan.generation
+                JOIN materialization_deployments deployment ON deployment.name = binding.deployment_name
                 JOIN materialization_definitions d ON d.definition_id = deployment.definition_id
                 WHERE part.partition_id = ?""", [partition_id]).fetchone()
         if row is None:
@@ -461,6 +465,11 @@ class MaterializationDuckDB:
                 return receipt[0] if receipt else None
             if state != ("leased", snapshot.lease.owner, snapshot.lease.attempt):
                 raise ValueError("partition lease is stale")
+            binding = conn.execute("""SELECT plan.binding_id, plan.generation, binding.status
+                FROM materialization_plans plan JOIN materialization_bindings binding
+                ON binding.binding_id = plan.binding_id AND binding.generation = plan.generation
+                WHERE plan.plan_id = ?""", [snapshot.lease.partition.plan_id]).fetchone()
+            binding_id, generation, binding_status = binding or (None, None, "active")
             reason = conn.execute("SELECT reason_json FROM materialization_plans WHERE plan_id = ?", [snapshot.lease.partition.plan_id]).fetchone()[0]
             from acquirium.Materialization.impact import ImpactPolicy
             impact = ImpactPolicy.from_json(json.loads(reason).get("impact", {"kind": "pointwise"}))
@@ -471,25 +480,37 @@ class MaterializationDuckDB:
                     dirty = impact.affected(TimeRange(start.replace(tzinfo=timezone.utc), end.replace(tzinfo=timezone.utc)))
                     if dirty.intersects(interval):
                         raise StaleAttemptError("a newer intersecting input change exists")
-            existing: list[dict] = []
-            if output_refs:
-                conn.register("_acq_replace_refs", pa.table({"ref_uri": list(output_refs)}))
-                try:
-                    existing_rows = conn.execute(f"""SELECT r.ref_uri, t.ts FROM {TIMESERIES_TABLE} t
-                        JOIN {REF_IDS_TABLE} r ON r.ref_id = t.ref_id
-                        WHERE r.ref_uri IN (SELECT ref_uri FROM _acq_replace_refs)
-                        AND t.ts >= ? AND t.ts < ? AND NOT t.deleted""",
-                        [interval.start.replace(tzinfo=None), interval.end.replace(tzinfo=None)]).fetchall()
-                finally:
-                    conn.unregister("_acq_replace_refs")
-                replacement_keys = {(row["ref_uri"], row["ts"].replace(tzinfo=None)) for row in rows}
-                existing = [{"operation": "delete", "ref_uri": ref, "ts": ts.replace(tzinfo=timezone.utc), "numeric_value": None, "text_value": None}
-                            for ref, ts in existing_rows if (ref, ts) not in replacement_keys]
-            mutations = existing + [{"operation": "upsert", **row} for row in rows]
-            publication_id: str | None = None
-            if mutations:
-                publication_id = f"materialization:{execution_id}"
-                ContinuousDuckDB(self._store)._apply_publication(conn, publication_id, pa.Table.from_pylist(mutations, schema=MUTATION_SCHEMA))
+            if binding_status == "staging":
+                conn.execute("""DELETE FROM materialization_staged_outputs WHERE binding_id = ? AND generation = ?
+                    AND ref_uri IN (SELECT ref_uri FROM materialization_binding_refs WHERE binding_id = ? AND generation = ? AND direction = 'output')
+                    AND ts >= ? AND ts < ?""", [binding_id, generation, binding_id, generation,
+                    interval.start.replace(tzinfo=None), interval.end.replace(tzinfo=None)])
+                if rows:
+                    conn.executemany("""INSERT INTO materialization_staged_outputs VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT (binding_id, generation, ref_uri, ts) DO UPDATE SET partition_id = excluded.partition_id,
+                        numeric_value = excluded.numeric_value, text_value = excluded.text_value""",
+                        [(binding_id, generation, snapshot.lease.partition.partition_id, row["ref_uri"], row["ts"].replace(tzinfo=None), row["numeric_value"], row["text_value"]) for row in rows])
+                publication_id = f"staged:{execution_id}"
+            else:
+                publication_id = None
+                existing: list[dict] = []
+                if output_refs:
+                    conn.register("_acq_replace_refs", pa.table({"ref_uri": list(output_refs)}))
+                    try:
+                        existing_rows = conn.execute(f"""SELECT r.ref_uri, t.ts FROM {TIMESERIES_TABLE} t
+                            JOIN {REF_IDS_TABLE} r ON r.ref_id = t.ref_id
+                            WHERE r.ref_uri IN (SELECT ref_uri FROM _acq_replace_refs)
+                            AND t.ts >= ? AND t.ts < ? AND NOT t.deleted""",
+                            [interval.start.replace(tzinfo=None), interval.end.replace(tzinfo=None)]).fetchall()
+                    finally:
+                        conn.unregister("_acq_replace_refs")
+                    replacement_keys = {(row["ref_uri"], row["ts"].replace(tzinfo=None)) for row in rows}
+                    existing = [{"operation": "delete", "ref_uri": ref, "ts": ts.replace(tzinfo=timezone.utc), "numeric_value": None, "text_value": None}
+                                for ref, ts in existing_rows if (ref, ts) not in replacement_keys]
+                mutations = existing + [{"operation": "upsert", **row} for row in rows]
+                if mutations:
+                    publication_id = f"materialization:{execution_id}"
+                    ContinuousDuckDB(self._store)._apply_publication(conn, publication_id, pa.Table.from_pylist(mutations, schema=MUTATION_SCHEMA))
             conn.execute("""UPDATE materialization_plan_partitions SET status = 'committed', committed_output_id = ?,
                 lease_owner = NULL, lease_expires_at = NULL WHERE partition_id = ?""", [publication_id, snapshot.lease.partition.partition_id])
             conn.execute("""INSERT INTO materialization_execution_receipts VALUES (?, ?, ?, ?, ?, 'committed', ?, ?, NULL, ?)

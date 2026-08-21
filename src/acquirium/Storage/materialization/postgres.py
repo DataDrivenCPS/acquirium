@@ -63,6 +63,10 @@ class MaterializationPostgres:
             conn.execute("""CREATE TABLE IF NOT EXISTS materialization_binding_progress (
                 binding_id TEXT NOT NULL, generation BIGINT NOT NULL, ref_uri TEXT NOT NULL,
                 stream_version BIGINT NOT NULL, PRIMARY KEY (binding_id, generation, ref_uri))""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS materialization_staged_outputs (
+                binding_id TEXT NOT NULL, generation BIGINT NOT NULL, partition_id TEXT NOT NULL,
+                ref_uri TEXT NOT NULL, ts TIMESTAMPTZ NOT NULL, numeric_value DOUBLE PRECISION, text_value TEXT,
+                PRIMARY KEY (binding_id, generation, ref_uri, ts))""")
             conn.execute("""CREATE TABLE IF NOT EXISTS materialization_attempt_snapshots (
                 partition_id TEXT NOT NULL, attempt INTEGER NOT NULL, input_vector_json JSONB NOT NULL,
                 rows_read BIGINT NOT NULL, created_at TIMESTAMPTZ NOT NULL, PRIMARY KEY (partition_id, attempt))""")
@@ -271,7 +275,7 @@ class MaterializationPostgres:
                 FROM materialization_plan_partitions part
                 JOIN materialization_plans plan ON plan.plan_id = part.plan_id
                 JOIN materialization_bindings binding ON binding.binding_id = plan.binding_id AND binding.generation = plan.generation
-                JOIN materialization_deployments deployment ON deployment.name = binding.deployment_name AND deployment.generation = plan.generation
+                JOIN materialization_deployments deployment ON deployment.name = binding.deployment_name
                 WHERE part.status = 'pending' AND deployment.status = 'active'
                 ORDER BY part.start_ts, part.partition_id FOR UPDATE OF part SKIP LOCKED LIMIT 1""").fetchone()
             if row is None:
@@ -329,7 +333,7 @@ class MaterializationPostgres:
             row = conn.execute("""SELECT d.source_digest, d.entrypoint, d.spec_json FROM materialization_plan_partitions part
                 JOIN materialization_plans plan ON plan.plan_id = part.plan_id
                 JOIN materialization_bindings binding ON binding.binding_id = plan.binding_id AND binding.generation = plan.generation
-                JOIN materialization_deployments deployment ON deployment.name = binding.deployment_name AND deployment.generation = plan.generation
+                JOIN materialization_deployments deployment ON deployment.name = binding.deployment_name
                 JOIN materialization_definitions d ON d.definition_id = deployment.definition_id
                 WHERE part.partition_id = %s""", [partition_id]).fetchone()
         if row is None:
