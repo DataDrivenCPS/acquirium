@@ -22,3 +22,46 @@ class LocalExecutorPool:
         return self.submit(target, request)
     def close(self) -> None:
         self._executor.shutdown(wait=True, cancel_futures=False)
+
+
+class _RayFuture:
+    def __init__(self, ref) -> None:
+        self._ref = ref
+
+    def result(self) -> pa.Table:
+        import ray
+        return ray.get(self._ref)
+
+
+class RayExecutorPool:
+    """Fixed-size Ray actor pool; logical bindings never create actors."""
+    def __init__(self, workers: int = 2) -> None:
+        if workers < 1:
+            raise ValueError("executor pool requires at least one worker")
+        import ray
+        if not ray.is_initialized():
+            raise RuntimeError("Ray must be initialized before creating a RayExecutorPool")
+
+        @ray.remote
+        class Worker:
+            def __init__(self) -> None:
+                self.adapter = PythonArrowAdapter()
+                self.definitions = DefinitionCache()
+            def execute(self, digest: str, entrypoint: str, request: ComputeRequest) -> pa.Table:
+                target = self.definitions.load(digest, lambda: load_entrypoint(entrypoint))
+                return self.adapter.execute(target, request)
+            def clear(self) -> None:
+                self.definitions.clear()
+
+        self._workers = [Worker.remote() for _ in range(workers)]
+        self._next = 0
+
+    def submit_entrypoint(self, *, digest: str, entrypoint: str, request: ComputeRequest) -> _RayFuture:
+        worker = self._workers[self._next % len(self._workers)]
+        self._next += 1
+        return _RayFuture(worker.execute.remote(digest, entrypoint, request))
+
+    def close(self) -> None:
+        import ray
+        for worker in self._workers:
+            ray.kill(worker, no_restart=True)

@@ -565,6 +565,11 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
+    def preview_transformation(self, name: str):
+        response = requests.post(f"{self.base_url}/transformations/{name}/preview")
+        _raise_for_status(response)
+        return ipc.open_stream(response.content).read_all()
+
     def delete_app(self, app_id: str) -> dict:
         url = f"{self.base_url}/apps/delete"
         response = requests.post(url, json={"app_id": app_id})

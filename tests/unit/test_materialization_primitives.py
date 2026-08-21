@@ -295,6 +295,54 @@ def test_registered_entrypoint_executes_through_cached_local_pool(tmp_path):
     finally:
         pool.close(); store.close()
 
+def test_registered_preview_uses_production_compute_without_committing(tmp_path):
+    store = DuckDBStore(tmp_path / "preview.duckdb", recreate=True); pool = LocalExecutorPool(workers=1)
+    try:
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        ContinuousDuckDB(store).publish(PublicationRequest("preview-input", pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:preview:in", "ts": start, "numeric_value": -3.0, "text_value": None},
+        ], schema=MUTATION_SCHEMA)))
+        runtime = MaterializationDuckDB(store)
+        definition = definition_for(abs, name="preview", inputs="in", outputs={"mode": "per_input"}, impact=pointwise())
+        definition_id = runtime.register_definition(definition); generation = runtime.deploy("preview", definition_id)
+        binding = BindingSpec("one", {"input": ("urn:preview:in",)}, {"output": ("urn:preview:out",)})
+        runtime.persist_bindings("preview", generation, 1, definition_id, (binding,)); runtime.activate_bindings("preview", generation)
+        runtime.set_deployment_status("preview", "active")
+        MaterializationScheduler(runtime).create_plan_for_binding(binding_id=binding.binding_id(definition_id), generation=generation, graph_revision=1,
+            progress={"urn:preview:in": 0}, heads={"urn:preview:in": 1}, impact=pointwise(), reason={}, maximum_partition_duration=timedelta(minutes=1))
+        result = MaterializationScheduler(runtime).preview_registered("previewer", executor=pool, deployment_name="preview")
+        assert result and result[0].column("numeric_value").to_pylist() == [3.0]
+        assert list(store.timeseries("urn:preview:out")) == []
+        with store._own_conn() as conn:
+            assert conn.execute("SELECT status FROM materialization_plan_partitions").fetchone() == ("pending",)
+    finally:
+        pool.close(); store.close()
+
+def test_pending_registered_partition_recovers_after_duckdb_restart(tmp_path):
+    path = tmp_path / "restart.duckdb"; start = datetime(2026, 1, 1, tzinfo=UTC)
+    store = DuckDBStore(path, recreate=True)
+    try:
+        ContinuousDuckDB(store).publish(PublicationRequest("restart-input", pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:restart:in", "ts": start, "numeric_value": -4.0, "text_value": None},
+        ], schema=MUTATION_SCHEMA)))
+        runtime = MaterializationDuckDB(store)
+        definition = definition_for(abs, name="restart", inputs="in", outputs={"mode": "per_input"}, impact=pointwise())
+        definition_id = runtime.register_definition(definition); generation = runtime.deploy("restart", definition_id)
+        binding = BindingSpec("one", {"input": ("urn:restart:in",)}, {"output": ("urn:restart:out",)})
+        runtime.persist_bindings("restart", generation, 1, definition_id, (binding,)); runtime.activate_bindings("restart", generation)
+        runtime.set_deployment_status("restart", "active")
+        MaterializationScheduler(runtime).create_plan_for_binding(binding_id=binding.binding_id(definition_id), generation=generation, graph_revision=1,
+            progress={"urn:restart:in": 0}, heads={"urn:restart:in": 1}, impact=pointwise(), reason={}, maximum_partition_duration=timedelta(minutes=1))
+    finally:
+        store.close()
+    store = DuckDBStore(path)
+    pool = LocalExecutorPool(workers=1)
+    try:
+        assert MaterializationScheduler(MaterializationDuckDB(store)).run_next_registered("restart", executor=pool)
+        assert [batch.column("value").to_pylist() for batch in store.timeseries("urn:restart:out")] == [[4.0]]
+    finally:
+        pool.close(); store.close()
+
 def test_rebind_worker_persists_direct_binding_and_plans_current_lag(tmp_path):
     store = DuckDBStore(tmp_path / "rebind-worker.duckdb", recreate=True)
     try:

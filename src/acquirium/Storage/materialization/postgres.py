@@ -349,7 +349,8 @@ class MaterializationPostgres:
                 WHERE partition_id = %s""", [attempt, owner, expires, partition_id])
         return WorkLease(PlanPartition(partition_id, plan_id, TimeRange(start, end), "leased"), owner, attempt, expires)
 
-    def lease_registered_partition(self, owner: str, *, duration: timedelta = timedelta(minutes=5)) -> WorkLease | None:
+    def lease_registered_partition(self, owner: str, *, deployment_name: str | None = None,
+                                 duration: timedelta = timedelta(minutes=5)) -> WorkLease | None:
         """Lease pending work only when its deployment has been started."""
         now = datetime.now(timezone.utc)
         with self._pool.connection() as conn, conn.transaction():
@@ -360,8 +361,8 @@ class MaterializationPostgres:
                 JOIN materialization_plans plan ON plan.plan_id = part.plan_id
                 JOIN materialization_bindings binding ON binding.binding_id = plan.binding_id AND binding.generation = plan.generation
                 JOIN materialization_deployments deployment ON deployment.name = binding.deployment_name
-                WHERE part.status = 'pending' AND deployment.status = 'active'
-                ORDER BY part.start_ts, part.partition_id FOR UPDATE OF part SKIP LOCKED LIMIT 1""").fetchone()
+                WHERE part.status = 'pending' AND deployment.status = 'active' AND (%s IS NULL OR deployment.name = %s)
+                ORDER BY part.start_ts, part.partition_id FOR UPDATE OF part SKIP LOCKED LIMIT 1""", [deployment_name, deployment_name]).fetchone()
             if row is None:
                 return None
             partition_id, plan_id, start, end, prior_attempt = row
@@ -369,6 +370,12 @@ class MaterializationPostgres:
             conn.execute("""UPDATE materialization_plan_partitions SET status = 'leased', attempt = %s, lease_owner = %s, lease_expires_at = %s
                 WHERE partition_id = %s""", [attempt, owner, expires, partition_id])
         return WorkLease(PlanPartition(partition_id, plan_id, TimeRange(start, end), "leased"), owner, attempt, expires)
+
+    def release_partition(self, lease: WorkLease) -> None:
+        with self._pool.connection() as conn, conn.transaction():
+            conn.execute("""UPDATE materialization_plan_partitions SET status = 'pending', lease_owner = NULL,
+                lease_expires_at = NULL WHERE partition_id = %s AND status = 'leased' AND lease_owner = %s AND attempt = %s""",
+                [lease.partition.partition_id, lease.owner, lease.attempt])
 
     def commit_partition(self, lease: WorkLease, *, output_publication_id: str) -> bool:
         with self._pool.connection() as conn, conn.transaction():

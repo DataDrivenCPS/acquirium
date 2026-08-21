@@ -688,6 +688,17 @@ class Manager:
         activated = self.materialization.activate_ready_bindings()
         return ran_work or bool(activated)
 
+    def preview_transformation(self, name: str) -> tuple["pa.Table", dict[str, object]] | None:
+        return self.materialization_scheduler.preview_registered(
+            "manager-preview", executor=self.materialization_executor, deployment_name=name
+        )
+
+    def use_ray_materialization_executor(self, workers: int = 2) -> None:
+        """Switch to the fixed Ray pool after the server has initialized Ray."""
+        from acquirium.Materialization.executor import RayExecutorPool
+        self.materialization_executor.close()
+        self.materialization_executor = RayExecutorPool(workers)
+
     def run_rebind_once(self, owner: str = "manager") -> bool:
         """Resolve one published-graph rebind and create its manifest plans."""
         result = self.materialization_rebinder.run_once(owner)

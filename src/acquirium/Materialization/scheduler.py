@@ -125,3 +125,25 @@ class MaterializationScheduler:
             self._storage.fail_partition(lease, {"type": type(error).__name__, "message": str(error)})
             raise
         return True
+
+    def preview_registered(self, owner: str, *, executor, deployment_name: str) -> tuple[pa.Table, dict[str, object]] | None:
+        """Run one pending partition through production compute without committing it."""
+        lease = self._storage.lease_registered_partition(owner, deployment_name=deployment_name)
+        if lease is None:
+            return None
+        try:
+            bundle = self._storage.partition_definition(lease.partition.partition_id)
+            spec = bundle["spec"]
+            outputs_spec = spec.get("outputs") if isinstance(spec, dict) else None
+            scalar = isinstance(outputs_spec, dict) and outputs_spec.get("mode") == "per_input"
+            inputs, output_refs = self._storage.partition_refs(lease.partition.partition_id)
+            snapshot = self._storage.snapshot_partition(lease, inputs)
+            request = ComputeRequest(snapshot.inputs, TransformContext(
+                binding_id=lease.partition.plan_id, execution_id=f"preview:{lease.partition.partition_id}:{lease.attempt}",
+                interval=lease.partition.interval, input_versions=snapshot.input_versions,
+            ), frozenset(output_refs), scalar=scalar)
+            replacement = executor.submit_entrypoint(digest=bundle["source_digest"], entrypoint=bundle["entrypoint"], request=request).result()
+            return replacement, {"partition_id": lease.partition.partition_id, "plan_id": lease.partition.plan_id,
+                                 "start": lease.partition.interval.start.isoformat(), "end": lease.partition.interval.end.isoformat()}
+        finally:
+            self._storage.release_partition(lease)

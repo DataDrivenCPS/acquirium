@@ -35,9 +35,11 @@ in phase order so the replacement can be delivered incrementally.
 
 ## Deferred by design
 
-- [ ] Phase 4 executor runtime: bounded local pool, durable-definition
-  execution, active-deployment server drain loop, and preview/debug remain in
-  progress. Ray workers and restart/recovery characterization remain pending.
+- [ ] Phase 4 production validation: bounded local and opt-in fixed Ray pools,
+  durable-definition execution, active-deployment server drain loop,
+  non-committing Arrow preview, and DuckDB restart recovery are implemented.
+  Long-backfill, multi-hop DAG, and 1,000-logical-binding scale characterization
+  remain before the Phase 4 performance exit gate can be claimed.
 - [x] Phase 4 foundation: bounded local executor, scalar/Arrow compute adapter,
   immutable execution context, and output ownership/range validation.
 - [x] Phase 4 registration surface: transformation registration, status,

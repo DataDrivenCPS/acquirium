@@ -339,6 +339,8 @@ async def lifespan(app: FastAPI):
 
     # Drivers run as Ray actors that connect back over HTTP.
     ray.init(ignore_reinit_error=True)
+    if os.getenv("ACQUIRIUM_MATERIALIZATION_EXECUTOR", "local").lower() == "ray":
+        m.use_ray_materialization_executor(int(os.getenv("ACQUIRIUM_MATERIALIZATION_RAY_WORKERS", "2")))
     _host, _port, _use_ssl = _self_connect_cfg(_cfg)
     supervisor = DriverSupervisor(server_url=_host, server_port=_port, use_ssl=_use_ssl)
     app.state.drivers = supervisor
@@ -644,6 +646,21 @@ def transformation_status(name: str) -> dict[str, Any]:
     if result is None:
         raise HTTPException(status_code=404, detail=f"unknown transformation {name!r}")
     return {"ok": True, **result}
+
+
+@app.post("/transformations/{name}/preview")
+def preview_transformation(name: str):
+    """Run the next pending partition without committing any output."""
+    if app.state.manager.materialization.deployment_status(name) is None:
+        raise HTTPException(status_code=404, detail=f"unknown transformation {name!r}")
+    try:
+        result = app.state.manager.preview_transformation(name)
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    if result is None:
+        raise HTTPException(status_code=409, detail="no pending partition is available for preview")
+    table, metadata = result
+    return _arrow_response(table, "acquirium-materialization-preview", {f"x-acquirium-{key.replace('_', '-')}": str(value) for key, value in metadata.items()})
 
 
 @app.post("/apps/register")
