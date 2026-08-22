@@ -84,8 +84,10 @@ no-server-down:
 test:
 	uv sync --locked --all-extras
 	status=0; \
+	$(TEST_COMPOSE) --profile server --profile test down -v --remove-orphans >/dev/null 2>&1 || true; \
 	$(TEST_COMPOSE) --profile server --profile test rm -sf timescaledb acquirium mosquitto testing_service >/dev/null 2>&1 || true; \
 	$(TEST_COMPOSE) --profile server --profile test up -d --build || status=$$?; \
+	if [ $$status -eq 0 ]; then $(MAKE) wait-health ACQUIRIUM_PORT=8010 || status=$$?; fi; \
 	if [ $$status -eq 0 ]; then $(TEST_PYTEST_ENV) uv run pytest tests || status=$$?; fi; \
 	$(MAKE) testing-down; \
 	exit $$status
@@ -95,8 +97,10 @@ test:
 test-timing:
 	uv sync --locked --all-extras
 	status=0; \
+	$(TEST_COMPOSE) --profile server --profile test down -v --remove-orphans >/dev/null 2>&1 || true; \
 	$(TEST_COMPOSE) --profile server --profile test rm -sf timescaledb acquirium mosquitto testing_service >/dev/null 2>&1 || true; \
 	$(TEST_COMPOSE) --profile server --profile test up -d --build || status=$$?; \
+	if [ $$status -eq 0 ]; then $(MAKE) wait-health ACQUIRIUM_PORT=8010 || status=$$?; fi; \
 	if [ $$status -eq 0 ]; then $(TEST_PYTEST_ENV) uv run pytest tests --durations=$(PYTEST_DURATIONS) || status=$$?; fi; \
 	$(MAKE) testing-down; \
 	exit $$status

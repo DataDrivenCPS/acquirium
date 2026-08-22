@@ -511,6 +511,22 @@ class Acquirium:
         return self.client.register_service({"name": definition.name, "source_digest": definition.source_digest,
             "entrypoint": definition.entrypoint, "parameters_schema": dict(definition.parameters_schema)})
 
+    def register_transformation(self, target: object) -> dict[str, Any]:
+        """Register a callable decorated with :func:`acquirium.transform` or ``stateful``."""
+        definition = getattr(target, "__acquirium_definition__", None)
+        if definition is None or definition.kind != "transformation":
+            raise ValueError("register_transformation expects an @acquirium.transform or @acquirium.stateful definition")
+        return self.client.register_transformation({
+            "name": definition.name,
+            "source_digest": definition.source_digest,
+            "entrypoint": definition.entrypoint,
+            "parameters_schema": dict(definition.parameters_schema),
+            "inputs": definition.inputs,
+            "outputs": definition.outputs,
+            "bind": definition.bind,
+            "impact": definition.impact.to_json() if definition.impact else None,
+        })
+
     def start_service(self, name: str) -> dict[str, Any]:
         return self.client.start_service(name)
 

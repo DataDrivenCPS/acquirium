@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import os
 import logging
+from threading import Lock
 import pyoxigraph as ox
 from time import perf_counter
 from rdflib import Graph, URIRef, Literal, RDF, RDFS, SKOS
@@ -1041,6 +1042,12 @@ class Manager:
 
     def _registered_value_kind(self, ref_uri: str) -> str:
         value_kind = self.timescale.stream_value_kind(ref_uri)
+        # Graph writes and Arrow ingestion may be issued back-to-back by a
+        # client. Ensure the derived stream registry has observed the graph
+        # write before rejecting the first data batch.
+        if value_kind is None:
+            self._sync_stream_refs_from_graph()
+            value_kind = self.timescale.stream_value_kind(ref_uri)
         if value_kind is None:
             raise ValueError(f"stream {ref_uri} is not registered")
         return normalize_value_kind(value_kind)
@@ -1118,6 +1125,8 @@ class Manager:
         """
         graph_uri = self.graph_store.source_graph_uri(source_id)
         result = self.graph_store.sparql_update(update, graph_uri=graph_uri)
+        self._sync_stream_refs_from_graph()
+        self._record_materialization_graph_revision()
         return result
 
     def validate_graph(self) -> dict[str, str | bool]:
