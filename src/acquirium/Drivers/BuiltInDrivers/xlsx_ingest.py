@@ -81,5 +81,5 @@ class XLSXIngestDriver(FileIngestDriver):
             day_first=bool(cfg.get("day_first", False)),
         )
         for name in observations["ref_name"].unique():
-            self.declare(name)
+            self.declare_stream(name)
         return FileBatch(observations, offset + len(df))

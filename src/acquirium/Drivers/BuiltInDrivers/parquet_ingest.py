@@ -59,7 +59,7 @@ class ParquetIngestDriver(FileIngestDriver):
         if batch.observations is not None:
             for name in batch.observations["ref_name"].unique():
                 if not self.is_declared(name):
-                    self.declare(name)
+                    self.declare_stream(name)
         return batch
 
 

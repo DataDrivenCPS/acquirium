@@ -381,6 +381,16 @@ class IngestDriver(Driver):
         with self._declaration_lock:
             return (source, str(ref_name)) in self._declarations
 
+    def declare_stream(self, ref_name: str) -> None:
+        """Declare one stream discovered while reading a source.
+
+        The tabular ingest drivers call this for every column they find, so a
+        subclass can attach unit, quantity kind, medium and substance from a
+        mapping file without reimplementing ``read``. The default declares
+        identity only, which is all a generic reader can know.
+        """
+        self.declare(ref_name)
+
     def register_declared(self, observations: "pl.DataFrame | None" = None) -> None:
         """Write pending declarations, inferring value kinds from *observations*.
 

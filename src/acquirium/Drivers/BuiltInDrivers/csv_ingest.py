@@ -59,6 +59,20 @@ class CSVIngestDriver(FileIngestDriver):
         encoding     = "utf8-lossy"  # "utf8", "utf8-lossy", "latin1", ...
         ragged_lines = "ignore"      # "ignore" | "skip" | "error"
         header_contains = ["time"]   # cell values identifying the header row
+        null_values  = ["Null"]      # extra strings to read as missing
+        infer_schema_length = 0      # 0 = read every column as text
+
+    ``null_values`` adds sentinel strings on top of the empty field, which is
+    always missing. SCADA historian exports commonly write something like
+    ``Null`` or ``Bad`` for a gap; without this they read as text and force
+    the whole stream to a text value kind.
+
+    ``infer_schema_length`` is how many rows polars samples to pick a column
+    dtype (default 100). A wide export whose column happens to hold whole
+    numbers for its first rows and fractions later is inferred as integer and
+    then fails to parse, so raise it — or set ``0`` to read everything as
+    text, which is often simplest: observation values are stored as text
+    anyway, and the value kind is inferred from the data separately.
 
     ``ragged_lines`` controls rows whose cell count differs from the header:
     ``"ignore"`` keeps the row (extra cells dropped, missing ones null),
@@ -71,6 +85,18 @@ class CSVIngestDriver(FileIngestDriver):
     For a layout these keys cannot describe, subclass and override
     :meth:`read` — see ``FileIngestDriver``.
     """
+
+    def prepare_frame(self, df: "pl.DataFrame", path: Path) -> "pl.DataFrame":
+        """Adjust the parsed frame before it is reshaped into observations.
+
+        Runs after the CSV is read and ``skip_cols`` dropped, and before
+        timestamp parsing — which is the only place a subclass can fix an
+        encoding the config keys cannot describe: a timestamp column holding
+        Excel serials, numbers written with thousands separators, or columns
+        polars renamed because the header repeats them. Returns the frame to
+        use; the default returns it unchanged.
+        """
+        return df
 
     def read(self, path: Path, cursor: Any) -> FileBatch:
         offset = cursor or 0
@@ -108,10 +134,13 @@ class CSVIngestDriver(FileIngestDriver):
             skip_rows_after_header=offset,
             encoding=encoding,
             truncate_ragged_lines=ragged != "error",
+            null_values=list(_as_tuple(cfg.get("null_values", []), "null_values")) or None,
+            infer_schema_length=cfg.get("infer_schema_length", 100),
         )
         skip_cols = [c for c in _as_tuple(cfg.get("skip_cols", []), "skip_cols") if c in df.columns]
         if skip_cols:
             df = df.drop(skip_cols)
+        df = self.prepare_frame(df, path)
         if df.is_empty():
             return FileBatch(None, cursor)
 
@@ -131,7 +160,7 @@ class CSVIngestDriver(FileIngestDriver):
             day_first=bool(cfg.get("day_first", False)),
         )
         for name in observations["ref_name"].unique():
-            self.declare(name)
+            self.declare_stream(name)
         return FileBatch(observations, offset + len(df))
 
 
