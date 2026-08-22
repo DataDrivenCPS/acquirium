@@ -10,7 +10,7 @@ from acquirium.Materialization.state import ArtifactCandidate, ArtifactRequest
 from acquirium.Materialization.bindings import BindingSpec
 from acquirium.Materialization.executor import LocalExecutorPool
 from acquirium.Materialization.scheduler import MaterializationScheduler
-from acquirium.Storage.publication.postgres import PublicationPostgres as ContinuousPostgres
+from acquirium.Storage.publication.postgres import PublicationPostgres
 from acquirium.Storage.publication.types import MUTATION_SCHEMA, PublicationRequest
 from acquirium.Storage.artifacts import FilesystemArtifactStore
 from acquirium.Storage.duckdb_store import DuckDBStore
@@ -103,7 +103,7 @@ def test_postgres_stateful_transform_recovers_after_runtime_restart(pg_dsn, tmp_
     deployment = f"stateful-{marker}"
     artifacts = FilesystemArtifactStore(tmp_path / "artifacts")
     try:
-        continuous = ContinuousPostgres(pg_dsn)
+        continuous = PublicationPostgres(pg_dsn)
         runtime = MaterializationPostgres(pg_dsn)
     except Exception as error:
         pytest.skip(f"PostgreSQL unavailable: {error}")
@@ -141,7 +141,7 @@ def test_postgres_stateful_transform_recovers_after_runtime_restart(pg_dsn, tmp_
         runtime.close()
         continuous.close()
 
-    continuous = ContinuousPostgres(pg_dsn)
+    continuous = PublicationPostgres(pg_dsn)
     runtime = MaterializationPostgres(pg_dsn)
     try:
         continuous.publish(PublicationRequest(f"second:{marker}", pa.Table.from_pylist([

@@ -8,6 +8,10 @@ from acquirium.Materialization.impact import TimeRange
 
 ChangeKind = Literal["upsert", "delete", "mixed"]
 
+# A partition is retried at most this many times before it is dead-lettered,
+# so a deterministically failing transform cannot be re-leased forever.
+MAX_PARTITION_ATTEMPTS = 8
+
 @dataclass(frozen=True)
 class StreamChangeRange:
     ref_uri: str

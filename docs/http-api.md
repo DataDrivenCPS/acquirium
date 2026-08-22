@@ -175,6 +175,7 @@ Insert observations for one or more streams. Request body is a JSON array; a sin
 | `point_uri` | no | Override the semantic point URI |
 | `replace` | no (default `false`) | If true, delete existing rows before inserting |
 | `values` | yes | List of `[timestamp, value]` pairs |
+| `publication_id` | no | Stable id for this atomic mutation set. Reusing it on a retry (same rows) replays the original receipt instead of re-applying; reusing it with different rows is rejected as a conflict |
 
 **Response** `{"ok": true, "rows_inserted": 42}`
 
@@ -185,6 +186,8 @@ High-throughput insert via Apache Arrow IPC stream. The request body is a binary
 **Content-Type** `application/vnd.apache.arrow.stream`
 
 **Response** `{"ok": true, "rows_inserted": 42}`
+
+Supply an `X-Acquirium-Publication-Id` header to make a retried flush idempotent. A request spanning multiple `source_id`s publishes one atomic set per source, namespacing the base id per source.
 
 ---
 
@@ -214,6 +217,75 @@ Return metadata for a list of stream URIs.
 **Request body** `{"uris": ["urn:acquirium#...", ...]}`
 
 **Response** A map of URI → stream info object.
+
+---
+
+## Materialization
+
+Durable transformations, services, experiments, artifacts, and state revisions.
+Declarations are immutable; registration returns the durable identity. See
+`docs/materialization_stateful.md` and `docs/materialization_services.md`.
+
+### Transformations
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /transformations/register` | Persist a transformation declaration and queue its first rebind |
+| `GET /transformations` | List deployments and their status |
+| `GET /transformations/{name}` | Status of one deployment |
+| `POST /transformations/{name}/start` | Mark a deployment active |
+| `POST /transformations/{name}/pause` | Mark a deployment paused |
+| `POST /transformations/{name}/rebind` | Queue a rebind against the published graph |
+| `POST /transformations/{name}/reconcile` | Force a fresh staged topology resolution |
+| `POST /transformations/{name}/preview` | Run the next pending partition without committing |
+
+`register` body: `name`, `source_digest`, `entrypoint`, `inputs`/`bind`,
+`outputs`, `impact`, `parameters_schema`.
+
+### Services
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /services/register` | Register a service definition (no stream ownership) |
+| `GET /services/{name}` | Service status and health |
+| `POST /services/{name}/start` | Start the service |
+| `POST /services/{name}/stop` | Stop the service |
+
+### Experiments
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /experiments/runs` | Start a run from a frozen snapshot |
+| `GET /experiments/runs` | List runs (optional `status`, `metadata_key`, `metadata_value`) |
+| `GET /experiments/runs/{run_id}` | One run record |
+| `POST /experiments/runs/{run_id}/execute` | Run the entrypoint on the shared executor |
+| `POST /experiments/runs/{run_id}/rerun/{new_run_id}` | Clone a run's frozen inputs under a new id |
+| `POST /experiments/runs/{run_id}/finish` | Mark succeeded/failed/cancelled |
+| `POST /experiments/runs/{run_id}/metrics/{name}` | Record a metric (`{"value": ...}`) |
+| `GET /experiments/runs/{run_id}/metrics` | Read recorded metrics |
+| `POST /experiments/runs/{run_id}/artifacts` | Attach a produced artifact by digest |
+| `GET /experiments/runs/{run_id}/artifacts` | List attached artifacts |
+| `POST /experiments/runs/{run_id}/keep` | Mark a run kept (`{"reason": ...}`) |
+| `POST /experiments/runs/{run_id}/collect` | Collect an unkept run, keeping its tombstone |
+
+Reusing a `run_id` is an idempotent replay only when every frozen input
+matches; otherwise the request is rejected.
+
+### Artifacts and state revisions
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /artifact-requests` | Submit a durable artifact-production request |
+| `POST /artifact-requests/lease` | Lease the next pending request |
+| `POST /artifact-requests/{request_id}/complete` | Complete a lease with base64 artifact bytes |
+| `POST /artifact-requests/{request_id}/fail` | Fail a leased request |
+| `POST /state-revisions/{revision_id}/promote` | Promote a candidate revision (`prospective`, `recompute_all`, or `recompute_from`) |
+
+### Internal executor endpoints
+
+`/internal/materializations/{lease,snapshot,commit,fail}` are used by remote
+materialization executors to lease partitions, read pinned Arrow snapshots, and
+commit or fail replacements. They are not part of the user-facing API.
 
 ---
 

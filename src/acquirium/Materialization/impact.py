@@ -61,7 +61,21 @@ def coalesce_ranges(ranges: Iterable[TimeRange]) -> tuple[TimeRange, ...]:
 
 @dataclass(frozen=True)
 class ImpactPolicy:
-    """A storage-evaluable mapping from changed input ranges to dirty output."""
+    """A storage-evaluable mapping from changed input ranges to dirty output.
+
+    ``before`` and ``after`` name the direction of the *input* an output reads,
+    not the direction the dirty range grows:
+
+    - ``before`` is how far back from an output timestamp the transform reads
+      input (a lookback). An input change therefore dirties output up to
+      ``before`` *later*, extending the dirty range's END forward.
+    - ``after`` is how far ahead of an output timestamp the transform reads
+      input (a look-ahead). An input change therefore dirties output up to
+      ``after`` *earlier*, extending the dirty range's START backward.
+
+    Concretely, ``affected()`` returns
+    ``[changed.start - after, changed.end + before]``.
+    """
 
     kind: Literal["pointwise", "lookback", "window", "full_history"]
     before: timedelta = timedelta()
@@ -78,8 +92,10 @@ class ImpactPolicy:
     def affected(self, changed: TimeRange, *, retained: TimeRange | None = None) -> TimeRange:
         """Map an input change to its dirty output range.
 
-        ``full_history`` requires the retained boundary, because the scheduler
-        deliberately owns retention knowledge rather than user code.
+        Returns ``[changed.start - after, changed.end + before]`` (see the class
+        docstring for the field naming). ``full_history`` requires the retained
+        boundary, because the scheduler deliberately owns retention knowledge
+        rather than user code.
         """
         if self.kind == "full_history":
             if retained is None:
@@ -104,12 +120,19 @@ def pointwise() -> ImpactPolicy:
 
 
 def lookback(duration: timedelta) -> ImpactPolicy:
-    """A source change dirties output that looks back through ``duration``."""
+    """A transform that reads ``duration`` of input before each output timestamp.
+
+    An input change dirties output up to ``duration`` later, so the policy is
+    stored as ``before=duration`` (the dirty range's END extends forward).
+    """
     return ImpactPolicy("lookback", before=duration)
 
 
 def window(*, before: timedelta, after: timedelta) -> ImpactPolicy:
-    """A change dirties output ``before`` before and ``after`` after it."""
+    """A transform reading input ``before`` prior to and ``after`` past each output.
+
+    The dirty range becomes ``[changed.start - after, changed.end + before]``.
+    """
     return ImpactPolicy("window", before=before, after=after)
 
 

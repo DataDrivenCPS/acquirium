@@ -108,6 +108,7 @@ def _build_stream_triples(
             _add_triple(g, target, pred, value)
 from acquirium.Client.client import AcquiriumClient
 from acquirium.internals.models import compute_ref_uri
+from acquirium.Materialization.definitions import definition_spec
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_DB_URI,
     ACQUIRIUM_REF_NAME,
@@ -516,15 +517,13 @@ class Acquirium:
         definition = getattr(target, "__acquirium_definition__", None)
         if definition is None or definition.kind != "transformation":
             raise ValueError("register_transformation expects an @acquirium.transform or @acquirium.stateful definition")
+        # definition_spec converts inputs/bind/outputs helper dataclasses into
+        # the JSON-safe shapes the server stores and rebinds against.
         return self.client.register_transformation({
             "name": definition.name,
             "source_digest": definition.source_digest,
             "entrypoint": definition.entrypoint,
-            "parameters_schema": dict(definition.parameters_schema),
-            "inputs": definition.inputs,
-            "outputs": definition.outputs,
-            "bind": definition.bind,
-            "impact": definition.impact.to_json() if definition.impact else None,
+            **definition_spec(definition),
         })
 
     def start_service(self, name: str) -> dict[str, Any]:

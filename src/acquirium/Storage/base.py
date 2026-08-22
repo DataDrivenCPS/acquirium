@@ -70,6 +70,15 @@ class TimeseriesStore(Protocol):
         batch_size: int = 50_000,
         value_mode: str = "default",
     ) -> Iterator[pa.RecordBatch]: ...
+    def timestamps(
+        self,
+        ref_uri: str,
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> list[datetime]:
+        """Return the live (non-tombstoned) timestamps for one stream, oldest first."""
+        ...
     def timeseries_info(self, ref_uri: str) -> TimeseriesInfo: ...
     def timeseries_info_batch(self, ref_uris: list[str]) -> dict[str, TimeseriesInfo]: ...
 

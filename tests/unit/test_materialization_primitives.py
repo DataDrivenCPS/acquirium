@@ -1,11 +1,11 @@
 from datetime import datetime, timedelta, timezone
 import threading
 from acquirium.Materialization.bindings import BindingSpec, diff_bindings, validate_binding_topology
-from acquirium.Materialization.impact import TimeRange, coalesce_ranges, lookback, window
+from acquirium.Materialization.impact import TimeRange, coalesce_ranges, full_history, lookback, window
 from acquirium.Storage.materialization.ids import normalize_change_ranges
 from acquirium.Storage.materialization.duckdb import MaterializationDuckDB
 from acquirium.Storage.materialization.duckdb import StaleAttemptError
-from acquirium.Storage.publication.duckdb import PublicationDuckDB as ContinuousDuckDB
+from acquirium.Storage.publication.duckdb import PublicationDuckDB
 from acquirium.Storage.publication.types import MUTATION_SCHEMA, PublicationRequest
 from acquirium.Storage.duckdb_store import DuckDBStore
 import pyarrow as pa
@@ -19,6 +19,8 @@ from acquirium.Materialization.compute import PythonArrowAdapter
 from acquirium.Materialization.validation import OutputValidationError
 from acquirium.Materialization.worker import DefinitionCache
 from acquirium.Materialization.state import ArtifactCandidate, ArtifactRequest
+from acquirium.Materialization.experiments import ExperimentRunRequest
+from acquirium.Storage.materialization.types import MAX_PARTITION_ATTEMPTS
 from acquirium.Storage.artifacts import FilesystemArtifactStore
 from acquirium.Materialization.scheduler import MaterializationScheduler
 from acquirium.Materialization.rebinding import MaterializationRebinder, resolve_bindings
@@ -92,7 +94,7 @@ def test_canonical_duckdb_publication_dual_writes_range_manifest(tmp_path):
             {"operation": "upsert", "ref_uri": "urn:input", "ts": timestamp, "numeric_value": 1.0, "text_value": None},
             {"operation": "delete", "ref_uri": "urn:input", "ts": timestamp + timedelta(seconds=30), "numeric_value": None, "text_value": None},
         ], schema=MUTATION_SCHEMA)
-        ContinuousDuckDB(store).publish(PublicationRequest("range-publication", mutations))
+        PublicationDuckDB(store).publish(PublicationRequest("range-publication", mutations))
         ranges = MaterializationDuckDB(store).change_ranges("urn:input", after_version=0, through_version=1)
         assert len(ranges) == 1
         assert ranges[0].change_kind == "mixed"
@@ -152,7 +154,7 @@ def test_completed_graph_publication_records_revision_and_queues_every_deploymen
             self.revision = args
         def deployment_names(self):
             return ("one", "two")
-        def services(self):
+        def services(self, status=None):
             return ()
         def request_rebind(self, *args):
             self.requests.append(args)
@@ -238,7 +240,7 @@ def test_snapshot_pins_live_arrow_rows_and_current_input_vector(tmp_path):
             {"operation": "upsert", "ref_uri": "urn:in", "ts": start, "numeric_value": 1.0, "text_value": None},
             {"operation": "delete", "ref_uri": "urn:in", "ts": start + timedelta(seconds=1), "numeric_value": None, "text_value": None},
         ], schema=MUTATION_SCHEMA)
-        ContinuousDuckDB(store).publish(PublicationRequest("snapshot-input", mutations))
+        PublicationDuckDB(store).publish(PublicationRequest("snapshot-input", mutations))
         runtime = MaterializationDuckDB(store)
         _, partitions = runtime.create_plan(binding_id="binding", generation=1, graph_revision=1, input_vector={"urn:in": 1},
             ranges=(TimeRange(start, start + timedelta(minutes=1)),), reason={}, maximum_partition_duration=timedelta(minutes=1))
@@ -258,7 +260,7 @@ def test_scheduler_creates_coalesced_manifest_driven_plan(tmp_path):
             {"operation": "upsert", "ref_uri": "urn:in", "ts": start, "numeric_value": 1.0, "text_value": None},
             {"operation": "upsert", "ref_uri": "urn:in", "ts": start + timedelta(seconds=30), "numeric_value": 2.0, "text_value": None},
         ], schema=MUTATION_SCHEMA)
-        ContinuousDuckDB(store).publish(PublicationRequest("schedule-input", rows))
+        PublicationDuckDB(store).publish(PublicationRequest("schedule-input", rows))
         runtime = MaterializationDuckDB(store)
         scheduler = MaterializationScheduler(runtime)
         plan, partitions = scheduler.create_plan_for_binding(binding_id="binding", generation=1, graph_revision=1,
@@ -291,7 +293,7 @@ def test_scheduler_discovers_progress_lag_from_durable_binding_state(tmp_path):
     store = DuckDBStore(tmp_path / "discover.duckdb", recreate=True)
     try:
         start = datetime(2026, 1, 1, tzinfo=UTC)
-        ContinuousDuckDB(store).publish(PublicationRequest("discover-input", pa.Table.from_pylist([
+        PublicationDuckDB(store).publish(PublicationRequest("discover-input", pa.Table.from_pylist([
             {"operation": "upsert", "ref_uri": "urn:discover:in", "ts": start, "numeric_value": 1.0, "text_value": None}], schema=MUTATION_SCHEMA)))
         runtime = MaterializationDuckDB(store)
         definition = definition_for(lambda value: value, inputs="in", outputs="out", impact=pointwise()); did = runtime.register_definition(definition); gen = runtime.deploy("discover", did)
@@ -307,7 +309,7 @@ def test_registered_entrypoint_executes_through_cached_local_pool(tmp_path):
     pool = LocalExecutorPool(workers=1)
     try:
         start = datetime(2026, 1, 1, tzinfo=UTC)
-        ContinuousDuckDB(store).publish(PublicationRequest("registered-input", pa.Table.from_pylist([
+        PublicationDuckDB(store).publish(PublicationRequest("registered-input", pa.Table.from_pylist([
             {"operation": "upsert", "ref_uri": "urn:registered:in", "ts": start, "numeric_value": 2.0, "text_value": None}], schema=MUTATION_SCHEMA)))
         runtime = MaterializationDuckDB(store)
         definition = definition_for(abs, inputs="in", outputs={"mode": "per_input"}, impact=pointwise())
@@ -328,7 +330,7 @@ def test_registered_preview_uses_production_compute_without_committing(tmp_path)
     store = DuckDBStore(tmp_path / "preview.duckdb", recreate=True); pool = LocalExecutorPool(workers=1)
     try:
         start = datetime(2026, 1, 1, tzinfo=UTC)
-        ContinuousDuckDB(store).publish(PublicationRequest("preview-input", pa.Table.from_pylist([
+        PublicationDuckDB(store).publish(PublicationRequest("preview-input", pa.Table.from_pylist([
             {"operation": "upsert", "ref_uri": "urn:preview:in", "ts": start, "numeric_value": -3.0, "text_value": None},
         ], schema=MUTATION_SCHEMA)))
         runtime = MaterializationDuckDB(store)
@@ -351,7 +353,7 @@ def test_pending_registered_partition_recovers_after_duckdb_restart(tmp_path):
     path = tmp_path / "restart.duckdb"; start = datetime(2026, 1, 1, tzinfo=UTC)
     store = DuckDBStore(path, recreate=True)
     try:
-        ContinuousDuckDB(store).publish(PublicationRequest("restart-input", pa.Table.from_pylist([
+        PublicationDuckDB(store).publish(PublicationRequest("restart-input", pa.Table.from_pylist([
             {"operation": "upsert", "ref_uri": "urn:restart:in", "ts": start, "numeric_value": -4.0, "text_value": None},
         ], schema=MUTATION_SCHEMA)))
         runtime = MaterializationDuckDB(store)
@@ -376,7 +378,7 @@ def test_rebind_worker_persists_direct_binding_and_plans_current_lag(tmp_path):
     store = DuckDBStore(tmp_path / "rebind-worker.duckdb", recreate=True)
     try:
         start = datetime(2026, 1, 1, tzinfo=UTC)
-        ContinuousDuckDB(store).publish(PublicationRequest("input", pa.Table.from_pylist([
+        PublicationDuckDB(store).publish(PublicationRequest("input", pa.Table.from_pylist([
             {"operation": "upsert", "ref_uri": "urn:rebind:in", "ts": start, "numeric_value": 3.0, "text_value": None},
         ], schema=MUTATION_SCHEMA)))
         runtime = MaterializationDuckDB(store)
@@ -402,7 +404,7 @@ def test_staged_bootstrap_plans_all_retained_input_history(tmp_path):
     store = DuckDBStore(tmp_path / "bootstrap-history.duckdb", recreate=True)
     try:
         start = datetime(2020, 1, 1, tzinfo=UTC)
-        ContinuousDuckDB(store).publish(PublicationRequest("history", pa.Table.from_pylist([
+        PublicationDuckDB(store).publish(PublicationRequest("history", pa.Table.from_pylist([
             {"operation": "upsert", "ref_uri": "urn:history", "ts": start, "numeric_value": 1.0, "text_value": None},
             {"operation": "upsert", "ref_uri": "urn:history", "ts": start + timedelta(days=365), "numeric_value": 2.0, "text_value": None},
         ], schema=MUTATION_SCHEMA)))
@@ -522,7 +524,7 @@ def test_activation_retracts_outputs_owned_only_by_retired_bindings(tmp_path):
         definition_id = runtime.register_definition(definition); generation = runtime.deploy("convert", definition_id)
         runtime.persist_bindings("convert", generation, 1, definition_id, (BindingSpec("old", {"input": ("urn:in",)}, {"output": ("urn:retired",)}),))
         runtime.activate_bindings("convert", generation)
-        ContinuousDuckDB(store).publish(PublicationRequest("old-output", pa.Table.from_pylist([
+        PublicationDuckDB(store).publish(PublicationRequest("old-output", pa.Table.from_pylist([
             {"operation": "upsert", "ref_uri": "urn:retired", "ts": start, "numeric_value": 1.0, "text_value": None},
         ], schema=MUTATION_SCHEMA)))
         runtime.stage_bindings("convert", 2, definition_id, (BindingSpec("new", {"input": ("urn:in",)}, {"output": ("urn:replacement",)}),))
@@ -576,7 +578,7 @@ def test_staging_execution_writes_isolated_rows_not_canonical_output(tmp_path):
     pool = LocalExecutorPool(workers=1)
     try:
         start = datetime(2026, 1, 1, tzinfo=UTC)
-        ContinuousDuckDB(store).publish(PublicationRequest("input", pa.Table.from_pylist([
+        PublicationDuckDB(store).publish(PublicationRequest("input", pa.Table.from_pylist([
             {"operation": "upsert", "ref_uri": "urn:stage:in", "ts": start, "numeric_value": -2.0, "text_value": None},
         ], schema=MUTATION_SCHEMA)))
         runtime = MaterializationDuckDB(store)
@@ -618,7 +620,7 @@ def test_range_commit_replaces_missing_rows_and_rejects_stale_snapshot(tmp_path)
     store = DuckDBStore(tmp_path / "range-commit.duckdb", recreate=True)
     try:
         start = datetime(2026, 1, 1, tzinfo=UTC)
-        continuous = ContinuousDuckDB(store)
+        continuous = PublicationDuckDB(store)
         input_table = pa.Table.from_pylist([{"operation": "upsert", "ref_uri": "urn:in", "ts": start, "numeric_value": 1.0, "text_value": None}], schema=MUTATION_SCHEMA)
         continuous.publish(PublicationRequest("input-1", input_table))
         runtime = MaterializationDuckDB(store)
@@ -650,14 +652,14 @@ def test_lookback_stale_check_only_rejects_changes_that_affect_partition(tmp_pat
     try:
         start = datetime(2026, 1, 1, tzinfo=UTC)
         initial = pa.Table.from_pylist([{"operation": "upsert", "ref_uri": "urn:in", "ts": start, "numeric_value": 1.0, "text_value": None}], schema=MUTATION_SCHEMA)
-        ContinuousDuckDB(store).publish(PublicationRequest("lookback-1", initial))
+        PublicationDuckDB(store).publish(PublicationRequest("lookback-1", initial))
         runtime = MaterializationDuckDB(store)
         scheduler = MaterializationScheduler(runtime)
         _, parts = scheduler.create_plan_for_binding(binding_id="binding", generation=1, graph_revision=1, progress={"urn:in": 0}, heads={"urn:in": 1}, impact=lookback(timedelta(minutes=5)), reason={}, maximum_partition_duration=timedelta(minutes=10))
         snapshot = runtime.snapshot_partition(runtime.lease_partition("worker"), ("urn:in",))
         # A newer source change ten minutes later cannot affect the owned output range.
         later = pa.Table.from_pylist([{"operation": "upsert", "ref_uri": "urn:in", "ts": start + timedelta(minutes=10), "numeric_value": 2.0, "text_value": None}], schema=MUTATION_SCHEMA)
-        ContinuousDuckDB(store).publish(PublicationRequest("lookback-2", later))
+        PublicationDuckDB(store).publish(PublicationRequest("lookback-2", later))
         runtime.commit_replacement(snapshot, input_refs=("urn:in",), output_refs=("urn:out",), replacement=pa.table({"ref_uri": [], "ts": pa.array([], type=pa.timestamp("us", tz="UTC")), "numeric_value": [], "text_value": []}))
     finally:
         store.close()
@@ -745,7 +747,7 @@ def test_long_backfill_compute_does_not_hold_the_canonical_write_lock(tmp_path):
     errors = []
     try:
         start = datetime(2026, 1, 1, tzinfo=UTC)
-        continuous = ContinuousDuckDB(store)
+        continuous = PublicationDuckDB(store)
         row_count = 10_000
         continuous.publish(PublicationRequest("backfill-input", pa.table({
             "operation": ["upsert"] * row_count,
@@ -803,7 +805,7 @@ def test_two_hop_registered_transformations_converge_from_durable_progress(tmp_p
     pool = LocalExecutorPool(workers=1)
     try:
         start = datetime(2026, 1, 1, tzinfo=UTC)
-        continuous = ContinuousDuckDB(store)
+        continuous = PublicationDuckDB(store)
         continuous.publish(PublicationRequest("two-hop-source", pa.Table.from_pylist([
             {"operation": "upsert", "ref_uri": "urn:hop:source", "ts": start,
              "numeric_value": -7.0, "text_value": None},
@@ -1028,7 +1030,7 @@ def test_recompute_from_invalidation_creates_a_bounded_durable_plan(tmp_path):
     artifacts = FilesystemArtifactStore(tmp_path / "artifacts")
     try:
         start = datetime(2026, 1, 1, tzinfo=UTC)
-        ContinuousDuckDB(store).publish(PublicationRequest("input", pa.Table.from_pylist([
+        PublicationDuckDB(store).publish(PublicationRequest("input", pa.Table.from_pylist([
             {"operation": "upsert", "ref_uri": "urn:state:in", "ts": start, "numeric_value": 1.0, "text_value": None},
             {"operation": "upsert", "ref_uri": "urn:state:in", "ts": start + timedelta(minutes=2), "numeric_value": 2.0, "text_value": None},
         ], schema=MUTATION_SCHEMA)))
@@ -1076,7 +1078,7 @@ def test_stateful_transform_recovers_after_storage_and_worker_restart(tmp_path):
 
     store = DuckDBStore(database, recreate=True)
     try:
-        ContinuousDuckDB(store).publish(PublicationRequest("first", pa.Table.from_pylist([
+        PublicationDuckDB(store).publish(PublicationRequest("first", pa.Table.from_pylist([
             {"operation": "upsert", "ref_uri": "urn:state:in", "ts": start,
              "numeric_value": 1.0, "text_value": None},
         ], schema=MUTATION_SCHEMA)))
@@ -1112,7 +1114,7 @@ def test_stateful_transform_recovers_after_storage_and_worker_restart(tmp_path):
     # This is the server/storage and fixed worker-pool restart boundary.
     store = DuckDBStore(database)
     try:
-        ContinuousDuckDB(store).publish(PublicationRequest("second", pa.Table.from_pylist([
+        PublicationDuckDB(store).publish(PublicationRequest("second", pa.Table.from_pylist([
             {"operation": "upsert", "ref_uri": "urn:state:in", "ts": start + timedelta(minutes=1),
              "numeric_value": 5.0, "text_value": None},
         ], schema=MUTATION_SCHEMA)))
@@ -1136,5 +1138,122 @@ def test_stateful_transform_recovers_after_storage_and_worker_restart(tmp_path):
         # ``uses`` mutation from the old worker cannot be authoritative.
         assert DurableOffsetTransformation.setup_calls == 2
         assert DurableOffsetTransformation.load_calls == 2
+    finally:
+        store.close()
+
+def _stage_full_history_binding(runtime, *, name, inputs, outputs, impact):
+    definition = definition_for(abs, name=name, inputs={"input": inputs},
+                                outputs={"output": outputs}, impact=impact)
+    definition_id = runtime.register_definition(definition)
+    runtime.deploy(name, definition_id, graph_revision=1)
+    return runtime.stage_bindings(name, 1, definition_id,
+        (BindingSpec("one", {"input": (inputs,)}, {"output": (outputs,)}),))
+
+def test_full_history_safety_scan_plans_the_entire_retained_span(tmp_path):
+    store = DuckDBStore(tmp_path / "full-history-plan.duckdb", recreate=True)
+    try:
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        PublicationDuckDB(store).publish(PublicationRequest("fh-1", pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:fh:in", "ts": start, "numeric_value": 1.0, "text_value": None},
+            {"operation": "upsert", "ref_uri": "urn:fh:in", "ts": start + timedelta(hours=2), "numeric_value": 2.0, "text_value": None},
+        ], schema=MUTATION_SCHEMA)))
+        runtime = MaterializationDuckDB(store)
+        _stage_full_history_binding(runtime, name="fh", inputs="urn:fh:in",
+                                    outputs="urn:fh:out", impact=full_history())
+        plans = MaterializationScheduler(runtime).discover_all(maximum_partition_duration=timedelta(hours=1))
+        assert len(plans) == 1
+        import json
+        with store._own_conn() as conn:
+            rows = conn.execute("SELECT start_ts, end_ts FROM materialization_plan_partitions ORDER BY start_ts").fetchall()
+            reason = json.loads(conn.execute("SELECT reason_json FROM materialization_plans").fetchone()[0])
+        # Any change dirties the whole retained span, partitioned hourly.
+        assert [(row[0].replace(tzinfo=UTC), row[1].replace(tzinfo=UTC)) for row in rows] == [
+            (start, start + timedelta(hours=1)),
+            (start + timedelta(hours=1), start + timedelta(hours=2)),
+            (start + timedelta(hours=2), start + timedelta(hours=2, microseconds=1)),
+        ]
+        assert reason["impact"] == full_history().to_json()
+    finally:
+        store.close()
+
+def test_full_history_commit_rejects_any_newer_input_change(tmp_path):
+    store = DuckDBStore(tmp_path / "full-history-stale.duckdb", recreate=True)
+    try:
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        PublicationDuckDB(store).publish(PublicationRequest("fh-2", pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:fh2:in", "ts": start, "numeric_value": 1.0, "text_value": None},
+        ], schema=MUTATION_SCHEMA)))
+        runtime = MaterializationDuckDB(store)
+        _stage_full_history_binding(runtime, name="fh2", inputs="urn:fh2:in",
+                                    outputs="urn:fh2:out", impact=full_history())
+        scheduler = MaterializationScheduler(runtime)
+        assert scheduler.discover_all(maximum_partition_duration=timedelta(minutes=10))
+        snapshot = runtime.snapshot_partition(runtime.lease_partition("worker"), ("urn:fh2:in",))
+        # A change far outside the leased partition still dirties full-history output.
+        PublicationDuckDB(store).publish(PublicationRequest("fh-3", pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:fh2:in", "ts": start + timedelta(hours=5), "numeric_value": 2.0, "text_value": None},
+        ], schema=MUTATION_SCHEMA)))
+        empty = pa.table({"ref_uri": [], "ts": pa.array([], type=pa.timestamp("us", tz="UTC")),
+                          "numeric_value": [], "text_value": []})
+        import pytest
+        with pytest.raises(StaleAttemptError):
+            runtime.commit_replacement(snapshot, input_refs=("urn:fh2:in",), output_refs=("urn:fh2:out",), replacement=empty)
+    finally:
+        store.close()
+
+def test_full_history_without_retained_input_data_plans_nothing(tmp_path):
+    store = DuckDBStore(tmp_path / "full-history-empty.duckdb", recreate=True)
+    try:
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        PublicationDuckDB(store).publish(PublicationRequest("fh-4", pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:fh3:in", "ts": start, "numeric_value": 1.0, "text_value": None},
+        ], schema=MUTATION_SCHEMA)))
+        runtime = MaterializationDuckDB(store)
+        _stage_full_history_binding(runtime, name="fh3", inputs="urn:fh3:in",
+                                    outputs="urn:fh3:out", impact=full_history())
+        # Tombstone the only row: heads advance, but nothing is retained yet.
+        PublicationDuckDB(store).publish(PublicationRequest("fh-5", pa.Table.from_pylist([
+            {"operation": "delete", "ref_uri": "urn:fh3:in", "ts": start, "numeric_value": None, "text_value": None},
+        ], schema=MUTATION_SCHEMA)))
+        assert MaterializationScheduler(runtime).discover_all(maximum_partition_duration=timedelta(minutes=10)) == ()
+    finally:
+        store.close()
+
+def test_experiment_run_id_replay_is_idempotent_but_conflict_rejected(tmp_path):
+    store = DuckDBStore(tmp_path / "experiment-replay.duckdb", recreate=True)
+    try:
+        runtime = MaterializationDuckDB(store)
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        interval = TimeRange(start, start + timedelta(hours=1))
+        request = ExperimentRunRequest("run-1", "def-1", 5, interval,
+            {"p": 1}, {"type": "object"}, {"m": "x"}, {"urn:in": 3}, [], None)
+        assert runtime.start_experiment(request).status == "running"
+        # An identical request is an idempotent replay of the same run.
+        assert runtime.start_experiment(request).run_id == "run-1"
+        # A different frozen input under the same run_id is rejected.
+        conflicting = ExperimentRunRequest("run-1", "def-1", 5, interval,
+            {"p": 2}, {"type": "object"}, {"m": "x"}, {"urn:in": 3}, [], None)
+        import pytest
+        with pytest.raises(ValueError, match="already exists"):
+            runtime.start_experiment(conflicting)
+    finally:
+        store.close()
+
+def test_partition_is_dead_lettered_after_max_attempts(tmp_path):
+    store = DuckDBStore(tmp_path / "retry-bound.duckdb", recreate=True)
+    try:
+        runtime = MaterializationDuckDB(store)
+        start = datetime(2026, 1, 1, tzinfo=UTC)
+        runtime.create_plan(binding_id="b", generation=1, graph_revision=1,
+            input_vector={"urn:in": 1}, ranges=(TimeRange(start, start + timedelta(minutes=1)),),
+            reason={}, maximum_partition_duration=timedelta(minutes=1))
+        # Each lease+fail bumps the attempt until the bound dead-letters it.
+        for _ in range(MAX_PARTITION_ATTEMPTS):
+            lease = runtime.lease_partition("worker")
+            assert lease is not None
+            runtime.fail_partition(lease, {"type": "X", "message": "boom"})
+        assert runtime.lease_partition("worker") is None
+        with store._own_conn() as conn:
+            assert conn.execute("SELECT status FROM materialization_plan_partitions").fetchone() == ("failed",)
     finally:
         store.close()

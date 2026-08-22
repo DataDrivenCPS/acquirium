@@ -88,6 +88,26 @@ def run_output_ref(run_id: str, name: str) -> str:
     return f"urn:acquirium:experiment:{run_id}:output:{name}"
 
 
+def frozen_inputs_match(run: "ExperimentRun", request: "ExperimentRunRequest") -> bool:
+    """Whether an existing run's frozen snapshot equals a new request.
+
+    A matching request is an idempotent replay of the same run; a mismatch on
+    any frozen field means the run_id is being reused for different work and
+    must be rejected rather than silently returning the original run.
+    """
+    return (
+        run.definition_id == request.definition_id
+        and run.graph_revision == request.graph_revision
+        and run.interval == request.interval
+        and dict(run.params) == dict(request.params)
+        and dict(run.params_schema) == dict(request.params_schema)
+        and dict(run.metadata) == dict(request.metadata)
+        and dict(run.input_versions) == dict(request.input_versions)
+        and list(run.binding_snapshot) == list(request.binding_snapshot)
+        and run.state_revision == request.state_revision
+    )
+
+
 @dataclass
 class ExperimentContext:
     """The only mutable facade supplied to bounded experiment code."""

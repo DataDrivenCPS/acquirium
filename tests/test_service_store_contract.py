@@ -8,7 +8,7 @@ import pyarrow as pa
 from acquirium.Materialization.services import ChangeHint
 from acquirium.Materialization.definitions import MaterializationDefinition
 from acquirium.Storage.publication.types import PublicationRequest, MUTATION_SCHEMA
-from acquirium.Storage.publication.duckdb import PublicationDuckDB as ContinuousDuckDB
+from acquirium.Storage.publication.duckdb import PublicationDuckDB
 from acquirium.Storage.duckdb_store import DuckDBStore
 from acquirium.Storage.materialization.duckdb import MaterializationDuckDB
 from acquirium.Storage.materialization.postgres import MaterializationPostgres
@@ -67,7 +67,7 @@ def test_service_input_snapshot_reads_current_canonical_values(tmp_path):
         mutations = pa.table({"operation": ["upsert"], "ref_uri": ["urn:input"],
             "ts": pa.array([datetime(2026, 1, 1, tzinfo=timezone.utc)], type=pa.timestamp("us", tz="UTC")),
             "numeric_value": [42.0], "text_value": [None]}, schema=MUTATION_SCHEMA)
-        ContinuousDuckDB(store).publish(PublicationRequest("service-snapshot", mutations))
+        PublicationDuckDB(store).publish(PublicationRequest("service-snapshot", mutations))
         versions, values = runtime.service_input_snapshot(("urn:input",))
         assert versions == {"urn:input": 1}
         assert values.to_pylist() == [{"ref_uri": "urn:input", "ts": datetime(2026, 1, 1, tzinfo=timezone.utc),

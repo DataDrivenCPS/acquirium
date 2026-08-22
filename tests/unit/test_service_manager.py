@@ -50,3 +50,26 @@ def test_service_registration_rejects_materialized_output_ownership():
     definition = MaterializationDefinition("dashboard", "digest", "demo:Dashboard", kind="service", outputs={"out": "urn:derived"})
     with pytest.raises(ValueError, match="cannot declare"):
         Manager.register_service(manager, definition)
+
+
+def test_registered_value_kind_gates_resync_on_graph_revision():
+    manager = Manager.__new__(Manager)
+    manager.timescale = MagicMock()
+    manager.timescale.stream_value_kind.return_value = None  # never registered
+    manager.graph_store = MagicMock()
+    manager.graph_store.graph_status.return_value = {"published_version": 3}
+    manager._sync_stream_refs_from_graph = MagicMock()
+    manager._refs_synced_revision = None
+    with pytest.raises(ValueError, match="not registered"):
+        Manager._registered_value_kind(manager, "urn:missing")
+    assert manager._sync_stream_refs_from_graph.call_count == 1
+    assert manager._refs_synced_revision == 3
+    # Same graph revision: a second unknown ref must not rebuild the graph.
+    with pytest.raises(ValueError, match="not registered"):
+        Manager._registered_value_kind(manager, "urn:missing-again")
+    assert manager._sync_stream_refs_from_graph.call_count == 1
+    # Graph advanced: the rebuild runs again.
+    manager.graph_store.graph_status.return_value = {"published_version": 4}
+    with pytest.raises(ValueError, match="not registered"):
+        Manager._registered_value_kind(manager, "urn:missing")
+    assert manager._sync_stream_refs_from_graph.call_count == 2

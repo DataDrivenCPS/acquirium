@@ -38,7 +38,9 @@ class ServiceSnapshot:
     inputs: pa.Table
 
 
-def snapshot_token(data_versions: Mapping[str, int], graph_revision: int | None) -> str:
-    payload = json.dumps({"data_versions": dict(sorted(data_versions.items())), "graph_revision": graph_revision},
+def snapshot_token(data_versions: Mapping[str, int], graph_revision: int | None, *, since: datetime | None = None) -> str:
+    payload = json.dumps({"data_versions": dict(sorted(data_versions.items())),
+                          "graph_revision": graph_revision,
+                          "since": since.isoformat() if since is not None else None},
                          sort_keys=True, separators=(",", ":"))
     return sha256(payload.encode()).hexdigest()

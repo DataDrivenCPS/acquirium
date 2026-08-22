@@ -69,12 +69,12 @@ REF_IDS_TABLE = "ref_ids"
 REF_IDS_SEQ = "ref_ids_seq"
 TIMESERIES_STREAMS_VIEW = "timeseries_streams"
 
-# Continuous-batch tables (continuous_batch.md; DDL details in
-# continuous_batch_plan.md Phase 1a). Keyed by the integer ``ref_id`` used
+# Canonical publication tables (stream version heads, publication receipts,
+# and coalesced change-range manifests). Keyed by the integer ``ref_id`` used
 # throughout this backend, not by ``ref_uri`` strings -- see
-# ``Storage/continuous/duckdb.py`` for the id-resolution boundary. Created
-# here (rather than lazily by the continuous layer) so a plain DuckDBStore
-# always has a schema the continuous layer can attach to without a separate
+# ``Storage/publication/duckdb.py`` for the id-resolution boundary. Created
+# here (rather than lazily by the publication layer) so a plain DuckDBStore
+# always has a schema the publication layer can attach to without a separate
 # migration step.
 STREAM_HEADS_TABLE = "stream_heads"
 STREAM_PUBLICATIONS_TABLE = "stream_publications"
@@ -197,8 +197,7 @@ CONTINUOUS_BATCH_DDL = [
     # Declared output targets for this bootstrap, captured at begin_bootstrap
     # time. finalize_bootstrap anti-joins this list against what actually
     # landed in app_bootstrap_outputs to tombstone an output stream a
-    # narrower/changed selector no longer produces (continuous_batch.md
-    # "The actor transforms staged history..."). Not part of the design
+    # narrower/changed selector no longer produces. Not part of the design
     # doc's logical schema list; added because finalize's reconciliation step
     # needs it.
     f"""
@@ -396,8 +395,8 @@ class DuckDBStore:
                 ts      TIMESTAMP NOT NULL,
                 numeric_value DOUBLE,
                 text_value    VARCHAR,
-                -- Continuous-batch columns (see continuous_batch.md and
-                -- Storage/continuous/duckdb.py). ``deleted`` marks a physical
+                -- Canonical publication columns (see Storage/publication/duckdb.py).
+                -- ``deleted`` marks a physical
                 -- tombstone: the row is kept (not removed) so its
                 -- last_stream_version remains resolvable by a batch reader.
                 -- ``last_stream_version`` is the stream_heads version at which
@@ -714,8 +713,7 @@ class DuckDBStore:
                     # Never written to: no id, no rows.
                     return
 
-                # Normal reads hide tombstones -- see continuous_batch.md's
-                # "Canonical values and version heads": a deleted row is kept
+                # Normal reads hide tombstones: a deleted row is kept
                 # physically (its last_stream_version stays resolvable by a
                 # batch reader) but is invisible to this API.
                 clauses = ["ref_id = ?", "NOT deleted"]
@@ -795,6 +793,39 @@ class DuckDBStore:
             # Runs on early caller exit (GeneratorExit) as well as on exhaustion.
             conn.close()
             logger.debug("timeseries: ref_uri=%s rows=%d (batch_size=%d)", ref_uri, rows, batch_size)
+
+    def timestamps(
+        self,
+        ref_uri: str,
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> list[datetime]:
+        """Return the live (non-tombstoned) timestamps for one stream.
+
+        Timestamp-only read: replace/delete tombstone computation needs the
+        existing keys but not their values, so this avoids materializing the
+        full row history.
+        """
+        with self._own_conn() as conn, timed_debug(logger, "timestamps ref_uri=%s", ref_uri):
+            ref_id_row = conn.execute(
+                f"SELECT ref_id FROM {REF_IDS_TABLE} WHERE ref_uri = ?", [ref_uri]
+            ).fetchone()
+            if ref_id_row is None:
+                return []
+            clauses = ["ref_id = ?", "NOT deleted"]
+            params: list[Any] = [ref_id_row[0]]
+            if start:
+                clauses.append("ts >= ?")
+                params.append(self._to_utc_naive(start))
+            if end:
+                clauses.append("ts <= ?")
+                params.append(self._to_utc_naive(end))
+            where = " AND ".join(clauses)
+            rows = conn.execute(
+                f"SELECT ts FROM {TIMESERIES_TABLE} WHERE {where} ORDER BY ts", params
+            ).fetchall()
+        return [self._add_utc(row[0]) for row in rows]
 
     def timeseries_info(self, ref_uri: str) -> TimeseriesInfo:
         with self._own_conn() as conn, timed_debug(logger, "timeseries_info ref_uri=%s", ref_uri):

@@ -18,11 +18,22 @@ class MaterializationScheduler:
                                 progress: Mapping[str, int], heads: Mapping[str, int],
                                 impact: ImpactPolicy, reason: dict, retained: TimeRange | None = None,
                                 maximum_partition_duration: timedelta = timedelta(minutes=15)):
-        ranges: list[TimeRange] = []
+        """Create durable work for one lagging binding, or None when nothing is retained to recompute."""
         vector = {ref: version for ref, version in heads.items() if version > progress.get(ref, 0)}
-        for ref, to_version in vector.items():
-            for change in self._storage.change_ranges(ref, after_version=progress.get(ref, 0), through_version=to_version):
-                ranges.append(impact.affected(change.interval, retained=retained))
+        ranges: list[TimeRange] = []
+        if impact.kind == "full_history":
+            # Every retained output depends on every input, so any change
+            # dirties the whole retained span; plan it from canonical storage
+            # rather than expanding per-range manifests.
+            if retained is None:
+                retained = self._storage.binding_input_range(binding_id, generation)
+            if retained is None:
+                return None
+            ranges.append(retained)
+        else:
+            for ref, to_version in vector.items():
+                for change in self._storage.change_ranges(ref, after_version=progress.get(ref, 0), through_version=to_version):
+                    ranges.append(impact.affected(change.interval, retained=retained))
         reason = {**reason, "impact": impact.to_json()}
         return self._storage.create_plan(binding_id=binding_id, generation=generation,
             graph_revision=graph_revision, input_vector=vector, ranges=coalesce_ranges(ranges),
@@ -50,12 +61,13 @@ class MaterializationScheduler:
         for binding in self._storage.stale_bindings():
             if deployment_name is not None and binding.get("deployment_name") != deployment_name:
                 continue
-            plan_id, _ = self.create_plan_for_binding(
+            plan = self.create_plan_for_binding(
                 binding_id=binding["binding_id"], generation=binding["generation"], graph_revision=binding["graph_revision"],
                 progress=binding["progress"], heads=binding["heads"], impact=impact,
                 reason={"kind": "safety_scan"}, maximum_partition_duration=maximum_partition_duration,
             )
-            plan_ids.append(plan_id)
+            if plan is not None:
+                plan_ids.append(plan[0])
         return tuple(plan_ids)
 
     def bootstrap_staged(self, *, deployment_name: str, generation: int, graph_revision: int,
@@ -80,16 +92,15 @@ class MaterializationScheduler:
         plans = []
         for binding in self._storage.stale_bindings():
             impact = ImpactPolicy.from_json(binding["impact"])
-            plan_id, _ = self.create_plan_for_binding(binding_id=binding["binding_id"], generation=binding["generation"],
+            plan = self.create_plan_for_binding(binding_id=binding["binding_id"], generation=binding["generation"],
                 graph_revision=binding["graph_revision"], progress=binding["progress"], heads=binding["heads"], impact=impact,
                 reason={"kind": "safety_scan"}, maximum_partition_duration=maximum_partition_duration)
-            plans.append(plan_id)
+            if plan is not None:
+                plans.append(plan[0])
         return tuple(plans)
 
     def plan_state_invalidations(self, *, maximum_partition_duration: timedelta = timedelta(minutes=15)) -> tuple[str, ...]:
         """Turn promoted recompute policies into ordinary durable work plans."""
-        if not hasattr(self._storage, "pending_state_invalidations"):
-            return ()
         plans = []
         for item in self._storage.pending_state_invalidations():
             ranges = coalesce_ranges(item["ranges"])
@@ -109,10 +120,11 @@ class MaterializationScheduler:
         if lease is None:
             return False
         inputs, outputs = self._storage.partition_refs(lease.partition.partition_id)
+        binding_id = self._storage.partition_binding_id(lease.partition.partition_id)
         try:
             snapshot = self._storage.snapshot_partition(lease, inputs)
             request = ComputeRequest(snapshot.inputs, TransformContext(
-                binding_id=lease.partition.plan_id, execution_id=f"{lease.partition.partition_id}:{lease.attempt}",
+                binding_id=binding_id, execution_id=f"{lease.partition.partition_id}:{lease.attempt}",
                 interval=lease.partition.interval, input_versions=snapshot.input_versions, metadata=metadata or {},
             ), frozenset(outputs), scalar=scalar)
             replacement = executor.submit_entrypoint(digest=source_digest, entrypoint=entrypoint, request=request).result()
@@ -132,11 +144,11 @@ class MaterializationScheduler:
         outputs = spec.get("outputs") if isinstance(spec, dict) else None
         scalar = isinstance(outputs, dict) and outputs.get("mode") == "per_input"
         inputs, output_refs = self._storage.partition_refs(lease.partition.partition_id)
+        binding_id = self._storage.partition_binding_id(lease.partition.partition_id)
         try:
             snapshot = self._storage.snapshot_partition(lease, inputs)
-            metadata = (self._storage.partition_binding_metadata(lease.partition.partition_id)
-                        if hasattr(self._storage, "partition_binding_metadata") else {})
-            state = self._storage.partition_state_revision(lease.partition.partition_id) if hasattr(self._storage, "partition_state_revision") else None
+            metadata = self._storage.partition_binding_metadata(lease.partition.partition_id)
+            state = self._storage.partition_state_revision(lease.partition.partition_id)
             artifact_bytes = None
             if state is not None:
                 uri = urlparse(state.artifact.uri)
@@ -146,7 +158,7 @@ class MaterializationScheduler:
                 if sha256(artifact_bytes).hexdigest() != state.artifact.digest:
                     raise ValueError("state artifact failed digest verification")
             request = ComputeRequest(snapshot.inputs, TransformContext(
-                binding_id=lease.partition.plan_id, execution_id=f"{lease.partition.partition_id}:{lease.attempt}",
+                binding_id=binding_id, execution_id=f"{lease.partition.partition_id}:{lease.attempt}",
                 interval=lease.partition.interval, input_versions=snapshot.input_versions,
                 metadata=metadata,
                 state_revision=state.revision_id if state else None,
@@ -169,11 +181,11 @@ class MaterializationScheduler:
             outputs_spec = spec.get("outputs") if isinstance(spec, dict) else None
             scalar = isinstance(outputs_spec, dict) and outputs_spec.get("mode") == "per_input"
             inputs, output_refs = self._storage.partition_refs(lease.partition.partition_id)
+            binding_id = self._storage.partition_binding_id(lease.partition.partition_id)
             snapshot = self._storage.snapshot_partition(lease, inputs)
-            metadata = (self._storage.partition_binding_metadata(lease.partition.partition_id)
-                        if hasattr(self._storage, "partition_binding_metadata") else {})
+            metadata = self._storage.partition_binding_metadata(lease.partition.partition_id)
             request = ComputeRequest(snapshot.inputs, TransformContext(
-                binding_id=lease.partition.plan_id, execution_id=f"preview:{lease.partition.partition_id}:{lease.attempt}",
+                binding_id=binding_id, execution_id=f"preview:{lease.partition.partition_id}:{lease.attempt}",
                 interval=lease.partition.interval, input_versions=snapshot.input_versions,
                 metadata=metadata,
             ), frozenset(output_refs), scalar=scalar)

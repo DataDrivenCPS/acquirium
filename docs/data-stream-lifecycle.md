@@ -264,38 +264,23 @@ The user-supplied RDF model file declares both `ref:hasExternalReference` (used 
 
 The driver reads these triples at startup and uses them to map Pyomo variable paths to `ref_name` values for insertion.
 
-### Soft-sensor apps (computed outputs)
+### Materialized transformations (computed outputs)
 
-App outputs get the same managed-stream treatment, but the reference node also carries type and dependency metadata:
+Derived streams produced by `@aq.transform` and `@aq.stateful` definitions get
+the same managed-stream treatment. A transformation declares its bindings (which
+input streams it reads) and its outputs; the materialization engine resolves the
+bindings against the published graph, owns the deterministic output stream
+identities, and commits the computed values as canonical publications.
 
-```turtle
-<ref_uri>
-    a acq:Stream, acq:TimeseriesStream ;
-    acq:sourceId "app:my-app" ;
-    acq:refName  "urn:output:predicted_flow" ;
-    acq:storageBackend "timescale" .
-```
+Per-input output streams are named deterministically from the transformation
+name and the input, e.g. `urn:acquirium:derived:celsius:<token>`, so a repeated
+or rebound topology never overwrites an unrelated stream. Provenance — which
+definition, binding, input versions, and (for stateful transforms) artifact
+revision produced each output range — is recorded with every commit rather than
+as hand-written triples.
 
-The `acq:produces` and `acq:isCalculatedFrom` triples on the output point URI record the app that generated the stream and the inputs it depended on.
-
-Static app outputs use the point URI as their default `ref_name` for backward
-compatibility. `MappedApp` outputs use a separate deterministic name such as
-`average/3a21...`, derived from the output template and input point URI. The
-semantic output point URI and source-local storage name therefore remain
-distinct in the same way they do for driver streams.
-
-At runtime, app outputs are emitted through a single shared output sink used by
-both server-side `AppRunner` execution and external app workers:
-
-- `Output.timeseries(...)` inserts the returned `(timestamp, value)` rows into
-  the output stream.
-- `Output.event(...)` is serialized as one JSON text value in the event stream.
-- `Output.trigger(...)` sends the configured HTTP webhook and does not write a
-  timeseries row unless the app also returns a timeseries or event output.
-
-The two execution modes provide different insertion transports (`Manager`
-directly in the server, `AcquiriumClient` in the worker), but the output
-serialization and trigger rules are intentionally shared.
+See `docs/materialization_stateful.md` and `docs/materialization_services.md`
+for the declaration API and lifecycle.
 
 ---
 

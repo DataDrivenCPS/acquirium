@@ -263,7 +263,9 @@ async def lifespan(app: FastAPI):
         owner = f"server-{os.getpid()}"
         idle_seconds = float(server_cfg.get("materialization_poll_seconds", 0.25))
         safety_scan_seconds = float(server_cfg.get("service_safety_scan_seconds", 1.0))
+        error_log_seconds = float(server_cfg.get("materialization_error_log_seconds", 30.0))
         next_service_scan = 0.0
+        next_error_log = 0.0
         while True:
             try:
                 rebound = await asyncio.to_thread(m.run_rebind_once, owner)
@@ -278,8 +280,13 @@ async def lifespan(app: FastAPI):
                 raise
             except Exception:
                 # The scheduler recorded the failed attempt as retryable; keep
-                # the server healthy and retry after the normal idle delay.
-                log.exception("Materialization execution failed")
+                # the server healthy and retry after the normal idle delay. Log
+                # at most once per interval so a deterministically failing
+                # partition cannot flood the log on every poll.
+                now = asyncio.get_running_loop().time()
+                if now >= next_error_log:
+                    log.exception("Materialization execution failed")
+                    next_error_log = now + error_log_seconds
                 rebound = ran_work = ran_service = ran_effect = False
             await asyncio.sleep(0 if rebound or ran_work or ran_service or ran_effect else idle_seconds)
 
@@ -311,11 +318,13 @@ async def lifespan(app: FastAPI):
             await asyncio.to_thread(supervisor.stop_all)
         except Exception:
             log.exception("Error stopping drivers during shutdown")
-        ray.shutdown()
+        # Close the manager before shutting down Ray: the Ray materialization
+        # executor kills its actors during close, which needs a live runtime.
         try:
             m.close()
         except Exception:
             log.exception("Error during shutdown")
+        ray.shutdown()
 
 
 app = FastAPI(title="Acquirium API", version="0.1", lifespan=lifespan)
@@ -891,16 +900,13 @@ class MaterializationFailureRequest(BaseModel):
 @app.post("/internal/materializations/{partition_id}/fail")
 def internal_materialization_fail(partition_id: str, request: MaterializationFailureRequest) -> dict[str, Any]:
     # A failed attempt becomes pending again; the attempt count remains durable.
+    storage = app.state.manager.materialization
     try:
-        storage = app.state.manager.materialization
         lease = storage.leased_partition(partition_id, request.owner, request.attempt)
-        if hasattr(storage, "fail_partition"):
-            storage.fail_partition(lease, request.error)
-        else:
-            raise RuntimeError("materialization backend lacks failure transitions")
-        return {"ok": True}
-    except Exception as error:
+    except (KeyError, ValueError) as error:
         raise HTTPException(status_code=409, detail=str(error))
+    storage.fail_partition(lease, request.error)
+    return {"ok": True}
 #### DRIVERS API ENDPOINTS ####
 
 
@@ -981,9 +987,8 @@ class ResolveStorageKeysRequest(BaseModel):
 @app.post("/resolve_storage_keys")
 def resolve_storage_keys(req: ResolveStorageKeysRequest) -> dict[str, str]:
     """Map each semantic point_uri (or already-canonical ref_uri) in *uris*
-    to its canonical storage key. An app resolves its declared input
-    point_uris to ref_uris with this before subscribing to them (used by
-    the actor's default, non-MappedApp mapping resolution)."""
+    to its canonical storage key. Callers resolve declared input point_uris
+    to ref_uris with this before reading or subscribing to them."""
     try:
         return app.state.manager.timescale.resolve_storage_keys(req.uris)
     except Exception as e:
@@ -1041,12 +1046,12 @@ async def insert_timeseries_arrow(request: Request):
         df = pl.from_arrow(reader.read_all())
         log.debug("/insert_timeseries_arrow: parsed Arrow stream into df rows=%d", len(df))
 
-        # A caller-supplied publication_id makes a retried flush idempotent
-        # (see continuous_batch_plan.md Decision 5/1d): reused verbatim
-        # against ContinuousStore.publish, whose id-plus-hash check returns
-        # the original receipt instead of re-applying the mutation. One
-        # request can span multiple source_ids, each its own atomic
-        # publication, so the base id is namespaced per source.
+        # A caller-supplied publication_id makes a retried flush idempotent:
+        # it is reused verbatim against PublicationStore.publish, whose
+        # id-plus-hash check returns the original receipt instead of
+        # re-applying the mutation. One request can span multiple source_ids,
+        # each its own atomic publication, so the base id is namespaced per
+        # source.
         base_publication_id = request.headers.get("X-Acquirium-Publication-Id")
 
         total = 0

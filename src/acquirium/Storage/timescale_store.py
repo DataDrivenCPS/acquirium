@@ -31,10 +31,10 @@ STREAMS_TABLE = "streams"
 LOGS_TABLE = "logs"
 TIMESERIES_STREAMS_VIEW = "timeseries_streams"
 
-# Continuous-batch tables (continuous_batch.md; DDL details in
-# continuous_batch_plan.md Phase 1a). Keyed directly by ``ref_uri`` text,
+# Canonical publication tables (stream version heads, publication receipts,
+# and coalesced change-range manifests). Keyed directly by ``ref_uri`` text,
 # unlike the DuckDB backend's integer ``ref_id`` -- see
-# ``Storage/continuous/postgres.py``.
+# ``Storage/publication/postgres.py``.
 STREAM_HEADS_TABLE = "stream_heads"
 STREAM_PUBLICATIONS_TABLE = "stream_publications"
 STREAM_CHANGE_KEYS_TABLE = "stream_change_keys"
@@ -275,8 +275,8 @@ class TimescaleStore(TimeseriesStore):
                     ts TIMESTAMPTZ NOT NULL,
                     numeric_value DOUBLE PRECISION,
                     text_value TEXT,
-                    -- Continuous-batch columns (see continuous_batch.md and
-                    -- Storage/continuous/postgres.py). ``deleted`` marks a
+                    -- Canonical publication columns (see Storage/publication/postgres.py).
+                    -- ``deleted`` marks a
                     -- physical tombstone, kept rather than removed so its
                     -- last_stream_version stays resolvable by a batch reader.
                     -- ``last_stream_version`` is the stream_heads version at
@@ -315,12 +315,11 @@ class TimescaleStore(TimeseriesStore):
             cur.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_timeseries_text_value ON {TIMESERIES_TABLE} (ref_uri, text_value) WHERE text_value IS NOT NULL;"
             )
-            # Compression is intentionally NOT enabled in v1 (see
-            # continuous_batch_plan.md Decision 3 / Finding 1): the
-            # continuous-batch protocol upserts corrections and updates
-            # last_stream_version on rows of any age, which compressed
-            # TimescaleDB chunks restrict. Revisit together with a retention
-            # policy once corrections have their own aging story.
+            # Compression is intentionally NOT enabled in v1: the publication
+            # protocol upserts corrections and updates last_stream_version on
+            # rows of any age, which compressed TimescaleDB chunks restrict.
+            # Revisit together with a retention policy once corrections have
+            # their own aging story.
             cur.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {STREAMS_TABLE} (
@@ -618,8 +617,8 @@ class TimescaleStore(TimeseriesStore):
         Returns an iterator over the time series data for the given ref URI.
         '''
         mode = normalize_value_mode(value_mode)
-        # Normal reads hide tombstones -- see continuous_batch.md's "Canonical
-        # values and version heads".
+        # Normal reads hide tombstones: a deleted row is kept physically
+        # (its last_stream_version stays resolvable) but invisible here.
         clauses = ["ref_uri = %s", "NOT deleted"]
         params: list[Any] = [ref_uri]
 
@@ -697,6 +696,34 @@ class TimescaleStore(TimeseriesStore):
                     names=["ts", "value", "uri"],
                 )
                 yield batch
+
+    def timestamps(
+        self,
+        ref_uri: str,
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> list[datetime]:
+        """Return the live (non-tombstoned) timestamps for one stream.
+
+        Timestamp-only read: replace/delete tombstone computation needs the
+        existing keys but not their values, so this avoids materializing the
+        full row history.
+        """
+        clauses = ["ref_uri = %s", "NOT deleted"]
+        params: list[Any] = [ref_uri]
+        if start:
+            clauses.append("ts >= %s")
+            params.append(self._to_utc(start))
+        if end:
+            clauses.append("ts <= %s")
+            params.append(self._to_utc(end))
+        where = " AND ".join(clauses)
+        with timed_debug(logger, "timestamps ref_uri=%s", ref_uri), self.conn.cursor() as cur:
+            cur.execute(f"SELECT ts FROM {TIMESERIES_TABLE} WHERE {where} ORDER BY ts", params)
+            rows = cur.fetchall()
+        # timestamptz columns come back timezone-aware.
+        return [row[0] for row in rows]
 
     def timeseries_info(self, ref_uri: str) -> TimeseriesInfo:
         with timed_debug(logger, "timeseries_info ref_uri=%s", ref_uri), self.conn.cursor() as cur:

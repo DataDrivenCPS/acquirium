@@ -54,16 +54,26 @@ class RayExecutorPool:
             def execute(self, digest: str, entrypoint: str, request: ComputeRequest) -> pa.Table:
                 target = self.definitions.load(digest, lambda: load_entrypoint(entrypoint))
                 return self.adapter.execute(target, request)
+            def call(self, digest: str, entrypoint: str, argument: Any) -> Any:
+                target = self.definitions.load(digest, lambda: load_entrypoint(entrypoint))
+                return target(argument)
             def clear(self) -> None:
                 self.definitions.clear()
 
         self._workers = [Worker.remote() for _ in range(workers)]
         self._next = 0
 
-    def submit_entrypoint(self, *, digest: str, entrypoint: str, request: ComputeRequest) -> _RayFuture:
+    def _pick_worker(self):
         worker = self._workers[self._next % len(self._workers)]
         self._next += 1
-        return _RayFuture(worker.execute.remote(digest, entrypoint, request))
+        return worker
+
+    def submit_entrypoint(self, *, digest: str, entrypoint: str, request: ComputeRequest) -> _RayFuture:
+        return _RayFuture(self._pick_worker().execute.remote(digest, entrypoint, request))
+
+    def submit_callable_entrypoint(self, *, digest: str, entrypoint: str, argument: Any) -> _RayFuture:
+        """Run bounded non-materialization work (e.g. an experiment) on the pool."""
+        return _RayFuture(self._pick_worker().call.remote(digest, entrypoint, argument))
 
     def close(self) -> None:
         import ray

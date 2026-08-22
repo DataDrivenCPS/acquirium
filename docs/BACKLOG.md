@@ -33,6 +33,19 @@ in phase order so the replacement can be delivered incrementally.
   impact-aware stale rejection, leases/retries, Arrow snapshots, replacement
   commits/tombstones, receipts/progress, bounded scheduler execution, and
   internal lease/snapshot/commit/fail transport on DuckDB and PostgreSQL.
+- [x] Post-review hardening: a service whose `on_change` raises is now marked
+  `failed` (hint retained for redelivery on restart) instead of re-running
+  every tick; `service_input_snapshot` returns the latest row per stream by
+  default with an optional `since` window/history read; full-history impact
+  planning and commit staleness fixed; client transformation-registration
+  payload serialized via `definition_spec`; partitions dead-letter after a
+  retry bound; the materialization safety scan is throttled.
+- [ ] Run the compose-backed PostgreSQL contract/integration suite
+  (`make integration-test`) to exercise the Postgres paths changed on this
+  branch: `binding_input_range`, full-history commit staleness, partition
+  dead-letter, experiment run-id replay guard, latest-row/`since` window
+  snapshot (`DISTINCT ON` / `ts >= since`), and single-query `services()` /
+  `list_experiments()`. The unit suite covers DuckDB only.
 
 ## Deferred by design
 

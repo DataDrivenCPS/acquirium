@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta
-from typing import Literal, Any, TYPE_CHECKING
+from typing import Literal
 from dataclasses import dataclass
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 from acquirium.internals.internals_namespaces import ACQUIRIUM_NS
@@ -40,9 +40,6 @@ def compute_ref_uri(source_id: str, ref_name: str) -> URIRef:
 
 compute_handle = compute_ref_uri
 
-
-if TYPE_CHECKING:
-    from acquirium.Client.explore.core import Query
 
 class TimeseriesInfo(BaseModel):
     table: str

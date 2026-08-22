@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, TypeVar, overload
+from typing import Any, Callable, TypeVar
 
 from acquirium.Materialization.bindings import Selector
 from acquirium.Materialization.definitions import MaterializationDefinition, definition_for

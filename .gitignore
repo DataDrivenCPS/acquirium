@@ -219,3 +219,6 @@ scripts/benchmark/scalability/*.csv
 dpr-trailer-data/
 
 .run_logs
+
+# Local TextMatch resolver benchmark output
+tests/text_match_results/

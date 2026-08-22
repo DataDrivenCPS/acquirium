@@ -18,12 +18,12 @@ from acquirium.Materialization.bindings import BindingSpec
 from acquirium.Materialization.definitions import MaterializationDefinition, definition_spec
 from acquirium.Materialization.impact import TimeRange
 from acquirium.Storage.materialization.ids import materialization_id, partition_ranges
-from acquirium.Storage.materialization.types import PlanPartition, WorkLease
+from acquirium.Storage.materialization.types import MAX_PARTITION_ATTEMPTS, PlanPartition, WorkLease
 from acquirium.Storage.materialization.types import InputSnapshot
 from acquirium.Storage.publication.types import MUTATION_SCHEMA
 from acquirium.Storage.artifacts import ArtifactRecord
 from acquirium.Materialization.state import ArtifactCandidate, ArtifactLease, ArtifactRequest, StateRevision
-from acquirium.Materialization.experiments import ExperimentArtifact, ExperimentRun, ExperimentRunRequest, run_output_ref
+from acquirium.Materialization.experiments import ExperimentArtifact, ExperimentRun, ExperimentRunRequest, frozen_inputs_match, run_output_ref
 from acquirium.Materialization.effects import EffectIntent
 from acquirium.Materialization.services import ChangeHint
 
@@ -181,7 +181,6 @@ class MaterializationDuckDB:
                 WHERE ref_uri = ? AND stream_version > ? AND stream_version <= ?
                 ORDER BY stream_version, start_ts""", [ref_uri, after_version, through_version]
             ).fetchall()
-        from acquirium.Materialization.impact import TimeRange
         return tuple(StreamChangeRange(ref, version, pub,
                    TimeRange(start.replace(tzinfo=timezone.utc), end.replace(tzinfo=timezone.utc)), kind, count)
                      for ref, version, pub, start, end, kind, count in rows)
@@ -230,8 +229,14 @@ class MaterializationDuckDB:
             return dict(conn.execute(f"""SELECT ids.ref_uri, head.current_version FROM {STREAM_HEADS_TABLE} head
                 JOIN {REF_IDS_TABLE} ids ON ids.ref_id = head.ref_id ORDER BY ids.ref_uri""").fetchall())
 
-    def service_input_snapshot(self, refs: Sequence[str]) -> tuple[dict[str, int], pa.Table]:
-        """Read canonical service inputs without exposing backend internals."""
+    def service_input_snapshot(self, refs: Sequence[str], *, since: datetime | None = None) -> tuple[dict[str, int], pa.Table]:
+        """Read canonical service inputs without exposing backend internals.
+
+        With ``since`` omitted, returns only the newest live row of each
+        requested stream (bounded at one row per stream). With ``since`` given,
+        returns every live row at or after that event time, for services that
+        need a rolling window or the retained history.
+        """
         from acquirium.Storage.duckdb_store import REF_IDS_TABLE, STREAM_HEADS_TABLE, TIMESERIES_TABLE
         with self._store._own_conn() as conn:
             conn.register("_acq_service_snapshot_refs", pa.table({"ref_uri": list(refs)}))
@@ -239,10 +244,20 @@ class MaterializationDuckDB:
                 versions = dict(conn.execute(f"""SELECT requested.ref_uri, COALESCE(head.current_version, 0)
                     FROM _acq_service_snapshot_refs requested LEFT JOIN {REF_IDS_TABLE} ids ON ids.ref_uri = requested.ref_uri
                     LEFT JOIN {STREAM_HEADS_TABLE} head ON head.ref_id = ids.ref_id""").fetchall())
-                rows = conn.execute(f"""SELECT ids.ref_uri, value.ts, value.numeric_value, value.text_value
-                    FROM {TIMESERIES_TABLE} value JOIN {REF_IDS_TABLE} ids ON ids.ref_id = value.ref_id
-                    WHERE ids.ref_uri IN (SELECT ref_uri FROM _acq_service_snapshot_refs) AND NOT value.deleted
-                    ORDER BY ids.ref_uri, value.ts""").fetchall()
+                if since is None:
+                    rows = conn.execute(f"""SELECT ref_uri, ts, numeric_value, text_value FROM (
+                            SELECT ids.ref_uri AS ref_uri, value.ts AS ts, value.numeric_value AS numeric_value,
+                                   value.text_value AS text_value,
+                                   row_number() OVER (PARTITION BY ids.ref_uri ORDER BY value.ts DESC) AS recency
+                            FROM {TIMESERIES_TABLE} value JOIN {REF_IDS_TABLE} ids ON ids.ref_id = value.ref_id
+                            WHERE ids.ref_uri IN (SELECT ref_uri FROM _acq_service_snapshot_refs) AND NOT value.deleted
+                        ) latest WHERE recency = 1 ORDER BY ref_uri""").fetchall()
+                else:
+                    rows = conn.execute(f"""SELECT ids.ref_uri, value.ts, value.numeric_value, value.text_value
+                        FROM {TIMESERIES_TABLE} value JOIN {REF_IDS_TABLE} ids ON ids.ref_id = value.ref_id
+                        WHERE ids.ref_uri IN (SELECT ref_uri FROM _acq_service_snapshot_refs)
+                          AND NOT value.deleted AND value.ts >= ?
+                        ORDER BY ids.ref_uri, value.ts""", [self._store._to_utc_naive(since)]).fetchall()
             finally:
                 conn.unregister("_acq_service_snapshot_refs")
         return versions, pa.table({
@@ -492,6 +507,21 @@ class MaterializationDuckDB:
                 item["ranges"].append((start.replace(tzinfo=timezone.utc), end.replace(tzinfo=timezone.utc)))
         return tuple(grouped.values())
 
+    def binding_input_range(self, binding_id: str, generation: int) -> TimeRange | None:
+        """Retained live event-time span across a binding's input streams."""
+        from acquirium.Storage.duckdb_store import REF_IDS_TABLE, TIMESERIES_TABLE
+        with self._store._own_conn() as conn:
+            row = conn.execute(f"""SELECT min(value.ts), max(value.ts)
+                FROM materialization_binding_refs refs
+                JOIN {REF_IDS_TABLE} ids ON ids.ref_uri = refs.ref_uri
+                JOIN {TIMESERIES_TABLE} value ON value.ref_id = ids.ref_id AND NOT value.deleted
+                WHERE refs.binding_id = ? AND refs.generation = ? AND refs.direction = 'input'""",
+                [binding_id, generation]).fetchone()
+        if row is None or row[0] is None:
+            return None
+        start, end = row
+        return TimeRange(start.replace(tzinfo=timezone.utc), end.replace(tzinfo=timezone.utc) + timedelta(microseconds=1))
+
     def set_deployment_status(self, name: str, status: str) -> None:
         with self._store._lock, self._store._write_conn() as conn:
             if conn.execute("SELECT 1 FROM materialization_deployments WHERE name = ?", [name]).fetchone() is None:
@@ -597,27 +627,42 @@ class MaterializationDuckDB:
         return True
 
     def snapshot_partition(self, lease: WorkLease, input_refs: Sequence[str]) -> InputSnapshot:
-        """Read one Arrow input snapshot after verifying the currently held lease."""
+        """Read one Arrow input snapshot after verifying the currently held lease.
+
+        The lease check, head vector, and row read run inside a single snapshot
+        transaction, so a concurrent publication cannot commit between them and
+        leave the head vector inconsistent with the pinned rows. This matches the
+        PostgreSQL backend's transactional snapshot. The read stays on a private
+        connection and never takes the canonical write lock, so long snapshots do
+        not block ingest.
+        """
         from acquirium.Storage.duckdb_store import REF_IDS_TABLE, STREAM_HEADS_TABLE, TIMESERIES_TABLE
         with self._store._own_conn() as conn:
-            row = conn.execute("SELECT status, lease_owner, attempt FROM materialization_plan_partitions WHERE partition_id = ?", [lease.partition.partition_id]).fetchone()
-            if row != ("leased", lease.owner, lease.attempt):
-                raise ValueError("partition lease is stale")
-            if not input_refs:
-                return InputSnapshot(lease, pa.table({name: [] for name in MUTATION_SCHEMA.names}, schema=MUTATION_SCHEMA), {})
-            conn.register("_acq_snapshot_refs", pa.table({"ref_uri": list(input_refs)}))
+            conn.begin()
             try:
-                heads = dict(conn.execute(f"""SELECT r.ref_uri, h.current_version FROM {REF_IDS_TABLE} r
-                    JOIN {STREAM_HEADS_TABLE} h ON h.ref_id = r.ref_id
-                    WHERE r.ref_uri IN (SELECT ref_uri FROM _acq_snapshot_refs)""").fetchall())
-                table = conn.execute(f"""SELECT 'upsert' AS operation, r.ref_uri, t.ts,
-                    t.numeric_value, t.text_value FROM {TIMESERIES_TABLE} t
-                    JOIN {REF_IDS_TABLE} r ON r.ref_id = t.ref_id
-                    WHERE r.ref_uri IN (SELECT ref_uri FROM _acq_snapshot_refs)
-                    AND t.ts >= ? AND t.ts < ? AND NOT t.deleted ORDER BY r.ref_uri, t.ts""",
-                    [lease.partition.interval.start.replace(tzinfo=None), lease.partition.interval.end.replace(tzinfo=None)]).arrow().read_all()
-            finally:
-                conn.unregister("_acq_snapshot_refs")
+                row = conn.execute("SELECT status, lease_owner, attempt FROM materialization_plan_partitions WHERE partition_id = ?", [lease.partition.partition_id]).fetchone()
+                if row != ("leased", lease.owner, lease.attempt):
+                    raise ValueError("partition lease is stale")
+                if not input_refs:
+                    conn.commit()
+                    return InputSnapshot(lease, pa.table({name: [] for name in MUTATION_SCHEMA.names}, schema=MUTATION_SCHEMA), {})
+                conn.register("_acq_snapshot_refs", pa.table({"ref_uri": list(input_refs)}))
+                try:
+                    heads = dict(conn.execute(f"""SELECT r.ref_uri, h.current_version FROM {REF_IDS_TABLE} r
+                        JOIN {STREAM_HEADS_TABLE} h ON h.ref_id = r.ref_id
+                        WHERE r.ref_uri IN (SELECT ref_uri FROM _acq_snapshot_refs)""").fetchall())
+                    table = conn.execute(f"""SELECT 'upsert' AS operation, r.ref_uri, t.ts,
+                        t.numeric_value, t.text_value FROM {TIMESERIES_TABLE} t
+                        JOIN {REF_IDS_TABLE} r ON r.ref_id = t.ref_id
+                        WHERE r.ref_uri IN (SELECT ref_uri FROM _acq_snapshot_refs)
+                        AND t.ts >= ? AND t.ts < ? AND NOT t.deleted ORDER BY r.ref_uri, t.ts""",
+                        [lease.partition.interval.start.replace(tzinfo=None), lease.partition.interval.end.replace(tzinfo=None)]).arrow().read_all()
+                finally:
+                    conn.unregister("_acq_snapshot_refs")
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
         table = table.cast(MUTATION_SCHEMA)
         with self._store._lock, self._store._write_conn() as conn:
             conn.execute("""INSERT INTO materialization_attempt_snapshots VALUES (?, ?, ?, ?, ?)
@@ -632,6 +677,16 @@ class MaterializationDuckDB:
                 JOIN materialization_binding_refs refs ON refs.binding_id = plan.binding_id AND refs.generation = plan.generation
                 WHERE part.partition_id = ? ORDER BY refs.direction, refs.ref_uri""", [partition_id]).fetchall()
         return (tuple(ref for direction, ref in rows if direction == "input"), tuple(ref for direction, ref in rows if direction == "output"))
+
+    def partition_binding_id(self, partition_id: str) -> str:
+        """Return the durable binding identity that owns a leased partition."""
+        with self._store._own_conn() as conn:
+            row = conn.execute("""SELECT plan.binding_id FROM materialization_plan_partitions part
+                JOIN materialization_plans plan ON plan.plan_id = part.plan_id
+                WHERE part.partition_id = ?""", [partition_id]).fetchone()
+        if row is None:
+            raise KeyError(partition_id)
+        return row[0]
 
     def partition_definition(self, partition_id: str) -> dict[str, object]:
         """Resolve the immutable definition bundle owned by a leased partition."""
@@ -668,10 +723,14 @@ class MaterializationDuckDB:
         return WorkLease(PlanPartition(partition_id, plan_id, TimeRange(start.replace(tzinfo=timezone.utc), end.replace(tzinfo=timezone.utc)), "leased"), owner, attempt, expires.replace(tzinfo=timezone.utc))
 
     def fail_partition(self, lease: WorkLease, error: dict) -> None:
+        # Failed attempts retry until the bound; then the partition is
+        # dead-lettered so a deterministically failing transform is not
+        # re-leased forever.
+        status = "failed" if lease.attempt >= MAX_PARTITION_ATTEMPTS else "pending"
         with self._store._lock, self._store._write_conn() as conn:
-            changed = conn.execute("""UPDATE materialization_plan_partitions SET status = 'pending', lease_owner = NULL,
+            conn.execute("""UPDATE materialization_plan_partitions SET status = ?, lease_owner = NULL,
                 lease_expires_at = NULL, error_json = ? WHERE partition_id = ? AND status = 'leased' AND lease_owner = ? AND attempt = ?""",
-                [json.dumps(error), lease.partition.partition_id, lease.owner, lease.attempt])
+                [status, json.dumps(error), lease.partition.partition_id, lease.owner, lease.attempt])
 
     def commit_replacement(self, snapshot: InputSnapshot, *, input_refs: Sequence[str],
                            output_refs: Sequence[str], replacement: pa.Table) -> str | None:
@@ -715,6 +774,12 @@ class MaterializationDuckDB:
             for ref_uri, version in snapshot.input_versions.items():
                 newer = conn.execute(f"""SELECT start_ts, end_ts FROM {STREAM_CHANGE_RANGES_TABLE}
                     WHERE ref_uri = ? AND stream_version > ?""", [ref_uri, version]).fetchall()
+                if not newer:
+                    continue
+                if impact.kind == "full_history":
+                    # Every retained output depends on every input; any newer
+                    # change invalidates the attempt regardless of its range.
+                    raise StaleAttemptError("a newer input change exists")
                 for start, end in newer:
                     dirty = impact.affected(TimeRange(start.replace(tzinfo=timezone.utc), end.replace(tzinfo=timezone.utc)))
                     if dirty.intersects(interval):
@@ -919,7 +984,20 @@ class MaterializationDuckDB:
         return {row[0] for row in rows}
 
     def start_experiment(self, request: ExperimentRunRequest) -> ExperimentRun:
-        """Persist an immutable experiment snapshot before any user code runs."""
+        """Persist an immutable experiment snapshot before any user code runs.
+
+        Reusing an existing run_id is an idempotent replay only when every
+        frozen input matches; otherwise the request is rejected so a run id
+        can never be silently repurposed for different work.
+        """
+        try:
+            existing = self.experiment_run(request.run_id)
+        except KeyError:
+            existing = None
+        if existing is not None:
+            if frozen_inputs_match(existing, request):
+                return existing
+            raise ValueError(f"experiment run_id {request.run_id!r} already exists with different frozen inputs")
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         with self._store._lock, self._store._write_conn() as conn:
             conn.execute("""INSERT INTO experiment_runs
@@ -934,17 +1012,24 @@ class MaterializationDuckDB:
                 json.dumps(list(request.binding_snapshot), sort_keys=True), request.state_revision, now])
         return self.experiment_run(request.run_id)
 
-    def experiment_run(self, run_id: str) -> ExperimentRun:
-        with self._store._own_conn() as conn:
-            row = conn.execute("SELECT run_id, definition_id, graph_revision, start_ts, end_ts, status, params_json, "
-                "params_schema_json, metadata_json, input_vector_json, binding_snapshot_json, state_revision, "
-                "started_at, finished_at, error_json, keep_reason, collected_at FROM experiment_runs WHERE run_id = ?", [run_id]).fetchone()
-        if row is None:
-            raise KeyError(run_id)
+    @staticmethod
+    def _row_to_experiment_run(row) -> ExperimentRun:
+        """Decode one full experiment_runs row (shared by single and list reads)."""
         return ExperimentRun(row[0], row[1], row[2], TimeRange(row[3].replace(tzinfo=timezone.utc), row[4].replace(tzinfo=timezone.utc)),
             row[5], json.loads(row[6]), json.loads(row[7]), json.loads(row[8]), json.loads(row[9]), json.loads(row[10]), row[11],
             row[12].replace(tzinfo=timezone.utc), row[13].replace(tzinfo=timezone.utc) if row[13] else None,
             json.loads(row[14]) if row[14] else None, row[15], row[16].replace(tzinfo=timezone.utc) if row[16] else None)
+
+    _EXPERIMENT_RUN_COLUMNS = ("run_id, definition_id, graph_revision, start_ts, end_ts, status, params_json, "
+        "params_schema_json, metadata_json, input_vector_json, binding_snapshot_json, state_revision, "
+        "started_at, finished_at, error_json, keep_reason, collected_at")
+
+    def experiment_run(self, run_id: str) -> ExperimentRun:
+        with self._store._own_conn() as conn:
+            row = conn.execute(f"SELECT {self._EXPERIMENT_RUN_COLUMNS} FROM experiment_runs WHERE run_id = ?", [run_id]).fetchone()
+        if row is None:
+            raise KeyError(run_id)
+        return self._row_to_experiment_run(row)
 
     def finish_experiment(self, run_id: str, *, status: str, error: dict | None = None) -> ExperimentRun:
         if status not in {"succeeded", "failed", "cancelled"}:
@@ -998,9 +1083,11 @@ class MaterializationDuckDB:
         return self.experiment_run(run_id)
 
     def list_experiments(self, *, status: str | None = None, metadata: dict[str, object] | None = None) -> tuple[ExperimentRun, ...]:
+        # One query returns every column so listing does not issue a read per run.
         with self._store._own_conn() as conn:
-            rows = conn.execute("SELECT run_id FROM experiment_runs WHERE (? IS NULL OR status = ?) ORDER BY started_at DESC", [status, status]).fetchall()
-        runs = tuple(self.experiment_run(row[0]) for row in rows)
+            rows = conn.execute(f"SELECT {self._EXPERIMENT_RUN_COLUMNS} FROM experiment_runs "
+                "WHERE (? IS NULL OR status = ?) ORDER BY started_at DESC", [status, status]).fetchall()
+        runs = tuple(self._row_to_experiment_run(row) for row in rows)
         return tuple(run for run in runs if metadata is None or all(run.metadata.get(key) == value for key, value in metadata.items()))
 
     def rerun_experiment(self, run_id: str, new_run_id: str) -> ExperimentRun:
@@ -1110,9 +1197,13 @@ class MaterializationDuckDB:
         return ServiceRecord(row[0], row[1], row[2], row[3], row[4].replace(tzinfo=timezone.utc))
 
     def services(self, *, status: str | None = None):
+        """Return every service record in one query (no per-row round trips)."""
+        from acquirium.Materialization.services import ServiceRecord
         with self._store._own_conn() as conn:
-            rows = conn.execute("SELECT name FROM materialization_services WHERE (? IS NULL OR status = ?) ORDER BY name", [status, status]).fetchall()
-        return tuple(self.service(row[0]) for row in rows)
+            rows = conn.execute("""SELECT name, definition_id, status, health, updated_at
+                FROM materialization_services WHERE (? IS NULL OR status = ?) ORDER BY name""", [status, status]).fetchall()
+        return tuple(ServiceRecord(name, definition_id, service_status, health, updated_at.replace(tzinfo=timezone.utc))
+                     for name, definition_id, service_status, health, updated_at in rows)
 
     def services_needing_hint(self, data_versions: dict[str, int], graph_revision: int | None):
         with self._store._own_conn() as conn:

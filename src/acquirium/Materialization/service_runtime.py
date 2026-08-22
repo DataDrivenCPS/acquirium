@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
@@ -9,6 +10,8 @@ from typing import Any, Callable, Mapping
 from acquirium.Materialization.effects import EffectIntent
 from acquirium.Materialization.services import ChangeHint
 from acquirium.Materialization.worker import load_entrypoint
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -22,11 +25,16 @@ class ServiceContext:
     service_name: str
     change: ChangeHint
     _storage: Any
-    _snapshot: Callable[[tuple[str, ...]], object]
+    _snapshot: Callable[..., object]
 
-    def snapshot(self, refs: tuple[str, ...] | list[str]) -> object:
-        """Read current authoritative values through the service snapshot API."""
-        return self._snapshot(tuple(refs))
+    def snapshot(self, refs: tuple[str, ...] | list[str], *, since: "datetime | None" = None) -> object:
+        """Read authoritative rows for each stream through the snapshot API.
+
+        By default returns only the latest row of each stream. Pass ``since``
+        to read every live row at or after that event time instead — a rolling
+        window or the full retained history.
+        """
+        return self._snapshot(tuple(refs), since=since)
 
     def emit_effect(self, *, effect_id: str, kind: str, destination: str,
                     payload: Mapping[str, object], idempotency_key: str) -> str:
@@ -73,7 +81,13 @@ class ServiceSupervisor:
             if asyncio.iscoroutine(result):
                 asyncio.run(result)
         except Exception as error:
-            self._storage.set_service_status(name, "running", f"failed: {type(error).__name__}")
+            # A crashing on_change is a bug in the service, not a transient
+            # delivery, so stop it loudly instead of re-running it every tick.
+            # The hint stays un-acked, so an explicit restart redelivers it;
+            # durable external side effects belong in effect intents, which
+            # already back off and retry.
+            log.exception("service %s on_change failed; marking it failed", name)
+            self._storage.set_service_status(name, "failed", f"on_change raised {type(error).__name__}")
             return False
         self._storage.acknowledge_service_hint(name, hint.token)
         self._storage.set_service_status(name, "running", "healthy")

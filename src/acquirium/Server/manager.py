@@ -215,6 +215,15 @@ class Manager:
         from acquirium.Server.effect_worker import deliver_effect
         self.service_supervisor = ServiceSupervisor(materialization, self.service_snapshot)
         self.effect_dispatcher = EffectDispatcher(materialization, deliver_effect)
+        # The materialization safety scan is a backstop for lost wake-ups, not
+        # the primary trigger, so it runs on a coarse interval instead of on
+        # every scheduler tick.
+        self._discover_interval_s = 1.0
+        self._next_discover_at = 0.0
+        # Published graph revision seen by the last stream-ref resync. It gates
+        # the expensive rebuild in _registered_value_kind so repeated writes to
+        # an unregistered ref do not each trigger a full inferred-graph rebuild.
+        self._refs_synced_revision = None
         self.qudt_converter = converter
         self.backend = _backend
 
@@ -682,11 +691,16 @@ class Manager:
                 "status": service.status, "health": service.health}
 
     def notify_service_changes(self, versions: dict[str, int], *, graph_revision: int | None = None) -> None:
-        """Persist a latest-state wake-up for every service, coalescing bursts."""
+        """Persist a latest-state wake-up for every running service, coalescing bursts.
+
+        Hints are an optimization: the startup safety scan recreates any that
+        are missed, so a service deleted mid-loop is skipped rather than
+        allowed to fail the publish that triggered the notification.
+        """
         from acquirium.Materialization.services import ChangeHint
         now = datetime.now(timezone.utc)
-        for service in self.materialization.services():
-            self.materialization.coalesce_service_hint(ChangeHint(
+        for service in self.materialization.services(status="running"):
+            self._coalesce_hint_ignore_removed(ChangeHint(
                 service.name, str(uuid.uuid4()), dict(versions), graph_revision, now,
             ))
 
@@ -698,7 +712,14 @@ class Manager:
         versions = self.materialization.all_stream_versions()
         now = datetime.now(timezone.utc)
         for name in self.materialization.services_needing_hint(versions, graph_revision):
-            self.materialization.coalesce_service_hint(ChangeHint(name, str(uuid.uuid4()), versions, graph_revision, now))
+            self._coalesce_hint_ignore_removed(ChangeHint(name, str(uuid.uuid4()), versions, graph_revision, now))
+
+    def _coalesce_hint_ignore_removed(self, hint) -> None:
+        """Write one coalesced hint; a concurrently removed service is not an error."""
+        try:
+            self.materialization.coalesce_service_hint(hint)
+        except KeyError:
+            pass
 
     def start_service(self, name: str):
         service = self.service_supervisor.start(name)
@@ -711,15 +732,19 @@ class Manager:
     def run_effect_once(self, owner: str = "manager") -> bool:
         return self.effect_dispatcher.deliver_once(owner)
 
-    def service_snapshot(self, refs: tuple[str, ...]):
-        """Return a read whose before/after head vectors prove one current snapshot."""
+    def service_snapshot(self, refs: tuple[str, ...], *, since: "datetime | None" = None):
+        """Return authoritative rows per stream, proven consistent by before/after head vectors.
+
+        Reads the latest row per stream by default, or every live row at or
+        after ``since`` when a window/history is requested.
+        """
         from acquirium.Materialization.services import ServiceSnapshot, snapshot_token
         for _ in range(3):
-            before, inputs = self.materialization.service_input_snapshot(refs)
+            before, inputs = self.materialization.service_input_snapshot(refs, since=since)
             after = self.materialization.stream_versions(refs)
             if before == after:
                 graph = int(self.graph_store.graph_status()["published_version"])
-                return ServiceSnapshot(snapshot_token(after, graph if graph >= 0 else None), after,
+                return ServiceSnapshot(snapshot_token(after, graph if graph >= 0 else None, since=since), after,
                                        graph if graph >= 0 else None, inputs)
         raise RuntimeError("canonical inputs changed continuously while taking service snapshot")
 
@@ -729,9 +754,17 @@ class Manager:
         ran_work = self.materialization_scheduler.run_next_registered(
             owner, executor=self.materialization_executor
         )
-        self.materialization_scheduler.discover_all()
+        self._maybe_discover()
         activated = self.materialization.activate_ready_bindings()
         return ran_work or bool(invalidation_plans) or bool(activated)
+
+    def _maybe_discover(self) -> None:
+        """Run the full binding safety scan at most once per interval."""
+        now = perf_counter()
+        if now < self._next_discover_at:
+            return
+        self._next_discover_at = now + self._discover_interval_s
+        self.materialization_scheduler.discover_all()
 
     def collect_materialization_artifacts(self, *, older_than_seconds: float = 86400) -> int:
         """Collect aged local blobs that no durable state revision references."""
@@ -829,14 +862,13 @@ class Manager:
     ) -> PublicationReceipt:
         """Atomically publish canonical mutations with stable retry identity.
 
-        Every write to canonical timeseries storage -- driver ingest, app
-        output commits, explicit deletes -- goes through this one path so
-        stream versions and changed-key manifests stay authoritative (see
-        continuous_batch.md's "Canonical timeseries as the only value
-        authority"). Assigns a fresh uuid4 ``publication_id`` when the
-        caller doesn't supply a stable one; a caller reusing the same id
-        across a retried request gets the idempotent-replay path in
-        ``ContinuousStore.publish`` for free.
+        Every write to canonical timeseries storage -- driver ingest,
+        materialization output commits, explicit deletes -- goes through this
+        one path so stream versions and change-range manifests stay
+        authoritative. Assigns a fresh uuid4 ``publication_id`` when the caller
+        doesn't supply a stable one; a caller reusing the same id across a
+        retried request gets the idempotent-replay path in
+        ``PublicationStore.publish`` for free.
         """
         pub_id = publication_id or str(uuid.uuid4())
         receipt = self.publication.publish(PublicationRequest(pub_id, mutations))
@@ -892,13 +924,12 @@ class Manager:
             # Atomic replace: tombstone every existing timestamp not present
             # in the new rows, in the *same* publication as the upserts, so
             # the replacement is one writer-defined atomic mutation set
-            # rather than a separate delete-then-insert pair.
+            # rather than a separate delete-then-insert pair. Only the keys
+            # are read back (not values). This assumes a single writer per
+            # stream: a concurrent write landing between this read and the
+            # publish would not be tombstoned.
             new_ts = set(upserts["ts"].to_list())
-            existing_ts = [
-                ts
-                for batch in self.timescale.timeseries(ref_uri)
-                for ts in batch.column("ts").to_pylist()
-            ]
+            existing_ts = self.timescale.timestamps(ref_uri)
             stale_ts = [ts for ts in existing_ts if ts not in new_ts]
             if stale_ts:
                 tombstones = pl.DataFrame(
@@ -1012,17 +1043,13 @@ class Manager:
         publication_id: str | None = None,
     ) -> PublicationReceipt:
         """Publish tombstones for explicit timestamps, or every timestamp in
-        ``[start, end]`` (resolved by reading current live rows -- deletion
+        ``[start, end]`` (resolved by reading current live keys -- deletion
         is itself an explicit mutation set, not a range predicate stored in
-        the manifest)."""
+        the manifest). Only timestamps are read back, not values."""
         import polars as pl
 
         if timestamps is None:
-            timestamps = [
-                ts
-                for batch in self.timescale.timeseries(ref_uri, start=start, end=end)
-                for ts in batch.column("ts").to_pylist()
-            ]
+            timestamps = self.timescale.timestamps(ref_uri, start=start, end=end)
         if not timestamps:
             return PublicationReceipt(
                 publication_id=publication_id or str(uuid.uuid4()),
@@ -1044,9 +1071,15 @@ class Manager:
         value_kind = self.timescale.stream_value_kind(ref_uri)
         # Graph writes and Arrow ingestion may be issued back-to-back by a
         # client. Ensure the derived stream registry has observed the graph
-        # write before rejecting the first data batch.
+        # write before rejecting the first data batch. The resync rebuilds the
+        # inferred graph, so only run it when the graph actually advanced since
+        # the last sync; otherwise repeated writes to an unregistered ref would
+        # each pay the full rebuild cost.
         if value_kind is None:
-            self._sync_stream_refs_from_graph()
+            published = int(self.graph_store.graph_status()["published_version"])
+            if published != self._refs_synced_revision:
+                self._sync_stream_refs_from_graph()
+                self._refs_synced_revision = published
             value_kind = self.timescale.stream_value_kind(ref_uri)
         if value_kind is None:
             raise ValueError(f"stream {ref_uri} is not registered")
@@ -1330,19 +1363,27 @@ class Manager:
         }
 
     def close(self) -> None:
+        """Release every owned resource; one component failing must not leak the rest.
+
+        Each step is isolated so a component that raises during shutdown (for
+        example a Ray executor killed after its runtime is gone) cannot skip
+        the stores that still need closing.
+        """
         logger.debug("Manager.close: shutting down")
-        executor = getattr(self, "materialization_executor", None)
-        if executor is not None:
-            executor.close()
-        services = getattr(self, "service_supervisor", None)
-        if services is not None:
-            services.close()
-        close_publication = getattr(self.publication, "close", None)
-        if callable(close_publication):
-            close_publication()
-        close_materialization = getattr(self.materialization, "close", None)
-        if callable(close_materialization):
-            close_materialization()
-        self.timescale.close()
-        self.graph_store.close()
+        steps = [
+            ("materialization executor", getattr(self, "materialization_executor", None)),
+            ("service supervisor", getattr(self, "service_supervisor", None)),
+            ("publication store", self.publication),
+            ("materialization store", self.materialization),
+            ("timeseries store", self.timescale),
+            ("graph store", self.graph_store),
+        ]
+        for label, component in steps:
+            close = getattr(component, "close", None)
+            if not callable(close):
+                continue
+            try:
+                close()
+            except Exception:
+                logger.exception("Manager.close: failed to close %s", label)
         logger.debug("Manager.close: done")

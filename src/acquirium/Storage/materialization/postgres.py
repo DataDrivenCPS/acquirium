@@ -12,12 +12,12 @@ from acquirium.Materialization.bindings import BindingSpec, validate_binding_top
 from acquirium.Materialization.definitions import MaterializationDefinition, definition_spec
 from acquirium.Materialization.impact import TimeRange
 from acquirium.Storage.materialization.ids import materialization_id, partition_ranges
-from acquirium.Storage.materialization.types import PlanPartition, StreamChangeRange, WorkLease
+from acquirium.Storage.materialization.types import MAX_PARTITION_ATTEMPTS, PlanPartition, StreamChangeRange, WorkLease
 from acquirium.Storage.materialization.types import InputSnapshot
 from acquirium.Storage.publication.types import MUTATION_SCHEMA
 from acquirium.Storage.artifacts import ArtifactRecord
 from acquirium.Materialization.state import ArtifactCandidate, ArtifactLease, ArtifactRequest, StateRevision
-from acquirium.Materialization.experiments import ExperimentArtifact, ExperimentRun, ExperimentRunRequest, run_output_ref
+from acquirium.Materialization.experiments import ExperimentArtifact, ExperimentRun, ExperimentRunRequest, frozen_inputs_match, run_output_ref
 from acquirium.Materialization.effects import EffectIntent
 from acquirium.Materialization.services import ChangeHint
 
@@ -200,13 +200,26 @@ class MaterializationPostgres:
         with self._pool.connection() as conn:
             return dict(conn.execute("SELECT ref_uri, current_version FROM stream_heads ORDER BY ref_uri").fetchall())
 
-    def service_input_snapshot(self, refs: Sequence[str]) -> tuple[dict[str, int], pa.Table]:
+    def service_input_snapshot(self, refs: Sequence[str], *, since: datetime | None = None) -> tuple[dict[str, int], pa.Table]:
+        """Read canonical service inputs.
+
+        With ``since`` omitted, returns only the newest live row of each
+        requested stream (bounded at one row per stream). With ``since`` given,
+        returns every live row at or after that event time, for services that
+        need a rolling window or the retained history.
+        """
         with self._pool.connection() as conn:
             versions = dict(conn.execute("""SELECT requested.ref_uri, COALESCE(head.current_version, 0)
                 FROM unnest(%s::text[]) AS requested(ref_uri) LEFT JOIN stream_heads head
                 ON head.ref_uri = requested.ref_uri""", [list(refs)]).fetchall())
-            rows = conn.execute("""SELECT ref_uri, ts, numeric_value, text_value FROM timeseries
-                WHERE ref_uri = ANY(%s::text[]) AND NOT deleted ORDER BY ref_uri, ts""", [list(refs)]).fetchall()
+            if since is None:
+                rows = conn.execute("""SELECT DISTINCT ON (ref_uri) ref_uri, ts, numeric_value, text_value
+                    FROM timeseries WHERE ref_uri = ANY(%s::text[]) AND NOT deleted
+                    ORDER BY ref_uri, ts DESC""", [list(refs)]).fetchall()
+            else:
+                rows = conn.execute("""SELECT ref_uri, ts, numeric_value, text_value FROM timeseries
+                    WHERE ref_uri = ANY(%s::text[]) AND NOT deleted AND ts >= %s
+                    ORDER BY ref_uri, ts""", [list(refs), since]).fetchall()
         return versions, pa.table({
             "ref_uri": [row[0] for row in rows],
             "ts": pa.array([row[1] for row in rows], type=pa.timestamp("us", tz="UTC")),
@@ -423,6 +436,19 @@ class MaterializationPostgres:
                 item["ranges"].append((start, end))
         return tuple(grouped.values())
 
+    def binding_input_range(self, binding_id: str, generation: int) -> TimeRange | None:
+        """Retained live event-time span across a binding's input streams."""
+        with self._pool.connection() as conn:
+            row = conn.execute("""SELECT min(value.ts), max(value.ts)
+                FROM materialization_binding_refs refs
+                JOIN timeseries value ON value.ref_uri = refs.ref_uri AND NOT value.deleted
+                WHERE refs.binding_id = %s AND refs.generation = %s AND refs.direction = 'input'""",
+                [binding_id, generation]).fetchone()
+        if row is None or row[0] is None:
+            return None
+        start, end = row
+        return TimeRange(start, end + timedelta(microseconds=1))
+
     def set_deployment_status(self, name: str, status: str) -> None:
         with self._pool.connection() as conn, conn.transaction():
             changed = conn.execute("UPDATE materialization_deployments SET status = %s, updated_at = %s WHERE name = %s",
@@ -546,6 +572,16 @@ class MaterializationPostgres:
                 WHERE part.partition_id = %s ORDER BY refs.direction, refs.ref_uri""", [partition_id]).fetchall()
         return (tuple(ref for direction, ref in rows if direction == "input"), tuple(ref for direction, ref in rows if direction == "output"))
 
+    def partition_binding_id(self, partition_id: str) -> str:
+        """Return the durable binding identity that owns a leased partition."""
+        with self._pool.connection() as conn:
+            row = conn.execute("""SELECT plan.binding_id FROM materialization_plan_partitions part
+                JOIN materialization_plans plan ON plan.plan_id = part.plan_id
+                WHERE part.partition_id = %s""", [partition_id]).fetchone()
+        if row is None:
+            raise KeyError(partition_id)
+        return row[0]
+
     def partition_definition(self, partition_id: str) -> dict[str, object]:
         """Resolve the immutable definition bundle owned by a leased partition."""
         with self._pool.connection() as conn:
@@ -584,10 +620,14 @@ class MaterializationPostgres:
         return WorkLease(PlanPartition(partition_id, plan_id, TimeRange(start, end), "leased"), owner, attempt, expires)
 
     def fail_partition(self, lease: WorkLease, error: dict) -> None:
+        # Failed attempts retry until the bound; then the partition is
+        # dead-lettered so a deterministically failing transform is not
+        # re-leased forever.
+        status = "failed" if lease.attempt >= MAX_PARTITION_ATTEMPTS else "pending"
         with self._pool.connection() as conn, conn.transaction():
-            conn.execute("""UPDATE materialization_plan_partitions SET status = 'pending', lease_owner = NULL,
+            conn.execute("""UPDATE materialization_plan_partitions SET status = %s, lease_owner = NULL,
                 lease_expires_at = NULL, error_json = %s WHERE partition_id = %s AND status = 'leased' AND lease_owner = %s AND attempt = %s""",
-                [json.dumps(error), lease.partition.partition_id, lease.owner, lease.attempt])
+                [status, json.dumps(error, sort_keys=True), lease.partition.partition_id, lease.owner, lease.attempt])
 
     def commit_replacement(self, snapshot: InputSnapshot, *, input_refs: Sequence[str], output_refs: Sequence[str], replacement: pa.Table) -> str | None:
         from acquirium.Storage.publication.postgres import PublicationPostgres
@@ -622,7 +662,14 @@ class MaterializationPostgres:
             # Keep policy expansion in Python so DuckDB/PostgreSQL have identical semantics.
             impact = ImpactPolicy.from_json((json.loads(reason) if isinstance(reason, str) else reason).get("impact", {"kind": "pointwise"}))
             for ref, version in snapshot.input_versions.items():
-                for start, end in cur.execute("SELECT start_ts, end_ts FROM stream_change_ranges WHERE ref_uri = %s AND stream_version > %s", [ref, version]).fetchall():
+                newer = cur.execute("SELECT start_ts, end_ts FROM stream_change_ranges WHERE ref_uri = %s AND stream_version > %s", [ref, version]).fetchall()
+                if not newer:
+                    continue
+                if impact.kind == "full_history":
+                    # Every retained output depends on every input; any newer
+                    # change invalidates the attempt regardless of its range.
+                    raise StaleAttemptError("a newer input change exists")
+                for start, end in newer:
                     if impact.affected(TimeRange(start, end)).intersects(interval):
                         raise StaleAttemptError("a newer intersecting input change exists")
             if binding_status == "staging":
@@ -846,6 +893,20 @@ class MaterializationPostgres:
         return {row[0] for row in rows}
 
     def start_experiment(self, request: ExperimentRunRequest) -> ExperimentRun:
+        """Persist an immutable experiment snapshot before any user code runs.
+
+        Reusing an existing run_id is an idempotent replay only when every
+        frozen input matches; otherwise the request is rejected so a run id
+        can never be silently repurposed for different work.
+        """
+        try:
+            existing = self.experiment_run(request.run_id)
+        except KeyError:
+            existing = None
+        if existing is not None:
+            if frozen_inputs_match(existing, request):
+                return existing
+            raise ValueError(f"experiment run_id {request.run_id!r} already exists with different frozen inputs")
         now = datetime.now(timezone.utc)
         with self._pool.connection() as conn, conn.transaction():
             conn.execute("""INSERT INTO experiment_runs
@@ -860,14 +921,23 @@ class MaterializationPostgres:
                 request.state_revision, now])
         return self.experiment_run(request.run_id)
 
-    def experiment_run(self, run_id: str) -> ExperimentRun:
-        with self._pool.connection() as conn:
-            row = conn.execute("SELECT run_id, definition_id, graph_revision, start_ts, end_ts, status, params_json, params_schema_json, metadata_json, input_vector_json, binding_snapshot_json, state_revision, started_at, finished_at, error_json, keep_reason, collected_at FROM experiment_runs WHERE run_id = %s", [run_id]).fetchone()
-        if row is None: raise KeyError(run_id)
+    @staticmethod
+    def _row_to_experiment_run(row) -> ExperimentRun:
+        """Decode one full experiment_runs row (shared by single and list reads)."""
         parse = lambda value: json.loads(value) if isinstance(value, str) else value
         return ExperimentRun(row[0], row[1], row[2], TimeRange(row[3], row[4]), row[5], parse(row[6]), parse(row[7]),
             parse(row[8]), parse(row[9]), parse(row[10]), row[11], row[12], row[13], parse(row[14]) if row[14] else None,
             row[15], row[16])
+
+    _EXPERIMENT_RUN_COLUMNS = ("run_id, definition_id, graph_revision, start_ts, end_ts, status, params_json, "
+        "params_schema_json, metadata_json, input_vector_json, binding_snapshot_json, state_revision, "
+        "started_at, finished_at, error_json, keep_reason, collected_at")
+
+    def experiment_run(self, run_id: str) -> ExperimentRun:
+        with self._pool.connection() as conn:
+            row = conn.execute(f"SELECT {self._EXPERIMENT_RUN_COLUMNS} FROM experiment_runs WHERE run_id = %s", [run_id]).fetchone()
+        if row is None: raise KeyError(run_id)
+        return self._row_to_experiment_run(row)
 
     def finish_experiment(self, run_id: str, *, status: str, error: dict | None = None) -> ExperimentRun:
         if status not in {"succeeded", "failed", "cancelled"}: raise ValueError("invalid experiment completion status")
@@ -914,9 +984,11 @@ class MaterializationPostgres:
         return self.experiment_run(run_id)
 
     def list_experiments(self, *, status: str | None = None, metadata: dict[str, object] | None = None) -> tuple[ExperimentRun, ...]:
+        # One query returns every column so listing does not issue a read per run.
         with self._pool.connection() as conn:
-            rows = conn.execute("SELECT run_id FROM experiment_runs WHERE (%s::text IS NULL OR status = %s) ORDER BY started_at DESC", [status, status]).fetchall()
-        runs = tuple(self.experiment_run(row[0]) for row in rows)
+            rows = conn.execute(f"SELECT {self._EXPERIMENT_RUN_COLUMNS} FROM experiment_runs "
+                "WHERE (%s::text IS NULL OR status = %s) ORDER BY started_at DESC", [status, status]).fetchall()
+        runs = tuple(self._row_to_experiment_run(row) for row in rows)
         return tuple(run for run in runs if metadata is None or all(run.metadata.get(key) == value for key, value in metadata.items()))
 
     def rerun_experiment(self, run_id: str, new_run_id: str) -> ExperimentRun:
@@ -1014,9 +1086,13 @@ class MaterializationPostgres:
         return ServiceRecord(*row)
 
     def services(self, *, status: str | None = None):
+        """Return every service record in one query (no per-row round trips)."""
+        from acquirium.Materialization.services import ServiceRecord
         with self._pool.connection() as conn:
-            rows = conn.execute("SELECT name FROM materialization_services WHERE (%s::text IS NULL OR status = %s) ORDER BY name", [status, status]).fetchall()
-        return tuple(self.service(row[0]) for row in rows)
+            rows = conn.execute("""SELECT name, definition_id, status, health, updated_at
+                FROM materialization_services WHERE (%s::text IS NULL OR status = %s) ORDER BY name""", [status, status]).fetchall()
+        return tuple(ServiceRecord(name, definition_id, service_status, health, updated_at)
+                     for name, definition_id, service_status, health, updated_at in rows)
 
     def services_needing_hint(self, data_versions: dict[str, int], graph_revision: int | None):
         with self._pool.connection() as conn:

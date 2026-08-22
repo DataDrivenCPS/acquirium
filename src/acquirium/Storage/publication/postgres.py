@@ -27,17 +27,20 @@ class PublicationPostgres:
 
     def _apply_publication(self, conn, publication_id: str, mutations) -> PublicationReceipt:
         payload_hash = ids.payload_hash(mutations)
-        normalized = ids.normalize_mutations(mutations)
-        if not normalized.num_rows:
-            raise ValueError("a publication requires at least one mutation")
-        frame = pl.from_arrow(normalized)
-        refs = sorted(frame["ref_uri"].unique().to_list())
+        # Dedup runs before the empty-mutation guard so that replaying an
+        # already-committed publication id behaves identically to DuckDB:
+        # the original receipt is returned instead of raising.
         existing = conn.execute(f"SELECT payload_hash, row_count, versions_json FROM {STREAM_PUBLICATIONS_TABLE} WHERE publication_id = %s", [publication_id]).fetchone()
         if existing is not None:
             if existing[0] != payload_hash:
                 raise PublicationConflict(publication_id)
             versions = existing[2] if isinstance(existing[2], dict) else json.loads(existing[2])
             return PublicationReceipt(publication_id, payload_hash, existing[1], versions, True)
+        normalized = ids.normalize_mutations(mutations)
+        if not normalized.num_rows:
+            raise ValueError("a publication requires at least one mutation")
+        frame = pl.from_arrow(normalized)
+        refs = sorted(frame["ref_uri"].unique().to_list())
         conn.execute(f"INSERT INTO {STREAM_HEADS_TABLE} (ref_uri, current_version, retained_from_version) SELECT unnest(%s::text[]), 0, 0 ON CONFLICT (ref_uri) DO NOTHING", [refs])
         current = dict(conn.execute(f"SELECT ref_uri, current_version FROM {STREAM_HEADS_TABLE} WHERE ref_uri = ANY(%s::text[]) ORDER BY ref_uri FOR UPDATE", [refs]).fetchall())
         versions = {ref: current[ref] + 1 for ref in refs}

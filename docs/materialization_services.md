@@ -33,8 +33,11 @@ client.start_service("room_dashboard")
 
 `ChangeHint` is deliberately coalesced and at-least-once: it says that data or
 graph state may have advanced, not that an individual event must be replayed.
-`context.snapshot()` returns the current canonical rows with the version vector
-and opaque snapshot token that it observed. A periodic safety scan compares
+`context.snapshot()` returns the latest canonical row of each requested stream,
+with the version vector and opaque snapshot token that it observed. Pass
+`since=<datetime>` to read every live row at or after that event time instead —
+a rolling window or the full retained history — when a service needs more than
+the current value. A periodic safety scan compares
 acknowledged vectors with stream heads, so a missed in-memory wake-up is
 recovered without polling database internals.
 
