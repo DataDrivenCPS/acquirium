@@ -15,13 +15,17 @@ from rdflib import Graph, Namespace, URIRef
 
 from acquirium.internals.qudt_units import QUDTUnitConverter, UnitNotFound
 from acquirium.Server.config import load_ontology_config
+from acquirium.Storage.graph_store import load_unit_extensions, merge_unit_vocabulary
 from acquirium.TextMatch.qudt_store import QUDTStore
 
 QUDT = Namespace("http://qudt.org/schema/qudt/")
 UNIT = Namespace("http://qudt.org/vocab/unit/")
 AQUNIT = Namespace("urn:acquirium:unit#")
 
-SVCW_UNITS = Path(__file__).resolve().parents[2] / "svcw_scripts" / "units.ttl"
+#: A fixture extension, not a copy of any deployment's file — the mechanism
+#: should be testable without one. Loaded from disk so the tests exercise the
+#: same path ``[ontologies] unit_extensions`` takes.
+EXTENSION_TTL = Path(__file__).resolve().parents[1] / "test_unit_extension.ttl"
 
 
 @pytest.fixture(scope="module")
@@ -35,12 +39,12 @@ def bundled() -> Graph:
 
 @pytest.fixture(scope="module")
 def extended(bundled: Graph) -> Graph:
-    """The bundled graph merged with the SVCW extension, as unit_vocabulary does."""
+    """The bundled graph merged with an extension, as unit_vocabulary does."""
     merged = Graph()
     for triple in bundled:
         merged.add(triple)
     ext = Graph()
-    ext.parse(SVCW_UNITS, format="turtle")
+    ext.parse(EXTENSION_TTL, format="turtle")
     for triple in ext:
         merged.add(triple)
     return merged
@@ -123,9 +127,11 @@ def test_aliasing_keeps_the_original_symbol_working(extended):
 
 
 def test_alias_must_use_symbol_not_altlabel(bundled):
-    """skos:altLabel is invisible to the converter, which is why units.ttl
-    uses qudt:symbol. Pinned so a future edit does not silently regress to a
-    predicate the deterministic resolver never reads."""
+    """skos:altLabel is invisible to the deterministic converter, which is
+    why an extension must alias with qudt:symbol. The embedding matcher *does*
+    read altLabel, so using it splits the two resolution paths: the same text
+    resolves through one and not the other. Pinned so an extension cannot
+    silently regress to it."""
     from rdflib import Literal
     from rdflib.namespace import SKOS
 
@@ -194,9 +200,10 @@ _MG_CANDIDATES = {UNIT["MegaGM"], UNIT["MilliG"], UNIT["MilliGM"]}
 
 
 def test_mg_is_ambiguous_and_never_a_volume(extended):
-    """SVCW's export labels million-gallons as "MG", and QUDT claims that
-    string for mass. units.ttl deliberately does not alias it; the mapping
-    file leaves that tag's unit unset with review = true instead.
+    """Plant exports commonly abbreviate million-gallons as "MG", and QUDT
+    already claims that string for mass. An extension should therefore leave
+    it alone rather than alias it, and a mapping should leave such a tag's
+    unit unset rather than guess.
 
     Asserted as set membership rather than one URI on purpose: the resolution
     is genuinely order-dependent (see _MG_CANDIDATES), so pinning a single
@@ -231,3 +238,57 @@ def test_extension_does_not_drop_bundled_units(bundled, extended):
     before = {c["uri"] for c in QUDTStore.extract_concepts(bundled, str(QUDT.Unit))}
     after = {c["uri"] for c in QUDTStore.extract_concepts(extended, str(QUDT.Unit))}
     assert before < after
+
+
+# ---------------------------------------------------- loading and merging
+
+def test_extension_file_is_loaded_from_disk():
+    """The path `[ontologies] unit_extensions` takes."""
+    graphs = load_unit_extensions([str(EXTENSION_TTL)])
+    assert len(graphs) == 1 and len(graphs[0]) > 0
+
+
+def test_an_unreadable_extension_is_skipped_not_raised(tmp_path, caplog):
+    """A broken extension should cost its own units, not stop the server
+    resolving units at all."""
+    broken = tmp_path / "broken.ttl"
+    broken.write_text("this is not turtle {{{")
+    with caplog.at_level("ERROR", logger="acquirium.graph_store"):
+        graphs = load_unit_extensions([str(broken), str(EXTENSION_TTL)])
+    assert len(graphs) == 1                       # the good one still loaded
+    assert any("failed to load extension" in r.message for r in caplog.records)
+
+
+def test_no_extensions_loads_nothing():
+    assert load_unit_extensions(None) == []
+    assert load_unit_extensions([]) == []
+
+
+def test_merge_adds_extension_units_without_dropping_bundled(bundled):
+    merged = merge_unit_vocabulary(bundled, load_unit_extensions([str(EXTENSION_TTL)]))
+    converter = QUDTUnitConverter(merged)
+    assert converter.resolve_unit("MGD").uri == AQUNIT.MGD             # added
+    assert converter.resolve_unit("SCFM").uri == UNIT["SCF-PER-MIN"]   # aliased
+    assert converter.resolve_unit("mg/L").uri == UNIT["MilliGM-PER-L"] # bundled
+    assert len(merged) > len(bundled)
+
+
+# --------------------------------------- verdicts on under-described units
+
+def test_an_undescribed_unit_reads_as_unknown_not_convertible(extended):
+    """are_compatible answers True for this pair — it fails open whenever the
+    two units never both carry the same tier of evidence. Converting on that
+    basis rescales the series by the described side's multiplier."""
+    converter = QUDTUnitConverter(extended)
+    assert converter.are_compatible(AQUNIT.Undescribed, UNIT["GAL_US"]) is True
+    assert converter.compatibility_verdict(AQUNIT.Undescribed, UNIT["GAL_US"]) == "unknown"
+
+
+def test_two_described_units_of_different_dimension_are_incompatible(extended):
+    converter = QUDTUnitConverter(extended)
+    assert converter.compatibility_verdict(AQUNIT.MGD, AQUNIT.MegaGAL_US) == "incompatible"
+
+
+def test_a_unit_matches_itself(extended):
+    assert QUDTUnitConverter(extended).compatibility_verdict(
+        AQUNIT.MGD, AQUNIT.MGD) == "match"

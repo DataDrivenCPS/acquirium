@@ -69,6 +69,36 @@ def _external_uri(subject: URIRef) -> str:
     return uri_str
 
 
+def load_unit_extensions(sources: list[str] | None) -> list[Graph]:
+    """Parse each ``[ontologies] unit_extensions`` file into its own graph.
+
+    A source that will not parse is logged and skipped rather than raised:
+    a broken extension should cost its own units, not stop the server
+    resolving units at all.
+    """
+    graphs: list[Graph] = []
+    for path in sources or []:
+        try:
+            g = Graph()
+            g.parse(path)
+            graphs.append(g)
+            _logger.info("unit vocabulary: loaded extension %s (%d triples)", path, len(g))
+        except Exception as exc:
+            _logger.error("unit vocabulary: failed to load extension %s: %s", path, exc)
+    return graphs
+
+
+def merge_unit_vocabulary(base: Graph, extensions: list[Graph]) -> Graph:
+    """Merge extension graphs over the canonical unit graph."""
+    merged = Graph()
+    for triple in base:
+        merged.add(triple)
+    for extension in extensions:
+        for triple in extension:
+            merged.add(triple)
+    return merged
+
+
 def _graph_affects_closure(graph: Graph) -> bool:
     """Return True if *graph* can change owl:imports-driven closure."""
     return any(graph.triples((None, OWL.imports, None))) or any(
@@ -276,15 +306,7 @@ class OxigraphGraphStore:
         # registered as ontoenv graphs: they are merged into the QUDT unit
         # vocabulary (see unit_vocabulary), not standalone ontologies, and
         # nothing should resolve owl:imports against them.
-        self._unit_extensions: list[Graph] = []
-        for path in unit_extension_sources or []:
-            try:
-                g = Graph()
-                g.parse(path)
-                self._unit_extensions.append(g)
-                _logger.info("unit vocabulary: loaded extension %s (%d triples)", path, len(g))
-            except Exception as exc:
-                _logger.error("unit vocabulary: failed to load extension %s: %s", path, exc)
+        self._unit_extensions = load_unit_extensions(unit_extension_sources)
         self._unit_vocabulary_cache: Graph | None = None
 
         self._commit_dataset(self.source_dataset)
@@ -322,12 +344,9 @@ class OxigraphGraphStore:
                 return self.env.get_graph(QUDT_UNIT_IRI)
             if self._unit_vocabulary_cache is not None:
                 return self._unit_vocabulary_cache
-            merged = Graph()
-            for triple in self.env.get_graph(QUDT_UNIT_IRI):
-                merged.add(triple)
-            for extension in self._unit_extensions:
-                for triple in extension:
-                    merged.add(triple)
+            merged = merge_unit_vocabulary(
+                self.env.get_graph(QUDT_UNIT_IRI), self._unit_extensions
+            )
             _logger.info(
                 "unit vocabulary: %d triples (%d extension file(s) merged)",
                 len(merged), len(self._unit_extensions),

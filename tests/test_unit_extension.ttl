@@ -1,0 +1,84 @@
+# A unit-vocabulary extension, for tests.
+#
+# Loaded the way `[ontologies] unit_extensions` loads one, so the tests
+# exercise the real file path rather than an in-memory graph. Deliberately
+# not a copy of any deployment's file — this is a fixture, and the mechanism
+# should be testable without one.
+#
+# Two jobs, matching the two things extensions exist to do:
+#   1. Alias an existing QUDT unit so a plant-floor abbreviation resolves.
+#   2. Define a unit the bundled QUDT subset lacks, with enough metadata
+#      (multiplier + dimension vector + quantity kind) that it converts and
+#      compatibility-checks like any built-in unit.
+#
+# Aliases use qudt:symbol, never skos:altLabel. resolve_unit searches
+# [rdfs:label, skos:prefLabel, qudt:symbol, qudt:ucumCode, qudt:uneceCommonCode]
+# and would miss an altLabel, while the embedding matcher reads altLabel and
+# would not — so altLabel silently splits the two resolution paths.
+
+@prefix owl:          <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs:         <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:          <http://www.w3.org/2001/XMLSchema#> .
+@prefix qudt:         <http://qudt.org/schema/qudt/> .
+@prefix unit:         <http://qudt.org/vocab/unit/> .
+@prefix quantitykind: <http://qudt.org/vocab/quantitykind/> .
+@prefix dimension:    <http://qudt.org/vocab/dimensionvector/> .
+@prefix aqunit:       <urn:acquirium:unit#> .
+
+<urn:acquirium:unit:test> a owl:Ontology ;
+    rdfs:label "Acquirium unit extension test fixture" .
+
+#################################################################
+# 1. Aliases for existing QUDT units
+#################################################################
+
+# qudt:symbol is multi-valued, so each of these adds to the unit's existing
+# symbol rather than replacing it — "A" must keep resolving after "Amps" is
+# added.
+unit:SCF-PER-MIN    qudt:symbol "SCFM" .
+unit:GAL_US-PER-MIN qudt:symbol "GPM" .
+unit:A              qudt:symbol "Amps" .
+
+#################################################################
+# 2. A unit the bundled QUDT subset does not carry
+#################################################################
+
+# Million US gallons per day. The bundled subset has GAL_US-PER-DAY but no
+# mega-gallon unit at all.
+#
+# The multiplier is exactly 1e6 x unit:GAL_US-PER-DAY's (4.381263638888...e-8),
+# carried at QUDT's own precision so a round trip does not lose digits. The
+# dimension vector and quantity kinds are GAL_US-PER-DAY's, which is what
+# makes MGD convertible with every other volumetric flow and incompatible
+# with everything else.
+#
+# urn:acquirium:unit# is shared rather than per-deployment, so two sites that
+# both need MGD agree on its URI and their streams compare equal.
+aqunit:MGD a qudt:Unit ;
+    rdfs:label "Million US Gallons per Day"@en ;
+    qudt:symbol "MGD" ;
+    qudt:hasQuantityKind quantitykind:VolumeFlowRate ;
+    qudt:hasQuantityKind quantitykind:VolumePerTime ;
+    qudt:hasDimensionVector dimension:A0E0L3I0M0H0T-1D0 ;
+    qudt:conversionMultiplier
+        "0.04381263638888888888888888888888887"^^xsd:decimal ;
+    qudt:conversionOffset "0.0"^^xsd:decimal .
+
+# The volume counterpart, used to check that a custom unit is incompatible
+# with a custom unit of a different dimension.
+aqunit:MegaGAL_US a qudt:Unit ;
+    rdfs:label "Million US Gallons"@en ;
+    qudt:symbol "MMgal" ;
+    qudt:hasQuantityKind quantitykind:Volume ;
+    qudt:hasDimensionVector dimension:A0E0L3I0M0H0T0D0 ;
+    qudt:conversionMultiplier "3785.411784"^^xsd:decimal ;
+    qudt:conversionOffset "0.0"^^xsd:decimal .
+
+# A unit with no dimension vector and no quantity kind — the shape that makes
+# are_compatible fail open. Used to check that compatibility_verdict answers
+# "unknown" rather than "convertible".
+aqunit:Undescribed a qudt:Unit ;
+    rdfs:label "Undescribed test unit"@en ;
+    qudt:symbol "UNDESC" ;
+    qudt:conversionMultiplier "1.0"^^xsd:decimal ;
+    qudt:conversionOffset "0.0"^^xsd:decimal .
