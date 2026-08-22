@@ -267,6 +267,7 @@ class MaterializationPostgres:
     def stage_bindings(self, deployment_name: str, graph_revision: int, definition_id: str,
                        bindings: Sequence[BindingSpec]) -> int:
         """Create the next invisible topology generation without moving the active pointer."""
+        validate_binding_topology(bindings, definition_id=definition_id)
         with self._pool.connection() as conn, conn.transaction():
             row = conn.execute("SELECT generation, staged_generation FROM materialization_deployments WHERE name = %s FOR UPDATE", [deployment_name]).fetchone()
             if row is None:
@@ -275,8 +276,34 @@ class MaterializationPostgres:
             generation = max(active, staged or active) + 1
             if not conn.execute("SELECT 1 FROM materialization_bindings WHERE deployment_name = %s AND generation = %s AND status = 'active'", [deployment_name, active]).fetchone():
                 generation = active
+            # Reusing a staging generation replaces its complete snapshot,
+            # including any plans derived from the previous snapshot.
+            binding_ids = "SELECT binding_id FROM materialization_bindings WHERE deployment_name = %s AND generation = %s"
+            plan_ids = f"SELECT plan_id FROM materialization_plans WHERE binding_id IN ({binding_ids}) AND generation = %s"
+            partition_ids = f"SELECT partition_id FROM materialization_plan_partitions WHERE plan_id IN ({plan_ids})"
+            conn.execute(f"DELETE FROM materialization_execution_receipts WHERE partition_id IN ({partition_ids})", [deployment_name, generation, generation])
+            conn.execute(f"DELETE FROM materialization_attempt_snapshots WHERE partition_id IN ({partition_ids})", [deployment_name, generation, generation])
+            conn.execute(f"DELETE FROM materialization_plan_partitions WHERE plan_id IN ({plan_ids})", [deployment_name, generation, generation])
+            conn.execute(f"DELETE FROM materialization_plans WHERE plan_id IN ({plan_ids})", [deployment_name, generation, generation])
+            conn.execute(f"DELETE FROM materialization_staged_outputs WHERE binding_id IN ({binding_ids}) AND generation = %s", [deployment_name, generation, generation])
+            conn.execute(f"DELETE FROM materialization_staged_partitions WHERE binding_id IN ({binding_ids}) AND generation = %s", [deployment_name, generation, generation])
+            conn.execute(f"DELETE FROM materialization_binding_progress WHERE binding_id IN ({binding_ids}) AND generation = %s", [deployment_name, generation, generation])
+            conn.execute(f"DELETE FROM materialization_binding_refs WHERE binding_id IN ({binding_ids}) AND generation = %s", [deployment_name, generation, generation])
+            conn.execute("DELETE FROM materialization_bindings WHERE deployment_name = %s AND generation = %s", [deployment_name, generation])
+            for binding in bindings:
+                binding_id = binding.binding_id(definition_id)
+                conn.execute("""INSERT INTO materialization_bindings
+                    (binding_id, deployment_name, generation, logical_key, content_digest, graph_revision, resolved_metadata_json, definition_id, status)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'staging')""",
+                    [binding_id, deployment_name, generation, binding.logical_key, binding.content_digest,
+                     graph_revision, json.dumps(binding.metadata), definition_id])
+                for direction, roles in (("input", binding.inputs), ("output", binding.outputs)):
+                    for role, refs in roles.items():
+                        with conn.cursor() as cursor:
+                            cursor.executemany("INSERT INTO materialization_binding_refs VALUES (%s, %s, %s, %s, %s)",
+                                [(binding_id, generation, ref, role, direction) for ref in refs])
+            # Expose the pointer only after the complete snapshot is written.
             conn.execute("UPDATE materialization_deployments SET staged_generation = %s, updated_at = %s WHERE name = %s", [generation, datetime.now(timezone.utc), deployment_name])
-        self.persist_bindings(deployment_name, generation, graph_revision, definition_id, bindings)
         return generation
 
     def activate_bindings(self, deployment_name: str, generation: int) -> None:

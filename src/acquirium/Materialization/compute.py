@@ -1,5 +1,6 @@
 """First compute adapter: trusted Python code over Arrow tables."""
 from __future__ import annotations
+from collections import OrderedDict
 from typing import Any, Callable, Protocol
 from threading import Lock, get_ident
 import pyarrow as pa
@@ -12,7 +13,9 @@ class ComputeAdapter(Protocol):
 
 class PythonArrowAdapter:
     """Execute either an explicit Arrow function or scalar pointwise callable."""
-    def __init__(self) -> None:
+    def __init__(self, *, max_decoded_artifacts: int = 32) -> None:
+        if max_decoded_artifacts < 1:
+            raise ValueError("max_decoded_artifacts must be positive")
         self._state_lock = Lock()
         # The adapter is shared by a pool, but these values are deliberately
         # local to the physical worker thread.  They are performance caches,
@@ -20,7 +23,8 @@ class PythonArrowAdapter:
         # the revision artifact supplied with its request.
         self._state_instances: dict[tuple[int, type], StatefulTransformation] = {}
         self._worker_resources: dict[tuple[int, type], object] = {}
-        self._decoded_artifacts: dict[tuple[int, type, str], object] = {}
+        self._max_decoded_artifacts = max_decoded_artifacts
+        self._decoded_artifacts: OrderedDict[tuple[int, type, str], object] = OrderedDict()
 
     def execute(self, target: Callable[..., Any], request: ComputeRequest) -> pa.Table:
         if isinstance(target, type) and issubclass(target, StatefulTransformation):
@@ -45,6 +49,10 @@ class PythonArrowAdapter:
                 if state is None:
                     state = instance.load_artifact(request.artifact_bytes, worker)
                     self._decoded_artifacts[artifact_key] = state
+                    if len(self._decoded_artifacts) > self._max_decoded_artifacts:
+                        self._decoded_artifacts.popitem(last=False)
+                else:
+                    self._decoded_artifacts.move_to_end(artifact_key)
             result = instance.transform(request.inputs, state, request.context)
             if not isinstance(result, pa.Table):
                 raise TypeError("stateful transformations must return a pyarrow.Table")

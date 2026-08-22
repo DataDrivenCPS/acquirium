@@ -495,6 +495,24 @@ def test_staged_generation_keeps_active_pointer_until_atomic_activation(tmp_path
     finally:
         store.close()
 
+def test_reused_staging_generation_replaces_its_entire_topology(tmp_path):
+    store = DuckDBStore(tmp_path / "replace-staging.duckdb", recreate=True)
+    try:
+        runtime = MaterializationDuckDB(store)
+        definition = definition_for(abs, inputs="urn:in", outputs="urn:out", impact=pointwise())
+        definition_id = runtime.register_definition(definition)
+        generation = runtime.deploy("convert", definition_id)
+        old = BindingSpec("old", {"input": ("urn:old",)}, {"output": ("urn:old-out",)})
+        new = BindingSpec("new", {"input": ("urn:new",)}, {"output": ("urn:new-out",)})
+        assert runtime.stage_bindings("convert", 1, definition_id, (old,)) == generation
+        assert runtime.stage_bindings("convert", 2, definition_id, (new,)) == generation
+        with store._own_conn() as conn:
+            assert conn.execute("SELECT logical_key, graph_revision FROM materialization_bindings WHERE deployment_name = 'convert'").fetchall() == [("new", 2)]
+            assert conn.execute("SELECT ref_uri FROM materialization_binding_refs ORDER BY ref_uri").fetchall() == [("urn:new",), ("urn:new-out",)]
+            assert conn.execute("SELECT staged_generation FROM materialization_deployments WHERE name = 'convert'").fetchone() == (generation,)
+    finally:
+        store.close()
+
 def test_pending_staged_plan_does_not_replace_active_topology(tmp_path):
     store = DuckDBStore(tmp_path / "pending-staged-topology.duckdb", recreate=True)
     try:
@@ -937,6 +955,32 @@ def test_stateful_adapter_caches_ephemeral_worker_and_decoded_artifact():
     assert adapter.execute(Offset, request).column("numeric_value").to_pylist() == [3.0]
     assert adapter.execute(Offset, request).column("numeric_value").to_pylist() == [3.0]
     assert calls == {"setup": 1, "load": 1}
+
+
+def test_stateful_adapter_evicts_least_recently_used_decoded_artifacts():
+    calls = {"load": 0}
+    class Offset(StatefulTransformation):
+        def setup_worker(self):
+            return object()
+        def load_artifact(self, artifact, worker):
+            calls["load"] += 1
+            return float(artifact.decode())
+        def transform(self, batch, state, context):
+            return pa.table({"ref_uri": ["urn:out"], "ts": [context.interval.start],
+                             "numeric_value": [state], "text_value": [None]})
+    base = _compute_request()
+    adapter = PythonArrowAdapter(max_decoded_artifacts=2)
+    def execute(revision: str):
+        request = ComputeRequest(base.inputs, TransformContext("binding", "run", base.context.interval, {}, state_revision=revision),
+                                 base.output_refs, artifact_bytes={"one": b"1", "two": b"2", "three": b"3"}[revision])
+        adapter.execute(Offset, request)
+    execute("one"); execute("two"); execute("one"); execute("three")
+    assert list(adapter._decoded_artifacts) == [
+        (threading.get_ident(), Offset, "one"),
+        (threading.get_ident(), Offset, "three"),
+    ]
+    execute("two")
+    assert calls == {"load": 4}
 
 
 def test_stateful_decorator_creates_a_normal_durable_definition():
