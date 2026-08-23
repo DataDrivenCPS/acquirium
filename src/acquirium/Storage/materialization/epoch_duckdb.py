@@ -35,9 +35,11 @@ class TopologyEpochDuckDB:
     """Durable epoch state machine backed by the server-owned DuckDB writer."""
 
     def __init__(self, store: DuckDBStore, *, state_revision_resolver: Callable[[str], object | None] | None = None,
+                 query_resolver: Callable[..., Any] | None = None,
                  transition_hook: Callable[[str], None] | None = None) -> None:
         self._store = store
         self._state_revision_resolver = state_revision_resolver
+        self._query_resolver = query_resolver
         self._transition_hook = transition_hook
         with store._lock, store._write_conn() as conn:
             conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_definitions (
@@ -178,16 +180,19 @@ class TopologyEpochDuckDB:
         """Serialize one component frontier (DuckDB has one writer)."""
 
     def _validate_deployments(self, conn, selected: Mapping[str, str], graph: object) -> None:
-        rows = conn.execute("""SELECT definition_id, spec_json FROM topology_epoch_definitions
+        rows = conn.execute("""SELECT definition_id, source_digest, entrypoint, spec_json FROM topology_epoch_definitions
             WHERE kind = 'transformation'""").fetchall()
-        specs = {row[0]: self._decode(row[1]) for row in rows}
+        specs = {row[0]: (row[1], row[2], self._decode(row[3])) for row in rows}
         missing = sorted(set(selected.values()) - set(specs))
         if missing:
             raise KeyError(missing[0])
         resolved: list[EpochBinding] = []
         for _, definition_id in sorted(selected.items()):
+            source_digest, entrypoint, spec = specs[definition_id]
             resolved.extend(epoch_binding("candidate", definition_id, binding)
-                            for binding in resolve_bindings(specs[definition_id], graph))
+                            for binding in resolve_bindings(
+                                spec, graph, entrypoint=entrypoint,
+                                source_digest=source_digest, query_resolver=self._query_resolver))
         global_dag(resolved)
 
     def _catalog(self, conn) -> tuple[tuple[str, str, str, str, str], ...]:
@@ -213,8 +218,10 @@ class TopologyEpochDuckDB:
         if self._state_revision_resolver is not None:
             if graph is None:
                 raise ValueError("graph is required to resolve binding state revisions")
-            for definition_id, _, _, _, spec_json in catalog:
-                for binding in resolve_bindings(self._decode(spec_json), graph):
+            for definition_id, _, source_digest, entrypoint, spec_json in catalog:
+                for binding in resolve_bindings(
+                    self._decode(spec_json), graph, entrypoint=entrypoint,
+                    source_digest=source_digest, query_resolver=self._query_resolver):
                     binding_id = binding.binding_id(definition_id)
                     revision = self._state_revision_resolver(binding_id)
                     if revision is None:
@@ -315,7 +322,9 @@ class TopologyEpochDuckDB:
         try:
             for definition_id, name, source_digest, entrypoint, spec_json in catalog:
                 spec = self._decode(spec_json)
-                bindings = resolve_bindings(spec, graph)
+                bindings = resolve_bindings(
+                    spec, graph, entrypoint=entrypoint, source_digest=source_digest,
+                    query_resolver=self._query_resolver)
                 resolved.extend(epoch_binding(epoch_id_value, definition_id, binding) for binding in bindings)
             edges, topo_order, components = global_dag(resolved)
         except Exception as error:

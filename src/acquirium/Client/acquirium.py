@@ -521,8 +521,8 @@ class Acquirium:
                 or not issubclass(target, (Transformation, StatefulTransformation))
                 or definition is None or definition.kind != "transformation"):
             raise ValueError("deploy_transformation expects a transformation class")
-        # definition_spec converts inputs/bind/outputs helper dataclasses into
-        # the JSON-safe shapes the server stores in immutable topology epochs.
+        # definition_spec converts output helper dataclasses into the JSON-safe
+        # shape the server stores in immutable topology epochs.
         return self.client.deploy_transformation({
             "name": definition.name,
             "source_digest": definition.source_digest,

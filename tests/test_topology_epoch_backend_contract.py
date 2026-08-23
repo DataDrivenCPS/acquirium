@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import pyarrow as pa
 import pytest
 
-from acquirium.Materialization.api import Transformation
+from acquirium.Materialization.api import Transformation, outputs
 from acquirium.Materialization.definitions import definition_for
 from acquirium.Materialization.impact import pointwise
 from acquirium.Storage.duckdb_store import DuckDBStore
@@ -19,12 +19,20 @@ UTC = timezone.utc
 
 
 class ContractTransformation(Transformation):
-    inputs = {"input": "urn:contract:in"}
-    outputs = {"output": "urn:contract:out"}
+    outputs = {"output": outputs.stream(value_kind="numeric", ref_uri="urn:contract:out")}
     impact = pointwise()
 
+    def build_query(self, aq):
+        return aq.query().measurement(alias="input")
+
     def transform(self, inputs, context):
-        return inputs
+        context.outputs.declare("output", for_input=inputs).write(inputs.values)
+
+
+class ContractGraph:
+    def sparql_query(self, query, **kwargs):
+        return {"columns": ["v0", "ext0", "unit0", "extunit0"],
+                "rows": [["urn:contract:point", "urn:epoch-contract:in", None, None]]}
 
 
 @pytest.fixture(params=["duckdb", "postgres"])
@@ -56,12 +64,18 @@ def test_equivalent_epoch_construction_claim_commit_seal_trace(epoch_backend):
         {"operation": "upsert", "ref_uri": f"urn:{marker}:in", "ts": start,
          "numeric_value": 4.0, "text_value": None},
     ], schema=MUTATION_SCHEMA)))
-    definition = definition_for(ContractTransformation, name=marker, inputs={"input": f"urn:{marker}:in"},
-                                outputs={"output": f"urn:{marker}:out"}, impact=pointwise())
+    definition = definition_for(
+        ContractTransformation,
+        name=marker,
+        invocation="whole_query",
+        outputs={"output": outputs.stream(value_kind="numeric", ref_uri=f"urn:{marker}:out")},
+        impact=pointwise(),
+    )
     definition_id = runtime.register_definition(definition)
-    runtime.deploy_definition(definition.name, definition_id, object())
+    graph = ContractGraph()
+    runtime.deploy_definition(definition.name, definition_id, graph)
     epoch = runtime.ensure_epoch(1, marker)
-    summary = runtime.construct_epoch(epoch, object())
+    summary = runtime.construct_epoch(epoch, graph)
     assert summary.component_count == 1
     claim = runtime.claim_next_work("contract-worker")
     snapshot = runtime.snapshot(claim)

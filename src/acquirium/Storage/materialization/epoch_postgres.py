@@ -68,9 +68,10 @@ class TopologyEpochPostgres(TopologyEpochDuckDB):
     """The PostgreSQL counterpart of :class:`TopologyEpochDuckDB`."""
 
     def __init__(self, dsn: str, *, min_size: int = 1, max_size: int = 10, state_revision_resolver=None,
-                 transition_hook=None) -> None:
+                 query_resolver=None, transition_hook=None) -> None:
         self._store = _PostgresStoreAdapter(dsn, min_size=min_size, max_size=max_size)
         self._state_revision_resolver = state_revision_resolver
+        self._query_resolver = query_resolver
         self._transition_hook = transition_hook
         with self._store._write_conn() as conn:
             conn.execute("""CREATE TABLE IF NOT EXISTS stream_change_ranges (

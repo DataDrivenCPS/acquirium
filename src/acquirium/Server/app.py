@@ -469,9 +469,7 @@ class TransformationRegistration(BaseModel):
     name: str
     source_digest: str
     entrypoint: str
-    execution: Literal["batch", "scalar"] = "batch"
-    inputs: dict[str, Any] | None = None
-    bind: dict[str, Any] | None = None
+    invocation: Literal["whole_query", "per_row"] = "whole_query"
     outputs: dict[str, Any]
     impact: dict[str, Any]
     parameters_schema: dict[str, Any] = Field(default_factory=dict)
@@ -561,8 +559,7 @@ def deploy_transformation(name: str, request: TransformationRegistration) -> dic
             raise ValueError("deployment name must match the definition name")
         definition = MaterializationDefinition(
             name=request.name, source_digest=request.source_digest, entrypoint=request.entrypoint,
-            execution=request.execution,
-            inputs=request.inputs, bind=request.bind, outputs=request.outputs,
+            invocation=request.invocation, outputs=request.outputs,
             impact=ImpactPolicy.from_json(request.impact), parameters_schema=request.parameters_schema,
         )
         return {"ok": True, **app.state.manager.deploy_transformation(definition)}

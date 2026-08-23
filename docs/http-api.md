@@ -236,8 +236,8 @@ Declarations are immutable; registration returns the durable identity. See
 | `GET /materialization/epochs` | Inspect the current immutable topology epoch and its persisted bindings |
 | `GET /materialization/epochs/{epoch_id}` | Inspect one topology epoch |
 
-Deployment body: `name`, `source_digest`, `entrypoint`, `inputs`/`bind`,
-`outputs`, `impact`, `parameters_schema`.
+Deployment body: `name`, `source_digest`, `entrypoint`, `invocation`
+(`whole_query` or `per_row`), `outputs`, `impact`, and `parameters_schema`.
 
 ### Services
 

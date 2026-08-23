@@ -1,11 +1,11 @@
-"""Class-based transformation declarations and execution."""
+"""Query-driven transformation declarations and execution."""
 
 from datetime import datetime, timedelta, timezone
 
+import polars as pl
 import pyarrow as pa
 
-from acquirium.Materialization.api import MappedTransformation, StatefulTransformation, Transformation, outputs, select
-from acquirium.Materialization.bindings import per_input
+from acquirium.Materialization.api import OutputSpec, StatefulTransformation, Transformation, outputs
 from acquirium.Materialization.compute import PythonArrowAdapter
 from acquirium.Materialization.context import ComputeRequest, TransformContext
 from acquirium.Materialization.definitions import definition_spec
@@ -14,72 +14,102 @@ from acquirium.Materialization.topology import resolve_bindings
 
 
 class AddOne(Transformation):
-    inputs = {"input": "urn:in"}
-    outputs = {"output": "urn:out"}
+    name = "add-one"
+    outputs = {"output": outputs.stream(value_kind="numeric", ref_uri="urn:out")}
     impact = pointwise()
 
-    def transform(self, batch, context):
-        return pa.table({
-            "ref_uri": [context.outputs["output"][0]],
-            "ts": batch.column("ts"),
-            "numeric_value": [batch.column("numeric_value")[0].as_py() + 1],
-            "text_value": [None],
-        })
+    def build_query(self, aq):
+        return aq.query().measurement(alias="input")
+
+    def transform(self, inputs, context):
+        context.outputs.declare("output", for_input=inputs).write(
+            inputs.values.select("time", (pl.col("value") + 1).alias("value"))
+        )
 
 
-class Temperatures(MappedTransformation):
-    bind = per_input(select(quantity_kind="http://qudt.org/vocab/quantitykind/Temperature"))
-    outputs = outputs.per_input(name="converted")
-    impact = pointwise()
+class PerRow(AddOne):
+    name = "per-row"
+    invocation = "per_row"
+    outputs = {"output": outputs.stream(value_kind="numeric", prefix="urn:per-row")}
 
-    def transform(self, batch, context):
-        return batch
+    def build_query(self, aq):
+        return aq.query().measurement(alias="temperature")
 
 
 class CalibratedTemperature(StatefulTransformation):
-    inputs = {"input": "urn:in"}
-    outputs = {"output": "urn:calibrated"}
-    impact = pointwise()
+    name = "calibrated-temperature"
+    invocation = "per_row"
+    outputs = {"output": outputs.stream(value_kind="numeric", prefix="urn:calibrated")}
 
-    def transform(self, batch, state, context):
-        return batch
+    def build_query(self, aq):
+        return aq.query().measurement(alias="temperature")
 
-
-def test_class_transformation_compiles_an_explicit_batch_definition():
-    spec = definition_spec(AddOne.__acquirium_definition__)
-    assert spec["execution"] == "batch"
-    assert spec["inputs"] == {"input": "urn:in"}
-    assert spec["outputs"] == {"output": "urn:out"}
+    def transform(self, inputs, state, context):
+        context.outputs.declare("output", for_input=inputs).write(
+            inputs.values.with_columns((pl.col("value") + state).alias("value"))
+        )
 
 
-def test_stateful_class_compiles_from_a_class_declaration():
-    definition = CalibratedTemperature.__acquirium_definition__
-    assert definition.entrypoint.endswith(":CalibratedTemperature")
-    assert definition_spec(definition)["inputs"] == {"input": "urn:in"}
+class Graph:
+    def __init__(self, refs=("urn:in",)):
+        self.refs = tuple(refs)
+
+    def sparql_query(self, query, **kwargs):
+        return {
+            "columns": ["v0", "ext0", "unit0", "extunit0"],
+            "rows": [[f"urn:point:{i}", ref, None, None] for i, ref in enumerate(self.refs)],
+        }
 
 
-def test_class_transformation_executes_with_binding_outputs_in_context():
+def _request(*, output_ref="urn:out"):
     start = datetime(2026, 1, 1, tzinfo=timezone.utc)
     interval = TimeRange(start, start + timedelta(seconds=1))
     inputs = pa.table({
-        "operation": ["upsert"], "ref_uri": ["urn:in"],
+        "operation": ["upsert"],
+        "ref_uri": ["urn:in"],
         "ts": pa.array([start], type=pa.timestamp("us", tz="UTC")),
-        "numeric_value": [2.0], "text_value": [None],
+        "numeric_value": [2.0],
+        "text_value": [None],
     })
-    context = TransformContext("binding", "execution", interval, interval, {"urn:in": 1},
-                               outputs={"output": ("urn:out",)})
-    result = PythonArrowAdapter().execute(
-        AddOne, ComputeRequest(inputs, context, frozenset({"urn:out"}))
+    context = TransformContext(
+        "binding", "execution", interval, interval, {"urn:in": 1},
+        metadata={
+            "logical_key": "urn:in",
+            "input_streams": {"input": [{"ref_uri": "urn:in", "point_uri": "urn:point:0", "unit": None}]},
+            "output_refs": {"output": (output_ref,)},
+            "output_specs": {"output": {"value_kind": "numeric", "ref_uri": output_ref}},
+        },
     )
+    return ComputeRequest(inputs, context, frozenset({output_ref}), output_specs=context.metadata["output_specs"])
+
+
+def test_class_transformation_serializes_query_and_output_declaration():
+    spec = definition_spec(AddOne.__acquirium_definition__)
+    assert spec["invocation"] == "whole_query"
+    assert spec["outputs"] == {
+        "output": {
+            "value_kind": "numeric", "unit": None, "quantity_kind": None,
+            "ref_uri": "urn:out", "prefix": None,
+        }
+    }
+
+
+def test_per_row_query_resolves_one_binding_per_result_row():
+    definition = PerRow.__acquirium_definition__
+    bindings = resolve_bindings(definition, Graph(("urn:a", "urn:b")))
+    assert len(bindings) == 2
+    assert all(binding.inputs["temperature"] == (ref,) for binding, ref in zip(bindings, ("urn:a", "urn:b")))
+    assert len({binding.outputs["output"][0] for binding in bindings}) == 2
+
+
+def test_transformation_receives_normalized_inputs_and_writes_output_handles():
+    result = PythonArrowAdapter().execute(AddOne, _request())
+    assert result.column("ref_uri").to_pylist() == ["urn:out"]
     assert result.column("numeric_value").to_pylist() == [3.0]
 
 
-def test_mapped_class_resolves_one_binding_per_semantic_match():
-    class Graph:
-        def sparql_query(self, query, **kwargs):
-            assert "qudt.org/vocab/quantitykind/Temperature" in query
-            return {"columns": ["ref_uri"], "rows": [["urn:a"], ["urn:b"]]}
-
-    bindings = resolve_bindings(definition_spec(Temperatures.__acquirium_definition__), Graph())
-    assert [binding.metadata["input_ref"] for binding in bindings] == ["urn:a", "urn:b"]
-    assert len({binding.logical_key for binding in bindings}) == 2
+def test_stateful_transformations_use_the_same_query_and_output_contract():
+    definition = CalibratedTemperature.__acquirium_definition__
+    assert definition.invocation == "per_row"
+    assert isinstance(OutputSpec(value_kind="numeric"), OutputSpec)
+    assert definition_spec(definition)["invocation"] == "per_row"

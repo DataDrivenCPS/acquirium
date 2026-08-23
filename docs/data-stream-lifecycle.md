@@ -268,13 +268,13 @@ The driver reads these triples at startup and uses them to map Pyomo variable pa
 
 Derived streams produced by `aq.Transformation` and
 `aq.StatefulTransformation` classes get
-the same managed-stream treatment. A transformation declares its bindings (which
-input streams it reads) and its outputs; the materialization engine resolves the
-bindings against the published graph, owns the deterministic output stream
-identities, and commits the computed values as canonical publications.
+the same managed-stream treatment. A transformation implements `build_query()`
+and declares its outputs; the materialization engine evaluates the immutable
+query against the published graph, owns deterministic output stream identities,
+and commits the computed values as canonical publications.
 
-Per-input output streams are named deterministically from the transformation
-name and the input, e.g. `urn:acquirium:derived:celsius:<token>`, so a repeated
+Per-row output streams are named deterministically from the transformation
+name and the query row, e.g. `urn:acquirium:derived:celsius:<token>`, so a repeated
 or rebound topology never overwrites an unrelated stream. Provenance — which
 definition, binding, input versions, and (for stateful transforms) artifact
 revision produced each output range — is recorded with every commit rather than

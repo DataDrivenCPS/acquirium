@@ -6,14 +6,22 @@ worker setup resource are caches only: replacing a process or worker reloads
 the same artifact and produces the same result.
 
 ```python
-import pyarrow as pa
+import polars as pl
 import acquirium as aq
 from acquirium.Materialization import TransformContext
 
 
 class CalibratedTemperature(aq.StatefulTransformation):
-    inputs = "temperature"
-    outputs = aq.outputs.per_input(name="calibrated-temperature")
+    invocation = "per_row"
+    outputs = {
+        "calibrated": aq.outputs.stream(
+            value_kind="numeric",
+            prefix="urn:acquirium:derived:calibrated-temperature",
+        )
+    }
+
+    def build_query(self, aq):
+        return aq.query().measurement(alias="temperature")
 
     def setup_worker(self):
         return load_fast_decoder_library()
@@ -21,16 +29,11 @@ class CalibratedTemperature(aq.StatefulTransformation):
     def load_artifact(self, artifact: bytes, worker):
         return decode_calibration(artifact, worker)
 
-    def transform(self, batch: pa.Table, calibration, context: TransformContext) -> pa.Table:
-        # Binding topology, including owned output IDs, is persisted first.
-        output_ref = context.outputs["output"][0]
-        values = apply_calibration(batch.column("numeric_value"), calibration)
-        return pa.table({
-            "ref_uri": [output_ref] * batch.num_rows,
-            "ts": batch.column("ts"),
-            "numeric_value": values,
-            "text_value": [None] * batch.num_rows,
-        })
+    def transform(self, stream, calibration, context: TransformContext):
+        values = apply_calibration(stream.values["value"], calibration)
+        context.outputs.declare("calibrated", for_input=stream).write(
+            pl.DataFrame({"time": stream.values["time"], "value": values})
+        )
 ```
 
 An independent producer creates the bytes.  It can be a calibration job, a

@@ -32,9 +32,8 @@ def _persistable(value: object) -> object:
 def definition_spec(definition: "MaterializationDefinition") -> dict[str, object]:
     """The durable, JSON-compatible portion of an immutable definition."""
     return {
-        "execution": definition.execution,
-        "inputs": _persistable(definition.inputs),
-        "bind": _persistable(definition.bind),
+        "name": definition.name,
+        "invocation": definition.invocation,
         "outputs": _persistable(definition.outputs),
         "impact": definition.impact.to_json() if definition.impact else None,
         "parameters_schema": _persistable(definition.parameters_schema),
@@ -69,9 +68,7 @@ class MaterializationDefinition:
     source_digest: str
     entrypoint: str
     kind: Literal["transformation", "experiment", "service"] = "transformation"
-    execution: Literal["batch", "scalar"] = "batch"
-    inputs: object | None = None
-    bind: object | None = None
+    invocation: Literal["whole_query", "per_row"] = "whole_query"
     outputs: object | None = None
     impact: ImpactPolicy | None = None
     parameters_schema: Mapping[str, Any] = field(default_factory=dict)

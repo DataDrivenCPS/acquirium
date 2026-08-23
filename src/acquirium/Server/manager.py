@@ -220,10 +220,18 @@ class Manager:
             return revision
         if _backend == "duckdb":
             from acquirium.Storage.materialization.epoch_duckdb import TopologyEpochDuckDB
-            epoch_materialization = TopologyEpochDuckDB(timescale, state_revision_resolver=_state_revision)
+            epoch_materialization = TopologyEpochDuckDB(
+                timescale,
+                state_revision_resolver=_state_revision,
+                query_resolver=self.resolve_text,
+            )
         else:
             from acquirium.Storage.materialization.epoch_postgres import TopologyEpochPostgres
-            epoch_materialization = TopologyEpochPostgres(_effective_dsn, state_revision_resolver=_state_revision)
+            epoch_materialization = TopologyEpochPostgres(
+                _effective_dsn,
+                state_revision_resolver=_state_revision,
+                query_resolver=self.resolve_text,
+            )
         self.epoch_materialization = epoch_materialization
         self.epoch_reconciler = TopologyEpochReconciler(epoch_materialization, graph, self.materialization_executor)
         from acquirium.Materialization.service_runtime import ServiceSupervisor
@@ -726,7 +734,7 @@ class Manager:
         """Register an immutable service package without granting stream ownership."""
         if definition.kind != "service":
             raise ValueError("service registration requires a service definition")
-        if definition.inputs is not None or definition.bind is not None or definition.outputs is not None:
+        if definition.outputs is not None:
             raise ValueError("services cannot declare materialized stream inputs or outputs")
         from acquirium.Materialization.api import Service
         from acquirium.Materialization.worker import load_entrypoint

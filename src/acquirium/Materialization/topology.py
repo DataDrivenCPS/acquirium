@@ -1,142 +1,223 @@
-"""Server-side construction of immutable resolved binding topologies."""
+"""Resolve pure transformation queries into immutable binding topologies."""
+
 from __future__ import annotations
 
+from dataclasses import dataclass
 from hashlib import sha256
-from typing import Iterable, Mapping
+import json
+from typing import Any, Callable, Mapping
 
+from acquirium.Client.explore.core import Query
 from acquirium.Materialization.bindings import BindingSpec
-from acquirium.internals.internals_namespaces import HAS_EXTERNAL_REFERENCE, HAS_QUANTITY_KIND, HAS_UNIT
+from acquirium.Materialization.definitions import MaterializationDefinition, definition_spec
+from acquirium.Materialization.worker import load_entrypoint
 
 
-def _roles(value: object, *, default_role: str) -> dict[str, tuple[str, ...]]:
-    if isinstance(value, str):
-        return {default_role: (value,)}
+def _canonical(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
+
+
+class _GraphQueryClient:
+    """Small query-builder client backed by the immutable graph snapshot."""
+
+    def __init__(self, graph: object, resolver: Callable[..., Any] | None = None) -> None:
+        self._graph = graph
+        self._resolver = resolver
+
+    def sparql_query(self, query: str, include_dependencies: bool = True, *, wait_for_fresh: bool = False) -> dict:
+        kwargs = {"include_dependencies": include_dependencies}
+        if wait_for_fresh:
+            kwargs["wait_for_fresh"] = True
+        return self._graph.sparql_query(query, **kwargs)
+
+    def resolve(self, value: str, kind: str, **kwargs: Any) -> str | None:
+        if isinstance(value, str) and value.startswith(("http://", "https://", "urn:")):
+            return value
+        if self._resolver is None:
+            raise ValueError(f"query builder value {value!r} requires the server text resolver")
+        resolved = self._resolver(value, kind, **kwargs)
+        if isinstance(resolved, str):
+            return resolved
+        if isinstance(resolved, list) and resolved:
+            first = resolved[0]
+            if isinstance(first, Mapping):
+                uri = first.get("uri")
+                return str(uri) if uri is not None else None
+        return None
+
+    def expand_uri(self, value: str) -> str:
+        return value
+
+    def graph_version(self) -> int:
+        status = getattr(self._graph, "graph_status", lambda: {"source_version": 0})()
+        return int(status.get("source_version", status.get("published_version", 0)))
+
+
+@dataclass(frozen=True)
+class _QueryFacade:
+    client: _GraphQueryClient
+
+    def query(self) -> Query:
+        return Query(client=self.client)
+
+
+def _output_spec(value: object) -> dict[str, Any]:
+    if hasattr(value, "__dataclass_fields__"):
+        value = {name: getattr(value, name) for name in value.__dataclass_fields__}
+    if value is None:
+        return {"value_kind": "numeric"}
     if not isinstance(value, Mapping):
-        raise ValueError("binding refs must be a URI or a role-to-URI mapping")
-    result: dict[str, tuple[str, ...]] = {}
-    for role, refs in value.items():
-        if isinstance(refs, str):
-            result[str(role)] = (refs,)
-        elif isinstance(refs, (list, tuple)) and all(isinstance(ref, str) for ref in refs):
-            result[str(role)] = tuple(refs)
-        else:
-            raise ValueError(f"binding role {role!r} must contain URI strings")
+        raise ValueError("each output spec must be a mapping or outputs.stream(...) result")
+    result = {str(key): item for key, item in value.items()}
+    result.setdefault("value_kind", "numeric")
     return result
 
 
-def _binding(value: Mapping[str, object], *, default_key: str = "default") -> BindingSpec:
-    return BindingSpec(
-        logical_key=str(value.get("logical_key", default_key)),
-        inputs=_roles(value["inputs"], default_role="input"),
-        outputs=_roles(value["outputs"], default_role="output"),
-        metadata=value.get("metadata", {}) if isinstance(value.get("metadata", {}), Mapping) else {},
-    )
+def _output_specs(spec: Mapping[str, object]) -> dict[str, dict[str, Any]]:
+    outputs = spec.get("outputs")
+    if not isinstance(outputs, Mapping) or not outputs:
+        raise ValueError("a transformation requires a non-empty outputs mapping")
+    return {str(name): _output_spec(value) for name, value in outputs.items()}
 
 
-def _selector_rows(selector: Mapping[str, object], graph: object, *, entity_alias: str) -> tuple[tuple[str, str], ...]:
-    criteria = selector.get("criteria", selector)
-    if not isinstance(criteria, Mapping):
-        raise ValueError("selector criteria must be a mapping")
-    direct = criteria.get("ref_uris", criteria.get("ref_uri"))
-    if isinstance(direct, str):
-        return ((direct, direct),)
-    if isinstance(direct, (list, tuple)) and all(isinstance(ref, str) for ref in direct):
-        return tuple((ref, ref) for ref in sorted(direct))
-    query = criteria.get("sparql")
-    if not isinstance(query, str):
-        patterns = []
-        for name, predicate in (("quantity_kind", HAS_QUANTITY_KIND), ("unit", HAS_UNIT)):
-            value = criteria.get(name)
-            if value is not None:
-                if not isinstance(value, str) or not value.startswith(("http://", "https://", "urn:")):
-                    raise ValueError(f"selector {name} must be an absolute URI")
-                patterns.append(f"?point <{predicate}> <{value}> .")
-        if not patterns:
-            raise ValueError(
-                "selector requires ref_uri(s), quantity_kind, unit, or a SPARQL query selecting ?ref_uri"
-            )
-        patterns.append(f"?point <{HAS_EXTERNAL_REFERENCE}> ?ref_uri .")
-        query = "SELECT DISTINCT ?ref_uri WHERE { " + " ".join(patterns) + " }"
-    result = graph.sparql_query(query, include_dependencies=True, wait_for_fresh=True)
-    try:
-        ref_column = result["columns"].index("ref_uri")
-        entity_column = result["columns"].index(entity_alias)
-    except ValueError as error:
-        raise ValueError(f"selector SPARQL must select ?ref_uri and ?{entity_alias}") from error
-    return tuple(sorted((str(row[entity_column]), str(row[ref_column])) for row in result["rows"]
-                        if row[entity_column] is not None and row[ref_column] is not None))
+def _query_rows(query: Query) -> tuple[dict[str, list[dict[str, str | None]]], ...]:
+    if not isinstance(query, Query):
+        raise TypeError("build_query() must return an Acquirium query")
+    result = query.execute(include_dependencies=True)
+    columns = list(result.get("columns", ()))
+    indices = {column: index for index, column in enumerate(columns)}
+    graph = query.query_graph
+    rows: list[dict[str, list[dict[str, str | None]]]] = []
+    seen: set[str] = set()
+    for raw in result.get("rows", ()):
+        def cell(name: str) -> Any:
+            index = indices.get(name)
+            return raw[index] if index is not None and index < len(raw) else None
+
+        streams: dict[str, list[dict[str, str | None]]] = {}
+        for node_id in graph.data_nodes:
+            point = cell(f"v{node_id}")
+            ref = cell(f"ext{node_id}")
+            if ref is None:
+                continue
+            alias = graph.aliases_reverse.get(node_id, f"data_{node_id}")
+            unit_column = f"unit{node_id}"
+            extunit_column = f"extunit{node_id}"
+            unit = cell(unit_column)
+            if unit is None:
+                unit = cell(extunit_column)
+            streams.setdefault(alias, []).append({
+                "ref_uri": str(ref),
+                "point_uri": str(point) if point is not None else None,
+                "unit": str(unit) if unit is not None else None,
+            })
+        if not streams:
+            continue
+        key = sha256(_canonical({
+            alias: sorted(item["ref_uri"] for item in matches)
+            for alias, matches in streams.items()
+        }).encode()).hexdigest()
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(streams)
+    return tuple(rows)
 
 
-def _per_input(selector: Mapping[str, object], outputs: Mapping[str, object], graph: object) -> tuple[BindingSpec, ...]:
-    name = outputs.get("name")
-    if not isinstance(name, str) or not name:
-        raise ValueError("per_input outputs require a non-empty name")
-    prefix = str(outputs.get("prefix", "urn:acquirium:derived"))
-    return tuple(
-        BindingSpec(
-            ref,
-            {"input": (ref,)},
-            {"output": (f"{prefix}:{name}:{sha256(ref.encode()).hexdigest()[:20]}",)},
-            {"input_ref": ref},
-        )
-        for ref in _selector_refs(selector, graph)
-    )
+def _derived_output_uri(name: str, output_name: str, logical_key: str, output: Mapping[str, Any], invocation: str) -> str:
+    explicit = output.get("ref_uri")
+    if explicit:
+        return str(explicit)
+    prefix = str(output.get("prefix") or "urn:acquirium:derived")
+    if invocation == "whole_query":
+        return f"{prefix}:{name}:{output_name}"
+    digest = sha256(logical_key.encode()).hexdigest()[:20]
+    return f"{prefix}:{name}:{output_name}:{digest}"
 
 
-def _selector_refs(selector: Mapping[str, object], graph: object) -> tuple[str, ...]:
-    return tuple(ref for _, ref in _selector_rows(selector, graph, entity_alias="ref_uri"))
-
-
-def _by_entity(selectors: Mapping[str, object], outputs: Mapping[str, object], graph: object,
-               *, entity_alias: str) -> tuple[BindingSpec, ...]:
-    name = outputs.get("name")
-    if not isinstance(name, str) or not name:
-        raise ValueError("by_entity outputs require a non-empty name")
-    prefix = str(outputs.get("prefix", "urn:acquirium:derived"))
-    roles: dict[str, dict[str, list[str]]] = {}
-    for role, selector in selectors.items():
-        if not isinstance(selector, Mapping):
-            raise ValueError(f"selector for role {role!r} must be a mapping")
-        grouped: dict[str, list[str]] = {}
-        for entity, ref in _selector_rows(selector, graph, entity_alias=entity_alias):
-            grouped.setdefault(entity, []).append(ref)
-        roles[str(role)] = grouped
-    entities = set.intersection(*(set(values) for values in roles.values())) if roles else set()
-    return tuple(
-        BindingSpec(
-            entity,
-            {role: tuple(sorted(values[entity])) for role, values in roles.items()},
-            {"output": (f"{prefix}:{name}:{sha256(entity.encode()).hexdigest()[:20]}",)},
-            {entity_alias: entity},
-        )
-        for entity in sorted(entities)
-    )
-
-
-def resolve_bindings(spec: Mapping[str, object], graph: object) -> tuple[BindingSpec, ...]:
-    """Resolve one trusted definition against the published graph exactly once."""
-    declaration = spec.get("bind")
-    resolved: Iterable[BindingSpec | Mapping[str, object]]
-    if isinstance(declaration, Mapping) and isinstance(declaration.get("selectors"), Mapping) and isinstance(spec.get("outputs"), Mapping):
-        return _by_entity(declaration["selectors"], spec["outputs"], graph,
-                          entity_alias=str(declaration.get("entity_alias", "entity")))
-    if isinstance(declaration, Mapping) and "selector" in declaration and isinstance(spec.get("outputs"), Mapping):
-        return _per_input(declaration["selector"], spec["outputs"], graph)
-    if declaration is None and isinstance(spec.get("inputs"), Mapping) and "criteria" in spec["inputs"] and isinstance(spec.get("outputs"), Mapping):
-        return _per_input(spec["inputs"], spec["outputs"], graph)
-    if isinstance(declaration, Mapping) and isinstance(declaration.get("bindings"), list):
-        resolved = declaration["bindings"]
-    elif isinstance(declaration, Mapping) and "inputs" in declaration and isinstance(spec.get("outputs"), Mapping):
-        resolved = ({"inputs": declaration["inputs"], "outputs": spec["outputs"]},)
-    elif isinstance(declaration, Mapping) and "inputs" in declaration and "outputs" in declaration:
-        resolved = (declaration,)
-    elif declaration is None:
-        if spec.get("inputs") is None or spec.get("outputs") is None:
-            raise ValueError("a direct transformation requires inputs and outputs")
-        resolved = ({"inputs": spec["inputs"], "outputs": spec["outputs"]},)
+def _query_bindings(
+    spec: Mapping[str, object],
+    *,
+    definition_name: str,
+    query: Query,
+) -> tuple[BindingSpec, ...]:
+    invocation = str(spec.get("invocation", "whole_query"))
+    if invocation not in {"whole_query", "per_row"}:
+        raise ValueError("invocation must be 'whole_query' or 'per_row'")
+    outputs = _output_specs(spec)
+    rows = _query_rows(query)
+    if invocation == "whole_query":
+        grouped: dict[str, list[dict[str, str | None]]] = {}
+        for row in rows:
+            for alias, matches in row.items():
+                grouped.setdefault(alias, []).extend(matches)
+        for alias, matches in grouped.items():
+            deduped = {item["ref_uri"]: item for item in matches}
+            grouped[alias] = [deduped[key] for key in sorted(deduped)]
+        candidates = (("whole-query", grouped),) if grouped else ()
     else:
-        raise ValueError("bind must use a declarative selector or explicit bindings")
-    bindings = tuple(item if isinstance(item, BindingSpec) else _binding(item) for item in resolved)
-    if not bindings and not (isinstance(declaration, Mapping) and "selector" in declaration):
-        raise ValueError("binding declaration resolved to no bindings")
-    return bindings
+        candidates = tuple(
+            (
+                sha256(_canonical({
+                    alias: sorted(item["ref_uri"] for item in matches)
+                    for alias, matches in row.items()
+                }).encode()).hexdigest(),
+                row,
+            )
+            for row in rows
+        )
+
+    bindings: list[BindingSpec] = []
+    for logical_key, streams in candidates:
+        inputs = {
+            alias: tuple(sorted(str(item["ref_uri"]) for item in matches))
+            for alias, matches in streams.items()
+        }
+        metadata = {
+            "input_streams": {
+                alias: [dict(item) for item in matches]
+                for alias, matches in sorted(streams.items())
+            },
+            "output_specs": outputs,
+            "invocation": invocation,
+        }
+        planned_outputs = {
+            output_name: (_derived_output_uri(definition_name, output_name, logical_key, output, invocation),)
+            for output_name, output in outputs.items()
+        }
+        bindings.append(BindingSpec(logical_key, inputs, planned_outputs, metadata))
+    return tuple(bindings)
+
+
+def resolve_bindings(
+    spec_or_definition: Mapping[str, object] | MaterializationDefinition,
+    graph: object,
+    *,
+    entrypoint: str | None = None,
+    source_digest: str | None = None,
+    query_resolver: Callable[..., Any] | None = None,
+) -> tuple[BindingSpec, ...]:
+    """Run a transformation's builder and resolve its query once.
+
+    ``build_query`` is called only here, during epoch construction.  The
+    returned query is then executed against the same graph snapshot; workers
+    receive only the resolved stream identities and never the graph client.
+    """
+    if isinstance(spec_or_definition, MaterializationDefinition):
+        spec = definition_spec(spec_or_definition)
+        entrypoint = spec_or_definition.entrypoint
+        source_digest = spec_or_definition.source_digest
+        definition_name = spec_or_definition.name
+    else:
+        spec = dict(spec_or_definition)
+        definition_name = str(spec.get("name", "transformation"))
+    if "invocation" not in spec:
+        raise ValueError("definition does not contain the query-driven invocation field")
+    if not entrypoint:
+        raise ValueError("query-driven binding resolution requires an entrypoint")
+    target = load_entrypoint(entrypoint, source_digest)
+    if not isinstance(target, type) or not hasattr(target, "build_query"):
+        raise TypeError("transformation entrypoint must implement build_query")
+    builder = target()
+    query = builder.build_query(_QueryFacade(_GraphQueryClient(graph, query_resolver)))
+    return _query_bindings(spec, definition_name=definition_name, query=query)

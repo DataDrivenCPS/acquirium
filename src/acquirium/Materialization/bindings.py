@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from hashlib import sha256
 import json
-from typing import Any, Iterable, Mapping, Protocol, Sequence
+from typing import Any, Mapping, Sequence
 
 
 def _canonical(value: object) -> str:
@@ -39,53 +39,6 @@ class BindingSpec:
 
     def binding_id(self, definition_id: str) -> str:
         return sha256(f"{definition_id}:{self.logical_key}".encode()).hexdigest()
-
-
-class GraphView(Protocol):
-    """Marker protocol intentionally kept small for custom binding resolvers."""
-
-
-class BindingResolver(Protocol):
-    def resolve(self, graph: GraphView) -> Iterable[BindingSpec]: ...
-
-
-@dataclass(frozen=True)
-class Selector:
-    """Declarative selector retained verbatim for server-side graph resolution."""
-
-    criteria: Mapping[str, Any]
-
-
-@dataclass(frozen=True)
-class PerInput:
-    selector: Selector
-
-
-@dataclass(frozen=True)
-class ByEntity:
-    selectors: Mapping[str, Selector]
-    entity_alias: str = "entity"
-
-
-@dataclass(frozen=True)
-class Single:
-    inputs: Mapping[str, str]
-
-
-def per_input(selector: Selector) -> PerInput:
-    return PerInput(selector)
-
-
-def by_entity(selector_map: Mapping[str, Selector], *, entity_alias: str = "entity") -> ByEntity:
-    if not selector_map:
-        raise ValueError("by_entity requires at least one selector")
-    return ByEntity(dict(selector_map), entity_alias)
-
-
-def single(input_map: Mapping[str, str]) -> Single:
-    if not input_map:
-        raise ValueError("single requires at least one input")
-    return Single(dict(input_map))
 
 
 @dataclass(frozen=True)

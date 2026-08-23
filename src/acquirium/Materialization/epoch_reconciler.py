@@ -60,7 +60,11 @@ class TopologyEpochReconciler:
         try:
             snapshot = self._storage.snapshot(claim)
             spec = snapshot.definition.spec
-            scalar = isinstance(spec, dict) and spec.get("execution", "batch") == "scalar"
+            metadata = dict(snapshot.binding.metadata)
+            metadata["logical_key"] = snapshot.binding.logical_key
+            metadata["output_refs"] = {
+                name: tuple(refs) for name, refs in snapshot.binding.outputs.items()
+            }
             request = ComputeRequest(
                 snapshot.inputs,
                 TransformContext(
@@ -69,12 +73,12 @@ class TopologyEpochReconciler:
                     write_interval=snapshot.work.write_interval,
                     read_interval=snapshot.work.read_interval,
                     input_versions=snapshot.input_versions,
-                    metadata=snapshot.binding.metadata,
+                    metadata=metadata,
                     state_revision=snapshot.binding.state_revision,
-                    outputs=snapshot.binding.outputs,
                 ),
                 frozenset(snapshot.binding.output_refs),
-                scalar=scalar,
+                invocation=str(spec.get("invocation", "whole_query")) if isinstance(spec, dict) else "whole_query",
+                output_specs=metadata.get("output_specs", {}),
                 artifact_bytes=(self._artifact_loader(snapshot.binding.state_revision)
                                 if snapshot.binding.state_revision and self._artifact_loader else None),
             )

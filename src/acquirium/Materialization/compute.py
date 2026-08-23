@@ -1,10 +1,17 @@
-"""First compute adapter: trusted Python code over Arrow tables."""
+"""Compute adapter for normalized query inputs and output handles."""
 from __future__ import annotations
 from collections import OrderedDict
-from typing import Any, Callable, Protocol
+from dataclasses import replace
+from typing import Any, Protocol
 from threading import Lock, get_ident
+import hashlib
+import json
+import polars as pl
 import pyarrow as pa
-from acquirium.Materialization.context import ComputeRequest
+import pyarrow.compute as pc
+from acquirium.Materialization.api import OutputSpec
+from acquirium.Materialization.context import ComputeRequest, InputSet, InputStream
+from acquirium.Materialization.outputs import OutputSet
 from acquirium.Materialization.validation import validate_output
 from acquirium.Materialization.api import StatefulTransformation, Transformation
 
@@ -27,6 +34,14 @@ class PythonArrowAdapter:
         self._decoded_artifacts: OrderedDict[tuple[int, type, str], object] = OrderedDict()
 
     def execute(self, target: type, request: ComputeRequest) -> pa.Table:
+        inputs = request.input_set or _input_set(request)
+        specs = {
+            name: _as_output_spec(value)
+            for name, value in request.output_specs.items()
+        }
+        output_set = OutputSet(request.context.metadata.get("output_refs", {}), specs)
+        context = replace(request.context, outputs=output_set)
+        argument = inputs
         if isinstance(target, type) and issubclass(target, StatefulTransformation):
             if request.artifact_bytes is None:
                 raise ValueError("stateful transformations require a pinned artifact")
@@ -53,32 +68,57 @@ class PythonArrowAdapter:
                         self._decoded_artifacts.popitem(last=False)
                 else:
                     self._decoded_artifacts.move_to_end(artifact_key)
-            result = instance.transform(request.inputs, state, request.context)
-            if not isinstance(result, pa.Table):
-                raise TypeError("stateful transformations must return a pyarrow.Table")
-            return validate_output(result, request)
+            result = instance.transform(argument, state, context)
+            if result is not None:
+                raise TypeError("transformations must write through context.outputs")
+            return validate_output(output_set.to_arrow(), request)
         if isinstance(target, type) and issubclass(target, Transformation):
-            transform = target().transform
-            if request.scalar:
-                result = self._scalar(transform, request)
-            else:
-                result = transform(request.inputs, request.context)
-                if not isinstance(result, pa.Table):
-                    raise TypeError("batch transformations must return a pyarrow.Table")
-            return validate_output(result, request)
+            result = target().transform(argument, context)
+            if result is not None:
+                raise TypeError("transformations must write through context.outputs")
+            return validate_output(output_set.to_arrow(), request)
         raise TypeError("transformation entrypoints must be Transformation classes")
 
-    def _scalar(self, target: Callable[[Any], Any], request: ComputeRequest) -> pa.Table:
-        if len(request.output_refs) != 1:
-            raise ValueError("scalar adapter requires exactly one owned output stream")
-        output_ref = next(iter(request.output_refs))
-        numeric = request.inputs.column("numeric_value").to_pylist()
-        text = request.inputs.column("text_value").to_pylist()
-        values = [number if number is not None else string for number, string in zip(numeric, text)]
-        produced = [target(value) for value in values]
-        if any(value is not None and (isinstance(value, bool) or not isinstance(value, (float, int, str))) for value in produced):
-            raise TypeError("scalar transformations must return float, int, str, or None")
-        numeric_values = [float(value) if isinstance(value, (float, int)) and not isinstance(value, bool) else None for value in produced]
-        text_values = [value if isinstance(value, str) else None for value in produced]
-        return pa.table({"ref_uri": [output_ref] * len(produced), "ts": request.inputs.column("ts"),
-                         "numeric_value": numeric_values, "text_value": text_values})
+
+def _as_output_spec(value: Any) -> OutputSpec:
+    if isinstance(value, OutputSpec):
+        return value
+    if isinstance(value, dict):
+        return OutputSpec(**{key: value[key] for key in ("value_kind", "unit", "quantity_kind", "ref_uri", "prefix") if key in value})
+    raise TypeError("durable output specs must be mappings")
+
+
+def _input_frame(table: pa.Table, ref_uri: str) -> pl.DataFrame:
+    rows = table.filter(pc.equal(table["ref_uri"], pa.scalar(ref_uri))).select(
+        ["ts", "numeric_value", "text_value"]
+    ).to_pylist()
+    if any(row["numeric_value"] is not None for row in rows):
+        return pl.DataFrame({
+            "time": [row["ts"] for row in rows],
+            "value": [row["numeric_value"] for row in rows],
+        })
+    return pl.DataFrame({
+        "time": [row["ts"] for row in rows],
+        "value": [row["text_value"] for row in rows],
+    })
+
+
+def _input_set(request: ComputeRequest) -> InputSet:
+    metadata = request.context.metadata
+    raw_streams = metadata.get("input_streams", {})
+    streams: dict[str, tuple[InputStream, ...]] = {}
+    for alias, values in raw_streams.items():
+        items: list[InputStream] = []
+        for item in values:
+            ref_uri = str(item["ref_uri"])
+            key = hashlib.sha256(json.dumps(item, sort_keys=True).encode()).hexdigest()
+            items.append(InputStream(
+                alias=str(alias),
+                ref_uri=ref_uri,
+                values=_input_frame(request.inputs, ref_uri),
+                point_uri=item.get("point_uri"),
+                unit=item.get("unit"),
+                key=key,
+            ))
+        streams[str(alias)] = tuple(items)
+    return InputSet(streams, key=str(metadata.get("logical_key", "")))

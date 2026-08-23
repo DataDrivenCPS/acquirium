@@ -4,23 +4,45 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import inspect
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, Mapping
 
-from acquirium.Materialization.bindings import Selector
+from dataclasses import dataclass
+
 from acquirium.Materialization.definitions import MaterializationDefinition, definition_for
 from acquirium.Materialization.impact import ImpactPolicy, pointwise
 
 
 class _Outputs:
-    def per_input(self, **options: Any) -> dict[str, Any]:
-        return {"mode": "per_input", **options}
+    def stream(self, **options: Any) -> "OutputSpec":
+        """Describe one logical output exposed by a transformation.
+
+        Output names belong to the transformation's ``outputs`` mapping.  The
+        spec only carries stream metadata and, optionally, a fixed URI.  A
+        worker turns the spec into an :class:`OutputStream` with
+        ``context.outputs.declare(...)``.
+        """
+        return OutputSpec(**options)
+
+@dataclass(frozen=True)
+class OutputSpec:
+    """Metadata used to plan and validate one logical output stream."""
+
+    value_kind: str = "numeric"
+    unit: str | None = None
+    quantity_kind: str | None = None
+    ref_uri: str | None = None
+    prefix: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.value_kind not in {"numeric", "text"}:
+            raise ValueError("output value_kind must be 'numeric' or 'text'")
+        for name in ("unit", "quantity_kind", "ref_uri", "prefix"):
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, str):
+                raise TypeError(f"output {name} must be a string or None")
 
 
 outputs = _Outputs()
-
-
-def select(**criteria: Any) -> Selector:
-    return Selector(criteria)
 
 
 class _Application(ABC):
@@ -66,58 +88,47 @@ class Service(_Application):
 class Transformation(ABC):
     """Class-based stateless transformation declaration.
 
-    Subclasses declare their topology as class attributes and implement
-    :meth:`transform`. The immutable definition is attached when the class is
-    created, so it deploys through ``aq.deploy_transformation``.
+    Subclasses implement pure :meth:`build_query` and :meth:`transform`; the
+    immutable definition is attached when the class is created, so it deploys
+    through ``aq.deploy_transformation``.
     """
 
     name: ClassVar[str | None] = None
-    inputs: ClassVar[object | None] = None
-    bind: ClassVar[object | None] = None
-    outputs: ClassVar[object | None] = None
+    invocation: ClassVar[Literal["whole_query", "per_row"]] = "whole_query"
+    outputs: ClassVar[dict[str, OutputSpec | Mapping[str, Any]] | None] = None
     impact: ClassVar[ImpactPolicy | None] = None
-    execution: ClassVar[Literal["batch", "scalar"]] = "batch"
     parameters_schema: ClassVar[dict[str, Any]] = {}
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         if inspect.isabstract(cls):
             return
-        if cls.inputs is not None and cls.bind is not None:
-            raise ValueError("declare either inputs or bind, not both")
-        if cls.inputs is None and cls.bind is None:
-            raise ValueError("a transformation requires inputs or bind")
+        if not callable(getattr(cls, "build_query", None)):
+            raise ValueError("a transformation must implement build_query(self, aq)")
         if cls.outputs is None:
             raise ValueError("a transformation requires outputs")
-        if cls.execution not in {"batch", "scalar"}:
-            raise ValueError("execution must be 'batch' or 'scalar'")
-        resolved_impact = cls.impact or (pointwise() if cls.execution == "scalar" else None)
-        if resolved_impact is None:
-            raise ValueError("batch and multi-input transformations must declare impact")
+        if not isinstance(cls.outputs, dict) or not cls.outputs:
+            raise ValueError("outputs must be a non-empty name-to-output-spec mapping")
+        if cls.invocation not in {"whole_query", "per_row"}:
+            raise ValueError("invocation must be 'whole_query' or 'per_row'")
+        resolved_impact = cls.impact or pointwise()
         definition = definition_for(
             cls,
             name=cls.name or cls.__name__,
-            inputs=cls.inputs,
-            bind=cls.bind,
             outputs=cls.outputs,
             impact=resolved_impact,
-            execution=cls.execution,
+            invocation=cls.invocation,
             parameters_schema=cls.parameters_schema,
         )
         setattr(cls, "__acquirium_definition__", definition)
 
     @abstractmethod
-    def transform(self, batch: Any, context: Any) -> Any:
+    def build_query(self, aq: Any) -> Any:
         raise NotImplementedError
 
-
-class MappedTransformation(Transformation):
-    """A class-based transformation resolved into one binding per match."""
-
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        super().__init_subclass__(**kwargs)
-        if not inspect.isabstract(cls) and cls.bind is None:
-            raise ValueError("a mapped transformation requires bind")
+    @abstractmethod
+    def transform(self, inputs: Any, context: Any) -> Any:
+        raise NotImplementedError
 
 
 class StatefulTransformation(ABC):
@@ -128,9 +139,8 @@ class StatefulTransformation(ABC):
     """
 
     name: ClassVar[str | None] = None
-    inputs: ClassVar[object | None] = None
-    bind: ClassVar[object | None] = None
-    outputs: ClassVar[object | None] = None
+    invocation: ClassVar[Literal["whole_query", "per_row"]] = "whole_query"
+    outputs: ClassVar[dict[str, OutputSpec | Mapping[str, Any]] | None] = None
     impact: ClassVar[ImpactPolicy | None] = None
     parameters_schema: ClassVar[dict[str, Any]] = {}
 
@@ -138,25 +148,21 @@ class StatefulTransformation(ABC):
         super().__init_subclass__(**kwargs)
         if inspect.isabstract(cls):
             return
-        if cls.inputs is not None and cls.bind is not None:
-            raise ValueError("declare either inputs or bind, not both")
-        if cls.inputs is None and cls.bind is None:
-            raise ValueError("a stateful transformation requires inputs or bind")
+        if not callable(getattr(cls, "build_query", None)):
+            raise ValueError("a stateful transformation must implement build_query(self, aq)")
         if cls.outputs is None:
             raise ValueError("a stateful transformation requires outputs")
-        resolved_impact = cls.impact
-        if resolved_impact is None and cls.inputs is not None and isinstance(cls.outputs, dict) and cls.outputs.get("mode") == "per_input":
-            resolved_impact = pointwise()
-        if resolved_impact is None:
-            raise ValueError("batch and multi-input transformations must declare impact")
+        if not isinstance(cls.outputs, dict) or not cls.outputs:
+            raise ValueError("outputs must be a non-empty name-to-output-spec mapping")
+        if cls.invocation not in {"whole_query", "per_row"}:
+            raise ValueError("invocation must be 'whole_query' or 'per_row'")
+        resolved_impact = cls.impact or pointwise()
         definition = definition_for(
             cls,
             name=cls.name or cls.__name__,
-            inputs=cls.inputs,
-            bind=cls.bind,
             outputs=cls.outputs,
             impact=resolved_impact,
-            execution="batch",
+            invocation=cls.invocation,
             parameters_schema=cls.parameters_schema,
         )
         setattr(cls, "__acquirium_definition__", definition)
@@ -166,6 +172,10 @@ class StatefulTransformation(ABC):
 
     def load_artifact(self, artifact: bytes, worker: Any):
         return artifact
+
+    @abstractmethod
+    def build_query(self, aq: Any):
+        raise NotImplementedError
 
     @abstractmethod
     def transform(self, batch: Any, state: Any, context: Any):
