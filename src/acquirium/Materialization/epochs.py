@@ -65,9 +65,10 @@ class EpochWork:
     epoch_id: str
     component_id: str
     binding_id: str
-    interval: TimeRange
+    write_interval: TimeRange
+    read_interval: TimeRange
     input_versions: Mapping[str, int]
-    upstream_frontier: Mapping[str, str]
+    upstream_frontier: Mapping[str, tuple[str, ...]]
     binding_digest: str
     status: WorkStatus = "pending"
     attempt: int = 0

@@ -17,6 +17,7 @@ def validate_output(table: pa.Table, request: ComputeRequest) -> pa.Table:
     for ref, timestamp in zip(refs, timestamps):
         if ref not in request.output_refs:
             raise OutputValidationError(f"output {ref!r} is not owned by this binding")
-        if timestamp is None or not (request.context.interval.start <= timestamp < request.context.interval.end):
-            raise OutputValidationError("output timestamp lies outside the partition range")
+        interval = request.context.write_interval
+        if timestamp is None or not (interval.start <= timestamp < interval.end):
+            raise OutputValidationError("output timestamp lies outside the write range")
     return result

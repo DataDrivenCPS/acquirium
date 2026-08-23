@@ -7,7 +7,7 @@ import pytest
 
 from acquirium.Materialization.definitions import definition_for
 from acquirium.Materialization.epochs import EpochClaimError, StaleEpochError
-from acquirium.Materialization.impact import pointwise
+from acquirium.Materialization.impact import lookback, pointwise
 from acquirium.Materialization.epoch_reconciler import TopologyEpochReconciler
 from acquirium.Storage.duckdb_store import DuckDBStore
 from acquirium.Storage.materialization.epoch_duckdb import TopologyEpochDuckDB
@@ -29,15 +29,36 @@ def add_one(inputs, context):
 
 
 def add_one_a(inputs, context):
-    return pa.table({"ref_uri": ["urn:a"], "ts": inputs.column("ts"),
+    return pa.table({"ref_uri": ["urn:a"] * inputs.num_rows, "ts": inputs.column("ts"),
                      "numeric_value": [value + 1 for value in inputs.column("numeric_value").to_pylist()],
                      "text_value": [None] * inputs.num_rows})
 
 
 def add_one_b(inputs, context):
-    return pa.table({"ref_uri": ["urn:b"], "ts": inputs.column("ts"),
+    return pa.table({"ref_uri": ["urn:b"] * inputs.num_rows, "ts": inputs.column("ts"),
                      "numeric_value": [value + 1 for value in inputs.column("numeric_value").to_pylist()],
                      "text_value": [None] * inputs.num_rows})
+
+
+def rolling_five_minutes(inputs, context):
+    rows = inputs.select(["ts", "numeric_value"]).to_pylist()
+    output = []
+    for row in rows:
+        ts = row["ts"]
+        if not (context.write_interval.start <= ts < context.write_interval.end):
+            continue
+        lower = ts - timedelta(minutes=5)
+        output.append({
+            "ref_uri": "urn:rolling",
+            "ts": ts,
+            "numeric_value": sum(
+                candidate["numeric_value"]
+                for candidate in rows
+                if lower <= candidate["ts"] <= ts
+            ),
+            "text_value": None,
+        })
+    return pa.Table.from_pylist(output)
 
 
 class Graph:
@@ -151,6 +172,74 @@ def test_epoch_execution_stages_then_seals_through_publication(tmp_path):
             assert conn.execute("""SELECT t.numeric_value FROM timeseries t JOIN ref_ids r ON r.ref_id = t.ref_id
                 WHERE r.ref_uri = 'urn:derived' AND NOT t.deleted""").fetchall() == [(3.0,)]
             assert conn.execute("SELECT count(*) FROM topology_epoch_outputs").fetchone() == (1,)
+    finally:
+        reconciler.close()
+        store.close()
+
+
+def test_lookback_reads_across_partition_boundaries(tmp_path):
+    store = DuckDBStore(tmp_path / "window.duckdb", recreate=True)
+    publisher = PublicationDuckDB(store)
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    publisher.publish(PublicationRequest("window-raw", pa.Table.from_pylist([
+        {"operation": "upsert", "ref_uri": "urn:raw", "ts": start + timedelta(minutes=minute),
+         "numeric_value": 1.0, "text_value": None}
+        for minute in range(21)
+    ], schema=MUTATION_SCHEMA)))
+    runtime = TopologyEpochDuckDB(store)
+    runtime.register_definition(definition_for(
+        rolling_five_minutes, name="rolling-five", inputs={"input": "urn:raw"},
+        outputs={"output": "urn:rolling"}, impact=lookback(timedelta(minutes=5)),
+    ))
+    reconciler = TopologyEpochReconciler(runtime, Graph(("urn:raw",)))
+    try:
+        reconciler.ensure_graph_epoch(1, "window")
+        reconciler.run_until_idle("window-worker")
+        with store._own_conn() as conn:
+            value = conn.execute("""SELECT t.numeric_value FROM timeseries t
+                JOIN ref_ids r ON r.ref_id = t.ref_id
+                WHERE r.ref_uri = 'urn:rolling' AND t.ts = ? AND NOT t.deleted""",
+                [(start + timedelta(minutes=15)).replace(tzinfo=None)]).fetchone()
+        assert value == (6.0,)
+    finally:
+        reconciler.close()
+        store.close()
+
+
+def test_late_change_propagates_window_through_managed_input(tmp_path):
+    store = DuckDBStore(tmp_path / "window-dag.duckdb", recreate=True)
+    publisher = PublicationDuckDB(store)
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    publisher.publish(PublicationRequest("dag-raw", pa.Table.from_pylist([
+        {"operation": "upsert", "ref_uri": "urn:raw", "ts": start + timedelta(minutes=minute),
+         "numeric_value": 1.0, "text_value": None}
+        for minute in range(21)
+    ], schema=MUTATION_SCHEMA)))
+    runtime = TopologyEpochDuckDB(store)
+    runtime.register_definition(definition_for(
+        add_one_a, name="upstream", inputs={"input": "urn:raw"},
+        outputs={"output": "urn:a"}, impact=pointwise(),
+    ))
+    runtime.register_definition(definition_for(
+        rolling_five_minutes, name="downstream", inputs={"input": "urn:a"},
+        outputs={"output": "urn:rolling"}, impact=lookback(timedelta(minutes=5)),
+    ))
+    reconciler = TopologyEpochReconciler(runtime, Graph(("urn:raw",)))
+    try:
+        reconciler.ensure_graph_epoch(1, "window-dag")
+        reconciler.run_until_idle("initial-worker")
+        publisher.publish(PublicationRequest("late-correction", pa.Table.from_pylist([{
+            "operation": "upsert", "ref_uri": "urn:raw", "ts": start + timedelta(minutes=15),
+            "numeric_value": 10.0, "text_value": None,
+        }], schema=MUTATION_SCHEMA)))
+        assert runtime.plan_data_changes() == 2
+        reconciler.run_until_idle("late-worker")
+        with store._own_conn() as conn:
+            value = conn.execute("""SELECT t.numeric_value FROM timeseries t
+                JOIN ref_ids r ON r.ref_id = t.ref_id
+                WHERE r.ref_uri = 'urn:rolling' AND t.ts = ? AND NOT t.deleted""",
+                [(start + timedelta(minutes=15)).replace(tzinfo=None)]).fetchone()
+        assert value == (21.0,)
     finally:
         reconciler.close()
         store.close()

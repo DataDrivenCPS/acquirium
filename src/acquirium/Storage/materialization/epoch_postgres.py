@@ -13,6 +13,7 @@ from typing import Sequence
 import pyarrow as pa
 
 from acquirium.Materialization.epochs import EpochClaim, EpochSnapshot, table_from_rows
+from acquirium.Materialization.impact import TimeRange
 from acquirium.Storage.materialization.epoch_duckdb import TopologyEpochDuckDB
 
 
@@ -101,11 +102,13 @@ class TopologyEpochPostgres(TopologyEpochDuckDB):
                 PRIMARY KEY (epoch_id, component_id))""")
             conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_work (
                 work_id TEXT PRIMARY KEY, epoch_id TEXT NOT NULL, component_id TEXT NOT NULL,
-                binding_id TEXT NOT NULL, start_ts TIMESTAMPTZ NOT NULL, end_ts TIMESTAMPTZ NOT NULL,
+                binding_id TEXT NOT NULL,
+                write_start_ts TIMESTAMPTZ NOT NULL, write_end_ts TIMESTAMPTZ NOT NULL,
+                read_start_ts TIMESTAMPTZ NOT NULL, read_end_ts TIMESTAMPTZ NOT NULL,
                 input_versions_json JSONB NOT NULL, upstream_frontier_json JSONB NOT NULL,
                 binding_digest TEXT NOT NULL, status TEXT NOT NULL, attempt INTEGER NOT NULL DEFAULT 0,
                 error_json JSONB, output_digest TEXT, committed_at TIMESTAMPTZ)""")
-            conn.execute("CREATE INDEX IF NOT EXISTS topology_epoch_work_pending ON topology_epoch_work (epoch_id, status, start_ts, work_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS topology_epoch_work_pending ON topology_epoch_work (epoch_id, status, write_start_ts, work_id)")
             conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_outputs (
                 epoch_id TEXT NOT NULL, work_id TEXT NOT NULL, ref_uri TEXT NOT NULL,
                 ts TIMESTAMPTZ NOT NULL, numeric_value DOUBLE PRECISION, text_value TEXT,
@@ -183,22 +186,54 @@ class TopologyEpochPostgres(TopologyEpochDuckDB):
             from acquirium.Materialization.epochs import EpochBinding
             binding = EpochBinding(row[0], row[1], row[2], row[3], row[4], self._obj(row[5]), self._obj(row[6]), self._obj(row[7]), row[8])
             definition = self._definition(conn, binding.definition_id)
-            owners = {ref for output_row in conn.execute("SELECT outputs_json FROM topology_epoch_bindings WHERE epoch_id = %s", [work.epoch_id]).fetchall()
-                      for refs in self._obj(output_row[0]).values() for ref in refs}
+            owners = {
+                ref: binding_id
+                for binding_id, outputs_json in conn.execute(
+                    "SELECT binding_id, outputs_json FROM topology_epoch_bindings WHERE epoch_id = %s",
+                    [work.epoch_id],
+                ).fetchall()
+                for refs in self._obj(outputs_json).values()
+                for ref in refs
+            }
+            active_epoch = conn.execute(
+                "SELECT active_epoch_id FROM topology_epoch_control WHERE control_id = 1"
+            ).fetchone()[0]
             rows = []
             for ref in binding.input_refs:
                 if ref in owners:
-                    values = conn.execute("""SELECT ref_uri, ts, numeric_value, text_value FROM (
-                        SELECT o.ref_uri, o.ts, o.numeric_value, o.text_value,
-                               row_number() OVER (PARTITION BY o.ref_uri, o.ts ORDER BY w.committed_at DESC, o.work_id DESC) AS recency
-                        FROM topology_epoch_outputs o JOIN topology_epoch_work w ON w.work_id = o.work_id
-                        WHERE o.epoch_id = %s AND o.ref_uri = %s AND w.status = 'committed'
-                          AND o.ts >= %s AND o.ts < %s) latest WHERE recency = 1 ORDER BY ts""",
-                                          [work.epoch_id, ref, work.interval.start, work.interval.end]).fetchall()
+                    dependency_ids = tuple(work.upstream_frontier.get(owners[ref], ()))
+                    staged_rows = []
+                    replaced = []
+                    if dependency_ids:
+                        staged_rows = conn.execute("""SELECT ref_uri, ts, numeric_value, text_value FROM (
+                            SELECT o.ref_uri, o.ts, o.numeric_value, o.text_value,
+                                   row_number() OVER (PARTITION BY o.ref_uri, o.ts ORDER BY w.committed_at DESC, o.work_id DESC) AS recency
+                            FROM topology_epoch_outputs o JOIN topology_epoch_work w ON w.work_id = o.work_id
+                            WHERE o.epoch_id = %s AND o.ref_uri = %s AND o.work_id = ANY(%s::text[])
+                              AND w.status = 'committed' AND o.ts >= %s AND o.ts < %s) latest
+                            WHERE recency = 1 ORDER BY ts""", [
+                                work.epoch_id, ref, list(dependency_ids),
+                                work.read_interval.start, work.read_interval.end,
+                            ]).fetchall()
+                        interval_rows = conn.execute("""SELECT write_start_ts, write_end_ts
+                            FROM topology_epoch_work WHERE work_id = ANY(%s::text[])""",
+                            [list(dependency_ids)]).fetchall()
+                        replaced = [TimeRange(self._aware(start), self._aware(end)) for start, end in interval_rows]
+                    baseline_rows = []
+                    if active_epoch == work.epoch_id:
+                        baseline_rows = conn.execute("""SELECT ref_uri, ts, numeric_value, text_value
+                            FROM timeseries WHERE ref_uri = %s AND ts >= %s AND ts < %s AND NOT deleted
+                            ORDER BY ts""", [ref, work.read_interval.start, work.read_interval.end]).fetchall()
+                        baseline_rows = [row for row in baseline_rows if not any(
+                            interval.start <= self._aware(row[1]) < interval.end for interval in replaced
+                        )]
+                    by_timestamp = {row[1]: row for row in baseline_rows}
+                    by_timestamp.update({row[1]: row for row in staged_rows})
+                    values = [by_timestamp[ts] for ts in sorted(by_timestamp)]
                 else:
                     values = conn.execute("""SELECT ref_uri, ts, numeric_value, text_value FROM timeseries
                         WHERE ref_uri = %s AND ts >= %s AND ts < %s AND NOT deleted ORDER BY ts""",
-                                          [ref, work.interval.start, work.interval.end]).fetchall()
+                                          [ref, work.read_interval.start, work.read_interval.end]).fetchall()
                 rows.extend({"operation": "upsert", "ref_uri": ref, "ts": self._aware(ts), "numeric_value": numeric, "text_value": text}
                             for _, ts, numeric, text in values)
             rows.sort(key=lambda item: (item["ref_uri"], item["ts"]))

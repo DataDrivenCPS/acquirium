@@ -66,11 +66,13 @@ class TopologyEpochDuckDB:
                 PRIMARY KEY (epoch_id, component_id))""")
             conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_work (
                 work_id VARCHAR PRIMARY KEY, epoch_id VARCHAR NOT NULL, component_id VARCHAR NOT NULL,
-                binding_id VARCHAR NOT NULL, start_ts TIMESTAMP NOT NULL, end_ts TIMESTAMP NOT NULL,
+                binding_id VARCHAR NOT NULL,
+                write_start_ts TIMESTAMP NOT NULL, write_end_ts TIMESTAMP NOT NULL,
+                read_start_ts TIMESTAMP NOT NULL, read_end_ts TIMESTAMP NOT NULL,
                 input_versions_json VARCHAR NOT NULL, upstream_frontier_json VARCHAR NOT NULL,
                 binding_digest VARCHAR NOT NULL, status VARCHAR NOT NULL, attempt INTEGER NOT NULL DEFAULT 0,
                 error_json VARCHAR, output_digest VARCHAR, committed_at TIMESTAMP)""")
-            conn.execute("CREATE INDEX IF NOT EXISTS topology_epoch_work_pending ON topology_epoch_work (epoch_id, status, start_ts, work_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS topology_epoch_work_pending ON topology_epoch_work (epoch_id, status, write_start_ts, work_id)")
             conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_outputs (
                 epoch_id VARCHAR NOT NULL, work_id VARCHAR NOT NULL, ref_uri VARCHAR NOT NULL,
                 ts TIMESTAMP NOT NULL, numeric_value DOUBLE, text_value VARCHAR,
@@ -237,7 +239,7 @@ class TopologyEpochDuckDB:
                 spec = self._decode(spec_json)
                 bindings = resolve_bindings(spec, graph)
                 resolved.extend(epoch_binding(epoch_id_value, definition_id, binding) for binding in bindings)
-            edges, _, components = global_dag(resolved)
+            edges, topo_order, components = global_dag(resolved)
         except Exception as error:
             with self._store._lock, self._store._write_conn() as conn:
                 conn.execute("UPDATE topology_epochs SET status = 'failed' WHERE epoch_id = ? AND status = 'constructing'", [epoch_id_value])
@@ -288,34 +290,53 @@ class TopologyEpochDuckDB:
                 conn.executemany("""INSERT INTO topology_epoch_components
                     (epoch_id, component_id, binding_ids_json, status) VALUES (?, ?, ?, 'pending') ON CONFLICT DO NOTHING""", component_rows)
 
-            # Each component receives one deterministic partition range set.
-            # This makes upstream frontiers explicit and makes the seal boundary
-            # the entire weakly connected dependency component.
+            # Derive each binding's output range in topological order.  A
+            # consumer applies its own impact policy to both raw changes and
+            # the output changes of its producers; this is what makes window
+            # semantics compose through a DAG.
+            owners = {ref: item.binding_id for item in resolved for ref in item.output_refs}
+            incoming = {binding_id: [] for binding_id in binding_by_id}
+            for source, target in edges:
+                incoming[target].append(source)
+            dirty: dict[str, tuple[TimeRange, ...]] = {}
+            component_for = {
+                binding_id: component_id
+                for _, component_id, members_json in component_rows
+                for binding_id in json.loads(members_json)
+            }
+            component_retained = {
+                component_id: self._retained_ranges(conn, sorted({
+                    ref
+                    for binding_id in json.loads(members_json)
+                    for ref in binding_by_id[binding_id].input_refs
+                    if ref not in owners
+                }))
+                for _, component_id, members_json in component_rows
+            }
+            for binding_id in topo_order:
+                binding = binding_by_id[binding_id]
+                raw_refs = tuple(ref for ref in binding.input_refs if ref not in owners)
+                changed = [*self._retained_ranges(conn, raw_refs)]
+                for source in incoming[binding_id]:
+                    changed.extend(dirty[source])
+                impact = self._definition_impact(conn, binding.definition_id)
+                dirty[binding_id] = self._affected_ranges(
+                    changed, impact, component_retained[component_for[binding_id]]
+                )
+
             works: list[tuple] = []
             for _, component_id, members_json in component_rows:
                 members = json.loads(members_json)
-                input_refs = sorted({ref for binding_id in members for ref in binding_by_id[binding_id].input_refs})
-                ranges = self._retained_ranges(conn, input_refs)
-                ranges = self._partition_ranges(ranges, maximum_partition_duration)
-                work_ids = {
-                    (binding_id, interval.start, interval.end): materialization_id("epoch-work", epoch_id_value, binding_id, interval.start.isoformat(), interval.end.isoformat())
-                    for binding_id in members for interval in ranges
-                }
-                for binding_id in sorted(members):
-                    binding = binding_by_id[binding_id]
-                    versions = self._stream_versions(conn, binding.input_refs)
-                    # The map is keyed by source and the deterministic range is
-                    # encoded into the work id; all members share the ranges.
-                    for interval in ranges:
-                        frontier = {source: work_ids[(source, interval.start, interval.end)] for source, target in edges if target == binding_id}
-                        work_id = work_ids[(binding_id, interval.start, interval.end)]
-                        works.append((work_id, epoch_id_value, component_id, binding_id,
-                                      self._stored_timestamp(interval.start), self._stored_timestamp(interval.end),
-                                      self._json(versions), self._json(frontier), binding.content_digest))
+                works.extend(self._work_rows(
+                    conn, epoch_id_value, component_id, members, binding_by_id,
+                    edges, dirty, maximum_partition_duration, prefix="epoch-work",
+                ))
             if works:
                 conn.executemany("""INSERT INTO topology_epoch_work
-                (work_id, epoch_id, component_id, binding_id, start_ts, end_ts, input_versions_json,
-                upstream_frontier_json, binding_digest, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+                (work_id, epoch_id, component_id, binding_id,
+                 write_start_ts, write_end_ts, read_start_ts, read_end_ts,
+                 input_versions_json, upstream_frontier_json, binding_digest, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
                 ON CONFLICT (work_id) DO NOTHING""", works)
             new_status = "reconciling" if works else ("ready" if component_rows else "active")
             conn.execute("UPDATE topology_epochs SET status = ? WHERE epoch_id = ? AND status = 'constructing'", [new_status, epoch_id_value])
@@ -354,14 +375,87 @@ class TopologyEpochDuckDB:
             LEFT JOIN {STREAM_HEADS_TABLE} head ON head.ref_id = ids.ref_id ORDER BY requested.ref_uri""", list(refs)).fetchall()
         return dict(rows)
 
-    def plan_data_changes(self, *, maximum_partition_duration: timedelta = timedelta(minutes=15)) -> int:
-        """Append a manifest revision for canonical input changes.
+    def _definition_impact(self, conn, definition_id: str) -> ImpactPolicy:
+        definition = self._definition(conn, definition_id)
+        value = self._decode(definition.spec).get("impact") or {"kind": "pointwise"}
+        return ImpactPolicy.from_json(value)
 
-        The epoch topology stays immutable while its reconciliation frontier
-        advances.  All bindings in an affected weak component receive the same
-        dirty ranges, which is conservative but keeps the component seal
-        invariant simple and deterministic.
-        """
+    @staticmethod
+    def _read_interval(write: TimeRange, impact: ImpactPolicy) -> TimeRange:
+        """Return the input halo required to compute one owned output range."""
+        if impact.kind == "full_history":
+            return write
+        return TimeRange(write.start - impact.before, write.end + impact.after)
+
+    @staticmethod
+    def _affected_ranges(
+        changed: Sequence[TimeRange],
+        impact: ImpactPolicy,
+        retained: Sequence[TimeRange],
+    ) -> tuple[TimeRange, ...]:
+        if not changed:
+            return ()
+        if impact.kind == "full_history":
+            return coalesce_ranges(retained)
+        return coalesce_ranges(impact.affected(interval) for interval in changed)
+
+    def _work_rows(
+        self,
+        conn,
+        epoch: str,
+        component: str,
+        members: Sequence[str],
+        bindings: Mapping[str, EpochBinding],
+        edges: Sequence[tuple[str, str]],
+        dirty: Mapping[str, Sequence[TimeRange]],
+        maximum_partition_duration: timedelta,
+        *,
+        prefix: str,
+    ) -> list[tuple]:
+        """Build deterministic work rows and overlap-based DAG frontiers."""
+        partitions = {
+            binding_id: self._partition_ranges(dirty.get(binding_id, ()), maximum_partition_duration)
+            for binding_id in members
+        }
+        identities: dict[str, list[tuple[TimeRange, TimeRange, str]]] = {}
+        for binding_id in members:
+            impact = self._definition_impact(conn, bindings[binding_id].definition_id)
+            versions = self._stream_versions(conn, bindings[binding_id].input_refs)
+            items: list[tuple[TimeRange, TimeRange, str]] = []
+            for write in partitions[binding_id]:
+                read = self._read_interval(write, impact)
+                work_id = materialization_id(
+                    prefix, epoch, binding_id, write.start.isoformat(),
+                    write.end.isoformat(), versions,
+                )
+                items.append((write, read, work_id))
+            identities[binding_id] = items
+
+        rows: list[tuple] = []
+        incoming = {
+            target: tuple(source for source, candidate in edges if candidate == target)
+            for target in members
+        }
+        for binding_id in sorted(members):
+            binding = bindings[binding_id]
+            versions = self._stream_versions(conn, binding.input_refs)
+            for write, read, work_id in identities[binding_id]:
+                frontier = {
+                    source: [candidate_id for source_write, _, candidate_id in identities[source]
+                             if source_write.intersects(read)]
+                    for source in incoming[binding_id]
+                }
+                frontier = {source: ids for source, ids in frontier.items() if ids}
+                rows.append((
+                    work_id, epoch, component, binding_id,
+                    self._stored_timestamp(write.start), self._stored_timestamp(write.end),
+                    self._stored_timestamp(read.start), self._stored_timestamp(read.end),
+                    self._json(versions), self._json(frontier), binding.content_digest,
+                ))
+        return rows
+
+    def plan_data_changes(self, *, maximum_partition_duration: timedelta = timedelta(minutes=15)) -> int:
+        """Derive missing work from canonical changes and propagate it through the DAG."""
         with self._store._lock, self._store._write_conn() as conn:
             epoch = conn.execute("SELECT current_epoch_id FROM topology_epoch_control WHERE control_id = 1").fetchone()[0]
             if epoch is None:
@@ -369,27 +463,57 @@ class TopologyEpochDuckDB:
             status = conn.execute("SELECT status FROM topology_epochs WHERE epoch_id = ?", [epoch]).fetchone()[0]
             if status in {"superseded", "failed", "compacted"}:
                 return 0
-            component_members = {component: self._decode(members) for component, members in
-                                 conn.execute("SELECT component_id, binding_ids_json FROM topology_epoch_components WHERE epoch_id = ?", [epoch]).fetchall()}
+            component_members = {
+                component: self._decode(members)
+                for component, members in conn.execute(
+                    "SELECT component_id, binding_ids_json FROM topology_epoch_components WHERE epoch_id = ?",
+                    [epoch],
+                ).fetchall()
+            }
             component_for = {binding_id: component for component, members in component_members.items() for binding_id in members}
-            binding_rows = [(binding_id, component_for[binding_id], definition_id, inputs_json)
-                            for binding_id, definition_id, inputs_json in conn.execute("""SELECT binding_id, definition_id, inputs_json
-                                FROM topology_epoch_bindings WHERE epoch_id = ? ORDER BY binding_id""", [epoch]).fetchall()]
-            if not binding_rows:
+            binding_rows = conn.execute("""SELECT epoch_id, binding_id, definition_id, logical_key,
+                content_digest, inputs_json, outputs_json, metadata_json, state_revision
+                FROM topology_epoch_bindings WHERE epoch_id = ? ORDER BY binding_id""", [epoch]).fetchall()
+            bindings = {
+                row[1]: EpochBinding(
+                    row[0], row[1], row[2], row[3], row[4], self._decode(row[5]),
+                    self._decode(row[6]), self._decode(row[7]), row[8],
+                )
+                for row in binding_rows
+            }
+            if not bindings:
                 return 0
-            owners = {ref for _, _, outputs_json in conn.execute("SELECT binding_id, definition_id, outputs_json FROM topology_epoch_bindings WHERE epoch_id = ?", [epoch]).fetchall()
-                      for refs in self._decode(outputs_json).values() for ref in refs}
-            dirty: dict[str, list[TimeRange]] = {binding_id: [] for binding_id, *_ in binding_rows}
-            for binding_id, _, definition_id, inputs_json in binding_rows:
-                binding_inputs = self._decode(inputs_json)
-                raw_refs = sorted({ref for refs in binding_inputs.values() for ref in refs if ref not in owners})
+            owners = {ref: binding_id for binding_id, binding in bindings.items() for ref in binding.output_refs}
+            edges = tuple(conn.execute(
+                "SELECT source_binding_id, target_binding_id FROM topology_epoch_edges WHERE epoch_id = ?",
+                [epoch],
+            ).fetchall())
+            incoming = {binding_id: [] for binding_id in bindings}
+            children = {binding_id: [] for binding_id in bindings}
+            indegree = {binding_id: 0 for binding_id in bindings}
+            for source, target in edges:
+                incoming[target].append(source)
+                children[source].append(target)
+                indegree[target] += 1
+            ready = sorted(binding_id for binding_id, degree in indegree.items() if degree == 0)
+            topo: list[str] = []
+            while ready:
+                binding_id = ready.pop(0)
+                topo.append(binding_id)
+                for child in sorted(children[binding_id]):
+                    indegree[child] -= 1
+                    if indegree[child] == 0:
+                        ready.append(child)
+                        ready.sort()
+
+            raw_changes: dict[str, list[TimeRange]] = {binding_id: [] for binding_id in bindings}
+            for binding_id, binding in bindings.items():
+                raw_refs = tuple(ref for ref in binding.input_refs if ref not in owners)
                 prior: dict[str, int] = {ref: 0 for ref in raw_refs}
                 for (versions_json,) in conn.execute("SELECT input_versions_json FROM topology_epoch_work WHERE epoch_id = ? AND binding_id = ?", [epoch, binding_id]).fetchall():
                     versions = self._decode(versions_json)
                     for ref in raw_refs:
                         prior[ref] = max(prior[ref], int(versions.get(ref, 0)))
-                definition = self._definition(conn, definition_id)
-                impact = ImpactPolicy.from_json(self._decode(definition.spec).get("impact") or {"kind": "pointwise"})
                 for ref in raw_refs:
                     head = self._stream_versions(conn, (ref,)).get(ref, 0)
                     if head <= prior[ref]:
@@ -397,40 +521,44 @@ class TopologyEpochDuckDB:
                     changes = conn.execute("""SELECT start_ts, end_ts FROM stream_change_ranges
                         WHERE ref_uri = ? AND stream_version > ? AND stream_version <= ? ORDER BY start_ts""", [ref, prior[ref], head]).fetchall()
                     for start, end in changes:
-                        changed = TimeRange(self._aware(start), self._aware(end))
-                        if impact.kind == "full_history":
-                            dirty[binding_id].extend(self._retained_ranges(conn, raw_refs))
-                        else:
-                            dirty[binding_id].append(impact.affected(changed))
-            component_dirty: dict[str, list[TimeRange]] = {component: [] for component in component_members}
-            for binding_id, component, *_ in binding_rows:
-                component_dirty[component].extend(dirty[binding_id])
+                        raw_changes[binding_id].append(TimeRange(self._aware(start), self._aware(end)))
+
+            component_retained = {
+                component: self._retained_ranges(conn, sorted({
+                    ref
+                    for binding_id in members
+                    for ref in bindings[binding_id].input_refs
+                    if ref not in owners
+                }))
+                for component, members in component_members.items()
+            }
+            dirty: dict[str, tuple[TimeRange, ...]] = {}
+            for binding_id in topo:
+                changed = list(raw_changes[binding_id])
+                for source in incoming[binding_id]:
+                    changed.extend(dirty[source])
+                dirty[binding_id] = self._affected_ranges(
+                    changed,
+                    self._definition_impact(conn, bindings[binding_id].definition_id),
+                    component_retained[component_for[binding_id]],
+                )
+
             inserted = 0
             for component, members in sorted(component_members.items()):
-                ranges = self._partition_ranges(coalesce_ranges(component_dirty[component]), maximum_partition_duration)
-                if not ranges:
+                if not any(dirty[binding_id] for binding_id in members):
                     continue
-                versions_by_binding = {
-                    binding_id: self._stream_versions(conn, tuple(sorted({ref for refs in self._decode(inputs_json).values() for ref in refs})))
-                    for binding_id, _, _, inputs_json in binding_rows if binding_id in members
-                }
-                work_ids = {(binding_id, interval.start, interval.end): materialization_id("epoch-data-work", epoch, binding_id, interval.start.isoformat(), interval.end.isoformat(), versions_by_binding[binding_id])
-                            for binding_id in members for interval in ranges}
-                edge_rows = conn.execute("SELECT source_binding_id, target_binding_id FROM topology_epoch_edges WHERE epoch_id = ?", [epoch]).fetchall()
-                for binding_id, _, definition_id, inputs_json in binding_rows:
-                    if binding_id not in members:
-                        continue
-                    binding_row = conn.execute("SELECT content_digest FROM topology_epoch_bindings WHERE epoch_id = ? AND binding_id = ?", [epoch, binding_id]).fetchone()
-                    for interval in ranges:
-                        frontier = {source: work_ids[(source, interval.start, interval.end)] for source, target in edge_rows if target == binding_id and source in members}
-                        work_id = work_ids[(binding_id, interval.start, interval.end)]
-                        conn.execute("""INSERT INTO topology_epoch_work
-                            (work_id, epoch_id, component_id, binding_id, start_ts, end_ts, input_versions_json,
-                             upstream_frontier_json, binding_digest, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
-                            ON CONFLICT (work_id) DO NOTHING""", [work_id, epoch, component, binding_id,
-                            self._stored_timestamp(interval.start), self._stored_timestamp(interval.end),
-                            self._json(versions_by_binding[binding_id]), self._json(frontier), binding_row[0]])
-                        inserted += 1
+                rows = self._work_rows(
+                    conn, epoch, component, members, bindings, edges, dirty,
+                    maximum_partition_duration, prefix="epoch-data-work",
+                )
+                for row in rows:
+                    changed = conn.execute("""INSERT INTO topology_epoch_work
+                        (work_id, epoch_id, component_id, binding_id,
+                         write_start_ts, write_end_ts, read_start_ts, read_end_ts,
+                         input_versions_json, upstream_frontier_json, binding_digest, status)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+                        ON CONFLICT (work_id) DO NOTHING""", row).rowcount
+                    inserted += int(bool(changed))
                 conn.execute("UPDATE topology_epoch_components SET status = 'pending', seal_publication_id = NULL WHERE epoch_id = ? AND component_id = ?", [epoch, component])
             if inserted:
                 conn.execute("UPDATE topology_epochs SET status = 'reconciling' WHERE epoch_id = ?", [epoch])
@@ -485,11 +613,12 @@ class TopologyEpochDuckDB:
                 JOIN topology_epochs e ON e.epoch_id = w.epoch_id
                 WHERE w.status = 'pending' AND e.status IN ('reconciling', 'ready')
                 AND e.epoch_id = (SELECT current_epoch_id FROM topology_epoch_control WHERE control_id = 1)
-                ORDER BY w.start_ts, w.work_id""").fetchall()
+                ORDER BY w.write_start_ts, w.work_id""").fetchall()
         for work_id, frontier_json in rows:
             frontier = self._decode(frontier_json)
             with self._store._own_conn() as conn:
-                if any(conn.execute("SELECT status FROM topology_epoch_work WHERE work_id = ?", [dependency]).fetchone() != ("committed",) for dependency in frontier.values()):
+                dependencies = (dependency for work_ids in frontier.values() for dependency in work_ids)
+                if any(conn.execute("SELECT status FROM topology_epoch_work WHERE work_id = ?", [dependency]).fetchone() != ("committed",) for dependency in dependencies):
                     continue
             claim = self.claim("reconcile", work_id, owner, duration=duration)
             if claim is None:
@@ -507,13 +636,20 @@ class TopologyEpochDuckDB:
         return None
 
     def _work(self, conn, work_id: str) -> EpochWork:
-        row = conn.execute("""SELECT work_id, epoch_id, component_id, binding_id, start_ts, end_ts,
+        row = conn.execute("""SELECT work_id, epoch_id, component_id, binding_id,
+            write_start_ts, write_end_ts, read_start_ts, read_end_ts,
             input_versions_json, upstream_frontier_json, binding_digest, status, attempt
             FROM topology_epoch_work WHERE work_id = ?""", [work_id]).fetchone()
         if row is None:
             raise KeyError(work_id)
-        return EpochWork(row[0], row[1], row[2], row[3], TimeRange(self._aware(row[4]), self._aware(row[5])),
-                         self._decode(row[6]), self._decode(row[7]), row[8], row[9], row[10])
+        return EpochWork(
+            row[0], row[1], row[2], row[3],
+            TimeRange(self._aware(row[4]), self._aware(row[5])),
+            TimeRange(self._aware(row[6]), self._aware(row[7])),
+            self._decode(row[8]),
+            {source: tuple(ids) for source, ids in self._decode(row[9]).items()},
+            row[10], row[11], row[12],
+        )
 
     def snapshot(self, claim: EpochClaim) -> EpochSnapshot:
         if claim.kind != "reconcile":
@@ -533,23 +669,60 @@ class TopologyEpochDuckDB:
             definition = self._definition(conn, binding.definition_id)
             # Output ownership is recovered from the immutable binding rows so
             # no graph query or worker-side selector evaluation is possible.
-            owners = {ref for row in conn.execute("SELECT outputs_json FROM topology_epoch_bindings WHERE epoch_id = ?", [work.epoch_id]).fetchall()
-                      for refs in self._decode(row[0]).values() for ref in refs}
+            owners = {
+                ref: binding_id
+                for binding_id, outputs_json in conn.execute(
+                    "SELECT binding_id, outputs_json FROM topology_epoch_bindings WHERE epoch_id = ?",
+                    [work.epoch_id],
+                ).fetchall()
+                for refs in self._decode(outputs_json).values()
+                for ref in refs
+            }
+            active_epoch = conn.execute(
+                "SELECT active_epoch_id FROM topology_epoch_control WHERE control_id = 1"
+            ).fetchone()[0]
             rows: list[dict[str, Any]] = []
             for ref in binding.input_refs:
                 if ref in owners:
-                    source_rows = conn.execute("""SELECT ref_uri, ts, numeric_value, text_value FROM (
-                        SELECT o.ref_uri, o.ts, o.numeric_value, o.text_value,
-                               row_number() OVER (PARTITION BY o.ref_uri, o.ts ORDER BY w.committed_at DESC, o.work_id DESC) AS recency
-                        FROM topology_epoch_outputs o JOIN topology_epoch_work w ON w.work_id = o.work_id
-                        WHERE o.epoch_id = ? AND o.ref_uri = ? AND w.status = 'committed'
-                          AND o.ts >= ? AND o.ts < ?) latest WHERE recency = 1 ORDER BY ts""",
-                                               [work.epoch_id, ref, work.interval.start.replace(tzinfo=None), work.interval.end.replace(tzinfo=None)]).fetchall()
+                    dependency_ids = tuple(work.upstream_frontier.get(owners[ref], ()))
+                    staged_rows = []
+                    replaced: list[TimeRange] = []
+                    if dependency_ids:
+                        placeholders = ",".join("?" for _ in dependency_ids)
+                        staged_rows = conn.execute(f"""SELECT ref_uri, ts, numeric_value, text_value FROM (
+                            SELECT o.ref_uri, o.ts, o.numeric_value, o.text_value,
+                                   row_number() OVER (PARTITION BY o.ref_uri, o.ts ORDER BY w.committed_at DESC, o.work_id DESC) AS recency
+                            FROM topology_epoch_outputs o JOIN topology_epoch_work w ON w.work_id = o.work_id
+                            WHERE o.epoch_id = ? AND o.ref_uri = ? AND o.work_id IN ({placeholders})
+                              AND w.status = 'committed' AND o.ts >= ? AND o.ts < ?) latest
+                            WHERE recency = 1 ORDER BY ts""", [
+                                work.epoch_id, ref, *dependency_ids,
+                                work.read_interval.start.replace(tzinfo=None),
+                                work.read_interval.end.replace(tzinfo=None),
+                            ]).fetchall()
+                        interval_rows = conn.execute(f"""SELECT write_start_ts, write_end_ts
+                            FROM topology_epoch_work WHERE work_id IN ({placeholders})""",
+                            list(dependency_ids)).fetchall()
+                        replaced = [TimeRange(self._aware(start), self._aware(end)) for start, end in interval_rows]
+                    baseline_rows = []
+                    if active_epoch == work.epoch_id:
+                        baseline_rows = conn.execute(f"""SELECT r.ref_uri, t.ts, t.numeric_value, t.text_value
+                            FROM {TIMESERIES_TABLE} t JOIN {REF_IDS_TABLE} r ON r.ref_id = t.ref_id
+                            WHERE r.ref_uri = ? AND t.ts >= ? AND t.ts < ? AND NOT t.deleted ORDER BY t.ts""", [
+                                ref, work.read_interval.start.replace(tzinfo=None),
+                                work.read_interval.end.replace(tzinfo=None),
+                            ]).fetchall()
+                        baseline_rows = [row for row in baseline_rows if not any(
+                            interval.start <= self._aware(row[1]) < interval.end for interval in replaced
+                        )]
+                    by_timestamp = {row[1]: row for row in baseline_rows}
+                    by_timestamp.update({row[1]: row for row in staged_rows})
+                    source_rows = [by_timestamp[ts] for ts in sorted(by_timestamp)]
                 else:
                     source_rows = conn.execute(f"""SELECT r.ref_uri, t.ts, t.numeric_value, t.text_value
                         FROM {TIMESERIES_TABLE} t JOIN {REF_IDS_TABLE} r ON r.ref_id = t.ref_id
                         WHERE r.ref_uri = ? AND t.ts >= ? AND t.ts < ? AND NOT t.deleted ORDER BY t.ts""",
-                                               [ref, work.interval.start.replace(tzinfo=None), work.interval.end.replace(tzinfo=None)]).fetchall()
+                                               [ref, work.read_interval.start.replace(tzinfo=None), work.read_interval.end.replace(tzinfo=None)]).fetchall()
                 rows.extend({"operation": "upsert", "ref_uri": ref, "ts": self._aware(ts), "numeric_value": numeric, "text_value": text}
                             for _, ts, numeric, text in source_rows)
             rows.sort(key=lambda item: (item["ref_uri"], item["ts"]))
@@ -566,7 +739,7 @@ class TopologyEpochDuckDB:
         if not required.issubset(replacement.column_names):
             raise ValueError("replacement must contain ref_uri, ts, numeric_value, and text_value")
         rows = replacement.select(["ref_uri", "ts", "numeric_value", "text_value"]).to_pylist()
-        if any(row["ref_uri"] not in snapshot.binding.output_refs or not (snapshot.work.interval.start <= row["ts"] < snapshot.work.interval.end) for row in rows):
+        if any(row["ref_uri"] not in snapshot.binding.output_refs or not (snapshot.work.write_interval.start <= row["ts"] < snapshot.work.write_interval.end) for row in rows):
             raise ValueError("replacement lies outside the persisted epoch binding or work range")
         digest = sha256(self._json([(row["ref_uri"], row["ts"].isoformat(), row["numeric_value"], row["text_value"]) for row in rows]).encode()).hexdigest()
         with self._store._lock, self._store._write_conn() as conn:
@@ -600,7 +773,8 @@ class TopologyEpochDuckDB:
                 conn.execute("UPDATE topology_epoch_work SET status = 'pending', error_json = ? WHERE work_id = ?", [self._json({"type": "stale_input"}), snapshot.work.work_id])
                 conn.execute("UPDATE topology_epoch_claims SET owner = NULL, expires_at = NULL WHERE claim_id = ?", [claim.claim_id])
                 raise StaleEpochError("raw input versions changed after snapshot")
-            for dependency in self._decode(conn.execute("SELECT upstream_frontier_json FROM topology_epoch_work WHERE work_id = ?", [snapshot.work.work_id]).fetchone()[0]).values():
+            frontier = self._decode(conn.execute("SELECT upstream_frontier_json FROM topology_epoch_work WHERE work_id = ?", [snapshot.work.work_id]).fetchone()[0])
+            for dependency in (work_id for work_ids in frontier.values() for work_id in work_ids):
                 dep = conn.execute("SELECT status FROM topology_epoch_work WHERE work_id = ?", [dependency]).fetchone()
                 if dep != ("committed",):
                     raise StaleEpochError("upstream dependency frontier is not committed")
@@ -694,7 +868,7 @@ class TopologyEpochDuckDB:
             work_intervals = [
                 (self._aware(start), self._aware(end))
                 for start, end in conn.execute(
-                    "SELECT start_ts, end_ts FROM topology_epoch_work WHERE epoch_id = ? AND component_id = ? ORDER BY start_ts, end_ts",
+                    "SELECT write_start_ts, write_end_ts FROM topology_epoch_work WHERE epoch_id = ? AND component_id = ? ORDER BY write_start_ts, write_end_ts",
                     [epoch, component],
                 ).fetchall()
             ]

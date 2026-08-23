@@ -9,7 +9,8 @@ from acquirium.Materialization.impact import TimeRange
 class TransformContext:
     binding_id: str
     execution_id: str
-    interval: TimeRange
+    write_interval: TimeRange
+    read_interval: TimeRange
     input_versions: Mapping[str, int]
     metadata: Mapping[str, Any] = field(default_factory=dict)
     state_revision: str | None = None

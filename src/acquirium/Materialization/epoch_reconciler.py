@@ -53,7 +53,8 @@ class TopologyEpochReconciler:
                 TransformContext(
                     binding_id=snapshot.binding.binding_id,
                     execution_id=f"{snapshot.work.work_id}:{claim.attempt}",
-                    interval=snapshot.work.interval,
+                    write_interval=snapshot.work.write_interval,
+                    read_interval=snapshot.work.read_interval,
                     input_versions=snapshot.input_versions,
                     metadata=snapshot.binding.metadata,
                     state_revision=snapshot.binding.state_revision,
