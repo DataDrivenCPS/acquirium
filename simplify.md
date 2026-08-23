@@ -272,6 +272,50 @@ hiding:
 `batch_example/` was verified end-to-end against the final API (no example
 code changes were needed; its missing files are now committed).
 
+### Performance: no measurable regression
+
+Two changes had plausible cost: `TZBoundaryConnection` converts timestamps
+per cell on every DuckDB fetch, and the rowcount fix adds `RETURNING 1` to DML
+guards. A paired A/B settled it.
+
+Method: the archived `benchmarks/microbatch_*` runs could **not** be used as a
+baseline — the harness's own output schema changed between those runs and now
+(`steady_*` columns became `end_to_end_*`/`drain_*`), so comparing them would
+have measured harness churn. Instead both sides were run with the *same*
+current harness, back to back on an idle machine: pre-refactor code from a
+`2b693c1` worktree selected via `PYTHONPATH`, then current `HEAD`. Sweep:
+192 cases (streams 1/8/32 × width 1/4 × outputs 1/4 × rate 0/10Hz × apps 1/4
+× depth 1/2, 5 microbatches, 2 repeats).
+
+Result — **no resolvable difference**:
+
+| metric | pre → post | median ratio |
+| --- | --- | --- |
+| `end_to_end_seconds` | 143.6s → 145.4s | ×1.017 |
+| `drain_seconds` | 77.0s → 77.5s | ×1.012 |
+| `initial_materialization_seconds` | 58.4s → 59.0s | ×1.010 |
+
+The ~1.6% median difference sits far below the noise floor: repeating an
+*identical* case within one version varies by a median of 4.4–5.5%
+(p90 ≈ 19%, max ≈ 5×). The handful of apparent per-case "×5 regressions" fall
+inside that same within-version spread.
+
+Correctness equivalence held: `topology_bindings`, `topology_components`, and
+`driver_publish_rows` matched on all 192 cases, and `output_rows` matched on
+all 96 **paced** cases. The 14 `output_rows` differences all occur in unpaced
+(`--publish-rate-hz 0`) `chain_depth=2` cases — and identical parameters
+repeated *within a single version* disagree exactly the same way (16 param-sets
+do so), in a balanced direction (6 post-higher, 8 post-lower). That is the
+benchmark's documented microbatch coalescing under open load, not a behavior
+change.
+
+One metric shifted meaning by design: pre-refactor logged 313
+`materializer_errors` across the sweep where post-refactor logs 0. Those were
+`StaleEpochError` races the reconciler now classifies internally (commit
+`851742b`) instead of raising to every caller, which also moves them from the
+error count into `transitions`. Compare wall-clock metrics, not
+`transitions`/`materializer_errors`, across this boundary.
+
 ---
 
 ## What's left
