@@ -1022,11 +1022,18 @@ class Query:
             res = self.execute(include_dependencies=include_dependencies)
             cols = res.get("columns", [])
             rows = res.get("rows", [])
+            # A stream's URI is a UUID minted from (source_id, ref_name), so
+            # showing it identifies nothing. Substitute the label into the
+            # node's own column and drop the label column itself; the URI is
+            # still there under include_internals.
+            rows = self._label_stream_columns(cols, rows, include_internals)
             keep_idx = list(range(len(cols)))
             if not include_internals:
                 keep_idx = [
                     i for i, c in enumerate(cols)
-                    if not (isinstance(c, str) and (c.startswith("ext") or c.startswith("unit")))
+                    if not (isinstance(c, str)
+                            and (c.startswith("ext") or c.startswith("unit")
+                                 or c.startswith("label")))
                 ]
             cols_kept = [cols[i] for i in keep_idx]
             rows_kept = [[r[i] for i in keep_idx] for r in rows]
@@ -1046,6 +1053,34 @@ class Query:
             ]).unique()
             self.cache[cache_key] = pl_table
         return self.cache[cache_key]
+
+    def _label_stream_columns(
+        self, cols: List[str], rows: List[List[Any]], include_internals: bool
+    ) -> List[List[Any]]:
+        """Replace each stream node's URI with its label, where it has one.
+
+        Display only, and only for stream nodes — an entity's URI usually
+        comes from a model and reads fine, while a reference's is a UUID.
+        ``include_internals=True`` leaves the URIs alone, since a caller
+        asking for internals wants the real values.
+        """
+        if include_internals or not self.query_graph.stream_nodes:
+            return rows
+        pairs = [
+            (cols.index(f"v{nid}"), cols.index(f"label{nid}"))
+            for nid in self.query_graph.stream_nodes
+            if f"v{nid}" in cols and f"label{nid}" in cols
+        ]
+        if not pairs:
+            return rows
+        relabelled = []
+        for row in rows:
+            row = list(row)
+            for uri_col, label_col in pairs:
+                if row[label_col] is not None:
+                    row[uri_col] = row[label_col]
+            relabelled.append(row)
+        return relabelled
 
     def data(
         self,

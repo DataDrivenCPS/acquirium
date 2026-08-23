@@ -187,31 +187,32 @@ def test_filters_combine(graph):
         data_source="SCADA", unit=str(MGL))) == ["r_scada"]
 
 
+def bound(graph: Graph, query: Query, var: str) -> list:
+    """Values of one SPARQL variable, by name — column order is not a contract."""
+    return [row[var] for row in graph.query(query.to_sparql())]
+
+
 def test_chained_form_narrows_a_point_to_one_of_its_references(graph):
     """The motivating case: a point with both a SCADA and a lab stream."""
     q = (Query(client=None).entity(str(BASIN)).measurement(alias="m")
          .streams(data_source="SCADA"))
-    rows = [(str(r[2]).split("#")[-1], str(r[3]).split("#")[-1])
+    rows = [(str(r["v2"]).split("#")[-1], str(r["pt2"]).split("#")[-1])
             for r in graph.query(q.to_sparql())]
     assert rows == [("r_scada", "p_do")]
 
 
 def test_chained_form_binds_the_point_it_came_from(graph):
     q = Query(client=None).entity(str(BASIN)).measurement(alias="m").streams()
-    points = {str(r[3]) for r in graph.query(q.to_sparql())}
-    assert points == {str(POINT)}
+    assert {str(p) for p in bound(graph, q, "pt2")} == {str(POINT)}
 
 
 def test_root_form_leaves_the_point_unbound_when_there_is_none(graph):
-    q = Query(client=None).streams(ref_name="FIT_9")
-    rows = list(graph.query(q.to_sparql()))
-    assert len(rows) == 1 and rows[0][1] is None
+    assert bound(graph, Query(client=None).streams(ref_name="FIT_9"), "pt0") == [None]
 
 
 def test_root_form_binds_a_point_when_one_exists(graph):
-    q = Query(client=None).streams(ref_name="DOX_1")
-    rows = list(graph.query(q.to_sparql()))
-    assert len(rows) == 1 and str(rows[0][1]) == str(POINT)
+    points = bound(graph, Query(client=None).streams(ref_name="DOX_1"), "pt0")
+    assert [str(p) for p in points] == [str(POINT)]
 
 
 # --------------------------------------------------- DataObject access
@@ -266,3 +267,63 @@ def test_query_graph_with_stream_node_is_immutable():
     g = QueryGraph().with_stream_node(StreamNodeInfo(node_id=0))
     assert QueryGraph().stream_nodes == {}
     assert list(g.stream_nodes) == [0]
+
+
+# ------------------------------------------------------------------ labels
+
+def test_metadata_shows_the_label_not_the_uuid(graph):
+    """A reference URI is a UUID minted from (source_id, ref_name), so showing
+    it identifies nothing — which is what makes an unlabelled result useless."""
+    from rdflib.namespace import RDFS
+    graph.add((URIRef("urn:t#r_orphan"), RDFS.label, Literal("Blower 9 air flow")))
+    frame = Query(client=sparql_client(graph)).streams(ref_name="FIT_9").metadata()
+    assert frame["streams"].to_list() == ["Blower 9 air flow"]
+
+
+def test_metadata_falls_back_to_the_uri_when_unlabelled(graph):
+    frame = Query(client=sparql_client(graph)).streams(ref_name="FIT_9").metadata()
+    assert frame["streams"].to_list() == ["r_orphan"]   # compacted by the stub
+
+
+def test_include_internals_keeps_the_real_uris(graph):
+    """A caller asking for internals wants the values, not the display form."""
+    from rdflib.namespace import RDFS
+    graph.add((URIRef("urn:t#r_orphan"), RDFS.label, Literal("Blower 9 air flow")))
+    frame = (Query(client=sparql_client(graph)).streams(ref_name="FIT_9")
+             .metadata(include_internals=True))
+    assert "r_orphan" in frame["streams"].to_list()
+
+
+def test_entity_uris_are_not_relabelled(graph):
+    """Only stream nodes substitute — an entity URI usually comes from a model
+    and reads fine as it is."""
+    from rdflib.namespace import RDFS
+    graph.add((EQ, RDFS.label, Literal("Basin 1")))
+    frame = Query(client=sparql_client(graph)).entity(str(BASIN)).metadata()
+    assert frame["Basin"].to_list() == ["b1"]
+
+
+def test_data_object_names_series_by_label(graph):
+    from rdflib.namespace import RDFS
+    graph.add((URIRef("urn:t#r_scada"), RDFS.label, Literal("Basin 1 DO (SCADA)")))
+    graph.add((URIRef("urn:t#r_orphan"), RDFS.label, Literal("Blower 9 air flow")))
+    do = Query(client=sparql_client(graph)).streams(source_id="svcw-scada").data()
+    assert sorted(name for name, _ in do.iter("streams")) == [
+        "Basin 1 DO (SCADA)", "Blower 9 air flow"
+    ]
+
+
+def test_wide_frame_columns_use_labels(graph):
+    from rdflib.namespace import RDFS
+    graph.add((URIRef("urn:t#r_scada"), RDFS.label, Literal("Basin 1 DO")))
+    graph.add((URIRef("urn:t#r_orphan"), RDFS.label, Literal("Blower 9 air")))
+    do = Query(client=sparql_client(graph)).streams(source_id="svcw-scada").data()
+    wide = do.dataframe(shape="wide")
+    assert sorted(wide.columns) == ["streams__Basin 1 DO", "streams__Blower 9 air", "time"]
+
+
+def test_binding_display_name_falls_back_to_the_identity(graph):
+    do = Query(client=sparql_client(graph)).streams(ref_name="FIT_9").data()
+    binding = do.bindings[0]
+    assert binding.label is None
+    assert binding.display_name == binding.series_uri

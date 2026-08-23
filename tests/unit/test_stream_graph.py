@@ -135,18 +135,42 @@ def test_data_source_is_a_literal_on_the_reference():
 
 # ---------------------------------------------------------------- label
 
-def test_label_goes_to_the_point_when_there_is_one():
+def test_both_the_point_and_the_reference_are_labelled():
+    """They are different nodes, and query output identifies a stream by the
+    reference's label — its URI is a UUID."""
     g = build({
         "source_id": SOURCE, "ref_name": "temp",
         "point_uri": str(POINT), "label": "Basin 1",
     })
     assert (POINT, RDFS.label, Literal("Basin 1")) in g
-    assert list(g.objects(ref_of(), RDFS.label)) == []
+    assert (ref_of(), RDFS.label, Literal("Basin 1")) in g
 
 
-def test_label_falls_back_to_the_reference_without_a_point():
+def test_the_reference_is_labelled_without_a_point():
     g = build({"source_id": SOURCE, "ref_name": "temp", "label": "Basin 1"})
     assert (ref_of(), RDFS.label, Literal("Basin 1")) in g
+
+
+def test_an_unlabelled_stream_gets_a_default_label():
+    """Otherwise it is identified in output only by a UUID."""
+    g = build({"source_id": SOURCE, "ref_name": "temp"})
+    assert (ref_of(), RDFS.label, Literal(f"{SOURCE}__temp")) in g
+
+
+def test_the_default_label_is_unique_by_construction():
+    """(source_id, ref_name) is the stream's identity, so the default cannot
+    collide with another stream's default."""
+    g = Graph()
+    for source, name in [("a", "temp"), ("b", "temp"), ("a", "rh")]:
+        build_stream_triples(g, {"source_id": source, "ref_name": name}, {})
+    labels = list(g.objects(None, RDFS.label))
+    stream_labels = [str(l) for l in labels if "__" in str(l)]
+    assert sorted(stream_labels) == ["a__rh", "a__temp", "b__temp"]
+
+
+def test_an_explicit_label_wins_over_the_default():
+    g = build({"source_id": SOURCE, "ref_name": "temp", "label": "Basin 1"})
+    assert list(g.objects(ref_of(), RDFS.label)) == [Literal("Basin 1")]
 
 
 # ------------------------------------------------------------ point link

@@ -45,6 +45,7 @@ def _parse_sparql_bindings(
     # Map column index -> node id for v<N>, pt<N>, ext<N>, unit<N>, extunit<N>
     col_to_id: dict[int, int] = {}
     point_col_to_id: dict[int, int] = {}
+    label_col_to_id: dict[int, int] = {}
     ext_ref_col_to_id: dict[int, int] = {}
     unit_col_to_id: dict[int, int] = {}
     extunit_col_to_id: dict[int, int] = {}
@@ -66,6 +67,11 @@ def _parse_sparql_bindings(
                 unit_col_to_id[i] = int(c[4:])
             except ValueError:
                 pass
+        elif c.startswith("label"):
+            try:
+                label_col_to_id[i] = int(c[5:])
+            except ValueError:
+                pass
         elif c.startswith("pt"):
             try:
                 point_col_to_id[i] = int(c[2:])
@@ -82,6 +88,7 @@ def _parse_sparql_bindings(
     nid_to_unit_col: dict[int, int] = {v: k for k, v in unit_col_to_id.items()}
     nid_to_extunit_col: dict[int, int] = {v: k for k, v in extunit_col_to_id.items()}
     nid_to_v_col: dict[int, int] = {v: k for k, v in col_to_id.items()}
+    nid_to_label_col: dict[int, int] = {v: k for k, v in label_col_to_id.items()}
 
     # Where each binding's point and reference come from. A measurement binds a
     # point in ?v and its reference in ?ext; a stream binds the reference
@@ -106,9 +113,10 @@ def _parse_sparql_bindings(
     entity_context: dict[tuple[int, str | None, str], list[dict[str, str]]] = {}
     property_units: dict[tuple[int, str | None, str], str | None] = {}
     ref_units: dict[tuple[int, str | None, str], str | None] = {}
+    labels: dict[tuple[int, str | None, str], str | None] = {}
 
     if not binding_cols:
-        return [], {}, {}, {}
+        return [], {}, {}, {}, {}
 
     def _cell(row: list[Any], idx: int | None) -> str | None:
         if idx is None or idx >= len(row) or row[idx] is None:
@@ -137,9 +145,10 @@ def _parse_sparql_bindings(
                 # Extract unit URIs (first non-None wins for each key)
                 property_units[key] = _cell(r, nid_to_unit_col.get(nid))
                 ref_units[key] = _cell(r, nid_to_extunit_col.get(nid))
+                labels[key] = _cell(r, nid_to_label_col.get(nid))
             entity_context.setdefault(key, []).append(row_entities)
 
-    return point_ref_uris, entity_context, property_units, ref_units
+    return point_ref_uris, entity_context, property_units, ref_units, labels
 
 
 def _deduplicate_contexts(contexts: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -233,6 +242,18 @@ class BindingInfo:
     latest: datetime | None = None
     property_unit: str | None = None    # unit URI from qudt:hasUnit on the property
     ref_unit: str | None = None         # unit URI from qudt:hasUnit on the ext reference
+    label: str | None = None            # rdfs:label on the external reference
+
+    @property
+    def display_name(self) -> str:
+        """What to call this series in output a person reads.
+
+        The reference's label when it has one — every registered stream does,
+        defaulting to ``source_id__ref_name`` — else its identity URI. A
+        reference URI is a UUID minted from that same pair, so showing it
+        names nothing.
+        """
+        return self.label or self.series_uri
 
     @property
     def series_uri(self) -> str:
@@ -321,7 +342,7 @@ class DataObject:
         if not getattr(qg, "data_nodes", None) and not getattr(qg, "stream_nodes", None):
             return cls._empty(qg, cast_value=cast_value, client=query.client)
 
-        point_ref_uris, entity_context, prop_units, ext_ref_units = _parse_sparql_bindings(
+        point_ref_uris, entity_context, prop_units, ext_ref_units, labels = _parse_sparql_bindings(
             query,
             include_dependencies=include_dependencies,
         )
@@ -359,6 +380,7 @@ class DataObject:
                 latest=info.latest if info else None,
                 property_unit=prop_units.get(key),
                 ref_unit=ext_ref_units.get(key),
+                label=labels.get(key),
             ))
 
         return cls(
@@ -393,6 +415,14 @@ class DataObject:
         return df.with_columns(
             ((pl.col(value_col) + src_off) * src_mult / tgt_mult - tgt_off).alias(value_col)
         )
+
+    def _series_names(self) -> dict[str, str]:
+        """``{series identity: display name}`` for every binding that has one.
+
+        Only labelled series appear, so callers keep their existing fallback
+        for anything unlabelled.
+        """
+        return {b.series_uri: b.label for b in self._bindings if b.label}
 
     def _resolve_effective_units(self) -> dict[str, str | None]:
         """Determine the effective unit for each alias, handling Case 3.2/3.2.1.
@@ -729,11 +759,14 @@ class DataObject:
         points_per_alias: dict[str, set[str]] = {}
         for b in self._bindings:
             points_per_alias.setdefault(b.alias, set()).add(b.series_uri)
+        names = self._series_names()
 
         def _pivot_key(alias: str, point_uri: str) -> str:
             pts = points_per_alias.get(alias, set())
             if len(pts) <= 1:
                 return alias
+            if point_uri in names:
+                return f"{alias}__{names[point_uri]}"
             try:
                 return f"{alias}__{self._client.compact_uri(point_uri)}"
             except Exception:
@@ -777,11 +810,14 @@ class DataObject:
             if b.alias == str(b.nid):
                 auto_aliases.add(b.alias)
 
+        names = self._series_names()
+
         def _label(alias: str, point_uri: str) -> str:
+            name = names.get(point_uri) or _compact(point_uri)
             if alias in auto_aliases:
-                return _compact(point_uri)
+                return name
             if len(points_per_alias.get(alias, set())) > 1:
-                return f"{alias}__{_compact(point_uri)}"
+                return f"{alias}__{name}"
             return alias
 
         tall = tall.with_columns(
@@ -816,15 +852,16 @@ class DataObject:
     def iter(self, alias: str) -> Iterator[tuple[str, pl.DataFrame]]:
         """Iterate ``(series, DataFrame[time, value])`` pairs for a data alias.
 
-        The series identifier is the point URI, or the reference URI for a
-        stream no point links to.
+        The series is named by its label where it has one — every registered
+        stream does — else by the point URI, else the reference URI.
         """
         self._materialize()
+        names = self._series_names()
         subset = self._tall.filter(pl.col("data_alias") == alias)
         for series in subset["series_key"].unique().sort().to_list():
             series_df = subset.filter(pl.col("series_key") == series)
             series_df = _restore_single_value_column(series_df)
-            yield series, series_df.select("time", "value").sort("time")
+            yield names.get(series, series), series_df.select("time", "value").sort("time")
 
     # ------------------------------------------------------------------
     # Metadata & introspection (no materialization needed)

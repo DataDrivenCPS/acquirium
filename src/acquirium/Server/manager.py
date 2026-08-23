@@ -33,6 +33,7 @@ from acquirium.internals.stream_graph import (
     FIELD_KINDS,
     SEMANTIC_PREDICATES,
     build_stream_triples,
+    default_label,
 )
 from acquirium.internals.internals_namespaces import *
 
@@ -120,6 +121,12 @@ def pick_convertible_pair(from_candidates, to_candidates, are_compatible):
             if are_compatible(a, b):
                 best = (i + j, a, b)
     return (best[1], best[2]) if best else None
+
+
+def _sparql_literal(value: str) -> str:
+    """Quote a string for a SPARQL VALUES clause."""
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
 
 
 def _wipe_dir_contents(base: Path) -> None:
@@ -761,6 +768,8 @@ class Manager:
         if conflicts:
             raise StreamMetadataConflict(conflicts)
 
+        self._check_label_uniqueness(streams)
+
         graphs: dict[str, Graph] = {}
         for stream, resolved in zip(streams, resolutions):
             graph = graphs.setdefault(stream["source_id"], Graph())
@@ -773,6 +782,60 @@ class Manager:
         for message in warnings:
             logger.warning("register_streams: %s", message)
         return {"ok": True, "registered": len(streams), "warnings": warnings}
+
+    def _check_label_uniqueness(self, streams: list[dict[str, Any]]) -> None:
+        """Refuse a batch that would give two streams the same label.
+
+        Labels are how query output identifies a stream — a reference URI is a
+        UUID — so a duplicate makes two rows indistinguishable in exactly the
+        place the label exists to help. Checked both within the batch and
+        against labels already in the graph.
+
+        Re-registering a stream with the label it already has is fine; only a
+        *different* reference claiming the label is a clash.
+        """
+        wanted: dict[str, str] = {}   # label -> ref_uri claiming it
+        for stream in streams:
+            source_id, ref_name = stream["source_id"], stream["ref_name"]
+            label = stream.get("label") or default_label(source_id, ref_name)
+            ref_uri = str(compute_ref_uri(source_id, ref_name))
+            if label in wanted and wanted[label] != ref_uri:
+                raise ValueError(
+                    f"two streams in this batch both use the label {label!r}. "
+                    "Labels identify a stream in query output, so they have to "
+                    "be distinct — give one an explicit label."
+                )
+            wanted[label] = ref_uri
+
+        for label, holder in sorted(self._label_holders(list(wanted)).items()):
+            if wanted.get(label) not in (None, holder):
+                raise ValueError(
+                    f"label {label!r} is already used by stream <{holder}>. "
+                    "Labels identify a stream in query output, so they have to "
+                    "be distinct — give this one an explicit label."
+                )
+
+    def _label_holders(self, labels: list[str]) -> dict[str, str]:
+        """``{label: ref_uri}`` for whichever of *labels* are already taken."""
+        if not labels:
+            return {}
+        values = " ".join(_sparql_literal(label) for label in sorted(set(labels)))
+        query = (
+            f"SELECT ?label ?ref WHERE {{ VALUES ?label {{ {values} }} "
+            f"?ref <{RDFS.label}> ?label . ?ref <{ACQUIRIUM_REF_NAME}> ?ref_name . }}"
+        )
+        result = self.graph_store.sparql_query(
+            query, include_dependencies=True, wait_for_fresh=True
+        )
+        columns = result.get("columns", [])
+        holders: dict[str, str] = {}
+        for row in result.get("rows", []):
+            record = dict(zip(columns, row))
+            label = self._sparql_value(record.get("label"))
+            ref = self._sparql_value(record.get("ref"))
+            if label and ref:
+                holders.setdefault(label, ref)
+        return holders
 
     def _resolve_stream_fields(
         self, stream: dict[str, Any], min_score: float

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any, List
 
-from rdflib.namespace import RDF
+from rdflib.namespace import RDF, RDFS
 
 import itertools
 
@@ -52,6 +52,7 @@ def _term(x: object) -> str:
 
 
 _RDF_TYPE = str(RDF.type)
+RDFS_LABEL = str(RDFS.label)
 _SUBCLASS = "http://www.w3.org/2000/01/rdf-schema#subClassOf"
 
 
@@ -538,6 +539,9 @@ def _stream_node_clauses(
         )
 
     clauses.append(f"OPTIONAL {{ {v} <{HAS_UNIT}> ?extunit{nid} . }}")
+    # A reference URI is a UUID, so the label is what identifies the stream in
+    # anything a human reads.
+    clauses.append(f"OPTIONAL {{ {v} <{RDFS_LABEL}> ?label{nid} . }}")
     clauses.extend(_filter_clauses(v, info.filters, "stream"))
     return clauses
 
@@ -657,6 +661,7 @@ def compile_parts(graph: QueryGraph) -> tuple:
 
     # stream node constraints — the reference itself, with an optional point
     point_vars: dict[int, str] = {}
+    label_vars: dict[int, str] = {}
     for nid, info in graph.stream_nodes.items():
         v = var_map[nid]
         src_id = info.source_id
@@ -666,6 +671,7 @@ def compile_parts(graph: QueryGraph) -> tuple:
         # No ext var: the stream node *is* the reference, so DataObject reads
         # it straight off ?v{nid} and only needs the point projected.
         point_vars[nid] = f"?pt{nid}"
+        label_vars[nid] = f"?label{nid}"
         unit_vars[nid] = f"?unit{nid}"
         extunit_vars[nid] = f"?extunit{nid}"
 
@@ -692,7 +698,8 @@ def compile_parts(graph: QueryGraph) -> tuple:
             select_parts.append(v)
         select_parts.extend(avar for anid, avar in attr_var_pairs if anid == nid)
     select_parts += (
-        [v for nid, v in point_vars.items() if nid not in dropped]
+        [v for nid, v in label_vars.items() if nid not in dropped]
+        + [v for nid, v in point_vars.items() if nid not in dropped]
         + [v for nid, v in ext_vars.items() if nid not in dropped]
         + [v for nid, v in unit_vars.items() if nid not in dropped]
         + [v for nid, v in extunit_vars.items() if nid not in dropped]

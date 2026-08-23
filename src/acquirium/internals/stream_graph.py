@@ -71,6 +71,16 @@ def _add(g: Graph, subj: URIRef, pred: URIRef, value: Any) -> None:
         g.add((subj, pred, Literal(value)))
 
 
+def default_label(source_id: str, ref_name: str) -> str:
+    """The label a stream gets when the caller supplies none.
+
+    Readable and unique by construction, since ``(source_id, ref_name)`` is
+    the stream's identity. Without it a stream is identified in query output
+    only by its reference URI, which is a UUID.
+    """
+    return f"{source_id}__{ref_name}"
+
+
 def build_stream_triples(g: Graph, stream: dict, resolved: dict[str, Any]) -> None:
     """Write one stream's reference, point and metadata triples into ``g``.
 
@@ -99,6 +109,16 @@ def build_stream_triples(g: Graph, stream: dict, resolved: dict[str, Any]) -> No
         g.add((ref_uri, STORED_AT, ACQUIRIUM_DB_URI))
         g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
 
+        # The reference always carries a label, because it is what query
+        # output identifies a stream by and its URI is a UUID. A point, when
+        # there is one, keeps the caller's label too — they are different
+        # nodes and a model may well name them differently.
+        g.add((
+            ref_uri,
+            RDFS.label,
+            Literal(label if label is not None else default_label(source_id, ref_name)),
+        ))
+
         # The semantics live here, whether or not a point exists.
         for field, predicate in SEMANTIC_PREDICATES.items():
             raw = stream.get(field)
@@ -116,9 +136,6 @@ def build_stream_triples(g: Graph, stream: dict, resolved: dict[str, Any]) -> No
             g.add((point, RDFS.label, Literal(label)))
         if ref_uri is not None:
             g.add((point, HAS_EXTERNAL_REFERENCE, ref_uri))
-    elif ref_uri is not None and label is not None:
-        # No point to hang it on, so the reference carries its own label.
-        g.add((ref_uri, RDFS.label, Literal(label)))
 
     target = ref_uri if ref_uri is not None else (
         URIRef(str(point_uri_raw)) if point_uri_raw is not None else None
