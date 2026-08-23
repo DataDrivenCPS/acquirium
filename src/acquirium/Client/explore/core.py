@@ -1022,11 +1022,6 @@ class Query:
             res = self.execute(include_dependencies=include_dependencies)
             cols = res.get("columns", [])
             rows = res.get("rows", [])
-            # A stream's URI is a UUID minted from (source_id, ref_name), so
-            # showing it identifies nothing. Substitute the label into the
-            # node's own column and drop the label column itself; the URI is
-            # still there under include_internals.
-            rows = self._label_stream_columns(cols, rows, include_internals)
             keep_idx = list(range(len(cols)))
             if not include_internals:
                 keep_idx = [
@@ -1050,37 +1045,56 @@ class Query:
                 )
                 .alias(c)
                 for c in cols_w_alias
-            ]).unique()
+            ])
+            # After compaction, never before: a label is prose, and running it
+            # through URI compaction turns "Basin 1 DO" into "ns1:Basin 1 DO".
+            pl_table = self._substitute_stream_labels(
+                pl_table, cols, rows, include_internals
+            ).unique()
             self.cache[cache_key] = pl_table
         return self.cache[cache_key]
 
-    def _label_stream_columns(
-        self, cols: List[str], rows: List[List[Any]], include_internals: bool
-    ) -> List[List[Any]]:
-        """Replace each stream node's URI with its label, where it has one.
+    def _substitute_stream_labels(
+        self,
+        table: "pl.DataFrame",
+        cols: List[str],
+        rows: List[List[Any]],
+        include_internals: bool,
+    ) -> "pl.DataFrame":
+        """Show each stream node's label in place of its URI, where it has one.
 
         Display only, and only for stream nodes — an entity's URI usually
-        comes from a model and reads fine, while a reference's is a UUID.
+        comes from a model and reads fine, while a reference's is a UUID
+        minted from ``(source_id, ref_name)`` and names nothing.
         ``include_internals=True`` leaves the URIs alone, since a caller
         asking for internals wants the real values.
         """
         if include_internals or not self.query_graph.stream_nodes:
-            return rows
-        pairs = [
-            (cols.index(f"v{nid}"), cols.index(f"label{nid}"))
-            for nid in self.query_graph.stream_nodes
-            if f"v{nid}" in cols and f"label{nid}" in cols
-        ]
-        if not pairs:
-            return rows
-        relabelled = []
-        for row in rows:
-            row = list(row)
-            for uri_col, label_col in pairs:
-                if row[label_col] is not None:
-                    row[uri_col] = row[label_col]
-            relabelled.append(row)
-        return relabelled
+            return table
+        replacements: dict[str, dict[str, str]] = {}
+        for nid in self.query_graph.stream_nodes:
+            uri_col, label_col = f"v{nid}", f"label{nid}"
+            if uri_col not in cols or label_col not in cols:
+                continue
+            alias = self._col_name_to_alias(uri_col)
+            if alias not in table.columns:
+                continue
+            uri_idx, label_idx = cols.index(uri_col), cols.index(label_col)
+            # Keyed on the *compacted* URI, since that is what the column now
+            # holds by the time this runs.
+            by_uri = {
+                self._compact_uri_safe(str(row[uri_idx])): str(row[label_idx])
+                for row in rows
+                if row[uri_idx] is not None and row[label_idx] is not None
+            }
+            if by_uri:
+                replacements[alias] = by_uri
+        if not replacements:
+            return table
+        return table.with_columns([
+            pl.col(alias).replace(mapping).alias(alias)
+            for alias, mapping in replacements.items()
+        ])
 
     def data(
         self,
