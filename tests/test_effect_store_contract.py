@@ -6,18 +6,18 @@ import pytest
 
 from acquirium.Materialization.effects import EffectIntent
 from acquirium.Storage.duckdb_store import DuckDBStore
-from acquirium.Storage.materialization.support_duckdb import MaterializationSupportDuckDB
-from acquirium.Storage.materialization.support_postgres import MaterializationSupportPostgres
+from acquirium.Storage.materialization.duckdb import MaterializationDuckDB
+from acquirium.Storage.materialization.postgres import MaterializationPostgres
 
 
 @pytest.fixture(params=["duckdb", "postgres"])
 def effect_store(request, tmp_path, pg_dsn):
     if request.param == "duckdb":
         store = DuckDBStore(tmp_path / "effects.duckdb", recreate=True)
-        try: yield MaterializationSupportDuckDB(store)
+        try: yield MaterializationDuckDB(store)
         finally: store.close()
     else:
-        try: runtime = MaterializationSupportPostgres(pg_dsn)
+        try: runtime = MaterializationPostgres(pg_dsn)
         except Exception as error: pytest.skip(f"PostgreSQL unavailable: {error}")
         try: yield runtime
         finally: runtime.close()

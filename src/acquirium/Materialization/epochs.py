@@ -16,7 +16,6 @@ from acquirium.Materialization.impact import TimeRange
 
 
 EpochStatus = Literal["constructing", "ready", "reconciling", "active", "superseded", "failed", "compacted"]
-ComponentStatus = Literal["pending", "sealed", "superseded"]
 WorkStatus = Literal["pending", "claimed", "committed", "failed", "superseded"]
 
 
@@ -49,14 +48,6 @@ class EpochBinding:
     @property
     def output_refs(self) -> tuple[str, ...]:
         return tuple(sorted({ref for refs in self.outputs.values() for ref in refs}))
-
-
-@dataclass(frozen=True)
-class EpochComponent:
-    epoch_id: str
-    component_id: str
-    binding_ids: tuple[str, ...]
-    status: ComponentStatus = "pending"
 
 
 @dataclass(frozen=True)

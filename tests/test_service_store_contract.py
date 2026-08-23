@@ -10,18 +10,18 @@ from acquirium.Materialization.definitions import MaterializationDefinition
 from acquirium.Storage.publication.types import PublicationRequest, MUTATION_SCHEMA
 from acquirium.Storage.publication.duckdb import PublicationDuckDB
 from acquirium.Storage.duckdb_store import DuckDBStore
-from acquirium.Storage.materialization.support_duckdb import MaterializationSupportDuckDB
-from acquirium.Storage.materialization.support_postgres import MaterializationSupportPostgres
+from acquirium.Storage.materialization.duckdb import MaterializationDuckDB
+from acquirium.Storage.materialization.postgres import MaterializationPostgres
 
 
 @pytest.fixture(params=["duckdb", "postgres"])
 def service_store(request, tmp_path, pg_dsn):
     if request.param == "duckdb":
         store = DuckDBStore(tmp_path / "services.duckdb", recreate=True)
-        try: yield MaterializationSupportDuckDB(store)
+        try: yield MaterializationDuckDB(store)
         finally: store.close()
     else:
-        try: runtime = MaterializationSupportPostgres(pg_dsn)
+        try: runtime = MaterializationPostgres(pg_dsn)
         except Exception as error: pytest.skip(f"PostgreSQL unavailable: {error}")
         try: yield runtime
         finally: runtime.close()
@@ -63,7 +63,7 @@ def test_service_hint_coalescing_merges_disjoint_stream_versions(service_store):
 def test_service_input_snapshot_reads_current_canonical_values(tmp_path):
     store = DuckDBStore(tmp_path / "service-snapshot.duckdb", recreate=True)
     try:
-        runtime = MaterializationSupportDuckDB(store)
+        runtime = MaterializationDuckDB(store)
         mutations = pa.table({"operation": ["upsert"], "ref_uri": ["urn:input"],
             "ts": pa.array([datetime(2026, 1, 1, tzinfo=timezone.utc)], type=pa.timestamp("us", tz="UTC")),
             "numeric_value": [42.0], "text_value": [None]}, schema=MUTATION_SCHEMA)

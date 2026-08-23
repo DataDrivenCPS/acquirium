@@ -8,7 +8,7 @@ import pyarrow as pa
 import pytest
 
 from acquirium.Storage.duckdb_store import DuckDBStore
-from acquirium.Storage.materialization.support_duckdb import MaterializationSupportDuckDB
+from acquirium.Storage.materialization.duckdb import MaterializationDuckDB
 from acquirium.Storage.publication.duckdb import PublicationDuckDB
 from acquirium.Storage.publication.postgres import PublicationPostgres
 from acquirium.Storage.publication import ids
@@ -18,7 +18,7 @@ from acquirium.Storage.publication.types import MUTATION_SCHEMA, PublicationConf
 def test_publication_is_idempotent_and_emits_range_manifest(tmp_path):
     store = DuckDBStore(tmp_path / "publication.duckdb", recreate=True)
     try:
-        materialization = MaterializationSupportDuckDB(store)
+        materialization = MaterializationDuckDB(store)
         publisher = PublicationDuckDB(store)
         mutations = pa.table({"operation": ["upsert"], "ref_uri": ["urn:input"],
             "ts": pa.array([datetime(2026, 1, 1, tzinfo=timezone.utc)], type=pa.timestamp("us", tz="UTC")),

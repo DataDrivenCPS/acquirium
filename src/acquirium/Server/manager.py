@@ -169,10 +169,10 @@ class Manager:
                     "duckdb", duckdb_path=_effective_duckdb_path, recreate=recreate
                 )
                 from acquirium.Storage.publication.duckdb import PublicationDuckDB
-                from acquirium.Storage.materialization.support_duckdb import MaterializationSupportDuckDB
+                from acquirium.Storage.materialization.duckdb import MaterializationDuckDB
 
                 publication: PublicationStore = PublicationDuckDB(timescale)
-                materialization = MaterializationSupportDuckDB(timescale)
+                materialization = MaterializationDuckDB(timescale)
             else:
                 _effective_dsn = pg_dsn or os.getenv("PG_DSN")
                 if not _effective_dsn:
@@ -181,10 +181,10 @@ class Manager:
                     "timescale", pg_dsn=_effective_dsn, recreate=recreate
                 )
                 from acquirium.Storage.publication.postgres import PublicationPostgres
-                from acquirium.Storage.materialization.support_postgres import MaterializationSupportPostgres
+                from acquirium.Storage.materialization.postgres import MaterializationPostgres
 
                 publication = PublicationPostgres(_effective_dsn)
-                materialization = MaterializationSupportPostgres(_effective_dsn)
+                materialization = MaterializationPostgres(_effective_dsn)
 
         # Caller-supplied converter or graph wins; otherwise the converter
         # is built lazily in _ensure_qudt_converter from the QUDT unit
@@ -949,6 +949,11 @@ class Manager:
             source_id, ref_name, len(rows), value_kind, replace,
         )
         n = len(rows)
+        if n == 0 and not replace:
+            return PublicationReceipt(
+                publication_id=publication_id or str(uuid.uuid4()),
+                payload_hash="", row_count=0, versions={},
+            )
         df = pl.DataFrame(
             {
                 "ref_uri": pl.Series("ref_uri", [ref_uri] * n, dtype=pl.Utf8),
@@ -959,31 +964,19 @@ class Manager:
         )
         upserts = pl.from_arrow(self._mutation_table(df))
 
-        mutations = upserts
-        if replace:
-            # Atomic replace: tombstone every existing timestamp not present
-            # in the new rows, in the *same* publication as the upserts, so
-            # the replacement is one writer-defined atomic mutation set
-            # rather than a separate delete-then-insert pair. Only the keys
-            # are read back (not values). This assumes a single writer per
-            # stream: a concurrent write landing between this read and the
-            # publish would not be tombstoned.
-            new_ts = set(upserts["ts"].to_list())
-            existing_ts = self.timescale.timestamps(ref_uri)
-            stale_ts = [ts for ts in existing_ts if ts not in new_ts]
-            if stale_ts:
-                tombstones = pl.DataFrame(
-                    {
-                        "operation": pl.Series(["delete"] * len(stale_ts), dtype=pl.Utf8),
-                        "ref_uri": pl.Series([ref_uri] * len(stale_ts), dtype=pl.Utf8),
-                        "ts": pl.Series(stale_ts, dtype=pl.Datetime("us", "UTC")),
-                        "numeric_value": pl.Series([None] * len(stale_ts), dtype=pl.Float64),
-                        "text_value": pl.Series([None] * len(stale_ts), dtype=pl.Utf8),
-                    }
-                )
-                mutations = pl.concat([upserts, tombstones], how="vertical_relaxed")
+        if not replace:
+            return self.publish(upserts.to_arrow(), publication_id=publication_id)
 
-        return self.publish(mutations.to_arrow(), publication_id=publication_id)
+        receipt = self.publication.replace(
+            PublicationRequest(
+                publication_id or str(uuid.uuid4()),
+                upserts.to_arrow(),
+            ),
+            ref_uri,
+        )
+        self.epoch_materialization.plan_data_changes()
+        self.notify_service_changes(dict(receipt.versions))
+        return receipt
 
     def insert_timeseries_batch(
         self,

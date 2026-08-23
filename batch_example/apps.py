@@ -12,6 +12,7 @@ ZONE_A_C = str(compute_ref_uri(SOURCE_ID, "zone_a_temperature_c"))
 ZONE_B_C = str(compute_ref_uri(SOURCE_ID, "zone_b_temperature_c"))
 AVERAGE_C = "urn:batch-example:average-temperature-c"
 TEMPERATURE_KIND = "http://qudt.org/vocab/quantitykind/Temperature"
+CELSIUS =  "http://qudt.org/vocab/unit/DEG_C"
 
 
 class AverageTemperature(Transformation):
@@ -57,7 +58,7 @@ class FahrenheitPerTemperature(Transformation):
     )}
 
     def build_query(self, aq):
-        return aq.query().measurement(alias="temperature", quantity_kind=TEMPERATURE_KIND)
+        return aq.query().measurement(alias="temperature", quantity_kind=TEMPERATURE_KIND, unit=CELSIUS)
 
     def transform(self, stream, context):
         fahrenheit = stream.values.select(

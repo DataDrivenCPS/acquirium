@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from hashlib import sha256
 import json
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping
 
 
 def _canonical(value: object) -> str:
@@ -39,68 +39,3 @@ class BindingSpec:
 
     def binding_id(self, definition_id: str) -> str:
         return sha256(f"{definition_id}:{self.logical_key}".encode()).hexdigest()
-
-
-@dataclass(frozen=True)
-class BindingDiff:
-    """Topology change classified by stable binding identity and content."""
-
-    unchanged: tuple[BindingSpec, ...]
-    added: tuple[BindingSpec, ...]
-    changed: tuple[BindingSpec, ...]
-    removed_ids: tuple[str, ...]
-
-
-def diff_bindings(
-    definition_id: str, previous: Sequence[BindingSpec], current: Sequence[BindingSpec]
-) -> BindingDiff:
-    """Diff resolved bindings without treating a metadata/input change as new."""
-    old = {binding.binding_id(definition_id): binding for binding in previous}
-    new = {binding.binding_id(definition_id): binding for binding in current}
-    if len(old) != len(previous) or len(new) != len(current):
-        raise ValueError("a resolver returned duplicate logical binding keys")
-    unchanged, added, changed = [], [], []
-    for binding_id, binding in new.items():
-        prior = old.get(binding_id)
-        if prior is None:
-            added.append(binding)
-        elif prior.content_digest == binding.content_digest:
-            unchanged.append(binding)
-        else:
-            changed.append(binding)
-    return BindingDiff(tuple(unchanged), tuple(added), tuple(changed), tuple(sorted(old.keys() - new.keys())))
-
-
-def validate_binding_topology(
-    bindings: Sequence[BindingSpec], *, definition_id: str
-) -> None:
-    """Reject ambiguous stream owners and cycles within a resolved topology."""
-    owner: dict[str, str] = {}
-    for binding in bindings:
-        binding_id = binding.binding_id(definition_id)
-        for refs in binding.outputs.values():
-            for ref_uri in refs:
-                previous = owner.setdefault(ref_uri, binding_id)
-                if previous != binding_id:
-                    raise ValueError(f"output {ref_uri!r} has ambiguous owners {previous!r} and {binding_id!r}")
-    edges: dict[str, set[str]] = {binding.binding_id(definition_id): set() for binding in bindings}
-    for binding in bindings:
-        target = binding.binding_id(definition_id)
-        for refs in binding.inputs.values():
-            for ref_uri in refs:
-                source = owner.get(ref_uri)
-                if source is not None:
-                    edges[source].add(target)
-    visiting: set[str] = set()
-    visited: set[str] = set()
-    def visit(node: str) -> None:
-        if node in visiting:
-            raise ValueError("resolved binding topology contains a cycle")
-        if node not in visited:
-            visiting.add(node)
-            for child in edges[node]:
-                visit(child)
-            visiting.remove(node)
-            visited.add(node)
-    for node in edges:
-        visit(node)

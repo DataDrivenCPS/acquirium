@@ -4,12 +4,13 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
+import pyarrow as pa
 import polars as pl
 
 from acquirium.Storage.duckdb_store import DuckDBStore, REF_IDS_TABLE, STREAM_HEADS_TABLE, STREAM_PUBLICATIONS_SEQ, STREAM_PUBLICATIONS_TABLE, TIMESERIES_TABLE
 from acquirium.Storage.materialization.ids import normalize_change_ranges
 from acquirium.Storage.publication import ids
-from acquirium.Storage.publication.types import PublicationConflict, PublicationReceipt, PublicationRequest
+from acquirium.Storage.publication.types import MUTATION_SCHEMA, PublicationConflict, PublicationReceipt, PublicationRequest
 
 
 class PublicationDuckDB:
@@ -21,8 +22,44 @@ class PublicationDuckDB:
         with self._store._lock, self._store._write_conn() as conn:
             return self._apply_publication(conn, request.publication_id, request.mutations)
 
-    def _apply_publication(self, conn, publication_id: str, mutations) -> PublicationReceipt:
-            payload_hash = ids.payload_hash(mutations)
+    def replace(self, request: PublicationRequest, ref_uri: str) -> PublicationReceipt:
+        """Replace one stream while reading its stale keys under the writer lock."""
+        desired = ids.normalize_mutations(request.mutations)
+        payload_hash = ids.payload_hash(desired)
+        with self._store._lock, self._store._write_conn() as conn:
+            existing = conn.execute(
+                f"SELECT payload_hash, row_count, versions_json FROM {STREAM_PUBLICATIONS_TABLE} WHERE publication_id = ?",
+                [request.publication_id],
+            ).fetchone()
+            if existing is not None:
+                if existing[0] != payload_hash:
+                    raise PublicationConflict(request.publication_id)
+                return PublicationReceipt(request.publication_id, payload_hash, existing[1], json.loads(existing[2]), True)
+
+            rows = conn.execute(f"""SELECT t.ts FROM {TIMESERIES_TABLE} t
+                JOIN {REF_IDS_TABLE} r ON r.ref_id = t.ref_id
+                WHERE r.ref_uri = ? AND NOT t.deleted ORDER BY t.ts""", [ref_uri]).fetchall()
+            desired_timestamps = {
+                row["ts"].astimezone(timezone.utc).replace(tzinfo=None)
+                for row in desired.to_pylist() if row["ref_uri"] == ref_uri
+            }
+            stale = [row[0] for row in rows if row[0] not in desired_timestamps]
+            if not desired.num_rows and not stale:
+                return PublicationReceipt(request.publication_id, payload_hash, 0, {})
+            mutations = [*desired.to_pylist()]
+            mutations.extend({
+                "operation": "delete", "ref_uri": ref_uri,
+                "ts": timestamp.replace(tzinfo=timezone.utc),
+                "numeric_value": None, "text_value": None,
+            } for timestamp in stale)
+            return self._apply_publication(
+                conn, request.publication_id,
+                pa.Table.from_pylist(mutations, schema=MUTATION_SCHEMA),
+                payload_hash=payload_hash,
+            )
+
+    def _apply_publication(self, conn, publication_id: str, mutations, *, payload_hash: str | None = None) -> PublicationReceipt:
+            payload_hash = payload_hash or ids.payload_hash(mutations)
             existing = conn.execute(f"SELECT payload_hash, row_count, versions_json FROM {STREAM_PUBLICATIONS_TABLE} WHERE publication_id = ?", [publication_id]).fetchone()
             if existing is not None:
                 if existing[0] != payload_hash:

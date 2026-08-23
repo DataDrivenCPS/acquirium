@@ -222,3 +222,7 @@ dpr-trailer-data/
 
 # Local TextMatch resolver benchmark output
 tests/text_match_results/
+# Local experiment/benchmark output and drafts
+batch_example/.data/
+benchmarks/microbatch_*/
+system_paper/

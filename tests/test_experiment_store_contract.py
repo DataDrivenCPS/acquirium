@@ -9,8 +9,8 @@ from acquirium.Materialization.api import Experiment
 from acquirium.Materialization.executor import LocalExecutorPool
 from acquirium.Materialization.impact import TimeRange
 from acquirium.Storage.duckdb_store import DuckDBStore
-from acquirium.Storage.materialization.support_duckdb import MaterializationSupportDuckDB
-from acquirium.Storage.materialization.support_postgres import MaterializationSupportPostgres
+from acquirium.Storage.materialization.duckdb import MaterializationDuckDB
+from acquirium.Storage.materialization.postgres import MaterializationPostgres
 
 
 class ContractExperiment(Experiment):
@@ -25,10 +25,10 @@ class ContractExperiment(Experiment):
 def experiment_store(request, tmp_path, pg_dsn):
     if request.param == "duckdb":
         store = DuckDBStore(tmp_path / "experiments.duckdb", recreate=True)
-        try: yield MaterializationSupportDuckDB(store)
+        try: yield MaterializationDuckDB(store)
         finally: store.close()
     else:
-        try: runtime = MaterializationSupportPostgres(pg_dsn)
+        try: runtime = MaterializationPostgres(pg_dsn)
         except Exception as error: pytest.skip(f"PostgreSQL unavailable: {error}")
         try: yield runtime
         finally: runtime.close()
@@ -112,3 +112,20 @@ def test_experiment_runner_uses_frozen_definition_and_bounded_pool(experiment_st
         executor.close()
     assert result == f"urn:acquirium:experiment:{request.run_id}:output:schedule"
     assert experiment_store.experiment_run(request.run_id).status == "succeeded"
+
+
+def test_running_experiment_has_one_durable_execution_claim(experiment_store):
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    request = ExperimentRunRequest(f"claim:{uuid4().hex}", "definition", 1,
+        TimeRange(start, start + timedelta(seconds=1)), {}, {})
+    experiment_store.start_experiment(request)
+
+    assert experiment_store.claim_experiment_execution(request.run_id, "worker-a") is True
+    assert experiment_store.claim_experiment_execution(request.run_id, "worker-b") is False
+    with pytest.raises(ValueError, match="stale"):
+        experiment_store.finish_experiment(
+            request.run_id, status="succeeded",
+            execution_claim="worker-b",
+        )
+    with pytest.raises(ValueError, match="terminal"):
+        experiment_store.collect_experiment(request.run_id)

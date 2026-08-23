@@ -4,12 +4,13 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
+import pyarrow as pa
 import polars as pl
 from psycopg_pool import ConnectionPool
 
 from acquirium.Storage.materialization.ids import normalize_change_ranges
 from acquirium.Storage.publication import ids
-from acquirium.Storage.publication.types import PublicationConflict, PublicationReceipt, PublicationRequest
+from acquirium.Storage.publication.types import MUTATION_SCHEMA, PublicationConflict, PublicationReceipt, PublicationRequest
 from acquirium.Storage.timescale_store import STREAM_HEADS_TABLE, STREAM_PUBLICATIONS_TABLE, TIMESERIES_TABLE
 
 
@@ -25,8 +26,52 @@ class PublicationPostgres:
         with self._pool.connection() as conn, conn.transaction():
             return self._apply_publication(conn.cursor(), request.publication_id, request.mutations)
 
-    def _apply_publication(self, conn, publication_id: str, mutations) -> PublicationReceipt:
-        payload_hash = ids.payload_hash(mutations)
+    def replace(self, request: PublicationRequest, ref_uri: str) -> PublicationReceipt:
+        """Replace one stream while holding its stream-head row lock."""
+        desired = ids.normalize_mutations(request.mutations)
+        payload_hash = ids.payload_hash(desired)
+        with self._pool.connection() as connection, connection.transaction():
+            conn = connection.cursor()
+            conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [request.publication_id])
+            existing = conn.execute(
+                f"SELECT payload_hash, row_count, versions_json FROM {STREAM_PUBLICATIONS_TABLE} WHERE publication_id = %s",
+                [request.publication_id],
+            ).fetchone()
+            if existing is not None:
+                if existing[0] != payload_hash:
+                    raise PublicationConflict(request.publication_id)
+                versions = existing[2] if isinstance(existing[2], dict) else json.loads(existing[2])
+                return PublicationReceipt(request.publication_id, payload_hash, existing[1], versions, True)
+
+            conn.execute(
+                f"INSERT INTO {STREAM_HEADS_TABLE} (ref_uri, current_version, retained_from_version) VALUES (%s, 0, 0) ON CONFLICT (ref_uri) DO NOTHING",
+                [ref_uri],
+            )
+            conn.execute(
+                f"SELECT current_version FROM {STREAM_HEADS_TABLE} WHERE ref_uri = %s FOR UPDATE",
+                [ref_uri],
+            )
+            rows = conn.execute(
+                f"SELECT ts FROM {TIMESERIES_TABLE} WHERE ref_uri = %s AND NOT deleted ORDER BY ts",
+                [ref_uri],
+            ).fetchall()
+            desired_timestamps = {row["ts"] for row in desired.to_pylist() if row["ref_uri"] == ref_uri}
+            stale = [row[0] for row in rows if row[0] not in desired_timestamps]
+            if not desired.num_rows and not stale:
+                return PublicationReceipt(request.publication_id, payload_hash, 0, {})
+            mutations = [*desired.to_pylist()]
+            mutations.extend({
+                "operation": "delete", "ref_uri": ref_uri, "ts": timestamp,
+                "numeric_value": None, "text_value": None,
+            } for timestamp in stale)
+            return self._apply_publication(
+                conn, request.publication_id,
+                pa.Table.from_pylist(mutations, schema=MUTATION_SCHEMA),
+                payload_hash=payload_hash,
+            )
+
+    def _apply_publication(self, conn, publication_id: str, mutations, *, payload_hash: str | None = None) -> PublicationReceipt:
+        payload_hash = payload_hash or ids.payload_hash(mutations)
         # Conflicting retries may touch disjoint streams, so stream-head locks
         # cannot serialize publication identity. This transaction-scoped lock
         # makes the receipt check and insert one atomic decision.

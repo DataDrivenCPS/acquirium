@@ -48,6 +48,10 @@ services:
     volumes:
       - acquirium_test_data:/app/.acquirium
       - ./acquirium.testing.toml:/app/acquirium.toml:ro
+      # Integration-only application entrypoints.  The production image stays
+      # source-only; the live test server needs to import these definitions
+      # when it validates and executes durable materializations.
+      - ./tests:/app/tests:ro
     ports:
       - "8010:8000"
     environment:

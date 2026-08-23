@@ -141,6 +141,29 @@ def test_insert_timeseries_replace_tombstones_stale_rows_atomically(mgr):
     assert rows == [(t1, 20.0), (t2, 3.0)]
 
 
+def test_insert_timeseries_empty_rows_returns_empty_receipt(mgr):
+    _register(mgr, "source/file.csv", "new-stream", "numeric")
+    receipt = mgr.insert_timeseries(
+        source_id="source/file.csv", ref_name="new-stream", rows=[],
+    )
+
+    assert receipt.row_count == 0
+    assert receipt.versions == {}
+
+
+def test_insert_timeseries_empty_replace_removes_existing_rows(mgr):
+    ref_uri = _register(mgr, "source/file.csv", "temp", "numeric")
+    timestamp = datetime(2026, 4, 28, tzinfo=timezone.utc)
+    mgr.insert_timeseries(source_id="source/file.csv", ref_name="temp", rows=[(timestamp, 1.0)])
+
+    receipt = mgr.insert_timeseries(
+        source_id="source/file.csv", ref_name="temp", rows=[], replace=True,
+    )
+
+    assert receipt.row_count == 1
+    assert list(mgr.timescale.timestamps(ref_uri)) == []
+
+
 def test_delete_timeseries_explicit_timestamps(mgr):
     ref_uri = _register(mgr, "source/file.csv", "temp", "numeric")
     t0, t1 = (datetime(2026, 4, 28, hour=h, tzinfo=timezone.utc) for h in (0, 1))

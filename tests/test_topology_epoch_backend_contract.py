@@ -49,6 +49,19 @@ def epoch_backend(request, tmp_path, pg_dsn):
             publication = PublicationPostgres(pg_dsn)
         except Exception as error:
             pytest.skip(f"PostgreSQL unavailable: {error}")
+        # The trace below asserts against a fresh desired topology, but the
+        # testing database outlives runs; clear anything a prior run left.
+        with runtime._store._write_conn() as conn:
+            for table in ("topology_deployments", "topology_epoch_definitions", "topology_epochs",
+                          "topology_epoch_binding_pins", "topology_epoch_bindings", "topology_epoch_edges",
+                          "topology_epoch_components", "topology_binding_frontiers", "topology_epoch_work",
+                          "topology_epoch_outputs", "topology_epoch_retirements", "topology_epoch_claims"):
+                conn.execute(f"DELETE FROM {table}")
+            conn.execute("""UPDATE topology_epoch_control SET candidate_epoch_id = NULL,
+                current_epoch_id = NULL, active_epoch_id = NULL""")
+            for table in ("timeseries", "stream_heads", "stream_change_ranges"):
+                conn.execute(f"DELETE FROM {table} WHERE ref_uri LIKE ?", ["urn:epoch-contract%"])
+            conn.execute("DELETE FROM stream_publications WHERE publication_id = ?", ["epoch-contract"])
         try:
             yield None, runtime, publication
         finally:

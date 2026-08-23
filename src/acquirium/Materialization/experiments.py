@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import json
 from typing import Any, Literal, Mapping, Sequence
+from uuid import uuid4
 
 from jsonschema import Draft202012Validator
 
@@ -135,13 +136,24 @@ class ExperimentRunner:
         run = self._storage.experiment_run(run_id)
         if run.status != "running":
             raise ValueError("only a running experiment can execute")
+        claim = f"experiment-runner:{uuid4()}"
+        if not self._storage.claim_experiment_execution(run_id, claim):
+            raise ValueError("experiment is already executing")
+        run = self._storage.experiment_run(run_id)
         definition = self._storage.experiment_definition(run.definition_id)
         context = ExperimentContext(run, self._storage)
         try:
             result = self._executor.submit_application_entrypoint(digest=definition["source_digest"],
                 entrypoint=definition["entrypoint"], argument=context).result()
         except Exception as error:
-            self._storage.finish_experiment(run_id, status="failed", error={"type": type(error).__name__, "message": str(error)})
+            self._storage.finish_experiment(
+                run_id, status="failed",
+                error={"type": type(error).__name__, "message": str(error)},
+                execution_claim=claim,
+            )
             raise
-        self._storage.finish_experiment(run_id, status="succeeded")
+        self._storage.finish_experiment(
+            run_id, status="succeeded",
+            execution_claim=claim,
+        )
         return result

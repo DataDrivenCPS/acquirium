@@ -1,18 +1,14 @@
 """Backend-independent topology-epoch construction helpers."""
 from __future__ import annotations
 
-import json
 from collections import defaultdict, deque
 from hashlib import sha256
-from typing import Iterable, Mapping, Sequence
+from typing import Iterable, Sequence
 
 from acquirium.Materialization.bindings import BindingSpec
 from acquirium.Materialization.epochs import EpochBinding
 from acquirium.Materialization.impact import TimeRange, coalesce_ranges
-
-
-def canonical_json(value: object) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
+from acquirium.Storage.materialization.dialect import canonical_json
 
 
 def epoch_id(graph_revision: int, graph_digest: str, definitions: Sequence[tuple]) -> str:
