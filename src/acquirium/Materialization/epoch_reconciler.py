@@ -1,12 +1,16 @@
 """Stateless orchestration for topology-epoch control-plane work."""
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 from threading import Event, Thread
 from typing import Callable
 
 from acquirium.Materialization.context import ComputeRequest, TransformContext
+from acquirium.Materialization.epochs import StaleEpochError
 from acquirium.Materialization.executor import LocalExecutorPool
+
+log = logging.getLogger(__name__)
 
 
 class TopologyEpochReconciler:
@@ -88,6 +92,12 @@ class TopologyEpochReconciler:
                 request=request,
             ).result()
             self._storage.commit_work(snapshot, replacement, claim)
+        except StaleEpochError as error:
+            # A superseding epoch or newer input invalidated this work while
+            # it ran.  Discarding the result is the designed outcome, not a
+            # failure: the replacement epoch or frontier owns the recompute.
+            log.info("discarding superseded work %s: %s", claim.target_id, error)
+            return True
         except Exception as error:
             try:
                 self._storage.fail_work(claim, {"type": type(error).__name__, "message": str(error)})
@@ -115,7 +125,10 @@ class TopologyEpochReconciler:
         claim = self._storage.claim_next_component(owner)
         if claim is None:
             return False
-        self._storage.seal_component(claim)
+        try:
+            self._storage.seal_component(claim)
+        except StaleEpochError as error:
+            log.info("skipping superseded component %s: %s", claim.target_id, error)
         return True
 
     def run_once(self, owner: str = "manager") -> bool:

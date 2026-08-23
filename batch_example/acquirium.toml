@@ -1,0 +1,19 @@
+[server]
+host = "0.0.0.0"
+port = 8000
+data_dir = ".data"
+timeseries_backend = "duckdb"
+duckdb_path = ".data/timeseries.duckdb"
+recreate = false
+materialization_workers = 2
+
+[driver]
+server_url = "localhost"
+server_port = 8000
+use_ssl = false
+interval = 1.0
+
+[[drivers]]
+name = "synthetic-building"
+spec = "./driver.py:SyntheticBuildingDriver"
+interval = 1.0
