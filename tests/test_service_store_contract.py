@@ -32,19 +32,25 @@ def test_service_hints_coalesce_and_are_at_least_once(service_store):
     definition = MaterializationDefinition(name, "digest", "tests.test_service_store_contract:Dashboard", kind="service")
     service_store.register_definition(definition)
     service_store.register_service(name, definition.definition_id)
-    service_store.set_service_status(name, "running")
-    now = datetime.now(timezone.utc)
-    service_store.coalesce_service_hint(ChangeHint(name, "first", {"urn:in": 1}, 4, now))
-    service_store.coalesce_service_hint(ChangeHint(name, "latest", {"urn:in": 3, "urn:other": 2}, 5, now))
-    hint = service_store.next_service_hint(name)
-    assert hint is not None and hint.token == "latest" and hint.data_versions == {"urn:in": 3, "urn:other": 2}
-    assert service_store.next_service_hint(name).token == "latest"
-    service_store.acknowledge_service_hint(name, "wrong-token")
-    assert service_store.next_service_hint(name) is not None
-    service_store.acknowledge_service_hint(name, "latest")
-    assert service_store.next_service_hint(name) is None
-    assert name not in service_store.services_needing_hint({"urn:in": 3, "urn:other": 2}, 5)
-    assert name in service_store.services_needing_hint({"urn:in": 4, "urn:other": 2}, 5)
+    try:
+        # The service stays 'registered' until the token assertions are done:
+        # a live server sharing the testing database hints and runs every
+        # 'running' service, and would clobber the tokens written here.
+        now = datetime.now(timezone.utc)
+        service_store.coalesce_service_hint(ChangeHint(name, "first", {"urn:in": 1}, 4, now))
+        service_store.coalesce_service_hint(ChangeHint(name, "latest", {"urn:in": 3, "urn:other": 2}, 5, now))
+        hint = service_store.next_service_hint(name)
+        assert hint is not None and hint.token == "latest" and hint.data_versions == {"urn:in": 3, "urn:other": 2}
+        assert service_store.next_service_hint(name).token == "latest"
+        service_store.acknowledge_service_hint(name, "wrong-token")
+        assert service_store.next_service_hint(name) is not None
+        service_store.acknowledge_service_hint(name, "latest")
+        assert service_store.next_service_hint(name) is None
+        service_store.set_service_status(name, "running")
+        assert name not in service_store.services_needing_hint({"urn:in": 3, "urn:other": 2}, 5)
+        assert name in service_store.services_needing_hint({"urn:in": 4, "urn:other": 2}, 5)
+    finally:
+        service_store.set_service_status(name, "stopped", "unknown")
 
 
 def test_service_hint_coalescing_merges_disjoint_stream_versions(service_store):
