@@ -92,7 +92,6 @@ class TimescaleStore(TimeseriesStore):
                     "topology_epoch_control",
                     "topology_deployments",
                     "topology_epochs",
-                    "topology_epoch_definitions",
                     TIMESERIES_TABLE,
                     STREAMS_TABLE,
                     LOGS_TABLE,

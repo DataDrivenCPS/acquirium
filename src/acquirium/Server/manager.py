@@ -212,24 +212,18 @@ class Manager:
         self.materialization_executor = (
             materialization_executor if materialization_executor is not None else LocalExecutorPool()
         )
-        def _state_revision(binding_id: str):
-            try:
-                revision = materialization.active_state_revision(binding_id)
-            except (KeyError, ValueError):
-                return None
-            return revision
         if _backend == "duckdb":
             from acquirium.Storage.materialization.epoch_duckdb import TopologyEpochDuckDB
             epoch_materialization = TopologyEpochDuckDB(
                 timescale,
-                state_revision_resolver=_state_revision,
+                state_revision_resolver=materialization.active_state_revisions,
                 query_resolver=self.resolve_text,
             )
         else:
             from acquirium.Storage.materialization.epoch_postgres import TopologyEpochPostgres
             epoch_materialization = TopologyEpochPostgres(
                 _effective_dsn,
-                state_revision_resolver=_state_revision,
+                state_revision_resolver=materialization.active_state_revisions,
                 query_resolver=self.resolve_text,
             )
         self.epoch_materialization = epoch_materialization
@@ -680,15 +674,21 @@ class Manager:
             logging.error("acquirium: failed to insert graph: %s", e)
             raise
 
-    def _record_materialization_graph_revision(self) -> None:
-        """Durably create the desired epoch for a completed query-graph publication."""
-        status = self.graph_store.graph_status()
-        graph_revision = int(status["published_version"])
+    def _ensure_current_epoch(self) -> str | None:
+        """Ensure the desired epoch for the published graph; None before first publish."""
+        graph_revision = int(self.graph_store.graph_status()["published_version"])
         if graph_revision < 0:
-            return
-        self.epoch_reconciler.ensure_graph_epoch(
+            return None
+        return self.epoch_reconciler.ensure_graph_epoch(
             graph_revision, self.graph_store.published_query_digest()
         )
+
+    def _record_materialization_graph_revision(self) -> None:
+        """Durably create the desired epoch for a completed query-graph publication."""
+        graph_revision = int(self.graph_store.graph_status()["published_version"])
+        if graph_revision < 0:
+            return
+        self._ensure_current_epoch()
         self.notify_service_changes({}, graph_revision=graph_revision)
 
     def recover_materialization_state(self) -> None:
@@ -713,22 +713,13 @@ class Manager:
         generation = self.epoch_materialization.deploy_definition(
             definition.name, definition_id, self.graph_store
         )
-        status = self.graph_store.graph_status()
-        graph_revision = int(status["published_version"])
-        epoch_id = self.epoch_reconciler.ensure_graph_epoch(
-            graph_revision, self.graph_store.published_query_digest()
-        ) if graph_revision >= 0 else None
         return {"name": definition.name, "definition_id": definition_id,
-                "generation": generation, "epoch_id": epoch_id, "status": "deploying"}
+                "generation": generation, "epoch_id": self._ensure_current_epoch(),
+                "status": "deploying"}
 
     def remove_transformation(self, name: str) -> dict[str, Any]:
         self.epoch_materialization.remove_deployment(name, self.graph_store)
-        status = self.graph_store.graph_status()
-        graph_revision = int(status["published_version"])
-        epoch_id = self.epoch_reconciler.ensure_graph_epoch(
-            graph_revision, self.graph_store.published_query_digest()
-        ) if graph_revision >= 0 else None
-        return {"name": name, "epoch_id": epoch_id, "status": "removing"}
+        return {"name": name, "epoch_id": self._ensure_current_epoch(), "status": "removing"}
 
     def register_service(self, definition) -> dict[str, Any]:
         """Register an immutable service package without granting stream ownership."""
@@ -751,11 +742,7 @@ class Manager:
         revision = self.materialization.promote_state_revision(
             revision_id, policy=policy, effective_from=effective_from
         )
-        graph_revision = int(self.graph_store.graph_status()["published_version"])
-        if graph_revision >= 0:
-            self.epoch_reconciler.ensure_graph_epoch(
-                graph_revision, self.graph_store.published_query_digest()
-            )
+        self._ensure_current_epoch()
         return revision
 
     def notify_service_changes(self, versions: dict[str, int], *, graph_revision: int | None = None) -> None:
@@ -911,9 +898,20 @@ class Manager:
         """
         pub_id = publication_id or str(uuid.uuid4())
         receipt = self.publication.publish(PublicationRequest(pub_id, mutations))
+        return self._after_canonical_publish(receipt)
+
+    def _after_canonical_publish(self, receipt: PublicationReceipt) -> PublicationReceipt:
+        """Derive materialization work and service hints from a committed publication."""
         self.epoch_materialization.plan_data_changes()
         self.notify_service_changes(dict(receipt.versions))
         return receipt
+
+    @staticmethod
+    def _empty_receipt(publication_id: str | None) -> PublicationReceipt:
+        return PublicationReceipt(
+            publication_id=publication_id or str(uuid.uuid4()),
+            payload_hash="", row_count=0, versions={},
+        )
 
     @staticmethod
     def _mutation_table(df: "Any", *, operation: str = "upsert") -> "pa.Table":
@@ -950,10 +948,7 @@ class Manager:
         )
         n = len(rows)
         if n == 0 and not replace:
-            return PublicationReceipt(
-                publication_id=publication_id or str(uuid.uuid4()),
-                payload_hash="", row_count=0, versions={},
-            )
+            return self._empty_receipt(publication_id)
         df = pl.DataFrame(
             {
                 "ref_uri": pl.Series("ref_uri", [ref_uri] * n, dtype=pl.Utf8),
@@ -974,9 +969,7 @@ class Manager:
             ),
             ref_uri,
         )
-        self.epoch_materialization.plan_data_changes()
-        self.notify_service_changes(dict(receipt.versions))
-        return receipt
+        return self._after_canonical_publish(receipt)
 
     def insert_timeseries_batch(
         self,
@@ -1006,10 +999,7 @@ class Manager:
             source_id, len(ref_uris), len(streams),
         )
         if not ref_uris:
-            return PublicationReceipt(
-                publication_id=publication_id or str(uuid.uuid4()),
-                payload_hash="", row_count=0, versions={},
-            )
+            return self._empty_receipt(publication_id)
 
         from acquirium.Storage.values import typed_value_series
 
@@ -1031,10 +1021,7 @@ class Manager:
 
         logger.debug("insert_timeseries_arrow source=%s arrow_rows=%d", source_id, len(table))
         if len(table) == 0:
-            return PublicationReceipt(
-                publication_id=publication_id or str(uuid.uuid4()),
-                payload_hash="", row_count=0, versions={},
-            )
+            return self._empty_receipt(publication_id)
         df = pl.from_arrow(table)
         stream_count = df["ref_name"].n_unique()
         logger.info(
@@ -1084,10 +1071,7 @@ class Manager:
         if timestamps is None:
             timestamps = self.timescale.timestamps(ref_uri, start=start, end=end)
         if not timestamps:
-            return PublicationReceipt(
-                publication_id=publication_id or str(uuid.uuid4()),
-                payload_hash="", row_count=0, versions={},
-            )
+            return self._empty_receipt(publication_id)
         n = len(timestamps)
         mutations = pl.DataFrame(
             {

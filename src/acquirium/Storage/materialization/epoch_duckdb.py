@@ -37,7 +37,7 @@ UTC = timezone.utc
 class TopologyEpochDuckDB(DuckDBCodecs):
     """Durable epoch state machine backed by the server-owned DuckDB writer."""
 
-    def __init__(self, store: DuckDBStore, *, state_revision_resolver: Callable[[str], object | None] | None = None,
+    def __init__(self, store: DuckDBStore, *, state_revision_resolver: Callable[[], Mapping[str, object]] | None = None,
                  query_resolver: Callable[..., Any] | None = None,
                  transition_hook: Callable[[str], None] | None = None) -> None:
         self._store = store
@@ -63,7 +63,7 @@ class TopologyEpochDuckDB(DuckDBCodecs):
     def register_definition(self, definition: MaterializationDefinition) -> str:
         spec = definition_spec(definition)
         with self._store._lock, self._store._write_conn() as conn:
-            conn.execute("""INSERT INTO topology_epoch_definitions
+            conn.execute("""INSERT INTO materialization_definitions
                 (definition_id, name, kind, source_digest, entrypoint, spec_json, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (definition_id) DO NOTHING""",
                 [definition.definition_id, definition.name, definition.kind, definition.source_digest,
@@ -110,7 +110,7 @@ class TopologyEpochDuckDB(DuckDBCodecs):
         """Serialize one component frontier (DuckDB has one writer)."""
 
     def _validate_deployments(self, conn, selected: Mapping[str, str], graph: object) -> None:
-        rows = conn.execute("""SELECT definition_id, source_digest, entrypoint, spec_json FROM topology_epoch_definitions
+        rows = conn.execute("""SELECT definition_id, source_digest, entrypoint, spec_json FROM materialization_definitions
             WHERE kind = 'transformation'""").fetchall()
         specs = {row[0]: (row[1], row[2], self._decode(row[3])) for row in rows}
         missing = sorted(set(selected.values()) - set(specs))
@@ -127,7 +127,7 @@ class TopologyEpochDuckDB(DuckDBCodecs):
 
     def _catalog(self, conn) -> tuple[tuple[str, str, str, str, str], ...]:
         rows = conn.execute("""SELECT d.definition_id, p.name, d.source_digest, d.entrypoint, d.spec_json
-            FROM topology_deployments p JOIN topology_epoch_definitions d
+            FROM topology_deployments p JOIN materialization_definitions d
               ON d.definition_id = p.definition_id
             ORDER BY p.name""").fetchall()
         return tuple(rows)
@@ -135,33 +135,28 @@ class TopologyEpochDuckDB(DuckDBCodecs):
     def _catalog_digest(self, catalog: Sequence[tuple[str, str, str, str, str]], state_ids: Sequence[tuple]) -> str:
         return sha256(self._json({"catalog": catalog, "state_revisions": state_ids}).encode()).hexdigest()
 
-    def ensure_epoch(self, graph_revision: int, graph_digest: str, graph: object | None = None) -> str:
+    def ensure_epoch(self, graph_revision: int, graph_digest: str) -> str:
         """Persist a candidate epoch without disturbing the current topology."""
-        # Resolve state pins before opening the epoch writer transaction.  A
-        # manager's resolver normally reads the support store, which shares
-        # the DuckDB file; nesting that read under this write lock can
-        # deadlock. Binding ids, rather than definition ids, own state
-        # revisions, so resolve those immutable ids before deriving identity.
+        # Read the catalog and active state pins before opening the epoch
+        # writer transaction; a manager's resolver normally reads the support
+        # store, which shares the DuckDB file, and nesting that read under
+        # this write lock can deadlock.  The resolver returns every active
+        # revision keyed by binding id -- no query resolution happens here,
+        # and pins for bindings absent from the constructed topology are
+        # harmless because construction never consults them.
         with self._store._own_conn() as conn:
             catalog = self._catalog(conn)
         state_ids: list[tuple[str, str | None, str | None, datetime | None]] = []
         if self._state_revision_resolver is not None:
-            if graph is None:
-                raise ValueError("graph is required to resolve binding state revisions")
-            for definition_id, _, source_digest, entrypoint, spec_json in catalog:
-                for binding in resolve_bindings(
-                    self._decode(spec_json), graph, entrypoint=entrypoint,
-                    source_digest=source_digest, query_resolver=self._query_resolver):
-                    binding_id = binding.binding_id(definition_id)
-                    revision = self._state_revision_resolver(binding_id)
-                    if revision is None:
-                        state_ids.append((binding_id, None, None, None))
-                    elif isinstance(revision, str):
-                        state_ids.append((binding_id, revision, None, None))
-                    else:
-                        state_ids.append((binding_id, getattr(revision, "revision_id"),
-                                          getattr(revision, "policy", None),
-                                          getattr(revision, "effective_from", None)))
+            for binding_id, revision in self._state_revision_resolver().items():
+                if revision is None:
+                    continue
+                if isinstance(revision, str):
+                    state_ids.append((binding_id, revision, None, None))
+                else:
+                    state_ids.append((binding_id, getattr(revision, "revision_id"),
+                                      getattr(revision, "policy", None),
+                                      getattr(revision, "effective_from", None)))
         state_ids.sort(key=lambda item: item[0])
         catalog_digest = self._catalog_digest(catalog, state_ids)
         eid = epoch_id(graph_revision, graph_digest, (*catalog, *state_ids))
@@ -221,7 +216,7 @@ class TopologyEpochDuckDB(DuckDBCodecs):
 
     def _definition(self, conn, definition_id: str) -> EpochDefinition:
         row = conn.execute("""SELECT definition_id, name, source_digest, entrypoint, kind, spec_json
-            FROM topology_epoch_definitions WHERE definition_id = ?""", [definition_id]).fetchone()
+            FROM materialization_definitions WHERE definition_id = ?""", [definition_id]).fetchone()
         if row is None:
             raise KeyError(definition_id)
         return EpochDefinition(row[0], row[1], row[2], row[3], row[4], self._decode(row[5]))
@@ -256,7 +251,7 @@ class TopologyEpochDuckDB(DuckDBCodecs):
                     spec, graph, entrypoint=entrypoint, source_digest=source_digest,
                     query_resolver=self._query_resolver)
                 resolved.extend(epoch_binding(epoch_id_value, definition_id, binding) for binding in bindings)
-            edges, topo_order, components = global_dag(resolved)
+            edges, _, components = global_dag(resolved)
         except Exception as error:
             with self._store._lock, self._store._write_conn() as conn:
                 conn.execute("UPDATE topology_epochs SET status = 'failed' WHERE epoch_id = ? AND status = 'constructing'", [epoch_id_value])
@@ -311,54 +306,31 @@ class TopologyEpochDuckDB(DuckDBCodecs):
                     (epoch_id, component_id, binding_ids_json, status, frontier, sealed_frontier)
                     VALUES (?, ?, ?, 'pending', 1, 0) ON CONFLICT DO NOTHING""", component_rows)
 
-            # Derive each binding's output range in topological order.  A
-            # consumer applies its own impact policy to both raw changes and
-            # the output changes of its producers; this is what makes window
-            # semantics compose through a DAG.
             owners = {ref: item.binding_id for item in resolved for ref in item.output_refs}
-            incoming = {binding_id: [] for binding_id in binding_by_id}
-            for source, target in edges:
-                incoming[target].append(source)
-            dirty: dict[str, tuple[TimeRange, ...]] = {}
+            component_members = {
+                component_id: json.loads(members_json)
+                for _, component_id, members_json in component_rows
+            }
             component_for = {
                 binding_id: component_id
-                for _, component_id, members_json in component_rows
-                for binding_id in json.loads(members_json)
+                for component_id, members in component_members.items()
+                for binding_id in members
             }
-            component_retained = {
-                component_id: self._retained_ranges(conn, sorted({
-                    ref
-                    for binding_id in json.loads(members_json)
-                    for ref in binding_by_id[binding_id].input_refs
-                    if ref not in owners
-                }))
-                for _, component_id, members_json in component_rows
+            # A newly constructed epoch owes its complete retained history, so
+            # every raw input's full retained range counts as changed.
+            raw_changes = {
+                binding_id: self._retained_ranges(
+                    conn, tuple(ref for ref in binding.input_refs if ref not in owners))
+                for binding_id, binding in binding_by_id.items()
             }
-            for binding_id in topo_order:
-                binding = binding_by_id[binding_id]
-                raw_refs = tuple(ref for ref in binding.input_refs if ref not in owners)
-                changed = [*self._retained_ranges(conn, raw_refs)]
-                for source in incoming[binding_id]:
-                    changed.extend(dirty[source])
-                impact = self._definition_impact(conn, binding.definition_id)
-                affected = self._affected_ranges(
-                    changed, impact, component_retained[component_for[binding_id]]
-                )
-                policy, effective_from = promotion.get(binding_id, (None, None))
-                if policy == "prospective":
-                    affected = ()
-                elif policy == "recompute_from":
-                    if effective_from is None:
-                        raise ValueError("recompute_from state revision lacks effective_from")
-                    affected = tuple(
-                        TimeRange(max(interval.start, effective_from), interval.end)
-                        for interval in affected if interval.end > effective_from
-                    )
-                dirty[binding_id] = affected
+            dirty = self._propagate_dirty(
+                conn, binding_by_id, edges, component_for, raw_changes,
+                self._component_raw_ranges(conn, component_members, binding_by_id, owners),
+                promotion=promotion,
+            )
 
             works: list[tuple] = []
-            for _, component_id, members_json in component_rows:
-                members = json.loads(members_json)
+            for component_id, members in component_members.items():
                 works.extend(self._work_rows(
                     conn, epoch_id_value, component_id, members, binding_by_id,
                     edges, dirty, maximum_partition_duration, frontier=1, prefix="epoch-work",
@@ -443,6 +415,77 @@ class TopologyEpochDuckDB(DuckDBCodecs):
             # to remove the previously materialized history.
             return coalesce_ranges([*retained, *historical] or list(changed))
         return coalesce_ranges(impact.affected(interval) for interval in changed)
+
+    def _component_raw_ranges(self, conn, component_members: Mapping[str, Sequence[str]],
+                              bindings: Mapping[str, EpochBinding], owners: Mapping[str, str],
+                              *, include_deleted: bool = False) -> dict[str, tuple[TimeRange, ...]]:
+        """Retained event-time bounds of each component's raw (unmanaged) inputs."""
+        return {
+            component: self._retained_ranges(conn, sorted({
+                ref for binding_id in members for ref in bindings[binding_id].input_refs
+                if ref not in owners
+            }), include_deleted=include_deleted)
+            for component, members in component_members.items()
+        }
+
+    def _propagate_dirty(
+        self,
+        conn,
+        bindings: Mapping[str, EpochBinding],
+        edges: Sequence[tuple[str, str]],
+        component_for: Mapping[str, str],
+        raw_changes: Mapping[str, Sequence[TimeRange]],
+        component_retained: Mapping[str, Sequence[TimeRange]],
+        component_history: Mapping[str, Sequence[TimeRange]] | None = None,
+        *,
+        promotion: Mapping[str, tuple[str | None, datetime | None]] | None = None,
+    ) -> dict[str, tuple[TimeRange, ...]]:
+        """Propagate changed input ranges through the DAG in topological order.
+
+        A consumer applies its own impact policy to both raw changes and the
+        output changes of its producers; this is what makes window semantics
+        compose through a DAG.  Both epoch construction and incremental data
+        planning derive their work from this one function.  ``promotion``
+        clamps a binding's dirty ranges *before* they reach its consumers, so
+        a prospective state revision suppresses downstream recomputation too.
+        """
+        incoming: dict[str, list[str]] = {binding_id: [] for binding_id in bindings}
+        children: dict[str, list[str]] = {binding_id: [] for binding_id in bindings}
+        indegree = {binding_id: 0 for binding_id in bindings}
+        for source, target in edges:
+            incoming[target].append(source)
+            children[source].append(target)
+            indegree[target] += 1
+        ready = sorted(binding_id for binding_id, degree in indegree.items() if degree == 0)
+        dirty: dict[str, tuple[TimeRange, ...]] = {}
+        while ready:
+            binding_id = ready.pop(0)
+            changed = list(raw_changes.get(binding_id, ()))
+            for source in incoming[binding_id]:
+                changed.extend(dirty[source])
+            affected = self._affected_ranges(
+                changed,
+                self._definition_impact(conn, bindings[binding_id].definition_id),
+                component_retained[component_for[binding_id]],
+                (component_history or {}).get(component_for[binding_id], ()),
+            )
+            policy, effective_from = (promotion or {}).get(binding_id, (None, None))
+            if policy == "prospective":
+                affected = ()
+            elif policy == "recompute_from":
+                if effective_from is None:
+                    raise ValueError("recompute_from state revision lacks effective_from")
+                affected = tuple(
+                    TimeRange(max(interval.start, effective_from), interval.end)
+                    for interval in affected if interval.end > effective_from
+                )
+            dirty[binding_id] = affected
+            for child in sorted(children[binding_id]):
+                indegree[child] -= 1
+                if indegree[child] == 0:
+                    ready.append(child)
+                    ready.sort()
+        return dirty
 
     def _work_rows(
         self,
@@ -568,23 +611,6 @@ class TopologyEpochDuckDB(DuckDBCodecs):
                 "SELECT source_binding_id, target_binding_id FROM topology_epoch_edges WHERE epoch_id = ?",
                 [epoch],
             ).fetchall())
-            incoming = {binding_id: [] for binding_id in bindings}
-            children = {binding_id: [] for binding_id in bindings}
-            indegree = {binding_id: 0 for binding_id in bindings}
-            for source, target in edges:
-                incoming[target].append(source)
-                children[source].append(target)
-                indegree[target] += 1
-            ready = sorted(binding_id for binding_id, degree in indegree.items() if degree == 0)
-            topo: list[str] = []
-            while ready:
-                binding_id = ready.pop(0)
-                topo.append(binding_id)
-                for child in sorted(children[binding_id]):
-                    indegree[child] -= 1
-                    if indegree[child] == 0:
-                        ready.append(child)
-                        ready.sort()
 
             raw_changes: dict[str, list[TimeRange]] = {binding_id: [] for binding_id in bindings}
             for binding_id, binding in bindings.items():
@@ -602,35 +628,11 @@ class TopologyEpochDuckDB(DuckDBCodecs):
                     for start, end in changes:
                         raw_changes[binding_id].append(TimeRange(self._aware(start), self._aware(end)))
 
-            component_retained = {
-                component: self._retained_ranges(conn, sorted({
-                    ref
-                    for binding_id in members
-                    for ref in bindings[binding_id].input_refs
-                    if ref not in owners
-                }))
-                for component, members in component_members.items()
-            }
-            component_history = {
-                component: self._retained_ranges(conn, sorted({
-                    ref
-                    for binding_id in members
-                    for ref in bindings[binding_id].input_refs
-                    if ref not in owners
-                }), include_deleted=True)
-                for component, members in component_members.items()
-            }
-            dirty: dict[str, tuple[TimeRange, ...]] = {}
-            for binding_id in topo:
-                changed = list(raw_changes[binding_id])
-                for source in incoming[binding_id]:
-                    changed.extend(dirty[source])
-                dirty[binding_id] = self._affected_ranges(
-                    changed,
-                    self._definition_impact(conn, bindings[binding_id].definition_id),
-                    component_retained[component_for[binding_id]],
-                    component_history[component_for[binding_id]],
-                )
+            dirty = self._propagate_dirty(
+                conn, bindings, edges, component_for, raw_changes,
+                self._component_raw_ranges(conn, component_members, bindings, owners),
+                self._component_raw_ranges(conn, component_members, bindings, owners, include_deleted=True),
+            )
 
             inserted = 0
             for component, members in sorted(component_members.items()):

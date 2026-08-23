@@ -174,24 +174,23 @@ def test_query_with_no_matches_builds_an_active_empty_epoch(tmp_path):
         store.close()
 
 
-def test_state_revision_pins_query_resolved_binding_before_construction(tmp_path):
+def test_state_revision_pins_resolved_binding_before_construction(tmp_path):
     store, _, definition, graph, _ = _runtime(tmp_path)
+    expected_binding_id = resolve_bindings(definition, graph)[0].binding_id(definition.definition_id)
     revisions = ["state-a"]
-    resolved_ids = []
 
-    def resolve_state(binding_id):
-        resolved_ids.append(binding_id)
-        return revisions[0]
+    def active_revisions():
+        return {expected_binding_id: revisions[0]}
 
-    runtime = TopologyEpochDuckDB(store, state_revision_resolver=resolve_state)
+    runtime = TopologyEpochDuckDB(store, state_revision_resolver=active_revisions)
     definition_id = runtime.register_definition(definition)
     runtime.deploy_definition(definition.name, definition_id, graph)
     try:
-        epoch = runtime.ensure_epoch(1, "state", graph)
+        epoch = runtime.ensure_epoch(1, "state")
         revisions[0] = "state-b"
         runtime.construct_epoch(epoch, graph)
         binding = runtime.epoch_bindings(epoch)[0]
-        assert resolved_ids == [binding.binding_id]
+        assert binding.binding_id == expected_binding_id
         assert binding.state_revision == "state-a"
     finally:
         store.close()

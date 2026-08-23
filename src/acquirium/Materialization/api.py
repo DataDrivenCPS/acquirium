@@ -85,11 +85,11 @@ class Service(_Application):
         raise NotImplementedError
 
 
-class Transformation(ABC):
-    """Class-based stateless transformation declaration.
+class _QueryTransformBase(ABC):
+    """Shared declaration contract for query-driven transformations.
 
-    Subclasses implement pure :meth:`build_query` and :meth:`transform`; the
-    immutable definition is attached when the class is created, so it deploys
+    Subclasses implement pure :meth:`build_query`; the immutable definition
+    is validated and attached when a concrete class is created, so it deploys
     through ``aq.deploy_transformation``.
     """
 
@@ -98,6 +98,8 @@ class Transformation(ABC):
     outputs: ClassVar[dict[str, OutputSpec | Mapping[str, Any]] | None] = None
     impact: ClassVar[ImpactPolicy | None] = None
     parameters_schema: ClassVar[dict[str, Any]] = {}
+
+    __acquirium_definition__: MaterializationDefinition
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
@@ -111,12 +113,11 @@ class Transformation(ABC):
             raise ValueError("outputs must be a non-empty name-to-output-spec mapping")
         if cls.invocation not in {"whole_query", "per_row"}:
             raise ValueError("invocation must be 'whole_query' or 'per_row'")
-        resolved_impact = cls.impact or pointwise()
         definition = definition_for(
             cls,
             name=cls.name or cls.__name__,
             outputs=cls.outputs,
-            impact=resolved_impact,
+            impact=cls.impact or pointwise(),
             invocation=cls.invocation,
             parameters_schema=cls.parameters_schema,
         )
@@ -126,46 +127,21 @@ class Transformation(ABC):
     def build_query(self, aq: Any) -> Any:
         raise NotImplementedError
 
+
+class Transformation(_QueryTransformBase):
+    """Class-based stateless transformation declaration."""
+
     @abstractmethod
     def transform(self, inputs: Any, context: Any) -> Any:
         raise NotImplementedError
 
 
-class StatefulTransformation(ABC):
+class StatefulTransformation(_QueryTransformBase):
     """Base for artifact-backed class transformations.
 
     ``setup_worker`` and decoded state are disposable caches.  Only bytes from
     an immutable artifact revision are authoritative.
     """
-
-    name: ClassVar[str | None] = None
-    invocation: ClassVar[Literal["whole_query", "per_row"]] = "whole_query"
-    outputs: ClassVar[dict[str, OutputSpec | Mapping[str, Any]] | None] = None
-    impact: ClassVar[ImpactPolicy | None] = None
-    parameters_schema: ClassVar[dict[str, Any]] = {}
-
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        super().__init_subclass__(**kwargs)
-        if inspect.isabstract(cls):
-            return
-        if not callable(getattr(cls, "build_query", None)):
-            raise ValueError("a stateful transformation must implement build_query(self, aq)")
-        if cls.outputs is None:
-            raise ValueError("a stateful transformation requires outputs")
-        if not isinstance(cls.outputs, dict) or not cls.outputs:
-            raise ValueError("outputs must be a non-empty name-to-output-spec mapping")
-        if cls.invocation not in {"whole_query", "per_row"}:
-            raise ValueError("invocation must be 'whole_query' or 'per_row'")
-        resolved_impact = cls.impact or pointwise()
-        definition = definition_for(
-            cls,
-            name=cls.name or cls.__name__,
-            outputs=cls.outputs,
-            impact=resolved_impact,
-            invocation=cls.invocation,
-            parameters_schema=cls.parameters_schema,
-        )
-        setattr(cls, "__acquirium_definition__", definition)
 
     def setup_worker(self):
         return None
@@ -174,11 +150,5 @@ class StatefulTransformation(ABC):
         return artifact
 
     @abstractmethod
-    def build_query(self, aq: Any):
-        raise NotImplementedError
-
-    @abstractmethod
     def transform(self, batch: Any, state: Any, context: Any):
         raise NotImplementedError
-
-    __acquirium_definition__: MaterializationDefinition

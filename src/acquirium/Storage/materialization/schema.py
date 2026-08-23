@@ -24,11 +24,16 @@ _CHANGE_RANGE_TEMPLATES = (
     "CREATE INDEX IF NOT EXISTS idx_stream_change_ranges_ref_version ON stream_change_ranges (ref_uri, stream_version)",
 )
 
-_SUPPORT_TEMPLATES = (
-    """CREATE TABLE IF NOT EXISTS materialization_definitions (
+# The one immutable definition registry, shared by the support store
+# (experiments, services) and the topology-epoch control plane
+# (transformations); rows are content-addressed by definition_id.
+_DEFINITIONS_TEMPLATE = """CREATE TABLE IF NOT EXISTS materialization_definitions (
         definition_id $STR PRIMARY KEY, name $STR NOT NULL, kind $STR NOT NULL,
         source_digest $STR NOT NULL, entrypoint $STR NOT NULL, spec_json $JSON NOT NULL,
-        created_at $TS NOT NULL)""",
+        created_at $TS NOT NULL)"""
+
+_SUPPORT_TEMPLATES = (
+    _DEFINITIONS_TEMPLATE,
     """CREATE TABLE IF NOT EXISTS materialization_artifacts (
         digest $STR PRIMARY KEY, uri $STR NOT NULL, size_bytes BIGINT NOT NULL,
         media_type $STR NOT NULL, metadata_json $JSON NOT NULL, created_at $TS NOT NULL)""",
@@ -76,10 +81,7 @@ _SUPPORT_TEMPLATES = (
 )
 
 _EPOCH_TEMPLATES = (
-    """CREATE TABLE IF NOT EXISTS topology_epoch_definitions (
-        definition_id $STR PRIMARY KEY, name $STR NOT NULL, kind $STR NOT NULL,
-        source_digest $STR NOT NULL, entrypoint $STR NOT NULL, spec_json $JSON NOT NULL,
-        created_at $TS NOT NULL)""",
+    _DEFINITIONS_TEMPLATE,
     """CREATE TABLE IF NOT EXISTS topology_deployments (
         name $STR PRIMARY KEY, definition_id $STR NOT NULL,
         generation BIGINT NOT NULL, updated_at $TS NOT NULL)""",

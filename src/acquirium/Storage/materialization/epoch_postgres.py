@@ -69,7 +69,7 @@ class TopologyEpochPostgres(PostgresCodecs, TopologyEpochDuckDB):
 
     def _catalog(self, conn):
         rows = conn.execute("""SELECT definition_id, name, source_digest, entrypoint, spec_json
-            FROM topology_epoch_definitions WHERE kind = 'transformation' ORDER BY definition_id""").fetchall()
+            FROM materialization_definitions WHERE kind = 'transformation' ORDER BY definition_id""").fetchall()
         return tuple((row[0], row[1], row[2], row[3], row[4] if isinstance(row[4], str) else self._json(row[4])) for row in rows)
 
     def _retained_ranges(self, conn, refs: Sequence[str], *, include_deleted: bool = False):

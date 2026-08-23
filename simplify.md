@@ -104,6 +104,32 @@ and `system_paper/` are untracked in the repo — gitignore them before they get
 
 ## Tier 2 — Structural consolidation (biggest understandability wins)
 
+> **Status: DONE** (2026-08-23). Items 6–11 implemented:
+>
+> - (7) `_propagate_dirty` + `_component_raw_ranges` are the single copy of
+>   dirty-range propagation; `construct_epoch` and `plan_data_changes` both
+>   call them (the inline Kahn's-algorithm re-implementation is gone).
+>   Promotion-policy clamping is a parameter of the shared function because
+>   it must apply *before* ranges reach consumers.
+> - (6) `ensure_epoch` no longer resolves queries at all: the
+>   `state_revision_resolver` is now a zero-arg bulk read
+>   (`active_state_revisions()`, binding_id → revision) and the `graph`
+>   parameter is gone. Query resolution now happens exactly once per epoch,
+>   in `construct_epoch` (plus the fail-fast pass at deploy time).
+> - (9) One definition registry: `topology_epoch_definitions` is gone; both
+>   stores use the shared content-addressed `materialization_definitions`
+>   table (single template in `schema.py`).
+> - (10) Manager: `_ensure_current_epoch()`, `_after_canonical_publish()`,
+>   and `_empty_receipt()` replace the three repeated blocks.
+> - (11) `Transformation`/`StatefulTransformation` share one
+>   `_QueryTransformBase.__init_subclass__`.
+> - (8) Scaled back deliberately: after Tier 1 each lease flavor exists in
+>   exactly one class, so only the expiry-recovery idiom was shared
+>   (`_recover_expired_leases`). A fully parameterized lease framework was
+>   judged to obscure more than it deduplicates; migrating artifact/effect
+>   leases onto the epoch-claims table would change durable schemas for
+>   little practical gain.
+
 ### 6. Stop resolving bindings in `ensure_epoch`
 
 `resolve_bindings` (which executes SPARQL) runs up to **three times** per epoch:

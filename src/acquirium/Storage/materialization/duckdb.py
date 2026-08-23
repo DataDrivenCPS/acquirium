@@ -151,10 +151,21 @@ class MaterializationDuckDB(DuckDBCodecs):
                  self._json(dict(request.metadata)), self._now()])
         return request.request_id
 
+    def _recover_expired_leases(self, conn, table: str, now: datetime, *, reset_retry: bool = False) -> None:
+        """Return expired leases to the pending pool.
+
+        A process can die while holding a lease; expiry is the recovery
+        mechanism, so notifications and worker memory are never correctness
+        requirements for leased work.
+        """
+        reset = ", next_attempt_at = ?" if reset_retry else ""
+        conn.execute(f"""UPDATE {table} SET status = 'pending', lease_owner = NULL, lease_expires_at = NULL{reset}
+            WHERE status = 'leased' AND lease_expires_at <= ?""", [now, now] if reset_retry else [now])
+
     def lease_artifact_request(self, owner: str, *, duration: timedelta = timedelta(minutes=15)) -> ArtifactLease | None:
         now = self._now(); expires = now + duration
         with self._store._lock, self._store._write_conn() as conn:
-            conn.execute("UPDATE materialization_artifact_requests SET status = 'pending', lease_owner = NULL, lease_expires_at = NULL WHERE status = 'leased' AND lease_expires_at <= ?", [now])
+            self._recover_expired_leases(conn, "materialization_artifact_requests", now)
             row = conn.execute(f"""SELECT request_id, kind, deployment_name, binding_id, previous_revision,
                 input_vector_json, range_start, range_end, metadata_json, attempt FROM materialization_artifact_requests
                 WHERE status = 'pending' ORDER BY created_at, request_id LIMIT 1{self._SKIP_LOCKED}""").fetchone()
@@ -217,10 +228,15 @@ class MaterializationDuckDB(DuckDBCodecs):
         identifier, deployment, binding, parent, digest, uri, size, media, metadata, status, policy, effective, metrics = row
         return StateRevision(identifier, deployment, binding, ArtifactRecord(digest, uri, size, media, self._decode(metadata)), status, parent, policy, self._aware(effective) if effective else None, self._decode(metrics))
 
-    def active_state_revision(self, binding_id: str) -> StateRevision | None:
+    def active_state_revisions(self) -> dict[str, StateRevision]:
+        """Each binding's newest active state revision, keyed by binding id."""
         with self._store._own_conn() as conn:
-            row = conn.execute("SELECT revision_id FROM materialization_state_revisions WHERE binding_id = ? AND status = 'active' ORDER BY activated_at DESC LIMIT 1", [binding_id]).fetchone()
-        return self.state_revision(row[0]) if row else None
+            rows = conn.execute("""SELECT binding_id, revision_id FROM (
+                SELECT binding_id, revision_id,
+                       row_number() OVER (PARTITION BY binding_id ORDER BY activated_at DESC) AS recency
+                FROM materialization_state_revisions WHERE status = 'active') latest
+                WHERE recency = 1 ORDER BY binding_id""").fetchall()
+        return {binding_id: self.state_revision(revision_id) for binding_id, revision_id in rows}
 
     def promote_state_revision(self, revision_id: str, *, policy: str = "prospective", effective_from=None) -> StateRevision:
         if policy not in {"prospective", "recompute_all", "recompute_from"}:
@@ -416,12 +432,7 @@ class MaterializationDuckDB(DuckDBCodecs):
             raise ValueError("effect lease owner is required")
         now = self._now()
         with self._store._lock, self._store._write_conn() as conn:
-            # A process can die after acquiring a lease.  Lease expiry is the
-            # recovery mechanism; notifications and worker memory are never
-            # correctness requirements for an external effect.
-            conn.execute("""UPDATE materialization_effect_intents SET status = 'pending', lease_owner = NULL,
-                lease_expires_at = NULL, next_attempt_at = ?
-                WHERE status = 'leased' AND lease_expires_at <= ?""", [now, now])
+            self._recover_expired_leases(conn, "materialization_effect_intents", now, reset_retry=True)
             row = conn.execute(f"""SELECT effect_id, execution_id, kind, destination, payload_json,
                 idempotency_key, attempts FROM materialization_effect_intents
                 WHERE status = 'pending' AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
