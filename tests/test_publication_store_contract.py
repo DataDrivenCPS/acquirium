@@ -77,14 +77,16 @@ def test_postgres_serializes_concurrent_retries_by_publication_id(pg_dsn):
         publisher.close()
 
 
-def test_duckdb_rejects_a_retired_app_runtime_schema(tmp_path):
-    path = tmp_path / "retired-runtime.duckdb"
-    store = DuckDBStore(path, recreate=True)
+def test_duckdb_schema_does_not_create_retired_app_runtime_tables(tmp_path):
+    store = DuckDBStore(tmp_path / "publication.duckdb", recreate=True)
     try:
         with store._own_conn() as conn:
-            conn.execute("CREATE TABLE app_runtime (app_id VARCHAR PRIMARY KEY)")
+            tables = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
+                ).fetchall()
+            }
+        assert not any(table.startswith("app_") for table in tables)
     finally:
         store.close()
-
-    with pytest.raises(RuntimeError, match="retired continuous app runtime"):
-        DuckDBStore(path)

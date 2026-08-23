@@ -9,8 +9,9 @@ import os
 import acquirium as aq
 
 
-@aq.service(name="room_dashboard")
-class RoomDashboard:
+class RoomDashboard(aq.Service):
+    name = "room_dashboard"
+
     def on_change(self, change: aq.ChangeHint, context) -> None:
         # This is an Arrow table read from authoritative canonical storage.
         snapshot = context.snapshot(["urn:plant:room-101:temperature"])

@@ -22,7 +22,7 @@
 
 [server]
 enabled           = true          # start the HTTP server in-process
-data_dir          = "../.acquirium"        # -> deployments/BENICIA/.acquirium (duckdb, apps, graph)
+data_dir          = "../.acquirium"        # -> deployments/BENICIA/.acquirium (duckdb, graph)
 timeseries_backend = "duckdb"
 
 [driver]

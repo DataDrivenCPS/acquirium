@@ -87,18 +87,10 @@ class MaterializationDuckDB:
                 destination VARCHAR NOT NULL, payload_json VARCHAR NOT NULL, idempotency_key VARCHAR UNIQUE NOT NULL,
                 status VARCHAR NOT NULL, attempts INTEGER NOT NULL, next_attempt_at TIMESTAMP, error_json VARCHAR,
                 lease_owner VARCHAR, lease_expires_at TIMESTAMP)""")
-            conn.execute("ALTER TABLE materialization_effect_intents ADD COLUMN IF NOT EXISTS lease_owner VARCHAR")
-            conn.execute("ALTER TABLE materialization_effect_intents ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMP")
             conn.execute("""CREATE TABLE IF NOT EXISTS materialization_services (
                 name VARCHAR PRIMARY KEY, definition_id VARCHAR NOT NULL, status VARCHAR NOT NULL,
                 health VARCHAR NOT NULL, updated_at TIMESTAMP NOT NULL, last_data_versions_json VARCHAR NOT NULL DEFAULT '{}',
                 last_graph_revision BIGINT)""")
-            # DuckDB cannot add a constrained column to an existing table.
-            # The creation path has the default; old databases are backfilled
-            # below and treated identically by the read path.
-            conn.execute("ALTER TABLE materialization_services ADD COLUMN IF NOT EXISTS last_data_versions_json VARCHAR")
-            conn.execute("ALTER TABLE materialization_services ADD COLUMN IF NOT EXISTS last_graph_revision BIGINT")
-            conn.execute("UPDATE materialization_services SET last_data_versions_json = '{}' WHERE last_data_versions_json IS NULL")
             conn.execute("""CREATE TABLE IF NOT EXISTS materialization_service_hints (
                 service_name VARCHAR PRIMARY KEY, token VARCHAR NOT NULL, data_versions_json VARCHAR NOT NULL,
                 graph_revision BIGINT, created_at TIMESTAMP NOT NULL)""")

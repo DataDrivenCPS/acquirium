@@ -138,7 +138,7 @@ class ExperimentRunner:
         definition = self._storage.experiment_definition(run.definition_id)
         context = ExperimentContext(run, self._storage)
         try:
-            result = self._executor.submit_callable_entrypoint(digest=definition["source_digest"],
+            result = self._executor.submit_application_entrypoint(digest=definition["source_digest"],
                 entrypoint=definition["entrypoint"], argument=context).result()
         except Exception as error:
             self._storage.finish_experiment(run_id, status="failed", error={"type": type(error).__name__, "message": str(error)})

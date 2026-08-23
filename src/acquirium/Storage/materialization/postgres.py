@@ -65,14 +65,10 @@ class MaterializationPostgres:
                 destination TEXT NOT NULL, payload_json JSONB NOT NULL, idempotency_key TEXT UNIQUE NOT NULL,
                 status TEXT NOT NULL, attempts INTEGER NOT NULL, next_attempt_at TIMESTAMPTZ, error_json JSONB,
                 lease_owner TEXT, lease_expires_at TIMESTAMPTZ)""")
-            conn.execute("ALTER TABLE materialization_effect_intents ADD COLUMN IF NOT EXISTS lease_owner TEXT")
-            conn.execute("ALTER TABLE materialization_effect_intents ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ")
             conn.execute("""CREATE TABLE IF NOT EXISTS materialization_services (
                 name TEXT PRIMARY KEY, definition_id TEXT NOT NULL, status TEXT NOT NULL,
                 health TEXT NOT NULL, updated_at TIMESTAMPTZ NOT NULL, last_data_versions_json JSONB NOT NULL DEFAULT '{}',
                 last_graph_revision BIGINT)""")
-            conn.execute("ALTER TABLE materialization_services ADD COLUMN IF NOT EXISTS last_data_versions_json JSONB NOT NULL DEFAULT '{}'")
-            conn.execute("ALTER TABLE materialization_services ADD COLUMN IF NOT EXISTS last_graph_revision BIGINT")
             conn.execute("""CREATE TABLE IF NOT EXISTS materialization_service_hints (
                 service_name TEXT PRIMARY KEY, token TEXT NOT NULL, data_versions_json JSONB NOT NULL,
                 graph_revision BIGINT, created_at TIMESTAMPTZ NOT NULL)""")
@@ -83,7 +79,7 @@ class MaterializationPostgres:
     def record_change_ranges(self, ranges: Sequence[StreamChangeRange]) -> None:
         """Persist ranges for callers that use the materialization store directly.
 
-        Canonical ``ContinuousPostgres.publish`` writes these in its own
+        Canonical publication writes these in its own
         transaction; this method makes the backend-neutral range-manifest
         contract complete for import/recovery tooling as well.
         """

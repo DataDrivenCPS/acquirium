@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 
 from acquirium.Materialization.experiments import ExperimentRunRequest, ExperimentRunner
-from acquirium.Materialization.api import experiment
+from acquirium.Materialization.api import Experiment
 from acquirium.Materialization.executor import LocalExecutorPool
 from acquirium.Materialization.impact import TimeRange
 from acquirium.Storage.duckdb_store import DuckDBStore
@@ -13,10 +13,12 @@ from acquirium.Storage.materialization.support_duckdb import MaterializationSupp
 from acquirium.Storage.materialization.support_postgres import MaterializationSupportPostgres
 
 
-@experiment(parameters_schema={"type": "object", "required": ["limit"]})
-def contract_experiment(context):
-    context.metric("objective", {"limit": context.params["limit"]})
-    return context.output_ref("schedule")
+class ContractExperiment(Experiment):
+    parameters_schema = {"type": "object", "required": ["limit"]}
+
+    def run(self, context):
+        context.metric("objective", {"limit": context.params["limit"]})
+        return context.output_ref("schedule")
 
 
 @pytest.fixture(params=["duckdb", "postgres"])
@@ -85,16 +87,19 @@ def test_failed_and_cancelled_runs_are_durable(experiment_store):
 
 
 def test_experiment_declaration_is_an_immutable_experiment_definition():
-    @experiment(parameters_schema={"type": "object", "required": ["limit"]})
-    def optimize(run):
-        return run.params["limit"]
-    definition = optimize.__acquirium_definition__
+    class Optimize(Experiment):
+        parameters_schema = {"type": "object", "required": ["limit"]}
+
+        def run(self, run):
+            return run.params["limit"]
+
+    definition = Optimize.__acquirium_definition__
     assert definition.kind == "experiment"
     assert definition.parameters_schema == {"type": "object", "required": ["limit"]}
 
 
 def test_experiment_runner_uses_frozen_definition_and_bounded_pool(experiment_store):
-    definition_id = experiment_store.register_definition(contract_experiment.__acquirium_definition__)
+    definition_id = experiment_store.register_definition(ContractExperiment.__acquirium_definition__)
     start = datetime(2026, 1, 1, tzinfo=timezone.utc)
     request = ExperimentRunRequest(f"execute:{uuid4().hex}", definition_id, 3,
         TimeRange(start, start + timedelta(seconds=1)), {"limit": 9},

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
 from acquirium.Materialization.effects import EffectIntent
+from acquirium.Materialization.api import Service
 from acquirium.Materialization.services import ChangeHint
 from acquirium.Materialization.worker import load_entrypoint
 
@@ -108,6 +109,8 @@ class ServiceSupervisor:
             return existing[1]
         definition = self._storage.service_definition(definition_id)
         target = load_entrypoint(definition["entrypoint"], definition["source_digest"])
-        instance = target() if isinstance(target, type) else target
+        if not isinstance(target, type) or not issubclass(target, Service):
+            raise TypeError("service entrypoints must be Service classes")
+        instance = target()
         self._instances[name] = (definition_id, instance)
         return instance

@@ -29,9 +29,8 @@ far more effective zonemap (min-max) pruning than VARCHAR, and the rows are
 narrower. The ``ref_ids`` table maps each ``ref_uri`` to its ``ref_id``; ids
 are assigned from a sequence on first write and resolved inside this module,
 never exposed. The ``timeseries_streams`` view joins the string back in, so
-SQL against the view is unaffected. This schema is not backward compatible
-with databases whose ``timeseries`` table is keyed by ``ref_uri`` strings —
-recreate those rather than opening them in place.
+    SQL against the view is unaffected. The schema expects the integer-keyed
+    ``timeseries`` table described above.
 """
 
 from contextlib import contextmanager
@@ -74,181 +73,12 @@ TIMESERIES_STREAMS_VIEW = "timeseries_streams"
 # throughout this backend, not by ``ref_uri`` strings -- see
 # ``Storage/publication/duckdb.py`` for the id-resolution boundary. Created
 # here (rather than lazily by the publication layer) so a plain DuckDBStore
-# always has a schema the publication layer can attach to without a separate
-# migration step.
+# always has a schema the publication layer can attach to.
 STREAM_HEADS_TABLE = "stream_heads"
 STREAM_PUBLICATIONS_TABLE = "stream_publications"
 STREAM_PUBLICATIONS_SEQ = "stream_publications_seq"
-STREAM_CHANGE_KEYS_TABLE = "stream_change_keys"
 STREAM_CHANGE_RANGES_TABLE = "stream_change_ranges"
-APP_RUNTIME_TABLE = "app_runtime"
-APP_SUBSCRIPTIONS_TABLE = "app_subscriptions"
-APP_BATCH_COMMITS_TABLE = "app_batch_commits"
-APP_BATCH_INPUTS_TABLE = "app_batch_inputs"
-APP_BOOTSTRAPS_TABLE = "app_bootstraps"
-APP_BOOTSTRAP_STREAMS_TABLE = "app_bootstrap_streams"
-APP_BOOTSTRAP_OUTPUT_TARGETS_TABLE = "app_bootstrap_output_targets"
-APP_BOOTSTRAP_ROWS_TABLE = "app_bootstrap_rows"
-APP_BOOTSTRAP_OUTPUTS_TABLE = "app_bootstrap_outputs"
-APP_WEBHOOK_INTENTS_TABLE = "app_webhook_intents"
 
-CONTINUOUS_BATCH_DDL = [
-    f"CREATE SEQUENCE IF NOT EXISTS {STREAM_PUBLICATIONS_SEQ}",
-    f"""
-    CREATE TABLE IF NOT EXISTS {STREAM_HEADS_TABLE} (
-        ref_id INTEGER PRIMARY KEY,
-        current_version BIGINT NOT NULL,
-        retained_from_version BIGINT NOT NULL
-    )
-    """,
-    f"""
-    CREATE TABLE IF NOT EXISTS {STREAM_PUBLICATIONS_TABLE} (
-        publication_seq BIGINT PRIMARY KEY DEFAULT nextval('{STREAM_PUBLICATIONS_SEQ}'),
-        publication_id VARCHAR UNIQUE NOT NULL,
-        payload_hash VARCHAR NOT NULL,
-        row_count BIGINT NOT NULL,
-        versions_json VARCHAR NOT NULL,
-        committed_at TIMESTAMP NOT NULL
-    )
-    """,
-    f"""
-    CREATE TABLE IF NOT EXISTS {STREAM_CHANGE_KEYS_TABLE} (
-        publication_seq BIGINT NOT NULL,
-        publication_row INTEGER NOT NULL,
-        ref_id INTEGER NOT NULL,
-        stream_version BIGINT NOT NULL,
-        ts TIMESTAMP NOT NULL,
-        PRIMARY KEY (publication_seq, publication_row)
-    )
-    """,
-    f"CREATE INDEX IF NOT EXISTS idx_stream_change_keys_ref_version ON {STREAM_CHANGE_KEYS_TABLE} (ref_id, stream_version)",
-    f"""
-    CREATE TABLE IF NOT EXISTS {STREAM_CHANGE_RANGES_TABLE} (
-        ref_uri VARCHAR NOT NULL,
-        stream_version BIGINT NOT NULL,
-        publication_id VARCHAR NOT NULL,
-        start_ts TIMESTAMP NOT NULL,
-        end_ts TIMESTAMP NOT NULL,
-        change_kind VARCHAR NOT NULL,
-        row_count BIGINT NOT NULL,
-        PRIMARY KEY (ref_uri, stream_version, start_ts, end_ts)
-    )
-    """,
-    f"CREATE INDEX IF NOT EXISTS idx_stream_change_ranges_ref_version ON {STREAM_CHANGE_RANGES_TABLE} (ref_uri, stream_version)",
-    f"""
-    CREATE TABLE IF NOT EXISTS {APP_RUNTIME_TABLE} (
-        app_id VARCHAR PRIMARY KEY,
-        generation BIGINT NOT NULL,
-        status VARCHAR NOT NULL,
-        topology_version BIGINT NOT NULL,
-        updated_at TIMESTAMP NOT NULL
-    )
-    """,
-    f"""
-    CREATE TABLE IF NOT EXISTS {APP_SUBSCRIPTIONS_TABLE} (
-        app_id VARCHAR NOT NULL,
-        generation BIGINT NOT NULL,
-        ref_id INTEGER NOT NULL,
-        stream_version BIGINT NOT NULL,
-        PRIMARY KEY (app_id, generation, ref_id)
-    )
-    """,
-    f"CREATE INDEX IF NOT EXISTS idx_app_subscriptions_ref ON {APP_SUBSCRIPTIONS_TABLE} (ref_id)",
-    f"""
-    CREATE TABLE IF NOT EXISTS {APP_BATCH_COMMITS_TABLE} (
-        app_id VARCHAR NOT NULL,
-        generation BIGINT NOT NULL,
-        batch_id VARCHAR NOT NULL,
-        batch_kind VARCHAR NOT NULL,
-        rows_inserted BIGINT NOT NULL,
-        output_versions_json VARCHAR NOT NULL,
-        committed_at TIMESTAMP NOT NULL,
-        PRIMARY KEY (app_id, generation, batch_id)
-    )
-    """,
-    f"""
-    CREATE TABLE IF NOT EXISTS {APP_BATCH_INPUTS_TABLE} (
-        app_id VARCHAR NOT NULL,
-        generation BIGINT NOT NULL,
-        batch_id VARCHAR NOT NULL,
-        ref_id INTEGER NOT NULL,
-        from_version BIGINT NOT NULL,
-        to_version BIGINT NOT NULL,
-        PRIMARY KEY (app_id, generation, batch_id, ref_id)
-    )
-    """,
-    f"""
-    CREATE TABLE IF NOT EXISTS {APP_BOOTSTRAPS_TABLE} (
-        bootstrap_id VARCHAR PRIMARY KEY,
-        app_id VARCHAR NOT NULL,
-        generation BIGINT NOT NULL,
-        status VARCHAR NOT NULL,
-        next_ordinal BIGINT NOT NULL
-    )
-    """,
-    f"""
-    CREATE TABLE IF NOT EXISTS {APP_BOOTSTRAP_STREAMS_TABLE} (
-        bootstrap_id VARCHAR NOT NULL,
-        ref_id INTEGER NOT NULL,
-        stream_version BIGINT NOT NULL,
-        PRIMARY KEY (bootstrap_id, ref_id)
-    )
-    """,
-    # Declared output targets for this bootstrap, captured at begin_bootstrap
-    # time. finalize_bootstrap anti-joins this list against what actually
-    # landed in app_bootstrap_outputs to tombstone an output stream a
-    # narrower/changed selector no longer produces. Not part of the design
-    # doc's logical schema list; added because finalize's reconciliation step
-    # needs it.
-    f"""
-    CREATE TABLE IF NOT EXISTS {APP_BOOTSTRAP_OUTPUT_TARGETS_TABLE} (
-        bootstrap_id VARCHAR NOT NULL,
-        output_ref_id INTEGER NOT NULL,
-        PRIMARY KEY (bootstrap_id, output_ref_id)
-    )
-    """,
-    f"""
-    CREATE TABLE IF NOT EXISTS {APP_BOOTSTRAP_ROWS_TABLE} (
-        bootstrap_id VARCHAR NOT NULL,
-        ordinal BIGINT NOT NULL,
-        ref_id INTEGER NOT NULL,
-        ts TIMESTAMP NOT NULL,
-        numeric_value DOUBLE,
-        text_value VARCHAR,
-        PRIMARY KEY (bootstrap_id, ordinal)
-    )
-    """,
-    f"""
-    CREATE TABLE IF NOT EXISTS {APP_BOOTSTRAP_OUTPUTS_TABLE} (
-        bootstrap_id VARCHAR NOT NULL,
-        ordinal BIGINT NOT NULL,
-        output_ref_uri VARCHAR NOT NULL,
-        ts TIMESTAMP NOT NULL,
-        operation VARCHAR NOT NULL,
-        numeric_value DOUBLE,
-        text_value VARCHAR,
-        PRIMARY KEY (bootstrap_id, ordinal)
-    )
-    """,
-    f"""
-    CREATE TABLE IF NOT EXISTS {APP_WEBHOOK_INTENTS_TABLE} (
-        app_id VARCHAR NOT NULL,
-        generation BIGINT NOT NULL,
-        batch_id VARCHAR NOT NULL,
-        seq INTEGER NOT NULL,
-        url VARCHAR NOT NULL,
-        payload_json VARCHAR NOT NULL,
-        status VARCHAR NOT NULL,
-        attempts INTEGER NOT NULL DEFAULT 0,
-        next_attempt_at TIMESTAMP,
-        PRIMARY KEY (app_id, generation, batch_id, seq)
-    )
-    """,
-]
-
-# Only these canonical publication tables are part of the active schema.
-# The preceding legacy app-runtime DDL is retained temporarily as migration
-# history and is not executed by a new store.
 PUBLICATION_DDL = [
     f"CREATE SEQUENCE IF NOT EXISTS {STREAM_PUBLICATIONS_SEQ}",
     f"CREATE TABLE IF NOT EXISTS {STREAM_HEADS_TABLE} (ref_id INTEGER PRIMARY KEY, current_version BIGINT NOT NULL, retained_from_version BIGINT NOT NULL)",
@@ -287,32 +117,14 @@ class DuckDBStore:
         # None outside such a span. Guarded by self._lock.
         self._tx_conn = None
 
-        if not recreate and self._has_legacy_runtime_schema():
-            self._anchor_conn.close()
-            raise RuntimeError(
-                "This DuckDB database contains the retired continuous app runtime "
-                "schema (app_runtime). Create a fresh database or start once with "
-                "ACQUIRIUM_RECREATE=1; automatic migration is not supported."
-            )
-
         if recreate:
             logger.debug("DuckDBStore.__init__: dropping existing tables/views (recreate=True)")
             with self._lock, self._own_conn() as conn:
                 conn.execute(f"DROP VIEW IF EXISTS {TIMESERIES_STREAMS_VIEW}")
                 for tbl in (
-                    APP_WEBHOOK_INTENTS_TABLE,
-                    APP_BOOTSTRAP_OUTPUTS_TABLE,
-                    APP_BOOTSTRAP_ROWS_TABLE,
-                    APP_BOOTSTRAP_OUTPUT_TARGETS_TABLE,
-                    APP_BOOTSTRAP_STREAMS_TABLE,
-                    APP_BOOTSTRAPS_TABLE,
-                    APP_BATCH_INPUTS_TABLE,
-                    APP_BATCH_COMMITS_TABLE,
-                    APP_SUBSCRIPTIONS_TABLE,
-                    APP_RUNTIME_TABLE,
-                    STREAM_CHANGE_KEYS_TABLE,
                     STREAM_PUBLICATIONS_TABLE,
                     STREAM_HEADS_TABLE,
+                    STREAM_CHANGE_RANGES_TABLE,
                     TIMESERIES_TABLE,
                     STREAMS_TABLE,
                     LOGS_TABLE,
@@ -323,12 +135,6 @@ class DuckDBStore:
                 conn.execute(f"DROP SEQUENCE IF EXISTS {STREAM_PUBLICATIONS_SEQ}")
         self.ensure_table()
         logger.debug("DuckDBStore.__init__: ready at %s", self.db_path)
-
-    def _has_legacy_runtime_schema(self) -> bool:
-        return self._anchor_conn.execute(
-            "SELECT 1 FROM information_schema.tables "
-            "WHERE table_schema = 'main' AND table_name = 'app_runtime'"
-        ).fetchone() is not None
 
     # ---- connections ----
 
@@ -400,7 +206,7 @@ class DuckDBStore:
                 -- tombstone: the row is kept (not removed) so its
                 -- last_stream_version remains resolvable by a batch reader.
                 -- ``last_stream_version`` is the stream_heads version at which
-                -- this row was last written; next_app_batch uses it to defer
+                -- this row was last written; the batch reader uses it to defer
                 -- a key to a later batch when a newer write has already
                 -- superseded it within the same snapshot.
                 deleted BOOLEAN NOT NULL DEFAULT FALSE,

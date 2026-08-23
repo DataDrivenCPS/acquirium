@@ -6,13 +6,13 @@ from threading import Lock, get_ident
 import pyarrow as pa
 from acquirium.Materialization.context import ComputeRequest
 from acquirium.Materialization.validation import validate_output
-from acquirium.Materialization.api import StatefulTransformation
+from acquirium.Materialization.api import StatefulTransformation, Transformation
 
 class ComputeAdapter(Protocol):
-    def execute(self, target: Callable[..., Any], request: ComputeRequest) -> pa.Table: ...
+    def execute(self, target: type, request: ComputeRequest) -> pa.Table: ...
 
 class PythonArrowAdapter:
-    """Execute either an explicit Arrow function or scalar pointwise callable."""
+    """Execute class-based Arrow transformations."""
     def __init__(self, *, max_decoded_artifacts: int = 32) -> None:
         if max_decoded_artifacts < 1:
             raise ValueError("max_decoded_artifacts must be positive")
@@ -26,7 +26,7 @@ class PythonArrowAdapter:
         self._max_decoded_artifacts = max_decoded_artifacts
         self._decoded_artifacts: OrderedDict[tuple[int, type, str], object] = OrderedDict()
 
-    def execute(self, target: Callable[..., Any], request: ComputeRequest) -> pa.Table:
+    def execute(self, target: type, request: ComputeRequest) -> pa.Table:
         if isinstance(target, type) and issubclass(target, StatefulTransformation):
             if request.artifact_bytes is None:
                 raise ValueError("stateful transformations require a pinned artifact")
@@ -57,13 +57,16 @@ class PythonArrowAdapter:
             if not isinstance(result, pa.Table):
                 raise TypeError("stateful transformations must return a pyarrow.Table")
             return validate_output(result, request)
-        if request.scalar:
-            result = self._scalar(target, request)
-        else:
-            result = target(request.inputs, request.context)
-            if not isinstance(result, pa.Table):
-                raise TypeError("batch transformations must return a pyarrow.Table")
-        return validate_output(result, request)
+        if isinstance(target, type) and issubclass(target, Transformation):
+            transform = target().transform
+            if request.scalar:
+                result = self._scalar(transform, request)
+            else:
+                result = transform(request.inputs, request.context)
+                if not isinstance(result, pa.Table):
+                    raise TypeError("batch transformations must return a pyarrow.Table")
+            return validate_output(result, request)
+        raise TypeError("transformation entrypoints must be Transformation classes")
 
     def _scalar(self, target: Callable[[Any], Any], request: ComputeRequest) -> pa.Table:
         if len(request.output_refs) != 1:

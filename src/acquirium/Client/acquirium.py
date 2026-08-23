@@ -18,6 +18,7 @@ import warnings
 
 from acquirium.Client.explore.core import Query
 from acquirium.Client.query import Q
+from acquirium.Materialization.api import Service, StatefulTransformation, Transformation
 
 
 def _dt_to_iso(v: "str | datetime | None") -> "str | None":
@@ -505,18 +506,21 @@ class Acquirium:
                 )
 
     def register_service(self, target: object) -> dict[str, Any]:
-        """Register a class decorated with :func:`acquirium.service`."""
+        """Register a :class:`~acquirium.Materialization.api.Service` class."""
         definition = getattr(target, "__acquirium_definition__", None)
-        if definition is None or definition.kind != "service":
-            raise ValueError("register_service expects an @acquirium.service definition")
+        if (not isinstance(target, type) or not issubclass(target, Service)
+                or definition is None or definition.kind != "service"):
+            raise ValueError("register_service expects a Service class")
         return self.client.register_service({"name": definition.name, "source_digest": definition.source_digest,
             "entrypoint": definition.entrypoint, "parameters_schema": dict(definition.parameters_schema)})
 
     def deploy_transformation(self, target: object) -> dict[str, Any]:
-        """Register a callable decorated with :func:`acquirium.transform` or ``stateful``."""
+        """Register a ``Transformation`` or ``StatefulTransformation`` class."""
         definition = getattr(target, "__acquirium_definition__", None)
-        if definition is None or definition.kind != "transformation":
-            raise ValueError("deploy_transformation expects an @acquirium.transform or @acquirium.stateful definition")
+        if (not isinstance(target, type)
+                or not issubclass(target, (Transformation, StatefulTransformation))
+                or definition is None or definition.kind != "transformation"):
+            raise ValueError("deploy_transformation expects a transformation class")
         # definition_spec converts inputs/bind/outputs helper dataclasses into
         # the JSON-safe shapes the server stores in immutable topology epochs.
         return self.client.deploy_transformation({

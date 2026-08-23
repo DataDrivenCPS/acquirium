@@ -608,7 +608,7 @@ class Manager:
     ###########################################
 
     def graph_version(self) -> int:
-        """Return the store-owned source-data generation for legacy pollers."""
+        """Return the store-owned source-data generation."""
         return int(self.graph_store.graph_status()["source_version"])
 
     def graph_status(self) -> dict[str, int | bool]:
@@ -695,8 +695,12 @@ class Manager:
 
     def deploy_transformation(self, definition) -> dict[str, Any]:
         """Validate and deploy one immutable transformation definition."""
+        from acquirium.Materialization.api import StatefulTransformation, Transformation
         from acquirium.Materialization.worker import load_entrypoint
-        load_entrypoint(definition.entrypoint, definition.source_digest)
+        target = load_entrypoint(definition.entrypoint, definition.source_digest)
+        if (not isinstance(target, type)
+                or not issubclass(target, (Transformation, StatefulTransformation))):
+            raise ValueError("transformation entrypoints must be Transformation classes")
         definition_id = self.epoch_materialization.register_definition(definition)
         generation = self.epoch_materialization.deploy_definition(
             definition.name, definition_id, self.graph_store
@@ -724,8 +728,11 @@ class Manager:
             raise ValueError("service registration requires a service definition")
         if definition.inputs is not None or definition.bind is not None or definition.outputs is not None:
             raise ValueError("services cannot declare materialized stream inputs or outputs")
+        from acquirium.Materialization.api import Service
         from acquirium.Materialization.worker import load_entrypoint
-        load_entrypoint(definition.entrypoint, definition.source_digest)
+        target = load_entrypoint(definition.entrypoint, definition.source_digest)
+        if not isinstance(target, type) or not issubclass(target, Service):
+            raise ValueError("service entrypoints must be Service classes")
         definition_id = self.materialization.register_definition(definition)
         service = self.materialization.register_service(definition.name, definition_id)
         return {"name": service.name, "definition_id": service.definition_id,

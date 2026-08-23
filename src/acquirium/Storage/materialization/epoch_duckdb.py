@@ -1218,7 +1218,7 @@ class TopologyEpochDuckDB:
                 conn.execute("DELETE FROM topology_epoch_edges WHERE epoch_id = ?", [epoch])
                 conn.execute("DELETE FROM topology_epoch_components WHERE epoch_id = ?", [epoch])
                 conn.execute("DELETE FROM topology_epoch_bindings WHERE epoch_id = ?", [epoch])
-                conn.execute("DELETE FROM topology_epoch_definition_pins WHERE epoch_id = ?", [epoch])
+                conn.execute("DELETE FROM topology_epoch_binding_pins WHERE epoch_id = ?", [epoch])
                 conn.execute("UPDATE topology_epochs SET status = 'compacted', compacted_at = ? WHERE epoch_id = ?", [self._now(), epoch])
         if rows:
             self._after_transition("epochs_compacted")

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import pyarrow as pa
 import pytest
 
+from acquirium.Materialization.api import Transformation
 from acquirium.Materialization.definitions import definition_for
 from acquirium.Materialization.impact import pointwise
 from acquirium.Storage.duckdb_store import DuckDBStore
@@ -15,6 +16,15 @@ from acquirium.Storage.publication.types import MUTATION_SCHEMA, PublicationRequ
 
 
 UTC = timezone.utc
+
+
+class ContractTransformation(Transformation):
+    inputs = {"input": "urn:contract:in"}
+    outputs = {"output": "urn:contract:out"}
+    impact = pointwise()
+
+    def transform(self, inputs, context):
+        return inputs
 
 
 @pytest.fixture(params=["duckdb", "postgres"])
@@ -46,7 +56,7 @@ def test_equivalent_epoch_construction_claim_commit_seal_trace(epoch_backend):
         {"operation": "upsert", "ref_uri": f"urn:{marker}:in", "ts": start,
          "numeric_value": 4.0, "text_value": None},
     ], schema=MUTATION_SCHEMA)))
-    definition = definition_for(abs, name=marker, inputs={"input": f"urn:{marker}:in"},
+    definition = definition_for(ContractTransformation, name=marker, inputs={"input": f"urn:{marker}:in"},
                                 outputs={"output": f"urn:{marker}:out"}, impact=pointwise())
     definition_id = runtime.register_definition(definition)
     runtime.deploy_definition(definition.name, definition_id, object())

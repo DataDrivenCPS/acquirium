@@ -358,7 +358,7 @@ def server_cmd(
     workers: Annotated[Optional[int], typer.Option("--workers", "-w", help="Uvicorn worker processes; must be 1 — the embedded Oxigraph graph store is single-process on every backend")] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Enable DEBUG logs in acquirium.* (server, storage, drivers)")] = False,
 ) -> None:
-    """Start the server and configured drivers and apps.
+    """Start the server and configured drivers.
 
     Set ``[server] enabled = false`` in the config to skip the HTTP server
     and submit the [[drivers]] to the remote server from the [driver]

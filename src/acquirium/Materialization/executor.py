@@ -1,13 +1,21 @@
 """Bounded local executor pool shared by all logical materializations."""
 from __future__ import annotations
 from concurrent.futures import Future, ThreadPoolExecutor
+import os
 from threading import Lock
-from typing import Any, Callable
+from typing import Any
 import pyarrow as pa
 from acquirium.Materialization.compute import PythonArrowAdapter
 from acquirium.Materialization.context import ComputeRequest
+from acquirium.Materialization.api import Experiment
 from acquirium.Materialization.worker import DefinitionCache
 from acquirium.Materialization.worker import load_entrypoint
+
+
+def _run_application(target: object, argument: Any) -> Any:
+    if not isinstance(target, type) or not issubclass(target, Experiment):
+        raise TypeError("application entrypoints must be Experiment classes")
+    return target().run(argument)
 
 class LocalExecutorPool:
     """Small in-process executor for service-free tests and library use."""
@@ -17,15 +25,15 @@ class LocalExecutorPool:
         self._executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="acquirium-materialization")
         self._adapter = adapter or PythonArrowAdapter()
         self.definitions = DefinitionCache()
-    def submit(self, target: Callable[..., Any], request: ComputeRequest) -> Future[pa.Table]:
+    def submit(self, target: type, request: ComputeRequest) -> Future[pa.Table]:
         return self._executor.submit(self._adapter.execute, target, request)
     def submit_entrypoint(self, *, digest: str, entrypoint: str, request: ComputeRequest) -> Future[pa.Table]:
         target = self.definitions.load(digest, lambda: load_entrypoint(entrypoint, digest))
         return self.submit(target, request)
-    def submit_callable_entrypoint(self, *, digest: str, entrypoint: str, argument: Any) -> Future[Any]:
-        """Run bounded non-materialization work from an immutable entrypoint."""
+    def submit_application_entrypoint(self, *, digest: str, entrypoint: str, argument: Any) -> Future[Any]:
+        """Run a class-based application from an immutable entrypoint."""
         target = self.definitions.load(digest, lambda: load_entrypoint(entrypoint, digest))
-        return self._executor.submit(target, argument)
+        return self._executor.submit(_run_application, target, argument)
     def close(self) -> None:
         self._executor.shutdown(wait=True, cancel_futures=False)
 
@@ -41,7 +49,7 @@ class _RayFuture:
 
 class RayExecutorPool:
     """Fixed-size Ray actor pool; logical bindings never create actors."""
-    def __init__(self, workers: int = 2) -> None:
+    def __init__(self, workers: int = 2, *, source_dir: str | None = None) -> None:
         if workers < 1:
             raise ValueError("executor pool requires at least one worker")
         import ray
@@ -56,13 +64,18 @@ class RayExecutorPool:
             def execute(self, digest: str, entrypoint: str, request: ComputeRequest) -> pa.Table:
                 target = self.definitions.load(digest, lambda: load_entrypoint(entrypoint, digest))
                 return self.adapter.execute(target, request)
-            def call(self, digest: str, entrypoint: str, argument: Any) -> Any:
+            def call_application(self, digest: str, entrypoint: str, argument: Any) -> Any:
                 target = self.definitions.load(digest, lambda: load_entrypoint(entrypoint, digest))
-                return target(argument)
+                return _run_application(target, argument)
             def clear(self) -> None:
                 self.definitions.clear()
 
-        self._workers = [Worker.remote() for _ in range(workers)]
+        worker_cls = Worker
+        if source_dir is not None:
+            inherited = os.environ.get("PYTHONPATH", "")
+            pythonpath = source_dir if not inherited else source_dir + os.pathsep + inherited
+            worker_cls = Worker.options(runtime_env={"env_vars": {"PYTHONPATH": pythonpath}})
+        self._workers = [worker_cls.remote() for _ in range(workers)]
         self._next = 0
         self._pick_lock = Lock()
 
@@ -75,9 +88,9 @@ class RayExecutorPool:
     def submit_entrypoint(self, *, digest: str, entrypoint: str, request: ComputeRequest) -> _RayFuture:
         return _RayFuture(self._pick_worker().execute.remote(digest, entrypoint, request))
 
-    def submit_callable_entrypoint(self, *, digest: str, entrypoint: str, argument: Any) -> _RayFuture:
-        """Run bounded non-materialization work (e.g. an experiment) on the pool."""
-        return _RayFuture(self._pick_worker().call.remote(digest, entrypoint, argument))
+    def submit_application_entrypoint(self, *, digest: str, entrypoint: str, argument: Any) -> _RayFuture:
+        """Run a class-based application on the pool."""
+        return _RayFuture(self._pick_worker().call_application.remote(digest, entrypoint, argument))
 
     def close(self) -> None:
         import ray

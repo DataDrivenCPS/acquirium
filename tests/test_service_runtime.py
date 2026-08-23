@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import pyarrow as pa
 
 from acquirium.Materialization.definitions import MaterializationDefinition, source_digest
+from acquirium.Materialization.api import Service
 from acquirium.Materialization.service_runtime import ServiceSupervisor
 from acquirium.Materialization.services import ChangeHint
 from acquirium.Storage.duckdb_store import DuckDBStore
@@ -14,7 +15,7 @@ from acquirium.Storage.publication.duckdb import PublicationDuckDB
 from acquirium.Storage.publication.types import MUTATION_SCHEMA, PublicationRequest
 
 
-class Dashboard:
+class Dashboard(Service):
     received: list[tuple[str, object]] = []
     last_context = None
 
@@ -67,7 +68,7 @@ def test_service_context_has_no_materialized_output_writer(tmp_path):
         supervisor.close()
 
 
-class CrashingService:
+class CrashingService(Service):
     calls = 0
     fail = True
 

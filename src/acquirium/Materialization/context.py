@@ -14,6 +14,7 @@ class TransformContext:
     input_versions: Mapping[str, int]
     metadata: Mapping[str, Any] = field(default_factory=dict)
     state_revision: str | None = None
+    outputs: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
 @dataclass(frozen=True)
 class ComputeRequest:

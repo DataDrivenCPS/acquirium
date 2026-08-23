@@ -8,17 +8,19 @@ parameters, metadata, and optional state revision are recorded before code runs.
 import acquirium as aq
 
 
-@aq.experiment(parameters_schema={
-    "type": "object",
-    "required": ["max_shift_kw"],
-    "properties": {"max_shift_kw": {"type": "number", "exclusiveMinimum": 0}},
-})
-def load_shift(run):
-    schedule_ref = run.output_ref("schedule")
-    schedule, total_cost = solve_load_shift(run.params["max_shift_kw"])
-    write_schedule(schedule_ref, schedule)
-    run.metric("total_cost", total_cost)
-    return {"schedule": schedule_ref}
+class LoadShift(aq.Experiment):
+    parameters_schema = {
+        "type": "object",
+        "required": ["max_shift_kw"],
+        "properties": {"max_shift_kw": {"type": "number", "exclusiveMinimum": 0}},
+    }
+
+    def run(self, context):
+        schedule_ref = context.output_ref("schedule")
+        schedule, total_cost = solve_load_shift(context.params["max_shift_kw"])
+        write_schedule(schedule_ref, schedule)
+        context.metric("total_cost", total_cost)
+        return {"schedule": schedule_ref}
 ```
 
 Start the run with a unique ID and a frozen snapshot. `execute_experiment()` uses

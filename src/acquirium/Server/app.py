@@ -7,6 +7,7 @@ import io
 import json
 import logging
 import os
+import sys
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -225,12 +226,9 @@ async def lifespan(app: FastAPI):
     from acquirium.cli import _load_config
     _config_path = os.environ.get("ACQUIRIUM_CONFIG")
     _cfg = _load_config(Path(_config_path) if _config_path else None)
-    if _cfg.get("apps"):
-        raise RuntimeError(
-            "[[apps]] configuration is no longer supported. "
-            "Deploy durable @transform definitions through the transformations API "
-            "or use @service for long-running reactive work."
-        )
+    config_dir = str(Path(_cfg.get("__config_dir", Path.cwd())).resolve())
+    if config_dir not in sys.path:
+        sys.path.insert(0, config_dir)
     server_cfg = _cfg.get("server", {})
     idle_seconds = float(server_cfg.get("materialization_poll_seconds", 0.25))
     safety_scan_seconds = float(server_cfg.get("materialization_safety_scan_seconds", 1.0))
@@ -245,7 +243,7 @@ async def lifespan(app: FastAPI):
     ray.init(ignore_reinit_error=True)
     from acquirium.Materialization.executor import RayExecutorPool
     try:
-        ray_executor = RayExecutorPool(worker_count)
+        ray_executor = RayExecutorPool(worker_count, source_dir=config_dir)
     except Exception:
         ray.shutdown()
         raise
@@ -321,7 +319,7 @@ async def lifespan(app: FastAPI):
 
     # Once the server answers /health, start configured drivers. Durable
     # transformations and services are restored by their own storage-backed
-    # schedulers rather than a configuration-time app actor.
+    # schedulers rather than a configuration-time application actor.
     async def _startup_actors() -> None:
         if not await _wait_until_healthy(supervisor.base_url):
             log.error("Server never became healthy at %s; skipping configured drivers", supervisor.base_url)
@@ -464,7 +462,7 @@ def list_namespaces() -> dict[str, str]:
         raise HTTPException(status_code=400, detail=str(e))
     
 \
-#### APPS API ENDPOINTS ####
+#### MATERIALIZATION API ENDPOINTS ####
 
 
 class TransformationRegistration(BaseModel):

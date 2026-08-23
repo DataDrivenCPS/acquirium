@@ -5,6 +5,7 @@ from hashlib import sha256
 from typing import Iterable, Mapping
 
 from acquirium.Materialization.bindings import BindingSpec
+from acquirium.internals.internals_namespaces import HAS_EXTERNAL_REFERENCE, HAS_QUANTITY_KIND, HAS_UNIT
 
 
 def _roles(value: object, *, default_role: str) -> dict[str, tuple[str, ...]]:
@@ -43,7 +44,19 @@ def _selector_rows(selector: Mapping[str, object], graph: object, *, entity_alia
         return tuple((ref, ref) for ref in sorted(direct))
     query = criteria.get("sparql")
     if not isinstance(query, str):
-        raise ValueError("selector requires ref_uri(s) or a SPARQL query selecting ?ref_uri")
+        patterns = []
+        for name, predicate in (("quantity_kind", HAS_QUANTITY_KIND), ("unit", HAS_UNIT)):
+            value = criteria.get(name)
+            if value is not None:
+                if not isinstance(value, str) or not value.startswith(("http://", "https://", "urn:")):
+                    raise ValueError(f"selector {name} must be an absolute URI")
+                patterns.append(f"?point <{predicate}> <{value}> .")
+        if not patterns:
+            raise ValueError(
+                "selector requires ref_uri(s), quantity_kind, unit, or a SPARQL query selecting ?ref_uri"
+            )
+        patterns.append(f"?point <{HAS_EXTERNAL_REFERENCE}> ?ref_uri .")
+        query = "SELECT DISTINCT ?ref_uri WHERE { " + " ".join(patterns) + " }"
     result = graph.sparql_query(query, include_dependencies=True, wait_for_fresh=True)
     try:
         ref_column = result["columns"].index("ref_uri")

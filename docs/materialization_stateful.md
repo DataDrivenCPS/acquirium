@@ -11,8 +11,10 @@ import acquirium as aq
 from acquirium.Materialization import TransformContext
 
 
-@aq.stateful(inputs="temperature", outputs=aq.outputs.per_input())
 class CalibratedTemperature(aq.StatefulTransformation):
+    inputs = "temperature"
+    outputs = aq.outputs.per_input(name="calibrated-temperature")
+
     def setup_worker(self):
         return load_fast_decoder_library()
 
@@ -20,8 +22,8 @@ class CalibratedTemperature(aq.StatefulTransformation):
         return decode_calibration(artifact, worker)
 
     def transform(self, batch: pa.Table, calibration, context: TransformContext) -> pa.Table:
-        # Binding metadata is resolved and persisted before this runs.
-        output_ref = context.metadata["output_ref"]
+        # Binding topology, including owned output IDs, is persisted first.
+        output_ref = context.outputs["output"][0]
         values = apply_calibration(batch.column("numeric_value"), calibration)
         return pa.table({
             "ref_uri": [output_ref] * batch.num_rows,

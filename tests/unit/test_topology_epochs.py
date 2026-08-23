@@ -8,6 +8,7 @@ import pyarrow as pa
 import pytest
 
 from acquirium.Materialization.definitions import definition_for
+from acquirium.Materialization.api import Transformation
 from acquirium.Materialization.epochs import EpochClaimError, StaleEpochError
 from acquirium.Materialization.impact import full_history, lookback, pointwise
 from acquirium.Materialization.epoch_reconciler import TopologyEpochReconciler
@@ -20,67 +21,79 @@ from acquirium.Storage.publication.types import MUTATION_SCHEMA, PublicationRequ
 UTC = timezone.utc
 
 
-def add_one(inputs, context):
-    values = inputs.column("numeric_value").to_pylist()
-    return pa.table({
-        "ref_uri": ["urn:derived"] * len(values),
-        "ts": inputs.column("ts"),
-        "numeric_value": [value + 1 if value is not None else None for value in values],
-        "text_value": [None] * len(values),
-    })
+class AddOne(Transformation):
+    inputs = {"input": "urn:raw"}
+    outputs = {"output": "urn:derived"}
+    impact = pointwise()
 
-
-def add_two(inputs, context):
-    values = inputs.column("numeric_value").to_pylist()
-    return pa.table({
-        "ref_uri": ["urn:derived"] * len(values),
-        "ts": inputs.column("ts"),
-        "numeric_value": [value + 2 if value is not None else None for value in values],
-        "text_value": [None] * len(values),
-    })
-
-
-def batch_per_input(inputs, context):
-    output_ref = f"urn:acquirium:derived:batch:{sha256('urn:raw'.encode()).hexdigest()[:20]}"
-    return pa.table({
-        "ref_uri": [output_ref] * inputs.num_rows,
-        "ts": inputs.column("ts"),
-        "numeric_value": inputs.column("numeric_value"),
-        "text_value": inputs.column("text_value"),
-    })
-
-
-def add_one_a(inputs, context):
-    return pa.table({"ref_uri": ["urn:a"] * inputs.num_rows, "ts": inputs.column("ts"),
-                     "numeric_value": [value + 1 for value in inputs.column("numeric_value").to_pylist()],
-                     "text_value": [None] * inputs.num_rows})
-
-
-def add_one_b(inputs, context):
-    return pa.table({"ref_uri": ["urn:b"] * inputs.num_rows, "ts": inputs.column("ts"),
-                     "numeric_value": [value + 1 for value in inputs.column("numeric_value").to_pylist()],
-                     "text_value": [None] * inputs.num_rows})
-
-
-def rolling_five_minutes(inputs, context):
-    rows = inputs.select(["ts", "numeric_value"]).to_pylist()
-    output = []
-    for row in rows:
-        ts = row["ts"]
-        if not (context.write_interval.start <= ts < context.write_interval.end):
-            continue
-        lower = ts - timedelta(minutes=5)
-        output.append({
-            "ref_uri": "urn:rolling",
-            "ts": ts,
-            "numeric_value": sum(
-                candidate["numeric_value"]
-                for candidate in rows
-                if lower <= candidate["ts"] <= ts
-            ),
-            "text_value": None,
+    def transform(self, inputs, context):
+        values = inputs.column("numeric_value").to_pylist()
+        return pa.table({
+            "ref_uri": ["urn:derived"] * len(values),
+            "ts": inputs.column("ts"),
+            "numeric_value": [value + 1 if value is not None else None for value in values],
+            "text_value": [None] * len(values),
         })
-    return pa.Table.from_pylist(output)
+
+
+class AddTwo(AddOne):
+    def transform(self, inputs, context):
+        values = inputs.column("numeric_value").to_pylist()
+        return pa.table({
+            "ref_uri": ["urn:derived"] * len(values),
+            "ts": inputs.column("ts"),
+            "numeric_value": [value + 2 if value is not None else None for value in values],
+            "text_value": [None] * len(values),
+        })
+
+
+class BatchPerInput(AddOne):
+    def transform(self, inputs, context):
+        output_ref = f"urn:acquirium:derived:batch:{sha256('urn:raw'.encode()).hexdigest()[:20]}"
+        return pa.table({
+            "ref_uri": [output_ref] * inputs.num_rows,
+            "ts": inputs.column("ts"),
+            "numeric_value": inputs.column("numeric_value"),
+            "text_value": inputs.column("text_value"),
+        })
+
+
+class AddOneA(AddOne):
+    def transform(self, inputs, context):
+        return pa.table({"ref_uri": ["urn:a"] * inputs.num_rows, "ts": inputs.column("ts"),
+                         "numeric_value": [value + 1 for value in inputs.column("numeric_value").to_pylist()],
+                         "text_value": [None] * inputs.num_rows})
+
+
+class AddOneB(AddOne):
+    def transform(self, inputs, context):
+        return pa.table({"ref_uri": ["urn:b"] * inputs.num_rows, "ts": inputs.column("ts"),
+                         "numeric_value": [value + 1 for value in inputs.column("numeric_value").to_pylist()],
+                         "text_value": [None] * inputs.num_rows})
+
+
+class RollingFiveMinutes(AddOne):
+    impact = lookback(timedelta(minutes=5))
+
+    def transform(self, inputs, context):
+        rows = inputs.select(["ts", "numeric_value"]).to_pylist()
+        output = []
+        for row in rows:
+            ts = row["ts"]
+            if not (context.write_interval.start <= ts < context.write_interval.end):
+                continue
+            lower = ts - timedelta(minutes=5)
+            output.append({
+                "ref_uri": "urn:rolling",
+                "ts": ts,
+                "numeric_value": sum(
+                    candidate["numeric_value"]
+                    for candidate in rows
+                    if lower <= candidate["ts"] <= ts
+                ),
+                "text_value": None,
+            })
+        return pa.Table.from_pylist(output)
 
 
 class Graph:
@@ -106,7 +119,7 @@ def _runtime(tmp_path):
          "numeric_value": 2.0, "text_value": None},
     ], schema=MUTATION_SCHEMA)))
     runtime = TopologyEpochDuckDB(store)
-    definition = definition_for(add_one, name="add-one", inputs={"input": "urn:raw"},
+    definition = definition_for(AddOne, name="add-one", inputs={"input": "urn:raw"},
                                 outputs={"output": "urn:derived"}, impact=pointwise())
     _deploy(runtime, definition)
     return store, runtime, definition, start
@@ -145,7 +158,7 @@ def test_two_managers_interleave_without_duplicate_control_plane_work(tmp_path):
         claim_b = second.claim_next_work("manager-b")
         assert claim_b is not None and claim_b.attempt == claim_a.attempt + 1
         snapshot = second.snapshot(claim_b)
-        second.commit_work(snapshot, add_one(snapshot.inputs, None), claim_b)
+        second.commit_work(snapshot, AddOne().transform(snapshot.inputs, None), claim_b)
         seal = second.claim_next_component("manager-b")
         assert seal is not None and first.claim_next_component("manager-a") is None
         second.seal_component(seal)
@@ -198,7 +211,7 @@ def test_state_promotion_policy_limits_initial_epoch_ranges(
         revision_id=f"revision-{policy}", policy=policy, effective_from=effective_from
     )
     runtime = TopologyEpochDuckDB(store, state_revision_resolver=lambda _binding: revision)
-    definition = definition_for(add_one, name="state-policy", inputs={"input": "urn:raw"},
+    definition = definition_for(AddOne, name="state-policy", inputs={"input": "urn:raw"},
                                 outputs={"output": "urn:derived"}, impact=pointwise())
     _deploy(runtime, definition)
     try:
@@ -244,7 +257,7 @@ def test_independent_partitions_can_be_claimed_concurrently(tmp_path):
         for minute in range(21)
     ], schema=MUTATION_SCHEMA)))
     runtime = TopologyEpochDuckDB(store)
-    _deploy(runtime, definition_for(add_one, name="parallel", inputs={"input": "urn:raw"},
+    _deploy(runtime, definition_for(AddOne, name="parallel", inputs={"input": "urn:raw"},
                                     outputs={"output": "urn:derived"}, impact=pointwise()))
     try:
         epoch = runtime.ensure_epoch(1, "parallel")
@@ -267,7 +280,7 @@ def test_failed_partition_yields_to_fresh_work_and_is_dead_lettered(tmp_path):
         for minute in range(21)
     ], schema=MUTATION_SCHEMA)))
     runtime = TopologyEpochDuckDB(store)
-    _deploy(runtime, definition_for(add_one, name="retry", inputs={"input": "urn:raw"},
+    _deploy(runtime, definition_for(AddOne, name="retry", inputs={"input": "urn:raw"},
                                     outputs={"output": "urn:derived"}, impact=pointwise()))
     try:
         epoch = runtime.ensure_epoch(1, "retry")
@@ -335,7 +348,7 @@ def test_per_input_output_does_not_turn_batch_definition_into_scalar_execution(t
     }], schema=MUTATION_SCHEMA)))
     runtime = TopologyEpochDuckDB(store)
     definition = definition_for(
-        batch_per_input, name="batch-per-input",
+        BatchPerInput, name="batch-per-input",
         bind={"selector": {"criteria": {"ref_uris": ["urn:raw"]}}},
         outputs={"mode": "per_input", "name": "batch"}, impact=pointwise(),
         execution="batch",
@@ -366,7 +379,7 @@ def test_lookback_reads_across_partition_boundaries(tmp_path):
     ], schema=MUTATION_SCHEMA)))
     runtime = TopologyEpochDuckDB(store)
     _deploy(runtime, definition_for(
-        rolling_five_minutes, name="rolling-five", inputs={"input": "urn:raw"},
+        RollingFiveMinutes, name="rolling-five", inputs={"input": "urn:raw"},
         outputs={"output": "urn:rolling"}, impact=lookback(timedelta(minutes=5)),
     ))
     reconciler = TopologyEpochReconciler(runtime, Graph(("urn:raw",)))
@@ -395,11 +408,11 @@ def test_late_change_propagates_window_through_managed_input(tmp_path):
     ], schema=MUTATION_SCHEMA)))
     runtime = TopologyEpochDuckDB(store)
     _deploy(runtime, definition_for(
-        add_one_a, name="upstream", inputs={"input": "urn:raw"},
+        AddOneA, name="upstream", inputs={"input": "urn:raw"},
         outputs={"output": "urn:a"}, impact=pointwise(),
     ))
     _deploy(runtime, definition_for(
-        rolling_five_minutes, name="downstream", inputs={"input": "urn:a"},
+        RollingFiveMinutes, name="downstream", inputs={"input": "urn:a"},
         outputs={"output": "urn:rolling"}, impact=lookback(timedelta(minutes=5)),
     ))
     reconciler = TopologyEpochReconciler(runtime, Graph(("urn:raw",)))
@@ -434,7 +447,7 @@ def test_full_history_frontier_clears_outputs_when_source_becomes_empty(tmp_path
     ]
     publisher.publish(PublicationRequest("full-initial", pa.Table.from_pylist(initial, schema=MUTATION_SCHEMA)))
     runtime = TopologyEpochDuckDB(store)
-    _deploy(runtime, definition_for(add_one, name="full", inputs={"input": "urn:raw"},
+    _deploy(runtime, definition_for(AddOne, name="full", inputs={"input": "urn:raw"},
                                     outputs={"output": "urn:derived"}, impact=full_history()))
     reconciler = TopologyEpochReconciler(runtime, Graph(("urn:raw",)))
     try:
@@ -528,7 +541,7 @@ def test_new_publications_coalesce_into_the_unsealed_component_frontier(tmp_path
 
         assert runtime.plan_data_changes() == 1
         with pytest.raises(StaleEpochError):
-            runtime.commit_work(old_snapshot, add_one(old_snapshot.inputs, None), old_claim)
+            runtime.commit_work(old_snapshot, AddOne().transform(old_snapshot.inputs, None), old_claim)
         assert reconciler.run_until_idle("frontier-3") == 2
         assert runtime.plan_data_changes() == 0
 
@@ -584,8 +597,8 @@ def test_cycles_are_rejected_before_any_epoch_binding_is_visible(tmp_path):
     store = DuckDBStore(tmp_path / "cycle.duckdb", recreate=True)
     runtime = TopologyEpochDuckDB(store)
     try:
-        first = definition_for(add_one, name="first", inputs={"input": "urn:b"}, outputs={"output": "urn:a"}, impact=pointwise())
-        second = definition_for(add_one, name="second", inputs={"input": "urn:a"}, outputs={"output": "urn:b"}, impact=pointwise())
+        first = definition_for(AddOne, name="first", inputs={"input": "urn:b"}, outputs={"output": "urn:a"}, impact=pointwise())
+        second = definition_for(AddOne, name="second", inputs={"input": "urn:a"}, outputs={"output": "urn:b"}, impact=pointwise())
         _deploy(runtime, first, Graph(()))
         with pytest.raises(ValueError, match="cycle"):
             _deploy(runtime, second, Graph(()))
@@ -602,7 +615,7 @@ def test_deployment_update_is_validated_before_it_changes_desired_topology(tmp_p
         old = runtime.ensure_epoch(1, "old")
         runtime.construct_epoch(old, graph)
         invalid = definition_for(
-            add_two, name=first.name, inputs={"input": "urn:derived"},
+            AddTwo, name=first.name, inputs={"input": "urn:derived"},
             outputs={"output": "urn:derived"}, impact=pointwise(),
         )
         invalid_id = runtime.register_definition(invalid)
@@ -617,7 +630,7 @@ def test_deployment_update_is_validated_before_it_changes_desired_topology(tmp_p
         assert runtime.current_epoch_id() == old
 
         second = definition_for(
-            add_two, name=first.name, inputs={"input": "urn:raw"},
+            AddTwo, name=first.name, inputs={"input": "urn:raw"},
             outputs={"output": "urn:derived"}, impact=pointwise(),
         )
         second_id = runtime.register_definition(second)
@@ -659,8 +672,8 @@ def test_dependency_frontier_executes_upstream_before_downstream_and_seals_toget
              "numeric_value": 2.0, "text_value": None},
         ], schema=MUTATION_SCHEMA)))
         runtime = TopologyEpochDuckDB(store)
-        _deploy(runtime, definition_for(add_one_a, name="a", inputs={"input": "urn:raw"}, outputs={"output": "urn:a"}, impact=pointwise()), Graph(()))
-        _deploy(runtime, definition_for(add_one_b, name="b", inputs={"input": "urn:a"}, outputs={"output": "urn:b"}, impact=pointwise()), Graph(()))
+        _deploy(runtime, definition_for(AddOneA, name="a", inputs={"input": "urn:raw"}, outputs={"output": "urn:a"}, impact=pointwise()), Graph(()))
+        _deploy(runtime, definition_for(AddOneB, name="b", inputs={"input": "urn:a"}, outputs={"output": "urn:b"}, impact=pointwise()), Graph(()))
         reconciler = TopologyEpochReconciler(runtime, Graph(()))
         try:
             epoch = reconciler.ensure_graph_epoch(1, "dag")
@@ -685,8 +698,8 @@ def test_dependency_path_never_exposes_mixed_epoch_outputs(tmp_path):
              "numeric_value": 2.0, "text_value": None},
         ], schema=MUTATION_SCHEMA)))
         runtime = TopologyEpochDuckDB(store)
-        _deploy(runtime, definition_for(add_one_a, name="boundary-a", inputs={"input": "urn:raw"}, outputs={"output": "urn:a"}, impact=pointwise()), Graph(()))
-        _deploy(runtime, definition_for(add_one_b, name="boundary-b", inputs={"input": "urn:a"}, outputs={"output": "urn:b"}, impact=pointwise()), Graph(()))
+        _deploy(runtime, definition_for(AddOneA, name="boundary-a", inputs={"input": "urn:raw"}, outputs={"output": "urn:a"}, impact=pointwise()), Graph(()))
+        _deploy(runtime, definition_for(AddOneB, name="boundary-b", inputs={"input": "urn:a"}, outputs={"output": "urn:b"}, impact=pointwise()), Graph(()))
         graph = Graph(())
         first = TopologyEpochReconciler(runtime, graph)
         first.ensure_graph_epoch(1, "boundary-old")
@@ -702,14 +715,14 @@ def test_dependency_path_never_exposes_mixed_epoch_outputs(tmp_path):
             runtime.construct_epoch(epoch, graph)
             source_claim = runtime.claim_next_work("new-source")
             source_snapshot = runtime.snapshot(source_claim)
-            runtime.commit_work(source_snapshot, add_one_a(source_snapshot.inputs, None), source_claim)
+            runtime.commit_work(source_snapshot, AddOneA().transform(source_snapshot.inputs, None), source_claim)
             with store._own_conn() as conn:
                 assert conn.execute("""SELECT r.ref_uri, t.numeric_value FROM timeseries t JOIN ref_ids r ON r.ref_id = t.ref_id
                     WHERE r.ref_uri IN ('urn:a', 'urn:b') AND NOT t.deleted ORDER BY r.ref_uri""").fetchall() == [
                     ("urn:a", 3.0), ("urn:b", 4.0)]
             target_claim = runtime.claim_next_work("new-target")
             target_snapshot = runtime.snapshot(target_claim)
-            runtime.commit_work(target_snapshot, add_one_b(target_snapshot.inputs, None), target_claim)
+            runtime.commit_work(target_snapshot, AddOneB().transform(target_snapshot.inputs, None), target_claim)
             runtime.seal_component(runtime.claim_next_component("new-sealer"))
             with store._own_conn() as conn:
                 assert conn.execute("""SELECT r.ref_uri, t.numeric_value FROM timeseries t JOIN ref_ids r ON r.ref_id = t.ref_id
@@ -731,7 +744,7 @@ def test_superseding_epoch_retires_outputs_removed_by_late_binding(tmp_path):
              "numeric_value": 1.0, "text_value": None},
         ], schema=MUTATION_SCHEMA)))
         runtime = TopologyEpochDuckDB(store)
-        definition = definition_for(add_one, name="late", inputs={"criteria": {"sparql": "q"}},
+        definition = definition_for(AddOne, name="late", inputs={"criteria": {"sparql": "q"}},
                                     outputs={"name": "late"}, impact=pointwise())
         _deploy(runtime, definition, Graph(("urn:raw",)))
         old_reconciler = TopologyEpochReconciler(runtime, Graph(("urn:raw",)))
@@ -776,7 +789,7 @@ def test_fault_after_commit_leaves_a_recoverable_seal(tmp_path):
         runtime.construct_epoch(epoch, Graph(("urn:raw",)))
         claim = runtime.claim_next_work("fault-worker")
         snapshot = runtime.snapshot(claim)
-        runtime.commit_work(snapshot, add_one(snapshot.inputs, None), claim)
+        runtime.commit_work(snapshot, AddOne().transform(snapshot.inputs, None), claim)
         seal = runtime.claim_next_component("fault-sealer")
         with pytest.raises(RuntimeError, match="simulated process stop"):
             runtime.seal_component(seal)
@@ -816,7 +829,7 @@ def test_fault_after_each_epoch_transition_recovers_without_partial_visibility(t
 
     if transition == "definition_registered":
         store = DuckDBStore(case / "epochs.duckdb", recreate=True)
-        definition = definition_for(add_one, name="fault-definition", inputs={"input": "urn:raw"},
+        definition = definition_for(AddOne, name="fault-definition", inputs={"input": "urn:raw"},
                                     outputs={"output": "urn:derived"}, impact=pointwise())
         runtime = TopologyEpochDuckDB(store, transition_hook=crash_after)
         try:
@@ -891,7 +904,7 @@ def test_fault_after_each_epoch_transition_recovers_without_partial_visibility(t
         if transition == "work_committed":
             runtime._transition_hook = crash_after
             with pytest.raises(RuntimeError, match=transition):
-                runtime.commit_work(snapshot, add_one(snapshot.inputs, None), claim)
+                runtime.commit_work(snapshot, AddOne().transform(snapshot.inputs, None), claim)
             recovered = TopologyEpochDuckDB(store)
             seal = recovered.claim_next_component("recovery-sealer")
             assert seal is not None
@@ -899,7 +912,7 @@ def test_fault_after_each_epoch_transition_recovers_without_partial_visibility(t
             assert recovered.active_epoch_id() == epoch
             return
 
-        runtime.commit_work(snapshot, add_one(snapshot.inputs, None), claim)
+        runtime.commit_work(snapshot, AddOne().transform(snapshot.inputs, None), claim)
         seal = runtime.claim_next_component("sealer")
         assert seal is not None
         if transition == "component_sealed":

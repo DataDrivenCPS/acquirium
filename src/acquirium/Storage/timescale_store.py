@@ -37,172 +37,7 @@ TIMESERIES_STREAMS_VIEW = "timeseries_streams"
 # ``Storage/publication/postgres.py``.
 STREAM_HEADS_TABLE = "stream_heads"
 STREAM_PUBLICATIONS_TABLE = "stream_publications"
-STREAM_CHANGE_KEYS_TABLE = "stream_change_keys"
 STREAM_CHANGE_RANGES_TABLE = "stream_change_ranges"
-APP_RUNTIME_TABLE = "app_runtime"
-APP_SUBSCRIPTIONS_TABLE = "app_subscriptions"
-APP_BATCH_COMMITS_TABLE = "app_batch_commits"
-APP_BATCH_INPUTS_TABLE = "app_batch_inputs"
-APP_BOOTSTRAPS_TABLE = "app_bootstraps"
-APP_BOOTSTRAP_STREAMS_TABLE = "app_bootstrap_streams"
-APP_BOOTSTRAP_OUTPUT_TARGETS_TABLE = "app_bootstrap_output_targets"
-APP_BOOTSTRAP_ROWS_TABLE = "app_bootstrap_rows"
-APP_BOOTSTRAP_OUTPUTS_TABLE = "app_bootstrap_outputs"
-APP_WEBHOOK_INTENTS_TABLE = "app_webhook_intents"
-
-CONTINUOUS_BATCH_DDL = [
-    f"""
-    CREATE TABLE IF NOT EXISTS {STREAM_HEADS_TABLE} (
-        ref_uri TEXT PRIMARY KEY,
-        current_version BIGINT NOT NULL,
-        retained_from_version BIGINT NOT NULL
-    );
-    """,
-    f"""
-    CREATE TABLE IF NOT EXISTS {STREAM_PUBLICATIONS_TABLE} (
-        publication_seq BIGSERIAL PRIMARY KEY,
-        publication_id TEXT UNIQUE NOT NULL,
-        payload_hash TEXT NOT NULL,
-        row_count BIGINT NOT NULL,
-        versions_json JSONB NOT NULL,
-        committed_at TIMESTAMPTZ NOT NULL
-    );
-    """,
-    f"""
-    CREATE TABLE IF NOT EXISTS {STREAM_CHANGE_KEYS_TABLE} (
-        publication_seq BIGINT NOT NULL,
-        publication_row INTEGER NOT NULL,
-        ref_uri TEXT NOT NULL,
-        stream_version BIGINT NOT NULL,
-        ts TIMESTAMPTZ NOT NULL,
-        PRIMARY KEY (publication_seq, publication_row)
-    );
-    """,
-    f"CREATE INDEX IF NOT EXISTS idx_stream_change_keys_ref_version ON {STREAM_CHANGE_KEYS_TABLE} (ref_uri, stream_version);",
-    f"""
-    CREATE TABLE IF NOT EXISTS {STREAM_CHANGE_RANGES_TABLE} (
-        ref_uri TEXT NOT NULL,
-        stream_version BIGINT NOT NULL,
-        publication_id TEXT NOT NULL,
-        start_ts TIMESTAMPTZ NOT NULL,
-        end_ts TIMESTAMPTZ NOT NULL,
-        change_kind TEXT NOT NULL,
-        row_count BIGINT NOT NULL,
-        PRIMARY KEY (ref_uri, stream_version, start_ts, end_ts)
-    );
-    """,
-    f"CREATE INDEX IF NOT EXISTS idx_stream_change_ranges_ref_version ON {STREAM_CHANGE_RANGES_TABLE} (ref_uri, stream_version);",
-    f"""
-    CREATE TABLE IF NOT EXISTS {APP_RUNTIME_TABLE} (
-        app_id TEXT PRIMARY KEY,
-        generation BIGINT NOT NULL,
-        status TEXT NOT NULL,
-        topology_version BIGINT NOT NULL,
-        updated_at TIMESTAMPTZ NOT NULL
-    );
-    """,
-    f"""
-    CREATE TABLE IF NOT EXISTS {APP_SUBSCRIPTIONS_TABLE} (
-        app_id TEXT NOT NULL,
-        generation BIGINT NOT NULL,
-        ref_uri TEXT NOT NULL,
-        stream_version BIGINT NOT NULL,
-        PRIMARY KEY (app_id, generation, ref_uri)
-    );
-    """,
-    f"CREATE INDEX IF NOT EXISTS idx_app_subscriptions_ref ON {APP_SUBSCRIPTIONS_TABLE} (ref_uri);",
-    f"""
-    CREATE TABLE IF NOT EXISTS {APP_BATCH_COMMITS_TABLE} (
-        app_id TEXT NOT NULL,
-        generation BIGINT NOT NULL,
-        batch_id TEXT NOT NULL,
-        batch_kind TEXT NOT NULL,
-        rows_inserted BIGINT NOT NULL,
-        output_versions_json JSONB NOT NULL,
-        committed_at TIMESTAMPTZ NOT NULL,
-        PRIMARY KEY (app_id, generation, batch_id)
-    );
-    """,
-    f"""
-    CREATE TABLE IF NOT EXISTS {APP_BATCH_INPUTS_TABLE} (
-        app_id TEXT NOT NULL,
-        generation BIGINT NOT NULL,
-        batch_id TEXT NOT NULL,
-        ref_uri TEXT NOT NULL,
-        from_version BIGINT NOT NULL,
-        to_version BIGINT NOT NULL,
-        PRIMARY KEY (app_id, generation, batch_id, ref_uri)
-    );
-    """,
-    f"""
-    CREATE TABLE IF NOT EXISTS {APP_BOOTSTRAPS_TABLE} (
-        bootstrap_id TEXT PRIMARY KEY,
-        app_id TEXT NOT NULL,
-        generation BIGINT NOT NULL,
-        status TEXT NOT NULL,
-        next_ordinal BIGINT NOT NULL
-    );
-    """,
-    f"""
-    CREATE TABLE IF NOT EXISTS {APP_BOOTSTRAP_STREAMS_TABLE} (
-        bootstrap_id TEXT NOT NULL,
-        ref_uri TEXT NOT NULL,
-        stream_version BIGINT NOT NULL,
-        PRIMARY KEY (bootstrap_id, ref_uri)
-    );
-    """,
-    # Declared output targets for this bootstrap, captured at begin_bootstrap
-    # time. finalize_bootstrap anti-joins this list against what actually
-    # landed in app_bootstrap_outputs to tombstone an output stream a
-    # narrower/changed selector no longer produces. Not part of the design
-    # doc's logical schema list; added because finalize's reconciliation step
-    # needs it.
-    f"""
-    CREATE TABLE IF NOT EXISTS {APP_BOOTSTRAP_OUTPUT_TARGETS_TABLE} (
-        bootstrap_id TEXT NOT NULL,
-        output_ref_uri TEXT NOT NULL,
-        PRIMARY KEY (bootstrap_id, output_ref_uri)
-    );
-    """,
-    f"""
-    CREATE TABLE IF NOT EXISTS {APP_BOOTSTRAP_ROWS_TABLE} (
-        bootstrap_id TEXT NOT NULL,
-        ordinal BIGINT NOT NULL,
-        ref_uri TEXT NOT NULL,
-        ts TIMESTAMPTZ NOT NULL,
-        numeric_value DOUBLE PRECISION,
-        text_value TEXT,
-        PRIMARY KEY (bootstrap_id, ordinal)
-    );
-    """,
-    f"""
-    CREATE TABLE IF NOT EXISTS {APP_BOOTSTRAP_OUTPUTS_TABLE} (
-        bootstrap_id TEXT NOT NULL,
-        ordinal BIGINT NOT NULL,
-        output_ref_uri TEXT NOT NULL,
-        ts TIMESTAMPTZ NOT NULL,
-        operation TEXT NOT NULL,
-        numeric_value DOUBLE PRECISION,
-        text_value TEXT,
-        PRIMARY KEY (bootstrap_id, ordinal)
-    );
-    """,
-    f"""
-    CREATE TABLE IF NOT EXISTS {APP_WEBHOOK_INTENTS_TABLE} (
-        app_id TEXT NOT NULL,
-        generation BIGINT NOT NULL,
-        batch_id TEXT NOT NULL,
-        seq INTEGER NOT NULL,
-        url TEXT NOT NULL,
-        payload_json JSONB NOT NULL,
-        status TEXT NOT NULL,
-        attempts INTEGER NOT NULL DEFAULT 0,
-        next_attempt_at TIMESTAMPTZ,
-        PRIMARY KEY (app_id, generation, batch_id, seq)
-    );
-    """,
-]
-
 PUBLICATION_DDL = [
     f"CREATE TABLE IF NOT EXISTS {STREAM_HEADS_TABLE} (ref_uri TEXT PRIMARY KEY, current_version BIGINT NOT NULL, retained_from_version BIGINT NOT NULL);",
     f"CREATE TABLE IF NOT EXISTS {STREAM_PUBLICATIONS_TABLE} (publication_seq BIGSERIAL PRIMARY KEY, publication_id TEXT UNIQUE NOT NULL, payload_hash TEXT NOT NULL, row_count BIGINT NOT NULL, versions_json JSONB NOT NULL, committed_at TIMESTAMPTZ NOT NULL);",
@@ -226,31 +61,14 @@ class TimescaleStore(TimeseriesStore):
         with timed_debug(logger, "psycopg.connect"):
             self.conn = psycopg.connect(self.dsn, autocommit=True, connect_timeout=connect_timeout)
         self._in_tx = False
-        if not recreate and self._has_legacy_runtime_schema():
-            self.conn.close()
-            raise RuntimeError(
-                "This PostgreSQL database contains the retired continuous app runtime "
-                "schema (app_runtime). Create a fresh database or start once with "
-                "ACQUIRIUM_RECREATE=1; automatic migration is not supported."
-            )
         if recreate:
             logger.debug("TimescaleStore.__init__: dropping existing tables/views")
             with self.conn.cursor() as cur:
                 cur.execute(sql.SQL("DROP VIEW IF EXISTS {} CASCADE").format(sql.Identifier(TIMESERIES_STREAMS_VIEW)))
                 for tbl in (
-                    APP_WEBHOOK_INTENTS_TABLE,
-                    APP_BOOTSTRAP_OUTPUTS_TABLE,
-                    APP_BOOTSTRAP_ROWS_TABLE,
-                    APP_BOOTSTRAP_OUTPUT_TARGETS_TABLE,
-                    APP_BOOTSTRAP_STREAMS_TABLE,
-                    APP_BOOTSTRAPS_TABLE,
-                    APP_BATCH_INPUTS_TABLE,
-                    APP_BATCH_COMMITS_TABLE,
-                    APP_SUBSCRIPTIONS_TABLE,
-                    APP_RUNTIME_TABLE,
-                    STREAM_CHANGE_KEYS_TABLE,
                     STREAM_PUBLICATIONS_TABLE,
                     STREAM_HEADS_TABLE,
+                    STREAM_CHANGE_RANGES_TABLE,
                     TIMESERIES_TABLE,
                     STREAMS_TABLE,
                     LOGS_TABLE,
@@ -258,11 +76,6 @@ class TimescaleStore(TimeseriesStore):
                     cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(tbl)))
         self.ensure_table()
         logger.debug("TimescaleStore.__init__: ready")
-
-    def _has_legacy_runtime_schema(self) -> bool:
-        with self.conn.cursor() as cur:
-            cur.execute("SELECT to_regclass('public.app_runtime')")
-            return cur.fetchone()[0] is not None
 
     # -------------------- table management --------------------
     def ensure_table(self) -> str:
@@ -280,17 +93,15 @@ class TimescaleStore(TimeseriesStore):
                     -- physical tombstone, kept rather than removed so its
                     -- last_stream_version stays resolvable by a batch reader.
                     -- ``last_stream_version`` is the stream_heads version at
-                    -- which this row was last written; next_app_batch uses it
-                    -- to defer a key already superseded within the snapshot.
+                    -- which this row was last written; publication readers use
+                    -- it to defer a key already superseded within the snapshot.
                     deleted BOOLEAN NOT NULL DEFAULT FALSE,
                     last_stream_version BIGINT NOT NULL DEFAULT 0,
                     CHECK (numeric_value IS NULL OR text_value IS NULL)
                 );
                 """
             )
-            # Create hypertable before enabling Timescale features. We target
-            # new Acquirium-managed stores here; older point_uri/handle schemas
-            # should be recreated rather than migrated in-place.
+            # Create the hypertable before enabling Timescale features.
             cur.execute(
                 sql.SQL(
                     "SELECT create_hypertable(%s, %s, if_not_exists => TRUE);"
@@ -330,9 +141,6 @@ class TimescaleStore(TimeseriesStore):
                     value_kind TEXT NOT NULL DEFAULT 'text'
                 );
                 """
-            )
-            cur.execute(
-                f"ALTER TABLE {STREAMS_TABLE} ALTER COLUMN point_uri DROP NOT NULL;"
             )
             cur.execute(
                 f"CREATE UNIQUE INDEX IF NOT EXISTS idx_streams_source_ref_name ON {STREAMS_TABLE} (source_id, ref_name);"

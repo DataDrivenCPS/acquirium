@@ -71,6 +71,7 @@ class TopologyEpochReconciler:
                     input_versions=snapshot.input_versions,
                     metadata=snapshot.binding.metadata,
                     state_revision=snapshot.binding.state_revision,
+                    outputs=snapshot.binding.outputs,
                 ),
                 frozenset(snapshot.binding.output_refs),
                 scalar=scalar,

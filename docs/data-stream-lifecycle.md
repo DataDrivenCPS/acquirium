@@ -266,7 +266,8 @@ The driver reads these triples at startup and uses them to map Pyomo variable pa
 
 ### Materialized transformations (computed outputs)
 
-Derived streams produced by `@aq.transform` and `@aq.stateful` definitions get
+Derived streams produced by `aq.Transformation` and
+`aq.StatefulTransformation` classes get
 the same managed-stream treatment. A transformation declares its bindings (which
 input streams it reads) and its outputs; the materialization engine resolves the
 bindings against the published graph, owns the deterministic output stream
