@@ -138,6 +138,7 @@ class Manager:
         ontology_sources: list["OntologySource"] | None = None,
         qudt_graph: Graph | None = None,
         qudt_converter: QUDTUnitConverter | None = None,
+        materialization_executor: object | None = None,
         recreate: bool = False,
     ):
         if not logging.getLogger().handlers:
@@ -206,7 +207,11 @@ class Manager:
         self.materialization = materialization
         from acquirium.Materialization.executor import LocalExecutorPool
         from acquirium.Materialization.epoch_reconciler import TopologyEpochReconciler
-        self.materialization_executor = LocalExecutorPool()
+        # Production injects its fixed Ray pool. The local implementation is a
+        # service-free harness for direct library use and unit tests only.
+        self.materialization_executor = (
+            materialization_executor if materialization_executor is not None else LocalExecutorPool()
+        )
         def _state_revision(binding_id: str) -> str | None:
             try:
                 revision = materialization.active_state_revision(binding_id)
@@ -289,7 +294,7 @@ class Manager:
 
     
     @classmethod
-    def from_env(cls) -> Manager:
+    def from_env(cls, *, materialization_executor: object) -> Manager:
         _backend = os.getenv("ACQUIRIUM_TIMESERIES_BACKEND", "duckdb").lower()
         _data_dir = os.getenv("ACQUIRIUM_DATA_DIR")
         # Ontology sources are read directly from acquirium.toml —
@@ -306,6 +311,7 @@ class Manager:
             graph_path=os.getenv("ACQUIRIUM_GRAPH_PATH"),
             ontoenv_root=os.getenv("ACQUIRIUM_ONTOENV_ROOT"),
             ontology_sources=list(ont_cfg.sources) or None,
+            materialization_executor=materialization_executor,
             recreate=os.getenv("ACQUIRIUM_RECREATE", "false").lower() == "true",
         )
 
@@ -804,13 +810,6 @@ class Manager:
         return self.materialization_artifacts.sweep_orphans(
             self.materialization.artifact_digests(), older_than_seconds=older_than_seconds
         )
-
-    def use_ray_materialization_executor(self, workers: int = 2) -> None:
-        """Switch to the fixed Ray pool after the server has initialized Ray."""
-        from acquirium.Materialization.executor import RayExecutorPool
-        self.materialization_executor.close()
-        self.materialization_executor = RayExecutorPool(workers)
-        self.epoch_reconciler._executor = self.materialization_executor
 
     def timeseries_batch(
         self,

@@ -1121,6 +1121,47 @@ class TopologyEpochDuckDB:
             row = conn.execute("SELECT active_epoch_id FROM topology_epoch_control WHERE control_id = 1").fetchone()
         return row[0] if row else None
 
+    def status(self, *, failed_limit: int = 50) -> dict[str, object]:
+        """Return a compact operational view of the durable state machine."""
+        if failed_limit < 0:
+            raise ValueError("failed_limit cannot be negative")
+        with self._store._own_conn() as conn:
+            candidate, current, active = conn.execute("""SELECT candidate_epoch_id,
+                current_epoch_id, active_epoch_id FROM topology_epoch_control WHERE control_id = 1""").fetchone()
+            deployments = [
+                {"name": name, "definition_id": definition_id, "generation": int(generation)}
+                for name, definition_id, generation in conn.execute("""SELECT name, definition_id, generation
+                    FROM topology_deployments ORDER BY name""").fetchall()
+            ]
+            work = {
+                status: int(count)
+                for status, count in conn.execute("""SELECT status, count(*) FROM topology_epoch_work
+                    WHERE epoch_id = ? GROUP BY status ORDER BY status""", [current]).fetchall()
+            } if current else {}
+            components = [
+                {"component_id": component, "status": status, "frontier": int(frontier),
+                 "sealed_frontier": int(sealed)}
+                for component, status, frontier, sealed in conn.execute("""SELECT component_id, status,
+                    frontier, sealed_frontier FROM topology_epoch_components
+                    WHERE epoch_id = ? ORDER BY component_id""", [current]).fetchall()
+            ] if current else []
+            failed = [
+                {"work_id": work_id, "binding_id": binding_id, "attempt": int(attempt),
+                 "error": self._decode(error) if error else None}
+                for work_id, binding_id, attempt, error in conn.execute("""SELECT work_id, binding_id,
+                    attempt, error_json FROM topology_epoch_work WHERE epoch_id = ? AND status = 'failed'
+                    ORDER BY work_id LIMIT ?""", [current, failed_limit]).fetchall()
+            ] if current and failed_limit else []
+        return {
+            "candidate_epoch_id": candidate,
+            "current_epoch_id": current,
+            "active_epoch_id": active,
+            "deployments": deployments,
+            "work": work,
+            "components": components,
+            "failed_work": failed,
+        }
+
     # ----- retention/compaction -----------------------------------------
 
     def compact(self) -> int:

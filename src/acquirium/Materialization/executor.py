@@ -1,6 +1,7 @@
 """Bounded local executor pool shared by all logical materializations."""
 from __future__ import annotations
 from concurrent.futures import Future, ThreadPoolExecutor
+from threading import Lock
 from typing import Any, Callable
 import pyarrow as pa
 from acquirium.Materialization.compute import PythonArrowAdapter
@@ -9,6 +10,7 @@ from acquirium.Materialization.worker import DefinitionCache
 from acquirium.Materialization.worker import load_entrypoint
 
 class LocalExecutorPool:
+    """Small in-process executor for service-free tests and library use."""
     def __init__(self, workers: int = 2, *, adapter: PythonArrowAdapter | None = None) -> None:
         if workers < 1:
             raise ValueError("executor pool requires at least one worker")
@@ -62,10 +64,12 @@ class RayExecutorPool:
 
         self._workers = [Worker.remote() for _ in range(workers)]
         self._next = 0
+        self._pick_lock = Lock()
 
     def _pick_worker(self):
-        worker = self._workers[self._next % len(self._workers)]
-        self._next += 1
+        with self._pick_lock:
+            worker = self._workers[self._next % len(self._workers)]
+            self._next += 1
         return worker
 
     def submit_entrypoint(self, *, digest: str, entrypoint: str, request: ComputeRequest) -> _RayFuture:

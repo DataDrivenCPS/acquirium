@@ -36,6 +36,14 @@ recreate = false
 # Number of rows per Arrow RecordBatch in timeseries read responses.
 # read_batch_size = 50000
 
+# Bounded transformation concurrency through the server's fixed Ray actor pool.
+materialization_workers = 2
+
+# Durable recovery polling. Values must be positive seconds.
+# materialization_poll_seconds = 0.25
+# materialization_safety_scan_seconds = 1.0
+# materialization_error_log_seconds = 30.0
+
 # ---------------------------------------------------------------------------
 # Additional or overriding ontology sources.
 #

@@ -2,6 +2,7 @@
 from __future__ import annotations
 from typing import Callable, TypeVar
 import importlib
+from threading import Lock
 
 from acquirium.Materialization.definitions import source_digest
 
@@ -11,14 +12,17 @@ class DefinitionCache:
     """Cache only digest-addressed immutable loaded definitions."""
     def __init__(self) -> None:
         self._items: dict[str, object] = {}
+        self._lock = Lock()
     def load(self, digest: str, loader: Callable[[], T]) -> T:
-        cached = self._items.get(digest)
-        if cached is None:
-            cached = loader()
-            self._items[digest] = cached
+        with self._lock:
+            cached = self._items.get(digest)
+            if cached is None:
+                cached = loader()
+                self._items[digest] = cached
         return cached  # type: ignore[return-value]
     def clear(self) -> None:
-        self._items.clear()
+        with self._lock:
+            self._items.clear()
 
 
 def load_entrypoint(entrypoint: str, expected_digest: str | None = None):

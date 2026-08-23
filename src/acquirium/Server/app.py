@@ -231,10 +231,32 @@ async def lifespan(app: FastAPI):
             "Deploy durable @transform definitions through the transformations API "
             "or use @service for long-running reactive work."
         )
+    server_cfg = _cfg.get("server", {})
+    idle_seconds = float(server_cfg.get("materialization_poll_seconds", 0.25))
+    safety_scan_seconds = float(server_cfg.get("materialization_safety_scan_seconds", 1.0))
+    error_log_seconds = float(server_cfg.get("materialization_error_log_seconds", 30.0))
+    worker_count = int(server_cfg.get("materialization_workers", 2))
+    if idle_seconds <= 0 or safety_scan_seconds <= 0 or error_log_seconds <= 0:
+        raise ValueError("materialization polling, safety scan, and error log intervals must be positive")
+    if worker_count < 1:
+        raise ValueError("server.materialization_workers must be positive")
 
-    m = Manager.from_env()
+    # The deployed runtime has one execution model: a fixed Ray actor pool.
+    ray.init(ignore_reinit_error=True)
+    from acquirium.Materialization.executor import RayExecutorPool
+    try:
+        ray_executor = RayExecutorPool(worker_count)
+    except Exception:
+        ray.shutdown()
+        raise
+    try:
+        m = Manager.from_env(materialization_executor=ray_executor)
+    except Exception:
+        ray_executor.close()
+        ray.shutdown()
+        raise
     app.state.manager = m
-    app.state.read_batch_size = int(_cfg.get("server", {}).get("read_batch_size", 50_000))
+    app.state.read_batch_size = int(server_cfg.get("read_batch_size", 50_000))
 
     try:
         m._sync_stream_refs_from_graph()
@@ -244,6 +266,7 @@ async def lifespan(app: FastAPI):
         try:
             m.close()
         finally:
+            ray.shutdown()
             raise
 
     # Shutdown signal for the insert summary logger thread.
@@ -251,19 +274,12 @@ async def lifespan(app: FastAPI):
     start_insert_summary_thread(summary_stop, interval=10.0)
 
     # Drivers run as Ray actors that connect back over HTTP.
-    ray.init(ignore_reinit_error=True)
-    if os.getenv("ACQUIRIUM_MATERIALIZATION_EXECUTOR", "local").lower() == "ray":
-        m.use_ray_materialization_executor(int(os.getenv("ACQUIRIUM_MATERIALIZATION_RAY_WORKERS", "2")))
     _host, _port, _use_ssl = _self_connect_cfg(_cfg)
     supervisor = DriverSupervisor(server_url=_host, server_port=_port, use_ssl=_use_ssl)
     app.state.drivers = supervisor
-    server_cfg = _cfg.get("server", {})
-
-    idle_seconds = float(server_cfg.get("materialization_poll_seconds", 0.25))
 
     async def _durable_worker(label: str, operation) -> None:
         """Run one failure-isolated durable control-plane worker."""
-        error_log_seconds = float(server_cfg.get("materialization_error_log_seconds", 30.0))
         next_error_log = 0.0
         while True:
             try:
@@ -279,9 +295,8 @@ async def lifespan(app: FastAPI):
             await asyncio.sleep(0 if ran else idle_seconds)
 
     async def _safety_loop() -> None:
-        interval = float(server_cfg.get("materialization_safety_scan_seconds", 1.0))
         while True:
-            await asyncio.sleep(interval)
+            await asyncio.sleep(safety_scan_seconds)
             try:
                 await asyncio.to_thread(m.materialization_safety_scan)
             except asyncio.CancelledError:
@@ -289,9 +304,6 @@ async def lifespan(app: FastAPI):
             except Exception:
                 log.exception("Materialization safety scan failed")
 
-    worker_count = int(server_cfg.get("materialization_workers", 2))
-    if worker_count < 1:
-        raise ValueError("server.materialization_workers must be positive")
     process_owner = f"server-{os.getpid()}"
     durable_tasks = [
         asyncio.create_task(_durable_worker(
@@ -776,6 +788,12 @@ def materialization_epochs() -> dict[str, Any]:
     summary = storage.epoch_summary(current)
     return {"ok": True, "epoch": summary.__dict__,
             "bindings": [binding.__dict__ for binding in storage.epoch_bindings(current)]}
+
+
+@app.get("/materialization/status")
+def materialization_status() -> dict[str, Any]:
+    """Inspect live pointers, component frontiers, retries, and deployments."""
+    return {"ok": True, **app.state.manager.epoch_materialization.status()}
 
 
 @app.get("/materialization/epochs/{epoch_id}")

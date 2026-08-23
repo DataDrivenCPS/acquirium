@@ -231,10 +231,12 @@ Declarations are immutable; registration returns the durable identity. See
 | Endpoint | Purpose |
 | --- | --- |
 | `PUT /transformations/{name}` | Validate and deploy an immutable transformation definition under a stable name |
+| `DELETE /transformations/{name}` | Remove a named deployment through a validated candidate epoch |
+| `GET /materialization/status` | Inspect candidate/current/active pointers, deployments, component frontiers, queue counts, and terminal failures |
 | `GET /materialization/epochs` | Inspect the current immutable topology epoch and its persisted bindings |
 | `GET /materialization/epochs/{epoch_id}` | Inspect one topology epoch |
 
-`register` body: `name`, `source_digest`, `entrypoint`, `inputs`/`bind`,
+Deployment body: `name`, `source_digest`, `entrypoint`, `inputs`/`bind`,
 `outputs`, `impact`, `parameters_schema`.
 
 ### Services

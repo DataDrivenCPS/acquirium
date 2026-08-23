@@ -655,6 +655,11 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
+    def materialization_status(self) -> dict:
+        response = requests.get(f"{self.base_url}/materialization/status")
+        _raise_for_status(response)
+        return response.json()
+
     def materialization_epoch(self, epoch_id: str) -> dict:
         response = requests.get(f"{self.base_url}/materialization/epochs/{epoch_id}")
         _raise_for_status(response)

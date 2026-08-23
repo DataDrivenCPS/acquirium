@@ -228,6 +228,10 @@ def test_failed_partition_yields_to_fresh_work_and_is_dead_lettered(tmp_path):
         with store._own_conn() as conn:
             assert conn.execute("SELECT status FROM topology_epoch_work WHERE work_id = ?",
                                 [poison.target_id]).fetchone() == ("failed",)
+        status = runtime.status()
+        assert status["current_epoch_id"] == epoch
+        assert status["work"]["failed"] == 1
+        assert status["failed_work"][0]["error"] == {"type": "deterministic"}
     finally:
         store.close()
 
@@ -237,10 +241,10 @@ def test_claim_renewal_preserves_owner_fence(tmp_path):
     try:
         epoch = runtime.ensure_epoch(1, "renew")
         runtime.construct_epoch(epoch, Graph(("urn:raw",)))
-        claim = runtime.claim_next_work("slow-worker", duration=timedelta(milliseconds=80))
-        time.sleep(0.04)
-        renewed = runtime.renew_claim(claim, duration=timedelta(milliseconds=100))
-        time.sleep(0.06)
+        claim = runtime.claim_next_work("slow-worker", duration=timedelta(milliseconds=500))
+        time.sleep(0.1)
+        renewed = runtime.renew_claim(claim, duration=timedelta(seconds=1))
+        time.sleep(0.5)
         assert runtime.claim_next_work("other") is None
         assert renewed.expires_at > claim.expires_at
         runtime.release_claim(renewed)

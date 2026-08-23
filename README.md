@@ -52,7 +52,13 @@ A sample `acquirium.toml` is included at the repository root. Key sections:
 - `[driver]` — connection defaults applied to all drivers (server URL, port, tick interval).
 - `[[drivers]]` — drivers to start alongside the server.
 
-By default the server stores data on local disk — an embedded Oxigraph RDF store and a single DuckDB file under `data_dir`. **No external services are required for a fresh install.** For multi-worker or production deployments, switch the config to `timeseries_backend = "timescale"` and point `pg_dsn` at a Postgres + TimescaleDB instance.
+By default the server stores data on local disk—an embedded Oxigraph RDF store
+and a single DuckDB file under `data_dir`. **No external services are required
+for a fresh install.** The server is intentionally one process because it owns
+the embedded graph store. `materialization_workers` provides bounded concurrent
+execution through a fixed Ray actor pool. The `timescale` backend moves
+timeseries and durable control state to PostgreSQL/TimescaleDB, but does not
+turn the API server into a multi-process deployment.
 
 Override the bind host/port from the CLI if needed:
 
