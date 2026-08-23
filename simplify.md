@@ -200,6 +200,30 @@ bodies; `_Application` is a third variant.
 
 ## Tier 3 — Trimming the state machine (semantic; discuss before doing)
 
+> **Status: DONE** (2026-08-23). Items 12–14 implemented:
+>
+> - (12) The `ready` status is gone (components-without-work epochs go
+>   straight to `reconciling`), and `candidate_epoch_id` is no longer a
+>   stored pointer: the candidate is derived as the unique epoch in
+>   `constructing` status, whose uniqueness `ensure_epoch`'s superseding
+>   write already maintains. The status-based construction guard also fixes
+>   a latent race in the old pointer-based guard, where a constructor racing
+>   a finished peer would supersede the just-activated epoch.
+> - (13) DuckDB naive-UTC conversion moved into `TZBoundaryConnection`;
+>   stores acquire connections through shared `_read()`/`_write()` context
+>   managers and deal exclusively in aware UTC datetimes. `_now()` is aware
+>   on both backends and `_stored_timestamp`/`_aware` are gone (~60 call
+>   sites).
+> - (14) `claim_next_work` answers every candidate's dependency question
+>   with one batched `IN` query instead of one SELECT per dependency.
+>
+> Bug found while testing: the PostgreSQL `_catalog` override selected every
+> registered transformation (`WHERE kind = 'transformation'`, no join) where
+> the DuckDB base joins through `topology_deployments` — on PG, construction
+> resolved definitions that were never deployed. The override is deleted; the
+> base catalog now also normalizes JSONB specs, so registration alone grants
+> nothing on either backend.
+
 ### 12. Drop the `ready` epoch status
 
 `ready` is nearly an alias for `reconciling`: construct sets it only for "components but

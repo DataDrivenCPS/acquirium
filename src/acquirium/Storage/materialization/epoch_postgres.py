@@ -51,7 +51,7 @@ class TopologyEpochPostgres(PostgresCodecs, TopologyEpochDuckDB):
         now = self._now()
         expires = now + duration
         claim_id = materialization_id("topology-claim", kind, target_id)
-        with self._store._write_conn() as conn:
+        with self._write() as conn:
             conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", [target_id])
             row = conn.execute("""SELECT owner, attempt, expires_at FROM topology_epoch_claims
                 WHERE target_id = ?""", [target_id]).fetchone()
@@ -67,11 +67,6 @@ class TopologyEpochPostgres(PostgresCodecs, TopologyEpochDuckDB):
         self._after_transition("claim_acquired")
         return EpochClaim(claim_id, kind, target_id, owner, attempt, expires)
 
-    def _catalog(self, conn):
-        rows = conn.execute("""SELECT definition_id, name, source_digest, entrypoint, spec_json
-            FROM materialization_definitions WHERE kind = 'transformation' ORDER BY definition_id""").fetchall()
-        return tuple((row[0], row[1], row[2], row[3], row[4] if isinstance(row[4], str) else self._json(row[4])) for row in rows)
-
     def _retained_ranges(self, conn, refs: Sequence[str], *, include_deleted: bool = False):
         if not refs:
             return ()
@@ -80,7 +75,7 @@ class TopologyEpochPostgres(PostgresCodecs, TopologyEpochDuckDB):
             WHERE ref_uri = ANY(%s::text[])""" + live_filter, [list(refs)]).fetchone()
         if row[0] is None:
             return ()
-        return (TimeRange(self._aware(row[0]), self._aware(row[1]) + timedelta(microseconds=1)),)
+        return (TimeRange(row[0], row[1] + timedelta(microseconds=1)),)
 
     def _stream_versions(self, conn, refs: Sequence[str]):
         if not refs:

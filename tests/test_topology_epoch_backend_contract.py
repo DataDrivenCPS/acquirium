@@ -57,8 +57,7 @@ def epoch_backend(request, tmp_path, pg_dsn):
                           "topology_epoch_components", "topology_binding_frontiers", "topology_epoch_work",
                           "topology_epoch_outputs", "topology_epoch_retirements", "topology_epoch_claims"):
                 conn.execute(f"DELETE FROM {table}")
-            conn.execute("""UPDATE topology_epoch_control SET candidate_epoch_id = NULL,
-                current_epoch_id = NULL, active_epoch_id = NULL""")
+            conn.execute("UPDATE topology_epoch_control SET current_epoch_id = NULL, active_epoch_id = NULL")
             for table in ("timeseries", "stream_heads", "stream_change_ranges"):
                 conn.execute(f"DELETE FROM {table} WHERE ref_uri LIKE ?", ["urn:epoch-contract%"])
             conn.execute("DELETE FROM stream_publications WHERE publication_id = ?", ["epoch-contract"])

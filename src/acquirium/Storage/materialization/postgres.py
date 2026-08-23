@@ -19,7 +19,7 @@ from acquirium.Storage.materialization.schema import change_range_statements, su
 class MaterializationPostgres(PostgresCodecs, MaterializationDuckDB):
     def __init__(self, dsn: str, *, min_size: int = 1, max_size: int = 4) -> None:
         self._store = PostgresStoreAdapter(dsn, min_size=min_size, max_size=max_size)
-        with self._store._write_conn() as conn:
+        with self._write() as conn:
             for statement in (*change_range_statements(self._DIALECT), *support_statements(self._DIALECT)):
                 conn.execute(statement)
 
@@ -28,18 +28,18 @@ class MaterializationPostgres(PostgresCodecs, MaterializationDuckDB):
 
     def stream_versions(self, refs: Sequence[str]) -> dict[str, int]:
         if not refs: return {}
-        with self._store._own_conn() as conn:
+        with self._read() as conn:
             rows = conn.execute("""SELECT requested.ref_uri, COALESCE(head.current_version, 0)
                 FROM unnest(%s::text[]) AS requested(ref_uri) LEFT JOIN stream_heads head
                 ON head.ref_uri = requested.ref_uri ORDER BY requested.ref_uri""", [list(refs)]).fetchall()
         return dict(rows)
 
     def all_stream_versions(self) -> dict[str, int]:
-        with self._store._own_conn() as conn:
+        with self._read() as conn:
             return dict(conn.execute("SELECT ref_uri, current_version FROM stream_heads ORDER BY ref_uri").fetchall())
 
     def service_input_snapshot(self, refs: Sequence[str], *, since: datetime | None = None) -> tuple[dict[str, int], pa.Table]:
-        with self._store._own_conn() as conn:
+        with self._read() as conn:
             versions = dict(conn.execute("""SELECT requested.ref_uri, COALESCE(head.current_version, 0)
                 FROM unnest(%s::text[]) AS requested(ref_uri) LEFT JOIN stream_heads head
                 ON head.ref_uri = requested.ref_uri""", [list(refs)]).fetchall())

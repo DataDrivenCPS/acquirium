@@ -130,7 +130,7 @@ _EPOCH_TEMPLATES = (
         claim_id $STR PRIMARY KEY, kind $STR NOT NULL, target_id $STR NOT NULL UNIQUE,
         owner $STR, attempt INTEGER NOT NULL DEFAULT 0, expires_at $TS)""",
     """CREATE TABLE IF NOT EXISTS topology_epoch_control (
-        control_id INTEGER PRIMARY KEY, candidate_epoch_id $STR,
+        control_id INTEGER PRIMARY KEY,
         current_epoch_id $STR, active_epoch_id $STR,
         updated_at $TS NOT NULL)""",
 )

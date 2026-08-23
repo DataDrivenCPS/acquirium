@@ -15,7 +15,7 @@ import pyarrow as pa
 from acquirium.Materialization.impact import TimeRange
 
 
-EpochStatus = Literal["constructing", "ready", "reconciling", "active", "superseded", "failed", "compacted"]
+EpochStatus = Literal["constructing", "reconciling", "active", "superseded", "failed", "compacted"]
 WorkStatus = Literal["pending", "claimed", "committed", "failed", "superseded"]
 
 

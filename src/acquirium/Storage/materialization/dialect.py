@@ -1,9 +1,10 @@
 """Backend dialect plumbing shared by every materialization store pair.
 
 The DuckDB classes hold the canonical state-machine logic, written with ``?``
-placeholders and the codec hooks below.  A PostgreSQL twin subclasses its
-DuckDB class, swaps in :class:`PostgresStoreAdapter`, and overrides only the
-codecs and the few queries that touch the differently-shaped canonical tables.
+placeholders against the ``_read``/``_write`` connections below, which deal
+exclusively in aware UTC datetimes.  A PostgreSQL twin subclasses its DuckDB
+class, swaps in :class:`PostgresStoreAdapter`, and overrides only the codecs
+and the few queries that touch the differently-shaped canonical tables.
 """
 from __future__ import annotations
 
@@ -16,8 +17,56 @@ def canonical_json(value: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
 
 
+def _naive_utc(value):
+    if isinstance(value, datetime) and value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+def _aware_utc(value):
+    if isinstance(value, datetime) and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+class _TZResult:
+    """Fetch results with naive-UTC timestamps converted to aware UTC."""
+
+    def __init__(self, relation) -> None:
+        self._relation = relation
+
+    def fetchone(self):
+        row = self._relation.fetchone()
+        return None if row is None else tuple(_aware_utc(value) for value in row)
+
+    def fetchall(self):
+        return [tuple(_aware_utc(value) for value in row) for row in self._relation.fetchall()]
+
+    def __getattr__(self, name):
+        return getattr(self._relation, name)
+
+
+class TZBoundaryConnection:
+    """DuckDB stores naive-UTC timestamps; convert at the connection boundary
+    so the shared state-machine code deals only in aware UTC datetimes."""
+
+    def __init__(self, conn) -> None:
+        self._conn = conn
+
+    def execute(self, sql: str, params=None):
+        if params is None:
+            return _TZResult(self._conn.execute(sql))
+        return _TZResult(self._conn.execute(sql, [_naive_utc(value) for value in params]))
+
+    def executemany(self, sql: str, rows):
+        return self._conn.executemany(sql, [[_naive_utc(value) for value in row] for row in rows])
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
 class DuckDBCodecs:
-    """Value conversions for DuckDB's naive-UTC timestamps and text JSON."""
+    """Connection and value codecs for the DuckDB backend."""
 
     _DIALECT = "duckdb"
     # DuckDB has a single writer serialized by the store lock, so row locks
@@ -25,17 +74,19 @@ class DuckDBCodecs:
     _FOR_UPDATE = ""
     _SKIP_LOCKED = ""
 
+    @contextmanager
+    def _read(self):
+        with self._store._own_conn() as conn:
+            yield TZBoundaryConnection(conn)
+
+    @contextmanager
+    def _write(self):
+        with self._store._lock, self._store._write_conn() as conn:
+            yield TZBoundaryConnection(conn)
+
     @staticmethod
     def _now() -> datetime:
-        return datetime.now(timezone.utc).replace(tzinfo=None)
-
-    @staticmethod
-    def _stored_timestamp(value: datetime) -> datetime:
-        return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
-
-    @staticmethod
-    def _aware(value: datetime) -> datetime:
-        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+        return datetime.now(timezone.utc)
 
     @staticmethod
     def _json(value: object) -> str:
@@ -56,19 +107,21 @@ class DuckDBCodecs:
 
 
 class PostgresCodecs(DuckDBCodecs):
-    """Value conversions for PostgreSQL's aware timestamps and JSONB columns."""
+    """PostgreSQL stores aware timestamps natively, so no boundary conversion."""
 
     _DIALECT = "postgres"
     _FOR_UPDATE = " FOR UPDATE"
     _SKIP_LOCKED = " FOR UPDATE SKIP LOCKED"
 
-    @staticmethod
-    def _now() -> datetime:
-        return datetime.now(timezone.utc)
+    @contextmanager
+    def _read(self):
+        with self._store._own_conn() as conn:
+            yield conn
 
-    @staticmethod
-    def _stored_timestamp(value: datetime) -> datetime:
-        return value.astimezone(timezone.utc) if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    @contextmanager
+    def _write(self):
+        with self._store._write_conn() as conn:
+            yield conn
 
 
 class PostgresConnection:
