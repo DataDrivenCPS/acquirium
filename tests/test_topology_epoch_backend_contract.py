@@ -35,6 +35,21 @@ class ContractGraph:
                 "rows": [["urn:contract:point", "urn:epoch-contract:in", None, None]]}
 
 
+def _dedicated_epoch_dsn(base_dsn: str) -> str:
+    """A private database for this module's trace.
+
+    The epoch control plane is a singleton per database (one control row, one
+    global deployment map), so this trace can share a database with neither
+    the live test server's reconciler nor a previous run's state.
+    """
+    import psycopg
+    dbname = "acquirium_epoch_contract"
+    with psycopg.connect(base_dsn, autocommit=True, connect_timeout=5) as conn:
+        if conn.execute("SELECT 1 FROM pg_database WHERE datname = %s", [dbname]).fetchone() is None:
+            conn.execute(f'CREATE DATABASE "{dbname}"')
+    return f"{base_dsn.rsplit('/', 1)[0]}/{dbname}"
+
+
 @pytest.fixture(params=["duckdb", "postgres"])
 def epoch_backend(request, tmp_path, pg_dsn):
     if request.param == "duckdb":
@@ -44,23 +59,14 @@ def epoch_backend(request, tmp_path, pg_dsn):
         finally:
             store.close()
     else:
+        from acquirium.Storage.timescale_store import TimescaleStore
         try:
-            runtime = TopologyEpochPostgres(pg_dsn)
-            publication = PublicationPostgres(pg_dsn)
+            dsn = _dedicated_epoch_dsn(pg_dsn)
+            TimescaleStore(dsn=dsn, connect_timeout=10, recreate=True).close()
+            runtime = TopologyEpochPostgres(dsn)
+            publication = PublicationPostgres(dsn)
         except Exception as error:
             pytest.skip(f"PostgreSQL unavailable: {error}")
-        # The trace below asserts against a fresh desired topology, but the
-        # testing database outlives runs; clear anything a prior run left.
-        with runtime._store._write_conn() as conn:
-            for table in ("topology_deployments", "topology_epochs",
-                          "topology_epoch_binding_pins", "topology_epoch_bindings", "topology_epoch_edges",
-                          "topology_epoch_components", "topology_binding_frontiers", "topology_epoch_work",
-                          "topology_epoch_outputs", "topology_epoch_retirements", "topology_epoch_claims"):
-                conn.execute(f"DELETE FROM {table}")
-            conn.execute("UPDATE topology_epoch_control SET current_epoch_id = NULL, active_epoch_id = NULL")
-            for table in ("timeseries", "stream_heads", "stream_change_ranges"):
-                conn.execute(f"DELETE FROM {table} WHERE ref_uri LIKE ?", ["urn:epoch-contract%"])
-            conn.execute("DELETE FROM stream_publications WHERE publication_id = ?", ["epoch-contract"])
         try:
             yield None, runtime, publication
         finally:

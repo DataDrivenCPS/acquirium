@@ -10,6 +10,7 @@ import time
 from uuid import uuid4
 
 import pyarrow.ipc as ipc
+import pytest
 import requests
 
 from acquirium.Materialization.definitions import definition_spec
@@ -32,6 +33,25 @@ BASE_URL = (
 
 UTC = timezone.utc
 START = datetime(2026, 1, 1, tzinfo=UTC)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _isolate_seeded_graph():
+    """Remove this module's deployment and graph-visible streams afterwards.
+
+    Later suite modules (for example ``test_query_data``) assert over every
+    stream the shared server's graph exposes, so the seeded input stream must
+    not outlive this module.
+    """
+    yield
+    _delete_transformation(AddOne.name)
+    response = requests.post(
+        f"{BASE_URL}/insert_graph",
+        json={"rdf_graph": "# cleared by test_materialization_app teardown",
+              "format": "turtle", "replace": True, "source_id": SOURCE_ID},
+        timeout=30,
+    )
+    assert response.status_code == 200, response.text
 
 
 def _definition_payload(target: type) -> dict[str, object]:

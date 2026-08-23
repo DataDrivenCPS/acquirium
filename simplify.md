@@ -314,10 +314,11 @@ survives.
 ### Test-infrastructure debt
 
 - The PG contract tests share `acquirium_test` with a *live server* from the
-  compose stack. Two races were patched test-by-test (epoch fixture wipes
-  prior topology; the service-hint test avoids `running` status until its
-  token assertions finish), but the structural fix is a dedicated database or
-  schema for contract tests so they never coexist with the running server.
+  compose stack. The epoch contract now runs in its own on-demand database
+  (`acquirium_epoch_contract`, recreated per run) because its control plane is
+  a per-database singleton; the service-hint test still coexists by avoiding
+  `running` status until its token assertions finish. Remaining exposure:
+  any future test asserting global server state needs the same isolation.
 - No migration story for pre-branch databases: the definitions-table merge,
   the dropped `candidate_epoch_id` column, and the removed `ready` status all
   assume recreate-from-empty. Fine while the branch is unmerged; needs a
