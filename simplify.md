@@ -247,12 +247,91 @@ selects only ready work in one statement — fewer lines and fewer round trips.
 
 ---
 
-## Rough totals
+## Outcome (2026-08-23)
 
-- **Tier 1:** ~1,200–1,500 lines removed, zero behavior change; converts every remaining
-  backend pair to the proven "shared state machine + dialect adapter" pattern so exactly
-  one copy of every correctness-bearing decision exists.
-- **Tier 2:** ~300–400 more lines, but the largest understandability gain — one
-  dirty-propagation function, one lease idiom, one definition registry, one
-  publication side-effect path.
-- **Tier 3:** small line counts; each removes a concept a reader must otherwise verify.
+All three tiers are implemented, across five commits (`e5d06e7`, `39e528b`,
+`f2c0290`, `f627dc8`, `851742b`). `Storage/materialization` went from 2,985 to
+~2,290 lines with every correctness-bearing decision — dirty propagation,
+seal/snapshot merging, lease recovery, DDL, timezone handling — existing in
+exactly one copy. The work flushed out four real bugs the duplication had been
+hiding:
+
+1. DuckDB's Python `rowcount` is always -1, so every rowcount-based guard
+   (stale-work fencing, lease completion, `plan_data_changes` insert counting)
+   silently passed on DuckDB → fixed portably via `RETURNING 1`.
+2. A zombie constructor racing a finished peer could supersede the
+   just-activated epoch through the cleared candidate pointer → fixed by the
+   status-derived candidate.
+3. The PostgreSQL `_catalog` override resolved every *registered*
+   transformation instead of only *deployed* ones → fixed by sharing the
+   joined catalog query.
+4. Deploy-time supersede races logged as ERROR tracebacks for what is the
+   designed discard path → reconciler now treats `StaleEpochError` as an
+   INFO-level non-event.
+
+`batch_example/` was verified end-to-end against the final API (no example
+code changes were needed; its missing files are now committed).
+
+---
+
+## What's left
+
+None of the items below block the branch; they are recorded so the reasoning
+survives.
+
+### Deliberately deferred decisions
+
+- **Validate-on-deploy vs. validate-at-construction** (from item 6).
+  `deploy_definition`/`remove_deployment` still resolve *every* deployment's
+  query to fail fast, so query resolution runs twice per epoch (deploy +
+  construct), and one unresolvable deployment blocks deploying or removing
+  anything else — exactly the failure mode seen with stale entrypoints in the
+  shared testing DB. The alternative is letting the epoch's existing `failed`
+  status carry validation errors, which changes deploy from fail-fast to
+  async. Product call; revisit if multi-tenant deploys make the coupling
+  painful. A middle path: validate only the changed deployment at deploy time.
+- **Full lease unification** (item 8). Artifact and effect leases still have
+  separate (single-copy) implementations sharing only `_recover_expired_leases`;
+  the experiment `execution_claim` and epoch claims are separate mechanisms.
+  A parameterized lease framework or migration onto `topology_epoch_claims`
+  was judged to obscure more than it deduplicates at current scale — revisit
+  only if multi-manager coordination needs grow.
+
+### Known residual duplication (small)
+
+- `register_definition` exists on both the epoch store and the support store
+  (identical ~10-line INSERTs into the now-shared table). A single store
+  facade would remove one, but merging the two store classes was out of scope.
+- `topology._canonical` and `bindings._canonical` duplicate
+  `dialect.canonical_json` (2 lines each).
+- Output-spec validation still lives in both `OutputSpec.__post_init__` and
+  `topology._output_spec` (item 11's last bullet — not done).
+- `epoch_duckdb.py` remains ~1,150 lines; `construct_epoch` and
+  `seal_component` are the two remaining long functions. Further decomposition
+  hits diminishing returns, but `seal_component`'s mutation-set derivation
+  (~60 lines) is the next natural extraction if anyone touches it again.
+
+### Test-infrastructure debt
+
+- The PG contract tests share `acquirium_test` with a *live server* from the
+  compose stack. Two races were patched test-by-test (epoch fixture wipes
+  prior topology; the service-hint test avoids `running` status until its
+  token assertions finish), but the structural fix is a dedicated database or
+  schema for contract tests so they never coexist with the running server.
+- No migration story for pre-branch databases: the definitions-table merge,
+  the dropped `candidate_epoch_id` column, and the removed `ready` status all
+  assume recreate-from-empty. Fine while the branch is unmerged; needs a
+  decision (migrate vs. document recreate) before any deployment carries
+  durable state across this boundary.
+
+### Natural next targets (beyond this effort's scope)
+
+- `Server/manager.py` (~1,400 lines) still mixes graph management, embedding,
+  timeseries ingest, and materialization wiring; splitting the
+  materialization-facing surface into its own module is the next
+  highest-leverage structural change.
+- `Server/app.py`'s materialization/experiment/service endpoints could move to
+  FastAPI routers, shrinking the single-file server.
+- `claim_next_work` still selects candidates in Python with a per-candidate
+  claim attempt; folding selection into one SQL statement is possible if the
+  work queue ever gets hot.
