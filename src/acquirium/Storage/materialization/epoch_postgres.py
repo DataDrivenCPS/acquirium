@@ -102,11 +102,15 @@ class TopologyEpochPostgres(TopologyEpochDuckDB):
                 PRIMARY KEY (epoch_id, source_binding_id, target_binding_id))""")
             conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_components (
                 epoch_id TEXT NOT NULL, component_id TEXT NOT NULL, binding_ids_json JSONB NOT NULL,
-                status TEXT NOT NULL, seal_publication_id TEXT,
+                status TEXT NOT NULL, frontier BIGINT NOT NULL, sealed_frontier BIGINT NOT NULL,
+                seal_publication_id TEXT,
                 PRIMARY KEY (epoch_id, component_id))""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS topology_binding_frontiers (
+                epoch_id TEXT NOT NULL, binding_id TEXT NOT NULL, input_versions_json JSONB NOT NULL,
+                PRIMARY KEY (epoch_id, binding_id))""")
             conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_work (
                 work_id TEXT PRIMARY KEY, epoch_id TEXT NOT NULL, component_id TEXT NOT NULL,
-                binding_id TEXT NOT NULL,
+                binding_id TEXT NOT NULL, frontier BIGINT NOT NULL,
                 write_start_ts TIMESTAMPTZ NOT NULL, write_end_ts TIMESTAMPTZ NOT NULL,
                 read_start_ts TIMESTAMPTZ NOT NULL, read_end_ts TIMESTAMPTZ NOT NULL,
                 input_versions_json JSONB NOT NULL, upstream_frontier_json JSONB NOT NULL,
@@ -126,9 +130,9 @@ class TopologyEpochPostgres(TopologyEpochDuckDB):
             conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_control (
                 control_id INTEGER PRIMARY KEY, candidate_epoch_id TEXT,
                 current_epoch_id TEXT, active_epoch_id TEXT,
-                compaction_watermark BIGINT NOT NULL DEFAULT -1, updated_at TIMESTAMPTZ NOT NULL)""")
-            conn.execute("""INSERT INTO topology_epoch_control (control_id, compaction_watermark, updated_at)
-                VALUES (1, -1, now()) ON CONFLICT (control_id) DO NOTHING""")
+                updated_at TIMESTAMPTZ NOT NULL)""")
+            conn.execute("""INSERT INTO topology_epoch_control (control_id, updated_at)
+                VALUES (1, now()) ON CONFLICT (control_id) DO NOTHING""")
 
     def close(self) -> None:
         self._store.close()
@@ -136,6 +140,10 @@ class TopologyEpochPostgres(TopologyEpochDuckDB):
     @staticmethod
     def _lock_deployments(conn) -> None:
         conn.execute("SELECT pg_advisory_xact_lock(hashtextextended('acquirium-deployments', 0))")
+
+    @staticmethod
+    def _lock_component(conn, epoch: str, component: str) -> None:
+        conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", [f"{epoch}:{component}"])
 
     def claim(self, kind: str, target_id: str, owner: str, *,
               duration: timedelta = timedelta(minutes=5)) -> EpochClaim | None:

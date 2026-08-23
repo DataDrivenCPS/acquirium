@@ -64,16 +64,20 @@ canonical publication protocol.  Only then does it mark the component sealed.
 The final component seal activates the epoch.  Publication receipts remain
 idempotent and are the only canonical stream mutation path.
 
-## Data frontiers and retention watermark
+## Data frontiers and retention
 
 Canonical input publications append range-manifest work to the current epoch;
 the topology and its resolved bindings do not change.  A data frontier creates
 new deterministic work IDs and re-seals the affected dependency component.
 The active epoch pointer therefore always names the latest fully visible
-topology, while its work frontier may advance as canonical data arrives.
+topology, while each component's monotonically increasing frontier advances as
+canonical data arrives. A seal publishes exactly one component frontier. Once
+published, its staged rows and work records are discarded; the compact input
+version vector retained per binding is sufficient to derive the next frontier.
+If inputs advance before a frontier seals, the component coalesces all changes
+since its last sealed vector into a replacement frontier and fences older work.
 
-`topology_epoch_control.compaction_watermark` is the graph-revision watermark.
-Compaction may remove private staged outputs and work for superseded epochs
-strictly below the watermark, while retaining epoch identity and canonical
-publication receipts.  It never removes data needed by the active epoch or
-changes canonical streams.
+Compaction follows reachability, not graph revision: any superseded epoch not
+named by the candidate, current, or active pointer can lose its resolved
+topology and private execution state. Epoch identity and canonical publication
+receipts remain. Compaction never changes canonical streams.

@@ -65,11 +65,15 @@ class TopologyEpochDuckDB:
                 PRIMARY KEY (epoch_id, source_binding_id, target_binding_id))""")
             conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_components (
                 epoch_id VARCHAR NOT NULL, component_id VARCHAR NOT NULL, binding_ids_json VARCHAR NOT NULL,
-                status VARCHAR NOT NULL, seal_publication_id VARCHAR,
+                status VARCHAR NOT NULL, frontier BIGINT NOT NULL, sealed_frontier BIGINT NOT NULL,
+                seal_publication_id VARCHAR,
                 PRIMARY KEY (epoch_id, component_id))""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS topology_binding_frontiers (
+                epoch_id VARCHAR NOT NULL, binding_id VARCHAR NOT NULL, input_versions_json VARCHAR NOT NULL,
+                PRIMARY KEY (epoch_id, binding_id))""")
             conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_work (
                 work_id VARCHAR PRIMARY KEY, epoch_id VARCHAR NOT NULL, component_id VARCHAR NOT NULL,
-                binding_id VARCHAR NOT NULL,
+                binding_id VARCHAR NOT NULL, frontier BIGINT NOT NULL,
                 write_start_ts TIMESTAMP NOT NULL, write_end_ts TIMESTAMP NOT NULL,
                 read_start_ts TIMESTAMP NOT NULL, read_end_ts TIMESTAMP NOT NULL,
                 input_versions_json VARCHAR NOT NULL, upstream_frontier_json VARCHAR NOT NULL,
@@ -89,9 +93,9 @@ class TopologyEpochDuckDB:
             conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_control (
                 control_id INTEGER PRIMARY KEY, candidate_epoch_id VARCHAR,
                 current_epoch_id VARCHAR, active_epoch_id VARCHAR,
-                compaction_watermark BIGINT NOT NULL DEFAULT -1, updated_at TIMESTAMP NOT NULL)""")
-            conn.execute("""INSERT INTO topology_epoch_control (control_id, compaction_watermark, updated_at)
-                VALUES (1, -1, ?) ON CONFLICT (control_id) DO NOTHING""", [self._now()])
+                updated_at TIMESTAMP NOT NULL)""")
+            conn.execute("""INSERT INTO topology_epoch_control (control_id, updated_at)
+                VALUES (1, ?) ON CONFLICT (control_id) DO NOTHING""", [self._now()])
 
     @staticmethod
     def _now() -> datetime:
@@ -167,6 +171,10 @@ class TopologyEpochDuckDB:
     @staticmethod
     def _lock_deployments(conn) -> None:
         """Serialize updates to the deployment map (DuckDB has one writer)."""
+
+    @staticmethod
+    def _lock_component(conn, epoch: str, component: str) -> None:
+        """Serialize one component frontier (DuckDB has one writer)."""
 
     def _validate_deployments(self, conn, selected: Mapping[str, str], graph: object) -> None:
         rows = conn.execute("""SELECT definition_id, spec_json FROM topology_epoch_definitions
@@ -340,7 +348,8 @@ class TopologyEpochDuckDB:
                                      [(epoch_id_value, ref) for ref in retired])
             if component_rows:
                 conn.executemany("""INSERT INTO topology_epoch_components
-                    (epoch_id, component_id, binding_ids_json, status) VALUES (?, ?, ?, 'pending') ON CONFLICT DO NOTHING""", component_rows)
+                    (epoch_id, component_id, binding_ids_json, status, frontier, sealed_frontier)
+                    VALUES (?, ?, ?, 'pending', 1, 0) ON CONFLICT DO NOTHING""", component_rows)
 
             # Derive each binding's output range in topological order.  A
             # consumer applies its own impact policy to both raw changes and
@@ -381,14 +390,14 @@ class TopologyEpochDuckDB:
                 members = json.loads(members_json)
                 works.extend(self._work_rows(
                     conn, epoch_id_value, component_id, members, binding_by_id,
-                    edges, dirty, maximum_partition_duration, prefix="epoch-work",
+                    edges, dirty, maximum_partition_duration, frontier=1, prefix="epoch-work",
                 ))
             if works:
                 conn.executemany("""INSERT INTO topology_epoch_work
-                (work_id, epoch_id, component_id, binding_id,
+                (work_id, epoch_id, component_id, binding_id, frontier,
                  write_start_ts, write_end_ts, read_start_ts, read_end_ts,
                  input_versions_json, upstream_frontier_json, binding_digest, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
                 ON CONFLICT (work_id) DO NOTHING""", works)
             new_status = "reconciling" if works else ("ready" if component_rows else "active")
             conn.execute("UPDATE topology_epochs SET status = ? WHERE epoch_id = ? AND status = 'constructing'", [new_status, epoch_id_value])
@@ -457,7 +466,9 @@ class TopologyEpochDuckDB:
         if not changed:
             return ()
         if impact.kind == "full_history":
-            return coalesce_ranges(retained)
+            # If the source became empty, the change ranges are still needed
+            # to remove the previously materialized history.
+            return coalesce_ranges(retained or changed)
         return coalesce_ranges(impact.affected(interval) for interval in changed)
 
     def _work_rows(
@@ -471,6 +482,7 @@ class TopologyEpochDuckDB:
         dirty: Mapping[str, Sequence[TimeRange]],
         maximum_partition_duration: timedelta,
         *,
+        frontier: int,
         prefix: str,
     ) -> list[tuple]:
         """Build deterministic work rows and overlap-based DAG frontiers."""
@@ -501,19 +513,53 @@ class TopologyEpochDuckDB:
             binding = bindings[binding_id]
             versions = self._stream_versions(conn, binding.input_refs)
             for write, read, work_id in identities[binding_id]:
-                frontier = {
+                dependency_frontier = {
                     source: [candidate_id for source_write, _, candidate_id in identities[source]
                              if source_write.intersects(read)]
                     for source in incoming[binding_id]
                 }
-                frontier = {source: ids for source, ids in frontier.items() if ids}
+                dependency_frontier = {source: ids for source, ids in dependency_frontier.items() if ids}
                 rows.append((
-                    work_id, epoch, component, binding_id,
+                    work_id, epoch, component, binding_id, frontier,
                     self._stored_timestamp(write.start), self._stored_timestamp(write.end),
                     self._stored_timestamp(read.start), self._stored_timestamp(read.end),
-                    self._json(versions), self._json(frontier), binding.content_digest,
+                    self._json(versions), self._json(dependency_frontier), binding.content_digest,
                 ))
         return rows
+
+    def _seal_input_frontiers(
+        self, conn, epoch: str, frontier: int, binding_ids: Sequence[str]
+    ) -> None:
+        """Advance durable input heads from the exact work being published."""
+        for binding_id in binding_ids:
+            versions: dict[str, int] = {}
+            for (versions_json,) in conn.execute("""SELECT input_versions_json
+                FROM topology_epoch_work WHERE epoch_id = ? AND binding_id = ? AND frontier = ?""",
+                [epoch, binding_id, frontier]).fetchall():
+                for ref, version in self._decode(versions_json).items():
+                    versions[ref] = max(versions.get(ref, 0), int(version))
+            if not versions:
+                continue
+            conn.execute("""INSERT INTO topology_binding_frontiers
+                (epoch_id, binding_id, input_versions_json) VALUES (?, ?, ?)
+                ON CONFLICT (epoch_id, binding_id) DO UPDATE SET
+                input_versions_json = excluded.input_versions_json""",
+                [epoch, binding_id, self._json(versions)])
+
+    def _component_frontier_covers_current_inputs(
+        self, conn, epoch: str, component: str, frontier: int,
+        members: Sequence[str], bindings: Mapping[str, EpochBinding], owners: Mapping[str, str],
+    ) -> bool:
+        planned: dict[str, int] = {}
+        for (versions_json,) in conn.execute("""SELECT input_versions_json FROM topology_epoch_work
+            WHERE epoch_id = ? AND component_id = ? AND frontier = ?""",
+            [epoch, component, frontier]).fetchall():
+            for ref, version in self._decode(versions_json).items():
+                planned[ref] = max(planned.get(ref, 0), int(version))
+        raw_refs = sorted({ref for binding_id in members for ref in bindings[binding_id].input_refs
+                           if ref not in owners})
+        current = self._stream_versions(conn, raw_refs)
+        return all(planned.get(ref, 0) >= version for ref, version in current.items())
 
     def plan_data_changes(self, *, maximum_partition_duration: timedelta = timedelta(minutes=15)) -> int:
         """Derive missing work from canonical changes and propagate it through the DAG."""
@@ -570,11 +616,10 @@ class TopologyEpochDuckDB:
             raw_changes: dict[str, list[TimeRange]] = {binding_id: [] for binding_id in bindings}
             for binding_id, binding in bindings.items():
                 raw_refs = tuple(ref for ref in binding.input_refs if ref not in owners)
-                prior: dict[str, int] = {ref: 0 for ref in raw_refs}
-                for (versions_json,) in conn.execute("SELECT input_versions_json FROM topology_epoch_work WHERE epoch_id = ? AND binding_id = ?", [epoch, binding_id]).fetchall():
-                    versions = self._decode(versions_json)
-                    for ref in raw_refs:
-                        prior[ref] = max(prior[ref], int(versions.get(ref, 0)))
+                saved = conn.execute("""SELECT input_versions_json FROM topology_binding_frontiers
+                    WHERE epoch_id = ? AND binding_id = ?""", [epoch, binding_id]).fetchone()
+                versions = self._decode(saved[0]) if saved else {}
+                prior: dict[str, int] = {ref: int(versions.get(ref, 0)) for ref in raw_refs}
                 for ref in raw_refs:
                     head = self._stream_versions(conn, (ref,)).get(ref, 0)
                     if head <= prior[ref]:
@@ -608,19 +653,41 @@ class TopologyEpochDuckDB:
             for component, members in sorted(component_members.items()):
                 if not any(dirty[binding_id] for binding_id in members):
                     continue
+                self._lock_component(conn, epoch, component)
+                component_state = conn.execute("""SELECT frontier, status FROM topology_epoch_components
+                    WHERE epoch_id = ? AND component_id = ?""", [epoch, component]).fetchone()
+                current_frontier = int(component_state[0])
+                if component_state[1] != "sealed":
+                    if self._component_frontier_covers_current_inputs(
+                        conn, epoch, component, current_frontier, members, bindings, owners
+                    ):
+                        continue
+                    # Coalesce a newer input head into a replacement frontier;
+                    # old attempts remain fenced and cannot publish.
+                    conn.execute("""UPDATE topology_epoch_work SET status = 'superseded'
+                        WHERE epoch_id = ? AND component_id = ? AND frontier = ?
+                        AND status != 'superseded'""", [epoch, component, current_frontier])
+                    conn.execute("""DELETE FROM topology_epoch_outputs WHERE epoch_id = ? AND work_id IN
+                        (SELECT work_id FROM topology_epoch_work
+                         WHERE epoch_id = ? AND component_id = ? AND frontier = ?)""",
+                        [epoch, epoch, component, current_frontier])
+                frontier = current_frontier + 1
                 rows = self._work_rows(
                     conn, epoch, component, members, bindings, edges, dirty,
-                    maximum_partition_duration, prefix="epoch-data-work",
+                    maximum_partition_duration, frontier=frontier, prefix="epoch-data-work",
                 )
                 for row in rows:
                     changed = conn.execute("""INSERT INTO topology_epoch_work
-                        (work_id, epoch_id, component_id, binding_id,
+                        (work_id, epoch_id, component_id, binding_id, frontier,
                          write_start_ts, write_end_ts, read_start_ts, read_end_ts,
                          input_versions_json, upstream_frontier_json, binding_digest, status)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
                         ON CONFLICT (work_id) DO NOTHING""", row).rowcount
                     inserted += int(bool(changed))
-                conn.execute("UPDATE topology_epoch_components SET status = 'pending', seal_publication_id = NULL WHERE epoch_id = ? AND component_id = ?", [epoch, component])
+                if rows:
+                    conn.execute("""UPDATE topology_epoch_components
+                        SET status = 'pending', frontier = ?, seal_publication_id = NULL
+                        WHERE epoch_id = ? AND component_id = ?""", [frontier, epoch, component])
             if inserted:
                 conn.execute("UPDATE topology_epochs SET status = 'reconciling' WHERE epoch_id = ?", [epoch])
         if inserted:
@@ -897,16 +964,18 @@ class TopologyEpochDuckDB:
 
     def claim_next_component(self, owner: str, *, duration: timedelta = timedelta(minutes=5)) -> EpochClaim | None:
         with self._store._own_conn() as conn:
-            rows = conn.execute("""SELECT c.epoch_id, c.component_id FROM topology_epoch_components c
+            rows = conn.execute("""SELECT c.epoch_id, c.component_id, c.frontier FROM topology_epoch_components c
                 JOIN topology_epochs e ON e.epoch_id = c.epoch_id
                 WHERE c.status = 'pending' AND e.status IN ('reconciling', 'ready')
                   AND e.epoch_id = (SELECT current_epoch_id FROM topology_epoch_control WHERE control_id = 1)
                 ORDER BY c.component_id""").fetchall()
-            for epoch, component in rows:
-                work_states = conn.execute("SELECT status FROM topology_epoch_work WHERE epoch_id = ? AND component_id = ?", [epoch, component]).fetchall()
+            for epoch, component, frontier in rows:
+                work_states = conn.execute("""SELECT status FROM topology_epoch_work
+                    WHERE epoch_id = ? AND component_id = ? AND frontier = ?""",
+                    [epoch, component, frontier]).fetchall()
                 if any(row[0] != "committed" for row in work_states):
                     continue
-                claim = self.claim("seal", f"{epoch}:{component}", owner, duration=duration)
+                claim = self.claim("seal", f"{epoch}:{component}:{frontier}", owner, duration=duration)
                 if claim is not None:
                     return claim
         return None
@@ -929,24 +998,33 @@ class TopologyEpochDuckDB:
     def seal_component(self, claim: EpochClaim) -> str | None:
         if claim.kind != "seal":
             raise EpochClaimError("claim is not a seal claim")
-        epoch, component = claim.target_id.split(":", 1)
+        epoch, component, frontier_text = claim.target_id.rsplit(":", 2)
+        frontier = int(frontier_text)
         with self._store._lock, self._store._write_conn() as conn:
+            self._lock_component(conn, epoch, component)
             self._require_claim(conn, claim)
             control, active_epoch = conn.execute(
                 "SELECT current_epoch_id, active_epoch_id FROM topology_epoch_control WHERE control_id = 1"
             ).fetchone()
             status = conn.execute("SELECT status FROM topology_epochs WHERE epoch_id = ?", [epoch]).fetchone()
-            component_row = conn.execute("SELECT binding_ids_json, status FROM topology_epoch_components WHERE epoch_id = ? AND component_id = ?", [epoch, component]).fetchone()
+            component_row = conn.execute("""SELECT binding_ids_json, status, frontier, sealed_frontier
+                FROM topology_epoch_components WHERE epoch_id = ? AND component_id = ?""",
+                [epoch, component]).fetchone()
             if status is None or component_row is None:
                 raise KeyError(claim.target_id)
             if control != epoch or status[0] == "superseded":
                 conn.execute("UPDATE topology_epoch_components SET status = 'superseded' WHERE epoch_id = ? AND component_id = ?", [epoch, component])
                 conn.execute("UPDATE topology_epoch_claims SET owner = NULL, expires_at = NULL WHERE claim_id = ?", [claim.claim_id])
                 raise StaleEpochError("epoch was superseded before seal")
-            if component_row[1] == "sealed":
+            if component_row[2] != frontier:
+                conn.execute("UPDATE topology_epoch_claims SET owner = NULL, expires_at = NULL WHERE claim_id = ?", [claim.claim_id])
+                raise StaleEpochError("component frontier advanced before seal")
+            if component_row[1] == "sealed" and component_row[3] == frontier:
                 conn.execute("UPDATE topology_epoch_claims SET owner = NULL, expires_at = NULL WHERE claim_id = ?", [claim.claim_id])
                 return conn.execute("SELECT seal_publication_id FROM topology_epoch_components WHERE epoch_id = ? AND component_id = ?", [epoch, component]).fetchone()[0]
-            work_states = conn.execute("SELECT status FROM topology_epoch_work WHERE epoch_id = ? AND component_id = ?", [epoch, component]).fetchall()
+            work_states = conn.execute("""SELECT status FROM topology_epoch_work
+                WHERE epoch_id = ? AND component_id = ? AND frontier = ?""",
+                [epoch, component, frontier]).fetchall()
             if any(row[0] != "committed" for row in work_states):
                 raise ValueError("component has unfinished work")
             binding_ids = self._decode(component_row[0])
@@ -957,8 +1035,10 @@ class TopologyEpochDuckDB:
             work_intervals = [
                 (self._aware(start), self._aware(end))
                 for start, end in conn.execute(
-                    "SELECT write_start_ts, write_end_ts FROM topology_epoch_work WHERE epoch_id = ? AND component_id = ? ORDER BY write_start_ts, write_end_ts",
-                    [epoch, component],
+                    """SELECT write_start_ts, write_end_ts FROM topology_epoch_work
+                    WHERE epoch_id = ? AND component_id = ? AND frontier = ?
+                    ORDER BY write_start_ts, write_end_ts""",
+                    [epoch, component, frontier],
                 ).fetchall()
             ]
             if not work_intervals and output_refs:
@@ -984,21 +1064,36 @@ class TopologyEpochDuckDB:
                     SELECT o.ref_uri, o.ts, o.numeric_value, o.text_value,
                            row_number() OVER (PARTITION BY o.ref_uri, o.ts ORDER BY w.committed_at DESC, o.work_id DESC) AS recency
                     FROM topology_epoch_outputs o JOIN topology_epoch_work w ON w.work_id = o.work_id
-                    WHERE o.epoch_id = ? AND w.epoch_id = ? AND w.component_id = ?) latest
-                    WHERE recency = 1 ORDER BY ref_uri, ts""", [epoch, epoch, component]).fetchall()
+                    WHERE o.epoch_id = ? AND w.epoch_id = ? AND w.component_id = ?
+                      AND w.frontier = ?) latest
+                    WHERE recency = 1 ORDER BY ref_uri, ts""",
+                    [epoch, epoch, component, frontier]).fetchall()
                 staged_keys = {(ref, ts) for ref, ts, _, _ in staged}
                 mutations.extend({"operation": "delete", "ref_uri": ref, "ts": self._aware(ts), "numeric_value": None, "text_value": None}
                                  for ref, ts in sorted(existing - staged_keys))
                 mutations.extend({"operation": "upsert", "ref_uri": ref, "ts": self._aware(ts), "numeric_value": numeric, "text_value": text}
                                  for ref, ts, numeric, text in staged)
             seal_digest = sha256(self._json(mutations).encode()).hexdigest() if mutations else "empty"
-            publication_id = f"topology-epoch:{epoch}:component:{component}:seal:{seal_digest}"
+            publication_id = f"topology-epoch:{epoch}:component:{component}:frontier:{frontier}:seal:{seal_digest}"
             if mutations:
                 receipt = self._apply_canonical_publication(conn, publication_id, pa.Table.from_pylist(mutations, schema=MUTATION_SCHEMA))
                 publication_id = receipt.publication_id
             else:
                 publication_id = None
-            conn.execute("UPDATE topology_epoch_components SET status = 'sealed', seal_publication_id = ? WHERE epoch_id = ? AND component_id = ?", [publication_id, epoch, component])
+            self._seal_input_frontiers(conn, epoch, frontier, binding_ids)
+            conn.execute("""UPDATE topology_epoch_components
+                SET status = 'sealed', sealed_frontier = ?, seal_publication_id = ?
+                WHERE epoch_id = ? AND component_id = ?""",
+                [frontier, publication_id, epoch, component])
+            # The canonical publication is now the durable baseline. Work and
+            # staged rows are execution scratch, not retained history.
+            conn.execute("""DELETE FROM topology_epoch_outputs WHERE epoch_id = ? AND work_id IN
+                (SELECT work_id FROM topology_epoch_work
+                 WHERE epoch_id = ? AND component_id = ? AND frontier <= ?)""",
+                [epoch, epoch, component, frontier])
+            conn.execute("""DELETE FROM topology_epoch_work
+                WHERE epoch_id = ? AND component_id = ? AND frontier <= ?""",
+                [epoch, component, frontier])
             pending = conn.execute("SELECT count(*) FROM topology_epoch_components WHERE epoch_id = ? AND status != 'sealed'", [epoch]).fetchone()[0]
             if pending == 0:
                 conn.execute("UPDATE topology_epochs SET status = 'active', activated_at = ? WHERE epoch_id = ?", [self._now(), epoch])
@@ -1028,26 +1123,29 @@ class TopologyEpochDuckDB:
 
     # ----- retention/compaction -----------------------------------------
 
-    def compact(self, graph_revision: int) -> int:
-        """Discard old private overlays while retaining epoch identity and receipts."""
+    def compact(self) -> int:
+        """Discard superseded topology state not named by a live pointer."""
         with self._store._lock, self._store._write_conn() as conn:
-            active = conn.execute("SELECT active_epoch_id FROM topology_epoch_control WHERE control_id = 1").fetchone()[0]
-            if active is None:
-                rows = conn.execute(
-                    "SELECT epoch_id FROM topology_epochs WHERE graph_revision < ? AND status = 'superseded' AND compacted_at IS NULL",
-                    [graph_revision],
-                ).fetchall()
+            candidate, current, active = conn.execute("""SELECT candidate_epoch_id,
+                current_epoch_id, active_epoch_id FROM topology_epoch_control WHERE control_id = 1""").fetchone()
+            live = [epoch for epoch in (candidate, current, active) if epoch is not None]
+            if live:
+                rows = conn.execute(f"""SELECT epoch_id FROM topology_epochs
+                    WHERE status = 'superseded' AND compacted_at IS NULL
+                    AND epoch_id NOT IN ({','.join('?' for _ in live)})""", live).fetchall()
             else:
-                rows = conn.execute(
-                    "SELECT epoch_id FROM topology_epochs WHERE graph_revision < ? AND status = 'superseded' AND epoch_id != ? AND compacted_at IS NULL",
-                    [graph_revision, active],
-                ).fetchall()
+                rows = conn.execute("""SELECT epoch_id FROM topology_epochs
+                    WHERE status = 'superseded' AND compacted_at IS NULL""").fetchall()
             for (epoch,) in rows:
                 conn.execute("DELETE FROM topology_epoch_outputs WHERE epoch_id = ?", [epoch])
                 conn.execute("DELETE FROM topology_epoch_work WHERE epoch_id = ?", [epoch])
                 conn.execute("DELETE FROM topology_epoch_retirements WHERE epoch_id = ?", [epoch])
+                conn.execute("DELETE FROM topology_binding_frontiers WHERE epoch_id = ?", [epoch])
+                conn.execute("DELETE FROM topology_epoch_edges WHERE epoch_id = ?", [epoch])
+                conn.execute("DELETE FROM topology_epoch_components WHERE epoch_id = ?", [epoch])
+                conn.execute("DELETE FROM topology_epoch_bindings WHERE epoch_id = ?", [epoch])
+                conn.execute("DELETE FROM topology_epoch_definition_pins WHERE epoch_id = ?", [epoch])
                 conn.execute("UPDATE topology_epochs SET status = 'compacted', compacted_at = ? WHERE epoch_id = ?", [self._now(), epoch])
-            conn.execute("UPDATE topology_epoch_control SET compaction_watermark = ?, updated_at = ? WHERE control_id = 1", [graph_revision, self._now()])
         if rows:
             self._after_transition("epochs_compacted")
         return len(rows)
