@@ -2,8 +2,9 @@
 
 Acquirium materialization is driven by an immutable resolved topology epoch.
 An epoch is identified by the published graph revision, graph digest, and the
-catalog of immutable transformation definition identities plus their pinned
-state-revision identities.  Construction is a
+definitions selected by named transformation deployments plus their pinned
+state-revision identities. Definitions are immutable; deployments are the
+small mutable map that selects one definition generation per name. Construction is a
 control-plane operation: it evaluates late-binding selectors once, persists the
 resolved binding inputs/outputs/metadata, records definition and state-revision
 identities, validates global output ownership, and stores a directed acyclic
@@ -19,7 +20,9 @@ constructing -> ready -> reconciling -> active
                           +--> failed
 ```
 
-`constructing` is claimed while the graph is resolved.  An epoch with work is
+`constructing` is a candidate while the graph is resolved. It does not replace
+the current desired topology until resolution and global DAG validation both
+succeed. An epoch with work is
 `reconciling`; an epoch with no retained input work is immediately sealable.
 Newer desired epochs supersede every older desired epoch.  Supersession changes
 eligibility only: old canonical rows remain visible until a newer component

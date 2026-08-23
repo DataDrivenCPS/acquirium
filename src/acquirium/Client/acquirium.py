@@ -512,19 +512,22 @@ class Acquirium:
         return self.client.register_service({"name": definition.name, "source_digest": definition.source_digest,
             "entrypoint": definition.entrypoint, "parameters_schema": dict(definition.parameters_schema)})
 
-    def register_transformation(self, target: object) -> dict[str, Any]:
+    def deploy_transformation(self, target: object) -> dict[str, Any]:
         """Register a callable decorated with :func:`acquirium.transform` or ``stateful``."""
         definition = getattr(target, "__acquirium_definition__", None)
         if definition is None or definition.kind != "transformation":
-            raise ValueError("register_transformation expects an @acquirium.transform or @acquirium.stateful definition")
+            raise ValueError("deploy_transformation expects an @acquirium.transform or @acquirium.stateful definition")
         # definition_spec converts inputs/bind/outputs helper dataclasses into
         # the JSON-safe shapes the server stores in immutable topology epochs.
-        return self.client.register_transformation({
+        return self.client.deploy_transformation({
             "name": definition.name,
             "source_digest": definition.source_digest,
             "entrypoint": definition.entrypoint,
             **definition_spec(definition),
         })
+
+    def remove_transformation(self, name: str) -> dict[str, Any]:
+        return self.client.remove_transformation(name)
 
     def start_service(self, name: str) -> dict[str, Any]:
         return self.client.start_service(name)

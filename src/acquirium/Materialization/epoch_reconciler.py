@@ -20,7 +20,7 @@ class TopologyEpochReconciler:
         return self._storage.ensure_epoch(graph_revision, graph_digest)
 
     def _construct_once(self, owner: str) -> bool:
-        epoch_id = self._storage.current_epoch_id()
+        epoch_id = self._storage.candidate_epoch_id()
         if epoch_id is None:
             return False
         if self._storage.epoch_summary(epoch_id).status != "constructing":

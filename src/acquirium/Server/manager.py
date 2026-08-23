@@ -677,15 +677,38 @@ class Manager:
         )
         self.notify_service_changes({}, graph_revision=graph_revision)
 
-    def register_transformation(self, definition) -> dict[str, Any]:
-        """Persist an immutable transformation and include it in the desired epoch."""
+    def recover_materialization_state(self) -> None:
+        """Re-derive control work from durable graph and publication state."""
+        self._record_materialization_graph_revision()
+        self.epoch_materialization.plan_data_changes()
+
+    def materialization_safety_scan(self) -> None:
+        """Continuously recover publication work missed by an interrupted request."""
+        self.epoch_materialization.plan_data_changes()
+        self.service_safety_scan()
+
+    def deploy_transformation(self, definition) -> dict[str, Any]:
+        """Validate and deploy one immutable transformation definition."""
         definition_id = self.epoch_materialization.register_definition(definition)
+        generation = self.epoch_materialization.deploy_definition(
+            definition.name, definition_id, self.graph_store
+        )
         status = self.graph_store.graph_status()
         graph_revision = int(status["published_version"])
         epoch_id = self.epoch_reconciler.ensure_graph_epoch(
             graph_revision, self.graph_store.published_query_digest()
         ) if graph_revision >= 0 else None
-        return {"name": definition.name, "definition_id": definition_id, "epoch_id": epoch_id, "status": "registered"}
+        return {"name": definition.name, "definition_id": definition_id,
+                "generation": generation, "epoch_id": epoch_id, "status": "deploying"}
+
+    def remove_transformation(self, name: str) -> dict[str, Any]:
+        self.epoch_materialization.remove_deployment(name, self.graph_store)
+        status = self.graph_store.graph_status()
+        graph_revision = int(status["published_version"])
+        epoch_id = self.epoch_reconciler.ensure_graph_epoch(
+            graph_revision, self.graph_store.published_query_digest()
+        ) if graph_revision >= 0 else None
+        return {"name": name, "epoch_id": epoch_id, "status": "removing"}
 
     def register_service(self, definition) -> dict[str, Any]:
         """Register an immutable service package without granting stream ownership."""

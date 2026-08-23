@@ -44,6 +44,9 @@ class TopologyEpochDuckDB:
                 definition_id VARCHAR PRIMARY KEY, name VARCHAR NOT NULL, kind VARCHAR NOT NULL,
                 source_digest VARCHAR NOT NULL, entrypoint VARCHAR NOT NULL, spec_json VARCHAR NOT NULL,
                 created_at TIMESTAMP NOT NULL)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS topology_deployments (
+                name VARCHAR PRIMARY KEY, definition_id VARCHAR NOT NULL,
+                generation BIGINT NOT NULL, updated_at TIMESTAMP NOT NULL)""")
             conn.execute("""CREATE TABLE IF NOT EXISTS topology_epochs (
                 epoch_id VARCHAR PRIMARY KEY, graph_revision BIGINT NOT NULL, graph_digest VARCHAR NOT NULL,
                 catalog_digest VARCHAR NOT NULL, status VARCHAR NOT NULL, superseded_by VARCHAR,
@@ -84,7 +87,8 @@ class TopologyEpochDuckDB:
                 claim_id VARCHAR PRIMARY KEY, kind VARCHAR NOT NULL, target_id VARCHAR NOT NULL UNIQUE,
                 owner VARCHAR, attempt INTEGER NOT NULL DEFAULT 0, expires_at TIMESTAMP)""")
             conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_control (
-                control_id INTEGER PRIMARY KEY, current_epoch_id VARCHAR, active_epoch_id VARCHAR,
+                control_id INTEGER PRIMARY KEY, candidate_epoch_id VARCHAR,
+                current_epoch_id VARCHAR, active_epoch_id VARCHAR,
                 compaction_watermark BIGINT NOT NULL DEFAULT -1, updated_at TIMESTAMP NOT NULL)""")
             conn.execute("""INSERT INTO topology_epoch_control (control_id, compaction_watermark, updated_at)
                 VALUES (1, -1, ?) ON CONFLICT (control_id) DO NOTHING""", [self._now()])
@@ -130,21 +134,61 @@ class TopologyEpochDuckDB:
         self._after_transition("definition_registered")
         return definition.definition_id
 
+    def deploy_definition(self, name: str, definition_id: str, graph: object) -> int:
+        """Validate and select one immutable definition for a deployment name."""
+        if not name:
+            raise ValueError("deployment name is required")
+        with self._store._own_conn() as conn:
+            selected = dict(conn.execute("SELECT name, definition_id FROM topology_deployments").fetchall())
+            selected[name] = definition_id
+            self._validate_deployments(conn, selected, graph)
+        with self._store._lock, self._store._write_conn() as conn:
+            prior = conn.execute("SELECT generation FROM topology_deployments WHERE name = ?", [name]).fetchone()
+            generation = int(prior[0]) + 1 if prior else 1
+            conn.execute("""INSERT INTO topology_deployments (name, definition_id, generation, updated_at)
+                VALUES (?, ?, ?, ?) ON CONFLICT (name) DO UPDATE SET
+                definition_id = excluded.definition_id, generation = excluded.generation,
+                updated_at = excluded.updated_at""", [name, definition_id, generation, self._now()])
+        self._after_transition("definition_deployed")
+        return generation
+
+    def remove_deployment(self, name: str, graph: object) -> None:
+        """Validate and remove one named deployment from desired topology."""
+        with self._store._own_conn() as conn:
+            selected = dict(conn.execute("SELECT name, definition_id FROM topology_deployments").fetchall())
+            if name not in selected:
+                raise KeyError(name)
+            del selected[name]
+            self._validate_deployments(conn, selected, graph)
+        with self._store._lock, self._store._write_conn() as conn:
+            conn.execute("DELETE FROM topology_deployments WHERE name = ?", [name])
+        self._after_transition("definition_undeployed")
+
+    def _validate_deployments(self, conn, selected: Mapping[str, str], graph: object) -> None:
+        rows = conn.execute("""SELECT definition_id, spec_json FROM topology_epoch_definitions
+            WHERE kind = 'transformation'""").fetchall()
+        specs = {row[0]: self._decode(row[1]) for row in rows}
+        missing = sorted(set(selected.values()) - set(specs))
+        if missing:
+            raise KeyError(missing[0])
+        resolved: list[EpochBinding] = []
+        for _, definition_id in sorted(selected.items()):
+            resolved.extend(epoch_binding("candidate", definition_id, binding)
+                            for binding in resolve_bindings(specs[definition_id], graph))
+        global_dag(resolved)
+
     def _catalog(self, conn) -> tuple[tuple[str, str, str, str, str], ...]:
-        rows = conn.execute("""SELECT definition_id, name, source_digest, entrypoint, spec_json
-            FROM topology_epoch_definitions WHERE kind = 'transformation' ORDER BY definition_id""").fetchall()
+        rows = conn.execute("""SELECT d.definition_id, p.name, d.source_digest, d.entrypoint, d.spec_json
+            FROM topology_deployments p JOIN topology_epoch_definitions d
+              ON d.definition_id = p.definition_id
+            ORDER BY p.name""").fetchall()
         return tuple(rows)
 
     def _catalog_digest(self, catalog: Sequence[tuple[str, str, str, str, str]], state_ids: Sequence[tuple]) -> str:
         return sha256(self._json({"catalog": catalog, "state_revisions": state_ids}).encode()).hexdigest()
 
     def ensure_epoch(self, graph_revision: int, graph_digest: str) -> str:
-        """Persist the desired epoch and supersede older desired epochs.
-
-        Supersession only changes control-plane eligibility.  Canonical rows
-        remain untouched until a newer component seal publishes a complete
-        replacement through the publication protocol.
-        """
+        """Persist a candidate epoch without disturbing the current topology."""
         # Resolve state pins before opening the epoch writer transaction.  A
         # manager's resolver normally reads the support store, which shares
         # the DuckDB file; nesting that read under this write lock can
@@ -162,27 +206,31 @@ class TopologyEpochDuckDB:
                 (epoch_id, graph_revision, graph_digest, catalog_digest, status, created_at)
                 VALUES (?, ?, ?, ?, 'constructing', ?) ON CONFLICT (epoch_id) DO NOTHING""",
                 [eid, graph_revision, graph_digest, catalog_digest, self._now()])
-            conn.executemany(
-                """INSERT INTO topology_epoch_definition_pins (epoch_id, definition_id, state_revision)
-                   VALUES (?, ?, ?) ON CONFLICT DO NOTHING""",
-                [(eid, definition_id, state_revision) for (definition_id, _, state_revision) in state_ids],
-            )
-            current = conn.execute("SELECT current_epoch_id FROM topology_epoch_control WHERE control_id = 1").fetchone()[0]
-            if current != eid:
+            if state_ids:
+                conn.executemany(
+                    """INSERT INTO topology_epoch_definition_pins (epoch_id, definition_id, state_revision)
+                       VALUES (?, ?, ?) ON CONFLICT DO NOTHING""",
+                    [(eid, definition_id, state_revision) for (definition_id, _, state_revision) in state_ids],
+                )
+            epoch_status = conn.execute(
+                "SELECT status FROM topology_epochs WHERE epoch_id = ?", [eid]
+            ).fetchone()[0]
+            candidate = conn.execute("SELECT candidate_epoch_id FROM topology_epoch_control WHERE control_id = 1").fetchone()[0]
+            if epoch_status == "constructing" and candidate != eid:
                 conn.execute("""UPDATE topology_epochs SET status = 'superseded', superseded_by = ?
-                    WHERE epoch_id != ? AND status IN ('constructing', 'ready', 'reconciling', 'active')
-                    AND graph_revision <= ?""", [eid, eid, graph_revision])
-                conn.execute("""UPDATE topology_epoch_components SET status = 'superseded'
-                    WHERE epoch_id != ? AND status = 'pending' AND epoch_id IN
-                    (SELECT epoch_id FROM topology_epochs WHERE status = 'superseded')""", [eid])
-                conn.execute("UPDATE topology_epoch_work SET status = 'superseded' WHERE epoch_id != ? AND status IN ('pending', 'claimed')", [eid])
-                conn.execute("UPDATE topology_epoch_control SET current_epoch_id = ?, updated_at = ? WHERE control_id = 1", [eid, self._now()])
+                    WHERE epoch_id != ? AND status = 'constructing'""", [eid, eid])
+                conn.execute("UPDATE topology_epoch_control SET candidate_epoch_id = ?, updated_at = ? WHERE control_id = 1", [eid, self._now()])
         self._after_transition("epoch_ensured")
         return eid
 
     def current_epoch_id(self) -> str | None:
         with self._store._own_conn() as conn:
             row = conn.execute("SELECT current_epoch_id FROM topology_epoch_control WHERE control_id = 1").fetchone()
+        return row[0] if row else None
+
+    def candidate_epoch_id(self) -> str | None:
+        with self._store._own_conn() as conn:
+            row = conn.execute("SELECT candidate_epoch_id FROM topology_epoch_control WHERE control_id = 1").fetchone()
         return row[0] if row else None
 
     def epoch_summary(self, epoch_id_value: str) -> EpochSummary:
@@ -225,8 +273,8 @@ class TopologyEpochDuckDB:
                 return self._epoch_summary_conn(conn, epoch_id_value)
             if row[2] != "constructing":
                 raise ValueError(f"epoch is not constructible: {row[2]}")
-            current = conn.execute("SELECT current_epoch_id FROM topology_epoch_control WHERE control_id = 1").fetchone()[0]
-            if current != epoch_id_value:
+            candidate = conn.execute("SELECT candidate_epoch_id FROM topology_epoch_control WHERE control_id = 1").fetchone()[0]
+            if candidate != epoch_id_value:
                 conn.execute("UPDATE topology_epochs SET status = 'superseded' WHERE epoch_id = ?", [epoch_id_value])
                 return self._epoch_summary_conn(conn, epoch_id_value)
             catalog = self._catalog(conn)
@@ -246,10 +294,10 @@ class TopologyEpochDuckDB:
             raise ValueError(f"epoch construction failed: {error}") from error
 
         with self._store._lock, self._store._write_conn() as conn:
-            current = conn.execute("SELECT current_epoch_id FROM topology_epoch_control WHERE control_id = 1").fetchone()[0]
+            candidate = conn.execute("SELECT candidate_epoch_id FROM topology_epoch_control WHERE control_id = 1").fetchone()[0]
             active_epoch = conn.execute("SELECT active_epoch_id FROM topology_epoch_control WHERE control_id = 1").fetchone()[0]
             status = conn.execute("SELECT status FROM topology_epochs WHERE epoch_id = ?", [epoch_id_value]).fetchone()[0]
-            if current != epoch_id_value or status == "superseded":
+            if candidate != epoch_id_value or status == "superseded":
                 conn.execute("UPDATE topology_epochs SET status = 'superseded' WHERE epoch_id = ?", [epoch_id_value])
                 return self._epoch_summary_conn(conn, epoch_id_value)
             pins = dict(conn.execute(
@@ -340,6 +388,15 @@ class TopologyEpochDuckDB:
                 ON CONFLICT (work_id) DO NOTHING""", works)
             new_status = "reconciling" if works else ("ready" if component_rows else "active")
             conn.execute("UPDATE topology_epochs SET status = ? WHERE epoch_id = ? AND status = 'constructing'", [new_status, epoch_id_value])
+            conn.execute("""UPDATE topology_epochs SET status = 'superseded', superseded_by = ?
+                WHERE epoch_id != ? AND status IN ('ready', 'reconciling', 'active')""",
+                [epoch_id_value, epoch_id_value])
+            conn.execute("""UPDATE topology_epoch_components SET status = 'superseded'
+                WHERE epoch_id != ? AND status = 'pending' AND epoch_id IN
+                (SELECT epoch_id FROM topology_epochs WHERE status = 'superseded')""", [epoch_id_value])
+            conn.execute("UPDATE topology_epoch_work SET status = 'superseded' WHERE epoch_id != ? AND status IN ('pending', 'claimed')", [epoch_id_value])
+            conn.execute("""UPDATE topology_epoch_control SET current_epoch_id = ?, candidate_epoch_id = NULL,
+                updated_at = ? WHERE control_id = 1""", [epoch_id_value, self._now()])
             if not component_rows:
                 conn.execute("UPDATE topology_epoch_control SET active_epoch_id = ?, updated_at = ? WHERE control_id = 1", [epoch_id_value, self._now()])
         self._after_transition("epoch_constructed")

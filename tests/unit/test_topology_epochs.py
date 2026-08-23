@@ -28,6 +28,16 @@ def add_one(inputs, context):
     })
 
 
+def add_two(inputs, context):
+    values = inputs.column("numeric_value").to_pylist()
+    return pa.table({
+        "ref_uri": ["urn:derived"] * len(values),
+        "ts": inputs.column("ts"),
+        "numeric_value": [value + 2 if value is not None else None for value in values],
+        "text_value": [None] * len(values),
+    })
+
+
 def add_one_a(inputs, context):
     return pa.table({"ref_uri": ["urn:a"] * inputs.num_rows, "ts": inputs.column("ts"),
                      "numeric_value": [value + 1 for value in inputs.column("numeric_value").to_pylist()],
@@ -69,6 +79,12 @@ class Graph:
         return {"columns": ["ref_uri"], "rows": [[ref] for ref in self.refs]}
 
 
+def _deploy(runtime, definition, graph=None):
+    definition_id = runtime.register_definition(definition)
+    runtime.deploy_definition(definition.name, definition_id, graph or Graph(("urn:raw",)))
+    return definition_id
+
+
 def _runtime(tmp_path):
     store = DuckDBStore(tmp_path / "epochs.duckdb", recreate=True)
     publisher = PublicationDuckDB(store)
@@ -80,7 +96,7 @@ def _runtime(tmp_path):
     runtime = TopologyEpochDuckDB(store)
     definition = definition_for(add_one, name="add-one", inputs={"input": "urn:raw"},
                                 outputs={"output": "urn:derived"}, impact=pointwise())
-    runtime.register_definition(definition)
+    _deploy(runtime, definition)
     return store, runtime, definition, start
 
 
@@ -132,7 +148,7 @@ def test_epoch_pins_state_revision_before_construction(tmp_path):
     state = ["state-a"]
     runtime = TopologyEpochDuckDB(store, state_revision_resolver=lambda _binding: state[0])
     try:
-        runtime.register_definition(definition)
+        _deploy(runtime, definition)
         epoch = runtime.ensure_epoch(7, "state-pinned")
         state[0] = "state-b"
         runtime.construct_epoch(epoch, Graph(("urn:raw",)))
@@ -187,7 +203,7 @@ def test_lookback_reads_across_partition_boundaries(tmp_path):
         for minute in range(21)
     ], schema=MUTATION_SCHEMA)))
     runtime = TopologyEpochDuckDB(store)
-    runtime.register_definition(definition_for(
+    _deploy(runtime, definition_for(
         rolling_five_minutes, name="rolling-five", inputs={"input": "urn:raw"},
         outputs={"output": "urn:rolling"}, impact=lookback(timedelta(minutes=5)),
     ))
@@ -216,11 +232,11 @@ def test_late_change_propagates_window_through_managed_input(tmp_path):
         for minute in range(21)
     ], schema=MUTATION_SCHEMA)))
     runtime = TopologyEpochDuckDB(store)
-    runtime.register_definition(definition_for(
+    _deploy(runtime, definition_for(
         add_one_a, name="upstream", inputs={"input": "urn:raw"},
         outputs={"output": "urn:a"}, impact=pointwise(),
     ))
-    runtime.register_definition(definition_for(
+    _deploy(runtime, definition_for(
         rolling_five_minutes, name="downstream", inputs={"input": "urn:a"},
         outputs={"output": "urn:rolling"}, impact=lookback(timedelta(minutes=5)),
     ))
@@ -253,6 +269,7 @@ def test_superseded_claim_cannot_publish_and_new_epoch_replaces_component(tmp_pa
         claim = runtime.claim_next_work("old-worker")
         snapshot = runtime.snapshot(claim)
         new = runtime.ensure_epoch(2, "new")
+        runtime.construct_epoch(new, Graph(("urn:raw",)))
         with pytest.raises(StaleEpochError):
             runtime.commit_work(snapshot, pa.table({
                 "ref_uri": ["urn:derived"], "ts": [start],
@@ -263,7 +280,7 @@ def test_superseded_claim_cannot_publish_and_new_epoch_replaces_component(tmp_pa
                 WHERE r.ref_uri = 'urn:derived' AND NOT t.deleted""").fetchone() == (0,)
         reconciler = TopologyEpochReconciler(runtime, Graph(("urn:raw",)))
         try:
-            assert reconciler.run_until_idle("new-worker") == 3
+            assert reconciler.run_until_idle("new-worker") == 2
             assert runtime.active_epoch_id() == new
         finally:
             reconciler.close()
@@ -295,20 +312,111 @@ def test_data_publication_appends_manifest_work_to_the_active_epoch(tmp_path):
         store.close()
 
 
+def test_restart_recovers_publication_committed_before_planning(tmp_path):
+    store, runtime, _, start = _runtime(tmp_path)
+    graph = Graph(("urn:raw",))
+    reconciler = TopologyEpochReconciler(runtime, graph)
+    try:
+        reconciler.ensure_graph_epoch(1, "recovery")
+        reconciler.run_until_idle("initial")
+        PublicationDuckDB(store).publish(PublicationRequest("unplanned", pa.Table.from_pylist([{
+            "operation": "upsert", "ref_uri": "urn:raw", "ts": start + timedelta(minutes=1),
+            "numeric_value": 8.0, "text_value": None,
+        }], schema=MUTATION_SCHEMA)))
+
+        recovered = TopologyEpochDuckDB(store)
+        recovered_reconciler = TopologyEpochReconciler(recovered, graph)
+        try:
+            assert recovered.plan_data_changes() == 1
+            assert recovered_reconciler.run_until_idle("recovered") == 2
+        finally:
+            recovered_reconciler.close()
+    finally:
+        reconciler.close()
+        store.close()
+
+
+def test_startup_graph_recovery_does_not_reopen_active_epoch(tmp_path):
+    store, runtime, _, _ = _runtime(tmp_path)
+    reconciler = TopologyEpochReconciler(runtime, Graph(("urn:raw",)))
+    try:
+        epoch = reconciler.ensure_graph_epoch(1, "stable-graph")
+        reconciler.run_until_idle("initial")
+        assert runtime.ensure_epoch(1, "stable-graph") == epoch
+        assert runtime.candidate_epoch_id() is None
+        assert runtime.current_epoch_id() == epoch
+    finally:
+        reconciler.close()
+        store.close()
+
+
 def test_cycles_are_rejected_before_any_epoch_binding_is_visible(tmp_path):
     store = DuckDBStore(tmp_path / "cycle.duckdb", recreate=True)
     runtime = TopologyEpochDuckDB(store)
     try:
         first = definition_for(add_one, name="first", inputs={"input": "urn:b"}, outputs={"output": "urn:a"}, impact=pointwise())
         second = definition_for(add_one, name="second", inputs={"input": "urn:a"}, outputs={"output": "urn:b"}, impact=pointwise())
-        runtime.register_definition(first)
-        runtime.register_definition(second)
-        epoch = runtime.ensure_epoch(1, "cycle")
+        _deploy(runtime, first, Graph(()))
         with pytest.raises(ValueError, match="cycle"):
-            runtime.construct_epoch(epoch, Graph(()))
-        assert runtime.epoch_summary(epoch).status == "failed"
-        assert runtime.epoch_bindings(epoch) == ()
+            _deploy(runtime, second, Graph(()))
+        with store._own_conn() as conn:
+            assert conn.execute("SELECT name FROM topology_deployments ORDER BY name").fetchall() == [("first",)]
     finally:
+        store.close()
+
+
+def test_deployment_update_is_validated_before_it_changes_desired_topology(tmp_path):
+    store, runtime, first, _ = _runtime(tmp_path)
+    graph = Graph(("urn:raw",))
+    try:
+        old = runtime.ensure_epoch(1, "old")
+        runtime.construct_epoch(old, graph)
+        invalid = definition_for(
+            add_two, name=first.name, inputs={"input": "urn:derived"},
+            outputs={"output": "urn:derived"}, impact=pointwise(),
+        )
+        invalid_id = runtime.register_definition(invalid)
+        with pytest.raises(ValueError, match="self-cycle"):
+            runtime.deploy_definition(first.name, invalid_id, graph)
+        with store._own_conn() as conn:
+            deployed = conn.execute(
+                "SELECT definition_id, generation FROM topology_deployments WHERE name = ?",
+                [first.name],
+            ).fetchone()
+        assert deployed == (first.definition_id, 1)
+        assert runtime.current_epoch_id() == old
+
+        second = definition_for(
+            add_two, name=first.name, inputs={"input": "urn:raw"},
+            outputs={"output": "urn:derived"}, impact=pointwise(),
+        )
+        second_id = runtime.register_definition(second)
+        assert runtime.deploy_definition(first.name, second_id, graph) == 2
+        candidate = runtime.ensure_epoch(1, "same-graph")
+        assert runtime.current_epoch_id() == old
+        runtime.construct_epoch(candidate, graph)
+        assert runtime.current_epoch_id() == candidate
+        assert runtime.epoch_summary(old).status == "superseded"
+    finally:
+        store.close()
+
+
+def test_removing_deployment_retires_its_output(tmp_path):
+    store, runtime, definition, _ = _runtime(tmp_path)
+    graph = Graph(("urn:raw",))
+    reconciler = TopologyEpochReconciler(runtime, graph)
+    try:
+        reconciler.ensure_graph_epoch(1, "with-deployment")
+        reconciler.run_until_idle("initial")
+        runtime.remove_deployment(definition.name, graph)
+        removed = reconciler.ensure_graph_epoch(1, "without-deployment")
+        reconciler.run_until_idle("remove")
+        assert runtime.active_epoch_id() == removed
+        with store._own_conn() as conn:
+            assert conn.execute("""SELECT count(*) FROM timeseries t JOIN ref_ids r
+                ON r.ref_id = t.ref_id WHERE r.ref_uri = 'urn:derived' AND NOT t.deleted""").fetchone() == (0,)
+    finally:
+        reconciler.close()
         store.close()
 
 
@@ -321,8 +429,8 @@ def test_dependency_frontier_executes_upstream_before_downstream_and_seals_toget
              "numeric_value": 2.0, "text_value": None},
         ], schema=MUTATION_SCHEMA)))
         runtime = TopologyEpochDuckDB(store)
-        runtime.register_definition(definition_for(add_one_a, name="a", inputs={"input": "urn:raw"}, outputs={"output": "urn:a"}, impact=pointwise()))
-        runtime.register_definition(definition_for(add_one_b, name="b", inputs={"input": "urn:a"}, outputs={"output": "urn:b"}, impact=pointwise()))
+        _deploy(runtime, definition_for(add_one_a, name="a", inputs={"input": "urn:raw"}, outputs={"output": "urn:a"}, impact=pointwise()), Graph(()))
+        _deploy(runtime, definition_for(add_one_b, name="b", inputs={"input": "urn:a"}, outputs={"output": "urn:b"}, impact=pointwise()), Graph(()))
         reconciler = TopologyEpochReconciler(runtime, Graph(()))
         try:
             epoch = reconciler.ensure_graph_epoch(1, "dag")
@@ -347,8 +455,8 @@ def test_dependency_path_never_exposes_mixed_epoch_outputs(tmp_path):
              "numeric_value": 2.0, "text_value": None},
         ], schema=MUTATION_SCHEMA)))
         runtime = TopologyEpochDuckDB(store)
-        runtime.register_definition(definition_for(add_one_a, name="boundary-a", inputs={"input": "urn:raw"}, outputs={"output": "urn:a"}, impact=pointwise()))
-        runtime.register_definition(definition_for(add_one_b, name="boundary-b", inputs={"input": "urn:a"}, outputs={"output": "urn:b"}, impact=pointwise()))
+        _deploy(runtime, definition_for(add_one_a, name="boundary-a", inputs={"input": "urn:raw"}, outputs={"output": "urn:a"}, impact=pointwise()), Graph(()))
+        _deploy(runtime, definition_for(add_one_b, name="boundary-b", inputs={"input": "urn:a"}, outputs={"output": "urn:b"}, impact=pointwise()), Graph(()))
         graph = Graph(())
         first = TopologyEpochReconciler(runtime, graph)
         first.ensure_graph_epoch(1, "boundary-old")
@@ -395,7 +503,7 @@ def test_superseding_epoch_retires_outputs_removed_by_late_binding(tmp_path):
         runtime = TopologyEpochDuckDB(store)
         definition = definition_for(add_one, name="late", inputs={"criteria": {"sparql": "q"}},
                                     outputs={"name": "late"}, impact=pointwise())
-        runtime.register_definition(definition)
+        _deploy(runtime, definition, Graph(("urn:raw",)))
         old_reconciler = TopologyEpochReconciler(runtime, Graph(("urn:raw",)))
         try:
             old = old_reconciler.ensure_graph_epoch(1, "retire-old")
@@ -500,7 +608,7 @@ def test_fault_after_each_epoch_transition_recovers_without_partial_visibility(t
             with pytest.raises(RuntimeError, match=transition):
                 runtime.ensure_epoch(1, transition)
             recovered = TopologyEpochDuckDB(store)
-            assert recovered.ensure_epoch(1, transition) == recovered.current_epoch_id()
+            assert recovered.ensure_epoch(1, transition) == recovered.candidate_epoch_id()
             return
 
         epoch = runtime.ensure_epoch(1, transition)
@@ -518,7 +626,7 @@ def test_fault_after_each_epoch_transition_recovers_without_partial_visibility(t
                 runtime.compact(2)
             recovered = TopologyEpochDuckDB(store)
             assert recovered.epoch_summary(epoch).status == "compacted"
-            assert recovered.current_epoch_id() == newer
+            assert recovered.candidate_epoch_id() == newer
             return
 
         runtime.construct_epoch(epoch, Graph(("urn:raw",)))
@@ -595,6 +703,7 @@ def test_compaction_removes_only_superseded_private_overlay(tmp_path):
         old = runtime.ensure_epoch(1, "compact-old")
         runtime.construct_epoch(old, Graph(("urn:raw",)))
         new = runtime.ensure_epoch(2, "compact-new")
+        runtime.construct_epoch(new, Graph(("urn:raw",)))
         assert runtime.compact(2) == 1
         assert runtime.epoch_summary(old).status == "compacted"
         assert runtime.current_epoch_id() == new

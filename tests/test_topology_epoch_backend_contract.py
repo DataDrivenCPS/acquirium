@@ -48,7 +48,8 @@ def test_equivalent_epoch_construction_claim_commit_seal_trace(epoch_backend):
     ], schema=MUTATION_SCHEMA)))
     definition = definition_for(abs, name=marker, inputs={"input": f"urn:{marker}:in"},
                                 outputs={"output": f"urn:{marker}:out"}, impact=pointwise())
-    runtime.register_definition(definition)
+    definition_id = runtime.register_definition(definition)
+    runtime.deploy_definition(definition.name, definition_id, object())
     epoch = runtime.ensure_epoch(1, marker)
     summary = runtime.construct_epoch(epoch, object())
     assert summary.component_count == 1
@@ -62,4 +63,3 @@ def test_equivalent_epoch_construction_claim_commit_seal_trace(epoch_backend):
     assert seal is not None
     runtime.seal_component(seal)
     assert runtime.active_epoch_id() == epoch
-

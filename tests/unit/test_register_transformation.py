@@ -14,7 +14,7 @@ from datetime import timedelta
 def _acquirium_with_mock_client() -> Acquirium:
     aq = Acquirium.__new__(Acquirium)
     aq.client = MagicMock()
-    aq.client.register_transformation.return_value = {"ok": True}
+    aq.client.deploy_transformation.return_value = {"ok": True}
     return aq
 
 
@@ -26,8 +26,8 @@ def test_register_transformation_serializes_per_input_binding_helpers():
         return batch
 
     aq = _acquirium_with_mock_client()
-    aq.register_transformation(to_celsius)
-    payload = aq.client.register_transformation.call_args.args[0]
+    aq.deploy_transformation(to_celsius)
+    payload = aq.client.deploy_transformation.call_args.args[0]
     # requests.post(json=...) raises TypeError on helper dataclasses; the
     # payload must be plain JSON types end to end.
     json.dumps(payload)
@@ -48,8 +48,8 @@ def test_register_transformation_serializes_entity_bindings_and_lookback_impact(
         return batch
 
     aq = _acquirium_with_mock_client()
-    aq.register_transformation(comfort)
-    payload = aq.client.register_transformation.call_args.args[0]
+    aq.deploy_transformation(comfort)
+    payload = aq.client.deploy_transformation.call_args.args[0]
     json.dumps(payload)
     assert payload["bind"]["entity_alias"] == "ahu"
     assert set(payload["bind"]["selectors"]) == {"temperature", "humidity"}
@@ -63,8 +63,8 @@ def test_register_transformation_direct_inputs_payload():
         return batch
 
     aq = _acquirium_with_mock_client()
-    aq.register_transformation(identity)
-    payload = aq.client.register_transformation.call_args.args[0]
+    aq.deploy_transformation(identity)
+    payload = aq.client.deploy_transformation.call_args.args[0]
     json.dumps(payload)
     assert payload["inputs"] == {"criteria": {"ref_uris": ["urn:in"]}}
     assert payload["bind"] is None
@@ -79,6 +79,6 @@ def test_register_transformation_rejects_non_transformation_definitions():
 
     aq = _acquirium_with_mock_client()
     with pytest.raises(ValueError, match="transform"):
-        aq.register_transformation(run)
+        aq.deploy_transformation(run)
     with pytest.raises(ValueError, match="transform"):
-        aq.register_transformation(object())
+        aq.deploy_transformation(object())

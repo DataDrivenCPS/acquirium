@@ -524,8 +524,15 @@ class AcquiriumClient:
         response.raise_for_status()
         return response.json()
 
-    def register_transformation(self, definition: dict) -> dict:
-        response = requests.post(f"{self.base_url}/transformations/register", json=definition)
+    def deploy_transformation(self, definition: dict) -> dict:
+        response = requests.put(
+            f"{self.base_url}/transformations/{definition['name']}", json=definition
+        )
+        _raise_for_status(response)
+        return response.json()
+
+    def remove_transformation(self, name: str) -> dict:
+        response = requests.delete(f"{self.base_url}/transformations/{name}")
         _raise_for_status(response)
         return response.json()
 

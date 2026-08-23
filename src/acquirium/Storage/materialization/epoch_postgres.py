@@ -80,6 +80,9 @@ class TopologyEpochPostgres(TopologyEpochDuckDB):
                 definition_id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
                 source_digest TEXT NOT NULL, entrypoint TEXT NOT NULL, spec_json JSONB NOT NULL,
                 created_at TIMESTAMPTZ NOT NULL)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS topology_deployments (
+                name TEXT PRIMARY KEY, definition_id TEXT NOT NULL,
+                generation BIGINT NOT NULL, updated_at TIMESTAMPTZ NOT NULL)""")
             conn.execute("""CREATE TABLE IF NOT EXISTS topology_epochs (
                 epoch_id TEXT PRIMARY KEY, graph_revision BIGINT NOT NULL, graph_digest TEXT NOT NULL,
                 catalog_digest TEXT NOT NULL, status TEXT NOT NULL, superseded_by TEXT,
@@ -120,7 +123,8 @@ class TopologyEpochPostgres(TopologyEpochDuckDB):
                 claim_id TEXT PRIMARY KEY, kind TEXT NOT NULL, target_id TEXT NOT NULL UNIQUE,
                 owner TEXT, attempt INTEGER NOT NULL DEFAULT 0, expires_at TIMESTAMPTZ)""")
             conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_control (
-                control_id INTEGER PRIMARY KEY, current_epoch_id TEXT, active_epoch_id TEXT,
+                control_id INTEGER PRIMARY KEY, candidate_epoch_id TEXT,
+                current_epoch_id TEXT, active_epoch_id TEXT,
                 compaction_watermark BIGINT NOT NULL DEFAULT -1, updated_at TIMESTAMPTZ NOT NULL)""")
             conn.execute("""INSERT INTO topology_epoch_control (control_id, compaction_watermark, updated_at)
                 VALUES (1, -1, now()) ON CONFLICT (control_id) DO NOTHING""")

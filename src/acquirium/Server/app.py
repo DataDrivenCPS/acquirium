@@ -238,6 +238,7 @@ async def lifespan(app: FastAPI):
 
     try:
         m._sync_stream_refs_from_graph()
+        m.recover_materialization_state()
     except Exception as e:
         log.exception("Startup failed: %s", e)
         try:
@@ -273,7 +274,7 @@ async def lifespan(app: FastAPI):
                 ran_effect = await asyncio.to_thread(m.run_effect_once, owner)
                 now = asyncio.get_running_loop().time()
                 if now >= next_service_scan:
-                    await asyncio.to_thread(m.service_safety_scan)
+                    await asyncio.to_thread(m.materialization_safety_scan)
                     next_service_scan = now + safety_scan_seconds
             except asyncio.CancelledError:
                 raise
@@ -527,18 +528,28 @@ class ExperimentArtifactAttachment(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-@app.post("/transformations/register")
-def register_transformation(request: TransformationRegistration) -> dict[str, Any]:
-    """Register trusted local transformation metadata; execution is scheduled separately."""
+@app.put("/transformations/{name}")
+def deploy_transformation(name: str, request: TransformationRegistration) -> dict[str, Any]:
+    """Validate and select an immutable definition for a named deployment."""
     try:
+        if name != request.name:
+            raise ValueError("deployment name must match the definition name")
         definition = MaterializationDefinition(
             name=request.name, source_digest=request.source_digest, entrypoint=request.entrypoint,
             inputs=request.inputs, bind=request.bind, outputs=request.outputs,
             impact=ImpactPolicy.from_json(request.impact), parameters_schema=request.parameters_schema,
         )
-        return {"ok": True, **app.state.manager.register_transformation(definition)}
+        return {"ok": True, **app.state.manager.deploy_transformation(definition)}
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error))
+
+
+@app.delete("/transformations/{name}")
+def remove_transformation(name: str) -> dict[str, Any]:
+    try:
+        return {"ok": True, **app.state.manager.remove_transformation(name)}
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"unknown transformation {name!r}")
 
 
 def _service_response(service) -> dict[str, Any]:

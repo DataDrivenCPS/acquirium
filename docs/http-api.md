@@ -230,7 +230,7 @@ Declarations are immutable; registration returns the durable identity. See
 
 | Endpoint | Purpose |
 | --- | --- |
-| `POST /transformations/register` | Persist an immutable transformation definition and include it in the next topology epoch |
+| `PUT /transformations/{name}` | Validate and deploy an immutable transformation definition under a stable name |
 | `GET /materialization/epochs` | Inspect the current immutable topology epoch and its persisted bindings |
 | `GET /materialization/epochs/{epoch_id}` | Inspect one topology epoch |
 
