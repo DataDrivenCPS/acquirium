@@ -259,39 +259,53 @@ async def lifespan(app: FastAPI):
     app.state.drivers = supervisor
     server_cfg = _cfg.get("server", {})
 
-    async def _materialization_loop() -> None:
-        """Drain active durable transformation work without blocking requests."""
-        owner = f"server-{os.getpid()}"
-        idle_seconds = float(server_cfg.get("materialization_poll_seconds", 0.25))
-        safety_scan_seconds = float(server_cfg.get("service_safety_scan_seconds", 1.0))
+    idle_seconds = float(server_cfg.get("materialization_poll_seconds", 0.25))
+
+    async def _durable_worker(label: str, operation) -> None:
+        """Run one failure-isolated durable control-plane worker."""
         error_log_seconds = float(server_cfg.get("materialization_error_log_seconds", 30.0))
-        next_service_scan = 0.0
         next_error_log = 0.0
         while True:
             try:
-                ran_work = await asyncio.to_thread(m.run_materialization_once, owner)
-                ran_service = await asyncio.to_thread(m.run_service_once)
-                ran_effect = await asyncio.to_thread(m.run_effect_once, owner)
-                now = asyncio.get_running_loop().time()
-                if now >= next_service_scan:
-                    await asyncio.to_thread(m.materialization_safety_scan)
-                    next_service_scan = now + safety_scan_seconds
+                ran = await asyncio.to_thread(operation)
             except asyncio.CancelledError:
                 raise
             except Exception:
-                # The reconciler recorded the failed attempt as retryable; keep
-                # the server healthy and retry after the normal idle delay. Log
-                # at most once per interval so a deterministically failing
-                # partition cannot flood the log on every poll.
                 now = asyncio.get_running_loop().time()
                 if now >= next_error_log:
-                    log.exception("Materialization execution failed")
+                    log.exception("%s worker failed", label)
                     next_error_log = now + error_log_seconds
-                rebound = ran_work = ran_service = ran_effect = False
-            await asyncio.sleep(0 if ran_work or ran_service or ran_effect else idle_seconds)
+                ran = False
+            await asyncio.sleep(0 if ran else idle_seconds)
 
-    materialization_task = asyncio.create_task(_materialization_loop())
-    app.state.materialization_task = materialization_task
+    async def _safety_loop() -> None:
+        interval = float(server_cfg.get("materialization_safety_scan_seconds", 1.0))
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await asyncio.to_thread(m.materialization_safety_scan)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("Materialization safety scan failed")
+
+    worker_count = int(server_cfg.get("materialization_workers", 2))
+    if worker_count < 1:
+        raise ValueError("server.materialization_workers must be positive")
+    process_owner = f"server-{os.getpid()}"
+    durable_tasks = [
+        asyncio.create_task(_durable_worker(
+            f"materialization-{index}",
+            lambda index=index: m.run_materialization_once(f"{process_owner}-{index}"),
+        ))
+        for index in range(worker_count)
+    ]
+    durable_tasks.extend([
+        asyncio.create_task(_durable_worker("service", m.run_service_once)),
+        asyncio.create_task(_durable_worker("effect", lambda: m.run_effect_once(process_owner))),
+        asyncio.create_task(_safety_loop()),
+    ])
+    app.state.durable_tasks = durable_tasks
 
     # Once the server answers /health, start configured drivers. Durable
     # transformations and services are restored by their own storage-backed
@@ -311,9 +325,9 @@ async def lifespan(app: FastAPI):
         startup_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await startup_task
-        materialization_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await materialization_task
+        for task in durable_tasks:
+            task.cancel()
+        await asyncio.gather(*durable_tasks, return_exceptions=True)
         try:
             await asyncio.to_thread(supervisor.stop_all)
         except Exception:

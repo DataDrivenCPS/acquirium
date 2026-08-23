@@ -15,6 +15,7 @@ import pyarrow as pa
 from acquirium.Materialization.epochs import EpochClaim, EpochSnapshot, table_from_rows
 from acquirium.Materialization.impact import TimeRange
 from acquirium.Storage.materialization.epoch_duckdb import TopologyEpochDuckDB
+from acquirium.Storage.materialization.ids import materialization_id
 
 
 class _PostgresConnection:
@@ -110,7 +111,7 @@ class TopologyEpochPostgres(TopologyEpochDuckDB):
                 read_start_ts TIMESTAMPTZ NOT NULL, read_end_ts TIMESTAMPTZ NOT NULL,
                 input_versions_json JSONB NOT NULL, upstream_frontier_json JSONB NOT NULL,
                 binding_digest TEXT NOT NULL, status TEXT NOT NULL, attempt INTEGER NOT NULL DEFAULT 0,
-                error_json JSONB, output_digest TEXT, committed_at TIMESTAMPTZ)""")
+                next_attempt_at TIMESTAMPTZ, error_json JSONB, output_digest TEXT, committed_at TIMESTAMPTZ)""")
             conn.execute("CREATE INDEX IF NOT EXISTS topology_epoch_work_pending ON topology_epoch_work (epoch_id, status, write_start_ts, work_id)")
             conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_outputs (
                 epoch_id TEXT NOT NULL, work_id TEXT NOT NULL, ref_uri TEXT NOT NULL,
@@ -131,6 +132,34 @@ class TopologyEpochPostgres(TopologyEpochDuckDB):
 
     def close(self) -> None:
         self._store.close()
+
+    @staticmethod
+    def _lock_deployments(conn) -> None:
+        conn.execute("SELECT pg_advisory_xact_lock(hashtextextended('acquirium-deployments', 0))")
+
+    def claim(self, kind: str, target_id: str, owner: str, *,
+              duration: timedelta = timedelta(minutes=5)) -> EpochClaim | None:
+        """Acquire a target claim atomically across PostgreSQL managers."""
+        if not owner or duration <= timedelta():
+            raise ValueError("claim owner and positive duration are required")
+        now = self._now()
+        expires = now + duration
+        claim_id = materialization_id("topology-claim", kind, target_id)
+        with self._store._write_conn() as conn:
+            conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", [target_id])
+            row = conn.execute("""SELECT owner, attempt, expires_at FROM topology_epoch_claims
+                WHERE target_id = ?""", [target_id]).fetchone()
+            if row is not None and row[0] is not None and row[2] > now:
+                return None
+            attempt = int(row[1]) + 1 if row else 1
+            conn.execute("""INSERT INTO topology_epoch_claims
+                (claim_id, kind, target_id, owner, attempt, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (target_id) DO UPDATE SET
+                kind = excluded.kind, owner = excluded.owner,
+                attempt = excluded.attempt, expires_at = excluded.expires_at""",
+                [claim_id, kind, target_id, owner, attempt, expires])
+        self._after_transition("claim_acquired")
+        return EpochClaim(claim_id, kind, target_id, owner, attempt, expires)
 
     @staticmethod
     def _now() -> datetime:

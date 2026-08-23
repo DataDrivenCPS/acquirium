@@ -1,8 +1,7 @@
 """DuckDB topology-epoch control plane.
 
-This module is intentionally independent of the retired deployment/generation
-tables.  Canonical values are touched only through the publication protocol;
-all other state belongs to an epoch-private overlay.
+Canonical values are touched only through the publication protocol; all other
+state belongs to an epoch-private overlay selected by named deployments.
 """
 from __future__ import annotations
 
@@ -19,6 +18,7 @@ from acquirium.Materialization.epochs import (
     EpochBinding, EpochClaim, EpochDefinition, EpochSnapshot, EpochSummary,
     EpochWork, EpochClaimError, StaleEpochError, table_from_rows,
 )
+from acquirium.Storage.materialization.types import MAX_PARTITION_ATTEMPTS
 from acquirium.Materialization.impact import TimeRange, coalesce_ranges
 from acquirium.Materialization.impact import ImpactPolicy
 from acquirium.Materialization.topology import resolve_bindings
@@ -74,7 +74,7 @@ class TopologyEpochDuckDB:
                 read_start_ts TIMESTAMP NOT NULL, read_end_ts TIMESTAMP NOT NULL,
                 input_versions_json VARCHAR NOT NULL, upstream_frontier_json VARCHAR NOT NULL,
                 binding_digest VARCHAR NOT NULL, status VARCHAR NOT NULL, attempt INTEGER NOT NULL DEFAULT 0,
-                error_json VARCHAR, output_digest VARCHAR, committed_at TIMESTAMP)""")
+                next_attempt_at TIMESTAMP, error_json VARCHAR, output_digest VARCHAR, committed_at TIMESTAMP)""")
             conn.execute("CREATE INDEX IF NOT EXISTS topology_epoch_work_pending ON topology_epoch_work (epoch_id, status, write_start_ts, work_id)")
             conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_outputs (
                 epoch_id VARCHAR NOT NULL, work_id VARCHAR NOT NULL, ref_uri VARCHAR NOT NULL,
@@ -138,11 +138,11 @@ class TopologyEpochDuckDB:
         """Validate and select one immutable definition for a deployment name."""
         if not name:
             raise ValueError("deployment name is required")
-        with self._store._own_conn() as conn:
+        with self._store._lock, self._store._write_conn() as conn:
+            self._lock_deployments(conn)
             selected = dict(conn.execute("SELECT name, definition_id FROM topology_deployments").fetchall())
             selected[name] = definition_id
             self._validate_deployments(conn, selected, graph)
-        with self._store._lock, self._store._write_conn() as conn:
             prior = conn.execute("SELECT generation FROM topology_deployments WHERE name = ?", [name]).fetchone()
             generation = int(prior[0]) + 1 if prior else 1
             conn.execute("""INSERT INTO topology_deployments (name, definition_id, generation, updated_at)
@@ -154,15 +154,19 @@ class TopologyEpochDuckDB:
 
     def remove_deployment(self, name: str, graph: object) -> None:
         """Validate and remove one named deployment from desired topology."""
-        with self._store._own_conn() as conn:
+        with self._store._lock, self._store._write_conn() as conn:
+            self._lock_deployments(conn)
             selected = dict(conn.execute("SELECT name, definition_id FROM topology_deployments").fetchall())
             if name not in selected:
                 raise KeyError(name)
             del selected[name]
             self._validate_deployments(conn, selected, graph)
-        with self._store._lock, self._store._write_conn() as conn:
             conn.execute("DELETE FROM topology_deployments WHERE name = ?", [name])
         self._after_transition("definition_undeployed")
+
+    @staticmethod
+    def _lock_deployments(conn) -> None:
+        """Serialize updates to the deployment map (DuckDB has one writer)."""
 
     def _validate_deployments(self, conn, selected: Mapping[str, str], graph: object) -> None:
         rows = conn.execute("""SELECT definition_id, spec_json FROM topology_epoch_definitions
@@ -655,6 +659,18 @@ class TopologyEpochDuckDB:
             conn.execute("UPDATE topology_epoch_claims SET owner = NULL, expires_at = NULL WHERE claim_id = ?", [claim.claim_id])
         self._after_transition("claim_released")
 
+    def renew_claim(self, claim: EpochClaim, *, duration: timedelta = timedelta(minutes=5)) -> EpochClaim:
+        """Extend a held claim without changing its fencing attempt."""
+        if duration <= timedelta():
+            raise ValueError("claim duration must be positive")
+        expires = self._now() + duration
+        with self._store._lock, self._store._write_conn() as conn:
+            self._require_claim(conn, claim)
+            conn.execute("UPDATE topology_epoch_claims SET expires_at = ? WHERE claim_id = ?",
+                         [expires, claim.claim_id])
+        return EpochClaim(claim.claim_id, claim.kind, claim.target_id, claim.owner,
+                          claim.attempt, expires.replace(tzinfo=UTC))
+
     # ----- execution against persisted epoch bindings -------------------
 
     def claim_next_work(self, owner: str, *, duration: timedelta = timedelta(minutes=5)) -> EpochClaim | None:
@@ -662,15 +678,16 @@ class TopologyEpochDuckDB:
         with self._store._lock, self._store._write_conn() as conn:
             # Expired claims make claimed work retryable.  A claim is only a
             # liveness marker; the work row is the durable desired state.
-            conn.execute("""UPDATE topology_epoch_work SET status = 'pending'
+            conn.execute("""UPDATE topology_epoch_work SET status = 'pending', next_attempt_at = ?
                 WHERE status = 'claimed' AND work_id IN
                 (SELECT work_id FROM topology_epoch_work w LEFT JOIN topology_epoch_claims c
-                 ON c.target_id = w.work_id WHERE c.owner IS NULL OR c.expires_at <= ?)""", [now])
+                 ON c.target_id = w.work_id WHERE c.owner IS NULL OR c.expires_at <= ?)""", [now, now])
             rows = conn.execute("""SELECT w.work_id, w.upstream_frontier_json FROM topology_epoch_work w
                 JOIN topology_epochs e ON e.epoch_id = w.epoch_id
                 WHERE w.status = 'pending' AND e.status IN ('reconciling', 'ready')
+                AND (w.next_attempt_at IS NULL OR w.next_attempt_at <= ?)
                 AND e.epoch_id = (SELECT current_epoch_id FROM topology_epoch_control WHERE control_id = 1)
-                ORDER BY w.write_start_ts, w.work_id""").fetchall()
+                ORDER BY w.attempt, w.write_start_ts, w.work_id""", [now]).fetchall()
         for work_id, frontier_json in rows:
             frontier = self._decode(frontier_json)
             with self._store._own_conn() as conn:
@@ -682,7 +699,10 @@ class TopologyEpochDuckDB:
                 continue
             claimed = False
             with self._store._lock, self._store._write_conn() as conn:
-                changed = conn.execute("UPDATE topology_epoch_work SET status = 'claimed', attempt = attempt + 1 WHERE work_id = ? AND status = 'pending'", [work_id]).rowcount
+                changed = conn.execute("""UPDATE topology_epoch_work
+                    SET status = 'claimed', attempt = attempt + 1, next_attempt_at = NULL
+                    WHERE work_id = ? AND status = 'pending'
+                    AND (next_attempt_at IS NULL OR next_attempt_at <= ?)""", [work_id, now]).rowcount
                 if changed:
                     claimed = True
                 else:
@@ -847,15 +867,27 @@ class TopologyEpochDuckDB:
         self._after_transition("work_committed")
         return digest
 
-    def fail_work(self, claim: EpochClaim, error: Mapping[str, object]) -> None:
-        """Return claimed work to the queue; an abandoned claim recovers too."""
+    def fail_work(self, claim: EpochClaim, error: Mapping[str, object], *,
+                  retry_after: timedelta | None = None,
+                  max_attempts: int = MAX_PARTITION_ATTEMPTS) -> None:
+        """Back off retryable work and dead-letter deterministic failures."""
         if claim.kind != "reconcile":
             raise EpochClaimError("claim is not a reconcile claim")
+        if max_attempts < 1:
+            raise ValueError("max_attempts must be positive")
+        if retry_after is None:
+            retry_after = timedelta(seconds=min(300, 2 ** (claim.attempt - 1)))
+        if retry_after < timedelta():
+            raise ValueError("retry_after cannot be negative")
+        status = "failed" if claim.attempt >= max_attempts else "pending"
+        next_attempt = None if status == "failed" else self._now() + retry_after
         with self._store._lock, self._store._write_conn() as conn:
             self._require_claim(conn, claim)
-            changed = conn.execute("""UPDATE topology_epoch_work SET status = 'pending', error_json = ?
+            changed = conn.execute("""UPDATE topology_epoch_work
+                SET status = ?, next_attempt_at = ?, error_json = ?
                 WHERE work_id = ? AND status = 'claimed' AND attempt = ?""",
-                                  [self._json(dict(error)), claim.target_id, claim.attempt]).rowcount
+                                  [status, next_attempt, self._json(dict(error)),
+                                   claim.target_id, claim.attempt]).rowcount
             if not changed:
                 raise EpochClaimError("work attempt is stale")
             conn.execute("UPDATE topology_epoch_claims SET owner = NULL, expires_at = NULL WHERE claim_id = ?", [claim.claim_id])

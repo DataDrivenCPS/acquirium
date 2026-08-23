@@ -39,7 +39,11 @@ component cannot contain a mixture of old and new epoch outputs.
 reconcile work, and component sealing.  A claim has `(kind, target_id)`, an
 owner, a monotonically increasing attempt, and an expiry.  Claim acquisition is
 atomic; a live claim suppresses duplicates, and an expired claim is reclaimed
-with the next attempt.  Claims provide liveness and duplicate suppression only.
+with the next attempt. Long-running execution renews its lease while computing.
+Failures use bounded exponential backoff; fresh work sorts ahead of retries, and
+a repeatedly failing partition becomes terminal instead of starving the queue.
+Multiple identical workers may claim independent partitions concurrently.
+Claims provide liveness and duplicate suppression only.
 They do not encode desired state or correctness.  All durable transitions are
 idempotent and validate the immutable epoch ID, binding digest, persisted input
 version vector, and upstream frontier at commit time.

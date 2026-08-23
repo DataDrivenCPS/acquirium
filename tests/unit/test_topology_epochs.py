@@ -177,6 +177,77 @@ def test_expired_manager_claim_recovers_without_partial_visibility(tmp_path):
         store.close()
 
 
+def test_independent_partitions_can_be_claimed_concurrently(tmp_path):
+    store = DuckDBStore(tmp_path / "parallel.duckdb", recreate=True)
+    publisher = PublicationDuckDB(store)
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    publisher.publish(PublicationRequest("parallel", pa.Table.from_pylist([
+        {"operation": "upsert", "ref_uri": "urn:raw", "ts": start + timedelta(minutes=minute),
+         "numeric_value": 1.0, "text_value": None}
+        for minute in range(21)
+    ], schema=MUTATION_SCHEMA)))
+    runtime = TopologyEpochDuckDB(store)
+    _deploy(runtime, definition_for(add_one, name="parallel", inputs={"input": "urn:raw"},
+                                    outputs={"output": "urn:derived"}, impact=pointwise()))
+    try:
+        epoch = runtime.ensure_epoch(1, "parallel")
+        runtime.construct_epoch(epoch, Graph(("urn:raw",)))
+        first = runtime.claim_next_work("worker-a")
+        second = runtime.claim_next_work("worker-b")
+        assert first is not None and second is not None
+        assert first.target_id != second.target_id
+    finally:
+        store.close()
+
+
+def test_failed_partition_yields_to_fresh_work_and_is_dead_lettered(tmp_path):
+    store = DuckDBStore(tmp_path / "retry.duckdb", recreate=True)
+    publisher = PublicationDuckDB(store)
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    publisher.publish(PublicationRequest("retry", pa.Table.from_pylist([
+        {"operation": "upsert", "ref_uri": "urn:raw", "ts": start + timedelta(minutes=minute),
+         "numeric_value": 1.0, "text_value": None}
+        for minute in range(21)
+    ], schema=MUTATION_SCHEMA)))
+    runtime = TopologyEpochDuckDB(store)
+    _deploy(runtime, definition_for(add_one, name="retry", inputs={"input": "urn:raw"},
+                                    outputs={"output": "urn:derived"}, impact=pointwise()))
+    try:
+        epoch = runtime.ensure_epoch(1, "retry")
+        runtime.construct_epoch(epoch, Graph(("urn:raw",)))
+        poison = runtime.claim_next_work("worker")
+        runtime.fail_work(poison, {"type": "deterministic"}, retry_after=timedelta(0), max_attempts=2)
+
+        fresh = runtime.claim_next_work("worker")
+        assert fresh is not None and fresh.target_id != poison.target_id
+        runtime.release_claim(fresh)
+        retry = runtime.claim_next_work("worker")
+        assert retry is not None and retry.target_id == poison.target_id
+        runtime.fail_work(retry, {"type": "deterministic"}, retry_after=timedelta(0), max_attempts=2)
+
+        with store._own_conn() as conn:
+            assert conn.execute("SELECT status FROM topology_epoch_work WHERE work_id = ?",
+                                [poison.target_id]).fetchone() == ("failed",)
+    finally:
+        store.close()
+
+
+def test_claim_renewal_preserves_owner_fence(tmp_path):
+    store, runtime, _, _ = _runtime(tmp_path)
+    try:
+        epoch = runtime.ensure_epoch(1, "renew")
+        runtime.construct_epoch(epoch, Graph(("urn:raw",)))
+        claim = runtime.claim_next_work("slow-worker", duration=timedelta(milliseconds=80))
+        time.sleep(0.04)
+        renewed = runtime.renew_claim(claim, duration=timedelta(milliseconds=100))
+        time.sleep(0.06)
+        assert runtime.claim_next_work("other") is None
+        assert renewed.expires_at > claim.expires_at
+        runtime.release_claim(renewed)
+    finally:
+        store.close()
+
+
 def test_epoch_execution_stages_then_seals_through_publication(tmp_path):
     store, runtime, _, start = _runtime(tmp_path)
     reconciler = TopologyEpochReconciler(runtime, Graph(("urn:raw",)))
@@ -652,7 +723,7 @@ def test_fault_after_each_epoch_transition_recovers_without_partial_visibility(t
         if transition == "work_failed":
             runtime._transition_hook = crash_after
             with pytest.raises(RuntimeError, match=transition):
-                runtime.fail_work(claim, {"type": "simulated"})
+                runtime.fail_work(claim, {"type": "simulated"}, retry_after=timedelta(0))
             recovered = TopologyEpochDuckDB(store)
             assert recovered.claim_next_work("recovery-worker") is not None
             return
