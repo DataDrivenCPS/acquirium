@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 import pyarrow as pa
 
-from acquirium.Materialization.definitions import MaterializationDefinition
+from acquirium.Materialization.definitions import MaterializationDefinition, source_digest
 from acquirium.Materialization.service_runtime import ServiceSupervisor
 from acquirium.Materialization.services import ChangeHint
 from acquirium.Storage.duckdb_store import DuckDBStore
@@ -27,7 +27,7 @@ def test_service_executes_coalesced_hint_and_reports_restart_health(tmp_path):
     Dashboard.received.clear()
     Dashboard.last_context = None
     store = MaterializationSupportDuckDB(DuckDBStore(tmp_path / "service.duckdb", recreate=True))
-    definition = MaterializationDefinition("dashboard", "digest", "test_service_runtime:Dashboard", kind="service")
+    definition = MaterializationDefinition("dashboard", source_digest(Dashboard), "test_service_runtime:Dashboard", kind="service")
     store.register_definition(definition)
     store.register_service("dashboard", definition.definition_id)
     snapshots = []
@@ -51,7 +51,7 @@ def test_service_executes_coalesced_hint_and_reports_restart_health(tmp_path):
 
 def test_service_context_has_no_materialized_output_writer(tmp_path):
     store = MaterializationSupportDuckDB(DuckDBStore(tmp_path / "service.duckdb", recreate=True))
-    definition = MaterializationDefinition("dashboard", "digest", "test_service_runtime:Dashboard", kind="service")
+    definition = MaterializationDefinition("dashboard", source_digest(Dashboard), "test_service_runtime:Dashboard", kind="service")
     store.register_definition(definition)
     store.register_service("dashboard", definition.definition_id)
     supervisor = ServiceSupervisor(store, lambda refs, since=None: pa.table({}))
@@ -81,7 +81,7 @@ def test_failing_service_is_stopped_not_retried_forever(tmp_path):
     CrashingService.calls = 0
     CrashingService.fail = True
     store = MaterializationSupportDuckDB(DuckDBStore(tmp_path / "service-fail.duckdb", recreate=True))
-    definition = MaterializationDefinition("crasher", "digest", "test_service_runtime:CrashingService", kind="service")
+    definition = MaterializationDefinition("crasher", source_digest(CrashingService), "test_service_runtime:CrashingService", kind="service")
     store.register_definition(definition)
     store.register_service("crasher", definition.definition_id)
     supervisor = ServiceSupervisor(store, lambda refs, since=None: pa.table({}))

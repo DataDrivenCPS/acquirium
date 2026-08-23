@@ -89,9 +89,10 @@ class TopologyEpochPostgres(TopologyEpochDuckDB):
                 catalog_digest TEXT NOT NULL, status TEXT NOT NULL, superseded_by TEXT,
                 created_at TIMESTAMPTZ NOT NULL, activated_at TIMESTAMPTZ, compacted_at TIMESTAMPTZ)""")
             conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS topology_epochs_revision_catalog ON topology_epochs (graph_revision, catalog_digest)")
-            conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_definition_pins (
-                epoch_id TEXT NOT NULL, definition_id TEXT NOT NULL, state_revision TEXT,
-                PRIMARY KEY (epoch_id, definition_id))""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_binding_pins (
+                epoch_id TEXT NOT NULL, binding_id TEXT NOT NULL, state_revision TEXT,
+                policy TEXT, effective_from TIMESTAMPTZ,
+                PRIMARY KEY (epoch_id, binding_id))""")
             conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_bindings (
                 epoch_id TEXT NOT NULL, binding_id TEXT NOT NULL, definition_id TEXT NOT NULL,
                 logical_key TEXT NOT NULL, content_digest TEXT NOT NULL, inputs_json JSONB NOT NULL,

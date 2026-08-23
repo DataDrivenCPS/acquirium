@@ -58,9 +58,10 @@ def test_register_transformation_serializes_entity_bindings_and_lookback_impact(
 
 
 def test_register_transformation_direct_inputs_payload():
-    @transform(inputs=select(ref_uris=["urn:in"]), outputs=outputs.per_input(name="out"))
-    def identity(batch, ctx):
-        return batch
+    @transform(inputs=select(ref_uris=["urn:in"]), outputs=outputs.per_input(name="out"),
+               execution="scalar")
+    def identity(value):
+        return value
 
     aq = _acquirium_with_mock_client()
     aq.deploy_transformation(identity)
@@ -68,6 +69,7 @@ def test_register_transformation_direct_inputs_payload():
     json.dumps(payload)
     assert payload["inputs"] == {"criteria": {"ref_uris": ["urn:in"]}}
     assert payload["bind"] is None
+    assert payload["execution"] == "scalar"
     # Scalar per-input declarations default to pointwise impact.
     assert payload["impact"] == {"kind": "pointwise", "before_us": 0, "after_us": 0}
 

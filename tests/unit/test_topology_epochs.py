@@ -1,5 +1,7 @@
 """Focused invariants for the topology-epoch control plane."""
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
+from types import SimpleNamespace
 import time
 
 import pyarrow as pa
@@ -35,6 +37,16 @@ def add_two(inputs, context):
         "ts": inputs.column("ts"),
         "numeric_value": [value + 2 if value is not None else None for value in values],
         "text_value": [None] * len(values),
+    })
+
+
+def batch_per_input(inputs, context):
+    output_ref = f"urn:acquirium:derived:batch:{sha256('urn:raw'.encode()).hexdigest()[:20]}"
+    return pa.table({
+        "ref_uri": [output_ref] * inputs.num_rows,
+        "ts": inputs.column("ts"),
+        "numeric_value": inputs.column("numeric_value"),
+        "text_value": inputs.column("text_value"),
     })
 
 
@@ -146,13 +158,58 @@ def test_two_managers_interleave_without_duplicate_control_plane_work(tmp_path):
 def test_epoch_pins_state_revision_before_construction(tmp_path):
     store, _, definition, _ = _runtime(tmp_path)
     state = ["state-a"]
-    runtime = TopologyEpochDuckDB(store, state_revision_resolver=lambda _binding: state[0])
+    resolved_ids = []
+    def resolve_state(binding_id):
+        resolved_ids.append(binding_id)
+        return state[0]
+    runtime = TopologyEpochDuckDB(store, state_revision_resolver=resolve_state)
     try:
         _deploy(runtime, definition)
-        epoch = runtime.ensure_epoch(7, "state-pinned")
+        epoch = runtime.ensure_epoch(7, "state-pinned", Graph(("urn:raw",)))
         state[0] = "state-b"
         runtime.construct_epoch(epoch, Graph(("urn:raw",)))
-        assert runtime.epoch_bindings(epoch)[0].state_revision == "state-a"
+        binding = runtime.epoch_bindings(epoch)[0]
+        assert resolved_ids == [binding.binding_id]
+        assert binding.state_revision == "state-a"
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize(
+    ("policy", "effective_offset", "expected_starts"),
+    [
+        ("prospective", None, []),
+        ("recompute_from", 1, [1]),
+        ("recompute_all", None, [0]),
+    ],
+)
+def test_state_promotion_policy_limits_initial_epoch_ranges(
+    tmp_path, policy, effective_offset, expected_starts
+):
+    store = DuckDBStore(tmp_path / f"state-{policy}.duckdb", recreate=True)
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    PublicationDuckDB(store).publish(PublicationRequest("raw", pa.Table.from_pylist([
+        {"operation": "upsert", "ref_uri": "urn:raw", "ts": start + timedelta(days=day),
+         "numeric_value": float(day), "text_value": None}
+        for day in range(3)
+    ], schema=MUTATION_SCHEMA)))
+    effective_from = start + timedelta(days=effective_offset) if effective_offset is not None else None
+    revision = SimpleNamespace(
+        revision_id=f"revision-{policy}", policy=policy, effective_from=effective_from
+    )
+    runtime = TopologyEpochDuckDB(store, state_revision_resolver=lambda _binding: revision)
+    definition = definition_for(add_one, name="state-policy", inputs={"input": "urn:raw"},
+                                outputs={"output": "urn:derived"}, impact=pointwise())
+    _deploy(runtime, definition)
+    try:
+        epoch = runtime.ensure_epoch(1, policy, Graph(("urn:raw",)))
+        runtime.construct_epoch(epoch, Graph(("urn:raw",)), maximum_partition_duration=timedelta(days=10))
+        with store._own_conn() as conn:
+            starts = [row[0].replace(tzinfo=UTC) for row in conn.execute(
+                "SELECT write_start_ts FROM topology_epoch_work WHERE epoch_id = ? ORDER BY write_start_ts",
+                [epoch],
+            ).fetchall()]
+        assert starts == [start + timedelta(days=offset) for offset in expected_starts]
     finally:
         store.close()
 
@@ -264,6 +321,35 @@ def test_epoch_execution_stages_then_seals_through_publication(tmp_path):
                 WHERE r.ref_uri = 'urn:derived' AND NOT t.deleted""").fetchall() == [(3.0,)]
             assert conn.execute("SELECT count(*) FROM topology_epoch_outputs").fetchone() == (0,)
             assert conn.execute("SELECT count(*) FROM topology_epoch_work").fetchone() == (0,)
+    finally:
+        reconciler.close()
+        store.close()
+
+
+def test_per_input_output_does_not_turn_batch_definition_into_scalar_execution(tmp_path):
+    store = DuckDBStore(tmp_path / "batch-per-input.duckdb", recreate=True)
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    PublicationDuckDB(store).publish(PublicationRequest("raw", pa.Table.from_pylist([{
+        "operation": "upsert", "ref_uri": "urn:raw", "ts": start,
+        "numeric_value": 2.0, "text_value": None,
+    }], schema=MUTATION_SCHEMA)))
+    runtime = TopologyEpochDuckDB(store)
+    definition = definition_for(
+        batch_per_input, name="batch-per-input",
+        bind={"selector": {"criteria": {"ref_uris": ["urn:raw"]}}},
+        outputs={"mode": "per_input", "name": "batch"}, impact=pointwise(),
+        execution="batch",
+    )
+    _deploy(runtime, definition)
+    reconciler = TopologyEpochReconciler(runtime, Graph(("urn:raw",)))
+    try:
+        reconciler.ensure_graph_epoch(1, "batch-per-input")
+        reconciler.run_until_idle("worker")
+        output_ref = f"urn:acquirium:derived:batch:{sha256('urn:raw'.encode()).hexdigest()[:20]}"
+        with store._own_conn() as conn:
+            value = conn.execute("""SELECT t.numeric_value FROM timeseries t JOIN ref_ids r ON r.ref_id = t.ref_id
+                WHERE r.ref_uri = ? AND NOT t.deleted""", [output_ref]).fetchone()
+        assert value == (2.0,)
     finally:
         reconciler.close()
         store.close()

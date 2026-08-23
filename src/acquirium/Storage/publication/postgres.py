@@ -27,6 +27,10 @@ class PublicationPostgres:
 
     def _apply_publication(self, conn, publication_id: str, mutations) -> PublicationReceipt:
         payload_hash = ids.payload_hash(mutations)
+        # Conflicting retries may touch disjoint streams, so stream-head locks
+        # cannot serialize publication identity. This transaction-scoped lock
+        # makes the receipt check and insert one atomic decision.
+        conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [publication_id])
         # Dedup runs before the empty-mutation guard so that replaying an
         # already-committed publication id behaves identically to DuckDB:
         # the original receipt is returned instead of raising.

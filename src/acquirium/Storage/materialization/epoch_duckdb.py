@@ -34,7 +34,7 @@ UTC = timezone.utc
 class TopologyEpochDuckDB:
     """Durable epoch state machine backed by the server-owned DuckDB writer."""
 
-    def __init__(self, store: DuckDBStore, *, state_revision_resolver: Callable[[str], str | None] | None = None,
+    def __init__(self, store: DuckDBStore, *, state_revision_resolver: Callable[[str], object | None] | None = None,
                  transition_hook: Callable[[str], None] | None = None) -> None:
         self._store = store
         self._state_revision_resolver = state_revision_resolver
@@ -52,9 +52,10 @@ class TopologyEpochDuckDB:
                 catalog_digest VARCHAR NOT NULL, status VARCHAR NOT NULL, superseded_by VARCHAR,
                 created_at TIMESTAMP NOT NULL, activated_at TIMESTAMP, compacted_at TIMESTAMP)""")
             conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS topology_epochs_revision_catalog ON topology_epochs (graph_revision, catalog_digest)")
-            conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_definition_pins (
-                epoch_id VARCHAR NOT NULL, definition_id VARCHAR NOT NULL, state_revision VARCHAR,
-                PRIMARY KEY (epoch_id, definition_id))""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_binding_pins (
+                epoch_id VARCHAR NOT NULL, binding_id VARCHAR NOT NULL, state_revision VARCHAR,
+                policy VARCHAR, effective_from TIMESTAMP,
+                PRIMARY KEY (epoch_id, binding_id))""")
             conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_bindings (
                 epoch_id VARCHAR NOT NULL, binding_id VARCHAR NOT NULL, definition_id VARCHAR NOT NULL,
                 logical_key VARCHAR NOT NULL, content_digest VARCHAR NOT NULL, inputs_json VARCHAR NOT NULL,
@@ -199,18 +200,32 @@ class TopologyEpochDuckDB:
     def _catalog_digest(self, catalog: Sequence[tuple[str, str, str, str, str]], state_ids: Sequence[tuple]) -> str:
         return sha256(self._json({"catalog": catalog, "state_revisions": state_ids}).encode()).hexdigest()
 
-    def ensure_epoch(self, graph_revision: int, graph_digest: str) -> str:
+    def ensure_epoch(self, graph_revision: int, graph_digest: str, graph: object | None = None) -> str:
         """Persist a candidate epoch without disturbing the current topology."""
         # Resolve state pins before opening the epoch writer transaction.  A
         # manager's resolver normally reads the support store, which shares
         # the DuckDB file; nesting that read under this write lock can
-        # deadlock.  The immutable definition ids make the resulting catalog
-        # identity deterministic even though the read and insert are separate
-        # transactions.
+        # deadlock. Binding ids, rather than definition ids, own state
+        # revisions, so resolve those immutable ids before deriving identity.
         with self._store._own_conn() as conn:
             catalog = self._catalog(conn)
-        state_ids = [(row[0], row[1], self._state_revision_resolver(row[0]) if self._state_revision_resolver else None)
-                     for row in catalog]
+        state_ids: list[tuple[str, str | None, str | None, datetime | None]] = []
+        if self._state_revision_resolver is not None:
+            if graph is None:
+                raise ValueError("graph is required to resolve binding state revisions")
+            for definition_id, _, _, _, spec_json in catalog:
+                for binding in resolve_bindings(self._decode(spec_json), graph):
+                    binding_id = binding.binding_id(definition_id)
+                    revision = self._state_revision_resolver(binding_id)
+                    if revision is None:
+                        state_ids.append((binding_id, None, None, None))
+                    elif isinstance(revision, str):
+                        state_ids.append((binding_id, revision, None, None))
+                    else:
+                        state_ids.append((binding_id, getattr(revision, "revision_id"),
+                                          getattr(revision, "policy", None),
+                                          getattr(revision, "effective_from", None)))
+        state_ids.sort(key=lambda item: item[0])
         catalog_digest = self._catalog_digest(catalog, state_ids)
         eid = epoch_id(graph_revision, graph_digest, (*catalog, *state_ids))
         with self._store._lock, self._store._write_conn() as conn:
@@ -220,9 +235,12 @@ class TopologyEpochDuckDB:
                 [eid, graph_revision, graph_digest, catalog_digest, self._now()])
             if state_ids:
                 conn.executemany(
-                    """INSERT INTO topology_epoch_definition_pins (epoch_id, definition_id, state_revision)
-                       VALUES (?, ?, ?) ON CONFLICT DO NOTHING""",
-                    [(eid, definition_id, state_revision) for (definition_id, _, state_revision) in state_ids],
+                    """INSERT INTO topology_epoch_binding_pins
+                       (epoch_id, binding_id, state_revision, policy, effective_from)
+                       VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING""",
+                    [(eid, binding_id, state_revision, policy,
+                      self._stored_timestamp(effective_from) if effective_from else None)
+                     for binding_id, state_revision, policy, effective_from in state_ids],
                 )
             epoch_status = conn.execute(
                 "SELECT status FROM topology_epochs WHERE epoch_id = ?", [eid]
@@ -312,12 +330,16 @@ class TopologyEpochDuckDB:
             if candidate != epoch_id_value or status == "superseded":
                 conn.execute("UPDATE topology_epochs SET status = 'superseded' WHERE epoch_id = ?", [epoch_id_value])
                 return self._epoch_summary_conn(conn, epoch_id_value)
-            pins = dict(conn.execute(
-                "SELECT definition_id, state_revision FROM topology_epoch_definition_pins WHERE epoch_id = ?",
+            pin_rows = conn.execute(
+                """SELECT binding_id, state_revision, policy, effective_from
+                   FROM topology_epoch_binding_pins WHERE epoch_id = ?""",
                 [epoch_id_value],
-            ).fetchall())
+            ).fetchall()
+            pins = {row[0]: row[1] for row in pin_rows}
+            promotion = {row[0]: (row[2], self._aware(row[3]) if row[3] else None)
+                         for row in pin_rows}
             from dataclasses import replace
-            resolved = [replace(item, state_revision=pins.get(item.definition_id)) for item in resolved]
+            resolved = [replace(item, state_revision=pins.get(item.binding_id)) for item in resolved]
             binding_by_id = {item.binding_id: item for item in resolved}
             binding_rows = [
                     (item.epoch_id, item.binding_id, item.definition_id, item.logical_key, item.content_digest,
@@ -381,9 +403,20 @@ class TopologyEpochDuckDB:
                 for source in incoming[binding_id]:
                     changed.extend(dirty[source])
                 impact = self._definition_impact(conn, binding.definition_id)
-                dirty[binding_id] = self._affected_ranges(
+                affected = self._affected_ranges(
                     changed, impact, component_retained[component_for[binding_id]]
                 )
+                policy, effective_from = promotion.get(binding_id, (None, None))
+                if policy == "prospective":
+                    affected = ()
+                elif policy == "recompute_from":
+                    if effective_from is None:
+                        raise ValueError("recompute_from state revision lacks effective_from")
+                    affected = tuple(
+                        TimeRange(max(interval.start, effective_from), interval.end)
+                        for interval in affected if interval.end > effective_from
+                    )
+                dirty[binding_id] = affected
 
             works: list[tuple] = []
             for _, component_id, members_json in component_rows:

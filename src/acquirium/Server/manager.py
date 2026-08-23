@@ -212,12 +212,12 @@ class Manager:
         self.materialization_executor = (
             materialization_executor if materialization_executor is not None else LocalExecutorPool()
         )
-        def _state_revision(binding_id: str) -> str | None:
+        def _state_revision(binding_id: str):
             try:
                 revision = materialization.active_state_revision(binding_id)
             except (KeyError, ValueError):
                 return None
-            return revision.revision_id if revision is not None else None
+            return revision
         if _backend == "duckdb":
             from acquirium.Storage.materialization.epoch_duckdb import TopologyEpochDuckDB
             epoch_materialization = TopologyEpochDuckDB(timescale, state_revision_resolver=_state_revision)
@@ -751,6 +751,11 @@ class Manager:
         allowed to fail the publish that triggered the notification.
         """
         from acquirium.Materialization.services import ChangeHint
+        current = self.materialization.all_stream_versions()
+        versions = {
+            key: max(int(current.get(key, value)), int(value))
+            for key, value in {**current, **versions}.items()
+        }
         now = datetime.now(timezone.utc)
         for service in self.materialization.services(status="running"):
             self._coalesce_hint_ignore_removed(ChangeHint(

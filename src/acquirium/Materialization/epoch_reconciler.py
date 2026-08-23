@@ -23,7 +23,7 @@ class TopologyEpochReconciler:
         self._lease_duration = lease_duration
 
     def ensure_graph_epoch(self, graph_revision: int, graph_digest: str) -> str:
-        return self._storage.ensure_epoch(graph_revision, graph_digest)
+        return self._storage.ensure_epoch(graph_revision, graph_digest, self._graph)
 
     def _construct_once(self, owner: str) -> bool:
         epoch_id = self._storage.candidate_epoch_id()
@@ -60,8 +60,7 @@ class TopologyEpochReconciler:
         try:
             snapshot = self._storage.snapshot(claim)
             spec = snapshot.definition.spec
-            outputs = spec.get("outputs") if isinstance(spec, dict) else None
-            scalar = isinstance(outputs, dict) and outputs.get("mode") == "per_input"
+            scalar = isinstance(spec, dict) and spec.get("execution", "batch") == "scalar"
             request = ComputeRequest(
                 snapshot.inputs,
                 TransformContext(

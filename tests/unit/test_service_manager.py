@@ -7,6 +7,7 @@ import pytest
 
 from acquirium.Materialization.definitions import MaterializationDefinition
 from acquirium.Materialization.services import ServiceRecord
+from acquirium.Storage.publication.types import PublicationReceipt
 from acquirium.Server.manager import Manager
 
 
@@ -28,6 +29,32 @@ def test_safety_scan_recreates_only_missing_service_hints():
     assert hint.service_name == "dashboard"
     assert hint.data_versions == {"urn:input": 4}
     assert hint.graph_revision == 7
+
+
+def test_publish_notifies_services_with_complete_version_vector():
+    manager = _manager(MagicMock())
+    manager.materialization.all_stream_versions.return_value = {"urn:a": 2, "urn:b": 7}
+    manager.publication = MagicMock()
+    manager.publication.publish.return_value = PublicationReceipt(
+        "publication", "digest", 1, {"urn:a": 2}
+    )
+    manager.epoch_materialization = MagicMock()
+    manager.notify_service_changes = MagicMock()
+    mutations = pa.table({})
+    Manager.publish(manager, mutations, publication_id="publication")
+    manager.notify_service_changes.assert_called_once_with({"urn:a": 2})
+
+
+def test_change_notification_expands_partial_hint_to_complete_version_vector():
+    storage = MagicMock()
+    storage.all_stream_versions.return_value = {"urn:a": 2, "urn:b": 7}
+    storage.services.return_value = (
+        ServiceRecord("dashboard", "definition", "running", "healthy", datetime.now(timezone.utc)),
+    )
+    manager = _manager(storage)
+    Manager.notify_service_changes(manager, {"urn:a": 2})
+    hint = storage.coalesce_service_hint.call_args.args[0]
+    assert hint.data_versions == {"urn:a": 2, "urn:b": 7}
 
 
 def test_service_snapshot_returns_current_authoritative_vector_and_token():
