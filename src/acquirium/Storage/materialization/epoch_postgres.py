@@ -1,0 +1,228 @@
+"""PostgreSQL implementation of the topology-epoch control plane.
+
+The state-machine methods are shared with DuckDB.  Only connection syntax and
+the canonical stream's URI-keyed reads differ; both backends therefore execute
+the same trace and expose the same durable transitions.
+"""
+from __future__ import annotations
+
+from contextlib import contextmanager, nullcontext
+from datetime import datetime, timedelta, timezone
+from typing import Sequence
+
+import pyarrow as pa
+
+from acquirium.Materialization.epochs import EpochClaim, EpochSnapshot, table_from_rows
+from acquirium.Storage.materialization.epoch_duckdb import TopologyEpochDuckDB
+
+
+class _PostgresConnection:
+    """Tiny placeholder adapter for the shared SQL state-machine methods."""
+
+    def __init__(self, connection) -> None:
+        self._connection = connection
+
+    @staticmethod
+    def _sql(sql: str) -> str:
+        # The epoch SQL intentionally uses only positional placeholders.  Do
+        # not touch PostgreSQL's native %s form used by the publication code.
+        return sql.replace("?", "%s")
+
+    def execute(self, sql: str, params=None):
+        return self._connection.execute(self._sql(sql), params or [])
+
+    def executemany(self, sql: str, params):
+        with self._connection.cursor() as cursor:
+            return cursor.executemany(self._sql(sql), params)
+
+    def transaction(self):
+        return self._connection.transaction()
+
+    def __getattr__(self, name):
+        return getattr(self._connection, name)
+
+
+class _PostgresStoreAdapter:
+    def __init__(self, dsn: str, *, min_size: int = 1, max_size: int = 10) -> None:
+        from psycopg_pool import ConnectionPool
+        self._pool = ConnectionPool(dsn, min_size=min_size, max_size=max_size, open=True)
+        self._lock = nullcontext()
+
+    @contextmanager
+    def _own_conn(self):
+        with self._pool.connection() as connection:
+            yield _PostgresConnection(connection)
+
+    @contextmanager
+    def _write_conn(self):
+        with self._pool.connection() as connection, connection.transaction():
+            yield _PostgresConnection(connection)
+
+    def close(self) -> None:
+        self._pool.close()
+
+
+class TopologyEpochPostgres(TopologyEpochDuckDB):
+    """The PostgreSQL counterpart of :class:`TopologyEpochDuckDB`."""
+
+    def __init__(self, dsn: str, *, min_size: int = 1, max_size: int = 10, state_revision_resolver=None,
+                 transition_hook=None) -> None:
+        self._store = _PostgresStoreAdapter(dsn, min_size=min_size, max_size=max_size)
+        self._state_revision_resolver = state_revision_resolver
+        self._transition_hook = transition_hook
+        with self._store._write_conn() as conn:
+            conn.execute("""CREATE TABLE IF NOT EXISTS stream_change_ranges (
+                ref_uri TEXT NOT NULL, stream_version BIGINT NOT NULL, publication_id TEXT NOT NULL,
+                start_ts TIMESTAMPTZ NOT NULL, end_ts TIMESTAMPTZ NOT NULL, change_kind TEXT NOT NULL,
+                row_count BIGINT NOT NULL, PRIMARY KEY (ref_uri, stream_version, start_ts, end_ts))""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_definitions (
+                definition_id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
+                source_digest TEXT NOT NULL, entrypoint TEXT NOT NULL, spec_json JSONB NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS topology_epochs (
+                epoch_id TEXT PRIMARY KEY, graph_revision BIGINT NOT NULL, graph_digest TEXT NOT NULL,
+                catalog_digest TEXT NOT NULL, status TEXT NOT NULL, superseded_by TEXT,
+                created_at TIMESTAMPTZ NOT NULL, activated_at TIMESTAMPTZ, compacted_at TIMESTAMPTZ)""")
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS topology_epochs_revision_catalog ON topology_epochs (graph_revision, catalog_digest)")
+            conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_definition_pins (
+                epoch_id TEXT NOT NULL, definition_id TEXT NOT NULL, state_revision TEXT,
+                PRIMARY KEY (epoch_id, definition_id))""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_bindings (
+                epoch_id TEXT NOT NULL, binding_id TEXT NOT NULL, definition_id TEXT NOT NULL,
+                logical_key TEXT NOT NULL, content_digest TEXT NOT NULL, inputs_json JSONB NOT NULL,
+                outputs_json JSONB NOT NULL, metadata_json JSONB NOT NULL, state_revision TEXT,
+                PRIMARY KEY (epoch_id, binding_id))""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_edges (
+                epoch_id TEXT NOT NULL, source_binding_id TEXT NOT NULL, target_binding_id TEXT NOT NULL,
+                PRIMARY KEY (epoch_id, source_binding_id, target_binding_id))""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_components (
+                epoch_id TEXT NOT NULL, component_id TEXT NOT NULL, binding_ids_json JSONB NOT NULL,
+                status TEXT NOT NULL, seal_publication_id TEXT,
+                PRIMARY KEY (epoch_id, component_id))""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_work (
+                work_id TEXT PRIMARY KEY, epoch_id TEXT NOT NULL, component_id TEXT NOT NULL,
+                binding_id TEXT NOT NULL, start_ts TIMESTAMPTZ NOT NULL, end_ts TIMESTAMPTZ NOT NULL,
+                input_versions_json JSONB NOT NULL, upstream_frontier_json JSONB NOT NULL,
+                binding_digest TEXT NOT NULL, status TEXT NOT NULL, attempt INTEGER NOT NULL DEFAULT 0,
+                error_json JSONB, output_digest TEXT, committed_at TIMESTAMPTZ)""")
+            conn.execute("CREATE INDEX IF NOT EXISTS topology_epoch_work_pending ON topology_epoch_work (epoch_id, status, start_ts, work_id)")
+            conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_outputs (
+                epoch_id TEXT NOT NULL, work_id TEXT NOT NULL, ref_uri TEXT NOT NULL,
+                ts TIMESTAMPTZ NOT NULL, numeric_value DOUBLE PRECISION, text_value TEXT,
+                PRIMARY KEY (epoch_id, work_id, ref_uri, ts))""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_retirements (
+                epoch_id TEXT NOT NULL, ref_uri TEXT NOT NULL,
+                PRIMARY KEY (epoch_id, ref_uri))""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_claims (
+                claim_id TEXT PRIMARY KEY, kind TEXT NOT NULL, target_id TEXT NOT NULL UNIQUE,
+                owner TEXT, attempt INTEGER NOT NULL DEFAULT 0, expires_at TIMESTAMPTZ)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS topology_epoch_control (
+                control_id INTEGER PRIMARY KEY, current_epoch_id TEXT, active_epoch_id TEXT,
+                compaction_watermark BIGINT NOT NULL DEFAULT -1, updated_at TIMESTAMPTZ NOT NULL)""")
+            conn.execute("""INSERT INTO topology_epoch_control (control_id, compaction_watermark, updated_at)
+                VALUES (1, -1, now()) ON CONFLICT (control_id) DO NOTHING""")
+
+    def close(self) -> None:
+        self._store.close()
+
+    @staticmethod
+    def _now() -> datetime:
+        return datetime.now(timezone.utc)
+
+    @staticmethod
+    def _stored_timestamp(value: datetime) -> datetime:
+        return value.astimezone(timezone.utc) if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+    def _json_value(self, value):
+        # JSONB parameters accept the canonical JSON strings used by the
+        # shared implementation; psycopg decodes them on reads.
+        return value
+
+    def _catalog(self, conn):
+        rows = conn.execute("""SELECT definition_id, name, source_digest, entrypoint, spec_json
+            FROM topology_epoch_definitions WHERE kind = 'transformation' ORDER BY definition_id""").fetchall()
+        return tuple((row[0], row[1], row[2], row[3], row[4] if isinstance(row[4], str) else self._json(row[4])) for row in rows)
+
+    def _definition(self, conn, definition_id):
+        definition = super()._definition(conn, definition_id)
+        if not isinstance(definition.spec, dict):
+            from acquirium.Materialization.epochs import EpochDefinition
+            definition = EpochDefinition(definition.definition_id, definition.name, definition.source_digest,
+                                         definition.entrypoint, definition.kind, dict(definition.spec))
+        return definition
+
+    def _retained_ranges(self, conn, refs: Sequence[str]):
+        if not refs:
+            return ()
+        row = conn.execute("""SELECT min(ts), max(ts) FROM timeseries
+            WHERE ref_uri = ANY(%s::text[]) AND NOT deleted""", [list(refs)]).fetchone()
+        if row[0] is None:
+            return ()
+        from acquirium.Materialization.impact import TimeRange
+        return (TimeRange(self._aware(row[0]), self._aware(row[1]) + timedelta(microseconds=1)),)
+
+    def _stream_versions(self, conn, refs: Sequence[str]):
+        if not refs:
+            return {}
+        values = dict(conn.execute("SELECT ref_uri, current_version FROM stream_heads WHERE ref_uri = ANY(%s::text[]) ORDER BY ref_uri", [list(refs)]).fetchall())
+        return {ref: int(values.get(ref, 0)) for ref in refs}
+
+    def snapshot(self, claim: EpochClaim) -> EpochSnapshot:
+        if claim.kind != "reconcile":
+            from acquirium.Materialization.epochs import EpochClaimError
+            raise EpochClaimError("claim is not a reconcile claim")
+        with self._store._own_conn() as conn:
+            self._require_claim(conn, claim)
+            work = self._work(conn, claim.target_id)
+            if work.status != "claimed" or work.attempt != claim.attempt:
+                from acquirium.Materialization.epochs import EpochClaimError
+                raise EpochClaimError("work attempt is stale")
+            row = conn.execute("""SELECT epoch_id, binding_id, definition_id, logical_key, content_digest,
+                inputs_json, outputs_json, metadata_json, state_revision FROM topology_epoch_bindings
+                WHERE epoch_id = %s AND binding_id = %s""", [work.epoch_id, work.binding_id]).fetchone()
+            from acquirium.Materialization.epochs import EpochBinding
+            binding = EpochBinding(row[0], row[1], row[2], row[3], row[4], self._obj(row[5]), self._obj(row[6]), self._obj(row[7]), row[8])
+            definition = self._definition(conn, binding.definition_id)
+            owners = {ref for output_row in conn.execute("SELECT outputs_json FROM topology_epoch_bindings WHERE epoch_id = %s", [work.epoch_id]).fetchall()
+                      for refs in self._obj(output_row[0]).values() for ref in refs}
+            rows = []
+            for ref in binding.input_refs:
+                if ref in owners:
+                    values = conn.execute("""SELECT ref_uri, ts, numeric_value, text_value FROM (
+                        SELECT o.ref_uri, o.ts, o.numeric_value, o.text_value,
+                               row_number() OVER (PARTITION BY o.ref_uri, o.ts ORDER BY w.committed_at DESC, o.work_id DESC) AS recency
+                        FROM topology_epoch_outputs o JOIN topology_epoch_work w ON w.work_id = o.work_id
+                        WHERE o.epoch_id = %s AND o.ref_uri = %s AND w.status = 'committed'
+                          AND o.ts >= %s AND o.ts < %s) latest WHERE recency = 1 ORDER BY ts""",
+                                          [work.epoch_id, ref, work.interval.start, work.interval.end]).fetchall()
+                else:
+                    values = conn.execute("""SELECT ref_uri, ts, numeric_value, text_value FROM timeseries
+                        WHERE ref_uri = %s AND ts >= %s AND ts < %s AND NOT deleted ORDER BY ts""",
+                                          [ref, work.interval.start, work.interval.end]).fetchall()
+                rows.extend({"operation": "upsert", "ref_uri": ref, "ts": self._aware(ts), "numeric_value": numeric, "text_value": text}
+                            for _, ts, numeric, text in values)
+            rows.sort(key=lambda item: (item["ref_uri"], item["ts"]))
+            return EpochSnapshot(work, binding, definition, table_from_rows(rows), dict(work.input_versions))
+
+    @staticmethod
+    def _obj(value):
+        import json
+        return json.loads(value) if isinstance(value, str) else value
+
+    def _canonical_rows(self, conn, refs: Sequence[str], start: datetime, end: datetime):
+        if not refs:
+            return []
+        return conn.execute("""SELECT ref_uri, ts FROM timeseries
+            WHERE ref_uri = ANY(%s::text[]) AND ts >= %s AND ts < %s AND NOT deleted""", [list(refs), start, end]).fetchall()
+
+    def _all_canonical_rows(self, conn, refs: Sequence[str]):
+        if not refs:
+            return []
+        return conn.execute(
+            "SELECT ref_uri, ts FROM timeseries WHERE ref_uri = ANY(%s::text[]) AND NOT deleted",
+            [list(refs)],
+        ).fetchall()
+
+    def _apply_canonical_publication(self, conn, publication_id: str, mutations: pa.Table):
+        from acquirium.Storage.publication.postgres import PublicationPostgres
+        return PublicationPostgres.__new__(PublicationPostgres)._apply_publication(conn, publication_id, mutations)

@@ -643,37 +643,15 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
-    def set_transformation_status(self, name: str, status: str) -> dict:
-        if status not in {"active", "paused"}:
-            raise ValueError("transformation status must be active or paused")
-        response = requests.post(f"{self.base_url}/transformations/{name}/{'start' if status == 'active' else 'pause'}")
+    def materialization_epochs(self) -> dict:
+        response = requests.get(f"{self.base_url}/materialization/epochs")
         _raise_for_status(response)
         return response.json()
 
-    def transformation_status(self, name: str) -> dict:
-        response = requests.get(f"{self.base_url}/transformations/{name}")
+    def materialization_epoch(self, epoch_id: str) -> dict:
+        response = requests.get(f"{self.base_url}/materialization/epochs/{epoch_id}")
         _raise_for_status(response)
         return response.json()
-
-    def list_transformations(self) -> dict:
-        response = requests.get(f"{self.base_url}/transformations")
-        _raise_for_status(response)
-        return response.json()
-
-    def rebind_transformation(self, name: str) -> dict:
-        response = requests.post(f"{self.base_url}/transformations/{name}/rebind")
-        _raise_for_status(response)
-        return response.json()
-
-    def reconcile_transformation(self, name: str) -> dict:
-        response = requests.post(f"{self.base_url}/transformations/{name}/reconcile")
-        _raise_for_status(response)
-        return response.json()
-
-    def preview_transformation(self, name: str):
-        response = requests.post(f"{self.base_url}/transformations/{name}/preview")
-        _raise_for_status(response)
-        return ipc.open_stream(response.content).read_all()
 
     def promote_state_revision(self, revision_id: str, *, policy: str = "prospective",
                                effective_from: str | None = None) -> dict:

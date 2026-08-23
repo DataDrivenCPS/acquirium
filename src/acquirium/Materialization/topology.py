@@ -1,12 +1,10 @@
-"""Server-local resolution of durable transformation binding declarations."""
+"""Server-side construction of immutable resolved binding topologies."""
 from __future__ import annotations
 
-from dataclasses import dataclass
 from hashlib import sha256
-from typing import Any, Iterable, Mapping
+from typing import Iterable, Mapping
 
 from acquirium.Materialization.bindings import BindingSpec
-from acquirium.Materialization.impact import ImpactPolicy
 from acquirium.Materialization.worker import load_entrypoint
 
 
@@ -33,10 +31,6 @@ def _binding(value: Mapping[str, object], *, default_key: str = "default") -> Bi
         outputs=_roles(value["outputs"], default_role="output"),
         metadata=value.get("metadata", {}) if isinstance(value.get("metadata", {}), Mapping) else {},
     )
-
-
-def _selector_refs(selector: Mapping[str, object], graph: object) -> tuple[str, ...]:
-    return tuple(ref for _, ref in _selector_rows(selector, graph, entity_alias="ref_uri"))
 
 
 def _selector_rows(selector: Mapping[str, object], graph: object, *, entity_alias: str) -> tuple[tuple[str, str], ...]:
@@ -66,11 +60,19 @@ def _per_input(selector: Mapping[str, object], outputs: Mapping[str, object], gr
     if not isinstance(name, str) or not name:
         raise ValueError("per_input outputs require a non-empty name")
     prefix = str(outputs.get("prefix", "urn:acquirium:derived"))
-    bindings = []
-    for ref in _selector_refs(selector, graph):
-        token = sha256(ref.encode()).hexdigest()[:20]
-        bindings.append(BindingSpec(ref, {"input": (ref,)}, {"output": (f"{prefix}:{name}:{token}",)}, {"input_ref": ref}))
-    return tuple(bindings)
+    return tuple(
+        BindingSpec(
+            ref,
+            {"input": (ref,)},
+            {"output": (f"{prefix}:{name}:{sha256(ref.encode()).hexdigest()[:20]}",)},
+            {"input_ref": ref},
+        )
+        for ref in _selector_refs(selector, graph)
+    )
+
+
+def _selector_refs(selector: Mapping[str, object], graph: object) -> tuple[str, ...]:
+    return tuple(ref for _, ref in _selector_rows(selector, graph, entity_alias="ref_uri"))
 
 
 def _by_entity(selectors: Mapping[str, object], outputs: Mapping[str, object], graph: object,
@@ -88,23 +90,19 @@ def _by_entity(selectors: Mapping[str, object], outputs: Mapping[str, object], g
             grouped.setdefault(entity, []).append(ref)
         roles[str(role)] = grouped
     entities = set.intersection(*(set(values) for values in roles.values())) if roles else set()
-    bindings = []
-    for entity in sorted(entities):
-        token = sha256(entity.encode()).hexdigest()[:20]
-        bindings.append(BindingSpec(entity, {role: tuple(sorted(values[entity])) for role, values in roles.items()},
-            {"output": (f"{prefix}:{name}:{token}",)}, {entity_alias: entity}))
-    return tuple(bindings)
+    return tuple(
+        BindingSpec(
+            entity,
+            {role: tuple(sorted(values[entity])) for role, values in roles.items()},
+            {"output": (f"{prefix}:{name}:{sha256(entity.encode()).hexdigest()[:20]}",)},
+            {entity_alias: entity},
+        )
+        for entity in sorted(entities)
+    )
 
 
 def resolve_bindings(spec: Mapping[str, object], graph: object) -> tuple[BindingSpec, ...]:
-    """Resolve the explicit v1 binding contract against the published graph.
-
-    ``bind`` may contain a trusted ``resolver`` entrypoint returning
-    ``BindingSpec`` objects (or their JSON-shaped equivalents), a ``bindings``
-    list, or one complete binding.  With no ``bind``, direct ``inputs`` and
-    ``outputs`` mappings form one binding.  Selector expansion remains a Phase
-    5 concern rather than silently guessing output identities here.
-    """
+    """Resolve one trusted definition against the published graph exactly once."""
     declaration = spec.get("bind")
     resolved: Iterable[BindingSpec | Mapping[str, object]]
     if isinstance(declaration, Mapping) and isinstance(declaration.get("selectors"), Mapping) and isinstance(spec.get("outputs"), Mapping):
@@ -132,39 +130,3 @@ def resolve_bindings(spec: Mapping[str, object], graph: object) -> tuple[Binding
     if not bindings and not (isinstance(declaration, Mapping) and "selector" in declaration):
         raise ValueError("binding resolver returned no bindings")
     return bindings
-
-
-@dataclass(frozen=True)
-class RebindResult:
-    deployment_name: str
-    graph_revision: int
-    generation: int
-    impact: ImpactPolicy
-
-
-class MaterializationRebinder:
-    """Consumes one durable rebind request at a time."""
-
-    def __init__(self, storage, graph: object) -> None:
-        self._storage = storage
-        self._graph = graph
-
-    def run_once(self, owner: str) -> RebindResult | None:
-        request = self._storage.lease_rebind(owner)
-        if request is None:
-            return None
-        deployment_name, graph_revision = request
-        try:
-            bundle = self._storage.deployment_definition(deployment_name)
-            bindings = resolve_bindings(bundle["spec"], self._graph)
-            generation = self._storage.stage_bindings(
-                deployment_name, graph_revision, str(bundle["definition_id"]), bindings
-            )
-            self._storage.finish_rebind(deployment_name, graph_revision)
-            impact = ImpactPolicy.from_json(bundle["spec"]["impact"])
-            return RebindResult(deployment_name, graph_revision, generation, impact)
-        except Exception as error:
-            self._storage.finish_rebind(deployment_name, graph_revision, error={
-                "type": type(error).__name__, "message": str(error),
-            })
-            raise

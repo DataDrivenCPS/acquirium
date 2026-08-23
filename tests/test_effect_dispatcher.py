@@ -5,11 +5,11 @@ from datetime import timedelta
 from acquirium.Materialization.effect_worker import EffectDispatcher
 from acquirium.Materialization.effects import EffectIntent
 from acquirium.Storage.duckdb_store import DuckDBStore
-from acquirium.Storage.materialization.duckdb import MaterializationDuckDB
+from acquirium.Storage.materialization.support_duckdb import MaterializationSupportDuckDB
 
 
 def test_effect_dispatcher_retries_with_backoff_then_dead_letters(tmp_path):
-    store = MaterializationDuckDB(DuckDBStore(tmp_path / "effects.duckdb", recreate=True))
+    store = MaterializationSupportDuckDB(DuckDBStore(tmp_path / "effects.duckdb", recreate=True))
     store.create_effect_intent(EffectIntent("effect", "execution", "webhook", "https://example.test", {}, "key"))
     attempts: list[int] = []
 
@@ -28,7 +28,7 @@ def test_effect_dispatcher_retries_with_backoff_then_dead_letters(tmp_path):
 
 
 def test_expired_effect_lease_is_recovered_and_old_owner_cannot_complete(tmp_path):
-    store = MaterializationDuckDB(DuckDBStore(tmp_path / "effects.duckdb", recreate=True))
+    store = MaterializationSupportDuckDB(DuckDBStore(tmp_path / "effects.duckdb", recreate=True))
     store.create_effect_intent(EffectIntent("effect", "execution", "webhook", "https://example.test", {}, "key"))
     first = store.lease_effect_intent("lost", duration=-timedelta(microseconds=1))
     assert first is not None

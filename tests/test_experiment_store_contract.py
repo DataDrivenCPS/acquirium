@@ -9,8 +9,8 @@ from acquirium.Materialization.api import experiment
 from acquirium.Materialization.executor import LocalExecutorPool
 from acquirium.Materialization.impact import TimeRange
 from acquirium.Storage.duckdb_store import DuckDBStore
-from acquirium.Storage.materialization.duckdb import MaterializationDuckDB
-from acquirium.Storage.materialization.postgres import MaterializationPostgres
+from acquirium.Storage.materialization.support_duckdb import MaterializationSupportDuckDB
+from acquirium.Storage.materialization.support_postgres import MaterializationSupportPostgres
 
 
 @experiment(parameters_schema={"type": "object", "required": ["limit"]})
@@ -23,10 +23,10 @@ def contract_experiment(context):
 def experiment_store(request, tmp_path, pg_dsn):
     if request.param == "duckdb":
         store = DuckDBStore(tmp_path / "experiments.duckdb", recreate=True)
-        try: yield MaterializationDuckDB(store)
+        try: yield MaterializationSupportDuckDB(store)
         finally: store.close()
     else:
-        try: runtime = MaterializationPostgres(pg_dsn)
+        try: runtime = MaterializationSupportPostgres(pg_dsn)
         except Exception as error: pytest.skip(f"PostgreSQL unavailable: {error}")
         try: yield runtime
         finally: runtime.close()

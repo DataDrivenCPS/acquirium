@@ -518,7 +518,7 @@ class Acquirium:
         if definition is None or definition.kind != "transformation":
             raise ValueError("register_transformation expects an @acquirium.transform or @acquirium.stateful definition")
         # definition_spec converts inputs/bind/outputs helper dataclasses into
-        # the JSON-safe shapes the server stores and rebinds against.
+        # the JSON-safe shapes the server stores in immutable topology epochs.
         return self.client.register_transformation({
             "name": definition.name,
             "source_digest": definition.source_digest,

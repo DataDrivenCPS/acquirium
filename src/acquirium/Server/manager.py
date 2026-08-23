@@ -168,10 +168,10 @@ class Manager:
                     "duckdb", duckdb_path=_effective_duckdb_path, recreate=recreate
                 )
                 from acquirium.Storage.publication.duckdb import PublicationDuckDB
-                from acquirium.Storage.materialization.duckdb import MaterializationDuckDB
+                from acquirium.Storage.materialization.support_duckdb import MaterializationSupportDuckDB
 
                 publication: PublicationStore = PublicationDuckDB(timescale)
-                materialization = MaterializationDuckDB(timescale)
+                materialization = MaterializationSupportDuckDB(timescale)
             else:
                 _effective_dsn = pg_dsn or os.getenv("PG_DSN")
                 if not _effective_dsn:
@@ -180,10 +180,10 @@ class Manager:
                     "timescale", pg_dsn=_effective_dsn, recreate=recreate
                 )
                 from acquirium.Storage.publication.postgres import PublicationPostgres
-                from acquirium.Storage.materialization.postgres import MaterializationPostgres
+                from acquirium.Storage.materialization.support_postgres import MaterializationSupportPostgres
 
                 publication = PublicationPostgres(_effective_dsn)
-                materialization = MaterializationPostgres(_effective_dsn)
+                materialization = MaterializationSupportPostgres(_effective_dsn)
 
         # Caller-supplied converter or graph wins; otherwise the converter
         # is built lazily in _ensure_qudt_converter from the QUDT unit
@@ -205,21 +205,27 @@ class Manager:
         self.publication = publication
         self.materialization = materialization
         from acquirium.Materialization.executor import LocalExecutorPool
-        from acquirium.Materialization.rebinding import MaterializationRebinder
-        from acquirium.Materialization.scheduler import MaterializationScheduler
-        self.materialization_scheduler = MaterializationScheduler(materialization)
-        self.materialization_rebinder = MaterializationRebinder(materialization, graph)
+        from acquirium.Materialization.epoch_reconciler import TopologyEpochReconciler
         self.materialization_executor = LocalExecutorPool()
+        def _state_revision(binding_id: str) -> str | None:
+            try:
+                revision = materialization.active_state_revision(binding_id)
+            except (KeyError, ValueError):
+                return None
+            return revision.revision_id if revision is not None else None
+        if _backend == "duckdb":
+            from acquirium.Storage.materialization.epoch_duckdb import TopologyEpochDuckDB
+            epoch_materialization = TopologyEpochDuckDB(timescale, state_revision_resolver=_state_revision)
+        else:
+            from acquirium.Storage.materialization.epoch_postgres import TopologyEpochPostgres
+            epoch_materialization = TopologyEpochPostgres(_effective_dsn, state_revision_resolver=_state_revision)
+        self.epoch_materialization = epoch_materialization
+        self.epoch_reconciler = TopologyEpochReconciler(epoch_materialization, graph, self.materialization_executor)
         from acquirium.Materialization.service_runtime import ServiceSupervisor
         from acquirium.Materialization.effect_worker import EffectDispatcher
         from acquirium.Server.effect_worker import deliver_effect
         self.service_supervisor = ServiceSupervisor(materialization, self.service_snapshot)
         self.effect_dispatcher = EffectDispatcher(materialization, deliver_effect)
-        # The materialization safety scan is a backstop for lost wake-ups, not
-        # the primary trigger, so it runs on a coarse interval instead of on
-        # every scheduler tick.
-        self._discover_interval_s = 1.0
-        self._next_discover_at = 0.0
         # Published graph revision seen by the last stream-ref resync. It gates
         # the expensive rebuild in _registered_value_kind so repeated writes to
         # an unregistered ref do not each trigger a full inferred-graph rebuild.
@@ -232,6 +238,10 @@ class Manager:
         self.materialization_artifacts = FilesystemArtifactStore(
             self.data_dir / "materialization-artifacts"
         )
+        def _epoch_artifact(revision_id: str) -> bytes:
+            revision = materialization.state_revision(revision_id)
+            return self.materialization_artifacts.get(revision.artifact.digest)
+        self.epoch_reconciler._artifact_loader = _epoch_artifact
 
         _emb_model = os.getenv("ACQUIRIUM_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 
@@ -657,27 +667,25 @@ class Manager:
             raise
 
     def _record_materialization_graph_revision(self) -> None:
-        """Durably couple a completed query-graph publication to rebind work."""
+        """Durably create the desired epoch for a completed query-graph publication."""
         status = self.graph_store.graph_status()
         graph_revision = int(status["published_version"])
         if graph_revision < 0:
             return
-        self.materialization.record_graph_revision(
-            graph_revision, int(status["source_version"]), self.graph_store.published_query_digest()
+        self.epoch_reconciler.ensure_graph_epoch(
+            graph_revision, self.graph_store.published_query_digest()
         )
-        for deployment_name in self.materialization.deployment_names():
-            self.materialization.request_rebind(deployment_name, graph_revision)
         self.notify_service_changes({}, graph_revision=graph_revision)
 
     def register_transformation(self, definition) -> dict[str, Any]:
-        """Persist a transformation declaration and enqueue its first rebind."""
-        definition_id = self.materialization.register_definition(definition)
+        """Persist an immutable transformation and include it in the desired epoch."""
+        definition_id = self.epoch_materialization.register_definition(definition)
         status = self.graph_store.graph_status()
         graph_revision = int(status["published_version"])
-        generation = self.materialization.deploy(definition.name, definition_id, graph_revision=graph_revision)
-        if graph_revision >= 0:
-            self.materialization.request_rebind(definition.name, graph_revision)
-        return {"name": definition.name, "definition_id": definition_id, "generation": generation, "status": "registered"}
+        epoch_id = self.epoch_reconciler.ensure_graph_epoch(
+            graph_revision, self.graph_store.published_query_digest()
+        ) if graph_revision >= 0 else None
+        return {"name": definition.name, "definition_id": definition_id, "epoch_id": epoch_id, "status": "registered"}
 
     def register_service(self, definition) -> dict[str, Any]:
         """Register an immutable service package without granting stream ownership."""
@@ -689,6 +697,18 @@ class Manager:
         service = self.materialization.register_service(definition.name, definition_id)
         return {"name": service.name, "definition_id": service.definition_id,
                 "status": service.status, "health": service.health}
+
+    def promote_state_revision(self, revision_id: str, *, policy: str = "prospective",
+                               effective_from: datetime | None = None):
+        revision = self.materialization.promote_state_revision(
+            revision_id, policy=policy, effective_from=effective_from
+        )
+        graph_revision = int(self.graph_store.graph_status()["published_version"])
+        if graph_revision >= 0:
+            self.epoch_reconciler.ensure_graph_epoch(
+                graph_revision, self.graph_store.published_query_digest()
+            )
+        return revision
 
     def notify_service_changes(self, versions: dict[str, int], *, graph_revision: int | None = None) -> None:
         """Persist a latest-state wake-up for every running service, coalescing bursts.
@@ -749,22 +769,8 @@ class Manager:
         raise RuntimeError("canonical inputs changed continuously while taking service snapshot")
 
     def run_materialization_once(self, owner: str = "manager") -> bool:
-        """Execute one durable materialization partition, if any is pending."""
-        invalidation_plans = self.materialization_scheduler.plan_state_invalidations()
-        ran_work = self.materialization_scheduler.run_next_registered(
-            owner, executor=self.materialization_executor
-        )
-        self._maybe_discover()
-        activated = self.materialization.activate_ready_bindings()
-        return ran_work or bool(invalidation_plans) or bool(activated)
-
-    def _maybe_discover(self) -> None:
-        """Run the full binding safety scan at most once per interval."""
-        now = perf_counter()
-        if now < self._next_discover_at:
-            return
-        self._next_discover_at = now + self._discover_interval_s
-        self.materialization_scheduler.discover_all()
+        """Execute one topology-epoch transition, if any is pending."""
+        return self.epoch_reconciler.run_once(owner)
 
     def collect_materialization_artifacts(self, *, older_than_seconds: float = 86400) -> int:
         """Collect aged local blobs that no durable state revision references."""
@@ -772,26 +778,13 @@ class Manager:
             self.materialization.artifact_digests(), older_than_seconds=older_than_seconds
         )
 
-    def preview_transformation(self, name: str) -> tuple["pa.Table", dict[str, object]] | None:
-        return self.materialization_scheduler.preview_registered(
-            "manager-preview", executor=self.materialization_executor, deployment_name=name
-        )
-
     def use_ray_materialization_executor(self, workers: int = 2) -> None:
         """Switch to the fixed Ray pool after the server has initialized Ray."""
         from acquirium.Materialization.executor import RayExecutorPool
         self.materialization_executor.close()
         self.materialization_executor = RayExecutorPool(workers)
+        self.epoch_reconciler._executor = self.materialization_executor
 
-    def run_rebind_once(self, owner: str = "manager") -> bool:
-        """Resolve one published-graph rebind and create its manifest plans."""
-        result = self.materialization_rebinder.run_once(owner)
-        if result is None:
-            return False
-        self.materialization_scheduler.bootstrap_staged(deployment_name=result.deployment_name,
-            generation=result.generation, graph_revision=result.graph_revision, impact=result.impact)
-        return True
-    
     def timeseries_batch(
         self,
         uri: str,
@@ -872,6 +865,7 @@ class Manager:
         """
         pub_id = publication_id or str(uuid.uuid4())
         receipt = self.publication.publish(PublicationRequest(pub_id, mutations))
+        self.epoch_materialization.plan_data_changes()
         self.notify_service_changes(dict(receipt.versions))
         return receipt
 
@@ -1374,6 +1368,7 @@ class Manager:
             ("materialization executor", getattr(self, "materialization_executor", None)),
             ("service supervisor", getattr(self, "service_supervisor", None)),
             ("publication store", self.publication),
+            ("epoch materialization store", getattr(self, "epoch_materialization", None)),
             ("materialization store", self.materialization),
             ("timeseries store", self.timescale),
             ("graph store", self.graph_store),

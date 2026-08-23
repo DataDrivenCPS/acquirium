@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -20,6 +21,7 @@ def mgr(tmp_path):
     m = Manager.__new__(Manager)
     m.timescale = store
     m.publication = PublicationDuckDB(store)
+    m.epoch_materialization = MagicMock()
     m.notify_service_changes = lambda *args, **kwargs: None
     yield m
     store.close()

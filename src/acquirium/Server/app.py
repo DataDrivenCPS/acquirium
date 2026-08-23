@@ -268,7 +268,6 @@ async def lifespan(app: FastAPI):
         next_error_log = 0.0
         while True:
             try:
-                rebound = await asyncio.to_thread(m.run_rebind_once, owner)
                 ran_work = await asyncio.to_thread(m.run_materialization_once, owner)
                 ran_service = await asyncio.to_thread(m.run_service_once)
                 ran_effect = await asyncio.to_thread(m.run_effect_once, owner)
@@ -279,7 +278,7 @@ async def lifespan(app: FastAPI):
             except asyncio.CancelledError:
                 raise
             except Exception:
-                # The scheduler recorded the failed attempt as retryable; keep
+                # The reconciler recorded the failed attempt as retryable; keep
                 # the server healthy and retry after the normal idle delay. Log
                 # at most once per interval so a deterministically failing
                 # partition cannot flood the log on every poll.
@@ -288,7 +287,7 @@ async def lifespan(app: FastAPI):
                     log.exception("Materialization execution failed")
                     next_error_log = now + error_log_seconds
                 rebound = ran_work = ran_service = ran_effect = False
-            await asyncio.sleep(0 if rebound or ran_work or ran_service or ran_effect else idle_seconds)
+            await asyncio.sleep(0 if ran_work or ran_service or ran_effect else idle_seconds)
 
     materialization_task = asyncio.create_task(_materialization_loop())
     app.state.materialization_task = materialization_task
@@ -742,81 +741,33 @@ def collect_experiment(run_id: str) -> dict[str, Any]:
     except ValueError as error: raise HTTPException(status_code=409, detail=str(error))
 
 
-def _set_transformation_status(name: str, status: str) -> dict[str, Any]:
+@app.get("/materialization/epochs")
+def materialization_epochs() -> dict[str, Any]:
+    """Inspect immutable topology epochs; reconciliation is automatic."""
+    storage = app.state.manager.epoch_materialization
+    current = storage.current_epoch_id()
+    if current is None:
+        return {"ok": True, "epoch": None, "bindings": []}
+    summary = storage.epoch_summary(current)
+    return {"ok": True, "epoch": summary.__dict__,
+            "bindings": [binding.__dict__ for binding in storage.epoch_bindings(current)]}
+
+
+@app.get("/materialization/epochs/{epoch_id}")
+def materialization_epoch(epoch_id: str) -> dict[str, Any]:
+    storage = app.state.manager.epoch_materialization
     try:
-        app.state.manager.materialization.set_deployment_status(name, status)
-        return {"ok": True, **app.state.manager.materialization.deployment_status(name)}
+        summary = storage.epoch_summary(epoch_id)
     except KeyError:
-        raise HTTPException(status_code=404, detail=f"unknown transformation {name!r}")
-
-
-@app.post("/transformations/{name}/start")
-def start_transformation(name: str) -> dict[str, Any]:
-    return _set_transformation_status(name, "active")
-
-
-@app.post("/transformations/{name}/pause")
-def pause_transformation(name: str) -> dict[str, Any]:
-    return _set_transformation_status(name, "paused")
-
-
-@app.post("/transformations/{name}/rebind")
-def rebind_transformation(name: str) -> dict[str, Any]:
-    deployment = app.state.manager.materialization.deployment_status(name)
-    if deployment is None:
-        raise HTTPException(status_code=404, detail=f"unknown transformation {name!r}")
-    revision = int(app.state.manager.graph_store.graph_status()["published_version"])
-    if revision < 0:
-        raise HTTPException(status_code=409, detail="no published query graph is available")
-    app.state.manager.materialization.request_rebind(name, revision)
-    return {"ok": True, "name": name, "graph_revision": revision}
-
-
-@app.post("/transformations/{name}/reconcile")
-def reconcile_transformation(name: str) -> dict[str, Any]:
-    """Force a fresh staged topology resolution against the published graph."""
-    deployment = app.state.manager.materialization.deployment_status(name)
-    if deployment is None:
-        raise HTTPException(status_code=404, detail=f"unknown transformation {name!r}")
-    revision = int(app.state.manager.graph_store.graph_status()["published_version"])
-    if revision < 0:
-        raise HTTPException(status_code=409, detail="no published query graph is available")
-    app.state.manager.materialization.request_rebind(name, revision, force=True)
-    return {"ok": True, "name": name, "graph_revision": revision, "reconcile": True}
-
-
-@app.get("/transformations")
-def transformations() -> dict[str, Any]:
-    return {"ok": True, "transformations": app.state.manager.materialization.deployments()}
-
-
-@app.get("/transformations/{name}")
-def transformation_status(name: str) -> dict[str, Any]:
-    result = app.state.manager.materialization.deployment_status(name)
-    if result is None:
-        raise HTTPException(status_code=404, detail=f"unknown transformation {name!r}")
-    return {"ok": True, **result}
-
-
-@app.post("/transformations/{name}/preview")
-def preview_transformation(name: str):
-    """Run the next pending partition without committing any output."""
-    if app.state.manager.materialization.deployment_status(name) is None:
-        raise HTTPException(status_code=404, detail=f"unknown transformation {name!r}")
-    try:
-        result = app.state.manager.preview_transformation(name)
-    except Exception as error:
-        raise HTTPException(status_code=400, detail=str(error))
-    if result is None:
-        raise HTTPException(status_code=409, detail="no pending partition is available for preview")
-    table, metadata = result
-    return _arrow_response(table, "acquirium-materialization-preview", {f"x-acquirium-{key.replace('_', '-')}": str(value) for key, value in metadata.items()})
+        raise HTTPException(status_code=404, detail=f"unknown topology epoch {epoch_id!r}")
+    return {"ok": True, "epoch": summary.__dict__,
+            "bindings": [binding.__dict__ for binding in storage.epoch_bindings(epoch_id)]}
 
 
 @app.post("/state-revisions/{revision_id}/promote")
 def promote_state_revision(revision_id: str, request: StateRevisionPromotion) -> dict[str, Any]:
     try:
-        revision = app.state.manager.materialization.promote_state_revision(
+        revision = app.state.manager.promote_state_revision(
             revision_id, policy=request.policy, effective_from=request.effective_from
         )
         return {"ok": True, "revision_id": revision.revision_id, "status": revision.status,
@@ -841,72 +792,6 @@ def _arrow_response(table: "pa.Table", metadata_key: str, metadata: dict[str, An
     )
 
 
-class MaterializationLeaseRequest(BaseModel):
-    owner: str
-
-
-class MaterializationSnapshotRequest(BaseModel):
-    owner: str
-    attempt: int
-
-
-@app.post("/internal/materializations/lease")
-def internal_materialization_lease(request: MaterializationLeaseRequest) -> dict[str, Any]:
-    lease = app.state.manager.materialization.lease_partition(request.owner)
-    if lease is None:
-        return {"lease": None}
-    return {"lease": {"partition_id": lease.partition.partition_id, "plan_id": lease.partition.plan_id,
-            "start": lease.partition.interval.start.isoformat(), "end": lease.partition.interval.end.isoformat(),
-            "attempt": lease.attempt, "expires_at": lease.expires_at.isoformat()}}
-
-
-@app.post("/internal/materializations/{partition_id}/snapshot")
-def internal_materialization_snapshot(partition_id: str, request: MaterializationSnapshotRequest):
-    try:
-        storage = app.state.manager.materialization
-        lease = storage.leased_partition(partition_id, request.owner, request.attempt)
-        inputs, outputs = storage.partition_refs(partition_id)
-        snapshot = storage.snapshot_partition(lease, inputs)
-        return _arrow_response(snapshot.inputs, "acquirium-materialization-snapshot", {
-            "partition_id": partition_id, "plan_id": lease.partition.plan_id, "attempt": lease.attempt,
-            "input_versions": snapshot.input_versions, "input_refs": inputs, "output_refs": outputs,
-            "start": lease.partition.interval.start.isoformat(), "end": lease.partition.interval.end.isoformat(),
-        })
-    except (KeyError, ValueError) as error:
-        raise HTTPException(status_code=409, detail=str(error))
-
-
-@app.post("/internal/materializations/{partition_id}/commit")
-async def internal_materialization_commit(partition_id: str, request: Request, owner: str, attempt: int):
-    try:
-        body = await request.body()
-        replacement = ipc.open_stream(pa.py_buffer(body)).read_all()
-        storage = app.state.manager.materialization
-        lease = storage.leased_partition(partition_id, owner, attempt)
-        inputs, outputs = storage.partition_refs(partition_id)
-        snapshot = storage.snapshot_partition(lease, inputs)
-        output_publication_id = storage.commit_replacement(snapshot, input_refs=inputs, output_refs=outputs, replacement=replacement)
-        return {"ok": True, "output_publication_id": output_publication_id}
-    except Exception as error:
-        raise HTTPException(status_code=409, detail=str(error))
-
-
-class MaterializationFailureRequest(BaseModel):
-    owner: str
-    attempt: int
-    error: dict[str, Any] = Field(default_factory=dict)
-
-
-@app.post("/internal/materializations/{partition_id}/fail")
-def internal_materialization_fail(partition_id: str, request: MaterializationFailureRequest) -> dict[str, Any]:
-    # A failed attempt becomes pending again; the attempt count remains durable.
-    storage = app.state.manager.materialization
-    try:
-        lease = storage.leased_partition(partition_id, request.owner, request.attempt)
-    except (KeyError, ValueError) as error:
-        raise HTTPException(status_code=409, detail=str(error))
-    storage.fail_partition(lease, request.error)
-    return {"ok": True}
 #### DRIVERS API ENDPOINTS ####
 
 

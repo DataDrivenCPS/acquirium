@@ -9,7 +9,7 @@ from acquirium.Materialization.definitions import MaterializationDefinition
 from acquirium.Materialization.service_runtime import ServiceSupervisor
 from acquirium.Materialization.services import ChangeHint
 from acquirium.Storage.duckdb_store import DuckDBStore
-from acquirium.Storage.materialization.duckdb import MaterializationDuckDB
+from acquirium.Storage.materialization.support_duckdb import MaterializationSupportDuckDB
 from acquirium.Storage.publication.duckdb import PublicationDuckDB
 from acquirium.Storage.publication.types import MUTATION_SCHEMA, PublicationRequest
 
@@ -26,7 +26,7 @@ class Dashboard:
 def test_service_executes_coalesced_hint_and_reports_restart_health(tmp_path):
     Dashboard.received.clear()
     Dashboard.last_context = None
-    store = MaterializationDuckDB(DuckDBStore(tmp_path / "service.duckdb", recreate=True))
+    store = MaterializationSupportDuckDB(DuckDBStore(tmp_path / "service.duckdb", recreate=True))
     definition = MaterializationDefinition("dashboard", "digest", "test_service_runtime:Dashboard", kind="service")
     store.register_definition(definition)
     store.register_service("dashboard", definition.definition_id)
@@ -50,7 +50,7 @@ def test_service_executes_coalesced_hint_and_reports_restart_health(tmp_path):
 
 
 def test_service_context_has_no_materialized_output_writer(tmp_path):
-    store = MaterializationDuckDB(DuckDBStore(tmp_path / "service.duckdb", recreate=True))
+    store = MaterializationSupportDuckDB(DuckDBStore(tmp_path / "service.duckdb", recreate=True))
     definition = MaterializationDefinition("dashboard", "digest", "test_service_runtime:Dashboard", kind="service")
     store.register_definition(definition)
     store.register_service("dashboard", definition.definition_id)
@@ -80,7 +80,7 @@ class CrashingService:
 def test_failing_service_is_stopped_not_retried_forever(tmp_path):
     CrashingService.calls = 0
     CrashingService.fail = True
-    store = MaterializationDuckDB(DuckDBStore(tmp_path / "service-fail.duckdb", recreate=True))
+    store = MaterializationSupportDuckDB(DuckDBStore(tmp_path / "service-fail.duckdb", recreate=True))
     definition = MaterializationDefinition("crasher", "digest", "test_service_runtime:CrashingService", kind="service")
     store.register_definition(definition)
     store.register_service("crasher", definition.definition_id)
@@ -121,7 +121,7 @@ def test_service_snapshot_returns_only_latest_row_per_stream(tmp_path):
             {"operation": "upsert", "ref_uri": "urn:b", "ts": base, "numeric_value": 10.0, "text_value": None},
             {"operation": "upsert", "ref_uri": "urn:b", "ts": base.replace(day=2), "numeric_value": 20.0, "text_value": None},
         ], schema=MUTATION_SCHEMA)))
-        versions, inputs = MaterializationDuckDB(store).service_input_snapshot(["urn:a", "urn:b"])
+        versions, inputs = MaterializationSupportDuckDB(store).service_input_snapshot(["urn:a", "urn:b"])
         rows = list(zip(inputs.column("ref_uri").to_pylist(), inputs.column("numeric_value").to_pylist()))
         # Only the newest row of each stream, regardless of retained history.
         assert rows == [("urn:a", 3.0), ("urn:b", 20.0)]
@@ -139,7 +139,7 @@ def test_service_snapshot_window_returns_rows_since(tmp_path):
             {"operation": "upsert", "ref_uri": "urn:a", "ts": base.replace(day=2), "numeric_value": 2.0, "text_value": None},
             {"operation": "upsert", "ref_uri": "urn:a", "ts": base.replace(day=3), "numeric_value": 3.0, "text_value": None},
         ], schema=MUTATION_SCHEMA)))
-        runtime = MaterializationDuckDB(store)
+        runtime = MaterializationSupportDuckDB(store)
         # A window from day 2 onward returns those rows, oldest first.
         _, windowed = runtime.service_input_snapshot(["urn:a"], since=base.replace(day=2))
         rows = list(zip(windowed.column("ts").to_pylist(), windowed.column("numeric_value").to_pylist()))

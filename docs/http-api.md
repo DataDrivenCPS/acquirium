@@ -230,14 +230,9 @@ Declarations are immutable; registration returns the durable identity. See
 
 | Endpoint | Purpose |
 | --- | --- |
-| `POST /transformations/register` | Persist a transformation declaration and queue its first rebind |
-| `GET /transformations` | List deployments and their status |
-| `GET /transformations/{name}` | Status of one deployment |
-| `POST /transformations/{name}/start` | Mark a deployment active |
-| `POST /transformations/{name}/pause` | Mark a deployment paused |
-| `POST /transformations/{name}/rebind` | Queue a rebind against the published graph |
-| `POST /transformations/{name}/reconcile` | Force a fresh staged topology resolution |
-| `POST /transformations/{name}/preview` | Run the next pending partition without committing |
+| `POST /transformations/register` | Persist an immutable transformation definition and include it in the next topology epoch |
+| `GET /materialization/epochs` | Inspect the current immutable topology epoch and its persisted bindings |
+| `GET /materialization/epochs/{epoch_id}` | Inspect one topology epoch |
 
 `register` body: `name`, `source_digest`, `entrypoint`, `inputs`/`bind`,
 `outputs`, `impact`, `parameters_schema`.
@@ -280,12 +275,6 @@ matches; otherwise the request is rejected.
 | `POST /artifact-requests/{request_id}/complete` | Complete a lease with base64 artifact bytes |
 | `POST /artifact-requests/{request_id}/fail` | Fail a leased request |
 | `POST /state-revisions/{revision_id}/promote` | Promote a candidate revision (`prospective`, `recompute_all`, or `recompute_from`) |
-
-### Internal executor endpoints
-
-`/internal/materializations/{lease,snapshot,commit,fail}` are used by remote
-materialization executors to lease partitions, read pinned Arrow snapshots, and
-commit or fail replacements. They are not part of the user-facing API.
 
 ---
 
