@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass, field
 from hashlib import sha256
 import inspect
 import json
+from pathlib import Path
 from typing import Any, Literal, Mapping
 
 from acquirium.Materialization.impact import ImpactPolicy
@@ -40,14 +41,25 @@ def definition_spec(definition: "MaterializationDefinition") -> dict[str, object
 
 
 def source_digest(target: object) -> str:
-    """Digest source rather than a mutable object instance or its address."""
+    """Digest the importable executable module and qualified entrypoint."""
+    module_name = getattr(target, "__module__", "")
+    qualname = getattr(target, "__qualname__", target.__class__.__qualname__)
+    module = inspect.getmodule(target)
+    module_file = getattr(module, "__file__", None)
+    if module_file:
+        try:
+            content = Path(module_file).read_bytes()
+        except OSError:
+            content = b""
+        if content:
+            return sha256(
+                module_name.encode() + b":" + qualname.encode() + b"\0" + content
+            ).hexdigest()
     try:
         source = inspect.getsource(target)
     except (OSError, TypeError):
-        source = getattr(target, "__qualname__", repr(target))
-    module = getattr(target, "__module__", "")
-    qualname = getattr(target, "__qualname__", target.__class__.__qualname__)
-    return sha256(f"{module}:{qualname}\n{source}".encode()).hexdigest()
+        source = qualname
+    return sha256(f"{module_name}:{qualname}\n{source}".encode()).hexdigest()
 
 
 @dataclass(frozen=True)

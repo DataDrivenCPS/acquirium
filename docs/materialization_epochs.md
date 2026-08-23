@@ -10,6 +10,12 @@ resolved binding inputs/outputs/metadata, records definition and state-revision
 identities, validates global output ownership, and stores a directed acyclic
 dependency graph.  Workers receive only these persisted rows.
 
+The executable digest covers the entrypoint's complete Python module. Both the
+deployment boundary and every fresh worker load recompute and verify it, so a
+mutable import path can never silently execute code different from the selected
+definition. Binding resolution is declarative; topology construction does not
+run an unversioned resolver callback.
+
 ## State machine
 
 ```text

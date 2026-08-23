@@ -5,7 +5,6 @@ from hashlib import sha256
 from typing import Iterable, Mapping
 
 from acquirium.Materialization.bindings import BindingSpec
-from acquirium.Materialization.worker import load_entrypoint
 
 
 def _roles(value: object, *, default_role: str) -> dict[str, tuple[str, ...]]:
@@ -112,9 +111,7 @@ def resolve_bindings(spec: Mapping[str, object], graph: object) -> tuple[Binding
         return _per_input(declaration["selector"], spec["outputs"], graph)
     if declaration is None and isinstance(spec.get("inputs"), Mapping) and "criteria" in spec["inputs"] and isinstance(spec.get("outputs"), Mapping):
         return _per_input(spec["inputs"], spec["outputs"], graph)
-    if isinstance(declaration, Mapping) and isinstance(declaration.get("resolver"), str):
-        resolved = load_entrypoint(declaration["resolver"])(graph)
-    elif isinstance(declaration, Mapping) and isinstance(declaration.get("bindings"), list):
+    if isinstance(declaration, Mapping) and isinstance(declaration.get("bindings"), list):
         resolved = declaration["bindings"]
     elif isinstance(declaration, Mapping) and "inputs" in declaration and isinstance(spec.get("outputs"), Mapping):
         resolved = ({"inputs": declaration["inputs"], "outputs": spec["outputs"]},)
@@ -125,8 +122,8 @@ def resolve_bindings(spec: Mapping[str, object], graph: object) -> tuple[Binding
             raise ValueError("a direct transformation requires inputs and outputs")
         resolved = ({"inputs": spec["inputs"], "outputs": spec["outputs"]},)
     else:
-        raise ValueError("bind must declare explicit bindings or a trusted resolver entrypoint")
+        raise ValueError("bind must use a declarative selector or explicit bindings")
     bindings = tuple(item if isinstance(item, BindingSpec) else _binding(item) for item in resolved)
     if not bindings and not (isinstance(declaration, Mapping) and "selector" in declaration):
-        raise ValueError("binding resolver returned no bindings")
+        raise ValueError("binding declaration resolved to no bindings")
     return bindings

@@ -18,11 +18,11 @@ class LocalExecutorPool:
     def submit(self, target: Callable[..., Any], request: ComputeRequest) -> Future[pa.Table]:
         return self._executor.submit(self._adapter.execute, target, request)
     def submit_entrypoint(self, *, digest: str, entrypoint: str, request: ComputeRequest) -> Future[pa.Table]:
-        target = self.definitions.load(digest, lambda: load_entrypoint(entrypoint))
+        target = self.definitions.load(digest, lambda: load_entrypoint(entrypoint, digest))
         return self.submit(target, request)
     def submit_callable_entrypoint(self, *, digest: str, entrypoint: str, argument: Any) -> Future[Any]:
         """Run bounded non-materialization work from an immutable entrypoint."""
-        target = self.definitions.load(digest, lambda: load_entrypoint(entrypoint))
+        target = self.definitions.load(digest, lambda: load_entrypoint(entrypoint, digest))
         return self._executor.submit(target, argument)
     def close(self) -> None:
         self._executor.shutdown(wait=True, cancel_futures=False)
@@ -52,10 +52,10 @@ class RayExecutorPool:
                 self.adapter = PythonArrowAdapter()
                 self.definitions = DefinitionCache()
             def execute(self, digest: str, entrypoint: str, request: ComputeRequest) -> pa.Table:
-                target = self.definitions.load(digest, lambda: load_entrypoint(entrypoint))
+                target = self.definitions.load(digest, lambda: load_entrypoint(entrypoint, digest))
                 return self.adapter.execute(target, request)
             def call(self, digest: str, entrypoint: str, argument: Any) -> Any:
-                target = self.definitions.load(digest, lambda: load_entrypoint(entrypoint))
+                target = self.definitions.load(digest, lambda: load_entrypoint(entrypoint, digest))
                 return target(argument)
             def clear(self) -> None:
                 self.definitions.clear()

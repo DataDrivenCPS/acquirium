@@ -689,6 +689,8 @@ class Manager:
 
     def deploy_transformation(self, definition) -> dict[str, Any]:
         """Validate and deploy one immutable transformation definition."""
+        from acquirium.Materialization.worker import load_entrypoint
+        load_entrypoint(definition.entrypoint, definition.source_digest)
         definition_id = self.epoch_materialization.register_definition(definition)
         generation = self.epoch_materialization.deploy_definition(
             definition.name, definition_id, self.graph_store
@@ -716,6 +718,8 @@ class Manager:
             raise ValueError("service registration requires a service definition")
         if definition.inputs is not None or definition.bind is not None or definition.outputs is not None:
             raise ValueError("services cannot declare materialized stream inputs or outputs")
+        from acquirium.Materialization.worker import load_entrypoint
+        load_entrypoint(definition.entrypoint, definition.source_digest)
         definition_id = self.materialization.register_definition(definition)
         service = self.materialization.register_service(definition.name, definition_id)
         return {"name": service.name, "definition_id": service.definition_id,

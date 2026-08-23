@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Callable, TypeVar
 import importlib
 
+from acquirium.Materialization.definitions import source_digest
+
 T = TypeVar("T")
 
 class DefinitionCache:
@@ -19,8 +21,8 @@ class DefinitionCache:
         self._items.clear()
 
 
-def load_entrypoint(entrypoint: str):
-    """Load trusted local ``module:qualname`` code without serializing objects."""
+def load_entrypoint(entrypoint: str, expected_digest: str | None = None):
+    """Load trusted code and prove it matches its immutable identity."""
     try:
         module_name, qualname = entrypoint.split(":", 1)
     except ValueError as error:
@@ -32,4 +34,10 @@ def load_entrypoint(entrypoint: str):
         target = getattr(target, part)
     if not callable(target):
         raise TypeError(f"entrypoint {entrypoint!r} is not callable")
+    actual_digest = source_digest(target)
+    if expected_digest is not None and actual_digest != expected_digest:
+        raise ValueError(
+            f"entrypoint digest mismatch for {entrypoint!r}: "
+            f"expected {expected_digest}, found {actual_digest}"
+        )
     return target

@@ -107,7 +107,7 @@ class ServiceSupervisor:
         if existing is not None and existing[0] == definition_id:
             return existing[1]
         definition = self._storage.service_definition(definition_id)
-        target = load_entrypoint(definition["entrypoint"])
+        target = load_entrypoint(definition["entrypoint"], definition["source_digest"])
         instance = target() if isinstance(target, type) else target
         self._instances[name] = (definition_id, instance)
         return instance
