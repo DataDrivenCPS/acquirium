@@ -58,11 +58,15 @@ model.
 | [Text resolution](resolution.md) | free text to URIs; unit conversion |
 | [Graph backend](graph-backend-architecture.md) | graph ownership, inference, query views |
 | [HTTP API](http-api.md) | the raw endpoints, for scripting against the server |
+| [Glossary](glossary.md) | the vocabulary the guides assume: URIs, CURIEs, free text, aliases, streams |
 
 The `docs/agents/` directory holds compact per-topic references written for
 coding agents; point your agent at them instead of the prose guides.
 
 ## Glossary
+
+The [glossary](glossary.md) defines these and the rest of the vocabulary with
+examples, including how URIs, CURIEs and free text differ.
 
 | term | meaning |
 |---|---|
