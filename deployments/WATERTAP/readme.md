@@ -43,8 +43,9 @@ uv manages the virtual environment and the right Python version for you.
     ```
 3. Start the server (plus any drivers listed in the config):
     ```bash
-    uv run acquirium server --config deployments/WATERTAP/scripts/acquirium.toml
+    uv run acquirium server --config deployments/WATERTAP/models/seawater-ro/acquirium.toml 
     ```
+    **Note:** In the first run, it will require 5-10 minutes to start the server.
 4. Run the example notebooks (in a second terminal, repo still the working dir):
     ```bash
     uv run --with jupyter jupyter lab
