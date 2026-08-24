@@ -56,12 +56,42 @@ version vector, and upstream frontier at commit time.
 
 ## Reconciliation and sealing
 
-Each node/range work item stores the raw input version vector and the upstream
-work IDs that constitute its dependency frontier.  Execution writes only to
-`topology_epoch_outputs`, an epoch-private staged overlay.  A commit is
-accepted only for the live claim and current epoch, with unchanged raw input
-versions and committed upstream frontier.  A stale worker may finish its
-process, but it cannot commit to canonical storage.
+Each node/range work item stores the raw input version vector, its input
+`read_interval`, and the upstream work IDs that constitute its dependency
+frontier. Execution writes only to `topology_epoch_outputs`, an epoch-private
+staged overlay. A commit is accepted only for the live claim and current epoch,
+with no raw input change intersecting the work's `read_interval` and with a
+committed upstream frontier. A newer raw version outside that interval does
+not invalidate pointwise work for an earlier event-time range. If exact change
+history is unavailable, validation falls back to conservative invalidation. A
+stale worker may finish its process, but it cannot commit to canonical storage.
+
+### Event-time invalidation
+
+The raw stream version vector is a discovery cursor, not itself a staleness
+condition. It tells the scheduler which publications must be examined. When a
+stream advances, the scheduler resolves those versions to changed event-time
+ranges and compares them with the work's input `read_interval`:
+
+| Change | Pointwise work | Windowed work |
+| --- | --- | --- |
+| New value outside the work's read interval | Keep the result | Keep the result |
+| New value inside the work's read interval | Recompute | Recompute |
+| Correction or delete inside the read interval | Recompute | Recompute |
+
+For pointwise work at timestamp `t`, the write and read ranges are the single
+event-time point around `t`. A lookback, look-ahead, or window policy expands
+the read range to include every input the transform can observe. Thus a later
+append normally does not invalidate an earlier pointwise result, but it does
+invalidate a windowed result when it falls inside that result's input halo.
+
+Canonical rows retain the stream version that last wrote them, allowing normal
+publications to be resolved to exact event-time points. Tombstones are included
+in this lookup, so deletes and corrections are treated like any other change.
+If those canonical version markers are unavailable—for example after history
+has been compacted—the bucketed `stream_change_ranges` manifest is used as a
+safe, conservative fallback. The fallback may invalidate more work than
+necessary, but it never silently accepts an unverified result.
 
 A component seal is one transaction.  It verifies that every component work
 item is committed, locks the current epoch pointer, constructs range
@@ -80,8 +110,25 @@ topology, while each component's monotonically increasing frontier advances as
 canonical data arrives. A seal publishes exactly one component frontier. Once
 published, its staged rows and work records are discarded; the compact input
 version vector retained per binding is sufficient to derive the next frontier.
-If inputs advance before a frontier seals, the component coalesces all changes
-since its last sealed vector into a replacement frontier and fences older work.
+If inputs advance before a frontier seals, overlapping changes coalesce into a
+replacement frontier and fence older work. Disjoint changes leave completed
+work eligible to seal first; the next frontier then owns only the newer ranges.
+
+This separates two cases that can occur in an open-load workload:
+
+1. A worker can commit an earlier range after a later, disjoint append has
+   arrived. The newer stream version does not make the earlier result stale.
+2. If a new change overlaps existing frontier work—or affects it through a
+   downstream impact policy—the current frontier is replaced and its old work
+   is fenced. The worker may finish, but its result is discarded and the
+   replacement frontier recomputes the affected range.
+
+Consequently, continuously appended streams can make progress while
+materialization is running. Batch uploads of historical data follow the same
+event-time rule: the uploaded event-time ranges become dirty, while corrections
+or deletes in already materialized history invalidate the affected ranges. If
+only the conservative manifest is available, its bucket ranges may dirty a
+larger safe interval.
 
 Compaction follows reachability, not graph revision: any superseded epoch not
 named by the candidate, current, or active pointer can lose its resolved

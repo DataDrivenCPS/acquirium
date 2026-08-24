@@ -7,7 +7,7 @@ import pytest
 
 from acquirium.Materialization.api import Transformation, outputs
 from acquirium.Materialization.epoch_reconciler import TopologyEpochReconciler
-from acquirium.Materialization.impact import pointwise
+from acquirium.Materialization.impact import pointwise, window
 from acquirium.Materialization.topology import resolve_bindings
 from acquirium.Materialization.definitions import definition_for
 from acquirium.Materialization.epochs import EpochClaimError, StaleEpochError
@@ -89,7 +89,7 @@ class NoMatches(Transformation):
         context.outputs.declare("output", for_input=inputs).write(inputs.values)
 
 
-def _definition(target, *, name=None, output=None):
+def _definition(target, *, name=None, output=None, impact=None):
     output_spec = (
         outputs.stream(value_kind="numeric", prefix="urn:per-row")
         if target.invocation == "per_row" and output is None
@@ -100,11 +100,11 @@ def _definition(target, *, name=None, output=None):
         name=name or target.name,
         invocation=target.invocation,
         outputs={"output": output_spec},
-        impact=pointwise(),
+        impact=impact or pointwise(),
     )
 
 
-def _runtime(tmp_path, refs=("urn:raw",), target=AddOne, *, output=None):
+def _runtime(tmp_path, refs=("urn:raw",), target=AddOne, *, output=None, impact=None):
     store = DuckDBStore(tmp_path / "epochs.duckdb", recreate=True)
     start = datetime(2026, 1, 1, tzinfo=UTC)
     PublicationDuckDB(store).publish(PublicationRequest("raw", pa.Table.from_pylist([
@@ -113,7 +113,7 @@ def _runtime(tmp_path, refs=("urn:raw",), target=AddOne, *, output=None):
         for index, ref in enumerate(refs)
     ], schema=MUTATION_SCHEMA)))
     runtime = TopologyEpochDuckDB(store)
-    definition = _definition(target, output=output)
+    definition = _definition(target, output=output, impact=impact)
     graph = Graph(refs)
     definition_id = runtime.register_definition(definition)
     runtime.deploy_definition(definition.name, definition_id, graph)
@@ -169,6 +169,140 @@ def test_query_with_no_matches_builds_an_active_empty_epoch(tmp_path):
         assert reconciler.run_until_idle("worker") == 1
         assert runtime.epoch_bindings(epoch) == ()
         assert runtime.active_epoch_id() == epoch
+    finally:
+        reconciler.close()
+        store.close()
+
+
+def test_pointwise_work_accepts_a_later_disjoint_raw_update(tmp_path):
+    store, runtime, definition, graph, start = _runtime(tmp_path)
+    publisher = PublicationDuckDB(store)
+    reconciler = TopologyEpochReconciler(runtime, graph)
+    try:
+        epoch = reconciler.ensure_graph_epoch(1, "disjoint-update")
+        assert reconciler.run_until_idle("worker") == 3
+        first = start + timedelta(seconds=1)
+        later = start + timedelta(seconds=2)
+        publisher.publish(PublicationRequest("raw-first", pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:raw", "ts": first,
+             "numeric_value": 2.0, "text_value": None},
+        ], schema=MUTATION_SCHEMA)))
+        assert runtime.plan_data_changes() == 1
+        claim = runtime.claim_next_work("worker")
+        snapshot = runtime.snapshot(claim)
+        assert snapshot.work.write_interval.start == first
+        assert snapshot.work.write_interval.end == first + timedelta(microseconds=1)
+
+        publisher.publish(PublicationRequest("raw-later", pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:raw", "ts": later,
+             "numeric_value": 3.0, "text_value": None},
+        ], schema=MUTATION_SCHEMA)))
+        runtime.commit_work(snapshot, pa.Table.from_pylist([{
+            "ref_uri": "urn:derived", "ts": first,
+            "numeric_value": 3.0, "text_value": None,
+        }]), claim)
+
+        # The later append must not replace the completed, disjoint frontier.
+        assert runtime.plan_data_changes() == 0
+        seal = runtime.claim_next_component("sealer")
+        assert seal is not None
+        runtime.seal_component(seal)
+        assert runtime.plan_data_changes() == 1
+        assert runtime.active_epoch_id() == epoch
+    finally:
+        reconciler.close()
+        store.close()
+
+
+@pytest.mark.parametrize("operation,numeric_value", [("upsert", 4.0), ("delete", None)])
+def test_pointwise_work_rejects_an_overlapping_raw_update(tmp_path, operation, numeric_value):
+    store, runtime, definition, graph, start = _runtime(tmp_path)
+    publisher = PublicationDuckDB(store)
+    reconciler = TopologyEpochReconciler(runtime, graph)
+    try:
+        reconciler.ensure_graph_epoch(1, "overlapping-update")
+        assert reconciler.run_until_idle("worker") == 3
+        timestamp = start + timedelta(seconds=1)
+        publisher.publish(PublicationRequest("raw-original", pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:raw", "ts": timestamp,
+             "numeric_value": 2.0, "text_value": None},
+        ], schema=MUTATION_SCHEMA)))
+        assert runtime.plan_data_changes() == 1
+        claim = runtime.claim_next_work("worker")
+        snapshot = runtime.snapshot(claim)
+        publisher.publish(PublicationRequest(f"raw-correction-{operation}", pa.Table.from_pylist([
+            {"operation": operation, "ref_uri": "urn:raw", "ts": timestamp,
+             "numeric_value": numeric_value, "text_value": None},
+        ], schema=MUTATION_SCHEMA)))
+        with pytest.raises(StaleEpochError, match="raw input versions changed"):
+            runtime.commit_work(snapshot, pa.Table.from_pylist([{
+                "ref_uri": "urn:derived", "ts": timestamp,
+                "numeric_value": 3.0, "text_value": None,
+            }]), claim)
+        assert runtime.plan_data_changes() == 1
+    finally:
+        reconciler.close()
+        store.close()
+
+
+def test_historical_upload_creates_precise_changed_work_ranges(tmp_path):
+    store, runtime, definition, graph, start = _runtime(tmp_path)
+    publisher = PublicationDuckDB(store)
+    reconciler = TopologyEpochReconciler(runtime, graph)
+    try:
+        reconciler.ensure_graph_epoch(1, "historical-upload")
+        assert reconciler.run_until_idle("worker") == 3
+        earlier = start - timedelta(minutes=10)
+        latest = start - timedelta(minutes=5)
+        publisher.publish(PublicationRequest("historical-upload", pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:raw", "ts": earlier,
+             "numeric_value": 2.0, "text_value": None},
+            {"operation": "upsert", "ref_uri": "urn:raw", "ts": latest,
+             "numeric_value": 3.0, "text_value": None},
+        ], schema=MUTATION_SCHEMA)))
+        assert runtime.plan_data_changes() == 2
+        first_claim = runtime.claim_next_work("worker")
+        first_snapshot = runtime.snapshot(first_claim)
+        second_claim = runtime.claim_next_work("worker")
+        second_snapshot = runtime.snapshot(second_claim)
+        assert {
+            first_snapshot.work.write_interval.start,
+            second_snapshot.work.write_interval.start,
+        } == {earlier, latest}
+    finally:
+        reconciler.close()
+        store.close()
+
+
+def test_window_work_rejects_a_change_inside_its_read_halo(tmp_path):
+    store, runtime, definition, graph, start = _runtime(
+        tmp_path,
+        impact=window(before=timedelta(), after=timedelta(seconds=10)),
+    )
+    publisher = PublicationDuckDB(store)
+    reconciler = TopologyEpochReconciler(runtime, graph)
+    try:
+        reconciler.ensure_graph_epoch(1, "window-update")
+        assert reconciler.run_until_idle("worker") == 3
+        first = start + timedelta(seconds=1)
+        inside_halo = start + timedelta(seconds=5)
+        publisher.publish(PublicationRequest("window-first", pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:raw", "ts": first,
+             "numeric_value": 2.0, "text_value": None},
+        ], schema=MUTATION_SCHEMA)))
+        assert runtime.plan_data_changes() == 1
+        claim = runtime.claim_next_work("worker")
+        snapshot = runtime.snapshot(claim)
+        assert snapshot.work.read_interval.start < inside_halo < snapshot.work.read_interval.end
+        publisher.publish(PublicationRequest("window-later", pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:raw", "ts": inside_halo,
+             "numeric_value": 3.0, "text_value": None},
+        ], schema=MUTATION_SCHEMA)))
+        with pytest.raises(StaleEpochError, match="raw input versions changed"):
+            runtime.commit_work(snapshot, pa.Table.from_pylist([{
+                "ref_uri": "urn:derived", "ts": first,
+                "numeric_value": 3.0, "text_value": None,
+            }]), claim)
     finally:
         reconciler.close()
         store.close()

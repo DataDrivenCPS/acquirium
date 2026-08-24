@@ -81,6 +81,14 @@ lateness and pending work; compare `publish_rate_hz` with
 serial publication thread, so if the publication API call is slower than the
 requested interval, the actual driver rate will also fall behind.
 
+For pointwise transformations, each appended event-time point is an
+independent work range. A later point does not invalidate an earlier point just
+because the raw stream version advanced, so open-load runs should not produce
+one stale-worker message per append. Stale work is still expected when a
+publication corrects or deletes an event already read by a worker, when a
+windowed transformation's input halo changes, or when topology work is
+superseded. Historical uploads use the same event-time overlap rules.
+
 The structural flags are also intentionally independent, so some combinations
 create fan-out or reuse rather than a strict partition:
 

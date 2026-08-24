@@ -395,6 +395,71 @@ class TopologyEpochDuckDB(DuckDBCodecs):
             LEFT JOIN {STREAM_HEADS_TABLE} head ON head.ref_id = ids.ref_id ORDER BY requested.ref_uri""", list(refs)).fetchall()
         return dict(rows)
 
+    def _raw_change_timestamps(
+        self, conn, ref: str, after_version: int, through_version: int
+    ) -> list[datetime]:
+        """Return exact event times changed by a raw stream version range."""
+        return [
+            row[0]
+            for row in conn.execute(f"""SELECT t.ts FROM {TIMESERIES_TABLE} t
+                JOIN {REF_IDS_TABLE} r ON r.ref_id = t.ref_id
+                WHERE r.ref_uri = ? AND t.last_stream_version > ?
+                  AND t.last_stream_version <= ?
+                ORDER BY t.ts""", [ref, after_version, through_version]).fetchall()
+        ]
+
+    def _raw_change_ranges(
+        self, conn, ref: str, after_version: int, through_version: int
+    ) -> tuple[TimeRange, ...]:
+        """Return precise changed ranges, falling back to the range manifest.
+
+        The public change manifest is intentionally bucketed to bound its row
+        count.  Canonical rows retain their last stream version, however, so
+        the epoch scheduler can recover exact event-time points for normal
+        publications.  If those rows have been compacted or are otherwise
+        unavailable, the manifest remains a safe conservative fallback.
+        """
+        rows = conn.execute(
+            """SELECT start_ts, end_ts, row_count FROM stream_change_ranges
+            WHERE ref_uri = ? AND stream_version > ? AND stream_version <= ?
+            ORDER BY stream_version, start_ts""",
+            [ref, after_version, through_version],
+        ).fetchall()
+        timestamps = self._raw_change_timestamps(
+            conn, ref, after_version, through_version
+        )
+        expected_rows = sum(int(row[2]) for row in rows)
+        if timestamps and (not rows or len(timestamps) == expected_rows):
+            return coalesce_ranges(TimeRange.point(timestamp) for timestamp in timestamps)
+        if rows:
+            return tuple(TimeRange(start, end) for start, end, _ in rows)
+        return coalesce_ranges(TimeRange.point(timestamp) for timestamp in timestamps)
+
+    def _raw_changes_since(
+        self,
+        conn,
+        bindings: Mapping[str, EpochBinding],
+        owners: Mapping[str, str],
+        baselines: Mapping[str, Mapping[str, int]],
+    ) -> dict[str, list[TimeRange]]:
+        """Resolve raw changes after each binding's persisted version vector."""
+        changes: dict[str, list[TimeRange]] = {binding_id: [] for binding_id in bindings}
+        heads: dict[str, int] = {}
+        ranges: dict[tuple[str, int, int], tuple[TimeRange, ...]] = {}
+        for binding_id, binding in bindings.items():
+            versions = baselines.get(binding_id, {})
+            for ref in (ref for ref in binding.input_refs if ref not in owners):
+                after = int(versions.get(ref, 0))
+                if ref not in heads:
+                    heads[ref] = self._stream_versions(conn, (ref,)).get(ref, 0)
+                head = heads[ref]
+                if head > after:
+                    key = (ref, after, head)
+                    if key not in ranges:
+                        ranges[key] = self._raw_change_ranges(conn, ref, after, head)
+                    changes[binding_id].extend(ranges[key])
+        return changes
+
     def _definition_impact(self, conn, definition_id: str) -> ImpactPolicy:
         definition = self._definition(conn, definition_id)
         value = self._decode(definition.spec).get("impact") or {"kind": "pointwise"}
@@ -583,6 +648,65 @@ class TopologyEpochDuckDB(DuckDBCodecs):
         current = self._stream_versions(conn, raw_refs)
         return all(planned.get(ref, 0) >= version for ref, version in current.items())
 
+    def _frontier_input_versions(
+        self, conn, epoch: str, component: str, frontier: int,
+        members: Sequence[str],
+    ) -> dict[str, dict[str, int]]:
+        """Return the raw version baseline represented by a current frontier."""
+        baselines: dict[str, dict[str, int]] = {}
+        rows = conn.execute("""SELECT binding_id, input_versions_json
+            FROM topology_epoch_work
+            WHERE epoch_id = ? AND component_id = ? AND frontier = ?""",
+            [epoch, component, frontier]).fetchall()
+        for binding_id, versions_json in rows:
+            target = baselines.setdefault(binding_id, {})
+            for ref, version in self._decode(versions_json).items():
+                target[ref] = max(target.get(ref, 0), int(version))
+        for binding_id in members:
+            if binding_id in baselines:
+                continue
+            saved = conn.execute("""SELECT input_versions_json
+                FROM topology_binding_frontiers
+                WHERE epoch_id = ? AND binding_id = ?""",
+                [epoch, binding_id]).fetchone()
+            baselines[binding_id] = self._decode(saved[0]) if saved else {}
+        return baselines
+
+    def _frontier_has_overlapping_new_work(
+        self,
+        conn,
+        epoch: str,
+        component: str,
+        frontier: int,
+        members: Sequence[str],
+        bindings: Mapping[str, EpochBinding],
+        owners: Mapping[str, str],
+        edges: Sequence[tuple[str, str]],
+        component_for: Mapping[str, str],
+        component_retained: Mapping[str, Sequence[TimeRange]],
+        component_history: Mapping[str, Sequence[TimeRange]],
+    ) -> bool:
+        """Whether changes after this frontier affect its existing work ranges."""
+        work_rows = conn.execute("""SELECT binding_id, write_start_ts, write_end_ts
+            FROM topology_epoch_work
+            WHERE epoch_id = ? AND component_id = ? AND frontier = ?""",
+            [epoch, component, frontier]).fetchall()
+        if not work_rows:
+            return True
+        baselines = self._frontier_input_versions(
+            conn, epoch, component, frontier, members
+        )
+        raw_changes = self._raw_changes_since(conn, bindings, owners, baselines)
+        dirty = self._propagate_dirty(
+            conn, bindings, edges, component_for, raw_changes,
+            component_retained, component_history,
+        )
+        return any(
+            changed.intersects(TimeRange(start, end))
+            for binding_id, start, end in work_rows
+            for changed in dirty.get(binding_id, ())
+        )
+
     def plan_data_changes(self, *, maximum_partition_duration: timedelta = timedelta(minutes=15)) -> int:
         """Derive missing work from canonical changes and propagate it through the DAG."""
         with self._write() as conn:
@@ -618,26 +742,24 @@ class TopologyEpochDuckDB(DuckDBCodecs):
                 [epoch],
             ).fetchall())
 
-            raw_changes: dict[str, list[TimeRange]] = {binding_id: [] for binding_id in bindings}
+            baselines: dict[str, dict[str, int]] = {}
             for binding_id, binding in bindings.items():
-                raw_refs = tuple(ref for ref in binding.input_refs if ref not in owners)
                 saved = conn.execute("""SELECT input_versions_json FROM topology_binding_frontiers
                     WHERE epoch_id = ? AND binding_id = ?""", [epoch, binding_id]).fetchone()
-                versions = self._decode(saved[0]) if saved else {}
-                prior: dict[str, int] = {ref: int(versions.get(ref, 0)) for ref in raw_refs}
-                for ref in raw_refs:
-                    head = self._stream_versions(conn, (ref,)).get(ref, 0)
-                    if head <= prior[ref]:
-                        continue
-                    changes = conn.execute("""SELECT start_ts, end_ts FROM stream_change_ranges
-                        WHERE ref_uri = ? AND stream_version > ? AND stream_version <= ? ORDER BY start_ts""", [ref, prior[ref], head]).fetchall()
-                    for start, end in changes:
-                        raw_changes[binding_id].append(TimeRange(start, end))
+                baselines[binding_id] = self._decode(saved[0]) if saved else {}
 
+            component_retained = self._component_raw_ranges(
+                conn, component_members, bindings, owners
+            )
+            component_history = self._component_raw_ranges(
+                conn, component_members, bindings, owners, include_deleted=True
+            )
+            raw_changes = self._raw_changes_since(
+                conn, bindings, owners, baselines
+            )
             dirty = self._propagate_dirty(
                 conn, bindings, edges, component_for, raw_changes,
-                self._component_raw_ranges(conn, component_members, bindings, owners),
-                self._component_raw_ranges(conn, component_members, bindings, owners, include_deleted=True),
+                component_retained, component_history,
             )
 
             inserted = 0
@@ -652,6 +774,15 @@ class TopologyEpochDuckDB(DuckDBCodecs):
                     if self._component_frontier_covers_current_inputs(
                         conn, epoch, component, current_frontier, members, bindings, owners
                     ):
+                        continue
+                    if not self._frontier_has_overlapping_new_work(
+                        conn, epoch, component, current_frontier, members,
+                        bindings, owners, edges, component_for,
+                        component_retained, component_history,
+                    ):
+                        # New input only affects disjoint event-time ranges.
+                        # Leave this frontier intact so it can seal; the next
+                        # planning pass will create work for the new ranges.
                         continue
                     # Coalesce a newer input head into a replacement frontier;
                     # old attempts remain fenced and cannot publish.
@@ -886,6 +1017,33 @@ class TopologyEpochDuckDB(DuckDBCodecs):
     def _current_raw_versions(self, conn, refs: Sequence[str], managed: set[str]) -> dict[str, int]:
         return {ref: version for ref, version in self._stream_versions(conn, refs).items() if ref not in managed}
 
+    def _raw_versions_conflict(
+        self,
+        conn,
+        refs: Sequence[str],
+        expected_versions: Mapping[str, int],
+        actual_versions: Mapping[str, int],
+        read_interval: TimeRange,
+    ) -> bool:
+        """Return whether a raw input changed inside the snapshot read range."""
+        for ref in refs:
+            expected = int(expected_versions.get(ref, 0))
+            actual = int(actual_versions.get(ref, 0))
+            if actual == expected:
+                continue
+            if actual < expected:
+                # Stream heads are monotonic. A regression means the snapshot
+                # cannot be trusted, even though there is no forward range to
+                # inspect.
+                return True
+            changes = self._raw_change_ranges(conn, ref, expected, actual)
+            # Missing precise history is an unsafe-to-accept condition. The
+            # range-manifest fallback normally prevents this path, but keeping
+            # the fence conservative protects compaction or legacy data.
+            if not changes or any(change.intersects(read_interval) for change in changes):
+                return True
+        return False
+
     def commit_work(self, snapshot: EpochSnapshot, replacement: pa.Table, claim: EpochClaim) -> str:
         """Persist a replacement in the private overlay after all validations."""
         if claim.kind != "reconcile" or claim.target_id != snapshot.work.work_id:
@@ -922,9 +1080,13 @@ class TopologyEpochDuckDB(DuckDBCodecs):
                 raise StaleEpochError("resolved binding identity changed")
             managed = {ref for row in conn.execute("SELECT outputs_json FROM topology_epoch_bindings WHERE epoch_id = ?", [snapshot.work.epoch_id]).fetchall()
                        for refs in self._decode(row[0]).values() for ref in refs}
+            raw_refs = tuple(ref for ref in snapshot.binding.input_refs if ref not in managed)
             actual_versions = self._current_raw_versions(conn, snapshot.binding.input_refs, managed)
             expected_versions = {ref: version for ref, version in snapshot.input_versions.items() if ref not in managed}
-            if actual_versions != expected_versions:
+            if self._raw_versions_conflict(
+                conn, raw_refs, expected_versions, actual_versions,
+                snapshot.work.read_interval,
+            ):
                 conn.execute("UPDATE topology_epoch_work SET status = 'pending', error_json = ? WHERE work_id = ?", [self._json({"type": "stale_input"}), snapshot.work.work_id])
                 conn.execute("UPDATE topology_epoch_claims SET owner = NULL, expires_at = NULL WHERE claim_id = ?", [claim.claim_id])
                 raise StaleEpochError("raw input versions changed after snapshot")

@@ -1,11 +1,12 @@
 """Equivalent control-plane trace for the two durable backends."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pyarrow as pa
 import pytest
 
 from acquirium.Materialization.api import Transformation, outputs
 from acquirium.Materialization.definitions import definition_for
+from acquirium.Materialization.epoch_reconciler import TopologyEpochReconciler
 from acquirium.Materialization.impact import pointwise
 from acquirium.Storage.duckdb_store import DuckDBStore
 from acquirium.Storage.materialization.epoch_duckdb import TopologyEpochDuckDB
@@ -105,3 +106,53 @@ def test_equivalent_epoch_construction_claim_commit_seal_trace(epoch_backend):
     assert seal is not None
     runtime.seal_component(seal)
     assert runtime.active_epoch_id() == epoch
+
+
+def test_disjoint_append_does_not_fence_inflight_work(epoch_backend):
+    store, runtime, publication = epoch_backend
+    marker = "epoch-disjoint"
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    graph = ContractGraph()
+    reconciler = TopologyEpochReconciler(runtime, graph)
+    try:
+        publication.publish(PublicationRequest(marker, pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:epoch-contract:in",
+             "ts": start, "numeric_value": 4.0, "text_value": None},
+        ], schema=MUTATION_SCHEMA)))
+        definition = definition_for(
+            ContractTransformation,
+            name=marker,
+            invocation="whole_query",
+            outputs={"output": outputs.stream(value_kind="numeric", ref_uri=f"urn:{marker}:out")},
+            impact=pointwise(),
+        )
+        definition_id = runtime.register_definition(definition)
+        runtime.deploy_definition(definition.name, definition_id, graph)
+        epoch = reconciler.ensure_graph_epoch(1, marker)
+        assert reconciler.run_until_idle("worker") == 3
+
+        first = start + timedelta(seconds=1)
+        later = start + timedelta(seconds=2)
+        publication.publish(PublicationRequest(f"{marker}:first", pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:epoch-contract:in",
+             "ts": first, "numeric_value": 5.0, "text_value": None},
+        ], schema=MUTATION_SCHEMA)))
+        assert runtime.plan_data_changes() == 1
+        claim = runtime.claim_next_work("worker")
+        snapshot = runtime.snapshot(claim)
+        publication.publish(PublicationRequest(f"{marker}:later", pa.Table.from_pylist([
+            {"operation": "upsert", "ref_uri": "urn:epoch-contract:in",
+             "ts": later, "numeric_value": 6.0, "text_value": None},
+        ], schema=MUTATION_SCHEMA)))
+        runtime.commit_work(snapshot, pa.Table.from_pylist([{
+            "ref_uri": f"urn:{marker}:out", "ts": first,
+            "numeric_value": 5.0, "text_value": None,
+        }]), claim)
+        assert runtime.plan_data_changes() == 0
+        seal = runtime.claim_next_component("sealer")
+        assert seal is not None
+        runtime.seal_component(seal)
+        assert runtime.plan_data_changes() == 1
+        assert runtime.active_epoch_id() == epoch
+    finally:
+        reconciler.close()

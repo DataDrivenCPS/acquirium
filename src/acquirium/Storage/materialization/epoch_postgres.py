@@ -83,6 +83,15 @@ class TopologyEpochPostgres(PostgresCodecs, TopologyEpochDuckDB):
         values = dict(conn.execute("SELECT ref_uri, current_version FROM stream_heads WHERE ref_uri = ANY(%s::text[]) ORDER BY ref_uri", [list(refs)]).fetchall())
         return {ref: int(values.get(ref, 0)) for ref in refs}
 
+    def _raw_change_timestamps(self, conn, ref: str, after_version: int, through_version: int):
+        return [
+            row[0]
+            for row in conn.execute("""SELECT ts FROM timeseries
+                WHERE ref_uri = ? AND last_stream_version > ?
+                  AND last_stream_version <= ?
+                ORDER BY ts""", [ref, after_version, through_version]).fetchall()
+        ]
+
     def _live_rows(self, conn, ref: str, interval: TimeRange) -> list[tuple]:
         return conn.execute("""SELECT ref_uri, ts, numeric_value, text_value FROM timeseries
             WHERE ref_uri = ? AND ts >= ? AND ts < ? AND NOT deleted ORDER BY ts""",
