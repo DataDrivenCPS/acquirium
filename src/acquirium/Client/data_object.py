@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Iterator, TYPE_CHECKING
 import polars as pl
 import logging
@@ -186,6 +186,40 @@ def _restore_single_value_column(df: pl.DataFrame) -> pl.DataFrame:
     if df.is_empty() or df["value_numeric"].null_count() < df.height:
         return df.with_columns(pl.col("value_numeric").alias("value"))
     return df.with_columns(pl.col("value_text").alias("value"))
+
+
+def _as_utc_datetime(v: "datetime | str | None") -> datetime | None:
+    if v is None:
+        return None
+    dt = v if isinstance(v, datetime) else datetime.fromisoformat(str(v))
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
+def _apply_window(
+    tall: pl.DataFrame,
+    start: "datetime | str | None",
+    end: "datetime | str | None",
+    limit: int | None,
+    order: str,
+) -> pl.DataFrame:
+    """Restrict a tall frame to a time window and per-stream row limit.
+
+    Mirrors the server-side fetch bounds: ``limit`` keeps the first
+    ``limit`` rows *per stream* in ``order`` direction.
+    """
+    start = _as_utc_datetime(start)
+    end = _as_utc_datetime(end)
+    if start is not None:
+        tall = tall.filter(pl.col("time") >= start)
+    if end is not None:
+        tall = tall.filter(pl.col("time") <= end)
+    if limit is not None:
+        tall = (
+            tall.sort("time", descending=order == "desc")
+            .group_by(["data_alias", "point_uri", "ref_uri"], maintain_order=True)
+            .head(limit)
+        )
+    return tall
 
 
 def _pivot_split_values(tall: pl.DataFrame, pivot_key: str) -> pl.DataFrame:
@@ -664,38 +698,57 @@ class DataObject:
         self,
         shape: str = "wide",
         *,
+        start: "datetime | str | None" = None,
+        end: "datetime | str | None" = None,
+        limit: int | None = None,
+        order: str = "asc",
         include_ref: bool = False,
-        compact: bool = False,
+        compact: bool = True,
     ) -> pl.DataFrame:
         """Return a flat DataFrame.
 
-        - ``shape="narrow"``: returns the internal tall frame as-is (every
-          ``(data_alias, point_uri, ref_uri, time)`` row preserved).
-        - ``shape="wide"``: pivots to ``[time, <alias_or_alias__point>, ...]``.
-          Multiple ref_uris that share the same point_uri are combined
-          (first-wins). When an alias resolves to a single point the column
-          is just the alias; when it resolves to several points the columns
-          are disambiguated as ``f"{alias}__{point_local}"``.
+        The parameters and defaults mirror :meth:`Query.dataframe`, so
+        ``q.data(...).dataframe(...)`` equals ``q.dataframe(...)``. Here
+        ``start``/``end``/``limit``/``order`` are applied client-side on the
+        already-fetched data (``limit`` keeps rows *per stream*, in
+        ``order`` direction, which also orders the output); the same
+        parameters on :meth:`Query.data` bound the fetch itself.
 
-        ``compact=True`` (used by :meth:`Query.dataframe`) renders URIs as
-        CURIEs and identifies points with a ``point_id`` column rather than the
-        raw ``point_uri``/``ref_uri``; auto-aliased data nodes are labelled by
-        their compacted point-local name. In this mode the narrow layout is
+        - ``shape="wide"`` (default): pivots to ``[time, <one column per
+          stream>]``. Multiple ref_uris that share the same point_uri are
+          combined (first-wins). When an alias resolves to a single point
+          the column is just the alias; when it resolves to several points
+          the columns are disambiguated per point.
+        - ``shape="narrow"``: one row per observation.
+
+        ``compact=True`` (default) renders URIs as CURIEs and identifies
+        points with a ``point_id`` column rather than the raw
+        ``point_uri``/``ref_uri``; auto-aliased data nodes are named by the
+        point's ``rdfs:label`` when it has one, else by their compacted
+        point-local name. In this mode the narrow layout is
         ``["data_alias", "point_id", "time", "value_numeric", "value_text"]``
         and ``include_ref=True`` adds the compacted ``ref`` column.
+
+        ``compact=False`` returns the raw layout: narrow is the internal
+        tall frame (every ``(data_alias, point_uri, ref_uri, time)`` row
+        preserved with entity columns), wide keeps alias/URI column names.
         """
         self._materialize()
 
-        if self._tall.is_empty():
-            return self._tall
+        descending = order == "desc"
+        windowed = _apply_window(self._tall, start, end, limit, order)
+
+        if windowed.is_empty():
+            return windowed
 
         if compact:
-            return self._compact_dataframe(shape=shape, include_ref=include_ref)
+            return self._compact_dataframe(windowed, shape=shape, include_ref=include_ref,
+                                           descending=descending)
 
         if shape == "narrow":
-            return self._tall.sort("time")
+            return windowed.sort("time", descending=descending)
 
-        tall = self._tall.clone()
+        tall = windowed.clone()
 
         # Combine ref_uris sharing the same (data_alias, point_uri, time):
         # we want one row per point_uri at each timestamp.
@@ -738,9 +791,11 @@ class DataObject:
             .alias("_pivot_key")
         )
 
-        return _pivot_split_values(tall, "_pivot_key")
+        wide = _pivot_split_values(tall, "_pivot_key")
+        return wide.sort("time", descending=True) if descending else wide
 
-    def _compact_dataframe(self, *, shape: str, include_ref: bool) -> pl.DataFrame:
+    def _compact_dataframe(self, tall: pl.DataFrame, *, shape: str, include_ref: bool,
+                           descending: bool = False) -> pl.DataFrame:
         """Query-compatible layout: CURIE-rendered URIs and a ``point_id`` column.
 
         Auto-aliased data nodes (alias == ``str(nid)``) are named by the
@@ -755,7 +810,7 @@ class DataObject:
                 return uri
 
         # Combine ref_uris sharing the same (data_alias, point_uri, time).
-        tall = self._tall.clone().unique(
+        tall = tall.clone().unique(
             subset=["data_alias", "point_uri", "time"], keep="first"
         )
 
@@ -795,10 +850,11 @@ class DataObject:
                     pl.col("ref_uri").map_elements(_compact, return_dtype=pl.Utf8).alias("ref")
                 )
                 cols.insert(2, "ref")
-            return out.select(cols).sort("time")
+            return out.select(cols).sort("time", descending=descending)
 
         # wide
-        return _pivot_split_values(tall, "_label")
+        wide = _pivot_split_values(tall, "_label")
+        return wide.sort("time", descending=True) if descending else wide
 
     # ------------------------------------------------------------------
     # Iteration (triggers materialization)

@@ -1003,18 +1003,29 @@ class Query:
 
     def dataframe(
         self,
+        shape: str = "wide",
         *,
         start: datetime | None = None,
         end: datetime | None = None,
         limit: int | None = None,
         order: str = "asc",
         include_dependencies: bool = True,
-        shape: str = "narrow",
         cast_value: str | None = "str",
         value_mode: str = "default",
         include_ref: bool = False,
+        compact: bool = True,
     ) -> pl.DataFrame:
-        """Fetch the matched streams' values as one polars frame (wide or narrow)."""
+        """Fetch the matched streams' values as one polars frame.
+
+        The shared parameters (``shape``, ``start``, ``end``, ``limit``,
+        ``order``, ``include_ref``, ``compact``) and their defaults mirror
+        :meth:`DataObject.dataframe`, so ``q.dataframe(...)`` equals
+        ``q.data(...).dataframe(...)``. Here the window bounds the fetch
+        itself; on a DataObject they filter the already-fetched data. Only
+        the fetch/parse-time keywords (``include_dependencies``,
+        ``cast_value``, ``value_mode``) have no DataObject counterpart —
+        they are fixed at ``data()`` time.
+        """
         return self.data(
             start=start,
             end=end,
@@ -1023,7 +1034,7 @@ class Query:
             include_dependencies=include_dependencies,
             cast_value=cast_value,
             value_mode=value_mode,
-        ).dataframe(shape=shape, include_ref=include_ref, compact=True)
+        ).dataframe(shape=shape, include_ref=include_ref, compact=compact)
 
     # ---------- display helpers ----------
 

@@ -109,6 +109,50 @@ class TestPointLabelsFirst:
                               ("flow", "urn:t#p2", "urn:t#r2")])
         assert d.dataframe(shape="wide").columns == ["time", "flow__p1", "flow__p2"]
 
+    def test_query_dataframe_interface_matches_data_object(self):
+        """The shared parameters must stay in lockstep so
+        ``q.dataframe(...)`` always equals ``q.data(...).dataframe(...)``."""
+        import inspect
+        from acquirium.Client.data_object import DataObject
+        from acquirium.Client.explore.core import Query
+
+        q = inspect.signature(Query.dataframe).parameters
+        d = inspect.signature(DataObject.dataframe).parameters
+        for name in ("shape", "start", "end", "limit", "order", "include_ref", "compact"):
+            assert name in q and name in d, name
+            assert q[name].default == d[name].default, name
+        # shape is the one positional display parameter on both
+        assert list(q)[1] == list(d)[1] == "shape"
+
+    def test_dataframe_window_filters_client_side(self):
+        from acquirium.Client.data_object import BindingInfo
+        from unittest.mock import MagicMock
+        from acquirium.Client.data_object import DataObject
+        from acquirium.Client.query_graph import QueryGraph
+
+        t = [datetime(2026, 1, d, tzinfo=timezone.utc) for d in (1, 2, 3)]
+        tall = pl.DataFrame({
+            "data_alias": ["flow"] * 3,
+            "point_uri": ["urn:t#p1"] * 3,
+            "ref_uri": ["urn:t#r1"] * 3,
+            "time": t,
+            "value_numeric": [1.0, 2.0, 3.0],
+            "value_text": [None] * 3,
+        })
+        client = MagicMock()
+        client.compact_uri.side_effect = lambda u: str(u).rsplit("#", 1)[-1]
+        d = DataObject(
+            _bindings=[BindingInfo(nid=0, point_uri="urn:t#p1", ref_uri="urn:t#r1",
+                                   alias="flow", entity_contexts=[{}])],
+            _entity_columns=[], _query_graph=QueryGraph(),
+            _client=client, _tall=tall, _materialized=True,
+        )
+
+        assert d.dataframe("wide", start=t[1])["flow"].to_list() == [2.0, 3.0]
+        assert d.dataframe("wide", end=t[1])["flow"].to_list() == [1.0, 2.0]
+        assert d.dataframe("wide", limit=2, order="desc")["flow"].to_list() == [3.0, 2.0]
+        assert d.dataframe("narrow", start="2026-01-02", order="desc")["value_numeric"].to_list() == [3.0, 2.0]
+
     def test_metadata_has_point_label_column(self):
         from acquirium.Client.data_object import DataObject
         from acquirium.Client.query_graph import QueryGraph
