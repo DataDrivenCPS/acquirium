@@ -1,4 +1,4 @@
-from typing import Optional, Iterator, Iterable, Any, TYPE_CHECKING
+from typing import Optional, Iterator, Iterable, Any, Callable, TYPE_CHECKING
 from datetime import datetime, timezone
 import requests
 from requests import HTTPError
@@ -104,6 +104,7 @@ def _coerce_resolved(
 def _build_stream_triples(
     g: Graph, stream: dict, resolved: dict[str, "str | None"],
     existing: dict[str, "str | None"],
+    units_compatible: "Callable[[Any, Any], bool]",
 ) -> None:
     """Write one stream's reference/point/metadata triples into ``g``.
 
@@ -114,9 +115,10 @@ def _build_stream_triples(
     ``existing`` is the metadata the point already carries in the server
     graph (from ``AcquiriumClient._point_metadata``); pass ``{}`` for a
     point that does not exist yet. A provided field the point lacks is
-    added; a conflicting value raises ``ValueError``. A unit that matches
-    the point's is additionally written on the external reference as the
-    unit the raw rows are stored in.
+    added; a conflicting value raises ``ValueError``. Units are the one
+    exception: a provided unit that differs from the point's is accepted
+    when ``units_compatible`` says the two are convertible, and is written
+    on the external reference as the unit the raw rows are stored in.
     """
     point_uri_raw = stream.get("point_uri")
     label = stream.get("label")
@@ -164,12 +166,27 @@ def _build_stream_triples(
         current = existing.get(field)
         if current is None:
             _add_triple(g, subj, pred, provided)
-        elif str(current) != str(provided):
+        elif str(current) == str(provided):
+            if field == "unit" and ref_uri is not None:
+                _add_triple(g, ref_uri, HAS_UNIT, provided)
+        elif field != "unit":
             raise ValueError(
                 f"{field} mismatch for point <{subj}>: the point has "
                 f"<{current}>, the stream provided <{provided}>"
             )
-        elif field == "unit" and ref_uri is not None:
+        elif not units_compatible(provided, current):
+            raise ValueError(
+                f"unit mismatch for point <{subj}>: the point has <{current}>, "
+                f"the stream provided <{provided}> and they are not convertible"
+            )
+        elif ref_uri is None:
+            raise ValueError(
+                f"stream for point <{subj}> stores data in <{provided}> but has "
+                "no (source_id, ref_name) reference to record the storage unit on"
+            )
+        else:
+            # Convertible: the provided unit is what the raw rows are stored
+            # in; data access defaults to the point's unit and converts.
             _add_triple(g, ref_uri, HAS_UNIT, provided)
 
     data_source = stream.get("data_source")
@@ -756,6 +773,14 @@ class AcquiriumClient:
         response.raise_for_status()
         return response.json()["source_id"]
 
+    def _units_compatible(self, from_unit: Any, to_unit: Any) -> bool:
+        """True when the server can convert between the two unit URIs."""
+        try:
+            factors = self.get_conversion_factors(str(from_unit), str(to_unit))
+            return bool(factors.get("compatible"))
+        except Exception:
+            return False
+
     def _point_metadata(self, point_uri: str) -> dict[str, "str | None"]:
         """Return the semantic metadata a point already has in the graph.
 
@@ -806,9 +831,12 @@ class AcquiriumClient:
 
         For a ``point_uri`` the graph already knows, a provided field the
         point lacks is added to it; a value that conflicts with the point's
-        raises ``ValueError`` before anything is inserted. A unit that
-        matches the point's is additionally written on the external
-        reference as the unit the raw rows are stored in.
+        raises ``ValueError`` before anything is inserted. Units are the
+        one exception: a provided unit that differs from the point's is
+        accepted when the two are convertible, and is written on the
+        external reference as the unit the raw rows are stored in — data
+        access defaults to the point's unit and converts automatically.
+        A non-convertible unit raises ``ValueError``.
 
         Drivers should still insert rows with ``insert_timeseries_arrow`` using
         the same ``source_id`` and source-local ``ref_name``. Acquirium resolves
@@ -828,7 +856,7 @@ class AcquiriumClient:
             resolved = self.resolve_point_metadata(meta) if meta else {}
             point_uri = stream.get("point_uri")
             existing = self._point_metadata(str(point_uri)) if point_uri is not None else {}
-            _build_stream_triples(graph, stream, resolved, existing)
+            _build_stream_triples(graph, stream, resolved, existing, self._units_compatible)
         for source_id, graph in graphs.items():
             if len(graph):
                 self.insert_graph(

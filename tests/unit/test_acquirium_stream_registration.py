@@ -30,6 +30,7 @@ def _client() -> AcquiriumClient:
     client = AcquiriumClient()
     client.insert_graph = MagicMock()
     client._point_metadata = MagicMock(return_value={})
+    client._units_compatible = MagicMock(return_value=False)
     return client
 
 
@@ -126,21 +127,59 @@ def test_register_stream_without_point_uri_and_ref_name_raises():
 
 _MG_L = "http://qudt.org/vocab/unit/MilliGM-PER-L"
 _G_L = "http://qudt.org/vocab/unit/GM-PER-L"
+_DEG_C = "http://qudt.org/vocab/unit/DEG_C"
 _WATER = "urn:nawi-water-ontology#Water"
+_MASS_CONC = "http://qudt.org/vocab/quantitykind/MassConcentration"
+_DENSITY = "http://qudt.org/vocab/quantitykind/Density"
 
 
 def test_register_streams_conflicting_metadata_fails_before_insert():
     client = _client()
-    client._point_metadata = MagicMock(return_value={"unit": _G_L})
+    client._point_metadata = MagicMock(return_value={"quantity_kind": _MASS_CONC})
 
-    with pytest.raises(ValueError, match="unit mismatch"):
+    with pytest.raises(ValueError, match="quantity_kind mismatch"):
+        client.register_streams([{
+            "point_uri": "urn:test:point:conc",
+            "source_id": "demo-source",
+            "ref_name": "conc",
+            "quantity_kind": _DENSITY,
+        }])
+    client.insert_graph.assert_not_called()
+
+
+def test_register_streams_unconvertible_unit_fails():
+    client = _client()
+    client._point_metadata = MagicMock(return_value={"unit": _DEG_C})
+
+    with pytest.raises(ValueError, match="not convertible"):
         client.register_streams([{
             "point_uri": "urn:test:point:conc",
             "source_id": "demo-source",
             "ref_name": "conc",
             "unit": _MG_L,
         }])
+    client._units_compatible.assert_called_once_with(URIRef(_MG_L), _DEG_C)
     client.insert_graph.assert_not_called()
+
+
+def test_register_streams_convertible_unit_becomes_storage_unit():
+    client = _client()
+    client._point_metadata = MagicMock(return_value={"unit": _G_L})
+    client._units_compatible = MagicMock(return_value=True)
+
+    client.register_streams([{
+        "point_uri": "urn:test:point:conc",
+        "source_id": "demo-source",
+        "ref_name": "conc",
+        "unit": _MG_L,
+    }])
+
+    g = Graph().parse(data=client.insert_graph.call_args[0][0], format="turtle")
+    ref_uri = compute_ref_uri("demo-source", "conc")
+    point = URIRef("urn:test:point:conc")
+    assert (ref_uri, HAS_UNIT, URIRef(_MG_L)) in g
+    # the point keeps its own unit; reads convert ref -> point automatically
+    assert list(g.objects(point, HAS_UNIT)) == []
 
 
 def test_register_streams_matching_unit_lands_on_reference():
