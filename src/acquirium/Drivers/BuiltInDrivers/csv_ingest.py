@@ -59,6 +59,8 @@ class CSVIngestDriver(FileIngestDriver):
         encoding     = "utf8-lossy"  # "utf8", "utf8-lossy", "latin1", ...
         ragged_lines = "ignore"      # "ignore" | "skip" | "error"
         header_contains = ["time"]   # cell values identifying the header row
+        null_values  = ["Null"]      # the source's missing-value sentinels
+        infer_schema_length = 0      # 0 reads every column as text
 
     ``ragged_lines`` controls rows whose cell count differs from the header:
     ``"ignore"`` keeps the row (extra cells dropped, missing ones null),
@@ -68,9 +70,38 @@ class CSVIngestDriver(FileIngestDriver):
     skipping any banner lines before the first line containing all the listed
     values. When set it takes precedence over ``skip_rows``.
 
-    For a layout these keys cannot describe, subclass and override
-    :meth:`read` — see ``FileIngestDriver``.
+    ``infer_schema_length`` is the row-sample size polars types each column
+    from (default 100). Set it to 0 for sources whose columns change shape
+    mid-file (e.g. plain numbers early, thousands-separated later): every
+    column then reads as text and value kinds are inferred downstream.
+
+    Source-specific quirks subclass one of two hooks — :meth:`prepare_frame`
+    transforms the raw frame before reshaping, :meth:`declare_stream`
+    attaches metadata to each discovered stream. For a layout the config
+    keys and hooks cannot describe, override :meth:`read` — see
+    ``FileIngestDriver``.
     """
+
+    def prepare_frame(self, df: pl.DataFrame, path: Path) -> pl.DataFrame:
+        """Hook: transform the raw frame before it is reshaped.
+
+        Runs after the CSV is read and ``skip_cols`` dropped, before
+        ``to_observations`` parses timestamps — the place for source-specific
+        fixes like non-standard timestamp encodings or column cleanup.
+        Default: return the frame unchanged.
+        """
+        return df
+
+    def declare_stream(self, ref_name: str) -> None:
+        """Hook: declare one stream discovered in the file.
+
+        Called once per distinct ``ref_name`` in each batch. Default declares
+        the bare identity; override to attach metadata::
+
+            def declare_stream(self, ref_name):
+                self.declare(ref_name, **self.mapping.declaration(ref_name))
+        """
+        self.declare(ref_name)
 
     def read(self, path: Path, cursor: Any) -> FileBatch:
         offset = cursor or 0
@@ -99,6 +130,7 @@ class CSVIngestDriver(FileIngestDriver):
         if ragged == "skip":
             text = _drop_ragged_lines(text, separator, path)
 
+        null_values = list(_as_tuple(cfg.get("null_values", []), "null_values"))
         df = pl.read_csv(
             StringIO(text),
             separator=separator,
@@ -108,12 +140,15 @@ class CSVIngestDriver(FileIngestDriver):
             skip_rows_after_header=offset,
             encoding=encoding,
             truncate_ragged_lines=ragged != "error",
+            null_values=null_values or None,
+            infer_schema_length=int(cfg.get("infer_schema_length", 100)),
         )
         skip_cols = [c for c in _as_tuple(cfg.get("skip_cols", []), "skip_cols") if c in df.columns]
         if skip_cols:
             df = df.drop(skip_cols)
         if df.is_empty():
             return FileBatch(None, cursor)
+        df = self.prepare_frame(df, path)
 
         layout = cfg.get("format")
         if layout is None:
@@ -131,7 +166,7 @@ class CSVIngestDriver(FileIngestDriver):
             day_first=bool(cfg.get("day_first", False)),
         )
         for name in observations["ref_name"].unique():
-            self.declare(name)
+            self.declare_stream(name)
         return FileBatch(observations, offset + len(df))
 
 

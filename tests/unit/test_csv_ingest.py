@@ -80,6 +80,61 @@ def test_parse_wide_basic(tmp_path):
     assert batch["rh"][0][1] == "55.0"
 
 
+def test_null_values_config_drops_sentinel_values(tmp_path):
+    p = tmp_path / "nulls.csv"
+    p.write_text(
+        "time,temp\n"
+        "2024-01-01T00:00:00Z,Null\n"
+        "2024-01-02T00:00:00Z,21.0\n"
+    )
+    driver = make_driver({"null_values": ["Null"]}, tmp_path=tmp_path)
+    batch, _ = parse(driver, p)
+    assert batch["temp"] == [(datetime(2024, 1, 2, tzinfo=timezone.utc), "21.0")]
+
+
+def test_prepare_frame_hook_sees_text_frame_with_schema_inference_off(tmp_path):
+    """infer_schema_length=0 reads every column as text, and prepare_frame
+    runs on the raw frame before timestamps are parsed."""
+    import polars as pl
+
+    class Fixer(CSVIngestDriver):
+        def prepare_frame(self, df, path):
+            assert df.schema["temp"] == pl.Utf8
+            return df.with_columns(pl.col("temp").str.replace_all(",", ""))
+
+    p = tmp_path / "commas.csv"
+    p.write_text(
+        "time,temp\n"
+        "2024-01-01T00:00:00Z,731.00\n"
+        '2024-01-02T00:00:00Z,"3,293.00"\n'
+    )
+    aq = MagicMock()
+    driver = Fixer(aq, {"driver": {
+        "watch_dir": str(tmp_path), "glob": "*.csv",
+        "source_id": "csv_files", "format": "wide",
+        "infer_schema_length": 0,
+    }})
+    driver.setup()
+    batch, _ = parse(driver, p)
+    assert [v for _, v in batch["temp"]] == ["731.00", "3293.00"]
+
+
+def test_declare_stream_hook_attaches_metadata(tmp_path):
+    class Meta(CSVIngestDriver):
+        def declare_stream(self, ref_name):
+            self.declare(ref_name, label=f"L:{ref_name}")
+
+    aq = MagicMock()
+    driver = Meta(aq, {"driver": {
+        "watch_dir": str(tmp_path), "glob": "*.csv",
+        "source_id": "csv_files", "format": "wide",
+    }})
+    driver.setup()
+    parse(driver, _wide_csv(tmp_path))
+    assert driver._declarations[("csv_files", "temp")] == {"label": "L:temp"}
+    assert driver._declarations[("csv_files", "rh")] == {"label": "L:rh"}
+
+
 def test_parse_wide_skip_rows(tmp_path):
     p = tmp_path / "wide_skip_rows.csv"
     p.write_text(
