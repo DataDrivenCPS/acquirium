@@ -33,6 +33,7 @@ def _parse_sparql_bindings(
             one dict per SPARQL row that matched this data key.
         property_units: mapping from data key to property unit URI (or None)
         ref_units: mapping from data key to external reference unit URI (or None)
+        point_labels: mapping from data key to the point's rdfs:label (or None)
     """
     res = query.execute(include_dependencies=include_dependencies)
     cols: list[str] = res.get("columns", [])
@@ -41,11 +42,13 @@ def _parse_sparql_bindings(
     qg = query.query_graph
     data_node_ids = set(qg.data_nodes.keys())
 
-    # Map column index -> node id for v<N>, ext<N>, unit<N>, extunit<N> columns
+    # Map column index -> node id for v<N>, ext<N>, unit<N>, extunit<N>,
+    # lbl<N> columns
     col_to_id: dict[int, int] = {}
     ext_ref_col_to_id: dict[int, int] = {}
     unit_col_to_id: dict[int, int] = {}
     extunit_col_to_id: dict[int, int] = {}
+    lbl_col_to_id: dict[int, int] = {}
     for i, c in enumerate(cols):
         if not isinstance(c, str):
             continue
@@ -64,6 +67,11 @@ def _parse_sparql_bindings(
                 unit_col_to_id[i] = int(c[4:])
             except ValueError:
                 pass
+        elif c.startswith("lbl"):
+            try:
+                lbl_col_to_id[i] = int(c[3:])
+            except ValueError:
+                pass
         elif c.startswith("v"):
             try:
                 col_to_id[i] = int(c[1:])
@@ -73,6 +81,7 @@ def _parse_sparql_bindings(
     nid_to_ext_ref_col: dict[int, int] = {v: k for k, v in ext_ref_col_to_id.items()}
     nid_to_unit_col: dict[int, int] = {v: k for k, v in unit_col_to_id.items()}
     nid_to_extunit_col: dict[int, int] = {v: k for k, v in extunit_col_to_id.items()}
+    nid_to_lbl_col: dict[int, int] = {v: k for k, v in lbl_col_to_id.items()}
 
     data_col_indices = [i for i, nid in col_to_id.items() if nid in data_node_ids]
     ref_col_indices = [i for i, nid in ext_ref_col_to_id.items() if nid in data_node_ids]
@@ -83,15 +92,16 @@ def _parse_sparql_bindings(
         if nid not in data_node_ids:
             entity_col_indices.append((i, nid))
 
-    # Collect unique data bindings, entity contexts, and unit info
+    # Collect unique data bindings, entity contexts, and unit/label info
     point_ref_uris: list[tuple[int, str, str]] = []
     seen: set[tuple[int, str, str]] = set()
     entity_context: dict[tuple[int, str, str], list[dict[str, str]]] = {}
     property_units: dict[tuple[int, str, str], str | None] = {}
     ref_units: dict[tuple[int, str, str], str | None] = {}
+    point_labels: dict[tuple[int, str, str], str | None] = {}
 
     if not data_col_indices or not ref_col_indices:
-        return [], {}, {}, {}
+        return [], {}, {}, {}, {}
 
     for r in rows:
         # Build entity context for this row
@@ -131,9 +141,14 @@ def _parse_sparql_bindings(
                     ref_units[key] = str(r[extunit_col])
                 else:
                     ref_units[key] = None
+                lbl_col = nid_to_lbl_col.get(nid)
+                if lbl_col is not None and lbl_col < len(r) and r[lbl_col] is not None:
+                    point_labels[key] = str(r[lbl_col])
+                else:
+                    point_labels[key] = None
             entity_context.setdefault(key, []).append(row_entities)
 
-    return point_ref_uris, entity_context, property_units, ref_units
+    return point_ref_uris, entity_context, property_units, ref_units, point_labels
 
 
 def _deduplicate_contexts(contexts: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -222,6 +237,7 @@ class BindingInfo:
     latest: datetime | None = None
     property_unit: str | None = None    # unit URI from qudt:hasUnit on the property
     ref_unit: str | None = None         # unit URI from qudt:hasUnit on the ext reference
+    point_label: str | None = None      # rdfs:label on the property (display name)
 
 
 @dataclass
@@ -298,7 +314,7 @@ class DataObject:
         if not getattr(qg, "data_nodes", None):
             return cls._empty(qg, cast_value=cast_value, client=query.client)
 
-        point_ref_uris, entity_context, prop_units, ext_ref_units = _parse_sparql_bindings(
+        point_ref_uris, entity_context, prop_units, ext_ref_units, point_labels = _parse_sparql_bindings(
             query,
             include_dependencies=include_dependencies,
         )
@@ -336,6 +352,7 @@ class DataObject:
                 latest=info.latest if info else None,
                 property_unit=prop_units.get(key),
                 ref_unit=ext_ref_units.get(key),
+                point_label=point_labels.get(key),
             ))
 
         return cls(
@@ -370,6 +387,19 @@ class DataObject:
         return df.with_columns(
             ((pl.col(value_col) + src_off) * src_mult / tgt_mult - tgt_off).alias(value_col)
         )
+
+    def _point_labels(self) -> dict[str, str]:
+        """``{point_uri: rdfs:label}`` for display naming.
+
+        A label shared by several distinct points is dropped so pivot
+        columns for different points can never collapse into one; those
+        points fall back to their URI-based names.
+        """
+        pairs = {(b.point_uri, b.point_label) for b in self._bindings if b.point_label}
+        counts: dict[str, int] = {}
+        for _, lbl in pairs:
+            counts[lbl] = counts.get(lbl, 0) + 1
+        return {uri: lbl for uri, lbl in pairs if counts[lbl] == 1}
 
     def _resolve_effective_units(self) -> dict[str, str | None]:
         """Determine the effective unit for each alias, handling Case 3.2/3.2.1.
@@ -676,13 +706,22 @@ class DataObject:
         # This keeps disambiguation stable even when some bindings had no
         # data within the requested window.
         points_per_alias: dict[str, set[str]] = {}
+        auto_aliases: set[str] = set()
         for b in self._bindings:
             points_per_alias.setdefault(b.alias, set()).add(b.point_uri)
+            if b.alias == str(b.nid):
+                auto_aliases.add(b.alias)
+        labels = self._point_labels()
 
         def _pivot_key(alias: str, point_uri: str) -> str:
+            label = labels.get(point_uri)
+            if alias in auto_aliases and label:
+                return label
             pts = points_per_alias.get(alias, set())
             if len(pts) <= 1:
                 return alias
+            if label:
+                return f"{alias}__{label}"
             try:
                 return f"{alias}__{self._client.compact_uri(point_uri)}"
             except Exception:
@@ -704,9 +743,10 @@ class DataObject:
     def _compact_dataframe(self, *, shape: str, include_ref: bool) -> pl.DataFrame:
         """Query-compatible layout: CURIE-rendered URIs and a ``point_id`` column.
 
-        Auto-aliased data nodes (alias == ``str(nid)``) are labelled by their
-        compacted point-local name; user aliases that resolve to several points
-        are disambiguated as ``f"{alias}__{point_local}"``.
+        Auto-aliased data nodes (alias == ``str(nid)``) are named by the
+        point's ``rdfs:label`` when it has one, else by its compacted
+        point-local name; user aliases that resolve to several points are
+        disambiguated as ``f"{alias}__{label_or_point_local}"``.
         """
         def _compact(uri: str) -> str:
             try:
@@ -726,11 +766,13 @@ class DataObject:
             if b.alias == str(b.nid):
                 auto_aliases.add(b.alias)
 
+        labels = self._point_labels()
+
         def _label(alias: str, point_uri: str) -> str:
             if alias in auto_aliases:
-                return _compact(point_uri)
+                return labels.get(point_uri) or _compact(point_uri)
             if len(points_per_alias.get(alias, set())) > 1:
-                return f"{alias}__{_compact(point_uri)}"
+                return f"{alias}__{labels.get(point_uri) or _compact(point_uri)}"
             return alias
 
         tall = tall.with_columns(
@@ -776,22 +818,34 @@ class DataObject:
     # ------------------------------------------------------------------
 
     def metadata(self, *, include_ref_uris: bool = False) -> pl.DataFrame:
-        """Return a DataFrame of unique ``(data_alias, point_uri, entity__*)``
-        tuples.
+        """Return a DataFrame of unique ``(data_alias, point_label,
+        point_uri, entity__*)`` tuples.
 
-        By default the UUID ``ref_uri`` column is hidden — multiple ref_uris
-        sharing the same point are folded into one row. Pass
+        ``point_label`` is the point's ``rdfs:label`` (null when it has
+        none). By default the UUID ``ref_uri`` column is hidden — multiple
+        ref_uris sharing the same point are folded into one row. Pass
         ``include_ref_uris=True`` to keep the per-ref breakdown (useful for
         per-ref filtering and debugging).
         """
         ref_col = ["ref_uri"] if include_ref_uris else []
+        label_map = {b.point_uri: b.point_label for b in self._bindings if b.point_label}
 
         if self._materialized and self._tall is not None:
             meta_cols = ["data_alias", "point_uri"] + ref_col + self._entity_columns
             existing = [c for c in meta_cols if c in self._tall.columns]
+            out_cols = existing[:1] + ["point_label"] + existing[1:]
             if self._tall.is_empty():
-                return pl.DataFrame(schema={c: pl.Utf8 for c in existing})
-            return self._tall.select(existing).unique().sort("data_alias")
+                return pl.DataFrame(schema={c: pl.Utf8 for c in out_cols})
+            return (
+                self._tall.select(existing).unique()
+                .with_columns(
+                    pl.col("point_uri")
+                    .map_elements(lambda u: label_map.get(u), return_dtype=pl.Utf8, skip_nulls=False)
+                    .alias("point_label")
+                )
+                .select(out_cols)
+                .sort("data_alias")
+            )
 
         # Build from bindings without materializing
         rows: list[dict[str, str | None]] = []
@@ -799,6 +853,7 @@ class DataObject:
             for ctx in (b.entity_contexts or [{}]):
                 row: dict[str, str | None] = {
                     "data_alias": b.alias,
+                    "point_label": b.point_label,
                     "point_uri": b.point_uri,
                 }
                 if include_ref_uris:
@@ -806,7 +861,7 @@ class DataObject:
                 for ec in self._entity_columns:
                     row[ec] = ctx.get(ec)
                 rows.append(row)
-        cols = ["data_alias", "point_uri"] + ref_col + self._entity_columns
+        cols = ["data_alias", "point_label", "point_uri"] + ref_col + self._entity_columns
         if not rows:
             return pl.DataFrame(schema={c: pl.Utf8 for c in cols})
         return pl.DataFrame(rows).unique().sort("data_alias")

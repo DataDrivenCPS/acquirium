@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from rdflib import Graph, Literal, URIRef
-from rdflib.namespace import RDF
+from rdflib.namespace import RDF, RDFS
 
 from acquirium.Client.acquirium import Acquirium
 from acquirium.Client.client import AcquiriumClient
@@ -92,6 +92,7 @@ def test_register_stream_without_point_uri_mints_dummy_point():
     points = list(g.subjects(HAS_EXTERNAL_REFERENCE, ref_uri))
     assert len(points) == 1
     assert (points[0], RDF.type, VIRTUAL_POINT) in g
+    assert (points[0], RDFS.label, Literal("demo-source__cpu_percent")) in g
 
 
 def test_register_streams_without_point_uri_mint_one_dummy_point_each():

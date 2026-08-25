@@ -149,6 +149,8 @@ def _build_stream_triples(
                 "(source_id, ref_name) pair to mint one"
             )
         subj = URIRef(f"{ref_uri}__point")
+        if label is None:
+            label = f"{source_id}__{ref_name}"
 
     g.add((subj, RDF.type, VIRTUAL_POINT))
     if label is not None:
@@ -820,7 +822,8 @@ class AcquiriumClient:
         - ``source_id`` and ``ref_name``: source-local stream identity. When
           both are present, Acquirium mints the canonical reference URI and
           writes ``acq:sourceId``, ``acq:refName``, and ``ref:storedAt`` on it.
-        - ``label``: optional ``rdfs:label`` written on the point.
+        - ``label``: optional ``rdfs:label`` written on the point. A dummy
+          point without one gets ``{source_id}__{ref_name}``.
         - ``data_source``: optional datasource marker written on the point.
         - ``properties``: optional mapping of predicate URIRefs to values,
           written on the reference node (or the point when no ref node exists).

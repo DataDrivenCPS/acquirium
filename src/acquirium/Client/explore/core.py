@@ -952,6 +952,17 @@ class Query:
             cols_w_alias = [self._col_name_to_alias(c) for c in cols_kept]
 
             pl_table = pl.DataFrame(rows_kept, schema=cols_w_alias, orient="row")
+            # point labels: drop all-null ``*.label`` columns and show the
+            # rest right after their node's column
+            keep: list[str] = []
+            for c in pl_table.columns:
+                if c.endswith(".label") and c.removesuffix(".label") in pl_table.columns:
+                    continue
+                keep.append(c)
+                lbl = f"{c}.label"
+                if lbl in pl_table.columns and pl_table[lbl].is_not_null().any():
+                    keep.append(lbl)
+            pl_table = pl_table.select(keep)
             pl_table = pl_table.with_columns([
                 pl.col(c)
                 .map_elements(
@@ -961,7 +972,7 @@ class Query:
                     skip_nulls=False,
                 )
                 .alias(c)
-                for c in cols_w_alias
+                for c in pl_table.columns
             ]).unique()
             self.cache[cache_key] = pl_table
         return self.cache[cache_key]
@@ -1025,6 +1036,13 @@ class Query:
                 return col_name
             base_alias = self.query_graph.aliases_reverse.get(node_id, f"v{node_id}")
             return f"{base_alias}.{attr_name}"
+        if col_name.startswith("lbl"):
+            try:
+                node_id = int(col_name[3:])
+            except ValueError:
+                return col_name
+            base_alias = self.query_graph.aliases_reverse.get(node_id, f"v{node_id}")
+            return f"{base_alias}.label"
         if col_name.startswith("ext"):
             try:
                 node_id = int(col_name[3:])
