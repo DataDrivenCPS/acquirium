@@ -231,6 +231,7 @@ class OxigraphGraphStore:
         self._query_cache_source_version = -1
         self._query_cache_closure_version = -1
         self._dependency_query_graph_closure_version = -1
+        self._named_graph_cache: dict[str, Graph] = {}
 
         # ontoenv shares this Oxigraph store via the graph-store protocol,
         # over the authoritative source dataset. SPARQL reads query that
@@ -279,14 +280,30 @@ class OxigraphGraphStore:
 
     # -------------------- ontoenv named-graph access --------------------
     def named_graph(self, iri: str) -> Graph:
-        """One ontology's own graph from ontoenv (owl:imports NOT followed).
+        """One ontology's own graph, materialized in memory (owl:imports NOT
+        followed). Cached per IRI until an ontology graph changes.
 
-        This is ontoenv's read-only store-backed view: cheap to take, but
-        mutating it raises ``ValueError``. Callers that need to write should
-        copy the triples out (or use ``env.copy_graph``).
+        Deliberately NOT ontoenv's store-backed view: iterating that view
+        calls into ontoenv's Rust backend, which locks an internal mutex and
+        then re-enters Python to build result terms. Two threads iterating
+        concurrently deadlock — one holds the GIL waiting for the mutex, the
+        other holds the mutex waiting for the GIL — freezing the whole
+        process. Copying the triples out once under ``self._lock`` keeps
+        every later read (QUDT converter lookups, embedding extraction) in
+        plain rdflib memory, off ontoenv entirely.
         """
         with self._lock:
-            return self.env.get_graph(iri)
+            cached = self._named_graph_cache.get(iri)
+            if cached is not None:
+                return cached
+            copy = Graph()
+            source = self.env.get_graph(iri)
+            for prefix, ns in source.namespaces():
+                copy.bind(prefix, ns)
+            for triple in source:
+                copy.add(triple)
+            self._named_graph_cache[iri] = copy
+            return copy
 
 # -------------------- source + dependency cache coordination --------------------
     def _source_state_path(self) -> Path:
@@ -386,6 +403,7 @@ class OxigraphGraphStore:
     def _mark_ontology_graph_changed(self) -> None:
         self._mark_source_changed()
         self._mark_closure_changed()
+        self._named_graph_cache.clear()
 
     def _invalidate_dependency_cache(self) -> None:
         self._dependency_graph_closure_version = -1

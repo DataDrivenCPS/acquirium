@@ -96,6 +96,36 @@ def test_cold_start_adds_bundled_ontologies(tmp_path, monkeypatch):
     store.close()
 
 
+def test_named_graph_returns_a_cached_memory_copy(tmp_path, monkeypatch):
+    """named_graph must hand out a materialized in-memory copy, never
+    ontoenv's live store-backed view: concurrent iteration of that view
+    deadlocks the process (its Rust backend holds a mutex while re-entering
+    Python, GIL vs mutex). One copy per IRI is cached until an ontology
+    graph changes."""
+    from rdflib import Graph, Literal, URIRef
+
+    store, env, _ = _build_store(tmp_path, monkeypatch, source_ready=False)
+    source = Graph()
+    source.add((URIRef("urn:x#a"), URIRef("urn:x#p"), Literal("v")))
+    env.get_graph = MagicMock(return_value=source)
+
+    g1 = store.named_graph("urn:x")
+    assert g1 is not source
+    assert len(g1) == 1
+    # cached: the second call must not touch ontoenv again
+    assert store.named_graph("urn:x") is g1
+    env.get_graph.assert_called_once()
+    # detached: mutating the copy never reaches the ontoenv view
+    g1.add((URIRef("urn:x#b"), URIRef("urn:x#p"), Literal("w")))
+    assert len(source) == 1
+
+    store._mark_ontology_graph_changed()
+    g2 = store.named_graph("urn:x")
+    assert g2 is not g1
+    assert env.get_graph.call_count == 2
+    store.close()
+
+
 def test_close_releases_the_ontoenv_lock(tmp_path, monkeypatch):
     """ontoenv holds an exclusive lock for the environment's lifetime, so
     close() has to release it alongside the datasets."""
