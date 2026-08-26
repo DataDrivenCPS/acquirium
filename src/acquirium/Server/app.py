@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import importlib
 import io
 import json
 import logging
 import os
+import sys
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Any, Optional, Iterator
+from typing import Annotated, Any, Iterator, Optional
 
 # When the server is launched via `uv run`, Ray's uv hook would give every
 # worker a fresh env resolved from pyproject.toml — dropping optional extras
@@ -26,13 +28,12 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 
 from acquirium.Server.manager import Manager
+from acquirium.Materialization import Transformation
+from acquirium.Materialization.planner import Deployment
 
 from acquirium.internals.models import (
     LogEntry,
     TimeIntervalModel,
-    AppSpec,
-    AppRunRequest,
-    AppStopRequest,
     StreamInsert,
     RegisterDatasourceRequest,
 )
@@ -44,7 +45,6 @@ import polars as pl
 
 from acquirium.Server.insert_stats import insert_stats, start_insert_summary_thread
 from acquirium.Drivers.supervisor import DriverSupervisor
-from acquirium.Apps.supervisor import AppSupervisor, AppAlreadyRegistered
 
 
 
@@ -141,48 +141,6 @@ async def _wait_until_healthy(base_url: str) -> bool:
     return False
 
 
-async def _restore_registered_apps(app_supervisor: AppSupervisor, manager: Manager) -> None:
-    """Respawn apps registered by a previous server run.
-
-    register_app() persisted each app's source under the app storage dir and
-    its registration triples in the graph; a restart only loses the
-    supervisor's in-memory records. Rebuild the specs from graph + disk and
-    respawn the actors without re-writing the graph. Apps whose last active
-    run was keep-alive are restarted with their saved interval, window, and
-    run parameters.
-    """
-    from acquirium.Apps.supervisor import restore_app_specs
-
-    try:
-        specs = await asyncio.to_thread(restore_app_specs, manager)
-    except Exception:
-        log.exception("App restore: failed to rebuild specs from the graph")
-        return
-    for spec in specs:
-        try:
-            await asyncio.to_thread(app_supervisor.restore_app, spec)
-            log.info("Restored app '%s' from the persistent store", spec.name)
-            if spec.resume_keep_alive:
-                await asyncio.to_thread(
-                    app_supervisor.run_app,
-                    AppRunRequest(
-                        app_id=spec.name,
-                        start=spec.run_start,
-                        end=spec.run_end,
-                        params=spec.run_params,
-                        keep_alive=True,
-                        interval=spec.run_interval,
-                    ),
-                )
-                log.info(
-                    "Resumed keep-alive app '%s' (interval=%.1fs)",
-                    spec.name,
-                    spec.run_interval,
-                )
-        except Exception:
-            log.exception("Failed to restore app '%s'", spec.name)
-
-
 async def _start_config_drivers(supervisor: DriverSupervisor, cfg: dict) -> None:
     """Start every [[drivers]] entry from the config as a Ray actor.
 
@@ -215,86 +173,75 @@ async def _start_config_drivers(supervisor: DriverSupervisor, cfg: dict) -> None
             log.exception("Config driver %s failed to start", spec)
 
 
-async def _start_config_apps(supervisor: AppSupervisor, cfg: dict) -> None:
-    """Register and optionally start every enabled ``[[apps]]`` entry.
+def _load_config_app_target(spec: str, *, base_dir: Path) -> object:
+    """Load a transformation class or registrar from a config ``spec``."""
+    if ":" not in spec:
+        raise ValueError("app spec must be module_or_file:target")
+    module_part, target_name = spec.rsplit(":", 1)
+    file_path = Path(module_part)
+    is_file = "/" in module_part or file_path.suffix == ".py" or file_path.exists()
+    if is_file:
+        # Config files may name a project-local module without packaging it.
+        # Resolve relative paths against the config, never the server's cwd.
+        if not file_path.is_absolute():
+            file_path = (base_dir / file_path).resolve()
+        if not file_path.is_file():
+            raise ValueError(f"app file not found: {module_part}")
+        if not file_path.stem.isidentifier():
+            raise ValueError(f"app file name must be a Python module name: {file_path.name}")
+        module_dir = str(file_path.parent)
+        if module_dir not in sys.path:
+            sys.path.insert(0, module_dir)
+        module = importlib.import_module(file_path.stem)
+    else:
+        module = importlib.import_module(module_part)
+    try:
+        return getattr(module, target_name)
+    except AttributeError as error:
+        raise ValueError(f"app target {target_name!r} was not found in {module.__name__!r}") from error
 
-    This runs only after the server is healthy and config drivers have finished
-    setup, so app selectors can resolve graph metadata contributed by drivers.
-    Config apps are declarative desired state: ``replace`` defaults to true so
-    source changes take effect on restart. Set it false to reuse a restored
-    registration without uploading it again.
-    """
+
+def _deploy_config_apps(cfg: dict) -> None:
+    """Deploy the materialization applications declared in ``[[apps]]``."""
     entries = cfg.get("apps", [])
     if not entries:
         return
-
     from acquirium.Client.acquirium import Acquirium
-    from acquirium.cli import _import_app_class
 
     host, port, use_ssl = _self_connect_cfg(cfg)
-    aq = await asyncio.to_thread(
-        Acquirium,
-        server_url=host,
-        server_port=port,
-        use_ssl=use_ssl,
-    )
+    aq = Acquirium(server_url=host, server_port=port, use_ssl=use_ssl)
     base_dir = Path(cfg.get("__config_dir", Path.cwd()))
-
     for entry in entries:
-        if not entry.get("enabled", True):
-            continue
         spec = entry.get("spec")
-        if not spec:
+        if not isinstance(spec, str) or not spec:
             log.warning("[[apps]] entry missing 'spec'; skipping")
             continue
         try:
-            cls = _import_app_class(spec, base_dir=base_dir)
-            instance = cls()
-            configured_name = entry.get("name")
-            if configured_name is not None and configured_name != instance.name:
-                raise ValueError(
-                    f"configured app name {configured_name!r} does not match "
-                    f"{cls.__name__}.name {instance.name!r}"
-                )
-
-            build_params = entry.get("build_params", {})
-            run_params = entry.get("params", {})
-            if not isinstance(build_params, dict) or not isinstance(run_params, dict):
-                raise TypeError("app build_params and params must be TOML tables/objects")
-
-            replace = bool(entry.get("replace", True))
-            existing = {item["name"] for item in supervisor.list_apps()}
-            if replace or instance.name not in existing:
-                await asyncio.to_thread(
-                    aq.register_app,
-                    instance,
-                    params=build_params,
-                    replace=replace,
-                )
-                log.info("Registered config app '%s' (%s)", instance.name, spec)
+            target = _load_config_app_target(spec, base_dir=base_dir)
+            # Only non-reserved fields become constructor parameters. ``name``
+            # remains display/config metadata and cannot alter binding identity.
+            parameters = {key: value for key, value in entry.items() if key not in {"spec", "name"}}
+            if isinstance(target, type) and issubclass(target, Transformation):
+                deployments = (target,)
+                deployment_parameters = parameters
+            elif callable(target):
+                result = target(aq, parameters)
+                if result is None:
+                    deployments = ()
+                elif isinstance(result, type) and issubclass(result, Transformation):
+                    deployments = (result,)
+                else:
+                    deployments = tuple(result)
+                    if not all(isinstance(item, type) and issubclass(item, Transformation) for item in deployments):
+                        raise TypeError("an app registrar must return Transformation classes or None")
+                deployment_parameters = {}
             else:
-                log.info("Reusing restored config app '%s'", instance.name)
-
-            if entry.get("autostart", True):
-                keep_alive = bool(entry.get("keep_alive", True))
-                interval = float(entry.get("interval", 10.0))
-                await asyncio.to_thread(
-                    aq.run_app,
-                    instance.name,
-                    start=entry.get("start"),
-                    end=entry.get("end"),
-                    params=run_params,
-                    keep_alive=keep_alive,
-                    interval=interval,
-                )
-                log.info(
-                    "Started config app '%s' (keep_alive=%s, interval=%.1fs)",
-                    instance.name,
-                    keep_alive,
-                    interval,
-                )
+                raise TypeError("app spec target must be a Transformation class or callable registrar")
+            for transformation in deployments:
+                aq.deploy_transformation(transformation, parameters=deployment_parameters)
+            log.info("Deployed config app '%s' (%s): %d transformation(s)", entry.get("name", spec), spec, len(deployments))
         except Exception:
-            log.exception("Config app %s failed to register/start", spec)
+            log.exception("Config app %s failed to deploy", spec)
 
 
 class Health(BaseModel):
@@ -347,13 +294,27 @@ async def lifespan(app: FastAPI):
     from acquirium.cli import _load_config
     _config_path = os.environ.get("ACQUIRIUM_CONFIG")
     _cfg = _load_config(Path(_config_path) if _config_path else None)
+    config_dir = str(Path(_cfg.get("__config_dir", Path.cwd())).resolve())
+    if config_dir not in sys.path:
+        sys.path.insert(0, config_dir)
+    server_cfg = _cfg.get("server", {})
+    idle_seconds = float(server_cfg.get("materialization_poll_seconds", 0.25))
+    error_log_seconds = float(server_cfg.get("materialization_error_log_seconds", 30.0))
+    worker_count = int(server_cfg.get("materialization_workers", 2))
+    if idle_seconds <= 0 or error_log_seconds <= 0:
+        raise ValueError("materialization polling and error log intervals must be positive")
+    if worker_count < 1:
+        raise ValueError("server.materialization_workers must be positive")
 
+    # v1 runs materialization in a bounded local worker pool. Ray remains an
+    # optional driver runtime, but is not part of the materialization API.
     m = Manager.from_env()
     app.state.manager = m
-    app.state.read_batch_size = int(_cfg.get("server", {}).get("read_batch_size", 50_000))
+    app.state.read_batch_size = int(server_cfg.get("read_batch_size", 50_000))
 
     try:
         m._sync_stream_refs_from_graph()
+        m.recover_materialization_state()
     except Exception as e:
         log.exception("Startup failed: %s", e)
         try:
@@ -366,31 +327,46 @@ async def lifespan(app: FastAPI):
     start_insert_summary_thread(summary_stop, interval=10.0)
 
     # Drivers run as Ray actors that connect back over HTTP.
-    ray.init(ignore_reinit_error=True)
     _host, _port, _use_ssl = _self_connect_cfg(_cfg)
     supervisor = DriverSupervisor(server_url=_host, server_port=_port, use_ssl=_use_ssl)
     app.state.drivers = supervisor
-    # Apps also run as Ray actors (one AppRunner per app) that connect back
-    # over HTTP; the supervisor spawns and tracks them.
-    app_supervisor = AppSupervisor(
-        app_storage_root=m.app_storage_root,
-        server_url=_host, server_port=_port, use_ssl=_use_ssl,
-    )
-    app.state.apps = app_supervisor
-    # Once the server answers /health: respawn apps persisted by a previous
-    # run, then start the config's [[drivers]] and [[apps]]. Restored apps come
-    # first; config apps run after driver setup so their selectors can see the
-    # graph and streams declared by those drivers.
+
+    async def _durable_worker(label: str, operation) -> None:
+        """Run one failure-isolated durable control-plane worker."""
+        next_error_log = 0.0
+        while True:
+            try:
+                ran = await asyncio.to_thread(operation)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # A bad deployment must not stop ingestion or other durable
+                # workers. Rate-limit repeats until its configuration changes.
+                now = asyncio.get_running_loop().time()
+                if now >= next_error_log:
+                    log.exception("%s worker failed", label)
+                    next_error_log = now + error_log_seconds
+                ran = False
+            await asyncio.sleep(0 if ran else idle_seconds)
+
+    durable_tasks = [
+        asyncio.create_task(_durable_worker(
+            f"materialization-{index}",
+            lambda index=index: m.run_materialization_once(),
+        ))
+        for index in range(worker_count)
+    ]
+    app.state.durable_tasks = durable_tasks
+
+    # Once the server answers /health, start configured drivers, then deploy
+    # configured transformations. Drivers load their plant models during setup,
+    # so application queries resolve against the intended graph.
     async def _startup_actors() -> None:
         if not await _wait_until_healthy(supervisor.base_url):
-            log.error(
-                "Server never became healthy at %s; skipping app restore, [[drivers]], and [[apps]]",
-                supervisor.base_url,
-            )
+            log.error("Server never became healthy at %s; skipping configured drivers", supervisor.base_url)
             return
-        await _restore_registered_apps(app_supervisor, m)
         await _start_config_drivers(supervisor, _cfg)
-        await _start_config_apps(app_supervisor, _cfg)
+        await asyncio.to_thread(_deploy_config_apps, _cfg)
 
     startup_task = asyncio.create_task(_startup_actors())
 
@@ -401,15 +377,13 @@ async def lifespan(app: FastAPI):
         startup_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await startup_task
+        for task in durable_tasks:
+            task.cancel()
+        await asyncio.gather(*durable_tasks, return_exceptions=True)
         try:
             await asyncio.to_thread(supervisor.stop_all)
         except Exception:
             log.exception("Error stopping drivers during shutdown")
-        try:
-            await asyncio.to_thread(app_supervisor.stop_all_apps)
-        except Exception:
-            log.exception("Error stopping apps during shutdown")
-        ray.shutdown()
         try:
             m.close()
         except Exception:
@@ -527,71 +501,44 @@ def list_namespaces() -> dict[str, str]:
         raise HTTPException(status_code=400, detail=str(e))
     
 \
-#### APPS API ENDPOINTS ####
+#### MATERIALIZATION API ENDPOINTS ####
 
 
-@app.post("/apps/register")
-def register_app(spec: AppSpec, replace: bool = False) -> dict[str, Any]:
-    """Register an app. Fails with 409 if the name already exists unless
-    ``replace=True``, in which case the existing app is gracefully torn down
-    (stopped, its graph registration cleaned up) and replaced."""
+class TransformationRegistration(BaseModel):
+    name: str
+    executable_digest: str
+    entrypoint: str
+    outputs: dict[str, Any]
+    window: dict[str, Any]
+    trigger: dict[str, Any]
+    start: str
+    parameters: dict[str, Any] = {}
+
+
+@app.put("/transformations/{name}")
+def deploy_transformation(name: str, request: TransformationRegistration) -> dict[str, Any]:
+    """Validate and select an immutable definition for a named deployment."""
     try:
-        info = app.state.apps.register_app(spec, replace=replace)
-        return {"ok": True, **info}
-    except AppAlreadyRegistered as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    except Exception as e:
-        log.exception("register_app failed")
-        raise HTTPException(status_code=400, detail=str(e))
+        if name != request.name:
+            raise ValueError("deployment name must match the definition name")
+        deployment = Deployment.from_json(request.model_dump_json())
+        return {"ok": True, **app.state.manager.deploy_transformation(deployment)}
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error))
 
 
-class AppDeleteRequest(BaseModel):
-    app_id: str
-
-
-@app.post("/apps/delete")
-def delete_app(req: AppDeleteRequest) -> dict[str, Any]:
-    """Gracefully delete a registered app: stop it, strip its registration
-    triples from the graph, kill its actor, and remove its persisted source."""
+@app.delete("/transformations/{name}")
+def remove_transformation(name: str) -> dict[str, Any]:
     try:
-        result = app.state.apps.delete_app(req.app_id)
-        return {"ok": True, **result}
-    except KeyError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        log.exception("delete_app failed")
-        raise HTTPException(status_code=400, detail=str(e))
+        return {"ok": True, **app.state.manager.remove_transformation(name)}
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"unknown transformation {name!r}")
 
 
-@app.post("/apps/run")
-def run_app(req: AppRunRequest) -> dict[str, Any]:
-    try:
-        result = app.state.apps.run_app(req)
-        return {"ok": True, **result}
-    except Exception as e:
-        log.exception("run_app failed")
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@app.post("/apps/stop")
-def stop_app(req: AppStopRequest) -> dict[str, Any]:
-    try:
-        result = app.state.apps.stop_app(req.app_id)
-        return {"ok": True, **result}
-    except Exception as e:
-        log.exception("stop_app failed")
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@app.get("/apps/list")
-def list_app_runs(app_id: Optional[str] = None) -> dict[str, Any]:
-    try:
-        if app_id:
-            return {"ok": True, **app.state.apps.app_status(app_id)}
-        return {"ok": True, "apps": app.state.apps.list_apps()}
-    except Exception as e:
-        log.exception("list_app_runs failed")
-        raise HTTPException(status_code=400, detail=str(e))
+@app.get("/materialization/dag")
+def materialization_dag() -> dict[str, Any]:
+    """Observational node-link representation of the active compiled DAG."""
+    return {"ok": True, **app.state.manager.materializer.dag()}
 
 
 #### DRIVERS API ENDPOINTS ####
@@ -667,6 +614,21 @@ def register_datasource(req: RegisterDatasourceRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(e))
 
 
+class ResolveStorageKeysRequest(BaseModel):
+    uris: list[str]
+
+
+@app.post("/resolve_storage_keys")
+def resolve_storage_keys(req: ResolveStorageKeysRequest) -> dict[str, str]:
+    """Map each semantic point_uri (or already-canonical ref_uri) in *uris*
+    to its canonical storage key. Callers resolve declared input point_uris
+    to ref_uris with this before reading or subscribing to them."""
+    try:
+        return app.state.manager.timescale.resolve_storage_keys(req.uris)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.post("/insert_timeseries")
 def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[str, Any]:
     """Insert timeseries data for one or more streams.
@@ -680,13 +642,16 @@ def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[st
         bulk_streams: dict[str, dict[str, list[tuple[datetime, Any]]]] = {}
         individual_streams: list[StreamInsert] = []
         for s in streams:
-            if s.point_uri is None and not s.replace:
+            # A stream needing its own publication_id, point_uri registration,
+            # or replace semantics can't share one bulk publication with its
+            # source-id siblings, so it always takes the individual path.
+            if s.point_uri is None and not s.replace and s.publication_id is None:
                 bulk_streams.setdefault(s.source_id, {})[s.ref_name] = s.values
             else:
                 individual_streams.append(s)
 
         for source_id, source_streams in bulk_streams.items():
-            total += app.state.manager.insert_timeseries_batch(source_id, source_streams)
+            total += app.state.manager.insert_timeseries_batch(source_id, source_streams).row_count
         for s in individual_streams:
             total += app.state.manager.insert_timeseries(
                 source_id=s.source_id,
@@ -694,7 +659,8 @@ def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[st
                 rows=s.values,
                 point_uri=s.point_uri,
                 replace=s.replace,
-            )
+                publication_id=s.publication_id,
+            ).row_count
         insert_stats.record(
             origin="http",
             rows=sum(len(s.values) for s in streams),
@@ -714,11 +680,22 @@ async def insert_timeseries_arrow(request: Request):
         df = pl.from_arrow(reader.read_all())
         log.debug("/insert_timeseries_arrow: parsed Arrow stream into df rows=%d", len(df))
 
+        # A caller-supplied publication_id makes a retried flush idempotent:
+        # it is reused verbatim against PublicationStore.publish, whose
+        # id-plus-hash check returns the original receipt instead of
+        # re-applying the mutation. One request can span multiple source_ids,
+        # each its own atomic publication, so the base id is namespaced per
+        # source.
+        base_publication_id = request.headers.get("X-Acquirium-Publication-Id")
+
         total = 0
         for key, source_df in df.partition_by("source_id", as_dict=True).items():
             sid = key[0] if isinstance(key, tuple) else key
             log.debug("/insert_timeseries_arrow: dispatching source=%s rows=%d", sid, len(source_df))
-            total += app.state.manager.insert_timeseries_arrow(str(sid), source_df.drop("source_id").to_arrow())
+            pub_id = f"{base_publication_id}:{sid}" if base_publication_id else None
+            total += app.state.manager.insert_timeseries_arrow(
+                str(sid), source_df.drop("source_id").to_arrow(), publication_id=pub_id
+            ).row_count
 
         return {"ok": True, "rows_inserted": total}
     except Exception as e:

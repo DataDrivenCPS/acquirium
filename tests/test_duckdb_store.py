@@ -71,10 +71,8 @@ def test_upsert_rows_empty(store):
 def test_replace_rows(store):
     uri = "urn:test:duck:replace"
     store.upsert_rows(uri, [(_utc(2024, 1, 1), "old"), (_utc(2024, 1, 2), "old2")], value_kind="text")
-    store.replace_rows(uri, [(_utc(2024, 1, 3), "new")], value_kind="text")
-    batches = list(store.timeseries(uri))
-    all_vals = [v for b in batches for v in b.to_pydict()["value"]]
-    assert all_vals == ["new"]
+    with pytest.raises(NotImplementedError, match="replace/delete"):
+        store.replace_rows(uri, [(_utc(2024, 1, 3), "new")], value_kind="text")
 
 
 # ---- bulk_insert_polars ----
