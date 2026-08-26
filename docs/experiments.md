@@ -8,7 +8,7 @@ scope, then start one durable run for every scenario.
 import acquirium as aq
 
 ac = aq.Acquirium()
-study = ac.experiment.define("load-shift")
+study = ac.study.define("load-shift")
 
 configuration = study.input("configuration").json()
 total_cost = study.output("total operating cost").scalar(unit="USD")

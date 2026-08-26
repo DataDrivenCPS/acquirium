@@ -52,6 +52,7 @@ log = logging.getLogger("acquirium.api")
 
 
 class ExperimentTemplateRequest(BaseModel):
+    """Transport names retain template/run wording; the Python API says Study."""
     name: str
 class ExperimentVariableRequest(BaseModel):
     label: str
@@ -83,6 +84,8 @@ def start_experiment(template_id: str, request: ExperimentStartRequest):
 
 def observe_experiment_variable(run_id: str, variable_id: str, request: ExperimentObservationRequest):
     try:
+        # A range accompanies a stream attachment. Scalar and log observations
+        # leave it null, so one append-only ledger covers every variable kind.
         interval = (request.start, request.end) if request.start and request.end else None
         return app.state.manager.experiments.observe(run_id, variable_id, value=request.value, occurred_at=request.occurred_at, ref_uri=request.ref_uri, interval=interval)
     except KeyError: raise HTTPException(status_code=404, detail="unknown experiment run")
@@ -90,6 +93,8 @@ def observe_experiment_variable(run_id: str, variable_id: str, request: Experime
 
 async def attach_experiment_file(run_id: str, variable_id: str, request: Request):
     try:
+        # The body is raw file bytes to avoid forcing script users through a
+        # multipart/form-data API for a single artifact.
         return app.state.manager.experiments.attach_file(run_id, variable_id, request.headers.get("X-Filename", "attachment"), request.headers.get("Content-Type"), await request.body())
     except Exception as error: raise HTTPException(status_code=400, detail=str(error))
 
@@ -443,6 +448,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Acquirium API", version="0.1", lifespan=lifespan)
 
+# The client facade owns the pleasant Study/Experiment vocabulary. These
+# stable endpoint names stay deliberately storage-oriented and small.
 app.post("/experiments/templates")(define_experiment)
 app.post("/experiments/templates/{template_id}/variables")(declare_experiment_variable)
 app.post("/experiments/templates/{template_id}/runs")(start_experiment)

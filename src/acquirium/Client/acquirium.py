@@ -110,7 +110,7 @@ def _build_stream_triples(
         for pred, value in (stream.get("properties") or {}).items():
             _add_triple(g, target, pred, value)
 from acquirium.Client.client import AcquiriumClient
-from acquirium.Experiments import ExperimentService, Point
+from acquirium.Experiments import Point, StudyService
 from acquirium.internals.models import compute_ref_uri
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_DB_URI,
@@ -179,7 +179,9 @@ class Acquirium:
             use_ssl=use_ssl,
         )
         self.insert_batch_rows = int(insert_batch_rows)
-        self.experiment = ExperimentService(self)
+        # Study owns user-facing declarations; the raw HTTP client remains
+        # available below for ordinary Acquirium APIs.
+        self.study = StudyService(self)
         if self.insert_batch_rows <= 0:
             raise ValueError("insert_batch_rows must be greater than zero")
         if health_timeout:
@@ -469,6 +471,8 @@ class Acquirium:
 
     def resolve(self, text: str, *, kind: str | None = None, min_score: float = 0.6) -> Point:
         """Resolve a human description to one graph resource for experiment use."""
+        # Keep text matching at the boundary. Persisted variable metadata is
+        # always the resolved URI, never an ambiguous natural-language string.
         uri = self.client.resolve(text, kind=kind, top_k=1, min_score=min_score)
         if uri is None:
             raise ValueError(f"could not resolve graph resource {text!r}")
