@@ -247,18 +247,28 @@ class OxigraphGraphStore:
         )
         with timed_debug(_logger, "OntoEnv build env_root=%s", self.env_root):
             self.env, is_warm_start = self._build_ontoenv()
-        # On a cold start, the persisted store has no bundled ontologies
-        # yet — parse each TTL, rewrite its declared owl:Ontology IRI to
-        # the package's canonical IRI, and register it. On warm start
-        # the bundled graphs are already in the store; skip re-adding.
-        if not is_warm_start:
-            for fname, canonical in BUNDLED_FILES:
-                try:
-                    g = load_bundled_graph(fname, canonical)
-                    self.env.add(g, fetch_imports=False)
-                    _logger.info("ontoenv: registered bundled %s at %s", fname, canonical)
-                except Exception as exc:
-                    _logger.error("ontoenv: failed to load bundled %s: %s", fname, exc)
+        # Register every bundled ontology whose canonical graph is not
+        # actually in the store: parse the TTL, rewrite its declared
+        # owl:Ontology IRI to the package's canonical IRI, and add it. On a
+        # warm start most graphs are present and skipped — but "the store
+        # has graphs" is no proof it has *these* graphs. A store created by
+        # an older version, or after a partially failed first run, can carry
+        # data graphs while bundled ontologies are missing; every
+        # ontology-dependent feature then degrades silently (empty
+        # quantity-kind vocabulary, no water/s223 concepts, all text
+        # metadata "storing as a plain literal"). So each graph is probed
+        # individually instead of trusting the warm-start flag.
+        for fname, canonical in BUNDLED_FILES:
+            if is_warm_start and self._store_has_graph(canonical):
+                continue
+            try:
+                g = load_bundled_graph(fname, canonical)
+                # overwrite: a stale catalog may still list an ontology
+                # whose graph content is gone; replacing is idempotent.
+                self.env.add(g, overwrite=True, fetch_imports=False)
+                _logger.info("ontoenv: registered bundled %s at %s", fname, canonical)
+            except Exception as exc:
+                _logger.error("ontoenv: failed to load bundled %s: %s", fname, exc)
         # User sources from acquirium.toml. An entry without `rename_to`
         # keeps its declared IRI; with `rename_to`, we rewrite the
         # declared IRI to the canonical key and pass overwrite=True so
@@ -312,6 +322,11 @@ class OxigraphGraphStore:
     def _has_persisted_source_graphs(self) -> bool:
         """Return True when the attached Oxigraph store already contains graphs."""
         return any(True for _ in self.source_dataset.graphs())
+
+    def _store_has_graph(self, iri: str) -> bool:
+        """One-triple existence probe for a named graph in the source dataset."""
+        graph = self.source_dataset.graph(URIRef(iri))
+        return next(iter(graph), None) is not None
 
     def _new_ontoenv(self) -> OntoEnv:
         """Open the environment at ``env_root`` over the shared graph store.

@@ -5,9 +5,10 @@ from acquirium.Storage import graph_store as graph_store_module
 
 
 class _FakeDataset:
-    def __init__(self, *, has_graphs: bool) -> None:
+    def __init__(self, *, has_graphs: bool, populated_iris: set[str] | None = None) -> None:
         self.store = MagicMock()
         self._graphs = [object()] if has_graphs else []
+        self._populated = populated_iris or set()
 
     def commit(self) -> None:
         return None
@@ -18,11 +19,19 @@ class _FakeDataset:
     def graphs(self):
         return iter(self._graphs)
 
+    def graph(self, identifier):
+        # non-empty iff the named graph is "populated" in this fake store
+        return [("s", "p", "o")] if str(identifier) in self._populated else []
 
-def _build_store(tmp_path: Path, monkeypatch, *, source_ready: bool):
+
+def _build_store(tmp_path: Path, monkeypatch, *, source_ready: bool,
+                 missing_bundled: tuple[str, ...] = ()):
+    from acquirium._ontologies import BUNDLED_IRIS
+
     opened_paths: list[Path] = []
+    populated = set(BUNDLED_IRIS) - set(missing_bundled) if source_ready else set()
     datasets = [
-        _FakeDataset(has_graphs=source_ready),
+        _FakeDataset(has_graphs=source_ready, populated_iris=populated),
         _FakeDataset(has_graphs=False),
     ]
 
@@ -79,6 +88,23 @@ def test_warm_start_reuses_the_populated_store(tmp_path, monkeypatch):
     assert env.lifecycle == "connect"
     env.update.assert_not_called()
     env.add.assert_not_called()
+    store.close()
+
+
+def test_warm_start_repairs_missing_bundled_graphs(tmp_path, monkeypatch):
+    """A warm start is no proof the bundled graphs exist: a store created by
+    an older version can carry data graphs while e.g. the quantity-kind
+    vocabulary is missing, and every start then silently skipped it. Each
+    canonical graph is probed individually and missing ones re-added."""
+    from acquirium._ontologies import QUDT_QK_IRI
+
+    store, env, _ = _build_store(
+        tmp_path, monkeypatch, source_ready=True, missing_bundled=(QUDT_QK_IRI,)
+    )
+    assert env.lifecycle == "connect"
+    assert env.add.call_count == 1
+    # replaced idempotently, surviving a stale catalog entry
+    assert env.add.call_args.kwargs.get("overwrite") is True
     store.close()
 
 
