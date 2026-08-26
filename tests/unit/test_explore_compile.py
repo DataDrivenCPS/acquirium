@@ -38,6 +38,20 @@ def norm(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
+def strip_labels(s: str) -> str:
+    """Drop the point-label optionals the explore compiler adds.
+
+    The frozen legacy builder does not fetch ``rdfs:label``, so parity is
+    asserted modulo the ``?lbl<N>`` select vars and their OPTIONAL clauses.
+    """
+    s = re.sub(
+        r"OPTIONAL \{ \?\w+ <http://www\.w3\.org/2000/01/rdf-schema#label> \?lbl\d+ \. \} ?",
+        "",
+        s,
+    )
+    return norm(re.sub(r" \?lbl\d+", "", s))
+
+
 def legacy_sparql(g: QueryGraph) -> str:
     return Q(client=None, query_graph=g).to_sparql()
 
@@ -60,7 +74,7 @@ def data_node(g: QueryGraph, nid: int, *, filters: dict) -> QueryGraph:
 def assert_parity(g: QueryGraph, g_legacy: QueryGraph | None = None):
     new = compile_sparql(g)
     old = legacy_sparql(g_legacy if g_legacy is not None else g)
-    assert norm(new) == norm(old)
+    assert strip_labels(norm(new)) == norm(old)
 
 
 class TestNodeConstraints:

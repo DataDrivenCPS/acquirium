@@ -952,6 +952,17 @@ class Query:
             cols_w_alias = [self._col_name_to_alias(c) for c in cols_kept]
 
             pl_table = pl.DataFrame(rows_kept, schema=cols_w_alias, orient="row")
+            # point labels: drop all-null ``*.label`` columns and show the
+            # rest right after their node's column
+            keep: list[str] = []
+            for c in pl_table.columns:
+                if c.endswith(".label") and c.removesuffix(".label") in pl_table.columns:
+                    continue
+                keep.append(c)
+                lbl = f"{c}.label"
+                if lbl in pl_table.columns and pl_table[lbl].is_not_null().any():
+                    keep.append(lbl)
+            pl_table = pl_table.select(keep)
             pl_table = pl_table.with_columns([
                 pl.col(c)
                 .map_elements(
@@ -961,7 +972,7 @@ class Query:
                     skip_nulls=False,
                 )
                 .alias(c)
-                for c in cols_w_alias
+                for c in pl_table.columns
             ]).unique()
             self.cache[cache_key] = pl_table
         return self.cache[cache_key]
@@ -992,18 +1003,29 @@ class Query:
 
     def dataframe(
         self,
+        shape: str = "wide",
         *,
         start: datetime | None = None,
         end: datetime | None = None,
         limit: int | None = None,
         order: str = "asc",
         include_dependencies: bool = True,
-        shape: str = "narrow",
         cast_value: str | None = "str",
         value_mode: str = "default",
         include_ref: bool = False,
+        compact: bool = True,
     ) -> pl.DataFrame:
-        """Fetch the matched streams' values as one polars frame (wide or narrow)."""
+        """Fetch the matched streams' values as one polars frame.
+
+        The shared parameters (``shape``, ``start``, ``end``, ``limit``,
+        ``order``, ``include_ref``, ``compact``) and their defaults mirror
+        :meth:`DataObject.dataframe`, so ``q.dataframe(...)`` equals
+        ``q.data(...).dataframe(...)``. Here the window bounds the fetch
+        itself; on a DataObject they filter the already-fetched data. Only
+        the fetch/parse-time keywords (``include_dependencies``,
+        ``cast_value``, ``value_mode``) have no DataObject counterpart —
+        they are fixed at ``data()`` time.
+        """
         return self.data(
             start=start,
             end=end,
@@ -1012,7 +1034,7 @@ class Query:
             include_dependencies=include_dependencies,
             cast_value=cast_value,
             value_mode=value_mode,
-        ).dataframe(shape=shape, include_ref=include_ref, compact=True)
+        ).dataframe(shape=shape, include_ref=include_ref, compact=compact)
 
     # ---------- display helpers ----------
 
@@ -1025,6 +1047,13 @@ class Query:
                 return col_name
             base_alias = self.query_graph.aliases_reverse.get(node_id, f"v{node_id}")
             return f"{base_alias}.{attr_name}"
+        if col_name.startswith("lbl"):
+            try:
+                node_id = int(col_name[3:])
+            except ValueError:
+                return col_name
+            base_alias = self.query_graph.aliases_reverse.get(node_id, f"v{node_id}")
+            return f"{base_alias}.label"
         if col_name.startswith("ext"):
             try:
                 node_id = int(col_name[3:])
