@@ -174,8 +174,8 @@ class Manager:
                 )
             else:
                 raise ValueError("timeseries_backend must be 'duckdb' or 'timescale'")
-            from acquirium.Storage.publication.duckdb import PublicationDuckDB
-            publication: PublicationStore = PublicationDuckDB(timescale)
+            from acquirium.Storage.publication.revision import RevisionPublisher
+            publication: PublicationStore = RevisionPublisher(timescale)
 
         # Caller-supplied converter or graph wins; otherwise the converter
         # is built lazily in _ensure_qudt_converter from the QUDT unit

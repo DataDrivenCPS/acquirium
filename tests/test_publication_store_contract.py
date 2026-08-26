@@ -4,14 +4,14 @@ from datetime import datetime, timezone
 import pyarrow as pa
 
 from acquirium.Storage.duckdb_store import DuckDBStore
-from acquirium.Storage.publication.duckdb import PublicationDuckDB
+from acquirium.Storage.publication.revision import RevisionPublisher
 from acquirium.Storage.publication.types import MUTATION_SCHEMA, PublicationRequest
 
 
 def test_publication_assigns_one_new_global_revision_per_write(tmp_path):
     store = DuckDBStore(tmp_path / "publication.duckdb", recreate=True)
     try:
-        publisher = PublicationDuckDB(store)
+        publisher = RevisionPublisher(store)
         mutations = pa.table({"operation": ["upsert"], "ref_uri": ["urn:input"],
             "ts": pa.array([datetime(2026, 1, 1, tzinfo=timezone.utc)], type=pa.timestamp("us", tz="UTC")),
             "numeric_value": [1.0], "text_value": [None]}, schema=MUTATION_SCHEMA)
@@ -31,7 +31,7 @@ def test_publication_rejects_deletion(tmp_path):
     store = DuckDBStore(tmp_path / "delete.duckdb")
     try:
         try:
-            PublicationDuckDB(store).publish(PublicationRequest("delete", pa.Table.from_pylist([base], schema=MUTATION_SCHEMA)))
+            RevisionPublisher(store).publish(PublicationRequest("delete", pa.Table.from_pylist([base], schema=MUTATION_SCHEMA)))
         except ValueError as error:
             assert "deletion" in str(error)
         else:
