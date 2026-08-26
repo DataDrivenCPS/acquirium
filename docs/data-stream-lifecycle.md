@@ -28,8 +28,9 @@ Since the URI is computable, no lookup is needed at insert time.
 A driver only needs its `source_id` and `ref_name` to insert rows.
 
 These stream URIs can be attached to `point_uri`s in the semantic model.
-A stream can be registered without being associated with a point, but then nothing in the model refers to
-it, and semantic queries will not find it.
+A stream registered without a point gets a placeholder point, `<ref_uri>__point`, so that
+`measurement()` on an empty query finds it; nothing else in the model refers to it, so topology
+queries do not reach it.
 
 ## What registration writes to the graph
 
@@ -47,8 +48,9 @@ For the stream itself, a reference node under the computed `ref_uri`:
     ref:storedAt  <urn:acquirium#TimescaleDB> .
 ```
 
-And, when a `point_uri` was given, the point node with its semantic metadata
-and the link between the two:
+And the point node with its semantic metadata and the link between the two.
+This is the given `point_uri`, or the placeholder `<ref_uri>__point` labelled
+`source_id__ref_name` when none was given:
 
 ```turtle
 <urn:swro/P1-out-pressure>
@@ -61,6 +63,20 @@ and the link between the two:
 
 Registration is idempotent and additive.
 Registering the same stream again with a `point_uri` does not erase metadata written earlier.
+Note that when the `point_uri` already exists in the graph, the metadata passed
+is checked against it before anything is inserted: a field the point lacks is
+added, and a conflicting value raises `ValueError`.
+Units are the exception.
+A unit that differs from the point's but converts to it is written on the
+reference node as the storage unit:
+
+```turtle
+<urn:acquirium#399ce39c-...>
+    qudt:hasUnit  unit:PSI .          # the rows are stored in psi
+```
+
+Reads convert from that unit to the point's automatically.
+A unit that does not convert raises `ValueError`.
 
 Note that driver authors do not call `register_streams()` themselves.
 A driver calls `self.declare(...)` per stream, and the platform calls

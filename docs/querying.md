@@ -369,9 +369,13 @@ shape: (3, 4)
 └────────────────────────────────┴───────────────────────┴────────────────────────┴──────────────────────────────────┘
 ```
 
-The default `shape="narrow"` gives one row per reading instead, with the point
-it came from in its own column.
+`shape="narrow"` gives one row per reading instead, with the point it came
+from in its own column.
 Either way you can bound what you pull with `start=`, `end=` and `limit=`.
+Note that a point with an `rdfs:label` is shown by that label: `metadata()`
+adds a `<alias>.label` column next to the node, and wide columns use it in
+place of the CURIE.
+The seawater-ro points carry no labels, so none appear here.
 
 `data()` returns a `DataObject`, a lazy reference to the same data.
 It reports the row count and time range before fetching anything, and lets

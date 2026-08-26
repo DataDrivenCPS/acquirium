@@ -135,6 +135,14 @@ Call it for every stream every time you read the source; only the first call
 does anything.
 Repeating an identical declaration is a no-op, while changing the metadata of
 an existing pair raises an error.
+When `point_uri` names a point the graph already has, the declared metadata is
+checked against it at registration: a field the point lacks is added, a
+conflicting value raises `ValueError`, and a unit that differs from the
+point's is accepted only when convertible, in which case it is recorded as
+the storage unit and reads convert to the point's unit.
+Without a `point_uri`, a placeholder point `<ref_uri>__point` is minted and
+labelled `source_id__ref_name`; see the
+[lifecycle guide](data-stream-lifecycle.md#what-registration-writes-to-the-graph).
 
 The platform writes declarations to the graph just before the next insert, so
 streams always exist before their observations do.
@@ -446,6 +454,8 @@ timezone  = "UTC"           # how to read naive timestamps
 | `timezone` | `"UTC"` | interpretation of naive timestamps |
 | `date_format`, `day_first` | none, `false` | for unusual or ambiguous dates |
 | `skip_rows`, `header_contains`, `encoding`, `ragged_lines` | | CSV only |
+| `null_values` | `[]` | CSV only; the source's missing-value sentinels (`["Null", "-"]`) |
+| `infer_schema_length` | `100` | CSV only; rows polars samples to type each column; `0` reads every column as text |
 | `sheets` | all | XLSX only |
 
 Note that the layout is never inferred; `format` has to be set.
@@ -453,6 +463,23 @@ Column names become `ref_name`s unchanged.
 Timestamps are discovered from common names (`timestamp`, `ts`, `Date` plus
 `Time`, `Sample Date` plus `Sample Time`), and unparseable ones are logged and
 dropped.
+Set `infer_schema_length = 0` for a source whose columns change shape
+mid-file, such as plain numbers early and thousands-separated values later;
+every column then reads as text and the value kind is inferred downstream.
+
+`CSVIngestDriver` has two hooks for source-specific quirks, so a deployment
+driver subclasses it instead of reimplementing `read()`:
+
+```python
+class PlantCSVDriver(CSVIngestDriver):
+    def prepare_frame(self, df, path):
+        # runs on the raw frame after skip_cols, before timestamps are parsed
+        return df.rename({"Date/Time": "time"})
+
+    def declare_stream(self, ref_name):
+        # called once per distinct ref_name in each batch; default is self.declare(ref_name)
+        self.declare(ref_name, **self.mapping.declaration(ref_name))
+```
 
 The two conversions are public, for drivers that read their own files:
 

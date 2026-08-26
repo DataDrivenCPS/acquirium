@@ -48,7 +48,16 @@ DataObject(5598 rows, aliases=['m'], entities=['Equipment'])
 ### Query.dataframe()
 
 Note that a `dataframe()` method also exists on the query object.
-This is a shortcut for `Query.data().dataframe()` for convenience.
+This is a shortcut for `Query.data().dataframe()`, and the two take the same
+parameters with the same defaults (`shape`, `start`, `end`, `limit`, `order`,
+`include_ref`, `compact`), so `q.dataframe(...)` returns the same frame as
+`q.data(...).dataframe(...)`.
+The difference is where the window applies: on the query it bounds the fetch,
+on a data object it filters the rows already fetched (`limit` keeps that many
+rows per stream, in `order` direction).
+`include_dependencies`, `cast_value` and `value_mode` act at fetch time, so
+they are set on `data()` (or on `Query.dataframe()`) and have no data-object
+counterpart.
 
 **TODO:** dataframe funcitons are not consistent with each other. make them consistent, or just remove one
 
@@ -79,21 +88,27 @@ shape: (3, 4)
 `shape="narrow"` gives one row per reading, with the point it came from in its own column.
 This is useful when points do not share timestamps.
 
-Be aware that the two entry points default differently.
-`Query.dataframe()` defaults to narrow, `DataObject.dataframe()` to wide.
-Pass `shape=` explicitly and the question does not arise.
+Wide is the default on both `Query.dataframe()` and `DataObject.dataframe()`.
 
-```text
-shape: (4, 7)
-┌────────────┬─────────────────────┬─────────────────────┬─────────────┬─────────────────────┬───────────────┬────────────┐
-│ data_alias ┆ point_uri           ┆ ref_uri             ┆ entity__ro  ┆ time                ┆ value_numeric ┆ value_text │
-╞════════════╪═════════════════════╪═════════════════════╪═════════════╪═════════════════════╪═══════════════╪════════════╡
-│ m          ┆ urn:swro/RO-out-re… ┆ urn:acquirium#87ad… ┆ urn:swro/RO ┆ 2026-08-05 16:28:…  ┆ 6.7442e6      ┆ null       │
-│ m          ┆ urn:swro/RO-out-pr… ┆ urn:acquirium#0077… ┆ urn:swro/RO ┆ 2026-08-05 16:28:…  ┆ 101325.0      ┆ null       │
-│ m          ┆ urn:swro/RO-in-pre… ┆ urn:acquirium#6c60… ┆ urn:swro/RO ┆ 2026-08-05 16:28:…  ┆ 7e6           ┆ null       │
-│ m          ┆ urn:swro/RO-out-re… ┆ urn:acquirium#87ad… ┆ urn:swro/RO ┆ 2026-08-05 16:28:…  ┆ 6.7626e6      ┆ null       │
-└────────────┴─────────────────────┴─────────────────────┴─────────────┴─────────────────────┴───────────────┴────────────┘
+```python
+d.dataframe("narrow").head(4)
 ```
+<!-- pending live re-capture on seawater-ro: derived from the earlier capture
+     with the compact layout applied -->
+```text
+shape: (4, 5)
+┌───────────────────────────────────┬───────────────────────────────┬─────────────────────┬───────────────┬────────────┐
+│ data_alias                        ┆ point_id                      ┆ time                ┆ value_numeric ┆ value_text │
+╞═══════════════════════════════════╪═══════════════════════════════╪═════════════════════╪═══════════════╪════════════╡
+│ m__wbs:RO-out-retentate-pressure  ┆ wbs:RO-out-retentate-pressure ┆ 2026-08-05 16:28:…  ┆ 6.7442e6      ┆ null       │
+│ m__wbs:RO-out-pressure            ┆ wbs:RO-out-pressure           ┆ 2026-08-05 16:28:…  ┆ 101325.0      ┆ null       │
+│ m__wbs:RO-in-pressure             ┆ wbs:RO-in-pressure            ┆ 2026-08-05 16:28:…  ┆ 7e6           ┆ null       │
+│ m__wbs:RO-out-retentate-pressure  ┆ wbs:RO-out-retentate-pressure ┆ 2026-08-05 16:28:…  ┆ 6.7626e6      ┆ null       │
+└───────────────────────────────────┴───────────────────────────────┴─────────────────────┴───────────────┴────────────┘
+```
+
+`data_alias` carries the same name the wide column would have, and `point_id`
+is the point as a CURIE.
 
 Numeric and text readings live in separate columns, `value_numeric` and
 `value_text`.
@@ -105,6 +120,14 @@ A wide column is named after its alias.
 When an alias covers several points the name would be ambiguous, so the point
 is appended: `m__wbs:RO-in-pressure`.
 An alias with a single point keeps its plain name.
+
+The appended part is the point's `rdfs:label` when it has one, and its CURIE
+otherwise.
+The seawater-ro points carry no labels, which is why the examples here show
+CURIEs.
+A node you did not alias is named by the label alone, or by the CURIE.
+Note that a label shared by several points is not used, since two columns
+would collapse into one; those points fall back to their CURIEs.
 
 ```python
 (acq.query().entity(uri="wbs:P1", alias="p1")
@@ -142,10 +165,12 @@ shape: (2, 5)
 ```
 **TODO:** Find a better way to create the schema from aliases
 
-Note that `Query.dataframe()` shortens the identifiers.
-It returns a `point_id` column with CURIEs (`wbs:RO-in-pressure`) where
-`DataObject.dataframe()` gives full `point_uri` and `ref_uri` columns.
-Pass `include_ref=True` to keep reference URIs.
+Both `dataframe()` methods shorten the identifiers by default
+(`compact=True`): URIs are CURIEs and the narrow shape identifies a point by a
+`point_id` column.
+`compact=False` returns the raw layout, with full `point_uri` and `ref_uri`
+columns and one `entity__<alias>` column per entity node in narrow shape.
+Pass `include_ref=True` to add the reference URI to the compact layout.
 This is only needed if you need to distinguish data coming from different sources for the same measurement point.
 
 ## Numbers and text
@@ -182,7 +207,7 @@ d = q.data(value_mode="numeric")
 Anything else, including `None`, leaves the column exactly as the server sent
 it, which for a numeric stream is already `Float64`.
 
-These defaults differ too: `Query.data()` casts to `"float"`, while
+Note that the defaults differ: `Query.data()` casts to `"float"`, while
 `Query.dataframe()` passes `"str"`, which is one of the values that does
 nothing.
 
@@ -251,8 +276,10 @@ ValueError: convert_to: no convertible unit pair for
 
 A point can carry one unit in the graph while its stream stores another, for
 example a driver ingesting a stream in psi under a point annotated in pascals.
-When those disagree, the values are converted for you as they are fetched, to
-the unit `units()` reports.
+Registration records the stream's unit on the reference node as the storage
+unit (see [Writing data](#writing-data)).
+When the two disagree, the values are converted for you as they are fetched,
+to the point's unit, which is the one `units()` reports.
 If the two are not convertible, the readings come through untouched and a
 warning is logged rather than an exception raised.
 A mismatch should not break a query that did not ask for a conversion; the
@@ -360,10 +387,21 @@ acq.register_streams([{
 
 `point_uri` ties the stream to a point in the semantic model.
 This link makes the rows reachable by the queries in this guide.
-A stream registered without it still stores rows, but queries will not find
-them.
+A stream registered without it gets a placeholder point, `<ref_uri>__point`,
+labelled `source_id__ref_name` unless you pass `label`.
+`measurement()` on an empty query finds it, but no equipment refers to it, so
+topology queries do not reach it.
 `unit`, `quantity_kind`, `medium` and `substance` accept free text or URIs,
 like everywhere else.
+
+When `point_uri` names a point the graph already has, the metadata you pass
+is checked against it.
+A field the point lacks is added, a field that conflicts raises `ValueError`
+before anything is inserted, and a unit that differs from the point's is
+accepted only when the two are convertible.
+In that case it is recorded on the reference node as the storage unit, and
+reads convert to the point's unit automatically; see
+[Automatic conversion](#automatic-conversion).
 
 Registration is required before the first insert.
 Inserting to an unregistered stream raises an error:

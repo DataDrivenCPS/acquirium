@@ -30,6 +30,8 @@ This is a reference for the vocabulary of the other guides.
 | point | a node representing one measured or computed quantity | `wbs:P1-out-pressure` |
 | connection point | the inlet or outlet of a piece of equipment; most points hang off one | `wbs:RO-in` |
 | reference node | the RDF node linking a point to its stream, through `ref:hasExternalReference` | `urn:acquirium#399ce39c-...` |
+| label | a point's display name (`rdfs:label`), shown in place of its CURIE in results | `"P1 outlet pressure"` |
+| placeholder point | the point minted for a stream registered without a `point_uri`, labelled `source_id__ref_name` | `<ref_uri>__point` |
 | stream | the timeseries behind a point | the rows stored under that reference node |
 | source | the owner of a set of streams and of its own graph | a driver, an app, `plant` |
 | datasource | who writes a set of streams; the graph-side record of a source | `watertap-seawater-ro` |
@@ -79,7 +81,7 @@ two.
 | `value_mode` | which of the two value columns a read returns | `"default"`, `"numeric"`, `"text"`, `"coalesce"` |
 | `cast_value` | a client-side cast applied after the values arrive | `"float"`, `"int"` |
 | wide | one column per point, aligned on the timestamp | `time, m__wbs:RO-in-pressure, ...` |
-| narrow | one row per reading, with its point in its own column | `data_alias, point_uri, time, value_numeric, ...` |
+| narrow | one row per reading, with its point in its own column | `data_alias, point_id, time, value_numeric, ...` |
 
 
 ## The platform
