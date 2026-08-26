@@ -219,7 +219,7 @@ DELETE DATA {{
         assert self.TEST_POINT in data
         assert data[self.TEST_POINT]["row_count"] >= 3
 
-    def test_replace(self):
+    def test_replace_is_rejected(self):
         self._insert_data(10)
         self._register_stream()
         values = [
@@ -235,7 +235,7 @@ DELETE DATA {{
                 "values": values,
             }],
         )
-        assert resp.status_code == 200
+        assert resp.status_code == 400
 
     def test_empty_uri(self):
         resp = requests.get(f"{BASE_URL}/timeseries", params={
