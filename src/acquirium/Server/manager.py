@@ -797,7 +797,8 @@ class Manager:
         upserts = pl.from_arrow(self._mutation_table(df))
 
         if replace:
-            raise ValueError("replace is not supported by incremental materialization; publish corrected rows as upserts")
+            written = self.timescale.replace_rows(ref_uri, rows, value_kind=value_kind)
+            return PublicationReceipt(publication_id or str(uuid.uuid4()), "", written, {})
         return self.publish(upserts.to_arrow(), publication_id=publication_id)
 
     def insert_timeseries_batch(

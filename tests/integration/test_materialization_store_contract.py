@@ -35,9 +35,10 @@ def materialization_store(request, tmp_path):
         schema = f"materialization_contract_{uuid.uuid4().hex}"
         with psycopg.connect(dsn, autocommit=True) as conn:
             conn.execute(f'CREATE SCHEMA "{schema}"')
-        # Keep ``public`` after the private schema: TimescaleDB exposes its
-        # functions there, while the unqualified tables remain isolated.
-        isolated_dsn = make_conninfo(dsn, options=f"-c search_path={schema},public")
+        # Use only the private schema.  Including ``public`` would cause
+        # ``CREATE TABLE IF NOT EXISTS`` to reuse the live server's tables.
+        # TimescaleStore qualifies the extension function it needs from public.
+        isolated_dsn = make_conninfo(dsn, options=f"-c search_path={schema}")
         store = TimescaleStore(dsn=isolated_dsn, recreate=True)
     try:
         yield store

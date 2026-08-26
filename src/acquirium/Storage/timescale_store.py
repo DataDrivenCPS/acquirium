@@ -73,18 +73,20 @@ class TimescaleStore(TimeseriesStore):
                     ts TIMESTAMPTZ NOT NULL,
                     numeric_value DOUBLE PRECISION,
                     text_value TEXT,
+                    deleted BOOLEAN NOT NULL DEFAULT FALSE,
                     last_revision BIGINT NOT NULL DEFAULT 0,
                     CHECK (numeric_value IS NULL OR text_value IS NULL)
                 );
                 """
             )
             # Migrate stores that predate the revision frontier.
+            cur.execute(f"ALTER TABLE {TIMESERIES_TABLE} ADD COLUMN IF NOT EXISTS deleted BOOLEAN NOT NULL DEFAULT FALSE;")
             cur.execute(f"ALTER TABLE {TIMESERIES_TABLE} ADD COLUMN IF NOT EXISTS last_revision BIGINT NOT NULL DEFAULT 0;")
             cur.execute(f"CREATE INDEX IF NOT EXISTS idx_timeseries_last_revision ON {TIMESERIES_TABLE} (last_revision);")
             # Create the hypertable before enabling Timescale features.
             cur.execute(
                 sql.SQL(
-                    "SELECT create_hypertable(%s, %s, if_not_exists => TRUE);"
+                    "SELECT public.create_hypertable(%s, %s, if_not_exists => TRUE);"
                 ),
                 (TIMESERIES_TABLE, "ts"),
             )
@@ -142,7 +144,7 @@ class TimescaleStore(TimeseriesStore):
                 FROM {TIMESERIES_TABLE} AS t
                 LEFT JOIN {STREAMS_TABLE} AS s
                     ON t.ref_uri = s.ref_uri
-                ;
+                WHERE NOT t.deleted;
                 """
             )
             cur.execute(
@@ -211,11 +213,12 @@ class TimescaleStore(TimeseriesStore):
         with conn.cursor() as cur:
             cur.executemany(
                 f"""INSERT INTO {TIMESERIES_TABLE}
-                (ref_uri, ts, numeric_value, text_value, last_revision)
-                VALUES (%s, %s, %s, %s, %s)
+                (ref_uri, ts, numeric_value, text_value, deleted, last_revision)
+                VALUES (%s, %s, %s, %s, FALSE, %s)
                 ON CONFLICT (ref_uri, ts) DO UPDATE SET
                     numeric_value = EXCLUDED.numeric_value,
                     text_value = EXCLUDED.text_value,
+                    deleted = FALSE,
                     last_revision = EXCLUDED.last_revision""",
                 [(*row, revision) for row in rows],
             )
@@ -248,10 +251,21 @@ class TimescaleStore(TimeseriesStore):
         *,
         value_kind: str = "text",
     ) -> int:
-        logger.debug("replace_rows ref_uri=%s kind=%s", ref_uri, value_kind)
-        with timed_debug(logger, "replace_rows DELETE ref_uri=%s", ref_uri), self.conn.cursor() as cur:
-            cur.execute(sql.SQL("DELETE FROM {} WHERE ref_uri=%s").format(sql.Identifier(TIMESERIES_TABLE)), [ref_uri])
-        return self.upsert_rows(ref_uri, rows, value_kind=value_kind)
+        rows_list = list(rows)
+        frame = (
+            prepare_value_columns(pl.DataFrame({
+                "ref_uri": [ref_uri] * len(rows_list),
+                "ts": [self._to_utc(ts) for ts, _ in rows_list],
+                "value": typed_value_series([value for _, value in rows_list]),
+                "value_kind": [value_kind] * len(rows_list),
+            })).unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
+            if rows_list else None
+        )
+        with self._lock, self._write_conn() as conn:
+            conn.execute(f"DELETE FROM {TIMESERIES_TABLE} WHERE ref_uri = %s", [ref_uri])
+            if frame is not None:
+                self._insert_frame(conn, frame, self._next_revision(conn))
+        return len(rows_list)
 
     def bulk_insert_polars(self, df: pl.DataFrame) -> int:
         # Using polars to write to database via ADBC
@@ -408,7 +422,7 @@ class TimescaleStore(TimeseriesStore):
         Returns an iterator over the time series data for the given ref URI.
         '''
         mode = normalize_value_mode(value_mode)
-        clauses = ["ref_uri = %s"]
+        clauses = ["ref_uri = %s", "NOT deleted"]
         params: list[Any] = [ref_uri]
 
         if start:
@@ -490,7 +504,7 @@ class TimescaleStore(TimeseriesStore):
     def timeseries_info(self, ref_uri: str) -> TimeseriesInfo:
         with timed_debug(logger, "timeseries_info ref_uri=%s", ref_uri), self.conn.cursor() as cur:
             cur.execute(
-                f"SELECT COUNT(*), MIN(ts), MAX(ts) FROM {TIMESERIES_TABLE} WHERE ref_uri=%s",
+                f"SELECT COUNT(*), MIN(ts), MAX(ts) FROM {TIMESERIES_TABLE} WHERE ref_uri=%s AND NOT deleted",
                 (ref_uri,),
             )
             cnt, earliest, latest = cur.fetchone()
@@ -502,7 +516,7 @@ class TimescaleStore(TimeseriesStore):
             return {}
         with timed_debug(logger, "timeseries_info_batch n=%d", len(ref_uris)), self.conn.cursor() as cur:
             cur.execute(
-                f"SELECT ref_uri, COUNT(*), MIN(ts), MAX(ts) FROM {TIMESERIES_TABLE} WHERE ref_uri = ANY(%s) GROUP BY ref_uri",
+                f"SELECT ref_uri, COUNT(*), MIN(ts), MAX(ts) FROM {TIMESERIES_TABLE} WHERE ref_uri = ANY(%s) AND NOT deleted GROUP BY ref_uri",
                 (ref_uris,),
             )
             rows = cur.fetchall()
