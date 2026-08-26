@@ -18,6 +18,7 @@ from acquirium.Storage import (
 )
 from acquirium.Storage.publication.types import PublicationReceipt, PublicationRequest, PublicationStore
 from acquirium.Storage.values import normalize_value_kind
+from acquirium.Experiments import ExperimentStore
 from acquirium.internals.qudt_units import QUDTUnitConverter
 from acquirium.Server.config import OntologySource
 from acquirium.internals.models import LogEntry, Order, TimeIntervalModel, compute_ref_uri
@@ -195,6 +196,7 @@ class Manager:
         self.timescale = timescale
         self.graph_store = graph
         self.publication = publication
+        self.experiments = ExperimentStore(timescale, base / "experiment_artifacts")
         from acquirium.Materialization.runtime import Materializer
         self.materializer = Materializer(timescale, graph,
             query_resolver=self.resolve_text, record_resolver=self.resolve_record)
