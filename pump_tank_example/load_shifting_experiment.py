@@ -22,7 +22,9 @@ def result_series(results: Any) -> dict[str, Iterable[tuple[Any, Any]]]:
 
 # Declare the study and its reusable variables once. Each `study.start()`
 # below creates a fresh run whose values are isolated from prior scenarios.
-study = ac.experiment.define("pump-tank-load-shift")
+# Keeping these declarations at module scope also makes the experiment's
+# vocabulary visible before a reader gets to the solver implementation.
+study = ac.study.define("pump-tank-load-shift")
 configuration = study.input("configuration").json()
 configuration_file = study.input("configuration file").file(
     media_type="application/json"
@@ -67,6 +69,8 @@ def run_scenario(config_path: Path, *, note: str = "", tags: list[str] | None = 
         configuration_file.attach(config_path)
         operator_note.set(note)
 
+        # This is the original optimization workflow. The experiment API
+        # records its inputs and results; it does not orchestrate the solve.
         model = build_model(config)
         solve_model(model)
         results = extract_results(model, config)
@@ -77,6 +81,8 @@ def run_scenario(config_path: Path, *, note: str = "", tags: list[str] | None = 
         solver_result.set({"termination": results.termination, "objective": results.total_cost})
 
         series = result_series(results)
+        # Each named result is written explicitly so this remains the visible
+        # contract between the optimizer result object and study variables.
         facility_net_load.add(series["facility-net-load"])
         pump_inlet_flow.add(series["pump-in-flow-vol"])
         tank_volume.add(series["tank-volume"])
