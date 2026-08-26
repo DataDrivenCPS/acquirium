@@ -66,6 +66,16 @@ POINT_FIELD_KINDS: dict[str, str] = {
     "substance": "substance",
 }
 
+# The same fields → the predicate each is written under on the point. Extend
+# both maps together when adding a semantic field; ``data_source`` is a plain
+# literal and stays outside (it is not resolved).
+POINT_FIELD_PREDICATES: dict[str, URIRef] = {
+    "unit": HAS_UNIT,
+    "quantity_kind": HAS_QUANTITY_KIND,
+    "medium": HAS_MEDIUM,
+    "substance": OF_SUBSTANCE,
+}
+
 
 def _add_triple(g: Graph, subj: URIRef, pred: URIRef, value: "str | URIRef | None") -> None:
     if value is None:
@@ -156,12 +166,7 @@ def _build_stream_triples(
     if label is not None:
         g.add((subj, RDFS.label, Literal(label)))
 
-    for field, pred in (
-        ("unit", HAS_UNIT),
-        ("quantity_kind", HAS_QUANTITY_KIND),
-        ("medium", HAS_MEDIUM),
-        ("substance", OF_SUBSTANCE),
-    ):
+    for field, pred in POINT_FIELD_PREDICATES.items():
         provided = _coerce_resolved(resolved, field, stream.get(field))
         if provided is None:
             continue
@@ -791,15 +796,13 @@ class AcquiriumClient:
         a field the point lacks maps to ``None``. Returns ``{}`` for a
         point the graph does not know at all.
         """
-        sparql = f"""
-        SELECT ?unit ?quantity_kind ?medium ?substance ?data_source WHERE {{
-            OPTIONAL {{ <{point_uri}> <{HAS_UNIT}> ?unit . }}
-            OPTIONAL {{ <{point_uri}> <{HAS_QUANTITY_KIND}> ?quantity_kind . }}
-            OPTIONAL {{ <{point_uri}> <{HAS_MEDIUM}> ?medium . }}
-            OPTIONAL {{ <{point_uri}> <{OF_SUBSTANCE}> ?substance . }}
-            OPTIONAL {{ <{point_uri}> <{DATA_SOURCE}> ?data_source . }}
-        }}
-        """
+        fields = {**POINT_FIELD_PREDICATES, "data_source": DATA_SOURCE}
+        select = " ".join(f"?{name}" for name in fields)
+        optionals = "\n".join(
+            f"            OPTIONAL {{ <{point_uri}> <{pred}> ?{name} . }}"
+            for name, pred in fields.items()
+        )
+        sparql = f"SELECT {select} WHERE {{\n{optionals}\n        }}"
         result = self.sparql_query(sparql)
         rows = result.get("rows") or []
         if not rows:
