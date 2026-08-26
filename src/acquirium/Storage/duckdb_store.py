@@ -201,13 +201,6 @@ class DuckDBStore:
                 UNIQUE (ref_id, ts)
             )
             """,
-            # Migrate pre-publication databases that predate the tombstone and
-            # revision columns: CREATE TABLE IF NOT EXISTS is a no-op for them.
-            # DuckDB cannot add a NOT NULL constraint here, but every write
-            # supplies a default, so nullable columns are equivalent in practice.
-            f"ALTER TABLE {TIMESERIES_TABLE} ADD COLUMN IF NOT EXISTS deleted BOOLEAN DEFAULT FALSE",
-            f"ALTER TABLE {TIMESERIES_TABLE} ADD COLUMN IF NOT EXISTS last_stream_version BIGINT DEFAULT 0",
-            f"ALTER TABLE {TIMESERIES_TABLE} ADD COLUMN IF NOT EXISTS last_revision BIGINT DEFAULT 0",
             f"""
             CREATE TABLE IF NOT EXISTS {STREAMS_TABLE} (
                 ref_uri   VARCHAR PRIMARY KEY,
