@@ -49,7 +49,7 @@ model.
 
 | guide | covers |
 |---|---|
-| [Querying](querying.md) | finding equipment, topology and measurements; the `Query` interface |
+| [Querying](tutorials/querying.md) | finding equipment, topology and measurements; the `Query` interface |
 | [Working with data](data.md) | fetching timeseries, shapes, units, writing data |
 | [Building drivers](drivers.md) | feeding plant data in on a schedule |
 | [Building apps](apps.md) | computing on plant data server-side, writing results back |
