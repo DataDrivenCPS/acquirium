@@ -2,7 +2,7 @@
 
 This is a guide to querying data (timeseries) with Acquirium.
 Finding the points in the first place is covered in the
-[querying guide](querying.md).
+[querying guide](tutorials/querying.md).
 
 Every example here runs on the public WaterTAP seawater-ro model.
 <!-- FT1 placeholder: link the seawater-ro run guide here once it exists.

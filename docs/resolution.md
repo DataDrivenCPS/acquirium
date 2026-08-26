@@ -61,7 +61,7 @@ This is how `"ro membrane"` resolves to `ReverseOsmosisMembrane`.
 The indexes are built from the ontologies at server startup: one over the
 water and s223 vocabularies, one over QUDT.
 Instance data is not indexed; see the note in the
-[querying guide](querying.md#free-text-and-what-it-resolves-to).
+[querying guide](explanation/query-model.md#free-text-and-what-it-resolves-to).
 
 Semantic matching returns the closest candidate above `min_score` (0.5 by
 default).

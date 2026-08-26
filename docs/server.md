@@ -164,7 +164,7 @@ graph-change hooks.
 
 The store is guarded by a single lock, so a heavy SPARQL query delays other
 graph operations until it finishes.
-The [querying guide](querying.md#when-a-query-returns-nothing) covers how to
+The [querying guide](how-to/debug-an-empty-query.md#when-a-query-returns-nothing-or-moreless-than-you-expect) covers how to
 keep queries bounded.
 
 ## The embedding indexes
