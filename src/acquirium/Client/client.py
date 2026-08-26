@@ -1,5 +1,6 @@
 from typing import Optional, Iterator, Any, TYPE_CHECKING
 from datetime import datetime, timezone
+import json
 import requests
 from requests import HTTPError
 from pathlib import Path
@@ -8,9 +9,6 @@ import pyarrow.ipc as ipc
 from acquirium.internals.models import (
     Order,
     LogEntry,
-    AppSpec,
-    AppRunRequest,
-    AppStopRequest,
     StreamInsert,
     RegisterDatasourceRequest,
     looks_like_uri,
@@ -525,55 +523,31 @@ class AcquiriumClient:
         response.raise_for_status()
         return response.json()
 
-    def register_app(self, spec: AppSpec, *, replace: bool = False) -> dict:
-        url = f"{self.base_url}/apps/register"
-        response = requests.post(
-            url, json=spec.model_dump(mode="json"), params={"replace": replace}
+
+    def deploy_transformation(self, definition: dict) -> dict:
+        response = requests.put(
+            f"{self.base_url}/transformations/{definition['name']}", json=definition
         )
         _raise_for_status(response)
         return response.json()
 
-    def delete_app(self, app_id: str) -> dict:
-        url = f"{self.base_url}/apps/delete"
-        response = requests.post(url, json={"app_id": app_id})
+    def remove_transformation(self, name: str) -> dict:
+        response = requests.delete(f"{self.base_url}/transformations/{name}")
         _raise_for_status(response)
         return response.json()
 
-    def run_app(
-        self,
-        app_id: str,
-        *,
-        start: Optional[datetime] = None,
-        end: Optional[datetime] = None,
-        params: Optional[dict] = None,
-        keep_alive: bool = False,
-        interval: float = 10.0,
-    ) -> dict:
-        url = f"{self.base_url}/apps/run"
-        req = AppRunRequest(
-            app_id=app_id,
-            start=start,
-            end=end,
-            params=params or {},
-            keep_alive=keep_alive,
-            interval=interval,
-        )
-        response = requests.post(url, json=req.model_dump(mode="json"))
-        response.raise_for_status()
+    def materialization_dag(self) -> dict:
+        response = requests.get(f"{self.base_url}/materialization/dag")
+        _raise_for_status(response)
         return response.json()
 
-    def stop_app(self, *, app_id: str) -> dict:
-        url = f"{self.base_url}/apps/stop"
-        req = AppStopRequest(app_id=app_id)
-        response = requests.post(url, json=req.model_dump(mode="json"))
-        response.raise_for_status()
-        return response.json()
-
-    def list_app_runs(self, *, app_id: Optional[str] = None) -> dict:
-        url = f"{self.base_url}/apps/list"
-        params = {"app_id": app_id} if app_id else None
-        response = requests.get(url, params=params)
-        response.raise_for_status()
+    def resolve_storage_keys(self, uris: list[str]) -> dict[str, str]:
+        """Map each point_uri (or already-canonical ref_uri) to its storage key."""
+        if not uris:
+            return {}
+        url = f"{self.base_url}/resolve_storage_keys"
+        response = requests.post(url, json={"uris": uris})
+        _raise_for_status(response)
         return response.json()
 
     def register_datasource(self, source_id: str) -> str:
@@ -591,6 +565,7 @@ class AcquiriumClient:
         rows: list[tuple[datetime, Any]],
         point_uri: Optional[str] = None,
         replace: bool = False,
+        publication_id: Optional[str] = None,
     ) -> dict:
         url = f"{self.base_url}/insert_timeseries"
         body = StreamInsert(
@@ -599,6 +574,7 @@ class AcquiriumClient:
             point_uri=point_uri,
             replace=replace,
             values=rows,
+            publication_id=publication_id,
         )
         response = requests.post(url, json=[body.model_dump(mode="json")])
         _raise_for_status(response)
@@ -628,7 +604,9 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
-    def insert_timeseries_arrow(self, source_id: str, table: "pa.Table") -> dict[str, Any]:
+    def insert_timeseries_arrow(
+        self, source_id: str, table: "pa.Table", *, publication_id: Optional[str] = None
+    ) -> dict[str, Any]:
         import io
         import pyarrow as pa
         table_with_sid = table.append_column("source_id", pa.repeat(source_id, len(table)))
@@ -636,10 +614,13 @@ class AcquiriumClient:
         with ipc.new_stream(buf, table_with_sid.schema) as writer:
             writer.write_table(table_with_sid)
         buf.seek(0)
+        headers = {"Content-Type": "application/vnd.apache.arrow.stream"}
+        if publication_id is not None:
+            headers["X-Acquirium-Publication-Id"] = publication_id
         response = requests.post(
             f"{self.base_url}/insert_timeseries_arrow",
             data=buf,
-            headers={"Content-Type": "application/vnd.apache.arrow.stream"},
+            headers=headers,
         )
         response.raise_for_status()
         return response.json()

@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import threading
+import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -290,6 +291,12 @@ class IngestDriver(Driver):
         self._pending_lock = threading.Lock()
         self._flush_lock = threading.Lock()
         self._inflight_rows = 0
+        # (publication_id, rows) of the most recent flush that failed and was
+        # put back unmodified. A retry that pops exactly this same batch (no
+        # add() calls landed in between) reuses the id, so the server's
+        # publish() idempotency check replays the receipt instead of
+        # double-writing; any other batch gets a fresh id.
+        self._last_failed_batch: tuple[str, list[tuple[str, datetime, str, Any]]] | None = None
         self._declaration_lock = threading.Lock()
         self._declarations: dict[tuple[str, str], dict[str, Any]] = {}
         self._registered: set[tuple[str, str]] = set()
@@ -471,15 +478,22 @@ class IngestDriver(Driver):
                 rows, self._pending = self._pending, []
                 self._inflight_rows = len(rows)
 
+            if self._last_failed_batch is not None and self._last_failed_batch[1] == rows:
+                publication_id = self._last_failed_batch[0]
+            else:
+                publication_id = str(uuid.uuid4())
+
             frame = self._pending_frame(rows)
             try:
-                result = self.insert_observations(frame)
+                result = self.insert_observations(frame, publication_id=publication_id)
             except Exception:
                 with self._pending_lock:
                     self._pending[:0] = rows
                     self._inflight_rows = 0
+                self._last_failed_batch = (publication_id, rows)
                 raise
 
+            self._last_failed_batch = None
             with self._pending_lock:
                 self._inflight_rows = 0
             return result
@@ -494,7 +508,17 @@ class IngestDriver(Driver):
             "value": pl.Series("value", [row[3] for row in rows], dtype=pl.Object),
         })
 
-    def insert_observations(self, observations: "pl.DataFrame | None") -> dict[str, Any]:
+    def insert_observations(
+        self, observations: "pl.DataFrame | None", *, publication_id: str | None = None
+    ) -> dict[str, Any]:
+        """Normalize and publish buffered observations.
+
+        ``publication_id`` (set by :meth:`flush` for its retry-idempotency
+        path) is the atomic-mutation-set id for this call. A frame spanning
+        multiple ``source_id`` values makes one publication per source, so
+        the id is namespaced per source rather than reused verbatim -- each
+        is still stable across a retry of the *same* frame.
+        """
         import polars as pl
 
         with timed_debug(logger, "%s.normalize_observations", self.__class__.__name__):
@@ -512,7 +536,12 @@ class IngestDriver(Driver):
             )
             with timed_debug(logger, "%s.aq.insert_timeseries_arrow source=%s rows=%d",
                              self.__class__.__name__, self.source_id, len(df)):
-                result = self.aq.insert_timeseries_arrow(self.source_id, df.to_arrow())
+                if publication_id is None:
+                    result = self.aq.insert_timeseries_arrow(self.source_id, df.to_arrow())
+                else:
+                    result = self.aq.insert_timeseries_arrow(
+                        self.source_id, df.to_arrow(), publication_id=publication_id
+                    )
             return self._coerce_insert_result(result, len(df))
 
         total = 0
@@ -523,9 +552,15 @@ class IngestDriver(Driver):
                 "%s.insert_observations source=%s rows=%d (multi-source)",
                 self.__class__.__name__, source, len(payload),
             )
+            source_publication_id = f"{publication_id}:{source}" if publication_id else None
             with timed_debug(logger, "%s.aq.insert_timeseries_arrow source=%s rows=%d",
                              self.__class__.__name__, source, len(payload)):
-                result = self.aq.insert_timeseries_arrow(str(source), payload.to_arrow())
+                if source_publication_id is None:
+                    result = self.aq.insert_timeseries_arrow(str(source), payload.to_arrow())
+                else:
+                    result = self.aq.insert_timeseries_arrow(
+                        str(source), payload.to_arrow(), publication_id=source_publication_id
+                    )
             total += self._coerce_insert_result(result, len(payload))["rows_inserted"]
         return {"ok": True, "rows_inserted": total}
 

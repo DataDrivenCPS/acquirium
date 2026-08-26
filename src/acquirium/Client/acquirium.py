@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import math
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable, Sequence, Callable, Optional, TYPE_CHECKING
+from typing import Any, Iterable, Sequence, Callable, Mapping, Optional, TYPE_CHECKING
 import inspect
 
 if TYPE_CHECKING:
@@ -18,7 +19,8 @@ import warnings
 
 from acquirium.Client.explore.core import Query
 from acquirium.Client.query import Q
-from acquirium.Client.app_display import AppsResponse
+from acquirium.Materialization.api import Transformation
+from acquirium.Materialization.planner import Deployment
 
 
 def _dt_to_iso(v: "str | datetime | None") -> "str | None":
@@ -108,18 +110,7 @@ def _build_stream_triples(
         for pred, value in (stream.get("properties") or {}).items():
             _add_triple(g, target, pred, value)
 from acquirium.Client.client import AcquiriumClient
-from acquirium.Apps.base import App
-from acquirium.Apps.execution import (
-    AppDebugSession,
-    AppExecutionResult,
-    normalize_output_specs,
-    prepare_app_debug,
-    preview_app as execute_app_preview,
-    resolve_stream_mappings,
-)
-from acquirium.Apps.mapped import StreamMapping
-from acquirium.Apps.output_emission import PreviewSink
-from acquirium.internals.models import AppOutputSpec, AppSpec, compute_ref_uri
+from acquirium.internals.models import compute_ref_uri
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_DB_URI,
     ACQUIRIUM_REF_NAME,
@@ -313,6 +304,7 @@ class Acquirium:
         *,
         point_uri: Optional[str] = None,
         replace: bool = False,
+        publication_id: Optional[str] = None,
     ) -> dict[str, Any]:
         """Insert timeseries data for a single stream.
 
@@ -324,6 +316,10 @@ class Acquirium:
             point_uri: Semantic URI of the measurement point. When provided,
                 a ref_uri mapping is registered in the streams table.
             replace: If True, replaces any existing data for this stream.
+            publication_id: A stable id for this atomic mutation set. Reusing
+                it on retry (same rows) replays the original receipt instead
+                of re-applying the write; reusing it with different rows is
+                rejected as a publication conflict.
 
         Returns:
             dict with ``{"ok": True, "rows_inserted": N}``.
@@ -334,6 +330,7 @@ class Acquirium:
             rows=rows,
             point_uri=point_uri,
             replace=replace,
+            publication_id=publication_id,
         )
 
     def insert_timeseries_batch(
@@ -365,9 +362,19 @@ class Acquirium:
             chunk_count += 1
         return {"ok": True, "rows_inserted": total, "batches": chunk_count}
 
-    def insert_timeseries_arrow(self, source_id: str, table: "pa.Table") -> dict[str, Any]:
-        """Insert a (ts, ref_name, value) Arrow table."""
-        return self.client.insert_timeseries_arrow(source_id, table)
+    def insert_timeseries_arrow(
+        self, source_id: str, table: "pa.Table", *, publication_id: Optional[str] = None
+    ) -> dict[str, Any]:
+        """Insert a (ts, ref_name, value) Arrow table.
+
+        ``publication_id``, when given, makes a retried call idempotent (see
+        :meth:`insert_timeseries`).
+        """
+        if publication_id is None:
+            return self.client.insert_timeseries_arrow(source_id, table)
+        return self.client.insert_timeseries_arrow(
+            source_id, table, publication_id=publication_id
+        )
 
     @staticmethod
     def _json_safe_value(value: Any) -> Any:
@@ -503,187 +510,32 @@ class Acquirium:
                     source_id=source_id,
                 )
 
-    # ------------------------------------------------------------------
-    # ACQUIRIUM APPS API
-    # ------------------------------------------------------------------
+    def deploy_transformation(self, target: object, *, parameters: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """Deploy a stateless transformation against the current graph."""
+        if not isinstance(target, type) or not issubclass(target, Transformation):
+            raise ValueError("deploy_transformation expects a transformation class")
+        return self.client.deploy_transformation(json.loads(Deployment.from_class(target, parameters=parameters).to_json()))
 
-    def register_app(
-        self,
-        app: App,
-        *,
-        app_type: str | None = None,
-        outputs: list[AppOutputSpec | dict[str, Any]] | None = None,
-        depends_on: list[str] | None = None,
-        resolve_dependencies: bool = True,
-        queries: dict[str, Query] | None = None,
-        params: dict[str, Any] | None = None,
-        source_spec: str | None = None,
-        replace: bool = False,
-    ) -> dict[str, Any]:
-        """Register an Acquirium App with the server.
+    def remove_transformation(self, name: str) -> dict[str, Any]:
+        return self.client.remove_transformation(name)
 
-        If an app with the same name is already registered, the server rejects
-        the request unless ``replace=True``, which gracefully tears down the
-        existing app (stopping it and cleaning up its graph registration)
-        before registering this one.
-
-        ``params`` are stored with the app and passed to ``build_app`` via
-        ``ctx.params`` during the (one-time) build phase, so build-time
-        configuration — training windows, thresholds — lives with the
-        registration rather than the run.
-        """
-        app.validate_definition()
-        query_bundle = queries if queries is not None else app.build_query(self)
-        if not isinstance(query_bundle, dict):
-            # a single Query (or legacy Q) builder
-            query_bundle = {"default": query_bundle}
-
-        query_specs = {name: q.to_dict() for name, q in query_bundle.items()}
-
-        deps = depends_on or []
-        if not depends_on and resolve_dependencies:
-            dep_set: set[str] = set()
-            for q in query_bundle.values():
-                dep_set.update(q.resolved_nodes())
-            deps = sorted(dep_set)
-
-        if outputs is not None:
-            output_items = outputs
-        else:
-            resolver = getattr(app, "resolve_output_specs", None)
-            output_items = (
-                resolver(query_bundle)
-                if callable(resolver)
-                else list(getattr(app, "outputs", []) or [])
-            )
-        output_specs = normalize_output_specs(output_items)
-
-        # The app's Python source is shipped to the server so its AppRunner
-        # actor can load and run the class. Prefer an explicit override on the
-        # app; otherwise read the class's defining module file.
-        source_code = getattr(app, "source_code", None)
-        entry_file = getattr(app, "entry_file", None)
-        source_spec = source_spec or getattr(app, "source_spec", None)
-        src_path: str | None = None
-        try:
-            src_path = inspect.getsourcefile(app.__class__)
-        except (OSError, TypeError):
-            pass
-        if src_path and source_spec is None:
-            source_spec = f"{Path(src_path).resolve()}:{app.__class__.__name__}"
-        if source_code is None:
-            try:
-                if src_path:
-                    source_code = Path(src_path).read_text()
-                    if entry_file is None:
-                        entry_file = Path(src_path).name
-            except Exception:
-                source_code = None
-        if source_code is None:
-            raise ValueError(
-                f"Could not locate source for {app.__class__.__name__}; define the "
-                "class in a Python file or set app.source_code and app.entry_file explicitly"
-            )
-
-        spec = AppSpec(
-            name=app.name,
-            version=getattr(app, "version", "0.0"),
-            app_type=app_type or getattr(app, "app_type", "soft_sensor"),
-            source_spec=source_spec,
-            app_class=app.__class__.__name__,
-            source_code=source_code,
-            entry_file=entry_file,
-            queries=query_specs,
-            outputs=output_specs,
-            depends_on=deps,
-            params=params or {},
-        )
-        return self.client.register_app(spec, replace=replace)
-
-    def preview_app(
-        self,
-        app: App,
-        *,
-        start: datetime | None = None,
-        end: datetime | None = None,
-        build_params: dict[str, Any] | None = None,
-        params: dict[str, Any] | None = None,
-        max_rows: int = 20,
-    ) -> AppExecutionResult:
-        """Execute an app once without persisting outputs or calling webhooks.
-
-        Queries and timeseries reads use this client's server. Known Acquirium
-        mutations are rejected during query/build/run, and the returned result
-        describes the writes and webhook calls that production would perform.
-        ``build_params`` are passed to ``build_app``; ``params`` are passed to
-        ``run``, mirroring registration-time and run-time configuration.
-        """
-        app.validate_definition()
-        return execute_app_preview(
-            app,
-            self,
-            start=start,
-            end=end,
-            build_params=build_params,
-            params=params,
-            sink=PreviewSink(max_rows=max_rows),
-        )
-
-    def prepare_app_debug(
-        self,
-        app: App,
-        *,
-        start: datetime | None = None,
-        end: datetime | None = None,
-        build_params: dict[str, Any] | None = None,
-        params: dict[str, Any] | None = None,
-    ) -> AppDebugSession:
-        """Prepare read-only app state and live inputs for interactive debugging."""
-        return prepare_app_debug(
-            app,
-            self,
-            start=start,
-            end=end,
-            build_params=build_params,
-            params=params,
-        )
-
-    def app_mappings(self, app: App) -> list[StreamMapping]:
-        """Resolve input/output stream pairs without building or running the app."""
-        return resolve_stream_mappings(app, self)
-
-    def delete_app(self, app_id: str) -> dict[str, Any]:
-        """Gracefully delete a registered app (stop it, clean up its graph
-        registration, and remove its persisted source)."""
-        return AppsResponse(self.client.delete_app(app_id))
-
-    def run_app(
-        self,
-        app_id: str,
-        *,
-        start: datetime | None = None,
-        end: datetime | None = None,
-        params: dict[str, Any] | None = None,
-        keep_alive: bool = False,
-        interval: float = 10.0,
-    ) -> dict[str, Any]:
-        """Trigger an app execution in its own container via the server."""
-        return AppsResponse(self.client.run_app(
-            app_id,
-            start=start,
-            end=end,
-            params=params or {},
-            keep_alive=keep_alive,
-            interval=interval,
-        ))
-
-    def stop_app(self, *, app_id: str) -> dict[str, Any]:
-        """Stop an app's keep-alive loop."""
-        return AppsResponse(self.client.stop_app(app_id=app_id))
-
-    def list_app_runs(self, *, app_id: str | None = None) -> dict[str, Any]:
-        """List registered apps, or one app's build/run status if app_id is given."""
-        return AppsResponse(self.client.list_app_runs(app_id=app_id))
+    def application_dag(self):
+        """Return the active materialization plan as a NetworkX DiGraph."""
+        import networkx as nx
+        payload = self.client.materialization_dag()
+        graph = nx.DiGraph()
+        for node in payload["nodes"]:
+            attributes = dict(node); signature = attributes.pop("binding_signature")
+            graph.add_node(signature, **attributes)
+        for edge in payload["edges"]:
+            source, target = edge["source"], edge["target"]
+            # NetworkX permits one edge per node pair; retain every stream
+            # dependency on that edge instead of discarding parallel ports.
+            if graph.has_edge(source, target):
+                graph.edges[source, target]["ref_uris"].append(edge["ref_uri"])
+            else:
+                graph.add_edge(source, target, ref_uris=[edge["ref_uri"]])
+        return graph
 
     def generate_grafana_dashboard(self, grafana_server, api_key):
         return self.client.generate_grafana_dashboard(grafana_server, api_key)

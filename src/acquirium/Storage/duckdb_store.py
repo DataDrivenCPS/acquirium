@@ -29,9 +29,8 @@ far more effective zonemap (min-max) pruning than VARCHAR, and the rows are
 narrower. The ``ref_ids`` table maps each ``ref_uri`` to its ``ref_id``; ids
 are assigned from a sequence on first write and resolved inside this module,
 never exposed. The ``timeseries_streams`` view joins the string back in, so
-SQL against the view is unaffected. This schema is not backward compatible
-with databases whose ``timeseries`` table is keyed by ``ref_uri`` strings —
-recreate those rather than opening them in place.
+    SQL against the view is unaffected. The schema expects the integer-keyed
+    ``timeseries`` table described above.
 """
 
 from contextlib import contextmanager
@@ -68,6 +67,9 @@ LOGS_TABLE = "logs"
 REF_IDS_TABLE = "ref_ids"
 REF_IDS_SEQ = "ref_ids_seq"
 TIMESERIES_STREAMS_VIEW = "timeseries_streams"
+SYSTEM_STATE_TABLE = "system_state"
+BINDING_PROGRESS_TABLE = "binding_progress"
+
 
 
 class DuckDBStore:
@@ -103,7 +105,14 @@ class DuckDBStore:
             logger.debug("DuckDBStore.__init__: dropping existing tables/views (recreate=True)")
             with self._lock, self._own_conn() as conn:
                 conn.execute(f"DROP VIEW IF EXISTS {TIMESERIES_STREAMS_VIEW}")
-                for tbl in (TIMESERIES_TABLE, STREAMS_TABLE, LOGS_TABLE, REF_IDS_TABLE):
+                for tbl in (
+                    BINDING_PROGRESS_TABLE,
+                    SYSTEM_STATE_TABLE,
+                    TIMESERIES_TABLE,
+                    STREAMS_TABLE,
+                    LOGS_TABLE,
+                    REF_IDS_TABLE,
+                ):
                     conn.execute(f"DROP TABLE IF EXISTS {tbl}")
                 conn.execute(f"DROP SEQUENCE IF EXISTS {REF_IDS_SEQ}")
         self.ensure_table()
@@ -174,10 +183,31 @@ class DuckDBStore:
                 ts      TIMESTAMP NOT NULL,
                 numeric_value DOUBLE,
                 text_value    VARCHAR,
+                -- Canonical publication columns (see Storage/publication/duckdb.py).
+                -- ``deleted`` marks a physical
+                -- tombstone: the row is kept (not removed) so its
+                -- last_stream_version remains resolvable by a batch reader.
+                -- ``last_stream_version`` is the stream_heads version at which
+                -- this row was last written; the batch reader uses it to defer
+                -- a key to a later batch when a newer write has already
+                -- superseded it within the same snapshot.
+                deleted BOOLEAN NOT NULL DEFAULT FALSE,
+                last_stream_version BIGINT NOT NULL DEFAULT 0,
+                -- A global discovery revision used by the incremental
+                -- materializer.  It is deliberately independent from the
+                -- per-stream publication protocol above.
+                last_revision BIGINT NOT NULL DEFAULT 0,
                 CHECK (numeric_value IS NULL OR text_value IS NULL),
                 UNIQUE (ref_id, ts)
             )
             """,
+            # Migrate pre-publication databases that predate the tombstone and
+            # revision columns: CREATE TABLE IF NOT EXISTS is a no-op for them.
+            # DuckDB cannot add a NOT NULL constraint here, but every write
+            # supplies a default, so nullable columns are equivalent in practice.
+            f"ALTER TABLE {TIMESERIES_TABLE} ADD COLUMN IF NOT EXISTS deleted BOOLEAN DEFAULT FALSE",
+            f"ALTER TABLE {TIMESERIES_TABLE} ADD COLUMN IF NOT EXISTS last_stream_version BIGINT DEFAULT 0",
+            f"ALTER TABLE {TIMESERIES_TABLE} ADD COLUMN IF NOT EXISTS last_revision BIGINT DEFAULT 0",
             f"""
             CREATE TABLE IF NOT EXISTS {STREAMS_TABLE} (
                 ref_uri   VARCHAR PRIMARY KEY,
@@ -205,6 +235,7 @@ class DuckDBStore:
                 ON t.ref_id = r.ref_id
             LEFT JOIN {STREAMS_TABLE} AS s
                 ON r.ref_uri = s.ref_uri
+            WHERE NOT t.deleted
             """,
             f"""
             CREATE TABLE IF NOT EXISTS {LOGS_TABLE} (
@@ -218,6 +249,10 @@ class DuckDBStore:
             """,
             f"CREATE INDEX IF NOT EXISTS idx_logs_point ON {LOGS_TABLE} (point_uri, timestamp)",
             f"CREATE INDEX IF NOT EXISTS idx_logs_obs ON {LOGS_TABLE} (observed_start, observed_end)",
+            f"CREATE TABLE IF NOT EXISTS {SYSTEM_STATE_TABLE} (current_revision BIGINT NOT NULL)",
+            f"INSERT INTO {SYSTEM_STATE_TABLE} SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM {SYSTEM_STATE_TABLE})",
+            f"CREATE TABLE IF NOT EXISTS {BINDING_PROGRESS_TABLE} (binding_signature VARCHAR PRIMARY KEY, consumed_revision BIGINT NOT NULL)",
+            f"CREATE INDEX IF NOT EXISTS idx_timeseries_last_revision ON {TIMESERIES_TABLE} (last_revision)",
         ]
         with self._lock, timed_debug(logger, "ensure_table"), self._own_conn() as conn:
             for stmt in stmts:
@@ -258,25 +293,7 @@ class DuckDBStore:
         *,
         value_kind: str = "text",
     ) -> int:
-        rows_list = list(rows)
-        logger.debug("replace_rows ref_uri=%s new_rows=%d kind=%s", ref_uri, len(rows_list), value_kind)
-        df = (
-            self._prepare_frame(self._rows_frame(ref_uri, rows_list, value_kind))
-            if rows_list
-            else pl.DataFrame()
-        )
-        # One transaction for delete + insert: a failure leaves the old rows intact.
-        with self._lock, timed_debug(logger, "replace_rows ref_uri=%s rows=%d", ref_uri, len(df)), self._write_conn() as conn:
-            conn.execute(
-                f"""
-                DELETE FROM {TIMESERIES_TABLE}
-                WHERE ref_id = (SELECT ref_id FROM {REF_IDS_TABLE} WHERE ref_uri = ?)
-                """,
-                [ref_uri],
-            )
-            if not df.is_empty():
-                self._insert_frame(conn, df)
-        return len(df)
+        raise NotImplementedError("replace/delete is not supported by incremental materialization")
 
     def bulk_insert_polars(self, df: pl.DataFrame) -> int:
         """Bulk-insert a Polars DataFrame with canonical or split value columns.
@@ -291,7 +308,7 @@ class DuckDBStore:
             df = self._prepare_frame(df)
         logger.debug("bulk_insert_polars: %d rows after dedupe (was %d)", len(df), in_rows)
         with self._lock, timed_debug(logger, "bulk_insert_polars DELETE+INSERT rows=%d", len(df)), self._write_conn() as conn:
-            self._insert_frame(conn, df)
+            self._insert_frame(conn, df, self._next_revision(conn))
         return len(df)
 
     @staticmethod
@@ -303,7 +320,16 @@ class DuckDBStore:
         return df.unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
 
     @staticmethod
-    def _insert_frame(conn, df: pl.DataFrame) -> None:
+    def _next_revision(conn) -> int:
+        """Allocate one revision inside the caller's write transaction."""
+        # This is global rather than per-stream so one materialization frontier
+        # can describe a coherent multi-input snapshot.
+        return int(conn.execute(
+            f"UPDATE {SYSTEM_STATE_TABLE} SET current_revision = current_revision + 1 RETURNING current_revision"
+        ).fetchone()[0])
+
+    @staticmethod
+    def _insert_frame(conn, df: pl.DataFrame, revision: int) -> None:
         """Upsert a prepared frame on *conn*: delete colliding (ref, ts) rows, insert.
 
         The frame carries ref_uri strings; ids are assigned for unseen uris and
@@ -332,11 +358,11 @@ class DuckDBStore:
             )
             conn.execute(
                 f"""
-                INSERT INTO {TIMESERIES_TABLE} (ref_id, ts, numeric_value, text_value)
-                SELECT r.ref_id, i.ts, i.numeric_value, i.text_value
+                INSERT INTO {TIMESERIES_TABLE} (ref_id, ts, numeric_value, text_value, last_revision)
+                SELECT r.ref_id, i.ts, i.numeric_value, i.text_value, ?
                 FROM _acquirium_incoming_timeseries AS i
                 JOIN {REF_IDS_TABLE} AS r USING (ref_uri)
-                """
+                """, [revision]
             )
         finally:
             conn.unregister("_acquirium_incoming_timeseries")
@@ -480,7 +506,10 @@ class DuckDBStore:
                     # Never written to: no id, no rows.
                     return
 
-                clauses = ["ref_id = ?"]
+                # Normal reads hide tombstones: a deleted row is kept
+                # physically (its last_stream_version stays resolvable by a
+                # batch reader) but is invisible to this API.
+                clauses = ["ref_id = ?", "NOT deleted"]
                 params: list[Any] = [ref_id_row[0]]
                 if start:
                     clauses.append("ts >= ?")
@@ -558,6 +587,7 @@ class DuckDBStore:
             conn.close()
             logger.debug("timeseries: ref_uri=%s rows=%d (batch_size=%d)", ref_uri, rows, batch_size)
 
+
     def timeseries_info(self, ref_uri: str) -> TimeseriesInfo:
         with self._own_conn() as conn, timed_debug(logger, "timeseries_info ref_uri=%s", ref_uri):
             row = conn.execute(
@@ -565,7 +595,7 @@ class DuckDBStore:
                 SELECT COUNT(*), MIN(ts), MAX(ts)
                 FROM {TIMESERIES_TABLE} AS t
                 JOIN {REF_IDS_TABLE} AS r USING (ref_id)
-                WHERE r.ref_uri = ?
+                WHERE r.ref_uri = ? AND NOT t.deleted
                 """,
                 [ref_uri],
             ).fetchone()
@@ -590,7 +620,7 @@ class DuckDBStore:
                        MAX(ts)    AS latest
                 FROM {TIMESERIES_TABLE} AS t
                 JOIN {REF_IDS_TABLE} AS r USING (ref_id)
-                WHERE r.ref_uri IN ({placeholders})
+                WHERE r.ref_uri IN ({placeholders}) AND NOT t.deleted
                 GROUP BY r.ref_uri
                 """,
                 ref_uris,
@@ -655,7 +685,11 @@ class DuckDBStore:
             clauses.append("observed_start < ? AND (observed_end IS NULL OR observed_end > ?)")
             params.extend([self._to_utc_naive(obs_end), self._to_utc_naive(obs_start)])
         elif obs_start is not None:
-            clauses.append("(observed_end IS NULL OR observed_end > ?)")
+            # A log without an observation interval is not an open-ended
+            # observation.  It has no event-time extent and must not match an
+            # observation-window query (matching PostgreSQL tstzrange NULL
+            # semantics).
+            clauses.append("observed_end IS NOT NULL AND observed_end > ?")
             params.append(self._to_utc_naive(obs_start))
         elif obs_end is not None:
             clauses.append("observed_start < ?")

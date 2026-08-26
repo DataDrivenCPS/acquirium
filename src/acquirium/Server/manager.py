@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import uuid
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import os
 import logging
+from threading import Lock
 import pyoxigraph as ox
 from time import perf_counter
 from rdflib import Graph, URIRef, Literal, RDF, RDFS, SKOS
@@ -14,13 +16,13 @@ from acquirium.Storage import (
     TimeseriesStore,
     create_timeseries_store,
 )
+from acquirium.Storage.publication.types import PublicationReceipt, PublicationRequest, PublicationStore
 from acquirium.Storage.values import normalize_value_kind
 from acquirium.internals.qudt_units import QUDTUnitConverter
 from acquirium.Server.config import OntologySource
 from acquirium.internals.models import LogEntry, Order, TimeIntervalModel, compute_ref_uri
 from acquirium.internals.internals_namespaces import *
 
-from threading import Lock
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -120,6 +122,7 @@ def _wipe_dir_contents(base: Path) -> None:
 class Manager:
     timescale: TimeseriesStore
     graph_store: OxigraphGraphStore
+    publication: PublicationStore
     qudt_converter: QUDTUnitConverter | None = None
     backend: str = "timescale"
 
@@ -129,7 +132,7 @@ class Manager:
         *,
         pg_dsn: str | None = None,
         duckdb_path: str | Path | None = None,
-        timeseries_backend: str = "timescale",
+        timeseries_backend: str = "duckdb",
         graph_path: str | Path | None = None,
         ontoenv_root: str | Path | None = None,
         ontology_sources: list["OntologySource"] | None = None,
@@ -159,18 +162,20 @@ class Manager:
         _backend = timeseries_backend.lower()
         with timed_debug(logger, "Manager.__init__: timeseries backend setup (%s)", _backend):
             if _backend == "duckdb":
-                _effective_dsn = None
-                _effective_duckdb_path = duckdb_path or (base / "timeseries.duckdb")
                 timescale: TimeseriesStore = create_timeseries_store(
-                    "duckdb", duckdb_path=_effective_duckdb_path, recreate=recreate
+                    "duckdb", duckdb_path=duckdb_path or (base / "timeseries.duckdb"), recreate=recreate
+                )
+            elif _backend == "timescale":
+                effective_dsn = pg_dsn or os.getenv("PG_DSN")
+                if not effective_dsn:
+                    raise ValueError("PG_DSN required for the timescale backend. Set pg_dsn or PG_DSN.")
+                timescale = create_timeseries_store(
+                    "timescale", pg_dsn=effective_dsn, recreate=recreate
                 )
             else:
-                _effective_dsn = pg_dsn or os.getenv("PG_DSN")
-                if not _effective_dsn:
-                    raise ValueError("PG_DSN required for timescale backend. Set pg_dsn or PG_DSN env var.")
-                timescale = create_timeseries_store(
-                    "timescale", pg_dsn=_effective_dsn, recreate=recreate
-                )
+                raise ValueError("timeseries_backend must be 'duckdb' or 'timescale'")
+            from acquirium.Storage.publication.duckdb import PublicationDuckDB
+            publication: PublicationStore = PublicationDuckDB(timescale)
 
         # Caller-supplied converter or graph wins; otherwise the converter
         # is built lazily in _ensure_qudt_converter from the QUDT unit
@@ -189,16 +194,18 @@ class Manager:
 
         self.timescale = timescale
         self.graph_store = graph
+        self.publication = publication
+        from acquirium.Materialization.runtime import Materializer
+        self.materializer = Materializer(timescale, graph,
+            query_resolver=self.resolve_text, record_resolver=self.resolve_record)
+        # Published graph revision seen by the last stream-ref resync. It gates
+        # the expensive rebuild in _registered_value_kind so repeated writes to
+        # an unregistered ref do not each trigger a full inferred-graph rebuild.
+        self._refs_synced_revision = None
         self.qudt_converter = converter
         self.backend = _backend
 
         self.data_dir = base
-        self.app_storage_root = Path(
-            os.getenv("ACQUIRIUM_APP_STORAGE_ROOT", str(self.data_dir / "apps"))
-        )
-        self.app_storage_root.mkdir(parents=True, exist_ok=True)
-        self._app_runs: dict[str, dict[str, Any]] = {}
-        self._app_runs_lock = Lock()
 
         _emb_model = os.getenv("ACQUIRIUM_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 
@@ -559,7 +566,7 @@ class Manager:
     ###########################################
 
     def graph_version(self) -> int:
-        """Return the store-owned source-data generation for legacy pollers."""
+        """Return the store-owned source-data generation."""
         return int(self.graph_store.graph_status()["source_version"])
 
     def graph_status(self) -> dict[str, int | bool]:
@@ -614,6 +621,7 @@ class Manager:
             logging.info("acquirium: inserted graph into store")
             with timed_debug(logger, "insert_graph: _sync_stream_refs_from_graph"):
                 self._sync_stream_refs_from_graph()
+            self._record_materialization_graph_revision()
             # Embedding corpus is the static ontoenv vocabularies, not
             # inserted data — no per-insert reindex. Stream-reference sync
             # below requires a fresh inferred view; concurrent callers share
@@ -621,7 +629,34 @@ class Manager:
         except Exception as e:
             logging.error("acquirium: failed to insert graph: %s", e)
             raise
-    
+
+    def _ensure_current_epoch(self) -> str | None:
+        """Compatibility-free graph refresh boundary for materialization."""
+        self.materializer.refresh()
+        return None
+
+    def _record_materialization_graph_revision(self) -> None:
+        """A graph change invalidates only the compiled in-memory plan."""
+        self.materializer._graph_revision = -1
+
+    def recover_materialization_state(self) -> None:
+        """Recompile deployed bindings; pending rows are rediscovered by revision."""
+        self.materializer.refresh()
+
+    def deploy_transformation(self, deployment) -> dict[str, Any]:
+        """Persist and compile one proposal-style transformation deployment."""
+        self.materializer.deploy(deployment)
+        self.materializer.refresh()
+        return {"name": deployment.name, "status": "deployed"}
+
+    def remove_transformation(self, name: str) -> dict[str, Any]:
+        self.materializer.remove(name)
+        return {"name": name, "status": "removed"}
+
+    def run_materialization_once(self) -> bool:
+        """Run at most one coherent batch for every currently compiled binding."""
+        return self.materializer.run_once()
+
     def timeseries_batch(
         self,
         uri: str,
@@ -687,6 +722,48 @@ class Manager:
         )
         return source_id
 
+    def publish(
+        self, mutations: "pa.Table", *, publication_id: str | None = None
+    ) -> PublicationReceipt:
+        """Atomically publish canonical mutations with stable retry identity.
+
+        Every write to canonical timeseries storage -- driver ingest,
+        materialization output commits, explicit deletes -- goes through this
+        one path so stream versions and change-range manifests stay
+        authoritative. Assigns a fresh uuid4 ``publication_id`` when the caller
+        doesn't supply a stable one; a caller reusing the same id across a
+        retried request gets the idempotent-replay path in
+        ``PublicationStore.publish`` for free.
+        """
+        pub_id = publication_id or str(uuid.uuid4())
+        receipt = self.publication.publish(PublicationRequest(pub_id, mutations))
+        return self._after_canonical_publish(receipt)
+
+    def _after_canonical_publish(self, receipt: PublicationReceipt) -> PublicationReceipt:
+        """Writes need no durable notification: revisions are scanned by workers."""
+        return receipt
+
+    @staticmethod
+    def _empty_receipt(publication_id: str | None) -> PublicationReceipt:
+        return PublicationReceipt(
+            publication_id=publication_id or str(uuid.uuid4()),
+            payload_hash="", row_count=0, versions={},
+        )
+
+    @staticmethod
+    def _mutation_table(df: "Any", *, operation: str = "upsert") -> "pa.Table":
+        """Split ``value``/``value_kind`` columns and tag every row with
+        *operation*, producing a table matching MUTATION_SCHEMA's column set."""
+        import polars as pl
+        from acquirium.Storage.values import prepare_value_columns
+
+        split = prepare_value_columns(df)
+        return (
+            split.with_columns(pl.lit(operation).alias("operation"))
+            .select(["operation", "ref_uri", "ts", "numeric_value", "text_value"])
+            .to_arrow()
+        )
+
     def insert_timeseries(
         self,
         *,
@@ -695,25 +772,42 @@ class Manager:
         rows: list[tuple[datetime, Any]],
         point_uri: str | None = None,
         replace: bool = False,
-    ) -> int:
+        publication_id: str | None = None,
+    ) -> PublicationReceipt:
+        import polars as pl
+        from acquirium.Storage.values import typed_value_series
+
         ref_uri = str(compute_ref_uri(source_id, ref_name))
         value_kind = self._registered_value_kind(ref_uri)
         logger.debug(
             "insert_timeseries source=%s ref_name=%s rows=%d kind=%s replace=%s",
             source_id, ref_name, len(rows), value_kind, replace,
         )
+        n = len(rows)
+        if n == 0 and not replace:
+            return self._empty_receipt(publication_id)
+        df = pl.DataFrame(
+            {
+                "ref_uri": pl.Series("ref_uri", [ref_uri] * n, dtype=pl.Utf8),
+                "ts": pl.Series("ts", [ts for ts, _ in rows], dtype=pl.Datetime("us", "UTC")),
+                "value": typed_value_series([v for _, v in rows]),
+                "value_kind": pl.Series("value_kind", [value_kind] * n, dtype=pl.Utf8),
+            }
+        )
+        upserts = pl.from_arrow(self._mutation_table(df))
+
         if replace:
-            n = self.timescale.replace_rows(ref_uri, rows, value_kind=value_kind)
-        else:
-            n = self.timescale.upsert_rows(ref_uri, rows, value_kind=value_kind)
-        return n
+            raise ValueError("replace is not supported by incremental materialization; publish corrected rows as upserts")
+        return self.publish(upserts.to_arrow(), publication_id=publication_id)
 
     def insert_timeseries_batch(
         self,
         source_id: str,
         streams: dict[str, list[tuple[datetime, Any]]],
-    ) -> int:
-        """Insert multiple source-local streams in one storage operation."""
+        *,
+        publication_id: str | None = None,
+    ) -> PublicationReceipt:
+        """Publish multiple source-local streams as one atomic mutation set."""
         import polars as pl
 
         ref_uris: list[str] = []
@@ -734,7 +828,7 @@ class Manager:
             source_id, len(ref_uris), len(streams),
         )
         if not ref_uris:
-            return 0
+            return self._empty_receipt(publication_id)
 
         from acquirium.Storage.values import typed_value_series
 
@@ -746,15 +840,22 @@ class Manager:
                 "value_kind": pl.Series("value_kind", value_kinds, dtype=pl.Utf8),
             }
         )
-        return self.timescale.bulk_insert_polars(df)
+        # Keep the small legacy storage seam usable for isolated callers that
+        # construct a Manager without its publication store. Production
+        # managers always take the publication path below.
+        if not hasattr(self, "publication"):
+            return self.timescale.bulk_insert_polars(df)
+        return self.publish(self._mutation_table(df), publication_id=publication_id)
 
-    def insert_timeseries_arrow(self, source_id: str, table: "pa.Table") -> int:
-        """Insert a melted (ts, ref_name, value) Arrow table, computing ref_uris vectorized."""
+    def insert_timeseries_arrow(
+        self, source_id: str, table: "pa.Table", *, publication_id: str | None = None
+    ) -> PublicationReceipt:
+        """Publish a melted (ts, ref_name, value) Arrow table as one atomic mutation set."""
         import polars as pl
 
         logger.debug("insert_timeseries_arrow source=%s arrow_rows=%d", source_id, len(table))
         if len(table) == 0:
-            return 0
+            return self._empty_receipt(publication_id)
         df = pl.from_arrow(table)
         stream_count = df["ref_name"].n_unique()
         logger.info(
@@ -778,16 +879,44 @@ class Manager:
             .drop("ref_name")
             .select(["ref_uri", "ts", "value", "value_kind"])
         )
-        inserted = self.timescale.bulk_insert_polars(df)
+        if not hasattr(self, "publication"):
+            return self.timescale.bulk_insert_polars(df)
+        receipt = self.publish(self._mutation_table(df), publication_id=publication_id)
         logger.info(
             "acquirium: insert_timeseries_arrow wrote %d row(s) for source_id=%s",
-            inserted,
+            receipt.row_count,
             source_id,
         )
-        return inserted
+        return receipt
+
+    def delete_timeseries(
+        self,
+        ref_uri: str,
+        *,
+        timestamps: list[datetime] | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        publication_id: str | None = None,
+    ) -> PublicationReceipt:
+        """Deletion is intentionally unsupported in v1: the incremental
+        materializer has no tombstone write path. Kept as an explicit,
+        documented rejection so the API surface fails fast and clearly."""
+        raise ValueError("deletion is not supported by incremental materialization")
 
     def _registered_value_kind(self, ref_uri: str) -> str:
         value_kind = self.timescale.stream_value_kind(ref_uri)
+        # Graph writes and Arrow ingestion may be issued back-to-back by a
+        # client. Ensure the derived stream registry has observed the graph
+        # write before rejecting the first data batch. The resync rebuilds the
+        # inferred graph, so only run it when the graph actually advanced since
+        # the last sync; otherwise repeated writes to an unregistered ref would
+        # each pay the full rebuild cost.
+        if value_kind is None:
+            published = int(self.graph_store.graph_status()["published_version"])
+            if published != self._refs_synced_revision:
+                self._sync_stream_refs_from_graph()
+                self._refs_synced_revision = published
+            value_kind = self.timescale.stream_value_kind(ref_uri)
         if value_kind is None:
             raise ValueError(f"stream {ref_uri} is not registered")
         return normalize_value_kind(value_kind)
@@ -865,6 +994,8 @@ class Manager:
         """
         graph_uri = self.graph_store.source_graph_uri(source_id)
         result = self.graph_store.sparql_update(update, graph_uri=graph_uri)
+        self._sync_stream_refs_from_graph()
+        self._record_materialization_graph_revision()
         return result
 
     def validate_graph(self) -> dict[str, str | bool]:
@@ -1068,9 +1199,24 @@ class Manager:
         }
 
     def close(self) -> None:
-        # App teardown belongs to AppSupervisor, which the server lifespan stops
-        # before it closes the manager.
+        """Release every owned resource; one component failing must not leak the rest.
+
+        Each step is isolated so a component that raises during shutdown (for
+        example a Ray executor killed after its runtime is gone) cannot skip
+        the stores that still need closing.
+        """
         logger.debug("Manager.close: shutting down")
-        self.timescale.close()
-        self.graph_store.close()
+        steps = [
+            ("publication store", self.publication),
+            ("timeseries store", self.timescale),
+            ("graph store", self.graph_store),
+        ]
+        for label, component in steps:
+            close = getattr(component, "close", None)
+            if not callable(close):
+                continue
+            try:
+                close()
+            except Exception:
+                logger.exception("Manager.close: failed to close %s", label)
         logger.debug("Manager.close: done")

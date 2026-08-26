@@ -2,13 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Iterable, Iterator
+from contextlib import contextmanager
 import hashlib
-import random
-import string
+import threading
 
 import psycopg
 from psycopg import sql
-from psycopg.types.json import Json
 
 from acquirium.internals.models import Order, TimeseriesInfo, TimeInterval, LogEntry, TimeIntervalModel, compute_ref_uri
 from acquirium.Storage.base import TimeseriesStore
@@ -20,7 +19,7 @@ from acquirium.Storage.values import (
     normalize_value_kind,
     normalize_value_mode,
     prepare_value_columns,
-    split_value,
+    typed_value_series,
 )
 from acquirium.internals._log import timed_debug
 
@@ -30,9 +29,13 @@ TIMESERIES_TABLE = "timeseries"
 STREAMS_TABLE = "streams"
 LOGS_TABLE = "logs"
 TIMESERIES_STREAMS_VIEW = "timeseries_streams"
+SYSTEM_STATE_TABLE = "system_state"
+BINDING_PROGRESS_TABLE = "binding_progress"
+
 
 
 class TimescaleStore(TimeseriesStore):
+    materialization_backend = "postgres"
     def __init__(
         self,
         *,
@@ -42,6 +45,9 @@ class TimescaleStore(TimeseriesStore):
     ):
         self.dsn = dsn
         self.db_path = self.dsn
+        # Materialization uses short-lived connections so a coherent read does
+        # not share a cursor or transaction with ordinary API traffic.
+        self._lock = threading.Lock()
         # default autocommit so reads don't hold open transactions; explicit begin toggles off
         logger.debug("TimescaleStore.__init__: connecting (recreate=%s)", recreate)
         with timed_debug(logger, "psycopg.connect"):
@@ -51,9 +57,8 @@ class TimescaleStore(TimeseriesStore):
             logger.debug("TimescaleStore.__init__: dropping existing tables/views")
             with self.conn.cursor() as cur:
                 cur.execute(sql.SQL("DROP VIEW IF EXISTS {} CASCADE").format(sql.Identifier(TIMESERIES_STREAMS_VIEW)))
-                cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(TIMESERIES_TABLE)))
-                cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(STREAMS_TABLE)))
-                cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(LOGS_TABLE)))
+                for tbl in (BINDING_PROGRESS_TABLE, SYSTEM_STATE_TABLE, TIMESERIES_TABLE, STREAMS_TABLE, LOGS_TABLE):
+                    cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(tbl)))
         self.ensure_table()
         logger.debug("TimescaleStore.__init__: ready")
 
@@ -68,13 +73,15 @@ class TimescaleStore(TimeseriesStore):
                     ts TIMESTAMPTZ NOT NULL,
                     numeric_value DOUBLE PRECISION,
                     text_value TEXT,
+                    last_revision BIGINT NOT NULL DEFAULT 0,
                     CHECK (numeric_value IS NULL OR text_value IS NULL)
                 );
                 """
             )
-            # Create hypertable before enabling Timescale features. We target
-            # new Acquirium-managed stores here; older point_uri/handle schemas
-            # should be recreated rather than migrated in-place.
+            # Migrate stores that predate the revision frontier.
+            cur.execute(f"ALTER TABLE {TIMESERIES_TABLE} ADD COLUMN IF NOT EXISTS last_revision BIGINT NOT NULL DEFAULT 0;")
+            cur.execute(f"CREATE INDEX IF NOT EXISTS idx_timeseries_last_revision ON {TIMESERIES_TABLE} (last_revision);")
+            # Create the hypertable before enabling Timescale features.
             cur.execute(
                 sql.SQL(
                     "SELECT create_hypertable(%s, %s, if_not_exists => TRUE);"
@@ -99,24 +106,10 @@ class TimescaleStore(TimeseriesStore):
             cur.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_timeseries_text_value ON {TIMESERIES_TABLE} (ref_uri, text_value) WHERE text_value IS NOT NULL;"
             )
-            # Segment compressed chunks by stream and order newest-first within
-            # each stream. This matches the common "latest values" read path
-            # while still supporting ascending scans via reverse index scans.
-            cur.execute(
-                f"""
-                ALTER TABLE {TIMESERIES_TABLE}
-                SET (
-                    timescaledb.compress,
-                    timescaledb.compress_segmentby = 'ref_uri',
-                    timescaledb.compress_orderby = 'ts DESC'
-                );
-                """
-            )
-            cur.execute(
-                sql.SQL("SELECT add_compression_policy({}, INTERVAL '7 days', if_not_exists => TRUE);").format(
-                    sql.Literal(TIMESERIES_TABLE)
-                )
-            )
+            # Compression is intentionally NOT enabled in v1: corrections
+            # update rows of any age, which compressed TimescaleDB chunks restrict.
+            # Revisit together with a retention policy once corrections have
+            # their own aging story.
             cur.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {STREAMS_TABLE} (
@@ -127,9 +120,6 @@ class TimescaleStore(TimeseriesStore):
                     value_kind TEXT NOT NULL DEFAULT 'text'
                 );
                 """
-            )
-            cur.execute(
-                f"ALTER TABLE {STREAMS_TABLE} ALTER COLUMN point_uri DROP NOT NULL;"
             )
             cur.execute(
                 f"CREATE UNIQUE INDEX IF NOT EXISTS idx_streams_source_ref_name ON {STREAMS_TABLE} (source_id, ref_name);"
@@ -151,7 +141,8 @@ class TimescaleStore(TimeseriesStore):
                     t.text_value AS value_text
                 FROM {TIMESERIES_TABLE} AS t
                 LEFT JOIN {STREAMS_TABLE} AS s
-                    ON t.ref_uri = s.ref_uri;
+                    ON t.ref_uri = s.ref_uri
+                ;
                 """
             )
             cur.execute(
@@ -172,9 +163,62 @@ class TimescaleStore(TimeseriesStore):
             cur.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_logs_observed ON {LOGS_TABLE} USING GIST (observed);"
             )
+            cur.execute(f"CREATE TABLE IF NOT EXISTS {SYSTEM_STATE_TABLE} (current_revision BIGINT NOT NULL);")
+            cur.execute(f"INSERT INTO {SYSTEM_STATE_TABLE} SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM {SYSTEM_STATE_TABLE});")
+            cur.execute(f"CREATE TABLE IF NOT EXISTS {BINDING_PROGRESS_TABLE} (binding_signature TEXT PRIMARY KEY, consumed_revision BIGINT NOT NULL);")
         if not self._in_tx:
             self.conn.commit()
         return TIMESERIES_TABLE
+
+    # -------------------- materialization transaction hooks --------------------
+    # These deliberately mirror the small private interface DuckDBStore offers
+    # to RevisionStore.  Keeping it here lets the materializer remain backend
+    # neutral instead of maintaining two schedulers.
+    def _connect(self):
+        return psycopg.connect(self.dsn, autocommit=True)
+
+    @contextmanager
+    def _own_conn(self):
+        conn = self._connect()
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+    @contextmanager
+    def _write_conn(self):
+        conn = self._connect()
+        try:
+            with conn.transaction():
+                yield conn
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _next_revision(conn) -> int:
+        # Match DuckDB's global frontier: a revision identifies one committed
+        # visibility boundary even when the write touches several streams.
+        return int(conn.execute(
+            f"UPDATE {SYSTEM_STATE_TABLE} SET current_revision = current_revision + 1 RETURNING current_revision"
+        ).fetchone()[0])
+
+    @staticmethod
+    def _insert_frame(conn, df: pl.DataFrame, revision: int) -> None:
+        """Upsert a prepared materialization frame at one global revision."""
+        rows = list(df.select("ref_uri", "ts", "numeric_value", "text_value").iter_rows())
+        if not rows:
+            return
+        with conn.cursor() as cur:
+            cur.executemany(
+                f"""INSERT INTO {TIMESERIES_TABLE}
+                (ref_uri, ts, numeric_value, text_value, last_revision)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (ref_uri, ts) DO UPDATE SET
+                    numeric_value = EXCLUDED.numeric_value,
+                    text_value = EXCLUDED.text_value,
+                    last_revision = EXCLUDED.last_revision""",
+                [(*row, revision) for row in rows],
+            )
 
     # -------------------- mutations --------------------
     def upsert_rows(
@@ -188,23 +232,14 @@ class TimescaleStore(TimeseriesStore):
         logger.debug("upsert_rows ref_uri=%s rows=%d kind=%s", ref_uri, len(rows_list), value_kind)
         if not rows_list:
             return 0
-        payload = [
-            (ref_uri, self._to_utc(ts), *split_value(val, value_kind))
-            for ts, val in rows_list
-        ]
-        with timed_debug(logger, "upsert_rows INSERT n=%d", len(payload)), self.conn.cursor() as cur:
-            cur.executemany(
-                f"""
-                INSERT INTO {TIMESERIES_TABLE} (ref_uri, ts, numeric_value, text_value)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (ref_uri, ts) DO UPDATE SET
-                    numeric_value = EXCLUDED.numeric_value,
-                    text_value = EXCLUDED.text_value
-                """,
-                payload,
-            )
-        logger.debug("acquirium: upserted %d rows into %s", len(rows_list), TIMESERIES_TABLE)
-        return len(rows_list)
+        # Route every public write through the same revisioned path used by
+        # bulk ingestion, so materialization sees single-row writes too.
+        return self.bulk_insert_polars(pl.DataFrame({
+            "ref_uri": [ref_uri] * len(rows_list),
+            "ts": [self._to_utc(ts) for ts, _ in rows_list],
+            "value": typed_value_series([value for _, value in rows_list]),
+            "value_kind": [value_kind] * len(rows_list),
+        }))
 
     def replace_rows(
         self,
@@ -227,49 +262,13 @@ class TimescaleStore(TimeseriesStore):
             return 0
         in_rows = len(df)
         with timed_debug(logger, "bulk_insert_polars prepare/dedupe rows=%d", in_rows):
-            df = prepare_value_columns(df)
-            df = df.unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
-        deduped = len(df)
-        logger.debug("bulk_insert_polars: %d rows after dedupe (was %d)", deduped, in_rows)
-        random_string = ''.join(random.choice(string.ascii_lowercase) for _ in range(15))
-        with self.conn.cursor() as cur:
-            cur.execute(
-                f"""DROP TABLE IF EXISTS {random_string};"""
-            )
-            cur.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {random_string} (
-                ref_uri TEXT NOT NULL,
-                ts TIMESTAMPTZ NOT NULL,
-                numeric_value DOUBLE PRECISION,
-                text_value TEXT
-            );""")
-        try:
-            with timed_debug(logger, "bulk_insert_polars ADBC write rows=%d", deduped):
-                rows_affected = df.write_database(
-                    table_name=random_string,
-                    connection=self.dsn,
-                    engine="adbc",
-                    if_table_exists="append" # Use 'replace' to drop/create the table
-                )
-            with timed_debug(logger, "bulk_insert_polars merge into %s", TIMESERIES_TABLE), self.conn.cursor() as cur:
-                cur.execute(
-                    f"""
-                    INSERT INTO {TIMESERIES_TABLE} (ref_uri, ts, numeric_value, text_value)
-                    SELECT ref_uri, ts, numeric_value, text_value FROM {random_string}
-                    ON CONFLICT (ref_uri, ts) DO UPDATE SET
-                        numeric_value = EXCLUDED.numeric_value,
-                        text_value = EXCLUDED.text_value;
-                    """
-                )
-            logger.info(f"acquirium: bulk inserted {rows_affected} rows into {TIMESERIES_TABLE}")
-            return rows_affected
-        except Exception:
-            logger.exception("acquirium: bulk insert into %s failed", TIMESERIES_TABLE)
-            raise
-        finally:
-            with self.conn.cursor() as cur:
-                cur.execute(f"DROP TABLE IF EXISTS {random_string};")
+            df = prepare_value_columns(df).unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
+        # Assigning the revision and writing the rows in this one transaction
+        # is the materialization visibility contract.  It also makes ordinary
+        # writes usable as materializer inputs.
+        with self._lock, self._write_conn() as conn:
+            self._insert_frame(conn, df, self._next_revision(conn))
+        return len(df)
 
     # -------------------- stream references --------------------
     def ensure_stream_ref(
@@ -486,6 +485,7 @@ class TimescaleStore(TimeseriesStore):
                     names=["ts", "value", "uri"],
                 )
                 yield batch
+
 
     def timeseries_info(self, ref_uri: str) -> TimeseriesInfo:
         with timed_debug(logger, "timeseries_info ref_uri=%s", ref_uri), self.conn.cursor() as cur:

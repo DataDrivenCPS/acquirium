@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta
-from typing import Literal, Any, TYPE_CHECKING
+from typing import Literal, Any
 from dataclasses import dataclass
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 from acquirium.internals.internals_namespaces import ACQUIRIUM_NS
@@ -40,9 +40,6 @@ def compute_ref_uri(source_id: str, ref_name: str) -> URIRef:
 
 compute_handle = compute_ref_uri
 
-
-if TYPE_CHECKING:
-    from acquirium.Client.explore.core import Query
 
 class TimeseriesInfo(BaseModel):
     table: str
@@ -90,6 +87,7 @@ class StreamInsert(BaseModel):
     point_uri: str | None = None
     replace: bool = False
     values: list[tuple[datetime, float | int | str | None]]
+    publication_id: str | None = None
 
 
 Order = Literal["asc", "desc"]
@@ -153,61 +151,3 @@ class LogEntry(BaseModel):
             "observation_end": self.period.end.isoformat() if self.period.end else None,
             "message": self.message,
         }
-    
-
-@dataclass
-class AppContext:
-    app_id: str
-    started_at: datetime
-    start: datetime | None
-    end: datetime | None
-    query: Query | None
-    params: dict[str, Any]
-    queries: dict[str, Query] | None = None
-    data: Any | None = None
-    state: Any | None = None
-
-
-class AppOutputSpec(BaseModel):
-    kind: Literal["timeseries", "event", "trigger"]
-    point_uri: str
-    ref_name: str | None = None
-    ref_uri: str | None = None
-    value_kind: Literal["numeric", "text"] | None = None
-    quantity_kind: str | None = None
-    unit: str | None = None
-    data_source: str | None = None
-    storage_backend: str | None = None
-    depends_on: list[str] = Field(default_factory=list)
-
-
-class AppSpec(BaseModel):
-    name: str
-    version: str = "0.0"
-    app_type: str = "soft_sensor"
-    source_spec: str | None = None
-    app_class: str | None = None
-    source_code: str | None = None
-    entry_file: str | None = None
-    queries: dict[str, dict] = Field(default_factory=dict)
-    outputs: list[AppOutputSpec] = Field(default_factory=list)
-    depends_on: list[str] = Field(default_factory=list)
-    params: dict[str, Any] = Field(default_factory=dict)
-    resume_keep_alive: bool = False
-    run_interval: float = 10.0
-    run_start: datetime | None = None
-    run_end: datetime | None = None
-    run_params: dict[str, Any] = Field(default_factory=dict)
-
-
-class AppRunRequest(BaseModel):
-    app_id: str
-    start: datetime | None = None
-    end: datetime | None = None
-    params: dict[str, Any] = Field(default_factory=dict)
-    keep_alive: bool = False
-    interval: float = 10.0
-
-
-class AppStopRequest(BaseModel):
-    app_id: str

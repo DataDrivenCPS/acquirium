@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-import inspect
 from unittest.mock import MagicMock
 
 import pytest
 
 from acquirium.Drivers.Driver import Driver
-from acquirium.Client.acquirium import Acquirium
-from acquirium.cli import _import_app_class, _import_driver_class
+from acquirium.cli import _import_driver_class
 from acquirium.Drivers.BuiltInDrivers.csv_ingest import CSVIngestDriver
 from acquirium.internals.models import compute_ref_uri
 
@@ -69,49 +67,6 @@ def test_module_driver_spec_reports_no_source_dir():
     )
     assert cls is CSVIngestDriver
     assert source_dir is None
-
-
-def test_config_relative_app_spec_import(tmp_path: Path):
-    app_file = tmp_path / "custom_app.py"
-    app_file.write_text(
-        "from acquirium import App\n"
-        "class TempApp(App):\n"
-        "    name = 'temp-app'\n"
-        "    def build_query(self, aq): return {}\n"
-        "    def run(self, ctx): return []\n"
-    )
-    cls = _import_app_class("./custom_app.py:TempApp", base_dir=tmp_path)
-    assert cls.__name__ == "TempApp"
-    assert Path(inspect.getsourcefile(cls)).resolve() == app_file.resolve()
-
-    aq = Acquirium.__new__(Acquirium)
-    aq.client = MagicMock()
-    aq.register_app(cls())
-
-    spec = aq.client.register_app.call_args.args[0]
-    assert spec.entry_file == "custom_app.py"
-    assert spec.source_spec == f"{app_file.resolve()}:TempApp"
-    assert "class TempApp(App):" in spec.source_code
-
-
-def test_file_app_imports_keep_distinct_source_paths(tmp_path: Path):
-    first = tmp_path / "first_app.py"
-    second = tmp_path / "second_app.py"
-    source = (
-        "from acquirium import App\n"
-        "class TempApp(App):\n"
-        "    name = {!r}\n"
-        "    def build_query(self, aq): return {{}}\n"
-        "    def run(self, ctx): return []\n"
-    )
-    first.write_text(source.format("first"))
-    second.write_text(source.format("second"))
-
-    first_cls = _import_app_class(f"{first}:TempApp")
-    second_cls = _import_app_class(f"{second}:TempApp")
-
-    assert Path(inspect.getsourcefile(first_cls)).resolve() == first.resolve()
-    assert Path(inspect.getsourcefile(second_cls)).resolve() == second.resolve()
 
 
 def test_csv_watch_dir_resolves_relative_to_config_dir(tmp_path: Path):
