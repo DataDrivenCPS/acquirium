@@ -293,17 +293,7 @@ class DuckDBStore:
         *,
         value_kind: str = "text",
     ) -> int:
-        rows_list = list(rows)
-        frame = self._prepare_frame(self._rows_frame(ref_uri, rows_list, value_kind)) if rows_list else None
-        with self._lock, self._write_conn() as conn:
-            conn.execute(
-                f"DELETE FROM {TIMESERIES_TABLE} WHERE ref_id = "
-                f"(SELECT ref_id FROM {REF_IDS_TABLE} WHERE ref_uri = ?)",
-                [ref_uri],
-            )
-            if frame is not None:
-                self._insert_frame(conn, frame, self._next_revision(conn))
-        return len(rows_list)
+        raise NotImplementedError("replace/delete is not supported by incremental materialization")
 
     def bulk_insert_polars(self, df: pl.DataFrame) -> int:
         """Bulk-insert a Polars DataFrame with canonical or split value columns.

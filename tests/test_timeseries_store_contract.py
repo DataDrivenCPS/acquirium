@@ -78,8 +78,8 @@ def test_timeseries_mutation_and_query_contract(contract_store, contract_uri_pre
     assert batch_info[missing_ref].row_count == 0
     assert list(store.timeseries(missing_ref)) == []
 
-    assert store.replace_rows(ref_uri, [(_utc(2026, 1, 3), 3.0)], value_kind="numeric") == 1
-    assert _values(store, ref_uri) == [3.0]
+    with pytest.raises(NotImplementedError, match="replace/delete"):
+        store.replace_rows(ref_uri, [(_utc(2026, 1, 3), 3.0)], value_kind="numeric")
 
 
 def test_numeric_stream_can_store_and_query_text_fallback_rows(contract_store, contract_uri_prefix):

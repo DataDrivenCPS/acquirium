@@ -251,21 +251,7 @@ class TimescaleStore(TimeseriesStore):
         *,
         value_kind: str = "text",
     ) -> int:
-        rows_list = list(rows)
-        frame = (
-            prepare_value_columns(pl.DataFrame({
-                "ref_uri": [ref_uri] * len(rows_list),
-                "ts": [self._to_utc(ts) for ts, _ in rows_list],
-                "value": typed_value_series([value for _, value in rows_list]),
-                "value_kind": [value_kind] * len(rows_list),
-            })).unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
-            if rows_list else None
-        )
-        with self._lock, self._write_conn() as conn:
-            conn.execute(f"DELETE FROM {TIMESERIES_TABLE} WHERE ref_uri = %s", [ref_uri])
-            if frame is not None:
-                self._insert_frame(conn, frame, self._next_revision(conn))
-        return len(rows_list)
+        raise NotImplementedError("replace/delete is not supported by incremental materialization")
 
     def bulk_insert_polars(self, df: pl.DataFrame) -> int:
         # Using polars to write to database via ADBC
