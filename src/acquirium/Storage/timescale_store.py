@@ -186,6 +186,12 @@ class TimescaleStore(TimeseriesStore):
 
     @contextmanager
     def _write_conn(self):
+        # ``begin()`` is the public transaction API.  Its writes must use the
+        # same connection so commit and rollback govern the revision update as
+        # well as the inserted rows.
+        if self._in_tx:
+            yield self.conn
+            return
         conn = self._connect()
         try:
             with conn.transaction():
