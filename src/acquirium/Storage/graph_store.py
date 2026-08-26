@@ -231,6 +231,7 @@ class OxigraphGraphStore:
         self._query_cache_source_version = -1
         self._query_cache_closure_version = -1
         self._dependency_query_graph_closure_version = -1
+        self._named_graph_cache: dict[str, Graph] = {}
 
         # ontoenv shares this Oxigraph store via the graph-store protocol,
         # over the authoritative source dataset. SPARQL reads query that
@@ -246,18 +247,28 @@ class OxigraphGraphStore:
         )
         with timed_debug(_logger, "OntoEnv build env_root=%s", self.env_root):
             self.env, is_warm_start = self._build_ontoenv()
-        # On a cold start, the persisted store has no bundled ontologies
-        # yet — parse each TTL, rewrite its declared owl:Ontology IRI to
-        # the package's canonical IRI, and register it. On warm start
-        # the bundled graphs are already in the store; skip re-adding.
-        if not is_warm_start:
-            for fname, canonical in BUNDLED_FILES:
-                try:
-                    g = load_bundled_graph(fname, canonical)
-                    self.env.add(g, fetch_imports=False)
-                    _logger.info("ontoenv: registered bundled %s at %s", fname, canonical)
-                except Exception as exc:
-                    _logger.error("ontoenv: failed to load bundled %s: %s", fname, exc)
+        # Register every bundled ontology whose canonical graph is not
+        # actually in the store: parse the TTL, rewrite its declared
+        # owl:Ontology IRI to the package's canonical IRI, and add it. On a
+        # warm start most graphs are present and skipped — but "the store
+        # has graphs" is no proof it has *these* graphs. A store created by
+        # an older version, or after a partially failed first run, can carry
+        # data graphs while bundled ontologies are missing; every
+        # ontology-dependent feature then degrades silently (empty
+        # quantity-kind vocabulary, no water/s223 concepts, all text
+        # metadata "storing as a plain literal"). So each graph is probed
+        # individually instead of trusting the warm-start flag.
+        for fname, canonical in BUNDLED_FILES:
+            if is_warm_start and self._store_has_graph(canonical):
+                continue
+            try:
+                g = load_bundled_graph(fname, canonical)
+                # overwrite: a stale catalog may still list an ontology
+                # whose graph content is gone; replacing is idempotent.
+                self.env.add(g, overwrite=True, fetch_imports=False)
+                _logger.info("ontoenv: registered bundled %s at %s", fname, canonical)
+            except Exception as exc:
+                _logger.error("ontoenv: failed to load bundled %s: %s", fname, exc)
         # User sources from acquirium.toml. An entry without `rename_to`
         # keeps its declared IRI; with `rename_to`, we rewrite the
         # declared IRI to the canonical key and pass overwrite=True so
@@ -279,14 +290,30 @@ class OxigraphGraphStore:
 
     # -------------------- ontoenv named-graph access --------------------
     def named_graph(self, iri: str) -> Graph:
-        """One ontology's own graph from ontoenv (owl:imports NOT followed).
+        """One ontology's own graph, materialized in memory (owl:imports NOT
+        followed). Cached per IRI until an ontology graph changes.
 
-        This is ontoenv's read-only store-backed view: cheap to take, but
-        mutating it raises ``ValueError``. Callers that need to write should
-        copy the triples out (or use ``env.copy_graph``).
+        Deliberately NOT ontoenv's store-backed view: iterating that view
+        calls into ontoenv's Rust backend, which locks an internal mutex and
+        then re-enters Python to build result terms. Two threads iterating
+        concurrently deadlock — one holds the GIL waiting for the mutex, the
+        other holds the mutex waiting for the GIL — freezing the whole
+        process. Copying the triples out once under ``self._lock`` keeps
+        every later read (QUDT converter lookups, embedding extraction) in
+        plain rdflib memory, off ontoenv entirely.
         """
         with self._lock:
-            return self.env.get_graph(iri)
+            cached = self._named_graph_cache.get(iri)
+            if cached is not None:
+                return cached
+            copy = Graph()
+            source = self.env.get_graph(iri)
+            for prefix, ns in source.namespaces():
+                copy.bind(prefix, ns)
+            for triple in source:
+                copy.add(triple)
+            self._named_graph_cache[iri] = copy
+            return copy
 
 # -------------------- source + dependency cache coordination --------------------
     def _source_state_path(self) -> Path:
@@ -295,6 +322,11 @@ class OxigraphGraphStore:
     def _has_persisted_source_graphs(self) -> bool:
         """Return True when the attached Oxigraph store already contains graphs."""
         return any(True for _ in self.source_dataset.graphs())
+
+    def _store_has_graph(self, iri: str) -> bool:
+        """One-triple existence probe for a named graph in the source dataset."""
+        graph = self.source_dataset.graph(URIRef(iri))
+        return next(iter(graph), None) is not None
 
     def _new_ontoenv(self) -> OntoEnv:
         """Open the environment at ``env_root`` over the shared graph store.
@@ -386,6 +418,7 @@ class OxigraphGraphStore:
     def _mark_ontology_graph_changed(self) -> None:
         self._mark_source_changed()
         self._mark_closure_changed()
+        self._named_graph_cache.clear()
 
     def _invalidate_dependency_cache(self) -> None:
         self._dependency_graph_closure_version = -1

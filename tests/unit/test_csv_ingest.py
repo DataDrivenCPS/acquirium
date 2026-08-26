@@ -8,10 +8,10 @@ from unittest.mock import MagicMock
 
 import polars as pl
 import pytest
-from rdflib import Graph, Literal
+from rdflib import Graph, Literal, URIRef
 
 from acquirium.Drivers.BuiltInDrivers.csv_ingest import CSVIngestDriver
-from acquirium.Client.acquirium import Acquirium
+from acquirium.Client.client import AcquiriumClient
 from acquirium.internals.models import compute_ref_uri
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_REF_NAME,
@@ -28,7 +28,7 @@ def make_driver(cfg_overrides: dict | None = None, tmp_path: Path | None = None)
     aq = MagicMock()
     aq.client = MagicMock()
     aq.register_datasource.return_value = "csv_files"
-    aq.register_streams.side_effect = lambda streams: Acquirium.register_streams(aq, streams)
+    aq.register_streams.side_effect = lambda streams: AcquiriumClient.register_streams(aq.client, streams)
     aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 0}
     watch = str(tmp_path) if tmp_path else "/tmp/csv_test_watch"
     driver = CSVIngestDriver(aq, {"driver": {
@@ -78,6 +78,61 @@ def test_parse_wide_basic(tmp_path):
     assert cursor == 2
     assert batch["temp"][0] == (datetime(2024, 1, 1, tzinfo=timezone.utc), "22.5")
     assert batch["rh"][0][1] == "55.0"
+
+
+def test_null_values_config_drops_sentinel_values(tmp_path):
+    p = tmp_path / "nulls.csv"
+    p.write_text(
+        "time,temp\n"
+        "2024-01-01T00:00:00Z,Null\n"
+        "2024-01-02T00:00:00Z,21.0\n"
+    )
+    driver = make_driver({"null_values": ["Null"]}, tmp_path=tmp_path)
+    batch, _ = parse(driver, p)
+    assert batch["temp"] == [(datetime(2024, 1, 2, tzinfo=timezone.utc), "21.0")]
+
+
+def test_prepare_frame_hook_sees_text_frame_with_schema_inference_off(tmp_path):
+    """infer_schema_length=0 reads every column as text, and prepare_frame
+    runs on the raw frame before timestamps are parsed."""
+    import polars as pl
+
+    class Fixer(CSVIngestDriver):
+        def prepare_frame(self, df, path):
+            assert df.schema["temp"] == pl.Utf8
+            return df.with_columns(pl.col("temp").str.replace_all(",", ""))
+
+    p = tmp_path / "commas.csv"
+    p.write_text(
+        "time,temp\n"
+        "2024-01-01T00:00:00Z,731.00\n"
+        '2024-01-02T00:00:00Z,"3,293.00"\n'
+    )
+    aq = MagicMock()
+    driver = Fixer(aq, {"driver": {
+        "watch_dir": str(tmp_path), "glob": "*.csv",
+        "source_id": "csv_files", "format": "wide",
+        "infer_schema_length": 0,
+    }})
+    driver.setup()
+    batch, _ = parse(driver, p)
+    assert [v for _, v in batch["temp"]] == ["731.00", "3293.00"]
+
+
+def test_declare_stream_hook_attaches_metadata(tmp_path):
+    class Meta(CSVIngestDriver):
+        def declare_stream(self, ref_name):
+            self.declare(ref_name, label=f"L:{ref_name}")
+
+    aq = MagicMock()
+    driver = Meta(aq, {"driver": {
+        "watch_dir": str(tmp_path), "glob": "*.csv",
+        "source_id": "csv_files", "format": "wide",
+    }})
+    driver.setup()
+    parse(driver, _wide_csv(tmp_path))
+    assert driver._declarations[("csv_files", "temp")] == {"label": "L:temp"}
+    assert driver._declarations[("csv_files", "rh")] == {"label": "L:rh"}
 
 
 def test_parse_wide_skip_rows(tmp_path):
@@ -345,8 +400,8 @@ def test_loop_registers_mixed_csv_streams_as_numeric(tmp_path):
     assert (ref, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
 
 
-def test_loop_registers_no_synthetic_point_uri(tmp_path):
-    """Tabular drivers must not mint synthetic point URIs — only the ref node."""
+def test_loop_mints_valid_dummy_point_uri_for_messy_ref_name(tmp_path):
+    """A ref_name full of URI-hostile characters still yields a valid dummy point URI."""
     p = tmp_path / "bad_uri.csv"
     p.write_text("time,UV-Ultraviolet Intensity (mW/cm^2)\n2024-01-01T00:00:00Z,1.0\n")
     driver = make_driver(tmp_path=tmp_path)
@@ -359,7 +414,8 @@ def test_loop_registers_no_synthetic_point_uri(tmp_path):
     assert (ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)) in g
     assert (ref_uri, ACQUIRIUM_REF_NAME, Literal(ref_name)) in g
     assert (ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
-    assert list(g.subjects(HAS_EXTERNAL_REFERENCE, ref_uri)) == []
+    points = list(g.subjects(HAS_EXTERNAL_REFERENCE, ref_uri))
+    assert points == [URIRef(f"{ref_uri}__point")]
 
 
 # ------------------------------------------------------------------ cursor / paging

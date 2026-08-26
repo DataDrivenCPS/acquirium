@@ -1,21 +1,20 @@
-"""No-Docker tests for Acquirium.resolve_point_metadata.
+"""No-Docker tests for AcquiriumClient.resolve_point_metadata.
 
-Stubs the HTTP client; asserts the fixed semantic-field -> kind mapping
-and the passthrough/None contract without a server.
+Stubs the underlying resolve call; asserts the fixed semantic-field ->
+kind mapping and the passthrough/None contract without a server.
 """
 
 from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from acquirium.Client.acquirium import Acquirium
+from acquirium.Client.client import AcquiriumClient
 
 
 def _aq(resolve_record_uris):
-    aq = Acquirium.__new__(Acquirium)
-    aq.client = MagicMock()
-    aq.client.resolve.side_effect = resolve_record_uris
-    return aq
+    client = AcquiriumClient()
+    client.resolve = MagicMock(side_effect=resolve_record_uris)
+    return client
 
 
 def test_field_name_is_the_kind():

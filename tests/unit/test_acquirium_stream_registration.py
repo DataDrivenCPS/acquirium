@@ -3,10 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
+import pytest
 from rdflib import Graph, Literal, URIRef
-from rdflib.namespace import RDF
+from rdflib.namespace import RDF, RDFS
 
 from acquirium.Client.acquirium import Acquirium
+from acquirium.Client.client import AcquiriumClient
 from acquirium.internals.models import compute_ref_uri
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_DB_URI,
@@ -15,6 +17,8 @@ from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_VALUE_KIND,
     DATA_SOURCE,
     HAS_EXTERNAL_REFERENCE,
+    HAS_MEDIUM,
+    HAS_UNIT,
     STORED_AT,
     VIRTUAL_POINT,
 )
@@ -22,11 +26,18 @@ from acquirium.internals.internals_namespaces import (
 _TEST_PROP = URIRef("urn:test:prop:fileLocation")
 
 
-def test_register_streams_inserts_one_graph_for_multiple_streams():
-    aq = Acquirium.__new__(Acquirium)
-    aq.client = MagicMock()
+def _client() -> AcquiriumClient:
+    client = AcquiriumClient()
+    client.insert_graph = MagicMock()
+    client._point_metadata = MagicMock(return_value={})
+    client._units_compatible = MagicMock(return_value=False)
+    return client
 
-    aq.register_streams(
+
+def test_register_streams_inserts_one_graph_for_multiple_streams():
+    client = _client()
+
+    client.register_streams(
         [
             {
                 "point_uri": "urn:test:point:temp",
@@ -47,8 +58,8 @@ def test_register_streams_inserts_one_graph_for_multiple_streams():
         ]
     )
 
-    aq.client.insert_graph.assert_called_once()
-    graph_text = aq.client.insert_graph.call_args[0][0]
+    client.insert_graph.assert_called_once()
+    graph_text = client.insert_graph.call_args[0][0]
     g = Graph().parse(data=graph_text, format="turtle")
 
     for ref_name in ("temp", "rh"):
@@ -64,14 +75,13 @@ def test_register_streams_inserts_one_graph_for_multiple_streams():
         assert (ref_uri, _TEST_PROP, Literal("demo.csv")) in g
 
 
-def test_register_stream_without_point_uri_writes_only_ref_node():
-    aq = Acquirium.__new__(Acquirium)
-    aq.client = MagicMock()
+def test_register_stream_without_point_uri_mints_dummy_point():
+    client = _client()
 
-    aq.register_streams([{"source_id": "demo-source", "ref_name": "cpu_percent", "value_kind": "numeric"}])
+    client.register_streams([{"source_id": "demo-source", "ref_name": "cpu_percent", "value_kind": "numeric"}])
 
-    aq.client.insert_graph.assert_called_once()
-    graph_text = aq.client.insert_graph.call_args[0][0]
+    client.insert_graph.assert_called_once()
+    graph_text = client.insert_graph.call_args[0][0]
     g = Graph().parse(data=graph_text, format="turtle")
     ref_uri = compute_ref_uri("demo-source", "cpu_percent")
 
@@ -79,21 +89,22 @@ def test_register_stream_without_point_uri_writes_only_ref_node():
     assert (ref_uri, ACQUIRIUM_REF_NAME, Literal("cpu_percent")) in g
     assert (ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
     assert (ref_uri, STORED_AT, ACQUIRIUM_DB_URI) in g
-    assert list(g.subjects(RDF.type, VIRTUAL_POINT)) == []
-    assert list(g.subjects(HAS_EXTERNAL_REFERENCE, ref_uri)) == []
+    points = list(g.subjects(HAS_EXTERNAL_REFERENCE, ref_uri))
+    assert len(points) == 1
+    assert (points[0], RDF.type, VIRTUAL_POINT) in g
+    assert (points[0], RDFS.label, Literal("demo-source__cpu_percent")) in g
 
 
-def test_register_streams_without_point_uri_writes_only_ref_nodes():
-    aq = Acquirium.__new__(Acquirium)
-    aq.client = MagicMock()
+def test_register_streams_without_point_uri_mint_one_dummy_point_each():
+    client = _client()
 
-    aq.register_streams([
+    client.register_streams([
         {"source_id": "demo-source", "ref_name": "temp", "value_kind": "numeric"},
         {"source_id": "demo-source", "ref_name": "rh", "value_kind": "numeric"},
     ])
 
-    aq.client.insert_graph.assert_called_once()
-    graph_text = aq.client.insert_graph.call_args[0][0]
+    client.insert_graph.assert_called_once()
+    graph_text = client.insert_graph.call_args[0][0]
     g = Graph().parse(data=graph_text, format="turtle")
 
     for ref_name in ("temp", "rh"):
@@ -102,9 +113,94 @@ def test_register_streams_without_point_uri_writes_only_ref_nodes():
         assert (ref_uri, ACQUIRIUM_REF_NAME, Literal(ref_name)) in g
         assert (ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
         assert (ref_uri, STORED_AT, ACQUIRIUM_DB_URI) in g
+        assert len(list(g.subjects(HAS_EXTERNAL_REFERENCE, ref_uri))) == 1
 
-    assert list(g.subjects(RDF.type, VIRTUAL_POINT)) == []
-    assert list(g.subjects(HAS_EXTERNAL_REFERENCE, None)) == []
+    assert len(list(g.subjects(RDF.type, VIRTUAL_POINT))) == 2
+
+
+def test_register_stream_without_point_uri_and_ref_name_raises():
+    client = _client()
+
+    with pytest.raises(ValueError, match="point_uri or a"):
+        client.register_streams([{"source_id": "demo-source"}])
+    client.insert_graph.assert_not_called()
+
+
+_MG_L = "http://qudt.org/vocab/unit/MilliGM-PER-L"
+_G_L = "http://qudt.org/vocab/unit/GM-PER-L"
+_DEG_C = "http://qudt.org/vocab/unit/DEG_C"
+_WATER = "urn:nawi-water-ontology#Water"
+_MASS_CONC = "http://qudt.org/vocab/quantitykind/MassConcentration"
+_DENSITY = "http://qudt.org/vocab/quantitykind/Density"
+
+
+def test_register_streams_conflicting_metadata_fails_before_insert():
+    client = _client()
+    client._point_metadata = MagicMock(return_value={"quantity_kind": _MASS_CONC})
+
+    with pytest.raises(ValueError, match="quantity_kind mismatch"):
+        client.register_streams([{
+            "point_uri": "urn:test:point:conc",
+            "source_id": "demo-source",
+            "ref_name": "conc",
+            "quantity_kind": _DENSITY,
+        }])
+    client.insert_graph.assert_not_called()
+
+
+def test_register_streams_unconvertible_unit_fails():
+    client = _client()
+    client._point_metadata = MagicMock(return_value={"unit": _DEG_C})
+
+    with pytest.raises(ValueError, match="not convertible"):
+        client.register_streams([{
+            "point_uri": "urn:test:point:conc",
+            "source_id": "demo-source",
+            "ref_name": "conc",
+            "unit": _MG_L,
+        }])
+    client._units_compatible.assert_called_once_with(URIRef(_MG_L), _DEG_C)
+    client.insert_graph.assert_not_called()
+
+
+def test_register_streams_convertible_unit_becomes_storage_unit():
+    client = _client()
+    client._point_metadata = MagicMock(return_value={"unit": _G_L})
+    client._units_compatible = MagicMock(return_value=True)
+
+    client.register_streams([{
+        "point_uri": "urn:test:point:conc",
+        "source_id": "demo-source",
+        "ref_name": "conc",
+        "unit": _MG_L,
+    }])
+
+    g = Graph().parse(data=client.insert_graph.call_args[0][0], format="turtle")
+    ref_uri = compute_ref_uri("demo-source", "conc")
+    point = URIRef("urn:test:point:conc")
+    assert (ref_uri, HAS_UNIT, URIRef(_MG_L)) in g
+    # the point keeps its own unit; reads convert ref -> point automatically
+    assert list(g.objects(point, HAS_UNIT)) == []
+
+
+def test_register_streams_matching_unit_lands_on_reference():
+    client = _client()
+    client._point_metadata = MagicMock(return_value={"unit": _MG_L})
+
+    client.register_streams([{
+        "point_uri": "urn:test:point:conc",
+        "source_id": "demo-source",
+        "ref_name": "conc",
+        "unit": _MG_L,
+        "medium": _WATER,  # the point lacks it -> added to the point
+    }])
+
+    g = Graph().parse(data=client.insert_graph.call_args[0][0], format="turtle")
+    ref_uri = compute_ref_uri("demo-source", "conc")
+    point = URIRef("urn:test:point:conc")
+    assert (ref_uri, HAS_UNIT, URIRef(_MG_L)) in g
+    assert (point, HAS_UNIT, URIRef(_MG_L)) not in g
+    assert (point, HAS_MEDIUM, URIRef(_WATER)) in g
 
 
 def test_insert_timeseries_batch_chunks_at_acquirium_facade():

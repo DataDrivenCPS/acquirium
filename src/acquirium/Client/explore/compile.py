@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any, List
 
-from rdflib.namespace import RDF
+from rdflib.namespace import RDF, RDFS
 
 import itertools
 
@@ -420,10 +420,11 @@ def _node_constraint_clauses(v: str, node) -> List[str]:
 
 
 def _data_node_clauses(v: str, nid: int, info) -> List[str]:
-    """ext-ref triple, unit OPTIONALs, and filters for one data node."""
+    """ext-ref triple, unit/label OPTIONALs, and filters for one data node."""
     clauses: List[str] = [f"{v} <{HAS_EXTERNAL_REFERENCE}> ?ext{nid} ."]
     clauses.append(f"OPTIONAL {{ {v} <{HAS_UNIT}> ?unit{nid} . }}")
     clauses.append(f"OPTIONAL {{ ?ext{nid} <{HAS_UNIT}> ?extunit{nid} . }}")
+    clauses.append(f"OPTIONAL {{ {v} <{RDFS.label}> ?lbl{nid} . }}")
 
     for pred, val in (info.filters or {}).items():
         if val is None:
@@ -524,19 +525,23 @@ def compile_parts(graph: QueryGraph) -> tuple:
     # data node constraints
     unit_vars = {}
     extunit_vars = {}
+    lbl_vars = {}
     for nid, info in graph.data_nodes.items():
         v = var_map[nid]
         ext = f"?ext{nid}"
         ext_vars[nid] = ext
         where_clauses.append(f"{v} <{HAS_EXTERNAL_REFERENCE}> {ext} .")
 
-        # OPTIONAL unit metadata for property and external reference
+        # OPTIONAL unit and label metadata for property and external reference
         uvar = f"?unit{nid}"
         euvar = f"?extunit{nid}"
+        lvar = f"?lbl{nid}"
         unit_vars[nid] = uvar
         extunit_vars[nid] = euvar
+        lbl_vars[nid] = lvar
         where_clauses.append(f"OPTIONAL {{ {v} <{HAS_UNIT}> {uvar} . }}")
         where_clauses.append(f"OPTIONAL {{ {ext} <{HAS_UNIT}> {euvar} . }}")
+        where_clauses.append(f"OPTIONAL {{ {v} <{RDFS.label}> {lvar} . }}")
 
         for pred, val in (info.filters or {}).items():
             if val is None:
@@ -606,6 +611,7 @@ def compile_parts(graph: QueryGraph) -> tuple:
         [v for nid, v in ext_vars.items() if nid not in dropped]
         + [v for nid, v in unit_vars.items() if nid not in dropped]
         + [v for nid, v in extunit_vars.items() if nid not in dropped]
+        + [v for nid, v in lbl_vars.items() if nid not in dropped]
     )
     if not select_parts:
         raise ValueError("drop(): every node is dropped — nothing left to select")
@@ -677,6 +683,7 @@ def _compile_parts_multi(graph: QueryGraph) -> tuple:
         [f"?ext{nid}" for nid in graph.data_nodes if nid not in dropped]
         + [f"?unit{nid}" for nid in graph.data_nodes if nid not in dropped]
         + [f"?extunit{nid}" for nid in graph.data_nodes if nid not in dropped]
+        + [f"?lbl{nid}" for nid in graph.data_nodes if nid not in dropped]
     )
     if not select_parts:
         raise ValueError("drop(): every node is dropped — nothing left to select")
