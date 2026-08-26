@@ -79,9 +79,6 @@ class TimescaleStore(TimeseriesStore):
                 );
                 """
             )
-            # Migrate stores that predate the revision frontier.
-            cur.execute(f"ALTER TABLE {TIMESERIES_TABLE} ADD COLUMN IF NOT EXISTS deleted BOOLEAN NOT NULL DEFAULT FALSE;")
-            cur.execute(f"ALTER TABLE {TIMESERIES_TABLE} ADD COLUMN IF NOT EXISTS last_revision BIGINT NOT NULL DEFAULT 0;")
             cur.execute(f"CREATE INDEX IF NOT EXISTS idx_timeseries_last_revision ON {TIMESERIES_TABLE} (last_revision);")
             # Create the hypertable before enabling Timescale features.
             cur.execute(
