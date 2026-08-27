@@ -44,7 +44,7 @@ The server and its configured drivers start from one command:
 acquirium server --config acquirium.toml
 ```
 
-A sample `acquirium.toml` is included at the repository root. By default everything is stored on local disk (an embedded Oxigraph RDF store and a DuckDB file under `data_dir`); no external services are required. The first start builds the text-resolution indexes and can take minutes; later starts reuse the cache.
+A sample `acquirium.toml` is included at the repository root. By default everything is stored on local disk (an embedded Oxigraph RDF store and a DuckDB file under `data_dir`); no external services are required. The first start builds the text-resolution indexes and can take 5-10 minutes; later starts reuse the cache.
 
 Querying is a Python client:
 
@@ -57,21 +57,44 @@ acq.query().entity("pump").measurement(quantity_kind="pressure").dataframe(shape
 
 ## Documentation
 
-The guides live in [docs/](./docs/index.md):
+The guides live in [docs/](./docs/_index.md), organized as tutorials, how-to
+guides, reference and explanation.
 
-| guide | covers |
+**Start here** — learning by doing, on the WaterTAP seawater-ro model:
+
+| tutorial | covers |
 |---|---|
-| [Querying](./docs/querying.md) | finding equipment, topology and measurements |
-| [Working with data](./docs/data.md) | fetching timeseries, shapes, units, writing data |
-| [Building drivers](./docs/drivers.md) | feeding plant data in on a schedule |
-| [Building apps](./docs/apps.md) | computing on plant data server-side, writing results back |
-| [The data stream lifecycle](./docs/data-stream-lifecycle.md) | how streams are identified, stored and found |
-| [Running the server](./docs/server.md) | config, storage backends, ontologies, HTTP API |
-| [Text resolution](./docs/resolution.md) | free text to URIs; unit conversion |
-| [Graph backend](./docs/graph-backend-architecture.md) | graph ownership, inference, query views |
-| [HTTP API](./docs/http-api.md) | the raw endpoints, for scripting against the server |
+| [Getting started](./docs/tutorials/getting-started.md) | install, start a server, run a first query |
+| [Querying](./docs/tutorials/querying.md) | the `Query` verbs: entities, topology, measurements, filters, columns |
+| [Query cookbook](./docs/tutorials/query-cookbook.md) | domain questions, how to phrase them, the query |
+| [Working with data](./docs/tutorials/data.md) | lazy fetching, shapes, units, taking a result apart |
+| [Your first driver](./docs/tutorials/first-driver.md) | authoring a CSV driver step by step |
 
-Working with a coding agent? Point it at [AGENTS.md](./AGENTS.md). (Coming Soon!)
+**How-to guides** — one task each:
+[load a plant model](./docs/how-to/load-a-plant-model.md),
+[explore a model](./docs/how-to/explore-a-model.md),
+[debug a query](./docs/how-to/debug-an-empty-query.md),
+[insert data](./docs/how-to/write-data.md),
+[run the server](./docs/how-to/run-the-server.md),
+[resolve text to URIs](./docs/how-to/resolve-text.md).
+
+**Reference** — facts, no narrative:
+[client API](./docs/reference/client-api.md),
+[drivers](./docs/reference/drivers.md),
+[server configuration](./docs/reference/server-config.md),
+[HTTP API](./docs/reference/http-api.md),
+[glossary](./docs/reference/glossary.md).
+
+**Explanation** — why things are the way they are:
+[the query model](./docs/explanation/query-model.md),
+[values](./docs/explanation/values.md) and [units](./docs/explanation/units.md),
+[why drivers](./docs/explanation/drivers.md),
+[the data stream lifecycle](./docs/explanation/stream-lifecycle.md),
+[text resolution](./docs/explanation/text-resolution.md),
+[server internals](./docs/explanation/server-internals.md),
+[graph backend](./docs/explanation/graph-backend.md).
+
+App documentation is pending the app infrastructure rework.
 
 ## Docker stack (optional)
 
@@ -100,7 +123,7 @@ The [WaterTAP deployment readme](./deployments/WATERTAP/readme.md) covers the mo
 
 ## Text resolution
 
-Free text anywhere in the API (class names, units, quantity kinds) is matched to ontology URIs by embedding similarity, using two indexes built from the bundled ontologies at server start. See the [resolution guide](./docs/resolution.md).
+Free text anywhere in the API (class names, units, quantity kinds) is matched to ontology URIs by embedding similarity, using two indexes built from the bundled ontologies at server start. See the [resolution guide](./docs/how-to/resolve-text.md).
 
 ## Tests
 
