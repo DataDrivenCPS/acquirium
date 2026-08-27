@@ -30,6 +30,7 @@ Learning by doing, on the public WaterTAP seawater-ro model.
 - [Query cookbook](tutorials/query-cookbook.md) — domain questions, how to phrase them, the query
 - [Working with data](tutorials/data.md) — lazy fetching, shapes, units, taking a result apart
 - [Your first driver](tutorials/first-driver.md) — authoring a CSV driver step by step
+- [A driver against an existing plant model](tutorials/driver-with-a-plant-model.md) — the same driver, binding to points the model already has
 - [Your first app](tutorials/first-app.md) — pending the app rework
 
 The notebooks under [`notebooks/watertap/`](https://github.com/DataDrivenCPS/acquirium/tree/main/notebooks/watertap) are runnable tutorials too: a quick start, the query interface feature by feature, a regulatory-compliance check and a soft sensor.
@@ -41,18 +42,13 @@ The notebooks under [`notebooks/watertap/`](https://github.com/DataDrivenCPS/acq
 
 One task each.
 
+- [Load a plant model](how-to/load-a-plant-model.md) — insert the model, check it landed, validate it against the shapes
 - [Explore a model](how-to/explore-a-model.md) — build a query step by step; `options()` and `facets()`
 - [Debugging queries for an unexpected result](how-to/debug-an-empty-query.md) — the five usual causes
 - [Inserting data](how-to/write-data.md) — register streams and write rows without a driver; the logbook
 - [Run the server](how-to/run-the-server.md) — the server command, startup, Docker
 - [Resolve text to URIs](how-to/resolve-text.md) — `resolve()`, units and conversion, tuning
 
-<!-- TODO: two tasks have no how-to yet and are only described inside
-     explanation/graph-backend.md:
-       - load a plant model: `insert_graph_file(..., source_id="plant")`,
-         what `replace=True` does, how to check it landed;
-       - validate a model: `validate_graph()` and how to read its SHACL report.
-     Both are the first thing a new deployment does. -->
 <!-- TODO: `generate_grafana_dashboard()` and the Grafana service in
      compose.yaml are undocumented everywhere except one row of the client-API
      table. Either write a how-to or drop it from the public API list. -->

@@ -215,5 +215,10 @@ The cursor is saved only after the rows were registered and inserted, so a
 failed insert is retried on the next tick with the same rows.
 An unreadable file is logged and skipped without stalling the others.
 
+This driver invented its own point URIs and inserted the RDF to back them.
+When the plant is already described in the graph, the driver binds to points
+that exist instead: see [a driver against an existing plant
+model](driver-with-a-plant-model.md).
+
 Every option of the built-in drivers, the other base classes and the full
 driver contract are in the [driver reference](../reference/drivers.md).
