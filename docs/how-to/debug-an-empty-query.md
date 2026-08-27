@@ -71,7 +71,20 @@ q = acq.query().entity(uri="wbs:intake", alias="intake")
 q.related("reverse osmosis membrane").metadata()                # empty: the RO is more than 3 hops from the intake
 q.related("reverse osmosis membrane", max_depth=0).metadata()   # unbounded: finds wbs:RO
 ```
-<!-- pending live capture on seawater-ro -->
+```text
+shape: (0, 2)                                    # default max_depth=3
+┌────────┬──────────────────────────┐
+│ intake ┆ reverse osmosis membrane │
+╞════════╪══════════════════════════╡
+└────────┴──────────────────────────┘
+
+shape: (1, 2)                                    # max_depth=0
+┌────────────┬──────────────────────────┐
+│ intake     ┆ reverse osmosis membrane │
+╞════════════╪══════════════════════════╡
+│ wbs:intake ┆ wbs:RO                   │
+└────────────┴──────────────────────────┘
+```
 
 ### 4. `required=True` removed the rows
 
@@ -121,6 +134,17 @@ inlet and outlet:
 ```python
 acq.query().entity(uri="wbs:RO").measurement(include_connection_points=False).metadata()
 ```
+```text
+shape: (1, 2)
+┌────────┬──────────────────────┐
+│ 0      ┆ 0_data               │
+╞════════╪══════════════════════╡
+│ wbs:RO ┆ wbs:RO-membrane-area │
+└────────┴──────────────────────┘
+```
+
+Only the membrane area is owned by the RO itself; every pressure, flow and
+temperature sits on a connection point.
 
 When in doubt, run `metadata()` after each step and see where the rows
 disappear.

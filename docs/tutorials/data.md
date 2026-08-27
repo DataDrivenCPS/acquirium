@@ -97,18 +97,16 @@ Wide is the default on both `Query.dataframe()` and `DataObject.dataframe()`.
 ```python
 d.dataframe("narrow").head(4)
 ```
-<!-- pending live re-capture on seawater-ro: derived from the earlier capture
-     with the compact layout applied -->
 ```text
 shape: (4, 5)
-┌───────────────────────────────────┬───────────────────────────────┬─────────────────────┬───────────────┬────────────┐
-│ data_alias                        ┆ point_id                      ┆ time                ┆ value_numeric ┆ value_text │
-╞═══════════════════════════════════╪═══════════════════════════════╪═════════════════════╪═══════════════╪════════════╡
-│ m__wbs:RO-out-retentate-pressure  ┆ wbs:RO-out-retentate-pressure ┆ 2026-08-05 16:28:…  ┆ 6.7442e6      ┆ null       │
-│ m__wbs:RO-out-pressure            ┆ wbs:RO-out-pressure           ┆ 2026-08-05 16:28:…  ┆ 101325.0      ┆ null       │
-│ m__wbs:RO-in-pressure             ┆ wbs:RO-in-pressure            ┆ 2026-08-05 16:28:…  ┆ 7e6           ┆ null       │
-│ m__wbs:RO-out-retentate-pressure  ┆ wbs:RO-out-retentate-pressure ┆ 2026-08-05 16:28:…  ┆ 6.7626e6      ┆ null       │
-└───────────────────────────────────┴───────────────────────────────┴─────────────────────┴───────────────┴────────────┘
+┌──────────────────────────────────┬───────────────────────────────┬────────────────────────────────┬───────────────┬────────────┐
+│ data_alias                       ┆ point_id                      ┆ time                           ┆ value_numeric ┆ value_text │
+╞══════════════════════════════════╪═══════════════════════════════╪════════════════════════════════╪═══════════════╪════════════╡
+│ m__wbs:RO-out-pressure           ┆ wbs:RO-out-pressure           ┆ 2026-08-15 06:24:14.709710 UTC ┆ 101325.0      ┆ null       │
+│ m__wbs:RO-in-pressure            ┆ wbs:RO-in-pressure            ┆ 2026-08-15 06:24:14.709710 UTC ┆ 7e6           ┆ null       │
+│ m__wbs:RO-out-retentate-pressure ┆ wbs:RO-out-retentate-pressure ┆ 2026-08-15 06:24:14.709710 UTC ┆ 6.7932e6      ┆ null       │
+│ m__wbs:RO-in-pressure            ┆ wbs:RO-in-pressure            ┆ 2026-08-15 06:24:29.376388 UTC ┆ 7e6           ┆ null       │
+└──────────────────────────────────┴───────────────────────────────┴────────────────────────────────┴───────────────┴────────────┘
 ```
 
 `data_alias` carries the same name the wide column would have, and `point_id`

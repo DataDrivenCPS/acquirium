@@ -54,7 +54,19 @@ Attach the measurements, and before filtering them, ask what kinds there are:
 readings = pumps.measurement(alias="m")
 readings.options("quantity_kind")
 ```
-<!-- pending live capture on seawater-ro -->
+```text
+shape: (6, 2)
+┌──────────────────────────┬───────┐
+│ quantity_kind            ┆ count │
+╞══════════════════════════╪═══════╡
+│ qudtqk:Efficiency        ┆ 2     │
+│ qudtqk:MassConcentration ┆ 2     │
+│ qudtqk:Power             ┆ 2     │
+│ qudtqk:Density           ┆ 1     │
+│ qudtqk:Pressure          ┆ 1     │
+│ qudtqk:VolumeFlowRate    ┆ 1     │
+└──────────────────────────┴───────┘
+```
 
 Narrow with `where()`, using one of the values `options()` reported, and check
 that the right points are left:
@@ -63,7 +75,15 @@ that the right points are left:
 power = readings.where(quantity_kind="power")
 power.metadata()
 ```
-<!-- pending live capture on seawater-ro -->
+```text
+shape: (2, 2)
+┌────────┬─────────────────────────┐
+│ pump   ┆ m                       │
+╞════════╪═════════════════════════╡
+│ wbs:P2 ┆ wbs:P2-mechanical-power │
+│ wbs:P1 ┆ wbs:P1-mechanical-power │
+└────────┴─────────────────────────┘
+```
 
 Only now fetch the data.
 `.data()` gives a lazy `DataObject` that reports the row count and time range
@@ -71,10 +91,21 @@ before pulling anything; `.dataframe()` pulls it:
 
 ```python
 d = power.data()
-d                          # DataObject(lazy, ~... rows, range=..., aliases=['m'], entities=['pump'])
+d
 d.dataframe().tail(3)
 ```
-<!-- pending live capture on seawater-ro -->
+```text
+DataObject(lazy, ~12 rows, range=2026-08-15T06:24:14.709710+00:00 to 2026-08-15T06:27:00.574609+00:00, aliases=['m'], entities=['pump'])
+
+shape: (3, 3)
+┌────────────────────────────────┬────────────────────────────┬────────────────────────────┐
+│ time                           ┆ m__wbs:P1-mechanical-power ┆ m__wbs:P2-mechanical-power │
+╞════════════════════════════════╪════════════════════════════╪════════════════════════════╡
+│ 2026-08-15 06:24:59.610773 UTC ┆ 1.0787e6                   ┆ 113111.712331              │
+│ 2026-08-15 06:26:45.916347 UTC ┆ 1.0913e6                   ┆ 119558.460613              │
+│ 2026-08-15 06:27:00.574609 UTC ┆ 1.0748e6                   ┆ 109642.612541              │
+└────────────────────────────────┴────────────────────────────┴────────────────────────────┘
+```
 
 The pattern is the same at every size: extend, `metadata()`, `options()` when
 you are not sure what to filter on, `where()`, and `data()` last.
