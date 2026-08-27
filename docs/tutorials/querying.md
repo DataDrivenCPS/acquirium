@@ -10,8 +10,9 @@ is done with Acquirium.
 
 Every example in this doc runs on the public WaterTAP seawater-ro model, so you
 can follow along.
-<!-- FT1 placeholder: link the seawater-ro run guide here once it exists.
-     Until then: deployments/WATERTAP/readme.md in the repo. -->
+Getting one running is the [WaterTAP deployment guide](https://github.com/DataDrivenCPS/acquirium/blob/main/deployments/WATERTAP/readme.md):
+clone the repo, install the `watertap` extra, and start the server against
+`deployments/WATERTAP/models/seawater-ro/acquirium.toml`.
 
 
 **Connecting to a running acquirium server using Acquirium Client:**
@@ -200,8 +201,6 @@ shape: (36, 2)
 └──────────────────────────┴──────────────────────────────┘
 ```
 
-**TODO:** check whether the `nearest` default flips with an explicit `via=` (plain `"any"` returns nearest matches, an explicit `via` returns all) and document it here.
-
 Note that `nearest` follows `via`.
 Plain `via="any"` with no direction returns the nearest matches.
 An explicit predicate, a predicate list or a `direction=` returns all matches
@@ -316,6 +315,12 @@ shape: (8, 4)
 └────────┴────────────────────┴─────────────────────┴─────────────────────────────────┘
 ```
 TODO: organize the metadata table to group nulls together.
+
+<!-- TODO: `metadata()` returns rows in no guaranteed order, so this
+     `.head(8)` capture shows a different eight rows on every run. Sort the
+     frame in the example, or show the full result. -->
+<!-- TODO: two other captures in this file are `.head()`/`.tail()` of an
+     unordered result for the same reason; decide on one convention. -->
 
 ### direction= and nearest=
 
@@ -523,30 +528,44 @@ q.include("unit").metadata()                   # every point, null where there i
 q.include("unit", required=True).metadata()    # only points that have a unit
 ```
 ```text
-shape: (6, 3)                                    # include("unit")
+shape: (11, 3)                                   # include("unit")
 ┌────────┬─────────────────────────────────┬─────────────────────┐
 │ ro     ┆ m                               ┆ m.unit              │
 ╞════════╪═════════════════════════════════╪═════════════════════╡
-│ wbs:RO ┆ wbs:RO-out-retentate-flow-mass… ┆ unit:KiloGM-PER-SEC │
 │ wbs:RO ┆ wbs:RO-in-pressure              ┆ null                │
+│ wbs:RO ┆ wbs:RO-out-pressure             ┆ null                │
+│ wbs:RO ┆ wbs:RO-in-flow-mass-water       ┆ unit:KiloGM-PER-SEC │
+│ wbs:RO ┆ wbs:RO-out-flow-mass-tds        ┆ unit:KiloGM-PER-SEC │
 │ wbs:RO ┆ wbs:RO-membrane-area            ┆ unit:M2             │
 │ wbs:RO ┆ wbs:RO-out-retentate-pressure   ┆ null                │
+│ wbs:RO ┆ wbs:RO-out-retentate-flow-mass… ┆ unit:KiloGM-PER-SEC │
 │ wbs:RO ┆ wbs:RO-in-temperature           ┆ null                │
 │ wbs:RO ┆ wbs:RO-out-flow-mass-water      ┆ unit:KiloGM-PER-SEC │
+│ wbs:RO ┆ wbs:RO-in-flow-mass-tds         ┆ unit:KiloGM-PER-SEC │
+│ wbs:RO ┆ wbs:RO-out-retentate-flow-mass… ┆ unit:KiloGM-PER-SEC │
 └────────┴─────────────────────────────────┴─────────────────────┘
 
-shape: (6, 3)                                    # include("unit", required=True)
+shape: (7, 3)                                    # include("unit", required=True)
 ┌────────┬─────────────────────────────────┬─────────────────────┐
 │ ro     ┆ m                               ┆ m.unit              │
 ╞════════╪═════════════════════════════════╪═════════════════════╡
+│ wbs:RO ┆ wbs:RO-in-flow-mass-water       ┆ unit:KiloGM-PER-SEC │
+│ wbs:RO ┆ wbs:RO-out-flow-mass-tds        ┆ unit:KiloGM-PER-SEC │
 │ wbs:RO ┆ wbs:RO-membrane-area            ┆ unit:M2             │
+│ wbs:RO ┆ wbs:RO-out-flow-mass-water      ┆ unit:KiloGM-PER-SEC │
+│ wbs:RO ┆ wbs:RO-out-retentate-flow-mass… ┆ unit:KiloGM-PER-SEC │
 │ wbs:RO ┆ wbs:RO-out-retentate-flow-mass… ┆ unit:KiloGM-PER-SEC │
 │ wbs:RO ┆ wbs:RO-in-flow-mass-tds         ┆ unit:KiloGM-PER-SEC │
-│ wbs:RO ┆ wbs:RO-in-flow-mass-water       ┆ unit:KiloGM-PER-SEC │
-│ wbs:RO ┆ wbs:RO-out-flow-mass-water      ┆ unit:KiloGM-PER-SEC │
-│ wbs:RO ┆ wbs:RO-out-flow-mass-tds        ┆ unit:KiloGM-PER-SEC │
 └────────┴─────────────────────────────────┴─────────────────────┘
 ```
+
+<!-- TODO: two RO-out-retentate-flow-mass-* points truncate to the same
+     display string; widen the capture or pick a shorter example so the
+     required=True table does not look like it has a duplicate row. -->
+Note that the four points dropped by `required=True` are the three pressures
+and the temperature, which is what [Which measurement points carry no
+unit?](query-cookbook.md#which-measurement-points-carry-no-unit) lists
+plant-wide.
 
 ### drop()
 
