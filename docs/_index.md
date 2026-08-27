@@ -78,8 +78,12 @@ Why things are the way they are.
 - [Server internals](explanation/server-internals.md) — storage backends, the graph store, the embedding indexes
 - [Graph backend architecture](explanation/graph-backend.md) — graph ownership, inference, query views
 
-<!-- TODO: this page used to end by pointing at `docs/agents/`, the compact
-     per-topic references written for coding agents. That directory lives on
-     the `ums-agents` branch and does not exist here, so the paragraph was
-     removed. Restore it when the agent references land, and update the
-     "Working with a coding agent?" line in the top-level README with it. -->
+## For coding agents
+
+[agents/](agents/) holds compact per-topic references written for coding
+agents rather than people: one file each for
+[querying](agents/querying.md), [data](agents/data.md),
+[drivers](agents/drivers.md), [apps](agents/apps.md) and the
+[server](agents/server.md). Each states the signatures, the rules that are
+easy to get wrong and the error messages, and links back to its human guide.
+The top-level [AGENTS.md](../AGENTS.md) maps tasks to files.

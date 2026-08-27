@@ -11,4 +11,4 @@ Load the file matching the task; each links its human-facing guide.
 | computing on plant data server-side: writing, registering or running an app | [docs/agents/apps.md](docs/agents/apps.md) |
 | running a server, editing acquirium.toml, debugging server behavior | [docs/agents/server.md](docs/agents/server.md) |
 
-Human-facing guides live in [docs/](docs/index.md).
+Human-facing guides live in [docs/](docs/_index.md).

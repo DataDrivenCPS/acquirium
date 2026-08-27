@@ -94,6 +94,9 @@ guides, reference and explanation.
 [server internals](./docs/explanation/server-internals.md),
 [graph backend](./docs/explanation/graph-backend.md).
 
+**Working with a coding agent?** Point it at [AGENTS.md](./AGENTS.md); it maps
+tasks to the compact references in [docs/agents/](./docs/agents/).
+
 App documentation is pending the app infrastructure rework.
 
 ## Docker stack (optional)
