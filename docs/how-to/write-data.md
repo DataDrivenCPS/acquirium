@@ -2,7 +2,7 @@
 title: Inserting data
 ---
 
-Most data enters acquirium through drivers, covered in the [drivers guide](./drivers.md).
+Most data enters acquirium through drivers, covered in the [first driver tutorial](../tutorials/first-driver.md).
 Drivers can pull data from any source, and once registered, acquirium manages running them for continuous data ingestion.
 Use this only if you want to build your own data ingestion pipeline.
 This might be useful for backfills, one-off imports and tests.

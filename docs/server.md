@@ -27,7 +27,7 @@ The embedded graph store is single-process on every backend, so a second
 worker (or a second server on the same data directory) fails at startup.
 
 The CLI also has a `driver` group (`start`, `list`, `stop`), covered in the
-[drivers guide](drivers.md#operations).
+[driver reference](reference/drivers.md#operations).
 
 ## The [server] section
 
@@ -78,7 +78,7 @@ Check the environment when a config edit appears to have no effect.
 ## The [driver] and [[drivers]] sections
 
 These declare the drivers the server starts; they are documented in the
-[drivers guide](drivers.md#configuration).
+[driver reference](reference/drivers.md#configuration).
 One key concerns the server itself: `[driver] server_url` and `server_port`
 are the address driver and app actors use to reach the server.
 The default (`localhost` and the `[server]` port) is right for a single-host

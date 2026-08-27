@@ -3,7 +3,7 @@ title: Drivers
 ---
 
 This is not a guide to authoring drivers; for that go to
-[building drivers](../how-to/drivers.md).
+[your first driver](../tutorials/first-driver.md) and the [driver reference](../reference/drivers.md).
 This is an explanation of why drivers exist in acquirium and where the design
 comes from.
 

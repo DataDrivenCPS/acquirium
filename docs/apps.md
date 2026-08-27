@@ -3,7 +3,7 @@
 This is a guide to authoring apps.
 Apps are the components that compute on plant data server-side and write the
 results back into acquirium.
-Drivers feed data in ([drivers guide](drivers.md)); apps read it back out and
+Drivers feed data in ([first driver tutorial](tutorials/first-driver.md)); apps read it back out and
 derive new values from it.
 
 Every example here runs on the public WaterTAP seawater-ro model.

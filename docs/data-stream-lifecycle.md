@@ -83,7 +83,7 @@ A driver calls `self.declare(...)` per stream, and the platform calls
 `register_datasource()` and `register_streams()` for it just before the next
 insert.
 `register_streams()` is the direct form, for backfills, imports and notebooks.
-See the [drivers guide](drivers.md#declaring-streams).
+See the [driver reference](reference/drivers.md#declaring-streams).
 
 **TODO:** We need to provide an interface to add, remove, replace streams. Also, auto register streams from a given graph.
 
@@ -126,7 +126,7 @@ Do not mint reference URIs by hand; use `acq.reference_uri()` or let
 Note that driver authors do not call this path directly.
 A driver declares its streams with `self.declare(...)` and reports values with
 `self.add(...)`; the platform registers and inserts for it.
-See the [drivers guide](drivers.md#declaring-streams).
+See the [driver reference](reference/drivers.md#declaring-streams).
 
 A row goes through five steps between a driver and the store.
 
