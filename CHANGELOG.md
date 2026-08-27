@@ -10,12 +10,7 @@ change in any release.
 
 ## [Unreleased]
 
-### Changed
-- File-driver configuration is centralized under `[[drivers]]`: `source_id`,
-  `watch_dir`, and `glob` are explicit and required. CSV/XLSX/Parquet layout is
-  also explicit; stream names are preserved exactly rather than sanitized.
-- Driver graph polling has its own cadence, independent of data ticks. Graph
-  content and graph-file insertion use separate APIs.
+## [0.4.0a2] - 2026-08-27
 
 ### Added
 - **Explicit driver-author contract.** Ingest drivers declare streams with
@@ -27,6 +22,52 @@ change in any release.
   native/ISO/common timestamp parsing, split date/time columns, Unix epochs,
   timezone handling, conservative column-name discovery, and explicit
   `date_format` / `day_first` controls.
+- `CSVIngestDriver` customization hooks: `prepare_frame(df, path)` runs on the
+  raw frame before reshaping and `declare_stream(ref_name)` attaches metadata
+  per discovered stream. New config keys `null_values` and
+  `infer_schema_length` pass through to the CSV reader.
+- **Point labels in displays.** Placeholder points minted at registration get
+  a default `rdfs:label` (`<source_id>__<ref_name>`); explore queries fetch
+  each data node's label, `DataObject.metadata()` gains a `point_label`
+  column, `Query.metadata()` shows `<alias>.label` columns, and wide
+  dataframe columns use the label instead of the URI where it is unique.
+- Explore query aliases are checked for uniqueness: duplicate explicit
+  aliases raise, derived aliases are uniquified.
+- Documentation reorganized into tutorials, how-to guides, reference, and
+  explanation (`docs/_index.md`), with a query cookbook and driver tutorials.
+
+### Changed
+- File-driver configuration is centralized under `[[drivers]]`: `source_id`,
+  `watch_dir`, and `glob` are explicit and required. CSV/XLSX/Parquet layout is
+  also explicit; stream names are preserved exactly rather than sanitized.
+- Driver graph polling has its own cadence, independent of data ticks. Graph
+  content and graph-file insertion use separate APIs.
+- **Stream registration checks point metadata.** `register_streams()` and
+  `resolve_point_metadata()` now live on `AcquiriumClient` (the `Acquirium`
+  facade delegates). A stream registered against an existing `point_uri` is
+  checked against the graph: missing metadata fields are added, conflicting
+  values raise `ValueError` before anything is inserted. A stream without a
+  `point_uri` mints a placeholder point (`<ref_uri>__point`); a stream with
+  neither `point_uri` nor `ref_name` is rejected.
+- A stream unit that differs from its point's unit is accepted when the server
+  reports the two convertible; it is recorded on the external reference as the
+  storage unit and converted on read. Unconvertible units still raise.
+- `Query.dataframe()` and `DataObject.dataframe()` share
+  `shape/start/end/limit/order/include_ref/compact` with identical defaults
+  (`"wide"`, `compact=True`), so `q.dataframe(...)` equals
+  `q.data(...).dataframe(...)`. On `DataObject` the window applies client-side
+  to the fetched frame.
+
+### Fixed
+- Warm start re-registers any bundled ontology (water, s223, QUDT quantity
+  kinds, ref-schema) missing from an existing store instead of skipping
+  registration whenever the store held any graph.
+- Concurrent `/resolve_record` and `insert_graph` calls could deadlock the
+  server on ontoenv's store-backed graph view (GIL/mutex inversion).
+  `named_graph()` now returns a cached in-memory copy built under the store
+  lock.
+- The explore query cache key distinguishes queries run with and without
+  ontology dependencies.
 
 ### Removed
 - **Breaking:** `TabularIngestBase`, implicit per-file datasource identity,
@@ -299,7 +340,8 @@ change in any release.
 - Text matcher backed by FastEmbed with QUDT and graph indexes.
 - Grafana dashboard helpers.
 
-[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a1...HEAD
+[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a2...HEAD
+[0.4.0a2]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a1...v0.4.0a2
 [0.4.0a1]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a0...v0.4.0a1
 [0.4.0a0]: https://github.com/DataDrivenCPS/acquirium/compare/v0.3.1...v0.4.0a0
 [0.3.1]: https://github.com/DataDrivenCPS/acquirium/compare/v0.3.0...v0.3.1
