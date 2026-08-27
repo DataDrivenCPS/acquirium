@@ -99,30 +99,39 @@ q.include("unit", required=True).metadata()    # no pressure rows
 q.include("unit").metadata()                   # the pressures are back, with null units
 ```
 ```text
-shape: (6, 3)                                    # include("unit", required=True)
+shape: (7, 3)                                    # include("unit", required=True)
 ┌────────┬─────────────────────────────────┬─────────────────────┐
 │ ro     ┆ m                               ┆ m.unit              │
 ╞════════╪═════════════════════════════════╪═════════════════════╡
+│ wbs:RO ┆ wbs:RO-in-flow-mass-water       ┆ unit:KiloGM-PER-SEC │
+│ wbs:RO ┆ wbs:RO-out-flow-mass-tds        ┆ unit:KiloGM-PER-SEC │
 │ wbs:RO ┆ wbs:RO-membrane-area            ┆ unit:M2             │
+│ wbs:RO ┆ wbs:RO-out-flow-mass-water      ┆ unit:KiloGM-PER-SEC │
+│ wbs:RO ┆ wbs:RO-out-retentate-flow-mass… ┆ unit:KiloGM-PER-SEC │
 │ wbs:RO ┆ wbs:RO-out-retentate-flow-mass… ┆ unit:KiloGM-PER-SEC │
 │ wbs:RO ┆ wbs:RO-in-flow-mass-tds         ┆ unit:KiloGM-PER-SEC │
-│ wbs:RO ┆ wbs:RO-in-flow-mass-water       ┆ unit:KiloGM-PER-SEC │
-│ wbs:RO ┆ wbs:RO-out-flow-mass-water      ┆ unit:KiloGM-PER-SEC │
-│ wbs:RO ┆ wbs:RO-out-flow-mass-tds        ┆ unit:KiloGM-PER-SEC │
 └────────┴─────────────────────────────────┴─────────────────────┘
 
-shape: (6, 3)                                    # include("unit")
+shape: (11, 3)                                   # include("unit")
 ┌────────┬─────────────────────────────────┬─────────────────────┐
 │ ro     ┆ m                               ┆ m.unit              │
 ╞════════╪═════════════════════════════════╪═════════════════════╡
-│ wbs:RO ┆ wbs:RO-out-retentate-flow-mass… ┆ unit:KiloGM-PER-SEC │
 │ wbs:RO ┆ wbs:RO-in-pressure              ┆ null                │
+│ wbs:RO ┆ wbs:RO-out-pressure             ┆ null                │
+│ wbs:RO ┆ wbs:RO-in-flow-mass-water       ┆ unit:KiloGM-PER-SEC │
+│ wbs:RO ┆ wbs:RO-out-flow-mass-tds        ┆ unit:KiloGM-PER-SEC │
 │ wbs:RO ┆ wbs:RO-membrane-area            ┆ unit:M2             │
 │ wbs:RO ┆ wbs:RO-out-retentate-pressure   ┆ null                │
+│ wbs:RO ┆ wbs:RO-out-retentate-flow-mass… ┆ unit:KiloGM-PER-SEC │
 │ wbs:RO ┆ wbs:RO-in-temperature           ┆ null                │
 │ wbs:RO ┆ wbs:RO-out-flow-mass-water      ┆ unit:KiloGM-PER-SEC │
+│ wbs:RO ┆ wbs:RO-in-flow-mass-tds         ┆ unit:KiloGM-PER-SEC │
+│ wbs:RO ┆ wbs:RO-out-retentate-flow-mass… ┆ unit:KiloGM-PER-SEC │
 └────────┴─────────────────────────────────┴─────────────────────┘
 ```
+
+Four rows came back: the three pressures and the temperature, the RO points
+that carry no unit.
 
 ### 5. The points are on connection points you excluded
 
