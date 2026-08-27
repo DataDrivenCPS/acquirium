@@ -52,7 +52,7 @@ model.
 | [Querying](tutorials/querying.md) | finding equipment, topology and measurements; the `Query` interface |
 | [Working with data](tutorials/data.md) | fetching timeseries, shapes, units, writing data |
 | [Building drivers](tutorials/first-driver.md) | feeding plant data in on a schedule |
-| [Building apps](apps.md) | computing on plant data server-side, writing results back |
+| [Building apps](tutorials/first-app.md) | computing on plant data server-side, writing results back |
 | [The data stream lifecycle](data-stream-lifecycle.md) | how streams are identified, stored and found again |
 | [Running the server](server.md) | config, storage backends, ontologies, HTTP API |
 | [Text resolution](resolution.md) | free text to URIs; unit conversion |

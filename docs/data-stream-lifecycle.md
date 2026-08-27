@@ -212,7 +212,7 @@ When an app that produces values (a soft sensor, for instance) is registered, ea
 reference node: `app:<name>` is the `source_id`, the output's point URI
 string is the `ref_name`, and the computed `ref_uri` follows from the pair
 as usual.
-See the [apps guide](apps.md#outputs).
+See the [app reference](reference/apps.md#outputs).
 This means computed values are indistinguishable from measured ones at query
 time.
 
