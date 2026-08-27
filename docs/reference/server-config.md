@@ -2,7 +2,14 @@
 title: Server configuration
 ---
 
-<!-- TODO: intro -->
+This is the reference for `acquirium.toml`: every key of the `[server]`
+section, the environment variables that override them, the `[ontologies]`
+section, and the endpoint map.
+The driver sections are in the [driver reference](drivers.md#configuration).
+For starting the server, see [run the server](../how-to/run-the-server.md).
+
+Relative paths in a config file always resolve against that file's own
+directory, never the working directory.
 
 ## The [server] section
 
@@ -97,6 +104,10 @@ environment variable.
 
 The Python client covers all of these; the raw endpoints are listed for
 scripting against the server directly.
+This table is the map; each endpoint's parameters and response shape are in
+the [HTTP API reference](http-api.md).
+A running server also serves the generated OpenAPI schema at `/docs` and
+`/openapi.json`.
 
 | area | endpoints |
 |---|---|
@@ -109,7 +120,7 @@ scripting against the server directly.
 | apps | `POST /apps/register`, `POST /apps/delete`, `POST /apps/run`, `POST /apps/stop`, `GET /apps/list` |
 | logbook | `POST /insert_log`, `GET /query_logs`, `DELETE /delete_logs` |
 
-Three conventions:
+The conventions across all of them:
 
 - Almost every failure is an HTTP 400 with the reason in `detail`.
   404 is reserved for an unknown driver or app, 409 for registering an app
