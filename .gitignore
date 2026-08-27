@@ -1,5 +1,8 @@
 # default data location
 .acquirium
+batch_example/.data/
+examples/transformation/.data/
+propagation_demo/.data/
 
 scripts/dev_examples
 # Byte-compiled / optimized / DLL files

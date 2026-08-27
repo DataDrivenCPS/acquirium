@@ -1,0 +1,6 @@
+[server]
+# Keep this example's disposable local state out of the repository root.
+data_dir = ".data"
+
+[[apps]]
+spec = "./temperature_conversion.py:CelsiusToFahrenheit"

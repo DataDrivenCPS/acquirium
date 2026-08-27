@@ -18,7 +18,7 @@ common early mistake:
 Apps are revision-frontier transformations over the semantic query graph. See
 [materialization-implementation.md](materialization-implementation.md) for the
 durable runtime and backend details, and the examples under
-`batch_example/`, `propagation_demo/`, and `dpr-trailer-data/`.
+`examples/transformation/`, `propagation_demo/`, and `dpr-trailer-data/`.
 
 ## Configured materialization apps
 
