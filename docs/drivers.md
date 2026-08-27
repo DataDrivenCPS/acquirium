@@ -2,7 +2,7 @@
 
 This is a guide to authoring drivers.
 Drivers are the components that feed plant data into acquirium from external sources.
-Reading the data back out is covered in the [querying](tutorials/querying.md) and [data](data.md) guides.
+Reading the data back out is covered in the [querying](tutorials/querying.md) and [data](tutorials/data.md) guides.
 
 ## Introduction
 

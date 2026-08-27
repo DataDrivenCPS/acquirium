@@ -307,7 +307,7 @@ agree.
 The app storage root is `<data_dir>/apps`, or `$ACQUIRIUM_APP_STORAGE_ROOT`.
 
 `ctx.query.data()` and `ctx.query.dataframe()` in `run` behave exactly as in
-the [data guide](data.md); the query is a normal `Query` bound to the actor's
+the [data guide](tutorials/data.md); the query is a normal `Query` bound to the actor's
 client.
 
 ### What registration writes to the graph

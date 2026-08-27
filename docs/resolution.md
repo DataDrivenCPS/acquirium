@@ -97,7 +97,7 @@ for 'bar' -> 'celsius' (from candidates: ['.../BAR'], to candidates: ['.../DEG_C
 `get_conversion_factors(from_uri, to_uri)` returns the raw multipliers and
 offsets when both URIs are already known.
 `DataObject.convert_to()` is built on these calls; see the
-[data guide](data.md#units).
+[data guide](tutorials/data.md#units).
 
 ## Tuning
 

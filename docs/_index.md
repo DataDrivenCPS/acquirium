@@ -50,7 +50,7 @@ model.
 | guide | covers |
 |---|---|
 | [Querying](tutorials/querying.md) | finding equipment, topology and measurements; the `Query` interface |
-| [Working with data](data.md) | fetching timeseries, shapes, units, writing data |
+| [Working with data](tutorials/data.md) | fetching timeseries, shapes, units, writing data |
 | [Building drivers](drivers.md) | feeding plant data in on a schedule |
 | [Building apps](apps.md) | computing on plant data server-side, writing results back |
 | [The data stream lifecycle](data-stream-lifecycle.md) | how streams are identified, stored and found again |

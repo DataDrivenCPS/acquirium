@@ -3,7 +3,7 @@
 This is a guide to how a timeseries stream comes into existence, how its rows
 are stored, and how a query finds them again.
 It is background for driver authors and for anyone debugging ingestion; using
-the data is covered in the [data guide](data.md).
+the data is covered in the [data guide](tutorials/data.md).
 
 ## The identifier model
 
@@ -172,7 +172,7 @@ A query follows the same links in reverse.
    as Arrow batches.
 4. When the reference node's unit differs from the point's, the values are
    converted during the fetch (see the
-   [data guide](data.md#automatic-conversion)).
+   [units guide](explanation/units.md#automatic-conversion)).
 
 The graph determines which streams to read, and the timeseries store returns
 their values; `ref_uri` is the join key between the two.
