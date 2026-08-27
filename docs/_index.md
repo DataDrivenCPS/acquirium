@@ -1,4 +1,6 @@
-# Acquirium documentation
+---
+title: Acquirium documentation
+---
 
 Acquirium is a data platform for water treatment plants.
 The server stores two things: a semantic model of the plant (equipment,
@@ -19,66 +21,53 @@ your code ── Acquirium client ──HTTP──▶ acquirium server
 drivers: feed data in, on a schedule        apps: compute on data, write results back
 ```
 
-## Install and first run
+## Tutorials
 
-```bash
-pip install acquirium          # extras: acquirium[mqtt], [xlsx], [watertap]
+Learning by doing, on the public WaterTAP seawater-ro model.
 
-acquirium server --config acquirium.toml
-```
+- [Getting started](tutorials/getting-started.md) — install, start a server, run a first query
+- [Querying](tutorials/querying.md) — the `Query` verbs: entities, topology, measurements, filters, columns
+- [Query cookbook](tutorials/query-cookbook.md) — domain questions, how to phrase them, the query
+- [Working with data](tutorials/data.md) — lazy fetching, shapes, units, taking a result apart
+- [Your first driver](tutorials/first-driver.md) — authoring a CSV driver step by step
+- [Your first app](tutorials/first-app.md) — pending the app rework
 
-The first start builds the text-resolution indexes and can take 3-5 minutes;
-later starts reuse the cache.
-The server answers on `http://localhost:8000` (`GET /health`) once the core
-is up.
+The notebooks under [`notebooks/watertap/`](https://github.com/DataDrivenCPS/acquirium/tree/main/notebooks/watertap) are runnable tutorials too: a quick start, the query interface feature by feature, a regulatory-compliance check and a soft sensor.
 
-```python
-from acquirium import Acquirium
+## How-to guides
 
-acq = Acquirium(server_url="localhost", server_port=8000)
-acq.query().entity("pump").metadata()
-```
+One task each.
 
-A fresh server starts with no model loaded.
-The examples throughout these docs run on the public WaterTAP seawater-ro
-model.
-<!-- FT1 placeholder: link the seawater-ro run guide here once it exists.
-     Until then: deployments/WATERTAP/readme.md in the repo. -->
+- [Explore a model](how-to/explore-a-model.md) — build a query step by step; `options()` and `facets()`
+- [Debugging queries for an unexpected result](how-to/debug-an-empty-query.md) — the five usual causes
+- [Inserting data](how-to/write-data.md) — register streams and write rows without a driver; the logbook
+- [Run the server](how-to/run-the-server.md) — the server command, startup, Docker
+- [Resolve text to URIs](how-to/resolve-text.md) — `resolve()`, units and conversion, tuning
 
-## The guides
+## Reference
 
-| guide | covers |
-|---|---|
-| [Querying](tutorials/querying.md) | finding equipment, topology and measurements; the `Query` interface |
-| [Working with data](tutorials/data.md) | fetching timeseries, shapes, units, writing data |
-| [Building drivers](tutorials/first-driver.md) | feeding plant data in on a schedule |
-| [Building apps](tutorials/first-app.md) | computing on plant data server-side, writing results back |
-| [The data stream lifecycle](explanation/stream-lifecycle.md) | how streams are identified, stored and found again |
-| [Running the server](how-to/run-the-server.md) | config, storage backends, ontologies, HTTP API |
-| [Text resolution](how-to/resolve-text.md) | free text to URIs; unit conversion |
-| [Graph backend](explanation/graph-backend.md) | graph ownership, inference, query views |
-| [HTTP API](http-api.md) | the raw endpoints, for scripting against the server |
-| [Glossary](reference/glossary.md) | the vocabulary the guides assume: URIs, CURIEs, free text, aliases, streams |
+Facts, no narrative.
+
+- [Acquirium Client API](reference/client-api.md) — every method of `Acquirium`, `Query`, `DataObject`, `AcquiriumClient`
+- [Driver reference](reference/drivers.md) — class hierarchy, hooks, state, config keys, built-in drivers, CLI
+- [App reference](reference/apps.md) — pending the app rework
+- [Server configuration](reference/server-config.md) — `[server]`, environment variables, `[ontologies]`, the endpoint table
+- [HTTP API](reference/http-api.md) — the raw endpoints
+- [Glossary](reference/glossary.md) — URIs, CURIEs, free text, the plant model, querying and data terms
+
+## Explanation
+
+Why things are the way they are.
+
+- [The query model](explanation/query-model.md) — what a query is, why we built it, free text, how it executes
+- [Values](explanation/values.md) — numeric and text storage, `value_mode`, `cast_value`
+- [Units](explanation/units.md) — point units, storage units, compatibility, automatic and requested conversion
+- [Drivers](explanation/drivers.md) — why drivers, and the sMAP inspiration
+- [Apps](explanation/apps.md) — pending the app rework
+- [The data stream lifecycle](explanation/stream-lifecycle.md) — how streams are identified, stored and found again
+- [Text resolution](explanation/text-resolution.md) — how matching works
+- [Server internals](explanation/server-internals.md) — storage backends, the graph store, the embedding indexes
+- [Graph backend architecture](explanation/graph-backend.md) — graph ownership, inference, query views
 
 The `docs/agents/` directory holds compact per-topic references written for
 coding agents; point your agent at them instead of the prose guides.
-
-## Glossary
-
-The [glossary](reference/glossary.md) defines these and the rest of the vocabulary with
-examples, including how URIs, CURIEs and free text differ.
-
-| term | meaning |
-|---|---|
-| model | the RDF description of one plant: equipment, piping, points |
-| ontology | the shared vocabulary the model is written in (s223, NAWI water, QUDT) |
-| entity | a thing in the plant: equipment, a system, a connection point |
-| point | a node representing one measured or computed quantity |
-| stream | the timeseries behind a point, identified by `(source_id, ref_name)` |
-| reference node | the RDF node linking a point to its stream (`ref:hasExternalReference`) |
-| datasource | who writes a set of streams: a driver, an import, an app |
-| driver | a class the server runs on a schedule to ingest data |
-| source | the owner of a set of streams and its own graph, named by `source_id` |
-| app | a class the server runs to compute on data and write results back |
-| deployment graph | the inferred union of every source's data; what queries run against |
-| dependencies | the resolved ontology and shape triples queried alongside it (`include_dependencies`) |
