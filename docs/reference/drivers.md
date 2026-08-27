@@ -37,8 +37,11 @@ Driver methods are serialized, so a slow `tick()` delays both deadlines.
 An exception inside `tick()` is logged and swallowed; the loop keeps going and
 the driver still reports as `running`.
 Check the `acquirium.driver.<ClassName>` logs for tick failures.
-An exception in `setup()` kills the actor and the status becomes
-`failed: <error>`.
+An exception in `setup()` kills the actor before the driver is registered, so
+it never appears in `acquirium driver list` at all; the start call fails with
+the error instead.
+The `failed: <error>` status is what a driver whose loop has already exited
+with an exception reports.
 
 ## Class hierarchy
 
@@ -49,16 +52,23 @@ An exception in `setup()` kills the actor and the status becomes
 | `PollingIngestDriver` | `IngestDriver` | `read()` or `collect()` | sources you pull from every tick |
 | `EventIngestDriver` | `IngestDriver` | a callback that calls `add()` | sources that push to you |
 | `FileIngestDriver` | `IngestDriver` | `read(path, cursor)` | files landing in a directory |
-| `CSVIngestDriver`, `XLSXIngestDriver`, `ParquetIngestDriver` | `FileIngestDriver` | optionally `prepare_frame()`, `declare_stream()` | tabular files |
+| `CSVIngestDriver` | `FileIngestDriver` | optionally `prepare_frame()`, `declare_stream()` | CSV and TSV files |
+| `XLSXIngestDriver`, `ParquetIngestDriver` | `FileIngestDriver` | optionally `read()` | Excel and Parquet files |
 | `MQTTIngestDriver` | `EventIngestDriver` | — | topics declared in the graph |
 | `WaterTAPDriver` | `PollingIngestDriver` | — | a WaterTAP flowsheet solved every tick |
 | `SystemMetricsDriver` | `PollingIngestDriver` | — | CPU, RAM, disk and network of the server host |
 
 ```python
 from acquirium import (Driver, IngestDriver, PollingIngestDriver, EventIngestDriver,
-                       FileIngestDriver, FileBatch, CSVIngestDriver, DriverState,
+                       FileIngestDriver, FileBatch, CSVIngestDriver,
                        UndeclaredStreamError, DriverBufferFull, to_observations, to_timestamp)
+from acquirium.DriverState import DriverState
 ```
+
+<!-- TODO: `from acquirium import DriverState` silently resolves to the
+     acquirium.DriverState *module*, not the class, because the module shadows
+     the name. Export the class from `acquirium/__init__.py` (or rename the
+     module) and simplify this import. -->
 
 The other built-ins are imported by their module path, as in the `spec`
 values below.
@@ -162,7 +172,7 @@ Without `point_uri`, a placeholder point `<ref_uri>__point` labelled
 
 | method | meaning |
 |---|---|
-| `add(ref_name: str, value: Any, ts: datetime \| None = None, *, source_id: str \| None = None) -> None` | buffer one reading; `ts` defaults to now (UTC), naive datetimes are read as UTC. Thread-safe, no network I/O |
+| `add(ref_name: str, value: Any, ts: datetime \| None = None, *, source_id: str \| None = None) -> None` | buffer one reading; `ts` defaults to now (UTC), naive datetimes are read as UTC. Raises `UndeclaredStreamError` for a pair this driver has not declared. Thread-safe, no network I/O |
 | `flush() -> dict` | insert everything buffered and clear the buffer; the platform calls it at the end of every tick and after `stop()` |
 | `insert_observations(observations: pl.DataFrame \| None) -> dict` | register what is pending and insert a frame directly |
 | `normalize_observations(observations: pl.DataFrame \| None) -> pl.DataFrame` | the normalization applied before upload |
@@ -214,12 +224,18 @@ The cursor is saved only after registration and insertion both succeed.
 Discovery is recursive under `watch_dir`; one unreadable file is logged and
 skipped.
 
-The tabular subclasses add two hooks:
+`CSVIngestDriver` adds two hooks:
 
 | method | meaning |
 |---|---|
 | `prepare_frame(df: pl.DataFrame, path: Path) -> pl.DataFrame` | transform the raw frame after `skip_cols`, before timestamps are parsed |
 | `declare_stream(ref_name: str) -> None` | called once per distinct `ref_name` in each batch; default `self.declare(ref_name)` |
+
+<!-- TODO: `XLSXIngestDriver` and `ParquetIngestDriver` have neither hook —
+     they call `self.declare(name)` inline in `read()`, so attaching point
+     URIs, units or quantity kinds to an Excel or Parquet source means
+     overriding `read()` wholesale. Lift both hooks into a shared tabular base
+     and this section covers all three again. -->
 
 The reshaping they use is public:
 
@@ -250,6 +266,11 @@ keys need no declaration.
 
 **TODO:** We can make default driver naming unique to avoid collisions.
 
+<!-- TODO: two more keys the supervisor reads are undocumented above:
+     `[driver] use_ssl` (false; it is in the sample acquirium.toml) and
+     `[driver] insert_batch_rows` (50000, passed to the actor's client). Add
+     them once we decide whether they are public config. -->
+
 ## Built-in drivers
 
 ### Tabular (CSV, XLSX, Parquet)
@@ -268,7 +289,7 @@ keys need no declaration.
 | `timezone` | `"UTC"` | how naive timestamps are read |
 | `date_format` | none | strptime format when discovery fails |
 | `day_first` | `false` | for ambiguous `d/m` vs `m/d` dates |
-| `skip_rows` | `[]` | CSV: row indexes to skip before the header |
+| `skip_rows` | `[]` | CSV: row indexes to skip before the header; also takes a per-file map, `{ "subdir/data.csv" = [2, 5] }` |
 | `header_contains` | `[]` | CSV: cell values identifying the header row; skips a banner; wins over `skip_rows` |
 | `encoding` | `"utf8-lossy"` | CSV |
 | `ragged_lines` | `"ignore"` | CSV: `"ignore"` keeps a row with the wrong cell count, `"skip"` drops it, `"error"` fails the file |
