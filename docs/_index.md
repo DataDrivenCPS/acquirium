@@ -34,6 +34,9 @@ Learning by doing, on the public WaterTAP seawater-ro model.
 
 The notebooks under [`notebooks/watertap/`](https://github.com/DataDrivenCPS/acquirium/tree/main/notebooks/watertap) are runnable tutorials too: a quick start, the query interface feature by feature, a regulatory-compliance check and a soft sensor.
 
+<!-- TODO: that sentence covers four of the five notebooks in the folder;
+     `watertap-1.ipynb` is unlisted. Name it here or drop it from the repo. -->
+
 ## How-to guides
 
 One task each.
@@ -43,6 +46,16 @@ One task each.
 - [Inserting data](how-to/write-data.md) — register streams and write rows without a driver; the logbook
 - [Run the server](how-to/run-the-server.md) — the server command, startup, Docker
 - [Resolve text to URIs](how-to/resolve-text.md) — `resolve()`, units and conversion, tuning
+
+<!-- TODO: two tasks have no how-to yet and are only described inside
+     explanation/graph-backend.md:
+       - load a plant model: `insert_graph_file(..., source_id="plant")`,
+         what `replace=True` does, how to check it landed;
+       - validate a model: `validate_graph()` and how to read its SHACL report.
+     Both are the first thing a new deployment does. -->
+<!-- TODO: `generate_grafana_dashboard()` and the Grafana service in
+     compose.yaml are undocumented everywhere except one row of the client-API
+     table. Either write a how-to or drop it from the public API list. -->
 
 ## Reference
 
@@ -69,5 +82,8 @@ Why things are the way they are.
 - [Server internals](explanation/server-internals.md) — storage backends, the graph store, the embedding indexes
 - [Graph backend architecture](explanation/graph-backend.md) — graph ownership, inference, query views
 
-The `docs/agents/` directory holds compact per-topic references written for
-coding agents; point your agent at them instead of the prose guides.
+<!-- TODO: this page used to end by pointing at `docs/agents/`, the compact
+     per-topic references written for coding agents. That directory lives on
+     the `ums-agents` branch and does not exist here, so the paragraph was
+     removed. Restore it when the agent references land, and update the
+     "Working with a coding agent?" line in the top-level README with it. -->
