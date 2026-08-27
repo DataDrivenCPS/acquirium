@@ -227,13 +227,23 @@ class TestRefocus:
 
 
 def canon(s: str) -> str:
-    """Normalize whitespace and node-id numbering.
+    """Normalize whitespace, point-label optionals, and node-id numbering.
 
-    The legacy builder's id counter skips numbers (its ``_new_id`` +
-    ``bump_id`` both increment), so equivalent graphs get different node ids.
-    Renumber ``?v<N>/?ext<N>/?unit<N>/?extunit<N>`` by order of first
-    appearance so structurally identical queries compare equal.
+    The explore compiler also fetches point ``rdfs:label``s; the frozen
+    legacy builder does not, so ``?lbl<N>`` select vars and their OPTIONAL
+    clauses are stripped before comparing. The legacy builder's id counter
+    skips numbers (its ``_new_id`` + ``bump_id`` both increment), so
+    equivalent graphs get different node ids. Renumber
+    ``?v<N>/?ext<N>/?unit<N>/?extunit<N>`` by order of first appearance so
+    structurally identical queries compare equal.
     """
+    s = norm(s)
+    s = re.sub(
+        r"OPTIONAL \{ \?\w+ <http://www\.w3\.org/2000/01/rdf-schema#label> \?lbl\d+ \. \} ?",
+        "",
+        s,
+    )
+    s = re.sub(r" \?lbl\d+", "", s)
     s = norm(s)
     mapping: dict[str, str] = {}
 

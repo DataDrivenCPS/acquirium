@@ -82,18 +82,23 @@ def test_dataframe_wide(acquirium_client_csv):
 
 
 def test_dataframe_narrow(acquirium_client_csv):
-    """dataframe(shape='narrow') should return the enriched tall frame."""
+    """dataframe(shape='narrow', compact=False) returns the enriched tall frame."""
     acq = acquirium_client_csv
     query = acq.find_all_data()
     data = query.data()
 
-    df = data.dataframe(shape="narrow")
+    df = data.dataframe(shape="narrow", compact=False)
     assert "data_alias" in df.columns
     assert "point_uri" in df.columns
     assert "ref_uri" in df.columns
     assert "time" in df.columns
     assert "value_numeric" in df.columns
     assert "value_text" in df.columns
+
+    # the default narrow layout is compact, matching Query.dataframe()
+    df_compact = data.dataframe(shape="narrow")
+    assert "point_id" in df_compact.columns
+    assert "point_uri" not in df_compact.columns
 
 
 # ---- iter() ----
