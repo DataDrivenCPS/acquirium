@@ -54,7 +54,7 @@ model.
 | [Building drivers](tutorials/first-driver.md) | feeding plant data in on a schedule |
 | [Building apps](tutorials/first-app.md) | computing on plant data server-side, writing results back |
 | [The data stream lifecycle](data-stream-lifecycle.md) | how streams are identified, stored and found again |
-| [Running the server](server.md) | config, storage backends, ontologies, HTTP API |
+| [Running the server](how-to/run-the-server.md) | config, storage backends, ontologies, HTTP API |
 | [Text resolution](resolution.md) | free text to URIs; unit conversion |
 | [Graph backend](graph-backend-architecture.md) | graph ownership, inference, query views |
 | [HTTP API](http-api.md) | the raw endpoints, for scripting against the server |
