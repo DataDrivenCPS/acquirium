@@ -228,8 +228,7 @@ real deployment, the only way two sources can feed the same point, and the
 only version where the graph can tell you that you got a column wrong.
 
 Ingest without one, as in [your first driver](first-driver.md), when no model
-describes the source yet — a new skid, a one-off export, a source you are
-still figuring out. The data is not stranded by that choice: it is stored,
+describes the source yet. The data is not stranded by that choice: it is stored,
 described, and queryable by what it measures from the first tick.
 
 Going from one to the other is a small change, and it does not strand the data

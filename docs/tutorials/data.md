@@ -9,8 +9,9 @@ Finding the points in the first place is covered in the
 [querying guide](querying.md).
 
 Every example here runs on the public WaterTAP seawater-ro model.
-<!-- FT1 placeholder: link the seawater-ro run guide here once it exists.
-     Until then: deployments/WATERTAP/readme.md in the repo. -->
+Getting one running is the [WaterTAP deployment guide](https://github.com/DataDrivenCPS/acquirium/blob/main/deployments/WATERTAP/readme.md):
+clone the repo, install the `watertap` extra, and start the server against
+`deployments/WATERTAP/models/seawater-ro/acquirium.toml`.
 
 ## Lazy by default
 
