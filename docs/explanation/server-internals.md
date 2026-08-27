@@ -62,8 +62,8 @@ They are built from the ontologies only.
 Inserted plant data is never indexed.
 This is why free text resolves classes and units but not instance labels.
 
-The first build is the expensive part of a first start; the QUDT index alone
-takes minutes.
+The first build is the expensive part of a first start: 5-10 minutes for the
+two indexes together, most of it the QUDT one.
 The result is cached under `data_dir/embedding_cache`, keyed by ontology
 content, so later starts reuse it and a changed ontology triggers a rebuild
 automatically.

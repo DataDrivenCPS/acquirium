@@ -54,7 +54,7 @@ The `Acquirium()` client constructor waits for `/health` (60 seconds by
 default) so scripts can start before the server finishes booting.
 
 A cold first start builds the embedding indexes and loads the ontologies,
-and can take minutes.
+and can take 5-10 minutes.
 A warm restart with an intact data directory is much faster.
 
 ## Docker
