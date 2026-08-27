@@ -1,14 +1,19 @@
-# Graph Backend Architecture
+---
+title: Graph backend architecture
+---
 
-This document describes the graph backend that exists today: its persistent
-graphs, derived query views, update rules, and the interfaces application and
-driver authors should use. The graph backend is owned by the Acquirium server;
-drivers and apps access it through the Acquirium client/HTTP API. They do not
-open Oxigraph directly and the graph store is not a Ray actor.
+<!-- TODO: intro -->
+
+This is a guide to the graph backend: the persistent graphs, the derived
+query views, the update rules, and the interfaces application and driver
+authors use.
+The graph backend is owned by the acquirium server.
+Drivers and apps access it through the client and the HTTP API; they do not
+open Oxigraph directly, and the graph store is not a Ray actor.
 
 ## Design goals
 
-The backend separates three concerns that otherwise become easy to mix up:
+The backend separates three kinds of data:
 
 - **Deployment data** is the plant model and the RDF asserted by Acquirium,
   drivers, and apps. It is persisted and is the input to inference and
@@ -19,8 +24,8 @@ The backend separates three concerns that otherwise become easy to mix up:
 - **Derived query data** is disposable cache data created from the first two.
   It is rebuilt rather than edited by callers.
 
-The important rule is: write only deployment data. Never write a derived graph
-or an OntoEnv-managed ontology graph.
+Note that callers only write deployment data.
+Never write a derived graph or an OntoEnv-managed ontology graph.
 
 ## Components and process boundary
 
@@ -29,10 +34,10 @@ store uses a file-backed Oxigraph/RocksDB source dataset, a separate file-backed
 query dataset, and an in-process reentrant lock to coordinate writes and cache
 rebuilds. Oxigraph's files must be opened by this server process only.
 
-Ray actors are used for `DriverRunner` and `AppRunner`, not for the graph store.
-They talk to the server over the normal client API. This gives all drivers one
-authoritative graph writer and avoids distributing a file-backed database handle
-to actor processes.
+Ray actors are used for `DriverRunner` and `AppRunner`, not for the graph
+store; the actors talk to the server over the normal client API.
+This way there is a single authoritative graph writer, and a file-backed
+database handle is never shared with actor processes.
 
 ## Persistent graph roles
 
@@ -57,8 +62,8 @@ namespaces (e.g. `https://qudt.org/...`).
 The plant graph URI is stable (`urn:acquirium#MainGraph`). Acquirium's graph is
 also stable. A source graph URI is a pure function of its `source_id`; asking
 for a source graph computes that URI without any lookup, and the graph itself
-comes into existence in Oxigraph on first write. A source ID is therefore an
-ownership boundary, not merely a timeseries label.
+comes into existence in Oxigraph on first write.
+This means a source ID is an ownership boundary, not just a timeseries label.
 
 ### Public graph views
 
@@ -81,8 +86,7 @@ as part of a normal driver shutdown.
 
 ## Derived-graph pipeline
 
-The pipeline below is the authoritative description of what queries and
-validation see.
+The pipeline below shows what queries and validation see.
 
 ```text
 registered plant, Acquirium, and source data graphs
@@ -117,15 +121,17 @@ does not duplicate asserted data. Import declarations may live in the plant
 graph or in any registered source graph. This matters when a driver contributes
 a model that imports an ontology containing its SHACL rules.
 
-`shifty.infer` is run over the complete deployment-data union, not one source
-at a time. Consequently, rules can relate the plant model to driver/app
-metadata, and inference/validation see the same full deployment boundary.
+`shifty.infer` runs over the complete deployment-data union, not one source
+at a time.
+This means rules can relate the plant model to driver and app metadata, and
+inference and validation see the same full deployment boundary.
 
 ## When derived data is refreshed
 
-The backend tracks a source-data version and a narrower closure version. It
-also maintains the versions represented by the published query cache and one
-``rebuild_in_progress`` flag. Those four values form a small state machine:
+The backend tracks a source-data version and a narrower closure version.
+It also maintains the versions represented by the published query cache and a
+`rebuild_in_progress` flag.
+Together they work like this:
 
 ```text
 write committed → source version advances → published cache is stale
@@ -147,9 +153,10 @@ fresh query / refresh_union               ▼
                            └── yes → rebuild once from latest snapshot
 ```
 
-At most one inference rebuild is in flight. A burst of writes during a rebuild
-does not create competing rebuilders: it causes the owner to discard the stale
-result and make one coalesced follow-up attempt from the newest generation.
+At most one inference rebuild runs at a time.
+Writes arriving during a rebuild do not start competing rebuilds; the owner
+discards the stale result and makes one follow-up attempt from the newest
+generation.
 The default public query returns the last complete published graph immediately
 while this process runs. Pass `wait_for_fresh=True` when a caller must wait for
 the current generation. Neither mode ever exposes a partially replaced graph.
@@ -175,15 +182,15 @@ backend; no caller may treat it as a system of record.
 
 For monitoring, `GET /graph_version` reports the store-owned
 `source_version`, the `published_version` contained in the last complete query
-cache, `is_current`, and `rebuild_in_progress`. The status is a snapshot, not
-a freshness guarantee for a subsequent request; use `wait_for_fresh=True` on
-that query when the query itself must be current.
+cache, `is_current`, and `rebuild_in_progress`. Note that the status is a snapshot; it does not guarantee freshness for a
+subsequent request. Use `wait_for_fresh=True` when the query itself must be
+current.
 
 ## Query and export semantics
 
-`include_dependencies` selects whether queries include ontology/shape triples along with
-inferred deployment data. It does not mean an RDF dataset union of every
-stored graph.
+`include_dependencies` selects whether queries include ontology/shape triples
+along with inferred deployment data.
+Note that it does not mean an RDF dataset union of every stored graph.
 
 | API setting | Default graph queried | Use it for |
 | --- | --- | --- |
@@ -192,7 +199,9 @@ stored graph.
 
 `export_graph(include_dependencies=False)` returns all registered deployment
 data. `export_graph(include_dependencies=True)` adds resolved import
-dependencies. It is an export view, not the same thing as either query cache.
+dependencies.
+Note that this is an export view; it is not the same thing as either query
+cache.
 
 The standards-compatible `/sparql` endpoint serializes every supported query
 form through Oxigraph. The compatibility `/sparql_json` endpoint retains its
@@ -279,7 +288,7 @@ data.
   for `wait_for_fresh=True` on a query that must be current.
 - Prefer one complete RDF insert over several small ones. Each `insert_graph`
   request synchronizes stream references against a fresh inferred view, so a
-  loop of small inserts pays for one inference pass apiece.
+  loop of small inserts runs one inference pass per request.
 
 ## Concurrency and operational constraints
 
@@ -297,12 +306,13 @@ Use these measurements before moving work to another language: Oxigraph and
 native SPARQL JSON serialization are already Rust-backed, while RDFLib graph
 copying and Python result materialization remain the likely Python-owned costs.
 
-Do not run two Acquirium server processes against the same graph-store path.
-RocksDB/Oxigraph locking is intentionally treated as a fatal startup error,
-rather than silently falling back to a different store. Scale driver and app
-actors freely through the HTTP API; scale the graph backend by giving its
-single server process suitable resources or by designing an explicit remote
-service boundary, not by sharing its database files.
+Do not run two acquirium server processes against the same graph-store path;
+RocksDB/Oxigraph locking is treated as a fatal startup error rather than a
+silent fallback to a different store.
+Driver and app actors scale freely through the HTTP API.
+The graph backend scales by giving its single server process suitable
+resources, or by an explicit remote service boundary; never by sharing its
+database files.
 
 ## Open questions and intentionally unsettled design choices
 

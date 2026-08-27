@@ -1,4 +1,5 @@
 # Acquirium
+
 A Data-Metadata Framework for Water Treatment Plants
 
 Acquirium is a framework for storing, managing, querying, and integrating data and metadata for water treatment systems. It combines knowledge graphs and time series data to support analysis, monitoring, and experimentation.
@@ -30,53 +31,70 @@ For development from a clone:
 ```bash
 git clone https://github.com/DataDrivenCPS/acquirium.git
 cd acquirium
-python -m venv .venv && source .venv/bin/activate
-pip install -e .
-# or: uv sync
+uv sync
 ```
 
 ## Quickstart
 
-**Easiest way to experiment with acquirium is through an example. We strongly recommend following the steps in [watertap readme](./deployments/WATERTAP/readme.md). Watertap is a simulation tool that has integration to acquirium. If you follow the steps there, you'll be able to run acquirium as if it's connected to a live plant that generates data or generate historical data that has realistic (abides physical formulations) ranges and try building applications over it.**
+**The easiest way to experiment with acquirium is through an example. We strongly recommend following the steps in the [WaterTAP readme](./deployments/WATERTAP/readme.md).** WaterTAP is a simulation tool with an acquirium integration; following the steps there runs acquirium as if it were connected to a live plant, generating physically realistic data you can query and build applications on.
 
-
-Acquirium ships a single CLI entry point. Start the server and any configured drivers with:
-
-```bash
-acquirium server --config acquirium.toml
-```
-
-A sample `acquirium.toml` is included at the repository root. Key sections:
-
-- `[server]` — bind host/port, choice of timeseries backend (DuckDB or TimescaleDB), data directory.
-- `[driver]` — connection defaults applied to all drivers (server URL, port, tick interval).
-- `[[drivers]]` — drivers to start alongside the server.
-
-By default the server stores data on local disk — an embedded Oxigraph RDF store and a single DuckDB file under `data_dir`. **No external services are required for a fresh install.** For multi-worker or production deployments, switch the config to `timeseries_backend = "timescale"` and point `pg_dsn` at a Postgres + TimescaleDB instance.
-
-Override the bind host/port from the CLI if needed:
-
-```bash
-acquirium server --config acquirium.toml --host 127.0.0.1 --port 8000
-acquirium server --config acquirium.toml --reload          # uvicorn auto-reload
-```
-
-## Driver-only mode
-
-To run only `[[drivers]]` against a remote Acquirium server (no FastAPI on this host), set:
-
-```toml
-[server]
-enabled = false
-```
-
-and configure `[driver].server_url` / `server_port` to point at the remote instance. Then:
+The server and its configured drivers start from one command:
 
 ```bash
 acquirium server --config acquirium.toml
 ```
 
-When `enabled = false`, the `server` subcommand starts only the drivers.
+A sample `acquirium.toml` is included at the repository root. By default everything is stored on local disk (an embedded Oxigraph RDF store and a DuckDB file under `data_dir`); no external services are required. The first start builds the text-resolution indexes and can take 5-10 minutes; later starts reuse the cache.
+
+Querying is a Python client:
+
+```python
+from acquirium import Acquirium
+
+acq = Acquirium(server_url="localhost", server_port=8000)
+acq.query().entity("pump").measurement(quantity_kind="pressure").dataframe(shape="wide")
+```
+
+## Documentation
+
+The guides live in [docs/](./docs/_index.md), organized as tutorials, how-to
+guides, reference and explanation.
+
+**Start here** — learning by doing, on the WaterTAP seawater-ro model:
+
+| tutorial | covers |
+|---|---|
+| [Getting started](./docs/tutorials/getting-started.md) | install, start a server, run a first query |
+| [Querying](./docs/tutorials/querying.md) | the `Query` verbs: entities, topology, measurements, filters, columns |
+| [Query cookbook](./docs/tutorials/query-cookbook.md) | domain questions, how to phrase them, the query |
+| [Working with data](./docs/tutorials/data.md) | lazy fetching, shapes, units, taking a result apart |
+| [Your first driver](./docs/tutorials/first-driver.md) | authoring a CSV driver step by step |
+
+**How-to guides** — one task each:
+[load a plant model](./docs/how-to/load-a-plant-model.md),
+[explore a model](./docs/how-to/explore-a-model.md),
+[debug a query](./docs/how-to/debug-an-empty-query.md),
+[insert data](./docs/how-to/write-data.md),
+[run the server](./docs/how-to/run-the-server.md),
+[resolve text to URIs](./docs/how-to/resolve-text.md).
+
+**Reference** — facts, no narrative:
+[client API](./docs/reference/client-api.md),
+[drivers](./docs/reference/drivers.md),
+[server configuration](./docs/reference/server-config.md),
+[HTTP API](./docs/reference/http-api.md),
+[glossary](./docs/reference/glossary.md).
+
+**Explanation** — why things are the way they are:
+[the query model](./docs/explanation/query-model.md),
+[values](./docs/explanation/values.md) and [units](./docs/explanation/units.md),
+[why drivers](./docs/explanation/drivers.md),
+[the data stream lifecycle](./docs/explanation/stream-lifecycle.md),
+[text resolution](./docs/explanation/text-resolution.md),
+[server internals](./docs/explanation/server-internals.md),
+[graph backend](./docs/explanation/graph-backend.md).
+
+App documentation is pending the app infrastructure rework.
 
 ## Docker stack (optional)
 
@@ -92,54 +110,25 @@ make down                            # stop
 
 ## WaterTAP integration
 
-**The [WaterTAP deployment](./deployments/WATERTAP/readme.md) is the recommended
-starting point** — it walks you through cloning the repo, installing (uv **or**
-pip), and running Acquirium against physically realistic simulated plant data,
-with example notebooks. Start there.
-
-In short, the `watertap` extra installs the Python packages needed for the
-built-in WaterTAP driver, plus a one-time install of native solver extensions:
+The `watertap` extra installs the Python packages for the built-in WaterTAP driver, plus a one-time install of native solver extensions:
 
 ```bash
 pip install "acquirium[watertap]"
 idaes get-extensions                        # native IDAES/IPOPT solver binaries
 # with uv: uv sync --extra watertap && uv run idaes get-extensions
-acquirium server --config acquirium.toml    # with a [[drivers]] entry for WaterTAP
+acquirium server --config deployments/WATERTAP/scripts/acquirium.toml
 ```
 
-For a full demo (WaterTAP + streaming simulator + API examples):
+The [WaterTAP deployment readme](./deployments/WATERTAP/readme.md) covers the models, the data generator, and the example notebooks under [notebooks/watertap/](./notebooks/watertap/).
 
-```bash
-make watertap-up
-uv run scripts/api_example.py
-# or open the notebooks in notebooks/watertap/
-make watertap-down
-```
+## Text resolution
 
-## Logging
-
-Acquirium supports user logs attached to entities in the system. See [scripts/logging_example.py](./scripts/logging_example.py):
-
-```bash
-acquirium server --config acquirium.toml &
-python scripts/logging_example.py
-```
-
-## Text Matcher
-
-Acquirium uses a text matcher to map natural-language input to ontology URIs (classes, predicates, units, quantity kinds). The match algorithm uses **semantic embedding similarity** powered by [FastEmbed](https://github.com/qdrant/fastembed) (default model: `BAAI/bge-small-en-v1.5`). Each ontology concept is represented by one or more surface strings, embedded and stored in an in-memory vector index. At query time the input phrase is embedded and compared against the index using cosine similarity.
-
-There are two separate matchers, each with its own index:
-
-1. **Graph matcher** — indexes classes and predicates from user-inserted RDF graphs. Surface strings are derived from `rdfs:label` values and CamelCase/underscore-split local names.
-2. **QUDT matcher** — indexes units and quantity kinds from the QUDT ontology, which ships bundled inside the `acquirium` package and is registered at the versionless canonical IRIs `https://qudt.org/vocab/unit` and `https://qudt.org/vocab/quantitykind`. Override either by adding a `{ source = "...", as = "<canonical IRI>" }` entry to `[ontologies] sources` in `acquirium.toml`. Surface strings include `rdfs:label`, `skos:prefLabel`, `skos:altLabel`, symbols, UCUM codes, and split local names.
-
-Both indexes are cached to disk and updated incrementally when graphs change. Results can be filtered by `kind` (`class`, `predicate`, `unit`, `quantity_kind`) and are ranked by cosine similarity, deduplicated to the highest-scoring surface per URI. See [scripts/text_matcher_example.py](./scripts/text_matcher_example.py) for usage.
+Free text anywhere in the API (class names, units, quantity kinds) is matched to ontology URIs by embedding similarity, using two indexes built from the bundled ontologies at server start. See the [resolution guide](./docs/how-to/resolve-text.md).
 
 ## Tests
 
 ```bash
-pytest tests/unit            # unit tests only
+uv run pytest tests/unit     # unit tests only (or: make unit-test)
 make test                    # full suite (Docker required)
 ```
 
