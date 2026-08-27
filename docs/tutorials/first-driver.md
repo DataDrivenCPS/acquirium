@@ -16,8 +16,14 @@ shutdown.
 In this tutorial we author a driver for the most common source, a CSV export,
 by extending the built-in `CSVIngestDriver`.
 By the end you have a driver that watches a folder, ingests every new row of
-every new file, and binds each column to a point in the plant model with its
-unit.
+every new file, and gives every column its unit and quantity kind.
+
+**No plant model is involved.** This is data ingest on its own: getting the
+rows in, stored, and described well enough to query by what they measure.
+Attaching them to equipment is what a plant model is for, and that is the
+[next tutorial](driver-with-a-plant-model.md).
+Starting here is deliberate — a driver you can run and watch insert rows is a
+much easier thing to debug than one that also has to match a model.
 
 ## The source
 
@@ -69,9 +75,16 @@ acquirium driver list
 ```
 
 Every column is now a stream, `measurement()` on an empty query finds them,
-and each one has a placeholder point labelled `ro-skid__Feed Flow` and so on.
-What is missing is meaning: nothing says that `Feed Flow` is the flow at the
-RO inlet, or that it is in gallons per minute.
+and each one has a *placeholder point*: a node minted for the stream, labelled
+`ro-skid__Feed Flow` and so on.
+
+```python
+acq.query().measurement(alias="m").metadata()
+```
+
+The rows are safely stored and reachable. What is missing is meaning: nothing
+says that `Feed Flow` is in gallons per minute, or that it is a flow rate at
+all, so you cannot ask for it by anything except its name.
 That is what the subclass adds.
 
 ## Step 2: subclass and keep what works
@@ -99,7 +112,7 @@ each column.
 Do not override `read()` or `tick()` for a CSV source; the two hooks below are
 the places to change behaviour.
 
-## Step 3: declare each column against the model
+## Step 3: say what each column measures
 
 `declare_stream(ref_name)` is called once per distinct column in every batch.
 The default declares the bare identity; override it to say what the column
@@ -108,35 +121,54 @@ means:
 ```python
 from acquirium import CSVIngestDriver
 
-POINTS = {
-    "Feed Flow":     ("urn:ro-skid/feed-flow",       "gal/min", "volume flow rate"),
-    "Permeate Flow": ("urn:ro-skid/permeate-flow",   "gal/min", "volume flow rate"),
-    "Feed Pressure": ("urn:ro-skid/feed-pressure",   "psi",     "pressure"),
-    "Permeate TDS":  ("urn:ro-skid/permeate-tds",    "mg/L",    "mass concentration"),
+COLUMNS = {
+    "Feed Flow":     ("Feed flow",     "gal/min", "volume flow rate"),
+    "Permeate Flow": ("Permeate flow", "gal/min", "volume flow rate"),
+    "Feed Pressure": ("Feed pressure", "psi",     "pressure"),
+    "Permeate TDS":  ("Permeate TDS",  "mg/L",    "mass concentration"),
 }
 
 
 class ROSkidDriver(CSVIngestDriver):
     def declare_stream(self, ref_name: str) -> None:
-        point = POINTS.get(ref_name)
-        if point is None:
-            self.declare(ref_name)               # a column we do not know: keep it, no point
+        described = COLUMNS.get(ref_name)
+        if described is None:
+            self.declare(ref_name)               # a column we do not know: keep it as is
             return
-        point_uri, unit, quantity_kind = point
+        label, unit, quantity_kind = described
         self.declare(
             ref_name,
             value_kind="numeric",
-            point_uri=point_uri,
+            label=label,
             unit=unit,
             quantity_kind=quantity_kind,
         )
 ```
 
 `unit` and `quantity_kind` take free text; they are resolved to QUDT together,
-so the quantity kind disambiguates the unit.
+so the quantity kind disambiguates the unit (`"psi"` alone is ambiguous across
+several pressure-like quantities).
+These land on the column's placeholder point, so the streams become queryable
+by what they measure rather than only by name:
+
+```python
+acq.query().measurement(quantity_kind="pressure").metadata()
+acq.query().measurement(unit="gal/min").metadata()
+```
+
+`label` replaces the default `ro-skid__Feed Flow` and is what result columns
+display in place of the URI, which is worth setting for readability alone.
+
 Declaring is idempotent and cheap, so it is fine that this runs on every batch;
 only the first call for each column does anything.
-A column not in `POINTS` is still ingested, as in step 1.
+A column not in `COLUMNS` is still ingested, as in step 1 — an undescribed
+stream is better than a dropped one.
+
+Note that the driver does not pick point URIs here.
+Without a plant model there is nothing to attach to, and inventing URIs now
+would only make it harder to adopt a real model later: the invented points
+would sit beside the real ones rather than becoming them.
+Let the platform mint the placeholders and describe them.
 
 ## Step 4: fix the frame before it is parsed
 
@@ -153,58 +185,44 @@ Say the skid started adding a `Comment` column with free text in mid-2026:
 (`skip_cols = ["Comment"]` in the config does the same for a fixed name;
 use the hook when the fix needs logic.)
 
-## Step 5: insert the model on first start
-
-The points above have to exist in the graph for queries to reach them through
-equipment.
-A driver can insert its part of the model itself, in `setup()`:
-
-```python
-    def setup(self) -> None:
-        super().setup()                          # validates source_id, watch_dir, glob
-        self.insert_graph_file(self.config_dir() / "ro-skid.ttl")
-```
-
-Note that `super().setup()` is required: it reads the file-source keys.
-`insert_graph_file()` writes into this driver's own graph, so it cannot
-overwrite the plant model or another driver's contribution.
-
 ## The whole driver
+
+Two hooks, no `setup()`, no RDF:
 
 ```python
 from acquirium import CSVIngestDriver
 
-POINTS = {
-    "Feed Flow":     ("urn:ro-skid/feed-flow",     "gal/min", "volume flow rate"),
-    "Permeate Flow": ("urn:ro-skid/permeate-flow", "gal/min", "volume flow rate"),
-    "Feed Pressure": ("urn:ro-skid/feed-pressure", "psi",     "pressure"),
-    "Permeate TDS":  ("urn:ro-skid/permeate-tds",  "mg/L",    "mass concentration"),
+COLUMNS = {
+    "Feed Flow":     ("Feed flow",     "gal/min", "volume flow rate"),
+    "Permeate Flow": ("Permeate flow", "gal/min", "volume flow rate"),
+    "Feed Pressure": ("Feed pressure", "psi",     "pressure"),
+    "Permeate TDS":  ("Permeate TDS",  "mg/L",    "mass concentration"),
 }
 
 
 class ROSkidDriver(CSVIngestDriver):
-    def setup(self) -> None:
-        super().setup()
-        self.insert_graph_file(self.config_dir() / "ro-skid.ttl")
-
     def prepare_frame(self, df, path):
         return df.drop("Comment") if "Comment" in df.columns else df
 
     def declare_stream(self, ref_name: str) -> None:
-        point = POINTS.get(ref_name)
-        if point is None:
+        described = COLUMNS.get(ref_name)
+        if described is None:
             self.declare(ref_name)
             return
-        point_uri, unit, quantity_kind = point
-        self.declare(ref_name, value_kind="numeric", point_uri=point_uri,
+        label, unit, quantity_kind = described
+        self.declare(ref_name, value_kind="numeric", label=label,
                      unit=unit, quantity_kind=quantity_kind)
 ```
 
-Drop a file into `data/ro-skid/`, wait one interval, and check:
+Drop a file into `data/ro-skid/`, wait one interval, and check that the rows
+arrived and carry their meaning:
 
 ```python
-acq.query().entity(uri="urn:ro-skid/RO").measurement(quantity_kind="pressure").dataframe().tail(3)
+acq.query().measurement(alias="m", quantity_kind="pressure").dataframe().tail(3)
 ```
+
+`acquirium driver list` shows the driver as `running`; if it is not there, or
+shows `failed:`, the error is in the `acquirium.driver.ROSkidDriver` log.
 
 ## What happened underneath
 
@@ -215,10 +233,22 @@ The cursor is saved only after the rows were registered and inserted, so a
 failed insert is retried on the next tick with the same rows.
 An unreadable file is logged and skipped without stalling the others.
 
-This driver invented its own point URIs and inserted the RDF to back them.
-When the plant is already described in the graph, the driver binds to points
-that exist instead: see [a driver against an existing plant
-model](driver-with-a-plant-model.md).
+## What you have, and what you do not
+
+Every column is stored, described by unit and quantity kind, and findable with
+`measurement()` and the attribute filters.
+
+What the placeholder points cannot do is topology. Nothing in the graph says
+`Feed Pressure` is measured at the RO inlet, so no query that starts from
+equipment reaches it: `entity("pump").measurement()` will not find these
+streams, and neither will `direction="upstream"`. They are readings without a
+place.
+
+That is not a defect of the driver, it is the absence of a plant model. When
+one exists, the same driver binds its columns to the points already in it and
+the readings join the plant proper: [a driver against an existing plant
+model](driver-with-a-plant-model.md) is this driver again, with that one
+change.
 
 Every option of the built-in drivers, the other base classes and the full
 driver contract are in the [driver reference](../reference/drivers.md).

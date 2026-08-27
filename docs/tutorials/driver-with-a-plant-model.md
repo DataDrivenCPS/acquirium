@@ -2,10 +2,10 @@
 title: A driver against an existing plant model
 ---
 
-[Your first driver](first-driver.md) built a CSV driver from nothing: it
-invented point URIs under `urn:ro-skid/` and inserted its own RDF fragment to
-give them a home. That is the right shape when the driver is the only thing
-that knows the source.
+[Your first driver](first-driver.md) ingested a CSV export with no plant model
+at all. Every column got a placeholder point, described by its unit and
+quantity kind, and the readings were queryable by what they measure — but not
+by where they were measured, because nothing said where that was.
 
 This tutorial is the same driver, the same CSV file, and the same four
 columns, in the situation you are actually in most of the time: **the plant
@@ -14,8 +14,10 @@ model already exists**. Somebody has loaded it with
 described in it, and the points your columns measure are already there with
 their units and quantity kinds.
 
-What changes is that the driver stops inventing and starts *binding*. It gets
-shorter, and the graph gets a consistency check it did not have before.
+What changes is one argument. `declare()` gains a `point_uri` naming a point
+already in the graph, and the stream attaches to it instead of to a
+placeholder. In exchange the driver gets shorter — the model already owns the
+units — and the graph gets a consistency check it did not have before.
 
 ## The situation
 
@@ -137,9 +139,9 @@ null_values = ["NaN"]
 interval    = 60.0
 ```
 
-There is no `setup()` and no `insert_graph_file()` this time. The driver
-contributes no RDF of its own beyond its stream registrations, so it owns no
-model fragment to insert.
+The driver still contributes no RDF of its own beyond its stream
+registrations. The difference is where those registrations land: on points the
+plant model already owns, rather than on placeholders minted for them.
 
 ## Step 3: what the check buys you
 
@@ -152,9 +154,11 @@ what the graph says, and refuses to write a contradiction:
 | the same value | the same value | no change |
 | `qudtqk:Pressure` | `quantity_kind="temperature"` | `ValueError`, nothing inserted |
 
-That is the whole reason to bind rather than invent. In the first tutorial a
-mislabelled column produced a confidently wrong point and no complaint; here
-it fails at declaration time, before a single row is stored.
+That check is the whole reason to bind. In the first tutorial nothing could
+contradict you: a placeholder point has no prior opinion, so declaring
+`quantity_kind="temperature"` on a pressure column produced a confidently
+wrong point and no complaint. Here the model already holds the opinion, and
+the mistake fails at declaration time, before a single row is stored.
 
 Units are the one field that tolerates a difference, and only in one specific
 way.
@@ -219,15 +223,38 @@ data that was already written.
 
 ## Which version to write
 
-Bind to an existing model when the plant is described independently of how it
-is instrumented — the normal case for a real deployment, and the only way two
-sources can feed the same point.
+Bind to an existing model whenever there is one. It is the normal case for a
+real deployment, the only way two sources can feed the same point, and the
+only version where the graph can tell you that you got a column wrong.
 
-Invent points, as in [your first driver](first-driver.md), when the driver is
-the authority on what its source produces and no model describes it yet. You
-can move from the second to the first later: load a model whose point URIs
-match what the driver already declared, and the placeholder points stop being
-used.
+Ingest without one, as in [your first driver](first-driver.md), when no model
+describes the source yet — a new skid, a one-off export, a source you are
+still figuring out. The data is not stranded by that choice: it is stored,
+described, and queryable by what it measures from the first tick.
+
+Going from one to the other is a small change, and it does not strand the data
+you already collected. Load the model, point `declare()` at the real URIs, and
+restart the driver.
+
+Rows already written come along. A stream's `ref_uri` is computed from
+`(source_id, ref_name)`, so it does not change when you add a `point_uri`; the
+new point is linked to the same reference node, and reads follow that link.
+The history was never stored per point.
+
+What you are left with is the old placeholder point, still linked to the same
+reference node and still turning up in `measurement()` on an empty query. It
+is stale metadata, not a second copy of the data. Drop it once the binding is
+confirmed:
+
+```python
+acq.sparql_update(
+    "DELETE WHERE { <urn:acquirium#...__point> ?p ?o }",
+    source_id="ro-skid",
+)
+```
+
+Take the placeholder's URI from the `m` column of the query above; it is the
+one ending in `__point`.
 
 Every option, base class and hook is in the
 [driver reference](../reference/drivers.md).
