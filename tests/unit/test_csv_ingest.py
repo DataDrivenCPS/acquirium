@@ -92,9 +92,9 @@ def test_null_values_config_drops_sentinel_values(tmp_path):
     assert batch["temp"] == [(datetime(2024, 1, 2, tzinfo=timezone.utc), "21.0")]
 
 
-def test_prepare_frame_hook_sees_text_frame_with_schema_inference_off(tmp_path):
-    """infer_schema_length=0 reads every column as text, and prepare_frame
-    runs on the raw frame before timestamps are parsed."""
+def test_prepare_frame_hook_sees_text_frame(tmp_path):
+    """Every column reads as text, and prepare_frame runs on the raw frame
+    before timestamps are parsed."""
     import polars as pl
 
     class Fixer(CSVIngestDriver):
@@ -112,11 +112,25 @@ def test_prepare_frame_hook_sees_text_frame_with_schema_inference_off(tmp_path):
     driver = Fixer(aq, {"driver": {
         "watch_dir": str(tmp_path), "glob": "*.csv",
         "source_id": "csv_files", "format": "wide",
-        "infer_schema_length": 0,
     }})
     driver.setup()
     batch, _ = parse(driver, p)
     assert [v for _, v in batch["temp"]] == ["731.00", "3293.00"]
+
+
+def test_column_shape_change_after_sample_window_does_not_fail(tmp_path):
+    """A status word or a first decimal reading far into a numeric column
+    must not fail the file (polars would type the column from a row sample)."""
+    rows = ["time,valve,do"]
+    for i in range(150):
+        rows.append(f"2024-01-01T00:{i // 60:02d}:{i % 60:02d}Z,0,7.1")
+    rows.append("2024-01-01T00:02:30Z,86.306,LOW")
+    p = tmp_path / "scada.csv"
+    p.write_text("\n".join(rows) + "\n")
+    driver = make_driver({}, tmp_path=tmp_path)
+    batch, _ = parse(driver, p)
+    assert batch["valve"][-1][1] == "86.306"
+    assert batch["do"][-1][1] == "LOW"
 
 
 def test_declare_stream_hook_attaches_metadata(tmp_path):

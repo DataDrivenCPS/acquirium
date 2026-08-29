@@ -951,7 +951,12 @@ class Query:
             rows_kept = [[r[i] for i in keep_idx] for r in rows]
             cols_w_alias = [self._col_name_to_alias(c) for c in cols_kept]
 
-            pl_table = pl.DataFrame(rows_kept, schema=cols_w_alias, orient="row")
+            # Scan every row for the column types: a sparse column (e.g. a point
+            # label bound on few rows) is otherwise typed Null from the first
+            # rows and the first real value fails the build.
+            pl_table = pl.DataFrame(
+                rows_kept, schema=cols_w_alias, orient="row", infer_schema_length=None,
+            )
             # point labels: drop all-null ``*.label`` columns and show the
             # rest right after their node's column
             keep: list[str] = []

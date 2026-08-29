@@ -294,7 +294,6 @@ keys need no declaration.
 | `encoding` | `"utf8-lossy"` | CSV |
 | `ragged_lines` | `"ignore"` | CSV: `"ignore"` keeps a row with the wrong cell count, `"skip"` drops it, `"error"` fails the file |
 | `null_values` | `[]` | CSV: missing-value sentinels |
-| `infer_schema_length` | `100` | CSV: rows polars samples to type a column; `0` reads every column as text |
 | `sheets` | first sheet | XLSX: sheet names; several are concatenated |
 
 Timestamp columns are discovered from common names (`timestamp`, `ts`,
