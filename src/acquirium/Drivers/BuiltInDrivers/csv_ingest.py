@@ -60,7 +60,6 @@ class CSVIngestDriver(FileIngestDriver):
         ragged_lines = "ignore"      # "ignore" | "skip" | "error"
         header_contains = ["time"]   # cell values identifying the header row
         null_values  = ["Null"]      # the source's missing-value sentinels
-        infer_schema_length = 0      # 0 reads every column as text
 
     ``ragged_lines`` controls rows whose cell count differs from the header:
     ``"ignore"`` keeps the row (extra cells dropped, missing ones null),
@@ -70,10 +69,11 @@ class CSVIngestDriver(FileIngestDriver):
     skipping any banner lines before the first line containing all the listed
     values. When set it takes precedence over ``skip_rows``.
 
-    ``infer_schema_length`` is the row-sample size polars types each column
-    from (default 100). Set it to 0 for sources whose columns change shape
-    mid-file (e.g. plain numbers early, thousands-separated later): every
-    column then reads as text and value kinds are inferred downstream.
+    Every cell is read as text. Typing columns from a row sample breaks on
+    sources whose columns change shape mid-file (a status word such as
+    ``LOW`` in a numeric column, or a column that is ``0`` for hundreds of
+    rows before its first decimal reading); value kinds are inferred
+    downstream instead.
 
     Source-specific quirks subclass one of two hooks — :meth:`prepare_frame`
     transforms the raw frame before reshaping, :meth:`declare_stream`
@@ -141,7 +141,7 @@ class CSVIngestDriver(FileIngestDriver):
             encoding=encoding,
             truncate_ragged_lines=ragged != "error",
             null_values=null_values or None,
-            infer_schema_length=int(cfg.get("infer_schema_length", 100)),
+            infer_schema=False,
         )
         skip_cols = [c for c in _as_tuple(cfg.get("skip_cols", []), "skip_cols") if c in df.columns]
         if skip_cols:
