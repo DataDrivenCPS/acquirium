@@ -2,36 +2,66 @@
 title: Acquirium documentation
 ---
 
-Acquirium is a data platform for water treatment plants.
-The server stores two things: a semantic model of the plant (equipment,
-piping, sensors and their meaning, described with the ASHRAE 223 and NAWI
-water ontologies) and the timeseries of every measured point.
-Queries describe what you are looking for; the server finds the matching
-points and returns their data.
+Acquirium is a data management platform for water treatment plants. It
+pairs with [WaTr](https://github.com/DataDrivenCPS/water-ontology), an
+ontology for water treatment operations that extends ASHRAE 223P with
+treatment processes, substance flows, chemical media and references to
+external data sources. 
+
+The server stores two things: the semantic model of the plant (equipment,
+piping, sensors and what they measure, described with WaTr and 223P) and
+the timeseries of every measured point, whatever its source. Queries
+describe what you are looking for in domain terms and are refined step by
+step; the server finds the matching points and returns their data, without
+SPARQL or knowledge of the graph's structure.
+
+The design is described in [Acquirium: Toward Interoperable Data Driven
+Applications in Water Treatment Systems](https://dl.acm.org/doi/abs/10.1145/3744256.3812557)
+(BuildSys '26). If you use Acquirium in your work, cite:
+
+```bibtex
+@inproceedings{saka2026acquirium,
+  title     = {Acquirium: Toward Interoperable Data Driven Applications in Water Treatment Systems},
+  author    = {Saka, Umut Mete and Chapin, Fletcher T. and Paul, Lazlo and Anwar, Avia and Struck, Scott and Mauter, Meagan S. and Fierro, Gabe},
+  booktitle = {Proceedings of the 13th ACM International Conference on Systems for Energy-Efficient Buildings, Cities, and Transportation (BuildSys '26)},
+  year      = {2026},
+  publisher = {ACM},
+  address   = {Banff, AB, Canada},
+  doi       = {10.1145/3744256.3812557}
+}
+```
 
 ## Architecture
 
 ```text
-your code ── Acquirium client ──HTTP──▶ acquirium server
-                                          ├─ graph store        (semantic model + ontologies)
-                                          ├─ timeseries store   (duckdb or timescale)
-                                          ├─ text resolution    (embedding indexes)
-                                          └─ Ray actors         (drivers and apps)
-
-drivers: feed data in, on a schedule        apps: compute on data, write results back
+                                  ┌──────────────────────────────────────────────┐
+                                  │               acquirium server               │
+ ┌───────────┐   ┌────────────┐   │                                              │
+ │ your code │──▶│  Acquirium │   │   graph store        semantic model + WaTr   │
+ │ notebooks │◀──│   client   │◀─▶│   timeseries store   duckdb or timescale     │
+ └───────────┘   └────────────┘   │   text resolution    embedding indexes       │
+                       HTTP       │                    ▲                         │
+                                  │                    │ write                   │
+                                  │             ┌──────┴──────┐                  │
+                                  │             │   drivers   │                  │
+                                  │             │ (Ray actor) │                  │
+                                  │             └──────▲──────┘                  │
+                                  └────────────────────┼─────────────────────────┘
+                                                       │ poll on a schedule
+                                     SCADA · historians · CSV · MQTT · lab sheets
 ```
 
 ## Tutorials
 
-Learning by doing, on the public WaterTAP seawater-ro model.
+Tutorials walk through the capabilities of Acquirium. We recommend starting here.
 
 - [Getting started](tutorials/getting-started.md) — install, start a server, run a first query
-- [Querying](tutorials/querying.md) — the `Query` verbs: entities, topology, measurements, filters, columns
-- [Query cookbook](tutorials/query-cookbook.md) — domain questions, how to phrase them, the query
-- [Working with data](tutorials/data.md) — lazy fetching, shapes, units, taking a result apart
-- [Your first driver](tutorials/first-driver.md) — authoring a CSV driver step by step
-- [A driver against an existing plant model](tutorials/driver-with-a-plant-model.md) — the same driver, binding to points the model already has
-- [Your first app](tutorials/first-app.md) — pending the app rework
+- [Querying](tutorials/querying.md) — accessing plant metadata and timeseries data with the incremental query interface
+- [Query cookbook](tutorials/query-cookbook.md) — example queries for common domain questions
+- [Working with data](tutorials/data.md) — accessing and preprocessing timeseries data
+- [Your first driver](tutorials/first-driver.md) — authoring a CSV driver step by step without a plant model
+- [A driver against an existing plant model](tutorials/driver-with-a-plant-model.md) — the same driver with a plant model, binding its streams to the model's points
+- [Your first app](tutorials/first-app.md) — coming soon
 
 The notebooks under [`notebooks/watertap/`](https://github.com/DataDrivenCPS/acquirium/tree/main/notebooks/watertap) are runnable tutorials too: a quick start, the query interface feature by feature, a regulatory-compliance check and a soft sensor.
 
@@ -40,13 +70,11 @@ The notebooks under [`notebooks/watertap/`](https://github.com/DataDrivenCPS/acq
 
 ## How-to guides
 
-One task each.
-
-- [Load a plant model](how-to/load-a-plant-model.md) — insert the model, check it landed, validate it against the shapes
-- [Explore a model](how-to/explore-a-model.md) — build a query step by step; `options()` and `facets()`
-- [Debugging queries for an unexpected result](how-to/debug-an-empty-query.md) — the five usual causes
-- [Inserting data](how-to/write-data.md) — register streams and write rows without a driver; the logbook
 - [Run the server](how-to/run-the-server.md) — the server command, startup, Docker
+- [Debugging queries for an unexpected result](how-to/debug-an-empty-query.md) — the five usual causes
+- [Explore a model](how-to/explore-a-model.md) — build a query step by step; `options()` and `facets()`
+- [Load a plant model](how-to/load-a-plant-model.md) — insert the model, check it landed, validate it against the shapes
+- [Inserting data](how-to/write-data.md) — register streams and write rows without a driver; the logbook
 - [Resolve text to URIs](how-to/resolve-text.md) — `resolve()`, units and conversion, tuning
 
 <!-- TODO: `generate_grafana_dashboard()` and the Grafana service in
@@ -55,24 +83,24 @@ One task each.
 
 ## Reference
 
-Facts, no narrative.
+The reference guides contain complete interface of each module:
 
 - [Acquirium Client API](reference/client-api.md) — every method of `Acquirium`, `Query`, `DataObject`, `AcquiriumClient`
 - [Driver reference](reference/drivers.md) — class hierarchy, hooks, state, config keys, built-in drivers, CLI
-- [App reference](reference/apps.md) — pending the app rework
+- [App reference](reference/apps.md) — coming soon
 - [Server configuration](reference/server-config.md) — `[server]`, environment variables, `[ontologies]`, the endpoint table
 - [HTTP API](reference/http-api.md) — the raw endpoints
 - [Glossary](reference/glossary.md) — URIs, CURIEs, free text, the plant model, querying and data terms
 
 ## Explanation
 
-Why things are the way they are.
+These contain explanation behind the motivation of key design choices we made while building acquirium:
 
 - [The query model](explanation/query-model.md) — what a query is, why we built it, free text, how it executes
 - [Values](explanation/values.md) — numeric and text storage, `value_mode`, `cast_value`
 - [Units](explanation/units.md) — point units, storage units, compatibility, automatic and requested conversion
 - [Drivers](explanation/drivers.md) — why drivers, and the sMAP inspiration
-- [Apps](explanation/apps.md) — pending the app rework
+- [Apps](explanation/apps.md) — coming soon
 - [The data stream lifecycle](explanation/stream-lifecycle.md) — how streams are identified, stored and found again
 - [Text resolution](explanation/text-resolution.md) — how matching works
 - [Server internals](explanation/server-internals.md) — storage backends, the graph store, the embedding indexes
