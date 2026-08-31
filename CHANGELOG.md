@@ -10,6 +10,23 @@ change in any release.
 
 ## [Unreleased]
 
+## [0.4.0a3] - 2026-08-30
+
+### Fixed
+- CSV ingestion no longer types columns from a 100-row sample; every cell is
+  read as text (values were cast to text downstream regardless). Files where a
+  numeric column carries a status word (`LOW`, `OK`) past the sample window, or
+  holds `0` for hundreds of rows before its first decimal reading, previously
+  failed to read.
+- `Query.metadata()` (explore and `Q`) infers its result-table column types
+  from all rows. A sparse column — a point label bound on few rows — was
+  previously typed from the first 100 rows and the first real value failed the
+  build.
+
+### Removed
+- The `infer_schema_length` CSV driver key: with every cell read as text it
+  has no effect.
+
 ## [0.4.0a2] - 2026-08-27
 
 ### Added
@@ -340,7 +357,8 @@ change in any release.
 - Text matcher backed by FastEmbed with QUDT and graph indexes.
 - Grafana dashboard helpers.
 
-[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a2...HEAD
+[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a3...HEAD
+[0.4.0a3]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a2...v0.4.0a3
 [0.4.0a2]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a1...v0.4.0a2
 [0.4.0a1]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a0...v0.4.0a1
 [0.4.0a0]: https://github.com/DataDrivenCPS/acquirium/compare/v0.3.1...v0.4.0a0
