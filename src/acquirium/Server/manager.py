@@ -26,7 +26,11 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     import pyarrow as pa
 import shutil
-from acquirium.TextMatch.embedding_matcher import EmbeddingMatcher, _split_local_name
+from acquirium.TextMatch.embedding_matcher import (
+    EmbeddingMatcher,
+    ResolveResult,
+    _split_local_name,
+)
 from acquirium.TextMatch.qudt_store import QUDTStore
 from acquirium.TextMatch.resolver import ConceptResolver
 
@@ -136,6 +140,7 @@ class Manager:
         qudt_graph: Graph | None = None,
         qudt_converter: QUDTUnitConverter | None = None,
         recreate: bool = False,
+        embeddings: bool = True,
     ):
         if not logging.getLogger().handlers:
             from acquirium.internals._log import configure_logging
@@ -200,48 +205,69 @@ class Manager:
         self._app_runs: dict[str, dict[str, Any]] = {}
         self._app_runs_lock = Lock()
 
-        _emb_model = os.getenv("ACQUIRIUM_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
+        self.embeddings_enabled = bool(embeddings)
 
-        # Persist the downloaded embedding model under the data dir so it
-        # survives OS temp-dir purges (fastembed defaults to $TMPDIR). A
-        # pre-warmed cache (e.g. baked into the Docker image) can be pointed
-        # at with FASTEMBED_CACHE_PATH.
-        _model_cache = Path(
-            os.getenv("FASTEMBED_CACHE_PATH") or base / "embedding_cache" / "models"
-        )
+        if self.embeddings_enabled:
+            _emb_model = os.getenv("ACQUIRIUM_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 
-        # Dual matchers: graph (class/predicate) and QUDT (unit/quantity_kind)
-        self._graph_matcher = EmbeddingMatcher(
-            model_name=_emb_model,
-            cache_dir=base / "embedding_cache" / "graph",
-            model_cache_dir=_model_cache,
-        )
-        self._qudt_matcher = EmbeddingMatcher(
-            model_name=_emb_model,
-            cache_dir=base / "embedding_cache" / "qudt",
-            model_cache_dir=_model_cache,
-        )
+            # Persist the downloaded embedding model under the data dir so it
+            # survives OS temp-dir purges (fastembed defaults to $TMPDIR). A
+            # pre-warmed cache (e.g. baked into the Docker image) can be pointed
+            # at with FASTEMBED_CACHE_PATH.
+            _model_cache = Path(
+                os.getenv("FASTEMBED_CACHE_PATH") or base / "embedding_cache" / "models"
+            )
+
+            # Dual matchers: graph (class/predicate) and QUDT (unit/quantity_kind)
+            self._graph_matcher = EmbeddingMatcher(
+                model_name=_emb_model,
+                cache_dir=base / "embedding_cache" / "graph",
+                model_cache_dir=_model_cache,
+            )
+            self._qudt_matcher = EmbeddingMatcher(
+                model_name=_emb_model,
+                cache_dir=base / "embedding_cache" / "qudt",
+                model_cache_dir=_model_cache,
+            )
+        else:
+            # Disabled: no matchers, and nothing is written under
+            # embedding_cache/ — a later start with embeddings on finds the
+            # directory exactly as an embedding run left it (or absent) and
+            # builds normally.
+            self._graph_matcher = None
+            self._qudt_matcher = None
+
+        # Exact-label index for no-embeddings resolution; built lazily by
+        # _ensure_label_index on first use.
+        self._label_index: dict[str, list[tuple[str, str, str | None]]] | None = None
 
         # Single normalization façade, sharing the lazily-built converter.
+        # Without embeddings the exact-label SPARQL lookup stands in for
+        # the matchers so full names still resolve.
         self._concept_resolver = ConceptResolver(
             graph_matcher=self._graph_matcher,
             qudt_matcher=self._qudt_matcher,
             converter_provider=self._ensure_qudt_converter,
+            label_lookup=None if self.embeddings_enabled else self._label_resolve,
         )
 
         # Kept for backward compat — points to graph matcher
         self.embedding_matcher = self._graph_matcher
 
         # Embedding index status tracking
+        _initial_state = "idle" if self.embeddings_enabled else "disabled"
         self._embedding_status_lock = Lock()
         self._embedding_status: dict[str, dict[str, Any]] = {
-            "graph": {"state": "idle", "concepts": 0, "surfaces": 0, "error": None, "last_built": None, "duration_s": None},
-            "qudt":  {"state": "idle", "concepts": 0, "surfaces": 0, "error": None, "last_built": None, "duration_s": None},
+            "graph": {"state": _initial_state, "concepts": 0, "surfaces": 0, "error": None, "last_built": None, "duration_s": None},
+            "qudt":  {"state": _initial_state, "concepts": 0, "surfaces": 0, "error": None, "last_built": None, "duration_s": None},
         }
 
         # Embedding corpus is the static ontoenv vocabularies; build once.
-        with timed_debug(logger, "Manager.__init__: _build_embedding_indexes"):
-            self._build_embedding_indexes()
+        if self.embeddings_enabled:
+            with timed_debug(logger, "Manager.__init__: _build_embedding_indexes"):
+                self._build_embedding_indexes()
+        else:
+            logger.info("Embeddings disabled; skipping embedding index build")
         logger.debug("Manager.__init__: complete in %.2fs", perf_counter() - start)
 
     
@@ -264,6 +290,7 @@ class Manager:
             ontoenv_root=os.getenv("ACQUIRIUM_ONTOENV_ROOT"),
             ontology_sources=list(ont_cfg.sources) or None,
             recreate=os.getenv("ACQUIRIUM_RECREATE", "false").lower() == "true",
+            embeddings=os.getenv("ACQUIRIUM_EMBEDDINGS", "true").lower() == "true",
         )
 
     def _sync_stream_refs_from_graph(self) -> int:
@@ -451,6 +478,9 @@ class Manager:
             WATER_IRI, S223_IRI, QUDT_UNIT_IRI, QUDT_QK_IRI,
         )
 
+        if not self.embeddings_enabled:
+            return
+
         self._update_embedding_status("graph", state="building")
         t0 = perf_counter()
         try:
@@ -494,6 +524,105 @@ class Manager:
         except Exception as exc:
             self._update_embedding_status("qudt", state="error", error=str(exc))
             logger.warning("Failed to build QUDT embedding index", exc_info=True)
+
+    def _ensure_label_index(self) -> dict[str, list[tuple[str, str, str | None]]]:
+        """Lazily build the exact-label index for no-embeddings resolution.
+
+        Maps a normalized (whitespace-collapsed, lower-cased) label to
+        ``(uri, label, kind_tag)`` entries. The corpus is the same static
+        ontoenv vocabularies the embedding indexes are built from — water +
+        s223 (kind tagged ``class`` / ``predicate`` from rdf:type where
+        recognizable, else untagged) and the QUDT quantity kinds. Units are
+        deliberately absent: the deterministic converter source already
+        resolves exact unit text with higher authority.
+        """
+        if self._label_index is not None:
+            return self._label_index
+        from acquirium._ontologies import WATER_IRI, S223_IRI, QUDT_QK_IRI
+
+        label_preds = (RDFS.label, SKOS.prefLabel, SKOS.altLabel)
+        class_types = {RDFS.Class, OWL_CLASS, WATR.Class}
+        pred_types = {RDF_PROP, OWL_OBJ_PROP, OWL_DATA_PROP}
+        index: dict[str, list[tuple[str, str, str | None]]] = {}
+
+        def _add(graph: Graph, default_tag: str | None) -> None:
+            for pred in label_preds:
+                for subj, obj in graph.subject_objects(pred):
+                    if not isinstance(subj, URIRef):
+                        continue
+                    label = str(obj)
+                    norm = " ".join(label.split()).lower()
+                    if not norm:
+                        continue
+                    entries = index.setdefault(norm, [])
+                    uri = str(subj)
+                    if any(e[0] == uri for e in entries):
+                        continue
+                    tag = default_tag
+                    if tag is None:
+                        types = set(graph.objects(subj, RDF.type))
+                        if types & class_types:
+                            tag = "class"
+                        elif types & pred_types:
+                            tag = "predicate"
+                    entries.append((uri, label, tag))
+
+        for iri, tag in (
+            (WATER_IRI, None), (S223_IRI, None), (QUDT_QK_IRI, "quantity_kind"),
+        ):
+            try:
+                with timed_debug(logger, "label index: %s", iri):
+                    _add(self.graph_store.named_graph(iri), tag)
+            except Exception:
+                logger.warning("label index: failed to read %s", iri, exc_info=True)
+
+        logger.info("Exact-label index: %d distinct labels", len(index))
+        self._label_index = index
+        return index
+
+    def _label_resolve(
+        self,
+        text: str,
+        kind: str | None,
+        top_k: int,
+        min_score: float,
+    ) -> list[ResolveResult]:
+        """Exact-label lookup (score 1.0 hits only).
+
+        The resolution source that stands in for the embedding matchers when
+        embeddings are disabled: a case-insensitive exact match of *text*
+        against the static-vocabulary label index. A ``class``/``predicate``
+        tagged entry only answers its own kind (``substance`` and ``process``
+        concepts are ontology classes, so they accept ``class``-tagged hits);
+        untagged entries answer any kind. Fuzzy resolution needs embeddings.
+        ``min_score`` is ignored — every hit is exact.
+        """
+        norm = " ".join(text.split()).lower()
+        if not norm:
+            return []
+        entries = self._ensure_label_index().get(norm, [])
+        results: list[ResolveResult] = []
+        for uri, label, tag in entries:
+            if not (
+                tag is None
+                or kind is None
+                or tag == kind
+                or (kind in ("substance", "process") and tag == "class")
+            ):
+                continue
+            results.append(
+                ResolveResult(
+                    uri=uri,
+                    kind=kind or (tag or ""),
+                    label=label,
+                    score=1.0,
+                    matched_surface=label,
+                    match_stage="exact",
+                )
+            )
+            if len(results) >= max(int(top_k), 1):
+                break
+        return results
 
     def resolve_text(
         self,
@@ -943,9 +1072,17 @@ class Manager:
         return self.graph_store.namespace_manager()
 
     def embedding_status(self) -> dict[str, Any]:
-        """Return the current state of each embedding index."""
+        """Return the current state of each embedding index.
+
+        The top-level ``enabled`` key says whether embeddings are on at all;
+        when ``False`` both indexes report state ``"disabled"``.
+        """
         with self._embedding_status_lock:
-            return {k: dict(v) for k, v in self._embedding_status.items()}
+            status: dict[str, Any] = {
+                k: dict(v) for k, v in self._embedding_status.items()
+            }
+        status["enabled"] = self.embeddings_enabled
+        return status
 
     # -------------------- Unit conversion --------------------
 

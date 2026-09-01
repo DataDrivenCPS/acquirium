@@ -54,6 +54,7 @@ _SERVER_ENV_MAP: dict[str, str] = {
     "timeseries_backend":     "ACQUIRIUM_TIMESERIES_BACKEND",
     "graph_path":             "ACQUIRIUM_GRAPH_PATH",
     "embedding_model":        "ACQUIRIUM_EMBEDDING_MODEL",
+    "embeddings":             "ACQUIRIUM_EMBEDDINGS",
     "recreate":               "ACQUIRIUM_RECREATE",
     "workers":                "ACQUIRIUM_WORKERS",
 }
