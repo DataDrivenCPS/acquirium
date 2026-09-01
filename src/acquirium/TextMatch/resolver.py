@@ -9,11 +9,7 @@ Sources, in authority order:
 
 1. graph     — embedding index over the union (data) graph; all kinds.
 2. converter — `QUDTUnitConverter` deterministic resolution; units only.
-3. label     — exact rdfs:label / skos lookup against the graph store; all
-               kinds. Only present when embeddings are disabled (the graph
-               and qudt matchers then are absent) so resolution of exact
-               names keeps working without a model.
-4. qudt      — embedding index over the broad QUDT vocabulary; unit /
+3. qudt      — embedding index over the broad QUDT vocabulary; unit /
                quantity_kind / untyped.
 
 A source declares which ``kind`` values it serves and an optional per-source
@@ -108,19 +104,12 @@ class ConceptResolver:
     """Resolve natural-language text to ontology / QUDT URIs.
 
     Args:
-        graph_matcher: embedding index built from the union (data) graph,
-            or ``None`` when embeddings are disabled.
-        qudt_matcher: embedding index over the broad QUDT vocabulary, or
-            ``None`` when embeddings are disabled.
+        graph_matcher: embedding index built from the union (data) graph.
+        qudt_matcher: embedding index over the broad QUDT vocabulary.
         converter_provider: zero-arg callable returning a ready
             ``QUDTUnitConverter``. It may raise if no QUDT graph is available;
             the converter source then yields nothing and the cascade falls
             through to the matchers.
-        label_lookup: optional exact-label resolution callable with the
-            ``produce`` signature (``(text, kind, top_k, min_score) ->
-            list[ResolveResult]``), slotted after the converter. Supplied by
-            the Manager when embeddings are disabled so exact names still
-            resolve without a model; must return exact (score 1.0) hits only.
     """
 
     # Over-fetch this many candidates when context is present so the rerank
@@ -129,12 +118,9 @@ class ConceptResolver:
 
     def __init__(
         self,
-        graph_matcher: EmbeddingMatcher | None,
-        qudt_matcher: EmbeddingMatcher | None,
+        graph_matcher: EmbeddingMatcher,
+        qudt_matcher: EmbeddingMatcher,
         converter_provider: Callable[[], "QUDTUnitConverter"],
-        label_lookup: Callable[
-            [str, str | None, int, float], list[ResolveResult]
-        ] | None = None,
     ) -> None:
         self._graph_matcher = graph_matcher
         self._qudt_matcher = qudt_matcher
@@ -145,47 +131,30 @@ class ConceptResolver:
                 text=text, kind=kind, top_k=k, min_score=ms
             )
 
-        _all_kinds = frozenset(
-            {None, "class", "predicate", "unit", "quantity_kind",
-             "substance", "process"}
-        )
-
         # Authority order — list position is the precedence (a stable rank
-        # makes earlier sources win ties against later ones). Matcher
-        # sources are present only when their index exists; the converter
-        # always is. The label source stands in for the matchers when
-        # embeddings are off, after the converter so deterministic unit
-        # resolution keeps priority.
-        self._sources: list[Source] = []
-        if graph_matcher is not None:
-            self._sources.append(
-                Source(
-                    "graph",
-                    kinds=_all_kinds,
-                    produce=_matcher(graph_matcher),
-                    floor=0.8,
-                    floor_kinds=frozenset({"unit", "quantity_kind"}),
-                )
-            )
-        self._sources.append(
+        # makes earlier sources win ties against later ones).
+        self._sources: list[Source] = [
+            Source(
+                "graph",
+                kinds=frozenset(
+                    {None, "class", "predicate", "unit", "quantity_kind",
+                     "substance", "process"}
+                ),
+                produce=_matcher(graph_matcher),
+                floor=0.8,
+                floor_kinds=frozenset({"unit", "quantity_kind"}),
+            ),
             Source(
                 "converter",
                 kinds=frozenset({"unit"}),
                 produce=lambda text, kind, k, ms: self._deterministic_unit(text),
-            )
-        )
-        if label_lookup is not None:
-            self._sources.append(
-                Source("label", kinds=_all_kinds, produce=label_lookup)
-            )
-        if qudt_matcher is not None:
-            self._sources.append(
-                Source(
-                    "qudt",
-                    kinds=frozenset({None, "unit", "quantity_kind"}),
-                    produce=_matcher(qudt_matcher),
-                )
-            )
+            ),
+            Source(
+                "qudt",
+                kinds=frozenset({None, "unit", "quantity_kind"}),
+                produce=_matcher(qudt_matcher),
+            ),
+        ]
 
     # -------------------- public API --------------------
     def resolve(
