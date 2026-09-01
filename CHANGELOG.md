@@ -10,6 +10,18 @@ change in any release.
 
 ## [Unreleased]
 
+## [0.4.0a4] - 2026-09-01
+
+### Fixed
+- Dependency bounds. `pyshifty`, `pyontoenv`, `numpy`, and `ipykernel` were
+  declared as either exact pins or open-ended ranges. Published releases
+  carried `pyshifty>=0.3.0`, so a fresh `pip install acquirium` pulled
+  pyshifty 0.4.x, whose API change crashed the server at startup. All four
+  now use compatible-release ranges (`pyshifty>=0.3.0,<0.4`,
+  `pyontoenv>=0.6.0,<0.7`, `numpy>=2.3,<3`, `ipykernel>=7.0.1,<8`), so new
+  installs stay on tested majors without forcing exact versions on
+  downstream environments.
+
 ## [0.4.0a3] - 2026-08-30
 
 ### Fixed
@@ -357,7 +369,8 @@ change in any release.
 - Text matcher backed by FastEmbed with QUDT and graph indexes.
 - Grafana dashboard helpers.
 
-[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a3...HEAD
+[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a4...HEAD
+[0.4.0a4]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a3...v0.4.0a4
 [0.4.0a3]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a2...v0.4.0a3
 [0.4.0a2]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a1...v0.4.0a2
 [0.4.0a1]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a0...v0.4.0a1
