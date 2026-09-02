@@ -202,7 +202,7 @@ class Health(BaseModel):
 
 
 class EmbeddingIndexStatus(BaseModel):
-    state: str          # "idle" | "building" | "ready" | "error" | "disabled"
+    state: str          # "idle" | "building" | "ready" | "error"
     concepts: int
     surfaces: int
     error: str | None
@@ -210,7 +210,9 @@ class EmbeddingIndexStatus(BaseModel):
     duration_s: float | None
 
 class EmbeddingStatus(BaseModel):
-    enabled: bool = True
+    # False in exact-only mode: the indexes are built and ready, but hold no
+    # embeddings, so they answer exact matches only.
+    semantic: bool = True
     graph: EmbeddingIndexStatus
     qudt: EmbeddingIndexStatus
 
@@ -347,7 +349,7 @@ def embedding_status():
     manager = app.state.manager
     status = manager.embedding_status()
     return EmbeddingStatus(
-        enabled=status.get("enabled", True),
+        semantic=status.get("semantic", True),
         graph=EmbeddingIndexStatus(**status["graph"]),
         qudt=EmbeddingIndexStatus(**status["qudt"]),
     )
