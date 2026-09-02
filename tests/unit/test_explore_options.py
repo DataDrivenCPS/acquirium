@@ -126,3 +126,19 @@ class TestOptionsErrors:
             base(make_client([], [])).options("process")
         with pytest.raises(ValueError, match="does not apply to entity"):
             base(make_client([], [])).options("quantity_kind", of="ro")
+
+
+def test_metadata_types_sparse_column_from_all_rows():
+    """A column that is null for the first 100+ rows (e.g. a point label bound
+    on few points) must still build; polars would otherwise type it Null from
+    its row sample and fail on the first real value."""
+    client = MagicMock()
+    rows = [["urn:p#ro1", f"urn:p#m{i}", "urn:p#ref", None, None, None] for i in range(150)]
+    rows.append(["urn:p#ro1", "urn:p#m150", "urn:p#ref", None, None, "CPU usage"])
+    client.sparql_query.return_value = {
+        "columns": ["v0", "v1", "ext1", "unit1", "extunit1", "lbl1"], "rows": rows,
+    }
+    client.compact_uri.side_effect = lambda x: str(x).rsplit("#", 1)[-1]
+    meta = base(client).metadata()
+    assert meta.schema["m.label"] == pl.Utf8
+    assert meta["m.label"].drop_nulls().to_list() == ["CPU usage"]

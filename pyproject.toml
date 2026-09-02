@@ -1,6 +1,6 @@
 [project]
 name = "acquirium"
-version = "0.4.0a2"
+version = "0.4.0a4"
 description = "Acquirium: A data-metadata management platform for water treatment systems"
 readme = "README.md"
 authors = [
@@ -41,16 +41,16 @@ dependencies = [
     "fastapi>=0.125.0",
     "fastexcel>=0.17.2",
     "grafanalib>=0.7.1",
-    "ipykernel==7.0.1",
+    "ipykernel>=7.0.1,<8",
     "matplotlib>=3.10.8",
-    "numpy==2.3.5",
+    "numpy>=2.3,<3",
     "polars>=1.36.1",
     "psycopg[binary]>=3.3.1",
     "pyarrow>=22.0.0",
     "pydantic>=2.12.5",
-    "pyontoenv==0.6.0",
+    "pyontoenv>=0.6.0,<0.7",
     "pyoxigraph>=0.5.2",
-    "pyshifty>=0.3.0",
+    "pyshifty>=0.3.0,<0.4",
     "python-dateutil>=2.9.0.post0",
     "python-multipart>=0.0.21",
     "requests>=2.32.5",
