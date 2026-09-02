@@ -88,7 +88,11 @@ class EmbeddingMatcher:
         cache_dir: str | Path | None = None,
         model_cache_dir: str | Path | None = None,
         exact_only: bool = False,
+        name: str = "matcher",
     ) -> None:
+        # Shown in every log line so the two matchers a resolver cascades
+        # over (graph, qudt) can be told apart in the server log.
+        self.name = name
         self.exact_only = exact_only
         self._model_name = model_name
         self._cache_dir = Path(cache_dir) if cache_dir else None
@@ -207,8 +211,8 @@ class EmbeddingMatcher:
             _surfaces, meta = self._build_surfaces_and_meta(concepts)
             self._set_index(None, meta, None)
             logger.info(
-                "Exact-only index built with %d entries from %d concepts",
-                len(meta), len(concepts),
+                "[%s] exact-only index built with %d entries from %d concepts",
+                self.name, len(meta), len(concepts),
             )
             return
 
@@ -217,18 +221,19 @@ class EmbeddingMatcher:
         # Check disk cache
         if self._cache_dir and self._try_load_cache(new_hash):
             logger.info(
-                "Loaded embedding index from cache (%d entries)", len(self._meta)
+                "[%s] loaded embedding index from cache (%d entries)",
+                self.name, len(self._meta),
             )
             return
 
         surfaces, meta = self._build_surfaces_and_meta(concepts)
 
         if not surfaces:
-            logger.warning("No surfaces to embed; index will be empty")
+            logger.warning("[%s] no surfaces to embed; index will be empty", self.name)
             self._set_index(np.empty((0, 1), dtype=np.float32), [], new_hash)
             return
 
-        logger.info("Embedding %d surfaces from %d concepts...", len(surfaces), len(concepts))
+        logger.info("[%s] embedding %d surfaces from %d concepts...", self.name, len(surfaces), len(concepts))
         # Embed outside the lock (expensive I/O)
         vectors = self._embed(surfaces)
         self._set_index(vectors, meta, new_hash)
@@ -237,7 +242,7 @@ class EmbeddingMatcher:
         if self._cache_dir:
             self._save_cache(new_hash)
 
-        logger.info("Embedding index built with %d entries", len(meta))
+        logger.info("[%s] embedding index built with %d entries", self.name, len(meta))
 
     @staticmethod
     def _row_to_result(m: dict[str, Any], score: float, stage: MatchStage) -> ResolveResult:
@@ -295,8 +300,8 @@ class EmbeddingMatcher:
             results.extend(semantic_hits)
 
         logger.debug(
-            "query(%r, kind=%s) -> %d exact + %d semantic",
-            text, kind, len(exact_hits), len(results) - len(exact_hits),
+            "[%s] query(%r, kind=%s) -> %d exact + %d semantic",
+            self.name, text, kind, len(exact_hits), len(results) - len(exact_hits),
         )
         return results[:top_k]
 
@@ -412,7 +417,7 @@ class EmbeddingMatcher:
             new_surfaces, new_meta = self._build_surfaces_and_meta(added_concepts)
 
             if new_surfaces:
-                logger.info("Embedding %d new surfaces from %d added concepts...", len(new_surfaces), len(added_concepts))
+                logger.info("[%s] embedding %d new surfaces from %d added concepts...", self.name, len(new_surfaces), len(added_concepts))
                 new_vectors = self._embed(new_surfaces)
                 vectors = np.concatenate([vectors, new_vectors], axis=0)
                 meta = meta + new_meta
@@ -436,7 +441,7 @@ class EmbeddingMatcher:
         if self._cache_dir:
             self._save_cache(new_hash)
 
-        logger.info("Updated embedding index: %d total entries", len(meta))
+        logger.info("[%s] updated embedding index: %d total entries", self.name, len(meta))
 
     @property
     def is_ready(self) -> bool:
@@ -469,7 +474,7 @@ class EmbeddingMatcher:
             self._set_index(vectors, meta, hash_val)
             return True
         except Exception:
-            logger.warning("Failed to load embedding cache, will rebuild")
+            logger.warning("[%s] failed to load embedding cache, will rebuild", self.name)
             return False
 
     def _save_cache(self, hash_val: str) -> None:
@@ -480,6 +485,6 @@ class EmbeddingMatcher:
             vec_path, meta_path = self._cache_path(hash_val)
             np.savez_compressed(vec_path, vectors=vectors)
             meta_path.write_text(json.dumps(meta, ensure_ascii=True))
-            logger.info("Saved embedding cache to %s", self._cache_dir)
+            logger.info("[%s] saved embedding cache to %s", self.name, self._cache_dir)
         except Exception:
-            logger.warning("Failed to save embedding cache", exc_info=True)
+            logger.warning("[%s] failed to save embedding cache", self.name, exc_info=True)

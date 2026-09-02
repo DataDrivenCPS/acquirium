@@ -223,12 +223,14 @@ class Manager:
             cache_dir=base / "embedding_cache" / "graph",
             model_cache_dir=_model_cache,
             exact_only=exact_only,
+            name="graph",
         )
         self._qudt_matcher = EmbeddingMatcher(
             model_name=_emb_model,
             cache_dir=base / "embedding_cache" / "qudt",
             model_cache_dir=_model_cache,
             exact_only=exact_only,
+            name="qudt",
         )
 
         # Single normalization façade, sharing the lazily-built converter.
