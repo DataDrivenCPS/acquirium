@@ -10,6 +10,25 @@ change in any release.
 
 ## [Unreleased]
 
+## [0.4.0a5] - 2026-09-02
+
+### Added
+- **Exact-only text resolution.** `[server] exact_only = true` (or
+  `ACQUIRIUM_EXACT_ONLY=true`) builds the graph and QUDT concept indexes
+  without embedding them. Exact matches on names, units, and symbols keep
+  resolving; fuzzy text resolves to nothing. No embedding model is downloaded
+  or loaded, and nothing is written under `embedding_cache/`, so a server can
+  start offline and without the FastEmbed weights.
+- `GET /embeddings/status` gains a top-level `semantic` flag, `false` in
+  exact-only mode. Both indexes still report `ready` there.
+
+### Changed
+- Client-side QUDT resolution (`unit`, `quantity_kind`, and similar fields on
+  registration) skips a value that does not resolve, with a warning, instead
+  of storing the raw text as a literal.
+- Text matcher log lines are prefixed with the index name (`[graph]`,
+  `[qudt]`) so the two matchers can be told apart in the server log.
+
 ## [0.4.0a4] - 2026-09-01
 
 ### Fixed
@@ -369,7 +388,8 @@ change in any release.
 - Text matcher backed by FastEmbed with QUDT and graph indexes.
 - Grafana dashboard helpers.
 
-[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a4...HEAD
+[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a5...HEAD
+[0.4.0a5]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a4...v0.4.0a5
 [0.4.0a4]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a3...v0.4.0a4
 [0.4.0a3]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a2...v0.4.0a3
 [0.4.0a2]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a1...v0.4.0a2
