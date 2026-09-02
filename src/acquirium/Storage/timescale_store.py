@@ -87,18 +87,6 @@ class TimescaleStore(TimeseriesStore):
             cur.execute(
                 f"CREATE UNIQUE INDEX IF NOT EXISTS idx_timeseries_ref_ts_unique ON {TIMESERIES_TABLE} (ref_uri, ts);"
             )
-            cur.execute(
-                f"CREATE INDEX IF NOT EXISTS idx_timeseries_numeric_ref_ts ON {TIMESERIES_TABLE} (ref_uri, ts) WHERE numeric_value IS NOT NULL;"
-            )
-            cur.execute(
-                f"CREATE INDEX IF NOT EXISTS idx_timeseries_text_ref_ts ON {TIMESERIES_TABLE} (ref_uri, ts) WHERE text_value IS NOT NULL;"
-            )
-            cur.execute(
-                f"CREATE INDEX IF NOT EXISTS idx_timeseries_numeric_value ON {TIMESERIES_TABLE} (ref_uri, numeric_value) WHERE numeric_value IS NOT NULL;"
-            )
-            cur.execute(
-                f"CREATE INDEX IF NOT EXISTS idx_timeseries_text_value ON {TIMESERIES_TABLE} (ref_uri, text_value) WHERE text_value IS NOT NULL;"
-            )
             # Segment compressed chunks by stream and order newest-first within
             # each stream. This matches the common "latest values" read path
             # while still supporting ascending scans via reverse index scans.
