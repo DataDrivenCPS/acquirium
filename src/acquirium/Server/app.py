@@ -210,6 +210,9 @@ class EmbeddingIndexStatus(BaseModel):
     duration_s: float | None
 
 class EmbeddingStatus(BaseModel):
+    # False in exact-only mode: the indexes are built and ready, but hold no
+    # embeddings, so they answer exact matches only.
+    semantic: bool = True
     graph: EmbeddingIndexStatus
     qudt: EmbeddingIndexStatus
 
@@ -346,6 +349,7 @@ def embedding_status():
     manager = app.state.manager
     status = manager.embedding_status()
     return EmbeddingStatus(
+        semantic=status.get("semantic", True),
         graph=EmbeddingIndexStatus(**status["graph"]),
         qudt=EmbeddingIndexStatus(**status["qudt"]),
     )

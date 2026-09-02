@@ -303,6 +303,8 @@ def _wait_for_embeddings_ready(client: Acquirium, timeout: int = 60) -> None:
     deadline = time.time() + timeout
     while time.time() < deadline:
         status = client.client.embedding_status()
+        if status.get("semantic") is False:
+            pytest.skip("server runs exact_only; these tests need embeddings")
         graph_state = status.get("graph", {}).get("state")
         qudt_state = status.get("qudt", {}).get("state")
         if graph_state == "error":
