@@ -42,7 +42,7 @@ class NormalizeTemperatures(aq.App):
     name = "normalize-temperatures"
     backfill = True
     outputs = {
-        "celsius": aq.output.per_input(
+        "celsius": aq.output.per_row(
             value_kind="numeric",
             unit="http://qudt.org/vocab/unit/DEG_C",
         ),
@@ -68,7 +68,7 @@ Reading the class top to bottom:
 - `build_query` selects the inputs *semantically*: every measurement whose
   quantity kind is temperature, whatever its source or unit. The alias
   `temperature` names that selection.
-- `outputs` declares the app's whole shape. `per_input` means "run me once
+- `outputs` declares the app's whole shape. `per_row` means "run me once
   per match, and put one derived stream beside each match's inputs" — fifty
   matched sensors mean fifty independent calls to `transform` and fifty
   Celsius streams, none of them named by hand.
@@ -146,7 +146,7 @@ def build_query(self, plant):
 
 The query runs against the plant model, not against a list of point IDs. When
 the model gains a heat exchanger, this app starts processing it; when one is
-removed, its processing stops. An app with `per_input` outputs receives one
+removed, its processing stops. An app with `per_row` outputs receives one
 query-result row per call — here, a related supply/return pair — so one query
 can express "for every X, take its Y and Z."
 
@@ -155,7 +155,7 @@ The output flavor decides how the query's matches become calls:
 ```text
 build_query() matches three sensors: A, B, C
 
-per_input outputs — one call per match
+per_row outputs — one call per match
 
   A ──► transform(A) ──► derived A
   B ──► transform(B) ──► derived B
@@ -170,7 +170,7 @@ named outputs — one call for the complete set
 
 To read another app's results, give its output a handle and select on it like
 any other stream. Declare a tag on the upstream output —
-`aq.output.per_input(data_source="normalized-temperatures", ...)` — and query
+`aq.output.per_row(data_source="normalized-temperatures", ...)` — and query
 it downstream with
 `measurement(alias="celsius", data_source="normalized-temperatures")`;
 semantic metadata (`unit`, `quantity_kind`, `point_uri`) works the same way.
@@ -187,7 +187,7 @@ Nothing about an output's identity is decided inside `transform`.
 inside the class, as in `output["celsius"] = ...` — declared with one of two
 identities:
 
-- `aq.output.per_input(...)` — one derived stream per call, identified by the
+- `aq.output.per_row(...)` — one derived stream per call, identified by the
   inputs it came from. Use it whenever the calculation fans out: a thousand
   matched sensors become a thousand derived streams automatically.
 - `aq.output.named("plant-average-flow", ...)` — one stream with exactly the
@@ -202,7 +202,7 @@ Every derived stream is registered under its app, with this identity:
 app "normalize-temperatures", port "celsius"
 
 source id    derived:normalize-temperatures        always derived:<app name>
-ref name     celsius:<digest of port + inputs>     per_input — generated
+ref name     celsius:<digest of port + inputs>     per_row — generated
              plant-average-flow                    named — exactly your string
 value kind   numeric | text                        always declared, like a
                                                    driver's stream registration
@@ -212,7 +212,7 @@ point        created in the model, carrying the    or the existing point you
 
 The identity is deterministic: recompiling the same app name, port, and bound
 inputs writes the same stream, across restarts and code edits. If a
-`per_input` port's bound inputs change — a sensor joins the group — that
+`per_row` port's bound inputs change — a sensor joins the group — that
 group's derived stream is a new one; the old stream keeps its history.
 
 **What rows a port accepts.** A call may only assign a port the app
@@ -243,13 +243,37 @@ The full declaration argument list (`unit`, `label`, `quantity_kind`,
 
 ### The transform: the calculation
 
-`transform(inputs, output, context)` receives the window and emits results.
+`transform(inputs, output, context)` receives two things, and each answers a
+different question. **`inputs` is the data** — one stream set per alias,
+along with the streams that produced it. **`context` is the match** — what
+`build_query` found for this particular call, and why the call happened. It
+holds no data.
 
-`context` is the *match* this call is bound to: `context.entities` maps the
-query's entity aliases to model URIs — for the heat-exchanger query above,
-`context.entities["hx"]` says which exchanger this call is about — and
-`context.changed_window` / `context.read_window` record why the call happened
-and what range it was handed.
+| question | where to look |
+|---|---|
+| what are the values? | `inputs[alias].df()` |
+| which stream is this call for? | `inputs[alias].stream` |
+| which entity is it about? | `context.entities[alias]` |
+| what range, and why? | `context.read_window`, `context.changed_window` |
+
+A `per_row` output binds one stream per call, so `.stream` is how you name
+what you are computing on:
+
+```python
+def transform(self, inputs, output, context):
+    sensor = inputs["temperature"].stream      # this call's stream
+    print(sensor.label, sensor.unit, sensor.point_uri)
+```
+
+The frame keeps its `ref_uri` column whether one stream is bound or fifty, so
+its shape never depends on the match; `.stream` is what tells you the
+cardinality, and it raises rather than guess when an alias is bound to
+several.
+
+A `named` output is the other case: it sees every match in one call, so its
+aliases hold many streams and `.streams` is the accessor — a fleet average
+iterates them. The rule follows from the output flavor, so it never has to be
+guessed: `per_row` → `.stream`, `named` → `.streams`.
 
 `inputs[alias]` holds the loaded data:
 
@@ -422,7 +446,7 @@ import acquirium as aq
 
 class HighTurbidityAlarm(aq.App):
     name = "high-turbidity-alarm"
-    outputs = {"alarm": aq.output.per_input(value_kind="text")}
+    outputs = {"alarm": aq.output.per_row(value_kind="text")}
 
     def __init__(self, threshold: float = 5.0):
         self.threshold = threshold
@@ -465,7 +489,7 @@ class FillGaps(aq.App):
     name = "fill-gaps"
     lookback = "2h"
     lookback_after = "2h"
-    outputs = {"filled": aq.output.per_input(value_kind="numeric")}
+    outputs = {"filled": aq.output.per_row(value_kind="numeric")}
 
     def __init__(self, cadence: str = "1m"):
         self.cadence = cadence

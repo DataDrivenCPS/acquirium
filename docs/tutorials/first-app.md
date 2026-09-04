@@ -54,7 +54,7 @@ Read it top to bottom:
 - `outputs` says *what to write*: one derived numeric stream. It is a
   **named** output — the stream's identity is exactly `fahrenheit` under this
   app, so anything else can find it directly. (The other flavor,
-  `aq.output.per_input(...)`, generates one stream beside each matched input;
+  `aq.output.per_row(...)`, generates one stream beside each matched input;
   you'll use it below.)
 - `transform` is *the calculation*: a dataframe of `time` and `value` rows in,
   a dataframe of `time` and `value` rows out.
@@ -110,13 +110,13 @@ Fahrenheit computation for exactly the changed range.
 ## 5. Make it react to every sensor
 
 The app above binds all matches into one call. The more common plant pattern —
-“do this beside every sensor” — uses a `per_input` output:
+“do this beside every sensor” — uses a `per_row` output:
 
 ```python
 class TemperatureSmoother(aq.App):
     name = "temperature-smoother"
     lookback = "10m"
-    outputs = {"smooth": aq.output.per_input(value_kind="numeric", unit="http://qudt.org/vocab/unit/DEG_C")}
+    outputs = {"smooth": aq.output.per_row(value_kind="numeric", unit="http://qudt.org/vocab/unit/DEG_C")}
 
     def build_query(self, plant):
         return plant.query().measurement(alias="temperature", quantity_kind="temperature")
@@ -132,7 +132,7 @@ class TemperatureSmoother(aq.App):
 
 Three new ideas:
 
-- `output.per_input` runs `transform` once per matched stream and creates
+- `output.per_row` runs `transform` once per matched stream and creates
   one derived stream beside each — a thousand sensors become a thousand
   smoothed streams with no naming on your part. (A `named` output does the
   opposite: one call over every match, one stream.)

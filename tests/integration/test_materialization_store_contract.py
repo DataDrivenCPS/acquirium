@@ -15,7 +15,7 @@ from acquirium.Storage.timescale_store import TimescaleStore
 
 class Copy(App):
     backfill = True
-    outputs = {"out": output.per_input(value_kind="numeric")}
+    outputs = {"out": output.per_row(value_kind="numeric")}
 
     def transform(self, inputs, output, context):
         source = inputs["source"].collect()

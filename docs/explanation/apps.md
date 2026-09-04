@@ -41,7 +41,7 @@ applies.
 A derived stream needs a name, and there are exactly two reasonable places for
 one to come from:
 
-- **Relative** (`output.per_input`): the identity is derived from the app,
+- **Relative** (`output.per_row`): the identity is derived from the app,
   the port, and the bound inputs. This scales to thousands of matched streams
   — nobody names them, and recompiling the same inputs reuses the same
   streams.

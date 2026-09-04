@@ -12,7 +12,7 @@ import acquirium as aq
 class Probe(aq.App):
     name = "probe"
     marker = {marker!r}
-    outputs = {{"out": aq.output.per_input(value_kind="numeric")}}
+    outputs = {{"out": aq.output.per_row(value_kind="numeric")}}
 
     def build_query(self, plant):
         return plant.query().measurement(alias="input")

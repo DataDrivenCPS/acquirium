@@ -9,7 +9,7 @@ def test_config_app_class_spec_loads_from_its_config_directory(tmp_path: Path):
     app_file.write_text(
         "from acquirium.Materialization import App, output\n"
         "class TemperatureApp(App):\n"
-        "    outputs = {'out': output.per_input(value_kind='numeric')}\n"
+        "    outputs = {'out': output.per_row(value_kind='numeric')}\n"
     )
 
     target = _load_config_app_target("./configured_temperature_app.py:TemperatureApp", base_dir=tmp_path)
@@ -24,9 +24,9 @@ def test_config_app_registrar_receives_table_options_and_deploys_returned_classe
     app_file.write_text(
         "from acquirium.Materialization import App, output\n"
         "class First(App):\n"
-        "    outputs = {'out': output.per_input(value_kind='numeric')}\n"
+        "    outputs = {'out': output.per_row(value_kind='numeric')}\n"
         "class Second(App):\n"
-        "    outputs = {'out': output.per_input(value_kind='numeric')}\n"
+        "    outputs = {'out': output.per_row(value_kind='numeric')}\n"
         "def register(aq, config):\n"
         "    assert config == {'threshold': 7}\n"
         "    return [First, Second]\n"

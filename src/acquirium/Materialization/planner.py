@@ -104,7 +104,7 @@ def _validated_outputs(name: str, declared: Mapping[str, Any]) -> dict[str, Outp
             continue
         if not isinstance(value, Mapping):
             raise TypeError(
-                f"app {name!r}: output {key!r} must be declared with aq.output.per_input(...) "
+                f"app {name!r}: output {key!r} must be declared with aq.output.per_row(...) "
                 f"or aq.output.named(...), got {type(value).__name__}"
             )
         try:
@@ -205,7 +205,7 @@ class BindingPlanner:
             app = target(**deployment.parameters)
             query = app.build_query(_QueryFacade(_GraphQueryClient(self.graph, self.query_resolver, self.record_resolver)))
             rows = _query_rows(query)
-            # The output declaration decides the grouping. A per_input output
+            # The output declaration decides the grouping. A per_row output
             # fans out: one binding per query-result row. All-named outputs
             # aggregate: one binding over the combined result (which keeps a
             # lone row's entity bindings, since it *is* that row).
@@ -226,7 +226,7 @@ class BindingPlanner:
                 # An absolute stream has one owner, so a named output cannot
                 # ride along with fan-out. The aggregate belongs downstream.
                 raise ValueError(
-                    f"app {deployment.name!r} declares named output(s) {named!r} alongside per-input "
+                    f"app {deployment.name!r} declares named output(s) {named!r} alongside per-row "
                     f"fan-out over {len(binding_rows)} input groups; compute the aggregate in a second "
                     f"app whose query selects this app's derived streams"
                 )

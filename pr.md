@@ -13,7 +13,7 @@ frontier instead of resetting it.
 ```python
 class TemperatureNormalizer(aq.App):
     name = "temperature-normalizer"
-    outputs = {"normalized": aq.output.per_input(value_kind="numeric")}
+    outputs = {"normalized": aq.output.per_row(value_kind="numeric")}
 
     def build_query(self, plant):
         return plant.query().measurement(alias="temperature", quantity_kind="temperature")
@@ -25,7 +25,7 @@ class TemperatureNormalizer(aq.App):
         )
 ```
 
-Outputs come in two flavors that also decide execution: `aq.output.per_input(...)`
+Outputs come in two flavors that also decide execution: `aq.output.per_row(...)`
 runs the transform once per query match and derives one stream beside each
 (fan-out across many sensors with no manual naming), while `aq.output.named("...")`
 runs it once over the complete result and publishes one absolute stream whose

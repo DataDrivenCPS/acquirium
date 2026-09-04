@@ -33,7 +33,7 @@ App class
 ```
 
 An app whose outputs are all `named` compiles to one binding for the
-complete query result; `per_input` outputs compile to one binding per
+complete query result; `per_row` outputs compile to one binding per
 query-result row. The scheduler does not need to know which form produced a
 binding.
 
