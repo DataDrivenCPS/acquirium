@@ -3,8 +3,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Iterable, Iterator
 import hashlib
-import random
-import string
 
 import psycopg
 from psycopg import sql
@@ -20,7 +18,7 @@ from acquirium.Storage.values import (
     normalize_value_kind,
     normalize_value_mode,
     prepare_value_columns,
-    split_value,
+    typed_value_series,
 )
 from acquirium.internals._log import timed_debug
 
@@ -213,25 +211,15 @@ class TimescaleStore(TimeseriesStore):
         row = cur.fetchone()
         return row[0] if row else None
 
-    def _ensure_ref_id(self, cur, ref_uri: str) -> int:
-        """Return ref_uri's ref_id, assigning one on first sight.
-
-        Looks up before inserting: ``INSERT ... ON CONFLICT DO NOTHING`` draws
-        a sequence value even when it conflicts, and this runs once per write
-        call, so the sequence would otherwise advance at the write rate. The
-        ON CONFLICT stays as the guard for two first writes racing, the only
-        case that still draws an unused id.
-        """
-        ref_id = self._ref_id(cur, ref_uri)
-        if ref_id is not None:
-            return ref_id
-        cur.execute(
-            f"INSERT INTO {REF_IDS_TABLE} (ref_uri) VALUES (%s) ON CONFLICT (ref_uri) DO NOTHING",
-            (ref_uri,),
-        )
-        return self._ref_id(cur, ref_uri)
-
     # -------------------- mutations --------------------
+    # Every write goes through one path: the rows become a Polars frame, the
+    # frame is COPYed into a TEMP staging table on this connection, ids are
+    # assigned for unseen uris, and one INSERT ... SELECT ... ON CONFLICT
+    # merges into the hypertable. All of that runs in a single transaction,
+    # so a failure leaves neither ids without rows nor a leaked staging
+    # table, and inside a begin()/commit() span the write joins that span.
+    STAGING_TABLE = "_acquirium_incoming_timeseries"
+
     def upsert_rows(
         self,
         ref_uri: str,
@@ -243,24 +231,7 @@ class TimescaleStore(TimeseriesStore):
         logger.debug("upsert_rows ref_uri=%s rows=%d kind=%s", ref_uri, len(rows_list), value_kind)
         if not rows_list:
             return 0
-        with timed_debug(logger, "upsert_rows INSERT n=%d", len(rows_list)), self.conn.cursor() as cur:
-            ref_id = self._ensure_ref_id(cur, ref_uri)
-            payload = [
-                (ref_id, self._to_utc(ts), *split_value(val, value_kind))
-                for ts, val in rows_list
-            ]
-            cur.executemany(
-                f"""
-                INSERT INTO {TIMESERIES_TABLE} (ref_id, ts, numeric_value, text_value)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (ref_id, ts) DO UPDATE SET
-                    numeric_value = EXCLUDED.numeric_value,
-                    text_value = EXCLUDED.text_value
-                """,
-                payload,
-            )
-        logger.debug("acquirium: upserted %d rows into %s", len(rows_list), TIMESERIES_TABLE)
-        return len(rows_list)
+        return self.bulk_insert_polars(self._rows_frame(ref_uri, rows_list, value_kind))
 
     def replace_rows(
         self,
@@ -269,8 +240,16 @@ class TimescaleStore(TimeseriesStore):
         *,
         value_kind: str = "text",
     ) -> int:
-        logger.debug("replace_rows ref_uri=%s kind=%s", ref_uri, value_kind)
-        with timed_debug(logger, "replace_rows DELETE ref_uri=%s", ref_uri), self.conn.cursor() as cur:
+        rows_list = list(rows)
+        logger.debug("replace_rows ref_uri=%s new_rows=%d kind=%s", ref_uri, len(rows_list), value_kind)
+        df = (
+            self._prepare_frame(self._rows_frame(ref_uri, rows_list, value_kind))
+            if rows_list
+            else pl.DataFrame()
+        )
+        # One transaction for delete + insert: a failure leaves the old rows intact.
+        with timed_debug(logger, "replace_rows ref_uri=%s rows=%d", ref_uri, len(df)), \
+                self.conn.transaction(), self.conn.cursor() as cur:
             cur.execute(
                 f"""
                 DELETE FROM {TIMESERIES_TABLE}
@@ -278,80 +257,122 @@ class TimescaleStore(TimeseriesStore):
                 """,
                 [ref_uri],
             )
-        return self.upsert_rows(ref_uri, rows, value_kind=value_kind)
+            if df.is_empty():
+                return 0
+            return self._insert_frame(cur, df)
 
     def bulk_insert_polars(self, df: pl.DataFrame) -> int:
-        # Using polars to write to database via ADBC
-        # Input df format: columns ["ref_uri", "ts", "value"] or already split
-        # columns ["ref_uri", "ts", "numeric_value", "text_value"].
+        """Upsert a Polars frame with columns ``ref_uri, ts, value[, value_kind]``
+        or the already split ``ref_uri, ts, numeric_value, text_value``.
+
+        Returns the number of rows merged (inserted or updated).
+        """
         if df.is_empty():
             logger.debug("bulk_insert_polars: empty DataFrame, skipping")
             return 0
         in_rows = len(df)
         with timed_debug(logger, "bulk_insert_polars prepare/dedupe rows=%d", in_rows):
-            df = prepare_value_columns(df)
-            df = df.unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
-        deduped = len(df)
-        logger.debug("bulk_insert_polars: %d rows after dedupe (was %d)", deduped, in_rows)
-        random_string = ''.join(random.choice(string.ascii_lowercase) for _ in range(15))
-        with self.conn.cursor() as cur:
-            cur.execute(
-                f"""DROP TABLE IF EXISTS {random_string};"""
-            )
-            cur.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {random_string} (
+            df = self._prepare_frame(df)
+        logger.debug("bulk_insert_polars: %d rows after dedupe (was %d)", len(df), in_rows)
+        try:
+            with timed_debug(logger, "bulk_insert_polars COPY+merge rows=%d", len(df)), \
+                    self.conn.transaction(), self.conn.cursor() as cur:
+                merged = self._insert_frame(cur, df)
+        except Exception:
+            logger.exception("acquirium: bulk insert into %s failed", TIMESERIES_TABLE)
+            raise
+        logger.info("acquirium: bulk inserted %d rows into %s", merged, TIMESERIES_TABLE)
+        return merged
+
+    @staticmethod
+    def _rows_frame(ref_uri: str, rows_list: list[tuple[datetime, Any]], value_kind: str) -> pl.DataFrame:
+        n = len(rows_list)
+        return pl.DataFrame(
+            {
+                "ref_uri": pl.Series("ref_uri", [ref_uri] * n, dtype=pl.Utf8),
+                "ts": pl.Series("ts", [ts for ts, _ in rows_list], dtype=pl.Datetime("us", "UTC")),
+                "value": typed_value_series([value for _, value in rows_list]),
+                "value_kind": pl.Series("value_kind", [value_kind] * n, dtype=pl.Utf8),
+            }
+        )
+
+    @staticmethod
+    def _prepare_frame(df: pl.DataFrame) -> pl.DataFrame:
+        """Split value columns, normalise ts to tz-aware UTC, dedupe on (ref_uri, ts).
+
+        Dedupe is required: ON CONFLICT DO UPDATE rejects a source that names
+        the same row twice. Last occurrence wins, matching a sequence of
+        individual upserts.
+        """
+        df = prepare_value_columns(df)
+        ts = pl.col("ts")
+        if df.schema["ts"].time_zone is None:
+            # Naive timestamps are taken as UTC, matching _to_utc on the read side.
+            ts = ts.dt.replace_time_zone("UTC")
+        else:
+            ts = ts.dt.convert_time_zone("UTC")
+        df = df.with_columns(ts.cast(pl.Datetime("us", "UTC")))
+        return df.unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
+
+    def _insert_frame(self, cur, df: pl.DataFrame) -> int:
+        """Merge a prepared frame on *cur*. Call inside a transaction.
+
+        The frame is serialised to CSV by Polars and handed to COPY in one
+        write, so no per-row Python loop touches the data. Polars writes NULL
+        as an empty field and an empty string as ``""``, which is exactly how
+        COPY's CSV format tells the two apart; timestamps carry their UTC
+        offset so the TIMESTAMPTZ column parses them unambiguously.
+        """
+        staging = self.STAGING_TABLE
+        # DROP first: ON COMMIT DROP only fires at the outer commit, so a
+        # second write inside one begin() span would otherwise find the table
+        # still there.
+        cur.execute(f"DROP TABLE IF EXISTS {staging}")
+        cur.execute(
+            f"""
+            CREATE TEMP TABLE {staging} (
                 ref_uri TEXT NOT NULL,
                 ts TIMESTAMPTZ NOT NULL,
                 numeric_value DOUBLE PRECISION,
                 text_value TEXT
-            );""")
-        try:
-            with timed_debug(logger, "bulk_insert_polars ADBC write rows=%d", deduped):
-                rows_affected = df.write_database(
-                    table_name=random_string,
-                    connection=self.dsn,
-                    engine="adbc",
-                    if_table_exists="append" # Use 'replace' to drop/create the table
-                )
-            # The staging table carries ref_uri strings; assign ids for unseen
-            # uris and key the rows by ref_id. One transaction for both so a
-            # failed merge leaves no ids without rows (the connection runs
-            # autocommit, so the statements would otherwise commit separately).
-            with timed_debug(logger, "bulk_insert_polars merge into %s", TIMESERIES_TABLE), \
-                    self.conn.transaction(), self.conn.cursor() as cur:
-                # WHERE NOT EXISTS rather than relying on ON CONFLICT alone: a
-                # conflicting insert still draws a sequence value, and every
-                # batch re-mentions its existing streams.
-                cur.execute(
-                    f"""
-                    INSERT INTO {REF_IDS_TABLE} (ref_uri)
-                    SELECT DISTINCT i.ref_uri FROM {random_string} AS i
-                    WHERE NOT EXISTS (
-                        SELECT 1 FROM {REF_IDS_TABLE} AS r WHERE r.ref_uri = i.ref_uri
-                    )
-                    ON CONFLICT (ref_uri) DO NOTHING;
-                    """
-                )
-                cur.execute(
-                    f"""
-                    INSERT INTO {TIMESERIES_TABLE} (ref_id, ts, numeric_value, text_value)
-                    SELECT r.ref_id, i.ts, i.numeric_value, i.text_value
-                    FROM {random_string} AS i
-                    JOIN {REF_IDS_TABLE} AS r USING (ref_uri)
-                    ON CONFLICT (ref_id, ts) DO UPDATE SET
-                        numeric_value = EXCLUDED.numeric_value,
-                        text_value = EXCLUDED.text_value;
-                    """
-                )
-            logger.info(f"acquirium: bulk inserted {rows_affected} rows into {TIMESERIES_TABLE}")
-            return rows_affected
-        except Exception:
-            logger.exception("acquirium: bulk insert into %s failed", TIMESERIES_TABLE)
-            raise
-        finally:
-            with self.conn.cursor() as cur:
-                cur.execute(f"DROP TABLE IF EXISTS {random_string};")
+            ) ON COMMIT DROP
+            """
+        )
+        payload = df.select(["ref_uri", "ts", "numeric_value", "text_value"]).write_csv(
+            include_header=False
+        )
+        with timed_debug(logger, "COPY rows=%d bytes=%d", len(df), len(payload)):
+            with cur.copy(
+                f"COPY {staging} (ref_uri, ts, numeric_value, text_value) FROM STDIN WITH (FORMAT csv)"
+            ) as copy:
+                copy.write(payload)
+        # WHERE NOT EXISTS rather than relying on ON CONFLICT alone: a
+        # conflicting insert still draws a sequence value, and every batch
+        # re-mentions its existing streams. ON CONFLICT stays as the guard for
+        # two first writes racing.
+        cur.execute(
+            f"""
+            INSERT INTO {REF_IDS_TABLE} (ref_uri)
+            SELECT DISTINCT i.ref_uri FROM {staging} AS i
+            WHERE NOT EXISTS (
+                SELECT 1 FROM {REF_IDS_TABLE} AS r WHERE r.ref_uri = i.ref_uri
+            )
+            ON CONFLICT (ref_uri) DO NOTHING
+            """
+        )
+        with timed_debug(logger, "merge into %s rows=%d", TIMESERIES_TABLE, len(df)):
+            cur.execute(
+                f"""
+                INSERT INTO {TIMESERIES_TABLE} (ref_id, ts, numeric_value, text_value)
+                SELECT r.ref_id, i.ts, i.numeric_value, i.text_value
+                FROM {staging} AS i
+                JOIN {REF_IDS_TABLE} AS r USING (ref_uri)
+                ON CONFLICT (ref_id, ts) DO UPDATE SET
+                    numeric_value = EXCLUDED.numeric_value,
+                    text_value = EXCLUDED.text_value
+                """
+            )
+        return cur.rowcount
 
     # -------------------- stream references --------------------
     def ensure_stream_ref(
