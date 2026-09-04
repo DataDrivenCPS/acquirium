@@ -974,7 +974,8 @@ outputs = {
 Now a query for temperature matches **both** the raw sensors and their
 normalized copies — they are all temperature measurements, which is the
 point — so you need a way to say which you want. Every derived stream records
-the app that made it, and `app=` selects on that:
+the app that made it, and `app=` selects on that. The value is the app's
+`name` and it is matched exactly, not resolved as free text:
 
 ```python
 from acquirium.Client.explore import Not

@@ -220,5 +220,12 @@ that pair as usual. Consequently, an app with one `per_row` output port and
 ten matched input rows owns ten distinct derived streams, while a `named`
 output owns exactly one stream under the name its author chose.
 See the [app reference](../reference/apps.md#aqoutput).
-This means computed values are indistinguishable from measured ones at query
-time.
+
+A derived stream is queried exactly like a measured one, and carries whatever
+metadata its output declaration gave it — so an app that declares a quantity
+kind turns up in queries for that quantity kind, beside the sensors it was
+computed from. The runtime also records the producing app on each derived
+point, which is the one thing that tells the two apart:
+`measurement(quantity_kind="temperature", app="normalize-temperatures")`
+returns that app's output alone. See
+[finding a derived stream again](../reference/apps.md#finding-a-derived-stream-again).

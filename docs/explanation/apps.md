@@ -51,7 +51,11 @@ one to come from:
   discovered relative to its inputs.
 
 Derived streams are first-class: later apps' queries can select them, and
-those dependencies form a DAG the scheduler runs in waves.
+those dependencies form a DAG the scheduler runs in waves. They are also
+findable on their own terms — a derived stream carries the metadata its
+declaration gave it, and records the app that produced it, so
+`measurement(quantity_kind="temperature", app="normalize-temperatures")` asks
+for one app's output and nothing else.
 
 ## Why "materialization"
 

@@ -107,7 +107,27 @@ output point until the derived Fahrenheit values arrive — typically well under
 a second later. Every new Celsius write from now on triggers a fresh
 Fahrenheit computation for exactly the changed range.
 
-## 5. Make it react to every sensor
+## 5. Find what it produced
+
+The derived stream is an ordinary stream, so you query it the ordinary way.
+Acquirium records which app produced each derived point, so you can ask for
+this app's output specifically:
+
+```python
+from acquirium import Acquirium
+
+acq = Acquirium(server_url="localhost", server_port=8000)
+acq.query().measurement(alias="f", app="celsius-to-fahrenheit").data()
+```
+
+That works for any app, without the app declaring anything for it. What a
+derived stream carries *besides* that — its unit, label, quantity kind — is
+whatever its `outputs` declaration says, so declaring a `quantity_kind` is
+what makes an output turn up in queries for that quantity kind alongside real
+sensors. The [apps guide](../apps.md#finding-derived-streams-again) covers the
+whole picture.
+
+## 6. Make it react to every sensor
 
 The app above binds all matches into one call. The more common plant pattern —
 “do this beside every sensor” — uses a `per_row` output:
