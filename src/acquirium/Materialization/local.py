@@ -111,7 +111,7 @@ def check_app(client: Any, target: type, *, parameters: dict | None = None,
             "inputs": {alias: [{"ref_uri": item.ref_uri, "label": item.label, "unit": item.unit}
                                for item in streams]
                        for alias, streams in binding.inputs.items()},
-            "entities": dict(binding.entities),
+            "row": dict(binding.row) if binding.row else None,
             "outputs": {}, "error": None,
         }
         bindings.append(entry)
@@ -125,7 +125,7 @@ def check_app(client: Any, target: type, *, parameters: dict | None = None,
         window = TimeWindow(min(w.start for w in extent), max(w.end for w in extent))
         entry["read_window"] = [window.start.isoformat(), window.end.isoformat()]
         context = InputBatch(binding.signature, revision, 0, revision, window, window,
-                             binding.entities)
+                             binding.row, binding.result)
         builder = OutputBuilder(binding.outputs)
         # No try/except: a breakpoint stops here and a traceback reaches the
         # caller, which is the whole reason to run locally.

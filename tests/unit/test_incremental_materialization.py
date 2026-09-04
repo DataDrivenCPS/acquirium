@@ -7,13 +7,20 @@ import pyarrow.compute as pc
 import pytest
 
 from acquirium.Materialization import (
-    App, ApplicationGraph, Binding, InProcessExecutor, RevisionStore, Scheduler,
+    App, ApplicationGraph, Binding, InProcessExecutor, InputBatch, RevisionStore, Scheduler,
     StreamDescriptor, StreamSet, TimeWindow, align, output,
 )
 from acquirium.Materialization.planner import BindingPlanner, Deployment
 from acquirium.Materialization.runtime import Materializer
 from acquirium.Storage.duckdb_store import DuckDBStore
 from acquirium.internals.models import compute_ref_uri
+
+NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
+def _context(row, result):
+    """An InputBatch carrying just the match information under test."""
+    return InputBatch("sig", 1, 0, 1, TimeWindow(NOW, NOW), TimeWindow(NOW, NOW), row, result)
 
 
 class Mean(App):
@@ -128,23 +135,24 @@ class MultiStreamLineageGraph(LineageGraph):
 
 
 class PairedRowGraph(LineageGraph):
-    """Two heat exchangers, each row pairing a supply and a return stream."""
+    """Two RO units, each row pairing a flow and a pressure stream."""
     def sparql_query(self, query, **kwargs):
         return {
             "columns": ["v0", "v1", "ext1", "unit1", "extunit1", "lbl1",
                         "v2", "ext2", "unit2", "extunit2", "lbl2"],
-            "rows": [[f"urn:hx-{n}", f"urn:p-s{n}", f"urn:ref-s{n}", None, None, f"supply {n}",
-                      f"urn:p-r{n}", f"urn:ref-r{n}", None, None, f"return {n}"] for n in (1, 2)],
+            "rows": [[f"urn:ro-{n}", f"urn:p-f{n}", f"urn:ref-f{n}", None, None, f"flow {n}",
+                      f"urn:p-p{n}", f"urn:ref-p{n}", None, None, f"pressure {n}"] for n in (1, 2)],
         }
 
 
 class PairedApp(App):
     name = "paired"
-    outputs = {"delta": output.per_row(value_kind="numeric")}
+    outputs = {"ratio": output.per_row(value_kind="numeric")}
     def build_query(self, plant):
-        return (plant.query().entity("urn:HeatExchanger", alias="hx")
-                .measurement(frm="hx", alias="supply")
-                .measurement(frm="hx", alias="ret"))
+        # Two aliases the query genuinely separates, by quantity kind.
+        return (plant.query().entity("urn:ReverseOsmosis", alias="ro")
+                .measurement(frm="ro", alias="flow", quantity_kind="urn:qk/VolumeFlowRate")
+                .measurement(frm="ro", alias="pressure", quantity_kind="urn:qk/Pressure"))
     def transform(self, inputs, output, context): pass
 
 
@@ -318,6 +326,43 @@ def test_in_unit_requires_a_converter_and_recorded_units():
                   converter=LinearFakeConverter()).in_unit("urn:unit:DEG_F")
 
 
+def test_named_output_gets_every_matched_row_for_grouping():
+    planner = BindingPlanner(MultiStreamLineageGraph())
+
+    application_graph, _ = planner.compile((Deployment.from_class(NamedTotal),), graph_revision=1)
+
+    (binding,) = application_graph.bindings
+    # An aggregate sees the whole table, so it can group on the match itself.
+    assert binding.row is None
+    result = _context(None, binding.result).result
+    assert result.height == 2
+    assert sorted(result["input_ref"].to_list()) == ["urn:input-a", "urn:input-b"]
+
+
+def test_every_per_row_call_sees_the_whole_query_result():
+    planner = BindingPlanner(MultiStreamLineageGraph())
+
+    application_graph, _ = planner.compile((Deployment.from_class(LineageCopy),), graph_revision=1)
+
+    assert len(application_graph.bindings) == 2
+    for binding in application_graph.bindings:
+        context = _context(binding.row, binding.result)
+        # Its own row, but the whole fleet it belongs to.
+        assert context.row["input_ref"] == binding.inputs["input"][0].ref_uri
+        assert context.result.height == 2
+
+
+def test_row_is_the_per_row_accessor_and_refuses_to_guess():
+    one = _context({"hx": "urn:hx-1"}, ({"hx": "urn:hx-1"}, {"hx": "urn:hx-2"}))
+    aggregate = _context(None, ({"hx": "urn:hx-1"}, {"hx": "urn:hx-2"}))
+
+    assert one.row == {"hx": "urn:hx-1"}
+    assert one.result.height == 2          # result is the whole query either way
+    with pytest.raises(ValueError, match="named output"):
+        aggregate.row
+    assert aggregate.result.height == 2
+
+
 def test_stream_names_the_single_bound_stream_and_refuses_to_guess():
     window = TimeWindow(datetime(2026, 1, 1, tzinfo=timezone.utc),
                         datetime(2026, 1, 1, tzinfo=timezone.utc))
@@ -334,14 +379,14 @@ def test_stream_names_the_single_bound_stream_and_refuses_to_guess():
 
 def test_per_row_binds_one_stream_per_alias_even_for_paired_rows():
     # The invariant behind .stream: a per_row call binds exactly one stream
-    # under every alias, so a supply/return row gives one of each.
+    # under every alias, so a flow/pressure row gives one of each.
     graph = PairedRowGraph()
 
     application_graph, _ = planner_for(graph, PairedApp)
 
     assert len(application_graph.bindings) == 2
     for binding in application_graph.bindings:
-        assert sorted(binding.inputs) == ["ret", "supply"]
+        assert sorted(binding.inputs) == ["flow", "pressure"]
         assert all(len(streams) == 1 for streams in binding.inputs.values())
 
 
@@ -351,7 +396,7 @@ def test_context_carries_the_match_and_not_the_data(tmp_path):
     store.upsert_rows("urn:left", [(timestamp, 1.0)], value_kind="numeric")
     inputs = {"source": (StreamDescriptor("urn:left"),)}
     binding = Binding("copy", "digest", inputs, {"out": ("urn:out:left", Copy.outputs["out"])},
-                      entities={"hx": "urn:plant/hx-1"})
+                      row={"hx": "urn:plant/hx-1"}, result=({"hx": "urn:plant/hx-1"},))
     revisions = RevisionStore(store)
     revisions.initialise(binding, True)
 
@@ -359,7 +404,8 @@ def test_context_carries_the_match_and_not_the_data(tmp_path):
 
     # The data arrives beside the context, never inside it.
     assert not hasattr(batch.context, "inputs")
-    assert batch.context.entities == {"hx": "urn:plant/hx-1"}
+    assert batch.context.row == {"hx": "urn:plant/hx-1"}
+    assert batch.context.result["hx"].to_list() == ["urn:plant/hx-1"]
     assert batch.inputs["source"].stream.ref_uri == "urn:left"
 
 
@@ -437,30 +483,32 @@ class EntityRowGraph(LineageGraph):
         return {
             "columns": ["v0", "v1", "ext1", "unit1", "extunit1", "lbl1"],
             "rows": [
-                ["urn:hx-1", "urn:point-1", "urn:input-1", None, None, "Supply temp 1"],
-                ["urn:hx-2", "urn:point-2", "urn:input-2", None, None, "Supply temp 2"],
+                ["urn:ro-1", "urn:point-1", "urn:input-1", None, None, "Feed pressure 1"],
+                ["urn:ro-2", "urn:point-2", "urn:input-2", None, None, "Feed pressure 2"],
             ],
         }
 
 
-class PerInputEntity(App):
+class PerRowEntity(App):
     name = "per-row-entity"
     outputs = {"out": output.per_row(value_kind="numeric")}
     def build_query(self, plant):
-        return (plant.query().entity("urn:HeatExchanger", alias="hx")
-                .measurement(frm="hx", alias="input"))
+        return (plant.query().entity("urn:ReverseOsmosis", alias="ro")
+                .measurement(frm="ro", alias="input"))
     def transform(self, inputs, output, context): pass
 
 
 def test_context_carries_the_bound_rows_entities_and_labels():
     planner = BindingPlanner(EntityRowGraph())
 
-    application_graph, _ = planner.compile((Deployment.from_class(PerInputEntity),), graph_revision=1)
+    application_graph, _ = planner.compile((Deployment.from_class(PerRowEntity),), graph_revision=1)
 
     by_ref = {binding.inputs["input"][0].ref_uri: binding for binding in application_graph.bindings}
-    assert by_ref["urn:input-1"].entities == {"hx": "urn:hx-1"}
-    assert by_ref["urn:input-2"].entities == {"hx": "urn:hx-2"}
-    assert by_ref["urn:input-1"].inputs["input"][0].label == "Supply temp 1"
+    first = by_ref["urn:input-1"].row
+    assert first["ro"] == "urn:ro-1"
+    assert first["input_ref"] == "urn:input-1" and first["input.label"] == "Feed pressure 1"
+    assert by_ref["urn:input-2"].row["ro"] == "urn:ro-2"
+    assert by_ref["urn:input-1"].inputs["input"][0].label == "Feed pressure 1"
 
 
 class CheckDouble(App):

@@ -55,9 +55,15 @@ class _QueryFacade:
 
 @dataclass(frozen=True)
 class _MatchRow:
-    """One deduplicated query-result row: its streams and its entity bindings."""
+    """One deduplicated query-result row: its streams and its flat columns.
+
+    ``columns`` is the row as ``Query.metadata()`` would name it — an alias
+    holding the matched URI, plus ``<alias>_ref``, ``<alias>.label`` and
+    ``<alias>.unit`` where the alias resolves to a stream. It is what
+    reaches ``transform`` as ``context.result``.
+    """
     streams: Mapping[str, tuple[dict[str, str | None], ...]]
-    entities: Mapping[str, str]
+    columns: Mapping[str, str | None]
 
 
 def _query_rows(query: Query) -> tuple[_MatchRow, ...]:
@@ -79,17 +85,26 @@ def _query_rows(query: Query) -> tuple[_MatchRow, ...]:
                 "unit": str(unit) if unit is not None else None,
                 "label": str(label) if label is not None else None,
             })
-        # Entity aliases resolve the semantic side of the row: which heat
-        # exchanger, which unit process. transform() sees them as context.
-        entities = {alias: str(cell(f"v{node}"))
-                    for node, alias in sorted(graph.aliases_reverse.items())
-                    if node not in graph.data_nodes and cell(f"v{node}") is not None}
+        # Every alias becomes a column, named the way Query.metadata() names
+        # them, and reaches transform as context.result. Aliases bound to a
+        # stream get their reference and metadata alongside.
+        columns: dict[str, str | None] = {
+            alias: str(cell(f"v{node}")) if cell(f"v{node}") is not None else None
+            for node, alias in sorted(graph.aliases_reverse.items())
+            if node not in graph.data_nodes
+        }
+        for alias, values in sorted(streams.items()):
+            item = values[0]
+            columns[alias] = item["point_uri"]
+            columns[f"{alias}_ref"] = item["ref_uri"]
+            columns[f"{alias}.label"] = item["label"]
+            columns[f"{alias}.unit"] = item["unit"]
         # SPARQL joins can repeat a stream through unrelated graph triples.
         # Bind each distinct alias-to-stream set once, deterministically.
         key = _json({alias: sorted(item["ref_uri"] for item in values) for alias,values in streams.items()})
         if streams and key not in seen:
             seen.add(key)
-            rows.append(_MatchRow({alias: tuple(values) for alias, values in streams.items()}, entities))
+            rows.append(_MatchRow({alias: tuple(values) for alias, values in streams.items()}, columns))
     return tuple(rows)
 
 
@@ -134,7 +149,7 @@ class Deployment:
     executable_digest: str
     outputs: Mapping[str, OutputSpec]
     lookback: timedelta | None = timedelta()
-    lookback_after: timedelta = timedelta()
+    lookahead: timedelta = timedelta()
     backfill: bool = False
     coalesce: timedelta = timedelta()
     max_delay: timedelta | None = None
@@ -159,7 +174,7 @@ class Deployment:
         name = target.name or target.__name__
         outputs = _validated_outputs(name, target.outputs)
         return cls(name, f"{target.__module__}:{target.__qualname__}", source_digest(target),
-                   outputs, parse_lookback(app.lookback), _duration(app.lookback_after), bool(app.backfill),
+                   outputs, parse_lookback(app.lookback), _duration(app.lookahead), bool(app.backfill),
                    _duration(app.coalesce),
                    _duration(app.max_delay) if app.max_delay is not None else None,
                    _duration(app.min_interval) if app.min_interval is not None else None,
@@ -170,7 +185,7 @@ class Deployment:
         return _json({"name": self.name, "entrypoint": self.entrypoint,
             "executable_digest": self.executable_digest, "outputs": {k: asdict(v) for k,v in self.outputs.items()},
             "lookback": "all" if self.lookback is None else micros(self.lookback),
-            "lookback_after": micros(self.lookback_after), "backfill": self.backfill,
+            "lookahead": micros(self.lookahead), "backfill": self.backfill,
             "coalesce": micros(self.coalesce), "max_delay": micros(self.max_delay),
             "min_interval": micros(self.min_interval), "parameters": dict(self.parameters)})
 
@@ -181,7 +196,7 @@ class Deployment:
         lookback = None if data["lookback"] == "all" else duration(data["lookback"])
         return cls(data["name"], data["entrypoint"], data["executable_digest"],
             {key: OutputSpec(**value) for key, value in data["outputs"].items()},
-            lookback, duration(data.get("lookback_after")) or timedelta(), bool(data.get("backfill")),
+            lookback, duration(data.get("lookahead")) or timedelta(), bool(data.get("backfill")),
             duration(data.get("coalesce")) or timedelta(), duration(data.get("max_delay")),
             duration(data.get("min_interval")), dict(data.get("parameters") or {}))
 
@@ -211,17 +226,23 @@ class BindingPlanner:
             # lone row's entity bindings, since it *is* that row).
             named = sorted(key for key, spec in deployment.outputs.items() if spec.stream_name is not None)
             fans_out = any(spec.stream_name is None for spec in deployment.outputs.values())
+            # Every binding carries the whole query result for context; only
+            # the row it computes differs.
+            result = tuple(row.columns for row in rows)
             if fans_out or len(rows) == 1:
-                binding_rows = rows
+                binding_rows = [(row.streams, row.columns) for row in rows]
             else:
+                # One binding over the whole table: it keeps every row, so an
+                # aggregate can group on the match itself.
                 grouped: dict[str, dict[str, dict[str, str | None]]] = {}
                 for row in rows:
                     for alias, matches in row.streams.items():
                         for item in matches:
                             grouped.setdefault(alias, {})[str(item["ref_uri"])] = item
-                binding_rows = (_MatchRow({
-                    alias: tuple(items.values()) for alias, items in sorted(grouped.items())
-                }, {}),) if grouped else ()
+                binding_rows = [(
+                    {alias: tuple(items.values()) for alias, items in sorted(grouped.items())},
+                    None,   # an aggregate is about every row, so it has no single one
+                )] if grouped else []
             if named and len(binding_rows) > 1:
                 # An absolute stream has one owner, so a named output cannot
                 # ride along with fan-out. The aggregate belongs downstream.
@@ -230,21 +251,21 @@ class BindingPlanner:
                     f"fan-out over {len(binding_rows)} input groups; compute the aggregate in a second "
                     f"app whose query selects this app's derived streams"
                 )
-            for row in binding_rows:
+            for row_streams, row_columns in binding_rows:
                 inputs = {
                     # The planner records the metadata the compiled query
                     # exposes: reference, point, unit, and label.
                     alias: tuple(StreamDescriptor(
                         ref_uri=str(item["ref_uri"]), point_uri=item.get("point_uri"),
                         unit=item.get("unit"), label=item.get("label"),
-                    ) for item in matches)
-                    for alias, matches in sorted(row.streams.items())
+                    ) for item in items)
+                    for alias, items in sorted(row_streams.items())
                 }
                 ports = {key: (Binding.derive_output_uri(deployment.name, key, inputs, spec), spec)
                          for key, spec in deployment.outputs.items()}
                 binding = Binding(deployment.name, deployment.executable_digest, inputs, ports,
-                                  deployment.lookback, deployment.lookback_after,
-                                  graph_revision, deployment.parameters, row.entities)
+                                  deployment.lookback, deployment.lookahead,
+                                  graph_revision, deployment.parameters, row_columns, result)
                 bindings.append(binding); applications[binding.signature] = app
         # Planning is optimistic: discard a plan from a mixed graph view.
         if int(self.graph.graph_status().get("published_version", 0)) != graph_revision:
