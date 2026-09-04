@@ -6,8 +6,8 @@ storage, and scheduling types) is importable only from here.
 """
 from acquirium.Materialization.incremental import (
     App, ApplicationGraph, Batch, Binding, InProcessExecutor, InputBatch, OutputBuilder,
-    OutputSpec, RayExecutor, RevisionStore, Scheduler, StreamDescriptor,
+    OutputPort, OutputSpec, RayExecutor, RevisionStore, Scheduler, StreamDescriptor,
     StreamSet, TimeWindow, align, output,
 )
 
-__all__ = ["App", "ApplicationGraph", "Batch", "Binding", "InProcessExecutor", "InputBatch", "OutputBuilder", "OutputSpec", "RayExecutor", "RevisionStore", "Scheduler", "StreamDescriptor", "StreamSet", "TimeWindow", "align", "output"]
+__all__ = ["App", "ApplicationGraph", "Batch", "Binding", "InProcessExecutor", "InputBatch", "OutputBuilder", "OutputPort", "OutputSpec", "RayExecutor", "RevisionStore", "Scheduler", "StreamDescriptor", "StreamSet", "TimeWindow", "align", "output"]

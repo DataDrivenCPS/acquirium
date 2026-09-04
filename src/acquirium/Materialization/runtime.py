@@ -1,6 +1,7 @@
 """Durable deployment registry and graph-recompiled materializer service."""
 from __future__ import annotations
 
+import re
 from typing import Any
 from time import monotonic
 from threading import Lock, RLock
@@ -17,6 +18,27 @@ from acquirium.internals.internals_namespaces import (
     IS_CALCULATED_FROM, OF_SUBSTANCE, PRODUCED_BY, PRODUCES,
     TIMESERIES_REFERENCE,
 )
+
+
+def _default_label(binding, port: str, spec) -> str:
+    """Name a derived stream the most specific way its binding allows.
+
+    The author's own ``label`` wins over this, and a ``named`` output already
+    carries a human name. Otherwise the label reads as the thing measured
+    followed by what produced it — ``Basin 1 inlet temperature
+    (normalize-temperatures[celsius])`` — with any previous parenthetical
+    dropped, so a chain of apps stays one hop deep instead of accumulating.
+    An output over several streams has no single subject, so it is named for
+    its app and port alone.
+    """
+    if spec.stream_name:
+        return spec.stream_name
+    tag = f"{binding.application_name}[{port}]"
+    streams = [stream for values in binding.inputs.values() for stream in values]
+    if len(streams) == 1 and streams[0].label:
+        subject = re.sub(r"\s*\([^()]*\)$", "", streams[0].label)
+        return f"{subject} ({tag})"
+    return tag
 
 
 class Materializer:
@@ -122,18 +144,18 @@ class Materializer:
                 shown = table if limit is None else table.slice(0, limit)
                 times, values = shown["time"].to_pylist(), shown["value"].to_pylist()
                 entry["outputs"][port] = {
-                    "stream": binding.outputs[port][0],
-                    "ref_name": binding.output_ref_name(port),
-                    "value_kind": binding.outputs[port][1].value_kind,
+                    "stream": binding.outputs[port].ref_uri,
+                    "ref_name": binding.outputs[port].ref_name,
+                    "value_kind": binding.outputs[port].spec.value_kind,
                     "rows": table.num_rows,
                     "truncated": shown.num_rows < table.num_rows,
                     "values": [{"time": time.isoformat(), "value": value}
                                for time, value in zip(times, values)],
                 }
             for port in binding.outputs:
-                entry["outputs"].setdefault(port, {"stream": binding.outputs[port][0],
-                                                   "ref_name": binding.output_ref_name(port),
-                                                   "value_kind": binding.outputs[port][1].value_kind,
+                entry["outputs"].setdefault(port, {"stream": binding.outputs[port].ref_uri,
+                                                   "ref_name": binding.outputs[port].ref_name,
+                                                   "value_kind": binding.outputs[port].spec.value_kind,
                                                    "rows": 0, "truncated": False, "values": []})
         return {"app": deployment.name, "graph_revision": revision, "bindings": bindings}
 
@@ -160,7 +182,8 @@ class Materializer:
                     rows = [(binding.signature, binding.progress_key, binding.application_name, binding.executable_digest,
                         alias, stream.ref_uri, output_name, output_ref)
                         for alias, streams in binding.inputs.items() for stream in streams
-                        for output_name, (output_ref, _) in binding.outputs.items()]
+                        for output_name, output in binding.outputs.items()
+                        for output_ref in (output.ref_uri,)]
                     if getattr(self._store, "materialization_backend", None) == "postgres":
                         with conn.cursor() as cur:
                             cur.executemany("INSERT INTO materialization_lineage VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING", rows)
@@ -186,8 +209,9 @@ class Materializer:
             for alias, inputs in binding.inputs.items():
                 for item in inputs:
                     graph.add((binding_uri, IS_CALCULATED_FROM, URIRef(item.ref_uri)))
-            for name, (ref_uri, spec) in binding.outputs.items():
-                ref, point = URIRef(ref_uri), URIRef(spec.point_uri or f"urn:acquirium:derived-point:{binding.signature}:{name}")
+            for name, output in binding.outputs.items():
+                spec = output.spec
+                ref, point = URIRef(output.ref_uri), URIRef(output.point_uri)
                 graph.add((binding_uri, PRODUCES, ref))
                 graph.add((point, HAS_EXTERNAL_REFERENCE, ref))
                 # Which app made this. On the point, where query attributes
@@ -196,10 +220,14 @@ class Materializer:
                 graph.add((point, PRODUCED_BY, Literal(binding.application_name)))
                 graph.add((ref, RDF.type, TIMESERIES_REFERENCE))
                 graph.add((ref, ACQUIRIUM_SOURCE_ID, Literal(f"derived:{binding.application_name}")))
-                graph.add((ref, ACQUIRIUM_REF_NAME, Literal(binding.output_ref_name(name))))
+                graph.add((ref, ACQUIRIUM_REF_NAME, Literal(output.ref_name)))
                 if spec.value_kind: graph.add((ref, ACQUIRIUM_VALUE_KIND, Literal(spec.value_kind)))
                 if spec.unit: graph.add((point, HAS_UNIT, URIRef(spec.unit)))
-                if spec.label: graph.add((point, RDFS.label, Literal(spec.label)))
+                # A point the author supplied is theirs and already has a
+                # name; only a point this runtime created gets a generated
+                # one, so a derived stream never shows up as a bare URI.
+                label = spec.label or (None if spec.point_uri else _default_label(binding, name, spec))
+                if label: graph.add((point, RDFS.label, Literal(label)))
                 if spec.quantity_kind: graph.add((point, HAS_QUANTITY_KIND, URIRef(spec.quantity_kind)))
                 if spec.medium: graph.add((point, HAS_MEDIUM, URIRef(spec.medium)))
                 if spec.substance: graph.add((point, OF_SUBSTANCE, URIRef(spec.substance)))
@@ -271,7 +299,7 @@ class Materializer:
                 row = self._execute(conn, "SELECT consumed_revision FROM binding_progress WHERE progress_key=?", [binding.progress_key]).fetchone()
             nodes.append({"binding_signature": binding.signature, "application_name": binding.application_name,
                 "inputs": {key: [item.ref_uri for item in value] for key,value in binding.inputs.items()},
-                "outputs": {key: ref for key,(ref,_) in binding.outputs.items()},
+                "outputs": {key: output.ref_uri for key, output in binding.outputs.items()},
                 "lookback": "all" if binding.lookback is None else str(binding.lookback),
                 "backfill": bool(applications[binding.signature].backfill),
                 "consumed_revision": row[0] if row else None, "current_revision": current, "status": "idle"})

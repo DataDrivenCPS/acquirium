@@ -3,16 +3,18 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import timedelta
+from hashlib import sha256
 import json
 from typing import Any, Callable, Iterable, Mapping
 
 from acquirium.Client.explore.core import Query
 from acquirium.Materialization.incremental import (
-    App, ApplicationGraph, Binding, OutputSpec, StreamDescriptor, _duration, parse_lookback,
+    App, ApplicationGraph, Binding, OutputPort, OutputSpec, StreamDescriptor,
+    _duration, parse_lookback,
 )
 from acquirium.Materialization.worker import load_entrypoint
 from acquirium.Materialization.definitions import source_digest
-from acquirium.internals.models import looks_like_uri
+from acquirium.internals.models import compute_ref_uri, looks_like_uri
 
 
 def _json(value: object) -> str:
@@ -51,6 +53,29 @@ class _GraphQueryClient:
 class _QueryFacade:
     client: _GraphQueryClient
     def query(self) -> Query: return Query(client=self.client)
+
+
+def output_port(application_name: str, port: str,
+                inputs: Mapping[str, Iterable[StreamDescriptor]],
+                spec: OutputSpec) -> OutputPort:
+    """Resolve one output port's durable identity, once, at planning time.
+
+    A ``named`` output owns the exact reference name its author chose. A
+    generated name follows the app, the port, and the bound inputs — not the
+    deployment instance — so recompiling the same graph, or editing the app's
+    code, keeps writing the same derived stream. The point that carries the
+    output's metadata is named after that stream unless the author attached
+    the output to a point of their own, which keeps it stable against edits
+    to anything that is not the stream's identity.
+    """
+    if spec.stream_name is not None:
+        ref_name = spec.stream_name
+    else:
+        pairs = sorted((alias, item.ref_uri) for alias, values in inputs.items() for item in values)
+        ref_name = f"{application_name}:{port}:{sha256(_json([port, pairs]).encode()).hexdigest()}"
+    ref_uri = str(compute_ref_uri(f"derived:{application_name}", ref_name))
+    point_uri = spec.point_uri or f"urn:acquirium:derived-point:{ref_uri.rsplit('#', 1)[-1]}"
+    return OutputPort(ref_uri, ref_name, point_uri, spec)
 
 
 @dataclass(frozen=True)
@@ -261,7 +286,7 @@ class BindingPlanner:
                     ) for item in items)
                     for alias, items in sorted(row_streams.items())
                 }
-                ports = {key: (Binding.derive_output_uri(deployment.name, key, inputs, spec), spec)
+                ports = {key: output_port(deployment.name, key, inputs, spec)
                          for key, spec in deployment.outputs.items()}
                 binding = Binding(deployment.name, deployment.executable_digest, inputs, ports,
                                   deployment.lookback, deployment.lookahead,

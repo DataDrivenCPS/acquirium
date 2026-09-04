@@ -268,7 +268,10 @@ Acquirium's reserved internal graph, replacing that generated view when the
 binding plan changes. Each output reference uses `derived:<app-name>` as its
 timeseries `source_id`; that is a stream identity, not a caller-owned graph.
 Each derived point carries `acquirium:producedBy "<app name>"`, which is what
-the query layer's `app` attribute matches.
+the query layer's `app` attribute matches, and — when the app declared no
+label of its own — a generated `rdfs:label` naming the measurement and the app
+that derived it. A point the app author supplied with `point_uri=` is not
+relabelled; it belongs to the plant model.
 See the [app reference](../reference/apps.md#aqoutput) for the output identity
 and metadata rules.
 

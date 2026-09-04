@@ -133,9 +133,9 @@ def check_app(client: Any, target: type, *, parameters: dict | None = None,
         for port, table in builder.values.items():
             shown = table if limit is None else table.slice(0, limit)
             entry["outputs"][port] = {
-                "stream": binding.outputs[port][0],
-                "ref_name": binding.output_ref_name(port),
-                "value_kind": binding.outputs[port][1].value_kind,
+                "stream": binding.outputs[port].ref_uri,
+                "ref_name": binding.outputs[port].ref_name,
+                "value_kind": binding.outputs[port].spec.value_kind,
                 "rows": table.num_rows,
                 "truncated": shown.num_rows < table.num_rows,
                 "values": [{"time": time.isoformat(), "value": value}
@@ -143,8 +143,8 @@ def check_app(client: Any, target: type, *, parameters: dict | None = None,
                                                   shown["value"].to_pylist())],
             }
         for port in binding.outputs:
-            entry["outputs"].setdefault(port, {"stream": binding.outputs[port][0],
-                                               "ref_name": binding.output_ref_name(port),
-                                               "value_kind": binding.outputs[port][1].value_kind,
+            entry["outputs"].setdefault(port, {"stream": binding.outputs[port].ref_uri,
+                                               "ref_name": binding.outputs[port].ref_name,
+                                               "value_kind": binding.outputs[port].spec.value_kind,
                                                "rows": 0, "truncated": False, "values": []})
     return {"app": deployment.name, "graph_revision": revision, "bindings": bindings}

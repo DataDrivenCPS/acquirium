@@ -305,10 +305,14 @@ progress key        = sha256(app, {alias: input refs}, {port: output ref})
    → keys binding_progress: what the binding reads and writes.
      Survives code and parameter edits.
 
-derived stream name = per_row: "<port>:<sha256(port, sorted (alias, ref) pairs)>"
+derived stream name = per_row: "<app>:<port>:<sha256(port, sorted (alias, ref) pairs)>"
                       named:   exactly the declared stream_name
    → the durable identity of the published stream, under source
      derived:<app name>.
+
+derived point uri   = "urn:acquirium:derived-point:<the stream's uuid>"
+   → the graph node carrying the output's metadata, named after the
+     stream it carries. Moves only when the stream does.
 ```
 
 Splitting the signature from the progress key is what lets you edit an app
@@ -317,6 +321,10 @@ comment would create a "new" binding starting at the current revision, and —
 without `backfill` — every row written between the edit and the redeploy would
 be silently skipped. Keying progress by what a binding reads and writes makes
 an edit a resumption rather than a reset.
+
+All three identities are resolved once, by `planner.output_port`, and carried
+on the binding as an `OutputPort`; nothing downstream recomputes them, so the
+name and the URI cannot drift apart.
 
 The `per_row` stream name excludes the executable digest for the same reason:
 a recompiled app writes the same derived stream instead of orphaning the old
@@ -534,13 +542,18 @@ One derived stream per matched row, named after the port and the inputs it was
 computed from:
 
 ```text
-app name + port + sorted (input alias, input ref_uri) pairs
+port + sorted (input alias, input ref_uri) pairs
                       │  sha256
                       ▼
-   ref_name  = "<port>:<digest>"
+   ref_name  = "<app name>:<port>:<digest>"
    source_id = "derived:<app name>"
    ref_uri   = the usual Acquirium reference URI for that pair
 ```
+
+The app name leads the reference name so that a stream is self-describing
+wherever the name is shown without its source — a database dump, a dashboard,
+a log line. It is not what makes the name unique; `source_id` already scopes
+it, which is why a `named` output stays exactly the string its author chose.
 
 Use it whenever the calculation fans out: a thousand matched sensors become a
 thousand derived streams, none of them named by hand, and recompiling the same
@@ -587,12 +600,34 @@ each output, which is what forms the DAG.
 
 ### Finding a derived stream again
 
-When `point_uri` is omitted the runtime creates a point at
-`urn:acquirium:derived-point:<binding signature>:<port>`, puts the declared
-`label`, `unit`, `quantity_kind`, `medium`, `substance`, `data_source` and
-`properties` on it, and records `acquirium:producedBy "<app name>"` there as
-well. That point is what queries match, so a derived stream is discoverable
-by exactly what its declaration says, plus the app that made it.
+When `point_uri` is omitted the runtime creates a point named after the
+stream it carries — `urn:acquirium:derived-point:<the stream's uuid>` — puts
+the declared `label`, `unit`, `quantity_kind`, `medium`, `substance`,
+`data_source` and `properties` on it, and records
+`acquirium:producedBy "<app name>"` there as well. That point is what queries
+match, so a derived stream is discoverable by exactly what its declaration
+says, plus the app that made it.
+
+Because the point is keyed by the stream, it moves only when the stream does.
+Editing the app's code, changing a parameter, or relabelling a sensor upstream
+all change the binding signature and none of them move the point, so a query
+or dashboard pinned to a derived point keeps working across those edits.
+
+**Labels.** A point the runtime creates gets a generated `rdfs:label` when the
+author declared none, so a derived stream never displays as a bare URI:
+
+| binding | label |
+|---|---|
+| declared `label=` | exactly that |
+| a `named` output | its `stream_name` |
+| one labelled input | `Basin 1 inlet temperature (normalize-temperatures[celsius])` |
+| chained onto that | `Basin 1 inlet temperature (fill-gaps[filled])` |
+| several or unlabelled inputs | `normalize-temperatures[celsius]` |
+
+Chaining stays one hop deep: a trailing parenthetical on the input's label is
+replaced rather than appended to. A point the *author* supplied is left alone
+— it already has a name, and adding a second `rdfs:label` would double the
+rows a metadata query returns for it.
 
 Two data-node attributes select derived streams:
 
@@ -1008,7 +1043,7 @@ from acquirium.Materialization.runtime import Materializer
 | `.run_layer(bindings, apps, *, max_workers=None)` | One dependency wave, committed together. |
 | `.run_graph_once(graph, apps)` / `.run_until_idle(graph, apps)` | Every wave once, or until nothing is left to do. |
 | `ApplicationGraph(bindings)` | Validates ownership and acyclicity; `.topological()` and `.layers()` give execution order. |
-| `Binding.derive_output_ref_name(port, inputs, spec=None)` | The derived stream name a port would publish under. |
+| `planner.output_port(app_name, port, inputs, spec)` | Resolve one output's `OutputPort`: its `ref_name`, `ref_uri`, `point_uri` and `spec`. The planner calls it once per port; a binding carries the result. |
 | `Materializer(store, graph, *, query_resolver=None, record_resolver=None, unit_converter=None)` | The full facade: `deploy`, `remove`, `check`, `refresh`, `run_once`, `dag`. |
 
 `RayExecutor` runs each batch as a Ray task, putting the sealed Arrow batch in

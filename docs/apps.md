@@ -7,17 +7,14 @@ results as new streams. Those **derived streams** behave like any other stream
 in the plant: you can query them, plot them, export them, and feed them into
 further apps.
 
-Most of a plant's recurring calculations take one of four shapes:
-
-- **Soft sensors** — a value nobody measures directly, computed from ones that
-  are: pressure drop across a membrane, specific flux, an estimated chemical
+Apps are designed to support common operations on plant data:
+- **Soft sensors**: a value nobody measures directly but are instead computed: pressure drop across a membrane, specific flux, an estimated chemical
   dose from flow and concentration.
-- **Cleaned-up copies of raw data** — one stream per sensor in a known unit,
-  with spikes removed, out-of-range values dropped, and gaps filled.
-- **Fault detection and alarms** — a stream that carries a value only when
-  something is wrong: a threshold exceeded, a sensor gone quiet.
-- **KPIs and rollups** — plant-wide totals, fleet averages, compliance figures,
-  published under a name everyone can find.
+- **Cleaned-up copies of raw data**: normalizing units, dropping out-of-bounds, filling gaps
+- **Fault detection and alarms** : a stream that carries a value only when
+  something is wrong: a threshold exceeded, missing data, etc
+- **KPIs and rollups**: plant-wide totals, compliance figures,
+  etc
 
 ```text
    the outside world              acquirium server                   you
@@ -36,8 +33,7 @@ Most of a plant's recurring calculations take one of four shapes:
                                 └───────────────────┘
 ```
 
-Drivers and apps are the two halves of the data path, and it is worth keeping
-them straight: a **driver** brings data *into* the server from somewhere
+Drivers and apps are the two halves of the data path: a **driver** brings data *into* the server from somewhere
 outside it, while an **app** derives new values *from* data the server already
 has. Drivers are configured in `[[drivers]]`, apps in `[[apps]]`. If you are
 reading a file, a database, or an OPC-UA server, you want a
@@ -54,8 +50,18 @@ import acquirium as aq
 
 
 class NormalizeTemperatures(aq.App):
+    # this is how we will find the derived data streams later
     name = "normalize-temperatures"
+
+    # if backfill is true, then apply this app to *all*
+    # of the historical data as well as any new data coming in
     backfill = True
+
+    # Apps define their output schema. This forces you to annotate
+    # your derived streams with useful metadata that helps you find
+    # the data later.
+    # This also determines if the app generates one output for every
+    # stream it runs on (i.e. 1:1 mapping of input to output streams) 
     outputs = {
         "celsius": aq.output.per_row(
             value_kind="numeric",
@@ -63,9 +69,19 @@ class NormalizeTemperatures(aq.App):
         ),
     }
 
+    # a query against acquirium's metadata store. The resulting table
+    # should contain the Properties you want to read data from in your application,
+    # along with any supplementary metadata (usually the name of an associated process
+    # or equipment)
     def build_query(self, plant):
         return plant.query().measurement(alias="temperature", quantity_kind="temperature")
 
+    # this method is called when there is new data available in the input streams.
+    # This will either be called once per row (of the result of build_query()) if your
+    # output schema uses aq.output.per_row
+    # OR it will be called once.
+    # Assigning into the 'output' streams (using the names of the output schema from above)
+    # writes the data back to Acquirium so other apps/clients can read it
     def transform(self, inputs, output, context):
         celsius = inputs["temperature"].in_unit("DEG_C")
         output["celsius"] = celsius.df().select("time", "value")
@@ -446,12 +462,18 @@ registering a stream. The full argument list is in the
 [app reference](reference/apps.md#declaration-arguments).
 
 Derived streams are registered under the app that produced them, with source
-`derived:<app name>`. A `per_row` port's stream name is generated from the
-port name and the sensors that call reads, so it stays the same across
-restarts and code edits; a `named` port's stream name is exactly the string
-you gave. Either way, the
-derived stream is queryable like any other measurement — including by the
-next app.
+`derived:<app name>`. A `per_row` port's stream is named
+`<app>:<port>:<digest of the sensors that call reads>`, so it says what made
+it and stays the same across restarts and code edits; a `named` port's stream
+is called exactly the string you gave. Either way, the derived stream is
+queryable like any other measurement — including by the next app.
+
+You do not have to label an output for it to read well. When you declare no
+`label`, Acquirium generates one — `Basin 1 inlet temperature
+(normalize-temperatures[celsius])` — so the stream appears in dashboards,
+query results and `aq.align()` columns as something recognisable rather than a
+UUID. Your own `label` overrides it, and an output attached to one of your
+points with `point_uri=` is left alone, since that point already has a name.
 
 ## `context`: the match this call is for
 
@@ -572,7 +594,7 @@ normalize-temperatures: 3 input group(s) matched
 [1] inputs
       temperature: 1 stream(s), 288 rows read
         - Basin 1 inlet temperature
-    output 'celsius' -> celsius:5d717e… (numeric, 288 rows)
+    output 'celsius' -> normalize-temperatures:celsius:5d717e… (numeric, 288 rows)
         2026-01-01T00:00:00+00:00  17.777777777777878
         2026-01-01T00:05:00+00:00  17.833333333333428
         … 286 more row(s); pass -n 0 for all of them
@@ -580,7 +602,7 @@ normalize-temperatures: 3 input group(s) matched
 [2] inputs
       temperature: 1 stream(s), 288 rows read
         - Basin 2 inlet temperature
-    output 'celsius' -> celsius:f06dd2… (numeric, 288 rows)
+    output 'celsius' -> normalize-temperatures:celsius:f06dd2… (numeric, 288 rows)
         2026-01-01T00:00:00+00:00  18.0
         2026-01-01T00:05:00+00:00  18.1
         … 286 more row(s); pass -n 0 for all of them
@@ -815,12 +837,12 @@ fill-gaps: 1 input group(s) matched
 [1] inputs
       reading: 1 stream(s), 786 rows read
         - Basin 1 inlet temperature
-    output 'filled' -> filled:9e6cf9… (numeric, 864 rows)
+    output 'filled' -> fill-gaps:filled:9e6cf9… (numeric, 864 rows)
         2026-01-01T00:00:00+00:00  18.0
         2026-01-01T00:05:00+00:00  18.09
         2026-01-01T00:10:00+00:00  18.17
         … 861 more row(s); pass -n 0 for all of them
-    output 'method' -> method:ca16c4… (text, 78 rows)
+    output 'method' -> fill-gaps:method:ca16c4… (text, 78 rows)
         2026-01-01T10:00:00+00:00  interpolated
         2026-01-01T10:05:00+00:00  interpolated
         2026-01-01T10:10:00+00:00  interpolated

@@ -47,6 +47,20 @@ change in any release.
   or `aq.output.named(...)`, two named outputs cannot claim one stream name,
   and assigning a port the app did not declare raises inside `transform`
   listing the declared ports.
+- A derived stream's reference name now leads with the app that produced it
+  (`fill-gaps:filled:<digest>`), so it says what made it wherever the name is
+  shown without its source. A `named` output keeps exactly the name its author
+  chose. The derived point that carries an output's metadata is named after
+  the stream it carries rather than after the binding signature, so it no
+  longer moves when the app's code, its parameters, or an upstream sensor's
+  label change. Both identities, and the output's spec, are resolved once by
+  `planner.output_port` and carried on the binding as an `OutputPort`, instead
+  of being recomputed at six call sites.
+- Derived points get a generated `rdfs:label` when the app declares none —
+  `Basin 1 inlet temperature (normalize-temperatures[celsius])` — so a derived
+  stream no longer displays as a bare UUID in dashboards, query results, or
+  `aq.align()` columns. A point supplied by the author with `point_uri=` is
+  never relabelled.
 - Derived streams record the app that produced them, and the query layer
   gained an `app` attribute to select on it: `measurement(quantity_kind=
   "temperature", app="normalize-temperatures")` returns one app's output,
@@ -76,6 +90,16 @@ change in any release.
   which the output validator did not accept. Both string types are now
   accepted and stored identically, so alarm-style apps can build their values
   with Polars expressions.
+
+### Migration
+
+- Reference names for `per_row` outputs changed, so their storage URIs and
+  progress keys changed with them. On upgrade, an app with `backfill = True`
+  recomputes its derived streams under the new identity (idempotent, since
+  outputs are keyed by stream and timestamp); one with `backfill = False`
+  resumes from the current revision and does not process input written before
+  the upgrade. Rows published under the old identity remain in storage,
+  unreferenced. `named` outputs are unaffected.
 
 ### Removed
 - The legacy `Apps` runtime (`MappedApp`, `OutputTemplate`, supervisor and

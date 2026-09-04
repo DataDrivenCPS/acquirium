@@ -13,13 +13,12 @@ from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
 import json
 from time import time
-from typing import Any, Iterable, Iterator, Mapping, Protocol
+from typing import Any, Iterable, Iterator, Mapping, NamedTuple, Protocol
 from threading import Lock
 
 import pyarrow as pa
 import pyarrow.compute as pc
 
-from acquirium.internals.models import compute_ref_uri
 
 UTC = timezone.utc
 
@@ -248,6 +247,22 @@ class OutputSpec:
             raise ValueError("a named output requires a non-empty stream name")
 
 
+class OutputPort(NamedTuple):
+    """One output's resolved durable identity, decided once at planning time.
+
+    ``ref_name`` is what the stream is called under ``derived:<app>``,
+    ``ref_uri`` is the storage key that name hashes to, and ``point_uri`` is
+    the graph node carrying the output's metadata — the author's own point
+    when they declared one, otherwise a point named after the stream itself.
+    Everything downstream reads these fields instead of recomputing them, so
+    the name and the URI cannot drift apart.
+    """
+    ref_uri: str
+    ref_name: str
+    point_uri: str
+    spec: OutputSpec
+
+
 class _OutputAPI:
     """The two output flavors an app can declare.
 
@@ -270,7 +285,7 @@ output = _OutputAPI()
 
 class OutputBuilder:
     """Single-assignment, named output collector for one invocation."""
-    def __init__(self, ports: Mapping[str, tuple[str, OutputSpec]]):
+    def __init__(self, ports: Mapping[str, OutputPort]):
         self._ports, self._values = dict(ports), {}
     def __setitem__(self, name: str, value: Any) -> None:
         if name not in self._ports:
@@ -282,7 +297,7 @@ class OutputBuilder:
             )
         if name in self._values: raise ValueError(f"output {name!r} assigned twice")
         try:
-            self._values[name] = _normalise_output(value, self._ports[name][1])
+            self._values[name] = _normalise_output(value, self._ports[name].spec)
         except (TypeError, ValueError) as error:
             # Schema violations surface inside transform(); the port name is
             # the author's handle on which assignment broke.
@@ -334,7 +349,7 @@ class Binding:
     application_name: str
     executable_digest: str
     inputs: Mapping[str, tuple[StreamDescriptor, ...]]
-    outputs: Mapping[str, tuple[str, OutputSpec]]
+    outputs: Mapping[str, OutputPort]
     lookback: timedelta | None = timedelta()   # None reads the whole stored extent
     lookahead: timedelta = timedelta()
     graph_revision: int = 0
@@ -347,7 +362,7 @@ class Binding:
         if not self.inputs or not self.outputs: raise ValueError("a binding needs inputs and outputs")
         payload = {"v": 1, "application": self.application_name, "executable": self.executable_digest,
                    "inputs": {k: [x.__dict__ for x in sorted(v, key=lambda x: x.ref_uri)] for k,v in sorted(self.inputs.items())},
-                   "outputs": {k: (v[0], v[1].__dict__) for k,v in sorted(self.outputs.items())},
+                   "outputs": {k: (v.ref_uri, v.spec.__dict__) for k,v in sorted(self.outputs.items())},
                    "lookback": "all" if self.lookback is None else self.lookback.total_seconds(),
                    "lookahead": self.lookahead.total_seconds()}
         # Keep unconfigured bindings byte-for-byte compatible with their
@@ -361,32 +376,8 @@ class Binding:
         # backfill, silently skip the rows written in between.
         progress = {"v": 1, "application": self.application_name,
                     "inputs": {k: sorted(x.ref_uri for x in v) for k,v in sorted(self.inputs.items())},
-                    "outputs": {k: v[0] for k,v in sorted(self.outputs.items())}}
+                    "outputs": {k: v.ref_uri for k,v in sorted(self.outputs.items())}}
         object.__setattr__(self, "progress_key", sha256(_canonical(progress).encode()).hexdigest())
-
-    @classmethod
-    def derive_output_ref_name(cls, key: str, inputs: Mapping[str, Iterable[StreamDescriptor]],
-                               spec: OutputSpec | None = None) -> str:
-        # A named output owns its exact reference name. A per-row identity
-        # follows the bound inputs, not a deployment instance, so recompiling
-        # the same graph reuses the derived stream.
-        if spec is not None and spec.stream_name is not None:
-            return spec.stream_name
-        pairs = sorted((alias, item.ref_uri) for alias, values in inputs.items() for item in values)
-        digest = sha256(_canonical([key, pairs]).encode()).hexdigest()
-        return f"{key}:{digest}"
-
-    @classmethod
-    def derive_output_uri(cls, application_name: str, key: str, inputs: Mapping[str, Iterable[StreamDescriptor]],
-                          spec: OutputSpec | None = None) -> str:
-        """Return the graph-registry URI for one deterministic derived port."""
-        return str(compute_ref_uri(
-            f"derived:{application_name}", cls.derive_output_ref_name(key, inputs, spec)
-        ))
-
-    def output_ref_name(self, key: str) -> str:
-        """Return the registry name corresponding to one output port."""
-        return self.derive_output_ref_name(key, self.inputs, self.outputs[key][1])
 
 
 class ApplicationGraph:
@@ -395,9 +386,9 @@ class ApplicationGraph:
         self.bindings = tuple(bindings)
         owners: dict[str, str] = {}
         for binding in self.bindings:
-            for ref_uri, _ in binding.outputs.values():
-                if ref_uri in owners: raise ValueError(f"multiple bindings own {ref_uri!r}")
-                owners[ref_uri] = binding.signature
+            for port in binding.outputs.values():
+                if port.ref_uri in owners: raise ValueError(f"multiple bindings own {port.ref_uri!r}")
+                owners[port.ref_uri] = binding.signature
         self.edges = tuple(sorted((owners[d.ref_uri], binding.signature, d.ref_uri)
             for binding in self.bindings for streams in binding.inputs.values() for d in streams
             if d.ref_uri in owners))
@@ -620,14 +611,14 @@ class RevisionStore:
                 revision = self.store._next_revision(conn)
                 records = []
                 for binding, name, table in nonempty:
-                    ref, spec = binding.outputs[name]
-                    kind = spec.value_kind
+                    port = binding.outputs[name]
+                    ref, kind = port.ref_uri, port.spec.value_kind
                     # Framework-owned reference metadata is registered in the
                     # same transaction as the first derived values.  User code
                     # never chooses this identity.
                     self._execute(conn, f"""INSERT INTO streams (ref_uri, point_uri, source_id, ref_name, value_kind)
                         VALUES (?, ?, ?, ?, ?) ON CONFLICT (ref_uri) DO NOTHING""",
-                        [ref, spec.point_uri, f"derived:{binding.application_name}", binding.output_ref_name(name), kind])
+                        [ref, port.point_uri, f"derived:{binding.application_name}", port.ref_name, kind])
                     for time, value in zip(table["time"].to_pylist(), table["value"].to_pylist()):
                         records.append((ref, self._time(time), float(value) if kind == "numeric" else None, str(value) if kind == "text" else None, revision))
                 if records:
@@ -642,13 +633,13 @@ class RevisionStore:
 
 class Executor(Protocol):
     def execute(self, application: App, batch: Batch,
-                ports: Mapping[str, tuple[str, OutputSpec]]) -> Mapping[str, pa.Table]: ...
+                ports: Mapping[str, OutputPort]) -> Mapping[str, pa.Table]: ...
 
 
 class InProcessExecutor:
     """Deterministic executor useful for tests; it has the same task boundary."""
     def execute(self, application: App, batch: Batch,
-                ports: Mapping[str, tuple[str, OutputSpec]]) -> Mapping[str, pa.Table]:
+                ports: Mapping[str, OutputPort]) -> Mapping[str, pa.Table]:
         output = OutputBuilder(ports)
         application.transform(batch.inputs, output, batch.context)
         return output.values
@@ -662,7 +653,7 @@ class _TaskResult:
 
 
 def _ray_transform(application: App, batch: Batch,
-                   ports: Mapping[str, tuple[str, OutputSpec]]) -> _TaskResult:
+                   ports: Mapping[str, OutputPort]) -> _TaskResult:
     started_at = time()
     outputs = InProcessExecutor().execute(application, batch, ports)
     return _TaskResult(outputs, started_at, time())
@@ -694,7 +685,7 @@ class RayExecutor:
             self._ray.shutdown()
 
     def submit(self, application: App, batch: Batch,
-               ports: Mapping[str, tuple[str, OutputSpec]]) -> Any:
+               ports: Mapping[str, OutputPort]) -> Any:
         """Submit work without waiting, returning Ray's dependency token."""
         # Arrow-bearing batches are put once in Ray's object store; retries and
         # object references are intentionally not durable coordination state.
@@ -705,7 +696,7 @@ class RayExecutor:
         return self._ray.get(ticket)
 
     def execute(self, application: App, batch: Batch,
-                ports: Mapping[str, tuple[str, OutputSpec]]) -> Mapping[str, pa.Table]:
+                ports: Mapping[str, OutputPort]) -> Mapping[str, pa.Table]:
         return self.resolve(self.submit(application, batch, ports)).outputs
 
 

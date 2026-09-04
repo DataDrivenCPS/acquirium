@@ -5,12 +5,18 @@ from time import sleep
 import pyarrow as pa
 import pyarrow.compute as pc
 import pytest
+from rdflib import URIRef
 
 from acquirium.Materialization import (
-    App, ApplicationGraph, Binding, InProcessExecutor, InputBatch, RevisionStore, Scheduler,
-    StreamDescriptor, StreamSet, TimeWindow, align, output,
+    App, ApplicationGraph, Binding, InProcessExecutor, InputBatch, OutputPort, RevisionStore,
+    Scheduler, StreamDescriptor, StreamSet, TimeWindow, align, output,
 )
-from acquirium.Materialization.planner import BindingPlanner, Deployment
+from acquirium.Materialization.planner import BindingPlanner, Deployment, output_port
+
+
+def _port(name="out", ref="urn:out", spec=None):
+    """A resolved output port, for tests that build a Binding by hand."""
+    return OutputPort(ref, name, f"urn:point:{name}", spec or output.per_row(value_kind="numeric"))
 from acquirium.Materialization.runtime import Materializer
 from acquirium.Storage.duckdb_store import DuckDBStore
 from acquirium.internals.models import compute_ref_uri
@@ -37,6 +43,13 @@ class Mean(App):
 class LineageCopy(App):
     name = "lineage-copy"
     outputs = {"out": output.per_row(value_kind="numeric")}
+    def build_query(self, plant): return plant.query().measurement(alias="input")
+    def transform(self, inputs, output, context): pass
+
+
+class BorrowedPoint(App):
+    name = "borrowed-point"
+    outputs = {"out": output.per_row(value_kind="numeric", point_uri="urn:plant/T-101")}
     def build_query(self, plant): return plant.query().measurement(alias="input")
     def transform(self, inputs, output, context): pass
 
@@ -181,25 +194,25 @@ def test_revision_frontier_commits_coherent_output_and_converges(tmp_path):
     store.upsert_rows("urn:right", [(timestamp, 4.0)], value_kind="numeric")
     inputs = {"left": (StreamDescriptor("urn:left"),), "right": (StreamDescriptor("urn:right"),)}
     binding = Binding("mean", "digest", inputs, {
-        "mean": (Binding.derive_output_uri("mean", "mean", inputs), Mean.outputs["mean"]),
+        "mean": output_port("mean", "mean", inputs, Mean.outputs["mean"]),
     }, timedelta(minutes=1))
     scheduler = Scheduler(RevisionStore(store), InProcessExecutor())
 
     assert scheduler.run_once(binding, Mean())
     assert not scheduler.run_once(binding, Mean())
     assert RevisionStore(store).current_revision() == 3
-    output = list(store.timeseries(binding.outputs["mean"][0], value_mode="numeric"))[0]
+    output = list(store.timeseries(binding.outputs["mean"].ref_uri, value_mode="numeric"))[0]
     assert output.column("value").to_pylist() == [3.0]
     with store._own_conn() as conn:
-        assert conn.execute("SELECT source_id FROM streams WHERE ref_uri=?", [binding.outputs["mean"][0]]).fetchone()[0] == "derived:mean"
+        assert conn.execute("SELECT source_id FROM streams WHERE ref_uri=?", [binding.outputs["mean"].ref_uri]).fetchone()[0] == "derived:mean"
 
 
 def test_graph_rejects_cycles_and_duplicate_output_ownership():
     input_a = {"source": (StreamDescriptor("urn:b"),)}
     input_b = {"source": (StreamDescriptor("urn:a"),)}
     spec = output.per_row(value_kind="numeric")
-    a = Binding("a", "a", input_a, {"out": ("urn:a", spec)})
-    b = Binding("b", "b", input_b, {"out": ("urn:b", spec)})
+    a = Binding("a", "a", input_a, {"out": _port(ref="urn:a", spec=spec)})
+    b = Binding("b", "b", input_b, {"out": _port(ref="urn:b", spec=spec)})
     try:
         ApplicationGraph((a, b))
     except ValueError as error:
@@ -210,21 +223,26 @@ def test_graph_rejects_cycles_and_duplicate_output_ownership():
 
 def test_derived_output_uri_uses_the_managed_reference_identity():
     inputs = {"source": (StreamDescriptor("urn:input"),)}
-    ref_name = Binding.derive_output_ref_name("out", inputs)
+    port = output_port("derived-app", "out", inputs, output.per_row(value_kind="numeric"))
 
-    assert Binding.derive_output_uri("derived-app", "out", inputs) == str(
-        compute_ref_uri("derived:derived-app", ref_name)
-    )
+    # The name carries the app, the port and the bound inputs; the URI is the
+    # ordinary reference identity of that (source, name) pair; and the point
+    # is named after the stream, so neither moves when the app is edited.
+    assert port.ref_name.startswith("derived-app:out:")
+    assert port.ref_uri == str(compute_ref_uri("derived:derived-app", port.ref_name))
+    assert port.point_uri == f"urn:acquirium:derived-point:{port.ref_uri.split('#')[-1]}"
 
 
 def test_named_output_keeps_its_exact_reference_name():
     inputs = {"source": (StreamDescriptor("urn:input"),)}
     spec = output.named("plant-total", value_kind="numeric")
 
-    assert Binding.derive_output_ref_name("out", inputs, spec) == "plant-total"
-    assert Binding.derive_output_uri("kpi-app", "out", inputs, spec) == str(
-        compute_ref_uri("derived:kpi-app", "plant-total")
-    )
+    port = output_port("kpi-app", "out", inputs, spec)
+
+    # A named output is called exactly what its author called it — no app
+    # prefix, since the source id already scopes it.
+    assert port.ref_name == "plant-total"
+    assert port.ref_uri == str(compute_ref_uri("derived:kpi-app", "plant-total"))
 
 
 def test_named_output_cannot_ride_along_with_fan_out():
@@ -240,8 +258,8 @@ def test_mixed_outputs_are_allowed_for_a_single_input_group():
     application_graph, _ = planner.compile((Deployment.from_class(MixedFanOut),), graph_revision=1)
 
     (binding,) = application_graph.bindings
-    assert binding.output_ref_name("total") == "kpi"
-    assert binding.output_ref_name("each").startswith("each:")
+    assert binding.outputs["total"].ref_name == "kpi"
+    assert binding.outputs["each"].ref_name.startswith("mixed-fan-out:each:")
 
 
 def test_deployment_persists_constructor_parameters_and_policy():
@@ -290,7 +308,7 @@ def test_named_outputs_aggregate_the_complete_query_result():
     application_graph, _ = planner.compile((Deployment.from_class(NamedTotal),), graph_revision=1)
 
     (binding,) = application_graph.bindings
-    assert binding.output_ref_name("total") == "plant-total"
+    assert binding.outputs["total"].ref_name == "plant-total"
     assert {item.ref_uri for item in binding.inputs["input"]} == {
         "urn:input-a", "urn:input-b",
     }
@@ -313,7 +331,7 @@ def test_progress_survives_code_and_parameter_edits(tmp_path):
     timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
     store.upsert_rows("urn:left", [(timestamp, 1.0)], value_kind="numeric")
     inputs = {"source": (StreamDescriptor("urn:left"),)}
-    ports = {"out": ("urn:out:left", Copy.outputs["out"])}
+    ports = {"out": _port(ref="urn:out:left", spec=Copy.outputs["out"])}
     before = Binding("copy", "digest-before-edit", inputs, ports)
     after = Binding("copy", "digest-after-edit", inputs, ports, parameters={"tweak": 1})
     scheduler = Scheduler(RevisionStore(store), InProcessExecutor())
@@ -425,7 +443,7 @@ def test_context_carries_the_match_and_not_the_data(tmp_path):
     timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
     store.upsert_rows("urn:left", [(timestamp, 1.0)], value_kind="numeric")
     inputs = {"source": (StreamDescriptor("urn:left"),)}
-    binding = Binding("copy", "digest", inputs, {"out": ("urn:out:left", Copy.outputs["out"])},
+    binding = Binding("copy", "digest", inputs, {"out": _port(ref="urn:out:left", spec=Copy.outputs["out"])},
                       row={"hx": "urn:plant/hx-1"}, result=({"hx": "urn:plant/hx-1"},))
     revisions = RevisionStore(store)
     revisions.initialise(binding, True)
@@ -441,7 +459,7 @@ def test_context_carries_the_match_and_not_the_data(tmp_path):
 
 def test_output_schema_violations_name_the_port():
     from acquirium.Materialization import OutputBuilder
-    builder = OutputBuilder({"celsius": ("urn:out", output.per_row(value_kind="numeric"))})
+    builder = OutputBuilder({"celsius": _port("celsius")})
     bad = pa.table({"time": pa.array([datetime(2026, 1, 1, tzinfo=timezone.utc)], pa.timestamp("us", tz="UTC")),
                     "value": pa.array([1.0]), "ref_uri": pa.array(["urn:x"])})
     with pytest.raises(TypeError, match="output 'celsius'"):
@@ -455,7 +473,7 @@ def test_a_text_output_accepts_a_polars_frame():
     import polars as pl
 
     from acquirium.Materialization import OutputBuilder
-    builder = OutputBuilder({"alarm": ("urn:out", output.per_row(value_kind="text"))})
+    builder = OutputBuilder({"alarm": _port("alarm", spec=output.per_row(value_kind="text"))})
 
     builder["alarm"] = pl.DataFrame({
         "time": [datetime(2026, 1, 1, tzinfo=timezone.utc)],
@@ -496,8 +514,8 @@ def test_scheduler_runs_independent_topological_wave_concurrently(tmp_path):
     store.upsert_rows("urn:left", [(timestamp, 1.0)], value_kind="numeric")
     store.upsert_rows("urn:right", [(timestamp, 2.0)], value_kind="numeric")
     spec = Copy.outputs["out"]
-    left = Binding("left-copy", "copy", {"source": (StreamDescriptor("urn:left"),)}, {"out": ("urn:out:left", spec)})
-    right = Binding("right-copy", "copy", {"source": (StreamDescriptor("urn:right"),)}, {"out": ("urn:out:right", spec)})
+    left = Binding("left-copy", "copy", {"source": (StreamDescriptor("urn:left"),)}, {"out": _port(ref="urn:out:left", spec=spec)})
+    right = Binding("right-copy", "copy", {"source": (StreamDescriptor("urn:right"),)}, {"out": _port(ref="urn:out:right", spec=spec)})
     graph = ApplicationGraph((left, right))
     assert len(graph.layers()) == 1
     assert {binding.signature for binding in graph.layers()[0]} == {left.signature, right.signature}
@@ -514,8 +532,8 @@ def test_scheduler_submits_an_entire_async_wave_before_resolving(tmp_path):
     store.upsert_rows("urn:left", [(timestamp, 1.0)], value_kind="numeric")
     store.upsert_rows("urn:right", [(timestamp, 2.0)], value_kind="numeric")
     spec = Copy.outputs["out"]
-    left = Binding("left-copy", "copy", {"source": (StreamDescriptor("urn:left"),)}, {"out": ("urn:out:left", spec)})
-    right = Binding("right-copy", "copy", {"source": (StreamDescriptor("urn:right"),)}, {"out": ("urn:out:right", spec)})
+    left = Binding("left-copy", "copy", {"source": (StreamDescriptor("urn:left"),)}, {"out": _port(ref="urn:out:left", spec=spec)})
+    right = Binding("right-copy", "copy", {"source": (StreamDescriptor("urn:right"),)}, {"out": _port(ref="urn:out:right", spec=spec)})
     executor = DeferredProbeExecutor()
     scheduler = Scheduler(RevisionStore(store), executor)
 
@@ -650,7 +668,7 @@ def test_preview_batch_leaves_the_deployed_apps_progress_alone(tmp_path):
     timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
     store.upsert_rows("urn:left", [(timestamp, 1.0)], value_kind="numeric")
     inputs = {"source": (StreamDescriptor("urn:left"),)}
-    binding = Binding("copy", "digest", inputs, {"out": ("urn:out:left", Copy.outputs["out"])})
+    binding = Binding("copy", "digest", inputs, {"out": _port(ref="urn:out:left", spec=Copy.outputs["out"])})
     revisions = RevisionStore(store)
     scheduler = Scheduler(revisions, InProcessExecutor())
     assert scheduler.run_once(binding, Copy())
@@ -699,6 +717,72 @@ def test_remove_forgets_the_apps_durable_progress(tmp_path):
 
     with store._own_conn() as conn:
         assert conn.execute("SELECT count(*) FROM binding_progress").fetchone()[0] == 0
+
+
+def test_a_derived_point_uri_survives_a_code_or_metadata_edit(tmp_path):
+    """Change 3: the point is keyed by the stream, not by the binding signature."""
+    spec = output.per_row(value_kind="numeric")
+    sensor = StreamDescriptor("urn:ref:raw", point_uri="urn:plant/T-101", label="Basin 1 inlet")
+    inputs = {"t": (sensor,)}
+    ports = {"celsius": output_port("normalize", "celsius", inputs, spec)}
+
+    edited_code = Binding("normalize", "digest-after-edit", inputs, ports)
+    relabelled = Binding("normalize", "digest-before-edit",
+                         {"t": (StreamDescriptor("urn:ref:raw", point_uri="urn:plant/T-101",
+                                                 label="Basin 1 inlet temperature"),)}, ports)
+    original = Binding("normalize", "digest-before-edit", inputs, ports)
+
+    # The signature moves with the code and with input metadata — that is what
+    # it is for — but nothing a query or a dashboard is pinned to moves with it.
+    assert original.signature != edited_code.signature != relabelled.signature
+    for binding in (original, edited_code, relabelled):
+        assert binding.outputs["celsius"].point_uri == ports["celsius"].point_uri
+        assert binding.outputs["celsius"].ref_uri == ports["celsius"].ref_uri
+        assert binding.progress_key == original.progress_key
+
+
+def test_a_generated_label_names_the_subject_and_its_app():
+    from acquirium.Materialization.runtime import _default_label
+
+    spec = output.per_row(value_kind="numeric")
+    sensor = StreamDescriptor("urn:ref:raw", label="Basin 1 inlet temperature")
+    ports = {"celsius": output_port("normalize-temperatures", "celsius", {"t": (sensor,)}, spec)}
+    one = Binding("normalize-temperatures", "d", {"t": (sensor,)}, ports)
+
+    assert _default_label(one, "celsius", spec) == (
+        "Basin 1 inlet temperature (normalize-temperatures[celsius])")
+
+    # A second app reading that stream keeps the subject and swaps the tag,
+    # instead of accumulating one parenthetical per hop.
+    derived = StreamDescriptor("urn:ref:celsius",
+                               label="Basin 1 inlet temperature (normalize-temperatures[celsius])")
+    two = Binding("fill-gaps", "d", {"t": (derived,)}, ports)
+    assert _default_label(two, "filled", spec) == "Basin 1 inlet temperature (fill-gaps[filled])"
+
+    # No single subject, or none with a name: the app and port stand alone.
+    many = Binding("plant-average-flow", "d",
+                   {"t": (StreamDescriptor("urn:a", label="A"), StreamDescriptor("urn:b", label="B"))},
+                   ports)
+    assert _default_label(many, "average", spec) == "plant-average-flow[average]"
+    unlabelled = Binding("fill-gaps", "d", {"t": (StreamDescriptor("urn:c"),)}, ports)
+    assert _default_label(unlabelled, "filled", spec) == "fill-gaps[filled]"
+
+    # A named output already has the human name its author chose.
+    named = output.named("plant-average-flow", value_kind="numeric")
+    assert _default_label(many, "average", named) == "plant-average-flow"
+
+
+def test_only_a_runtime_owned_point_gets_a_generated_label(tmp_path):
+    """A point the author supplied is theirs; do not add a second name to it."""
+    from rdflib import RDFS
+
+    graph = LineageGraph()
+    materializer = Materializer(DuckDBStore(tmp_path / "labels.duckdb"), graph)
+    materializer.deploy(Deployment.from_class(BorrowedPoint))
+    materializer.refresh()
+
+    published = graph.published[0]
+    assert not list(published.triples((URIRef("urn:plant/T-101"), RDFS.label, None)))
 
 
 def test_a_declared_data_source_tag_is_queryable(tmp_path):

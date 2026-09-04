@@ -214,9 +214,11 @@ Register many streams in one call rather than looping over single ones.
 
 When a materialization app is compiled, each named output port becomes a point
 and reference node for every concrete input binding. Its `source_id` is
-`derived:<name>`; its generated `ref_name` combines the port name with a stable
-hash of the bound input aliases and reference URIs. The `ref_uri` follows from
-that pair as usual. Consequently, an app with one `per_row` output port and
+`derived:<name>`; its generated `ref_name` is the app name, the port name and a
+stable hash of the bound input aliases and reference URIs. The `ref_uri`
+follows from that pair as usual, and the generated point is named after the
+stream it carries, so neither moves when the app's code or a sensor's metadata
+changes. Consequently, an app with one `per_row` output port and
 ten matched input rows owns ten distinct derived streams, while a `named`
 output owns exactly one stream under the name its author chose.
 See the [app reference](../reference/apps.md#aqoutput).
