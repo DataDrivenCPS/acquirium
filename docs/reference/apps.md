@@ -73,12 +73,12 @@ settings, see
 | **app** | The `App` subclass an author writes: a query, an output declaration, and a `transform`. |
 | **deployment** | The durable record of one app being deployed, including its parameters. |
 | **match / input group** | One row of the app's query result. The CLI calls it an *input group*. |
-| **binding** | The compiled form of one input group: the exact stream references to read and derived references to write. One binding is one call to `transform` per invocation. |
+| **binding** | The compiled form of one input group: the exact stream references to read and derived references to write. Whenever a binding has unconsumed input, it produces one call to `transform`. |
 | **port** | A key of the `outputs` mapping — the name used in `output["…"] = …`. |
 | **derived stream** | The timeseries a port publishes, registered under `derived:<app name>`. |
 | **revision** | A monotonic counter incremented once per non-empty write to the timeseries store. Every row records the revision that last wrote it. |
 | **frontier** | The highest revision a binding has consumed. Stored in `binding_progress`. |
-| **changed extent / read window** | The timestamps of newly written rows, and that range padded by `lookback`/`lookahead`. |
+| **changed extent / read window** | The timestamp range of newly written rows, and that range widened by `lookback` and `lookahead`. |
 
 ## Durable state
 
@@ -146,9 +146,9 @@ cannot block a writer.
 ### Planning: from query to bindings
 
 `BindingPlanner.compile(deployments, graph_revision)` turns deployment records
-into an `ApplicationGraph`. It is deliberately optimistic: it checks the
-graph's published version before and after, and discards a plan compiled
-across a change.
+into an `ApplicationGraph`. It is deliberately optimistic: it reads the
+graph's published version before and after, and throws away any plan that was
+built while the model changed underneath it.
 
 ```text
 for each deployment:
@@ -167,14 +167,14 @@ validate: single ownership of each output ref, no self-consumption, acyclic
 
 Step 5 matters more than it looks. Unrelated triples in the plant model can
 produce the same alias-to-stream combination several times; binding each
-distinct combination once keeps the number of derived streams a function of
-the plant, not of the query's join shape.
+distinct combination once means the number of derived streams follows the
+plant, not the shape of the query's joins.
 
 Step 6 is the rule the guide states as "the outputs decide how matches become
 calls". A binding built for the whole table keeps every matched row in
 `context.result` but has no single `context.row`; a lone match is treated as a
-row, so an app whose query resolves to exactly one group can declare both
-flavors.
+row, so an app whose query resolves to exactly one group may declare both
+kinds of output.
 
 ### Batch construction: what one call reads
 
@@ -226,12 +226,13 @@ in one write transaction:
       binding_progress[progress_key] = batch.to_revision
 ```
 
-That equality check is the whole safety property. Two processes that both computed revisions
-`(40, 41]` will both offer a commit; the first advances the frontier to 41 and
-the second is rejected because it no longer matches, so its work is discarded
-rather than double-counted. Rows are keyed by `(stream, timestamp)`, so even
-the accepted duplicate would have been an overwrite — the check exists to keep
-the *frontier* honest, not the values.
+That equality check is the whole safety property. Two processes that both
+computed revisions `(40, 41]` will both offer a commit; the first advances the
+frontier to 41 and the second is rejected, because the frontier no longer
+matches what it started from, so its work is discarded rather than
+double-counted. Rows are keyed by `(stream, timestamp)`, so even the rejected
+duplicate would only have overwritten identical values — the check exists to
+keep the *frontier* honest, not the values.
 
 A binding whose transform assigned nothing is still accepted: its frontier
 advances, publishing no rows. That is how an alarm app with nothing to report
@@ -588,14 +589,14 @@ forms the DAG.
 ## `StreamSet`
 
 The value of each `inputs[alias]`: the rows for one alias inside this call's
-window, plus the identity of the streams that produced them.
+window, plus a description of the streams that produced them.
 
 | member | signature | returns |
 |---|---|---|
 | `.df()` | `df(library="polars")` | The read window as a [Polars](https://docs.pola.rs/api/python/stable/reference/dataframe/index.html) dataframe with columns `ref_uri`, `time`, `value`. `library="pandas"` returns the same rows as pandas; any other value raises `ValueError`. |
 | `.collect()` | `collect()` | The read window as a [`pyarrow.Table`](https://arrow.apache.org/docs/python/generated/pyarrow.Table.html). |
 | `.batches()` | `batches()` | Iterator of `pyarrow.RecordBatch` over the read window (65,536 rows per batch by default). |
-| `.changes` | attribute | `pyarrow.Table` of only the rows written in the revisions this invocation consumes. Same columns. |
+| `.changes` | attribute | `pyarrow.Table` holding only the rows that are new in this call — those written in the revisions it consumes. Same columns. |
 | `.in_unit(unit)` | `in_unit(unit)` | A new `StreamSet` with every value converted into `unit`. |
 | `.stream` | property | The single `StreamDescriptor` bound to this alias. Raises `ValueError` when the alias holds any other number of streams. |
 | `.streams` | attribute | Tuple of every `StreamDescriptor` bound to this alias. |
@@ -607,12 +608,12 @@ for a numeric alias and a string for a text alias — an alias is read as text
 when a row in the window carries a text value and no numeric one.
 
 The frame's shape never changes with the match: `ref_uri` is present whether
-one stream is bound or fifty. Which streams those are is a question for the
-stream set, not the frame.
+one stream is bound or fifty. To find out which streams those are, ask the
+stream set (`.stream` or `.streams`) rather than the frame.
 
 ### `.stream` versus `.streams`
 
-| output flavor | streams per alias per call | accessor |
+| kind of output | streams per alias per call | use |
 |---|---|---|
 | `per_row` | exactly one, for every alias — a row pairing `feed` and `permeate` gives one of each | `.stream` |
 | `named` | every match the query found | `.streams` |
@@ -642,20 +643,21 @@ the values are not numeric (`TypeError`), or the stream set carries no
 converter (`RuntimeError` — the server injects one; an embedded scheduler
 passes `unit_converter=` to `RevisionStore`).
 
-Conversions are linear, so two probe conversions per stream give exact
-factors; expect floating-point error on the order of 1e-13.
+Unit conversion is linear, so each stream's factor and offset are derived by
+converting two sample values; expect floating-point error on the order of
+1e-13.
 
 ## `StreamDescriptor`
 
-One stream's identity, as the compiled query saw it.
+What the compiled query knows about one stream.
 
 | field | meaning |
 |---|---|
-| `ref_uri` | The stream's identity in storage. |
+| `ref_uri` | How the stream is identified in storage. |
 | `point_uri` | The point in the plant model it measures, when the query bound one. |
 | `label` | Human-readable name from the model. |
 | `unit` | The unit URI the stream records in. |
-| `value_kind`, `quantity_kind`, `medium`, `substance`, `properties` | Declared for completeness but **not populated** by the planner today. Do not branch on them. |
+| `value_kind`, `quantity_kind`, `medium`, `substance`, `properties` | Declared for completeness but **not populated** by the planner today. Do not rely on them. |
 
 ## `InputBatch`
 
@@ -665,17 +667,17 @@ no measurement data.
 | member | type | meaning |
 |---|---|---|
 | `.row` | `Mapping[str, Any]` | The matched row this call is computing. Raises `ValueError` for a `named` output, which is about every row at once. |
-| `.result` | `polars.DataFrame` | Every row the query matched — the same table in every call of the app, whatever the flavor. |
+| `.result` | `polars.DataFrame` | Every row the query matched — the same table in every call of the app, whichever kind of output it declares. |
 | `.changed_window` | `TimeWindow` | Timestamp extent of the unconsumed writes: why this call happened. |
-| `.read_window` | `TimeWindow` | The lookback/lookahead-padded range actually read. Equals every `StreamSet.window`. |
+| `.read_window` | `TimeWindow` | The range actually read: the changed extent widened by `lookback` and `lookahead`. Equals every `StreamSet.window`. |
 | `.graph_revision` | `int` | The graph version this binding was compiled against. |
-| `.from_revision`, `.to_revision` | `int` | The revision interval being consumed, exclusive of `from`. |
+| `.from_revision`, `.to_revision` | `int` | The revisions this call consumes: everything after `from_revision`, up to and including `to_revision`. |
 | `.binding_signature` | `str` | Identifies this compiled binding in logs and lineage. |
 
 `.row` and `.result` use the column names of
-[`Query.metadata()`](client-api.md): an alias holds the matched URI, with
-`<alias>_ref`, `<alias>.label` and `<alias>.unit` beside a stream-bearing
-alias.
+[`Query.metadata()`](client-api.md): a column named for each alias holds the
+URI that matched it, and where that alias is a sensor, `<alias>_ref`,
+`<alias>.label` and `<alias>.unit` sit beside it.
 
 ## `OutputBuilder`
 
@@ -687,8 +689,8 @@ output["celsius"] = frame.select("time", "value")
 ```
 
 Accepted values: a Polars dataframe, a pandas dataframe, a `pyarrow.Table`, a
-`pyarrow.RecordBatch`, or a sequence of record batches. After conversion the
-table must have exactly two columns:
+`pyarrow.RecordBatch`, or a sequence of record batches. Once converted to
+Arrow, the table must have exactly two columns:
 
 | column | requirement |
 |---|---|
@@ -773,9 +775,9 @@ what it computed. It writes nothing: the app is not registered, its derived
 streams are not created, no progress row is written or advanced, and no
 revision is allocated. A deployed app of the same name is unaffected.
 
-Because each binding reads its whole retained extent rather than an
-incremental window, the values shown are what a `backfill = True` deployment
-would publish.
+Because each binding reads its whole stored history rather than only the
+newest rows, the values shown are what a `backfill = True` deployment would
+publish.
 
 ### CLI
 
@@ -873,9 +875,9 @@ over the client API, and returns the same document. Three things follow:
 - The server never imports the app, so nothing needs to be importable there
   and `search_path` is irrelevant.
 
-Everything else matches a server-side check, including the identities the
-derived streams would be published under. Input rows travel over HTTP, so
-reading a large extent is slower this way.
+Everything else matches a server-side check, including the exact derived
+stream each output would be written to. Input rows travel over HTTP, so
+reading a lot of history is slower this way.
 
 ## Deploying
 
