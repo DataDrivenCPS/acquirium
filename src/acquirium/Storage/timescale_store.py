@@ -110,9 +110,13 @@ class TimescaleStore(TimeseriesStore):
             # Create hypertable before enabling Timescale features. We target
             # new Acquirium-managed stores here; older point_uri/handle schemas
             # should be recreated rather than migrated in-place.
+            # No default (ts) index: every query the store issues filters by
+            # ref_id first, which the unique (ref_id, ts) index below serves,
+            # so the default index would only add a second b-tree insert per
+            # row on the write path.
             cur.execute(
                 sql.SQL(
-                    "SELECT create_hypertable(%s, %s, if_not_exists => TRUE);"
+                    "SELECT create_hypertable(%s, %s, if_not_exists => TRUE, create_default_indexes => FALSE);"
                 ),
                 (TIMESERIES_TABLE, "ts"),
             )

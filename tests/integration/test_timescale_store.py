@@ -54,6 +54,16 @@ class TestRefIdKeys:
         assert again == first
         assert ts_store.timeseries_info(clean_point).row_count == 3
 
+    def test_no_default_ts_index(self, ts_store):
+        # create_default_indexes => FALSE: only the unique (ref_id, ts) index exists.
+        names = [
+            row[0] for row in ts_store.sql_query(
+                "SELECT indexname FROM pg_indexes WHERE tablename = 'timeseries'"
+            )["rows"]
+        ]
+        assert "timeseries_ts_idx" not in names
+        assert "idx_timeseries_ref_ts_unique" in names
+
     def test_unknown_ref_reads_empty(self, ts_store):
         assert list(ts_store.timeseries("urn:test:never_written")) == []
         assert ts_store.timeseries_info("urn:test:never_written").row_count == 0
