@@ -96,7 +96,7 @@ class StreamSet:
         """The one stream bound to this alias — which sensor this call is for.
 
         A ``per_row`` output binds exactly one stream per alias per call —
-        for every alias, even when a query row pairs several — so this is the
+        for every alias, even when a query row pairs two — so this is the
         usual way to ask what is being computed: ``inputs["temperature"].stream``
         gives its ``ref_uri``, ``point_uri``, ``label`` and ``unit``.
 
@@ -154,15 +154,28 @@ class StreamSet:
                          self.batch_size, self.converter)
 
 
+def _rows_to_frame(rows: tuple[Mapping[str, Any], ...]) -> Any:
+    """Render match rows as a Polars frame, columns in query-alias order."""
+    import polars as pl
+    if not rows:
+        return pl.DataFrame()
+    columns: list[str] = []
+    for row in rows:
+        columns.extend(key for key in row if key not in columns)
+    return pl.DataFrame([{key: row.get(key) for key in columns} for row in rows],
+                        schema=columns, orient="row", infer_schema_length=None)
+
+
 @dataclass(frozen=True)
 class InputBatch:
     """What one call to ``transform`` is about — the match, not its data.
 
-    ``entities`` carries the semantic side of the match: the query's non-data
-    aliases resolved to model URIs, for the row this call is bound to. The
-    windows say why the call happened and how much was read; the revision
-    fields are runtime diagnostics. The data itself, and the streams that
-    produced it, arrive in the ``inputs`` argument beside this one.
+    ``result`` is everything ``build_query`` matched, the same table in every
+    call, so an app can see the fleet it belongs to and not only its own row.
+    ``row`` is the one row a ``per_row`` call is computing. The windows say
+    why the call happened and how much was read; the revision fields are
+    runtime diagnostics. The data itself, and the streams that produced it,
+    arrive in the ``inputs`` argument beside this one.
     """
     binding_signature: str
     graph_revision: int
@@ -170,7 +183,38 @@ class InputBatch:
     to_revision: int
     changed_window: TimeWindow
     read_window: TimeWindow
-    entities: Mapping[str, str] = field(default_factory=dict)
+    _row: Mapping[str, Any] | None = None
+    _result: tuple[Mapping[str, Any], ...] = ()
+
+    @property
+    def result(self) -> Any:
+        """Everything ``build_query`` matched, as a Polars dataframe.
+
+        The same table in every call of an app, whatever the output flavor:
+        a ``per_row`` call sees the whole fleet it is one of, which is what
+        lets it group, rank, or count siblings. Columns follow
+        ``Query.metadata()``: an alias holds the matched URI, with
+        ``<alias>_ref``, ``<alias>.label`` and ``<alias>.unit`` beside a
+        stream-bearing one.
+
+        Use :attr:`row` for the one row this call is computing.
+        """
+        return _rows_to_frame(self._result)
+
+    @property
+    def row(self) -> Mapping[str, Any]:
+        """The row this call is computing, for a ``per_row`` output.
+
+        Raises for a ``named`` output: that call is about every matched row
+        at once, and :attr:`result` is the whole table.
+        """
+        if self._row is None:
+            raise ValueError(
+                "this call covers every matched row, so it has no single row — that is what a "
+                "named output sees. Use .result for the whole table, or a per_row output to "
+                "run once per row."
+            )
+        return self._row
 
 
 @dataclass(frozen=True)
@@ -209,8 +253,8 @@ class _OutputAPI:
     ``per_row`` runs the app once per query-result row and publishes one
     derived stream beside that row's inputs — the right choice when the same
     calculation fans out across many matches. A row is one match, not one
-    stream: a query pairing ``supply`` and ``return`` gives a call holding
-    both, which publishes a single stream for the pair.
+    stream: a query pairing the pressure upstream and downstream of a unit
+    gives a call holding both, which publishes a single stream for the pair.
 
     ``named`` publishes one absolute stream whose identity you choose, from a
     single call over the complete query result, so it can be found by name.
@@ -289,10 +333,11 @@ class Binding:
     inputs: Mapping[str, tuple[StreamDescriptor, ...]]
     outputs: Mapping[str, tuple[str, OutputSpec]]
     lookback: timedelta | None = timedelta()   # None reads the whole stored extent
-    lookback_after: timedelta = timedelta()
+    lookahead: timedelta = timedelta()
     graph_revision: int = 0
     parameters: Mapping[str, Any] = field(default_factory=dict)
-    entities: Mapping[str, str] = field(default_factory=dict)
+    row: Mapping[str, Any] | None = None
+    result: tuple[Mapping[str, Any], ...] = ()
     signature: str = field(init=False)
     progress_key: str = field(init=False)
     def __post_init__(self):
@@ -300,9 +345,8 @@ class Binding:
         payload = {"v": 1, "application": self.application_name, "executable": self.executable_digest,
                    "inputs": {k: [x.__dict__ for x in sorted(v, key=lambda x: x.ref_uri)] for k,v in sorted(self.inputs.items())},
                    "outputs": {k: (v[0], v[1].__dict__) for k,v in sorted(self.outputs.items())},
-                   "entities": dict(sorted(self.entities.items())),
                    "lookback": "all" if self.lookback is None else self.lookback.total_seconds(),
-                   "lookback_after": self.lookback_after.total_seconds()}
+                   "lookahead": self.lookahead.total_seconds()}
         # Keep unconfigured bindings byte-for-byte compatible with their
         # previous identity, while making configured deployments distinct.
         if self.parameters:
@@ -419,7 +463,7 @@ class App:
 
     - ``lookback`` — how much stored context precedes the new data in each
       call's window (``"all"`` reads the whole stream every time).
-    - ``lookback_after`` — context after the changed range, for corrections
+    - ``lookahead`` — context after the changed range, for corrections
       that land in the middle of history.
     - ``backfill`` — whether the first run processes already-stored history.
     - ``coalesce`` / ``max_delay`` — wait for a quiet gap in a burst of
@@ -428,7 +472,7 @@ class App:
     """
     name: str | None = None
     lookback: timedelta | str = "0s"
-    lookback_after: timedelta | str = "0s"
+    lookahead: timedelta | str = "0s"
     backfill: bool = False
     coalesce: timedelta | str = "0s"
     max_delay: timedelta | str | None = None
@@ -533,10 +577,10 @@ class RevisionStore:
         if binding.lookback is None:
             extent = self._execute(conn, f"SELECT min(t.ts), max(t.ts) FROM {self._timeseries_source} WHERE {self._ref} IN ({marks}) AND NOT t.deleted", refs).fetchone()
             read = TimeWindow(extent[0].replace(tzinfo=UTC) if extent[0].tzinfo is None else extent[0], extent[1].replace(tzinfo=UTC) if extent[1].tzinfo is None else extent[1])
-        else: read = TimeWindow(changed_window.start-binding.lookback, changed_window.end+binding.lookback_after)
+        else: read = TimeWindow(changed_window.start-binding.lookback, changed_window.end+binding.lookahead)
         inputs = {alias: self._stream_set(conn, alias, descriptors, read, previous, target) for alias, descriptors in binding.inputs.items()}
         return Batch(inputs, InputBatch(binding.signature, binding.graph_revision, previous,
-                                       target, changed_window, read, binding.entities))
+                                       target, changed_window, read, binding.row, binding.result))
     def _stream_set(self, conn: Any, alias: str, descriptors: tuple[StreamDescriptor,...], window: TimeWindow, previous: int, target: int) -> StreamSet:
         refs = [x.ref_uri for x in descriptors]
         if not refs: return StreamSet(alias, window, descriptors, converter=self.unit_converter)

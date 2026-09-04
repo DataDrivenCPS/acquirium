@@ -466,8 +466,13 @@ def _render_check(result: dict, limit: int, *, as_json: bool = False) -> None:
                 typer.echo(f"        - {item.get('label') or item['ref_uri']}")
             if len(shown) < len(streams):
                 typer.echo(f"        … {len(streams) - len(shown)} more stream(s)")
-        for alias, uri in (entry.get("entities") or {}).items():
-            typer.echo(f"      [{alias}] {uri}")
+        # Entity columns say what this call's row is about; the stream
+        # columns are already listed above.
+        row = entry.get("row") or {}
+        entities = {k: v for k, v in row.items()
+                    if v and "." not in k and not k.endswith("_ref") and f"{k}_ref" not in row}
+        if entities:
+            typer.echo("      " + "  ".join(f"[{k}] {v}" for k, v in entities.items()))
         if entry.get("error"):
             typer.echo(f"    error: {entry['error']}", err=True)
             continue

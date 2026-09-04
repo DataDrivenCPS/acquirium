@@ -515,7 +515,7 @@ class AppRegistration(BaseModel):
     outputs: dict[str, Any]
     # Durations travel as whole microseconds; lookback may be the string "all".
     lookback: int | str
-    lookback_after: int = 0
+    lookahead: int = 0
     backfill: bool = False
     coalesce: int = 0
     max_delay: int | None = None

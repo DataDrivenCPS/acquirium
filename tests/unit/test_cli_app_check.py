@@ -65,7 +65,8 @@ def test_check_prints_matched_inputs_and_computed_rows(monkeypatch, app_file: Pa
     capture: dict = {}
     result = _run(monkeypatch, app_file, [{
         "inputs": {"input": [{"ref_uri": "urn:input", "label": "Inlet temp", "unit": None}]},
-        "entities": {"hx": "urn:hx-1"},
+        "row": {"hx": "urn:hx-1", "input": "urn:point",
+                "input_ref": "urn:input", "input.label": "Inlet temp"},
         "input_rows": {"input": 2},
         "outputs": {"doubled": {"stream": "urn:derived", "ref_name": "doubled:abc",
                                 "value_kind": "numeric", "rows": 2, "truncated": True,
@@ -75,7 +76,8 @@ def test_check_prints_matched_inputs_and_computed_rows(monkeypatch, app_file: Pa
 
     assert result.exit_code == 0
     assert "doubler: 1 input group(s) matched" in result.stdout
-    assert "Inlet temp" in result.stdout and "urn:hx-1" in result.stdout
+    assert "Inlet temp" in result.stdout
+    assert "[hx] urn:hx-1" in result.stdout          # the row's entity column
     assert "'doubled' -> doubled:abc (numeric, 2 rows)" in result.stdout
     assert "2026-01-01T00:00:00+00:00  4.0" in result.stdout
     assert "… 1 more row(s); pass -n 0 for all of them" in result.stdout
@@ -86,7 +88,7 @@ def test_check_prints_matched_inputs_and_computed_rows(monkeypatch, app_file: Pa
 
 
 def test_check_defaults_to_five_rows_and_n_zero_asks_for_all(monkeypatch, app_file: Path):
-    binding = [{"inputs": {"input": []}, "entities": {}, "outputs": {}, "error": None}]
+    binding = [{"inputs": {"input": []}, "row": None, "outputs": {}, "error": None}]
 
     capture: dict = {}
     _run(monkeypatch, app_file, binding, capture, extra=())
@@ -118,7 +120,7 @@ def test_a_module_spec_sends_no_search_path(monkeypatch, app_file: Path):
 def test_check_exits_nonzero_when_a_binding_failed(monkeypatch, app_file: Path):
     result = _run(monkeypatch, app_file, [{
         "inputs": {"input": [{"ref_uri": "urn:input", "label": None, "unit": None}]},
-        "entities": {}, "outputs": {}, "error": "ValueError: calibration missing",
+        "row": None, "outputs": {}, "error": "ValueError: calibration missing",
     }])
 
     assert result.exit_code == 1

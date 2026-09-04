@@ -98,7 +98,7 @@ class Materializer:
                 "inputs": {alias: [{"ref_uri": item.ref_uri, "label": item.label, "unit": item.unit}
                                    for item in streams]
                            for alias, streams in binding.inputs.items()},
-                "entities": dict(binding.entities),
+                "row": dict(binding.row) if binding.row else None,
                 "outputs": {}, "error": None,
             }
             bindings.append(entry)
