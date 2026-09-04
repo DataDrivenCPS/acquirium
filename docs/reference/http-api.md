@@ -210,7 +210,7 @@ Read timeseries data for a single stream. Returns an Apache Arrow IPC stream (`a
 
 The Arrow schema is `(ts: timestamp[us, UTC], value: float64 or utf8, uri: utf8)`.
 
-See [data-api.md](data-api.md#value_mode) for a full description of `value_mode` options.
+See [Values](../explanation/values.md) for a full description of `value_mode` options.
 
 ### `POST /timeseries_info`
 

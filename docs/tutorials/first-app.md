@@ -149,5 +149,5 @@ Three new ideas:
 - [Apps](../apps.md) — the walkthrough of lookback, scheduling, output flavors,
   and deployment.
 - [App reference](../reference/apps.md) — the complete class contract.
-- [Incremental materialization implementation](../materialization-implementation.md)
-  — what the server does after you deploy.
+- [How it works](../reference/apps.md#how-it-works) — what the server does
+  after you deploy: windows, transactions, recovery.

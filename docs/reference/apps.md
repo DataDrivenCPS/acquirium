@@ -2,194 +2,502 @@
 title: App reference
 ---
 
-This is the complete reference for authoring a materialization app. An app is
-an importable `App` class: its query selects stored input streams, its class
-attributes say when and how much data to read, and its `transform` method
-publishes one or more derived streams.
+This page is the complete reference for Acquirium's app platform — the
+*incremental materialization* runtime that keeps derived streams up to date.
+It has two halves:
 
-For a shorter walkthrough and deployment examples, see [Apps](../apps.md). For
-the revision frontier, transaction, and recovery model, see
-[Incremental materialization implementation](../materialization-implementation.md).
+- **[How it works](#how-it-works)** — the components, the durable state, the
+  algorithms, and the design decisions behind them. Read this when you need to
+  predict what the system will do, debug something surprising, or embed the
+  runtime in another program.
+- **[API reference](#api-reference)** — every class, attribute and method an
+  app author touches, plus the CLI, HTTP and configuration surfaces.
 
-## Complete class shape
+For a guided introduction with worked examples, start with
+[Apps](../apps.md). For the storage-backend contract and operational
+settings, see
+[Backends and operations](../materialization-implementation.md).
 
-```python
-import polars as pl
-import acquirium as aq
+---
 
+# How it works
 
-class TemperatureNormalizer(aq.App):
-    name = "temperature-normalizer"
-    lookback = "5m"
-    backfill = True
-    coalesce = "250ms"
-    max_delay = "5s"
-    outputs = {
-        "normalized": aq.output.per_row(
-            value_kind="numeric",
-            label="Normalized temperature",
-            unit="http://qudt.org/vocab/unit/DEG_C",
-        ),
-    }
+## The pieces
 
-    def __init__(self, offset: float = 0.0):
-        self.offset = offset
+```text
+   deploy / check                          acquirium.toml  [[apps]]
+        │                                          │
+        ▼                                          ▼
+ ┌──────────────────────────────────────────────────────────────┐
+ │ Materializer                     durable registry + orchestration
+ │   materialization_deployments    what is deployed
+ │   materialization_lineage        what each binding reads and writes
+ └──────┬─────────────────────────────────────────┬─────────────┘
+        │ compile, when the graph revision changes│ once per tick
+        ▼                                         ▼
+ ┌────────────────┐                        ┌──────────────────┐
+ │ BindingPlanner │ ─► ApplicationGraph ─► │    Scheduler     │
+ │ runs build_query│    bindings + edges   │ waves, locking   │
+ └───────┬────────┘                        └────────┬─────────┘
+         │ reads                            batch in │ rows out
+         ▼                                           ▼
+ ┌────────────────┐                        ┌──────────────────┐
+ │  plant model   │                        │  RevisionStore   │
+ │   (Oxigraph)   │                        │ read one batch,  │
+ └────────────────┘                        │ commit atomically│
+                                           └────────┬─────────┘
+                                                    ▼
+                                            timeseries store
+                                          (DuckDB / TimescaleDB)
 
-    def build_query(self, plant):
-        return plant.query().measurement(alias="temperature", quantity_kind="temperature")
-
-    def transform(self, inputs, output, context):
-        temperature = inputs["temperature"].in_unit("DEG_C").df()
-        if temperature.is_empty():
-            return
-        output["normalized"] = temperature.select(
-            "time", (pl.col("value") - self.offset).alias("value")
-        )
+                     transform() runs in an Executor:
+                     InProcessExecutor (the server) or RayExecutor
 ```
 
-The public declaration API is available directly from `acquirium` and from
-`acquirium.Materialization`.
+| component | module | responsibility |
+|---|---|---|
+| `Materializer` | `Materialization/runtime.py` | Durable deployment registry, graph-driven recompilation, lineage publication, per-tick throttling. The server's entry point. |
+| `Deployment` | `Materialization/planner.py` | The durable record of one deployed app: entrypoint, digest, outputs, windows, throttles, parameters. JSON round-trips over HTTP and into the database. |
+| `BindingPlanner` | `Materialization/planner.py` | Runs each app's `build_query` against one pinned graph revision and compiles the matches into bindings. |
+| `Binding` | `Materialization/incremental.py` | One concrete calculation: fixed input references, fixed output references, a window policy, and two identities. |
+| `ApplicationGraph` | `Materialization/incremental.py` | The validated DAG of bindings: single ownership of every output, no cycles, dependency layers. |
+| `RevisionStore` | `Materialization/incremental.py` | All durable read/write logic: build a coherent batch, commit results and progress in one transaction. Backend-independent. |
+| `Scheduler` | `Materialization/incremental.py` | Claims work, runs a dependency wave through an executor, commits it. Holds no durable state. |
+| `Executor` | `Materialization/incremental.py` | Where `transform` actually runs: `InProcessExecutor` (server default) or `RayExecutor`. |
+| `local.check_app` | `Materialization/local.py` | The same compile-and-run path in the caller's process, reading inputs over the client API. |
 
-## Class contract
+## Vocabulary
 
-Acquirium calls `transform` once for each concrete group of input streams. The
-runtime calls one such input group a *binding*. The term matters when reading
-diagnostics, but app authors can usually read “binding” as “the inputs for one
-call.” Acquirium creates these groups by running `build_query` against the
-current plant model.
+| term | meaning |
+|---|---|
+| **app** | The `App` subclass an author writes: a query, an output declaration, and a `transform`. |
+| **deployment** | The durable record of one app being deployed, including its parameters. |
+| **match / input group** | One row of the app's query result. The CLI calls it an *input group*. |
+| **binding** | The compiled form of one input group: the exact stream references to read and derived references to write. One binding is one call to `transform` per invocation. |
+| **port** | A key of the `outputs` mapping — the name used in `output["…"] = …`. |
+| **derived stream** | The timeseries a port publishes, registered under `derived:<app name>`. |
+| **revision** | A monotonic counter incremented once per non-empty write to the timeseries store. Every row records the revision that last wrote it. |
+| **frontier** | The highest revision a binding has consumed. Stored in `binding_progress`. |
+| **changed extent / read window** | The timestamps of newly written rows, and that range padded by `lookback`/`lookahead`. |
 
-Every scheduling and windowing knob is a plain attribute holding a duration
-string (`"250ms"`, `"30s"`, `"5m"`, `"2h"`), a bool, or `"all"`. Durations
-also accept `datetime.timedelta` and cannot be negative.
+## Durable state
+
+Materialization keeps everything it needs to recover in the timeseries
+database. There is no queue, no lease table, and no in-memory state that
+matters after a restart.
+
+```text
+system_state                     one row, the global write counter
+┌──────────────────┐
+│ current_revision │  42
+└──────────────────┘
+
+binding_progress                 how far each binding has consumed
+┌──────────────┬───────────────────┐
+│ progress_key │ consumed_revision │
+├──────────────┼───────────────────┤
+│ 7d4d…        │ 40                │
+│ b102…        │ 42                │
+└──────────────┴───────────────────┘
+
+timeseries                       raw and derived rows, side by side
+┌──────────────┬─────────────────────┬───────┬─────────┬───────────────┐
+│ stream       │ ts                  │ value │ deleted │ last_revision │
+├──────────────┼─────────────────────┼───────┼─────────┼───────────────┤
+│ input:zone-a │ 2026-01-01 12:00:00 │ 21.5  │ false   │ 41            │
+│ derived:avg  │ 2026-01-01 12:00:00 │ 21.1  │ false   │ 42            │
+└──────────────┴─────────────────────┴───────┴─────────┴───────────────┘
+
+materialization_deployments      name → deployment JSON
+materialization_lineage          binding → (input alias, input ref, port, output ref)
+```
+
+Two properties do most of the work:
+
+- **Every write allocates one revision.** A batch touching many rows and many
+  streams gets a single revision number, so "what changed since 40" is one
+  indexed predicate rather than a per-stream cursor.
+- **Output rows and the frontier advance commit together.** After a crash the
+  database holds either the output *and* its advanced frontier, or neither. It
+  never records progress for work it did not publish.
+
+## The life of one invocation
+
+```text
+             read transaction                         write transaction
+┌───────────────────────────────────────┐    ┌────────────────────────────────────┐
+│ 1. read consumed revision: 40         │    │ 5. re-check frontier is still 40   │
+│ 2. snapshot current revision: 41      │    │    allocate output revision: 42    │
+│ 3. find rows with                     │    │    register derived streams        │
+│      40 < last_revision <= 41         │    │    upsert output rows @ 42         │
+│ 4. read the windowed input StreamSets │    │    advance frontier: 40 → 41       │
+└───────────────────┬───────────────────┘    └───────────────────┬────────────────┘
+                    │                                            │
+                    └──── sealed Batch ──► transform() ──────────┘
+                           (no database access in between)
+```
+
+`transform` runs entirely outside both transactions, on Arrow data that has
+already been read. It cannot hold a database connection open, and a slow app
+cannot block a writer.
+
+## Algorithms
+
+### Planning: from query to bindings
+
+`BindingPlanner.compile(deployments, graph_revision)` turns deployment records
+into an `ApplicationGraph`. It is deliberately optimistic: it checks the
+graph's published version before and after, and discards a plan compiled
+across a change.
+
+```text
+for each deployment:
+  1. load_entrypoint(entrypoint, digest)      import module:qualname, verify digest
+  2. app = target(**parameters)               construct with deployment parameters
+  3. query = app.build_query(plant facade)    a narrow facade: query + text resolution
+  4. rows = execute(query)                    SPARQL over the pinned graph revision
+  5. dedupe rows by {alias: sorted ref_uris}  a SPARQL join can repeat a match
+  6. group rows into bindings:
+        any per_row output   → one binding per row
+        all named outputs    → one binding over the whole table
+        named + several rows → planning error
+  7. for each binding: derive output refs, build Binding
+validate: single ownership of each output ref, no self-consumption, acyclic
+```
+
+Step 5 matters more than it looks. Unrelated triples in the plant model can
+produce the same alias-to-stream combination several times; binding each
+distinct combination once keeps the number of derived streams a function of
+the plant, not of the query's join shape.
+
+Step 6 is the rule the guide states as "the outputs decide how matches become
+calls". A binding built for the whole table keeps every matched row in
+`context.result` but has no single `context.row`; a lone match is treated as a
+row, so an app whose query resolves to exactly one group can declare both
+flavors.
+
+### Batch construction: what one call reads
+
+`RevisionStore._build_batch(conn, binding, previous, target)`:
+
+```text
+refs        = every input stream reference of the binding
+changed     = SELECT min(ts), max(ts) WHERE ref IN refs
+                AND previous < last_revision <= target
+if changed is empty                       → no batch (nothing relevant changed)
+
+read window = lookback is "all"
+                ? SELECT min(ts), max(ts) WHERE ref IN refs AND NOT deleted
+                : [changed.start - lookback, changed.end + lookahead]
+
+for each alias:
+  rows      = SELECT ref, ts, numeric_value, text_value, last_revision
+                WHERE ref IN alias refs AND NOT deleted
+                  AND ts BETWEEN read window
+  table     = the whole read window
+  changes   = rows where previous < last_revision <= target
+```
+
+Both tables are handed to the app inside one `StreamSet`: `.collect()`/`.df()`
+give the read window, `.changes` gives only the rows that triggered the call.
+An alias is read as strings when one of its rows carries a text value and no
+numeric one; otherwise it is numeric.
+
+When a revision touched none of the binding's inputs, `next_batch` returns
+nothing and advances the frontier anyway — with a compare-and-set on the
+previous value, so it cannot race an invocation already in flight. Unrelated
+writes therefore cost one query, not one invocation.
+
+### Commit: exactly-once frontier advance
+
+`RevisionStore.commit_wave(commits)` is where the exactly-once guarantee is
+enforced.
+
+```text
+in one write transaction:
+  accepted = [c for c in commits
+              if binding_progress[c.progress_key] == c.batch.from_revision]
+  if any accepted output has rows:
+      revision = next_revision()               one revision for the whole wave
+      for each output table:
+          INSERT INTO streams (…) ON CONFLICT DO NOTHING     register the stream
+          upsert rows keyed by (stream, ts) at that revision
+  for each accepted commit:
+      binding_progress[progress_key] = batch.to_revision
+```
+
+That equality check is the whole safety property. Two processes that both computed revisions
+`(40, 41]` will both offer a commit; the first advances the frontier to 41 and
+the second is rejected because it no longer matches, so its work is discarded
+rather than double-counted. Rows are keyed by `(stream, timestamp)`, so even
+the accepted duplicate would have been an overwrite — the check exists to keep
+the *frontier* honest, not the values.
+
+A binding whose transform assigned nothing is still accepted: its frontier
+advances, publishing no rows. That is how an alarm app with nothing to report
+makes progress.
+
+### Scheduling: waves and throttles
+
+The compiled DAG is executed in layers. Every binding in a layer is
+independent of the others in it, so they may run concurrently; a layer starts
+only after the previous one has committed.
+
+```text
+raw streams ──► [A] ──► derived:a ──► [C]
+       └──────► [B] ──► derived:b ──┘
+
+layer 1: A and B run together
+layer 2: C runs after layer 1's accepted commits
+```
+
+Each tick of the server's materialization worker (`Materializer.run_once`)
+walks the layers and decides, per binding, whether to run it:
+
+```text
+consumed = initialise(binding, app.backfill)     create the progress row if new
+if current_revision <= consumed:      nothing pending — clear its pending timer
+if min_interval set and now - last_run < min_interval:      skip this tick
+elapsed = now - first_pending
+if elapsed < coalesce and (max_delay is None or elapsed < max_delay):  skip
+otherwise: run it
+```
+
+`coalesce` waits for a quiet gap in a burst of writes; `max_delay` bounds that
+wait so a steady trickle cannot postpone a run indefinitely; `min_interval`
+caps the run rate. All three are throttles on *pending input* — none of them
+runs an app that has nothing new to read, and none of them is a wall clock.
+
+Within a wave, an executor that exposes `submit`/`resolve` (the Ray executor)
+has the entire wave submitted before anything is awaited, so tasks overlap,
+and the whole wave is then committed in one transaction. Otherwise the
+scheduler runs the wave in a thread pool and each binding commits on its own,
+under the same frontier check.
+
+A per-binding in-process lock stops one server from running the same binding
+twice concurrently. It is an optimization, not the safety property: the
+compare-and-set at commit is what makes concurrency safe across processes and
+restarts.
+
+### Recompilation
+
+`Materializer.refresh()` recompiles when the graph's published version has
+changed, and swaps the DAG and the app instances together under one lock, so
+an invocation already running always sees a coherent plan. It then rewrites
+`materialization_lineage` and — only when the set of binding signatures
+actually changed — republishes the lineage graph. That condition matters:
+publishing lineage advances the graph's published version, so republishing on
+every refresh would trigger a perpetual recompile loop.
+
+### Identity: three different names
+
+Three derived names are computed from different inputs, and the differences
+are deliberate.
+
+```text
+binding signature   = sha256(app, executable digest, inputs, outputs,
+                             lookback, lookahead, parameters)
+   → names one compiled binding in diagnostics and lineage.
+     Changes when the code or configuration changes.
+
+progress key        = sha256(app, {alias: input refs}, {port: output ref})
+   → keys binding_progress: what the binding reads and writes.
+     Survives code and parameter edits.
+
+derived stream name = per_row: "<port>:<sha256(port, sorted (alias, ref) pairs)>"
+                      named:   exactly the declared stream_name
+   → the durable identity of the published stream, under source
+     derived:<app name>.
+```
+
+Splitting the signature from the progress key is what lets you edit an app
+without losing its place. If progress were keyed by the signature, fixing a
+comment would create a "new" binding starting at the current revision, and —
+without `backfill` — every row written between the edit and the redeploy would
+be silently skipped. Keying progress by what a binding reads and writes makes
+an edit a resumption rather than a reset.
+
+The `per_row` stream name excludes the executable digest for the same reason:
+a recompiled app writes the same derived stream instead of orphaning the old
+one and starting a new history.
+
+## Design decisions
+
+| decision | why | what it costs |
+|---|---|---|
+| **Outputs are keyed by (stream, timestamp) and overwrite** | Makes every recomputation idempotent, which removes checkpoints, deduplication, and partial-failure repair from both the runtime and the app author's job. | The store keeps current values, not a history of corrections. An app must be deterministic; non-deterministic code silently rewrites history. |
+| **The database is the only recovery authority** | One place to look after a crash, and no queue state that can disagree with the data. | Progress advances only as fast as transactions commit; there is no in-memory fast path. |
+| **A revision counter, not per-stream cursors** | One indexed predicate answers "what changed for this binding", however many streams it reads. | A revision is global, so bindings must skip revisions that did not touch their inputs (they do, without running user code). |
+| **Progress keyed by what a binding reads and writes** | Editing code or parameters resumes instead of resetting, so a trivial edit cannot silently skip data. | Changing an app's *meaning* while keeping its inputs and outputs does not reprocess history; that needs a removal and a backfill, or a new name. |
+| **Apps are bound by query, not by stream ID** | The calculation is written once and follows the plant model; sensors added later are picked up automatically. | Bindings appear and disappear as the model changes, and a query bug is a deployment-wide problem. A check makes the match list visible before deploying. |
+| **The output declaration decides the grouping** | One concept fewer: there is no separate "mode" attribute that can disagree with what the outputs say. | Mixing `per_row` and `named` is only meaningful for a single-group query, which is a planning error to explain rather than a silent behavior. |
+| **A `named` output must have exactly one owner** | An absolute stream name is a promise that one thing writes it; fan-out would make the writer ambiguous. | Fleet aggregates over a fanned-out calculation need a second, chained app. |
+| **Output metadata is declared, never inferred** | A stream's value kind and semantics are fixed before any data exists, exactly as a driver registers a stream — so the first batch cannot define the schema by accident. | More to write in the declaration; `value_kind` is required. |
+| **`transform` runs outside the transactions** | A slow or failing app cannot hold a write lock or block ingestion. | Inputs are fully materialized as Arrow before the call; a very wide window costs memory. |
+| **Layers run in order; a wave's results land before the next layer reads** | A downstream app never observes a partially published upstream result. | A slow binding delays the layer it is in. |
+| **Ray is optional and never durable state** | Object references and retries are not recovery information; the frontier is. The server runs in-process to avoid competing with the Ray driver supervisor. | Multi-node execution needs an embedder to construct `Scheduler` with a `RayExecutor`. |
+
+## Storage backends
+
+Both backends implement the same contract; only the SQL and the connection
+mechanics differ.
+
+| concern | DuckDB | PostgreSQL / TimescaleDB |
+|---|---|---|
+| Stream key in `timeseries` | integer `ref_id`, joined to `ref_ids` | `ref_uri` text directly |
+| Timestamps | UTC-normalized `TIMESTAMP` (naive in SQL) | `TIMESTAMPTZ` |
+| Revisioned write | registered Polars frame, delete+insert keyed by `(ref_id, ts)` | cursor `executemany` upsert keyed by `(ref_uri, ts)` |
+| Parameters | `?` | `%s` |
+| Write serialization | in-process lock; DuckDB has one writer | in-process lock plus transaction isolation |
+
+`RevisionStore` owns the algorithm and adapts only those details. A backend
+supplies four private hooks — `_own_conn`, `_write_conn`, `_next_revision`,
+`_insert_frame` — and inherits the whole scheduler. TimescaleDB needs no
+continuous aggregate or background job: derived rows are ordinary rows in the
+same hypertable.
+
+## Failure modes
+
+| situation | what happens |
+|---|---|
+| `transform` raises during a scheduled run | That invocation commits nothing and its frontier does not advance; the error is logged (rate-limited) and it is retried on a later tick. Other bindings in the same wave still commit their own results, but the tick ends early, so later layers wait for the next one. A failing app cannot stop ingestion or the other durable workers. |
+| `transform` raises during a check | Reported in that group's `error` field (the CLI exits non-zero). With `--local`, it raises in your terminal with a traceback instead. |
+| The server restarts mid-computation | Nothing was committed, so the same window is read again and recomputed. Outputs overwrite themselves. |
+| An app's file is edited on disk | A check always runs the new code: a module whose file changed is reloaded before it is used. A **deployed** app keeps running the code the server already imported; the edit surfaces at the next recompilation (a graph publication, another deployment, or a restart), where the file no longer matches the digest recorded at deploy time and loading fails with `entrypoint digest mismatch`. Because compilation covers every deployment at once, that stalls recompilation for all of them until the app is deployed again — which resumes from its kept frontier. |
+| A deployed app's module cannot be imported | Deployment fails with an error naming the module; a check can be given a `search_path`, or run with `--local`. |
+| The plant model changes | The plan is recompiled; new matches start under their `backfill` setting, and vanished matches simply stop running. Their derived streams remain. |
+| Two bindings declare the same output stream | Rejected at planning: `multiple bindings own …`. |
+| An app's query selects its own output | Rejected at planning: a binding cannot consume its own output. |
+
+---
+
+# API reference
+
+Everything an app author needs is exported from the top-level `acquirium`
+package:
+
+```python
+import acquirium as aq
+
+aq.App        aq.output        aq.align        aq.console
+```
+
+The runtime types beneath them (`StreamSet`, `InputBatch`, `OutputBuilder`,
+`Binding`, `RevisionStore`, `Scheduler`, …) are importable from
+`acquirium.Materialization`. An app author reads them as documentation; an
+embedder constructs them.
+
+**Durations** appear throughout. Every duration accepts a string with a `ms`,
+`s`, `m`, `h` or `d` suffix (`"250ms"`, `"30s"`, `"5m"`, `"2h"`, `"7d"`) or a
+`datetime.timedelta`. The number may be fractional (`"1.5d"`), and durations
+may not be negative.
+
+## `aq.App`
+
+```python
+class MyApp(aq.App):
+    name: str | None = None
+    lookback: timedelta | str = "0s"
+    lookahead: timedelta | str = "0s"
+    backfill: bool = False
+    coalesce: timedelta | str = "0s"
+    max_delay: timedelta | str | None = None
+    min_interval: timedelta | str | None = None
+    outputs: Mapping[str, OutputSpec] = {}
+
+    def build_query(self, plant) -> Query: ...
+    def transform(self, inputs, output, context) -> None: ...
+```
+
+The base class for every app. Subclass it, declare `outputs`, and implement
+`build_query` and `transform`.
+
+### Attributes
 
 | member | default | meaning |
 |---|---|---|
-| `name` | the Python class name | Durable app name and namespace for derived streams. |
-| `lookback` | `"0s"` | How much stored context precedes the new data in each call's window; `"all"` reads the whole retained extent. |
-| `lookback_after` | `"0s"` | Context after the changed range, for corrections landing mid-history. |
-| `backfill` | `False` | Whether a new input group's first run processes retained history. |
+| `name` | the Python class name | Durable app name; also the namespace of its derived streams (`derived:<name>`). Keep it stable across code revisions if the app should keep writing the same streams. |
+| `lookback` | `"0s"` | Stored context read *before* the changed extent. `"all"` reads the whole retained extent instead. A windowed calculation needs at least its own window length. |
+| `lookahead` | `"0s"` | Context read *after* the changed extent, for corrections that land mid-history. |
+| `backfill` | `False` | Whether a newly seen binding starts at revision 0 (processing retained history) or at the current revision. Applies only the first time that binding is seen; after that its stored frontier governs. |
 | `coalesce` | `"0s"` | Wait for this long a quiet gap in a burst of writes before running. |
-| `max_delay` | `None` | Cap on the coalesce wait: run once the oldest pending change is this old. |
-| `min_interval` | `None` | At most one run per interval for an input group. |
-| `outputs` | none | Mapping of local output-port names to output declarations. At least one is required; the flavors also decide how query matches group into calls. Port names must be non-empty strings, each value must come from `aq.output.per_row(...)` or `aq.output.named(...)`, and two named outputs cannot claim the same stream name. These are checked when the app is deployed or checked, before it runs. |
-| `build_query(plant)` | required | Return one Acquirium `Query` that selects inputs and names them with aliases. |
-| `transform(inputs, output, context)` | required | Compute tables and assign them to declared output ports. |
+| `max_delay` | `None` | Upper bound on the `coalesce` wait: run once the oldest pending change is this old. |
+| `min_interval` | `None` | At most one run per interval for a binding. A throttle, not a schedule. |
+| `outputs` | `{}` | Mapping of port name → output declaration. At least one is required. |
 
-Constructor arguments are deployment parameters. For example,
-`parameters={"offset": 273.15}` constructs the class as
-`TemperatureNormalizer(offset=273.15)`. An instance may use those values in
-`transform` or set instance knobs such as `self.lookback`. The `name` and
-`outputs` declarations are read from the class, so declare those as class
-attributes rather than constructing them in `__init__`.
+`outputs` is validated when the app is deployed or checked, before it runs:
+port names must be non-empty strings, each value must come from
+`aq.output.per_row(...)` or `aq.output.named(...)` (or be a mapping with the
+same fields), and two named outputs may not claim the same stream name.
 
-### `name`
+Declare `name` and `outputs` as **class** attributes — they are read from the
+class, not from an instance. Windows and throttles may be set either way, so
+`self.lookback = window` in `__init__` is a supported way to make a window
+configurable.
+
+### Constructor parameters
+
+An app's `__init__` arguments are its deployment parameters:
 
 ```python
-name: str | None = None
+class HighTurbidityAlarm(aq.App):
+    def __init__(self, threshold: float = 5.0):
+        self.threshold = threshold
 ```
 
-When `name` is `None`, the Python class name is used. The name identifies the
-durable deployment and forms the output source ID `derived:<name>`. Keep it
-stable across code revisions if the class should continue writing the same
-derived streams.
+```toml
+[[apps]]
+spec = "./high_turbidity_alarm.py:HighTurbidityAlarm"
+threshold = 3.0
+```
 
-### How query matches become calls
+```python
+client.deploy_app(HighTurbidityAlarm, parameters={"threshold": 3.0})
+```
 
-`build_query` can find one stream, many streams, or rows containing several
-related streams. The `outputs` declaration decides whether the complete set
-is processed together or each matched row separately — there is no separate
-attribute or subclass for this.
+Parameters are stored with the deployment, passed to the constructor on every
+recompilation, and included in the binding signature — but not in the progress
+key, so changing one resumes rather than restarts.
 
-Suppose a query with one alias, `temperature`, finds three streams: A, B, and C.
-
-| outputs declared | calls to `transform` | derived streams | use it when |
-|---|---|---|---|
-| `per_row` | Three calls: one for A, one for B, and one for C. | Three streams, one beside each matched input. | The same calculation should be applied independently to every match, such as normalizing every sensor. |
-| `named` | One call whose `inputs["temperature"]` contains A, B, and C. | One stream with the declared name. | The calculation combines or compares all matches, such as a fleet average. |
-
-Declaring both flavors together is valid only when the query resolves to
-exactly one input group — then both describe the same single call. When the
-query fans out into several groups, a named output alongside `per_row`
-fan-out is a planning error: an absolute stream has one owner, so compute
-the aggregate in a second app whose query selects this app's derived
-streams (the scheduler orders chained apps automatically).
-
-A query row can contain several aliases. For example, each row might contain
-a related `supply` and `return` temperature. A `per_row` app then gets one
-pair per call and can create one `delta_t` output for that pair. “Per row”
-does not necessarily mean “one input stream.”
-
-If the query has no matches, it creates no input groups, `transform` is not
-called, and no output streams exist. The query is compiled again when the
-semantic graph changes, so input groups can appear or disappear as the model
-changes.
-
-### `lookback` and `lookback_after`
-
-The lookback controls the rows read for a call; it does not change which
-streams the query binds. The read window is the changed extent — the
-timestamps affected by the unconsumed writes — padded by `lookback` before
-and `lookback_after` after. `lookback = "all"` reads the complete retained
-extent instead. A windowed calculation (rolling average, rate of change)
-needs `lookback` at least as long as its window.
-
-`context.changed_window` always records the narrower extent that caused the
-call. `context.read_window` records the padded range actually read.
-Every `StreamSet.window` equals `context.read_window`, and
-`StreamSet.changes` contains only rows written in the revisions being consumed.
-
-Because a re-emitted (stream, time) value overwrites the previous one, the
-simplest correct habit is to recompute the entire read window and emit all of
-it.
-
-### `backfill`
-
-`backfill = False` starts a new input group at the current storage revision,
-so it processes only later writes. `backfill = True` starts it at revision
-zero, so retained input history is eligible for its first run. This matters
-only the first time Acquirium sees that input group; its saved progress is
-reused after a restart, and survives edits to the app's code and parameters.
-
-### `coalesce`, `max_delay`, `min_interval`
-
-Three composable throttles decide when pending input actually triggers a run;
-there are no trigger modes. With all three unset, an input group runs as soon
-as it has unconsumed input. `coalesce` waits for a quiet gap in a burst of
-writes; `max_delay` bounds that wait so a steady trickle cannot postpone a
-run forever; `min_interval` enforces at most one run per interval regardless
-of write rate. The transform still runs only when there is new input —
-`min_interval` is a throttle, not a wall-clock schedule.
-
-## `build_query(plant)`
+### `build_query(plant)`
 
 ```python
 def build_query(self, plant) -> Query
 ```
 
-`build_query` must return an Acquirium `Query`. It runs during planning against
-a pinned semantic graph, not once per data batch. Use query aliases to define
-the keys later passed in `inputs`:
+Return one Acquirium [`Query`](client-api.md) selecting the app's inputs. It
+runs during planning against a pinned graph revision — once per
+recompilation, not once per batch.
+
+`plant` is a deliberately narrow facade: it offers `plant.query()` and the
+graph and text-resolution operations a query needs. It is not the runtime
+client; do not fetch timeseries inside `build_query`.
+
+Every `alias=` that resolves to a stream reference becomes a key of `inputs`
+and a column of `context.result`; aliases that name entities appear only in
+the match table.
 
 ```python
 def build_query(self, plant):
     return (
         plant.query()
-        .entity("AirHandlingUnit", alias="ahu")
-        .measurement(frm="ahu", alias="supply", quantity_kind="temperature")
-        .measurement(frm="ahu", alias="return", quantity_kind="temperature")
+        .entity("ReverseOsmosis", alias="ro")
+        .measurement(frm="ro", alias="feed", direction="upstream",
+                     nearest=True, quantity_kind="pressure")
+        .measurement(frm="ro", alias="permeate", direction="downstream",
+                     nearest=True, quantity_kind="pressure")
     )
 ```
 
-This produces `inputs["supply"]` and `inputs["return"]`. Entity aliases such as
-`ahu` help express the semantic match, but only measurement/data-node aliases
-that resolve to stream references become `StreamSet` inputs.
+Two aliases only name different things when the query distinguishes them —
+here by walking the topology upstream and downstream. Repeating one filter
+under two aliases binds both to the same matches.
 
-The `plant` argument is deliberately a query facade over the plant model. It
-supports `plant.query()` and the graph and text-resolution operations needed
-while building and executing a query; do not use it as the runtime client or
-fetch timeseries inside `build_query`.
+If the query matches nothing, the app compiles to no bindings, `transform` is
+never called, and no derived stream exists. This is not an error; a check
+reports `0 input group(s) matched`.
 
-## `transform(inputs, output, context)`
+### `transform(inputs, output, context)`
 
 ```python
 def transform(
@@ -200,315 +508,320 @@ def transform(
 ) -> None
 ```
 
-The runtime calls `transform` once for each input group that has new work. It
-receives a fixed, internally consistent batch and expects results through
-`output`; its return value is ignored. Given the same `InputBatch`, a transform
-should be deterministic.
+Called once per binding that has unconsumed input. Receives a fixed,
+internally consistent batch; the return value is ignored. Results are
+published by assigning them to `output`.
 
-### Inputs
+Given the same batch, `transform` must produce the same output: the runtime
+may recompute a window after a restart, and non-determinism silently rewrites
+stored history. Side effects outside the database cannot be rolled back.
 
-`inputs` maps each data alias from `build_query` to a `StreamSet`:
+## `aq.output`
 
-| member | type | meaning |
-|---|---|---|
-| `.df()` | `polars.DataFrame` | All rows in the read window, as Polars. |
-| `.df("pandas")` | `pandas.DataFrame` | The same rows as pandas. |
-| `.collect()` | `pyarrow.Table` | The same rows as one Arrow table. |
-| `.batches()` | iterator of `pyarrow.RecordBatch` | The same rows in record batches, for large windows. |
-| `.changes` | `pyarrow.Table` | Only rows from the revisions this invocation is consuming. |
-| `.in_unit(unit)` | `StreamSet` | The same stream set with every value converted into `unit`. |
-| `.stream` | `StreamDescriptor` | The one stream bound to this alias — which sensor this call is for. Raises when the alias holds several, which is what a `named` output sees. |
-| `.streams` | `tuple[StreamDescriptor, ...]` | Every stream bound under the alias; the right accessor for a `named` output. |
-| `.alias` | `str` | The query alias. |
-| `.window` | `TimeWindow` | The read range used for this batch. |
+Two functions build the declarations that go in `outputs`. Both return an
+`OutputSpec`.
 
-Input tables always contain `ref_uri`, `time`, and `value`, whether one
-stream is bound or fifty, so the frame's shape does not change with the
-match. Which streams are actually in it is a question for the stream set, not
-the frame: a `per_row` call binds exactly one, and `.stream` is how to ask
-for it.
+### `aq.output.per_row(...)`
 
 ```python
-def transform(self, inputs, output, context):
-    sensor = inputs["temperature"].stream     # the stream this call is for
-    sensor.ref_uri, sensor.point_uri, sensor.label, sensor.unit
+aq.output.per_row(*, value_kind, point_uri=None, label=None, unit=None,
+                  quantity_kind=None, medium=None, substance=None,
+                  data_source=None, properties=None) -> OutputSpec
 ```
 
-Which accessor to use follows from the output flavor, and it is an invariant
-rather than a matter of luck:
+One derived stream per matched row, named after the port and the inputs it was
+computed from:
 
-| output | streams per alias, per call | accessor |
+```text
+app name + port + sorted (input alias, input ref_uri) pairs
+                      │  sha256
+                      ▼
+   ref_name  = "<port>:<digest>"
+   source_id = "derived:<app name>"
+   ref_uri   = the usual Acquirium reference URI for that pair
+```
+
+Use it whenever the calculation fans out: a thousand matched sensors become a
+thousand derived streams, none of them named by hand, and recompiling the same
+app, port and inputs reuses the same streams. If a group's bound inputs change
+— a sensor joins a pair — that group's derived stream is a new one, and the
+old stream keeps its history.
+
+Passing `stream_name` raises; use `named` for that.
+
+### `aq.output.named(stream_name, ...)`
+
+```python
+aq.output.named(stream_name, *, value_kind, point_uri=None, label=None, …) -> OutputSpec
+```
+
+One derived stream whose reference name is exactly `stream_name`, under
+`derived:<app name>`. Use it when the result is a thing the plant refers to
+directly — a total, an index, a compliance figure — so it can be found by
+name.
+
+A named output is valid only when the app's query resolves to exactly one
+input group. Declaring one alongside `per_row` fan-out is a planning error
+that names the offending ports and points at a second, chained app.
+
+### Declaration arguments
+
+| argument | meaning |
+|---|---|
+| `value_kind` | **Required.** `"numeric"` or `"text"`. Fixed at declaration; never inferred from published data. |
+| `stream_name` | `named` only, and required there: the exact reference name. |
+| `point_uri` | An existing point in the plant model to attach this derived reference to. When omitted, Acquirium creates a derived point. |
+| `label` | `rdfs:label` placed on the output point. |
+| `unit` | Unit URI placed on the output point. |
+| `quantity_kind` | Quantity-kind URI placed on the output point. |
+| `medium` | Medium URI placed on the output point. |
+| `substance` | Substance URI placed on the output point. |
+| `data_source` | A literal data-source tag on the output reference — the simplest handle for a downstream app's query to select on. |
+| `properties` | Mapping of predicate URI → tuple of object URIs, added to the output point. |
+
+Every field is explicit: an output's metadata is what its declaration says,
+never copied from its inputs. Alongside the point metadata, the runtime
+records `isCalculatedFrom` from the binding to each input and `produces` to
+each output, which is what makes derived streams selectable by later apps and
+forms the DAG.
+
+## `StreamSet`
+
+The value of each `inputs[alias]`: the rows for one alias inside this call's
+window, plus the identity of the streams that produced them.
+
+| member | signature | returns |
 |---|---|---|
-| `per_row` | exactly one, for every alias — a row pairing `supply` and `return` gives one of each | `.stream` |
+| `.df()` | `df(library="polars")` | The read window as a [Polars](https://docs.pola.rs/api/python/stable/reference/dataframe/index.html) dataframe with columns `ref_uri`, `time`, `value`. `library="pandas"` returns the same rows as pandas; any other value raises `ValueError`. |
+| `.collect()` | `collect()` | The read window as a [`pyarrow.Table`](https://arrow.apache.org/docs/python/generated/pyarrow.Table.html). |
+| `.batches()` | `batches()` | Iterator of `pyarrow.RecordBatch` over the read window (65,536 rows per batch by default). |
+| `.changes` | attribute | `pyarrow.Table` of only the rows written in the revisions this invocation consumes. Same columns. |
+| `.in_unit(unit)` | `in_unit(unit)` | A new `StreamSet` with every value converted into `unit`. |
+| `.stream` | property | The single `StreamDescriptor` bound to this alias. Raises `ValueError` when the alias holds any other number of streams. |
+| `.streams` | attribute | Tuple of every `StreamDescriptor` bound to this alias. |
+| `.alias` | attribute | The query alias this set was bound to. |
+| `.window` | attribute | The `TimeWindow` actually read; equal to `context.read_window`. |
+
+`time` is a timezone-aware UTC microsecond timestamp. `value` is `float64`
+for a numeric alias and a string for a text alias — an alias is read as text
+when a row in the window carries a text value and no numeric one.
+
+The frame's shape never changes with the match: `ref_uri` is present whether
+one stream is bound or fifty. Which streams those are is a question for the
+stream set, not the frame.
+
+### `.stream` versus `.streams`
+
+| output flavor | streams per alias per call | accessor |
+|---|---|---|
+| `per_row` | exactly one, for every alias — a row pairing `feed` and `permeate` gives one of each | `.stream` |
 | `named` | every match the query found | `.streams` |
 
-So a many-to-one app — a fleet average, a plant total — reads `.streams` and
-iterates or aggregates. Reaching for `.stream` there raises rather than
-quietly returning the first match, which also means an app converted from
-`per_row` to `named` fails loudly instead of silently computing on one
-sensor and ignoring the rest.
+`.stream` raises on a multi-stream alias rather than returning the first, so
+an app converted from `per_row` to `named` fails loudly instead of silently
+computing on one sensor and ignoring the rest.
 
-Each `StreamDescriptor` carries the metadata the compiled query exposes
-today: `ref_uri`, `point_uri`, `unit`, and `label`. The remaining fields
-(`quantity_kind`, `medium`, `substance`, `properties`) are reserved and
-currently unpopulated.
-
-### `in_unit`: convert values where you use them
+### `.in_unit(unit)`
 
 ```python
 temperature = inputs["temperature"].in_unit("DEG_C")
 ```
 
-`in_unit` returns a new `StreamSet` whose values — the read window and
-`.changes` alike — are converted into the requested unit, each stream from its
-own recorded unit, so an alias mixing Fahrenheit and Celsius sensors comes out
-uniform. The unit may be a QUDT URI, symbol, or label (`"DEG_C"`,
-`"http://qudt.org/vocab/unit/DEG_C"`, `"mg/L"`). Because the result is an
-ordinary `StreamSet`, everything composes: `.df()`, `.batches()`, and
-`aq.align` all work on it unchanged.
+Returns a `StreamSet` whose values — the read window and `.changes` alike —
+are converted into `unit`, each stream from its own recorded unit, so an alias
+mixing Fahrenheit and Celsius sensors comes out uniform. `unit` may be a QUDT
+URI, symbol, or label (`"DEG_C"`, `"http://qudt.org/vocab/unit/DEG_C"`,
+`"mg/L"`). See [Units](../explanation/units.md).
 
-Conversion fails immediately — rather than feeding mis-scaled values into
-the calculation — when a stream has no recorded unit, the units are
-dimensionally incompatible, or the stream set carries no converter (the
-server's runtime injects one; an embedded scheduler passes `unit_converter=`
-to `RevisionStore`).
+The result is an ordinary `StreamSet`, so `.df()`, `.batches()`, `aq.align`
+and a further `.in_unit()` all work on it.
 
-### Context: the match this call is bound to
+Raises rather than producing mis-scaled values when a stream has no recorded
+unit (`ValueError`), the units are dimensionally incompatible (`ValueError`),
+the values are not numeric (`TypeError`), or the stream set carries no
+converter (`RuntimeError` — the server injects one; an embedded scheduler
+passes `unit_converter=` to `RevisionStore`).
 
-`transform` receives two things, and each answers a different question:
-`inputs` is **the data**, one stream set per alias, carrying the streams that
-produced it; `context` is **the match** — what `build_query` found for this
-particular call, and why the call happened. It holds no data.
+Conversions are linear, so two probe conversions per stream give exact
+factors; expect floating-point error on the order of 1e-13.
 
-`context` is an `InputBatch` (importable from `acquirium.Materialization`):
+## `StreamDescriptor`
 
-| member | meaning |
+One stream's identity, as the compiled query saw it.
+
+| field | meaning |
 |---|---|
-| `.entities` | The query's entity aliases resolved to model URIs for this call's row, e.g. `{"hx": "urn:plant/hx-1"}`. Empty when the query names no entities, and empty for a `named` output's combined group, which has no single row. |
-| `.changed_window` | The timestamp extent of the unconsumed writes: why this call happened. |
-| `.read_window` | The lookback-padded range actually read. Equals every `StreamSet.window`. |
-| `.from_revision`, `.to_revision`, `.graph_revision`, `.binding_signature` | Runtime diagnostics. |
+| `ref_uri` | The stream's identity in storage. |
+| `point_uri` | The point in the plant model it measures, when the query bound one. |
+| `label` | Human-readable name from the model. |
+| `unit` | The unit URI the stream records in. |
+| `value_kind`, `quantity_kind`, `medium`, `substance`, `properties` | Declared for completeness but **not populated** by the planner today. Do not branch on them. |
 
-So there is one place to look for each question:
+## `InputBatch`
 
-| question | where |
-|---|---|
-| what are the values? | `inputs[alias].df()` / `.collect()` / `.changes` |
-| which stream is this call for? | `inputs[alias].stream` |
-| which entity is it about? | `context.entities[alias]` |
-| what time range, and why? | `context.read_window`, `context.changed_window` |
+The `context` argument: what this call is about, and why it happened. It holds
+no measurement data.
 
-Data selection should use the supplied tables rather than querying storage
-again.
+| member | type | meaning |
+|---|---|---|
+| `.row` | `Mapping[str, Any]` | The matched row this call is computing. Raises `ValueError` for a `named` output, which is about every row at once. |
+| `.result` | `polars.DataFrame` | Every row the query matched — the same table in every call of the app, whatever the flavor. |
+| `.changed_window` | `TimeWindow` | Timestamp extent of the unconsumed writes: why this call happened. |
+| `.read_window` | `TimeWindow` | The lookback/lookahead-padded range actually read. Equals every `StreamSet.window`. |
+| `.graph_revision` | `int` | The graph version this binding was compiled against. |
+| `.from_revision`, `.to_revision` | `int` | The revision interval being consumed, exclusive of `from`. |
+| `.binding_signature` | `str` | Identifies this compiled binding in logs and lineage. |
 
-### `aq.align`: one clock for many streams
+`.row` and `.result` use the column names of
+[`Query.metadata()`](client-api.md): an alias holds the matched URI, with
+`<alias>_ref`, `<alias>.label` and `<alias>.unit` beside a stream-bearing
+alias.
+
+## `OutputBuilder`
+
+The `output` argument. Assignment is by declared port name, at most once per
+call:
 
 ```python
-frame = aq.align(inputs, every="1m", aggregate="mean")
+output["celsius"] = frame.select("time", "value")
 ```
 
-`align` resamples every input stream onto shared time buckets and returns a
-wide Polars dataframe: a `time` column plus one column per stream. An alias
-bound to one stream contributes a column named after the alias; an alias bound
-to several contributes `alias[label-or-ref]` columns. Buckets a stream never
-reported in hold nulls. `aggregate` is one of `mean`, `min`, `max`, `sum`,
-`first`, `last`, `median`, or `count`.
-
-### Publishing results
-
-Assign each result by its declared port name:
-
-```python
-output["normalized"] = result
-```
-
-The value may be a Polars dataframe, a pandas dataframe, a PyArrow table or
-record batch, or a sequence of Arrow record batches. After conversion it must
-have exactly these columns:
+Accepted values: a Polars dataframe, a pandas dataframe, a `pyarrow.Table`, a
+`pyarrow.RecordBatch`, or a sequence of record batches. After conversion the
+table must have exactly two columns:
 
 | column | requirement |
 |---|---|
-| `time` | Non-null, timezone-aware timestamps, unique within this output assignment. Values are normalized to UTC and sorted ascending. |
-| `value` | Non-null numbers for a numeric output or strings for a text output. Numeric values are stored as `float64`. |
-
-Assignment is validated against the declaration, inside `transform`:
+| `time` | Non-null, timezone-aware timestamps, unique within this assignment. Normalized to UTC microseconds and sorted ascending on write. |
+| `value` | Non-null. Numbers for a `"numeric"` port (stored as `float64`); strings for a `"text"` port. |
 
 | assignment | result |
 |---|---|
-| a port the app declared | accepted after schema validation |
-| a name not in `outputs` | `KeyError`, naming the declared ports |
+| a declared port | accepted after validation |
+| a name not in `outputs` | `KeyError`, listing the declared ports |
 | the same port twice in one call | `ValueError` |
-| a table with the wrong columns, types, or duplicate timestamps | `TypeError`/`ValueError`, prefixed with the port name |
+| wrong columns, wrong types, nulls, or duplicate timestamps | `TypeError`/`ValueError`, prefixed with the port name |
 
-A declared port that is not assigned publishes no rows for that call. Empty
-tables also publish no rows. All accepted outputs and the saved input
-progress commit in one database transaction.
+A declared port that is never assigned, or is assigned an empty table,
+publishes nothing for that call — the frontier still advances. Everything
+assigned across all ports in one call commits in a single transaction together
+with that progress.
 
-## Outputs
+## `TimeWindow`
 
 ```python
-outputs: Mapping[str, OutputSpec] = {
-    "port_name": aq.output.per_row(...),   # or aq.output.named("...", ...)
-}
+TimeWindow(start: datetime, end: datetime)
 ```
 
-An output mapping declares named *ports*: names used inside the class, such as
-`"normalized"` in both the `outputs` mapping and `output["normalized"]`. Each
-port becomes one or more derived streams, and the two declaration flavors
-choose how those streams are identified.
+An inclusive range of instants: a read window covers every row with
+`start <= time <= end`. Naive datetimes are assumed to be UTC; aware ones are
+converted to it. An `end` before `start` raises `ValueError`.
 
-### `aq.output.per_row(...)`: relative identity
+## `aq.align`
 
-Each input group gets one derived stream for every `per_row` port, and the
-stream's identity is derived from that group's inputs:
-
-```text
-app name + output port + sorted (input alias, input ref_uri) pairs
-                              |
-                              v
-                  one stable derived stream reference
+```python
+aq.align(inputs, every, *, aggregate="mean") -> polars.DataFrame
 ```
 
-For example, an app with `per_row` port `normalized` and three matched sensors
-creates three derived streams. All three have source ID
-`derived:temperature-normalizer`, but each has a different generated reference
-name because each is bound to a different input. This is the flavor for
-calculations that fan out across many streams: nothing needs to be named by
-hand, and recompiling the same app name, port, aliases, and input references
-reuses the same derived stream identity.
+Resample every input stream onto shared time buckets and return one wide
+frame: a `time` column plus one column per stream. An alias bound to a single
+stream contributes a column named after the alias; an alias bound to several
+contributes `alias[label-or-ref]` columns. Buckets a stream never reported in
+hold nulls.
 
-The generated storage identity has:
+- `inputs` — the mapping `transform` was given, or any subset of it.
+- `every` — bucket size; a positive duration.
+- `aggregate` — one of `mean`, `min`, `max`, `sum`, `first`, `last`, `median`,
+  `count`.
 
-- `source_id`: `derived:<app name>`;
-- `ref_name`: `<port name>:<deterministic hash of the port and bound inputs>`;
-- `ref_uri`: the normal Acquirium reference URI computed from that source ID
-  and reference name.
+```python
+frame = aq.align(inputs, every="1m", aggregate="mean")
+output["average"] = frame.select(
+    "time", pl.mean_horizontal(pl.exclude("time")).alias("value")
+).drop_nulls()
+```
 
-### `aq.output.named(stream_name, ...)`: absolute identity
+Raises `ValueError` for a non-positive bucket or an unknown aggregate. With no
+rows at all, returns an empty frame with just a `time` column.
 
-A named output is one stream whose reference name you choose:
+## `aq.console`
 
-- `source_id`: `derived:<app name>`;
-- `ref_name`: exactly `stream_name`;
-- `ref_uri`: computed from those two.
+```python
+aq.console(banner=None, *, depth=1) -> None
+```
 
-Use it for any single result the plant refers to as a thing in itself — an
-aggregate across a fleet, an index, a KPI, a compliance figure — so that other
-queries, dashboards, and people can find it directly by name rather than
-discovering it relative to its inputs.
+Open an interactive Python console holding the calling frame's variables — its
+locals merged over its globals, locals winning. Inside `transform` that is
+`inputs`, `output`, `context`, `self`, and whatever you have computed so far.
+Ctrl-D or `exit()` closes it and execution resumes.
 
-Because an absolute stream has exactly one owner, a named output is valid
-only when the app's query produces exactly one input group — which is always
-the case when every output is `named`, since they aggregate the whole result.
-Declaring one alongside `per_row` fan-out over several groups is a planning
-error pointing you to a second, chained app.
+The namespace is a snapshot: rebinding a name in the console does not change
+the variable in the running function, though mutating an object does. Pass
+`banner` to replace the default banner, and `depth` to show an outer frame
+(`depth=2` from inside a helper shows that helper's caller).
 
-### Attachment to the plant model
-
-Either flavor may set `point_uri` to attach the derived reference to a known
-semantic point. Otherwise Acquirium creates a derived point for that stream.
-Internally, the runtime records an `isCalculatedFrom` relationship from the
-binding to every input and records which reference the binding produces.
-Derived streams can therefore be selected by later apps' queries, and those
-dependencies form the materialization DAG.
-
-### Declaration arguments
-
-`aq.output.per_row(value_kind, **kwargs)` and
-`aq.output.named(stream_name, value_kind, **kwargs)` return an `OutputSpec`:
-
-| argument | meaning |
-|---|---|
-| `value_kind` | **Required.** `"numeric"` or `"text"`. Fixed at declaration, like a driver's stream registration — never inferred from published data. |
-| `point_uri` | Semantic point to which this derived reference is attached. When omitted, generate a point for the stream. |
-| `label` | RDF label placed on the output point. |
-| `unit` | Unit URI placed on the output point. |
-| `quantity_kind` | Quantity-kind URI placed on the output point. |
-| `medium` | Medium URI placed on the output point. |
-| `substance` | Substance URI placed on the output point. |
-| `data_source` | Literal data-source tag placed on the output reference. |
-| `properties` | Mapping of predicate URIs to tuples of object URIs, added to the output point. |
-
-Every field is explicit: an output's metadata is exactly what its declaration
-says, never copied from its inputs.
+Without an interactive terminal — a deployed app, a server-side check, a test
+— it logs a warning naming the call site and returns immediately, so a
+forgotten console never blocks a server. To get a console from a check, run it
+with `--local`.
 
 ## Checking an app
 
-```python
-client.check_app(TemperatureNormalizer, parameters={"offset": 273.15})
-```
+A check compiles the app's query against the live graph, reads **every
+retained input row** for each resulting binding, runs `transform`, and returns
+what it computed. It writes nothing: the app is not registered, its derived
+streams are not created, no progress row is written or advanced, and no
+revision is allocated. A deployed app of the same name is unaffected.
+
+Because each binding reads its whole retained extent rather than an
+incremental window, the values shown are what a `backfill = True` deployment
+would publish.
+
+### CLI
 
 ```bash
-uv run acquirium app check ./temperature_normalizer.py:TemperatureNormalizer
+acquirium app check <module_or_file>:<ClassName> [options]
 ```
 
-A check compiles the app's query against the live graph, reads every
-retained input row for each resulting input group, runs `transform`, and
-returns what it computed. It writes nothing: the app is not registered, its
-derived streams are not created, no progress row is written or advanced, and
-no revision is allocated. A deployed app of the same name is unaffected.
+| option | default | meaning |
+|---|---|---|
+| `--params JSON` | `{}` | Constructor parameters, e.g. `'{"threshold": 3}'`. |
+| `-n`, `--limit N` | `5` | Show the first `N` rows of each output; `0` shows every row. |
+| `--local` | off | Run the app in this process instead of on the server. |
+| `--json` | off | Print the raw result document. |
+| `-c`, `--config PATH` | discovered | `acquirium.toml`, for the server address. |
+| `--server-url`, `--server-port` | from config | Override the server address. |
 
-The app runs on the server, which imports it by module name. `search_path`
-names a directory on the server's filesystem to look in first, so a file
-that is not otherwise importable there can still be checked: the CLI sends
-the directory of any file spec it was given, and `Acquirium.check_app` sends
-the directory of the class's own module (pass `search_path=""` to send
-none). It applies to checks only — a deployed app must be importable by the
-server on its own, since it is loaded again long after the request that
-created it.
+Exits non-zero when any binding reported an error, so a check works as a CI
+test. A spec naming a file (`./my_app.py:MyApp`) also sends that file's
+directory to the server as a search path.
+
+### Python
+
+```python
+client.check_app(MyApp, parameters={"offset": 273.15}, limit=None, search_path=None)
+```
+
+Returns the full result document; every computed row is included unless
+`limit` is given. `search_path` defaults to the directory of the class's own
+module (pass `""` to send none).
+
+### HTTP
+
+```text
+POST /apps/check?limit=<int>&search_path=<dir>
+```
+
+Body is the deployment JSON. `search_path` is a directory **on the server's
+filesystem** to look in first, so a file that is not otherwise importable
+there can still be checked. Deployment has no such escape hatch: a deployed
+app must be importable by the server on its own, since it is loaded again long
+after the request that created it.
 
 A module whose file has changed since the server imported it is reloaded, so
-editing an app and re-checking runs the new code rather than the code the
-process first loaded.
+editing an app and re-checking runs the new code.
 
-### `aq.console()`
-
-```python
-aq.console(banner=None, *, depth=1)
-```
-
-Opens an interactive console holding the calling frame's variables — its
-locals merged over its globals, locals winning. The default banner names the
-calling function, its file and line, and the local variables in scope.
-Ctrl-D or `exit()` closes it and execution resumes.
-
-The namespace is a snapshot, so rebinding a name in the console does not
-change the variable in the running function; mutating an object does. Pass
-`banner` to replace the default, and `depth` to show an outer frame instead
-(`depth=2` from inside a helper shows that helper's caller).
-
-Without an interactive terminal — a deployed app, a server-side check, a
-test — it logs a warning naming the call site and returns immediately, so a
-forgotten console never blocks a server.
-
-### Running the check locally
-
-```bash
-uv run acquirium app check ./temperature_normalizer.py:TemperatureNormalizer --local
-```
-
-```python
-from acquirium.Materialization import local
-result = local.check_app(client, TemperatureNormalizer, parameters={"offset": 273.15})
-```
-
-The app is compiled and run in the caller's process, with its inputs fetched
-over the client API, and returns the same result document. Three things
-follow from running here rather than on the server:
-
-- `breakpoint()` opens a console in the calling terminal, and debuggers and
-  profilers attach to the app normally.
-- A failing `transform` raises where it was called, with its traceback,
-  instead of being captured in that binding's `error` field. One broken
-  binding therefore stops the check.
-- The server never imports the app, so nothing needs to be importable there
-  and `search_path` is irrelevant.
-
-Everything else matches a server-side check, including the derived stream
-identities each output would be published under. Input rows travel over HTTP,
-so a check reading a large extent is slower this way.
-
-The result document is:
+### The result document
 
 ```text
 {
@@ -516,14 +829,14 @@ The result document is:
   "graph_revision": 12,
   "bindings": [
     {
-      "inputs": {"temperature": [{"ref_uri": ..., "label": ..., "unit": ...}]},
-      "entities": {"hx": "urn:plant/hx-1"},
+      "inputs": {"temperature": [{"ref_uri": …, "label": …, "unit": …}]},
+      "row": {"temperature": …, "temperature_ref": …, "temperature.label": …},
       "input_rows": {"temperature": 288},
       "read_window": ["2026-09-01T00:00:00+00:00", "2026-09-02T00:00:00+00:00"],
       "outputs": {
-        "normalized": {"stream": ..., "ref_name": ..., "value_kind": "numeric",
+        "normalized": {"stream": …, "ref_name": …, "value_kind": "numeric",
                        "rows": 288, "truncated": false,
-                       "values": [{"time": ..., "value": ...}, ...]}
+                       "values": [{"time": …, "value": …}, …]}
       },
       "error": null
     }
@@ -531,34 +844,42 @@ The result document is:
 }
 ```
 
-One entry per input group the query produced, so an empty `bindings` list
-means the query matched nothing. `values` holds every row the transform
-computed for that output; `rows` is that count. Passing `limit` keeps only
-the first `limit` rows of each output and sets `truncated` — `rows` still
-reports the full count. A transform that raises is reported in that group's
-`error` rather than propagating, so one broken group still shows the others;
-the CLI exits non-zero when any group has an error.
+One entry per input group, so an empty `bindings` list means the query matched
+nothing. `rows` is always the full count; `values` holds every row unless
+`limit` headed it, in which case `truncated` is true. A binding whose inputs
+have no stored data reports `"no stored data for these inputs"` and no
+outputs. A transform that raises is reported in that binding's `error` rather
+than propagating, so one broken group still shows the others.
 
-The CLI prints the first five rows of each output by default; `-n N` heads
-it at a different count and `-n 0` prints every row. The Python and HTTP
-forms return every row unless `limit` is given.
+### Running the check locally
 
-Because each group reads its whole retained extent rather than an
-incremental window, the values shown are what a `backfill = True` deployment
-would publish.
-
-## Deployment
-
-Deploy an importable class through a connected client:
-
-```python
-client.deploy_app(
-    TemperatureNormalizer,
-    parameters={"offset": 273.15},
-)
+```bash
+acquirium app check ./my_app.py:MyApp --local
 ```
 
-Or load it when the server starts:
+```python
+from acquirium.Materialization import local
+result = local.check_app(client, MyApp, parameters={"offset": 273.15})
+```
+
+The app is compiled and run in the caller's process, with its inputs fetched
+over the client API, and returns the same document. Three things follow:
+
+- `breakpoint()` and `aq.console()` open in the calling terminal, and
+  debuggers and profilers attach normally.
+- A failing `transform` raises where it was called, with its traceback,
+  instead of being captured in that binding's `error`. One broken binding
+  therefore stops the check.
+- The server never imports the app, so nothing needs to be importable there
+  and `search_path` is irrelevant.
+
+Everything else matches a server-side check, including the identities the
+derived streams would be published under. Input rows travel over HTTP, so
+reading a large extent is slower this way.
+
+## Deploying
+
+### Configuration
 
 ```toml
 [[apps]]
@@ -566,17 +887,109 @@ spec = "./temperature_normalizer.py:TemperatureNormalizer"
 offset = 273.15
 ```
 
-For a class spec, every key other than `spec` is passed to the constructor. A
-`spec` may instead name a registrar function for a group of related apps; see
-[Apps](../apps.md#deploying-and-inspecting-apps).
+Every key other than `spec` and `name` is passed to the constructor.
+Relative paths resolve against the config file's directory. Apps in the
+config are deployed once the server is healthy and its configured drivers have
+started, so their queries resolve against the intended graph.
+
+A `spec` may instead name a **registrar** — a callable taking
+`(acquirium_client, parameters)` and returning an `App` class, an iterable of
+them, or `None` — which is how a family of related apps is deployed from one
+entry.
+
+### Python
+
+```python
+client.deploy_app(MyApp, parameters={"offset": 273.15})   # PUT /apps/{name}
+client.remove_app("temperature-normalizer")               # DELETE /apps/{name}
+client.app_dag()                                          # GET /materialization/dag
+```
 
 `deploy_app` ships a *reference* to the code — module path, qualified name,
-and a source digest — not the code itself. The server must be able to import
-the identical module. A class defined in a script's `__main__` module is
-rejected at deploy time for this reason; move it into an importable module.
+and a source digest — not the code itself, so the server must be able to
+import the identical module. A class defined in a script's `__main__` is
+rejected at deploy time for that reason.
 
-Progress is keyed by what a binding reads and writes, so editing the app's
-source or parameters neither resets its place nor skips data. To reprocess
-history with changed code, redeploy under a new name with `backfill = True`
-(the old streams remain until their app is removed), or remove and redeploy
-the same name and backfill.
+`remove_app` deletes the deployment and forgets its progress rows, so
+redeploying the same name starts fresh under its `backfill` setting. Its
+derived streams are left in place.
+
+`app_dag()` returns the active plan as a NetworkX `DiGraph`: one node per
+binding (with its inputs, outputs, `lookback`, `backfill`, consumed and
+current revisions) and one edge per derived stream a downstream binding reads.
+
+To reprocess history with changed code, remove and redeploy with
+`backfill = True`, or deploy the new version under a new name — the old
+streams remain until their app is removed.
+
+### Server settings
+
+| key in `[server]` | default | meaning |
+|---|---|---|
+| `materialization_poll_seconds` | `0.25` | Idle polling cadence of the materialization workers. |
+| `materialization_workers` | `2` | Number of concurrent materialization workers. |
+| `materialization_error_log_seconds` | `30` | Rate limit for repeated failure logs from one worker. |
+
+Run one server process: the embedded graph store has a single owning process.
+
+## Embedding the runtime
+
+The pieces below are for programs that schedule materialization themselves.
+They are importable from `acquirium.Materialization`.
+
+```python
+from acquirium.Materialization import (
+    ApplicationGraph, Binding, InProcessExecutor, RayExecutor,
+    RevisionStore, Scheduler,
+)
+from acquirium.Materialization.planner import BindingPlanner, Deployment
+from acquirium.Materialization.runtime import Materializer
+```
+
+| call | what it does |
+|---|---|
+| `Deployment.from_class(cls, *, parameters=None)` | Build the durable record from an `App` subclass. Rejects a non-`App`, an app with no outputs, and a `__main__`-defined class. |
+| `Deployment.to_json()` / `.from_json(text)` | Round-trip the record; durations are whole microseconds and `lookback` may be `"all"`. |
+| `BindingPlanner(graph, *, query_resolver=None, record_resolver=None)` | Construct a planner over anything offering `graph_status()` and `sparql_query()`. |
+| `.compile(deployments, graph_revision, *, search_path=None)` | Returns `(ApplicationGraph, {binding signature: app instance})`. Raises if the graph moved during planning. |
+| `RevisionStore(store, unit_converter=None)` | Durable read/write logic over a `DuckDBStore` or `TimescaleStore`. The converter is injected here and reaches `StreamSet.in_unit`. |
+| `.initialise(binding, backfill=False)` | Create the progress row if absent; returns the consumed revision. |
+| `.next_batch(binding)` | The next `Batch`, or `None`. Advances past irrelevant revisions. |
+| `.preview_batch(binding)` | A batch over all stored input data, touching no durable state. What a check uses. |
+| `.commit(binding, batch, results)` / `.commit_wave(commits)` | Publish results and advance frontiers atomically; returns which commits were accepted. |
+| `Scheduler(store, executor=None)` | Defaults to `RayExecutor()`; pass `InProcessExecutor()` for deterministic single-process execution. |
+| `.run_once(binding, app)` | Claim, execute and commit one binding. Returns whether anything committed. |
+| `.run_layer(bindings, apps, *, max_workers=None)` | One dependency wave, committed together. |
+| `.run_graph_once(graph, apps)` / `.run_until_idle(graph, apps)` | Every wave once, or until nothing is left to do. |
+| `ApplicationGraph(bindings)` | Validates ownership and acyclicity; `.topological()` and `.layers()` give execution order. |
+| `Binding.derive_output_ref_name(port, inputs, spec=None)` | The derived stream name a port would publish under. |
+| `Materializer(store, graph, *, query_resolver=None, record_resolver=None, unit_converter=None)` | The full facade: `deploy`, `remove`, `check`, `refresh`, `run_once`, `dag`. |
+
+`RayExecutor` runs each batch as a Ray task, putting the sealed Arrow batch in
+the object store once. It is optional and holds no recovery state; the
+frontier remains the only authority. `StreamSet.in_unit` needs a converter
+that can be shipped to a worker, which the server's graph-backed converter is
+not — so unit conversion under Ray raises rather than silently returning
+unconverted values.
+
+## Error messages
+
+| message | cause | fix |
+|---|---|---|
+| `an app requires at least one declared output` | `outputs` is empty | Declare a port. |
+| `an app class defined in a script's __main__ module cannot be deployed` | The class lives in the script you ran | Move it into an importable module. |
+| `output 'x' is not declared in this app's outputs` | Typo, or a missing declaration | Assign a declared port. |
+| `output 'x': an output must be an Arrow/Polars/pandas table with exactly time and value columns` | Extra columns, usually `ref_uri` | `select("time", "value")`. |
+| `output 'x': output value must be non-null` | Nulls survived a resample or join | `drop_nulls()` or fill them. |
+| `output 'x': output timestamps must be unique` | Two rows share a timestamp | Aggregate the duplicates. |
+| `output 'x': text output requires string values` | A `"text"` port was given numbers | Format them, or declare the port numeric. |
+| `alias 'a' is bound to N streams, not one` | `.stream` on a `named` app's alias | Use `.streams`. |
+| `this call covers every matched row, so it has no single row` | `context.row` in a `named` app | Use `context.result`. |
+| `app 'x' declares named output(s) […] alongside per-row fan-out` | A `named` port in a fanning-out app | Compute the aggregate in a second, chained app. |
+| `multiple bindings own '…'` | Two apps declare the same named stream | Rename one. |
+| `application bindings contain a cycle` | Apps read each other's outputs in a loop | Break the cycle. |
+| `stream … has no recorded unit to convert from` | `in_unit` on a stream whose point has no unit | Declare the unit on the point. |
+| `durations must use ms, s, m, h, or d` | An unrecognised suffix, such as `"2w"`, or a bare number | Spell the unit, or pass a `datetime.timedelta`. |
+| `the server could not import '…' for entrypoint '…'` | The server cannot see the app's module | Install it, put it where the server imports from, or check with `--local`. |
+| `entrypoint digest mismatch` | The file changed between deployment and load | Redeploy the app. |
+| `graph changed while materialization plan was being compiled` | The plant model was published mid-planning | Nothing to do; the plan is recompiled. |
