@@ -244,7 +244,7 @@ class DuckDBStore:
             f"CREATE INDEX IF NOT EXISTS idx_logs_obs ON {LOGS_TABLE} (observed_start, observed_end)",
             f"CREATE TABLE IF NOT EXISTS {SYSTEM_STATE_TABLE} (current_revision BIGINT NOT NULL)",
             f"INSERT INTO {SYSTEM_STATE_TABLE} SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM {SYSTEM_STATE_TABLE})",
-            f"CREATE TABLE IF NOT EXISTS {BINDING_PROGRESS_TABLE} (binding_signature VARCHAR PRIMARY KEY, consumed_revision BIGINT NOT NULL)",
+            f"CREATE TABLE IF NOT EXISTS {BINDING_PROGRESS_TABLE} (progress_key VARCHAR PRIMARY KEY, consumed_revision BIGINT NOT NULL)",
             f"CREATE INDEX IF NOT EXISTS idx_timeseries_last_revision ON {TIMESERIES_TABLE} (last_revision)",
         ]
         with self._lock, timed_debug(logger, "ensure_table"), self._own_conn() as conn:

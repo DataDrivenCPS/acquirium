@@ -39,41 +39,14 @@ def _duration(value: timedelta | str) -> timedelta:
     return result
 
 
-@dataclass(frozen=True)
-class OnChange:
-    coalesce: timedelta | str = "0ms"
-    max_delay: timedelta | str | None = None
-    def __post_init__(self):
-        object.__setattr__(self, "coalesce", _duration(self.coalesce))
-        if self.max_delay is not None:
-            object.__setattr__(self, "max_delay", _duration(self.max_delay))
+def parse_lookback(value: timedelta | str) -> timedelta | None:
+    """Parse a lookback: a duration, or ``"all"`` for the whole stored extent.
 
-
-@dataclass(frozen=True)
-class Every:
-    interval: timedelta | str
-    def __post_init__(self): object.__setattr__(self, "interval", _duration(self.interval))
-
-
-@dataclass(frozen=True)
-class Changed: pass
-
-
-@dataclass(frozen=True)
-class AroundChange:
-    before: timedelta | str = timedelta()
-    after: timedelta | str = timedelta()
-    def __post_init__(self):
-        object.__setattr__(self, "before", _duration(self.before))
-        object.__setattr__(self, "after", _duration(self.after))
-
-
-@dataclass(frozen=True)
-class AllAvailable: pass
-
-
-@dataclass(frozen=True)
-class Current: pass
+    ``None`` is the internal spelling of ``"all"``; authors never write it.
+    """
+    if value == "all" or value is None:
+        return None
+    return _duration(value)
 
 
 @dataclass(frozen=True)
@@ -113,6 +86,10 @@ class StreamSet:
     _table: pa.Table = field(default_factory=_empty_table)
     changes: pa.Table = field(default_factory=_empty_table)
     batch_size: int = 65_536
+    # The unit converter (or a zero-argument factory for one) is injected by
+    # whoever builds the set — RevisionStore in the server — so the dependency
+    # is visible in the object graph rather than ambient process state.
+    converter: Any = field(default=None, repr=False)
 
     def batches(self) -> Iterator[pa.RecordBatch]:
         yield from self._table.to_batches(self.batch_size)
@@ -124,9 +101,46 @@ class StreamSet:
         if library == "pandas": return self._table.to_pandas()
         raise ValueError("library must be 'polars' or 'pandas'")
 
+    def in_unit(self, unit: str) -> "StreamSet":
+        """Return this stream set with every value converted into ``unit``.
+
+        Each stream converts from its own recorded unit, so an alias mixing
+        Celsius and Fahrenheit sensors comes out uniform. The result is a
+        normal :class:`StreamSet`: every accessor and helper works on it.
+        """
+        converter = self.converter() if callable(self.converter) else self.converter
+        if converter is None:
+            raise RuntimeError("this stream set carries no unit converter")
+        for descriptor in self.streams:
+            if descriptor.unit is None:
+                raise ValueError(f"stream {descriptor.ref_uri} has no recorded unit to convert from")
+        # QUDT conversions are linear, so two probe conversions per stream
+        # yield exact factors; the converter raises on incompatible units.
+        shifts = {d.ref_uri: converter.convert(0.0, d.unit, unit) for d in self.streams}
+        scales = {d.ref_uri: converter.convert(1.0, d.unit, unit) - shifts[d.ref_uri] for d in self.streams}
+        def convert(table: pa.Table) -> pa.Table:
+            if not (pa.types.is_floating(table["value"].type) or pa.types.is_integer(table["value"].type)):
+                raise TypeError("unit conversion requires numeric values")
+            refs = [d.ref_uri for d in self.streams]
+            index = pc.index_in(table["ref_uri"], pa.array(refs, pa.string()))
+            scale = pc.take(pa.array([scales[r] for r in refs], pa.float64()), index)
+            shift = pc.take(pa.array([shifts[r] for r in refs], pa.float64()), index)
+            value = pc.add(pc.multiply(pc.cast(table["value"], pa.float64()), scale), shift)
+            return table.set_column(table.column_names.index("value"), "value", value)
+        from dataclasses import replace as _replace
+        streams = tuple(_replace(d, unit=unit) for d in self.streams)
+        return StreamSet(self.alias, self.window, streams, convert(self._table), convert(self.changes),
+                         self.batch_size, self.converter)
+
 
 @dataclass(frozen=True)
 class InputBatch:
+    """The context handed to ``transform``: one bound query match, loaded.
+
+    ``entities`` carries the semantic side of the match — the query's
+    non-data aliases resolved to model URIs (for a per-row app, the row this
+    call is bound to). The revision fields are runtime diagnostics.
+    """
     binding_signature: str
     graph_revision: int
     from_revision: int
@@ -134,11 +148,14 @@ class InputBatch:
     changed_window: TimeWindow
     read_window: TimeWindow
     inputs: Mapping[str, StreamSet]
+    entities: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class OutputSpec:
-    value_kind: str | None = None
+    """A derived-stream definition: like a driver's stream registration,
+    every field is declared, nothing is inferred from published data."""
+    value_kind: str
     point_uri: str | None = None
     label: str | None = None
     unit: str | None = None
@@ -147,16 +164,30 @@ class OutputSpec:
     substance: str | None = None
     data_source: str | None = None
     properties: Mapping[str, tuple[str, ...]] | None = None
-    inherit: bool = False
-    inherit_properties: tuple[str, ...] = ()
+    # ``stream_name`` makes an output absolute: the derived stream keeps this
+    # exact reference name instead of one derived from the bound inputs.
+    stream_name: str | None = None
     def __post_init__(self):
-        if self.value_kind not in (None, "numeric", "text"):
-            raise ValueError("value_kind must be numeric, text, or None")
+        if self.value_kind not in ("numeric", "text"):
+            raise ValueError("value_kind must be 'numeric' or 'text'")
+        if self.stream_name is not None and not self.stream_name:
+            raise ValueError("a named output requires a non-empty stream name")
 
 
-class _Outputs:
-    def stream(self, **kwargs: Any) -> OutputSpec: return OutputSpec(**kwargs)
-outputs = _Outputs()
+class _OutputAPI:
+    """The two output flavors an app can declare.
+
+    ``per_input`` publishes one derived stream beside each group of inputs the
+    app is bound to — the right choice when the same calculation fans out
+    across many matched streams. ``named`` publishes one absolute stream whose
+    identity you choose, so it can be found directly by name.
+    """
+    def per_input(self, **kwargs: Any) -> OutputSpec:
+        if "stream_name" in kwargs: raise TypeError("per_input outputs derive their name; use output.named(...)")
+        return OutputSpec(**kwargs)
+    def named(self, stream_name: str, **kwargs: Any) -> OutputSpec:
+        return OutputSpec(stream_name=stream_name, **kwargs)
+output = _OutputAPI()
 
 
 class OutputBuilder:
@@ -164,15 +195,26 @@ class OutputBuilder:
     def __init__(self, ports: Mapping[str, tuple[str, OutputSpec]]):
         self._ports, self._values = dict(ports), {}
     def __setitem__(self, name: str, value: Any) -> None:
-        if name not in self._ports: raise KeyError(f"undeclared output {name!r}")
+        if name not in self._ports:
+            # Every published stream is declared up front, so an unknown port
+            # is a typo or a missing declaration, never a new stream.
+            declared = ", ".join(repr(port) for port in sorted(self._ports)) or "none"
+            raise KeyError(
+                f"output {name!r} is not declared in this app's outputs (declared: {declared})"
+            )
         if name in self._values: raise ValueError(f"output {name!r} assigned twice")
-        self._values[name] = _normalise_output(value, self._ports[name][1])
+        try:
+            self._values[name] = _normalise_output(value, self._ports[name][1])
+        except (TypeError, ValueError) as error:
+            # Schema violations surface inside transform(); the port name is
+            # the author's handle on which assignment broke.
+            raise type(error)(f"output {name!r}: {error}") from None
     @property
     def values(self) -> Mapping[str, pa.Table]: return self._values
 
 
 def _normalise_output(value: Any, spec: OutputSpec) -> pa.Table:
-    # Transformations may use any supported dataframe library, but storage sees
+    # Apps may use any supported dataframe library, but storage sees
     # one canonical Arrow shape. Validate before casting so a bad output cannot
     # silently change a stream's registered value kind.
     if isinstance(value, pa.RecordBatch): value = pa.Table.from_batches([value])
@@ -195,7 +237,6 @@ def _normalise_output(value: Any, spec: OutputSpec) -> pa.Table:
     time = pc.cast(time, pa.timestamp("us", tz="UTC"))
     if values.null_count: raise ValueError("output value must be non-null")
     kind = spec.value_kind
-    if kind is None: kind = "numeric" if pa.types.is_integer(values.type) or pa.types.is_floating(values.type) else "text"
     if kind == "numeric" and not (pa.types.is_integer(values.type) or pa.types.is_floating(values.type)):
         raise TypeError("numeric output requires numeric values")
     if kind == "text" and not pa.types.is_string(values.type): raise TypeError("text output requires string values")
@@ -214,40 +255,58 @@ class Binding:
     executable_digest: str
     inputs: Mapping[str, tuple[StreamDescriptor, ...]]
     outputs: Mapping[str, tuple[str, OutputSpec]]
-    window: Changed | AroundChange | AllAvailable = field(default_factory=Changed)
+    lookback: timedelta | None = timedelta()   # None reads the whole stored extent
+    lookback_after: timedelta = timedelta()
     graph_revision: int = 0
     parameters: Mapping[str, Any] = field(default_factory=dict)
+    entities: Mapping[str, str] = field(default_factory=dict)
     signature: str = field(init=False)
+    progress_key: str = field(init=False)
     def __post_init__(self):
         if not self.inputs or not self.outputs: raise ValueError("a binding needs inputs and outputs")
         payload = {"v": 1, "application": self.application_name, "executable": self.executable_digest,
                    "inputs": {k: [x.__dict__ for x in sorted(v, key=lambda x: x.ref_uri)] for k,v in sorted(self.inputs.items())},
                    "outputs": {k: (v[0], v[1].__dict__) for k,v in sorted(self.outputs.items())},
-                   "window": {"kind": type(self.window).__name__, **self.window.__dict__}}
+                   "entities": dict(sorted(self.entities.items())),
+                   "lookback": "all" if self.lookback is None else self.lookback.total_seconds(),
+                   "lookback_after": self.lookback_after.total_seconds()}
         # Keep unconfigured bindings byte-for-byte compatible with their
         # previous identity, while making configured deployments distinct.
         if self.parameters:
             payload["parameters"] = dict(self.parameters)
         object.__setattr__(self, "signature", sha256(_canonical(payload).encode()).hexdigest())
+        # Durable progress deliberately survives code and parameter edits: it is
+        # keyed by what the binding reads and writes, not by how it computes.
+        # Otherwise editing a comment would reset the frontier and, without
+        # backfill, silently skip the rows written in between.
+        progress = {"v": 1, "application": self.application_name,
+                    "inputs": {k: sorted(x.ref_uri for x in v) for k,v in sorted(self.inputs.items())},
+                    "outputs": {k: v[0] for k,v in sorted(self.outputs.items())}}
+        object.__setattr__(self, "progress_key", sha256(_canonical(progress).encode()).hexdigest())
 
     @classmethod
-    def derive_output_ref_name(cls, key: str, inputs: Mapping[str, Iterable[StreamDescriptor]]) -> str:
-        # Output identities follow bound inputs, not a deployment instance.
-        # Recompiling the same graph therefore reuses the derived stream.
+    def derive_output_ref_name(cls, key: str, inputs: Mapping[str, Iterable[StreamDescriptor]],
+                               spec: OutputSpec | None = None) -> str:
+        # A named output owns its exact reference name. A per-input identity
+        # follows the bound inputs, not a deployment instance, so recompiling
+        # the same graph reuses the derived stream.
+        if spec is not None and spec.stream_name is not None:
+            return spec.stream_name
         pairs = sorted((alias, item.ref_uri) for alias, values in inputs.items() for item in values)
         digest = sha256(_canonical([key, pairs]).encode()).hexdigest()
         return f"{key}:{digest}"
 
     @classmethod
-    def derive_output_uri(cls, application_name: str, key: str, inputs: Mapping[str, Iterable[StreamDescriptor]]) -> str:
+    def derive_output_uri(cls, application_name: str, key: str, inputs: Mapping[str, Iterable[StreamDescriptor]],
+                          spec: OutputSpec | None = None) -> str:
         """Return the graph-registry URI for one deterministic derived port."""
         return str(compute_ref_uri(
-            f"derived:{application_name}", cls.derive_output_ref_name(key, inputs)
+            f"derived:{application_name}", cls.derive_output_ref_name(key, inputs, spec)
         ))
 
     def output_ref_name(self, key: str) -> str:
         """Return the registry name corresponding to one output port."""
-        return self.derive_output_ref_name(key, self.inputs)
+        return self.derive_output_ref_name(key, self.inputs, self.outputs[key][1])
 
 
 class ApplicationGraph:
@@ -312,26 +371,45 @@ class ApplicationGraph:
         return tuple(layers)
 
 
-class Transformation:
-    """A transformation bound once to the complete semantic query result."""
+class App:
+    """A calculation over the streams selected by one semantic query.
+
+    The ``outputs`` declaration alone decides how query matches become calls:
+    a ``per_input`` output runs ``transform`` once per query-result row and
+    derives one stream beside each row's inputs, while a ``named`` output
+    runs it once over the complete result and owns one absolute stream. The
+    two may be declared together only when the query resolves to a single
+    input group, where both describe the same call.
+
+    Every knob is a plain attribute holding a duration string, a bool, or
+    ``"all"`` — there are no policy objects to learn:
+
+    - ``lookback`` — how much stored context precedes the new data in each
+      call's window (``"all"`` reads the whole stream every time).
+    - ``lookback_after`` — context after the changed range, for corrections
+      that land in the middle of history.
+    - ``backfill`` — whether the first run processes already-stored history.
+    - ``coalesce`` / ``max_delay`` — wait for a quiet gap in a burst of
+      writes before running, capped at ``max_delay``.
+    - ``min_interval`` — at most one run per interval.
+    """
     name: str | None = None
-    binding_mode = "full_query"
-    trigger: OnChange | Every = OnChange()
-    window: Changed | AroundChange | AllAvailable = Changed()
+    lookback: timedelta | str = "0s"
+    lookback_after: timedelta | str = "0s"
+    backfill: bool = False
+    coalesce: timedelta | str = "0s"
+    max_delay: timedelta | str | None = None
+    min_interval: timedelta | str | None = None
     outputs: Mapping[str, OutputSpec] = {}
-    start: Current | AllAvailable = Current()
-    def build_query(self, aq: Any) -> Any: raise NotImplementedError
+    def build_query(self, plant: Any) -> Any: raise NotImplementedError
     def transform(self, inputs: Mapping[str, StreamSet], output: OutputBuilder, context: InputBatch) -> None: raise NotImplementedError
-
-
-class RowWiseTransformation(Transformation):
-    """A transformation bound independently to each semantic query result row."""
-    binding_mode = "per_row"
 
 
 class RevisionStore:
     """Durable revision-frontier persistence shared by supported stores."""
-    def __init__(self, store: Any): self.store = store
+    def __init__(self, store: Any, unit_converter: Any = None):
+        self.store = store
+        self.unit_converter = unit_converter
 
     @property
     def _postgres(self) -> bool:
@@ -357,15 +435,15 @@ class RevisionStore:
         return conn.execute(self._sql(query), list(params))
     def current_revision(self) -> int:
         with self.store._own_conn() as conn: return int(self._execute(conn, "SELECT current_revision FROM system_state").fetchone()[0])
-    def initialise(self, binding: Binding, start: Current | AllAvailable) -> int:
+    def initialise(self, binding: Binding, backfill: bool = False) -> int:
         with self.store._lock, self.store._write_conn() as conn:
-            row = self._execute(conn, "SELECT consumed_revision FROM binding_progress WHERE binding_signature=?", [binding.signature]).fetchone()
+            row = self._execute(conn, "SELECT consumed_revision FROM binding_progress WHERE progress_key=?", [binding.progress_key]).fetchone()
             if row is not None: return int(row[0])
             current = int(self._execute(conn, "SELECT current_revision FROM system_state").fetchone()[0])
-            # Current opts into future changes; AllAvailable deliberately
-            # replays history for a newly seen binding.
-            consumed = current if isinstance(start, Current) else 0
-            self._execute(conn, "INSERT INTO binding_progress VALUES (?, ?)", [binding.signature, consumed])
+            # Backfill deliberately replays retained history for a newly seen
+            # binding; otherwise only future changes are processed.
+            consumed = 0 if backfill else current
+            self._execute(conn, "INSERT INTO binding_progress VALUES (?, ?)", [binding.progress_key, consumed])
             return consumed
     def next_batch(self, binding: Binding) -> InputBatch | None:
         # One read transaction is the snapshot boundary described by proposal.
@@ -377,35 +455,57 @@ class RevisionStore:
                 conn.execute("BEGIN")
             else:
                 conn.begin()
-            row = self._execute(conn, "SELECT consumed_revision FROM binding_progress WHERE binding_signature=?", [binding.signature]).fetchone()
+            row = self._execute(conn, "SELECT consumed_revision FROM binding_progress WHERE progress_key=?", [binding.progress_key]).fetchone()
             if row is None: raise KeyError("binding was not initialised")
             previous = int(row[0]); target = int(self._execute(conn, "SELECT current_revision FROM system_state").fetchone()[0])
-            refs = [d.ref_uri for values in binding.inputs.values() for d in values]
-            if not refs or target == previous: conn.commit(); return None
-            marks = ",".join("?" for _ in refs)
-            changed = self._execute(conn, f"SELECT min(t.ts), max(t.ts) FROM {self._timeseries_source} WHERE {self._ref} IN ({marks}) AND t.last_revision>? AND t.last_revision<=?", [*refs, previous, target]).fetchone()
-            if changed[0] is None:
-                conn.commit()
+            batch = self._build_batch(conn, binding, previous, target)
+            conn.commit()
+            if batch is None and previous != target and any(binding.inputs.values()):
                 # Revisions for unrelated streams can be safely skipped.  The
                 # compare makes this race-safe with an in-flight invocation.
                 with self.store._lock, self.store._write_conn() as writer:
-                    self._execute(writer, "UPDATE binding_progress SET consumed_revision=? WHERE binding_signature=? AND consumed_revision=?", [target, binding.signature, previous])
-                return None
-            changed_window = TimeWindow(changed[0].replace(tzinfo=UTC) if changed[0].tzinfo is None else changed[0], changed[1].replace(tzinfo=UTC) if changed[1].tzinfo is None else changed[1])
-            if isinstance(binding.window, AllAvailable):
-                extent = self._execute(conn, f"SELECT min(t.ts), max(t.ts) FROM {self._timeseries_source} WHERE {self._ref} IN ({marks}) AND NOT t.deleted", refs).fetchone()
-                read = TimeWindow(extent[0].replace(tzinfo=UTC) if extent[0].tzinfo is None else extent[0], extent[1].replace(tzinfo=UTC) if extent[1].tzinfo is None else extent[1])
-            elif isinstance(binding.window, AroundChange): read = TimeWindow(changed_window.start-binding.window.before, changed_window.end+binding.window.after)
-            else: read = changed_window
-            inputs = {alias: self._stream_set(conn, alias, descriptors, read, previous, target) for alias, descriptors in binding.inputs.items()}
-            conn.commit()
-            return InputBatch(binding.signature, binding.graph_revision, previous, target, changed_window, read, inputs)
+                    self._execute(writer, "UPDATE binding_progress SET consumed_revision=? WHERE progress_key=? AND consumed_revision=?", [target, binding.progress_key, previous])
+            return batch
         except BaseException:
             conn.rollback(); raise
         finally: conn.close()
+
+    def preview_batch(self, binding: Binding) -> InputBatch | None:
+        """Build a batch over all stored input data, touching no durable state.
+
+        This is the read half of an invocation without the write half: no
+        progress row is created or advanced, so a dry run neither disturbs a
+        deployed app nor leaves anything behind.
+        """
+        conn = self.store._connect()
+        try:
+            if self._postgres: conn.execute("BEGIN")
+            else: conn.begin()
+            target = int(self._execute(conn, "SELECT current_revision FROM system_state").fetchone()[0])
+            batch = self._build_batch(conn, binding, 0, target)
+            conn.commit()
+            return batch
+        except BaseException:
+            conn.rollback(); raise
+        finally: conn.close()
+
+    def _build_batch(self, conn: Any, binding: Binding, previous: int, target: int) -> InputBatch | None:
+        """Read one coherent batch for the revisions in ``(previous, target]``."""
+        refs = [d.ref_uri for values in binding.inputs.values() for d in values]
+        if not refs or target == previous: return None
+        marks = ",".join("?" for _ in refs)
+        changed = self._execute(conn, f"SELECT min(t.ts), max(t.ts) FROM {self._timeseries_source} WHERE {self._ref} IN ({marks}) AND t.last_revision>? AND t.last_revision<=?", [*refs, previous, target]).fetchone()
+        if changed[0] is None: return None
+        changed_window = TimeWindow(changed[0].replace(tzinfo=UTC) if changed[0].tzinfo is None else changed[0], changed[1].replace(tzinfo=UTC) if changed[1].tzinfo is None else changed[1])
+        if binding.lookback is None:
+            extent = self._execute(conn, f"SELECT min(t.ts), max(t.ts) FROM {self._timeseries_source} WHERE {self._ref} IN ({marks}) AND NOT t.deleted", refs).fetchone()
+            read = TimeWindow(extent[0].replace(tzinfo=UTC) if extent[0].tzinfo is None else extent[0], extent[1].replace(tzinfo=UTC) if extent[1].tzinfo is None else extent[1])
+        else: read = TimeWindow(changed_window.start-binding.lookback, changed_window.end+binding.lookback_after)
+        inputs = {alias: self._stream_set(conn, alias, descriptors, read, previous, target) for alias, descriptors in binding.inputs.items()}
+        return InputBatch(binding.signature, binding.graph_revision, previous, target, changed_window, read, inputs, binding.entities)
     def _stream_set(self, conn: Any, alias: str, descriptors: tuple[StreamDescriptor,...], window: TimeWindow, previous: int, target: int) -> StreamSet:
         refs = [x.ref_uri for x in descriptors]
-        if not refs: return StreamSet(alias, window, descriptors)
+        if not refs: return StreamSet(alias, window, descriptors, converter=self.unit_converter)
         marks = ",".join("?" for _ in refs)
         query = f"""SELECT {self._ref},t.ts,t.numeric_value,t.text_value,t.last_revision FROM {self._timeseries_source}
                     WHERE {self._ref} IN ({marks}) AND NOT t.deleted AND t.ts>=? AND t.ts<=? ORDER BY {self._ref},t.ts"""
@@ -416,7 +516,7 @@ class RevisionStore:
         # ``table`` is the complete read window; ``changes`` is only the rows
         # advanced by this batch. Windowed transformations often need both.
         changed = table.filter(pa.array([previous < row[4] <= target for row in rows]))
-        return StreamSet(alias, window, descriptors, table, changed)
+        return StreamSet(alias, window, descriptors, table, changed, converter=self.unit_converter)
     def commit(self, binding: Binding, batch: InputBatch, results: Mapping[str, pa.Table]) -> bool:
         return self.commit_wave(((binding, batch, results),)).get(binding.signature, False)
 
@@ -428,7 +528,7 @@ class RevisionStore:
         with self.store._lock, self.store._write_conn() as conn:
             accepted = []
             for binding, batch, results in completed:
-                row = self._execute(conn, "SELECT consumed_revision FROM binding_progress WHERE binding_signature=?", [binding.signature]).fetchone()
+                row = self._execute(conn, "SELECT consumed_revision FROM binding_progress WHERE progress_key=?", [binding.progress_key]).fetchone()
                 if row is not None and int(row[0]) == batch.from_revision:
                     accepted.append((binding, batch, results))
             # Commit the full wave atomically. A dependent layer can then see
@@ -440,7 +540,7 @@ class RevisionStore:
                 records = []
                 for binding, name, table in nonempty:
                     ref, spec = binding.outputs[name]
-                    kind = spec.value_kind or ("numeric" if pa.types.is_floating(table["value"].type) or pa.types.is_integer(table["value"].type) else "text")
+                    kind = spec.value_kind
                     # Framework-owned reference metadata is registered in the
                     # same transaction as the first derived values.  User code
                     # never chooses this identity.
@@ -455,18 +555,18 @@ class RevisionStore:
                     import polars as pl
                     self.store._insert_frame(conn, pl.from_arrow(incoming), revision)
             for binding, batch, _ in accepted:
-                self._execute(conn, "UPDATE binding_progress SET consumed_revision=? WHERE binding_signature=?", [batch.to_revision, binding.signature])
+                self._execute(conn, "UPDATE binding_progress SET consumed_revision=? WHERE progress_key=?", [batch.to_revision, binding.progress_key])
             return {binding.signature: True for binding, _, _ in accepted}
 
 
 class Executor(Protocol):
-    def execute(self, application: Transformation, batch: InputBatch,
+    def execute(self, application: App, batch: InputBatch,
                 ports: Mapping[str, tuple[str, OutputSpec]]) -> Mapping[str, pa.Table]: ...
 
 
 class InProcessExecutor:
     """Deterministic executor useful for tests; it has the same task boundary."""
-    def execute(self, application: Transformation, batch: InputBatch,
+    def execute(self, application: App, batch: InputBatch,
                 ports: Mapping[str, tuple[str, OutputSpec]]) -> Mapping[str, pa.Table]:
         output = OutputBuilder(ports)
         application.transform(batch.inputs, output, batch)
@@ -480,7 +580,7 @@ class _TaskResult:
     finished_at: float
 
 
-def _ray_transform(application: Transformation, batch: InputBatch,
+def _ray_transform(application: App, batch: InputBatch,
                    ports: Mapping[str, tuple[str, OutputSpec]]) -> _TaskResult:
     started_at = time()
     outputs = InProcessExecutor().execute(application, batch, ports)
@@ -512,7 +612,7 @@ class RayExecutor:
         if self._owns_cluster and self._ray.is_initialized():
             self._ray.shutdown()
 
-    def submit(self, application: Transformation, batch: InputBatch,
+    def submit(self, application: App, batch: InputBatch,
                ports: Mapping[str, tuple[str, OutputSpec]]) -> Any:
         """Submit work without waiting, returning Ray's dependency token."""
         # Arrow-bearing batches are put once in Ray's object store; retries and
@@ -523,7 +623,7 @@ class RayExecutor:
     def resolve(self, ticket: Any) -> _TaskResult:
         return self._ray.get(ticket)
 
-    def execute(self, application: Transformation, batch: InputBatch,
+    def execute(self, application: App, batch: InputBatch,
                 ports: Mapping[str, tuple[str, OutputSpec]]) -> Mapping[str, pa.Table]:
         return self.resolve(self.submit(application, batch, ports)).outputs
 
@@ -542,7 +642,7 @@ class Scheduler:
         self.store, self.executor = store, executor or RayExecutor()
         self._locks: dict[str, Lock] = {}
         self._locks_guard = Lock()
-    def run_once(self, binding: Binding, application: Transformation) -> bool:
+    def run_once(self, binding: Binding, application: App) -> bool:
         invocation = self._prepare(binding, application)
         if invocation is None:
             return False
@@ -551,14 +651,14 @@ class Scheduler:
         finally:
             invocation.lock.release()
 
-    def _prepare(self, binding: Binding, application: Transformation) -> _Invocation | None:
+    def _prepare(self, binding: Binding, application: App) -> _Invocation | None:
         with self._locks_guard:
-            lock = self._locks.setdefault(binding.signature, Lock())
+            lock = self._locks.setdefault(binding.progress_key, Lock())
         # This lock only avoids duplicate local work; the durable frontier
         # comparison remains the correctness guard after a restart.
         if not lock.acquire(blocking=False): return None
         try:
-            self.store.initialise(binding, application.start)
+            self.store.initialise(binding, application.backfill)
             batch = self.store.next_batch(binding)
             if batch is None:
                 lock.release()
@@ -571,7 +671,7 @@ class Scheduler:
     def _complete(self, invocation: _Invocation, results: Mapping[str, pa.Table]) -> bool:
         return self.store.commit(invocation.binding, invocation.batch, results)
 
-    def run_layer(self, bindings: Iterable[Binding], applications: Mapping[str, Transformation], *, max_workers: int | None = None) -> bool:
+    def run_layer(self, bindings: Iterable[Binding], applications: Mapping[str, App], *, max_workers: int | None = None) -> bool:
         """Run one topological wave and wait for every durable commit.
 
         The executor work overlaps (Ray tasks in production), while each
@@ -592,7 +692,7 @@ class Scheduler:
             results = [future.result() for future in futures]
             return any(results)
 
-    def _run_async_layer(self, wave: tuple[Binding, ...], applications: Mapping[str, Transformation], submit: Any, resolve: Any) -> bool:
+    def _run_async_layer(self, wave: tuple[Binding, ...], applications: Mapping[str, App], submit: Any, resolve: Any) -> bool:
         """Submit a whole dependency wave before waiting on any Ray result."""
         pending: list[tuple[_Invocation, Any]] = []
         try:
@@ -623,14 +723,46 @@ class Scheduler:
                 if invocation.lock.locked():
                     invocation.lock.release()
 
-    def run_graph_once(self, graph: ApplicationGraph, applications: Mapping[str, Transformation], *, max_workers: int | None = None) -> bool:
+    def run_graph_once(self, graph: ApplicationGraph, applications: Mapping[str, App], *, max_workers: int | None = None) -> bool:
         """Run every dependency wave once, committing each wave before the next."""
         ran = False
         for wave in graph.layers():
             ran = self.run_layer(wave, applications, max_workers=max_workers) or ran
         return ran
 
-    def run_until_idle(self, graph: ApplicationGraph, applications: Mapping[str, Transformation], *, max_workers: int | None = None) -> None:
+    def run_until_idle(self, graph: ApplicationGraph, applications: Mapping[str, App], *, max_workers: int | None = None) -> None:
         """Drive a DAG to its latest canonical state without durable queue state."""
         while self.run_graph_once(graph, applications, max_workers=max_workers):
             pass
+
+
+def align(inputs: Mapping[str, StreamSet], every: timedelta | str, *, aggregate: str = "mean") -> Any:
+    """Resample every input onto one shared clock and return a wide dataframe.
+
+    The result has a ``time`` column plus one column per stream: an alias with
+    a single bound stream contributes a column named after the alias, and an
+    alias with several contributes ``alias[label-or-ref]`` columns. Buckets a
+    stream never reported in hold nulls; combining differently sampled sensors
+    is then one join instead of a hand-rolled resample per stream.
+    """
+    import polars as pl
+    step = _duration(every)
+    if step <= timedelta(): raise ValueError("align requires a positive bucket size")
+    aggregates = {"mean": pl.col("value").mean(), "min": pl.col("value").min(), "max": pl.col("value").max(),
+                  "sum": pl.col("value").sum(), "first": pl.col("value").first(), "last": pl.col("value").last(),
+                  "median": pl.col("value").median(), "count": pl.col("value").count()}
+    if aggregate not in aggregates: raise ValueError(f"aggregate must be one of {sorted(aggregates)}")
+    columns: list[pl.DataFrame] = []
+    for alias, stream_set in sorted(inputs.items()):
+        frame = pl.from_arrow(stream_set.collect())
+        labels = {d.ref_uri: d.label or d.ref_uri for d in stream_set.streams}
+        for ref, group in sorted(frame.group_by("ref_uri"), key=lambda item: str(item[0][0])):
+            name = alias if len(stream_set.streams) <= 1 else f"{alias}[{labels.get(str(ref[0]), str(ref[0]))}]"
+            columns.append(group.sort("time")
+                .group_by_dynamic("time", every=step).agg(aggregates[aggregate].alias(name)))
+    if not columns:
+        return pl.DataFrame({"time": pl.Series([], dtype=pl.Datetime("us", "UTC"))})
+    result = columns[0]
+    for column in columns[1:]:
+        result = result.join(column, on="time", how="full", coalesce=True)
+    return result.sort("time")

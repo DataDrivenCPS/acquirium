@@ -197,7 +197,8 @@ class Manager:
         self.publication = publication
         from acquirium.Materialization.runtime import Materializer
         self.materializer = Materializer(timescale, graph,
-            query_resolver=self.resolve_text, record_resolver=self.resolve_record)
+            query_resolver=self.resolve_text, record_resolver=self.resolve_record,
+            unit_converter=self._ensure_qudt_converter)
         # Published graph revision seen by the last stream-ref resync. It gates
         # the expensive rebuild in _registered_value_kind so repeated writes to
         # an unregistered ref do not each trigger a full inferred-graph rebuild.
@@ -643,15 +644,19 @@ class Manager:
         """Recompile deployed bindings; pending rows are rediscovered by revision."""
         self.materializer.refresh()
 
-    def deploy_transformation(self, deployment) -> dict[str, Any]:
-        """Persist and compile one proposal-style transformation deployment."""
+    def deploy_app(self, deployment) -> dict[str, Any]:
+        """Persist and compile one durable app deployment."""
         self.materializer.deploy(deployment)
         self.materializer.refresh()
         return {"name": deployment.name, "status": "deployed"}
 
-    def remove_transformation(self, name: str) -> dict[str, Any]:
+    def remove_app(self, name: str) -> dict[str, Any]:
         self.materializer.remove(name)
         return {"name": name, "status": "removed"}
+
+    def check_app(self, deployment, limit: int | None = None) -> dict[str, Any]:
+        """Dry-run an app against stored data; nothing is written."""
+        return self.materializer.check(deployment, limit=limit)
 
     def run_materialization_once(self) -> bool:
         """Run at most one coherent batch for every currently compiled binding."""

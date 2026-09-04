@@ -1,15 +1,14 @@
-"""Compile graph-resolved transformation declarations into a validated DAG."""
+"""Compile graph-resolved app declarations into a validated DAG."""
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field, replace
-from hashlib import sha256
+from dataclasses import asdict, dataclass, field
+from datetime import timedelta
 import json
 from typing import Any, Callable, Iterable, Mapping
 
 from acquirium.Client.explore.core import Query
 from acquirium.Materialization.incremental import (
-    AllAvailable, ApplicationGraph, AroundChange, Binding, Changed, Current, Every,
-    OnChange, OutputSpec, StreamDescriptor, Transformation,
+    App, ApplicationGraph, Binding, OutputSpec, StreamDescriptor, _duration, parse_lookback,
 )
 from acquirium.Materialization.worker import load_entrypoint
 from acquirium.Materialization.definitions import source_digest
@@ -54,7 +53,14 @@ class _QueryFacade:
     def query(self) -> Query: return Query(client=self.client)
 
 
-def _query_rows(query: Query) -> tuple[dict[str, list[dict[str, str | None]]], ...]:
+@dataclass(frozen=True)
+class _MatchRow:
+    """One deduplicated query-result row: its streams and its entity bindings."""
+    streams: Mapping[str, tuple[dict[str, str | None], ...]]
+    entities: Mapping[str, str]
+
+
+def _query_rows(query: Query) -> tuple[_MatchRow, ...]:
     if not isinstance(query, Query): raise TypeError("build_query() must return an Acquirium query")
     result, indices, graph = query.execute(include_dependencies=True), {}, query.query_graph
     indices = {column: index for index, column in enumerate(result.get("columns", ()))}
@@ -66,100 +72,118 @@ def _query_rows(query: Query) -> tuple[dict[str, list[dict[str, str | None]]], .
             ref = cell(f"ext{node}")
             if ref is None: continue
             unit = cell(f"unit{node}") or cell(f"extunit{node}")
-            streams.setdefault(graph.aliases_reverse.get(node, f"data_{node}"), []).append({"ref_uri": str(ref), "point_uri": str(cell(f"v{node}")) if cell(f"v{node}") is not None else None, "unit": str(unit) if unit is not None else None})
+            label = cell(f"lbl{node}")
+            streams.setdefault(graph.aliases_reverse.get(node, f"data_{node}"), []).append({
+                "ref_uri": str(ref),
+                "point_uri": str(cell(f"v{node}")) if cell(f"v{node}") is not None else None,
+                "unit": str(unit) if unit is not None else None,
+                "label": str(label) if label is not None else None,
+            })
+        # Entity aliases resolve the semantic side of the row: which heat
+        # exchanger, which unit process. transform() sees them as context.
+        entities = {alias: str(cell(f"v{node}"))
+                    for node, alias in sorted(graph.aliases_reverse.items())
+                    if node not in graph.data_nodes and cell(f"v{node}") is not None}
         # SPARQL joins can repeat a stream through unrelated graph triples.
         # Bind each distinct alias-to-stream set once, deterministically.
         key = _json({alias: sorted(item["ref_uri"] for item in values) for alias,values in streams.items()})
-        if streams and key not in seen: seen.add(key); rows.append(streams)
+        if streams and key not in seen:
+            seen.add(key)
+            rows.append(_MatchRow({alias: tuple(values) for alias, values in streams.items()}, entities))
     return tuple(rows)
+
+
+def _validated_outputs(name: str, declared: Mapping[str, Any]) -> dict[str, OutputSpec]:
+    """Check an app's output schema before anything is deployed or run."""
+    outputs: dict[str, OutputSpec] = {}
+    for key, value in declared.items():
+        if not isinstance(key, str) or not key or not key.strip():
+            raise ValueError(f"app {name!r}: output port names must be non-empty strings, got {key!r}")
+        if isinstance(value, OutputSpec):
+            outputs[key] = value
+            continue
+        if not isinstance(value, Mapping):
+            raise TypeError(
+                f"app {name!r}: output {key!r} must be declared with aq.output.per_input(...) "
+                f"or aq.output.named(...), got {type(value).__name__}"
+            )
+        try:
+            outputs[key] = OutputSpec(**value)
+        except TypeError as error:
+            raise ValueError(f"app {name!r}: output {key!r}: {error}") from None
+    claimed: dict[str, str] = {}
+    for key, spec in outputs.items():
+        if spec.stream_name is None: continue
+        if spec.stream_name in claimed:
+            raise ValueError(
+                f"app {name!r}: outputs {claimed[spec.stream_name]!r} and {key!r} both claim the "
+                f"stream name {spec.stream_name!r}; a named stream has one owner"
+            )
+        claimed[spec.stream_name] = key
+    return outputs
 
 
 @dataclass(frozen=True)
 class Deployment:
+    """The durable record of one deployed app: identity, outputs, scheduling.
+
+    Durations are stored as whole microseconds; ``lookback`` may be ``"all"``.
+    """
     name: str
     entrypoint: str
     executable_digest: str
     outputs: Mapping[str, OutputSpec]
-    window: object
-    trigger: object
-    start: object
+    lookback: timedelta | None = timedelta()
+    lookback_after: timedelta = timedelta()
+    backfill: bool = False
+    coalesce: timedelta = timedelta()
+    max_delay: timedelta | None = None
+    min_interval: timedelta | None = None
     parameters: Mapping[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_class(cls, target: type[Transformation], *, parameters: Mapping[str, Any] | None = None) -> "Deployment":
-        if not issubclass(target, Transformation):
-            raise TypeError("deployment target must be a Transformation class")
+    def from_class(cls, target: type[App], *, parameters: Mapping[str, Any] | None = None) -> "Deployment":
+        if not issubclass(target, App):
+            raise TypeError("deployment target must be an App class")
         if not target.outputs:
-            raise ValueError("a transformation requires at least one named output")
+            raise ValueError("an app requires at least one declared output")
+        if target.__module__ == "__main__":
+            # The deployment ships only ``module:qualname`` plus a digest; the
+            # server must import the same file. ``__main__`` can never resolve.
+            raise ValueError(
+                "an app class defined in a script's __main__ module cannot be deployed; "
+                "move it into an importable module the server can load"
+            )
         params = dict(parameters or {})
         app = target(**params)
         name = target.name or target.__name__
-        outputs = {str(key): value if isinstance(value, OutputSpec) else OutputSpec(**value)
-                   for key, value in target.outputs.items()}
+        outputs = _validated_outputs(name, target.outputs)
         return cls(name, f"{target.__module__}:{target.__qualname__}", source_digest(target),
-                   outputs, app.window, app.trigger, app.start, params)
+                   outputs, parse_lookback(app.lookback), _duration(app.lookback_after), bool(app.backfill),
+                   _duration(app.coalesce),
+                   _duration(app.max_delay) if app.max_delay is not None else None,
+                   _duration(app.min_interval) if app.min_interval is not None else None,
+                   params)
 
     def to_json(self) -> str:
+        micros = lambda value: None if value is None else int(value.total_seconds() * 1_000_000)
         return _json({"name": self.name, "entrypoint": self.entrypoint,
             "executable_digest": self.executable_digest, "outputs": {k: asdict(v) for k,v in self.outputs.items()},
-            "window": _policy_json(self.window), "trigger": _policy_json(self.trigger), "start": type(self.start).__name__,
-            "parameters": dict(self.parameters)})
+            "lookback": "all" if self.lookback is None else micros(self.lookback),
+            "lookback_after": micros(self.lookback_after), "backfill": self.backfill,
+            "coalesce": micros(self.coalesce), "max_delay": micros(self.max_delay),
+            "min_interval": micros(self.min_interval), "parameters": dict(self.parameters)})
 
     @classmethod
     def from_json(cls, text: str) -> "Deployment":
         data = json.loads(text)
-        start_name = data.get("start")
-        if start_name not in {"Current", "AllAvailable"}: raise ValueError("unknown start policy")
+        duration = lambda value: None if value is None else timedelta(microseconds=int(value))
+        lookback = None if data["lookback"] == "all" else duration(data["lookback"])
         return cls(data["name"], data["entrypoint"], data["executable_digest"],
             {key: OutputSpec(**value) for key, value in data["outputs"].items()},
-            _window(data["window"]), _trigger(data["trigger"]),
-            Current() if start_name == "Current" else AllAvailable(),
-            dict(data.get("parameters") or {}))
-
-
-def _policy_json(value: object) -> dict[str, object]:
-    # JSON has no duration type. Microseconds preserve exact scheduler units.
-    fields = {}
-    for key, item in getattr(value, "__dict__", {}).items():
-        fields[key] = int(item.total_seconds() * 1_000_000) if hasattr(item, "total_seconds") else item
-    return {"kind": type(value).__name__, **fields}
-
-
-def _window(value: Mapping[str, Any]) -> Changed | AroundChange | AllAvailable:
-    if value["kind"] == "Changed": return Changed()
-    if value["kind"] == "AllAvailable": return AllAvailable()
-    if value["kind"] == "AroundChange":
-        from datetime import timedelta
-        return AroundChange(timedelta(microseconds=int(value.get("before", 0))), timedelta(microseconds=int(value.get("after", 0))))
-    raise ValueError("unknown window policy")
-
-
-def _trigger(value: Mapping[str, Any]) -> OnChange | Every:
-    from datetime import timedelta
-    if value["kind"] == "OnChange":
-        return OnChange(timedelta(microseconds=int(value.get("coalesce", 0))), timedelta(microseconds=int(value["max_delay"])) if value.get("max_delay") is not None else None)
-    if value["kind"] == "Every": return Every(timedelta(microseconds=int(value["interval"])))
-    raise ValueError("unknown trigger policy")
-
-
-def _resolved_output(spec: OutputSpec, inputs: Mapping[str, tuple[StreamDescriptor, ...]]) -> OutputSpec:
-    """Apply the deliberately conservative inheritance rule at compile time."""
-    if not spec.inherit:
-        return spec
-    streams = [stream for values in inputs.values() for stream in values]
-    if not streams:
-        return spec
-    inherited: dict[str, Any] = {}
-    for field in ("unit", "quantity_kind", "medium", "substance"):
-        values = {getattr(stream, field) for stream in streams}
-        if len(values) == 1 and None not in values and getattr(spec, field) is None:
-            inherited[field] = values.pop()
-    properties = dict(spec.properties or {})
-    for predicate in spec.inherit_properties:
-        common = set(streams[0].properties.get(predicate, ()))
-        for stream in streams[1:]: common.intersection_update(stream.properties.get(predicate, ()))
-        if common and predicate not in properties: properties[predicate] = tuple(sorted(common))
-    return replace(spec, properties=properties or None, **inherited)
+            lookback, duration(data.get("lookback_after")) or timedelta(), bool(data.get("backfill")),
+            duration(data.get("coalesce")) or timedelta(), duration(data.get("max_delay")),
+            duration(data.get("min_interval")), dict(data.get("parameters") or {}))
 
 
 class BindingPlanner:
@@ -168,43 +192,58 @@ class BindingPlanner:
                  record_resolver: Callable[..., Any] | None = None) -> None:
         self.graph, self.query_resolver, self.record_resolver = graph, query_resolver, record_resolver
 
-    def compile(self, deployments: Iterable[Deployment], graph_revision: int) -> tuple[ApplicationGraph, dict[str, Transformation]]:
+    def compile(self, deployments: Iterable[Deployment], graph_revision: int) -> tuple[ApplicationGraph, dict[str, App]]:
         before = int(self.graph.graph_status().get("published_version", 0))
         if before != graph_revision:
             raise RuntimeError("graph changed before materialization planning began")
         bindings, applications = [], {}
         for deployment in deployments:
             target = load_entrypoint(deployment.entrypoint, deployment.executable_digest)
-            if not isinstance(target, type) or not issubclass(target, Transformation):
-                raise TypeError(f"{deployment.entrypoint!r} is not a Transformation")
+            if not isinstance(target, type) or not issubclass(target, App):
+                raise TypeError(f"{deployment.entrypoint!r} is not an App")
             app = target(**deployment.parameters)
             query = app.build_query(_QueryFacade(_GraphQueryClient(self.graph, self.query_resolver, self.record_resolver)))
             rows = _query_rows(query)
-            if app.binding_mode == "full_query":
-                # A full-query app consumes one combined stream set; per-row
-                # apps below receive independent semantic query bindings.
-                grouped: dict[str, dict[str, dict[str, str | None]]] = {}
-                for row in rows:
-                    for alias, matches in row.items():
-                        for item in matches:
-                            grouped.setdefault(alias, {})[str(item["ref_uri"])] = item
-                binding_rows = ({
-                    alias: tuple(items.values()) for alias, items in sorted(grouped.items())
-                },) if grouped else ()
-            elif app.binding_mode == "per_row":
+            # The output declaration decides the grouping. A per_input output
+            # fans out: one binding per query-result row. All-named outputs
+            # aggregate: one binding over the combined result (which keeps a
+            # lone row's entity bindings, since it *is* that row).
+            named = sorted(key for key, spec in deployment.outputs.items() if spec.stream_name is not None)
+            fans_out = any(spec.stream_name is None for spec in deployment.outputs.values())
+            if fans_out or len(rows) == 1:
                 binding_rows = rows
             else:
-                raise ValueError(f"unknown transformation binding mode {app.binding_mode!r}")
+                grouped: dict[str, dict[str, dict[str, str | None]]] = {}
+                for row in rows:
+                    for alias, matches in row.streams.items():
+                        for item in matches:
+                            grouped.setdefault(alias, {})[str(item["ref_uri"])] = item
+                binding_rows = (_MatchRow({
+                    alias: tuple(items.values()) for alias, items in sorted(grouped.items())
+                }, {}),) if grouped else ()
+            if named and len(binding_rows) > 1:
+                # An absolute stream has one owner, so a named output cannot
+                # ride along with fan-out. The aggregate belongs downstream.
+                raise ValueError(
+                    f"app {deployment.name!r} declares named output(s) {named!r} alongside per-input "
+                    f"fan-out over {len(binding_rows)} input groups; compute the aggregate in a second "
+                    f"app whose query selects this app's derived streams"
+                )
             for row in binding_rows:
                 inputs = {
+                    # The planner records the metadata the compiled query
+                    # exposes: reference, point, unit, and label.
                     alias: tuple(StreamDescriptor(
-                        ref_uri=str(item["ref_uri"]), point_uri=item.get("point_uri"), unit=item.get("unit")
+                        ref_uri=str(item["ref_uri"]), point_uri=item.get("point_uri"),
+                        unit=item.get("unit"), label=item.get("label"),
                     ) for item in matches)
-                    for alias, matches in sorted(row.items())
+                    for alias, matches in sorted(row.streams.items())
                 }
-                ports = {key: (Binding.derive_output_uri(deployment.name, key, inputs), _resolved_output(spec, inputs))
+                ports = {key: (Binding.derive_output_uri(deployment.name, key, inputs, spec), spec)
                          for key, spec in deployment.outputs.items()}
-                binding = Binding(deployment.name, deployment.executable_digest, inputs, ports, app.window, graph_revision, deployment.parameters)
+                binding = Binding(deployment.name, deployment.executable_digest, inputs, ports,
+                                  deployment.lookback, deployment.lookback_after,
+                                  graph_revision, deployment.parameters, row.entities)
                 bindings.append(binding); applications[binding.signature] = app
         # Planning is optimistic: discard a plan from a mixed graph view.
         if int(self.graph.graph_status().get("published_version", 0)) != graph_revision:

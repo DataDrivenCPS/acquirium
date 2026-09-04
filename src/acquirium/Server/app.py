@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 
 from acquirium.Server.manager import Manager
-from acquirium.Materialization import Transformation
+from acquirium.Materialization import App as MaterializationApp
 from acquirium.Materialization.planner import Deployment
 
 from acquirium.internals.models import (
@@ -221,25 +221,25 @@ def _deploy_config_apps(cfg: dict) -> None:
             # Only non-reserved fields become constructor parameters. ``name``
             # remains display/config metadata and cannot alter binding identity.
             parameters = {key: value for key, value in entry.items() if key not in {"spec", "name"}}
-            if isinstance(target, type) and issubclass(target, Transformation):
+            if isinstance(target, type) and issubclass(target, MaterializationApp):
                 deployments = (target,)
                 deployment_parameters = parameters
             elif callable(target):
                 result = target(aq, parameters)
                 if result is None:
                     deployments = ()
-                elif isinstance(result, type) and issubclass(result, Transformation):
+                elif isinstance(result, type) and issubclass(result, MaterializationApp):
                     deployments = (result,)
                 else:
                     deployments = tuple(result)
-                    if not all(isinstance(item, type) and issubclass(item, Transformation) for item in deployments):
-                        raise TypeError("an app registrar must return Transformation classes or None")
+                    if not all(isinstance(item, type) and issubclass(item, MaterializationApp) for item in deployments):
+                        raise TypeError("an app registrar must return App classes or None")
                 deployment_parameters = {}
             else:
-                raise TypeError("app spec target must be a Transformation class or callable registrar")
-            for transformation in deployments:
-                aq.deploy_transformation(transformation, parameters=deployment_parameters)
-            log.info("Deployed config app '%s' (%s): %d transformation(s)", entry.get("name", spec), spec, len(deployments))
+                raise TypeError("app spec target must be an App class or callable registrar")
+            for app_class in deployments:
+                aq.deploy_app(app_class, parameters=deployment_parameters)
+            log.info("Deployed config app '%s' (%s): %d app(s)", entry.get("name", spec), spec, len(deployments))
         except Exception:
             log.exception("Config app %s failed to deploy", spec)
 
@@ -504,35 +504,53 @@ def list_namespaces() -> dict[str, str]:
 #### MATERIALIZATION API ENDPOINTS ####
 
 
-class TransformationRegistration(BaseModel):
+class AppRegistration(BaseModel):
     name: str
     executable_digest: str
     entrypoint: str
     outputs: dict[str, Any]
-    window: dict[str, Any]
-    trigger: dict[str, Any]
-    start: str
+    # Durations travel as whole microseconds; lookback may be the string "all".
+    lookback: int | str
+    lookback_after: int = 0
+    backfill: bool = False
+    coalesce: int = 0
+    max_delay: int | None = None
+    min_interval: int | None = None
     parameters: dict[str, Any] = {}
 
 
-@app.put("/transformations/{name}")
-def deploy_transformation(name: str, request: TransformationRegistration) -> dict[str, Any]:
+@app.put("/apps/{name}")
+def deploy_app(name: str, request: AppRegistration) -> dict[str, Any]:
     """Validate and select an immutable definition for a named deployment."""
     try:
         if name != request.name:
             raise ValueError("deployment name must match the definition name")
         deployment = Deployment.from_json(request.model_dump_json())
-        return {"ok": True, **app.state.manager.deploy_transformation(deployment)}
+        return {"ok": True, **app.state.manager.deploy_app(deployment)}
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error))
 
 
-@app.delete("/transformations/{name}")
-def remove_transformation(name: str) -> dict[str, Any]:
+@app.post("/apps/check")
+def check_app(request: AppRegistration, limit: int | None = None) -> dict[str, Any]:
+    """Run an app against stored data and return its output without saving it.
+
+    Every computed row is returned unless ``limit`` keeps only the first few
+    of each output.
+    """
     try:
-        return {"ok": True, **app.state.manager.remove_transformation(name)}
+        deployment = Deployment.from_json(request.model_dump_json())
+        return {"ok": True, **app.state.manager.check_app(deployment, limit=limit)}
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+
+@app.delete("/apps/{name}")
+def remove_app(name: str) -> dict[str, Any]:
+    try:
+        return {"ok": True, **app.state.manager.remove_app(name)}
     except KeyError:
-        raise HTTPException(status_code=404, detail=f"unknown transformation {name!r}")
+        raise HTTPException(status_code=404, detail=f"unknown app {name!r}")
 
 
 @app.get("/materialization/dag")

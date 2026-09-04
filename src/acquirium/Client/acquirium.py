@@ -16,7 +16,7 @@ import warnings
 
 from acquirium.Client.explore.core import Query
 from acquirium.Client.query import Q
-from acquirium.Materialization.api import Transformation
+from acquirium.Materialization.api import App
 from acquirium.Materialization.planner import Deployment
 
 
@@ -360,19 +360,38 @@ class Acquirium:
         """
         self.client.register_streams(streams)
 
-    def deploy_transformation(
+    def deploy_app(
         self, target: object, *, parameters: Mapping[str, Any] | None = None
     ) -> dict[str, Any]:
-        """Deploy a stateless transformation against the current graph."""
-        if not isinstance(target, type) or not issubclass(target, Transformation):
-            raise ValueError("deploy_transformation expects a transformation class")
+        """Deploy a stateless app against the current graph."""
+        if not isinstance(target, type) or not issubclass(target, App):
+            raise ValueError("deploy_app expects an App class")
         deployment = Deployment.from_class(target, parameters=parameters)
-        return self.client.deploy_transformation(json.loads(deployment.to_json()))
+        return self.client.deploy_app(json.loads(deployment.to_json()))
 
-    def remove_transformation(self, name: str) -> dict[str, Any]:
-        return self.client.remove_transformation(name)
+    def remove_app(self, name: str) -> dict[str, Any]:
+        return self.client.remove_app(name)
 
-    def application_dag(self):
+    def check_app(
+        self, target: object, *, parameters: Mapping[str, Any] | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Run an app against stored data and return what it computed.
+
+        Nothing is saved: the app is not deployed, its derived streams are not
+        created, and the computed rows come back instead of being stored. Use
+        it to confirm a query matches the streams you expect and a transform
+        produces the values you want, before deploying anything.
+
+        Every computed row comes back unless ``limit`` keeps only the first
+        few of each output.
+        """
+        if not isinstance(target, type) or not issubclass(target, App):
+            raise ValueError("check_app expects an App class")
+        deployment = Deployment.from_class(target, parameters=parameters)
+        return self.client.check_app(json.loads(deployment.to_json()), limit=limit)
+
+    def app_dag(self):
         """Return the active materialization plan as a NetworkX DiGraph."""
         import networkx as nx
 
@@ -388,6 +407,7 @@ class Acquirium:
                 graph.edges[source, target]["ref_uris"].append(edge["ref_uri"])
             else:
                 graph.add_edge(source, target, ref_uris=[edge["ref_uri"]])
+        return graph
 
     def generate_grafana_dashboard(self, grafana_server, api_key):
         return self.client.generate_grafana_dashboard(grafana_server, api_key)

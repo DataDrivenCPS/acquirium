@@ -275,6 +275,43 @@ Get multiplicative and additive conversion factors between two units.
 
 ---
 
+## Apps
+
+An app definition is the JSON built by `Deployment.from_class` (name,
+entrypoint, executable digest, outputs, and the scheduling attributes). The
+server imports the app by its entrypoint, so the class must be importable
+there.
+
+### `PUT /apps/{name}`
+
+Deploy an app. The body is an app definition whose `name` must match the path.
+
+**Response** `{"ok": true, "name": ..., "status": "deployed"}`
+
+### `POST /apps/check`
+
+Dry-run an app: compile its query, read every retained input row for each
+resulting input group, run its transform, and return the computed rows.
+Nothing is written — no deployment, no derived stream, no progress row, no
+revision. The body is an app definition. Every computed row is returned
+unless the optional `limit` query parameter keeps only the first `limit`
+rows of each output.
+
+**Response** `{"ok": true, "app": ..., "graph_revision": N, "bindings": [...]}`,
+where each binding reports its bound `inputs`, `entities`, `input_rows`,
+`read_window`, per-port `outputs` (`rows` is the full count, `values` holds
+the returned rows, `truncated` says whether `limit` cut them), and `error`.
+
+### `DELETE /apps/{name}`
+
+Remove a deployment and forget its progress.
+
+**Response** `{"ok": true, "name": ..., "status": "removed"}`
+
+### `GET /materialization/dag`
+
+The active compiled plan as a node-link document.
+
 ## Logs
 
 ### `POST /insert_log`

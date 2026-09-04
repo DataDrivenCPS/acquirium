@@ -1,6 +1,6 @@
 # Incremental materialization implementation
 
-This document describes how Acquirium turns a Python `Transformation` into a
+This document describes how Acquirium turns a Python `App` into a
 derived time series that keeps up with its inputs. For example, an app can read
 temperature measurements, publish a rolling average, and resume after a restart
 without forgetting which measurements it has already processed. Use
@@ -13,14 +13,14 @@ consumed, and normal timeseries rows carry the revision that last wrote them.
 
 ## The model
 
-A **transformation** is a Python class that describes one kind of calculation.
+An **app** is a Python class that describes one kind of calculation.
 Its semantic query is compiled against the current plant graph into one or more
 **bindings**. A binding is the concrete version of that calculation: it fixes
 the input stream references to read and the derived output references to write.
 The binding signature is a stable hash of that declaration.
 
 ```text
-Transformation class
+App class
   build_query() + outputs
           │ compile against graph revision
           ▼
@@ -32,9 +32,10 @@ Transformation class
   RevisionStore + Scheduler
 ```
 
-`Transformation` creates one binding for the complete query result.
-`RowWiseTransformation` creates one binding per query-result row. The scheduler
-does not need to know which form produced a binding.
+An app whose outputs are all `named` compiles to one binding for the
+complete query result; `per_input` outputs compile to one binding per
+query-result row. The scheduler does not need to know which form produced a
+binding.
 
 ## Durable state
 
@@ -47,12 +48,12 @@ system_state
 └──────────────────┘
 
 binding_progress
-┌──────────────────────────────────────────────────────────────────┬───────────────────┐
-│ binding_signature                                                │ consumed_revision │
-├──────────────────────────────────────────────────────────────────┼───────────────────┤
-│ 7d4d…                                                            │ 40                │
-│ b102…                                                            │ 42                │
-└──────────────────────────────────────────────────────────────────┴───────────────────┘
+┌──────────────┬───────────────────┐
+│ progress_key │ consumed_revision │
+├──────────────┼───────────────────┤
+│ 7d4d…        │ 40                │
+│ b102…        │ 42                │
+└──────────────┴───────────────────┘
 
 timeseries
 ┌──────────────┬─────────────────────┬───────────────┬─────────┬───────────────┐
@@ -68,6 +69,16 @@ many rows and streams, but they all receive that revision. Materialized output
 rows and the corresponding `binding_progress` update are committed together:
 after a crash, the database contains both the output and its advanced frontier,
 or contains neither. It never records progress without the output it represents.
+
+A binding has two identities. Its **signature** hashes everything, including
+the executable digest and parameters, and names the binding in diagnostics and
+lineage. Its **progress key** hashes only what it reads and writes — the app
+name, bound input references, and output references — and keys
+`binding_progress`. Editing an app's source or parameters therefore changes
+the signature but keeps the frontier: the edited app resumes where its
+predecessor stopped instead of resetting and silently skipping the rows
+written in between. Removing an app deletes its progress rows, so redeploying
+the same name starts fresh under its start policy.
 
 The graph, app definitions, and lineage projection are durable too:
 `materialization_deployments` stores deployment JSON and
@@ -91,18 +102,16 @@ The scheduler handles a binding in five steps.
                     └──── sealed InputBatch ──► transform() ─────┘
 ```
 
-The app author chooses a built-in window-policy object on the transformation;
-the backend applies that choice when it constructs an `InputBatch`. For
-example:
+The app author sets a plain `lookback` attribute; the backend applies it
+when it constructs an `InputBatch`. For example:
 
 ```python
-window = aq.Changed()                    # the default
-window = aq.AroundChange(before="5m")
-window = aq.AllAvailable()
+lookback = "0s"      # the default: exactly the changed range
+lookback = "5m"      # the changed range plus five minutes of context
+lookback = "all"     # the complete retained extent
 ```
 
-These are built-in Acquirium objects that an app assigns to its `window`
-attribute. They tell Acquirium which range of input timestamps to include when
+The attribute tells Acquirium which range of input timestamps to include when
 it runs the app after a change. The backend always begins by finding relevant
 input rows written since the binding's previous frontier. Their earliest and latest timestamps are
 the **changed extent**. It then uses the app's policy to choose the data the
@@ -111,15 +120,14 @@ app receives:
 ```text
 new input rows ──► changed extent ─────────────────────────► InputBatch.changed_window
                          │
-                         └──► app's window policy ──► read window ─► InputBatch.read_window
-                                   ├─ Changed()
-                                   ├─ AroundChange(...)
-                                   └─ AllAvailable()
+                         └──► app's lookback ──► read window ──► InputBatch.read_window
+                                   ├─ "0s"  (exactly the changed extent)
+                                   ├─ "5m"  (padded with context)
+                                   └─ "all" (the whole retained extent)
 ```
 
-`Changed()` reads exactly the changed extent. `AroundChange(before="5m")`
-expands it with context. `AllAvailable()` reads the complete retained input
-extent. The resulting batch records both: `changed_window` says what
+`lookback = "0s"` reads exactly the changed extent; a duration expands it
+with context; `"all"` reads the complete retained input extent. The resulting batch records both: `changed_window` says what
 caused the run, while `read_window` says what data was supplied to
 `transform()`. Even when the read window contains extra context,
 `StreamSet.changes` identifies only rows written in the selected
@@ -128,11 +136,11 @@ input-revision interval.
 For example, imagine that newly written temperature rows have timestamps from
 `10:02` through `10:04`. Acquirium records that range as
 `changed_window = 10:02 … 10:04`: it explains why this run happened. If the
-app declares `window = aq.AroundChange(before="5m")`, Acquirium also uses the
+app declares `lookback = "5m"`, Acquirium also uses the
 same changed extent to calculate `read_window = 09:57 … 10:04`. The app's
 `transform()` method receives all rows in the read window, and
 `inputs["temperature"].changes` identifies just the rows from `10:02` through
-`10:04`. With `Changed()`, the two windows are equal; with `AllAvailable()`,
+`10:04`. With the default lookback, the two windows are equal; with `"all"`,
 the changed window still identifies the trigger while the read window contains
 all retained input rows.
 
@@ -194,7 +202,7 @@ does not require a separate hypertable, continuous aggregate, or Timescale job.
 - The materializer polls durably. `materialization_poll_seconds` controls the
   recovery/idle polling cadence, and `materialization_workers` bounds execution
   within a dependency layer.
-- A transformation must be deterministic for a given `InputBatch`. The runtime
+- An app must be deterministic for a given `InputBatch`. The runtime
   can safely retry uncommitted computation, but it cannot roll back external
   side effects performed by user code.
 - Revisions identify newly written or corrected current rows. A corrected
