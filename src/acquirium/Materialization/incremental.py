@@ -30,9 +30,10 @@ def _duration(value: timedelta | str) -> timedelta:
     if isinstance(value, timedelta):
         return value
     suffix = value[-2:] if value.endswith("ms") else value[-1:]
-    units = {"ms": 1_000, "s": 1_000_000, "m": 60_000_000, "h": 3_600_000_000}
+    units = {"ms": 1_000, "s": 1_000_000, "m": 60_000_000, "h": 3_600_000_000,
+             "d": 86_400_000_000}
     if suffix not in units:
-        raise ValueError("durations must use ms, s, m, or h")
+        raise ValueError("durations must use ms, s, m, h, or d")
     try: result = timedelta(microseconds=int(float(value[:-len(suffix)]) * units[suffix]))
     except ValueError as error: raise ValueError(f"invalid duration {value!r}") from error
     if result < timedelta(): raise ValueError("durations must not be negative")
@@ -316,7 +317,9 @@ def _normalise_output(value: Any, spec: OutputSpec) -> pa.Table:
     kind = spec.value_kind
     if kind == "numeric" and not (pa.types.is_integer(values.type) or pa.types.is_floating(values.type)):
         raise TypeError("numeric output requires numeric values")
-    if kind == "text" and not pa.types.is_string(values.type): raise TypeError("text output requires string values")
+    # Polars hands back large_string; both are the same values to storage.
+    if kind == "text" and not (pa.types.is_string(values.type) or pa.types.is_large_string(values.type)):
+        raise TypeError("text output requires string values")
     result = pa.table({"time": time, "value": pc.cast(values, pa.float64() if kind == "numeric" else pa.string())})
     # A correction is identified by (stream, time); duplicates would make the
     # publication order-dependent.

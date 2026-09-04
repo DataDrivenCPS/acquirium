@@ -50,12 +50,21 @@ change in any release.
 - App scheduling and windowing are plain attributes — `lookback` (a duration
   or `"all"`), `backfill`, and the composable throttles `coalesce`,
   `max_delay`, and `min_interval` — with no policy classes to learn.
+  Durations are strings with a `ms`, `s`, `m`, `h`, or `d` suffix (`"250ms"`,
+  `"5m"`, `"7d"`, `"1.5d"`) or a `datetime.timedelta`.
 
 ### Changed
 - An app's `context` (`InputBatch`) no longer carries `inputs`: `transform`'s
   two arguments now split cleanly, `inputs` being the data and `context` the
   match `build_query` produced for that call. Executors receive a `Batch`
   pairing the two.
+
+### Fixed
+- A text output assigned a Polars dataframe was rejected with "text output
+  requires string values": Polars renders strings as Arrow `large_string`,
+  which the output validator did not accept. Both string types are now
+  accepted and stored identically, so alarm-style apps can build their values
+  with Polars expressions.
 
 ### Removed
 - The legacy `Apps` runtime (`MappedApp`, `OutputTemplate`, supervisor and

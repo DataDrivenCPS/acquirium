@@ -245,6 +245,29 @@ def test_deployment_persists_constructor_parameters_and_policy():
     assert restored.lookback == timedelta(minutes=15)
 
 
+def test_durations_accept_every_suffix_and_reject_the_rest():
+    from acquirium.Materialization.incremental import _duration
+
+    assert _duration("250ms") == timedelta(milliseconds=250)
+    assert _duration("30s") == timedelta(seconds=30)
+    assert _duration("5m") == timedelta(minutes=5)
+    assert _duration("2h") == timedelta(hours=2)
+    # A week of context is a normal lookback for gap filling; days spell it.
+    assert _duration("7d") == timedelta(days=7)
+    assert _duration("1.5d") == timedelta(days=1, hours=12)
+    assert _duration(timedelta(days=7)) == timedelta(days=7)
+
+    for bad in ("7w", "7", "-1d"):
+        with pytest.raises(ValueError):
+            _duration(bad)
+
+
+def test_a_lookback_in_days_round_trips_through_a_deployment():
+    deployment = Deployment.from_class(ConfiguredLookback, parameters={"window": "7d"})
+
+    assert Deployment.from_json(deployment.to_json()).lookback == timedelta(days=7)
+
+
 def test_whole_stream_attributes_round_trip():
     deployment = Deployment.from_class(WholeStream)
     restored = Deployment.from_json(deployment.to_json())
@@ -418,6 +441,23 @@ def test_output_schema_violations_name_the_port():
         builder["celsius"] = bad
     with pytest.raises(KeyError, match="not declared in this app's outputs"):
         builder["fahrenheit"] = bad
+
+
+def test_a_text_output_accepts_a_polars_frame():
+    """Polars renders strings as Arrow large_string; a text port takes both."""
+    import polars as pl
+
+    from acquirium.Materialization import OutputBuilder
+    builder = OutputBuilder({"alarm": ("urn:out", output.per_row(value_kind="text"))})
+
+    builder["alarm"] = pl.DataFrame({
+        "time": [datetime(2026, 1, 1, tzinfo=timezone.utc)],
+        "value": ["turbidity over limit"],
+    })
+
+    stored = builder.values["alarm"]
+    assert stored["value"].type == pa.string()
+    assert stored["value"].to_pylist() == ["turbidity over limit"]
 
 
 def test_align_resamples_every_stream_onto_one_clock():
