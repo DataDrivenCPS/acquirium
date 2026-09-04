@@ -68,3 +68,10 @@ The result is cached under `data_dir/embedding_cache`, keyed by ontology
 content, so later starts reuse it and a changed ontology triggers a rebuild
 automatically.
 `GET /embedding_status` reports the state of both indexes.
+
+Each index answers a query in two stages: an exact lookup over the indexed
+surfaces, then embedding similarity for whatever slots remain.
+Only the second stage needs the model, which is what
+[`exact_only`](../reference/server-config.md#exact-only-resolution) turns
+off — the same indexes over the same concepts, built in seconds, minus the
+fuzzy matching.

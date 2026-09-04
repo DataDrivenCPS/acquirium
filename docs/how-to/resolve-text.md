@@ -96,3 +96,6 @@ offsets when both URIs are already known.
   next start.
 - `GET /embedding_status` reports index state when resolution returns
   nothing at all: an index still building resolves nothing until it is done.
+  A `"semantic": false` there means the server runs with
+  [`exact_only`](../reference/server-config.md#exact-only-resolution), which
+  resolves exact names and symbols but never near-misses.

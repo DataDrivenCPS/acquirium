@@ -21,7 +21,7 @@ constraints = [{ name = "py-rust-stemmers", specifier = ">=0.1.7" }]
 
 [[package]]
 name = "acquirium"
-version = "0.4.0a3"
+version = "0.4.0a5"
 source = { editable = "." }
 dependencies = [
     { name = "adbc-driver-postgresql" },
@@ -80,19 +80,19 @@ requires-dist = [
     { name = "fastexcel", specifier = ">=0.17.2" },
     { name = "fastexcel", marker = "extra == 'xlsx'", specifier = ">=0.11.0" },
     { name = "grafanalib", specifier = ">=0.7.1" },
-    { name = "ipykernel", specifier = "==7.0.1" },
+    { name = "ipykernel", specifier = ">=7.0.1,<8" },
     { name = "matplotlib", specifier = ">=3.10.8" },
     { name = "networkx", specifier = ">=3.6.1" },
-    { name = "numpy", specifier = "==2.3.5" },
+    { name = "numpy", specifier = ">=2.3,<3" },
     { name = "paho-mqtt", marker = "extra == 'mqtt'", specifier = ">=2.1.0" },
     { name = "polars", specifier = ">=1.36.1" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.1" },
     { name = "pyarrow", specifier = ">=22.0.0" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pyomo", marker = "extra == 'watertap'", specifier = ">=6" },
-    { name = "pyontoenv", specifier = "==0.6.0" },
+    { name = "pyontoenv", specifier = ">=0.6.0,<0.7" },
     { name = "pyoxigraph", specifier = ">=0.5.2" },
-    { name = "pyshifty", specifier = ">=0.3.0" },
+    { name = "pyshifty", specifier = ">=0.3.0,<0.4" },
     { name = "python-dateutil", specifier = ">=2.9.0.post0" },
     { name = "python-multipart", specifier = ">=0.0.21" },
     { name = "ray", specifier = ">=2.56.0" },

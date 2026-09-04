@@ -139,6 +139,7 @@ class Manager:
         qudt_graph: Graph | None = None,
         qudt_converter: QUDTUnitConverter | None = None,
         recreate: bool = False,
+        exact_only: bool = False,
     ):
         if not logging.getLogger().handlers:
             from acquirium.internals._log import configure_logging
@@ -208,6 +209,12 @@ class Manager:
 
         self.data_dir = base
 
+        # exact_only builds the same indexes over the same concepts but
+        # never embeds them: resolution keeps working on exact names, units
+        # and symbols with no model to download, and nothing is written
+        # under embedding_cache/. See EmbeddingMatcher.
+        self.exact_only = exact_only
+
         _emb_model = os.getenv("ACQUIRIUM_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 
         # Persist the downloaded embedding model under the data dir so it
@@ -223,11 +230,15 @@ class Manager:
             model_name=_emb_model,
             cache_dir=base / "embedding_cache" / "graph",
             model_cache_dir=_model_cache,
+            exact_only=exact_only,
+            name="graph",
         )
         self._qudt_matcher = EmbeddingMatcher(
             model_name=_emb_model,
             cache_dir=base / "embedding_cache" / "qudt",
             model_cache_dir=_model_cache,
+            exact_only=exact_only,
+            name="qudt",
         )
 
         # Single normalization façade, sharing the lazily-built converter.
@@ -272,6 +283,7 @@ class Manager:
             ontoenv_root=os.getenv("ACQUIRIUM_ONTOENV_ROOT"),
             ontology_sources=list(ont_cfg.sources) or None,
             recreate=os.getenv("ACQUIRIUM_RECREATE", "false").lower() == "true",
+            exact_only=os.getenv("ACQUIRIUM_EXACT_ONLY", "false").lower() == "true",
         )
 
     def _sync_stream_refs_from_graph(self) -> int:
@@ -454,6 +466,9 @@ class Manager:
         / substance); qudt matcher <- the QUDT unit + quantity_kind
         vocabularies. Graphs are read out of ontoenv by IRI (owl:imports
         not followed); no inserted data is embedded.
+
+        Runs the same way in exact-only mode — same concepts, same counts —
+        the matchers just index the surfaces without embedding them.
         """
         from acquirium._ontologies import (
             WATER_IRI, S223_IRI, QUDT_UNIT_IRI, QUDT_QK_IRI,
@@ -1082,9 +1097,18 @@ class Manager:
         return self.graph_store.namespace_manager()
 
     def embedding_status(self) -> dict[str, Any]:
-        """Return the current state of each embedding index."""
+        """Return the current state of each concept index.
+
+        The top-level ``semantic`` key says whether the indexes carry
+        embeddings; when ``False`` (exact-only mode) they still build and
+        report ``"ready"``, but answer exact matches only.
+        """
         with self._embedding_status_lock:
-            return {k: dict(v) for k, v in self._embedding_status.items()}
+            status: dict[str, Any] = {
+                k: dict(v) for k, v in self._embedding_status.items()
+            }
+        status["semantic"] = not self.exact_only
+        return status
 
     # -------------------- Unit conversion --------------------
 

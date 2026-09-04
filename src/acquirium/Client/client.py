@@ -91,8 +91,9 @@ def _coerce_resolved(
 ) -> "str | URIRef | None":
     """Map a raw field value to its resolved URIRef.
 
-    Passes ``None``/``URIRef`` through; warns and keeps the literal when
-    plain text did not resolve.
+    Passes ``None``/``URIRef`` through; warns and returns ``None`` when
+    plain text did not resolve, so the field is skipped as if it had not
+    been supplied.
     """
     if value is None:
         return None
@@ -102,10 +103,10 @@ def _coerce_resolved(
     if uri is None:
         warnings.warn(
             f"Could not resolve {name!r} value {value!r} to a QUDT URI; "
-            "storing as a plain literal.",
+            "skipping",
             stacklevel=3,
         )
-        return value
+        return None
     return URIRef(uri)
 
 

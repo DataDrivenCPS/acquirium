@@ -31,6 +31,7 @@ timeseries_backend = "duckdb"        # or "timescale" (requires pg_dsn)
 | `duckdb_path` | `data_dir/timeseries.duckdb` | duckdb file location |
 | `graph_path` | `data_dir/.oxigraph` | graph store location |
 | `embedding_model` | `"BAAI/bge-small-en-v1.5"` | model for the text-resolution index |
+| `exact_only` | `false` | index concepts without embedding them; see below |
 | `recreate` | `false` | wipe the data directory and start fresh; see below |
 | `read_batch_size` | `50000` | rows per Arrow batch on timeseries reads |
 | `workers` | `1` | must stay 1 |
@@ -40,6 +41,25 @@ Relative paths resolve against the config file's directory.
 
 `recreate = true` deletes the following contents of the data directory at
 startup: graph, timeseries, embedding caches, app sources, driver state.
+
+### Exact-only resolution
+
+    [server]
+    exact_only = true
+
+The two concept indexes are built as usual, but their surfaces are never
+embedded. No model is downloaded or loaded, nothing is written under
+`data_dir/embedding_cache`, and the 5-10 minute first-start index build
+drops to seconds — useful for a small deployment, an air-gapped host, or CI.
+
+The cost is fuzzy matching. Text resolution still answers exact names,
+labels and unit symbols (`"aeration basin"`, `"mg/L"`), and returns the same
+URIs and kinds it would with embeddings on; near-misses (`"basin for
+aeration"`) resolve to nothing instead of to the closest concept.
+`GET /embedding_status` reports `"semantic": false`.
+
+The flag is a start-time choice, not a property of the data directory: a
+later start without it builds the embeddings normally.
 
 ### Environment variables
 
@@ -51,6 +71,7 @@ startup: graph, timeseries, embedding caches, app sources, driver state.
 | `ACQUIRIUM_TIMESERIES_BACKEND` | `[server] timeseries_backend` |
 | `ACQUIRIUM_GRAPH_PATH` | `[server] graph_path` |
 | `ACQUIRIUM_EMBEDDING_MODEL` | `[server] embedding_model` |
+| `ACQUIRIUM_EXACT_ONLY` | `[server] exact_only` |
 | `ACQUIRIUM_RECREATE` | `[server] recreate` |
 | `ACQUIRIUM_WORKERS` | `[server] workers` |
 
