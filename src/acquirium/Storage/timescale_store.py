@@ -364,6 +364,11 @@ class TimescaleStore(TimeseriesStore):
             ON CONFLICT (ref_uri) DO NOTHING
             """
         )
+        # ORDER BY the unique index's key: a wide batch arrives time-major
+        # across all its streams, so unsorted rows land in a different region
+        # of the (ref_id, ts) b-tree on every row. Sorted input makes the
+        # index inserts sequential per stream and keeps the hot pages cached;
+        # the sort itself is cheap next to the per-row insert work.
         with timed_debug(logger, "merge into %s rows=%d", TIMESERIES_TABLE, len(df)):
             cur.execute(
                 f"""
@@ -371,6 +376,7 @@ class TimescaleStore(TimeseriesStore):
                 SELECT r.ref_id, i.ts, i.numeric_value, i.text_value
                 FROM {staging} AS i
                 JOIN {REF_IDS_TABLE} AS r USING (ref_uri)
+                ORDER BY r.ref_id, i.ts
                 ON CONFLICT (ref_id, ts) DO UPDATE SET
                     numeric_value = EXCLUDED.numeric_value,
                     text_value = EXCLUDED.text_value
