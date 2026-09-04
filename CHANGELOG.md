@@ -35,6 +35,10 @@ change in any release.
   `acquirium.Materialization.local.check_app`) runs the app in the caller's
   process against the server's data instead, so `breakpoint()` opens a
   console in that terminal and a failing transform raises a traceback there.
+- `aq.console()` opens an interactive console holding the calling frame's
+  variables (`inputs`, `output`, `context` inside a transform). Without an
+  interactive terminal it logs that it was skipped and returns, so one left
+  in a deployed app never blocks the server.
 - App output declarations are validated before an app runs: port names must
   be non-empty strings, each value must come from `aq.output.per_input(...)`
   or `aq.output.named(...)`, two named outputs cannot claim one stream name,
