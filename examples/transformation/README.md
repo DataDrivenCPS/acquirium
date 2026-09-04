@@ -1,9 +1,9 @@
-# Temperature transformation
+# Temperature app
 
-This is a small end-to-end transformation: Celsius input samples become a
+This is a small end-to-end app: Celsius input samples become a
 derived Fahrenheit stream. It keeps the three pieces visible and separate:
 
-- `temperature_conversion.py` declares the transformation.
+- `temperature_conversion.py` declares the app.
 - `acquirium.toml` deploys it when the server starts.
 - `publish.py` registers an input stream, publishes samples, and prints the
   derived output.

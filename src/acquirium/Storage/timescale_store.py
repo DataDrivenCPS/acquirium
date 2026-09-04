@@ -164,7 +164,7 @@ class TimescaleStore(TimeseriesStore):
             )
             cur.execute(f"CREATE TABLE IF NOT EXISTS {SYSTEM_STATE_TABLE} (current_revision BIGINT NOT NULL);")
             cur.execute(f"INSERT INTO {SYSTEM_STATE_TABLE} SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM {SYSTEM_STATE_TABLE});")
-            cur.execute(f"CREATE TABLE IF NOT EXISTS {BINDING_PROGRESS_TABLE} (binding_signature TEXT PRIMARY KEY, consumed_revision BIGINT NOT NULL);")
+            cur.execute(f"CREATE TABLE IF NOT EXISTS {BINDING_PROGRESS_TABLE} (progress_key TEXT PRIMARY KEY, consumed_revision BIGINT NOT NULL);")
         if not self._in_tx:
             self.conn.commit()
         return TIMESERIES_TABLE

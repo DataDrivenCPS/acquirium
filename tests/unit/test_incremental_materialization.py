@@ -3,21 +3,23 @@ from threading import Lock
 from time import sleep
 
 import pyarrow as pa
+import pyarrow.compute as pc
+import pytest
 
 from acquirium.Materialization import (
-    AllAvailable, ApplicationGraph, AroundChange, Binding, InProcessExecutor,
-    RevisionStore, RowWiseTransformation, Scheduler, StreamDescriptor, Transformation, outputs,
+    App, ApplicationGraph, Binding, InProcessExecutor, RevisionStore, Scheduler,
+    StreamDescriptor, StreamSet, TimeWindow, align, output,
 )
-from acquirium.Materialization.planner import BindingPlanner, Deployment, _resolved_output
+from acquirium.Materialization.planner import BindingPlanner, Deployment
 from acquirium.Materialization.runtime import Materializer
 from acquirium.Storage.duckdb_store import DuckDBStore
 from acquirium.internals.models import compute_ref_uri
 
 
-class Mean(Transformation):
-    start = AllAvailable()
-    window = AroundChange(before="1m")
-    outputs = {"mean": outputs.stream(value_kind="numeric")}
+class Mean(App):
+    backfill = True
+    lookback = "1m"
+    outputs = {"mean": output.per_input(value_kind="numeric")}
 
     def transform(self, inputs, output, context):
         assert inputs["left"].window == inputs["right"].window == context.read_window
@@ -25,34 +27,51 @@ class Mean(Transformation):
         output["mean"] = pa.table({"time": source["time"], "value": pa.array([3.0])})
 
 
-class LineageCopy(Transformation):
+class LineageCopy(App):
     name = "lineage-copy"
-    outputs = {"out": outputs.stream(value_kind="numeric")}
-    def build_query(self, aq): return aq.query().measurement(alias="input")
+    outputs = {"out": output.per_input(value_kind="numeric")}
+    def build_query(self, plant): return plant.query().measurement(alias="input")
     def transform(self, inputs, output, context): pass
 
 
-class RowWiseLineageCopy(RowWiseTransformation):
-    name = "row-wise-lineage-copy"
-    outputs = {"out": outputs.stream(value_kind="numeric")}
-    def build_query(self, aq): return aq.query().measurement(alias="input")
+class MixedFanOut(App):
+    name = "mixed-fan-out"
+    outputs = {
+        "each": output.per_input(value_kind="numeric"),
+        "total": output.named("kpi", value_kind="numeric"),
+    }
+    def build_query(self, plant): return plant.query().measurement(alias="input")
     def transform(self, inputs, output, context): pass
 
 
-class Copy(Transformation):
-    start = AllAvailable()
-    outputs = {"out": outputs.stream(value_kind="numeric")}
+class NamedTotal(App):
+    name = "named-total"
+    outputs = {"total": output.named("plant-total", value_kind="numeric")}
+    def build_query(self, plant): return plant.query().measurement(alias="input")
+    def transform(self, inputs, output, context): pass
+
+
+class Copy(App):
+    backfill = True
+    outputs = {"out": output.per_input(value_kind="numeric")}
 
     def transform(self, inputs, output, context):
         source = inputs["source"].collect()
         output["out"] = pa.table({"time": source["time"], "value": source["value"]})
 
 
-class ConfiguredWindow(Transformation):
-    outputs = {"out": outputs.stream(value_kind="numeric")}
+class ConfiguredLookback(App):
+    outputs = {"out": output.per_input(value_kind="numeric")}
 
     def __init__(self, window="5m"):
-        self.window = AroundChange(before=window)
+        self.lookback = window
+
+
+class WholeStream(App):
+    lookback = "all"
+    backfill = True
+    min_interval = "5m"
+    outputs = {"out": output.per_input(value_kind="numeric")}
 
 
 class ConcurrentProbeExecutor(InProcessExecutor):
@@ -108,6 +127,13 @@ class MultiStreamLineageGraph(LineageGraph):
         }
 
 
+class LinearFakeConverter:
+    """Celsius to Fahrenheit without a QUDT graph."""
+    def convert(self, value, from_unit, to_unit):
+        assert from_unit == "urn:unit:DEG_C" and to_unit == "urn:unit:DEG_F"
+        return value * 9.0 / 5.0 + 32.0
+
+
 def test_revision_frontier_commits_coherent_output_and_converges(tmp_path):
     store = DuckDBStore(tmp_path / "timeseries.duckdb")
     timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -116,7 +142,7 @@ def test_revision_frontier_commits_coherent_output_and_converges(tmp_path):
     inputs = {"left": (StreamDescriptor("urn:left"),), "right": (StreamDescriptor("urn:right"),)}
     binding = Binding("mean", "digest", inputs, {
         "mean": (Binding.derive_output_uri("mean", "mean", inputs), Mean.outputs["mean"]),
-    }, Mean.window)
+    }, timedelta(minutes=1))
     scheduler = Scheduler(RevisionStore(store), InProcessExecutor())
 
     assert scheduler.run_once(binding, Mean())
@@ -131,7 +157,7 @@ def test_revision_frontier_commits_coherent_output_and_converges(tmp_path):
 def test_graph_rejects_cycles_and_duplicate_output_ownership():
     input_a = {"source": (StreamDescriptor("urn:b"),)}
     input_b = {"source": (StreamDescriptor("urn:a"),)}
-    spec = outputs.stream(value_kind="numeric")
+    spec = output.per_input(value_kind="numeric")
     a = Binding("a", "a", input_a, {"out": ("urn:a", spec)})
     b = Binding("b", "b", input_b, {"out": ("urn:b", spec)})
     try:
@@ -151,35 +177,154 @@ def test_derived_output_uri_uses_the_managed_reference_identity():
     )
 
 
+def test_named_output_keeps_its_exact_reference_name():
+    inputs = {"source": (StreamDescriptor("urn:input"),)}
+    spec = output.named("plant-total", value_kind="numeric")
+
+    assert Binding.derive_output_ref_name("out", inputs, spec) == "plant-total"
+    assert Binding.derive_output_uri("kpi-app", "out", inputs, spec) == str(
+        compute_ref_uri("derived:kpi-app", "plant-total")
+    )
+
+
+def test_named_output_cannot_ride_along_with_fan_out():
+    planner = BindingPlanner(MultiStreamLineageGraph())
+
+    with pytest.raises(ValueError, match="named output"):
+        planner.compile((Deployment.from_class(MixedFanOut),), graph_revision=1)
+
+
+def test_mixed_outputs_are_allowed_for_a_single_input_group():
+    planner = BindingPlanner(LineageGraph())
+
+    application_graph, _ = planner.compile((Deployment.from_class(MixedFanOut),), graph_revision=1)
+
+    (binding,) = application_graph.bindings
+    assert binding.output_ref_name("total") == "kpi"
+    assert binding.output_ref_name("each").startswith("each:")
+
+
 def test_deployment_persists_constructor_parameters_and_policy():
-    deployment = Deployment.from_class(ConfiguredWindow, parameters={"window": "15m"})
+    deployment = Deployment.from_class(ConfiguredLookback, parameters={"window": "15m"})
     restored = Deployment.from_json(deployment.to_json())
 
     assert restored.parameters == {"window": "15m"}
-    assert restored.window.before == timedelta(minutes=15)
+    assert restored.lookback == timedelta(minutes=15)
 
 
-def test_planner_aggregates_full_query_bindings_by_default():
+def test_whole_stream_attributes_round_trip():
+    deployment = Deployment.from_class(WholeStream)
+    restored = Deployment.from_json(deployment.to_json())
+
+    assert restored.lookback is None          # "all"
+    assert restored.backfill is True
+    assert restored.min_interval == timedelta(minutes=5)
+
+
+def test_named_outputs_aggregate_the_complete_query_result():
     planner = BindingPlanner(MultiStreamLineageGraph())
 
-    application_graph, _ = planner.compile((Deployment.from_class(LineageCopy),), graph_revision=1)
+    application_graph, _ = planner.compile((Deployment.from_class(NamedTotal),), graph_revision=1)
 
-    assert len(application_graph.bindings) == 1
-    assert {item.ref_uri for item in application_graph.bindings[0].inputs["input"]} == {
+    (binding,) = application_graph.bindings
+    assert binding.output_ref_name("total") == "plant-total"
+    assert {item.ref_uri for item in binding.inputs["input"]} == {
         "urn:input-a", "urn:input-b",
     }
 
 
-def test_row_wise_transformation_creates_one_binding_per_matching_stream():
+def test_per_input_outputs_bind_one_group_per_query_row():
     graph = MultiStreamLineageGraph()
     planner = BindingPlanner(graph)
 
-    application_graph, _ = planner.compile((Deployment.from_class(RowWiseLineageCopy),), graph_revision=1)
+    application_graph, _ = planner.compile((Deployment.from_class(LineageCopy),), graph_revision=1)
 
     assert len(application_graph.bindings) == 2
     assert {binding.inputs["input"][0].ref_uri for binding in application_graph.bindings} == {
         "urn:input-a", "urn:input-b",
     }
+
+
+def test_progress_survives_code_and_parameter_edits(tmp_path):
+    store = DuckDBStore(tmp_path / "progress.duckdb")
+    timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    store.upsert_rows("urn:left", [(timestamp, 1.0)], value_kind="numeric")
+    inputs = {"source": (StreamDescriptor("urn:left"),)}
+    ports = {"out": ("urn:out:left", Copy.outputs["out"])}
+    before = Binding("copy", "digest-before-edit", inputs, ports)
+    after = Binding("copy", "digest-after-edit", inputs, ports, parameters={"tweak": 1})
+    scheduler = Scheduler(RevisionStore(store), InProcessExecutor())
+
+    assert before.signature != after.signature
+    assert before.progress_key == after.progress_key
+    assert scheduler.run_once(before, Copy())
+    # The edited deployment reads the same inputs and writes the same outputs,
+    # so it resumes the frontier instead of resetting or skipping anything.
+    assert not scheduler.run_once(after, Copy())
+
+
+def test_in_unit_converts_every_accessor_of_the_stream_set():
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    window = TimeWindow(start, start + timedelta(minutes=1))
+    table = pa.table({
+        "ref_uri": pa.array(["urn:temp", "urn:temp"], pa.string()),
+        "time": pa.array([start, start + timedelta(seconds=30)], pa.timestamp("us", tz="UTC")),
+        "value": pa.array([0.0, 100.0], pa.float64()),
+    })
+    stream_set = StreamSet("temperature", window, (StreamDescriptor("urn:temp", unit="urn:unit:DEG_C"),),
+                           table, table.slice(1), converter=LinearFakeConverter())
+
+    fahrenheit = stream_set.in_unit("urn:unit:DEG_F")
+
+    assert fahrenheit.collect()["value"].to_pylist() == pytest.approx([32.0, 212.0])
+    assert fahrenheit.changes["value"].to_pylist() == pytest.approx([212.0])
+    assert fahrenheit.df()["value"].to_list() == pytest.approx([32.0, 212.0])
+    assert fahrenheit.streams[0].unit == "urn:unit:DEG_F"
+
+
+def test_in_unit_requires_a_converter_and_recorded_units():
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    window = TimeWindow(start, start)
+    unitless = StreamSet("temperature", window, (StreamDescriptor("urn:temp"),))
+    with pytest.raises(RuntimeError, match="unit converter"):
+        unitless.in_unit("urn:unit:DEG_F")
+    with pytest.raises(ValueError, match="no recorded unit"):
+        StreamSet("temperature", window, (StreamDescriptor("urn:temp"),),
+                  converter=LinearFakeConverter()).in_unit("urn:unit:DEG_F")
+
+
+def test_output_schema_violations_name_the_port():
+    from acquirium.Materialization import OutputBuilder
+    builder = OutputBuilder({"celsius": ("urn:out", output.per_input(value_kind="numeric"))})
+    bad = pa.table({"time": pa.array([datetime(2026, 1, 1, tzinfo=timezone.utc)], pa.timestamp("us", tz="UTC")),
+                    "value": pa.array([1.0]), "ref_uri": pa.array(["urn:x"])})
+    with pytest.raises(TypeError, match="output 'celsius'"):
+        builder["celsius"] = bad
+    with pytest.raises(KeyError, match="not declared in this app's outputs"):
+        builder["fahrenheit"] = bad
+
+
+def test_align_resamples_every_stream_onto_one_clock():
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    window = TimeWindow(start, start + timedelta(minutes=2))
+    def table(ref, points):
+        return pa.table({
+            "ref_uri": pa.array([ref] * len(points), pa.string()),
+            "time": pa.array([start + offset for offset, _ in points], pa.timestamp("us", tz="UTC")),
+            "value": pa.array([value for _, value in points], pa.float64()),
+        })
+    inputs = {
+        "temperature": StreamSet("temperature", window, (StreamDescriptor("urn:temp"),),
+            table("urn:temp", [(timedelta(seconds=10), 20.0), (timedelta(seconds=40), 22.0), (timedelta(seconds=70), 24.0)])),
+        "flow": StreamSet("flow", window, (StreamDescriptor("urn:flow"),),
+            table("urn:flow", [(timedelta(seconds=5), 1.0)])),
+    }
+
+    frame = align(inputs, "1m")
+
+    assert frame.columns == ["time", "flow", "temperature"]
+    assert frame["temperature"].to_list() == [21.0, 24.0]
+    assert frame["flow"].to_list()[0] == 1.0 and frame["flow"].to_list()[1] is None
 
 
 def test_scheduler_runs_independent_topological_wave_concurrently(tmp_path):
@@ -191,7 +336,8 @@ def test_scheduler_runs_independent_topological_wave_concurrently(tmp_path):
     left = Binding("left-copy", "copy", {"source": (StreamDescriptor("urn:left"),)}, {"out": ("urn:out:left", spec)})
     right = Binding("right-copy", "copy", {"source": (StreamDescriptor("urn:right"),)}, {"out": ("urn:out:right", spec)})
     graph = ApplicationGraph((left, right))
-    assert graph.layers() == ((left, right),)
+    assert len(graph.layers()) == 1
+    assert {binding.signature for binding in graph.layers()[0]} == {left.signature, right.signature}
     executor = ConcurrentProbeExecutor()
     scheduler = Scheduler(RevisionStore(store), executor)
 
@@ -215,15 +361,179 @@ def test_scheduler_submits_an_entire_async_wave_before_resolving(tmp_path):
     assert RevisionStore(store).current_revision() == 3
 
 
-def test_output_inheritance_only_copies_common_semantic_metadata():
-    inputs = {"input": (
-        StreamDescriptor("urn:a", unit="urn:unit:C", medium="urn:air", properties={"urn:p": ("urn:x",)}),
-        StreamDescriptor("urn:b", unit="urn:unit:C", medium="urn:water", properties={"urn:p": ("urn:x", "urn:y")}),
-    )}
-    resolved = _resolved_output(outputs.stream(inherit=True, inherit_properties=("urn:p",)), inputs)
-    assert resolved.unit == "urn:unit:C"
-    assert resolved.medium is None
-    assert resolved.properties == {"urn:p": ("urn:x",)}
+class EntityRowGraph(LineageGraph):
+    """One entity node (0) related to one data node (1), twice over."""
+    def sparql_query(self, query, **kwargs):
+        return {
+            "columns": ["v0", "v1", "ext1", "unit1", "extunit1", "lbl1"],
+            "rows": [
+                ["urn:hx-1", "urn:point-1", "urn:input-1", None, None, "Supply temp 1"],
+                ["urn:hx-2", "urn:point-2", "urn:input-2", None, None, "Supply temp 2"],
+            ],
+        }
+
+
+class PerInputEntity(App):
+    name = "per-input-entity"
+    outputs = {"out": output.per_input(value_kind="numeric")}
+    def build_query(self, plant):
+        return (plant.query().entity("urn:HeatExchanger", alias="hx")
+                .measurement(frm="hx", alias="input"))
+    def transform(self, inputs, output, context): pass
+
+
+def test_context_carries_the_bound_rows_entities_and_labels():
+    planner = BindingPlanner(EntityRowGraph())
+
+    application_graph, _ = planner.compile((Deployment.from_class(PerInputEntity),), graph_revision=1)
+
+    by_ref = {binding.inputs["input"][0].ref_uri: binding for binding in application_graph.bindings}
+    assert by_ref["urn:input-1"].entities == {"hx": "urn:hx-1"}
+    assert by_ref["urn:input-2"].entities == {"hx": "urn:hx-2"}
+    assert by_ref["urn:input-1"].inputs["input"][0].label == "Supply temp 1"
+
+
+class CheckDouble(App):
+    name = "check-double"
+    outputs = {"doubled": output.per_input(value_kind="numeric")}
+    def build_query(self, plant): return plant.query().measurement(alias="input")
+    def transform(self, inputs, output, context):
+        source = inputs["input"].collect()
+        output["doubled"] = pa.table({
+            "time": source["time"], "value": pc.multiply(source["value"], 2.0),
+        })
+
+
+class CheckBroken(CheckDouble):
+    name = "check-broken"
+    def transform(self, inputs, output, context):
+        raise ValueError("sensor calibration missing")
+
+
+class CheckUndeclared(CheckDouble):
+    name = "check-undeclared"
+    def transform(self, inputs, output, context):
+        output["dubbled"] = inputs["input"].collect()
+
+
+def test_check_returns_computed_rows_without_writing_anything(tmp_path):
+    store = DuckDBStore(tmp_path / "check.duckdb")
+    timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    store.upsert_rows("urn:input", [(timestamp, 2.0), (timestamp + timedelta(minutes=1), 3.0)],
+                      value_kind="numeric")
+    materializer = Materializer(store, LineageGraph())
+    revision_before = materializer._revisions.current_revision()
+
+    result = materializer.check(Deployment.from_class(CheckDouble))
+
+    (binding,) = result["bindings"]
+    assert binding["error"] is None
+    assert binding["inputs"]["input"][0]["ref_uri"] == "urn:input"
+    assert binding["input_rows"] == {"input": 2}
+    doubled = binding["outputs"]["doubled"]
+    assert [row["value"] for row in doubled["values"]] == [4.0, 6.0]
+    assert doubled["rows"] == 2 and doubled["truncated"] is False
+
+    # A check is a dry run: no derived stream, no progress, no new revision.
+    with store._own_conn() as conn:
+        assert conn.execute("SELECT count(*) FROM streams WHERE source_id LIKE 'derived:%'").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM binding_progress").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM materialization_deployments").fetchone()[0] == 0
+    assert materializer._revisions.current_revision() == revision_before
+
+
+def test_check_limit_heads_the_output_and_says_so(tmp_path):
+    store = DuckDBStore(tmp_path / "check-limit.duckdb")
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    store.upsert_rows("urn:input", [(start + timedelta(minutes=i), float(i)) for i in range(10)],
+                      value_kind="numeric")
+    materializer = Materializer(store, LineageGraph())
+
+    full = materializer.check(Deployment.from_class(CheckDouble))
+    headed = materializer.check(Deployment.from_class(CheckDouble), limit=3)
+
+    assert len(full["bindings"][0]["outputs"]["doubled"]["values"]) == 10
+    assert full["bindings"][0]["outputs"]["doubled"]["truncated"] is False
+    headed_output = headed["bindings"][0]["outputs"]["doubled"]
+    assert [row["value"] for row in headed_output["values"]] == [0.0, 2.0, 4.0]
+    assert headed_output["rows"] == 10 and headed_output["truncated"] is True
+
+
+def test_check_reports_a_failing_transform_as_a_result(tmp_path):
+    store = DuckDBStore(tmp_path / "check-broken.duckdb")
+    store.upsert_rows("urn:input", [(datetime(2026, 1, 1, tzinfo=timezone.utc), 2.0)], value_kind="numeric")
+    materializer = Materializer(store, LineageGraph())
+
+    result = materializer.check(Deployment.from_class(CheckBroken))
+
+    assert "sensor calibration missing" in result["bindings"][0]["error"]
+
+
+def test_check_flags_an_assignment_to_an_undeclared_output(tmp_path):
+    store = DuckDBStore(tmp_path / "check-undeclared.duckdb")
+    store.upsert_rows("urn:input", [(datetime(2026, 1, 1, tzinfo=timezone.utc), 2.0)], value_kind="numeric")
+    materializer = Materializer(store, LineageGraph())
+
+    result = materializer.check(Deployment.from_class(CheckUndeclared))
+
+    error = result["bindings"][0]["error"]
+    assert "'dubbled'" in error and "not declared" in error and "'doubled'" in error
+
+
+def test_preview_batch_leaves_the_deployed_apps_progress_alone(tmp_path):
+    store = DuckDBStore(tmp_path / "preview.duckdb")
+    timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    store.upsert_rows("urn:left", [(timestamp, 1.0)], value_kind="numeric")
+    inputs = {"source": (StreamDescriptor("urn:left"),)}
+    binding = Binding("copy", "digest", inputs, {"out": ("urn:out:left", Copy.outputs["out"])})
+    revisions = RevisionStore(store)
+    scheduler = Scheduler(revisions, InProcessExecutor())
+    assert scheduler.run_once(binding, Copy())
+
+    # The frontier is caught up, so a real batch is None while a preview still
+    # reads every stored row.
+    assert revisions.next_batch(binding) is None
+    preview = revisions.preview_batch(binding)
+
+    assert preview is not None and preview.inputs["source"].collect().num_rows == 1
+    with store._own_conn() as conn:
+        consumed = conn.execute("SELECT consumed_revision FROM binding_progress WHERE progress_key=?",
+                                [binding.progress_key]).fetchone()[0]
+    assert consumed == revisions.current_revision()
+
+
+def test_output_declarations_are_validated_before_deployment():
+    class BadSpec(App):
+        name = "bad-spec"
+        outputs = {"out": "numeric"}
+        def build_query(self, plant): return plant.query().measurement(alias="input")
+
+    class Colliding(App):
+        name = "colliding"
+        outputs = {"a": output.named("total", value_kind="numeric"),
+                   "b": output.named("total", value_kind="numeric")}
+        def build_query(self, plant): return plant.query().measurement(alias="input")
+
+    with pytest.raises(TypeError, match="aq.output.per_input"):
+        Deployment.from_class(BadSpec)
+    with pytest.raises(ValueError, match="claim the stream name"):
+        Deployment.from_class(Colliding)
+
+
+def test_remove_forgets_the_apps_durable_progress(tmp_path):
+    store = DuckDBStore(tmp_path / "remove.duckdb")
+    materializer = Materializer(store, LineageGraph())
+    materializer.deploy(Deployment.from_class(LineageCopy))
+    materializer.refresh()
+    with store._own_conn() as conn:
+        (progress_key,) = conn.execute("SELECT DISTINCT progress_key FROM materialization_lineage").fetchone()
+    with store._lock, store._write_conn() as conn:
+        conn.execute("INSERT INTO binding_progress VALUES (?, ?)", [progress_key, 7])
+
+    materializer.remove("lineage-copy")
+
+    with store._own_conn() as conn:
+        assert conn.execute("SELECT count(*) FROM binding_progress").fetchone()[0] == 0
 
 
 def test_compiled_binding_publishes_structural_lineage(tmp_path):

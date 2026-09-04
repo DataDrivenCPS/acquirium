@@ -8,14 +8,14 @@ import pytest
 import psycopg
 from psycopg.conninfo import make_conninfo
 
-from acquirium.Materialization import AllAvailable, Binding, InProcessExecutor, RevisionStore, Scheduler, StreamDescriptor, Transformation, outputs
+from acquirium.Materialization import Binding, InProcessExecutor, RevisionStore, Scheduler, StreamDescriptor, App, output
 from acquirium.Storage.duckdb_store import DuckDBStore
 from acquirium.Storage.timescale_store import TimescaleStore
 
 
-class Copy(Transformation):
-    start = AllAvailable()
-    outputs = {"out": outputs.stream(value_kind="numeric")}
+class Copy(App):
+    backfill = True
+    outputs = {"out": output.per_input(value_kind="numeric")}
 
     def transform(self, inputs, output, context):
         source = inputs["source"].collect()

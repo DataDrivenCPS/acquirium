@@ -1,8 +1,13 @@
-"""Coherent incremental materialization public surface."""
+"""Incremental materialization.
+
+The authoring surface (``App``, ``output``, ``align``) is re-exported from
+the top-level ``acquirium`` package; the embedder surface below (runtime,
+storage, and scheduling types) is importable only from here.
+"""
 from acquirium.Materialization.incremental import (
-    AllAvailable, ApplicationGraph, AroundChange, Binding, Changed, Current, Every, InputBatch,
-    InProcessExecutor, OnChange, OutputBuilder, OutputSpec, RayExecutor, RevisionStore, Scheduler,
-    RowWiseTransformation, StreamDescriptor, StreamSet, TimeWindow, Transformation, outputs,
+    App, ApplicationGraph, Binding, InProcessExecutor, InputBatch, OutputBuilder,
+    OutputSpec, RayExecutor, RevisionStore, Scheduler, StreamDescriptor,
+    StreamSet, TimeWindow, align, output,
 )
 
-__all__ = ["AllAvailable", "ApplicationGraph", "AroundChange", "Binding", "Changed", "Current", "Every", "InProcessExecutor", "InputBatch", "OnChange", "OutputBuilder", "OutputSpec", "RayExecutor", "RevisionStore", "RowWiseTransformation", "Scheduler", "StreamDescriptor", "StreamSet", "TimeWindow", "Transformation", "outputs"]
+__all__ = ["App", "ApplicationGraph", "Binding", "InProcessExecutor", "InputBatch", "OutputBuilder", "OutputSpec", "RayExecutor", "RevisionStore", "Scheduler", "StreamDescriptor", "StreamSet", "TimeWindow", "align", "output"]

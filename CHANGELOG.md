@@ -10,6 +10,37 @@ change in any release.
 
 ## [Unreleased]
 
+### Added
+- Incremental materialization apps: subclass `acquirium.App` and declare
+  outputs with `aq.output.per_input(...)` (one call and one derived stream
+  per query match) or `aq.output.named(...)` (one call over the complete
+  result, one stream), then deploy with `client.deploy_app(...)` or an
+  `[[apps]]` config entry. Derived rows and consumed input progress commit in
+  one transaction on DuckDB and PostgreSQL/TimescaleDB.
+- `StreamSet.in_unit(unit)` converts an app's input values from each stream's
+  recorded unit inside `transform`; missing or incompatible units raise.
+- `aq.align(inputs, every=...)` resamples an app's input streams onto one
+  shared clock as a wide Polars dataframe.
+- App dry runs: `acquirium app check module:AppClass` and
+  `client.check_app(AppClass)` compile the query, run `transform` over every
+  retained input row, and return every computed row without deploying the
+  app, creating its streams, or recording progress. The CLI prints the first
+  five rows of each output (`-n N` to head it differently, `-n 0` for all);
+  the Python and HTTP forms return everything unless given a `limit`.
+  `POST /apps/check` is the endpoint behind both.
+- App output declarations are validated before an app runs: port names must
+  be non-empty strings, each value must come from `aq.output.per_input(...)`
+  or `aq.output.named(...)`, two named outputs cannot claim one stream name,
+  and assigning a port the app did not declare raises inside `transform`
+  listing the declared ports.
+- App scheduling and windowing are plain attributes — `lookback` (a duration
+  or `"all"`), `backfill`, and the composable throttles `coalesce`,
+  `max_delay`, and `min_interval` — with no policy classes to learn.
+
+### Removed
+- The legacy `Apps` runtime (`MappedApp`, `OutputTemplate`, supervisor and
+  runner) in favor of the revision-frontier materializer.
+
 ## [0.4.0a3] - 2026-08-30
 
 ### Fixed

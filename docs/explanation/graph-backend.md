@@ -8,16 +8,17 @@ This is a guide to the graph backend: the persistent graphs, the derived
 query views, the update rules, and the interfaces application and driver
 authors use.
 The graph backend is owned by the acquirium server.
-Drivers and apps access it through the client and the HTTP API; they do not
-open Oxigraph directly, and the graph store is not a Ray actor.
+Drivers access it through the client and HTTP API; the materializer uses the
+same server-owned interface. Neither opens Oxigraph directly, and the graph
+store is not a Ray actor.
 
 ## Design goals
 
 The backend separates three kinds of data:
 
-- **Deployment data** is the plant model and the RDF asserted by Acquirium,
-  drivers, and apps. It is persisted and is the input to inference and
-  validation.
+- **Deployment data** is the plant model and the RDF asserted by Acquirium and
+  drivers, including materialization output metadata and lineage. It is
+  persisted and is the input to inference and validation.
 - **Ontology and shape data** defines vocabulary, `owl:imports`, SHACL shapes,
   and SHACL-AF rules. It is managed by OntoEnv, usually from bundled ontologies
   and configured ontology sources.
@@ -34,10 +35,11 @@ store uses a file-backed Oxigraph/RocksDB source dataset, a separate file-backed
 query dataset, and an in-process reentrant lock to coordinate writes and cache
 rebuilds. Oxigraph's files must be opened by this server process only.
 
-Ray actors are used for `DriverRunner` and `AppRunner`, not for the graph
-store; the actors talk to the server over the normal client API.
-This way there is a single authoritative graph writer, and a file-backed
-database handle is never shared with actor processes.
+Ray actors are used for `DriverRunner`, not for the graph store; the actors
+talk to the server over the normal client API. Materialization execution uses
+the server's bounded in-process worker pool. This way there is a single
+authoritative graph writer, and a file-backed database handle is never shared
+with actor processes.
 
 ## Persistent graph roles
 
@@ -52,8 +54,8 @@ namespaces (e.g. `https://qudt.org/...`).
 | Role | Persistence | Contents | How it is written |
 | --- | --- | --- | --- |
 | Plant data graph | source dataset | The shared plant model; it is the reserved `plant` source. | `insert_graph(..., source_id="plant")` or `sparql_update(..., source_id="plant")`. |
-| Acquirium data graph | source dataset | Acquirium-owned bookkeeping, such as logs. | Server internals only. |
-| Source data graph | source dataset | RDF owned by one driver, app, or metadata source. | `insert_graph(..., source_id="...")`; source-scoped SPARQL update. |
+| Acquirium data graph | source dataset | Acquirium-owned bookkeeping, such as logs and materialization lineage. | Server internals only. |
+| Source data graph | source dataset | RDF owned by one driver or external metadata source. | `insert_graph(..., source_id="...")`; source-scoped SPARQL update. |
 | Ontology/shape graph | source dataset | Ontologies, shapes, rules, and imports managed through OntoEnv. | Server configuration/startup; not application or driver writes. |
 | Dependency cache | memory | Imports closure minus asserted deployment data. | Backend only. |
 | Inferred-data graph | query dataset | `shifty.infer` output. Replaced after every derived rebuild. | Backend only. |
@@ -260,15 +262,13 @@ not extra lifecycle work required of driver authors.
 
 ### Apps
 
-Apps write their registration metadata to `source_id="app:<app-name>"`.
-`AppRunner` exposes this as `self.source_id` and binds the same value onto the
-loaded `App` instance. Both app and driver code can use
-`self.insert_graph(...)` and `self.sparql_update(...)`; these helpers always
-target that instance's owned graph and intentionally do not accept a
-`source_id` argument. App teardown issues a source-scoped SPARQL update against
-that same graph, so it removes only the app's registration triples. App and
-driver code should not use unscoped SPARQL updates to alter another component's
-data.
+Materialization apps do not write arbitrary graph data. The planner publishes
+their derived points, references, and structural lineage together in
+Acquirium's reserved internal graph, replacing that generated view when the
+binding plan changes. Each output reference uses `derived:<app-name>` as its
+timeseries `source_id`; that is a stream identity, not a caller-owned graph.
+See the [app reference](../reference/apps.md#outputs) for the output identity
+and metadata rules.
 
 ### Updates, queries, and validation
 

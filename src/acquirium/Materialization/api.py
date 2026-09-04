@@ -1,18 +1,14 @@
-"""Public declaration API for revision-frontier transformations."""
+"""Public declaration API for authoring apps."""
 from dataclasses import asdict
 from typing import Any, Mapping
-from acquirium.Materialization.incremental import (
-    AllAvailable, AroundChange, Changed, Current, Every, OnChange, OutputSpec,
-    RowWiseTransformation, Transformation, outputs,
-)
+from acquirium.Materialization.incremental import App, OutputSpec, align, output
 
-__all__ = ["AllAvailable", "AroundChange", "Changed", "Current", "Every", "OnChange", "OutputSpec", "RowWiseTransformation", "Transformation", "outputs"]
+__all__ = ["App", "OutputSpec", "align", "output"]
 
 
 def _coerce_output_spec(value: Any) -> OutputSpec:
     if isinstance(value, OutputSpec):
         return value
-    if value is None: return OutputSpec()
     if not isinstance(value, Mapping): raise TypeError("output declarations must be OutputSpec values")
     return OutputSpec(**value)
 

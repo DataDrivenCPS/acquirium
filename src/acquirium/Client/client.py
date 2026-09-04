@@ -721,15 +721,23 @@ class AcquiriumClient:
         return response.json()
 
 
-    def deploy_transformation(self, definition: dict) -> dict:
+    def deploy_app(self, definition: dict) -> dict:
         response = requests.put(
-            f"{self.base_url}/transformations/{definition['name']}", json=definition
+            f"{self.base_url}/apps/{definition['name']}", json=definition
         )
         _raise_for_status(response)
         return response.json()
 
-    def remove_transformation(self, name: str) -> dict:
-        response = requests.delete(f"{self.base_url}/transformations/{name}")
+    def remove_app(self, name: str) -> dict:
+        response = requests.delete(f"{self.base_url}/apps/{name}")
+        _raise_for_status(response)
+        return response.json()
+
+    def check_app(self, definition: dict, limit: int | None = None) -> dict:
+        response = requests.post(
+            f"{self.base_url}/apps/check", json=definition,
+            params={} if limit is None else {"limit": limit},
+        )
         _raise_for_status(response)
         return response.json()
 

@@ -190,8 +190,8 @@ describes how it behaves.
 
 Every write names an owner.
 `insert_graph` requires a `source_id`, and the triples land in that owner's
-graph: the reserved `plant` source for the shared model, `app:<name>` for an
-app, or the driver's own source.
+graph: the reserved `plant` source for the shared model, a driver's own source,
+or another source explicitly chosen by an external client.
 `replace=True` therefore replaces only that owner's graph, never the plant
 model or another driver's streams.
 
@@ -212,11 +212,13 @@ Register many streams in one call rather than looping over single ones.
 
 ## App outputs are streams too
 
-When an app that produces values (a soft sensor, for instance) is registered, each declared output becomes a point and a
-reference node: `app:<name>` is the `source_id`, the output's point URI
-string is the `ref_name`, and the computed `ref_uri` follows from the pair
-as usual.
+When a materialization app is compiled, each named output port becomes a point
+and reference node for every concrete input binding. Its `source_id` is
+`derived:<name>`; its generated `ref_name` combines the port name with a stable
+hash of the bound input aliases and reference URIs. The `ref_uri` follows from
+that pair as usual. Consequently, an app with one `per_input` output port and
+ten matched input rows owns ten distinct derived streams, while a `named`
+output owns exactly one stream under the name its author chose.
 See the [app reference](../reference/apps.md#outputs).
 This means computed values are indistinguishable from measured ones at query
 time.
-
