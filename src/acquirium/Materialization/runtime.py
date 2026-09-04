@@ -73,7 +73,8 @@ class Materializer:
         with self._plan_lock:
             self._graph_revision = -1
 
-    def check(self, deployment: Deployment, *, limit: int | None = None) -> dict[str, Any]:
+    def check(self, deployment: Deployment, *, limit: int | None = None,
+              search_path: str | None = None) -> dict[str, Any]:
         """Run an app against real stored data and return what it computed.
 
         Nothing is written: the app is not registered, its derived streams are
@@ -82,13 +83,15 @@ class Materializer:
         row, so a check shows what the app would produce from a full backfill.
 
         Every computed row is returned unless ``limit`` keeps only the first
-        few of each output.
+        few of each output. ``search_path`` is a directory the server looks in
+        for the app's module, so a file that is not otherwise importable there
+        can still be checked.
         """
         if limit is not None and limit < 0: raise ValueError("limit must not be negative")
         # Compile against the live graph without persisting the deployment or
         # publishing lineage, so a check cannot disturb what is deployed.
         revision = int(self._graph.graph_status().get("published_version", 0))
-        dag, applications = self._planner.compile((deployment,), revision)
+        dag, applications = self._planner.compile((deployment,), revision, search_path=search_path)
         bindings = []
         for binding in dag.bindings:
             entry: dict[str, Any] = {

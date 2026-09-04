@@ -669,9 +669,10 @@ class Manager:
         self.materializer.remove(name)
         return {"name": name, "status": "removed"}
 
-    def check_app(self, deployment, limit: int | None = None) -> dict[str, Any]:
+    def check_app(self, deployment, limit: int | None = None,
+                  search_path: str | None = None) -> dict[str, Any]:
         """Dry-run an app against stored data; nothing is written."""
-        return self.materializer.check(deployment, limit=limit)
+        return self.materializer.check(deployment, limit=limit, search_path=search_path)
 
     def run_materialization_once(self) -> bool:
         """Run at most one coherent batch for every currently compiled binding."""

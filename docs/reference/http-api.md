@@ -300,7 +300,11 @@ resulting input group, run its transform, and return the computed rows.
 Nothing is written — no deployment, no derived stream, no progress row, no
 revision. The body is an app definition. Every computed row is returned
 unless the optional `limit` query parameter keeps only the first `limit`
-rows of each output.
+rows of each output. The optional `search_path` query parameter names a
+directory on the server's filesystem to import the app's module from, for a
+file the server cannot otherwise import; a module whose file changed since
+it was imported is reloaded. Both are specific to checks — `PUT /apps/{name}`
+requires an app the server can import on its own.
 
 **Response** `{"ok": true, "app": ..., "graph_revision": N, "bindings": [...]}`,
 where each binding reports its bound `inputs`, `entities`, `input_rows`,

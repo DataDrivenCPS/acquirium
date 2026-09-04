@@ -27,7 +27,14 @@ change in any release.
   app, creating its streams, or recording progress. The CLI prints the first
   five rows of each output (`-n N` to head it differently, `-n 0` for all);
   the Python and HTTP forms return everything unless given a `limit`.
-  `POST /apps/check` is the endpoint behind both.
+  `POST /apps/check` is the endpoint behind both. Naming a file
+  (`./my_app.py:MyApp`) sends its directory as a `search_path`, so a server
+  on the same machine can import an app that is not installed; a module whose
+  file changed since the server imported it is reloaded, so re-checking an
+  edited app runs the new code. `acquirium app check --local` (and
+  `acquirium.Materialization.local.check_app`) runs the app in the caller's
+  process against the server's data instead, so `breakpoint()` opens a
+  console in that terminal and a failing transform raises a traceback there.
 - App output declarations are validated before an app runs: port names must
   be non-empty strings, each value must come from `aq.output.per_input(...)`
   or `aq.output.named(...)`, two named outputs cannot claim one stream name,

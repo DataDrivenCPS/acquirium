@@ -734,11 +734,14 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
-    def check_app(self, definition: dict, limit: int | None = None) -> dict:
-        response = requests.post(
-            f"{self.base_url}/apps/check", json=definition,
-            params={} if limit is None else {"limit": limit},
-        )
+    def check_app(self, definition: dict, limit: int | None = None,
+                  search_path: str | None = None) -> dict:
+        params = {}
+        if limit is not None:
+            params["limit"] = limit
+        if search_path is not None:
+            params["search_path"] = search_path
+        response = requests.post(f"{self.base_url}/apps/check", json=definition, params=params)
         _raise_for_status(response)
         return response.json()
 
