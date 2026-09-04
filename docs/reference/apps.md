@@ -577,14 +577,58 @@ that names the offending ports and points at a second, chained app.
 | `quantity_kind` | Quantity-kind URI placed on the output point. |
 | `medium` | Medium URI placed on the output point. |
 | `substance` | Substance URI placed on the output point. |
-| `data_source` | A literal data-source tag on the output reference — the simplest handle for a downstream app's query to select on. |
+| `data_source` | A literal tag placed on the output point. This is the handle a later query selects the stream by: `measurement(data_source="…")`, or `Not("…")` to exclude it. |
 | `properties` | Mapping of predicate URI → tuple of object URIs, added to the output point. |
 
 Every field is explicit: an output's metadata is what its declaration says,
 never copied from its inputs. Alongside the point metadata, the runtime
 records `isCalculatedFrom` from the binding to each input and `produces` to
-each output, which is what makes derived streams selectable by later apps and
-forms the DAG.
+each output, which is what forms the DAG.
+
+### Finding a derived stream again
+
+When `point_uri` is omitted the runtime creates a point at
+`urn:acquirium:derived-point:<binding signature>:<port>`, puts the declared
+`label`, `unit`, `quantity_kind`, `medium`, `substance`, `data_source` and
+`properties` on it, and records `acquirium:producedBy "<app name>"` there as
+well. That point is what queries match, so a derived stream is discoverable
+by exactly what its declaration says, plus the app that made it.
+
+Two data-node attributes select derived streams:
+
+| attribute | matches | set by |
+|---|---|---|
+| `app` | `acquirium:producedBy` on the point — the producing app's `name` | the runtime, on every derived point |
+| `data_source` | `acquirium:dataSource` on the point | the output's `data_source=` declaration, and driver stream registration |
+
+```python
+from acquirium.Client.explore import Not
+
+plant.query().measurement(alias="t", quantity_kind="temperature")
+plant.query().measurement(alias="t", quantity_kind="temperature",
+                          app="normalize-temperatures")       # that app's output
+plant.query().measurement(alias="t", quantity_kind="temperature",
+                          app=Not("normalize-temperatures"))  # everything else
+```
+
+`app` needs no cooperation from the app author, and a measurement written by
+a driver carries no `producedBy` at all — so `app=Not("x")` keeps every raw
+sensor along with every other app's output, and `options("app")` enumerates
+the apps publishing into the plant. `data_source` is the one to use for a
+*group* of apps that should be found under a single keyword, and it is also
+how an app tags output for a downstream app to select.
+
+There is no "was this derived?" attribute. The rest of the provenance —
+`acquirium:sourceId` (`derived:<app name>`) on the reference, and
+`isCalculatedFrom`/`produces` on the binding — sits on nodes the query
+layer's attribute filters never reach, since they all apply to the point.
+
+Setting `point_uri` to an input's own point attaches a second reference to
+that point, and applies `producedBy` and any declared metadata to a point the
+raw sensor shares. A query matching it then returns one row per reference,
+with nothing in the row to tell them apart, and `app=` matches the pair.
+Prefer a derived point of its own unless you specifically want both streams
+retrieved together.
 
 ## `StreamSet`
 

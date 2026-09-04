@@ -41,6 +41,13 @@ class LineageCopy(App):
     def transform(self, inputs, output, context): pass
 
 
+class TaggedOutput(App):
+    name = "tagged-output"
+    outputs = {"out": output.per_row(value_kind="numeric", data_source="normalized")}
+    def build_query(self, plant): return plant.query().measurement(alias="input")
+    def transform(self, inputs, output, context): pass
+
+
 class MixedFanOut(App):
     name = "mixed-fan-out"
     outputs = {
@@ -692,6 +699,68 @@ def test_remove_forgets_the_apps_durable_progress(tmp_path):
 
     with store._own_conn() as conn:
         assert conn.execute("SELECT count(*) FROM binding_progress").fetchone()[0] == 0
+
+
+def test_a_declared_data_source_tag_is_queryable(tmp_path):
+    """The tag lands on the point, which is what measurement(data_source=) filters."""
+    from rdflib import Literal, URIRef
+
+    from acquirium.internals.internals_namespaces import DATA_SOURCE, HAS_EXTERNAL_REFERENCE
+
+    graph = LineageGraph()
+    materializer = Materializer(DuckDBStore(tmp_path / "tagged.duckdb"), graph)
+    materializer.deploy(Deployment.from_class(TaggedOutput))
+    materializer.refresh()
+
+    published = graph.published[0]
+    tagged = {subject for subject, _, _ in published.triples((None, DATA_SOURCE, Literal("normalized")))}
+    assert tagged, "the declared data_source tag was not published"
+    # Every tagged subject is a point carrying the derived reference, not the
+    # reference itself; a filter on the reference would match nothing.
+    for point in tagged:
+        assert list(published.triples((point, URIRef(HAS_EXTERNAL_REFERENCE), None)))
+
+
+def test_a_derived_point_records_the_app_that_made_it(tmp_path):
+    """measurement(app="…") finds one app's output without a hand-written tag."""
+    from rdflib import Graph, Literal, RDF, URIRef
+
+    from acquirium.Client.explore.core import Query
+    from acquirium.internals.internals_namespaces import (
+        HAS_EXTERNAL_REFERENCE, HAS_QUANTITY_KIND, TIMESERIES_REFERENCE,
+    )
+
+    class UriOnlyClient:
+        """Enough client for compiling a query whose values are already URIs."""
+        def resolve(self, value, kind=None, **kwargs): return value
+        def expand_uri(self, value): return value
+        def graph_version(self): return 1
+
+    quantity_kind = URIRef("urn:qk/Temperature")
+    graph = LineageGraph()
+    materializer = Materializer(DuckDBStore(tmp_path / "produced.duckdb"), graph)
+    materializer.deploy(Deployment.from_class(TaggedOutput))
+    materializer.refresh()
+
+    # One raw sensor of the same quantity kind, as a driver would leave it.
+    model = graph.published[0]
+    raw_point, raw_ref = URIRef("urn:plant/T-101"), URIRef("urn:acquirium#raw")
+    model.add((raw_point, HAS_QUANTITY_KIND, quantity_kind))
+    model.add((raw_point, URIRef(HAS_EXTERNAL_REFERENCE), raw_ref))
+    model.add((raw_ref, RDF.type, URIRef(TIMESERIES_REFERENCE)))
+    for point, _, _ in model.triples((None, URIRef(HAS_EXTERNAL_REFERENCE), None)):
+        model.add((point, HAS_QUANTITY_KIND, quantity_kind))
+
+    def matches(**attrs):
+        sparql = Query(client=UriOnlyClient()).measurement(
+            alias="t", quantity_kind=str(quantity_kind), **attrs).to_sparql()
+        return {str(row[0]) for row in model.query(sparql)}
+
+    everything = matches()
+    derived = matches(app="tagged-output")
+
+    assert str(raw_point) in everything and len(everything) == 2
+    assert derived == everything - {str(raw_point)}
 
 
 def test_compiled_binding_publishes_structural_lineage(tmp_path):

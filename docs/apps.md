@@ -949,28 +949,96 @@ class PlantAverageFlow(aq.App):
 averages across them, and the result is one stream named `plant-average-flow`
 however many meters the plant has this month.
 
-### Chaining apps
+## Finding derived streams again
 
-Apps read each other's output, which is how a fleet aggregate over a
-fanned-out calculation is written: one `per_row` app, then one `named` app
-over its results.
+A derived stream is an ordinary stream in the plant model, so you find it with
+the same query interface you use for sensors — and you find it by the metadata
+the app *declared*, since nothing about a derived stream is inherited from its
+inputs.
 
-Give the upstream output a handle the downstream query can select on — a
-`data_source` tag is the simplest:
+The app at the top of this guide declares a unit but no quantity kind. Add
+one, and its output becomes findable as a temperature:
 
 ```python
-# upstream
+outputs = {
+    "celsius": aq.output.per_row(
+        value_kind="numeric",
+        label="Normalized temperature",
+        unit="http://qudt.org/vocab/unit/DEG_C",
+        quantity_kind="http://qudt.org/vocab/quantitykind/Temperature",
+        data_source="normalized",
+    ),
+}
+```
+
+Now a query for temperature matches **both** the raw sensors and their
+normalized copies — they are all temperature measurements, which is the
+point — so you need a way to say which you want. Every derived stream records
+the app that made it, and `app=` selects on that:
+
+```python
+from acquirium.Client.explore import Not
+
+plant.query().measurement(alias="t", quantity_kind="temperature")
+# → the raw sensors AND the normalized copies
+
+plant.query().measurement(alias="t", quantity_kind="temperature",
+                          app="normalize-temperatures")
+# → only the normalized copies
+
+plant.query().measurement(alias="t", quantity_kind="temperature",
+                          app=Not("normalize-temperatures"))
+# → everything except that app's output
+```
+
+You write nothing extra to get this: `app` is recorded for you when the app
+publishes, and a measurement a driver wrote has no `app` at all, so
+`app=Not(...)` and `options("app")` both work as you would expect. Ask a node
+what it can be filtered by — `q.facets()` or `q.options("app")` — and the apps
+that have published into your plant are listed there.
+
+`data_source` is the other selector, and it is the one to use when a *group*
+of apps should be found together: several apps that all publish
+`data_source="normalized"` are one keyword away, whatever their names, and it
+is also how you tag output for a downstream app to pick up.
+
+Anything else you declare works as a selector too — `unit`, `medium`,
+`substance`, `label` all come from the declaration. The one thing you cannot
+ask is "was this derived at all?", so if you want to sweep up every derived
+stream regardless of which app made it, give them a shared `data_source`.
+
+### Attaching an output to an existing point
+
+`point_uri=` hangs the derived stream off a point that already exists rather
+than off a new one Acquirium creates. It is the right choice when the app is
+publishing a better measurement of something the model already names — a
+despiked copy of one sensor, say.
+
+Be deliberate about it, because that point then has two streams attached, and
+a query that matches the point returns a row for each of them. Nothing
+distinguishes the two rows except the reference itself, so use `point_uri`
+when you want both streams found together, and leave it off — the default —
+when you want the derived stream to stand on its own and be selectable by its
+own metadata.
+
+### Chaining apps
+
+One app reading another's output is how you write a fleet aggregate over a
+fanned-out calculation: a `per_row` app first, then a `named` app whose query
+selects the first app's derived streams.
+
+```python
+# upstream: one cleaned stream per flow meter
 outputs = {"clean": aq.output.per_row(value_kind="numeric", data_source="cleaned-flow")}
 
-# downstream
+# downstream: the plant total, over exactly those streams
 def build_query(self, plant):
     return plant.query().measurement(alias="flow", data_source="cleaned-flow")
 ```
 
-Semantic metadata works the same way: a `quantity_kind`, `unit`, or
-`point_uri` declared on the upstream output can be selected on downstream. The
-server works out the dependency order and always runs upstream work first, so
-the downstream app never reads a half-finished result.
+The server works out the dependency order from the streams themselves and
+always runs the upstream app first, so the downstream app never reads a
+half-finished result.
 
 ## Deploying and managing apps
 

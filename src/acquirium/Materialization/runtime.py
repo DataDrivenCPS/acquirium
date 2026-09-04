@@ -14,7 +14,7 @@ from acquirium.Storage.graph_registry import ACQUIRIUM_GRAPH_URI
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_REF_NAME, ACQUIRIUM_SOURCE_ID, ACQUIRIUM_VALUE_KIND,
     DATA_SOURCE, HAS_EXTERNAL_REFERENCE, HAS_MEDIUM, HAS_QUANTITY_KIND, HAS_UNIT,
-    IS_CALCULATED_FROM, OF_SUBSTANCE, PRODUCES,
+    IS_CALCULATED_FROM, OF_SUBSTANCE, PRODUCED_BY, PRODUCES,
     TIMESERIES_REFERENCE,
 )
 
@@ -190,6 +190,10 @@ class Materializer:
                 ref, point = URIRef(ref_uri), URIRef(spec.point_uri or f"urn:acquirium:derived-point:{binding.signature}:{name}")
                 graph.add((binding_uri, PRODUCES, ref))
                 graph.add((point, HAS_EXTERNAL_REFERENCE, ref))
+                # Which app made this. On the point, where query attributes
+                # are matched, so `measurement(app="…")` finds one app's work
+                # without the author having to tag it by hand.
+                graph.add((point, PRODUCED_BY, Literal(binding.application_name)))
                 graph.add((ref, RDF.type, TIMESERIES_REFERENCE))
                 graph.add((ref, ACQUIRIUM_SOURCE_ID, Literal(f"derived:{binding.application_name}")))
                 graph.add((ref, ACQUIRIUM_REF_NAME, Literal(binding.output_ref_name(name))))
@@ -199,7 +203,10 @@ class Materializer:
                 if spec.quantity_kind: graph.add((point, HAS_QUANTITY_KIND, URIRef(spec.quantity_kind)))
                 if spec.medium: graph.add((point, HAS_MEDIUM, URIRef(spec.medium)))
                 if spec.substance: graph.add((point, OF_SUBSTANCE, URIRef(spec.substance)))
-                if spec.data_source: graph.add((ref, DATA_SOURCE, Literal(spec.data_source)))
+                # On the point, not the reference: that is where driver
+                # registration records it, and where the query layer looks —
+                # measurement(data_source=...) filters the point.
+                if spec.data_source: graph.add((point, DATA_SOURCE, Literal(spec.data_source)))
                 for predicate, values in (spec.properties or {}).items():
                     for value in values: graph.add((point, URIRef(predicate), URIRef(value)))
         self._graph.insert_graph(

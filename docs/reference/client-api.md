@@ -104,7 +104,7 @@ See the [querying tutorial](../tutorials/querying.md) and
 
 Attributes accepted by `where()`, `include()`, `options()` and the inline
 keywords: `type`, `process`, `cp_type`, `medium`, `substance`,
-`quantity_kind`, `unit`, `enumeration_kind`, `data_source`.
+`quantity_kind`, `unit`, `enumeration_kind`, `data_source`, `app`.
 
 ### Terminals
 

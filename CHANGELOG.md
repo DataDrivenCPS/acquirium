@@ -47,6 +47,12 @@ change in any release.
   or `aq.output.named(...)`, two named outputs cannot claim one stream name,
   and assigning a port the app did not declare raises inside `transform`
   listing the declared ports.
+- Derived streams record the app that produced them, and the query layer
+  gained an `app` attribute to select on it: `measurement(quantity_kind=
+  "temperature", app="normalize-temperatures")` returns one app's output,
+  `app=Not(...)` excludes it, and `options("app")` lists the apps publishing
+  into the plant. Nothing needs declaring for this; a measurement written by
+  a driver carries no `app`.
 - App scheduling and windowing are plain attributes — `lookback` (a duration
   or `"all"`), `backfill`, and the composable throttles `coalesce`,
   `max_delay`, and `min_interval` — with no policy classes to learn.
@@ -60,6 +66,11 @@ change in any release.
   pairing the two.
 
 ### Fixed
+- An app output's `data_source` tag is recorded on the derived point rather
+  than on its reference, so `measurement(data_source="…")` actually finds the
+  derived stream. Driver registration already recorded the tag on the point;
+  the query layer's attribute filters apply to the point, so the tag was
+  previously unqueryable wherever it was written.
 - A text output assigned a Polars dataframe was rejected with "text output
   requires string values": Polars renders strings as Arrow `large_string`,
   which the output validator did not accept. Both string types are now
