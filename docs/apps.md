@@ -368,20 +368,47 @@ module whose file has changed rather than reusing what it imported before.
 
 ### Debugging a check
 
-By default the app runs on the server, so a `breakpoint()` in `transform`
-opens a console on the server's stdin, where you cannot reach it. `--local`
-runs the app in your own process instead, reading its inputs over the API:
+`aq.console()` opens an interactive prompt wherever you put it, holding the
+variables around it — inside `transform` that is `inputs`, `output`,
+`context`, and whatever you have computed so far:
+
+```python
+def transform(self, inputs, output, context):
+    frame = inputs["temperature"].df()
+    aq.console()          # look at `frame` before deciding what to emit
+    output["celsius"] = frame.select("time", "value")
+```
+
+```text
+acquirium console — transform at ./normalize_temperatures.py:14
+in scope: context, frame, inputs, output, self
+Ctrl-D (or exit()) resumes.
+>>> frame.height
+288
+```
+
+Ctrl-D closes the prompt and the app carries on. It is a snapshot: rebinding
+a name in the console does not change the variable in the running function,
+though mutating an object does.
+
+The app has to be running in your terminal for a console to open, and by
+default it runs on the server. `--local` runs it in your own process
+instead, reading its inputs over the API:
 
 ```bash
 uv run acquirium app check ./normalize_temperatures.py:NormalizeTemperatures --local
 ```
 
-Now `breakpoint()` stops in the terminal you ran the command from, and a
-failing `transform` raises a full traceback there rather than being reported
-as a per-binding error. The results are otherwise identical, down to the
-derived stream identities. Running locally also sidesteps importing
-entirely: the server never loads your app, so nothing needs to be
-importable there.
+Now `aq.console()` opens where you ran the command, `breakpoint()` works the
+same way, and a failing `transform` raises a full traceback there rather
+than being reported as a per-binding error. The results are otherwise
+identical, down to the derived stream identities. Running locally also
+sidesteps importing entirely: the server never loads your app, so nothing
+needs to be importable there.
+
+A console left in an app that runs on the server — a deployed app, or a
+check without `--local` — logs that it was skipped and carries on, rather
+than stalling on input that will never arrive.
 
 ## Pattern: fault detection
 

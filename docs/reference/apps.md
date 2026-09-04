@@ -423,6 +423,26 @@ A module whose file has changed since the server imported it is reloaded, so
 editing an app and re-checking runs the new code rather than the code the
 process first loaded.
 
+### `aq.console()`
+
+```python
+aq.console(banner=None, *, depth=1)
+```
+
+Opens an interactive console holding the calling frame's variables — its
+locals merged over its globals, locals winning. The default banner names the
+calling function, its file and line, and the local variables in scope.
+Ctrl-D or `exit()` closes it and execution resumes.
+
+The namespace is a snapshot, so rebinding a name in the console does not
+change the variable in the running function; mutating an object does. Pass
+`banner` to replace the default, and `depth` to show an outer frame instead
+(`depth=2` from inside a helper shows that helper's caller).
+
+Without an interactive terminal — a deployed app, a server-side check, a
+test — it logs a warning naming the call site and returns immediately, so a
+forgotten console never blocks a server.
+
 ### Running the check locally
 
 ```bash
