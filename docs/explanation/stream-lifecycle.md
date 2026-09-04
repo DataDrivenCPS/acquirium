@@ -219,6 +219,6 @@ hash of the bound input aliases and reference URIs. The `ref_uri` follows from
 that pair as usual. Consequently, an app with one `per_row` output port and
 ten matched input rows owns ten distinct derived streams, while a `named`
 output owns exactly one stream under the name its author chose.
-See the [app reference](../reference/apps.md#outputs).
+See the [app reference](../reference/apps.md#aqoutput).
 This means computed values are indistinguishable from measured ones at query
 time.

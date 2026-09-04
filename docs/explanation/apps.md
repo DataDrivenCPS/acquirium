@@ -58,5 +58,7 @@ those dependencies form a DAG the scheduler runs in waves.
 Internally the docs call this machinery *incremental materialization*: derived
 streams are materialized views over raw streams, maintained incrementally by
 revision rather than recomputed wholesale. That vocabulary lives in
-[the implementation notes](../materialization-implementation.md); writing an
+[How it works](../reference/apps.md#how-it-works), with the backend and
+operational details in
+[Backends and operations](../materialization-implementation.md); writing an
 app requires none of it.

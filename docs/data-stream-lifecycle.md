@@ -78,7 +78,7 @@ The table also records streams discovered only from data insertion. Those rows h
 
 `value_kind` records the stream-level storage type. Drivers declare it as `"numeric"` or `"text"` when registering streams or inserting observations. It defaults to `"text"` when omitted. Numeric telemetry is stored in `timeseries.numeric_value`; text/log-like samples are stored in `timeseries.text_value`; the other value column is normally `NULL`.
 
-Numeric streams can still contain occasional nonnumeric rows. If a value in a numeric stream cannot be converted to a float, Acquirium stores that row in `timeseries.text_value` rather than rejecting the whole insert. Read APIs expose `value_mode` to choose default behavior, numeric-only rows, text-only rows, or a coalesced mixed stream. See [`data-api.md`](data-api.md) for the read modes and examples.
+Numeric streams can still contain occasional nonnumeric rows. If a value in a numeric stream cannot be converted to a float, Acquirium stores that row in `timeseries.text_value` rather than rejecting the whole insert. Read APIs expose `value_mode` to choose default behavior, numeric-only rows, text-only rows, or a coalesced mixed stream. See [Values](explanation/values.md) for the read modes and examples.
 
 ---
 
@@ -121,7 +121,8 @@ The `ref_uri` node (the UUID5 URI) is intentionally thin. It is an indirection n
 
 The steps below describe the low-level client API. Driver authors normally use
 `self.declare(...)`; the driver platform performs datasource and stream
-registration before inserting observations. See [Drivers](drivers.md).
+registration before inserting observations. See the
+[driver reference](reference/drivers.md).
 
 ### Step 1 — register the datasource
 

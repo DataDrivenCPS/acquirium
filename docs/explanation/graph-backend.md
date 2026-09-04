@@ -267,7 +267,7 @@ their derived points, references, and structural lineage together in
 Acquirium's reserved internal graph, replacing that generated view when the
 binding plan changes. Each output reference uses `derived:<app-name>` as its
 timeseries `source_id`; that is a stream identity, not a caller-owned graph.
-See the [app reference](../reference/apps.md#outputs) for the output identity
+See the [app reference](../reference/apps.md#aqoutput) for the output identity
 and metadata rules.
 
 ### Updates, queries, and validation
