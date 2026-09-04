@@ -38,12 +38,17 @@ Returns the current state of the semantic embedding indexes.
 
 ```json
 {
+  "semantic": true,
   "graph": {"state": "ready", "concepts": 120, "surfaces": 340, "error": null, "last_built": "...", "duration_s": 1.2},
   "qudt":  {"state": "ready", "concepts": 80,  "surfaces": 210, "error": null, "last_built": "...", "duration_s": 0.8}
 }
 ```
 
 `state` is one of `"idle"`, `"building"`, `"ready"`, or `"error"`.
+
+`semantic` is `false` when the server runs with
+[`exact_only`](server-config.md#exact-only-resolution): both indexes still
+build and report `"ready"`, but they answer exact matches only.
 
 ---
 
