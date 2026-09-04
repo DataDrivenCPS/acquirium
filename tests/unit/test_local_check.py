@@ -11,7 +11,7 @@ START = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 class Doubler(aq.App):
     name = "doubler"
-    outputs = {"doubled": aq.output.per_input(value_kind="numeric")}
+    outputs = {"doubled": aq.output.per_row(value_kind="numeric")}
 
     def build_query(self, plant):
         return plant.query().measurement(alias="input")

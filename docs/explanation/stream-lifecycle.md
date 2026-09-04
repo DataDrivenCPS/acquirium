@@ -216,7 +216,7 @@ When a materialization app is compiled, each named output port becomes a point
 and reference node for every concrete input binding. Its `source_id` is
 `derived:<name>`; its generated `ref_name` combines the port name with a stable
 hash of the bound input aliases and reference URIs. The `ref_uri` follows from
-that pair as usual. Consequently, an app with one `per_input` output port and
+that pair as usual. Consequently, an app with one `per_row` output port and
 ten matched input rows owns ten distinct derived streams, while a `named`
 output owns exactly one stream under the name its author chose.
 See the [app reference](../reference/apps.md#outputs).

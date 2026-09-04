@@ -25,7 +25,7 @@ class TemperatureNormalizer(aq.App):
     coalesce = "250ms"
     max_delay = "5s"
     outputs = {
-        "normalized": aq.output.per_input(
+        "normalized": aq.output.per_row(
             value_kind="numeric",
             label="Normalized temperature",
             unit="http://qudt.org/vocab/unit/DEG_C",
@@ -71,7 +71,7 @@ also accept `datetime.timedelta` and cannot be negative.
 | `coalesce` | `"0s"` | Wait for this long a quiet gap in a burst of writes before running. |
 | `max_delay` | `None` | Cap on the coalesce wait: run once the oldest pending change is this old. |
 | `min_interval` | `None` | At most one run per interval for an input group. |
-| `outputs` | none | Mapping of local output-port names to output declarations. At least one is required; the flavors also decide how query matches group into calls. Port names must be non-empty strings, each value must come from `aq.output.per_input(...)` or `aq.output.named(...)`, and two named outputs cannot claim the same stream name. These are checked when the app is deployed or checked, before it runs. |
+| `outputs` | none | Mapping of local output-port names to output declarations. At least one is required; the flavors also decide how query matches group into calls. Port names must be non-empty strings, each value must come from `aq.output.per_row(...)` or `aq.output.named(...)`, and two named outputs cannot claim the same stream name. These are checked when the app is deployed or checked, before it runs. |
 | `build_query(plant)` | required | Return one Acquirium `Query` that selects inputs and names them with aliases. |
 | `transform(inputs, output, context)` | required | Compute tables and assign them to declared output ports. |
 
@@ -104,18 +104,18 @@ Suppose a query with one alias, `temperature`, finds three streams: A, B, and C.
 
 | outputs declared | calls to `transform` | derived streams | use it when |
 |---|---|---|---|
-| `per_input` | Three calls: one for A, one for B, and one for C. | Three streams, one beside each matched input. | The same calculation should be applied independently to every match, such as normalizing every sensor. |
+| `per_row` | Three calls: one for A, one for B, and one for C. | Three streams, one beside each matched input. | The same calculation should be applied independently to every match, such as normalizing every sensor. |
 | `named` | One call whose `inputs["temperature"]` contains A, B, and C. | One stream with the declared name. | The calculation combines or compares all matches, such as a fleet average. |
 
 Declaring both flavors together is valid only when the query resolves to
 exactly one input group — then both describe the same single call. When the
-query fans out into several groups, a named output alongside `per_input`
+query fans out into several groups, a named output alongside `per_row`
 fan-out is a planning error: an absolute stream has one owner, so compute
 the aggregate in a second app whose query selects this app's derived
 streams (the scheduler orders chained apps automatically).
 
 A query row can contain several aliases. For example, each row might contain
-a related `supply` and `return` temperature. A `per_input` app then gets one
+a related `supply` and `return` temperature. A `per_row` app then gets one
 pair per call and can create one `delta_t` output for that pair. “Per row”
 does not necessarily mean “one input stream.”
 
@@ -217,12 +217,36 @@ should be deterministic.
 | `.batches()` | iterator of `pyarrow.RecordBatch` | The same rows in record batches, for large windows. |
 | `.changes` | `pyarrow.Table` | Only rows from the revisions this invocation is consuming. |
 | `.in_unit(unit)` | `StreamSet` | The same stream set with every value converted into `unit`. |
+| `.stream` | `StreamDescriptor` | The one stream bound to this alias — which sensor this call is for. Raises when the alias holds several, which is what a `named` output sees. |
+| `.streams` | `tuple[StreamDescriptor, ...]` | Every stream bound under the alias; the right accessor for a `named` output. |
 | `.alias` | `str` | The query alias. |
-| `.streams` | `tuple[StreamDescriptor, ...]` | Metadata for every stream bound under the alias. |
 | `.window` | `TimeWindow` | The read range used for this batch. |
 
-Input tables contain `ref_uri`, `time`, and `value`. Multiple physical streams
-under one alias are distinguished by `ref_uri`.
+Input tables always contain `ref_uri`, `time`, and `value`, whether one
+stream is bound or fifty, so the frame's shape does not change with the
+match. Which streams are actually in it is a question for the stream set, not
+the frame: a `per_row` call binds exactly one, and `.stream` is how to ask
+for it.
+
+```python
+def transform(self, inputs, output, context):
+    sensor = inputs["temperature"].stream     # the stream this call is for
+    sensor.ref_uri, sensor.point_uri, sensor.label, sensor.unit
+```
+
+Which accessor to use follows from the output flavor, and it is an invariant
+rather than a matter of luck:
+
+| output | streams per alias, per call | accessor |
+|---|---|---|
+| `per_row` | exactly one, for every alias — a row pairing `supply` and `return` gives one of each | `.stream` |
+| `named` | every match the query found | `.streams` |
+
+So a many-to-one app — a fleet average, a plant total — reads `.streams` and
+iterates or aggregates. Reaching for `.stream` there raises rather than
+quietly returning the first match, which also means an app converted from
+`per_row` to `named` fails loudly instead of silently computing on one
+sensor and ignoring the rest.
 
 Each `StreamDescriptor` carries the metadata the compiled query exposes
 today: `ref_uri`, `point_uri`, `unit`, and `label`. The remaining fields
@@ -251,14 +275,28 @@ to `RevisionStore`).
 
 ### Context: the match this call is bound to
 
-`context` describes the semantic match behind the call:
+`transform` receives two things, and each answers a different question:
+`inputs` is **the data**, one stream set per alias, carrying the streams that
+produced it; `context` is **the match** — what `build_query` found for this
+particular call, and why the call happened. It holds no data.
+
+`context` is an `InputBatch` (importable from `acquirium.Materialization`):
 
 | member | meaning |
 |---|---|
-| `.entities` | The query's entity aliases resolved to model URIs — with `per_input` outputs, this call's row, e.g. `{"hx": "urn:plant/hx-1"}`. A `named` output's combined group has no single row, so its mapping is empty. |
+| `.entities` | The query's entity aliases resolved to model URIs for this call's row, e.g. `{"hx": "urn:plant/hx-1"}`. Empty when the query names no entities, and empty for a `named` output's combined group, which has no single row. |
 | `.changed_window` | The timestamp extent of the unconsumed writes: why this call happened. |
-| `.read_window` | The lookback-padded range actually read. |
+| `.read_window` | The lookback-padded range actually read. Equals every `StreamSet.window`. |
 | `.from_revision`, `.to_revision`, `.graph_revision`, `.binding_signature` | Runtime diagnostics. |
+
+So there is one place to look for each question:
+
+| question | where |
+|---|---|
+| what are the values? | `inputs[alias].df()` / `.collect()` / `.changes` |
+| which stream is this call for? | `inputs[alias].stream` |
+| which entity is it about? | `context.entities[alias]` |
+| what time range, and why? | `context.read_window`, `context.changed_window` |
 
 Data selection should use the supplied tables rather than querying storage
 again.
@@ -310,7 +348,7 @@ progress commit in one database transaction.
 
 ```python
 outputs: Mapping[str, OutputSpec] = {
-    "port_name": aq.output.per_input(...),   # or aq.output.named("...", ...)
+    "port_name": aq.output.per_row(...),   # or aq.output.named("...", ...)
 }
 ```
 
@@ -319,9 +357,9 @@ An output mapping declares named *ports*: names used inside the class, such as
 port becomes one or more derived streams, and the two declaration flavors
 choose how those streams are identified.
 
-### `aq.output.per_input(...)`: relative identity
+### `aq.output.per_row(...)`: relative identity
 
-Each input group gets one derived stream for every `per_input` port, and the
+Each input group gets one derived stream for every `per_row` port, and the
 stream's identity is derived from that group's inputs:
 
 ```text
@@ -331,7 +369,7 @@ app name + output port + sorted (input alias, input ref_uri) pairs
                   one stable derived stream reference
 ```
 
-For example, an app with `per_input` port `normalized` and three matched sensors
+For example, an app with `per_row` port `normalized` and three matched sensors
 creates three derived streams. All three have source ID
 `derived:temperature-normalizer`, but each has a different generated reference
 name because each is bound to a different input. This is the flavor for
@@ -362,7 +400,7 @@ discovering it relative to its inputs.
 Because an absolute stream has exactly one owner, a named output is valid
 only when the app's query produces exactly one input group — which is always
 the case when every output is `named`, since they aggregate the whole result.
-Declaring one alongside `per_input` fan-out over several groups is a planning
+Declaring one alongside `per_row` fan-out over several groups is a planning
 error pointing you to a second, chained app.
 
 ### Attachment to the plant model
@@ -376,7 +414,7 @@ dependencies form the materialization DAG.
 
 ### Declaration arguments
 
-`aq.output.per_input(value_kind, **kwargs)` and
+`aq.output.per_row(value_kind, **kwargs)` and
 `aq.output.named(stream_name, value_kind, **kwargs)` return an `OutputSpec`:
 
 | argument | meaning |

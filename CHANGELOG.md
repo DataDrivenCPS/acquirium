@@ -12,7 +12,7 @@ change in any release.
 
 ### Added
 - Incremental materialization apps: subclass `acquirium.App` and declare
-  outputs with `aq.output.per_input(...)` (one call and one derived stream
+  outputs with `aq.output.per_row(...)` (one call and one derived stream
   per query match) or `aq.output.named(...)` (one call over the complete
   result, one stream), then deploy with `client.deploy_app(...)` or an
   `[[apps]]` config entry. Derived rows and consumed input progress commit in
@@ -35,18 +35,27 @@ change in any release.
   `acquirium.Materialization.local.check_app`) runs the app in the caller's
   process against the server's data instead, so `breakpoint()` opens a
   console in that terminal and a failing transform raises a traceback there.
+- `StreamSet.stream` names the single stream an alias is bound to — the usual
+  way a `per_row` call asks which sensor it is computing on — and raises
+  when an alias is bound to several.
 - `aq.console()` opens an interactive console holding the calling frame's
   variables (`inputs`, `output`, `context` inside a transform). Without an
   interactive terminal it logs that it was skipped and returns, so one left
   in a deployed app never blocks the server.
 - App output declarations are validated before an app runs: port names must
-  be non-empty strings, each value must come from `aq.output.per_input(...)`
+  be non-empty strings, each value must come from `aq.output.per_row(...)`
   or `aq.output.named(...)`, two named outputs cannot claim one stream name,
   and assigning a port the app did not declare raises inside `transform`
   listing the declared ports.
 - App scheduling and windowing are plain attributes — `lookback` (a duration
   or `"all"`), `backfill`, and the composable throttles `coalesce`,
   `max_delay`, and `min_interval` — with no policy classes to learn.
+
+### Changed
+- An app's `context` (`InputBatch`) no longer carries `inputs`: `transform`'s
+  two arguments now split cleanly, `inputs` being the data and `context` the
+  match `build_query` produced for that call. Executors receive a `Batch`
+  pairing the two.
 
 ### Removed
 - The legacy `Apps` runtime (`MappedApp`, `OutputTemplate`, supervisor and

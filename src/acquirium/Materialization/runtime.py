@@ -106,11 +106,13 @@ class Materializer:
             if batch is None:
                 entry["error"] = "no stored data for these inputs"
                 continue
-            entry["read_window"] = [batch.read_window.start.isoformat(), batch.read_window.end.isoformat()]
-            entry["input_rows"] = {alias: stream_set.collect().num_rows for alias, stream_set in batch.inputs.items()}
+            entry["read_window"] = [batch.context.read_window.start.isoformat(),
+                                    batch.context.read_window.end.isoformat()]
+            entry["input_rows"] = {alias: stream_set.collect().num_rows
+                                   for alias, stream_set in batch.inputs.items()}
             builder = OutputBuilder(binding.outputs)
             try:
-                applications[binding.signature].transform(batch.inputs, builder, batch)
+                applications[binding.signature].transform(batch.inputs, builder, batch.context)
             except BaseException as error:
                 # A failing transform is the normal reason to run a check, so
                 # report it as a result rather than an unhandled error.

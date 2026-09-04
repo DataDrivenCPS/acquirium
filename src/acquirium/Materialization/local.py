@@ -124,12 +124,12 @@ def check_app(client: Any, target: type, *, parameters: dict | None = None,
         extent = [value.window for value in inputs.values() if value.collect().num_rows]
         window = TimeWindow(min(w.start for w in extent), max(w.end for w in extent))
         entry["read_window"] = [window.start.isoformat(), window.end.isoformat()]
-        batch = InputBatch(binding.signature, revision, 0, revision, window, window,
-                           inputs, binding.entities)
+        context = InputBatch(binding.signature, revision, 0, revision, window, window,
+                             binding.entities)
         builder = OutputBuilder(binding.outputs)
         # No try/except: a breakpoint stops here and a traceback reaches the
         # caller, which is the whole reason to run locally.
-        applications[binding.signature].transform(inputs, builder, batch)
+        applications[binding.signature].transform(inputs, builder, context)
         for port, table in builder.values.items():
             shown = table if limit is None else table.slice(0, limit)
             entry["outputs"][port] = {

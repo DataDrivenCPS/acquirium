@@ -19,7 +19,7 @@ from acquirium.internals.models import compute_ref_uri
 class Mean(App):
     backfill = True
     lookback = "1m"
-    outputs = {"mean": output.per_input(value_kind="numeric")}
+    outputs = {"mean": output.per_row(value_kind="numeric")}
 
     def transform(self, inputs, output, context):
         assert inputs["left"].window == inputs["right"].window == context.read_window
@@ -29,7 +29,7 @@ class Mean(App):
 
 class LineageCopy(App):
     name = "lineage-copy"
-    outputs = {"out": output.per_input(value_kind="numeric")}
+    outputs = {"out": output.per_row(value_kind="numeric")}
     def build_query(self, plant): return plant.query().measurement(alias="input")
     def transform(self, inputs, output, context): pass
 
@@ -37,7 +37,7 @@ class LineageCopy(App):
 class MixedFanOut(App):
     name = "mixed-fan-out"
     outputs = {
-        "each": output.per_input(value_kind="numeric"),
+        "each": output.per_row(value_kind="numeric"),
         "total": output.named("kpi", value_kind="numeric"),
     }
     def build_query(self, plant): return plant.query().measurement(alias="input")
@@ -53,7 +53,7 @@ class NamedTotal(App):
 
 class Copy(App):
     backfill = True
-    outputs = {"out": output.per_input(value_kind="numeric")}
+    outputs = {"out": output.per_row(value_kind="numeric")}
 
     def transform(self, inputs, output, context):
         source = inputs["source"].collect()
@@ -61,7 +61,7 @@ class Copy(App):
 
 
 class ConfiguredLookback(App):
-    outputs = {"out": output.per_input(value_kind="numeric")}
+    outputs = {"out": output.per_row(value_kind="numeric")}
 
     def __init__(self, window="5m"):
         self.lookback = window
@@ -71,7 +71,7 @@ class WholeStream(App):
     lookback = "all"
     backfill = True
     min_interval = "5m"
-    outputs = {"out": output.per_input(value_kind="numeric")}
+    outputs = {"out": output.per_row(value_kind="numeric")}
 
 
 class ConcurrentProbeExecutor(InProcessExecutor):
@@ -127,6 +127,31 @@ class MultiStreamLineageGraph(LineageGraph):
         }
 
 
+class PairedRowGraph(LineageGraph):
+    """Two heat exchangers, each row pairing a supply and a return stream."""
+    def sparql_query(self, query, **kwargs):
+        return {
+            "columns": ["v0", "v1", "ext1", "unit1", "extunit1", "lbl1",
+                        "v2", "ext2", "unit2", "extunit2", "lbl2"],
+            "rows": [[f"urn:hx-{n}", f"urn:p-s{n}", f"urn:ref-s{n}", None, None, f"supply {n}",
+                      f"urn:p-r{n}", f"urn:ref-r{n}", None, None, f"return {n}"] for n in (1, 2)],
+        }
+
+
+class PairedApp(App):
+    name = "paired"
+    outputs = {"delta": output.per_row(value_kind="numeric")}
+    def build_query(self, plant):
+        return (plant.query().entity("urn:HeatExchanger", alias="hx")
+                .measurement(frm="hx", alias="supply")
+                .measurement(frm="hx", alias="ret"))
+    def transform(self, inputs, output, context): pass
+
+
+def planner_for(graph, app):
+    return BindingPlanner(graph).compile((Deployment.from_class(app),), graph_revision=1)
+
+
 class LinearFakeConverter:
     """Celsius to Fahrenheit without a QUDT graph."""
     def convert(self, value, from_unit, to_unit):
@@ -157,7 +182,7 @@ def test_revision_frontier_commits_coherent_output_and_converges(tmp_path):
 def test_graph_rejects_cycles_and_duplicate_output_ownership():
     input_a = {"source": (StreamDescriptor("urn:b"),)}
     input_b = {"source": (StreamDescriptor("urn:a"),)}
-    spec = output.per_input(value_kind="numeric")
+    spec = output.per_row(value_kind="numeric")
     a = Binding("a", "a", input_a, {"out": ("urn:a", spec)})
     b = Binding("b", "b", input_b, {"out": ("urn:b", spec)})
     try:
@@ -233,7 +258,7 @@ def test_named_outputs_aggregate_the_complete_query_result():
     }
 
 
-def test_per_input_outputs_bind_one_group_per_query_row():
+def test_per_row_outputs_bind_one_group_per_query_row():
     graph = MultiStreamLineageGraph()
     planner = BindingPlanner(graph)
 
@@ -293,9 +318,54 @@ def test_in_unit_requires_a_converter_and_recorded_units():
                   converter=LinearFakeConverter()).in_unit("urn:unit:DEG_F")
 
 
+def test_stream_names_the_single_bound_stream_and_refuses_to_guess():
+    window = TimeWindow(datetime(2026, 1, 1, tzinfo=timezone.utc),
+                        datetime(2026, 1, 1, tzinfo=timezone.utc))
+    one = StreamSet("temperature", window, (StreamDescriptor("urn:a", label="Basin 1"),))
+    several = StreamSet("temperature", window,
+                        (StreamDescriptor("urn:a"), StreamDescriptor("urn:b")))
+
+    # A per_row call binds one stream, so this is how it asks which.
+    assert one.stream.ref_uri == "urn:a" and one.stream.label == "Basin 1"
+    with pytest.raises(ValueError, match="named output sees every match"):
+        several.stream
+    assert [d.ref_uri for d in several.streams] == ["urn:a", "urn:b"]
+
+
+def test_per_row_binds_one_stream_per_alias_even_for_paired_rows():
+    # The invariant behind .stream: a per_row call binds exactly one stream
+    # under every alias, so a supply/return row gives one of each.
+    graph = PairedRowGraph()
+
+    application_graph, _ = planner_for(graph, PairedApp)
+
+    assert len(application_graph.bindings) == 2
+    for binding in application_graph.bindings:
+        assert sorted(binding.inputs) == ["ret", "supply"]
+        assert all(len(streams) == 1 for streams in binding.inputs.values())
+
+
+def test_context_carries_the_match_and_not_the_data(tmp_path):
+    store = DuckDBStore(tmp_path / "context.duckdb")
+    timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    store.upsert_rows("urn:left", [(timestamp, 1.0)], value_kind="numeric")
+    inputs = {"source": (StreamDescriptor("urn:left"),)}
+    binding = Binding("copy", "digest", inputs, {"out": ("urn:out:left", Copy.outputs["out"])},
+                      entities={"hx": "urn:plant/hx-1"})
+    revisions = RevisionStore(store)
+    revisions.initialise(binding, True)
+
+    batch = revisions.preview_batch(binding)
+
+    # The data arrives beside the context, never inside it.
+    assert not hasattr(batch.context, "inputs")
+    assert batch.context.entities == {"hx": "urn:plant/hx-1"}
+    assert batch.inputs["source"].stream.ref_uri == "urn:left"
+
+
 def test_output_schema_violations_name_the_port():
     from acquirium.Materialization import OutputBuilder
-    builder = OutputBuilder({"celsius": ("urn:out", output.per_input(value_kind="numeric"))})
+    builder = OutputBuilder({"celsius": ("urn:out", output.per_row(value_kind="numeric"))})
     bad = pa.table({"time": pa.array([datetime(2026, 1, 1, tzinfo=timezone.utc)], pa.timestamp("us", tz="UTC")),
                     "value": pa.array([1.0]), "ref_uri": pa.array(["urn:x"])})
     with pytest.raises(TypeError, match="output 'celsius'"):
@@ -374,8 +444,8 @@ class EntityRowGraph(LineageGraph):
 
 
 class PerInputEntity(App):
-    name = "per-input-entity"
-    outputs = {"out": output.per_input(value_kind="numeric")}
+    name = "per-row-entity"
+    outputs = {"out": output.per_row(value_kind="numeric")}
     def build_query(self, plant):
         return (plant.query().entity("urn:HeatExchanger", alias="hx")
                 .measurement(frm="hx", alias="input"))
@@ -395,7 +465,7 @@ def test_context_carries_the_bound_rows_entities_and_labels():
 
 class CheckDouble(App):
     name = "check-double"
-    outputs = {"doubled": output.per_input(value_kind="numeric")}
+    outputs = {"doubled": output.per_row(value_kind="numeric")}
     def build_query(self, plant): return plant.query().measurement(alias="input")
     def transform(self, inputs, output, context):
         source = inputs["input"].collect()
@@ -514,7 +584,7 @@ def test_output_declarations_are_validated_before_deployment():
                    "b": output.named("total", value_kind="numeric")}
         def build_query(self, plant): return plant.query().measurement(alias="input")
 
-    with pytest.raises(TypeError, match="aq.output.per_input"):
+    with pytest.raises(TypeError, match="aq.output.per_row"):
         Deployment.from_class(BadSpec)
     with pytest.raises(ValueError, match="claim the stream name"):
         Deployment.from_class(Colliding)

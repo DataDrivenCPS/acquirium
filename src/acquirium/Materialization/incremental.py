@@ -1,7 +1,7 @@
 """Revision-frontier incremental materialization.
 
 This module is intentionally the whole runtime boundary: declarations compile
-to :class:`Binding`, storage constructs coherent :class:`InputBatch` objects,
+to :class:`Binding`, storage constructs coherent :class:`Batch` objects,
 and the scheduler commits results with the input frontier in one transaction.
 It has no queue or lease state; DuckDB is the recovery authority.
 """
@@ -91,6 +91,27 @@ class StreamSet:
     # is visible in the object graph rather than ambient process state.
     converter: Any = field(default=None, repr=False)
 
+    @property
+    def stream(self) -> StreamDescriptor:
+        """The one stream bound to this alias — which sensor this call is for.
+
+        A ``per_row`` output binds exactly one stream per alias per call —
+        for every alias, even when a query row pairs several — so this is the
+        usual way to ask what is being computed: ``inputs["temperature"].stream``
+        gives its ``ref_uri``, ``point_uri``, ``label`` and ``unit``.
+
+        A ``named`` output sees the whole query result at once, so its aliases
+        can hold many streams and this raises. Use :attr:`streams` there; an
+        aggregate is about all of them by definition.
+        """
+        if len(self.streams) != 1:
+            raise ValueError(
+                f"alias {self.alias!r} is bound to {len(self.streams)} streams, not one — "
+                f"a named output sees every match in one call. Use .streams for all of them, "
+                f"or a per_row output to run once per match."
+            )
+        return self.streams[0]
+
     def batches(self) -> Iterator[pa.RecordBatch]:
         yield from self._table.to_batches(self.batch_size)
     def collect(self) -> pa.Table: return self._table
@@ -135,11 +156,13 @@ class StreamSet:
 
 @dataclass(frozen=True)
 class InputBatch:
-    """The context handed to ``transform``: one bound query match, loaded.
+    """What one call to ``transform`` is about — the match, not its data.
 
-    ``entities`` carries the semantic side of the match — the query's
-    non-data aliases resolved to model URIs (for a per-row app, the row this
-    call is bound to). The revision fields are runtime diagnostics.
+    ``entities`` carries the semantic side of the match: the query's non-data
+    aliases resolved to model URIs, for the row this call is bound to. The
+    windows say why the call happened and how much was read; the revision
+    fields are runtime diagnostics. The data itself, and the streams that
+    produced it, arrive in the ``inputs`` argument beside this one.
     """
     binding_signature: str
     graph_revision: int
@@ -147,8 +170,14 @@ class InputBatch:
     to_revision: int
     changed_window: TimeWindow
     read_window: TimeWindow
-    inputs: Mapping[str, StreamSet]
     entities: Mapping[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class Batch:
+    """One unit of work: the loaded inputs and the context describing them."""
+    inputs: Mapping[str, StreamSet]
+    context: InputBatch
 
 
 @dataclass(frozen=True)
@@ -177,13 +206,17 @@ class OutputSpec:
 class _OutputAPI:
     """The two output flavors an app can declare.
 
-    ``per_input`` publishes one derived stream beside each group of inputs the
-    app is bound to — the right choice when the same calculation fans out
-    across many matched streams. ``named`` publishes one absolute stream whose
-    identity you choose, so it can be found directly by name.
+    ``per_row`` runs the app once per query-result row and publishes one
+    derived stream beside that row's inputs — the right choice when the same
+    calculation fans out across many matches. A row is one match, not one
+    stream: a query pairing ``supply`` and ``return`` gives a call holding
+    both, which publishes a single stream for the pair.
+
+    ``named`` publishes one absolute stream whose identity you choose, from a
+    single call over the complete query result, so it can be found by name.
     """
-    def per_input(self, **kwargs: Any) -> OutputSpec:
-        if "stream_name" in kwargs: raise TypeError("per_input outputs derive their name; use output.named(...)")
+    def per_row(self, **kwargs: Any) -> OutputSpec:
+        if "stream_name" in kwargs: raise TypeError("per_row outputs derive their name; use output.named(...)")
         return OutputSpec(**kwargs)
     def named(self, stream_name: str, **kwargs: Any) -> OutputSpec:
         return OutputSpec(stream_name=stream_name, **kwargs)
@@ -287,7 +320,7 @@ class Binding:
     @classmethod
     def derive_output_ref_name(cls, key: str, inputs: Mapping[str, Iterable[StreamDescriptor]],
                                spec: OutputSpec | None = None) -> str:
-        # A named output owns its exact reference name. A per-input identity
+        # A named output owns its exact reference name. A per-row identity
         # follows the bound inputs, not a deployment instance, so recompiling
         # the same graph reuses the derived stream.
         if spec is not None and spec.stream_name is not None:
@@ -375,7 +408,7 @@ class App:
     """A calculation over the streams selected by one semantic query.
 
     The ``outputs`` declaration alone decides how query matches become calls:
-    a ``per_input`` output runs ``transform`` once per query-result row and
+    a ``per_row`` output runs ``transform`` once per query-result row and
     derives one stream beside each row's inputs, while a ``named`` output
     runs it once over the complete result and owns one absolute stream. The
     two may be declared together only when the query resolves to a single
@@ -445,7 +478,7 @@ class RevisionStore:
             consumed = 0 if backfill else current
             self._execute(conn, "INSERT INTO binding_progress VALUES (?, ?)", [binding.progress_key, consumed])
             return consumed
-    def next_batch(self, binding: Binding) -> InputBatch | None:
+    def next_batch(self, binding: Binding) -> Batch | None:
         # One read transaction is the snapshot boundary described by proposal.
         conn = self.store._connect()
         try:
@@ -470,7 +503,7 @@ class RevisionStore:
             conn.rollback(); raise
         finally: conn.close()
 
-    def preview_batch(self, binding: Binding) -> InputBatch | None:
+    def preview_batch(self, binding: Binding) -> Batch | None:
         """Build a batch over all stored input data, touching no durable state.
 
         This is the read half of an invocation without the write half: no
@@ -489,7 +522,7 @@ class RevisionStore:
             conn.rollback(); raise
         finally: conn.close()
 
-    def _build_batch(self, conn: Any, binding: Binding, previous: int, target: int) -> InputBatch | None:
+    def _build_batch(self, conn: Any, binding: Binding, previous: int, target: int) -> Batch | None:
         """Read one coherent batch for the revisions in ``(previous, target]``."""
         refs = [d.ref_uri for values in binding.inputs.values() for d in values]
         if not refs or target == previous: return None
@@ -502,7 +535,8 @@ class RevisionStore:
             read = TimeWindow(extent[0].replace(tzinfo=UTC) if extent[0].tzinfo is None else extent[0], extent[1].replace(tzinfo=UTC) if extent[1].tzinfo is None else extent[1])
         else: read = TimeWindow(changed_window.start-binding.lookback, changed_window.end+binding.lookback_after)
         inputs = {alias: self._stream_set(conn, alias, descriptors, read, previous, target) for alias, descriptors in binding.inputs.items()}
-        return InputBatch(binding.signature, binding.graph_revision, previous, target, changed_window, read, inputs, binding.entities)
+        return Batch(inputs, InputBatch(binding.signature, binding.graph_revision, previous,
+                                       target, changed_window, read, binding.entities))
     def _stream_set(self, conn: Any, alias: str, descriptors: tuple[StreamDescriptor,...], window: TimeWindow, previous: int, target: int) -> StreamSet:
         refs = [x.ref_uri for x in descriptors]
         if not refs: return StreamSet(alias, window, descriptors, converter=self.unit_converter)
@@ -517,10 +551,10 @@ class RevisionStore:
         # advanced by this batch. Windowed transformations often need both.
         changed = table.filter(pa.array([previous < row[4] <= target for row in rows]))
         return StreamSet(alias, window, descriptors, table, changed, converter=self.unit_converter)
-    def commit(self, binding: Binding, batch: InputBatch, results: Mapping[str, pa.Table]) -> bool:
+    def commit(self, binding: Binding, batch: Batch, results: Mapping[str, pa.Table]) -> bool:
         return self.commit_wave(((binding, batch, results),)).get(binding.signature, False)
 
-    def commit_wave(self, commits: Iterable[tuple[Binding, InputBatch, Mapping[str, pa.Table]]]) -> Mapping[str, bool]:
+    def commit_wave(self, commits: Iterable[tuple[Binding, Batch, Mapping[str, pa.Table]]]) -> Mapping[str, bool]:
         """Commit independent completed work in one revision transaction."""
         completed = tuple(commits)
         if not completed:
@@ -529,7 +563,7 @@ class RevisionStore:
             accepted = []
             for binding, batch, results in completed:
                 row = self._execute(conn, "SELECT consumed_revision FROM binding_progress WHERE progress_key=?", [binding.progress_key]).fetchone()
-                if row is not None and int(row[0]) == batch.from_revision:
+                if row is not None and int(row[0]) == batch.context.from_revision:
                     accepted.append((binding, batch, results))
             # Commit the full wave atomically. A dependent layer can then see
             # either all of its predecessors' outputs or none of them.
@@ -555,21 +589,21 @@ class RevisionStore:
                     import polars as pl
                     self.store._insert_frame(conn, pl.from_arrow(incoming), revision)
             for binding, batch, _ in accepted:
-                self._execute(conn, "UPDATE binding_progress SET consumed_revision=? WHERE progress_key=?", [batch.to_revision, binding.progress_key])
+                self._execute(conn, "UPDATE binding_progress SET consumed_revision=? WHERE progress_key=?", [batch.context.to_revision, binding.progress_key])
             return {binding.signature: True for binding, _, _ in accepted}
 
 
 class Executor(Protocol):
-    def execute(self, application: App, batch: InputBatch,
+    def execute(self, application: App, batch: Batch,
                 ports: Mapping[str, tuple[str, OutputSpec]]) -> Mapping[str, pa.Table]: ...
 
 
 class InProcessExecutor:
     """Deterministic executor useful for tests; it has the same task boundary."""
-    def execute(self, application: App, batch: InputBatch,
+    def execute(self, application: App, batch: Batch,
                 ports: Mapping[str, tuple[str, OutputSpec]]) -> Mapping[str, pa.Table]:
         output = OutputBuilder(ports)
-        application.transform(batch.inputs, output, batch)
+        application.transform(batch.inputs, output, batch.context)
         return output.values
 
 
@@ -580,7 +614,7 @@ class _TaskResult:
     finished_at: float
 
 
-def _ray_transform(application: App, batch: InputBatch,
+def _ray_transform(application: App, batch: Batch,
                    ports: Mapping[str, tuple[str, OutputSpec]]) -> _TaskResult:
     started_at = time()
     outputs = InProcessExecutor().execute(application, batch, ports)
@@ -612,7 +646,7 @@ class RayExecutor:
         if self._owns_cluster and self._ray.is_initialized():
             self._ray.shutdown()
 
-    def submit(self, application: App, batch: InputBatch,
+    def submit(self, application: App, batch: Batch,
                ports: Mapping[str, tuple[str, OutputSpec]]) -> Any:
         """Submit work without waiting, returning Ray's dependency token."""
         # Arrow-bearing batches are put once in Ray's object store; retries and
@@ -623,7 +657,7 @@ class RayExecutor:
     def resolve(self, ticket: Any) -> _TaskResult:
         return self._ray.get(ticket)
 
-    def execute(self, application: App, batch: InputBatch,
+    def execute(self, application: App, batch: Batch,
                 ports: Mapping[str, tuple[str, OutputSpec]]) -> Mapping[str, pa.Table]:
         return self.resolve(self.submit(application, batch, ports)).outputs
 
@@ -632,7 +666,7 @@ class RayExecutor:
 class _Invocation:
     """A claimed durable batch held until its result is committed or discarded."""
     binding: Binding
-    batch: InputBatch
+    batch: Batch
     lock: Any
 
 
