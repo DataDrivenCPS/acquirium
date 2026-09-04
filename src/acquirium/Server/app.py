@@ -536,15 +536,19 @@ def deploy_app(name: str, request: AppRegistration) -> dict[str, Any]:
 
 
 @app.post("/apps/check")
-def check_app(request: AppRegistration, limit: int | None = None) -> dict[str, Any]:
+def check_app(request: AppRegistration, limit: int | None = None,
+              search_path: str | None = None) -> dict[str, Any]:
     """Run an app against stored data and return its output without saving it.
 
     Every computed row is returned unless ``limit`` keeps only the first few
-    of each output.
+    of each output. ``search_path`` is a directory on the server's filesystem
+    to look in for the app's module, letting a file that is not otherwise
+    importable be checked; deployment has no such escape hatch.
     """
     try:
         deployment = Deployment.from_json(request.model_dump_json())
-        return {"ok": True, **app.state.manager.check_app(deployment, limit=limit)}
+        return {"ok": True, **app.state.manager.check_app(
+            deployment, limit=limit, search_path=search_path)}
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error))
 

@@ -355,8 +355,33 @@ result = client.check_app(NormalizeTemperatures, parameters={"offset": 273.15})
 rows = result["bindings"][0]["outputs"]["celsius"]["values"]
 ```
 
-The server imports the app by module path, so the class must be importable
-there exactly as it is locally — the same requirement deployment has.
+A check runs the app *on the server*, so the file has to exist there. When
+you name a file (`./my_app.py:MyApp`, or any relative path), the CLI sends
+its directory along, so a server on the same machine can import it wherever
+it sits — no need to install it or move it next to the config first. Against
+a server on another machine or in a container, copy the file somewhere that
+server imports from. Deployment is stricter: it stores only a module path,
+so a deployed app must be importable by the server on its own.
+
+Editing an app and re-checking always runs the new code — a check reloads a
+module whose file has changed rather than reusing what it imported before.
+
+### Debugging a check
+
+By default the app runs on the server, so a `breakpoint()` in `transform`
+opens a console on the server's stdin, where you cannot reach it. `--local`
+runs the app in your own process instead, reading its inputs over the API:
+
+```bash
+uv run acquirium app check ./normalize_temperatures.py:NormalizeTemperatures --local
+```
+
+Now `breakpoint()` stops in the terminal you ran the command from, and a
+failing `transform` raises a full traceback there rather than being reported
+as a per-binding error. The results are otherwise identical, down to the
+derived stream identities. Running locally also sidesteps importing
+entirely: the server never loads your app, so nothing needs to be
+importable there.
 
 ## Pattern: fault detection
 

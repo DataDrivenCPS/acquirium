@@ -65,7 +65,7 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 
 | method | description |
 |---|---|
-| `check_app(target: type[App], *, parameters=None, limit=None) -> dict` | Dry-run an app against stored data and return what it computed; nothing is deployed or saved. Every computed row comes back unless `limit` heads each output. |
+| `check_app(target: type[App], *, parameters=None, limit=None, search_path=None) -> dict` | Dry-run an app against stored data and return what it computed; nothing is deployed or saved. Every computed row comes back unless `limit` heads each output. `search_path` defaults to the directory of the class's module, so a local server can import it. |
 | `deploy_app(target: type[App], *, parameters=None) -> dict` | Persist and deploy an importable app class; `parameters` are passed to its constructor. |
 | `remove_app(name: str) -> dict` | Remove a durable app deployment by name. |
 | `app_dag() -> nx.DiGraph` | Return the compiled binding DAG; nodes describe concrete inputs, outputs, policies, and revision progress. |
@@ -233,7 +233,7 @@ and are listed once above.
 
 | method | description |
 |---|---|
-| `check_app(definition: dict, limit=None) -> dict` | Raw HTTP form behind `Acquirium.check_app`. |
+| `check_app(definition: dict, limit=None, search_path=None) -> dict` | Raw HTTP form behind `Acquirium.check_app`. |
 | `deploy_app(definition: dict) -> dict` | Raw HTTP form behind `Acquirium.deploy_app`; the high-level client builds the definition from a class. |
 | `remove_app(name: str) -> dict` | Remove a deployment. |
 | `materialization_dag() -> dict` | Return the server's raw binding-DAG payload. |

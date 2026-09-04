@@ -38,9 +38,11 @@ def app_file(tmp_path: Path) -> Path:
 
 
 def test_load_app_target_reads_a_file_path(app_file: Path):
-    target = _load_app_target(f"{app_file}:Doubler")
+    target, source_dir = _load_app_target(f"{app_file}:Doubler")
 
     assert target.__name__ == "Doubler"
+    # The directory travels with the class so the server can be told where it is.
+    assert source_dir == str(app_file.parent)
     with pytest.raises(ValueError, match="was not found"):
         _load_app_target(f"{app_file}:Missing")
     with pytest.raises(ValueError, match="module_or_file:ClassName"):
@@ -80,7 +82,7 @@ def test_check_prints_matched_inputs_and_computed_rows(monkeypatch, app_file: Pa
     # The class is sent as a definition; the check never deploys it.
     assert capture["url"].endswith("/apps/check")
     assert capture["definition"]["name"] == "doubler"
-    assert capture["params"] == {"limit": 2}
+    assert capture["params"] == {"limit": 2, "search_path": str(app_file.parent)}
 
 
 def test_check_defaults_to_five_rows_and_n_zero_asks_for_all(monkeypatch, app_file: Path):
@@ -88,11 +90,29 @@ def test_check_defaults_to_five_rows_and_n_zero_asks_for_all(monkeypatch, app_fi
 
     capture: dict = {}
     _run(monkeypatch, app_file, binding, capture, extra=())
-    assert capture["params"] == {"limit": 5}
+    assert capture["params"]["limit"] == 5
 
     capture.clear()
     _run(monkeypatch, app_file, binding, capture, extra=("-n", "0"))
-    assert capture["params"] == {}
+    assert "limit" not in capture["params"]
+
+
+def test_a_module_spec_sends_no_search_path(monkeypatch, app_file: Path):
+    import requests
+
+    capture: dict = {}
+
+    def fake_post(url, json=None, params=None, timeout=None):
+        capture.update({"params": params})
+        return _FakeResponse({"ok": True, "app": "doubler", "graph_revision": 1, "bindings": []})
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    monkeypatch.syspath_prepend(str(app_file.parent))
+    result = CliRunner().invoke(app, ["app", "check", "doubler_app:Doubler"])
+
+    # An importable module needs no hint about where it lives.
+    assert result.exit_code == 0
+    assert "search_path" not in capture["params"]
 
 
 def test_check_exits_nonzero_when_a_binding_failed(monkeypatch, app_file: Path):

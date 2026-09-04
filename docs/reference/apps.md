@@ -410,6 +410,46 @@ returns what it computed. It writes nothing: the app is not registered, its
 derived streams are not created, no progress row is written or advanced, and
 no revision is allocated. A deployed app of the same name is unaffected.
 
+The app runs on the server, which imports it by module name. `search_path`
+names a directory on the server's filesystem to look in first, so a file
+that is not otherwise importable there can still be checked: the CLI sends
+the directory of any file spec it was given, and `Acquirium.check_app` sends
+the directory of the class's own module (pass `search_path=""` to send
+none). It applies to checks only — a deployed app must be importable by the
+server on its own, since it is loaded again long after the request that
+created it.
+
+A module whose file has changed since the server imported it is reloaded, so
+editing an app and re-checking runs the new code rather than the code the
+process first loaded.
+
+### Running the check locally
+
+```bash
+uv run acquirium app check ./temperature_normalizer.py:TemperatureNormalizer --local
+```
+
+```python
+from acquirium.Materialization import local
+result = local.check_app(client, TemperatureNormalizer, parameters={"offset": 273.15})
+```
+
+The app is compiled and run in the caller's process, with its inputs fetched
+over the client API, and returns the same result document. Three things
+follow from running here rather than on the server:
+
+- `breakpoint()` opens a console in the calling terminal, and debuggers and
+  profilers attach to the app normally.
+- A failing `transform` raises where it was called, with its traceback,
+  instead of being captured in that binding's `error` field. One broken
+  binding therefore stops the check.
+- The server never imports the app, so nothing needs to be importable there
+  and `search_path` is irrelevant.
+
+Everything else matches a server-side check, including the derived stream
+identities each output would be published under. Input rows travel over HTTP,
+so a check reading a large extent is slower this way.
+
 The result document is:
 
 ```text

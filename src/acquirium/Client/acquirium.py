@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import math
 import json
+import sys
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Iterable, Sequence, Callable, Mapping, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -374,7 +376,7 @@ class Acquirium:
 
     def check_app(
         self, target: object, *, parameters: Mapping[str, Any] | None = None,
-        limit: int | None = None,
+        limit: int | None = None, search_path: str | None = None,
     ) -> dict[str, Any]:
         """Run an app against stored data and return what it computed.
 
@@ -385,11 +387,20 @@ class Acquirium:
 
         Every computed row comes back unless ``limit`` keeps only the first
         few of each output.
+
+        The directory holding ``target``'s module is sent as a search path, so
+        an app the server cannot otherwise import is still checkable when the
+        two share a filesystem. Pass ``search_path=""`` to send none.
         """
         if not isinstance(target, type) or not issubclass(target, App):
             raise ValueError("check_app expects an App class")
         deployment = Deployment.from_class(target, parameters=parameters)
-        return self.client.check_app(json.loads(deployment.to_json()), limit=limit)
+        if search_path is None:
+            module_file = getattr(sys.modules.get(target.__module__), "__file__", None)
+            search_path = str(Path(module_file).resolve().parent) if module_file else None
+        return self.client.check_app(
+            json.loads(deployment.to_json()), limit=limit, search_path=search_path or None
+        )
 
     def app_dag(self):
         """Return the active materialization plan as a NetworkX DiGraph."""
