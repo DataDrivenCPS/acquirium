@@ -7,13 +7,13 @@ results as new streams. Those **derived streams** behave like any other stream
 in the plant: you can query them, plot them, export them, and feed them into
 further apps.
 
-Apps cover the recurring analytics of a treatment plant:
+Most of a plant's recurring calculations take one of four shapes:
 
 - **Soft sensors** — a value nobody measures directly, computed from ones that
   are: pressure drop across a membrane, specific flux, an estimated chemical
   dose from flow and concentration.
-- **Cleaning and conditioning** — one stream per sensor in a known unit,
-  despiked, range-checked, gap-filled.
+- **Cleaned-up copies of raw data** — one stream per sensor in a known unit,
+  with spikes removed, out-of-range values dropped, and gaps filled.
 - **Fault detection and alarms** — a stream that carries a value only when
   something is wrong: a threshold exceeded, a sensor gone quiet.
 - **KPIs and rollups** — plant-wide totals, fleet averages, compliance figures,
@@ -76,8 +76,8 @@ That is a complete, deployable app. Reading it top to bottom:
 - **`build_query` says what to read.** It selects measurements *semantically* —
   every point whose quantity kind is temperature, whatever its equipment,
   vendor or unit — rather than listing sensor IDs. The word `temperature` in
-  `alias="temperature"` is a name you choose; it is how the data reaches your
-  calculation later.
+  `alias="temperature"` is a name you choose, and you use that same name to
+  reach the data inside `transform`.
 - **`outputs` says what to write.** `per_row` means "run me once for each
   measurement you matched, and publish one derived stream beside each of
   them". Fifty matched sensors mean fifty Celsius streams, and you name none
@@ -161,8 +161,9 @@ what your code computed before you deploy it.
 ## From query to calls
 
 Three steps get you from a plant model to a running calculation. The query
-finds streams; the output declaration decides how those streams group into
-calls; each call receives three arguments.
+finds the streams; what you declare as outputs decides how those streams are
+grouped into *calls* — one call being one run of your `transform`; and each
+call receives three arguments.
 
 ### 1. The query finds your streams
 
@@ -197,13 +198,13 @@ plant model contains.
   urn:plant/ro-2          PT-201 "RO-2 feed"      PT-202 "RO-2 permeate"
   urn:plant/ro-3          PT-301 "RO-3 feed"      PT-302 "RO-3 permeate"
                           └──────────────────────────────────────┘
-                          these aliases resolve to streams, so they
-                          also arrive as inputs["feed"], inputs["permeate"]
+                          these two columns are sensors, so their data
+                          arrives as inputs["feed"] and inputs["permeate"]
 ```
 
-This table is metadata, not data. It reaches your code as `context.result`,
-and the aliases that resolve to actual streams also arrive in `inputs`
-carrying their measurements. Aliases that name equipment — `ro` above — are
+The table describes what was found; it holds no measurements. It reaches your
+code as `context.result`, and the aliases that name sensors also arrive in
+`inputs`, carrying their data. Aliases that name equipment — `ro` above — are
 there to read, group by, or ignore.
 
 If you are unsure what your query matches, build it interactively first with
@@ -236,7 +237,7 @@ named outputs — one call for the whole table
 | declared output | calls to `transform` | derived streams | use it for |
 |---|---|---|---|
 | `aq.output.per_row(...)` | one per match | one per match | the same calculation applied to every match: a conversion, a smoother, an alarm |
-| `aq.output.named("plant-total", ...)` | one, holding every match | one, named exactly as you say | a calculation over all matches: a fleet average, a plant total |
+| `aq.output.named("plant-total", ...)` | one call, holding every match | one, named exactly as you say | a calculation over all matches: a fleet average, a plant total |
 
 **One row is not the same thing as one sensor.** A row is a combination the
 query found, and a combination can involve several sensors: the query above
@@ -245,10 +246,10 @@ pairs the feed and permeate pressures of the same RO unit, so a single
 that unit. Three RO units mean three calls and three delta streams — not
 six.
 
-A named stream has exactly one app writing it, so the two kinds cannot be
-mixed in an app whose query matches several rows. Acquirium says so when you
-check or deploy it, and names the fix: compute the aggregate in a second app
-that reads the first app's derived streams.
+A named stream has exactly one app writing it, so you cannot declare both
+kinds of output in an app whose query matches more than one row. Acquirium
+says so when you check or deploy it, and tells you the fix: compute the
+aggregate in a second app that reads the first app's derived streams.
 
 ### 3. What each call receives
 
@@ -273,7 +274,7 @@ inputs["feed"].df()         # polars: ref_uri | time | value      (288 rows)
 context.row                 # {'ro': 'urn:plant/ro-1',
                             #  'feed': 'urn:…/point-101', 'feed_ref': 'urn:…/PT-101',
                             #  'feed.label': 'RO-1 feed', 'feed.unit': '…/PSI', …}
-context.result              # every matched row — all three units — as a frame
+context.result              # every matched row — all three units — as a dataframe
 context.read_window         # TimeWindow(start=…09:57+00:00, end=…10:04+00:00)
 context.changed_window      # TimeWindow(start=…10:02+00:00, end=…10:04+00:00)
 
@@ -381,33 +382,34 @@ frame = aq.align(inputs, every="1m", aggregate="mean")
 
 The result is one wide Polars frame: a `time` column plus one column per
 stream, named after the alias (or `alias[label]` when an alias holds several
-streams). Buckets a stream never reported in hold nulls, which
+streams). Where a stream reported nothing in a bucket, its column holds a
+null, which
 [Polars' null handling](https://docs.pola.rs/user-guide/expressions/missing-data/)
-lets you fill, drop, or propagate as your calculation requires. `aggregate`
+lets you fill, drop, or carry through as your calculation requires. `aggregate`
 may be `mean`, `min`, `max`, `sum`, `first`, `last`, `median`, or `count`.
 
 ## `output`: where results go
 
-Each key of the `outputs` declaration is a **port** — the name you use inside
-the class. Assign a table to it and those rows become the port's derived
-stream:
+Each key of the `outputs` declaration is a **port** — the name you use to
+refer to that output inside the class. Assign a table to a port and its rows
+become that port's derived stream:
 
 ```python
 output["celsius"] = frame.select("time", "value")
 ```
 
 The table may be a Polars dataframe, a pandas dataframe, an Arrow table, or
-Arrow record batches. Whatever the container, its schema must be exactly two
-columns:
+Arrow record batches. Whichever you use, it must have exactly two columns and
+no others:
 
 | column | type | rules |
 |---|---|---|
 | `time` | timezone-aware timestamp | non-null; no duplicates within one assignment; normalized to UTC and sorted for you |
 | `value` | number for a `"numeric"` port, string for a `"text"` port | non-null |
 
-Two habits follow from that. Drop `ref_uri` before emitting an input frame —
-`select("time", "value")` is the usual way — and drop or fill nulls rather
-than publishing them.
+Two things follow in practice: drop the `ref_uri` column before publishing a
+frame that came from `inputs` — `select("time", "value")` is the usual way —
+and drop or fill nulls rather than publishing them.
 
 A few rules keep published streams predictable:
 
@@ -421,7 +423,8 @@ A few rules keep published streams predictable:
 - **Writing a timestamp that already has a value replaces it.** This is the
   third rule of the mental model above, and it is what makes recomputing a
   window safe.
-- **Everything in one call commits together** with the app's saved position.
+- **Everything one call publishes is saved together**, along with the app's
+  record of how far it has read, so the two can never disagree.
 
 The declaration itself is where a derived stream's metadata lives — unit,
 label, quantity kind, the point it attaches to:
@@ -437,15 +440,16 @@ outputs = {
 }
 ```
 
-Nothing here is inferred from what you publish: `value_kind` is required, and
-the rest is exactly what you declare, in the same spirit as a driver
+None of this is guessed from the data you publish: `value_kind` is required,
+and the rest is exactly what you declare, in the same spirit as a driver
 registering a stream. The full argument list is in the
 [app reference](reference/apps.md#declaration-arguments).
 
 Derived streams are registered under the app that produced them, with source
 `derived:<app name>`. A `per_row` port's stream name is generated from the
-port and its bound inputs, so it is stable across restarts and code edits; a
-`named` port's stream name is exactly the string you gave. Either way, the
+port name and the sensors that call reads, so it stays the same across
+restarts and code edits; a `named` port's stream name is exactly the string
+you gave. Either way, the
 derived stream is queryable like any other measurement — including by the
 next app.
 
@@ -459,13 +463,14 @@ which time range, and why it happened.
 | `.row` | the one matched row this call is computing, as a dictionary — `per_row` apps only |
 | `.result` | every row the query matched, as a Polars dataframe — the same table in every call |
 | `.changed_window` | the timestamps of the new data: *why* this call happened |
-| `.read_window` | the range actually loaded, after `lookback`/`lookahead` padding |
+| `.read_window` | the range actually loaded, once `lookback` and `lookahead` have widened it |
 | `.from_revision`, `.to_revision`, `.graph_revision`, `.binding_signature` | runtime diagnostics, useful in logs |
 
 `context.row` and `context.result` use the same column names as
-[`Query.metadata()`](reference/client-api.md): an alias holds the matched URI,
-with `<alias>_ref`, `<alias>.label` and `<alias>.unit` beside a stream-bearing
-alias. So a `per_row` app can read the equipment its sensors belong to:
+[`Query.metadata()`](reference/client-api.md): a column named for each alias
+holds the URI that matched it, and where that alias is a sensor, three more
+columns sit beside it — `<alias>_ref`, `<alias>.label` and `<alias>.unit`. So
+a `per_row` app can read which equipment its sensors belong to:
 
 ```python
 unit_uri = context.row["ro"]                 # which RO unit this call is for
@@ -829,32 +834,34 @@ the grid is right, and 78 imputed values is the size of the two holes.
 
 Several things in that app generalize beyond gap filling.
 
-**Choosing the window is the real design decision.** A hole can only be filled once the
-reading on its far side exists — and that reading is what eventually triggers
-the run. `lookback` has to be long enough to reach back across the hole from
-there, and `lookahead` gives the same context when a historian later backfills
-data into the middle of history. The seven days here also feed the daily
-profile: it is built from the readings in the window, not from a stored model,
-so the app stays a pure function of what it was handed. Widen the window and
-you get a more stable profile and more work per run; narrow it and the app
-gets cheaper but can no longer close long outages. `lookback = "all"` is the
-extreme: correct, self-healing, and increasingly expensive as the stream grows.
+**Choosing the window is the real design decision.** A hole can only be
+filled once the reading on its far side exists — and that reading is what
+eventually triggers the run. So `lookback` has to be long enough to reach back
+across the hole from there, and `lookahead` gives the same context when a
+historian later backfills data into the middle of history. The seven days here
+also feed the daily profile, which is built from the readings in the window
+rather than from a stored model, so the app depends on nothing but the data it
+was handed. Widen the window and the profile is steadier but each run does
+more work; narrow it and the app is cheaper but can no longer close long
+outages. `lookback = "all"` is the far end of that trade: always correct,
+always self-healing, and steadily more expensive as the stream grows.
 
-**Re-running the app is what closes a hole.** During an outage the app still runs on
-whatever arrives, and the hole stays open at its trailing edge — `upsample`
-only builds a grid between the first and last reading it can see, so the app
-never invents data beyond its inputs. When the sensor comes back, the run
-triggered by the new data reaches back over the outage, computes the whole
-stretch, and overwrites what it published before. Nothing in the app handles
-that case; the overwrite rule handles it.
+**Re-running the app is what closes a hole.** During an outage the app keeps
+running on whatever data does arrive, and the hole stays open at its trailing
+edge: the grid is only built between the first and last reading the app can
+see, so it never invents values past the end of its inputs. When the sensor
+comes back, the run triggered by that new data reaches back over the outage,
+recomputes the whole stretch, and replaces what it published before. Nothing
+in the app handles the outage as a special case — replacing values by
+timestamp handles it.
 
 **Two outputs, for two different readers.** `filled` is what dashboards and
 downstream apps read. `method` is a text stream with one row per invented
-value, so anyone
-can see exactly which points were measured and which were manufactured, and
-a compliance report can exclude the latter. A port assigned an empty
-table publishes nothing, so a sensor with no holes produces no `method` rows
-at all — that derived stream only appears once there is something to say.
+value, so anyone can see which points were measured and which were
+manufactured, and a compliance report can leave the manufactured ones out. A
+port assigned an empty table publishes nothing, so a sensor with no holes
+produces no `method` rows at all — that stream appears only once there is
+something to say.
 
 **Settings belong in configuration, not in the code.** `cadence` and
 `max_interpolate_hours` are constructor arguments, so changing either one is a
