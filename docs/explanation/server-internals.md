@@ -9,10 +9,9 @@ title: Server internals
 Both backends store the same logical schema: a `timeseries` table (one row
 per stream and timestamp, with a `numeric_value` and a `text_value` column),
 the `streams` reference table, and the logbook.
-They key the rows differently.
-Timescale uses `ref_uri` directly; duckdb uses an integer `ref_id` and maps it
-back through a `ref_ids` table.
-Reads expose `ref_uri` either way.
+Both key the rows by an integer `ref_id` and map it back through a `ref_ids`
+table.
+Reads expose `ref_uri`.
 
 `duckdb` is the default: one file under the data directory, with no extra
 services to install or run.
