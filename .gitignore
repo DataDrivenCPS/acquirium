@@ -222,3 +222,6 @@ scripts/benchmark/scalability/*.csv
 dpr-trailer-data/
 
 .run_logs
+
+# Scores and failure dumps written by tests/test_resolve_text.py on each run.
+tests/text_match_results/
