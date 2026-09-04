@@ -26,8 +26,8 @@ def create_timeseries_store(
     ``backend="timescale"`` — returns :class:`TimescaleStore` (requires *pg_dsn*)
     ``backend="duckdb"``    — returns :class:`DuckDBStore` (requires *duckdb_path*)
 
-    The ``duckdb`` backend lazily imports ``duckdb`` so the package is not
-    required when using the TimescaleDB backend.
+    Both backends run on DuckDB: the timescale backend attaches the Postgres
+    database through DuckDB's ``postgres`` extension.
     """
     logger.debug("create_timeseries_store backend=%s recreate=%s", backend, recreate)
     if backend == "duckdb":

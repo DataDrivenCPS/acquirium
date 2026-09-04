@@ -1,38 +1,79 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Iterable, Iterator
-import hashlib
-import random
-import string
+"""TimescaleDB-backed timeseries store, driven through DuckDB.
 
-import psycopg
-from psycopg import sql
-from psycopg.types.json import Json
+The Postgres/TimescaleDB database is attached to an in-process DuckDB
+instance with DuckDB's ``postgres`` extension, and every read and write goes
+through DuckDB connections exactly as in :class:`DuckDBStore`, which this
+class extends. No psycopg, no ADBC. Select this backend at startup via:
 
-from acquirium.internals.models import Order, TimeseriesInfo, TimeInterval, LogEntry, TimeIntervalModel, compute_ref_uri
-from acquirium.Storage.base import TimeseriesStore
+    ACQUIRIUM_TIMESERIES_BACKEND=timescale
+    PG_DSN=postgresql://user:pass@host:5432/dbname
+
+**Reads** are the inherited DuckDB read path, run against the attached
+catalog: DuckDB pushes the ``ref_id``/``ts`` filters into the Postgres scan
+and streams the result over the binary COPY protocol. Parallel ctid-range
+scanning is disabled because Timescale chunks reuse ctids, and LIMIT is not
+pushed down, so a ``LIMIT n`` read still pulls the whole filtered range from
+Postgres before DuckDB cuts it.
+
+**Writes** cannot be the inherited DuckDB statements for the ``timeseries``
+hypertable: DuckDB executes its own DELETE/UPDATE/ON CONFLICT against an
+attached Postgres table by ctid, and on a hypertable a ctid identifies one
+row *per chunk*. Mutations are therefore merged server-side: the frame is
+staged into a per-store Postgres staging table by DuckDB (one COPY), then a
+single ``INSERT ... ON CONFLICT DO UPDATE`` runs on Postgres through
+``postgres_execute`` inside the same DuckDB transaction. The ``streams`` and
+``logs`` tables are plain tables and use the same staging path for
+uniformity. Staging tables are named ``_acquirium_stg_<kind>_<suffix>`` and
+dropped on :meth:`close`; ``recreate=True`` also sweeps any left behind.
+
+**Schema** mirrors :class:`DuckDBStore`: ``timeseries`` keyed by an integer
+``ref_id`` assigned from ``ref_ids``, naive-UTC ``TIMESTAMP`` columns, and
+``logs`` with two observation columns. It is a hypertable on ``ts`` with
+compression segmented by ``ref_id``. Databases written by the previous
+psycopg store (``ref_uri`` text keys, ``TIMESTAMPTZ``) are not readable;
+recreate them.
+
+**Concurrency** follows :class:`DuckDBStore`: an anchor connection keeps the
+named in-memory DuckDB instance (and its attached Postgres pool) alive,
+every operation opens its own DuckDB connection to it, writes are serialised
+by a lock, and ``begin()``/``commit()``/``rollback()`` span a DuckDB
+transaction, which the extension maps onto one Postgres transaction.
+"""
+
+from typing import Any
+from uuid import uuid4
 import logging
-import pyarrow as pa
+import threading
+
 import polars as pl
-from rdflib import URIRef
-from acquirium.Storage.values import (
-    normalize_value_kind,
-    normalize_value_mode,
-    prepare_value_columns,
-    split_value,
+
+from acquirium.Storage.duckdb_store import (
+    DuckDBStore,
+    LOGS_TABLE,
+    REF_IDS_SEQ,
+    REF_IDS_TABLE,
+    STREAMS_TABLE,
+    TIMESERIES_STREAMS_VIEW,
+    TIMESERIES_TABLE,
 )
 from acquirium.internals._log import timed_debug
 
 logger = logging.getLogger(__name__)
 
-TIMESERIES_TABLE = "timeseries"
-STREAMS_TABLE = "streams"
-LOGS_TABLE = "logs"
-TIMESERIES_STREAMS_VIEW = "timeseries_streams"
+CATALOG = "pg"
+SCHEMA = "public"
+_STAGING_PREFIX = "_acquirium_stg_"
+
+# Statement heads that produce a result set and go through postgres_query;
+# anything else runs through postgres_execute.
+_QUERY_HEADS = ("SELECT", "WITH", "VALUES", "TABLE", "SHOW", "EXPLAIN")
 
 
-class TimescaleStore(TimeseriesStore):
+class TimescaleStore(DuckDBStore):
+    """TimescaleDB implementation of the TimeseriesStore protocol via DuckDB."""
+
     def __init__(
         self,
         *,
@@ -40,646 +81,337 @@ class TimescaleStore(TimeseriesStore):
         connect_timeout: int | None = None,
         recreate: bool = False,
     ):
+        import duckdb  # lazy, as in DuckDBStore
+
+        if not dsn:
+            raise ValueError("TimescaleStore requires a dsn")
+        self._duckdb = duckdb
         self.dsn = dsn
-        self.db_path = self.dsn
-        # default autocommit so reads don't hold open transactions; explicit begin toggles off
-        logger.debug("TimescaleStore.__init__: connecting (recreate=%s)", recreate)
-        with timed_debug(logger, "psycopg.connect"):
-            self.conn = psycopg.connect(self.dsn, autocommit=True, connect_timeout=connect_timeout)
-        self._in_tx = False
+        self.db_path = dsn
+        self._bind_table_names(f"{CATALOG}.{SCHEMA}.")
+        self._lock = threading.Lock()
+        self._tx_conn = None
+        suffix = uuid4().hex[:12]
+        # Named in-memory instance: connections opened with the same name share
+        # it, so the attached Postgres catalog and its connection pool are set up
+        # once and every per-operation connection reuses them.
+        self._instance = f":memory:acquirium-timescale-{suffix}"
+        self._stg_timeseries = f"{CATALOG}.{SCHEMA}.{_STAGING_PREFIX}timeseries_{suffix}"
+        self._stg_streams = f"{CATALOG}.{SCHEMA}.{_STAGING_PREFIX}streams_{suffix}"
+        self._stg_logs = f"{CATALOG}.{SCHEMA}.{_STAGING_PREFIX}logs_{suffix}"
+
+        logger.debug("TimescaleStore.__init__: attaching (recreate=%s)", recreate)
+        with timed_debug(logger, "TimescaleStore attach"):
+            self._anchor_conn = duckdb.connect(self._instance)
+            self._anchor_conn.execute("INSTALL postgres; LOAD postgres;")
+            attach_dsn = _with_connect_timeout(dsn, connect_timeout).replace("'", "''")
+            self._anchor_conn.execute(f"ATTACH '{attach_dsn}' AS {CATALOG} (TYPE postgres)")
+            # ctid-range parallel scans assume one heap; a hypertable is many.
+            self._anchor_conn.execute("SET GLOBAL pg_use_ctid_scan = false")
+
         if recreate:
-            logger.debug("TimescaleStore.__init__: dropping existing tables/views")
-            with self.conn.cursor() as cur:
-                cur.execute(sql.SQL("DROP VIEW IF EXISTS {} CASCADE").format(sql.Identifier(TIMESERIES_STREAMS_VIEW)))
-                cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(TIMESERIES_TABLE)))
-                cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(STREAMS_TABLE)))
-                cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(LOGS_TABLE)))
+            logger.debug("TimescaleStore.__init__: dropping existing tables/views (recreate=True)")
+            staging_like = _STAGING_PREFIX.replace("_", "\\_")
+            with self._lock, self._own_conn() as conn:
+                self._pg_execute(
+                    conn,
+                    f"""
+                    DROP VIEW IF EXISTS {TIMESERIES_STREAMS_VIEW} CASCADE;
+                    DROP TABLE IF EXISTS {TIMESERIES_TABLE} CASCADE;
+                    DROP TABLE IF EXISTS {STREAMS_TABLE} CASCADE;
+                    DROP TABLE IF EXISTS {LOGS_TABLE} CASCADE;
+                    DROP TABLE IF EXISTS {REF_IDS_TABLE} CASCADE;
+                    DROP SEQUENCE IF EXISTS {REF_IDS_SEQ};
+                    DO $sweep$
+                    DECLARE r record;
+                    BEGIN
+                        FOR r IN SELECT tablename FROM pg_tables
+                                 WHERE schemaname = '{SCHEMA}'
+                                   AND tablename LIKE '{staging_like}%'
+                        LOOP
+                            EXECUTE format('DROP TABLE IF EXISTS {SCHEMA}.%I', r.tablename);
+                        END LOOP;
+                    END
+                    $sweep$;
+                    """,
+                )
+                conn.execute("CALL pg_clear_cache()")
         self.ensure_table()
         logger.debug("TimescaleStore.__init__: ready")
 
-    # -------------------- table management --------------------
-    def ensure_table(self) -> str:
-        with timed_debug(logger, "ensure_table"), self.conn.cursor() as cur:
-            cur.execute("CREATE EXTENSION IF NOT EXISTS timescaledb;")
-            cur.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {TIMESERIES_TABLE} (
-                    ref_uri TEXT NOT NULL,
-                    ts TIMESTAMPTZ NOT NULL,
-                    numeric_value DOUBLE PRECISION,
-                    text_value TEXT,
-                    CHECK (numeric_value IS NULL OR text_value IS NULL)
-                );
-                """
-            )
-            # Create hypertable before enabling Timescale features. We target
-            # new Acquirium-managed stores here; older point_uri/handle schemas
-            # should be recreated rather than migrated in-place.
-            cur.execute(
-                sql.SQL(
-                    "SELECT create_hypertable(%s, %s, if_not_exists => TRUE);"
-                ),
-                (TIMESERIES_TABLE, "ts"),
-            )
-            # Unique index supports idempotent upserts and scans by stream/time.
-            # Timescale unique indexes on hypertables must include the time
-            # partition column; (ref_uri, ts) satisfies that requirement.
-            cur.execute(
-                f"CREATE UNIQUE INDEX IF NOT EXISTS idx_timeseries_ref_ts_unique ON {TIMESERIES_TABLE} (ref_uri, ts);"
-            )
-            # Segment compressed chunks by stream and order newest-first within
-            # each stream. This matches the common "latest values" read path
-            # while still supporting ascending scans via reverse index scans.
-            cur.execute(
-                f"""
-                ALTER TABLE {TIMESERIES_TABLE}
-                SET (
-                    timescaledb.compress,
-                    timescaledb.compress_segmentby = 'ref_uri',
-                    timescaledb.compress_orderby = 'ts DESC'
-                );
-                """
-            )
-            cur.execute(
-                sql.SQL("SELECT add_compression_policy({}, INTERVAL '7 days', if_not_exists => TRUE);").format(
-                    sql.Literal(TIMESERIES_TABLE)
-                )
-            )
-            cur.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {STREAMS_TABLE} (
-                    ref_uri TEXT PRIMARY KEY,
-                    point_uri TEXT,
-                    source_id TEXT NOT NULL,
-                    ref_name TEXT NOT NULL,
-                    value_kind TEXT NOT NULL DEFAULT 'text'
-                );
-                """
-            )
-            cur.execute(
-                f"ALTER TABLE {STREAMS_TABLE} ALTER COLUMN point_uri DROP NOT NULL;"
-            )
-            cur.execute(
-                f"CREATE UNIQUE INDEX IF NOT EXISTS idx_streams_source_ref_name ON {STREAMS_TABLE} (source_id, ref_name);"
-            )
-            cur.execute(
-                f"CREATE INDEX IF NOT EXISTS idx_streams_point_uri ON {STREAMS_TABLE} (point_uri) WHERE point_uri IS NOT NULL;"
-            )
-            cur.execute(
-                f"""
-                CREATE OR REPLACE VIEW {TIMESERIES_STREAMS_VIEW} AS
-                SELECT
-                    t.ref_uri,
-                    s.point_uri,
-                    s.source_id,
-                    s.ref_name,
-                    COALESCE(s.value_kind, 'text') AS value_kind,
-                    t.ts,
-                    t.numeric_value AS value_numeric,
-                    t.text_value AS value_text
-                FROM {TIMESERIES_TABLE} AS t
-                LEFT JOIN {STREAMS_TABLE} AS s
-                    ON t.ref_uri = s.ref_uri;
-                """
-            )
-            cur.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {LOGS_TABLE} (
-                    point_uri TEXT NOT NULL,
-                    timestamp TIMESTAMPTZ NOT NULL,
-                    observed tstzrange,
-                    message TEXT NOT NULL
-                );
-                """
-            )
-            # index to support lookups by point_uri, timestamp
-            cur.execute(
-                f"CREATE UNIQUE INDEX IF NOT EXISTS idx_logs_point_time ON {LOGS_TABLE} (point_uri, timestamp);"
-            )
-            # index to support lookups by observed time range
-            cur.execute(
-                f"CREATE INDEX IF NOT EXISTS idx_logs_observed ON {LOGS_TABLE} USING GIST (observed);"
-            )
-        if not self._in_tx:
-            self.conn.commit()
-        return TIMESERIES_TABLE
+    # ---- connections ----
 
-    # -------------------- mutations --------------------
-    def upsert_rows(
-        self,
-        ref_uri: str,
-        rows: Iterable[tuple[datetime, Any]],
-        *,
-        value_kind: str = "text",
-    ) -> int:
-        rows_list = list(rows)
-        logger.debug("upsert_rows ref_uri=%s rows=%d kind=%s", ref_uri, len(rows_list), value_kind)
-        if not rows_list:
-            return 0
-        payload = [
-            (ref_uri, self._to_utc(ts), *split_value(val, value_kind))
-            for ts, val in rows_list
-        ]
-        with timed_debug(logger, "upsert_rows INSERT n=%d", len(payload)), self.conn.cursor() as cur:
-            cur.executemany(
-                f"""
-                INSERT INTO {TIMESERIES_TABLE} (ref_uri, ts, numeric_value, text_value)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (ref_uri, ts) DO UPDATE SET
-                    numeric_value = EXCLUDED.numeric_value,
-                    text_value = EXCLUDED.text_value
-                """,
-                payload,
-            )
-        logger.debug("acquirium: upserted %d rows into %s", len(rows_list), TIMESERIES_TABLE)
-        return len(rows_list)
+    def _connect(self):
+        return self._duckdb.connect(self._instance)
 
-    def replace_rows(
-        self,
-        ref_uri: str,
-        rows: Iterable[tuple[datetime, Any]],
-        *,
-        value_kind: str = "text",
-    ) -> int:
-        logger.debug("replace_rows ref_uri=%s kind=%s", ref_uri, value_kind)
-        with timed_debug(logger, "replace_rows DELETE ref_uri=%s", ref_uri), self.conn.cursor() as cur:
-            cur.execute(sql.SQL("DELETE FROM {} WHERE ref_uri=%s").format(sql.Identifier(TIMESERIES_TABLE)), [ref_uri])
-        return self.upsert_rows(ref_uri, rows, value_kind=value_kind)
+    # ---- Postgres passthrough ----
 
-    def bulk_insert_polars(self, df: pl.DataFrame) -> int:
-        # Using polars to write to database via ADBC
-        # Input df format: columns ["ref_uri", "ts", "value"] or already split
-        # columns ["ref_uri", "ts", "numeric_value", "text_value"].
-        if df.is_empty():
-            logger.debug("bulk_insert_polars: empty DataFrame, skipping")
-            return 0
-        in_rows = len(df)
-        with timed_debug(logger, "bulk_insert_polars prepare/dedupe rows=%d", in_rows):
-            df = prepare_value_columns(df)
-            df = df.unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
-        deduped = len(df)
-        logger.debug("bulk_insert_polars: %d rows after dedupe (was %d)", deduped, in_rows)
-        random_string = ''.join(random.choice(string.ascii_lowercase) for _ in range(15))
-        with self.conn.cursor() as cur:
-            cur.execute(
-                f"""DROP TABLE IF EXISTS {random_string};"""
-            )
-            cur.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {random_string} (
-                ref_uri TEXT NOT NULL,
-                ts TIMESTAMPTZ NOT NULL,
-                numeric_value DOUBLE PRECISION,
-                text_value TEXT
-            );""")
+    @staticmethod
+    def _pg_execute(conn, sql: str) -> None:
+        """Run *sql* verbatim on Postgres, on the connection DuckDB has bound to
+        *conn*'s transaction (so it commits or rolls back with it)."""
+        conn.execute(f"CALL postgres_execute('{CATALOG}', $acq${sql}$acq$)")
+
+    def _stage(self, conn, df: pl.DataFrame, staging_table: str) -> None:
+        """Load *df* into *staging_table* through DuckDB (a single binary COPY)."""
+        cols = ", ".join(df.columns)
+        conn.register("_acquirium_staging_frame", df)
         try:
-            with timed_debug(logger, "bulk_insert_polars ADBC write rows=%d", deduped):
-                rows_affected = df.write_database(
-                    table_name=random_string,
-                    connection=self.dsn,
-                    engine="adbc",
-                    if_table_exists="append" # Use 'replace' to drop/create the table
-                )
-            with timed_debug(logger, "bulk_insert_polars merge into %s", TIMESERIES_TABLE), self.conn.cursor() as cur:
-                cur.execute(
-                    f"""
-                    INSERT INTO {TIMESERIES_TABLE} (ref_uri, ts, numeric_value, text_value)
-                    SELECT ref_uri, ts, numeric_value, text_value FROM {random_string}
-                    ON CONFLICT (ref_uri, ts) DO UPDATE SET
-                        numeric_value = EXCLUDED.numeric_value,
-                        text_value = EXCLUDED.text_value;
-                    """
-                )
-            logger.info(f"acquirium: bulk inserted {rows_affected} rows into {TIMESERIES_TABLE}")
-            return rows_affected
-        except Exception:
-            logger.exception("acquirium: bulk insert into %s failed", TIMESERIES_TABLE)
-            raise
+            conn.execute(f"INSERT INTO {staging_table} ({cols}) SELECT {cols} FROM _acquirium_staging_frame")
         finally:
-            with self.conn.cursor() as cur:
-                cur.execute(f"DROP TABLE IF EXISTS {random_string};")
+            conn.unregister("_acquirium_staging_frame")
 
-    # -------------------- stream references --------------------
-    def ensure_stream_ref(
-        self,
-        point_uri: str | None,
-        source_id: str,
-        ref_name: str,
-        ref_uri: URIRef | None = None,
-        value_kind: str = "text",
-    ) -> URIRef:
-        """Register a stream reference in the streams table.
+    # ---- table management ----
 
-        The ref URI is computed deterministically from (source_id, ref_name) via
-        :func:`compute_ref_uri`, so two sources with the same ref_name never
-        produce the same storage key. The ref URI is also used as the
-        TimescaleDB row key for the stream's data. Pass a precomputed ref_uri
-        to avoid recomputing it when already available.
-
-        Returns the ref URI.
-        """
-        if ref_uri is None:
-            ref_uri = compute_ref_uri(source_id, ref_name)
-        value_kind = normalize_value_kind(value_kind)
-        # logger.debug(
-        #     "ensure_stream_ref source=%s ref_name=%s point_uri=%s kind=%s",
-        #     source_id, ref_name, point_uri, value_kind,
-        # )
-        with self.conn.cursor() as cur:
-            cur.execute(
-                f"""
-                INSERT INTO {STREAMS_TABLE} (ref_uri, point_uri, source_id, ref_name, value_kind)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (ref_uri) DO UPDATE
-                    SET
-                        point_uri = COALESCE(EXCLUDED.point_uri, {STREAMS_TABLE}.point_uri),
-                        source_id = EXCLUDED.source_id,
-                        ref_name = EXCLUDED.ref_name,
-                        value_kind = EXCLUDED.value_kind
-                """,
-                (str(ref_uri), point_uri, source_id, ref_name, value_kind),
-            )
-        return ref_uri
-
-    def ensure_stream_refs(
-        self,
-        refs: Iterable[tuple[str | None, str, str, str | None, str]],
-    ) -> list[str]:
-        """Batch form of :meth:`ensure_stream_ref`.
-
-        Each entry is ``(point_uri, source_id, ref_name, ref_uri, value_kind)``.
-
-        COPY into a staging table and upsert from it in one statement, rather
-        than a statement per row: COPY streams the whole batch over the wire in
-        a single command, which beats even a pipelined executemany.
-        """
-        prepared: dict[str, tuple[Any, ...]] = {}
-        for point_uri, source_id, ref_name, ref_uri, value_kind in refs:
-            key = str(ref_uri if ref_uri is not None else compute_ref_uri(source_id, ref_name))
-            # Last occurrence wins, matching a sequence of individual upserts.
-            # ON CONFLICT DO UPDATE also refuses a source naming the same row
-            # twice, and the caller's SPARQL can legitimately yield repeats.
-            prepared[key] = (key, point_uri, source_id, ref_name, normalize_value_kind(value_kind))
-        if not prepared:
-            return []
-        cols = "(ref_uri, point_uri, source_id, ref_name, value_kind)"
-        # The connection runs autocommit, so an explicit transaction is what keeps
-        # the staging table alive from COPY through to the upsert (and drops it).
-        with timed_debug(logger, "ensure_stream_refs rows=%d", len(prepared)), self.conn.transaction():
-            with self.conn.cursor() as cur:
-                cur.execute(
-                    f"CREATE TEMP TABLE _acquirium_incoming_refs "
-                    f"(LIKE {STREAMS_TABLE}) ON COMMIT DROP"
-                )
-                with cur.copy(f"COPY _acquirium_incoming_refs {cols} FROM STDIN") as copy:
-                    for row in prepared.values():
-                        copy.write_row(row)
-                cur.execute(
-                    f"""
-                    INSERT INTO {STREAMS_TABLE} {cols}
-                    SELECT ref_uri, point_uri, source_id, ref_name, value_kind
-                    FROM _acquirium_incoming_refs
-                    ON CONFLICT (ref_uri) DO UPDATE
-                        SET
-                            point_uri = COALESCE(EXCLUDED.point_uri, {STREAMS_TABLE}.point_uri),
-                            source_id = EXCLUDED.source_id,
-                            ref_name = EXCLUDED.ref_name,
-                            value_kind = EXCLUDED.value_kind
-                    """
-                )
-        return list(prepared.keys())
-
-    def resolve_storage_key(self, point_uri: str) -> str:
-        """Return the storage key (ref URI) for a point_uri, or point_uri itself if not registered.
-
-        Streams inserted via insert_timeseries are stored under their ref URI.
-        This resolves the semantic URI → ref URI so reads find the right rows.
-        Falls back to the URI itself for data inserted directly (e.g. bulk CSV ingest).
-        """
-        with self.conn.cursor() as cur:
-            cur.execute(
-                f"SELECT ref_uri FROM {STREAMS_TABLE} WHERE point_uri = %s",
-                (point_uri,),
-            )
-            row = cur.fetchone()
-            return row[0] if row else point_uri
-
-    def resolve_storage_keys(self, point_uris: list[str]) -> dict[str, str]:
-        """Batch-resolve point_uris to storage keys in a single query.
-
-        Returns a mapping of point_uri → ref_uri (or point_uri itself for
-        unregistered URIs, preserving the single-URI fallback behaviour).
-        """
-        if not point_uris:
-            return {}
-        with timed_debug(logger, "resolve_storage_keys n=%d", len(point_uris)), self.conn.cursor() as cur:
-            cur.execute(
-                f"SELECT point_uri, ref_uri FROM {STREAMS_TABLE} WHERE point_uri = ANY(%s)",
-                (point_uris,),
-            )
-            rows = cur.fetchall()
-        registered = {row[0]: row[1] for row in rows}
-        return {uri: registered.get(uri, uri) for uri in point_uris}
-
-    # -------------------- queries --------------------
-    def timeseries(
-        self,
-        ref_uri: str,
-        *,
-        start: datetime | None = None,
-        end: datetime | None = None,
-        limit: int | None = None,
-        order: Order = "asc",
-        batch_size: int = 50_000,
-        value_mode: str = "default",
-    ) -> Iterator[pa.RecordBatch]:
-        '''
-        Returns an iterator over the time series data for the given ref URI.
-        '''
-        mode = normalize_value_mode(value_mode)
-        clauses = ["ref_uri = %s"]
-        params: list[Any] = [ref_uri]
-
-        if start:
-            clauses.append("ts >= %s")
-            params.append(self._to_utc(start))
-        if end:
-            clauses.append("ts <= %s")
-            params.append(self._to_utc(end))
-        if mode == "numeric":
-            clauses.append("numeric_value IS NOT NULL")
-        elif mode == "text":
-            clauses.append("text_value IS NOT NULL")
-
-        where = " AND ".join(clauses)
-        order_sql = "ASC" if order == "asc" else "DESC"
-        limit_sql = " LIMIT %s" if limit else ""
-        if limit:
-            params.append(limit)
-
-        query = f"""
+    def ensure_table(self) -> str:
+        """Create tables, hypertable, indexes and staging tables if missing."""
+        stg_ts = _unqualified(self._stg_timeseries)
+        stg_streams = _unqualified(self._stg_streams)
+        stg_logs = _unqualified(self._stg_logs)
+        ddl = f"""
+            CREATE EXTENSION IF NOT EXISTS timescaledb;
+            CREATE SEQUENCE IF NOT EXISTS {REF_IDS_SEQ};
+            CREATE TABLE IF NOT EXISTS {REF_IDS_TABLE} (
+                ref_id  INTEGER PRIMARY KEY DEFAULT nextval('{REF_IDS_SEQ}'),
+                ref_uri TEXT NOT NULL UNIQUE
+            );
+            CREATE TABLE IF NOT EXISTS {TIMESERIES_TABLE} (
+                ref_id  INTEGER NOT NULL,
+                ts      TIMESTAMP NOT NULL,
+                numeric_value DOUBLE PRECISION,
+                text_value    TEXT,
+                CHECK (numeric_value IS NULL OR text_value IS NULL)
+            );
+            SELECT create_hypertable('{TIMESERIES_TABLE}', 'ts', if_not_exists => TRUE);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_timeseries_ref_ts_unique ON {TIMESERIES_TABLE} (ref_id, ts);
+            ALTER TABLE {TIMESERIES_TABLE} SET (
+                timescaledb.compress,
+                timescaledb.compress_segmentby = 'ref_id',
+                timescaledb.compress_orderby = 'ts DESC'
+            );
+            SELECT add_compression_policy('{TIMESERIES_TABLE}', INTERVAL '7 days', if_not_exists => TRUE);
+            CREATE TABLE IF NOT EXISTS {STREAMS_TABLE} (
+                ref_uri    TEXT PRIMARY KEY,
+                point_uri  TEXT,
+                source_id  TEXT NOT NULL,
+                ref_name   TEXT NOT NULL,
+                value_kind TEXT NOT NULL DEFAULT 'text'
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_streams_source_ref_name ON {STREAMS_TABLE} (source_id, ref_name);
+            CREATE INDEX IF NOT EXISTS idx_streams_point_uri ON {STREAMS_TABLE} (point_uri) WHERE point_uri IS NOT NULL;
+            CREATE OR REPLACE VIEW {TIMESERIES_STREAMS_VIEW} AS
             SELECT
-                ts,
-                numeric_value,
-                text_value
-            FROM {TIMESERIES_TABLE}
-            WHERE {where}
-            ORDER BY ts {order_sql}{limit_sql}
+                r.ref_uri,
+                s.point_uri,
+                s.source_id,
+                s.ref_name,
+                COALESCE(s.value_kind, 'text') AS value_kind,
+                t.ts,
+                t.numeric_value AS value_numeric,
+                t.text_value AS value_text
+            FROM {TIMESERIES_TABLE} AS t
+            JOIN {REF_IDS_TABLE} AS r ON t.ref_id = r.ref_id
+            LEFT JOIN {STREAMS_TABLE} AS s ON r.ref_uri = s.ref_uri;
+            CREATE TABLE IF NOT EXISTS {LOGS_TABLE} (
+                point_uri      TEXT NOT NULL,
+                timestamp      TIMESTAMP NOT NULL,
+                observed_start TIMESTAMP,
+                observed_end   TIMESTAMP,
+                message        TEXT NOT NULL,
+                UNIQUE (point_uri, timestamp)
+            );
+            CREATE INDEX IF NOT EXISTS idx_logs_obs ON {LOGS_TABLE} (observed_start, observed_end);
+            CREATE UNLOGGED TABLE IF NOT EXISTS {stg_ts} (
+                ref_uri TEXT, ts TIMESTAMP, numeric_value DOUBLE PRECISION, text_value TEXT
+            );
+            CREATE UNLOGGED TABLE IF NOT EXISTS {stg_streams} (
+                ref_uri TEXT, point_uri TEXT, source_id TEXT, ref_name TEXT, value_kind TEXT
+            );
+            CREATE UNLOGGED TABLE IF NOT EXISTS {stg_logs} (
+                point_uri TEXT, timestamp TIMESTAMP, observed_start TIMESTAMP, observed_end TIMESTAMP, message TEXT
+            );
         """
+        with self._lock, timed_debug(logger, "ensure_table"), self._own_conn() as conn:
+            self._check_schema(conn)
+            self._pg_execute(conn, ddl)
+            # DDL ran on Postgres directly; refresh DuckDB's view of the catalog.
+            conn.execute("CALL pg_clear_cache()")
+        return "ok"
 
-        value_kind = self.stream_value_kind(str(ref_uri))
-        logger.debug(
-            "timeseries ref_uri=%s start=%s end=%s limit=%s order=%s mode=%s",
-            ref_uri, start, end, limit, order, mode,
+    def _check_schema(self, conn) -> None:
+        """Refuse to run against a ``timeseries`` table from the psycopg-era schema."""
+        cols = {
+            r[0]
+            for r in conn.execute(
+                f"""
+                SELECT column_name FROM {CATALOG}.information_schema.columns
+                WHERE table_schema = '{SCHEMA}' AND table_name = '{TIMESERIES_TABLE}'
+                """
+            ).fetchall()
+        }
+        if cols and "ref_id" not in cols:
+            raise RuntimeError(
+                f"Postgres table {TIMESERIES_TABLE!r} uses the old ref_uri-keyed schema; "
+                "this store keys rows by ref_id. Start with recreate=True to rebuild it "
+                "(this drops all stored timeseries, streams and logs)."
+            )
+
+    # ---- timeseries mutations ----
+
+    def _insert_frame(self, conn, df: pl.DataFrame) -> None:
+        """Stage the prepared frame, then assign ids, delete colliding rows and insert.
+
+        Same shape as the DuckDB path, run on Postgres. Delete-then-insert
+        measured 2-4x faster than ``ON CONFLICT DO UPDATE`` on the hypertable
+        (100k rows: ~1.1s empty / ~1.9s all colliding, versus ~4.4s either way).
+        """
+        stg = _unqualified(self._stg_timeseries)
+        df = df.select(["ref_uri", "ts", "numeric_value", "text_value"])
+        self._stage(conn, df, self._stg_timeseries)
+        self._pg_execute(
+            conn,
+            f"""
+            INSERT INTO {REF_IDS_TABLE} (ref_uri)
+            SELECT DISTINCT ref_uri FROM {stg}
+            ON CONFLICT (ref_uri) DO NOTHING;
+            """,
         )
-        with self.conn.cursor() as cur:
-            with timed_debug(logger, "timeseries cur.execute ref_uri=%s", ref_uri):
-                cur.execute(query, params)
+        # Constant predicates on the segmentby column and the orderby range:
+        # Timescale prunes compressed batches on these, but not on join
+        # conditions, so without them a DELETE touching a compressed chunk
+        # decompresses the whole chunk (and trips its per-transaction limit).
+        ids = self._ref_ids(conn, df["ref_uri"].unique().to_list())
+        id_list = ", ".join(str(int(i)) for i in ids.values()) or "NULL"
+        ts_min, ts_max = df["ts"].min(), df["ts"].max()
+        self._pg_execute(
+            conn,
+            f"""
+            DELETE FROM {TIMESERIES_TABLE} AS t
+            USING {stg} AS s
+            JOIN {REF_IDS_TABLE} AS r USING (ref_uri)
+            WHERE t.ref_id = r.ref_id AND t.ts = s.ts
+              AND t.ref_id IN ({id_list})
+              AND t.ts BETWEEN '{ts_min.isoformat()}' AND '{ts_max.isoformat()}';
+            INSERT INTO {TIMESERIES_TABLE} (ref_id, ts, numeric_value, text_value)
+            SELECT r.ref_id, s.ts, s.numeric_value, s.text_value
+            FROM {stg} AS s
+            JOIN {REF_IDS_TABLE} AS r USING (ref_uri);
+            TRUNCATE {stg};
+            """,
+        )
 
-            total = 0
-            while True:
-                rows = cur.fetchmany(batch_size)
-                if not rows:
-                    logger.debug("timeseries ref_uri=%s yielded total rows=%d", ref_uri, total)
-                    break
-                total += len(rows)
+    def _delete_stream_rows(self, conn, ref_uri: str) -> None:
+        ref_id = self._ref_id(conn, ref_uri)
+        if ref_id is None:
+            return
+        self._pg_execute(conn, f"DELETE FROM {TIMESERIES_TABLE} WHERE ref_id = {int(ref_id)}")
 
-                ts_col = [r[0] for r in rows]
-                numeric_col = [r[1] for r in rows]
-                text_col = [r[2] for r in rows]
-                ref_uri_col = [ref_uri] * len(ts_col)
-                if not ts_col or not ref_uri_col:
-                    break
-                if mode == "coalesce":
-                    values = [
-                        text if text is not None else (str(numeric) if numeric is not None else None)
-                        for numeric, text in zip(numeric_col, text_col)
-                    ]
-                    val_array = pa.array(values, type=pa.string())
-                elif mode == "text" or value_kind == "text":
-                    val_array = pa.array(text_col, type=pa.string())
-                elif mode == "numeric" or value_kind == "numeric":
-                    val_array = pa.array(numeric_col, type=pa.float64())
-                elif any(v is not None for v in numeric_col):
-                    val_array = pa.array(numeric_col, type=pa.float64())
-                else:
-                    val_array = pa.array(text_col, type=pa.string())
+    # ---- stream reference registry ----
 
-                batch = pa.record_batch(
-                    [
-                        pa.array(ts_col, type=pa.timestamp("us", tz="UTC")),
-                        val_array,
-                        pa.array(ref_uri_col, type=pa.string()),
-                    ],
-                    names=["ts", "value", "uri"],
-                )
-                yield batch
+    def _upsert_streams_frame(self, conn, df: pl.DataFrame) -> None:
+        stg = _unqualified(self._stg_streams)
+        self._stage(conn, df, self._stg_streams)
+        self._pg_execute(
+            conn,
+            f"""
+            INSERT INTO {STREAMS_TABLE} (ref_uri, point_uri, source_id, ref_name, value_kind)
+            SELECT ref_uri, point_uri, source_id, ref_name, value_kind FROM {stg}
+            ON CONFLICT (ref_uri) DO UPDATE SET
+                source_id  = EXCLUDED.source_id,
+                ref_name   = EXCLUDED.ref_name,
+                point_uri  = COALESCE(EXCLUDED.point_uri, {STREAMS_TABLE}.point_uri),
+                value_kind = EXCLUDED.value_kind;
+            TRUNCATE {stg};
+            """,
+        )
 
-    def timeseries_info(self, ref_uri: str) -> TimeseriesInfo:
-        with timed_debug(logger, "timeseries_info ref_uri=%s", ref_uri), self.conn.cursor() as cur:
-            cur.execute(
-                f"SELECT COUNT(*), MIN(ts), MAX(ts) FROM {TIMESERIES_TABLE} WHERE ref_uri=%s",
-                (ref_uri,),
-            )
-            cnt, earliest, latest = cur.fetchone()
-        return TimeseriesInfo(table=TIMESERIES_TABLE, row_count=cnt, earliest=earliest, latest=latest)
+    # ---- logs ----
 
-    def timeseries_info_batch(self, ref_uris: list[str]) -> dict[str, TimeseriesInfo]:
-        """Return stats (row_count, earliest, latest) for multiple ref URIs in one query."""
-        if not ref_uris:
-            return {}
-        with timed_debug(logger, "timeseries_info_batch n=%d", len(ref_uris)), self.conn.cursor() as cur:
-            cur.execute(
-                f"SELECT ref_uri, COUNT(*), MIN(ts), MAX(ts) FROM {TIMESERIES_TABLE} WHERE ref_uri = ANY(%s) GROUP BY ref_uri",
-                (ref_uris,),
-            )
-            rows = cur.fetchall()
-        result: dict[str, TimeseriesInfo] = {}
-        for uri, cnt, earliest, latest in rows:
-            result[uri] = TimeseriesInfo(table=TIMESERIES_TABLE, row_count=cnt, earliest=earliest, latest=latest)
-        for uri in ref_uris:
-            if uri not in result:
-                result[uri] = TimeseriesInfo(table=TIMESERIES_TABLE, row_count=0)
-        return result
+    def _upsert_log_row(self, conn, row: list[Any]) -> None:
+        stg = _unqualified(self._stg_logs)
+        point_uri, timestamp, obs_start, obs_end, message = row
+        df = pl.DataFrame(
+            {
+                "point_uri": pl.Series([point_uri], dtype=pl.Utf8),
+                "timestamp": pl.Series([timestamp], dtype=pl.Datetime("us")),
+                "observed_start": pl.Series([obs_start], dtype=pl.Datetime("us")),
+                "observed_end": pl.Series([obs_end], dtype=pl.Datetime("us")),
+                "message": pl.Series([message], dtype=pl.Utf8),
+            }
+        )
+        self._stage(conn, df, self._stg_logs)
+        self._pg_execute(
+            conn,
+            f"""
+            INSERT INTO {LOGS_TABLE} (point_uri, timestamp, observed_start, observed_end, message)
+            SELECT point_uri, timestamp, observed_start, observed_end, message FROM {stg}
+            ON CONFLICT (point_uri, timestamp) DO UPDATE SET
+                message        = EXCLUDED.message,
+                observed_start = EXCLUDED.observed_start,
+                observed_end   = EXCLUDED.observed_end;
+            TRUNCATE {stg};
+            """,
+        )
 
-    # -------------------- logging API --------------------
+    # ---- utility ----
 
-    def insert_log(self, log: LogEntry) -> None:
-        point_uri: str = log.point_uri
-        ts: datetime = log.timestamp
-        message: str = log.message
-
-        # if period is optional
-        if log.period is None:
-            observation_start = None
-            observation_end = None
-        else:
-            observation_start = log.period.start
-            observation_end = log.period.end
-
-        if observation_start is not None and observation_end is not None:
-            # Let Postgres build the range
-            sql = f"""
-                INSERT INTO {LOGS_TABLE} (point_uri, timestamp, observed, message)
-                VALUES (%s, %s, tstzrange(%s, %s, '[)'), %s)
-                ON CONFLICT (point_uri, timestamp) DO UPDATE SET message = EXCLUDED.message, observed = EXCLUDED.observed      
-            """
-            params = [point_uri, ts, observation_start, observation_end, message]
-        elif observation_start is not None:
-            sql = f"""
-                INSERT INTO {LOGS_TABLE} (point_uri, timestamp, observed, message)
-                VALUES (%s, %s, tstzrange(%s, 'infinity', '[)'), %s)
-                ON CONFLICT (point_uri, timestamp) DO UPDATE SET message = EXCLUDED.message, observed = EXCLUDED.observed
-            """
-            params = [point_uri, ts, observation_start, message]
-        elif observation_end is not None:
-            sql = f"""
-                INSERT INTO {LOGS_TABLE} (point_uri, timestamp, observed, message)
-                VALUES (%s, %s, tstzrange('-infinity', %s, '[)'), %s)
-                ON CONFLICT (point_uri, timestamp) DO UPDATE SET message = EXCLUDED.message, observed = EXCLUDED.observed
-            """
-            params = [point_uri, ts, observation_end, message]
-        else:
-            sql = f"""
-                INSERT INTO {LOGS_TABLE} (point_uri, timestamp, observed, message)
-                VALUES (%s, %s, NULL, %s)
-                ON CONFLICT (point_uri, timestamp) DO UPDATE SET message = EXCLUDED.message, observed = EXCLUDED.observed
-            """
-            params = [point_uri, ts, message]
-        
-        logger.debug("insert_log point_uri=%s ts=%s", point_uri, ts)
-        try:
-            with self.conn.cursor() as cur:
-                cur.execute(sql, params)
-        except Exception as e:
-            logger.error(f"An error occurred while inserting log: {e}")
-            logger.error(f"SQL: {sql}")
-            logger.error(f"Params: {params}")
-            raise e
-    def query_logs(
-        self,
-        point_uri: str,
-        log_time_interval: TimeIntervalModel | None = None,
-        obs_time_interval: TimeIntervalModel | None = None
-    ) -> list[LogEntry]:
-        start = log_time_interval.start if log_time_interval else None
-        end = log_time_interval.end if log_time_interval else None
-        observation_start = obs_time_interval.start if obs_time_interval else None
-        observation_end = obs_time_interval.end if obs_time_interval else None
-        
-        clauses = ["point_uri = %s"]
-        params: list[Any] = [point_uri]
-
-        if start is not None:
-            clauses.append("timestamp >= %s")
-            params.append(start)
-        if end is not None:
-            clauses.append("timestamp <= %s")
-            params.append(end)
-
-        # observed overlap semantics with open ended windows
-        if observation_start is not None and observation_end is not None:
-            clauses.append("observed && tstzrange(%s, %s, '[)')")
-            params.extend([observation_start, observation_end])
-        elif observation_start is not None:
-            clauses.append("observed && tstzrange(%s, 'infinity', '[)')")
-            params.append(observation_start)
-        elif observation_end is not None:
-            clauses.append("observed && tstzrange('-infinity', %s, '[)')")
-            params.append(observation_end)
-        where = " AND ".join(clauses)
-        query = f"""
-            SELECT point_uri, timestamp, observed, message
-            FROM {LOGS_TABLE}
-            WHERE {where}
-            ORDER BY timestamp ASC
-        """
-        try:
-            with timed_debug(logger, "query_logs point_uri=%s clauses=%d", point_uri, len(clauses)), self.conn.cursor() as cur:
-                cur.execute(query, params)
-                rows = cur.fetchall()
-
-            result: list[LogEntry] = []
-            for point_uri, ts, observed_range, msg in rows:
-                print(point_uri, ts, observed_range, msg)
-                period = None
-                if observed_range is not None:
-                    period = TimeIntervalModel(start=observed_range.lower, end=observed_range.upper)
-                else:
-                    period = TimeIntervalModel(start=None, end=None)
-
-                result.append(
-                    LogEntry(
-                        point_uri=point_uri,
-                        timestamp=ts,
-                        period=period,
-                        message=msg,
-                    )
-                )
-            return result
-        except Exception as e:
-            logger.error(f"An error occurred while querying logs: {e}")
-            logger.error(f"Query: {query}")
-            return []
-
-    def delete_logs(self, point_uri: str) -> None:
-        logger.debug("delete_logs point_uri=%s", point_uri)
-        with self.conn.cursor() as cur:
-            cur.execute(f"DELETE FROM {LOGS_TABLE} WHERE point_uri=%s", (point_uri,))
-        return True
-
-    # -------------------- transaction helpers --------------------
-    def begin(self) -> None:
-        if not self._in_tx:
-            logger.debug("BEGIN")
-            self.conn.autocommit = False
-            self._in_tx = True
-            self.conn.execute("BEGIN")
-
-    def commit(self) -> None:
-        if self._in_tx:
-            logger.debug("COMMIT")
-            self.conn.commit()
-            self.conn.autocommit = True
-            self._in_tx = False
-
-    def rollback(self) -> None:
-        if self._in_tx:
-            logger.debug("ROLLBACK")
-            self.conn.rollback()
-            self.conn.autocommit = True
-            self._in_tx = False
-
-    # -------------------- utility --------------------
     def sql_query(self, query: str) -> dict[str, Any]:
-        logger.debug("sql_query: %s", query.replace("\n", " ")[:200])
-        with timed_debug(logger, "sql_query"), self.conn.cursor() as cur:
-            cur.execute(query)
-            cols = [desc[0] for desc in cur.description] if cur.description else []
-            rows = cur.fetchall() if cur.description else []
-        return {"columns": cols, "rows": rows}
+        """Run *query* on Postgres in Postgres SQL.
 
-    # -------------------- lifecycle --------------------
+        Statements are passed through rather than planned by DuckDB, so
+        Timescale functions work and a DELETE against the hypertable is safe.
+        Result-producing statements return columns and rows; others return
+        empty ones.
+        """
+        logger.debug("sql_query: %s", query.replace("\n", " ")[:200])
+        stripped = query.strip().rstrip(";").strip()
+        head = stripped.lstrip("(").split(None, 1)[0].upper() if stripped else ""
+        with self._own_conn() as conn, timed_debug(logger, "sql_query"):
+            if head in _QUERY_HEADS:
+                tbl = conn.execute(
+                    f"SELECT * FROM postgres_query('{CATALOG}', $acq${stripped}$acq$)"
+                ).to_arrow_table()
+            else:
+                self._pg_execute(conn, stripped)
+                return {"columns": [], "rows": []}
+        d = tbl.to_pydict()
+        cols = tbl.schema.names
+        return {
+            "columns": cols,
+            "rows": [list(row) for row in zip(*[d[c] for c in cols])] if cols else [],
+        }
+
     def close(self) -> None:
         logger.debug("TimescaleStore.close")
-        self.conn.close()
+        with self._lock:
+            if self._tx_conn is not None:
+                self._tx_conn.rollback()
+                self._tx_conn.close()
+                self._tx_conn = None
+            try:
+                with self._own_conn() as conn:
+                    self._pg_execute(
+                        conn,
+                        f"""
+                        DROP TABLE IF EXISTS {_unqualified(self._stg_timeseries)};
+                        DROP TABLE IF EXISTS {_unqualified(self._stg_streams)};
+                        DROP TABLE IF EXISTS {_unqualified(self._stg_logs)};
+                        """,
+                    )
+            except Exception as exc:  # the database may already be gone
+                logger.debug("TimescaleStore.close: staging cleanup skipped: %s", exc)
+        self._anchor_conn.close()
 
-    # -------------------- helpers --------------------
-    def _to_utc(self, ts: datetime) -> datetime:
-        if ts.tzinfo is None:
-            return ts.replace(tzinfo=timezone.utc)
-        return ts.astimezone(timezone.utc)
 
-    def _to_str(self, val: Any) -> str | None:
-        if val is None:
-            return None
-        return str(val)
+def _unqualified(name: str) -> str:
+    """``pg.public.x`` -> ``x``, for statements that run on Postgres itself."""
+    return name.rsplit(".", 1)[-1]
 
-    def stream_value_kind(self, ref_uri: str) -> str | None:
-        with self.conn.cursor() as cur:
-            cur.execute(
-                f"SELECT value_kind FROM {STREAMS_TABLE} WHERE ref_uri = %s",
-                (ref_uri,),
-            )
-            row = cur.fetchone()
-        return row[0] if row else None
+
+def _with_connect_timeout(dsn: str, connect_timeout: int | None) -> str:
+    if connect_timeout is None:
+        return dsn
+    if dsn.startswith(("postgresql://", "postgres://")):
+        sep = "&" if "?" in dsn else "?"
+        return f"{dsn}{sep}connect_timeout={int(connect_timeout)}"
+    return f"{dsn} connect_timeout={int(connect_timeout)}"

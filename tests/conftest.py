@@ -87,10 +87,12 @@ def ts_store(pg_dsn):
 def clean_point(ts_store):
     """Provides a test point URI and cleans up its data after each test."""
     yield TEST_POINT_URI
-    with ts_store.conn.cursor() as cur:
-        cur.execute("DELETE FROM timeseries WHERE ref_uri = %s", [TEST_POINT_URI])
-        cur.execute("DELETE FROM streams WHERE point_uri = %s", [TEST_POINT_URI])
-        cur.execute("DELETE FROM logs WHERE point_uri = %s", [TEST_POINT_URI])
+    uri = TEST_POINT_URI.replace("'", "''")
+    ts_store.sql_query(
+        f"DELETE FROM timeseries WHERE ref_id = (SELECT ref_id FROM ref_ids WHERE ref_uri = '{uri}')"
+    )
+    ts_store.sql_query(f"DELETE FROM streams WHERE point_uri = '{uri}'")
+    ts_store.sql_query(f"DELETE FROM logs WHERE point_uri = '{uri}'")
 
 
 def insert_sample_csv_streams(acq, *, source_id: str = SAMPLE_SOURCE_ID) -> None:

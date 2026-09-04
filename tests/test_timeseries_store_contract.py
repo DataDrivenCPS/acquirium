@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
+import duckdb
 import polars as pl
-import psycopg
 import pytest
 
 from acquirium.Storage.base import TimeseriesStore
@@ -26,7 +26,7 @@ def contract_store(request, tmp_path, pg_dsn):
     else:
         try:
             store = TimescaleStore(dsn=pg_dsn, connect_timeout=2, recreate=False)
-        except psycopg.OperationalError as exc:
+        except duckdb.Error as exc:
             pytest.skip(f"TimescaleDB is not available: {exc}")
 
     assert isinstance(store, TimeseriesStore)

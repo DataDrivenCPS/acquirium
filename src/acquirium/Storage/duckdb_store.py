@@ -85,6 +85,7 @@ class DuckDBStore:
         # Kept on the instance so operations can open their own connections
         # without importing duckdb at module scope.
         self._duckdb = duckdb
+        self._bind_table_names("")
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
@@ -102,12 +103,27 @@ class DuckDBStore:
         if recreate:
             logger.debug("DuckDBStore.__init__: dropping existing tables/views (recreate=True)")
             with self._lock, self._own_conn() as conn:
-                conn.execute(f"DROP VIEW IF EXISTS {TIMESERIES_STREAMS_VIEW}")
+                conn.execute(f"DROP VIEW IF EXISTS {self._v_streams}")
                 for tbl in (TIMESERIES_TABLE, STREAMS_TABLE, LOGS_TABLE, REF_IDS_TABLE):
                     conn.execute(f"DROP TABLE IF EXISTS {tbl}")
-                conn.execute(f"DROP SEQUENCE IF EXISTS {REF_IDS_SEQ}")
+                conn.execute(f"DROP SEQUENCE IF EXISTS {self._s_ref_ids}")
         self.ensure_table()
         logger.debug("DuckDBStore.__init__: ready at %s", self.db_path)
+
+    def _bind_table_names(self, prefix: str) -> None:
+        """Set the qualified table names every SQL statement is built from.
+
+        The DuckDB backend uses bare names in its own catalog; a subclass
+        backed by an attached database passes ``"catalog.schema."`` so the
+        same statements run against that database without a per-connection
+        ``USE``.
+        """
+        self._t_timeseries = prefix + TIMESERIES_TABLE
+        self._t_streams = prefix + STREAMS_TABLE
+        self._t_logs = prefix + LOGS_TABLE
+        self._t_ref_ids = prefix + REF_IDS_TABLE
+        self._s_ref_ids = prefix + REF_IDS_SEQ
+        self._v_streams = prefix + TIMESERIES_STREAMS_VIEW
 
     # ---- connections ----
 
@@ -161,15 +177,15 @@ class DuckDBStore:
         # Use TIMESTAMP (not TIMESTAMPTZ) to avoid a DuckDB/pytz interop issue.
         # All values are normalised to UTC before insertion via _to_utc().
         stmts = [
-            f"CREATE SEQUENCE IF NOT EXISTS {REF_IDS_SEQ}",
+            f"CREATE SEQUENCE IF NOT EXISTS {self._s_ref_ids}",
             f"""
-            CREATE TABLE IF NOT EXISTS {REF_IDS_TABLE} (
-                ref_id  INTEGER PRIMARY KEY DEFAULT nextval('{REF_IDS_SEQ}'),
+            CREATE TABLE IF NOT EXISTS {self._t_ref_ids} (
+                ref_id  INTEGER PRIMARY KEY DEFAULT nextval('{self._s_ref_ids}'),
                 ref_uri VARCHAR NOT NULL UNIQUE
             )
             """,
             f"""
-            CREATE TABLE IF NOT EXISTS {TIMESERIES_TABLE} (
+            CREATE TABLE IF NOT EXISTS {self._t_timeseries} (
                 ref_id  INTEGER NOT NULL,
                 ts      TIMESTAMP NOT NULL,
                 numeric_value DOUBLE,
@@ -179,7 +195,7 @@ class DuckDBStore:
             )
             """,
             f"""
-            CREATE TABLE IF NOT EXISTS {STREAMS_TABLE} (
+            CREATE TABLE IF NOT EXISTS {self._t_streams} (
                 ref_uri   VARCHAR PRIMARY KEY,
                 point_uri VARCHAR,
                 source_id VARCHAR NOT NULL,
@@ -187,10 +203,10 @@ class DuckDBStore:
                 value_kind VARCHAR NOT NULL DEFAULT 'text'
             )
             """,
-            f"CREATE UNIQUE INDEX IF NOT EXISTS idx_streams_source_ref_name ON {STREAMS_TABLE} (source_id, ref_name)",
-            f"CREATE INDEX IF NOT EXISTS idx_streams_point_uri ON {STREAMS_TABLE} (point_uri)",
+            f"CREATE UNIQUE INDEX IF NOT EXISTS idx_streams_source_ref_name ON {self._t_streams} (source_id, ref_name)",
+            f"CREATE INDEX IF NOT EXISTS idx_streams_point_uri ON {self._t_streams} (point_uri)",
             f"""
-            CREATE OR REPLACE VIEW {TIMESERIES_STREAMS_VIEW} AS
+            CREATE OR REPLACE VIEW {self._v_streams} AS
             SELECT
                 r.ref_uri,
                 s.point_uri,
@@ -200,14 +216,14 @@ class DuckDBStore:
                 t.ts,
                 t.numeric_value AS value_numeric,
                 t.text_value AS value_text
-            FROM {TIMESERIES_TABLE} AS t
-            JOIN {REF_IDS_TABLE} AS r
+            FROM {self._t_timeseries} AS t
+            JOIN {self._t_ref_ids} AS r
                 ON t.ref_id = r.ref_id
-            LEFT JOIN {STREAMS_TABLE} AS s
+            LEFT JOIN {self._t_streams} AS s
                 ON r.ref_uri = s.ref_uri
             """,
             f"""
-            CREATE TABLE IF NOT EXISTS {LOGS_TABLE} (
+            CREATE TABLE IF NOT EXISTS {self._t_logs} (
                 point_uri      VARCHAR NOT NULL,
                 timestamp      TIMESTAMP NOT NULL,
                 observed_start TIMESTAMP,
@@ -216,8 +232,8 @@ class DuckDBStore:
                 UNIQUE (point_uri, timestamp)
             )
             """,
-            f"CREATE INDEX IF NOT EXISTS idx_logs_point ON {LOGS_TABLE} (point_uri, timestamp)",
-            f"CREATE INDEX IF NOT EXISTS idx_logs_obs ON {LOGS_TABLE} (observed_start, observed_end)",
+            f"CREATE INDEX IF NOT EXISTS idx_logs_point ON {self._t_logs} (point_uri, timestamp)",
+            f"CREATE INDEX IF NOT EXISTS idx_logs_obs ON {self._t_logs} (observed_start, observed_end)",
         ]
         with self._lock, timed_debug(logger, "ensure_table"), self._own_conn() as conn:
             for stmt in stmts:
@@ -267,16 +283,20 @@ class DuckDBStore:
         )
         # One transaction for delete + insert: a failure leaves the old rows intact.
         with self._lock, timed_debug(logger, "replace_rows ref_uri=%s rows=%d", ref_uri, len(df)), self._write_conn() as conn:
-            conn.execute(
-                f"""
-                DELETE FROM {TIMESERIES_TABLE}
-                WHERE ref_id = (SELECT ref_id FROM {REF_IDS_TABLE} WHERE ref_uri = ?)
-                """,
-                [ref_uri],
-            )
+            self._delete_stream_rows(conn, ref_uri)
             if not df.is_empty():
                 self._insert_frame(conn, df)
         return len(df)
+
+    def _delete_stream_rows(self, conn, ref_uri: str) -> None:
+        """Delete every timeseries row of *ref_uri* on *conn*."""
+        conn.execute(
+            f"""
+            DELETE FROM {self._t_timeseries}
+            WHERE ref_id = (SELECT ref_id FROM {self._t_ref_ids} WHERE ref_uri = ?)
+            """,
+            [ref_uri],
+        )
 
     def bulk_insert_polars(self, df: pl.DataFrame) -> int:
         """Bulk-insert a Polars DataFrame with canonical or split value columns.
@@ -302,8 +322,7 @@ class DuckDBStore:
         )
         return df.unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
 
-    @staticmethod
-    def _insert_frame(conn, df: pl.DataFrame) -> None:
+    def _insert_frame(self, conn, df: pl.DataFrame) -> None:
         """Upsert a prepared frame on *conn*: delete colliding (ref, ts) rows, insert.
 
         The frame carries ref_uri strings; ids are assigned for unseen uris and
@@ -313,29 +332,29 @@ class DuckDBStore:
         try:
             conn.execute(
                 f"""
-                INSERT INTO {REF_IDS_TABLE} (ref_uri)
+                INSERT INTO {self._t_ref_ids} (ref_uri)
                 SELECT DISTINCT ref_uri FROM _acquirium_incoming_timeseries
                 ON CONFLICT (ref_uri) DO NOTHING
                 """
             )
             conn.execute(
                 f"""
-                DELETE FROM {TIMESERIES_TABLE}
+                DELETE FROM {self._t_timeseries}
                 USING (
                     SELECT r.ref_id, i.ts
                     FROM _acquirium_incoming_timeseries AS i
-                    JOIN {REF_IDS_TABLE} AS r USING (ref_uri)
+                    JOIN {self._t_ref_ids} AS r USING (ref_uri)
                 ) AS incoming
-                WHERE {TIMESERIES_TABLE}.ref_id = incoming.ref_id
-                  AND {TIMESERIES_TABLE}.ts = incoming.ts
+                WHERE {self._t_timeseries}.ref_id = incoming.ref_id
+                  AND {self._t_timeseries}.ts = incoming.ts
                 """
             )
             conn.execute(
                 f"""
-                INSERT INTO {TIMESERIES_TABLE} (ref_id, ts, numeric_value, text_value)
+                INSERT INTO {self._t_timeseries} (ref_id, ts, numeric_value, text_value)
                 SELECT r.ref_id, i.ts, i.numeric_value, i.text_value
                 FROM _acquirium_incoming_timeseries AS i
-                JOIN {REF_IDS_TABLE} AS r USING (ref_uri)
+                JOIN {self._t_ref_ids} AS r USING (ref_uri)
                 """
             )
         finally:
@@ -352,28 +371,7 @@ class DuckDBStore:
         value_kind: str = "text",
     ) -> str:
         """Register a stream reference and return its canonical ref URI."""
-        if ref_uri is None:
-            ref_uri = compute_ref_uri(source_id, ref_name)
-        ref_uri_str = str(ref_uri)
-        value_kind = normalize_value_kind(value_kind)
-        # logger.debug(
-        #     "ensure_stream_ref source=%s ref_name=%s point_uri=%s kind=%s",
-        #     source_id, ref_name, point_uri, value_kind,
-        # )
-        with self._lock, self._write_conn() as conn:
-            conn.execute(
-                f"""
-                INSERT INTO {STREAMS_TABLE} (ref_uri, point_uri, source_id, ref_name, value_kind)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT (ref_uri) DO UPDATE SET
-                    source_id = excluded.source_id,
-                    ref_name  = excluded.ref_name,
-                    point_uri = COALESCE(excluded.point_uri, {STREAMS_TABLE}.point_uri),
-                    value_kind = excluded.value_kind
-                """,
-                [ref_uri_str, point_uri, source_id, ref_name, value_kind],
-            )
-        return ref_uri_str
+        return self.ensure_stream_refs([(point_uri, source_id, ref_name, ref_uri, value_kind)])[0]
 
     def ensure_stream_refs(
         self,
@@ -401,29 +399,33 @@ class DuckDBStore:
             orient="row",
         )
         with self._lock, timed_debug(logger, "ensure_stream_refs rows=%d", len(df)), self._write_conn() as conn:
-            conn.register("_acquirium_incoming_refs", df)
-            try:
-                conn.execute(
-                    f"""
-                    INSERT INTO {STREAMS_TABLE} (ref_uri, point_uri, source_id, ref_name, value_kind)
-                    SELECT ref_uri, point_uri, source_id, ref_name, value_kind
-                    FROM _acquirium_incoming_refs
-                    ON CONFLICT (ref_uri) DO UPDATE SET
-                        source_id  = excluded.source_id,
-                        ref_name   = excluded.ref_name,
-                        point_uri  = COALESCE(excluded.point_uri, {STREAMS_TABLE}.point_uri),
-                        value_kind = excluded.value_kind
-                    """
-                )
-            finally:
-                conn.unregister("_acquirium_incoming_refs")
+            self._upsert_streams_frame(conn, df)
         return list(prepared.keys())
+
+    def _upsert_streams_frame(self, conn, df: pl.DataFrame) -> None:
+        """Upsert a frame of stream rows on *conn*; a NULL incoming point_uri keeps the stored one."""
+        conn.register("_acquirium_incoming_refs", df)
+        try:
+            conn.execute(
+                f"""
+                INSERT INTO {self._t_streams} (ref_uri, point_uri, source_id, ref_name, value_kind)
+                SELECT ref_uri, point_uri, source_id, ref_name, value_kind
+                FROM _acquirium_incoming_refs
+                ON CONFLICT (ref_uri) DO UPDATE SET
+                    source_id  = excluded.source_id,
+                    ref_name   = excluded.ref_name,
+                    point_uri  = COALESCE(excluded.point_uri, {self._t_streams}.point_uri),
+                    value_kind = excluded.value_kind
+                """
+            )
+        finally:
+            conn.unregister("_acquirium_incoming_refs")
 
     def resolve_storage_key(self, point_uri: str) -> str:
         """Return the storage ref URI for point_uri, or point_uri itself if unregistered."""
         with self._own_conn() as conn:
             row = conn.execute(
-                f"SELECT ref_uri FROM {STREAMS_TABLE} WHERE point_uri = ?", [point_uri]
+                f"SELECT ref_uri FROM {self._t_streams} WHERE point_uri = ?", [point_uri]
             ).fetchone()
         return point_uri if row is None else row[0]
 
@@ -434,7 +436,7 @@ class DuckDBStore:
         placeholders = ", ".join("?" * len(point_uris))
         with self._own_conn() as conn, timed_debug(logger, "resolve_storage_keys n=%d", len(point_uris)):
             d = conn.execute(
-                f"SELECT point_uri, ref_uri FROM {STREAMS_TABLE} WHERE point_uri IN ({placeholders})",
+                f"SELECT point_uri, ref_uri FROM {self._t_streams} WHERE point_uri IN ({placeholders})",
                 point_uris,
             ).to_arrow_table().to_pydict()
         registered = dict(zip(d["point_uri"], d["ref_uri"]))
@@ -473,15 +475,13 @@ class DuckDBStore:
                 logger, "timeseries ref_uri=%s start=%s end=%s limit=%s order=%s mode=%s",
                 ref_uri, start, end, limit, order, mode,
             ):
-                ref_id_row = conn.execute(
-                    f"SELECT ref_id FROM {REF_IDS_TABLE} WHERE ref_uri = ?", [ref_uri]
-                ).fetchone()
-                if ref_id_row is None:
+                ref_id = self._ref_id(conn, ref_uri)
+                if ref_id is None:
                     # Never written to: no id, no rows.
                     return
 
                 clauses = ["ref_id = ?"]
-                params: list[Any] = [ref_id_row[0]]
+                params: list[Any] = [ref_id]
                 if start:
                     clauses.append("ts >= ?")
                     params.append(self._to_utc_naive(start))
@@ -502,7 +502,7 @@ class DuckDBStore:
                         ts,
                         numeric_value,
                         text_value
-                    FROM {TIMESERIES_TABLE}
+                    FROM {self._t_timeseries}
                     WHERE {where}
                     ORDER BY ts {order_sql}{limit_sql}
                 """
@@ -524,7 +524,7 @@ class DuckDBStore:
                         resolved = value_kind
                     else:
                         has_numeric, has_text = conn.execute(
-                            f"SELECT COUNT(numeric_value) > 0, COUNT(text_value) > 0 FROM {TIMESERIES_TABLE} WHERE {where}",
+                            f"SELECT COUNT(numeric_value) > 0, COUNT(text_value) > 0 FROM {self._t_timeseries} WHERE {where}",
                             params,
                         ).fetchone()
                         if has_numeric and has_text:
@@ -559,16 +559,18 @@ class DuckDBStore:
             logger.debug("timeseries: ref_uri=%s rows=%d (batch_size=%d)", ref_uri, rows, batch_size)
 
     def timeseries_info(self, ref_uri: str) -> TimeseriesInfo:
+        # Resolve the id first and filter the timeseries table on it directly:
+        # a plain equality on ref_id is what both DuckDB's zonemaps and an
+        # attached database's filter pushdown act on, where a join-derived
+        # filter is not pushed into the scan.
         with self._own_conn() as conn, timed_debug(logger, "timeseries_info ref_uri=%s", ref_uri):
-            row = conn.execute(
-                f"""
-                SELECT COUNT(*), MIN(ts), MAX(ts)
-                FROM {TIMESERIES_TABLE} AS t
-                JOIN {REF_IDS_TABLE} AS r USING (ref_id)
-                WHERE r.ref_uri = ?
-                """,
-                [ref_uri],
-            ).fetchone()
+            ref_id = self._ref_id(conn, ref_uri)
+            row = None
+            if ref_id is not None:
+                row = conn.execute(
+                    f"SELECT COUNT(*), MIN(ts), MAX(ts) FROM {self._t_timeseries} WHERE ref_id = ?",
+                    [ref_id],
+                ).fetchone()
         cnt, earliest_raw, latest_raw = (row[0] or 0, row[1], row[2]) if row else (0, None, None)
         return TimeseriesInfo(
             table=TIMESERIES_TABLE,
@@ -580,31 +582,33 @@ class DuckDBStore:
     def timeseries_info_batch(self, ref_uris: list[str]) -> dict[str, TimeseriesInfo]:
         if not ref_uris:
             return {}
-        placeholders = ", ".join("?" * len(ref_uris))
-        with self._own_conn() as conn, timed_debug(logger, "timeseries_info_batch n=%d", len(ref_uris)):
-            d = conn.execute(
-                f"""
-                SELECT r.ref_uri,
-                       COUNT(*)   AS row_count,
-                       MIN(ts)    AS earliest,
-                       MAX(ts)    AS latest
-                FROM {TIMESERIES_TABLE} AS t
-                JOIN {REF_IDS_TABLE} AS r USING (ref_id)
-                WHERE r.ref_uri IN ({placeholders})
-                GROUP BY r.ref_uri
-                """,
-                ref_uris,
-            ).to_arrow_table().to_pydict()
         result: dict[str, TimeseriesInfo] = {}
-        for uri, cnt, earliest_raw, latest_raw in zip(
-            d["ref_uri"], d["row_count"], d["earliest"], d["latest"]
-        ):
-            result[uri] = TimeseriesInfo(
-                table=TIMESERIES_TABLE,
-                row_count=cnt or 0,
-                earliest=self._add_utc(earliest_raw),
-                latest=self._add_utc(latest_raw),
-            )
+        with self._own_conn() as conn, timed_debug(logger, "timeseries_info_batch n=%d", len(ref_uris)):
+            ids = self._ref_ids(conn, ref_uris)
+            if ids:
+                placeholders = ", ".join("?" * len(ids))
+                d = conn.execute(
+                    f"""
+                    SELECT ref_id,
+                           COUNT(*)   AS row_count,
+                           MIN(ts)    AS earliest,
+                           MAX(ts)    AS latest
+                    FROM {self._t_timeseries}
+                    WHERE ref_id IN ({placeholders})
+                    GROUP BY ref_id
+                    """,
+                    list(ids.values()),
+                ).to_arrow_table().to_pydict()
+                uri_of = {ref_id: uri for uri, ref_id in ids.items()}
+                for ref_id, cnt, earliest_raw, latest_raw in zip(
+                    d["ref_id"], d["row_count"], d["earliest"], d["latest"]
+                ):
+                    result[uri_of[ref_id]] = TimeseriesInfo(
+                        table=TIMESERIES_TABLE,
+                        row_count=cnt or 0,
+                        earliest=self._add_utc(earliest_raw),
+                        latest=self._add_utc(latest_raw),
+                    )
         for uri in ref_uris:
             if uri not in result:
                 result[uri] = TimeseriesInfo(table=TIMESERIES_TABLE, row_count=0)
@@ -617,17 +621,23 @@ class DuckDBStore:
         obs_end = self._to_utc_naive(log.period.end) if log.period and log.period.end else None
         logger.debug("insert_log point_uri=%s ts=%s", log.point_uri, log.timestamp)
         with self._lock, self._write_conn() as conn:
-            conn.execute(
-                f"""
-                INSERT INTO {LOGS_TABLE} (point_uri, timestamp, observed_start, observed_end, message)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT (point_uri, timestamp) DO UPDATE SET
-                    message        = excluded.message,
-                    observed_start = excluded.observed_start,
-                    observed_end   = excluded.observed_end
-                """,
-                [log.point_uri, self._to_utc_naive(log.timestamp), obs_start, obs_end, log.message],
+            self._upsert_log_row(
+                conn, [log.point_uri, self._to_utc_naive(log.timestamp), obs_start, obs_end, log.message]
             )
+
+    def _upsert_log_row(self, conn, row: list[Any]) -> None:
+        """Upsert one ``(point_uri, timestamp, observed_start, observed_end, message)`` row on *conn*."""
+        conn.execute(
+            f"""
+            INSERT INTO {self._t_logs} (point_uri, timestamp, observed_start, observed_end, message)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (point_uri, timestamp) DO UPDATE SET
+                message        = excluded.message,
+                observed_start = excluded.observed_start,
+                observed_end   = excluded.observed_end
+            """,
+            row,
+        )
 
     def query_logs(
         self,
@@ -664,7 +674,7 @@ class DuckDBStore:
         where = " AND ".join(clauses)
         query = f"""
             SELECT point_uri, timestamp, observed_start, observed_end, message
-            FROM {LOGS_TABLE}
+            FROM {self._t_logs}
             WHERE {where}
             ORDER BY timestamp ASC
         """
@@ -688,7 +698,7 @@ class DuckDBStore:
         logger.debug("delete_logs point_uri=%s", point_uri)
         with self._lock, self._write_conn() as conn:
             conn.execute(
-                f"DELETE FROM {LOGS_TABLE} WHERE point_uri = ?", [point_uri]
+                f"DELETE FROM {self._t_logs} WHERE point_uri = ?", [point_uri]
             )
         return True
 
@@ -772,6 +782,22 @@ class DuckDBStore:
     def _to_str(val: Any) -> str | None:
         return None if val is None else str(val)
 
+    def _ref_id(self, conn, ref_uri: str) -> int | None:
+        """The storage id of *ref_uri*, or None if it has never been written."""
+        row = conn.execute(
+            f"SELECT ref_id FROM {self._t_ref_ids} WHERE ref_uri = ?", [ref_uri]
+        ).fetchone()
+        return None if row is None else row[0]
+
+    def _ref_ids(self, conn, ref_uris: list[str]) -> dict[str, int]:
+        """ref_uri -> ref_id for the uris that have been written; others are absent."""
+        placeholders = ", ".join("?" * len(ref_uris))
+        d = conn.execute(
+            f"SELECT ref_uri, ref_id FROM {self._t_ref_ids} WHERE ref_uri IN ({placeholders})",
+            ref_uris,
+        ).to_arrow_table().to_pydict()
+        return dict(zip(d["ref_uri"], d["ref_id"]))
+
     def stream_value_kind(self, ref_uri: str) -> str | None:
         with self._own_conn() as conn:
             return self._stream_value_kind(conn, ref_uri)
@@ -780,7 +806,7 @@ class DuckDBStore:
         """Look up a stream's value kind on *conn* — the caller's connection, so
         a streaming read can resolve it without opening a second connection."""
         row = conn.execute(
-            f"SELECT value_kind FROM {STREAMS_TABLE} WHERE ref_uri = ?",
+            f"SELECT value_kind FROM {self._t_streams} WHERE ref_uri = ?",
             [ref_uri],
         ).fetchone()
         return row[0] if row else None
