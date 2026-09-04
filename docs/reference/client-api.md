@@ -65,11 +65,12 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 
 | method | description |
 |---|---|
-| `register_app(app: App, *, app_type=None, outputs=None, depends_on=None, resolve_dependencies=True, queries=None, params=None, replace=False) -> dict` | Register an `App` with the server. |
-| `run_app(app_id, *, start=None, end=None, params=None, keep_alive=False, interval=10.0) -> dict` | Run an app once, or keep it alive on `interval`. |
-| `stop_app(*, app_id) -> dict` | Stop an app's keep-alive loop. |
-| `delete_app(app_id) -> dict` | Stop a registered app and remove its graph registration. |
-| `list_app_runs(*, app_id=None) -> dict` | List registered apps, or one app's build and run status. |
+| `check_app(target: type[App], *, parameters=None, limit=None, search_path=None) -> dict` | Dry-run an app against stored data and return what it computed; nothing is deployed or saved. Every computed row comes back unless `limit` heads each output. `search_path` defaults to the directory of the class's module, so a local server can import it. |
+| `deploy_app(target: type[App], *, parameters=None) -> dict` | Persist and deploy an importable app class; `parameters` are passed to its constructor. |
+| `remove_app(name: str) -> dict` | Remove a durable app deployment by name. |
+| `app_dag() -> nx.DiGraph` | Return the compiled binding DAG; nodes describe concrete inputs, outputs, policies, and revision progress. |
+
+See the [app reference](apps.md) for the transformation class contract.
 
 ### Deprecated
 
@@ -230,9 +231,12 @@ and are listed once above.
 
 ### Apps
 
-`register_app(spec: AppSpec, *, replace=False)`, `run_app(...)`, `stop_app(*, app_id)`,
-`delete_app(app_id)`, `list_app_runs(*, app_id=None)`: the raw forms behind the
-`Acquirium` methods; `register_app` takes a built `AppSpec` rather than an `App`.
+| method | description |
+|---|---|
+| `check_app(definition: dict, limit=None, search_path=None) -> dict` | Raw HTTP form behind `Acquirium.check_app`. |
+| `deploy_app(definition: dict) -> dict` | Raw HTTP form behind `Acquirium.deploy_app`; the high-level client builds the definition from a class. |
+| `remove_app(name: str) -> dict` | Remove a deployment. |
+| `materialization_dag() -> dict` | Return the server's raw binding-DAG payload. |
 
 ### Grafana
 

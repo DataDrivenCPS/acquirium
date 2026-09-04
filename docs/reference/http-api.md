@@ -1,13 +1,8 @@
----
-title: HTTP API
----
+# HTTP API Reference
 
-This is a reference for the HTTP endpoints the acquirium server exposes
-(default `http://localhost:8000`).
-The Python client covers all of these; use the raw endpoints when scripting
-against the server directly.
+All endpoints are served by the Acquirium FastAPI server (default `http://localhost:8000`).
 
-Timestamps are ISO 8601 strings (e.g. `2026-01-01T00:00:00Z`). Errors return HTTP 400 with a JSON body `{"detail": "<message>"}`. 404 is reserved for an unknown driver or app, and 409 for registering an app name that already exists.
+Timestamps are ISO 8601 strings (e.g. `2026-01-01T00:00:00Z`). Errors return HTTP 400 with a JSON body `{"detail": "<message>"}`.
 
 ---
 
@@ -20,9 +15,8 @@ Returns `{"ok": true}` when the server is running.
 ### `GET /graph_version`
 
 Returns the store-owned source-data generation and the state of the derived
-query cache.
-The cache is fresh when `published_version` equals `source_version` and
-`is_current` is true.
+query cache. A cache is fresh exactly when `published_version` equals
+`source_version` and `is_current` is true.
 
 ```json
 {
@@ -33,10 +27,10 @@ The cache is fresh when `published_version` equals `source_version` and
 }
 ```
 
-Long-running clients can poll `source_version` to invalidate local query
-state.
-Note that this endpoint is informational; a query that must see the current
-inferred data should pass `wait_for_fresh=true` itself.
+Long-running clients may poll `source_version` to invalidate local query state. A
+caller that needs to observe current inferred data should issue its query with
+`wait_for_fresh=true`; the status endpoint is informational and does not make
+the following query atomic.
 
 ### `GET /embedding_status`
 
@@ -58,7 +52,7 @@ build and report `"ready"`, but they answer exact matches only.
 
 ---
 
-## Knowledge graph
+## Knowledge Graph
 
 ### `POST /insert_graph`
 
@@ -89,22 +83,6 @@ Export the RDF graph as serialized RDF.
 | `format` | `turtle` | Serialization format (`turtle`, `n3`, `xml`, `trig`, `nquads`) |
 
 Returns the RDF document with the appropriate content type (e.g. `text/turtle`).
-
-### `POST /validate_graph`
-
-Validate all registered deployment data against the ontology shapes and SHACL rules. Takes no parameters.
-
-**Response**
-
-```json
-{
-  "conforms": false,
-  "report": "@prefix sh: <http://www.w3.org/ns/shacl#> . ...",
-  "results_text": "Validation Report\nConforms: False\nResults (364): ..."
-}
-```
-
-`report` is the SHACL validation report as Turtle; `results_text` is the same report rendered for reading. Validation runs against the source data and the shapes directly, so it does not wait for a derived-graph rebuild.
 
 ### `GET /namespace/list`
 
@@ -162,33 +140,9 @@ Legacy endpoint. Executes a SPARQL SELECT query and returns results in an intern
 | `include_dependencies` | `true` | Include ontology/shape triples in the query graph |
 | `wait_for_fresh` | `false` | If true, wait for pending inference after graph writes. Otherwise return the last complete published graph while rebuilding. |
 
-Also accepts POST with the same fields as a JSON body. The Python client always POSTs, because a resolved traversal query exceeds URL length limits.
-
-### `POST /sparql_update`
-
-Execute a SPARQL UPDATE against one owned data graph. `/sparql` is read-only; this is the write path.
-
-**Request body**
-
-```json
-{
-  "update": "INSERT DATA { <urn:swro/P1> <http://www.w3.org/2000/01/rdf-schema#label> \"Feed pump 1\" }",
-  "source_id": "plant"
-}
-```
-
-| Field | Required | Description |
-| --- | --- | --- |
-| `update` | yes | SPARQL UPDATE (`INSERT`/`DELETE`) statement |
-| `source_id` | yes | Owner of the data graph to update; use the reserved `plant` for the shared plant model |
-
-The update is scoped to that owner's graph, so it cannot touch the plant model or another source's triples unless `source_id` names it. Drivers and apps use their own `sparql_update()` helper, which supplies the owner for them.
-
-**Response** `{"ok": true, ...}`
-
 ---
 
-## Timeseries ingestion
+## Timeseries Ingestion
 
 ### `POST /register_datasource`
 
@@ -239,7 +193,7 @@ High-throughput insert via Apache Arrow IPC stream. The request body is a binary
 
 ---
 
-## Timeseries query
+## Timeseries Query
 
 ### `GET /timeseries`
 
@@ -256,33 +210,19 @@ Read timeseries data for a single stream. Returns an Apache Arrow IPC stream (`a
 
 The Arrow schema is `(ts: timestamp[us, UTC], value: float64 or utf8, uri: utf8)`.
 
-See the [values guide](../explanation/values.md#numbers-and-text) for a full description of the
-`value_mode` options.
+See [Values](../explanation/values.md) for a full description of `value_mode` options.
 
 ### `POST /timeseries_info`
 
-Return metadata for a list of stream URIs in one request. This is what makes a `DataObject` able to report its row count and time range without fetching any values.
+Return metadata for a list of stream URIs.
 
-**Request body** `{"uris": ["urn:acquirium#399ce39c-...", ...]}`
+**Request body** `{"uris": ["urn:acquirium#...", ...]}`
 
-**Response** a map of URI → stream info:
-
-```json
-{
-  "urn:acquirium#399ce39c-...": {
-    "table": "timeseries",
-    "row_count": 5892,
-    "earliest": "2026-08-05T16:28:39.137381+00:00",
-    "latest": "2026-08-07T22:53:38.669786+00:00"
-  }
-}
-```
-
-A stream that was never written to reports `row_count: 0` with null bounds.
+**Response** A map of URI → stream info object.
 
 ---
 
-## Semantic resolution
+## Semantic Resolution
 
 ### `GET /resolve_text`
 
@@ -320,86 +260,66 @@ Resolve multiple fields of a structured record to semantic concepts in a single 
 
 ---
 
-## Unit conversion
-
-Every unit is expressed as a multiplier and an offset against the base unit of its dimension, and a value moves between two units through that base:
-
-```text
-converted = (value + from_offset) * from_multiplier / to_multiplier - to_offset
-```
+## Unit Conversion
 
 ### `POST /resolve_unit`
 
 Look up a unit by URI, label, symbol, or UCUM code.
 
-**Request body** `{"identifier": "psi"}`
+**Request body** `{"identifier": "degF"}`
 
-**Response**
-
-```json
-{
-  "uri": "http://qudt.org/vocab/unit/PSI",
-  "label": "Psi",
-  "symbol": "psi",
-  "quantity_kind": "http://qudt.org/vocab/quantitykind/VapourPressure",
-  "multiplier": 6894.757293168362,
-  "offset": 0.0
-}
-```
-
-### `POST /resolve_conversion`
-
-Resolve both sides of a conversion together and return a *convertible* pair. Candidates for each side are considered jointly, so a near-match that does not convert never shadows one that does. Use this when either side is free text; use `/conversion_factors` when both URIs are already known.
-
-**Request body**
-
-```json
-{"from_unit": "psi", "to_unit": "bar", "top_k": 5, "min_score": 0.5}
-```
-
-| Field | Required | Description |
-| --- | --- | --- |
-| `from_unit`, `to_unit` | yes | Unit URI or free text |
-| `top_k` | no (default `5`) | Candidates considered per side |
-| `min_score` | no (default `0.5`) | Minimum resolver score |
-
-**Response** the resolved unit record for each side plus the factors between them:
-
-```json
-{
-  "from":    {"uri": ".../PSI", "label": "Psi", "symbol": "psi", "multiplier": 6894.757293168362, "offset": 0.0, ...},
-  "to":      {"uri": ".../BAR", "label": "Bar", "symbol": "bar", "multiplier": 100000.0,          "offset": 0.0, ...},
-  "factors": {"from_uri": ".../PSI", "to_uri": ".../BAR",
-              "from_multiplier": 6894.757293168362, "from_offset": 0.0,
-              "to_multiplier": 100000.0, "to_offset": 0.0, "compatible": true}
-}
-```
-
-A request with no convertible pair among the candidates fails with HTTP 400 and both candidate lists in `detail`.
+**Response** Unit metadata including URI, label, and conversion factors.
 
 ### `POST /conversion_factors`
 
-Get the conversion factors between two units that are already identified by URI.
+Get multiplicative and additive conversion factors between two units.
 
-**Request body** `{"from_unit": "http://qudt.org/vocab/unit/PSI", "to_unit": "http://qudt.org/vocab/unit/BAR"}`
+**Request body** `{"from_unit": "degF", "to_unit": "degC"}`
 
-**Response**
-
-```json
-{
-  "from_uri": "http://qudt.org/vocab/unit/PSI",
-  "to_uri": "http://qudt.org/vocab/unit/BAR",
-  "from_multiplier": 6894.757293168362,
-  "from_offset": 0.0,
-  "to_multiplier": 100000.0,
-  "to_offset": 0.0,
-  "compatible": true
-}
-```
-
-`compatible` is the verdict of the dimension-vector check described in the [units guide](../explanation/units.md#what-convertible-means).
+**Response** `{"multiplier": ..., "offset": ...}`
 
 ---
+
+## Apps
+
+An app definition is the JSON built by `Deployment.from_class` (name,
+entrypoint, executable digest, outputs, and the scheduling attributes). The
+server imports the app by its entrypoint, so the class must be importable
+there.
+
+### `PUT /apps/{name}`
+
+Deploy an app. The body is an app definition whose `name` must match the path.
+
+**Response** `{"ok": true, "name": ..., "status": "deployed"}`
+
+### `POST /apps/check`
+
+Dry-run an app: compile its query, read every retained input row for each
+resulting input group, run its transform, and return the computed rows.
+Nothing is written — no deployment, no derived stream, no progress row, no
+revision. The body is an app definition. Every computed row is returned
+unless the optional `limit` query parameter keeps only the first `limit`
+rows of each output. The optional `search_path` query parameter names a
+directory on the server's filesystem to import the app's module from, for a
+file the server cannot otherwise import; a module whose file changed since
+it was imported is reloaded. Both are specific to checks — `PUT /apps/{name}`
+requires an app the server can import on its own.
+
+**Response** `{"ok": true, "app": ..., "graph_revision": N, "bindings": [...]}`,
+where each binding reports its bound `inputs`, `entities`, `input_rows`,
+`read_window`, per-port `outputs` (`rows` is the full count, `values` holds
+the returned rows, `truncated` says whether `limit` cut them), and `error`.
+
+### `DELETE /apps/{name}`
+
+Remove a deployment and forget its progress.
+
+**Response** `{"ok": true, "name": ..., "status": "removed"}`
+
+### `GET /materialization/dag`
+
+The active compiled plan as a node-link document.
 
 ## Logs
 
@@ -416,7 +336,6 @@ Insert a log entry associated with a point URI and optional observation period. 
 | `observation_end` | no | ISO 8601 end of the observed period |
 
 **Response** `{"ok": true}`
-
 ### `GET /query_logs`
 
 Query log entries by point URI and time range. All parameters are query parameters.
@@ -440,121 +359,3 @@ Delete all log entries for a point URI.
 | `point_uri` | Point URI to delete logs for (defaults to plant URI) |
 
 **Response** `{"ok": true}`
-
----
-
-## Drivers
-
-The `acquirium driver` CLI group is a thin wrapper over these three. See the [driver reference](drivers.md) for what a driver is and how it is configured.
-
-### `POST /drivers/start`
-
-Start a driver as a Ray actor on this server.
-
-**Request body**
-
-```json
-{
-  "spec": "acquirium.Drivers.BuiltInDrivers.csv_ingest:CSVIngestDriver",
-  "config": {"driver": {"source_id": "ro-skid", "watch_dir": "./data", "glob": "*.csv", "format": "wide"}},
-  "name": "ro-skid",
-  "interval": 60.0
-}
-```
-
-| Field | Required | Description |
-| --- | --- | --- |
-| `spec` | yes | `module.path:ClassName`, or `path/to/file.py:ClassName` resolved against the config's directory **on the server host** |
-| `config` | no (default `{}`) | The full merged acquirium config; the driver reads its own entry as `self.config["driver"]` |
-| `name` | no | Registry name; defaults to the spec's class name. Starting a second driver under a name already in use fails |
-| `interval` | no | Tick interval in seconds; falls back to `[driver] interval`, then `10.0` |
-
-The driver's `setup()` runs before this returns, so a slow setup means a slow response, and a setup that raises fails the request rather than leaving a registered driver behind.
-
-**Response** `{"ok": true, "driver": {"name": ..., "spec": ..., "interval": ..., "started_at": ..., "status": "running"}}`
-
-### `POST /drivers/stop`
-
-Signal a driver to stop, wait up to 10 seconds for the current tick, run its `stop()`, flush what is buffered, then kill the actor.
-
-**Request body** `{"name": "ro-skid"}`
-
-**Response** `{"ok": true, "name": "ro-skid", "stopped": true}`
-
-`stopped: false` with an `error` means the driver did not exit within the window and the actor was killed anyway. An unknown name returns 404.
-
-### `GET /drivers/list`
-
-List the drivers running on this server. Takes no parameters.
-
-**Response**
-
-```json
-{
-  "ok": true,
-  "drivers": [
-    {
-      "name": "WaterTAPParquetDriver",
-      "spec": "../../scripts/parquet_driver.py:WaterTAPParquetDriver",
-      "interval": 120.0,
-      "started_at": "2026-08-26T22:22:39.362884+00:00",
-      "status": "running"
-    }
-  ]
-}
-```
-
-`status` is `running`, `stopped`, or `failed: <error>`.
-
----
-
-## Apps
-
-### `POST /apps/register`
-
-Register an app spec. See `AppSpec` in `internals/models.py` for the full field list. An optional `replace` query parameter (default `false`) tears the existing app down and re-registers it; without it, a name that already exists returns 409.
-
-**Response** `{"ok": true, ...}` with the registration info.
-
-### `POST /apps/delete`
-
-Gracefully delete a registered app: stop it, strip its registration triples from its source graph, kill its actor, and remove its persisted source.
-
-**Request body** `{"app_id": "my-app"}`
-
-**Response** `{"ok": true, "name": "my-app", "deleted": true}`
-
-An unknown `app_id` returns 404.
-
-### `POST /apps/run`
-
-Start an app run.
-
-**Request body**
-
-```json
-{
-  "app_id": "my-app",
-  "start": "2026-01-01T00:00:00Z",
-  "end": "2026-02-01T00:00:00Z",
-  "params": {},
-  "keep_alive": false,
-  "interval": 10.0
-}
-```
-
-**Response** `{"ok": true, "run_id": "<uuid>"}`
-
-### `POST /apps/stop`
-
-Stop a running app. Provide `run_id` or `app_id`.
-
-**Request body** `{"run_id": "<uuid>"}` or `{"app_id": "my-app"}`
-
-**Response** `{"ok": true, ...}`
-
-### `GET /apps/list`
-
-List app runs. Optional `app_id` query parameter filters by app.
-
-**Response** `{"ok": true, "runs": [...]}`

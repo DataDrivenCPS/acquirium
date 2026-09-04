@@ -61,7 +61,7 @@ Tutorials walk through the capabilities of Acquirium. We recommend starting here
 - [Working with data](tutorials/data.md) — accessing and preprocessing timeseries data
 - [Your first driver](tutorials/first-driver.md) — authoring a CSV driver step by step without a plant model
 - [A driver against an existing plant model](tutorials/driver-with-a-plant-model.md) — the same driver with a plant model, binding its streams to the model's points
-- [Your first app](tutorials/first-app.md) — coming soon
+- [Your first app](tutorials/first-app.md) — derive a new stream from stored data and watch it stay current
 
 The notebooks under [`notebooks/watertap/`](https://github.com/DataDrivenCPS/acquirium/tree/main/notebooks/watertap) are runnable tutorials too: a quick start, the query interface feature by feature, a regulatory-compliance check and a soft sensor.
 
@@ -70,6 +70,7 @@ The notebooks under [`notebooks/watertap/`](https://github.com/DataDrivenCPS/acq
 
 ## How-to guides
 
+- [Apps](apps.md) — process stored data into derived streams: soft sensors, alarms, KPIs, and the mental model behind them
 - [Run the server](how-to/run-the-server.md) — the server command, startup, Docker
 - [Debugging queries for an unexpected result](how-to/debug-an-empty-query.md) — the five usual causes
 - [Explore a model](how-to/explore-a-model.md) — build a query step by step; `options()` and `facets()`
@@ -87,7 +88,7 @@ The reference guides contain complete interface of each module:
 
 - [Acquirium Client API](reference/client-api.md) — every method of `Acquirium`, `Query`, `DataObject`, `AcquiriumClient`
 - [Driver reference](reference/drivers.md) — class hierarchy, hooks, state, config keys, built-in drivers, CLI
-- [App reference](reference/apps.md) — coming soon
+- [App reference](reference/apps.md) — how materialization works, its algorithms and design decisions, then the complete app API
 - [Server configuration](reference/server-config.md) — `[server]`, environment variables, `[ontologies]`, the endpoint table
 - [HTTP API](reference/http-api.md) — the raw endpoints
 - [Glossary](reference/glossary.md) — URIs, CURIEs, free text, the plant model, querying and data terms
@@ -100,7 +101,7 @@ These contain explanation behind the motivation of key design choices we made wh
 - [Values](explanation/values.md) — numeric and text storage, `value_mode`, `cast_value`
 - [Units](explanation/units.md) — point units, storage units, compatibility, automatic and requested conversion
 - [Drivers](explanation/drivers.md) — why drivers, and the sMAP inspiration
-- [Apps](explanation/apps.md) — coming soon
+- [Apps](explanation/apps.md) — why derived streams are recomputed windows, not event pipelines
 - [The data stream lifecycle](explanation/stream-lifecycle.md) — how streams are identified, stored and found again
 - [Text resolution](explanation/text-resolution.md) — how matching works
 - [Server internals](explanation/server-internals.md) — storage backends, the graph store, the embedding indexes

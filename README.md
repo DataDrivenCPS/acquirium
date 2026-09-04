@@ -44,7 +44,7 @@ The server and its configured drivers start from one command:
 acquirium server --config acquirium.toml
 ```
 
-A sample `acquirium.toml` is included at the repository root. By default everything is stored on local disk (an embedded Oxigraph RDF store and a DuckDB file under `data_dir`); no external services are required. The first start builds the text-resolution indexes and can take 5-10 minutes; later starts reuse the cache.
+A sample `acquirium.toml` is included at the repository root. By default everything is stored on local disk (an embedded Oxigraph RDF store and a DuckDB file under `data_dir`); no external services are required. The first start builds the text-resolution indexes and can take 5-10 minutes; later starts reuse the cache. The server is intentionally one process because it owns the embedded graph store. `materialization_workers` bounds concurrent transformation execution through the server's in-process worker pool; incremental materialization supports both DuckDB and TimescaleDB backends.
 
 Querying is a Python client:
 

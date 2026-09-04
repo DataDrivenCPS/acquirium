@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -685,6 +686,20 @@ class OxigraphGraphStore:
                 "is_current": self._query_cache_is_current(),
                 "rebuild_in_progress": self._query_rebuild_in_progress,
             }
+
+    def published_query_digest(self) -> str:
+        """Return a stable digest of the complete published inferred graph.
+
+        This deliberately waits for the query-cache publication boundary, so
+        runtime SQL never records a revision for a partial graph rebuild.
+        """
+        result = self.sparql_query(
+            "SELECT ?s ?p ?o WHERE { ?s ?p ?o } ORDER BY ?s ?p ?o",
+            include_dependencies=False,
+            wait_for_fresh=True,
+        )
+        payload = json.dumps(result["rows"], ensure_ascii=False, separators=(",", ":"), default=str)
+        return hashlib.sha256(payload.encode()).hexdigest()
 
     def refresh_union(self, snapshot_path: str | Path | None = None) -> dict[str, int]:
         """Refresh inferred query views from all data graphs and shape graphs."""

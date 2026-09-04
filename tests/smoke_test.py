@@ -6,31 +6,35 @@ runtime checks (server, drivers) are out of scope here.
 """
 
 from acquirium import (
-    AppContext,
     Acquirium,
     App,
     DataObject,
     Driver,
     EventIngestDriver,
     IngestDriver,
-    Output,
+    OutputSpec,
     PollingIngestDriver,
     Query,
+    align,
+    console,
+    output,
 )
 
 
 def main() -> None:
     exports = (
-        AppContext,
         Acquirium,
         App,
         DataObject,
         Driver,
         EventIngestDriver,
         IngestDriver,
-        Output,
+        OutputSpec,
         PollingIngestDriver,
         Query,
+            align,
+        console,
+        output,
     )
     for obj in exports:
         assert obj is not None, f"{obj!r} import failed"

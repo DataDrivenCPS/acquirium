@@ -57,6 +57,7 @@ dependencies = [
     "rich>=14.2.0",
     "uvicorn>=0.38.0",
     "ray>=2.56.0",
+    "networkx>=3.6.1",
 ]
 
 [project.optional-dependencies]
@@ -118,6 +119,10 @@ constraint-dependencies = ["py-rust-stemmers>=0.1.7"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The live integration tests and the test server share application modules by
+# the importable name tests.integration.materialization_targets; the repo root
+# on sys.path makes that name resolve identically on both sides.
+pythonpath = ["."]
 markers = [
     "unit: Unit tests (no external services required)",
     "integration: Integration tests (require Docker services)",
