@@ -8,7 +8,9 @@ import pytest
 import psycopg
 from psycopg.conninfo import make_conninfo
 
-from acquirium.Materialization import Binding, InProcessExecutor, RevisionStore, Scheduler, StreamDescriptor, App, output
+from acquirium.Materialization import (
+    App, Binding, InProcessExecutor, OutputPort, RevisionStore, Scheduler, StreamDescriptor, output,
+)
 from acquirium.Storage.duckdb_store import DuckDBStore
 from acquirium.Storage.timescale_store import TimescaleStore
 
@@ -57,7 +59,7 @@ def test_materialization_revision_frontier_contract(materialization_store):
     store.upsert_rows("urn:input", [(timestamp, 2.0)], value_kind="numeric")
     binding = Binding(
         "copy", "digest", {"source": (StreamDescriptor("urn:input"),)},
-        {"out": ("urn:output", Copy.outputs["out"])},
+        {"out": OutputPort("urn:output", "out", "urn:point:output", Copy.outputs["out"])},
     )
     revisions = RevisionStore(store)
     scheduler = Scheduler(revisions, InProcessExecutor())
