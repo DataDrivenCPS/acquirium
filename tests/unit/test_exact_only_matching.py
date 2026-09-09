@@ -106,12 +106,7 @@ def _make_manager(data_dir: Path, *, exact_only: bool) -> Manager:
 @pytest.fixture(scope="module")
 def exact_manager(tmp_path_factory: pytest.TempPathFactory):
     data_dir = tmp_path_factory.mktemp("acq-exact-only")
-    # Whether this Manager loads the model is the thing under test, so record
-    # what the process had already imported. Another test in the same session
-    # may legitimately have embedded something before this one ran.
-    preloaded = "fastembed" in sys.modules
     m = _make_manager(data_dir, exact_only=True)
-    m._test_imported_fastembed = "fastembed" in sys.modules and not preloaded
     yield m
     m.close()
 
@@ -129,7 +124,7 @@ def test_no_model_and_no_cache_dir(exact_manager: Manager) -> None:
     assert exact_manager._graph_matcher.exact_only
     assert exact_manager._qudt_matcher.exact_only
     assert not (exact_manager.data_dir / "embedding_cache").exists()
-    assert not exact_manager._test_imported_fastembed
+    assert "fastembed" not in sys.modules
 
 
 def test_unit_resolution_via_converter(exact_manager: Manager) -> None:

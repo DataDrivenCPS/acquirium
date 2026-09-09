@@ -1,8 +1,6 @@
 # default data location
 .acquirium
-batch_example/.data/
 examples/transformation/.data/
-propagation_demo/.data/
 
 scripts/dev_examples
 # Byte-compiled / optimized / DLL files
@@ -222,6 +220,3 @@ scripts/benchmark/scalability/*.csv
 dpr-trailer-data/
 
 .run_logs
-
-# Scores and failure dumps written by tests/test_resolve_text.py on each run.
-tests/text_match_results/
