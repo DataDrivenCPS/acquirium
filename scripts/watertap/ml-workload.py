@@ -49,6 +49,7 @@ class InteractionOLS:
 
 class MembraneFoulingSoftSensor(App):
     name = "membrane_fouling_soft_sensor"
+    grouping = "per_match"
     version = "0.1"
     app_type = "soft_sensor"
     outputs = [

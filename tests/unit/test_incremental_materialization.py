@@ -31,6 +31,7 @@ def _context(row, result):
 
 
 class Mean(App):
+    grouping = "per_match"
     backfill = True
     lookback = "1m"
     outputs = {"mean": output.stream(value_kind="numeric")}
@@ -43,6 +44,7 @@ class Mean(App):
 
 class LineageCopy(App):
     name = "lineage-copy"
+    grouping = "per_match"
     outputs = {"out": output.stream(value_kind="numeric")}
     def build_query(self, plant): return plant.query().measurement(alias="input")
     def transform(self, inputs, output, context): pass
@@ -50,6 +52,7 @@ class LineageCopy(App):
 
 class BorrowedPoint(App):
     name = "borrowed-point"
+    grouping = "per_match"
     outputs = {"out": output.stream(value_kind="numeric", point_uri="urn:plant/T-101")}
     def build_query(self, plant): return plant.query().measurement(alias="input")
     def transform(self, inputs, output, context): pass
@@ -57,6 +60,7 @@ class BorrowedPoint(App):
 
 class TaggedOutput(App):
     name = "tagged-output"
+    grouping = "per_match"
     outputs = {"out": output.stream(value_kind="numeric", data_source="normalized")}
     def build_query(self, plant): return plant.query().measurement(alias="input")
     def transform(self, inputs, output, context): pass
@@ -64,6 +68,7 @@ class TaggedOutput(App):
 
 class MixedFanOut(App):
     name = "mixed-fan-out"
+    grouping = "per_match"
     outputs = {
         "each": output.stream(value_kind="numeric"),
         "total": output.named("kpi", value_kind="numeric"),
@@ -81,6 +86,7 @@ class NamedTotal(App):
 
 
 class Copy(App):
+    grouping = "per_match"
     backfill = True
     outputs = {"out": output.stream(value_kind="numeric")}
 
@@ -90,6 +96,7 @@ class Copy(App):
 
 
 class ConfiguredLookback(App):
+    grouping = "per_match"
     outputs = {"out": output.stream(value_kind="numeric")}
 
     def __init__(self, window="5m"):
@@ -97,6 +104,7 @@ class ConfiguredLookback(App):
 
 
 class WholeStream(App):
+    grouping = "per_match"
     lookback = "all"
     backfill = True
     min_interval = "5m"
@@ -152,6 +160,7 @@ class PairedRowGraph(LineageGraph):
 
 class PairedApp(App):
     name = "paired"
+    grouping = "per_match"
     outputs = {"ratio": output.stream(value_kind="numeric")}
     def build_query(self, plant):
         # Two aliases the query genuinely separates, by quantity kind.
@@ -540,6 +549,7 @@ class EntityRowGraph(LineageGraph):
 
 class PerMatchEntity(App):
     name = "per-row-entity"
+    grouping = "per_match"
     outputs = {"out": output.stream(value_kind="numeric")}
     def build_query(self, plant):
         return (plant.query().entity("urn:ReverseOsmosis", alias="ro")
@@ -562,6 +572,7 @@ def test_context_carries_the_bound_rows_entities_and_labels():
 
 class CheckDouble(App):
     name = "check-double"
+    grouping = "per_match"
     outputs = {"doubled": output.stream(value_kind="numeric")}
     def build_query(self, plant): return plant.query().measurement(alias="input")
     def transform(self, inputs, output, context):
@@ -573,12 +584,14 @@ class CheckDouble(App):
 
 class CheckBroken(CheckDouble):
     name = "check-broken"
+    grouping = "per_match"
     def transform(self, inputs, output, context):
         raise ValueError("sensor calibration missing")
 
 
 class CheckUndeclared(CheckDouble):
     name = "check-undeclared"
+    grouping = "per_match"
     def transform(self, inputs, output, context):
         output["dubbled"] = inputs["input"].collect()
 
@@ -672,16 +685,19 @@ def test_preview_batch_leaves_the_deployed_apps_progress_alone(tmp_path):
 def test_output_declarations_are_validated_before_deployment():
     class BadSpec(App):
         name = "bad-spec"
+        grouping = "per_match"
         outputs = {"out": "numeric"}
         def build_query(self, plant): return plant.query().measurement(alias="input")
 
     class Colliding(App):
         name = "colliding"
+        grouping = "per_match"
         outputs = {"a": output.named("total", value_kind="numeric"),
                    "b": output.named("total", value_kind="numeric")}
         def build_query(self, plant): return plant.query().measurement(alias="input")
 
     class MappingSpec(App):
+        grouping = "per_match"
         outputs = {"out": {"value_kind": "numeric"}}
 
     with pytest.raises(TypeError, match="aq.output.stream"):

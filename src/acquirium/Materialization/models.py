@@ -445,11 +445,26 @@ class ApplicationGraph:
         return tuple(layers)
 
 
-class App:
+_GROUPINGS = ("per_match", "all_matches")
+
+
+class _AppMeta(type):
+    def __call__(cls, *args: Any, **kwargs: Any) -> "App":
+        app = super().__call__(*args, **kwargs)
+        if app.grouping not in _GROUPINGS:
+            raise ValueError(
+                f"{cls.__name__}.grouping must be explicitly set to "
+                f"'per_match' or 'all_matches'; got {app.grouping!r}"
+            )
+        return app
+
+
+class App(metaclass=_AppMeta):
     """A stateless calculation over streams selected by a semantic query.
 
-    grouping selects per_match calls or one all_matches call independently
-    of output naming. every declares complete resampling buckets. lookback
+    Every concrete app must explicitly set grouping to ``"per_match"`` or
+    ``"all_matches"``. It selects per-match calls or one aggregate call
+    independently of output naming. every declares complete resampling buckets. lookback
     and lookahead describe trailing and leading input dependencies; their
     effects also determine which outputs a correction recomputes.
     backfill processes retained history on first activation. batch_delay and
@@ -460,7 +475,7 @@ class App:
     """
     name: str | None = None
     every: timedelta | str | None = None
-    grouping: str = "per_match"
+    grouping: str | None = None
     lookback: timedelta | str = "0s"
     lookahead: timedelta | str = "0s"
     backfill: bool = False

@@ -23,7 +23,7 @@ effects in transforms; execution can be retried.
 | Attribute | Default | Meaning |
 |---|---|---|
 | `name` | class name | Deployment and derived source identity |
-| `grouping` | `"per_match"` | One call per match, or `"all_matches"` for one aggregate |
+| `grouping` | required | `"per_match"` for one call per match, or `"all_matches"` for one aggregate |
 | `outputs` | required | Mapping of port names to stream declarations |
 | `every` | none | Complete fixed UTC buckets, e.g. `"1m"` |
 | `lookback` | `"0s"` | Preceding input dependency, or `"all"` |
@@ -237,9 +237,10 @@ constructor parameters.
 
 Deployment JSON carries name, entrypoint, executable_digest, outputs,
 parameters, grouping, and window/scheduling attributes. Durations are integer
-microseconds; lookback may be `"all"`. Grouping defaults to `"per_match"`,
-including for named outputs. Unknown fields and invalid grouping values are
-rejected.
+microseconds; lookback may be `"all"`. Grouping must be explicitly set to
+`"per_match"` or `"all_matches"`, including for named outputs. Missing, null,
+unknown, and invalid grouping values are rejected when the deployment is
+constructed.
 
 DAG statuses are idle, pending, running, waiting, failed, or reprocessing.
 Errors and last-success timestamps are process diagnostics; consumed progress
