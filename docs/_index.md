@@ -70,7 +70,7 @@ The notebooks under [`notebooks/watertap/`](https://github.com/DataDrivenCPS/acq
 
 ## How-to guides
 
-- [Apps](apps.md) — process stored data into derived streams: soft sensors, alarms, KPIs, and the mental model behind them
+- [Apps](apps.md) — write and deploy calculations for derived streams, including averages and alarms
 - [Run the server](how-to/run-the-server.md) — the server command, startup, Docker
 - [Debugging queries for an unexpected result](how-to/debug-an-empty-query.md) — the five usual causes
 - [Explore a model](how-to/explore-a-model.md) — build a query step by step; `options()` and `facets()`
@@ -88,7 +88,7 @@ The reference guides contain complete interface of each module:
 
 - [Acquirium Client API](reference/client-api.md) — every method of `Acquirium`, `Query`, `DataObject`, `AcquiriumClient`
 - [Driver reference](reference/drivers.md) — class hierarchy, hooks, state, config keys, built-in drivers, CLI
-- [App reference](reference/apps.md) — how materialization works, its algorithms and design decisions, then the complete app API
+- [App reference](reference/apps.md) — the app API, processing rules, and scheduling and recovery algorithm
 - [Server configuration](reference/server-config.md) — `[server]`, environment variables, `[ontologies]`, the endpoint table
 - [HTTP API](reference/http-api.md) — the raw endpoints
 - [Glossary](reference/glossary.md) — URIs, CURIEs, free text, the plant model, querying and data terms
@@ -101,7 +101,7 @@ These contain explanation behind the motivation of key design choices we made wh
 - [Values](explanation/values.md) — numeric and text storage, `value_mode`, `cast_value`
 - [Units](explanation/units.md) — point units, storage units, compatibility, automatic and requested conversion
 - [Drivers](explanation/drivers.md) — why drivers, and the sMAP inspiration
-- [Apps](explanation/apps.md) — why derived streams are recomputed windows, not event pipelines
+- [Apps](explanation/apps.md) — how apps keep derived streams current as readings arrive and are corrected
 - [The data stream lifecycle](explanation/stream-lifecycle.md) — how streams are identified, stored and found again
 - [Text resolution](explanation/text-resolution.md) — how matching works
 - [Server internals](explanation/server-internals.md) — storage backends, the graph store, the embedding indexes

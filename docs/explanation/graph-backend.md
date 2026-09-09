@@ -262,18 +262,21 @@ not extra lifecycle work required of driver authors.
 
 ### Apps
 
-Materialization apps do not write arbitrary graph data. The planner publishes
-their derived points, references, and structural lineage together in
-Acquirium's reserved internal graph, replacing that generated view when the
-binding plan changes. Each output reference uses `derived:<app-name>` as its
-timeseries `source_id`; that is a stream identity, not a caller-owned graph.
-Each derived point carries `acquirium:producedBy "<app name>"`, which is what
-the query layer's `app` attribute matches, and — when the app declared no
-label of its own — a generated `rdfs:label` naming the measurement and the app
-that derived it. A point the app author supplied with `point_uri=` is not
-relabelled; it belongs to the plant model.
-See the [app reference](../reference/apps.md#output-declarations) for the output identity
-and metadata rules.
+The planner manages graph metadata for materialization apps. It publishes
+derived points, references, and structural lineage together in Acquirium's
+reserved internal graph, and replaces that generated view when the binding
+plan changes. App transforms do not write arbitrary graph data.
+
+Each output reference uses `derived:<app-name>` as its timeseries `source_id`.
+This identifies the app's streams without creating a caller-owned graph. The
+planner records `acquirium:producedBy "<app name>"` on derived points, allowing
+queries to select them with the `app` attribute.
+
+When an output has no explicit label, the planner generates an `rdfs:label`
+from the measurement and producing app. It preserves labels on existing plant
+points supplied through `point_uri=`. See the
+[app reference](../reference/apps.md#output-declarations) for the complete output
+identity and metadata rules.
 
 ### Updates, queries, and validation
 
