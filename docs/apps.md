@@ -216,6 +216,26 @@ wait for that work to finish.
 `client.remove_app("celsius")` stops the app and forgets its progress and pending
 work. Existing derived history remains stored.
 
+## Inspect deployed apps
+
+```bash
+acquirium app list --config acquirium.toml
+acquirium app inspect normalize-temperatures --config acquirium.toml
+```
+
+`list` includes every deployment, even apps with no matching inputs or planning
+errors. `inspect` shows grouping, window and scheduling settings, declared
+output schemas and units, resolved input/output stream IDs, and each binding's
+progress, last success, and error. It uses the deployed name, not a file path.
+Both commands support `--json`, `--server-url`, and `--server-port`.
+
+These commands only read state: they do not run transforms or refresh the plan.
+`planning` means the coordinator has not compiled the current graph yet;
+`no_matches` means its current plan has no bindings. While a plan is stale,
+inspection can show bindings from the last compiled plan. Output schemas come
+from the stored declaration and are available before any readings are produced.
+Revision lag may include unrelated writes; it is not a count of pending samples.
+
 ## Advanced execution controls
 
 - `batch_delay = "2s"`: wait two seconds from the first pending change before

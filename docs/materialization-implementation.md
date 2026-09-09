@@ -16,6 +16,15 @@ implements the contract, and what an operator needs to know.
 
 ## The storage contract
 
+For read-only operational inspection, use `acquirium app list` and
+`acquirium app inspect NAME` (both accept `--json`). The corresponding
+`GET /apps` and `GET /apps/{name}` endpoints join the durable deployment registry
+with the latest in-memory plan and stored progress. They do not trigger graph
+refresh or execution. Progress is fetched once per request, not once per binding.
+Declarations remain inspectable when code cannot be loaded or queries match
+nothing. See the [inspection guide](apps.md#inspect-deployed-apps) for status
+and plan-freshness semantics.
+
 The timeseries backend stores `system_state` (one global `current_revision`)
 and `binding_progress` (`progress_key` → `consumed_revision`). The materializer
 owns `materialization_deployments`, `materialization_lineage`, and
