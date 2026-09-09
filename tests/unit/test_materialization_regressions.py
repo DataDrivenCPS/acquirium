@@ -109,15 +109,31 @@ def test_ambiguous_entity_matches_are_rejected():
         BindingPlanner(Ambiguous([])).compile([Deployment.from_class(LineageCopy)], 1)
 
 
-def test_legacy_deployment_settings_upgrade_without_changing_progress():
+def test_deployment_roundtrip_and_grouping_default():
     import json
-    old = json.loads(Deployment.from_class(SumFleet).to_json())
-    old.pop('grouping')
-    old.pop('batch_delay')
-    old.update(coalesce=10_000_000, max_delay=2_000_000)
-    loaded = Deployment.from_json(json.dumps(old))
-    assert loaded.grouping == 'all_matches'
-    assert loaded.batch_delay == timedelta(seconds=2)
+    declaration = replace(Deployment.from_class(SumFleet), batch_delay=timedelta(seconds=2))
+    assert Deployment.from_json(declaration.to_json()) == declaration
+    payload = json.loads(declaration.to_json())
+    payload.pop('grouping')
+    assert Deployment.from_json(json.dumps(payload)).grouping == 'per_match'
+    payload['unexpected_setting'] = 2
+    with pytest.raises(ValueError, match='unknown deployment fields'):
+        Deployment.from_json(json.dumps(payload))
+
+
+def test_http_deployment_uses_explicit_grouping_and_rejects_unknown_fields():
+    import json
+    from pydantic import ValidationError
+    from acquirium.Server.app import AppRegistration
+    payload = json.loads(Deployment.from_class(SumFleet).to_json())
+    payload.pop('grouping')
+    registration = AppRegistration.model_validate(payload)
+    assert registration.grouping == 'per_match'
+    assert Deployment.from_json(registration.model_dump_json()).grouping == 'per_match'
+    with pytest.raises(ValidationError):
+        AppRegistration.model_validate({**payload, 'grouping': None})
+    with pytest.raises(ValidationError):
+        AppRegistration.model_validate({**payload, 'unexpected_setting': 1})
 
 
 def test_partitioned_backfill_and_reprocessing_resume_after_restart(tmp_path):

@@ -21,6 +21,8 @@ def _duration(value: timedelta | str) -> timedelta:
         if value < timedelta():
             raise ValueError("durations must not be negative")
         return value
+    if not isinstance(value, str):
+        raise TypeError("durations must be strings or timedeltas")
     suffix = value[-2:] if value.endswith("ms") else value[-1:]
     units = {"ms": 1_000, "s": 1_000_000, "m": 60_000_000, "h": 3_600_000_000,
              "d": 86_400_000_000}
@@ -37,7 +39,7 @@ def parse_lookback(value: timedelta | str) -> timedelta | None:
 
     ``None`` is the internal spelling of ``"all"``; authors never write it.
     """
-    if value == "all" or value is None:
+    if value == "all":
         return None
     return _duration(value)
 
@@ -180,7 +182,7 @@ class InputBatch:
     read_window: TimeWindow
     _row: Mapping[str, Any] | None = None
     _result: tuple[Mapping[str, Any], ...] = ()
-    output_window: TimeWindow | None = None
+    output_window: TimeWindow = field(kw_only=True)
     work_id: str | None = None
     work_cursor: str | None = None
     work_next: str | None = None
@@ -189,7 +191,7 @@ class InputBatch:
     def result(self) -> Any:
         """Everything ``build_query`` matched, as a Polars dataframe.
 
-        The same table in every call of an app, whatever the output flavor:
+        The same table in every call of an app, regardless of grouping:
         a ``per_match`` call sees the whole fleet it is one of, which is what
         lets it group, rank, or count siblings. Columns follow
         ``Query.metadata()``: an alias holds the matched URI, with
@@ -204,8 +206,8 @@ class InputBatch:
     def row(self) -> Mapping[str, Any]:
         """The row this call is computing, with ``per_match`` grouping.
 
-        Raises for an ``all_matches`` app: that call is about every matched row
-        at once, and :attr:`result` is the whole table.
+        An ``all_matches`` call also has a row when its query matches exactly
+        one row. Otherwise this raises; :attr:`result` holds the whole table.
         """
         if self._row is None:
             raise ValueError(
@@ -364,10 +366,7 @@ class Binding:
                    "lookback": "all" if self.lookback is None else self.lookback.total_seconds(),
                    "lookahead": self.lookahead.total_seconds(),
                    "every": self.every.total_seconds() if self.every else None}
-        # Keep unconfigured bindings byte-for-byte compatible with their
-        # previous identity, while making configured deployments distinct.
-        if self.parameters:
-            payload["parameters"] = dict(self.parameters)
+        payload["parameters"] = dict(self.parameters)
         object.__setattr__(self, "signature", sha256(_canonical(payload).encode()).hexdigest())
         # Durable progress deliberately survives code and parameter edits: it is
         # keyed by what the binding reads and writes, not by how it computes.

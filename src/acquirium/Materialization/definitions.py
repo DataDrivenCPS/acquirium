@@ -1,4 +1,4 @@
-"""Immutable, deterministic transformation definition bundles."""
+"""Deterministic source digests for application entrypoints."""
 
 from __future__ import annotations
 

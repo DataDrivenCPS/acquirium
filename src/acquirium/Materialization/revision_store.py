@@ -208,7 +208,7 @@ class RevisionStore:
         inputs = {alias: replace(self._stream_set(conn, alias, descriptors, read, previous, target), every=binding.every, _scheduled=True)
                   for alias, descriptors in binding.inputs.items()}
         return Batch(inputs, InputBatch(binding.signature, binding.graph_revision, previous,
-                                        target, changed_window, read, binding.row, binding.result, window))
+                                        target, changed_window, read, binding.row, binding.result, output_window=window))
 
     @staticmethod
     def _output_window(binding: Binding, changed: TimeWindow) -> TimeWindow:
@@ -276,7 +276,7 @@ class RevisionStore:
             import polars as pl
             revision = None
             for binding, batch, results in accepted:
-                window = batch.context.output_window or batch.context.changed_window
+                window = batch.context.output_window
                 for name, table in results.items():
                     port = binding.outputs[name]
                     mask = pc.and_(pc.greater_equal(table["time"], pa.scalar(window.start)),

@@ -11,7 +11,7 @@ import sys
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Any, Iterator, Optional
+from typing import Annotated, Any, Iterator, Literal, Optional
 
 # When the server is launched via `uv run`, Ray's uv hook would give every
 # worker a fresh env resolved from pyproject.toml — dropping optional extras
@@ -309,8 +309,7 @@ async def lifespan(app: FastAPI):
     if worker_count < 1:
         raise ValueError("server.materialization_workers must be positive")
 
-    # v1 runs materialization in a bounded local worker pool. Ray remains an
-    # optional driver runtime, but is not part of the materialization API.
+    # Materialization runs through one coordinator and a bounded local pool.
     m = Manager.from_env()
     m.materializer.configure_workers(worker_count)
     app.state.manager = m
@@ -512,6 +511,8 @@ def list_namespaces() -> dict[str, str]:
 
 
 class AppRegistration(BaseModel):
+    """App definition with explicit grouping and microsecond durations."""
+    model_config = {"extra": "forbid"}
     name: str
     executable_digest: str
     entrypoint: str
@@ -524,7 +525,7 @@ class AppRegistration(BaseModel):
     min_interval: int | None = None
     parameters: dict[str, Any] = {}
     every: int | None = None
-    grouping: str | None = None
+    grouping: Literal["per_match", "all_matches"] = "per_match"
 
 
 @app.put("/apps/{name}")

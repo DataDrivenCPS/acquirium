@@ -19,7 +19,7 @@ def check_entry(binding: Binding) -> dict[str, Any]:
 def check_outputs(binding: Binding, context: InputBatch,
                   results: Mapping[str, pa.Table], limit: int | None) -> dict[str, Any]:
     outputs = {}
-    window = context.output_window or context.changed_window
+    window = context.output_window
     for name, port in binding.outputs.items():
         table = results.get(name)
         rows, values = 0, []

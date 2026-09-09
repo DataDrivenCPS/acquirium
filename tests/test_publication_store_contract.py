@@ -40,7 +40,7 @@ def test_publication_rejects_deletion(tmp_path):
         store.close()
 
 
-def test_duckdb_schema_does_not_create_retired_app_runtime_tables(tmp_path):
+def test_duckdb_schema_contains_revision_frontier_tables(tmp_path):
     store = DuckDBStore(tmp_path / "publication.duckdb", recreate=True)
     try:
         with store._own_conn() as conn:
@@ -50,6 +50,6 @@ def test_duckdb_schema_does_not_create_retired_app_runtime_tables(tmp_path):
                     "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
                 ).fetchall()
             }
-        assert not any(table.startswith("app_") for table in tables)
+        assert {"binding_progress", "system_state", "timeseries", "streams"} <= tables
     finally:
         store.close()

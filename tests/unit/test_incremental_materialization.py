@@ -26,7 +26,8 @@ NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 def _context(row, result):
     """An InputBatch carrying just the match information under test."""
-    return InputBatch("sig", 1, 0, 1, TimeWindow(NOW, NOW), TimeWindow(NOW, NOW), row, result)
+    return InputBatch("sig", 1, 0, 1, TimeWindow(NOW, NOW), TimeWindow(NOW, NOW), row, result,
+                      output_window=TimeWindow(NOW, NOW))
 
 
 class Mean(App):
@@ -117,23 +118,6 @@ class ConcurrentProbeExecutor(InProcessExecutor):
         finally:
             with self.lock:
                 self.active -= 1
-
-
-class DeferredProbeExecutor:
-    """A fake Ray executor that records whether a wave was fully submitted."""
-    def __init__(self):
-        self.pending = []
-        self.submitted_before_first_resolution = 0
-
-    def submit(self, application, batch, ports):
-        self.pending.append((application, batch, ports))
-        return len(self.pending) - 1
-
-    def resolve(self, ticket):
-        if self.submitted_before_first_resolution == 0:
-            self.submitted_before_first_resolution = len(self.pending)
-        application, batch, ports = self.pending[ticket]
-        return InProcessExecutor().execute(application, batch, ports)
 
 
 class LineageGraph:
@@ -272,7 +256,7 @@ def test_deployment_persists_constructor_parameters_and_policy():
 
 
 def test_durations_accept_every_suffix_and_reject_the_rest():
-    from acquirium.Materialization.incremental import _duration
+    from acquirium.Materialization.models import _duration
 
     assert _duration("250ms") == timedelta(milliseconds=250)
     assert _duration("30s") == timedelta(seconds=30)
@@ -315,7 +299,7 @@ def test_named_outputs_aggregate_the_complete_query_result():
     }
 
 
-def test_per_row_outputs_bind_one_group_per_query_row():
+def test_per_match_outputs_bind_one_group_per_query_row():
     graph = MultiStreamLineageGraph()
     planner = BindingPlanner(graph)
 
@@ -388,7 +372,7 @@ def test_named_output_gets_every_matched_row_for_grouping():
     assert sorted(result["input_ref"].to_list()) == ["urn:input-a", "urn:input-b"]
 
 
-def test_every_per_row_call_sees_the_whole_query_result():
+def test_every_per_match_call_sees_the_whole_query_result():
     planner = BindingPlanner(MultiStreamLineageGraph())
 
     application_graph, _ = planner.compile((Deployment.from_class(LineageCopy),), graph_revision=1)
@@ -401,7 +385,7 @@ def test_every_per_row_call_sees_the_whole_query_result():
         assert context.result.height == 2
 
 
-def test_row_is_the_per_row_accessor_and_refuses_to_guess():
+def test_row_is_the_per_match_accessor_and_refuses_to_guess():
     one = _context({"hx": "urn:hx-1"}, ({"hx": "urn:hx-1"}, {"hx": "urn:hx-2"}))
     aggregate = _context(None, ({"hx": "urn:hx-1"}, {"hx": "urn:hx-2"}))
 
@@ -419,15 +403,15 @@ def test_stream_names_the_single_bound_stream_and_refuses_to_guess():
     several = StreamSet("temperature", window,
                         (StreamDescriptor("urn:a"), StreamDescriptor("urn:b")))
 
-    # A per_row call binds one stream, so this is how it asks which.
+    # A per_match call binds one stream, so this is how it asks which.
     assert one.stream.ref_uri == "urn:a" and one.stream.label == "Basin 1"
     with pytest.raises(ValueError, match="all_matches grouping sees every match"):
         several.stream
     assert [d.ref_uri for d in several.streams] == ["urn:a", "urn:b"]
 
 
-def test_per_row_binds_one_stream_per_alias_even_for_paired_rows():
-    # The invariant behind .stream: a per_row call binds exactly one stream
+def test_per_match_binds_one_stream_per_alias_even_for_paired_rows():
+    # The invariant behind .stream: a per_match call binds exactly one stream
     # under every alias, so a flow/pressure row gives one of each.
     graph = PairedRowGraph()
 
@@ -554,7 +538,7 @@ class EntityRowGraph(LineageGraph):
         }
 
 
-class PerRowEntity(App):
+class PerMatchEntity(App):
     name = "per-row-entity"
     outputs = {"out": output.stream(value_kind="numeric")}
     def build_query(self, plant):
@@ -566,7 +550,7 @@ class PerRowEntity(App):
 def test_context_carries_the_bound_rows_entities_and_labels():
     planner = BindingPlanner(EntityRowGraph())
 
-    application_graph, _ = planner.compile((Deployment.from_class(PerRowEntity),), graph_revision=1)
+    application_graph, _ = planner.compile((Deployment.from_class(PerMatchEntity),), graph_revision=1)
 
     by_ref = {binding.inputs["input"][0].ref_uri: binding for binding in application_graph.bindings}
     first = by_ref["urn:input-1"].row
@@ -697,8 +681,13 @@ def test_output_declarations_are_validated_before_deployment():
                    "b": output.named("total", value_kind="numeric")}
         def build_query(self, plant): return plant.query().measurement(alias="input")
 
+    class MappingSpec(App):
+        outputs = {"out": {"value_kind": "numeric"}}
+
     with pytest.raises(TypeError, match="aq.output.stream"):
         Deployment.from_class(BadSpec)
+    with pytest.raises(TypeError, match="aq.output.stream"):
+        Deployment.from_class(MappingSpec)
     with pytest.raises(ValueError, match="claim the stream name"):
         Deployment.from_class(Colliding)
 

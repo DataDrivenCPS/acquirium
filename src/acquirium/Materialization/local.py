@@ -21,7 +21,7 @@ from typing import Any
 
 import pyarrow as pa
 
-from acquirium.Materialization.incremental import (
+from acquirium.Materialization.models import (
     InputBatch, OutputBuilder, StreamDescriptor, StreamSet, TimeWindow,
 )
 from acquirium.Materialization.planner import BindingPlanner, Deployment
@@ -127,7 +127,7 @@ def check_app(client: Any, target: type, *, parameters: dict | None = None,
         inputs = {alias: replace(value, window=read, every=binding.every, _scheduled=True) for alias, value in inputs.items()}
         entry["read_window"] = [read.start.isoformat(), read.end.isoformat()]
         context = InputBatch(binding.signature, revision, 0, revision, window, read,
-                             binding.row, binding.result, owned)
+                             binding.row, binding.result, output_window=owned)
         builder = OutputBuilder(binding.outputs)
         # No try/except: a breakpoint stops here and a traceback reaches the
         # caller, which is the whole reason to run locally.

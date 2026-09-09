@@ -646,11 +646,6 @@ class Manager:
             logging.error("acquirium: failed to insert graph: %s", e)
             raise
 
-    def _ensure_current_epoch(self) -> str | None:
-        """Compatibility-free graph refresh boundary for materialization."""
-        self.materializer.refresh()
-        return None
-
     def _record_materialization_graph_revision(self) -> None:
         """A graph change invalidates only the compiled in-memory plan."""
         self.materializer._graph_revision = -1

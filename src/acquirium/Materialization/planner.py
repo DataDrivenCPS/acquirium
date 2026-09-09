@@ -1,14 +1,14 @@
 """Compile graph-resolved app declarations into a validated DAG."""
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import timedelta
 from hashlib import sha256
 import json
 from typing import Any, Callable, Iterable, Mapping
 
 from acquirium.Client.explore.core import Query
-from acquirium.Materialization.incremental import (
+from acquirium.Materialization.models import (
     App, ApplicationGraph, Binding, OutputPort, OutputSpec, StreamDescriptor,
     _duration, parse_lookback,
 )
@@ -144,15 +144,10 @@ def _validated_outputs(name: str, declared: Mapping[str, Any]) -> dict[str, Outp
         if isinstance(value, OutputSpec):
             outputs[key] = value
             continue
-        if not isinstance(value, Mapping):
-            raise TypeError(
-                f"app {name!r}: output {key!r} must be declared with aq.output.stream(...) "
-                f"or aq.output.named(...), got {type(value).__name__}"
-            )
-        try:
-            outputs[key] = OutputSpec(**value)
-        except TypeError as error:
-            raise ValueError(f"app {name!r}: output {key!r}: {error}") from None
+        raise TypeError(
+            f"app {name!r}: output {key!r} must be declared with aq.output.stream(...) "
+            f"or aq.output.named(...), got {type(value).__name__}"
+        )
     claimed: dict[str, str] = {}
     for key, spec in outputs.items():
         if spec.stream_name is None: continue
@@ -228,21 +223,19 @@ class Deployment:
 
     @classmethod
     def from_json(cls, text: str) -> "Deployment":
+        """Decode the deployment wire format; grouping defaults to per_match."""
         data = json.loads(text)
+        unknown = data.keys() - {item.name for item in fields(cls)}
+        if unknown:
+            raise ValueError(f"unknown deployment fields: {', '.join(sorted(unknown))}")
         duration = lambda value: None if value is None else timedelta(microseconds=int(value))
         lookback = None if data["lookback"] == "all" else duration(data["lookback"])
-        batch_delay = data.get("batch_delay")
-        if batch_delay is None:
-            batch_delay = data.get("coalesce", 0)
-            if data.get("max_delay") is not None:
-                batch_delay = min(batch_delay, data["max_delay"])
         return cls(data["name"], data["entrypoint"], data["executable_digest"],
             {key: OutputSpec(**value) for key, value in data["outputs"].items()},
             lookback, duration(data.get("lookahead")) or timedelta(), bool(data.get("backfill")),
-            duration(batch_delay) or timedelta(),
+            duration(data.get("batch_delay", 0)) or timedelta(),
             duration(data.get("min_interval")), dict(data.get("parameters") or {}),
-            duration(data.get("every")), data.get("grouping") or
-            ("all_matches" if all(v.get("stream_name") for v in data["outputs"].values()) else "per_match"))
+            duration(data.get("every")), data.get("grouping", "per_match"))
 
 
 class BindingPlanner:

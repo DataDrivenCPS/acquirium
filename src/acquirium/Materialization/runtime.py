@@ -13,9 +13,9 @@ from time import monotonic
 from threading import Lock, RLock
 from rdflib import Graph, Literal, RDF, RDFS, URIRef
 
-from acquirium.Materialization.incremental import (
-    ApplicationGraph, InProcessExecutor, OutputBuilder, RevisionStore, Scheduler, TimeWindow, _duration,
-)
+from acquirium.Materialization.models import ApplicationGraph, OutputBuilder, TimeWindow, _duration
+from acquirium.Materialization.revision_store import RevisionStore
+from acquirium.Materialization.scheduler import InProcessExecutor, Scheduler
 from acquirium.Materialization.planner import BindingPlanner, Deployment
 from acquirium.Storage.graph_registry import ACQUIRIUM_GRAPH_URI
 from acquirium.internals.internals_namespaces import (
@@ -75,9 +75,8 @@ class Materializer:
                 application_name VARCHAR NOT NULL,
                 executable_digest VARCHAR NOT NULL, input_alias VARCHAR NOT NULL,
                 input_ref_uri VARCHAR NOT NULL, output_name VARCHAR NOT NULL,
-                output_ref_uri VARCHAR NOT NULL,
+                output_ref_uri VARCHAR NOT NULL, context_hash VARCHAR NOT NULL,
                 PRIMARY KEY (binding_signature, input_alias, input_ref_uri, output_name))""")
-            self._execute(conn, "ALTER TABLE materialization_lineage ADD COLUMN IF NOT EXISTS context_hash VARCHAR DEFAULT ''")
 
     def _execute(self, conn: Any, query: str, params=()):
         if getattr(self._store, "materialization_backend", None) == "postgres":
