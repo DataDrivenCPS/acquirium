@@ -203,7 +203,9 @@ Checks load retained history; the result limit does not limit input reads.
 
 Deployment JSON carries name, entrypoint, executable_digest, outputs,
 parameters, grouping, and window/scheduling attributes. Durations are integer
-microseconds; lookback may be `"all"`.
+microseconds; lookback may be `"all"`. Grouping defaults to `"per_match"`,
+including for named outputs. Unknown fields and invalid grouping values are
+rejected.
 
 DAG statuses are idle, pending, running, waiting, failed, or reprocessing.
 Errors and last-success timestamps are process diagnostics; consumed progress
@@ -234,5 +236,4 @@ Whole-history calculations remain fully materialized.
 
 The source is separated into models/helpers, revision storage, scheduling,
 planning, and orchestration. Both SQL backends use the same algorithm.
-See [operations](../materialization-implementation.md) and
-[migration](../materialization-migration.md).
+See [operations](../materialization-implementation.md).

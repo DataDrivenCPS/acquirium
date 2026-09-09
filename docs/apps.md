@@ -228,5 +228,4 @@ These settings affect when computation happens. `every`, `lookback`, and
 `lookahead` determine its time semantics. They are not timers or watermarks.
 
 See the [app reference](reference/apps.md) for the complete contract,
-[operations](materialization-implementation.md) for storage and server settings,
-and [migration notes](materialization-migration.md) when updating existing apps.
+and [operations](materialization-implementation.md) for storage and server settings.

@@ -11,99 +11,36 @@ change in any release.
 ## [Unreleased]
 
 ### Added
-- Incremental materialization apps: subclass `acquirium.App` and declare
-  outputs with `aq.output.per_row(...)` (one call and one derived stream
-  per query match) or `aq.output.named(...)` (one call over the complete
-  result, one stream), then deploy with `client.deploy_app(...)` or an
-  `[[apps]]` config entry. Derived rows and consumed input progress commit in
-  one transaction on DuckDB and PostgreSQL/TimescaleDB.
-- `StreamSet.in_unit(unit)` converts an app's input values from each stream's
-  recorded unit inside `transform`; missing or incompatible units raise.
-- `aq.align(inputs, every=...)` resamples an app's input streams onto one
-  shared clock as a wide Polars dataframe.
-- App dry runs: `acquirium app check module:AppClass` and
-  `client.check_app(AppClass)` compile the query, run `transform` over every
-  retained input row, and return every computed row without deploying the
-  app, creating its streams, or recording progress. The CLI prints the first
-  five rows of each output (`-n N` to head it differently, `-n 0` for all);
-  the Python and HTTP forms return everything unless given a `limit`.
-  `POST /apps/check` is the endpoint behind both. Naming a file
-  (`./my_app.py:MyApp`) sends its directory as a `search_path`, so a server
-  on the same machine can import an app that is not installed; a module whose
-  file changed since the server imported it is reloaded, so re-checking an
-  edited app runs the new code. `acquirium app check --local` (and
-  `acquirium.Materialization.local.check_app`) runs the app in the caller's
-  process against the server's data instead, so `breakpoint()` opens a
-  console in that terminal and a failing transform raises a traceback there.
-- `StreamSet.stream` names the single stream an alias is bound to — the usual
-  way a `per_row` call asks which sensor it is computing on — and raises
-  when an alias is bound to several.
-- `aq.console()` opens an interactive console holding the calling frame's
-  variables (`inputs`, `output`, `context` inside a transform). Without an
-  interactive terminal it logs that it was skipped and returns, so one left
-  in a deployed app never blocks the server.
-- App output declarations are validated before an app runs: port names must
-  be non-empty strings, each value must come from `aq.output.per_row(...)`
-  or `aq.output.named(...)`, two named outputs cannot claim one stream name,
-  and assigning a port the app did not declare raises inside `transform`
-  listing the declared ports.
-- A derived stream's reference name now leads with the app that produced it
-  (`fill-gaps:filled:<digest>`), so it says what made it wherever the name is
-  shown without its source. A `named` output keeps exactly the name its author
-  chose. The derived point that carries an output's metadata is named after
-  the stream it carries rather than after the binding signature, so it no
-  longer moves when the app's code, its parameters, or an upstream sensor's
-  label change. Both identities, and the output's spec, are resolved once by
-  `planner.output_port` and carried on the binding as an `OutputPort`, instead
-  of being recomputed at six call sites.
-- Derived points get a generated `rdfs:label` when the app declares none —
-  `Basin 1 inlet temperature (normalize-temperatures[celsius])` — so a derived
-  stream no longer displays as a bare UUID in dashboards, query results, or
-  `aq.align()` columns. A point supplied by the author with `point_uri=` is
-  never relabelled.
-- Derived streams record the app that produced them, and the query layer
-  gained an `app` attribute to select on it: `measurement(quantity_kind=
-  "temperature", app="normalize-temperatures")` returns one app's output,
-  `app=Not(...)` excludes it, and `options("app")` lists the apps publishing
-  into the plant. Nothing needs declaring for this; a measurement written by
-  a driver carries no `app`.
-- App scheduling and windowing are plain attributes — `lookback` (a duration
-  or `"all"`), `backfill`, and the composable throttles `coalesce`,
-  `max_delay`, and `min_interval` — with no policy classes to learn.
-  Durations are strings with a `ms`, `s`, `m`, `h`, or `d` suffix (`"250ms"`,
-  `"5m"`, `"7d"`, `"1.5d"`) or a `datetime.timedelta`.
-
-### Changed
-- An app's `context` (`InputBatch`) no longer carries `inputs`: `transform`'s
-  two arguments now split cleanly, `inputs` being the data and `context` the
-  match `build_query` produced for that call. Executors receive a `Batch`
-  pairing the two.
-
-### Fixed
-- An app output's `data_source` tag is recorded on the derived point rather
-  than on its reference, so `measurement(data_source="…")` actually finds the
-  derived stream. Driver registration already recorded the tag on the point;
-  the query layer's attribute filters apply to the point, so the tag was
-  previously unqueryable wherever it was written.
-- A text output assigned a Polars dataframe was rejected with "text output
-  requires string values": Polars renders strings as Arrow `large_string`,
-  which the output validator did not accept. Both string types are now
-  accepted and stored identically, so alarm-style apps can build their values
-  with Polars expressions.
-
-### Migration
-
-- Reference names for `per_row` outputs changed, so their storage URIs and
-  progress keys changed with them. On upgrade, an app with `backfill = True`
-  recomputes its derived streams under the new identity (idempotent, since
-  outputs are keyed by stream and timestamp); one with `backfill = False`
-  resumes from the current revision and does not process input written before
-  the upgrade. Rows published under the old identity remain in storage,
-  unreferenced. `named` outputs are unaffected.
-
-### Removed
-- The legacy `Apps` runtime (`MappedApp`, `OutputTemplate`, supervisor and
-  runner) in favor of the revision-frontier materializer.
+- Incremental materialization apps on DuckDB and PostgreSQL/TimescaleDB.
+  Apps select streams with a semantic query and implement
+  `transform(inputs, output, context)`. Grouping is explicitly `per_match`
+  or `all_matches`; `aq.output.stream(...)` and `aq.output.named(...)`
+  select generated or explicit stream identities independently.
+- Correction-aware output replacement. Assigned output windows include removals
+  that propagate downstream. Complete buckets (`every`), trailing dependencies
+  (`lookback`), and leading dependencies (`lookahead`) determine which input
+  and output intervals are recomputed from the latest available readings.
+- One bounded materialization executor with per-binding failure isolation,
+  coherent database snapshots, transactional output/progress publication, and
+  active-generation checks. Long finite work ranges and explicit
+  `reprocess_app(name, start, end)` requests use durable cursors.
+- App deployment through `client.deploy_app(...)` or `[[apps]]` configuration.
+  Source definitions are validated before activation. Query-match changes
+  schedule retained output repair; code edits preserve progress and use explicit
+  reprocessing to update history.
+- App scheduling attributes `backfill`, `batch_delay`, and `min_interval`.
+  Durations accept `timedelta` or strings using `ms`, `s`, `m`, `h`, or `d`.
+- `StreamSet.in_unit(...)` for unit conversion and `aq.align(inputs)` for
+  resampling onto the app's declared clock. Stream descriptors, individual
+  matches, the full query result, and calculation windows are available to
+  transforms.
+- App checks through `client.check_app(...)` and
+  `acquirium app check module:Class`. The `--local` option executes in the
+  caller's terminal for debugging. `aq.console()` opens an interactive console
+  inside a transform.
+- Derived stream metadata, generated labels, and producer selection through
+  `measurement(app="producer-name")`. The materialization DAG endpoint exposes
+  progress, execution status, and errors.
 
 ## [0.4.0a5] - 2026-09-02
 

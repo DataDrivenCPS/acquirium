@@ -165,7 +165,7 @@ Three new ideas:
 
 ## Where to go next
 
-- [Apps](../apps.md) — the walkthrough of lookback, scheduling, output flavors,
+- [Apps](../apps.md) — the walkthrough of lookback, scheduling, output identities,
   and deployment.
 - [App reference](../reference/apps.md) — the complete class contract.
 - [How it works](../reference/apps.md#how-it-works) — what the server does

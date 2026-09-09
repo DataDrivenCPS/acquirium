@@ -16,13 +16,13 @@ implements the contract, and what an operator needs to know.
 
 ## The storage contract
 
-Materialization adds two tables to the selected timeseries backend —
-`system_state` (one global `current_revision`) and `binding_progress`
-(`progress_key` → `consumed_revision`) — plus two control-plane tables owned
-by the materializer, `materialization_deployments` and
-`materialization_lineage`. `materialization_work` stores bounded output cursors
-for long backfills and explicit reprocessing. Derived rows live in the ordinary `timeseries`
-table beside raw ones.
+The timeseries backend stores `system_state` (one global `current_revision`)
+and `binding_progress` (`progress_key` → `consumed_revision`). The materializer
+owns `materialization_deployments`, `materialization_lineage`, and
+`materialization_work`. Lineage records output ownership, input references,
+and a query-context fingerprint. Work rows store bounded output cursors for
+long backfills and explicit reprocessing. Derived rows live beside raw rows in
+the ordinary `timeseries` table.
 
 A backend supplies connection and write hooks and inherits the entire scheduler:
 
@@ -67,8 +67,9 @@ needs no separate hypertable, continuous aggregate, or Timescale job.
 - **Corrections keep the current value.** A re-written `(stream, timestamp)`
   overwrites that row and advances its `last_revision`; the store keeps
   current values, not a history of prior ones.
-- **Additive upgrade.** Startup adds the durable work table and lineage context
-  fingerprint without dropping existing data. See [migration](materialization-migration.md).
+- **Initialization.** Startup creates the materialization tables with the
+  complete schema. Restart uses the stored deployments, frontiers, work cursors,
+  and query-context fingerprints to resume processing.
 - **Replacement propagates.** Rows removed from an assigned output interval
   retain revisioned tombstones so downstream calculations observe removals.
 - **Bounded execution.** One coordinator uses a persistent thread pool. Finite
@@ -86,8 +87,25 @@ schema so it cannot disturb the API integration server's database. It needs
 `ACQUIRIUM_TEST_PG_DSN`; without it the Timescale half is skipped.
 
 `tests/unit/test_incremental_materialization.py` is the unit-level contract:
-output flavors and grouping, window construction, progress-key continuity,
+output identities and grouping, window construction, progress-key continuity,
 unit conversion, alignment, and DAG validation.
+
+## Implementation boundaries
+
+| Module | Responsibility |
+|---|---|
+| `Materialization/models.py` | App declarations, stream sets, windows, resolved bindings, DAG validation, and dataframe helpers |
+| `Materialization/planner.py` | Deployment serialization and query compilation into bindings |
+| `Materialization/revision_store.py` | Snapshot reads, durable work cursors, and atomic replacement/progress writes |
+| `Materialization/scheduler.py` | Bounded execution and per-binding failure tracking |
+| `Materialization/runtime.py` | Deployment activation, graph refresh, scheduling cadence, and status |
+| `Materialization/checks.py` | Shared dry-run result rendering and window clipping |
+| `Materialization/local.py` | Caller-process checks using data fetched from the server |
+| `Materialization/worker.py` | Importing and verifying application entrypoints |
+
+The top-level `acquirium` package exports the authoring API. Embedders can
+import runtime types from `acquirium.Materialization`; implementation modules
+import their dependencies directly.
 
 ## Performance probe
 
