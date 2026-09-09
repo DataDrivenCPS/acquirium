@@ -11,10 +11,6 @@ change in any release.
 ## [Unreleased]
 
 ### Added
-- Read-only `acquirium app list` and `acquirium app inspect NAME` commands,
-  with JSON output and matching HTTP/Python APIs. Inspection includes declared
-  output schemas, units, settings, resolved streams, progress, and errors,
-  including deployments with no matches or planning failures.
 - Incremental materialization apps on DuckDB and PostgreSQL/TimescaleDB.
   Apps select streams with a semantic query and implement
   `transform(inputs, output, context)`. Grouping is explicitly `per_match`

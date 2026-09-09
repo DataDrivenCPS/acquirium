@@ -4,7 +4,6 @@ from __future__ import annotations
 from acquirium.Materialization.checks import check_entry, check_outputs
 
 import re
-import json
 from dataclasses import replace
 from uuid import uuid4
 from hashlib import sha256
@@ -376,76 +375,26 @@ class Materializer:
 
     def dag(self) -> dict[str, Any]:
         dag, applications = self._plan_snapshot()
-        return self._dag_status(dag, applications)
-
-    def list_apps(self) -> list[dict[str, Any]]:
-        """Summarize every registered deployment without running or replanning it."""
-        return self._inspect_deployments()
-
-    def inspect_app(self, name: str) -> dict[str, Any]:
-        """Describe a deployment and its latest compiled bindings, without writes."""
-        return self._inspect_deployments(name)[0]
-
-    def _inspect_deployments(self, name: str | None = None) -> list[dict[str, Any]]:
-        with self._plan_lock:
-            deployments = [d for d in self._deployments() if name is None or d.name == name]
-            if name is not None and not deployments:
-                raise KeyError(name)
-            snapshot = self._dag_status(self._dag, self._applications)
-            plan_current = self._graph_revision == int(self._graph.graph_status().get("published_version", 0))
-            by_app: dict[str, list[dict[str, Any]]] = {}
-            for node in snapshot["nodes"]:
-                by_app.setdefault(node["application_name"], []).append(node)
-            results = []
-            for deployment in deployments:
-                bindings = by_app.get(deployment.name, [])
-                counts: dict[str, int] = {}
-                for binding in bindings:
-                    state = binding["status"]
-                    counts[state] = counts.get(state, 0) + 1
-                error = snapshot["errors"].get(deployment.name) or snapshot["errors"].get("graph")
-                status = ("failed" if error else "planning" if not plan_current else
-                          next((s for s in ("failed", "running", "reprocessing", "waiting", "pending", "idle")
-                                if s in counts), "no_matches"))
-                result = {"name": deployment.name, "entrypoint": deployment.entrypoint,
-                          "grouping": deployment.grouping, "status": status,
-                          "binding_count": len(bindings), "binding_statuses": counts,
-                          "graph_revision": snapshot["graph_revision"], "plan_current": plan_current,
-                          "error": error}
-                if name is not None:
-                    result["definition"] = json.loads(deployment.to_json())
-                    result["output_schemas"] = {
-                        key: {"time": {"type": "timestamp[us, tz=UTC]", "nullable": False},
-                              "value": {"type": "float64" if spec.value_kind == "numeric" else "string",
-                                        "nullable": False}}
-                        for key, spec in deployment.outputs.items()}
-                    result["bindings"] = bindings
-                results.append(result)
-            return results
-
-    def _dag_status(self, dag: ApplicationGraph, applications: dict[str, Any]) -> dict[str, Any]:
-        """Read progress for a captured plan; do not advance the coordinator."""
         current = self._revisions.current_revision()
         pending_work = self._revisions.pending_keys()
-        with self._store._own_conn() as conn:
-            progress = dict(self._execute(conn, "SELECT progress_key, consumed_revision FROM binding_progress").fetchall())
         blocked = set(self._scheduler.errors)
         for wave in dag.layers():
             blocked.update(target for source, target, _ in dag.edges if source in blocked)
         nodes = []
         for binding in dag.bindings:
-            consumed = progress.get(binding.progress_key)
+            with self._store._own_conn() as conn:
+                row = self._execute(conn, "SELECT consumed_revision FROM binding_progress WHERE progress_key=?", [binding.progress_key]).fetchone()
             nodes.append({"binding_signature": binding.signature, "application_name": binding.application_name,
                 "inputs": {key: [item.ref_uri for item in value] for key,value in binding.inputs.items()},
                 "outputs": {key: output.ref_uri for key, output in binding.outputs.items()},
                 "lookback": "all" if binding.lookback is None else str(binding.lookback),
                 "backfill": bool(applications[binding.signature].backfill),
-                "consumed_revision": consumed, "current_revision": current,
+                "consumed_revision": row[0] if row else None, "current_revision": current,
                 "status": ("running" if binding.signature in self._scheduler.running else
                            "failed" if binding.signature in self._scheduler.errors else
                            "waiting" if binding.signature in blocked else
                            "reprocessing" if binding.progress_key in pending_work else
-                           "pending" if consumed is None or consumed < current else "idle"),
+                           "pending" if row is None or row[0] < current else "idle"),
                 "last_success": self._scheduler.last_success.get(binding.signature),
                 "error": self._scheduler.errors.get(binding.signature)})
         return {"graph_revision": self._graph_revision, "nodes": nodes, "errors": dict(self._plan_errors),

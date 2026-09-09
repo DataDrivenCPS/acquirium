@@ -371,14 +371,6 @@ class Acquirium:
         deployment = Deployment.from_class(target, parameters=parameters)
         return self.client.deploy_app(json.loads(deployment.to_json()))
 
-    def list_apps(self) -> dict[str, Any]:
-        """List every deployment, including apps with no matches or errors."""
-        return self.client.list_apps()
-
-    def inspect_app(self, name: str) -> dict[str, Any]:
-        """Inspect declared output schemas, settings, streams, and progress."""
-        return self.client.inspect_app(name)
-
     def remove_app(self, name: str) -> dict[str, Any]:
         return self.client.remove_app(name)
 
