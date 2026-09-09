@@ -17,6 +17,58 @@ TEST_POINT = "urn:test:integration_point"
 TEST_REF = "urn:test:integration_ref"
 
 
+# ── Storage keys ───────────────────────────────────────────
+
+
+class TestRefIdKeys:
+    def test_timeseries_table_keyed_by_integer_ref_id(self, ts_store, clean_point):
+        ts_store.upsert_rows(
+            clean_point,
+            [(datetime(2025, 1, 1, tzinfo=timezone.utc), 1.0)],
+            value_kind="numeric",
+        )
+
+        mapping = ts_store.sql_query(
+            f"SELECT ref_id FROM ref_ids WHERE ref_uri = '{clean_point}'"
+        )["rows"]
+        assert len(mapping) == 1
+        ref_id = mapping[0][0]
+        assert isinstance(ref_id, int)
+
+        stored = ts_store.sql_query(
+            f"SELECT ref_id FROM timeseries WHERE ref_id = {ref_id}"
+        )["rows"]
+        assert [tuple(row) for row in stored] == [(ref_id,)]
+
+    def test_ref_id_is_stable_across_writes(self, ts_store, clean_point):
+        ts_store.upsert_rows(clean_point, [(datetime(2025, 1, 1, tzinfo=timezone.utc), 1.0)])
+        first = ts_store.sql_query(f"SELECT ref_id FROM ref_ids WHERE ref_uri = '{clean_point}'")["rows"]
+        ts_store.upsert_rows(clean_point, [(datetime(2025, 1, 2, tzinfo=timezone.utc), 2.0)])
+        ts_store.bulk_insert_polars(pl.DataFrame({
+            "ref_uri": [clean_point],
+            "ts": [datetime(2025, 1, 3, tzinfo=timezone.utc)],
+            "value": [3.0],
+            "value_kind": ["numeric"],
+        }))
+        again = ts_store.sql_query(f"SELECT ref_id FROM ref_ids WHERE ref_uri = '{clean_point}'")["rows"]
+        assert again == first
+        assert ts_store.timeseries_info(clean_point).row_count == 3
+
+    def test_no_default_ts_index(self, ts_store):
+        # create_default_indexes => FALSE: only the unique (ref_id, ts) index exists.
+        names = [
+            row[0] for row in ts_store.sql_query(
+                "SELECT indexname FROM pg_indexes WHERE tablename = 'timeseries'"
+            )["rows"]
+        ]
+        assert "timeseries_ts_idx" not in names
+        assert "idx_timeseries_ref_ts_unique" in names
+
+    def test_unknown_ref_reads_empty(self, ts_store):
+        assert list(ts_store.timeseries("urn:test:never_written")) == []
+        assert ts_store.timeseries_info("urn:test:never_written").row_count == 0
+
+
 # ── Mutation Tests ─────────────────────────────────────────
 
 

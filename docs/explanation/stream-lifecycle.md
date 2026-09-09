@@ -158,10 +158,8 @@ inserting.
 Storage is one `timeseries` table holding `ts`, `numeric_value` and
 `text_value`, with one row per stream and timestamp and a check that only one
 of the two value columns is set.
-The backends key it differently.
-Timescale keys rows by `ref_uri` directly.
-DuckDB keys them by an integer `ref_id` and maps it back through a `ref_ids`
-table, which keeps the column narrow; reads expose `ref_uri` either way.
+Both backends key rows by an integer `ref_id` and map it back through a
+`ref_ids` table, which keeps the column narrow; reads expose `ref_uri`.
 
 ## The read path
 

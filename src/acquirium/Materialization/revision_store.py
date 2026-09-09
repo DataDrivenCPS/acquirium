@@ -49,11 +49,11 @@ class RevisionStore:
 
     @property
     def _timeseries_source(self) -> str:
-        return "timeseries t" if self._postgres else "timeseries t JOIN ref_ids r ON r.ref_id=t.ref_id"
+        return "timeseries t JOIN ref_ids r ON r.ref_id=t.ref_id"
 
     @property
     def _ref(self) -> str:
-        return "t.ref_uri" if self._postgres else "r.ref_uri"
+        return "r.ref_uri"
 
     def _execute(self, conn: Any, query: str, params: Iterable[Any] = ()) -> Any:
         return conn.execute(self._sql(query), list(params))
@@ -282,7 +282,7 @@ class RevisionStore:
                     mask = pc.and_(pc.greater_equal(table["time"], pa.scalar(window.start)),
                                    pc.less_equal(table["time"], pa.scalar(window.end)))
                     table = table.filter(mask)
-                    ref_filter = "ref_uri=?" if self._postgres else "ref_id IN (SELECT ref_id FROM ref_ids WHERE ref_uri=?)"
+                    ref_filter = "ref_id IN (SELECT ref_id FROM ref_ids WHERE ref_uri=?)"
                     existing = self._execute(conn, f"SELECT 1 FROM timeseries WHERE {ref_filter} AND ts>=? AND ts<=? AND NOT deleted LIMIT 1",
                                              [port.ref_uri, self._time(window.start), self._time(window.end)]).fetchone()
                     if not table.num_rows and existing is None:
