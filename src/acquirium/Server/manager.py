@@ -118,7 +118,7 @@ def _wipe_dir_contents(base: Path) -> None:
 
 @dataclass
 class Manager:
-    timescale: TimeseriesStore
+    timeseries_store: TimeseriesStore
     graph_store: OxigraphGraphStore
     qudt_converter: QUDTUnitConverter | None = None
     backend: str = "timescale"
@@ -162,14 +162,14 @@ class Manager:
             if _backend == "duckdb":
                 _effective_dsn = None
                 _effective_duckdb_path = duckdb_path or (base / "timeseries.duckdb")
-                timescale: TimeseriesStore = create_timeseries_store(
+                timeseries_store: TimeseriesStore = create_timeseries_store(
                     "duckdb", duckdb_path=_effective_duckdb_path, recreate=recreate
                 )
             else:
                 _effective_dsn = pg_dsn or os.getenv("PG_DSN")
                 if not _effective_dsn:
                     raise ValueError("PG_DSN required for timescale backend. Set pg_dsn or PG_DSN env var.")
-                timescale = create_timeseries_store(
+                timeseries_store = create_timeseries_store(
                     "timescale", pg_dsn=_effective_dsn, recreate=recreate
                 )
 
@@ -188,7 +188,7 @@ class Manager:
                 extra_ontology_sources=ontology_sources,
             )
 
-        self.timescale = timescale
+        self.timeseries_store = timeseries_store
         self.graph_store = graph
         self.qudt_converter = converter
         self.backend = _backend
@@ -342,7 +342,7 @@ class Manager:
             except Exception:
                 logger.warning("Failed to ensure stream ref %s / %s → %s", point_uri, source_id, ref_name, exc_info=True)
                 raise
-        count = len(self.timescale.ensure_stream_refs(refs)) if refs else 0
+        count = len(self.timeseries_store.ensure_stream_refs(refs)) if refs else 0
         if count:
             logger.info("Synced %d stream ref(s) from graph", count)
         return count
@@ -653,12 +653,12 @@ class Manager:
         Returns:
             An iterator that yields batches of time series data as Arrow RecordBatches.
         """
-        storage_key = self.timescale.resolve_storage_key(uri)
+        storage_key = self.timeseries_store.resolve_storage_key(uri)
         logger.debug(
             "timeseries_batch uri=%s storage_key=%s start=%s end=%s limit=%s",
             uri, storage_key, start, end, limit,
         )
-        return self.timescale.timeseries(
+        return self.timeseries_store.timeseries(
             ref_uri=storage_key,
             start=start,
             end=end,
@@ -672,9 +672,9 @@ class Manager:
         """Fetch stats for multiple stream or point URIs."""
         if not uris:
             return {}
-        uri_to_key = self.timescale.resolve_storage_keys(uris)
+        uri_to_key = self.timeseries_store.resolve_storage_keys(uris)
         key_to_uri = {v: k for k, v in uri_to_key.items()}
-        raw = self.timescale.timeseries_info_batch(list(key_to_uri.keys()))
+        raw = self.timeseries_store.timeseries_info_batch(list(key_to_uri.keys()))
         return {key_to_uri[k]: v for k, v in raw.items()}
 
     @staticmethod
@@ -718,9 +718,9 @@ class Manager:
             source_id, ref_name, len(rows), value_kind, replace,
         )
         if replace:
-            n = self.timescale.replace_rows(ref_uri, rows, value_kind=value_kind)
+            n = self.timeseries_store.replace_rows(ref_uri, rows, value_kind=value_kind)
         else:
-            n = self.timescale.upsert_rows(ref_uri, rows, value_kind=value_kind)
+            n = self.timeseries_store.upsert_rows(ref_uri, rows, value_kind=value_kind)
         return n
 
     def insert_timeseries_batch(
@@ -761,7 +761,7 @@ class Manager:
                 "value_kind": pl.Series("value_kind", value_kinds, dtype=pl.Utf8),
             }
         )
-        return self.timescale.bulk_insert_polars(df)
+        return self.timeseries_store.bulk_insert_polars(df)
 
     def insert_timeseries_arrow(self, source_id: str, table: "pa.Table") -> int:
         """Insert a melted (ts, ref_name, value) Arrow table, computing ref_uris vectorized."""
@@ -793,7 +793,7 @@ class Manager:
             .drop("ref_name")
             .select(["ref_uri", "ts", "value", "value_kind"])
         )
-        inserted = self.timescale.bulk_insert_polars(df)
+        inserted = self.timeseries_store.bulk_insert_polars(df)
         logger.info(
             "acquirium: insert_timeseries_arrow wrote %d row(s) for source_id=%s",
             inserted,
@@ -802,14 +802,14 @@ class Manager:
         return inserted
 
     def _registered_value_kind(self, ref_uri: str) -> str:
-        value_kind = self.timescale.stream_value_kind(ref_uri)
+        value_kind = self.timeseries_store.stream_value_kind(ref_uri)
         if value_kind is None:
             raise ValueError(f"stream {ref_uri} is not registered")
         return normalize_value_kind(value_kind)
 
     def insert_log(self, log_message: LogEntry):
         logger.debug("insert_log point_uri=%s ts=%s", log_message.point_uri, log_message.timestamp)
-        self.timescale.insert_log(log_message)
+        self.timeseries_store.insert_log(log_message)
         G = Graph()
         log_uri = URIRef(f"{str(log_message.point_uri)}_log")
         G.add((URIRef(log_message.point_uri), HAS_LOG, log_uri))
@@ -841,7 +841,7 @@ class Manager:
         Returns:
             A list of LogEntry objects.
         """
-        return self.timescale.query_logs(
+        return self.timeseries_store.query_logs(
             point_uri=point_uri,
             log_time_interval=log_time_interval,
             obs_time_interval=obs_time_interval
@@ -854,7 +854,7 @@ class Manager:
         Args:
             point_uri: The URI of the time series point.
         """
-        if not self.timescale.delete_logs(point_uri):
+        if not self.timeseries_store.delete_logs(point_uri):
             logger.warning("Failed to delete log entries for point %s from database", point_uri)
             return False
         logger.info("Deleted all log entries for point %s from database", point_uri)
@@ -1095,6 +1095,6 @@ class Manager:
         # App teardown belongs to AppSupervisor, which the server lifespan stops
         # before it closes the manager.
         logger.debug("Manager.close: shutting down")
-        self.timescale.close()
+        self.timeseries_store.close()
         self.graph_store.close()
         logger.debug("Manager.close: done")

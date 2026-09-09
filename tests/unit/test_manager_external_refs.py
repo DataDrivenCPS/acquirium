@@ -40,7 +40,7 @@ def _bare_manager(rows) -> tuple[Manager, _StubTimescale]:
     mgr = Manager.__new__(Manager)
     mgr.graph_store = _StubGraphStore(rows)
     ts = _StubTimescale()
-    mgr.timescale = ts
+    mgr.timeseries_store = ts
     return mgr, ts
 
 
