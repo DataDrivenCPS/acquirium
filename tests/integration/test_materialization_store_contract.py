@@ -17,6 +17,7 @@ from acquirium.Storage.timescale_store import TimescaleStore
 
 
 class Copy(App):
+    grouping = "per_match"
     backfill = True
     outputs = {"out": output.stream(value_kind="numeric")}
 
@@ -123,6 +124,7 @@ def test_materializer_control_schema_and_deployment_roundtrip(materialization_st
 def test_empty_replacement_propagates_to_descendants(materialization_store, kind):
     from acquirium.Materialization import ApplicationGraph
     class Alarm(Copy):
+        grouping = "per_match"
         def transform(self, inputs, output, context):
             table = inputs['source'].collect()
             table = table.filter(pc.greater(table['value'], 5.))

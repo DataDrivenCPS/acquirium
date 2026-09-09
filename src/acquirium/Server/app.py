@@ -526,7 +526,7 @@ class AppRegistration(BaseModel):
     min_interval: int | None = None
     parameters: dict[str, Any] = {}
     every: int | None = None
-    grouping: Literal["per_match", "all_matches"] = "per_match"
+    grouping: Literal["per_match", "all_matches"]
 
 
 @app.get("/apps")

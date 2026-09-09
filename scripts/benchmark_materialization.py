@@ -16,6 +16,7 @@ from acquirium.Storage.duckdb_store import DuckDBStore
 
 
 class Copy(App):
+    grouping = "per_match"
     backfill = True
     outputs = {'out': output.stream(value_kind='numeric')}
 

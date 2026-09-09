@@ -3,6 +3,7 @@ from acquirium import Acquirium, AppContext
 
 class SeawaterTDSmonitor(App):
     name = "seawater_tds_monitoring"
+    grouping = "per_match"
     version = "0.1"
     app_type = "soft_sensor"
     outputs = [

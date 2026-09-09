@@ -14,6 +14,7 @@ import polars as pl
 
 class Celsius(aq.App):
     name = "celsius"
+    grouping = "per_match"
     backfill = True
     outputs = {
         "temperature": aq.output.stream(
@@ -35,13 +36,15 @@ class Celsius(aq.App):
         output["temperature"] = frame.select("time", "value")
 ```
 
-The default `grouping = "per_match"` calls the app once for each query match.
+The explicit `grouping = "per_match"` calls the app once for each query match.
 A match can contain one sensor or a related pair of sensors.
 `inputs["temperature"].stream` describes the sensor for this call.
 The output gets a stable identity derived from the app, port, and input streams.
 
 Select inputs specifically enough to exclude the app's own derived streams.
 Downstream apps can select these results using `measurement(app="celsius")`.
+Every app must declare `grouping` as either `"per_match"` or `"all_matches"`;
+an omitted or invalid value is rejected when the app is instantiated.
 
 ## Understand the three arguments
 
@@ -84,6 +87,7 @@ Declare the bucket size once. `aq.align` uses that declaration:
 ```python
 class MinuteTemperature(Celsius):
     name = "minute-temperature"
+    grouping = "per_match"
     every = "1m"
 
     def transform(self, inputs, output, context):
@@ -108,6 +112,7 @@ Declare how much preceding input each output depends on:
 ```python
 class RollingTemperature(Celsius):
     name = "rolling-temperature"
+    grouping = "per_match"
     lookback = "10m"
 
     def transform(self, inputs, output, context):
@@ -163,6 +168,7 @@ A named output has one owner, so it cannot be shared by multiple per-match calls
 ```python
 class HighTemperature(Celsius):
     name = "high-temperature"
+    grouping = "per_match"
     outputs = {"alarm": aq.output.stream(value_kind="text")}
 
     def transform(self, inputs, output, context):

@@ -177,14 +177,17 @@ class Deployment:
     min_interval: timedelta | None = None
     parameters: Mapping[str, Any] = field(default_factory=dict)
     every: timedelta | None = None
-    grouping: str = "per_match"
+    grouping: str | None = None
 
     def __post_init__(self):
         for value in (self.lookback, self.lookahead, self.batch_delay, self.min_interval):
             if value is not None:
                 _duration(value)
         if self.grouping not in ("per_match", "all_matches"):
-            raise ValueError("grouping must be per_match or all_matches")
+            raise ValueError(
+                "grouping must be explicitly set to 'per_match' or 'all_matches'; "
+                f"got {self.grouping!r}"
+            )
         if self.every is not None and self.every <= timedelta():
             raise ValueError("every must be positive")
 
@@ -223,7 +226,7 @@ class Deployment:
 
     @classmethod
     def from_json(cls, text: str) -> "Deployment":
-        """Decode the deployment wire format; grouping defaults to per_match."""
+        """Decode the deployment wire format, including its required grouping."""
         data = json.loads(text)
         unknown = data.keys() - {item.name for item in fields(cls)}
         if unknown:
@@ -235,7 +238,7 @@ class Deployment:
             lookback, duration(data.get("lookahead")) or timedelta(), bool(data.get("backfill")),
             duration(data.get("batch_delay", 0)) or timedelta(),
             duration(data.get("min_interval")), dict(data.get("parameters") or {}),
-            duration(data.get("every")), data.get("grouping", "per_match"))
+            duration(data.get("every")), data.get("grouping"))
 
 
 class BindingPlanner:

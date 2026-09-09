@@ -11,6 +11,7 @@ START = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 class Doubler(aq.App):
     name = "doubler"
+    grouping = "per_match"
     outputs = {"doubled": aq.output.stream(value_kind="numeric")}
 
     def build_query(self, plant):
@@ -23,6 +24,7 @@ class Doubler(aq.App):
 
 class Exploder(Doubler):
     name = "exploder"
+    grouping = "per_match"
 
     def transform(self, inputs, output, context):
         raise ValueError("bad calibration")
@@ -30,6 +32,7 @@ class Exploder(Doubler):
 
 class Celsius(Doubler):
     name = "celsius"
+    grouping = "per_match"
 
     def transform(self, inputs, output, context):
         frame = inputs["input"].in_unit("urn:unit:DEG_C").df()

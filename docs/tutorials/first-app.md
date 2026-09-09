@@ -129,11 +129,12 @@ whole picture.
 ## 6. Make it react to every sensor
 
 The app above binds all matches into one call. The more common plant pattern —
-“do this beside every sensor” — uses the default `grouping = "per_match"`:
+“do this beside every sensor” — explicitly declares `grouping = "per_match"`:
 
 ```python
 class TemperatureSmoother(aq.App):
     name = "temperature-smoother"
+    grouping = "per_match"
     lookback = "10m"
     outputs = {"smooth": aq.output.stream(value_kind="numeric", unit="http://qudt.org/vocab/unit/DEG_C")}
 
@@ -151,7 +152,9 @@ class TemperatureSmoother(aq.App):
 
 Three new ideas:
 
-- The default `grouping = "per_match"` runs `transform` once per query match.
+- `grouping = "per_match"` runs `transform` once per query match. Every app
+  must explicitly choose either `"per_match"` or `"all_matches"`; omitting it
+  is rejected when the app is instantiated.
   `output.stream` then derives one stable output identity from each match's
   bound inputs, so a thousand sensor matches become a thousand smoothed
   streams without manual names. Grouping and output naming are independent;

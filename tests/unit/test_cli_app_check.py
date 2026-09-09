@@ -12,6 +12,7 @@ import acquirium as aq
 
 class Doubler(aq.App):
     name = "doubler"
+    grouping = "per_match"
     outputs = {"doubled": aq.output.stream(value_kind="numeric")}
 
     def build_query(self, plant):
