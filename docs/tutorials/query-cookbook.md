@@ -4,14 +4,14 @@ title: Query cookbook
 
 <!-- TODO: intro -->
 
-Each entry starts from a question a plant engineer would ask, works out how to
-phrase it for the query interface, and ends with the query and its result.
-Every result below was captured on the WaterTAP seawater-ro model.
+This tutorial shows how to write acquirum queries based on common questions a plant engineer may ask. 
+
+This tutorial uses data from the WaterTAP seawater-RO model, 
+so start the server against `deployments/WATERTAP/models/seawater-ro/acquirium.toml`
+and connect to acquirium:
 
 ```python
-import polars as pl
 from acquirium import Acquirium
-from acquirium.Client.explore import Not
 
 acq = Acquirium(server_url="localhost", server_port=8000)
 ```
@@ -131,6 +131,12 @@ So walk from the RO to its connection points, filter each by medium, and
 attach one measurement node to each.
 `hasConnectionPoint` is a structural predicate that generic traversal skips,
 so it is named in `via=`.
+
+To leave out the salt mass flow in our query, we import `Not` from acquirium 
+
+```python
+from acquirium.Client.explore import Not
+```
 
 ```python
 S223 = "http://data.ashrae.org/standard223#"

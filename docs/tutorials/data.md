@@ -5,13 +5,16 @@ title: Working with data
 <!-- TODO: intro -->
 
 This is a guide to querying data (timeseries) with Acquirium.
-Finding the points in the first place is covered in the
-[querying guide](querying.md).
 
-Every example here runs on the public WaterTAP seawater-ro model.
-Getting one running is the [WaterTAP deployment guide](https://github.com/DataDrivenCPS/acquirium/blob/main/deployments/WATERTAP/readme.md):
-clone the repo, install the `watertap` extra, and start the server against
-`deployments/WATERTAP/models/seawater-ro/acquirium.toml`.
+This tutorial uses data from the WaterTAP seawater-RO model, 
+so start the server against `deployments/WATERTAP/models/seawater-ro/acquirium.toml`
+and connect to acquirium:
+
+```python
+from acquirium import Acquirium
+
+acq = Acquirium(server_url="localhost", server_port=8000)
+```
 
 ## Lazy by default
 

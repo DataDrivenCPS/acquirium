@@ -8,16 +8,9 @@ In this tutorial, we show how querying metadata (what equipment exists, how thin
 connect, and what measurements hang off them) and data (the actual timeseries)
 is done with Acquirium.
 
-Every example in this doc runs on the public WaterTAP seawater-ro model, so you
-can follow along.
-Getting one running is the [WaterTAP deployment guide](https://github.com/DataDrivenCPS/acquirium/blob/main/deployments/WATERTAP/readme.md):
-clone the repo, install the `watertap` extra, and start the server against
-`deployments/WATERTAP/models/seawater-ro/acquirium.toml`.
-
-
-**Connecting to a running acquirium server using Acquirium Client:**
-
-Every query starts with connecting to a running acquirium server. The client object `acq` exposes all the required methods to interact with the server.
+This tutorial uses data from the WaterTAP seawater-RO model, 
+so start the server against `deployments/WATERTAP/models/seawater-ro/acquirium.toml`
+and connect to acquirium:
 
 ```python
 from acquirium import Acquirium
@@ -27,7 +20,7 @@ acq = Acquirium(server_url="localhost", server_port=8000)
 
 ## entity()
 
-`entity(cls)` adds a node for every instance of a class.
+`entity(cls)` queries for every instance of a class.
 The class can be a URI, CURIE or free text (see [Glossary](../reference/glossary.md) for terminology).
 Free text is matched to an actual class by the server (e.g. `"pump"` finds `s223:Pump`).
 
@@ -45,18 +38,16 @@ shape: (3, 1)
 └────────────┘
 ```
 
-Here, `metadata()` actually executes the query.
-It returns the matched items as a polars frame, one column per node, and every
-example in this doc ends with it.
+When `metadata()` is called, the query is executed.
+`metadata()` returns the matched items as a polars frame, one column per node.
+
 Timeseries values are requested separately, covered under
 [Getting the values](#getting-the-values).
 
-`uri=` pins one specific instance instead (CURIEs work).
-Keyword arguments filter by attributes inline, using the same attribute names
-as `where()` (covered later):
+Entity queries may also filter by attribute, e.g. by process. 
+These attributes are added as keywords, and are further described in the [where section](#where())
 
 ```python
-q = acq.query().entity(uri="wbs:RO")                            # exactly this item
 q = acq.query().entity("Equipment", process="reverse osmosis")  # filter by attribute
 
 q.metadata()
@@ -70,10 +61,26 @@ shape: (1, 1)
 └───────────┘
 ```
 
+## uri()
+
+`uri=` pins one specific instance instead (CURIEs work).
+```python
+q = acq.query().entity(uri="wbs:RO")                            # exactly this item
+q.metadata()
+```
+```text
+shape: (1, 1)
+┌───────────┐
+│ Equipment │
+╞═══════════╡
+│ wbs:RO    │
+└───────────┘
+```
+
 ### Aliases
 
-Every node has an alias, and aliases are the column names of every result.
-The default is the text you typed (`pump`, `Equipment` above).
+Aliases are the column names returned in your query results, referring to particular nodes in your graph.
+The default alias is the text you typed (`pump`, `Equipment` above).
 To provide an alias: either use the `alias=` keyword or the `.alias()` method.
 
 Note that it is recommended to assign an alias to a node built from `uri=`; otherwise the column is named by the node's internal numeric id.
@@ -99,10 +106,11 @@ Explicitly reusing an alias raises an error.
 
 ## related()
 
-`related(cls)` adds an entity connected to an existing node.
-By default it starts from the node the pointer is on (see next chapter) and returns the *nearest*
-matches within 3 hops of any visible edge (equal-distance ties all
-survive).
+`related(cls)` retrieves nodes of type `cls` related to the focus node in the query.
+
+By default `related(cls)` starts from the node the pointer is on (see next chapter) and returns the *nearest*
+matches within 3 hops of any visible edge. Equal-distance ties all show up in the query, 
+meaning that if there are 2 tanks within 1 hop of a pump, both tanks will be returned when the query is executed. 
 
 ```python
 pumps = acq.query().entity("pump")     # every pump in the plant
@@ -171,7 +179,7 @@ shape: (3, 3)
 
 Both forms produce the same result.
 `refocus("pump")` moves the pointer, so everything after it starts from the
-pumps; `frm="pump"` redirects just that one step.
+pumps; `frm="pump"` moves the pointer to pump for that one call.
 Both take the node's alias.
 
 ### via=
