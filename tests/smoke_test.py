@@ -16,7 +16,6 @@ from acquirium import (
     PollingIngestDriver,
     Query,
     align,
-    console,
     output,
 )
 
@@ -33,7 +32,6 @@ def main() -> None:
         PollingIngestDriver,
         Query,
             align,
-        console,
         output,
     )
     for obj in exports:

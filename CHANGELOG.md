@@ -36,8 +36,7 @@ change in any release.
   transforms.
 - App checks through `client.check_app(...)` and
   `acquirium app check module:Class`. The `--local` option executes in the
-  caller's terminal for debugging. `aq.console()` opens an interactive console
-  inside a transform.
+  caller's terminal for debugging.
 - Derived stream metadata, generated labels, and producer selection through
   `measurement(app="producer-name")`. The materialization DAG endpoint exposes
   progress, execution status, and errors.

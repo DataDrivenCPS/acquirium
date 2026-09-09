@@ -187,9 +187,8 @@ acquirium app check plant_apps:Celsius --local
 ```
 
 Use `--local` to run in your terminal with breakpoints and tracebacks. Without
-it, the server executes the check. `aq.console()` opens an interactive console
-inside a transform. Checks load retained input history and can consume more
-memory than normal partitioned execution.
+it, the server executes the check. Checks load retained input history and can
+consume more memory than normal partitioned execution.
 
 Deploy an imported class with `client.deploy_app(Celsius)`, where `client` is
 your configured Acquirium instance. The server must be able to import the same
