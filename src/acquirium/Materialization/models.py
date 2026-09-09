@@ -450,8 +450,10 @@ class App:
     of output naming. every declares complete resampling buckets. lookback
     and lookahead describe trailing and leading input dependencies; their
     effects also determine which outputs a correction recomputes.
-    backfill processes retained history on first activation. batch_delay
-    waits from the first pending change; min_interval caps execution frequency.
+    backfill processes retained history on first activation. batch_delay and
+    min_interval are advanced operational controls: batch_delay collects rapid
+    changes before an invocation, while min_interval caps execution frequency
+    for expensive computations. They do not affect event-time window semantics.
     """
     name: str | None = None
     every: timedelta | str | None = None

@@ -216,15 +216,21 @@ wait for that work to finish.
 `client.remove_app("celsius")` stops the app and forgets its progress and pending
 work. Existing derived history remains stored.
 
-## Control execution frequency
+## Advanced execution controls
 
-- `batch_delay = "2s"`: wait two seconds from the first pending change to collect
-  a burst. Subsequent changes do not restart the timer.
-- `min_interval = "1m"`: limit invocation frequency.
+- `batch_delay = "2s"`: wait two seconds from the first pending change before
+  running. This lets a rapidly updating stream collect several readings into
+  one invocation and can reduce the overhead of expensive computations.
+  Subsequent changes do not restart the timer.
+- `min_interval = "1m"`: prevent the app from running more than once per minute,
+  even when additional changes arrive. Use this to cap the execution rate of an
+  expensive computation.
 - `backfill = True`: process retained history on initial activation.
 
-These settings affect when computation happens. `every`, `lookback`, and
-`lookahead` determine its time semantics. They are not timers or watermarks.
+`batch_delay` and `min_interval` are advanced operational tuning parameters;
+most apps should leave them at their defaults. They affect when computation
+happens, while `every`, `lookback`, and `lookahead` determine its time semantics.
+They are not timers or watermarks and cannot be inferred from the app's window.
 
 See the [app reference](reference/apps.md) for the complete contract,
 and [operations](materialization-implementation.md) for storage and server settings.

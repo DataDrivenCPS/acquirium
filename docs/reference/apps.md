@@ -29,11 +29,15 @@ effects in transforms; execution can be retried.
 | `lookback` | `"0s"` | Preceding input dependency, or `"all"` |
 | `lookahead` | `"0s"` | Following input dependency |
 | `backfill` | `False` | Process retained history on first activation |
-| `batch_delay` | `"0s"` | Fixed delay from the first observed pending revision |
-| `min_interval` | none | Minimum interval between completed invocations |
+| `batch_delay` | `"0s"` | Advanced: wait after the first pending revision to batch rapid changes into one invocation |
+| `min_interval` | none | Advanced: cap execution frequency for expensive computations |
 
 Durations accept nonnegative `timedelta` values or strings ending in `ms`,
 `s`, `m`, `h`, or `d`. `every` must be positive.
+
+Most apps should keep `batch_delay` and `min_interval` at their defaults. They
+control wall-clock execution behavior and do not change the event-time window
+defined by `every`, `lookback`, and `lookahead`.
 
 ### Query matches
 
