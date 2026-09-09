@@ -8,7 +8,15 @@ from pathlib import Path
 
 
 def source_digest(target: object) -> str:
-    """Digest the importable executable module and qualified entrypoint."""
+    """Identify an entrypoint by its module bytes and qualified name.
+
+    Hash the whole module because a transform can depend on helpers or constants
+    outside its class body. This deliberately treats comment-only edits as new
+    executable identities too; Binding.progress_key separately preserves progress.
+    Imported modules, dependencies, and environment are not included, so this is
+    a code-version check rather than a reproducible environment or security proof.
+    Source inspection is a fallback when module bytes are unavailable.
+    """
     module_name = getattr(target, "__module__", "")
     qualname = getattr(target, "__qualname__", target.__class__.__qualname__)
     module = inspect.getmodule(target)

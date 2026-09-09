@@ -1,4 +1,9 @@
-"""Shared dry-run result rendering and output-window enforcement."""
+"""Render local and server checks using the same output replacement rules.
+
+OutputBuilder has already validated table schemas. This module clips results
+to the interval that publication would replace and renders a bounded preview.
+It does not write data, consume progress, or impose limits on input loading.
+"""
 from typing import Any, Mapping
 
 import pyarrow as pa
@@ -18,6 +23,9 @@ def check_entry(binding: Binding) -> dict[str, Any]:
 
 def check_outputs(binding: Binding, context: InputBatch,
                   results: Mapping[str, pa.Table], limit: int | None) -> dict[str, Any]:
+    # Preserve all declared ports and their assigned flag. An empty replacement
+    # and an untouched port both show zero rows but have different effects when
+    # deployed. Count after clipping and before limiting the displayed values.
     outputs = {}
     window = context.output_window
     for name, port in binding.outputs.items():

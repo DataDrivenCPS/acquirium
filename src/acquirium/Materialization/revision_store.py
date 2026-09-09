@@ -1,4 +1,16 @@
-"""Revision snapshots, bounded work cursors, and atomic publication."""
+"""Bridge loaded calculation batches and durable timeseries state.
+
+A batch is prepared in a consistent read transaction, then user code runs
+outside that transaction. Publication opens a write transaction and validates
+that the prepared work is still current before replacing outputs and advancing
+progress together. Transform failures therefore leave progress available for
+retry, and stale workers cannot overwrite a newer accepted result.
+
+Revisions identify writes, not event timestamps. The database retains current
+values and deletion tombstones, not historical row versions. A revision range
+selects what needs recalculation; the input window supplies current values from
+the read snapshot, including context outside that range.
+"""
 from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Any, ContextManager, Iterable, Mapping, Protocol
@@ -27,7 +39,10 @@ class RevisionStore:
     def __init__(self, store: RevisionBackend, unit_converter: Any = None):
         self.store = store
         self.unit_converter = unit_converter
-        # None is the standalone store contract; a runtime installs its active plan.
+        # A runtime installs progress_key -> generation as the publication
+        # authority and updates it under the backend write lock. None permits
+        # standalone scheduler use; an empty mapping permits no publications.
+        # Do not conflate those two cases in the validation below.
         self.active_bindings: dict[str, str] | None = None
         with store._lock, store._write_conn() as conn:
             self._execute(conn, """CREATE TABLE IF NOT EXISTS materialization_work (
@@ -86,6 +101,8 @@ class RevisionStore:
             return {row[0] for row in self._execute(conn, "SELECT progress_key FROM materialization_work").fetchall()}
 
     def retained_window(self, binding: Binding) -> TimeWindow | None:
+        # Include outputs: after input membership shrinks, obsolete results may
+        # extend beyond the remaining inputs and still need to be removed.
         refs = sorted({d.ref_uri for values in binding.inputs.values() for d in values}
                       | {p.ref_uri for p in binding.outputs.values()})
         with self.store._own_conn() as conn:
@@ -106,6 +123,9 @@ class RevisionStore:
                     raise ValueError("binding must be initialized before reprocessing")
                 if self._execute(conn, "SELECT 1 FROM materialization_work WHERE progress_key=?", [binding.progress_key]).fetchone():
                     raise ValueError("binding already has pending work; wait for it to finish")
+                # Equal source and target revisions distinguish explicit repair
+                # from catch-up: finishing it must preserve the input frontier.
+                # Reject overlapping requests instead of losing a work cursor.
                 self._execute(conn, "INSERT INTO materialization_work VALUES (?, ?, ?, ?, ?, ?)",
                               [binding.progress_key, uuid4().hex, owned.start.isoformat(), owned.end.isoformat(), progress[0], progress[0]])
 
@@ -113,6 +133,9 @@ class RevisionStore:
         from dataclasses import replace
         work_id, cursor, end, previous, target = work
         start, finish = datetime.fromisoformat(cursor), datetime.fromisoformat(end)
+        # Inclusive microsecond bounds let adjacent chunks meet without a gap
+        # or overlap. Round the end out to a whole bucket before moving the
+        # cursor; a bucket must never be computed from two partial input loads.
         stop = min(finish, start + timedelta(days=1) - timedelta(microseconds=1))
         if binding.every:
             epoch = datetime(1970, 1, 1, tzinfo=UTC)
@@ -123,7 +146,11 @@ class RevisionStore:
         return replace(batch, context=replace(batch.context, work_id=work_id, work_cursor=cursor, work_next=following))
 
     def next_batch(self, binding: Binding) -> Batch | None:
-        # One read transaction is the snapshot boundary described by proposal.
+        # The frontier, changed extent, and every input alias must come from
+        # one snapshot. Per-query snapshots could combine a new revision with
+        # old data, then advance progress past values the transform never saw.
+        # All Arrow data is loaded before returning; no read transaction is
+        # held open while arbitrary application code executes.
         conn = self.store._connect()
         try:
             # DuckDB exposes ``begin()`` while psycopg starts an explicit
@@ -173,9 +200,15 @@ class RevisionStore:
         refs = [d.ref_uri for values in binding.inputs.values() for d in values]
         if not refs or target == previous: return None
         marks = ",".join("?" for _ in refs)
+        # Include tombstones in the changed extent. Filtering deleted rows here
+        # would hide removals from consumers, even though _stream_set correctly
+        # excludes those rows from the values delivered to the transform.
         changed = self._execute(conn, f"SELECT min(t.ts), max(t.ts) FROM {self._timeseries_source} WHERE {self._ref} IN ({marks}) AND t.last_revision>? AND t.last_revision<=?", [*refs, previous, target]).fetchone()
         if changed[0] is None: return None
         changed_window = TimeWindow(changed[0].replace(tzinfo=UTC) if changed[0].tzinfo is None else changed[0], changed[1].replace(tzinfo=UTC) if changed[1].tzinfo is None else changed[1])
+        # Persist a cursor before executing a long range so a restart can resume
+        # its unfinished intervals. Whole-history apps cannot be partitioned this
+        # way: each invocation explicitly depends on the full retained extent.
         if partition and binding.lookback is not None and changed_window.end - changed_window.start > timedelta(days=1):
             window = self._output_window(binding, changed_window)
             work = (uuid4().hex, window.start.isoformat(), window.end.isoformat(), previous, target)
@@ -188,8 +221,11 @@ class RevisionStore:
 
     def _window_batch(self, conn: Any, binding: Binding, previous: int, target: int,
                       changed_window: TimeWindow, *, output_window: TimeWindow | None = None) -> Batch:
-        # lookback describes a trailing dependency; a correction also affects
-        # following outputs. lookahead is the corresponding leading dependency.
+        # There are two expansions, serving different purposes. A corrected
+        # reading at noon in a ten-minute rolling calculation affects outputs
+        # through 12:10. Recomputing those outputs needs inputs starting at 11:50.
+        # _output_window finds the affected outputs; this method adds their
+        # input context. Publication must clip back to the output interval.
         if binding.lookback is None:
             refs = sorted({d.ref_uri for values in binding.inputs.values() for d in values}
                           | {p.ref_uri for p in binding.outputs.values()})
@@ -229,6 +265,10 @@ class RevisionStore:
         refs = [x.ref_uri for x in descriptors]
         if not refs: return StreamSet(alias, window, descriptors, converter=self.unit_converter)
         marks = ",".join("?" for _ in refs)
+        # Read current context, not only rows written in (previous, target].
+        # Durable work retains its original target across chunks, but later
+        # chunks read fresh snapshots; newer corrections are processed again
+        # after the range completes. This is not a historical as-of read.
         query = f"""SELECT {self._ref},t.ts,t.numeric_value,t.text_value,t.last_revision FROM {self._timeseries_source}
                     WHERE {self._ref} IN ({marks}) AND NOT t.deleted AND t.ts>=? AND t.ts<=? ORDER BY {self._ref},t.ts"""
         cursor = self._execute(conn, query, [*refs, self._time(window.start), self._time(window.end)])
@@ -256,16 +296,30 @@ class RevisionStore:
         return self.commit_wave(((binding, batch, results),)).get(binding.signature, False)
 
     def commit_wave(self, commits: Iterable[tuple[Binding, Batch, Mapping[str, pa.Table]]]) -> Mapping[str, bool]:
-        """Commit independent completed work in one revision transaction."""
+        """Publish still-current results from one independent scheduler chunk.
+
+        The return mapping contains accepted signatures, including invocations
+        that advanced progress without emitting rows. Rejected work is omitted.
+        All accepted outputs and progress updates share one transaction; a write
+        failure rolls them back together. The backend's _insert_frame must use
+        the supplied connection and revision, never commit independently.
+        """
         completed = tuple(commits)
         if not completed:
             return {}
         with self.store._lock, self.store._write_conn() as conn:
+            # Check authorization and progress while holding the same write
+            # lock used by deployment revocation. Checking before entering this
+            # transaction would leave a gap in which an obsolete result could
+            # become authorized to overwrite the replacement deployment's data.
             accepted = []
             for binding, batch, results in completed:
                 row = self._execute(conn, "SELECT consumed_revision FROM binding_progress WHERE progress_key=?", [binding.progress_key]).fetchone()
                 active = self.active_bindings
                 valid = active is None or active.get(binding.progress_key) == binding.generation
+                # Intermediate chunks share the same frontier. The work ID and
+                # cursor provide the additional compare-and-swap condition that
+                # prevents a duplicate chunk or cancelled repair from publishing.
                 if batch.context.work_id:
                     work = self._execute(conn, "SELECT work_id, cursor_ts FROM materialization_work WHERE progress_key=?", [binding.progress_key]).fetchone()
                     valid = valid and work == (batch.context.work_id, batch.context.work_cursor)
@@ -274,6 +328,9 @@ class RevisionStore:
             # Assigned ports replace their owned interval. Tombstones remain
             # discoverable by downstream revision scans, even for empty results.
             import polars as pl
+            # Allocate a revision for nonempty output or removal of existing
+            # rows. An empty interval with nothing to remove needs only a
+            # progress update, avoiding revisions that wake unrelated bindings.
             revision = None
             for binding, batch, results in accepted:
                 window = batch.context.output_window
@@ -304,6 +361,9 @@ class RevisionStore:
                             (pl.col("value") if numeric else pl.lit(None, dtype=pl.Float64)).alias("numeric_value"),
                             (pl.lit(None, dtype=pl.String) if numeric else pl.col("value")).alias("text_value"))
                         self.store._insert_frame(conn, frame, revision)
+            # Cursor movement is atomic with this chunk's output. Keep the input
+            # frontier fixed until the final chunk, otherwise restart would skip
+            # unfinished portions of the captured revision range.
             for binding, batch, _ in accepted:
                 if batch.context.work_id:
                     if batch.context.work_next:
