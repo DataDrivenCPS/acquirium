@@ -84,8 +84,13 @@ These declare the drivers the server starts; they are documented in the
 [driver reference](drivers.md#configuration).
 One key concerns the server itself: `[driver] server_url` and `server_port`
 are the address driver and app actors use to reach the server.
-The default (`localhost` and the `[server]` port) is right for a single-host
+The default (`127.0.0.1` and the `[server]` port) is right for a single-host
 setup; set them when the bind address is not reachable under that name.
+Note that `127.0.0.1` is preferred over `localhost`: the server listens on IPv4
+only, `localhost` resolves to `::1` first, and on Windows every new connection
+waits about 2 s for the IPv6 attempt to fail. The server closes idle
+connections after 5 s, so an actor ticking every 10 s reconnects on each tick
+and, with `localhost`, pays that delay every time.
 
 ## The [ontologies] section
 

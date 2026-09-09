@@ -22,7 +22,7 @@ Every query starts with connecting to a running acquirium server. The client obj
 ```python
 from acquirium import Acquirium
 
-acq = Acquirium(server_url="localhost", server_port=8000)
+acq = Acquirium(server_url="127.0.0.1", server_port=8000)
 ```
 
 ## entity()

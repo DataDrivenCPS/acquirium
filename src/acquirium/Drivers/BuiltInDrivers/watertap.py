@@ -237,7 +237,9 @@ def _load_point_specs_from_mapping(
 
 
 def _load_callable(spec: str) -> Callable[..., Any]:
-    module_name, sep, attr_name = spec.partition(":")
+    # rpartition, not partition: a Windows file spec like C:\x\build.py:fn
+    # has a colon in the drive letter.
+    module_name, sep, attr_name = spec.rpartition(":")
     if not sep or not attr_name:
         raise ValueError(
             "watertap_build_spec must be in the form 'module.path:callable' or "

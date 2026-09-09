@@ -46,7 +46,7 @@ streams to, so renaming one later orphans its data.
 ```python
 from acquirium import Acquirium
 
-acq = Acquirium(server_url="localhost", server_port=8000)
+acq = Acquirium(server_url="127.0.0.1", server_port=8000)
 
 acq.insert_graph_file(
     "deployments/WATERTAP/models/seawater-ro/model.ttl",

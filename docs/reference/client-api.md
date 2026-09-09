@@ -16,12 +16,19 @@ Type hints are shortened; `pl` is polars, `pa` is pyarrow.
 ```python
 from acquirium import Acquirium
 
-acq = Acquirium(server_url="localhost", server_port=8000, use_ssl=False,
+acq = Acquirium(server_url="127.0.0.1", server_port=8000, use_ssl=False,
                 insert_batch_rows=50000, health_timeout=60.0)
 ```
 
 The constructor waits for `GET /health` for up to `health_timeout` seconds.
 `acq.client` is the underlying [`AcquiriumClient`](#acquiriumclient).
+
+> **Note:** use `127.0.0.1`, not `localhost`, for a server on the same machine.
+> The server listens on IPv4 only and `localhost` resolves to `::1` first. On
+> Windows each new connection waits about 2 s for the IPv6 attempt to fail
+> before it falls back to IPv4. The client keeps one connection open, so the
+> cost is paid per connection rather than per request, but a client that
+> reconnects, for instance a driver ticking every 10 s, pays it on every tick.
 
 ### Querying
 
@@ -172,7 +179,7 @@ See the [data tutorial](../tutorials/data.md).
 ```python
 from acquirium.Client.client import AcquiriumClient
 
-client = AcquiriumClient(server_url="localhost", server_port=8000, use_ssl=False)
+client = AcquiriumClient(server_url="127.0.0.1", server_port=8000, use_ssl=False)
 ```
 
 `Acquirium` delegates to this class; the methods it shares (`insert_graph`,
