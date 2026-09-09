@@ -1,4 +1,10 @@
-"""Bounded local execution and dependency failure isolation."""
+"""Bound transform concurrency without moving recovery state into workers.
+
+The coordinator loads at most one chunk of batches, submits their transforms,
+and collects successful results for a single publication transaction. A worker
+only receives loaded data and returns validated outputs; it does not advance
+progress. RevisionStore checks whether results are still current at commit time.
+"""
 from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
@@ -14,7 +20,12 @@ class Executor(Protocol):
 
 
 class InProcessExecutor:
-    """Deterministic executor useful for tests; it has the same task boundary."""
+    """Call application code on loaded data using the shared output validator.
+
+    This is the production in-process execution boundary as well as the default
+    for standalone schedulers. Determinism is the app's responsibility; the
+    executor neither retries side effects nor enforces purity.
+    """
     def execute(self, application: App, batch: Batch,
                 ports: Mapping[str, OutputPort]) -> Mapping[str, pa.Table]:
         output = OutputBuilder(ports)
@@ -47,8 +58,11 @@ class Scheduler:
         return self.store.commit(binding, batch, results)
 
     def run_layer(self, bindings: Iterable[Binding], applications: Mapping[str, App], *, max_workers: int | None = None) -> bool:
-        # A chunk bounds both loaded batches and pending futures. All successes
-        # in it publish together before dependent work can be scheduled.
+        # ThreadPoolExecutor bounds running threads but its submission queue is
+        # unbounded. Chunking before next_batch bounds both queued work and the
+        # number of loaded Arrow batches retained here. It does not cap the byte
+        # size of a batch: data density and lookback still determine that.
+        # Each chunk publishes before subsequent dependency layers are read.
         capacity = self.capacity if max_workers is None else min(self.capacity, max_workers)
         if capacity < 1:
             raise ValueError("max_workers must be positive")
@@ -75,6 +89,9 @@ class Scheduler:
                         self.errors[binding.signature] = f"{type(error).__name__}: {error}"
                     finally:
                         self.running.discard(binding.signature)
+                # A transform failure omits only that binding from publication.
+                # A database failure is different: commit_wave rolls back all
+                # accepted work in this chunk and propagates to the coordinator.
                 accepted = self.store.commit_wave(completed)
                 for signature in accepted:
                     self.last_success[signature] = datetime.now(timezone.utc).isoformat()
@@ -82,6 +99,9 @@ class Scheduler:
         return ran
 
     def run_graph_once(self, graph: ApplicationGraph, applications: Mapping[str, App], *, max_workers: int | None = None) -> bool:
+        # Propagate failures through topological layers during this pass. A
+        # failed source is tried again on the next pass; its descendants remain
+        # blocked until it succeeds, while independent branches keep running.
         ran, blocked = False, set()
         for wave in graph.layers():
             blocked.update(target for source, target, _ in graph.edges if source in blocked)
