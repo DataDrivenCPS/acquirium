@@ -3,4 +3,4 @@
 data_dir = ".data"
 
 [[apps]]
-spec = "./temperature_conversion.py:CelsiusToFahrenheit"
+spec = "./temperature_conversion.py:FahrenheitToCelsius"

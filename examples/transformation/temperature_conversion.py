@@ -1,4 +1,4 @@
-"""An app that converts an input temperature stream to Fahrenheit."""
+"""Convert each Fahrenheit input stream to Celsius."""
 from __future__ import annotations
 
 import polars as pl
@@ -6,31 +6,24 @@ import polars as pl
 import acquirium as aq
 
 
-INPUT_SOURCE = "temperature-example-input"
-OUTPUT_POINT = "urn:example:temperature:fahrenheit"
+class FahrenheitToCelsius(aq.App):
+    """Publish a separate Celsius stream for each Fahrenheit input stream."""
 
-
-class CelsiusToFahrenheit(aq.App):
-    """Publish a Fahrenheit stream for every Celsius input sample."""
-
-    name = "celsius-to-fahrenheit"
-    grouping = "all_matches"
+    name = "fahrenheit-to-celsius"
+    grouping = "per_match"
     backfill = True
     outputs = {
-        "fahrenheit": aq.output.named(
-            "fahrenheit",
+        "celsius": aq.output.stream(
             value_kind="numeric",
-            point_uri=OUTPUT_POINT,
-            unit="http://qudt.org/vocab/unit/DEG_F",
-            data_source="temperature-example-output",
+            unit="http://qudt.org/vocab/unit/DEG_C",
         ),
     }
 
     def build_query(self, plant):
-        return plant.query().measurement(alias="temperature", data_source=INPUT_SOURCE)
+        return plant.query().measurement(alias="temperature", unit="DEG_F")
 
     def transform(self, inputs, output, context):
-        celsius = inputs["temperature"].df()
-        output["fahrenheit"] = celsius.select(
-            "time", (pl.col("value") * 9.0 / 5.0 + 32.0).alias("value")
+        fahrenheit = inputs["temperature"].df()
+        output["celsius"] = fahrenheit.select(
+            "time", ((pl.col("value") - 32.0) * 5.0 / 9.0).alias("value")
         )

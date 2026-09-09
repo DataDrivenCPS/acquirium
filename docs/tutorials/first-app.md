@@ -4,8 +4,8 @@ title: Your first app
 
 Drivers load sensor readings into Acquirium. Apps use those readings to
 calculate derived streams, such as converted temperatures, averages, or anomaly
-flags. In this tutorial, you will run an app that converts Celsius readings to
-Fahrenheit, then adapt the approach to smooth readings from multiple sensors.
+flags. In this tutorial, you will run an app that converts Fahrenheit readings to
+Celsius, then adapt the approach to smooth readings from multiple sensors.
 
 The full working files are in `examples/transformation/` in the repository.
 
@@ -17,45 +17,42 @@ declaration of its outputs, and the calculation itself.
 ```python
 # temperature_conversion.py
 import polars as pl
+
 import acquirium as aq
 
-INPUT_SOURCE = "temperature-example-input"
-OUTPUT_POINT = "urn:example:temperature:fahrenheit"
 
-
-class CelsiusToFahrenheit(aq.App):
-    name = "celsius-to-fahrenheit"
-    grouping = "all_matches"
+class FahrenheitToCelsius(aq.App):
+    name = "fahrenheit-to-celsius"
+    grouping = "per_match"
     backfill = True
     outputs = {
-        "fahrenheit": aq.output.named(
-            "fahrenheit",
+        "celsius": aq.output.stream(
             value_kind="numeric",
-            point_uri=OUTPUT_POINT,
-            unit="http://qudt.org/vocab/unit/DEG_F",
+            unit="http://qudt.org/vocab/unit/DEG_C",
         ),
     }
 
     def build_query(self, plant):
-        return plant.query().measurement(alias="temperature", data_source=INPUT_SOURCE)
+        return plant.query().measurement(alias="temperature", unit="DEG_F")
 
     def transform(self, inputs, output, context):
-        celsius = inputs["temperature"].df()
-        output["fahrenheit"] = celsius.select(
-            "time", (pl.col("value") * 9.0 / 5.0 + 32.0).alias("value")
+        fahrenheit = inputs["temperature"].df()
+        output["celsius"] = fahrenheit.select(
+            "time", ((pl.col("value") - 32.0) * 5.0 / 9.0).alias("value")
         )
 ```
 
-The query selects measurement streams from `INPUT_SOURCE` and exposes their
-readings under the alias `temperature`. This example publishes one input
-stream, so `grouping = "all_matches"` gives the transform that stream's readings
-in a single call. Every app must explicitly choose its grouping mode.
+The query selects every measurement stream whose unit is `DEG_F`, regardless
+of its data source, and exposes the readings under the alias `temperature`.
+With `grouping = "per_match"`, each matched stream gets a separate call to
+`transform`. Every app must explicitly choose its grouping mode.
 
-The `outputs` declaration gives the Fahrenheit stream the name `fahrenheit`
-within this app and attaches it to `OUTPUT_POINT`. In `transform`, the app reads
-a dataframe, applies the conversion, and assigns the `time` and `value` columns
-to that output. Setting `backfill = True` also processes readings already in
-storage when the app first becomes active.
+The `output.stream` declaration gives each input its own derived Celsius
+stream. In `transform`, the app reads a dataframe, applies the Fahrenheit-to-
+Celsius conversion, and assigns the `time` and `value` columns to that output.
+The outputs declare `DEG_C`, so they do not match the app's `DEG_F` input query.
+Setting `backfill = True` also processes readings already in storage when the
+app first becomes active.
 
 Acquirium selects the interval to recompute and saves the output together with
 its processing progress in one transaction. The transform only needs to
@@ -66,7 +63,7 @@ calculate results for the input window it receives.
 Before deploying, run it as a dry run against the data already stored:
 
 ```bash
-uv run acquirium app check ./temperature_conversion.py:CelsiusToFahrenheit
+uv run acquirium app check ./temperature_conversion.py:FahrenheitToCelsius
 ```
 
 The check reports the matched streams, computed values, and any transform
@@ -79,7 +76,7 @@ The example config deploys the class at startup:
 
 ```toml
 [[apps]]
-spec = "./temperature_conversion.py:CelsiusToFahrenheit"
+spec = "./temperature_conversion.py:FahrenheitToCelsius"
 ```
 
 Start the server in one terminal:
@@ -96,10 +93,10 @@ In another terminal:
 uv run python examples/transformation/publish.py
 ```
 
-The script registers a Celsius input stream, writes six samples, and polls the
-output point until the derived Fahrenheit values appear. Further writes to the
-Celsius stream cause the app to recompute the affected interval. Correcting an
-earlier Celsius reading also updates its Fahrenheit result.
+The script registers a Fahrenheit input stream, writes six samples, and queries
+the app's outputs until the derived Celsius values appear. Further writes to
+any matched Fahrenheit stream cause the app to recompute its affected interval.
+Correcting an earlier Fahrenheit reading also updates its Celsius result.
 
 ## 5. Find what it produced
 
@@ -111,7 +108,7 @@ selects this calculation's output:
 from acquirium import Acquirium
 
 acq = Acquirium(server_url="127.0.0.1", server_port=8000)
-acq.query().measurement(alias="f", app="celsius-to-fahrenheit").data()
+acq.query().measurement(alias="c", app="fahrenheit-to-celsius").data()
 ```
 
 The producing-app metadata is added automatically. Other metadata, such as a
@@ -120,11 +117,11 @@ declaring `quantity_kind` makes the output discoverable by queries for that
 quantity kind alongside measured streams. See the
 [apps guide](../apps.md#convert-each-sensor) for an example.
 
-## 6. Make it react to every sensor
+## 6. Smooth each sensor's readings
 
-To calculate a separate result for every temperature sensor, use
-`grouping = "per_match"`. The following app smooths each sensor's readings with
-a ten-minute rolling average:
+The same `grouping = "per_match"` setting also works for calculations that need
+several readings from each sensor. The following app uses a ten-minute rolling
+average and selects inputs by quantity kind:
 
 ```python
 class TemperatureSmoother(aq.App):
