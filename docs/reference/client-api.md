@@ -56,9 +56,9 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 | `register_streams(streams: Iterable[dict]) -> None` | Declare one or more streams' identity and semantic metadata in one graph insert; see the [lifecycle guide](../explanation/stream-lifecycle.md). |
 | `reference_uri(source_id: str, ref_name: str) -> URIRef` | The canonical stream URI for a `(source_id, ref_name)` pair. |
 | `resolve_point_metadata(fields: dict, min_score=0.6) -> dict[str, str \| None]` | Resolve `unit`, `quantity_kind`, `medium`, `substance` text to URIs jointly. |
-| `insert_timeseries(source_id, ref_name, rows: list[tuple[datetime, Any]], *, point_uri=None, replace=False) -> dict` | Insert rows for one stream. |
+| `insert_timeseries(source_id, ref_name, rows: list[tuple[datetime, Any]], *, point_uri=None, replace=False) -> dict` | Insert or correct rows for one stream. Register point metadata separately; `replace=True` is currently rejected. |
 | `insert_timeseries_batch(source_id, streams: dict[str, list[tuple[datetime, Any]]]) -> dict` | Insert rows for several streams; chunked by `insert_batch_rows`. |
-| `insert_timeseries_arrow(source_id, table: pa.Table) -> dict` | Insert a `(ts, ref_name, value)` Arrow table; the path drivers use. |
+| `insert_timeseries_arrow(source_id, table: pa.Table, *, publication_id=None) -> dict` | Insert a `(ts, ref_name, value)` Arrow table; the path drivers use. The optional ID is for request correlation and does not currently deduplicate retries. |
 
 ### Logbook
 
@@ -75,6 +75,7 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 | `check_app(target: type[App], *, parameters=None, limit=None, search_path=None) -> dict` | Dry-run an app against stored data and return what it computed; nothing is deployed or saved. Every computed row comes back unless `limit` heads each output. `search_path` defaults to the directory of the class's module, so a local server can import it. |
 | `deploy_app(target: type[App], *, parameters=None) -> dict` | Persist and deploy an importable app class; `parameters` are passed to its constructor. |
 | `remove_app(name: str) -> dict` | Remove a durable app deployment by name. |
+| `reprocess_app(name: str, start: datetime, end: datetime) -> dict` | Schedule a retained output interval for recomputation without resetting input progress. |
 | `app_dag() -> nx.DiGraph` | Return the compiled binding DAG; nodes describe concrete inputs, outputs, policies, and revision progress. |
 
 See the [app reference](apps.md) for the transformation class contract.
@@ -221,9 +222,10 @@ and are listed once above.
 | method | description |
 |---|---|
 | `register_datasource(source_id) -> str`, `register_streams(streams) -> None` | As on `Acquirium`. |
-| `insert_timeseries(*, source_id, ref_name, rows, point_uri=None, replace=False) -> dict` | Keyword-only form of the `Acquirium` method. |
+| `insert_timeseries(*, source_id, ref_name, rows, point_uri=None, replace=False, publication_id=None) -> dict` | Keyword-only form of the `Acquirium` method; `publication_id` is forwarded but does not currently deduplicate retries. |
 | `insert_timeseries_batch(source_id, streams) -> dict` | One HTTP request for several streams (unchunked). |
-| `insert_timeseries_arrow(source_id, table) -> dict` | As on `Acquirium`. |
+| `insert_timeseries_arrow(source_id, table, *, publication_id=None) -> dict` | As on `Acquirium`; the optional ID is forwarded but does not currently deduplicate retries. |
+| `resolve_storage_keys(uris: list[str]) -> dict[str, str]` | Map point URIs to the canonical ref URIs used by timeseries APIs; canonical ref URIs pass through. |
 | `timeseries_df(uri, start=None, end=None, limit=None, order="asc", timeout=60.0, *, value_mode="default") -> pl.DataFrame` | All rows of one stream by `ref_uri`. |
 | `timeseries_batches(uri, start=None, end=None, limit=None, order="asc", *, value_mode="default", timeout=60.0) -> Iterator[pl.DataFrame]` | The same, one frame per Arrow record batch. |
 | `timeseries_info_batch(uris: list[str]) -> dict` | `row_count`, `earliest`, `latest` for several streams in one request. |
@@ -243,6 +245,7 @@ and are listed once above.
 | `check_app(definition: dict, limit=None, search_path=None) -> dict` | Raw HTTP form behind `Acquirium.check_app`. |
 | `deploy_app(definition: dict) -> dict` | Raw HTTP form behind `Acquirium.deploy_app`; the high-level client builds the definition from a class. |
 | `remove_app(name: str) -> dict` | Remove a deployment. |
+| `reprocess_app(name: str, start: datetime, end: datetime) -> dict` | Schedule retained output repair. |
 | `materialization_dag() -> dict` | Return the server's raw binding-DAG payload. |
 
 ### Grafana

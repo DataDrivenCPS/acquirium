@@ -10,7 +10,11 @@ from acquirium.Storage.publication.types import PublicationReceipt, PublicationR
 
 
 class RevisionPublisher:
-    """Publish one frame through the shared revision-writing store seam."""
+    """Publish one normalized upsert frame through the revision-writing seam.
+
+    This adapter does not keep a receipt ledger, so ``publication_id`` labels
+    the returned receipt but does not deduplicate retries.
+    """
 
     def __init__(self, store: object) -> None:
         self._store = store

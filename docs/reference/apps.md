@@ -30,14 +30,16 @@ effects in transforms; execution can be retried.
 | `lookahead` | `"0s"` | Following input dependency |
 | `backfill` | `False` | Process retained history on first activation |
 | `batch_delay` | `"0s"` | Advanced: wait after the first pending revision to batch rapid changes into one invocation |
-| `min_interval` | none | Advanced: cap execution frequency for expensive computations |
+| `min_interval` | none | Advanced: wait this long after a successful invocation before running that binding again |
 
 Durations accept nonnegative `timedelta` values or strings ending in `ms`,
 `s`, `m`, `h`, or `d`. `every` must be positive.
 
 Most apps should keep `batch_delay` and `min_interval` at their defaults. They
 control wall-clock execution behavior and do not change the event-time window
-defined by `every`, `lookback`, and `lookahead`.
+defined by `every`, `lookback`, and `lookahead`. Their timing state resets on
+server restart, and failed transforms can retry at the materialization polling
+cadence rather than waiting for `min_interval`.
 
 ### Query matches
 
@@ -194,6 +196,29 @@ Check outputs include `assigned`, `rows`, `truncated`, `value_kind`,
 `stream`, `ref_name`, and `values`. Empty assigned output means replacement
 with no rows; empty unassigned output means no change.
 Checks load retained history; the result limit does not limit input reads.
+
+### Configuration deployment
+
+The server can deploy apps after its configured drivers start:
+
+```toml
+[[apps]]
+spec = "./plant_apps.py:Celsius"
+threshold = 40.0
+```
+
+`spec` is `module:Class` or `path/to/file.py:Class`; relative file paths are
+resolved against the configuration file. Other keys except the optional
+display `name` are passed to the app constructor as `parameters`. The class
+must remain importable from the same module whenever the server recompiles or
+restarts, and its source must match the deployment digest. A deployment error
+is logged without stopping the server or other configured apps.
+
+For programmatic registration, `spec` may instead name a callable with the
+signature `registrar(client, parameters)`. It may deploy apps itself and return
+`None`, or return one `App` class or an iterable of them. Configuration keys
+are passed to the registrar; classes it returns are deployed without separate
+constructor parameters.
 
 ## HTTP API
 

@@ -57,8 +57,9 @@ class TimescaleStore(TimeseriesStore):
     ):
         self.dsn = dsn
         self.db_path = self.dsn
-        # Materialization uses short-lived connections so a coherent read does
-        # not share a cursor or transaction with ordinary API traffic.
+        # Snapshot reads use independent short-lived connections. Serialized
+        # writes use this persistent connection so the public transaction API
+        # can govern revision updates and rows together.
         self._lock = threading.Lock()
         # default autocommit so reads don't hold open transactions; explicit begin toggles off
         logger.debug("TimescaleStore.__init__: connecting (recreate=%s)", recreate)
@@ -411,9 +412,9 @@ class TimescaleStore(TimeseriesStore):
 
         The ref URI is computed deterministically from (source_id, ref_name) via
         :func:`compute_ref_uri`, so two sources with the same ref_name never
-        produce the same storage key. The ref URI is also used as the
-        TimescaleDB row key for the stream's data. Pass a precomputed ref_uri
-        to avoid recomputing it when already available.
+        produce the same canonical identity. Timeseries rows use the integer
+        ``ref_id`` assigned through ``ref_ids``. Pass a precomputed ref_uri to
+        avoid recomputing it when already available.
 
         Returns the ref URI.
         """
@@ -489,11 +490,11 @@ class TimescaleStore(TimeseriesStore):
         return list(prepared.keys())
 
     def resolve_storage_key(self, point_uri: str) -> str:
-        """Return the storage key (ref URI) for a point_uri, or point_uri itself if not registered.
+        """Return the canonical ref URI for a point URI, or pass it through.
 
-        Streams inserted via insert_timeseries are stored under their ref URI.
-        This resolves the semantic URI → ref URI so reads find the right rows.
-        Falls back to the URI itself for data inserted directly (e.g. bulk CSV ingest).
+        This resolves the semantic URI to the public stream identity used by
+        reads. Internally, ``ref_ids`` maps that identity to an integer key.
+        An unregistered URI is returned unchanged.
         """
         with self.conn.cursor() as cur:
             cur.execute(
@@ -504,7 +505,7 @@ class TimescaleStore(TimeseriesStore):
             return row[0] if row else point_uri
 
     def resolve_storage_keys(self, point_uris: list[str]) -> dict[str, str]:
-        """Batch-resolve point_uris to storage keys in a single query.
+        """Batch-resolve point URIs to canonical ref URIs in one query.
 
         Returns a mapping of point_uri → ref_uri (or point_uri itself for
         unregistered URIs, preserving the single-URI fallback behaviour).

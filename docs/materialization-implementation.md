@@ -41,16 +41,19 @@ UTC conversion, and the stream-key join.
 
 | concern | DuckDB | PostgreSQL / TimescaleDB |
 |---|---|---|
-| Stream key in `timeseries` | integer `ref_id`, joined to `ref_ids` | `ref_uri` text directly |
+| Stream key in `timeseries` | integer `ref_id`, joined to `ref_ids` | integer `ref_id`, joined to `ref_ids` |
 | Timestamp storage | UTC-normalized `TIMESTAMP` (naive in SQL) | `TIMESTAMPTZ` |
-| Revisioned write | registered Polars frame, delete+insert keyed by `(ref_id, ts)` | cursor `executemany` upsert keyed by `(ref_uri, ts)` |
+| Revisioned write | registered Polars frame, delete+insert keyed by `(ref_id, ts)` | Polars CSV into a temporary `COPY` staging table, then ordered `INSERT ... SELECT ... ON CONFLICT` keyed by `(ref_id, ts)` |
 | Read connection | a new connection to the shared embedded database | a new psycopg connection |
 | Snapshot boundary | `conn.begin()` | `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY` |
-| Write serialization | in-process store lock; DuckDB has one writer | in-process store lock; the transaction also provides isolation |
+| Write transaction | in-process store lock around the store's write connection | in-process store lock around a transaction on the store's persistent write connection |
 | Backend SQL | `?` parameters, `INSERT OR REPLACE` where needed | `%s` parameters, `ON CONFLICT` |
 
-TimescaleDB's hypertable is the normal `timeseries` table. Materialization
-needs no separate hypertable, continuous aggregate, or Timescale job.
+TimescaleDB's hypertable is the normal `timeseries` table. It omits
+TimescaleDB's default timestamp index and uses a unique `(ref_id, ts)` index
+for reads and idempotent upserts. Compression segments by `ref_id`, orders
+each segment by descending timestamp, and has a seven-day compression policy.
+Materialization needs no separate hypertable or continuous aggregate.
 
 ## Operational notes
 
