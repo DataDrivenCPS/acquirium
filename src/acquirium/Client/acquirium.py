@@ -46,7 +46,7 @@ class Acquirium:
     # ---------- construction ----------
     def __init__(
             self,
-            server_url: str = "localhost",
+            server_url: str = "127.0.0.1",
             server_port: int = 8000,
             use_ssl: bool = False,
             lexicon_path: Optional[Path] = None,

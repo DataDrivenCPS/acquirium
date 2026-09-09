@@ -159,14 +159,15 @@ def _import_driver_class(
 def _driver_connect_cfg(
     driver_cfg: dict,
     *,
-    fallback_host: str = "localhost",
+    fallback_host: str = "127.0.0.1",
     fallback_port: int = 8000,
 ) -> tuple[str, int, bool, float]:
     """Return (host, port, use_ssl, interval) from a [driver] config dict."""
     host = driver_cfg.get("server_url", fallback_host)
-    # 0.0.0.0 is a bind address, not a connectable host
+    # 0.0.0.0 is a bind address, not a connectable host. 127.0.0.1 rather than
+    # "localhost": see AcquiriumClient (issue #85).
     if host == "0.0.0.0":
-        host = "localhost"
+        host = "127.0.0.1"
     port = int(driver_cfg.get("server_port", fallback_port))
     use_ssl = driver_cfg.get("use_ssl", False)
     interval = float(driver_cfg.get("interval", 10.0))
@@ -256,7 +257,7 @@ def _push_drivers_to_server(
 driver_app = typer.Typer(help="Manage drivers running on an Acquirium server.", add_completion=False)
 app.add_typer(driver_app, name="driver")
 
-_ServerUrlOpt = Annotated[Optional[str], typer.Option("--server-url", help="Server host (default: [driver] server_url or localhost)")]
+_ServerUrlOpt = Annotated[Optional[str], typer.Option("--server-url", help="Server host (default: [driver] server_url or 127.0.0.1)")]
 _ServerPortOpt = Annotated[Optional[int], typer.Option("--server-port", help="Server port (default: [driver] server_port or 8000)")]
 
 

@@ -118,6 +118,7 @@ def mock_get(monkeypatch, payload, status=200):
         response.url = url
         return response
     monkeypatch.setattr(requests, "get", get)
+    monkeypatch.setattr(requests.Session, "get", lambda self, url, **kwargs: get(url, **kwargs))
     return calls
 
 
