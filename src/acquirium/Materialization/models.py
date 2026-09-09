@@ -90,7 +90,7 @@ class StreamSet:
     def stream(self) -> StreamDescriptor:
         """The one stream bound to this alias — which sensor this call is for.
 
-        A ``per_match`` output binds exactly one stream per alias per call —
+        A ``per_match`` app binds exactly one stream per alias per call —
         for every alias, even when a query row pairs two — so this is the
         usual way to ask what is being computed: ``inputs["temperature"].stream``
         gives its ``ref_uri``, ``point_uri``, ``label`` and ``unit``.
@@ -202,7 +202,7 @@ class InputBatch:
 
     @property
     def row(self) -> Mapping[str, Any]:
-        """The row this call is computing, for a ``per_match`` output.
+        """The row this call is computing, with ``per_match`` grouping.
 
         Raises for an ``all_matches`` app: that call is about every matched row
         at once, and :attr:`result` is the whole table.

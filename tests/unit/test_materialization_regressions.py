@@ -27,6 +27,30 @@ class SumFleet(LineageCopy):
         output['out'] = inputs['input'].df().group_by('time').agg(pl.col('value').sum())
 
 
+class TimedCopy(LineageCopy):
+    name = 'timed-copy'
+    min_interval = '10s'
+
+    def transform(self, inputs, output, context):
+        output['out'] = inputs['input'].collect().select(['time', 'value'])
+
+
+def test_unrelated_writes_do_not_start_the_execution_rate_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr('acquirium.Materialization.runtime.monotonic', lambda: 100.)
+    store = DuckDBStore(tmp_path / 'throttle.duckdb')
+    runtime = Materializer(store, LineageGraph())
+    try:
+        runtime.deploy(Deployment.from_class(TimedCopy))
+        assert not runtime.run_once()
+        store.upsert_rows('urn:unrelated', [(NOW, 1.)], value_kind='numeric')
+        assert not runtime.run_once()
+        store.upsert_rows('urn:input', [(NOW, 2.)], value_kind='numeric')
+        assert runtime.run_once()
+    finally:
+        runtime.close()
+        store.close()
+
+
 class FleetGraph(LineageGraph):
     def __init__(self, refs):
         super().__init__()
@@ -107,6 +131,7 @@ def test_partitioned_backfill_and_reprocessing_resume_after_restart(tmp_path):
     assert scheduler.run_once(binding, Copy())
     assert binding.progress_key in revisions.pending_keys()
     assert revisions.initialise(binding) == 0
+    store.upsert_rows('urn:input', [(NOW, 10.)], value_kind='numeric')
     scheduler.close()
     store.close()
 
@@ -115,7 +140,7 @@ def test_partitioned_backfill_and_reprocessing_resume_after_restart(tmp_path):
     scheduler = Scheduler(revisions)
     try:
         scheduler.run_until_idle(ApplicationGraph([binding]), {binding.signature: Copy()})
-        assert [r['value'] for r in stored(store, 'urn:copy')] == [1., 2., 3.]
+        assert [r['value'] for r in stored(store, 'urn:copy')] == [10., 2., 3.]
         progress = revisions.initialise(binding)
         revisions.request_reprocess([binding], TimeWindow(NOW, NOW + timedelta(days=2)))
         class Doubled(Copy):
@@ -128,7 +153,7 @@ def test_partitioned_backfill_and_reprocessing_resume_after_restart(tmp_path):
         revisions = RevisionStore(store)
         scheduler = Scheduler(revisions)
         scheduler.run_until_idle(ApplicationGraph([binding]), {binding.signature: Doubled()})
-        assert [r['value'] for r in stored(store, 'urn:copy')] == [2., 4., 6.]
+        assert [r['value'] for r in stored(store, 'urn:copy')] == [20., 4., 6.]
         assert not revisions.pending_keys()
         assert revisions.initialise(binding) >= progress
     finally:

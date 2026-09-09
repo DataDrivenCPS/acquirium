@@ -362,15 +362,16 @@ class Materializer:
             if not ready:
                 blocked.update(b.signature for b in wave if b.signature in self._scheduler.errors)
                 continue
+            successes = {b.signature: self._scheduler.last_success.get(b.signature) for b in ready}
             ran = self._scheduler.run_layer(ready, applications) or ran
             blocked.update(b.signature for b in ready if b.signature in self._scheduler.errors)
+            _, progressed = self._revisions.progress_snapshot()
             for binding in ready:
-                with self._store._own_conn() as conn:
-                    row = self._execute(conn, "SELECT consumed_revision FROM binding_progress WHERE progress_key=?", [binding.progress_key]).fetchone()
-                if row is not None and row[0] > previous[binding.signature]:
+                executed = successes[binding.signature] != self._scheduler.last_success.get(binding.signature)
+                if executed:
                     self._last_run[binding.signature] = now
+                if executed or progressed.get(binding.progress_key, 0) > previous[binding.signature]:
                     self._pending_since.pop(binding.signature, None)
-                    ran = True
         return ran
 
     def dag(self) -> dict[str, Any]:
