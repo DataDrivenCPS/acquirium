@@ -16,7 +16,7 @@ from acquirium.Materialization.planner import BindingPlanner, Deployment, output
 
 def _port(name="out", ref="urn:out", spec=None):
     """A resolved output port, for tests that build a Binding by hand."""
-    return OutputPort(ref, name, f"urn:point:{name}", spec or output.per_row(value_kind="numeric"))
+    return OutputPort(ref, name, f"urn:point:{name}", spec or output.stream(value_kind="numeric"))
 from acquirium.Materialization.runtime import Materializer
 from acquirium.Storage.duckdb_store import DuckDBStore
 from acquirium.internals.models import compute_ref_uri
@@ -32,7 +32,7 @@ def _context(row, result):
 class Mean(App):
     backfill = True
     lookback = "1m"
-    outputs = {"mean": output.per_row(value_kind="numeric")}
+    outputs = {"mean": output.stream(value_kind="numeric")}
 
     def transform(self, inputs, output, context):
         assert inputs["left"].window == inputs["right"].window == context.read_window
@@ -42,21 +42,21 @@ class Mean(App):
 
 class LineageCopy(App):
     name = "lineage-copy"
-    outputs = {"out": output.per_row(value_kind="numeric")}
+    outputs = {"out": output.stream(value_kind="numeric")}
     def build_query(self, plant): return plant.query().measurement(alias="input")
     def transform(self, inputs, output, context): pass
 
 
 class BorrowedPoint(App):
     name = "borrowed-point"
-    outputs = {"out": output.per_row(value_kind="numeric", point_uri="urn:plant/T-101")}
+    outputs = {"out": output.stream(value_kind="numeric", point_uri="urn:plant/T-101")}
     def build_query(self, plant): return plant.query().measurement(alias="input")
     def transform(self, inputs, output, context): pass
 
 
 class TaggedOutput(App):
     name = "tagged-output"
-    outputs = {"out": output.per_row(value_kind="numeric", data_source="normalized")}
+    outputs = {"out": output.stream(value_kind="numeric", data_source="normalized")}
     def build_query(self, plant): return plant.query().measurement(alias="input")
     def transform(self, inputs, output, context): pass
 
@@ -64,7 +64,7 @@ class TaggedOutput(App):
 class MixedFanOut(App):
     name = "mixed-fan-out"
     outputs = {
-        "each": output.per_row(value_kind="numeric"),
+        "each": output.stream(value_kind="numeric"),
         "total": output.named("kpi", value_kind="numeric"),
     }
     def build_query(self, plant): return plant.query().measurement(alias="input")
@@ -81,7 +81,7 @@ class NamedTotal(App):
 
 class Copy(App):
     backfill = True
-    outputs = {"out": output.per_row(value_kind="numeric")}
+    outputs = {"out": output.stream(value_kind="numeric")}
 
     def transform(self, inputs, output, context):
         source = inputs["source"].collect()
@@ -89,7 +89,7 @@ class Copy(App):
 
 
 class ConfiguredLookback(App):
-    outputs = {"out": output.per_row(value_kind="numeric")}
+    outputs = {"out": output.stream(value_kind="numeric")}
 
     def __init__(self, window="5m"):
         self.lookback = window
@@ -99,7 +99,7 @@ class WholeStream(App):
     lookback = "all"
     backfill = True
     min_interval = "5m"
-    outputs = {"out": output.per_row(value_kind="numeric")}
+    outputs = {"out": output.stream(value_kind="numeric")}
 
 
 class ConcurrentProbeExecutor(InProcessExecutor):
@@ -168,7 +168,7 @@ class PairedRowGraph(LineageGraph):
 
 class PairedApp(App):
     name = "paired"
-    outputs = {"ratio": output.per_row(value_kind="numeric")}
+    outputs = {"ratio": output.stream(value_kind="numeric")}
     def build_query(self, plant):
         # Two aliases the query genuinely separates, by quantity kind.
         return (plant.query().entity("urn:ReverseOsmosis", alias="ro")
@@ -211,7 +211,7 @@ def test_revision_frontier_commits_coherent_output_and_converges(tmp_path):
 def test_graph_rejects_cycles_and_duplicate_output_ownership():
     input_a = {"source": (StreamDescriptor("urn:b"),)}
     input_b = {"source": (StreamDescriptor("urn:a"),)}
-    spec = output.per_row(value_kind="numeric")
+    spec = output.stream(value_kind="numeric")
     a = Binding("a", "a", input_a, {"out": _port(ref="urn:a", spec=spec)})
     b = Binding("b", "b", input_b, {"out": _port(ref="urn:b", spec=spec)})
     try:
@@ -224,7 +224,7 @@ def test_graph_rejects_cycles_and_duplicate_output_ownership():
 
 def test_derived_output_uri_uses_the_managed_reference_identity():
     inputs = {"source": (StreamDescriptor("urn:input"),)}
-    port = output_port("derived-app", "out", inputs, output.per_row(value_kind="numeric"))
+    port = output_port("derived-app", "out", inputs, output.stream(value_kind="numeric"))
 
     # The name carries the app, the port and the bound inputs; the URI is the
     # ordinary reference identity of that (source, name) pair; and the point
@@ -407,7 +407,7 @@ def test_row_is_the_per_row_accessor_and_refuses_to_guess():
 
     assert one.row == {"hx": "urn:hx-1"}
     assert one.result.height == 2          # result is the whole query either way
-    with pytest.raises(ValueError, match="named output"):
+    with pytest.raises(ValueError, match="all_matches grouping"):
         aggregate.row
     assert aggregate.result.height == 2
 
@@ -421,7 +421,7 @@ def test_stream_names_the_single_bound_stream_and_refuses_to_guess():
 
     # A per_row call binds one stream, so this is how it asks which.
     assert one.stream.ref_uri == "urn:a" and one.stream.label == "Basin 1"
-    with pytest.raises(ValueError, match="named output sees every match"):
+    with pytest.raises(ValueError, match="all_matches grouping sees every match"):
         several.stream
     assert [d.ref_uri for d in several.streams] == ["urn:a", "urn:b"]
 
@@ -474,7 +474,7 @@ def test_a_text_output_accepts_a_polars_frame():
     import polars as pl
 
     from acquirium.Materialization import OutputBuilder
-    builder = OutputBuilder({"alarm": _port("alarm", spec=output.per_row(value_kind="text"))})
+    builder = OutputBuilder({"alarm": _port("alarm", spec=output.stream(value_kind="text"))})
 
     builder["alarm"] = pl.DataFrame({
         "time": [datetime(2026, 1, 1, tzinfo=timezone.utc)],
@@ -556,7 +556,7 @@ class EntityRowGraph(LineageGraph):
 
 class PerRowEntity(App):
     name = "per-row-entity"
-    outputs = {"out": output.per_row(value_kind="numeric")}
+    outputs = {"out": output.stream(value_kind="numeric")}
     def build_query(self, plant):
         return (plant.query().entity("urn:ReverseOsmosis", alias="ro")
                 .measurement(frm="ro", alias="input"))
@@ -578,7 +578,7 @@ def test_context_carries_the_bound_rows_entities_and_labels():
 
 class CheckDouble(App):
     name = "check-double"
-    outputs = {"doubled": output.per_row(value_kind="numeric")}
+    outputs = {"doubled": output.stream(value_kind="numeric")}
     def build_query(self, plant): return plant.query().measurement(alias="input")
     def transform(self, inputs, output, context):
         source = inputs["input"].collect()
@@ -697,7 +697,7 @@ def test_output_declarations_are_validated_before_deployment():
                    "b": output.named("total", value_kind="numeric")}
         def build_query(self, plant): return plant.query().measurement(alias="input")
 
-    with pytest.raises(TypeError, match="aq.output.per_row"):
+    with pytest.raises(TypeError, match="aq.output.stream"):
         Deployment.from_class(BadSpec)
     with pytest.raises(ValueError, match="claim the stream name"):
         Deployment.from_class(Colliding)
@@ -721,7 +721,7 @@ def test_remove_forgets_the_apps_durable_progress(tmp_path):
 
 def test_a_derived_point_uri_survives_a_code_or_metadata_edit(tmp_path):
     """Change 3: the point is keyed by the stream, not by the binding signature."""
-    spec = output.per_row(value_kind="numeric")
+    spec = output.stream(value_kind="numeric")
     sensor = StreamDescriptor("urn:ref:raw", point_uri="urn:plant/T-101", label="Basin 1 inlet")
     inputs = {"t": (sensor,)}
     ports = {"celsius": output_port("normalize", "celsius", inputs, spec)}
@@ -744,7 +744,7 @@ def test_a_derived_point_uri_survives_a_code_or_metadata_edit(tmp_path):
 def test_a_generated_label_names_the_subject_and_its_app():
     from acquirium.Materialization.runtime import _default_label
 
-    spec = output.per_row(value_kind="numeric")
+    spec = output.stream(value_kind="numeric")
     sensor = StreamDescriptor("urn:ref:raw", label="Basin 1 inlet temperature")
     ports = {"celsius": output_port("normalize-temperatures", "celsius", {"t": (sensor,)}, spec)}
     one = Binding("normalize-temperatures", "d", {"t": (sensor,)}, ports)

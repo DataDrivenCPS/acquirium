@@ -1,35 +1,13 @@
-"""Worker-local immutable definition cache for materialization workers."""
+"""Import and verify durable application entrypoints."""
 from __future__ import annotations
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Callable, TypeVar
+from typing import Any
 import importlib
 import importlib.util
 import sys
-from threading import Lock
 
 from acquirium.Materialization.definitions import source_digest
-
-T = TypeVar("T")
-
-class DefinitionCache:
-    """Cache only digest-addressed immutable loaded definitions."""
-    def __init__(self) -> None:
-        self._items: dict[str, object] = {}
-        self._lock = Lock()
-    def load(self, digest: str, loader: Callable[[], T]) -> T:
-        with self._lock:
-            cached = self._items.get(digest)
-            if cached is None:
-                # Definitions are content-addressed. Never overwrite one cache
-                # entry with mutable worker-local state under the same digest.
-                cached = loader()
-                self._items[digest] = cached
-        return cached  # type: ignore[return-value]
-    def clear(self) -> None:
-        with self._lock:
-            self._items.clear()
-
 
 def _file_digest(module: Any) -> str | None:
     """Digest a module's file as it currently stands on disk."""

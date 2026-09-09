@@ -132,7 +132,7 @@ def _query_rows(query: Query) -> tuple[_MatchRow, ...]:
         if streams and key not in seen:
             seen[key] = columns
             rows.append(_MatchRow({alias: tuple(values) for alias, values in streams.items()}, columns))
-    return tuple(rows)
+    return tuple(sorted(rows, key=lambda row: _json(row.columns)))
 
 
 def _validated_outputs(name: str, declared: Mapping[str, Any]) -> dict[str, OutputSpec]:
@@ -146,7 +146,7 @@ def _validated_outputs(name: str, declared: Mapping[str, Any]) -> dict[str, Outp
             continue
         if not isinstance(value, Mapping):
             raise TypeError(
-                f"app {name!r}: output {key!r} must be declared with aq.output.per_row(...) "
+                f"app {name!r}: output {key!r} must be declared with aq.output.stream(...) "
                 f"or aq.output.named(...), got {type(value).__name__}"
             )
         try:
@@ -178,14 +178,16 @@ class Deployment:
     lookback: timedelta | None = timedelta()
     lookahead: timedelta = timedelta()
     backfill: bool = False
-    coalesce: timedelta = timedelta()
-    max_delay: timedelta | None = None
+    batch_delay: timedelta = timedelta()
     min_interval: timedelta | None = None
     parameters: Mapping[str, Any] = field(default_factory=dict)
     every: timedelta | None = None
     grouping: str = "per_match"
 
     def __post_init__(self):
+        for value in (self.lookback, self.lookahead, self.batch_delay, self.min_interval):
+            if value is not None:
+                _duration(value)
         if self.grouping not in ("per_match", "all_matches"):
             raise ValueError("grouping must be per_match or all_matches")
         if self.every is not None and self.every <= timedelta():
@@ -210,8 +212,7 @@ class Deployment:
         outputs = _validated_outputs(name, app.outputs)
         return cls(name, f"{target.__module__}:{target.__qualname__}", source_digest(target),
                    outputs, parse_lookback(app.lookback), _duration(app.lookahead), bool(app.backfill),
-                   _duration(app.coalesce),
-                   _duration(app.max_delay) if app.max_delay is not None else None,
+                   _duration(app.batch_delay),
                    _duration(app.min_interval) if app.min_interval is not None else None,
                    params, _duration(app.every) if app.every is not None else None, app.grouping)
 
@@ -221,7 +222,7 @@ class Deployment:
             "executable_digest": self.executable_digest, "outputs": {k: asdict(v) for k,v in self.outputs.items()},
             "lookback": "all" if self.lookback is None else micros(self.lookback),
             "lookahead": micros(self.lookahead), "backfill": self.backfill,
-            "coalesce": micros(self.coalesce), "max_delay": micros(self.max_delay),
+            "batch_delay": micros(self.batch_delay),
             "min_interval": micros(self.min_interval), "parameters": dict(self.parameters),
             "every": micros(self.every), "grouping": self.grouping})
 
@@ -230,10 +231,15 @@ class Deployment:
         data = json.loads(text)
         duration = lambda value: None if value is None else timedelta(microseconds=int(value))
         lookback = None if data["lookback"] == "all" else duration(data["lookback"])
+        batch_delay = data.get("batch_delay")
+        if batch_delay is None:
+            batch_delay = data.get("coalesce", 0)
+            if data.get("max_delay") is not None:
+                batch_delay = min(batch_delay, data["max_delay"])
         return cls(data["name"], data["entrypoint"], data["executable_digest"],
             {key: OutputSpec(**value) for key, value in data["outputs"].items()},
             lookback, duration(data.get("lookahead")) or timedelta(), bool(data.get("backfill")),
-            duration(data.get("coalesce")) or timedelta(), duration(data.get("max_delay")),
+            duration(batch_delay) or timedelta(),
             duration(data.get("min_interval")), dict(data.get("parameters") or {}),
             duration(data.get("every")), data.get("grouping") or
             ("all_matches" if all(v.get("stream_name") for v in data["outputs"].values()) else "per_match"))
@@ -256,12 +262,10 @@ class BindingPlanner:
             if not isinstance(target, type) or not issubclass(target, App):
                 raise TypeError(f"{deployment.entrypoint!r} is not an App")
             app = target(**deployment.parameters)
+            app.backfill, app.batch_delay, app.min_interval = deployment.backfill, deployment.batch_delay, deployment.min_interval
             query = app.build_query(_QueryFacade(_GraphQueryClient(self.graph, self.query_resolver, self.record_resolver)))
             rows = _query_rows(query)
-            # The output declaration decides the grouping. A per_row output
-            # fans out: one binding per query-result row. All-named outputs
-            # aggregate: one binding over the combined result (which keeps a
-            # lone row's entity bindings, since it *is* that row).
+            # Grouping selects invocation cardinality independently of naming.
             named = sorted(key for key, spec in deployment.outputs.items() if spec.stream_name is not None)
             fans_out = deployment.grouping == "per_match"
             # Every binding carries the whole query result for context; only
@@ -277,6 +281,11 @@ class BindingPlanner:
                     for alias, matches in row.streams.items():
                         for item in matches:
                             grouped.setdefault(alias, {})[str(item["ref_uri"])] = item
+                # A named aggregate still owns its stream when its last input
+                # disappears. Keep empty aliases so retained outputs can retract.
+                if not grouped:
+                    for node in query.query_graph.data_nodes:
+                        grouped[query.query_graph.aliases_reverse.get(node, f"data_{node}")] = {}
                 binding_rows = [(
                     {alias: tuple(items.values()) for alias, items in sorted(grouped.items())},
                     None,   # an aggregate is about every row, so it has no single one
@@ -304,7 +313,8 @@ class BindingPlanner:
                 binding = Binding(deployment.name, deployment.executable_digest, inputs, ports,
                                   deployment.lookback, deployment.lookahead,
                                   graph_revision, deployment.parameters, row_columns, result,
-                                  every=deployment.every)
+                                  every=deployment.every,
+                                  custom_window=app.output_window if type(app).output_window is not App.output_window else None)
                 bindings.append(binding); applications[binding.signature] = app
         # Planning is optimistic: discard a plan from a mixed graph view.
         if int(self.graph.graph_status().get("published_version", 0)) != graph_revision:

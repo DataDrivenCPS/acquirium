@@ -1,9 +1,12 @@
 """Durable deployment registry and graph-recompiled materializer service."""
 from __future__ import annotations
 
+from acquirium.Materialization.checks import check_entry, check_outputs
+
 import re
 from dataclasses import replace
 from uuid import uuid4
+from hashlib import sha256
 from datetime import datetime
 from typing import Any
 from time import monotonic
@@ -45,7 +48,7 @@ def _default_label(binding, port: str, spec) -> str:
 
 
 class Materializer:
-    """Small orchestration facade; all recoverable state remains in DuckDB."""
+    """Orchestration facade; recoverable state lives in the timeseries store."""
     def __init__(self, store: Any, graph: Any, *, query_resolver=None, record_resolver=None,
                  unit_converter=None, max_workers: int = 2) -> None:
         self._store, self._graph = store, graph
@@ -74,6 +77,7 @@ class Materializer:
                 input_ref_uri VARCHAR NOT NULL, output_name VARCHAR NOT NULL,
                 output_ref_uri VARCHAR NOT NULL,
                 PRIMARY KEY (binding_signature, input_alias, input_ref_uri, output_name))""")
+            self._execute(conn, "ALTER TABLE materialization_lineage ADD COLUMN IF NOT EXISTS context_hash VARCHAR DEFAULT ''")
 
     def _execute(self, conn: Any, query: str, params=()):
         if getattr(self._store, "materialization_backend", None) == "postgres":
@@ -119,6 +123,14 @@ class Materializer:
             self._scheduler.close()
             self._scheduler = Scheduler(self._revisions, max_workers=count)
 
+    def failures(self) -> dict[str, str]:
+        errors = dict(self._plan_errors)
+        for binding in self._dag.bindings:
+            error = self._scheduler.errors.get(binding.signature)
+            if error:
+                errors[f"{binding.application_name}[{binding.signature[:8]}]"] = error
+        return errors
+
     def reprocess(self, name: str, start: datetime, end: datetime) -> dict[str, Any]:
         window = TimeWindow(start, end)
         with self._coordinator_lock, self._plan_lock:
@@ -152,13 +164,7 @@ class Materializer:
         dag, applications = self._planner.compile((deployment,), revision, search_path=search_path)
         bindings = []
         for binding in dag.bindings:
-            entry: dict[str, Any] = {
-                "inputs": {alias: [{"ref_uri": item.ref_uri, "label": item.label, "unit": item.unit}
-                                   for item in streams]
-                           for alias, streams in binding.inputs.items()},
-                "row": dict(binding.row) if binding.row else None,
-                "outputs": {}, "error": None,
-            }
+            entry = check_entry(binding)
             bindings.append(entry)
             batch = self._revisions.preview_batch(binding)
             if batch is None:
@@ -176,23 +182,7 @@ class Materializer:
                 # report it as a result rather than an unhandled error.
                 entry["error"] = f"{type(error).__name__}: {error}"
                 continue
-            for port, table in builder.values.items():
-                shown = table if limit is None else table.slice(0, limit)
-                times, values = shown["time"].to_pylist(), shown["value"].to_pylist()
-                entry["outputs"][port] = {
-                    "stream": binding.outputs[port].ref_uri,
-                    "ref_name": binding.outputs[port].ref_name,
-                    "value_kind": binding.outputs[port].spec.value_kind,
-                    "rows": table.num_rows,
-                    "truncated": shown.num_rows < table.num_rows,
-                    "values": [{"time": time.isoformat(), "value": value}
-                               for time, value in zip(times, values)],
-                }
-            for port in binding.outputs:
-                entry["outputs"].setdefault(port, {"stream": binding.outputs[port].ref_uri,
-                                                   "ref_name": binding.outputs[port].ref_name,
-                                                   "value_kind": binding.outputs[port].spec.value_kind,
-                                                   "rows": 0, "truncated": False, "values": []})
+            entry["outputs"] = check_outputs(binding, batch.context, builder.values, limit)
         return {"app": deployment.name, "graph_revision": revision, "bindings": bindings}
 
     def _deployments(self) -> tuple[Deployment, ...]:
@@ -208,7 +198,7 @@ class Materializer:
                 try:
                     partial, loaded = self._planner.compile((deployment,), revision)
                     generation = self._generations.setdefault(deployment.name, uuid4().hex)
-                    bindings.extend(replace(b, generation=generation) for b in partial.bindings)
+                    bindings.extend(replace(b, generation=f"{generation}:{b.signature}:{sha256(repr(b.result).encode()).hexdigest()}") for b in partial.bindings)
                     applications.update(loaded)
                 except Exception as error:
                     self._plan_errors[deployment.name] = f"{type(error).__name__}: {error}"
@@ -221,6 +211,12 @@ class Materializer:
             except ValueError as error:
                 self._plan_errors["graph"] = str(error)
                 return
+            with self._store._own_conn() as conn:
+                prior_outputs = dict(self._execute(conn, "SELECT output_ref_uri, progress_key FROM materialization_lineage").fetchall())
+                prior_context = dict(self._execute(conn, "SELECT progress_key, context_hash FROM materialization_lineage").fetchall())
+            repair = [b for b in dag.bindings if
+                      any(p.ref_uri in prior_outputs and prior_outputs[p.ref_uri] != b.progress_key for p in b.outputs.values())
+                      or (prior_context.get(b.progress_key) and prior_context[b.progress_key] != sha256(repr(b.result).encode()).hexdigest())]
             # Materialization-owned provenance is a complete projection of the
             # current DAG. Publish it only when the projection actually changed:
             # lineage writes advance the graph's published_version, so publishing
@@ -229,20 +225,46 @@ class Materializer:
             if signatures != self._lineage_signatures:
                 self._publish_graph_lineage(dag.bindings)
                 self._lineage_signatures = signatures
+            # Schedule repair before recording the new context fingerprint.
+            # A crash can repeat a repair, but cannot forget that it is needed.
+            with self._store._lock:
+                self._revisions.active_bindings = {b.progress_key: b.generation for b in dag.bindings}
+            for binding in repair:
+                window = self._revisions.retained_window(binding)
+                if window is None:
+                    continue
+                self._revisions.initialise(binding, applications[binding.signature].backfill)
+                with self._store._lock, self._store._write_conn() as conn:
+                    keys = {binding.progress_key} | {prior_outputs[p.ref_uri] for p in binding.outputs.values() if p.ref_uri in prior_outputs}
+                    for key in keys:
+                        self._execute(conn, "DELETE FROM materialization_work WHERE progress_key=?", [key])
+                self._revisions.request_reprocess([binding], window)
             with self._store._lock, self._store._write_conn() as conn:
                 self._revisions.active_bindings = {b.progress_key: b.generation for b in dag.bindings}
-                self._execute(conn, "DELETE FROM materialization_lineage")
+                failed = list(self._plan_errors)
+                if failed:
+                    marks = ','.join('?' for _ in failed)
+                    self._execute(conn, f"DELETE FROM materialization_lineage WHERE application_name NOT IN ({marks})", failed)
+                else:
+                    self._execute(conn, "DELETE FROM materialization_lineage")
                 for binding in dag.bindings:
                     rows = [(binding.signature, binding.progress_key, binding.application_name, binding.executable_digest,
-                        alias, stream.ref_uri, output_name, output_ref)
+                        alias, stream.ref_uri, output_name, output_ref, sha256(repr(binding.result).encode()).hexdigest())
                         for alias, streams in binding.inputs.items() for stream in streams
                         for output_name, output in binding.outputs.items()
                         for output_ref in (output.ref_uri,)]
+                    if not rows:
+                        # Empty aggregates retain output ownership across restart.
+                        # Empty alias/ref fields represent no input edge in SQL.
+                        rows = [(binding.signature, binding.progress_key, binding.application_name,
+                                 binding.executable_digest, "", "", name, port.ref_uri,
+                                 sha256(repr(binding.result).encode()).hexdigest())
+                                for name, port in binding.outputs.items()]
                     if getattr(self._store, "materialization_backend", None) == "postgres":
                         with conn.cursor() as cur:
-                            cur.executemany("INSERT INTO materialization_lineage VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING", rows)
+                            cur.executemany("INSERT INTO materialization_lineage VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING", rows)
                     else:
-                        conn.executemany("INSERT OR REPLACE INTO materialization_lineage VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
+                        conn.executemany("INSERT OR REPLACE INTO materialization_lineage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
             self._dag, self._applications, self._graph_revision = dag, applications, revision
 
     def _plan_snapshot(self) -> tuple[ApplicationGraph, dict[str, Any]]:
@@ -329,19 +351,16 @@ class Materializer:
                     self._pending_since.pop(binding.signature, None)
                     continue
                 first = self._pending_since.setdefault(binding.signature, now)
-                # Three composable throttles instead of trigger modes: at most
-                # one run per min_interval; wait coalesce for a quiet gap in a
-                # burst, but never longer than max_delay.
+                # Delay from the first pending change, then enforce the rate cap.
                 min_interval = _duration(app.min_interval) if app.min_interval is not None else None
                 if min_interval is not None and now - self._last_run.get(binding.signature, 0) < min_interval.total_seconds():
                     continue
-                elapsed, coalesce = now - first, _duration(app.coalesce)
-                max_delay = _duration(app.max_delay) if app.max_delay is not None else None
-                if elapsed < coalesce.total_seconds() and (max_delay is None or elapsed < max_delay.total_seconds()):
+                if now - first < _duration(app.batch_delay).total_seconds():
                     continue
                 ready.append(binding)
                 previous[binding.signature] = consumed
             if not ready:
+                blocked.update(b.signature for b in wave if b.signature in self._scheduler.errors)
                 continue
             ran = self._scheduler.run_layer(ready, applications) or ran
             blocked.update(b.signature for b in ready if b.signature in self._scheduler.errors)
@@ -358,6 +377,9 @@ class Materializer:
         dag, applications = self._plan_snapshot()
         current = self._revisions.current_revision()
         pending_work = self._revisions.pending_keys()
+        blocked = set(self._scheduler.errors)
+        for wave in dag.layers():
+            blocked.update(target for source, target, _ in dag.edges if source in blocked)
         nodes = []
         for binding in dag.bindings:
             with self._store._own_conn() as conn:
@@ -368,7 +390,12 @@ class Materializer:
                 "lookback": "all" if binding.lookback is None else str(binding.lookback),
                 "backfill": bool(applications[binding.signature].backfill),
                 "consumed_revision": row[0] if row else None, "current_revision": current,
-                "status": "failed" if binding.signature in self._scheduler.errors else ("reprocessing" if binding.progress_key in pending_work else ("pending" if row is None or row[0] < current else "idle")),
+                "status": ("running" if binding.signature in self._scheduler.running else
+                           "failed" if binding.signature in self._scheduler.errors else
+                           "waiting" if binding.signature in blocked else
+                           "reprocessing" if binding.progress_key in pending_work else
+                           "pending" if row is None or row[0] < current else "idle"),
+                "last_success": self._scheduler.last_success.get(binding.signature),
                 "error": self._scheduler.errors.get(binding.signature)})
         return {"graph_revision": self._graph_revision, "nodes": nodes, "errors": dict(self._plan_errors),
                 "edges": [{"source": source, "target": target, "ref_uri": ref} for source,target,ref in dag.edges]}

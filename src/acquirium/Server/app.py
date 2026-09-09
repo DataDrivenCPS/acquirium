@@ -341,6 +341,10 @@ async def lifespan(app: FastAPI):
         while True:
             try:
                 ran = await asyncio.to_thread(operation)
+                errors = m.materializer.failures()
+                if errors and asyncio.get_running_loop().time() >= next_error_log:
+                    log.error("Materialization failures: %s", errors)
+                    next_error_log = asyncio.get_running_loop().time() + error_log_seconds
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -355,10 +359,8 @@ async def lifespan(app: FastAPI):
 
     durable_tasks = [
         asyncio.create_task(_durable_worker(
-            f"materialization-{index}",
-            lambda index=index: m.run_materialization_once(),
+            "materialization", m.run_materialization_once,
         ))
-        for index in range(1)
     ]
     app.state.durable_tasks = durable_tasks
 
@@ -518,8 +520,7 @@ class AppRegistration(BaseModel):
     lookback: int | str
     lookahead: int = 0
     backfill: bool = False
-    coalesce: int = 0
-    max_delay: int | None = None
+    batch_delay: int = 0
     min_interval: int | None = None
     parameters: dict[str, Any] = {}
     every: int | None = None

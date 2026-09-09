@@ -57,7 +57,7 @@ class TimescaleStore(TimeseriesStore):
             logger.debug("TimescaleStore.__init__: dropping existing tables/views")
             with self.conn.cursor() as cur:
                 cur.execute(sql.SQL("DROP VIEW IF EXISTS {} CASCADE").format(sql.Identifier(TIMESERIES_STREAMS_VIEW)))
-                for tbl in (BINDING_PROGRESS_TABLE, SYSTEM_STATE_TABLE, TIMESERIES_TABLE, STREAMS_TABLE, LOGS_TABLE):
+                for tbl in ("materialization_work", "materialization_lineage", "materialization_deployments", BINDING_PROGRESS_TABLE, SYSTEM_STATE_TABLE, TIMESERIES_TABLE, STREAMS_TABLE, LOGS_TABLE):
                     cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(tbl)))
         self.ensure_table()
         logger.debug("TimescaleStore.__init__: ready")

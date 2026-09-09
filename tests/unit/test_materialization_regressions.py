@@ -13,6 +13,87 @@ from tests.unit.test_incremental_materialization import Copy, ConcurrentProbeExe
 from acquirium.Materialization import ApplicationGraph, Binding, RevisionStore, Scheduler, StreamDescriptor
 from acquirium.Materialization import align
 from acquirium.Materialization import TimeWindow
+from acquirium.Materialization import output
+from acquirium.Materialization.planner import BindingPlanner
+
+
+class SumFleet(LineageCopy):
+    name = 'sum-fleet'
+    grouping = 'all_matches'
+    backfill = True
+    outputs = {'out': output.named('fleet-sum', value_kind='numeric')}
+
+    def transform(self, inputs, output, context):
+        output['out'] = inputs['input'].df().group_by('time').agg(pl.col('value').sum())
+
+
+class FleetGraph(LineageGraph):
+    def __init__(self, refs):
+        super().__init__()
+        self.refs = refs
+
+    def sparql_query(self, query, **kwargs):
+        return {'columns': ['v0', 'ext0'],
+                'rows': [[ref + ':point', ref] for ref in self.refs]}
+
+
+def test_membership_removal_repairs_named_history_after_restart(tmp_path):
+    path = tmp_path / 'membership.duckdb'
+    store = DuckDBStore(path)
+    runtime = Materializer(store, FleetGraph(['urn:a', 'urn:b']))
+    store.upsert_rows('urn:a', [(NOW, 2.)], value_kind='numeric')
+    store.upsert_rows('urn:b', [(NOW + timedelta(hours=1), 6.)], value_kind='numeric')
+    runtime.deploy(Deployment.from_class(SumFleet))
+    while runtime.run_once():
+        pass
+    ref = runtime._dag.bindings[0].outputs['out'].ref_uri
+    assert len(stored(store, ref)) == 2
+    runtime.close()
+    store.close()
+    store = DuckDBStore(path)
+    runtime = Materializer(store, FleetGraph(['urn:a']))
+    try:
+        while runtime.run_once():
+            pass
+        assert [r['value'] for r in stored(store, ref)] == [2.]
+        runtime.close()
+        runtime = Materializer(store, FleetGraph([]))
+        while runtime.run_once():
+            pass
+        assert not stored(store, ref)
+    finally:
+        runtime.close()
+        store.close()
+
+
+def test_grouping_is_independent_of_output_naming():
+    class GeneratedAggregate(SumFleet):
+        outputs = {'out': output.stream(value_kind='numeric')}
+    # Durable entrypoints cannot be local classes; verify the declaration
+    # independently with a replaced deployment targeting the importable app.
+    declaration = replace(Deployment.from_class(SumFleet), outputs=GeneratedAggregate.outputs)
+    dag, _ = BindingPlanner(FleetGraph(['urn:a', 'urn:b'])).compile([declaration], 1)
+    assert len(dag.bindings) == 1
+    assert len(dag.bindings[0].inputs['input']) == 2
+
+
+def test_ambiguous_entity_matches_are_rejected():
+    class Ambiguous(FleetGraph):
+        def sparql_query(self, query, **kwargs):
+            return {'columns': ['v0', 'ext0'], 'rows': [['urn:p1', 'urn:a'], ['urn:p2', 'urn:a']]}
+    with pytest.raises(ValueError, match='different entity bindings'):
+        BindingPlanner(Ambiguous([])).compile([Deployment.from_class(LineageCopy)], 1)
+
+
+def test_legacy_deployment_settings_upgrade_without_changing_progress():
+    import json
+    old = json.loads(Deployment.from_class(SumFleet).to_json())
+    old.pop('grouping')
+    old.pop('batch_delay')
+    old.update(coalesce=10_000_000, max_delay=2_000_000)
+    loaded = Deployment.from_json(json.dumps(old))
+    assert loaded.grouping == 'all_matches'
+    assert loaded.batch_delay == timedelta(seconds=2)
 
 
 def test_partitioned_backfill_and_reprocessing_resume_after_restart(tmp_path):

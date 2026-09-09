@@ -12,7 +12,11 @@ the server never has to import the app at all.
 """
 from __future__ import annotations
 
+from acquirium.Materialization.checks import check_entry, check_outputs
+
 from datetime import datetime, timezone
+from dataclasses import replace
+from acquirium.Materialization.revision_store import RevisionStore
 from typing import Any
 
 import pyarrow as pa
@@ -107,13 +111,7 @@ def check_app(client: Any, target: type, *, parameters: dict | None = None,
 
     bindings = []
     for binding in dag.bindings:
-        entry: dict[str, Any] = {
-            "inputs": {alias: [{"ref_uri": item.ref_uri, "label": item.label, "unit": item.unit}
-                               for item in streams]
-                       for alias, streams in binding.inputs.items()},
-            "row": dict(binding.row) if binding.row else None,
-            "outputs": {}, "error": None,
-        }
+        entry = check_entry(binding)
         bindings.append(entry)
         inputs = {alias: _stream_set(api, alias, descriptors, converter)
                   for alias, descriptors in binding.inputs.items()}
@@ -124,27 +122,15 @@ def check_app(client: Any, target: type, *, parameters: dict | None = None,
         extent = [value.window for value in inputs.values() if value.collect().num_rows]
         window = TimeWindow(min(w.start for w in extent), max(w.end for w in extent))
         entry["read_window"] = [window.start.isoformat(), window.end.isoformat()]
-        context = InputBatch(binding.signature, revision, 0, revision, window, window,
-                             binding.row, binding.result)
+        owned = RevisionStore._output_window(binding, window)
+        read = window if binding.lookback is None else TimeWindow(owned.start - binding.lookback, owned.end + binding.lookahead)
+        inputs = {alias: replace(value, window=read, every=binding.every, _scheduled=True) for alias, value in inputs.items()}
+        entry["read_window"] = [read.start.isoformat(), read.end.isoformat()]
+        context = InputBatch(binding.signature, revision, 0, revision, window, read,
+                             binding.row, binding.result, owned)
         builder = OutputBuilder(binding.outputs)
         # No try/except: a breakpoint stops here and a traceback reaches the
         # caller, which is the whole reason to run locally.
         applications[binding.signature].transform(inputs, builder, context)
-        for port, table in builder.values.items():
-            shown = table if limit is None else table.slice(0, limit)
-            entry["outputs"][port] = {
-                "stream": binding.outputs[port].ref_uri,
-                "ref_name": binding.outputs[port].ref_name,
-                "value_kind": binding.outputs[port].spec.value_kind,
-                "rows": table.num_rows,
-                "truncated": shown.num_rows < table.num_rows,
-                "values": [{"time": time.isoformat(), "value": value}
-                           for time, value in zip(shown["time"].to_pylist(),
-                                                  shown["value"].to_pylist())],
-            }
-        for port in binding.outputs:
-            entry["outputs"].setdefault(port, {"stream": binding.outputs[port].ref_uri,
-                                               "ref_name": binding.outputs[port].ref_name,
-                                               "value_kind": binding.outputs[port].spec.value_kind,
-                                               "rows": 0, "truncated": False, "values": []})
+        entry["outputs"] = check_outputs(binding, context, builder.values, limit)
     return {"app": deployment.name, "graph_revision": revision, "bindings": bindings}
