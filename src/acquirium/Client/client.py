@@ -217,11 +217,18 @@ def _build_stream_triples(
 
 
 class AcquiriumClient:
+    # 127.0.0.1 rather than "localhost": the server listens on IPv4 only, and
+    # "localhost" resolves to ::1 first on most systems. The failed IPv6
+    # attempt costs about 2 s per TCP connection on Windows (issue #85).
     def __init__(self,
-                 server_url: str = "localhost",
+                 server_url: str = "127.0.0.1",
                  server_port: int = 8000,
                  use_ssl: bool = False):
         self.base_url = f"{'https' if use_ssl else 'http'}://{server_url}:{server_port}"
+        # One Session per client so HTTP keep-alive reuses the TCP connection.
+        # Bare requests.get/post open a new connection per call, which paid the
+        # connect cost (and the ::1 miss above) on every request.
+        self._http = requests.Session()
         self.grafana = GrafanaDashboardCreator(
             title="Acquirium Grafana Dashboard",
             tags=["acquirium"],
@@ -261,7 +268,7 @@ class AcquiriumClient:
             "replace": replace,
         }
         data["source_id"] = source_id
-        response = requests.post(url, json=data)
+        response = self._http.post(url, json=data)
         _raise_for_status(response)
 
     def insert_graph_file(
@@ -314,7 +321,7 @@ class AcquiriumClient:
         }
         headers = {"Accept": "application/vnd.apache.arrow.stream"}
 
-        with requests.get(url, params=params, headers=headers, stream=True, timeout=timeout) as r:
+        with self._http.get(url, params=params, headers=headers, stream=True, timeout=timeout) as r:
             r.raise_for_status()
 
             try:
@@ -322,6 +329,11 @@ class AcquiriumClient:
                 reader = ipc.RecordBatchStreamReader(r.raw)
                 # Collect all batches into a single table
                 tables = [pl.from_arrow(batch) for batch in reader]
+                # The Arrow reader stops at the IPC end-of-stream marker and
+                # leaves the HTTP chunked terminator unread, so urllib3 would
+                # close the socket instead of returning it to the pool. Drain
+                # to EOF so the next request reuses the connection.
+                r.raw.read()
                 if tables:
                     return pl.concat(tables)
                 else:
@@ -360,7 +372,7 @@ class AcquiriumClient:
         headers = {"Accept": "application/vnd.apache.arrow.stream"}
 
         # stream=True means requests won't buffer the full body into memory
-        with requests.get(url, params=params, headers=headers, stream=True, timeout=timeout) as r:
+        with self._http.get(url, params=params, headers=headers, stream=True, timeout=timeout) as r:
             r.raise_for_status()
 
             # r.raw is a file-like object
@@ -369,19 +381,21 @@ class AcquiriumClient:
             for batch in reader:
                 # batch is a pyarrow.RecordBatch; convert to Polars
                 yield pl.from_arrow(batch)
+            # Drain to EOF so the pooled connection is reused (see timeseries_df).
+            r.raw.read()
 
     def timeseries_info_batch(self, uris: list[str]) -> dict:
         """Fetch lightweight stats (row_count, earliest, latest) for multiple URIs in one request."""
         from acquirium.internals.models import TimeseriesInfo
         url = f"{self.base_url}/timeseries_info"
-        response = requests.post(url, json={"uris": uris})
+        response = self._http.post(url, json={"uris": uris})
         _raise_for_status(response)
         data = response.json()
         return {uri: TimeseriesInfo.model_validate(info) for uri, info in data.items()}
 
     def health(self, timeout: float = 3.0) -> dict:
         """GET /health; raises on connection failure or non-200."""
-        response = requests.get(f"{self.base_url}/health", timeout=timeout)
+        response = self._http.get(f"{self.base_url}/health", timeout=timeout)
         _raise_for_status(response)
         return response.json()
 
@@ -408,7 +422,7 @@ class AcquiriumClient:
         # VALUES blocks, and long query strings blow the server's URL limit
         # ("Invalid HTTP request received").
         url = f"{self.base_url}/sparql_json"
-        response = requests.post(
+        response = self._http.post(
             url,
             json={
                 "query": sparql,
@@ -434,13 +448,13 @@ class AcquiriumClient:
         url = f"{self.base_url}/sparql_update"
         data = {"update": update}
         data["source_id"] = source_id
-        response = requests.post(url, json=data)
+        response = self._http.post(url, json=data)
         _raise_for_status(response)
         return response.json()
 
     def validate_graph(self) -> dict[str, str | bool]:
         """Validate all registered deployment data against ontology shapes."""
-        response = requests.post(f"{self.base_url}/validate_graph")
+        response = self._http.post(f"{self.base_url}/validate_graph")
         _raise_for_status(response)
         return response.json()
 
@@ -451,7 +465,7 @@ class AcquiriumClient:
         """
         if self._namespaces_cache is None:
             url = f"{self.base_url}/namespace/list"
-            response = requests.get(url)
+            response = self._http.get(url)
             _raise_for_status(response)
             self._namespaces_cache = Graph()
             for prefix, ns_uri in response.json().items():
@@ -532,7 +546,7 @@ class AcquiriumClient:
                     "top_k": 1,
                     "min_score": min_score,
                 }
-                response = requests.post(f"{self.base_url}/resolve_record", json=body)
+                response = self._http.post(f"{self.base_url}/resolve_record", json=body)
                 _raise_for_status(response)
                 matches = response.json().get("matches", {})
                 for name in to_resolve:
@@ -550,7 +564,7 @@ class AcquiriumClient:
             params["kind"] = kind
         if context:
             params["context"] = context
-        response = requests.get(f"{self.base_url}/resolve_text", params=params)
+        response = self._http.get(f"{self.base_url}/resolve_text", params=params)
         _raise_for_status(response)
         matches = response.json().get("matches", [])
         if top_k == 1:
@@ -618,7 +632,7 @@ class AcquiriumClient:
             #     "factors": {"from_multiplier": ..., "to_uri": ..., ...}}
         """
         url = f"{self.base_url}/resolve_conversion"
-        response = requests.post(url, json={
+        response = self._http.post(url, json={
             "from_unit": str(from_unit), "to_unit": str(to_unit),
             "top_k": top_k, "min_score": min_score,
         })
@@ -637,7 +651,7 @@ class AcquiriumClient:
             A dictionary with per-index status (graph, qudt).
         """
         url = f"{self.base_url}/embedding_status"
-        response = requests.get(url)
+        response = self._http.get(url)
         response.raise_for_status()
         return response.json()
 
@@ -652,7 +666,7 @@ class AcquiriumClient:
     def graph_status(self) -> dict[str, int | bool]:
         """Return source and derived-query cache generations from the server."""
         url = f"{self.base_url}/graph_version"
-        response = requests.get(url)
+        response = self._http.get(url)
         response.raise_for_status()
         return response.json()
 
@@ -670,7 +684,7 @@ class AcquiriumClient:
             #     "multiplier": 6.30901964e-05, "offset": 0.0}
         """
         url = f"{self.base_url}/resolve_unit"
-        response = requests.post(url, json={"identifier": identifier})
+        response = self._http.post(url, json={"identifier": identifier})
         if not response.ok:
             detail = response.json().get("detail", response.text) if response.headers.get("content-type", "").startswith("application/json") else response.text
             raise ValueError(f"resolve_unit failed: {detail}")
@@ -682,7 +696,7 @@ class AcquiriumClient:
         Returns dict with from_multiplier, from_offset, to_multiplier, to_offset, compatible.
         """
         url = f"{self.base_url}/conversion_factors"
-        response = requests.post(url, json={"from_unit": from_unit, "to_unit": to_unit})
+        response = self._http.post(url, json={"from_unit": from_unit, "to_unit": to_unit})
         if not response.ok:
             detail = response.json().get("detail", response.text) if response.headers.get("content-type", "").startswith("application/json") else response.text
             raise ValueError(f"conversion_factors failed: {detail}")
@@ -719,13 +733,13 @@ class AcquiriumClient:
         }
         if point_uri is not None:
             data["point_uri"] = point_uri
-        response = requests.post(url, params=data)
+        response = self._http.post(url, params=data)
         response.raise_for_status()
         return response.json()
 
     def register_app(self, spec: AppSpec, *, replace: bool = False) -> dict:
         url = f"{self.base_url}/apps/register"
-        response = requests.post(
+        response = self._http.post(
             url, json=spec.model_dump(mode="json"), params={"replace": replace}
         )
         _raise_for_status(response)
@@ -733,7 +747,7 @@ class AcquiriumClient:
 
     def delete_app(self, app_id: str) -> dict:
         url = f"{self.base_url}/apps/delete"
-        response = requests.post(url, json={"app_id": app_id})
+        response = self._http.post(url, json={"app_id": app_id})
         _raise_for_status(response)
         return response.json()
 
@@ -756,28 +770,28 @@ class AcquiriumClient:
             keep_alive=keep_alive,
             interval=interval,
         )
-        response = requests.post(url, json=req.model_dump(mode="json"))
+        response = self._http.post(url, json=req.model_dump(mode="json"))
         response.raise_for_status()
         return response.json()
 
     def stop_app(self, *, app_id: str) -> dict:
         url = f"{self.base_url}/apps/stop"
         req = AppStopRequest(app_id=app_id)
-        response = requests.post(url, json=req.model_dump(mode="json"))
+        response = self._http.post(url, json=req.model_dump(mode="json"))
         response.raise_for_status()
         return response.json()
 
     def list_app_runs(self, *, app_id: Optional[str] = None) -> dict:
         url = f"{self.base_url}/apps/list"
         params = {"app_id": app_id} if app_id else None
-        response = requests.get(url, params=params)
+        response = self._http.get(url, params=params)
         response.raise_for_status()
         return response.json()
 
     def register_datasource(self, source_id: str) -> str:
         """Register a named datasource. Returns source_id."""
         url = f"{self.base_url}/register_datasource"
-        response = requests.post(url, json=RegisterDatasourceRequest(source_id=source_id).model_dump())
+        response = self._http.post(url, json=RegisterDatasourceRequest(source_id=source_id).model_dump())
         response.raise_for_status()
         return response.json()["source_id"]
 
@@ -890,7 +904,7 @@ class AcquiriumClient:
             replace=replace,
             values=rows,
         )
-        response = requests.post(url, json=[body.model_dump(mode="json")])
+        response = self._http.post(url, json=[body.model_dump(mode="json")])
         _raise_for_status(response)
         return response.json()
 
@@ -914,7 +928,7 @@ class AcquiriumClient:
             )
             for rn, rows in streams.items()
         ]
-        response = requests.post(url, json=[s.model_dump(mode="json") for s in payload])
+        response = self._http.post(url, json=[s.model_dump(mode="json") for s in payload])
         _raise_for_status(response)
         return response.json()
 
@@ -926,7 +940,7 @@ class AcquiriumClient:
         with ipc.new_stream(buf, table_with_sid.schema) as writer:
             writer.write_table(table_with_sid)
         buf.seek(0)
-        response = requests.post(
+        response = self._http.post(
             f"{self.base_url}/insert_timeseries_arrow",
             data=buf,
             headers={"Content-Type": "application/vnd.apache.arrow.stream"},
@@ -965,7 +979,7 @@ class AcquiriumClient:
             "observation_end": observation_end,
         }
         params = {k: v for k, v in params.items() if v is not None}
-        response = requests.get(url, params=params)
+        response = self._http.get(url, params=params)
         response.raise_for_status()
         data = response.json()
         return [LogEntry.model_validate(x) for x in data]
@@ -982,7 +996,7 @@ class AcquiriumClient:
         params = {}
         if point_uri is not None:
             params["point_uri"] = point_uri
-        response = requests.delete(url, params=params)
+        response = self._http.delete(url, params=params)
         response.raise_for_status()
         return response.json()
 
