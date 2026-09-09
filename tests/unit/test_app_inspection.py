@@ -5,14 +5,14 @@ import json
 
 import pytest
 import requests
-from fastapi.testclient import TestClient
+from fastapi import HTTPException
 from typer.testing import CliRunner
 
 from acquirium.cli import app as cli
 from acquirium.Materialization.models import output
 from acquirium.Materialization.planner import Deployment
 from acquirium.Materialization.runtime import Materializer
-from acquirium.Server.app import app as server
+from acquirium.Server.app import app as server, inspect_app as inspect_app_endpoint, list_apps as list_apps_endpoint
 from acquirium.Storage.duckdb_store import DuckDBStore
 from tests.unit.test_incremental_materialization import LineageCopy, NOW
 from tests.unit.test_materialization_regressions import FleetGraph
@@ -96,14 +96,16 @@ def test_text_schema_and_sorted_deployment_list(runtime):
 
 def test_http_inspection(runtime, monkeypatch):
     monkeypatch.setattr(server.state, "manager", SimpleNamespace(materializer=runtime), raising=False)
-    client = TestClient(server)
-    assert client.get("/apps").json() == {"ok": True, "apps": []}
-    assert client.get("/apps/missing").status_code == 404
+    routes = {(route.path, frozenset(route.methods or ())) for route in server.routes}
+    assert ("/apps", frozenset({"GET"})) in routes
+    assert ("/apps/{name}", frozenset({"GET"})) in routes
+    assert list_apps_endpoint() == {"ok": True, "apps": []}
+    with pytest.raises(HTTPException, match="404"):
+        inspect_app_endpoint("missing")
     definition = Deployment.from_class(LineageCopy)
     runtime.deploy(definition)
-    response = client.get(f"/apps/{definition.name}")
-    assert response.status_code == 200
-    assert response.json()["app"]["definition"]["name"] == definition.name
+    response = inspect_app_endpoint(definition.name)
+    assert response["app"]["definition"]["name"] == definition.name
 
 
 def mock_get(monkeypatch, payload, status=200):
