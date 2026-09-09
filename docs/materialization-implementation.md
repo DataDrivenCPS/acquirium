@@ -1,18 +1,14 @@
 # Incremental materialization: backends and operations
 
-Acquirium keeps derived streams up to date with a revision frontier: the
-timeseries database is the recovery authority, every row records the revision
-that last wrote it, and a durable frontier says which revision each binding
-has consumed.
+Acquirium stores both derived values and processing progress in the timeseries
+database. Each row records the revision that last wrote it, and each binding
+records how far it has processed its inputs. These records allow the runtime
+to resume after a restart without relying on worker memory.
 
-The model, the algorithms, and the reasoning behind them now live in one
-place — [How it works](reference/apps.md#how-it-works) in the app reference.
-This page covers what is specific to running it: how each storage backend
-implements the contract, and what an operator needs to know.
-
-- Writing and deploying an app: [Apps](apps.md)
-- The runtime contract, algorithms and design decisions:
-  [App reference](reference/apps.md)
+This page describes how the storage backends support that behavior and which
+settings affect server operation. For an introduction to writing an app, see
+[Apps](apps.md). For the scheduling and recovery algorithm, see
+[How it works](reference/apps.md#how-it-works).
 
 ## The storage contract
 
@@ -24,7 +20,8 @@ and a query-context fingerprint. Work rows store bounded output cursors for
 long backfills and explicit reprocessing. Derived rows live beside raw rows in
 the ordinary `timeseries` table.
 
-A backend supplies connection and write hooks and inherits the entire scheduler:
+The scheduling algorithm is shared between backends. Each backend supplies the
+following connection and write hooks:
 
 | hook | purpose |
 |---|---|
@@ -34,8 +31,9 @@ A backend supplies connection and write hooks and inherits the entire scheduler:
 | `_next_revision(conn)` | Allocate the next global revision inside the caller's transaction. |
 | `_insert_frame(conn, frame, revision)` | Upsert rows keyed by `(stream, ts)` at that revision. |
 
-`RevisionStore` owns the algorithm and adapts only the parameter spelling, the
-UTC conversion, and the stream-key join.
+`RevisionStore` coordinates snapshot reads and publication through these hooks,
+adapting SQL parameter syntax, UTC conversion, and the join used to resolve
+stream keys for each backend.
 
 ## DuckDB and PostgreSQL/TimescaleDB
 
@@ -57,28 +55,32 @@ Materialization needs no separate hypertable or continuous aggregate.
 
 ## Operational notes
 
-- **Run one server process.** The embedded Oxigraph graph store has a single
-  owning process; the timeseries backend stores its values separately.
-- **Tuning.** `[server] materialization_poll_seconds` (default `0.25`) sets
-  the idle polling cadence, `materialization_workers` (default `2`) bounds
-  concurrent execution, and `materialization_error_log_seconds` (default `30`)
-  rate-limits repeated failure logs. A failing deployment is isolated: it
-  cannot stop ingestion or the other durable workers.
-- **Apps must be deterministic for a given batch.** The runtime can safely
-  recompute uncommitted work, but it cannot roll back side effects performed
-  by user code.
-- **Corrections keep the current value.** A re-written `(stream, timestamp)`
-  overwrites that row and advances its `last_revision`; the store keeps
-  current values, not a history of prior ones.
-- **Initialization.** Startup creates the materialization tables with the
-  complete schema. Restart uses the stored deployments, frontiers, work cursors,
-  and query-context fingerprints to resume processing.
-- **Replacement propagates.** Rows removed from an assigned output interval
-  retain revisioned tombstones so downstream calculations observe removals.
-- **Bounded execution.** One coordinator uses a persistent thread pool. Finite
-  work ranges are partitioned into roughly one-day output intervals, with
-  complete buckets and the declared input context. Whole-history apps remain
-  bounded by their retained history, not by a fixed memory limit.
+Run one server process for each embedded Oxigraph graph store. That process
+owns the graph files and schedules app execution; the timeseries backend stores
+the readings and durable processing state separately. On startup, the runtime
+creates the materialization tables if needed and restores deployments,
+frontiers, work cursors, and query-context fingerprints.
+
+The `[server]` settings control execution and diagnostics.
+`materialization_poll_seconds` (default `0.25`) sets how often an idle runtime
+checks for work. `materialization_workers` (default `2`) limits concurrent
+execution, and `materialization_error_log_seconds` (default `30`) limits how
+frequently repeated failures are logged. A failing deployment does not prevent
+ingestion or independent apps from progressing.
+
+Apps must produce the same result for a given batch. The runtime can repeat
+uncommitted work, but it cannot undo external side effects performed by a
+transform. Each write to an existing `(stream, timestamp)` replaces the current
+value and advances its `last_revision`; previous values are not retained as a
+version history. Output removals retain revisioned tombstones so downstream
+calculations can detect them.
+
+A persistent thread pool bounds the number of concurrent invocations. Finite
+work ranges are divided into roughly one-day output intervals, expanded to
+complete buckets and supplied with the declared input context. This limits the
+size of individual work items, but is not a fixed memory bound: memory use also
+depends on data density and context size. Apps using `lookback="all"` load their
+complete retained history.
 
 ## Tests
 

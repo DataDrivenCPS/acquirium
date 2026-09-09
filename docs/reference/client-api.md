@@ -72,7 +72,7 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 
 | method | description |
 |---|---|
-| `check_app(target: type[App], *, parameters=None, limit=None, search_path=None) -> dict` | Dry-run an app against stored data and return what it computed; nothing is deployed or saved. Every computed row comes back unless `limit` heads each output. `search_path` defaults to the directory of the class's module, so a local server can import it. |
+| `check_app(target: type[App], *, parameters=None, limit=None, search_path=None) -> dict` | Run an app against stored data without saving results. Returns all computed rows unless `limit` restricts each output. `search_path` defaults to the class module's directory, allowing a local server to import it. |
 | `deploy_app(target: type[App], *, parameters=None) -> dict` | Persist and deploy an importable app class; `parameters` are passed to its constructor. |
 | `remove_app(name: str) -> dict` | Remove a durable app deployment by name. |
 | `reprocess_app(name: str, start: datetime, end: datetime) -> dict` | Schedule a retained output interval for recomputation without resetting input progress. |

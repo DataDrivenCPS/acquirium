@@ -2,10 +2,10 @@
 title: Your first app
 ---
 
-A driver gets plant data *into* Acquirium. An app derives new streams *from*
-that data and keeps them up to date: soft sensors, unit conversions, KPIs,
-anomaly flags. In this tutorial you will run a complete app — Celsius samples
-in, a derived Fahrenheit stream out — and then modify it.
+Drivers load sensor readings into Acquirium. Apps use those readings to
+calculate derived streams, such as converted temperatures, averages, or anomaly
+flags. In this tutorial, you will run an app that converts Celsius readings to
+Fahrenheit, then adapt the approach to smooth readings from multiple sensors.
 
 The full working files are in `examples/transformation/` in the repository.
 
@@ -46,24 +46,20 @@ class CelsiusToFahrenheit(aq.App):
         )
 ```
 
-Read it top to bottom:
+The query selects measurement streams from `INPUT_SOURCE` and exposes their
+readings under the alias `temperature`. This example publishes one input
+stream, so `grouping = "all_matches"` gives the transform that stream's readings
+in a single call. Every app must explicitly choose its grouping mode.
 
-- `build_query` says *what to read*: every measurement stream tagged with the
-  example's data source, under the alias `temperature`.
-- `outputs` says *what to write*: one derived numeric stream. It is a
-  **named** output — the stream's identity is exactly `fahrenheit` under this
-  app, so anything else can find it directly. (The other flavor,
-  `aq.output.stream(...)`, generates one stream beside each matched input;
-  you'll use it below.)
-- `transform` is *the calculation*: a dataframe of `time` and `value` rows in,
-  a dataframe of `time` and `value` rows out.
-- `backfill = True` says the first run should process data that was already
-  stored, not just data arriving later.
+The `outputs` declaration gives the Fahrenheit stream the name `fahrenheit`
+within this app and attaches it to `OUTPUT_POINT`. In `transform`, the app reads
+a dataframe, applies the conversion, and assigns the `time` and `value` columns
+to that output. Setting `backfill = True` also processes readings already in
+storage when the app first becomes active.
 
-Notice what is absent: no scheduling code, no checkpoint handling, no retry
-logic. Your job is to recompute the window of data you are handed; Acquirium
-decides when to call you and commits your output together with its saved
-position in one transaction.
+Acquirium selects the interval to recompute and saves the output together with
+its processing progress in one transaction. The transform only needs to
+calculate results for the input window it receives.
 
 ## 2. Check it without saving anything
 
@@ -73,10 +69,9 @@ Before deploying, run it as a dry run against the data already stored:
 uv run acquirium app check ./temperature_conversion.py:CelsiusToFahrenheit
 ```
 
-It prints which streams the query matched and the values `transform`
-computed, and saves none of it — no deployment, no derived stream, no
-progress. If the query matched nothing, or the transform raised, you find
-out here rather than after deploying.
+The check reports the matched streams, computed values, and any transform
+errors without saving a deployment or output data. It is useful for checking
+an app against an existing dataset before activating it.
 
 ## 3. Deploy it with the server
 
@@ -102,15 +97,15 @@ uv run python examples/transformation/publish.py
 ```
 
 The script registers a Celsius input stream, writes six samples, and polls the
-output point until the derived Fahrenheit values arrive — typically well under
-a second later. Every new Celsius write from now on triggers a fresh
-Fahrenheit computation for exactly the changed range.
+output point until the derived Fahrenheit values appear. Further writes to the
+Celsius stream cause the app to recompute the affected interval. Correcting an
+earlier Celsius reading also updates its Fahrenheit result.
 
 ## 5. Find what it produced
 
-The derived stream is an ordinary stream, so you query it the ordinary way.
-Acquirium records which app produced each derived point, so you can ask for
-this app's output specifically:
+You can query the derived stream through the same API used for sensor data.
+Acquirium records the producing app on each derived point, so the `app` filter
+selects this calculation's output:
 
 ```python
 from acquirium import Acquirium
@@ -119,17 +114,17 @@ acq = Acquirium(server_url="127.0.0.1", server_port=8000)
 acq.query().measurement(alias="f", app="celsius-to-fahrenheit").data()
 ```
 
-That works for any app, without the app declaring anything for it. What a
-derived stream carries *besides* that — its unit, label, quantity kind — is
-whatever its `outputs` declaration says, so declaring a `quantity_kind` is
-what makes an output turn up in queries for that quantity kind alongside real
-sensors. The [apps guide](../apps.md#convert-each-sensor) covers the
-whole picture.
+The producing-app metadata is added automatically. Other metadata, such as a
+unit, label, or quantity kind, comes from the output declaration. For example,
+declaring `quantity_kind` makes the output discoverable by queries for that
+quantity kind alongside measured streams. See the
+[apps guide](../apps.md#convert-each-sensor) for an example.
 
 ## 6. Make it react to every sensor
 
-The app above binds all matches into one call. The more common plant pattern —
-“do this beside every sensor” — explicitly declares `grouping = "per_match"`:
+To calculate a separate result for every temperature sensor, use
+`grouping = "per_match"`. The following app smooths each sensor's readings with
+a ten-minute rolling average:
 
 ```python
 class TemperatureSmoother(aq.App):
@@ -150,23 +145,21 @@ class TemperatureSmoother(aq.App):
         )
 ```
 
-Three new ideas:
+With `grouping = "per_match"`, each query match gets a separate call to
+`transform`. The `output.stream` declaration derives a stable output name from
+that match's inputs, so adding another sensor produces another smoothed stream
+without requiring you to name it. An app that combines several sensors would
+instead declare `grouping = "all_matches"`.
 
-- `grouping = "per_match"` runs `transform` once per query match. Every app
-  must explicitly choose either `"per_match"` or `"all_matches"`; omitting it
-  is rejected when the app is instantiated.
-  `output.stream` then derives one stable output identity from each match's
-  bound inputs, so a thousand sensor matches become a thousand smoothed
-  streams without manual names. Grouping and output naming are independent;
-  use `grouping = "all_matches"` when one call must combine every match, and
-  use `output.named` when an output needs one author-chosen identity.
-- `lookback = "10m"` hands each call ten minutes of context
-  before the new data, so the rolling mean is correct at the edge. Re-emitting
-  the whole window is safe: outputs are keyed by (stream, time), so recomputed
-  values overwrite themselves.
-- `.in_unit("DEG_C")` delivers every stream in Celsius no matter what unit
-  each sensor reports; a stream that cannot convert raises loudly rather than
-  feeding mis-scaled values into the calculation.
+The rolling mean needs earlier readings to calculate values near the beginning
+of the output interval. `lookback = "10m"` tells the runtime to load that context
+and to revisit later outputs when an earlier reading is corrected. The runtime
+publishes only rows within the selected output interval, even if the transform
+returns additional rows from its input context.
+
+Finally, `.in_unit("DEG_C")` converts the readings before calculating the mean.
+This allows sensors reporting compatible units to use the same transform. A
+missing or incompatible unit raises an error.
 
 ## Where to go next
 
