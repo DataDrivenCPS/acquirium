@@ -314,7 +314,8 @@ copying and Python result materialization remain the likely Python-owned costs.
 Do not run two acquirium server processes against the same graph-store path;
 RocksDB/Oxigraph locking is treated as a fatal startup error rather than a
 silent fallback to a different store.
-Driver and app actors scale freely through the HTTP API.
+Driver actors connect through the HTTP API. Apps execute inside the server's
+bounded worker pool; `materialization_workers` controls their concurrency.
 The graph backend scales by giving its single server process suitable
 resources, or by an explicit remote service boundary; never by sharing its
 database files.

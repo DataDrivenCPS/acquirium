@@ -252,9 +252,11 @@ class OutputPort(NamedTuple):
     """One output's resolved durable identity, decided once at planning time.
 
     ``ref_name`` is what the stream is called under ``derived:<app>``,
-    ``ref_uri`` is the storage key that name hashes to, and ``point_uri`` is
-    the graph node carrying the output's metadata — the author's own point
-    when they declared one, otherwise a point named after the stream itself.
+    ``ref_uri`` is the canonical stream identity that name hashes to, and
+    ``point_uri`` is the graph node carrying the output's metadata — the
+    author's own point when they declared one, otherwise a point named after
+    the stream itself. The storage backend maps ``ref_uri`` to its internal
+    integer key.
     Everything downstream reads these fields instead of recomputing them, so
     the name and the URI cannot drift apart.
     """
@@ -452,8 +454,9 @@ class App:
     effects also determine which outputs a correction recomputes.
     backfill processes retained history on first activation. batch_delay and
     min_interval are advanced operational controls: batch_delay collects rapid
-    changes before an invocation, while min_interval caps execution frequency
-    for expensive computations. They do not affect event-time window semantics.
+    changes before an invocation, while min_interval waits between successful
+    invocations of an expensive computation. Their process-local timing state
+    is not a failure retry backoff. They do not affect event-time windows.
     """
     name: str | None = None
     every: timedelta | str | None = None

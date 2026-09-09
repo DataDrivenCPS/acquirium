@@ -17,7 +17,7 @@ MUTATION_SCHEMA = pa.schema([
 
 
 class PublicationConflict(ValueError):
-    """A stable publication id was retried with different mutations."""
+    """Reserved error for a backend that persists publication identities."""
     def __init__(self, publication_id: str):
         super().__init__(f"publication {publication_id!r} was already committed with a different payload")
         self.publication_id = publication_id

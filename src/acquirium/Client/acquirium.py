@@ -184,7 +184,7 @@ class Acquirium:
 
         The ``source_id`` is a user-provided string that scopes stream
         ``ref_name`` values so two sources with the same ``ref_name`` never
-        produce colliding TimescaleDB keys.  Safe to call on every startup —
+        produce colliding canonical reference URIs. Safe to call on every startup —
         the graph write is idempotent.
 
         Returns ``source_id``.
@@ -205,11 +205,11 @@ class Acquirium:
         Args:
             source_id: The registered datasource identifier.
             ref_name: The source-local stream identifier. Combined with
-                ``source_id`` to derive the unique TimescaleDB storage key.
+                ``source_id`` to derive the canonical reference URI.
             rows: List of (timestamp, value) tuples.
-            point_uri: Semantic URI of the measurement point. When provided,
-                a ref_uri mapping is registered in the streams table.
-            replace: If True, replaces any existing data for this stream.
+            point_uri: Compatibility field. Register the point relationship
+                with ``register_streams`` before inserting rows.
+            replace: Must remain False; whole-stream replacement is rejected.
 
         Returns:
             dict with ``{"ok": True, "rows_inserted": N}``.
@@ -231,7 +231,7 @@ class Acquirium:
 
         Large inputs are split into bounded requests according to
         ``insert_batch_rows``. Drivers can call this method with their natural
-        batch size; the Acquirium facade ref_uris transport/storage chunking.
+        batch size; the Acquirium facade hides transport/storage chunking.
 
         Args:
             source_id: The registered datasource identifier.
@@ -251,9 +251,18 @@ class Acquirium:
             chunk_count += 1
         return {"ok": True, "rows_inserted": total, "batches": chunk_count}
 
-    def insert_timeseries_arrow(self, source_id: str, table: "pa.Table") -> dict[str, Any]:
-        """Insert a (ts, ref_name, value) Arrow table."""
-        return self.client.insert_timeseries_arrow(source_id, table)
+    def insert_timeseries_arrow(
+        self, source_id: str, table: "pa.Table", *, publication_id: str | None = None
+    ) -> dict[str, Any]:
+        """Insert a ``(ts, ref_name, value)`` Arrow table.
+
+        ``publication_id`` is forwarded for request correlation. The current
+        revision backend does not use it to deduplicate retries; repeated rows
+        remain idempotent by stream and timestamp.
+        """
+        return self.client.insert_timeseries_arrow(
+            source_id, table, publication_id=publication_id
+        )
 
     @staticmethod
     def _json_safe_value(value: Any) -> Any:

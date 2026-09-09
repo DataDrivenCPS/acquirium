@@ -8,8 +8,8 @@
 host = "0.0.0.0"
 port = 8000
 
-# Data directory: Oxigraph graph store, embedding cache, and app storage
-# all live under this path.
+# Data directory: the Oxigraph graph store, embedding cache, and local DuckDB
+# file live under this path by default. TimescaleDB data remains in PostgreSQL.
 data_dir = ".acquirium"
 
 # Use DuckDB for timeseries storage instead of TimescaleDB.

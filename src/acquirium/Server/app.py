@@ -663,8 +663,8 @@ class ResolveStorageKeysRequest(BaseModel):
 @app.post("/resolve_storage_keys")
 def resolve_storage_keys(req: ResolveStorageKeysRequest) -> dict[str, str]:
     """Map each semantic point_uri (or already-canonical ref_uri) in *uris*
-    to its canonical storage key. Callers resolve declared input point_uris
-    to ref_uris with this before reading or subscribing to them."""
+    to its canonical ref_uri. Callers do this before reading or subscribing;
+    the database's internal integer ref_id is never exposed."""
     try:
         return app.state.manager.timescale.resolve_storage_keys(req.uris)
     except Exception as e:
@@ -722,12 +722,9 @@ async def insert_timeseries_arrow(request: Request):
         df = pl.from_arrow(reader.read_all())
         log.debug("/insert_timeseries_arrow: parsed Arrow stream into df rows=%d", len(df))
 
-        # A caller-supplied publication_id makes a retried flush idempotent:
-        # it is reused verbatim against PublicationStore.publish, whose
-        # id-plus-hash check returns the original receipt instead of
-        # re-applying the mutation. One request can span multiple source_ids,
-        # each its own atomic publication, so the base id is namespaced per
-        # source.
+        # Preserve a caller-supplied publication identifier on each per-source
+        # publication. The revision publisher currently records no receipt
+        # ledger, so this identifier does not deduplicate retried requests.
         base_publication_id = request.headers.get("X-Acquirium-Publication-Id")
 
         total = 0

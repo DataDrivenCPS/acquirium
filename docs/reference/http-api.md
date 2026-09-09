@@ -225,8 +225,9 @@ Insert observations for one or more streams. Request body is a JSON array; a sin
 | --- | --- | --- |
 | `source_id` | yes | Registered datasource identifier |
 | `ref_name` | yes | Source-local stream name |
-| `point_uri` | no | Override the semantic point URI |
-| `replace` | no (default `false`) | If true, delete existing rows before inserting |
+| `point_uri` | no | Compatibility field; register the stream-to-point relationship with `register_streams` before inserting data |
+| `replace` | no (default `false`) | Must remain false; whole-stream replacement is rejected by incremental materialization |
+| `publication_id` | no | Identifier echoed into the internal publication receipt; the current revision backend does not deduplicate retries by this value |
 | `values` | yes | List of `[timestamp, value]` pairs |
 
 **Response** `{"ok": true, "rows_inserted": 42}`
@@ -550,7 +551,7 @@ Schedule a retained interval for recomputation. `start` and `end` are required
 ISO 8601 query parameters. An unknown app returns 404; an invalid interval
 returns 400.
 
-**Response** `{"ok": true, "name": "...", "start": "...", "end": "..."}`
+**Response** `{"ok": true, "name": "...", "status": "reprocessing", "bindings": 3}`
 
 ### `GET /materialization/dag`
 

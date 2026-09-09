@@ -30,9 +30,11 @@ def looks_like_uri(value: object) -> bool:
 def compute_ref_uri(source_id: str, ref_name: str) -> URIRef:
     """Return a deterministic UUID5 ref URI for a (source_id, ref_name) pair.
 
-    The ref URI is used as the TimescaleDB storage key and stored as
-    ``ref:hasTimeseriesId`` in the RDF graph.  It is stable across restarts
-    and can be recomputed at any time from the same inputs.
+    The ref URI is the canonical stream identity exposed by the graph and
+    client APIs. A point links to this reference node through
+    ``ref:hasExternalReference``. Both SQL backends map it to an internal
+    integer ``ref_id`` for timeseries rows. It is stable across restarts and
+    can be recomputed from the same inputs.
     """
     ref_uri_str = str(uuid.uuid5(_REF_URI_NAMESPACE, f"{source_id}:{ref_name}"))
     return ACQUIRIUM_NS[ref_uri_str]
@@ -77,9 +79,9 @@ class StreamInsert(BaseModel):
 
     ``source_id`` identifies the registered datasource (e.g. ``"mybox-metrics"``).
     ``ref_name`` is the source-local stream identifier (e.g. ``"cpu_percent"``).
-    The TimescaleDB storage key (ref URI) is computed deterministically from
-    both via :func:`compute_ref_uri` — so two sources with the same ``ref_name``
-    never collide.
+    The canonical ref URI is computed deterministically from both via
+    :func:`compute_ref_uri`, so two sources with the same ``ref_name`` never
+    collide. The storage backend maps that URI to its internal integer key.
     """
 
     source_id: str
