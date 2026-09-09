@@ -3,7 +3,7 @@ title: HTTP API
 ---
 
 This is a reference for the HTTP endpoints the acquirium server exposes
-(default `http://localhost:8000`).
+(default `http://127.0.0.1:8000`).
 The Python client covers all of these; use the raw endpoints when scripting
 against the server directly.
 

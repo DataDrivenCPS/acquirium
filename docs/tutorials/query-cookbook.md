@@ -13,7 +13,7 @@ import polars as pl
 from acquirium import Acquirium
 from acquirium.Client.explore import Not
 
-acq = Acquirium(server_url="localhost", server_port=8000)
+acq = Acquirium(server_url="127.0.0.1", server_port=8000)
 ```
 
 ## How salty is the brine we discharge, compared to the seawater we take in?
