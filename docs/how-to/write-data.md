@@ -75,7 +75,8 @@ For high volume, `insert_timeseries_arrow(source_id, table)` takes a
 Writes are idempotent on the (stream, timestamp) pair.
 Re-inserting the same timestamps overwrites those rows, so re-running an
 import is safe and will not duplicate anything.
-`replace=True` on `insert_timeseries` clears the stream first.
+Whole-stream replacement is not supported by incremental materialization;
+`replace=True` is rejected. Publish corrected timestamps as ordinary upserts.
 
 ### The logbook
 

@@ -6,7 +6,8 @@ Subcommands:
 
   acquirium server [--config FILE] [--host HOST] [--port PORT] [--reload]
       Start the Acquirium FastAPI server. [[drivers]] listed in the config
-      are started as Ray actors that connect back over the API.
+      are started as Ray actors that connect back over the API, followed by
+      deployments from [[apps]].
 
       Set ``[server] enabled = false`` in the config to submit the
       [[drivers]] to the remote Acquirium instance declared in the
@@ -15,8 +16,9 @@ Subcommands:
   acquirium driver start CONFIG    Submit the config's [[drivers]] to a server.
   acquirium driver list            List drivers running on a server.
   acquirium driver stop --name X   Stop a running driver.
-  acquirium app list              List deployed apps and binding status.
-  acquirium app inspect NAME      Inspect schemas, settings, streams, and progress.
+  acquirium app check MODULE:CLASS Dry-run an app locally or on a server.
+  acquirium app list               List deployed apps and binding status.
+  acquirium app inspect NAME       Inspect schemas, settings, streams, and progress.
 """
 
 import importlib
@@ -257,13 +259,13 @@ def _push_drivers_to_server(
 driver_app = typer.Typer(help="Manage drivers running on an Acquirium server.", add_completion=False)
 app.add_typer(driver_app, name="driver")
 
-_ServerUrlOpt = Annotated[Optional[str], typer.Option("--server-url", help="Server host (default: [driver] server_url or 127.0.0.1)")]
-_ServerPortOpt = Annotated[Optional[int], typer.Option("--server-port", help="Server port (default: [driver] server_port or 8000)")]
+_ServerUrlOpt = Annotated[Optional[str], typer.Option("--server-url", help="Server host (default: driver.server_url or 127.0.0.1)")]
+_ServerPortOpt = Annotated[Optional[int], typer.Option("--server-port", help="Server port (default: driver.server_port or 8000)")]
 
 
 @driver_app.command("start")
 def driver_start(
-    config: Annotated[Path, typer.Argument(help="Path to acquirium.toml with [[drivers]] entries")],
+    config: Annotated[Path, typer.Argument(help="Path to acquirium.toml with configured drivers")],
     server_url: _ServerUrlOpt = None,
     server_port: _ServerPortOpt = None,
 ) -> None:
@@ -587,11 +589,11 @@ def server_cmd(
     workers: Annotated[Optional[int], typer.Option("--workers", "-w", help="Uvicorn worker processes; must be 1 — the embedded Oxigraph graph store is single-process on every backend")] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Enable DEBUG logs in acquirium.* (server, storage, drivers)")] = False,
 ) -> None:
-    """Start the server and configured drivers.
+    """Start the server, configured drivers, and configured apps.
 
-    Set ``[server] enabled = false`` in the config to skip the HTTP server
-    and submit the [[drivers]] to the remote server from the [driver]
-    section instead (same as ``acquirium driver start``).
+    Set ``server.enabled = false`` in the config to skip the HTTP server and
+    submit its configured drivers to the remote address in the driver section
+    instead (the same behavior as ``acquirium driver start``).
     """
     if verbose:
         os.environ["ACQUIRIUM_VERBOSE"] = "1"
@@ -609,7 +611,8 @@ def server_cmd(
 
     import uvicorn
 
-    # Propagate the config path so the lifespan can start [[drivers]] as Ray actors.
+    # Propagate the config path so the lifespan can start [[drivers]] and
+    # deploy [[apps]].
     if config:
         os.environ.setdefault("ACQUIRIUM_CONFIG", str(config.resolve()))
     elif Path("acquirium.toml").exists():

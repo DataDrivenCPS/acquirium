@@ -292,10 +292,10 @@ class IngestDriver(Driver):
         self._flush_lock = threading.Lock()
         self._inflight_rows = 0
         # (publication_id, rows) of the most recent flush that failed and was
-        # put back unmodified. A retry that pops exactly this same batch (no
-        # add() calls landed in between) reuses the id, so the server's
-        # publish() idempotency check replays the receipt instead of
-        # double-writing; any other batch gets a fresh id.
+        # put back unmodified. A retry of exactly that batch keeps the same
+        # request identifier for correlation. The server's revision publisher
+        # currently relies on row upserts, rather than an id receipt ledger,
+        # for retry-safe final values.
         self._last_failed_batch: tuple[str, list[tuple[str, datetime, str, Any]]] | None = None
         self._declaration_lock = threading.Lock()
         self._declarations: dict[tuple[str, str], dict[str, Any]] = {}
@@ -513,11 +513,11 @@ class IngestDriver(Driver):
     ) -> dict[str, Any]:
         """Normalize and publish buffered observations.
 
-        ``publication_id`` (set by :meth:`flush` for its retry-idempotency
-        path) is the atomic-mutation-set id for this call. A frame spanning
-        multiple ``source_id`` values makes one publication per source, so
-        the id is namespaced per source rather than reused verbatim -- each
-        is still stable across a retry of the *same* frame.
+        ``publication_id`` is a request-correlation identifier set by
+        :meth:`flush`. A frame spanning multiple ``source_id`` values makes
+        one publication per source, so the identifier is namespaced per
+        source. The current revision publisher does not deduplicate by this
+        identifier; repeated stream/timestamp pairs upsert to the same rows.
         """
         import polars as pl
 

@@ -789,7 +789,11 @@ class AcquiriumClient:
         return response.json()
 
     def resolve_storage_keys(self, uris: list[str]) -> dict[str, str]:
-        """Map each point_uri (or already-canonical ref_uri) to its storage key."""
+        """Map each point URI to its canonical ref URI used by timeseries APIs.
+
+        An already-canonical ref URI passes through. The database may map the
+        returned URI to an internal integer key.
+        """
         if not uris:
             return {}
         url = f"{self.base_url}/resolve_storage_keys"

@@ -115,7 +115,7 @@ this app's output specifically:
 ```python
 from acquirium import Acquirium
 
-acq = Acquirium(server_url="localhost", server_port=8000)
+acq = Acquirium(server_url="127.0.0.1", server_port=8000)
 acq.query().measurement(alias="f", app="celsius-to-fahrenheit").data()
 ```
 
@@ -151,10 +151,12 @@ class TemperatureSmoother(aq.App):
 
 Three new ideas:
 
-- `output.stream` runs `transform` once per matched stream and creates
-  one derived stream beside each — a thousand sensors become a thousand
-  smoothed streams with no naming on your part. (A `named` output does the
-  opposite: one call over every match, one stream.)
+- The default `grouping = "per_match"` runs `transform` once per query match.
+  `output.stream` then derives one stable output identity from each match's
+  bound inputs, so a thousand sensor matches become a thousand smoothed
+  streams without manual names. Grouping and output naming are independent;
+  use `grouping = "all_matches"` when one call must combine every match, and
+  use `output.named` when an output needs one author-chosen identity.
 - `lookback = "10m"` hands each call ten minutes of context
   before the new data, so the rolling mean is correct at the edge. Re-emitting
   the whole window is safe: outputs are keyed by (stream, time), so recomputed

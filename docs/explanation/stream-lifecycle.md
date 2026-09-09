@@ -144,16 +144,17 @@ A row goes through five steps between a driver and the store.
    A value on a numeric stream that does not parse as a number falls back to
    the text column instead of failing the batch.
 4. Rows are deduplicated on `(ref_uri, ts)`, keeping the last.
-5. The batch is written as a delete-then-insert on those pairs, in one
-   transaction.
+5. The batch is written in one transaction. DuckDB deletes colliding pairs
+   and inserts the frame; TimescaleDB `COPY`s the frame to a temporary staging
+   table and merges it with `INSERT ... SELECT ... ON CONFLICT`, ordered by
+   `(ref_id, ts)`.
 
-Step 5 makes ingestion idempotent: re-inserting the same timestamps replaces
-those rows instead of duplicating them, so re-running an import or replaying
-a file is safe.
-Note that this also means an insert with changed values silently overwrites
-the history at those timestamps.
-`replace=True` on `insert_timeseries` clears the whole stream before
-inserting.
+Step 5 makes ingestion idempotent by stream and timestamp: re-inserting the
+same timestamps replaces those rows instead of duplicating them, so re-running
+an import or replaying a file is safe. An insert with changed values therefore
+overwrites the current values at those timestamps. Whole-stream replacement
+is not supported by incremental materialization, and `replace=True` is
+rejected.
 
 Storage is one `timeseries` table holding `ts`, `numeric_value` and
 `text_value`, with one row per stream and timestamp and a check that only one
@@ -177,7 +178,8 @@ A query follows the same links in reverse.
    [units guide](units.md#automatic-conversion)).
 
 The graph determines which streams to read, and the timeseries store returns
-their values; `ref_uri` is the join key between the two.
+their values. `ref_uri` is the logical join key at this boundary; the backend
+maps it to its internal integer `ref_id`.
 A point with no reference node yields metadata but no data.
 A reference node with no point stores data that semantic queries cannot find.
 

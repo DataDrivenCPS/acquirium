@@ -242,15 +242,17 @@ Revision lag may include unrelated writes; it is not a count of pending samples.
   running. This lets a rapidly updating stream collect several readings into
   one invocation and can reduce the overhead of expensive computations.
   Subsequent changes do not restart the timer.
-- `min_interval = "1m"`: prevent the app from running more than once per minute,
-  even when additional changes arrive. Use this to cap the execution rate of an
-  expensive computation.
+- `min_interval = "1m"`: wait at least one minute after a successful invocation
+  before running the binding again, even when additional changes arrive. Use
+  this to cap the successful execution rate of an expensive computation.
 - `backfill = True`: process retained history on initial activation.
 
 `batch_delay` and `min_interval` are advanced operational tuning parameters;
 most apps should leave them at their defaults. They affect when computation
 happens, while `every`, `lookback`, and `lookahead` determine its time semantics.
 They are not timers or watermarks and cannot be inferred from the app's window.
+Their wall-clock state resets when the server restarts, and neither setting is
+a retry backoff for a failing transform.
 
 See the [app reference](reference/apps.md) for the complete contract,
 and [operations](materialization-implementation.md) for storage and server settings.

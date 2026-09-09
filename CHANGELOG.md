@@ -45,6 +45,12 @@ change in any release.
   `measurement(app="producer-name")`. The materialization DAG endpoint exposes
   progress, execution status, and errors.
 
+### Changed
+- Timeseries writes accept timestamp-level corrections as upserts but reject
+  whole-stream `replace=True`; the current revision publisher exposes only
+  upserts. App-owned output-window replacement remains supported and records
+  tombstones for downstream materialization.
+
 ## [0.4.0a6] - 2026-09-09
 
 ### Changed

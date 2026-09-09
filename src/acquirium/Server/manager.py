@@ -298,7 +298,8 @@ class Manager:
         recorded with a null ``point_uri``.
         The reference-node URI is the canonical stream identity and should be
         equal to ``compute_ref_uri(source_id, ref_name)``. We upsert into the
-        streams table using the graph's actual reference URI as the storage key.
+        streams table using the graph's actual reference URI as its canonical
+        identity. The timeseries table maps that URI to an integer ref_id.
         References without sourceId/refName are skipped; drivers are responsible
         for ingesting external data into managed streams.
         """
@@ -742,15 +743,13 @@ class Manager:
     def publish(
         self, mutations: "pa.Table", *, publication_id: str | None = None
     ) -> PublicationReceipt:
-        """Atomically publish canonical mutations with stable retry identity.
+        """Atomically publish canonical upserts under a request identifier.
 
-        Every write to canonical timeseries storage -- driver ingest,
-        materialization output commits, explicit deletes -- goes through this
-        one path so stream versions and change-range manifests stay
-        authoritative. Assigns a fresh uuid4 ``publication_id`` when the caller
-        doesn't supply a stable one; a caller reusing the same id across a
-        retried request gets the idempotent-replay path in
-        ``PublicationStore.publish`` for free.
+        Driver ingestion goes through this revision-writing path. A fresh UUID
+        is assigned when the caller supplies no ``publication_id``. The
+        current revision publisher does not persist receipts or deduplicate a
+        retry that reuses an identifier; row upserts remain idempotent by
+        ``(ref_uri, timestamp)``.
         """
         pub_id = publication_id or str(uuid.uuid4())
         receipt = self.publication.publish(PublicationRequest(pub_id, mutations))

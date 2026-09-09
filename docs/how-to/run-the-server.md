@@ -14,8 +14,9 @@ file, storage backends, ontologies, and the HTTP API.
 acquirium server --config acquirium.toml
 ```
 
-The server hosts everything: the graph store, the timeseries store, the HTTP
-API, and the Ray actors that run drivers and apps.
+The server hosts the graph store, the timeseries store, the HTTP API, the
+bounded in-process worker pool that runs apps, and the Ray actors that run
+drivers.
 Without `--config` it looks for `acquirium.toml` in the working directory,
 and starts with defaults when there is none.
 
@@ -43,13 +44,16 @@ Startup runs in this order:
 3. Sync the `streams` table from the graph.
    A reference node failing the canonical-URI check aborts startup; see the
    [lifecycle guide](../explanation/stream-lifecycle.md#registration-and-the-streams-table).
-4. Serve HTTP. `/health` answers from this point.
-5. In the background: restore registered apps, then start the `[[drivers]]`
-   entries.
+4. Restore durable app deployments and start the materialization coordinator.
+5. Serve HTTP. `/health` answers from this point.
+6. In the background, start the `[[drivers]]` entries and then deploy the
+   `[[apps]]` entries. Drivers start first because their setup may load the
+   graph that app queries use.
 
 Note that `/health` only means the core is up; drivers and apps may still be
 starting.
-Check `GET /drivers/list` and `GET /apps/list` for those.
+Check `GET /drivers/list` for configured drivers and
+`GET /materialization/dag` for app bindings and execution state.
 The `Acquirium()` client constructor waits for `/health` (60 seconds by
 default) so scripts can start before the server finishes booting.
 
