@@ -4,7 +4,7 @@
 enabled = true            # connect to an already-running Acquirium server
 
 [driver]
-server_url  = "localhost"
+server_url  = "127.0.0.1"
 server_port = 8000
 interval    = 10.0
 data_dir    = ".acquirium"
