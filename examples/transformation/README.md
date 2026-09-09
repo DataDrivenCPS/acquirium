@@ -1,7 +1,7 @@
 # Temperature app
 
-This is a small end-to-end app: Celsius input samples become a
-derived Fahrenheit stream. It keeps the three pieces visible and separate:
+This app selects all measurement streams with unit `DEG_F` and publishes a
+separate Celsius stream for each match. The example has three files:
 
 - `temperature_conversion.py` declares the app.
 - `acquirium.toml` deploys it when the server starts.

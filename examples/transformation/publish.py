@@ -1,4 +1,4 @@
-"""Publish Celsius samples and show the Fahrenheit values derived by the server.
+"""Publish Fahrenheit samples and show the Celsius values derived by the server.
 
     uv run python examples/transformation/publish.py
 """
@@ -10,9 +10,6 @@ from time import monotonic, sleep
 
 import acquirium as aq
 
-from temperature_conversion import INPUT_SOURCE, OUTPUT_POINT
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
@@ -21,30 +18,31 @@ def main() -> None:
     args = parser.parse_args()
 
     client = aq.Acquirium(server_url=args.host, server_port=args.port)
-    source_id, ref_name = "temperature-example", "celsius"
+    source_id, ref_name = "temperature-example", "fahrenheit"
     client.register_datasource(source_id)
     client.register_streams([{
         "source_id": source_id,
         "ref_name": ref_name,
-        "point_uri": "urn:example:temperature:celsius",
-        "label": "Example temperature in Celsius",
-        "unit": "http://qudt.org/vocab/unit/DEG_C",
+        "point_uri": "urn:example:temperature:fahrenheit",
+        "label": "Example temperature in Fahrenheit",
+        "unit": "http://qudt.org/vocab/unit/DEG_F",
         "value_kind": "numeric",
-        "data_source": INPUT_SOURCE,
     }])
     deadline = monotonic() + args.timeout
     start = datetime(2026, 1, 1, tzinfo=timezone.utc)
     client.insert_timeseries(source_id, ref_name, [
-        (start + timedelta(minutes=index), 20.0 + index) for index in range(6)
+        (start + timedelta(minutes=index), 68.0 + 1.8 * index) for index in range(6)
     ])
 
     while monotonic() < deadline:
-        fahrenheit = client.client.timeseries_df(OUTPUT_POINT, value_mode="numeric")
-        if fahrenheit.height:
-            print(fahrenheit.to_dicts())
+        celsius = client.query().measurement(
+            alias="celsius", app="fahrenheit-to-celsius"
+        ).dataframe()
+        if celsius.height:
+            print(celsius.to_dicts())
             return
         sleep(0.05)
-    raise TimeoutError(f"the transformation did not produce Fahrenheit values within {args.timeout:g} seconds")
+    raise TimeoutError(f"the transformation did not produce Celsius values within {args.timeout:g} seconds")
 
 
 if __name__ == "__main__":
