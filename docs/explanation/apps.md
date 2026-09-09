@@ -33,7 +33,9 @@ back. In exchange, restart, retry, and catch-up need no code at all.
 
 An app never lists stream IDs. Its `build_query` is a semantic query over the
 plant model — “every temperature measurement on an air handling unit” — and
-the compiler resolves the streams into concrete *bindings*. With
+the compiler resolves the streams into concrete *bindings*. Every app
+explicitly declares one of the two grouping modes; omission is rejected when
+the app is instantiated. With
 `grouping="per_match"`, each match gets its own invocation. With
 `grouping="all_matches"`, one invocation receives all the matches. When the
 model changes, queries are compiled again and retained output is repaired when

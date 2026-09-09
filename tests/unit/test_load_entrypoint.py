@@ -11,6 +11,7 @@ import acquirium as aq
 
 class Probe(aq.App):
     name = "probe"
+    grouping = "per_match"
     marker = {marker!r}
     outputs = {{"out": aq.output.stream(value_kind="numeric")}}
 

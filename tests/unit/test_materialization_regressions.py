@@ -10,7 +10,7 @@ from acquirium.Materialization.planner import Deployment
 from acquirium.Storage.duckdb_store import DuckDBStore
 from tests.unit.test_incremental_materialization import LineageCopy, LineageGraph
 from tests.unit.test_incremental_materialization import Copy, ConcurrentProbeExecutor, NOW, _port
-from acquirium.Materialization import ApplicationGraph, Binding, RevisionStore, Scheduler, StreamDescriptor
+from acquirium.Materialization import App, ApplicationGraph, Binding, RevisionStore, Scheduler, StreamDescriptor
 from acquirium.Materialization import align
 from acquirium.Materialization import TimeWindow
 from acquirium.Materialization import output
@@ -29,6 +29,7 @@ class SumFleet(LineageCopy):
 
 class TimedCopy(LineageCopy):
     name = 'timed-copy'
+    grouping = 'per_match'
     min_interval = '10s'
 
     def transform(self, inputs, output, context):
@@ -92,6 +93,7 @@ def test_membership_removal_repairs_named_history_after_restart(tmp_path):
 
 def test_grouping_is_independent_of_output_naming():
     class GeneratedAggregate(SumFleet):
+        grouping = 'all_matches'
         outputs = {'out': output.stream(value_kind='numeric')}
     # Durable entrypoints cannot be local classes; verify the declaration
     # independently with a replaced deployment targeting the importable app.
@@ -109,13 +111,28 @@ def test_ambiguous_entity_matches_are_rejected():
         BindingPlanner(Ambiguous([])).compile([Deployment.from_class(LineageCopy)], 1)
 
 
-def test_deployment_roundtrip_and_grouping_default():
+def test_app_instantiation_requires_an_explicit_valid_grouping():
+    class MissingGrouping(App):
+        outputs = {'out': output.stream(value_kind='numeric')}
+
+    class InvalidGrouping(App):
+        grouping = 'together'
+        outputs = {'out': output.stream(value_kind='numeric')}
+
+    with pytest.raises(ValueError, match="MissingGrouping.grouping must be explicitly set.*got None"):
+        MissingGrouping()
+    with pytest.raises(ValueError, match="InvalidGrouping.grouping must be explicitly set.*got 'together'"):
+        InvalidGrouping()
+
+
+def test_deployment_roundtrip_requires_grouping():
     import json
     declaration = replace(Deployment.from_class(SumFleet), batch_delay=timedelta(seconds=2))
     assert Deployment.from_json(declaration.to_json()) == declaration
     payload = json.loads(declaration.to_json())
     payload.pop('grouping')
-    assert Deployment.from_json(json.dumps(payload)).grouping == 'per_match'
+    with pytest.raises(ValueError, match="grouping must be explicitly set.*got None"):
+        Deployment.from_json(json.dumps(payload))
     payload['unexpected_setting'] = 2
     with pytest.raises(ValueError, match='unknown deployment fields'):
         Deployment.from_json(json.dumps(payload))
@@ -127,11 +144,12 @@ def test_http_deployment_uses_explicit_grouping_and_rejects_unknown_fields():
     from acquirium.Server.app import AppRegistration
     payload = json.loads(Deployment.from_class(SumFleet).to_json())
     payload.pop('grouping')
-    registration = AppRegistration.model_validate(payload)
-    assert registration.grouping == 'per_match'
-    assert Deployment.from_json(registration.model_dump_json()).grouping == 'per_match'
+    with pytest.raises(ValidationError):
+        AppRegistration.model_validate(payload)
     with pytest.raises(ValidationError):
         AppRegistration.model_validate({**payload, 'grouping': None})
+    with pytest.raises(ValidationError):
+        AppRegistration.model_validate({**payload, 'grouping': 'together'})
     with pytest.raises(ValidationError):
         AppRegistration.model_validate({**payload, 'unexpected_setting': 1})
 
@@ -182,6 +200,7 @@ def stored(store, ref):
 
 
 class MinuteMean(Copy):
+    grouping = 'per_match'
     every = '1m'
 
     def transform(self, inputs, output, context):
@@ -189,6 +208,7 @@ class MinuteMean(Copy):
 
 
 class RollingMean(Copy):
+    grouping = 'per_match'
     lookback = '1m'
 
     def transform(self, inputs, output, context):

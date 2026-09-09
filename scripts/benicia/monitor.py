@@ -3,6 +3,7 @@ from acquirium import Acquirium, AppContext
 
 class EffluentChlorineMonitor(App):
     name = "effluent_chlorine_monitoring"
+    grouping = "per_match"
     version = "0.1"
     app_type = "soft_sensor"
     outputs = [
