@@ -272,7 +272,7 @@ the query layer's `app` attribute matches, and — when the app declared no
 label of its own — a generated `rdfs:label` naming the measurement and the app
 that derived it. A point the app author supplied with `point_uri=` is not
 relabelled; it belongs to the plant model.
-See the [app reference](../reference/apps.md#aqoutput) for the output identity
+See the [app reference](../reference/apps.md#output-declarations) for the output identity
 and metadata rules.
 
 ### Updates, queries, and validation

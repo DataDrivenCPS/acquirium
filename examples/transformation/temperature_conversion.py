@@ -14,6 +14,7 @@ class CelsiusToFahrenheit(aq.App):
     """Publish a Fahrenheit stream for every Celsius input sample."""
 
     name = "celsius-to-fahrenheit"
+    grouping = "all_matches"
     backfill = True
     outputs = {
         "fahrenheit": aq.output.named(
@@ -30,8 +31,6 @@ class CelsiusToFahrenheit(aq.App):
 
     def transform(self, inputs, output, context):
         celsius = inputs["temperature"].df()
-        if celsius.is_empty():
-            return
         output["fahrenheit"] = celsius.select(
             "time", (pl.col("value") * 9.0 / 5.0 + 32.0).alias("value")
         )

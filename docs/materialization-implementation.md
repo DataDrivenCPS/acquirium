@@ -20,13 +20,15 @@ Materialization adds two tables to the selected timeseries backend —
 `system_state` (one global `current_revision`) and `binding_progress`
 (`progress_key` → `consumed_revision`) — plus two control-plane tables owned
 by the materializer, `materialization_deployments` and
-`materialization_lineage`. Derived rows live in the ordinary `timeseries`
+`materialization_lineage`. `materialization_work` stores bounded output cursors
+for long backfills and explicit reprocessing. Derived rows live in the ordinary `timeseries`
 table beside raw ones.
 
-A backend supplies four private hooks and inherits the entire scheduler:
+A backend supplies connection and write hooks and inherits the entire scheduler:
 
 | hook | purpose |
 |---|---|
+| `_connect()` | An independent connection for a coherent batch snapshot. |
 | `_own_conn()` | A short-lived read connection. |
 | `_write_conn()` | A write connection, taken under the store's lock. |
 | `_next_revision(conn)` | Allocate the next global revision inside the caller's transaction. |
@@ -43,7 +45,7 @@ UTC conversion, and the stream-key join.
 | Timestamp storage | UTC-normalized `TIMESTAMP` (naive in SQL) | `TIMESTAMPTZ` |
 | Revisioned write | registered Polars frame, delete+insert keyed by `(ref_id, ts)` | cursor `executemany` upsert keyed by `(ref_uri, ts)` |
 | Read connection | a new connection to the shared embedded database | a new psycopg connection |
-| Snapshot boundary | `conn.begin()` | `BEGIN` issued as SQL |
+| Snapshot boundary | `conn.begin()` | `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY` |
 | Write serialization | in-process store lock; DuckDB has one writer | in-process store lock; the transaction also provides isolation |
 | Backend SQL | `?` parameters, `INSERT OR REPLACE` where needed | `%s` parameters, `ON CONFLICT` |
 
@@ -65,8 +67,14 @@ needs no separate hypertable, continuous aggregate, or Timescale job.
 - **Corrections keep the current value.** A re-written `(stream, timestamp)`
   overwrites that row and advances its `last_revision`; the store keeps
   current values, not a history of prior ones.
-- **Schema changes are not migrated.** Development databases created before a
-  materialization schema change must be dropped and recreated.
+- **Additive upgrade.** Startup adds the durable work table and lineage context
+  fingerprint without dropping existing data. See [migration](materialization-migration.md).
+- **Replacement propagates.** Rows removed from an assigned output interval
+  retain revisioned tombstones so downstream calculations observe removals.
+- **Bounded execution.** One coordinator uses a persistent thread pool. Finite
+  work ranges are partitioned into roughly one-day output intervals, with
+  complete buckets and the declared input context. Whole-history apps remain
+  bounded by their retained history, not by a fixed memory limit.
 
 ## Tests
 
@@ -80,3 +88,13 @@ schema so it cannot disturb the API integration server's database. It needs
 `tests/unit/test_incremental_materialization.py` is the unit-level contract:
 output flavors and grouping, window construction, progress-key continuity,
 unit conversion, alignment, and DAG validation.
+
+## Performance probe
+
+Run `.venv/bin/python scripts/benchmark_materialization.py` for a temporary
+DuckDB workload with eight precompiled bindings, 48,000 rows, two workers,
+a backfill, a correction, and idle polling. It checks the output row count.
+On the development machine on 2026-09-09, this took 0.79 seconds for backfill,
+0.19 seconds for the correction cycle, and 0.52 milliseconds per idle tick.
+These are local measurements, not capacity guarantees or a before/after comparison.
+Graph compilation and module startup are excluded.

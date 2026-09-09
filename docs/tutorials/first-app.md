@@ -25,6 +25,7 @@ OUTPUT_POINT = "urn:example:temperature:fahrenheit"
 
 class CelsiusToFahrenheit(aq.App):
     name = "celsius-to-fahrenheit"
+    grouping = "all_matches"
     backfill = True
     outputs = {
         "fahrenheit": aq.output.named(
@@ -40,8 +41,6 @@ class CelsiusToFahrenheit(aq.App):
 
     def transform(self, inputs, output, context):
         celsius = inputs["temperature"].df()
-        if celsius.is_empty():
-            return
         output["fahrenheit"] = celsius.select(
             "time", (pl.col("value") * 9.0 / 5.0 + 32.0).alias("value")
         )
@@ -54,7 +53,7 @@ Read it top to bottom:
 - `outputs` says *what to write*: one derived numeric stream. It is a
   **named** output — the stream's identity is exactly `fahrenheit` under this
   app, so anything else can find it directly. (The other flavor,
-  `aq.output.per_row(...)`, generates one stream beside each matched input;
+  `aq.output.stream(...)`, generates one stream beside each matched input;
   you'll use it below.)
 - `transform` is *the calculation*: a dataframe of `time` and `value` rows in,
   a dataframe of `time` and `value` rows out.
@@ -124,19 +123,19 @@ That works for any app, without the app declaring anything for it. What a
 derived stream carries *besides* that — its unit, label, quantity kind — is
 whatever its `outputs` declaration says, so declaring a `quantity_kind` is
 what makes an output turn up in queries for that quantity kind alongside real
-sensors. The [apps guide](../apps.md#finding-derived-streams-again) covers the
+sensors. The [apps guide](../apps.md#convert-each-sensor) covers the
 whole picture.
 
 ## 6. Make it react to every sensor
 
 The app above binds all matches into one call. The more common plant pattern —
-“do this beside every sensor” — uses a `per_row` output:
+“do this beside every sensor” — uses the default `grouping = "per_match"`:
 
 ```python
 class TemperatureSmoother(aq.App):
     name = "temperature-smoother"
     lookback = "10m"
-    outputs = {"smooth": aq.output.per_row(value_kind="numeric", unit="http://qudt.org/vocab/unit/DEG_C")}
+    outputs = {"smooth": aq.output.stream(value_kind="numeric", unit="http://qudt.org/vocab/unit/DEG_C")}
 
     def build_query(self, plant):
         return plant.query().measurement(alias="temperature", quantity_kind="temperature")
@@ -152,7 +151,7 @@ class TemperatureSmoother(aq.App):
 
 Three new ideas:
 
-- `output.per_row` runs `transform` once per matched stream and creates
+- `output.stream` runs `transform` once per matched stream and creates
   one derived stream beside each — a thousand sensors become a thousand
   smoothed streams with no naming on your part. (A `named` output does the
   opposite: one call over every match, one stream.)

@@ -218,10 +218,10 @@ and reference node for every concrete input binding. Its `source_id` is
 stable hash of the bound input aliases and reference URIs. The `ref_uri`
 follows from that pair as usual, and the generated point is named after the
 stream it carries, so neither moves when the app's code or a sensor's metadata
-changes. Consequently, an app with one `per_row` output port and
+changes. Consequently, an app with `grouping="per_match"`, one generated output, and
 ten matched input rows owns ten distinct derived streams, while a `named`
 output owns exactly one stream under the name its author chose.
-See the [app reference](../reference/apps.md#aqoutput).
+See the [app reference](../reference/apps.md#output-declarations).
 
 A derived stream is queried exactly like a measured one, and carries whatever
 metadata its output declaration gave it — so an app that declares a quantity
@@ -230,4 +230,4 @@ computed from. The runtime also records the producing app on each derived
 point, which is the one thing that tells the two apart:
 `measurement(quantity_kind="temperature", app="normalize-temperatures")`
 returns that app's output alone. See
-[finding a derived stream again](../reference/apps.md#finding-a-derived-stream-again).
+[query matches](../reference/apps.md#query-matches).
