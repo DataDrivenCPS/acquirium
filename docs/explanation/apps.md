@@ -2,76 +2,94 @@
 title: Apps
 ---
 
-Apps exist to answer one question: how does a plant get derived values —
-soft sensors, KPIs, converted units, anomaly flags — that stay correct as data
-arrives, without anyone writing streaming infrastructure?
+An app calculates derived values from stored sensor readings and keeps those
+values up to date as the inputs change. For example, an app might convert
+temperatures to a common unit, calculate a plant-wide average, or identify
+readings that exceed a threshold. The same calculation handles new readings,
+late arrivals, and corrections to data already processed.
 
 ## Recomputed windows
 
-An app is a pure function from a window of input samples to a window of
-output samples. The runtime finds out what changed, determines the affected
-output interval, and reads the input context needed to calculate it. Complete
-buckets, trailing dependencies, and leading dependencies are declared through
-`every`, `lookback`, and `lookahead`. Computation uses the latest available
-readings, and late readings trigger another calculation.
+Consider a ten-minute rolling average. When a reading is corrected, the
+correction can affect averages for the following ten minutes. Recalculating
+those averages also requires readings before the corrected timestamp.
+Acquirium therefore distinguishes the interval of output being replaced from
+the wider interval of input needed to calculate it.
 
-Two properties make this simple model safe:
+An app declares these dependencies through `lookback` and `lookahead`, and uses
+`every` when it needs fixed time buckets. The runtime uses the declarations to
+select the affected output interval and load its input data. The app's
+`transform` method then calculates results from the latest available readings.
+It does not have to maintain a separate calculation for corrections.
 
-- **Replacement is idempotent.** An output value is identified by its stream
-  and timestamp. Assigning a port replaces its output interval, including
-  removing results that disappear. An alarm is removed when its corrected
-  reading no longer exceeds the threshold. Downstream apps observe removals.
-- **Progress is transactional.** Output rows and the consumed-input frontier
-  commit together. After a crash there is either the output with its advanced
-  frontier or neither — never progress without the output it represents.
+Each output value is identified by its stream and timestamp. Publishing a
+result replaces the previous values in the output interval, including removing
+values that no longer appear in the result. For example, if a corrected
+reading falls below an alarm threshold, the corresponding alarm disappears.
+Downstream apps receive that removal as an input change.
 
-The cost of the model is a discipline: given the same input batch, `transform`
-must be deterministic, and side effects outside the database cannot be rolled
-back. In exchange, restart, retry, and catch-up need no code at all.
+The database commits output changes and processing progress in the same
+transaction. If a process stops before the transaction commits, the runtime
+can repeat the calculation when it restarts. This requires `transform` to
+produce the same result for the same input batch. External side effects, such
+as sending a notification, cannot be rolled back with the database transaction
+and should be handled outside the transform.
 
 ## Queries bind apps to the plant
 
-An app never lists stream IDs. Its `build_query` is a semantic query over the
-plant model — “every temperature measurement on an air handling unit” — and
-the compiler resolves the streams into concrete *bindings*. Every app
-explicitly declares one of the two grouping modes; omission is rejected when
-the app is instantiated. With
-`grouping="per_match"`, each match gets its own invocation. With
-`grouping="all_matches"`, one invocation receives all the matches. When the
-model changes, queries are compiled again and retained output is repaired when
-the match context changes. The calculation is written once; the plant model
-decides where it applies.
+An app selects its inputs through `build_query`. The query might find every
+temperature measurement on an air handling unit, or pair flow and pressure
+measurements on each pump. The compiler resolves each query match to a set of
+input streams, called a *binding*.
+
+With `grouping="per_match"`, the runtime calls the app separately for each
+match. This suits calculations such as converting every sensor's readings to
+Celsius. With `grouping="all_matches"`, one call receives all selected streams,
+which allows a calculation to combine readings from several sensors. Every app
+must explicitly choose one of these values; a missing or invalid grouping is
+rejected when the app is instantiated.
+
+When the plant model changes, the runtime compiles the queries again. If the
+matched inputs or their query context have changed, it schedules a repair of
+the retained output. For example, adding a sensor to an aggregate may require
+recalculating that aggregate's earlier results.
 
 ## Two output identities
 
-Grouping determines invocation cardinality. Output declarations determine
-stream identity independently.
+After deciding which inputs a calculation should receive, you also need to
+choose how other queries will identify its output. Acquirium provides two
+output declarations for this purpose.
 
-A derived stream needs a name, and there are exactly two reasonable places for
-one to come from:
+For a conversion performed separately on each sensor, `output.stream` derives
+a name from the app, the output port, and the bound inputs. Each sensor gets
+its own derived stream, and recompiling the same inputs produces the same
+stream identity. You can therefore add sensors without assigning a new output
+name to each one.
 
-- **Relative** (`output.stream`): the identity is derived from the app,
-  the port, and the bound inputs. This scales to thousands of matched streams
-  — nobody names them, and recompiling the same inputs reuses the same
-  streams.
-- **Absolute** (`output.named`): the identity is chosen by the author. Use it
-  whenever the result is a thing the plant refers to directly — a total, an
-  index, a compliance figure — so it can be found by name rather than
-  discovered relative to its inputs.
+For a result such as a plant-wide total, `output.named` lets you choose a name
+that remains the same when sensors join or leave the calculation. The name is
+scoped to the app, under the source `derived:<app-name>`. Each named output
+must have a single owner: multiple per-match bindings cannot publish to the
+same named stream.
 
-Derived streams are first-class: later apps' queries can select them, and
-those dependencies form a DAG the scheduler runs in waves. They are also
-findable on their own terms — a derived stream carries the metadata its
-declaration gave it, and records the app that produced it, so
-`measurement(quantity_kind="temperature", app="normalize-temperatures")` asks
-for one app's output and nothing else.
+The naming declaration does not choose which inputs the app receives. An
+aggregate still needs `grouping="all_matches"`, whether its output name is
+generated or supplied by the author.
+
+Other apps can query derived streams in the same way as measured streams.
+These dependencies form a directed acyclic graph, which the scheduler uses
+to run producers before their consumers. Queries can select outputs by their
+declared metadata and by the app that produced them. For example,
+`measurement(quantity_kind="temperature", app="normalize-temperatures")`
+selects temperature outputs from that app.
 
 ## Why "materialization"
 
-Internally the docs call this machinery *incremental materialization*: derived
-streams are materialized views over raw streams, maintained incrementally by
-revision rather than recomputed wholesale. That vocabulary lives in
-[How it works](../reference/apps.md#how-it-works), with the backend and
-operational details in
-[Backends and operations](../materialization-implementation.md); writing an
-app requires none of it.
+The documentation calls this process *incremental materialization*. The derived
+streams are stored calculation results, similar to materialized views in a
+database. The runtime updates the affected parts of those results as input
+revisions arrive, rather than recalculating the entire history for every write.
+
+[How it works](../reference/apps.md#how-it-works) explains revision tracking,
+publication, and recovery. [Backends and operations](../materialization-implementation.md)
+covers the storage implementations and server settings.

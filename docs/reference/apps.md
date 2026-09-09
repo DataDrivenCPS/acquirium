@@ -1,8 +1,9 @@
 # App reference
 
-Apps maintain derived streams from the latest available inputs. An output can
-change or disappear after a correction. Results must converge independently of
-ingestion batch boundaries.
+Apps maintain derived streams from the latest available inputs. When a reading
+is corrected, the app recalculates the affected results, which may change or
+be removed. A calculation must produce the same final results whether its
+inputs arrive in one batch or several.
 
 ## App
 
@@ -16,9 +17,9 @@ def transform(self, inputs, output, context):
     ...  # assign declared output ports
 ```
 
-Instances must be stateless: bindings may execute concurrently. Constructors
-accept the `parameters` supplied at deployment. Do not perform external side
-effects in transforms; execution can be retried.
+Constructors accept the `parameters` supplied at deployment. Keep instances
+stateless because bindings may execute concurrently, and keep external side
+effects out of `transform` because the runtime may retry a calculation.
 
 | Attribute | Default | Meaning |
 |---|---|---|
@@ -63,8 +64,9 @@ from the app, port, and bound input references.
 `aq.output.named(stream_name, value_kind=..., **metadata)` uses the exact
 reference name under source `derived:<app>`.
 
-Neither declaration selects grouping. Named outputs require a single owner;
-multiple per-match bindings cannot publish to the same named stream.
+Set `App.grouping` explicitly to control which query matches each call receives.
+The output declaration only controls naming. A named stream must have a single
+owning binding, so multiple per-match bindings cannot publish to it.
 
 | Metadata | Meaning |
 |---|---|
@@ -93,10 +95,11 @@ timezone-aware, and non-null. They are normalized to UTC microseconds.
 Values must be non-null and match the declared kind. Numeric values are stored
 as float64; text as strings. Empty tables must still have these typed columns.
 
-Assigned ports replace `context.output_window`. Returned rows outside that
-window are clipped. An assigned empty table removes previous rows in the
-window. Unassigned ports are unchanged. All accepted output mutations and
-progress updates commit together.
+Assigning a table replaces the port's stored results within
+`context.output_window`; rows returned outside that interval are discarded.
+An empty table therefore removes the previous results in the window. Leaving
+a port unassigned preserves its data. The runtime commits these output changes
+and the corresponding progress updates in one transaction.
 
 ## StreamSet
 
@@ -112,9 +115,10 @@ progress updates commit together.
 - `changes`: live rows with revisions in the invocation's revision range.
 - `in_unit(unit_uri)`: a converted StreamSet; missing/incompatible units raise.
 
-Deleted input timestamps are represented by absence from the loaded data.
-They still trigger an invocation through revisioned tombstones.
-An invocation caused only by removal can have empty `changes`.
+Deleted readings are absent from the loaded data, but their tombstones record
+the revision of the deletion so that the runtime can schedule affected apps.
+Because `changes` contains only live rows, it can be empty when a deletion
+causes the invocation.
 
 ## InputBatch
 
@@ -131,14 +135,16 @@ The `context` argument exposes:
 | `graph_revision` | Graph version used in planning |
 | `from_revision`, `to_revision` | Input revision range |
 
-Match columns use query aliases: the point URI under the alias, plus
-`<alias>_ref`, `<alias>.label`, and `<alias>.unit`.
-Non-stream entities appear under their own aliases.
-Internal work cursor fields are runtime bookkeeping.
-Changes to a query's match table schedule retained output repair. This includes
-membership changes in named aggregates and changes to fleet context seen by
-per-match apps. A persisted context fingerprint preserves this behavior across
-restarts; code changes alone still require explicit reprocessing.
+Match columns use query aliases. A stream alias holds its point URI, with
+`<alias>_ref`, `<alias>.label`, and `<alias>.unit` alongside it. Non-stream
+entities appear under their own aliases. Internal work cursor fields are
+reserved for runtime bookkeeping.
+
+When the query's match table changes, the runtime schedules a repair of the
+retained output. This includes changes to the sensors in a named aggregate
+and to the full query result available to per-match apps. The runtime persists
+a fingerprint of that context so it can detect changes across restarts.
+Changing the app's code alone still requires explicit reprocessing.
 
 ## TimeWindow
 
@@ -201,9 +207,9 @@ incomplete rows according to the calculation's requirements.
   restart, and a conflicting reprocessing request is rejected.
 
 Check outputs include `assigned`, `rows`, `truncated`, `value_kind`,
-`stream`, `ref_name`, and `values`. Empty assigned output means replacement
-with no rows; empty unassigned output means no change.
-Checks load retained history; the result limit does not limit input reads.
+`stream`, `ref_name`, and `values`. Use `assigned` to distinguish an empty
+replacement from an output the transform left unchanged. Checks load retained
+input history; the result limit only bounds the output included in the response.
 
 ### Configuration deployment
 
@@ -244,8 +250,8 @@ Deployment JSON carries name, entrypoint, executable_digest, outputs,
 parameters, grouping, and window/scheduling attributes. Durations are integer
 microseconds; lookback may be `"all"`. Grouping must be explicitly set to
 `"per_match"` or `"all_matches"`, including for named outputs. Missing, null,
-unknown, and invalid grouping values are rejected when the deployment is
-constructed.
+and invalid grouping values are rejected when the deployment is constructed.
+Unknown deployment fields are also rejected.
 
 DAG statuses are idle, pending, running, waiting, failed, or reprocessing.
 Deployment summaries prioritize failed, running, reprocessing, waiting,
@@ -260,27 +266,33 @@ and pending work are durable. Global revision lag can include unrelated writes.
 
 ## How it works
 
-The timeseries database stores current values and a monotonically increasing
-revision. A binding records its consumed revision. A coherent read snapshot
-finds changed input timestamps, constructs windows, and loads Arrow data.
-User code runs outside database transactions.
+The timeseries database stores current values and assigns each write a
+monotonically increasing revision. Each binding records the last input revision
+it has processed, called its *consumed frontier*. To prepare the next invocation,
+the runtime opens a consistent database snapshot, finds input timestamps that
+changed after that frontier, and loads the required windows into Arrow tables.
+It closes the read transaction before running user code.
 
-Publication checks the active binding generation and consumed frontier before
-writing. Stale work is discarded. Removed output rows retain tombstones with a
-new revision, so downstream bindings discover them. Re-inserting a timestamp
-clears its tombstone.
+Before publishing the result, the runtime checks that the binding generation
+and consumed frontier still match those used to prepare the work. If the
+binding has been replaced or its progress has changed, the result is discarded.
+Otherwise, output changes and progress commit together. Deleted output rows
+leave revisioned tombstones so downstream apps can observe the removal;
+reinserting a timestamp clears its tombstone.
 
-One coordinator executes independent bindings through a bounded thread pool.
-Successful work in each bounded chunk commits together. Failed bindings keep
-their frontier and block their descendants; healthy branches continue.
-The next layer reads after predecessor work has completed.
+One coordinator schedules independent bindings through a bounded thread pool.
+The next dependency layer reads its inputs after predecessor work has completed.
+A failed binding keeps its previous frontier and blocks its descendants, while
+unrelated branches can continue processing.
 
-Long finite input ranges use durable output cursors with approximately one day
-per invocation, rounded to whole buckets. The input frontier advances only when
-that range completes. Corrections newer than its captured revision are handled
-afterward. Explicit reprocessing retains the existing input frontier.
-Whole-history calculations remain fully materialized.
+Long, finite work ranges are divided into output intervals of approximately one
+day, rounded to complete buckets where necessary. A durable cursor records which
+intervals have finished, and the input frontier advances when the entire range
+is complete. Corrections newer than the range's captured revision are processed
+afterward. Explicit reprocessing uses the same durable work mechanism while
+preserving the existing input frontier. Whole-history calculations still load
+their complete retained input and are not bounded by these daily intervals.
 
-The source is separated into models/helpers, revision storage, scheduling,
-planning, and orchestration. Both SQL backends use the same algorithm.
-See [operations](../materialization-implementation.md).
+Both SQL backends use this algorithm. The
+[operations guide](../materialization-implementation.md) describes their storage
+hooks, transaction behavior, and server settings.

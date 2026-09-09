@@ -1,26 +1,35 @@
 # Processing contract
 
-Derived streams describe the current, corrected inputs. Calculations use all
-available readings; they do not wait for sensors to finish an interval.
-Late readings and corrections recompute affected output timestamps. A result
-that disappears (including an alarm corrected below its threshold) is removed,
-and downstream calculations observe that removal.
+Derived streams reflect the current, corrected inputs. Calculations use the
+readings available in storage without waiting for sensors to finish reporting
+an interval. A late arrival or correction causes affected output timestamps to
+be recalculated. If a result is no longer present, such as an alarm whose
+corrected input falls below its threshold, it is removed. Downstream
+calculations must observe that removal.
 
-Each invocation owns an output window and reads a possibly wider input window.
-Context rows outside the output window must never overwrite historical results.
-Fixed buckets read complete buckets. A trailing rolling calculation reads its
-preceding context and recomputes subsequent outputs affected by a correction.
-Windows are UTC and inclusive at microsecond precision.
+## Input and output windows
 
-Assigning a port replaces its output window, including when the assigned table
-is empty. Leaving a port unassigned leaves it unchanged. Output changes and
-consumed input progress commit in one transaction. Repeated execution and
+Each invocation owns an output window and reads an input window that may be
+wider. The extra readings provide context for the calculation; they must not
+overwrite results outside the output window. Fixed-bucket calculations read
+complete buckets. A trailing rolling calculation reads preceding context and,
+when an earlier reading is corrected, revisits subsequent outputs that depend
+on it. All window bounds are UTC and inclusive at microsecond precision.
+
+## Publication and recovery
+
+Assigning a table to a port replaces its stored results in the output window.
+An empty table removes those results, while leaving the port unassigned
+preserves them. Output changes and consumed input progress commit in one
+transaction so recovery can repeat uncommitted work. Repeated execution and
 different ingestion batch boundaries must converge to the same result.
 
-One coordinator schedules work through a bounded executor. Failure blocks only
-the affected dependency branch. Deployment validation precedes activation;
-obsolete work cannot publish after a deployment is replaced or removed.
-Progress survives code changes. Explicit reprocessing repairs retained history.
+One coordinator schedules work through a bounded executor. A failed calculation
+blocks its dependent branch, while independent branches remain runnable.
+Deployment validation completes before activation, and obsolete work cannot
+publish after a deployment is replaced or removed. Code changes preserve
+processing progress; explicit reprocessing applies those changes to retained
+history.
 
 ## Acceptance checks
 

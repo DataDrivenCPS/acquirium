@@ -1,8 +1,9 @@
 # Apps
 
-An app selects streams with a semantic query and keeps derived streams up to
-date. It runs over the latest available readings. Late readings and corrections
-update its results, including removing results that no longer apply.
+An app uses a semantic query to select input streams, calculates new values
+from their readings, and publishes the results as derived streams. Acquirium
+keeps those results up to date as readings arrive or are corrected. This guide
+starts with a unit conversion, then extends it to averages and alarms.
 
 ## Convert each sensor
 
@@ -36,15 +37,20 @@ class Celsius(aq.App):
         output["temperature"] = frame.select("time", "value")
 ```
 
-The explicit `grouping = "per_match"` calls the app once for each query match.
-A match can contain one sensor or a related pair of sensors.
-`inputs["temperature"].stream` describes the sensor for this call.
-The output gets a stable identity derived from the app, port, and input streams.
+Here, `grouping = "per_match"` gives each matched sensor a separate call to
+`transform`. The call receives that sensor's readings through
+`inputs["temperature"]`; its `.stream` attribute provides the sensor's metadata.
+`output.stream` gives each result a stable identity based on the app, output
+port, and input stream.
 
-Select inputs specifically enough to exclude the app's own derived streams.
-Downstream apps can select these results using `measurement(app="celsius")`.
-Every app must declare `grouping` as either `"per_match"` or `"all_matches"`;
-an omitted or invalid value is rejected when the app is instantiated.
+Every app must explicitly declare `grouping` as either `"per_match"` or
+`"all_matches"`. A missing or invalid value is rejected on instantiation.
+A query match can also contain related sensors, such as flow and pressure
+measurements on the same pump; per-match grouping keeps those inputs together.
+
+The query selects only `raw-temperature` inputs so that the app does not read
+its own output. A downstream app can select the converted streams with
+`measurement(app="celsius")`.
 
 ## Understand the three arguments
 
@@ -75,14 +81,17 @@ timezone-aware timestamps. Values must be non-null and match the declared kind.
 | `.output_window` | The interval this invocation replaces |
 | `.read_window` | The input interval, including calculation context |
 
-An assigned output replaces its output window. An assigned empty table removes
-old results in that interval. A port left unassigned is unchanged.
-The runtime clips returned rows to the output window, so extra context cannot
-overwrite historical results.
+Assigning a table to an output port replaces the stored results within
+`context.output_window`. Assign an empty table when previous results in that
+interval should be removed, or leave the port unassigned to keep them unchanged.
+The runtime discards returned rows outside the output window, allowing the
+transform to read extra input context without overwriting adjacent results.
 
 ## Average into complete minutes
 
-Declare the bucket size once. `aq.align` uses that declaration:
+To calculate a value for each minute, set `every = "1m"`. The runtime uses this
+setting to read complete minute buckets, and `aq.align` uses it to resample the
+readings:
 
 ```python
 class MinuteTemperature(Celsius):
@@ -101,9 +110,10 @@ class MinuteTemperature(Celsius):
         )
 ```
 
-Each affected minute is read completely, even if only one new reading arrived.
-A late reading revises the minute's result. There is no wait for a minute to
-become final or for every sensor to report.
+If a new reading falls within a minute that already has a result, the runtime
+reads all available readings in that minute and calculates it again. The result
+reflects the data currently stored; later arrivals can revise it. The runtime
+does not wait for every sensor to report or for the minute to become final.
 
 ## Calculate a rolling result
 
@@ -135,7 +145,9 @@ history on every invocation; that history must fit in memory.
 
 ## Combine several sensors
 
-Grouping belongs to the app. Output naming is a separate decision:
+A plant-wide average needs readings from several sensors in the same call.
+Set `grouping = "all_matches"` to receive them together, and use `output.named`
+to give the aggregate a name that remains stable as the sensor set changes:
 
 ```python
 class PlantAverageFlow(aq.App):
@@ -253,12 +265,16 @@ Revision lag may include unrelated writes; it is not a count of pending samples.
   this to cap the successful execution rate of an expensive computation.
 - `backfill = True`: process retained history on initial activation.
 
-`batch_delay` and `min_interval` are advanced operational tuning parameters;
-most apps should leave them at their defaults. They affect when computation
-happens, while `every`, `lookback`, and `lookahead` determine its time semantics.
-They are not timers or watermarks and cannot be inferred from the app's window.
-Their wall-clock state resets when the server restarts, and neither setting is
-a retry backoff for a failing transform.
+Most apps can leave `batch_delay` and `min_interval` at their defaults. These
+advanced settings control how often the runtime performs a calculation, while
+`every`, `lookback`, and `lookahead` describe which readings the calculation
+needs. A ten-minute rolling average, for example, may be cheap enough to update
+on every arrival or expensive enough to run less often. Its lookback alone
+does not determine an appropriate delay.
+
+Both controls measure elapsed wall-clock time, and their timing state resets
+on server restart. They do not delay failure retries; a failed transform can
+retry at the materialization polling cadence.
 
 See the [app reference](reference/apps.md) for the complete contract,
 and [operations](materialization-implementation.md) for storage and server settings.

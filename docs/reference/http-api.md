@@ -573,5 +573,5 @@ returns 400.
 
 ### `GET /materialization/dag`
 
-Return an observational node-link representation of the active compiled
-materialization graph, including dependency edges and execution state.
+Return the active materialization graph as nodes and links, including the
+dependencies between bindings and their current execution state.
