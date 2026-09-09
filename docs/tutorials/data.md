@@ -24,7 +24,7 @@ This object is a lazy reference to the underlying data.
 ```python
 from acquirium import Acquirium
 
-acq = Acquirium(server_url="localhost", server_port=8000)
+acq = Acquirium(server_url="127.0.0.1", server_port=8000)
 
 d = (acq.query().entity("Equipment")
      .measurement(alias="m", quantity_kind="mass flow rate")

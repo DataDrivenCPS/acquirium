@@ -41,6 +41,49 @@ change in any release.
   `measurement(app="producer-name")`. The materialization DAG endpoint exposes
   progress, execution status, and errors.
 
+## [0.4.0a6] - 2026-09-09
+
+### Changed
+- **Timescale timeseries keyed by integer `ref_id`**, matching the DuckDB
+  backend. A new `ref_ids` table maps reference URIs to ids; the unique index
+  and compression `segmentby` use `ref_id`, and the `timeseries_streams` view
+  joins the URI back in. A store whose `timeseries` table is still keyed by
+  `ref_uri` is refused at startup; recreate it.
+- **One Timescale write path.** Rows become a Polars frame, are COPYed into a
+  temporary staging table on the store's own connection, and one
+  `INSERT ... SELECT ... ON CONFLICT` merges them into the hypertable, all in a
+  single transaction. `upsert_rows` and `replace_rows` both route through it,
+  so replace is atomic and the `executemany` loop is gone. The merge input is
+  sorted by `(ref_id, ts)` so inserts stay sequential per stream.
+- The Timescale hypertable is created without the default `ts` index; every
+  store query filters by `ref_id` first, which the unique `(ref_id, ts)` index
+  serves. Existing stores keep the old index until recreated or dropped by
+  hand.
+- `AcquiriumClient` owns one `requests.Session`, so consecutive calls reuse
+  the TCP connection instead of opening a new one per request. The Arrow
+  streaming reads drain the response to end of stream so the connection
+  returns to the pool.
+- The client, the `[driver]` self-connect default, the CLI fallback, and the
+  shipped `acquirium.toml` files use `127.0.0.1` instead of `localhost` as the
+  server host.
+- `Manager.timescale` is renamed `Manager.timeseries_store`; it holds
+  whichever timeseries backend is configured.
+
+### Fixed
+- Windows clients paid about 2 s per request against a local server (#85).
+  The server listens on IPv4 only and `localhost` resolves to `::1` first;
+  Windows refuses that connection only after ~2 s, and every request opened a
+  new connection. The session reuse and the `127.0.0.1` default above remove
+  both halves. Configs that set `server_url = "localhost"` explicitly should
+  switch to `127.0.0.1` on Windows.
+- `watertap_build_spec` with a Windows file path (`C:\path\build.py:fn`) was
+  split at the drive-letter colon and failed to import a module named `C`.
+
+### Removed
+- The `adbc-driver-postgresql` dependency. The Timescale write path COPYs into
+  a staging table on the store's own psycopg connection and no longer needs
+  it.
+
 ## [0.4.0a5] - 2026-09-02
 
 ### Added
@@ -419,7 +462,8 @@ change in any release.
 - Text matcher backed by FastEmbed with QUDT and graph indexes.
 - Grafana dashboard helpers.
 
-[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a5...HEAD
+[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a6...HEAD
+[0.4.0a6]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a5...v0.4.0a6
 [0.4.0a5]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a4...v0.4.0a5
 [0.4.0a4]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a3...v0.4.0a4
 [0.4.0a3]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a2...v0.4.0a3

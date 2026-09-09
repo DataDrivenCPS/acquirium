@@ -111,9 +111,10 @@ def _accepted_sparql_formats(accept: str) -> tuple[ox.QueryResultsFormat, ox.Rdf
 def _self_connect_cfg(cfg: dict) -> tuple[str, int, bool]:
     """Return (host, port, use_ssl) that driver actors use to reach this server."""
     driver_cfg = cfg.get("driver", {})
-    host = driver_cfg.get("server_url", "localhost")
+    # 127.0.0.1 rather than "localhost": see AcquiriumClient (issue #85).
+    host = driver_cfg.get("server_url", "127.0.0.1")
     if host == "0.0.0.0":
-        host = "localhost"
+        host = "127.0.0.1"
     port = int(
         driver_cfg.get("server_port")
         or os.environ.get("ACQUIRIUM_SELF_PORT")

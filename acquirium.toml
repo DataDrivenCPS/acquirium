@@ -73,7 +73,7 @@ materialization_workers = 2
 
 [driver]
 # Defaults applied to every [[drivers]] entry.
-server_url  = "localhost"
+server_url  = "127.0.0.1"
 server_port = 8000
 use_ssl     = false
 
