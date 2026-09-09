@@ -1,4 +1,15 @@
-"""Durable deployment registry and graph-recompiled materializer service."""
+"""Coordinate deployments, graph changes, and incremental execution.
+
+Materializer owns the currently installed plan and execution cadence. Planning
+resolves app queries; RevisionStore owns snapshot reads and atomic publication;
+Scheduler executes independent bindings. Keeping these responsibilities separate
+lets graph/deployment updates revoke work without waiting for transforms to end.
+
+The SQL registry and lineage survive restart. The DAG, loaded App instances,
+generation tokens, and scheduling timers are rebuilt in this process. A graph
+refresh reconciles the durable record with current query matches and schedules
+repairs before acknowledging changed query context in stored lineage.
+"""
 from __future__ import annotations
 
 from acquirium.Materialization.checks import check_entry, check_outputs
@@ -49,7 +60,18 @@ def _default_label(binding, port: str, spec) -> str:
 
 
 class Materializer:
-    """Orchestration facade; recoverable state lives in the timeseries store."""
+    """Manage a plan while allowing already-started transforms to finish.
+
+    Lock order, when combined, is coordinator -> plan -> backend write lock.
+    The coordinator lock serializes ticks, reprocessing requests, and executor
+    replacement. The reentrant plan lock protects compilation and plan swaps;
+    a tick releases it before running transforms. Deployment updates only need
+    the plan and backend locks, so they can revoke a generation during execution.
+
+    Publication uses the backend lock to check active generations and progress
+    in the same critical section as its writes. A worker finishing after removal
+    or replacement is discarded there rather than cancelled mid-transform.
+    """
     def __init__(self, store: Any, graph: Any, *, query_resolver=None, record_resolver=None,
                  unit_converter=None, max_workers: int = 2) -> None:
         self._store, self._graph = store, graph
@@ -89,9 +111,16 @@ class Materializer:
             deployments = [d for d in self._deployments() if d.name != deployment.name]
             deployments.append(deployment)
             revision = int(self._graph.graph_status().get("published_version", 0))
+            # Validate the proposed app together with existing deployments:
+            # individually valid apps can still form a cycle or share an output.
+            # Persist and revoke only after this succeeds, leaving the active
+            # definition intact if import, query, or graph validation fails.
             self._planner.compile(deployments, revision)
             with self._store._lock, self._store._write_conn() as conn:
                 self._execute(conn, "INSERT INTO materialization_deployments VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET deployment_json=EXCLUDED.deployment_json", [deployment.name, deployment.to_json()])
+                # Renew even if the definition is identical. Redeploying must
+                # revoke work from the prior activation without resetting its
+                # durable progress or changing its derived stream identities.
                 self._generations[deployment.name] = uuid4().hex
                 self._revoke(deployment.name)
             self._graph_revision = -1
@@ -190,6 +219,13 @@ class Materializer:
             return tuple(Deployment.from_json(row[0]) for row in self._execute(conn, "SELECT deployment_json FROM materialization_deployments ORDER BY name").fetchall())
 
     def refresh(self) -> None:
+        """Reconcile the plan with persisted deployments and the graph version.
+
+        Compile each deployment independently so an unavailable module or failed
+        query does not remove healthy apps. Validate the combined DAG before
+        installing it. SQL lineage records both output ownership and query
+        context, which lets restart detect repairs needed by membership changes.
+        """
         with self._plan_lock:
             revision = int(self._graph.graph_status().get("published_version", 0))
             if revision == self._graph_revision: return
@@ -197,11 +233,17 @@ class Materializer:
             for deployment in self._deployments():
                 try:
                     partial, loaded = self._planner.compile((deployment,), revision)
+                    # Signature covers code and policy; the result fingerprint
+                    # also covers context visible to a per-match app about other
+                    # matches. Either changing must invalidate old publications.
                     generation = self._generations.setdefault(deployment.name, uuid4().hex)
                     bindings.extend(replace(b, generation=f"{generation}:{b.signature}:{sha256(repr(b.result).encode()).hexdigest()}") for b in partial.bindings)
                     applications.update(loaded)
                 except Exception as error:
                     self._plan_errors[deployment.name] = f"{type(error).__name__}: {error}"
+                    # Retain the last compiled plan for this deployment and
+                    # expose the failure instead of silently dropping its
+                    # bindings when a query or import temporarily fails.
                     for binding in self._dag.bindings:
                         if binding.application_name == deployment.name:
                             bindings.append(binding)
@@ -214,6 +256,10 @@ class Materializer:
             with self._store._own_conn() as conn:
                 prior_outputs = dict(self._execute(conn, "SELECT output_ref_uri, progress_key FROM materialization_lineage").fetchall())
                 prior_context = dict(self._execute(conn, "SELECT progress_key, context_hash FROM materialization_lineage").fetchall())
+            # A stable named output may now have different inputs; a per-match
+            # output may have unchanged inputs but different fleet context.
+            # Both can alter historical results. Compare with persisted lineage
+            # rather than the old in-memory plan so restart detects this too.
             repair = [b for b in dag.bindings if
                       any(p.ref_uri in prior_outputs and prior_outputs[p.ref_uri] != b.progress_key for p in b.outputs.values())
                       or (prior_context.get(b.progress_key) and prior_context[b.progress_key] != sha256(repr(b.result).encode()).hexdigest())]
@@ -332,6 +378,8 @@ class Materializer:
         dag, applications = self._plan_snapshot()
         ran = False
         blocked = set()
+        # Explicit repairs can be pending even when their input frontier is
+        # current. Readiness must account for durable work as well as revisions.
         pending_work = self._revisions.pending_keys()
         # A completed wave publishes before a dependent wave reads its next
         # revision, preserving DAG semantics across this scheduler tick.
@@ -350,6 +398,9 @@ class Materializer:
                 if current <= consumed and binding.progress_key not in pending_work:
                     self._pending_since.pop(binding.signature, None)
                     continue
+                # Global revisions are only a cheap readiness hint: they may
+                # belong to unrelated streams. next_batch performs the precise
+                # input check and can advance progress without running the app.
                 first = self._pending_since.setdefault(binding.signature, now)
                 # Delay from the first pending change, then enforce the rate cap.
                 min_interval = _duration(app.min_interval) if app.min_interval is not None else None
@@ -367,6 +418,10 @@ class Materializer:
             blocked.update(b.signature for b in ready if b.signature in self._scheduler.errors)
             _, progressed = self._revisions.progress_snapshot()
             for binding in ready:
+                # A frontier advance alone is not a successful calculation:
+                # skipping unrelated writes must not start the rate-limit timer.
+                # A committed chunk can also succeed without advancing its
+                # frontier, so use the scheduler's publication record here.
                 executed = successes[binding.signature] != self._scheduler.last_success.get(binding.signature)
                 if executed:
                     self._last_run[binding.signature] = now
@@ -375,6 +430,12 @@ class Materializer:
         return ran
 
     def dag(self) -> dict[str, Any]:
+        """Combine durable progress and process-local diagnostics for display.
+
+        These reads are observational, not one transactional scheduling snapshot.
+        A global revision gap may come from unrelated streams; "pending" does
+        not prove that this binding has input changes requiring a transform.
+        """
         dag, applications = self._plan_snapshot()
         return self._dag_status(dag, applications)
 

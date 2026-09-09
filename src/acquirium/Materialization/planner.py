@@ -1,4 +1,11 @@
-"""Compile graph-resolved app declarations into a validated DAG."""
+"""Resolve deployment declarations into concrete input/output bindings.
+
+Compilation loads verified app code, runs build_query against the graph,
+normalizes its matches, and assigns each output a stable identity. The result
+is an ApplicationGraph plus App instances keyed by binding signature. No
+lineage or timeseries output is published here, so deployment validation and
+dry runs can use the same compiler without activating the result.
+"""
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, fields
@@ -93,6 +100,8 @@ class _MatchRow:
 
 def _query_rows(query: Query) -> tuple[_MatchRow, ...]:
     if not isinstance(query, Query): raise TypeError("build_query() must return an Acquirium query")
+    # The query compiler's extN/unitN columns are an internal representation.
+    # Convert them once here so transforms see stable alias-based columns.
     result, indices, graph = query.execute(include_dependencies=True), {}, query.query_graph
     indices = {column: index for index, column in enumerate(result.get("columns", ()))}
     rows, seen = [], {}
@@ -164,7 +173,11 @@ def _validated_outputs(name: str, declared: Mapping[str, Any]) -> dict[str, Outp
 class Deployment:
     """The durable record of one deployed app: identity, outputs, scheduling.
 
-    Durations are stored as whole microseconds; ``lookback`` may be ``"all"``.
+    The wire format uses whole microseconds and ``"all"`` for unbounded
+    lookback; Python instances use timedeltas and None respectively. Keeping
+    conversion at this boundary lets scheduling use one duration representation.
+    Entrypoint and digest identify code to import, not serialized App instances.
+    Parameters are persisted so the planner can reconstruct those instances.
     """
     name: str
     entrypoint: str
@@ -242,7 +255,13 @@ class Deployment:
 
 
 class BindingPlanner:
-    """One deep operation: resolve applications against one pinned graph view."""
+    """Compile a plan with optimistic graph-version validation.
+
+    Query execution does not hold a graph snapshot across all deployments.
+    Checking the published version before and after compilation rejects a plan
+    assembled while that version changes. The caller can retry against a fresh
+    version instead of publishing bindings from inconsistent graph reads.
+    """
     def __init__(self, graph: object, *, query_resolver: Callable[..., Any] | None = None,
                  record_resolver: Callable[..., Any] | None = None) -> None:
         self.graph, self.query_resolver, self.record_resolver = graph, query_resolver, record_resolver
@@ -261,7 +280,9 @@ class BindingPlanner:
             app.backfill, app.batch_delay, app.min_interval = deployment.backfill, deployment.batch_delay, deployment.min_interval
             query = app.build_query(_QueryFacade(_GraphQueryClient(self.graph, self.query_resolver, self.record_resolver)))
             rows = _query_rows(query)
-            # Grouping selects invocation cardinality independently of naming.
+            # Choose which matches share a call before assigning output names.
+            # Inferring grouping from named outputs would silently change the
+            # calculation when an author only intended to rename its result.
             named = sorted(key for key, spec in deployment.outputs.items() if spec.stream_name is not None)
             fans_out = deployment.grouping == "per_match"
             # Every binding carries the whole query result for context; only
@@ -311,6 +332,9 @@ class BindingPlanner:
                                   graph_revision, deployment.parameters, row_columns, result,
                                   every=deployment.every,
                                   custom_window=app.output_window if type(app).output_window is not App.output_window else None)
+                # One instance serves all bindings of this deployment. Those
+                # bindings may run concurrently, so App instances must not keep
+                # mutable per-invocation state on self.
                 bindings.append(binding); applications[binding.signature] = app
         # Planning is optimistic: discard a plan from a mixed graph view.
         if int(self.graph.graph_status().get("published_version", 0)) != graph_revision:

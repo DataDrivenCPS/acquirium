@@ -2,13 +2,17 @@
 
 A check normally executes on the server, because that is where the data is.
 That also puts the running app out of reach: a ``breakpoint()`` opens on the
-server's stdin, and tracebacks land in the server log rather than the
-terminal that asked for the check.
+server's stdin, while transform errors are returned as per-binding messages
+instead of raising a traceback in the caller's terminal.
 
 This module compiles the same app and runs it here instead, pulling its
 inputs over the client API. The app executes under the caller's own
 interpreter, so debuggers, tracebacks, and profilers all work normally, and
 the server never has to import the app at all.
+
+Unlike RevisionStore's server-side check, separate HTTP reads do not share a
+single database snapshot. This path is useful for debugging calculations, not
+for establishing a consistent publication frontier while ingestion continues.
 """
 from __future__ import annotations
 
@@ -83,8 +87,9 @@ def _stream_set(client: Any, alias: str, descriptors: tuple[StreamDescriptor, ..
     })
     window = (TimeWindow(min(times), max(times)) if times
               else TimeWindow(_EPOCH, _EPOCH))
-    # Everything retained is in play, exactly as a backfilling first run sees
-    # it, so the read window and the changed rows are the same thing.
+    # Local checks fetch retained values without row revision metadata. Expose
+    # the full table as changes to exercise the calculation over that history;
+    # this does not reproduce an incremental invocation's changed-row subset.
     return StreamSet(alias, window, descriptors, table, table, converter=converter)
 
 
@@ -93,9 +98,11 @@ def check_app(client: Any, target: type, *, parameters: dict | None = None,
     """Compile and run ``target`` here, against ``client``'s server data.
 
     Returns the same document as a server-side check, so callers can render
-    either the same way. Two things differ, both deliberate: the app runs in
-    this process, and a failing ``transform`` raises here instead of being
-    reported per binding — the traceback is the point.
+    either the same way. The app executes in this process and transform errors
+    propagate to the caller for debugging. Inputs are fetched through separate
+    HTTP requests, so they do not have the shared snapshot guarantee of a
+    server-side check. Revision fields here are diagnostic placeholders derived
+    from the graph version; they must not be used as timeseries progress.
     """
     if limit is not None and limit < 0:
         raise ValueError("limit must not be negative")

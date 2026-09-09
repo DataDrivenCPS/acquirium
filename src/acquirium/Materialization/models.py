@@ -1,4 +1,14 @@
-"""Application declarations, resolved bindings, and dataframe helpers."""
+"""Application declarations, resolved bindings, and dataframe helpers.
+
+OutputSpec and App describe a calculation before its query is resolved. The
+planner turns these declarations into Bindings with concrete input references
+and OutputPorts. RevisionStore then supplies a Batch: loaded StreamSets plus
+an InputBatch describing the interval to replace. OutputBuilder validates the
+transform's assignments before they reach storage.
+
+Keep SQL and scheduling out of these types so the same authoring and validation
+rules apply to deployed apps, local checks, and standalone runtime users.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -75,6 +85,13 @@ def _empty_table() -> pa.Table:
 
 @dataclass(frozen=True)
 class StreamSet:
+    """Loaded data and descriptors for one query alias in one invocation.
+
+    The Arrow tables belong to the batch and remain usable after its database
+    read transaction closes. ``batches()`` only slices that loaded table; it
+    does not bound how much data was fetched. ``changes`` contains live changed
+    rows, while the complete table supplies context and reflects removals.
+    """
     alias: str
     window: TimeWindow
     streams: tuple[StreamDescriptor, ...]
@@ -183,6 +200,9 @@ class InputBatch:
     _row: Mapping[str, Any] | None = None
     _result: tuple[Mapping[str, Any], ...] = ()
     output_window: TimeWindow = field(kw_only=True)
+    # These fields identify one step of durable, partitioned work. Publication
+    # compares both ID and cursor: the input frontier alone stays unchanged
+    # between chunks and therefore cannot detect a repeated chunk's result.
     work_id: str | None = None
     work_cursor: str | None = None
     work_next: str | None = None
@@ -269,8 +289,8 @@ class OutputPort(NamedTuple):
 class _OutputAPI:
     """Declare a generated stream identity or an explicitly named identity.
 
-    App.grouping decides invocation cardinality. Each port has one owner;
-    a named output cannot be shared by multiple per_match bindings.
+    App.grouping chooses which query matches each call receives. Each output
+    stream has one owner; multiple per_match bindings cannot share a named one.
     """
     def stream(self, **kwargs: Any) -> OutputSpec:
         if "stream_name" in kwargs: raise TypeError("stream outputs derive their name; use output.named(...)")
@@ -281,7 +301,14 @@ output = _OutputAPI()
 
 
 class OutputBuilder:
-    """Single-assignment, named output collector for one invocation."""
+    """Validate assignments while preserving the author's replacement intent.
+
+    A missing port means leave its stored interval alone. An assigned empty
+    table means remove that interval's results. Do not prepopulate ports with
+    empty tables or drop empty assignments: either would change publication.
+    Window clipping belongs to publication (and check rendering), since this
+    collector only knows port schemas, not the invocation's output interval.
+    """
     def __init__(self, ports: Mapping[str, OutputPort]):
         self._ports, self._values = dict(ports), {}
     def __setitem__(self, name: str, value: Any) -> None:
@@ -343,6 +370,21 @@ def _canonical(value: object) -> str: return json.dumps(value, sort_keys=True, s
 
 @dataclass(frozen=True)
 class Binding:
+    """A resolved calculation, with separate identities for separate lifetimes.
+
+    ``signature`` includes code, parameters, input metadata, and window policy.
+    It identifies compiled work and diagnostics. ``progress_key`` includes only
+    the app and its input/output references, allowing code edits to preserve
+    the consumed frontier. Reprocessing old values is an explicit operation.
+
+    ``generation`` is supplied by Materializer and authorizes publication. It
+    also captures deployment activation and query context, so an old worker
+    cannot publish merely because its durable progress key still exists.
+    Graph revision is diagnostic; unrelated graph edits must not reset progress.
+
+    Treat the mappings inside a binding as immutable once it is in a plan:
+    workers retain references to a plan after the runtime has replaced it.
+    """
     application_name: str
     executable_digest: str
     inputs: Mapping[str, tuple[StreamDescriptor, ...]]
@@ -381,7 +423,14 @@ class Binding:
 
 
 class ApplicationGraph:
-    """Validated compiled binding DAG, deliberately separate from scheduling."""
+    """Resolve dependencies through output ownership, then validate the graph.
+
+    An edge exists when a binding reads another binding's output reference.
+    Explicit single ownership makes replacement unambiguous, and rejecting
+    cycles ensures the scheduler can visit producers before consumers. This
+    class describes ordering only; readiness, retries, and execution limits
+    belong to the runtime and scheduler.
+    """
     def __init__(self, bindings: Iterable[Binding]):
         self.bindings = tuple(bindings)
         owners: dict[str, str] = {}
@@ -449,6 +498,9 @@ _GROUPINGS = ("per_match", "all_matches")
 
 
 class _AppMeta(type):
+    # Validate after construction so custom __init__ methods cannot bypass the
+    # check by omitting super().__init__(), and constructor-supplied values are
+    # checked as well as class attributes.
     def __call__(cls, *args: Any, **kwargs: Any) -> "App":
         app = super().__call__(*args, **kwargs)
         if app.grouping not in _GROUPINGS:
@@ -485,7 +537,13 @@ class App(metaclass=_AppMeta):
     def build_query(self, plant: Any) -> Any: raise NotImplementedError
     def transform(self, inputs: Mapping[str, StreamSet], output: OutputBuilder, context: InputBatch) -> None: raise NotImplementedError
     def output_window(self, changed: TimeWindow) -> TimeWindow | None:
-        """Override for custom timestamp mappings; None uses the declared windows."""
+        """Declare a custom mapping from changed inputs to affected outputs.
+
+        The planner recognizes this base method and uses lookback/lookahead
+        and bucket declarations instead of calling it. An override must return
+        a TimeWindow for every call; returning None from an override is invalid.
+        Input context is still added around that output interval by RevisionStore.
+        """
         return None
 
 
@@ -499,6 +557,9 @@ def align(inputs: Mapping[str, StreamSet], every: timedelta | str | None = None,
     is then one join instead of a hand-rolled resample per stream.
     """
     import polars as pl
+    # Resampling needs every input bucket in full. Choosing a different size
+    # here after the runtime has loaded its windows could silently aggregate
+    # partial buckets and make results depend on ingestion batch boundaries.
     declared = {value.every for value in inputs.values() if value.every is not None}
     if not declared and any(value._scheduled for value in inputs.values()):
         raise ValueError("declare App.every to resample scheduled inputs with complete buckets")
@@ -526,6 +587,8 @@ def align(inputs: Mapping[str, StreamSet], every: timedelta | str | None = None,
     if not columns:
         return pl.DataFrame({"time": pl.Series([], dtype=pl.Datetime("us", "UTC"))})
     result = columns[0]
+    # Keep timestamps present in any stream. An inner join would discard data
+    # when sensors report at different times; callers decide how to handle nulls.
     for column in columns[1:]:
         result = result.join(column, on="time", how="full", coalesce=True)
     return result.sort("time")

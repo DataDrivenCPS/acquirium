@@ -1,4 +1,10 @@
-"""Import and verify durable application entrypoints."""
+"""Import application entrypoints for planning and verify their source identity.
+
+Despite the module name, this does not launch worker processes or provide a
+sandbox. App code runs in the importing process. The durable deployment stores
+an import path and digest, so loading must resolve the intended module and
+check its source instead of deserializing a previously constructed instance.
+"""
 from __future__ import annotations
 from hashlib import sha256
 from pathlib import Path
@@ -55,12 +61,15 @@ def _load_module(module_name: str, search_path: str | None):
 
 def load_entrypoint(entrypoint: str, expected_digest: str | None = None,
                     search_path: str | None = None):
-    """Load trusted code and prove it matches its immutable identity.
+    """Load trusted code and check its source against the deployment digest.
 
     ``search_path`` is a directory to look in first, used by dry-run checks so
     an app file that is not otherwise importable by the server can still be
     run. Deployments never pass it: a deployed app must be importable on its
     own, since it is reloaded long after the request that created it.
+
+    Import executes module-level code before the digest check. The check detects
+    source-version mismatches; it is not an authorization or isolation boundary.
     """
     try:
         module_name, qualname = entrypoint.split(":", 1)
