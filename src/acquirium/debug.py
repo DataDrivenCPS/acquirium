@@ -67,7 +67,12 @@ def console(banner: str | None = None, *, depth: int = 1) -> None:
         f"in scope: {names}\n"
         f"Ctrl-D (or exit()) resumes."
     )
-    code.InteractiveConsole(_namespace(frame)).interact(
-        banner=default_banner if banner is None else banner,
-        exitmsg="resuming.",
-    )
+    try:
+        code.InteractiveConsole(_namespace(frame)).interact(
+            banner=default_banner if banner is None else banner,
+            exitmsg="resuming.",
+        )
+    except SystemExit:
+        # ``exit()`` raises SystemExit in an embedded console. Treat it like
+        # Ctrl-D so the documented debugging workflow resumes the app.
+        return

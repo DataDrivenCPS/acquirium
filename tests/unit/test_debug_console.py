@@ -65,6 +65,20 @@ def test_a_custom_banner_replaces_the_default(interactive):
     assert interactive.seen["banner"] == "look here"
 
 
+def test_exit_from_the_embedded_console_resumes(monkeypatch):
+    class _ExitingConsole:
+        def __init__(self, namespace):
+            pass
+
+        def interact(self, **kwargs):
+            raise SystemExit
+
+    monkeypatch.setattr(debug.code, "InteractiveConsole", _ExitingConsole)
+    monkeypatch.setattr(debug.sys.stdin, "isatty", lambda: True, raising=False)
+
+    aq.console()
+
+
 def test_depth_selects_an_outer_frame_for_wrappers(interactive):
     def helper():
         # A wrapper wants its own caller's scope, not its own.
