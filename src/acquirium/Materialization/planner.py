@@ -95,7 +95,7 @@ def _query_rows(query: Query) -> tuple[_MatchRow, ...]:
     if not isinstance(query, Query): raise TypeError("build_query() must return an Acquirium query")
     result, indices, graph = query.execute(include_dependencies=True), {}, query.query_graph
     indices = {column: index for index, column in enumerate(result.get("columns", ()))}
-    rows, seen = [], set()
+    rows, seen = [], {}
     for raw in result.get("rows", ()):
         cell = lambda name: raw[indices[name]] if name in indices and indices[name] < len(raw) else None
         streams: dict[str, list[dict[str, str | None]]] = {}
@@ -127,8 +127,10 @@ def _query_rows(query: Query) -> tuple[_MatchRow, ...]:
         # SPARQL joins can repeat a stream through unrelated graph triples.
         # Bind each distinct alias-to-stream set once, deterministically.
         key = _json({alias: sorted(item["ref_uri"] for item in values) for alias,values in streams.items()})
+        if key in seen and seen[key] != columns:
+            raise ValueError("query matches the same streams with different entity bindings; disambiguate the query")
         if streams and key not in seen:
-            seen.add(key)
+            seen[key] = columns
             rows.append(_MatchRow({alias: tuple(values) for alias, values in streams.items()}, columns))
     return tuple(rows)
 
@@ -180,6 +182,14 @@ class Deployment:
     max_delay: timedelta | None = None
     min_interval: timedelta | None = None
     parameters: Mapping[str, Any] = field(default_factory=dict)
+    every: timedelta | None = None
+    grouping: str = "per_match"
+
+    def __post_init__(self):
+        if self.grouping not in ("per_match", "all_matches"):
+            raise ValueError("grouping must be per_match or all_matches")
+        if self.every is not None and self.every <= timedelta():
+            raise ValueError("every must be positive")
 
     @classmethod
     def from_class(cls, target: type[App], *, parameters: Mapping[str, Any] | None = None) -> "Deployment":
@@ -197,13 +207,13 @@ class Deployment:
         params = dict(parameters or {})
         app = target(**params)
         name = target.name or target.__name__
-        outputs = _validated_outputs(name, target.outputs)
+        outputs = _validated_outputs(name, app.outputs)
         return cls(name, f"{target.__module__}:{target.__qualname__}", source_digest(target),
                    outputs, parse_lookback(app.lookback), _duration(app.lookahead), bool(app.backfill),
                    _duration(app.coalesce),
                    _duration(app.max_delay) if app.max_delay is not None else None,
                    _duration(app.min_interval) if app.min_interval is not None else None,
-                   params)
+                   params, _duration(app.every) if app.every is not None else None, app.grouping)
 
     def to_json(self) -> str:
         micros = lambda value: None if value is None else int(value.total_seconds() * 1_000_000)
@@ -212,7 +222,8 @@ class Deployment:
             "lookback": "all" if self.lookback is None else micros(self.lookback),
             "lookahead": micros(self.lookahead), "backfill": self.backfill,
             "coalesce": micros(self.coalesce), "max_delay": micros(self.max_delay),
-            "min_interval": micros(self.min_interval), "parameters": dict(self.parameters)})
+            "min_interval": micros(self.min_interval), "parameters": dict(self.parameters),
+            "every": micros(self.every), "grouping": self.grouping})
 
     @classmethod
     def from_json(cls, text: str) -> "Deployment":
@@ -223,7 +234,9 @@ class Deployment:
             {key: OutputSpec(**value) for key, value in data["outputs"].items()},
             lookback, duration(data.get("lookahead")) or timedelta(), bool(data.get("backfill")),
             duration(data.get("coalesce")) or timedelta(), duration(data.get("max_delay")),
-            duration(data.get("min_interval")), dict(data.get("parameters") or {}))
+            duration(data.get("min_interval")), dict(data.get("parameters") or {}),
+            duration(data.get("every")), data.get("grouping") or
+            ("all_matches" if all(v.get("stream_name") for v in data["outputs"].values()) else "per_match"))
 
 
 class BindingPlanner:
@@ -250,7 +263,7 @@ class BindingPlanner:
             # aggregate: one binding over the combined result (which keeps a
             # lone row's entity bindings, since it *is* that row).
             named = sorted(key for key, spec in deployment.outputs.items() if spec.stream_name is not None)
-            fans_out = any(spec.stream_name is None for spec in deployment.outputs.values())
+            fans_out = deployment.grouping == "per_match"
             # Every binding carries the whole query result for context; only
             # the row it computes differs.
             result = tuple(row.columns for row in rows)
@@ -290,7 +303,8 @@ class BindingPlanner:
                          for key, spec in deployment.outputs.items()}
                 binding = Binding(deployment.name, deployment.executable_digest, inputs, ports,
                                   deployment.lookback, deployment.lookahead,
-                                  graph_revision, deployment.parameters, row_columns, result)
+                                  graph_revision, deployment.parameters, row_columns, result,
+                                  every=deployment.every)
                 bindings.append(binding); applications[binding.signature] = app
         # Planning is optimistic: discard a plan from a mixed graph view.
         if int(self.graph.graph_status().get("published_version", 0)) != graph_revision:

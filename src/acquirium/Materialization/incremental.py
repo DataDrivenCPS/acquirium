@@ -12,9 +12,9 @@ from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
 import json
-from time import time
 from typing import Any, Iterable, Iterator, Mapping, NamedTuple, Protocol
 from threading import Lock
+from uuid import uuid4
 
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -27,6 +27,8 @@ def _duration(value: timedelta | str) -> timedelta:
     # Policies are persisted as microseconds, so parse every public spelling
     # here and keep the rest of the scheduler on one comparable type.
     if isinstance(value, timedelta):
+        if value < timedelta():
+            raise ValueError("durations must not be negative")
         return value
     suffix = value[-2:] if value.endswith("ms") else value[-1:]
     units = {"ms": 1_000, "s": 1_000_000, "m": 60_000_000, "h": 3_600_000_000,
@@ -185,6 +187,10 @@ class InputBatch:
     read_window: TimeWindow
     _row: Mapping[str, Any] | None = None
     _result: tuple[Mapping[str, Any], ...] = ()
+    output_window: TimeWindow | None = None
+    work_id: str | None = None
+    work_cursor: str | None = None
+    work_next: str | None = None
 
     @property
     def result(self) -> Any:
@@ -356,6 +362,8 @@ class Binding:
     parameters: Mapping[str, Any] = field(default_factory=dict)
     row: Mapping[str, Any] | None = None
     result: tuple[Mapping[str, Any], ...] = ()
+    generation: str = ""
+    every: timedelta | None = None
     signature: str = field(init=False)
     progress_key: str = field(init=False)
     def __post_init__(self):
@@ -364,7 +372,8 @@ class Binding:
                    "inputs": {k: [x.__dict__ for x in sorted(v, key=lambda x: x.ref_uri)] for k,v in sorted(self.inputs.items())},
                    "outputs": {k: (v.ref_uri, v.spec.__dict__) for k,v in sorted(self.outputs.items())},
                    "lookback": "all" if self.lookback is None else self.lookback.total_seconds(),
-                   "lookahead": self.lookahead.total_seconds()}
+                   "lookahead": self.lookahead.total_seconds(),
+                   "every": self.every.total_seconds() if self.every else None}
         # Keep unconfigured bindings byte-for-byte compatible with their
         # previous identity, while making configured deployments distinct.
         if self.parameters:
@@ -465,6 +474,8 @@ class App:
     - ``min_interval`` — at most one run per interval.
     """
     name: str | None = None
+    every: timedelta | str | None = None
+    grouping: str = "per_match"
     lookback: timedelta | str = "0s"
     lookahead: timedelta | str = "0s"
     backfill: bool = False
@@ -481,6 +492,13 @@ class RevisionStore:
     def __init__(self, store: Any, unit_converter: Any = None):
         self.store = store
         self.unit_converter = unit_converter
+        # None is the standalone store contract; a runtime installs its active plan.
+        self.active_bindings: dict[str, str] | None = None
+        with store._lock, store._write_conn() as conn:
+            self._execute(conn, """CREATE TABLE IF NOT EXISTS materialization_work (
+                progress_key VARCHAR PRIMARY KEY, work_id VARCHAR NOT NULL,
+                cursor_ts VARCHAR NOT NULL, end_ts VARCHAR NOT NULL,
+                from_revision BIGINT NOT NULL, to_revision BIGINT NOT NULL)""")
 
     @property
     def _postgres(self) -> bool:
@@ -506,7 +524,17 @@ class RevisionStore:
         return conn.execute(self._sql(query), list(params))
     def current_revision(self) -> int:
         with self.store._own_conn() as conn: return int(self._execute(conn, "SELECT current_revision FROM system_state").fetchone()[0])
+    def progress_snapshot(self) -> tuple[int, dict[str, int]]:
+        with self.store._own_conn() as conn:
+            current = int(self._execute(conn, "SELECT current_revision FROM system_state").fetchone()[0])
+            progress = dict(self._execute(conn, "SELECT progress_key, consumed_revision FROM binding_progress").fetchall())
+        return current, progress
+
     def initialise(self, binding: Binding, backfill: bool = False) -> int:
+        with self.store._own_conn() as conn:
+            row = self._execute(conn, "SELECT consumed_revision FROM binding_progress WHERE progress_key=?", [binding.progress_key]).fetchone()
+            if row is not None:
+                return int(row[0])
         with self.store._lock, self.store._write_conn() as conn:
             row = self._execute(conn, "SELECT consumed_revision FROM binding_progress WHERE progress_key=?", [binding.progress_key]).fetchone()
             if row is not None: return int(row[0])
@@ -516,6 +544,39 @@ class RevisionStore:
             consumed = 0 if backfill else current
             self._execute(conn, "INSERT INTO binding_progress VALUES (?, ?)", [binding.progress_key, consumed])
             return consumed
+    def pending_keys(self) -> set[str]:
+        with self.store._own_conn() as conn:
+            return {row[0] for row in self._execute(conn, "SELECT progress_key FROM materialization_work").fetchall()}
+
+    def request_reprocess(self, bindings: Iterable[Binding], window: TimeWindow) -> None:
+        with self.store._lock, self.store._write_conn() as conn:
+            for binding in bindings:
+                owned = window
+                if binding.every:
+                    epoch = datetime(1970, 1, 1, tzinfo=UTC)
+                    floor = lambda t: epoch + ((t - epoch) // binding.every) * binding.every
+                    owned = TimeWindow(floor(window.start), floor(window.end) + binding.every - timedelta(microseconds=1))
+                progress = self._execute(conn, "SELECT consumed_revision FROM binding_progress WHERE progress_key=?", [binding.progress_key]).fetchone()
+                if progress is None:
+                    raise ValueError("binding must be initialized before reprocessing")
+                if self._execute(conn, "SELECT 1 FROM materialization_work WHERE progress_key=?", [binding.progress_key]).fetchone():
+                    raise ValueError("binding already has pending work; wait for it to finish")
+                self._execute(conn, "INSERT INTO materialization_work VALUES (?, ?, ?, ?, ?, ?)",
+                              [binding.progress_key, uuid4().hex, owned.start.isoformat(), owned.end.isoformat(), progress[0], progress[0]])
+
+    def _work_batch(self, conn: Any, binding: Binding, work) -> Batch:
+        from dataclasses import replace
+        work_id, cursor, end, previous, target = work
+        start, finish = datetime.fromisoformat(cursor), datetime.fromisoformat(end)
+        stop = min(finish, start + timedelta(days=1) - timedelta(microseconds=1))
+        if binding.every:
+            epoch = datetime(1970, 1, 1, tzinfo=UTC)
+            stop = min(finish, epoch + (((stop - epoch) // binding.every) + 1) * binding.every - timedelta(microseconds=1))
+        window = TimeWindow(start, stop)
+        batch = self._window_batch(conn, binding, previous, target, window, output_window=window)
+        following = (stop + timedelta(microseconds=1)).isoformat() if stop < finish else None
+        return replace(batch, context=replace(batch.context, work_id=work_id, work_cursor=cursor, work_next=following))
+
     def next_batch(self, binding: Binding) -> Batch | None:
         # One read transaction is the snapshot boundary described by proposal.
         conn = self.store._connect()
@@ -523,13 +584,14 @@ class RevisionStore:
             # DuckDB exposes ``begin()`` while psycopg starts an explicit
             # snapshot transaction through SQL.
             if self._postgres:
-                conn.execute("BEGIN")
+                conn.execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
             else:
                 conn.begin()
             row = self._execute(conn, "SELECT consumed_revision FROM binding_progress WHERE progress_key=?", [binding.progress_key]).fetchone()
             if row is None: raise KeyError("binding was not initialised")
             previous = int(row[0]); target = int(self._execute(conn, "SELECT current_revision FROM system_state").fetchone()[0])
-            batch = self._build_batch(conn, binding, previous, target)
+            work = self._execute(conn, "SELECT work_id, cursor_ts, end_ts, from_revision, to_revision FROM materialization_work WHERE progress_key=?", [binding.progress_key]).fetchone()
+            batch = self._work_batch(conn, binding, work) if work else self._build_batch(conn, binding, previous, target, partition=True)
             conn.commit()
             if batch is None and previous != target and any(binding.inputs.values()):
                 # Revisions for unrelated streams can be safely skipped.  The
@@ -550,7 +612,7 @@ class RevisionStore:
         """
         conn = self.store._connect()
         try:
-            if self._postgres: conn.execute("BEGIN")
+            if self._postgres: conn.execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
             else: conn.begin()
             target = int(self._execute(conn, "SELECT current_revision FROM system_state").fetchone()[0])
             batch = self._build_batch(conn, binding, 0, target)
@@ -560,7 +622,7 @@ class RevisionStore:
             conn.rollback(); raise
         finally: conn.close()
 
-    def _build_batch(self, conn: Any, binding: Binding, previous: int, target: int) -> Batch | None:
+    def _build_batch(self, conn: Any, binding: Binding, previous: int, target: int, *, partition: bool = False) -> Batch | None:
         """Read one coherent batch for the revisions in ``(previous, target]``."""
         refs = [d.ref_uri for values in binding.inputs.values() for d in values]
         if not refs or target == previous: return None
@@ -568,13 +630,45 @@ class RevisionStore:
         changed = self._execute(conn, f"SELECT min(t.ts), max(t.ts) FROM {self._timeseries_source} WHERE {self._ref} IN ({marks}) AND t.last_revision>? AND t.last_revision<=?", [*refs, previous, target]).fetchone()
         if changed[0] is None: return None
         changed_window = TimeWindow(changed[0].replace(tzinfo=UTC) if changed[0].tzinfo is None else changed[0], changed[1].replace(tzinfo=UTC) if changed[1].tzinfo is None else changed[1])
+        if partition and binding.lookback is not None and changed_window.end - changed_window.start > timedelta(days=1):
+            window = self._output_window(binding, changed_window)
+            work = (uuid4().hex, window.start.isoformat(), window.end.isoformat(), previous, target)
+            with self.store._lock, self.store._write_conn() as writer:
+                self._execute(writer, "INSERT INTO materialization_work VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (progress_key) DO NOTHING", [binding.progress_key, *work])
+            return self._work_batch(conn, binding, work)
+        return self._window_batch(conn, binding, previous, target, changed_window)
+
+    def _window_batch(self, conn: Any, binding: Binding, previous: int, target: int,
+                      changed_window: TimeWindow, *, output_window: TimeWindow | None = None) -> Batch:
+        # lookback describes a trailing dependency; a correction also affects
+        # following outputs. lookahead is the corresponding leading dependency.
         if binding.lookback is None:
-            extent = self._execute(conn, f"SELECT min(t.ts), max(t.ts) FROM {self._timeseries_source} WHERE {self._ref} IN ({marks}) AND NOT t.deleted", refs).fetchone()
-            read = TimeWindow(extent[0].replace(tzinfo=UTC) if extent[0].tzinfo is None else extent[0], extent[1].replace(tzinfo=UTC) if extent[1].tzinfo is None else extent[1])
-        else: read = TimeWindow(changed_window.start-binding.lookback, changed_window.end+binding.lookahead)
-        inputs = {alias: self._stream_set(conn, alias, descriptors, read, previous, target) for alias, descriptors in binding.inputs.items()}
+            refs = sorted({d.ref_uri for values in binding.inputs.values() for d in values}
+                          | {p.ref_uri for p in binding.outputs.values()})
+            marks = ",".join("?" for _ in refs)
+            extent = self._execute(conn, f"SELECT min(t.ts), max(t.ts) FROM {self._timeseries_source} WHERE {self._ref} IN ({marks})", refs).fetchone()
+            window = TimeWindow(extent[0], extent[1]) if extent[0] is not None else changed_window
+            read = window
+        else:
+            window = output_window or self._output_window(binding, changed_window)
+            read = TimeWindow(window.start - binding.lookback, window.end + binding.lookahead)
+        if output_window is not None and binding.lookback is None:
+            window = output_window
+        inputs = {alias: self._stream_set(conn, alias, descriptors, read, previous, target)
+                  for alias, descriptors in binding.inputs.items()}
         return Batch(inputs, InputBatch(binding.signature, binding.graph_revision, previous,
-                                       target, changed_window, read, binding.row, binding.result))
+                                        target, changed_window, read, binding.row, binding.result, window))
+
+    @staticmethod
+    def _output_window(binding: Binding, changed: TimeWindow) -> TimeWindow:
+        window = TimeWindow(changed.start - binding.lookahead,
+                            changed.end + (binding.lookback or timedelta()))
+        if binding.every is not None:
+            epoch = datetime(1970, 1, 1, tzinfo=UTC)
+            floor = lambda t: epoch + ((t - epoch) // binding.every) * binding.every
+            window = TimeWindow(floor(window.start), floor(window.end) + binding.every - timedelta(microseconds=1))
+        return window
+
     def _stream_set(self, conn: Any, alias: str, descriptors: tuple[StreamDescriptor,...], window: TimeWindow, previous: int, target: int) -> StreamSet:
         refs = [x.ref_uri for x in descriptors]
         if not refs: return StreamSet(alias, window, descriptors, converter=self.unit_converter)
@@ -587,7 +681,7 @@ class RevisionStore:
         table = pa.table({"ref_uri": pa.array([x[0] for x in rows], pa.string()), "time": pa.array([(x[1].replace(tzinfo=UTC) if x[1].tzinfo is None else x[1].astimezone(UTC)) for x in rows], pa.timestamp("us",tz="UTC")), "value": pa.array([x[2] if numeric else (x[3] if x[3] is not None else str(x[2])) for x in rows], schema)})
         # ``table`` is the complete read window; ``changes`` is only the rows
         # advanced by this batch. Windowed transformations often need both.
-        changed = table.filter(pa.array([previous < row[4] <= target for row in rows]))
+        changed = table.filter(pa.array([previous < row[4] <= target for row in rows], type=pa.bool_()))
         return StreamSet(alias, window, descriptors, table, changed, converter=self.unit_converter)
     def commit(self, binding: Binding, batch: Batch, results: Mapping[str, pa.Table]) -> bool:
         return self.commit_wave(((binding, batch, results),)).get(binding.signature, False)
@@ -601,32 +695,52 @@ class RevisionStore:
             accepted = []
             for binding, batch, results in completed:
                 row = self._execute(conn, "SELECT consumed_revision FROM binding_progress WHERE progress_key=?", [binding.progress_key]).fetchone()
-                if row is not None and int(row[0]) == batch.context.from_revision:
+                active = self.active_bindings
+                valid = active is None or active.get(binding.progress_key) == binding.generation
+                if batch.context.work_id:
+                    work = self._execute(conn, "SELECT work_id, cursor_ts FROM materialization_work WHERE progress_key=?", [binding.progress_key]).fetchone()
+                    valid = valid and work == (batch.context.work_id, batch.context.work_cursor)
+                if valid and row is not None and int(row[0]) == batch.context.from_revision:
                     accepted.append((binding, batch, results))
-            # Commit the full wave atomically. A dependent layer can then see
-            # either all of its predecessors' outputs or none of them.
-            nonempty = [(binding, name, table) for binding, _, results in accepted
-                        for name, table in results.items() if table.num_rows]
-            if nonempty:
-                revision = self.store._next_revision(conn)
-                records = []
-                for binding, name, table in nonempty:
+            # Assigned ports replace their owned interval. Tombstones remain
+            # discoverable by downstream revision scans, even for empty results.
+            import polars as pl
+            revision = None
+            for binding, batch, results in accepted:
+                window = batch.context.output_window or batch.context.changed_window
+                for name, table in results.items():
                     port = binding.outputs[name]
-                    ref, kind = port.ref_uri, port.spec.value_kind
-                    # Framework-owned reference metadata is registered in the
-                    # same transaction as the first derived values.  User code
-                    # never chooses this identity.
-                    self._execute(conn, f"""INSERT INTO streams (ref_uri, point_uri, source_id, ref_name, value_kind)
+                    mask = pc.and_(pc.greater_equal(table["time"], pa.scalar(window.start)),
+                                   pc.less_equal(table["time"], pa.scalar(window.end)))
+                    table = table.filter(mask)
+                    ref_filter = "ref_uri=?" if self._postgres else "ref_id IN (SELECT ref_id FROM ref_ids WHERE ref_uri=?)"
+                    existing = self._execute(conn, f"SELECT 1 FROM timeseries WHERE {ref_filter} AND ts>=? AND ts<=? AND NOT deleted LIMIT 1",
+                                             [port.ref_uri, self._time(window.start), self._time(window.end)]).fetchone()
+                    if not table.num_rows and existing is None:
+                        continue
+                    if revision is None:
+                        revision = self.store._next_revision(conn)
+                    self._execute(conn, f"UPDATE timeseries SET deleted=TRUE, last_revision=? WHERE {ref_filter} AND ts>=? AND ts<=? AND NOT deleted",
+                                  [revision, port.ref_uri, self._time(window.start), self._time(window.end)])
+                    self._execute(conn, """INSERT INTO streams (ref_uri, point_uri, source_id, ref_name, value_kind)
                         VALUES (?, ?, ?, ?, ?) ON CONFLICT (ref_uri) DO NOTHING""",
-                        [ref, port.point_uri, f"derived:{binding.application_name}", port.ref_name, kind])
-                    for time, value in zip(table["time"].to_pylist(), table["value"].to_pylist()):
-                        records.append((ref, self._time(time), float(value) if kind == "numeric" else None, str(value) if kind == "text" else None, revision))
-                if records:
-                    timestamp_type = pa.timestamp("us", tz="UTC") if self._postgres else pa.timestamp("us")
-                    incoming = pa.table({"ref_uri":[x[0] for x in records], "ts":pa.array([x[1] for x in records], timestamp_type), "numeric_value":[x[2] for x in records], "text_value":[x[3] for x in records]})
-                    import polars as pl
-                    self.store._insert_frame(conn, pl.from_arrow(incoming), revision)
+                        [port.ref_uri, port.point_uri, f"derived:{binding.application_name}", port.ref_name, port.spec.value_kind])
+                    if table.num_rows:
+                        frame = pl.from_arrow(table).rename({"time": "ts"})
+                        if not self._postgres:
+                            frame = frame.with_columns(pl.col("ts").dt.replace_time_zone(None))
+                        numeric = port.spec.value_kind == "numeric"
+                        frame = frame.select(
+                            pl.lit(port.ref_uri).alias("ref_uri"), "ts",
+                            (pl.col("value") if numeric else pl.lit(None, dtype=pl.Float64)).alias("numeric_value"),
+                            (pl.lit(None, dtype=pl.String) if numeric else pl.col("value")).alias("text_value"))
+                        self.store._insert_frame(conn, frame, revision)
             for binding, batch, _ in accepted:
+                if batch.context.work_id:
+                    if batch.context.work_next:
+                        self._execute(conn, "UPDATE materialization_work SET cursor_ts=? WHERE progress_key=?", [batch.context.work_next, binding.progress_key])
+                        continue
+                    self._execute(conn, "DELETE FROM materialization_work WHERE progress_key=?", [binding.progress_key])
                 self._execute(conn, "UPDATE binding_progress SET consumed_revision=? WHERE progress_key=?", [batch.context.to_revision, binding.progress_key])
             return {binding.signature: True for binding, _, _ in accepted}
 
@@ -645,165 +759,67 @@ class InProcessExecutor:
         return output.values
 
 
-@dataclass(frozen=True)
-class _TaskResult:
-    outputs: Mapping[str, pa.Table]
-    started_at: float
-    finished_at: float
-
-
-def _ray_transform(application: App, batch: Batch,
-                   ports: Mapping[str, OutputPort]) -> _TaskResult:
-    started_at = time()
-    outputs = InProcessExecutor().execute(application, batch, ports)
-    return _TaskResult(outputs, started_at, time())
-
-
-class RayExecutor:
-    """Disposable, single-node Ray task substrate for sealed Arrow batches."""
-    def __init__(self, *, num_cpus: int | None = None) -> None:
-        import ray
-        self._ray = ray
-        self._owns_cluster = not ray.is_initialized()
-        if self._owns_cluster:
-            options: dict[str, Any] = {"ignore_reinit_error": True, "include_dashboard": False}
-            if num_cpus is not None:
-                if num_cpus < 1:
-                    raise ValueError("Ray worker capacity must be positive")
-                options["num_cpus"] = num_cpus
-            ray.init(**options)
-        self._task = ray.remote(_ray_transform)
-
-    @property
-    def worker_capacity(self) -> float:
-        """CPU task capacity advertised by the active local Ray cluster."""
-        return float(self._ray.cluster_resources().get("CPU", 0))
+class Scheduler:
+    """A persistent bounded executor, with failures recorded per binding."""
+    def __init__(self, store: RevisionStore, executor: Executor | None = None, *, max_workers: int = 2):
+        if max_workers < 1:
+            raise ValueError("max_workers must be positive")
+        self.store, self.executor = store, executor or InProcessExecutor()
+        self.capacity = max_workers
+        self._pool = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="acquirium-materialize")
+        self.errors: dict[str, str] = {}
+        self._run_lock = Lock()
 
     def close(self) -> None:
-        """Stop the local cluster only when this executor started it."""
-        if self._owns_cluster and self._ray.is_initialized():
-            self._ray.shutdown()
+        self._pool.shutdown(wait=True)
 
-    def submit(self, application: App, batch: Batch,
-               ports: Mapping[str, OutputPort]) -> Any:
-        """Submit work without waiting, returning Ray's dependency token."""
-        # Arrow-bearing batches are put once in Ray's object store; retries and
-        # object references are intentionally not durable coordination state.
-        sealed = self._ray.put(batch)
-        return self._task.remote(application, sealed, ports)
-
-    def resolve(self, ticket: Any) -> _TaskResult:
-        return self._ray.get(ticket)
-
-    def execute(self, application: App, batch: Batch,
-                ports: Mapping[str, OutputPort]) -> Mapping[str, pa.Table]:
-        return self.resolve(self.submit(application, batch, ports)).outputs
-
-
-@dataclass
-class _Invocation:
-    """A claimed durable batch held until its result is committed or discarded."""
-    binding: Binding
-    batch: Batch
-    lock: Any
-
-
-class Scheduler:
-    """Coordinates durable batches; independent graph layers may run in parallel."""
-    def __init__(self, store: RevisionStore, executor: Executor | None = None):
-        self.store, self.executor = store, executor or RayExecutor()
-        self._locks: dict[str, Lock] = {}
-        self._locks_guard = Lock()
     def run_once(self, binding: Binding, application: App) -> bool:
-        invocation = self._prepare(binding, application)
-        if invocation is None:
+        self.store.initialise(binding, application.backfill)
+        batch = self.store.next_batch(binding)
+        if batch is None:
             return False
-        try:
-            return self._complete(invocation, self.executor.execute(application, invocation.batch, binding.outputs))
-        finally:
-            invocation.lock.release()
-
-    def _prepare(self, binding: Binding, application: App) -> _Invocation | None:
-        with self._locks_guard:
-            lock = self._locks.setdefault(binding.progress_key, Lock())
-        # This lock only avoids duplicate local work; the durable frontier
-        # comparison remains the correctness guard after a restart.
-        if not lock.acquire(blocking=False): return None
-        try:
-            self.store.initialise(binding, application.backfill)
-            batch = self.store.next_batch(binding)
-            if batch is None:
-                lock.release()
-                return None
-            return _Invocation(binding, batch, lock)
-        except BaseException:
-            lock.release()
-            raise
-
-    def _complete(self, invocation: _Invocation, results: Mapping[str, pa.Table]) -> bool:
-        return self.store.commit(invocation.binding, invocation.batch, results)
+        results = self.executor.execute(application, batch, binding.outputs)
+        return self.store.commit(binding, batch, results)
 
     def run_layer(self, bindings: Iterable[Binding], applications: Mapping[str, App], *, max_workers: int | None = None) -> bool:
-        """Run one topological wave and wait for every durable commit.
-
-        The executor work overlaps (Ray tasks in production), while each
-        commit remains protected by :class:`RevisionStore`. Callers advance to
-        a dependent wave only after this method returns.
-        """
-        wave = tuple(bindings)
-        if not wave:
-            return False
-        if max_workers is not None and max_workers < 1:
+        # A chunk bounds both loaded batches and pending futures. All successes
+        # in it publish together before dependent work can be scheduled.
+        capacity = self.capacity if max_workers is None else min(self.capacity, max_workers)
+        if capacity < 1:
             raise ValueError("max_workers must be positive")
-        submit, resolve = getattr(self.executor, "submit", None), getattr(self.executor, "resolve", None)
-        if callable(submit) and callable(resolve):
-            return self._run_async_layer(wave, applications, submit, resolve)
-        workers = min(len(wave), max_workers or len(wave))
-        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="acquirium-materialize") as pool:
-            futures = [pool.submit(self.run_once, binding, applications[binding.signature]) for binding in wave]
-            results = [future.result() for future in futures]
-            return any(results)
-
-    def _run_async_layer(self, wave: tuple[Binding, ...], applications: Mapping[str, App], submit: Any, resolve: Any) -> bool:
-        """Submit a whole dependency wave before waiting on any Ray result."""
-        pending: list[tuple[_Invocation, Any]] = []
-        try:
-            for binding in wave:
-                application = applications[binding.signature]
-                invocation = self._prepare(binding, application)
-                if invocation is not None:
+        wave, ran = tuple(bindings), False
+        with self._run_lock:
+            for offset in range(0, len(wave), capacity):
+                pending = []
+                for binding in wave[offset:offset + capacity]:
+                    self.errors.pop(binding.signature, None)
                     try:
-                        pending.append((invocation, submit(application, invocation.batch, binding.outputs)))
-                    except BaseException:
-                        invocation.lock.release()
-                        raise
-            completed, failure = [], None
-            for invocation, ticket in pending:
-                try:
-                    result = resolve(ticket)
-                    outputs = result.outputs if isinstance(result, _TaskResult) else result
-                    completed.append((invocation.binding, invocation.batch, outputs))
-                except BaseException as error:
-                    # Resolve every already-submitted task before reporting the
-                    # first failure, so no work or binding lock is abandoned.
-                    failure = failure or error
-            if failure is not None:
-                raise failure
-            return any(self.store.commit_wave(completed).values())
-        finally:
-            for invocation, _ in pending:
-                if invocation.lock.locked():
-                    invocation.lock.release()
+                        self.store.initialise(binding, applications[binding.signature].backfill)
+                        batch = self.store.next_batch(binding)
+                        if batch is not None:
+                            future = self._pool.submit(self.executor.execute, applications[binding.signature], batch, binding.outputs)
+                            pending.append((binding, batch, future))
+                    except Exception as error:
+                        self.errors[binding.signature] = f"{type(error).__name__}: {error}"
+                completed = []
+                for binding, batch, future in pending:
+                    try:
+                        completed.append((binding, batch, future.result()))
+                    except Exception as error:
+                        self.errors[binding.signature] = f"{type(error).__name__}: {error}"
+                ran = any(self.store.commit_wave(completed).values()) or ran
+        return ran
 
     def run_graph_once(self, graph: ApplicationGraph, applications: Mapping[str, App], *, max_workers: int | None = None) -> bool:
-        """Run every dependency wave once, committing each wave before the next."""
-        ran = False
+        ran, blocked = False, set()
         for wave in graph.layers():
-            ran = self.run_layer(wave, applications, max_workers=max_workers) or ran
+            blocked.update(target for source, target, _ in graph.edges if source in blocked)
+            ready = [b for b in wave if b.signature not in blocked]
+            ran = self.run_layer(ready, applications, max_workers=max_workers) or ran
+            blocked.update(b.signature for b in ready if b.signature in self.errors)
         return ran
 
     def run_until_idle(self, graph: ApplicationGraph, applications: Mapping[str, App], *, max_workers: int | None = None) -> None:
-        """Drive a DAG to its latest canonical state without durable queue state."""
         while self.run_graph_once(graph, applications, max_workers=max_workers):
             pass
 

@@ -312,6 +312,7 @@ async def lifespan(app: FastAPI):
     # v1 runs materialization in a bounded local worker pool. Ray remains an
     # optional driver runtime, but is not part of the materialization API.
     m = Manager.from_env()
+    m.materializer.configure_workers(worker_count)
     app.state.manager = m
     app.state.read_batch_size = int(server_cfg.get("read_batch_size", 50_000))
 
@@ -357,7 +358,7 @@ async def lifespan(app: FastAPI):
             f"materialization-{index}",
             lambda index=index: m.run_materialization_once(),
         ))
-        for index in range(worker_count)
+        for index in range(1)
     ]
     app.state.durable_tasks = durable_tasks
 
@@ -521,6 +522,8 @@ class AppRegistration(BaseModel):
     max_delay: int | None = None
     min_interval: int | None = None
     parameters: dict[str, Any] = {}
+    every: int | None = None
+    grouping: str | None = None
 
 
 @app.put("/apps/{name}")
@@ -559,6 +562,16 @@ def remove_app(name: str) -> dict[str, Any]:
         return {"ok": True, **app.state.manager.remove_app(name)}
     except KeyError:
         raise HTTPException(status_code=404, detail=f"unknown app {name!r}")
+
+
+@app.post("/apps/{name}/reprocess")
+def reprocess_app(name: str, start: datetime, end: datetime) -> dict[str, Any]:
+    try:
+        return {"ok": True, **app.state.manager.materializer.reprocess(name, start, end)}
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"unknown app {name!r}")
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
 
 
 @app.get("/materialization/dag")

@@ -734,6 +734,12 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
+    def reprocess_app(self, name: str, start: datetime, end: datetime) -> dict:
+        response = requests.post(f"{self.base_url}/apps/{name}/reprocess",
+                                 params={"start": start.isoformat(), "end": end.isoformat()})
+        _raise_for_status(response)
+        return response.json()
+
     def check_app(self, definition: dict, limit: int | None = None,
                   search_path: str | None = None) -> dict:
         params = {}

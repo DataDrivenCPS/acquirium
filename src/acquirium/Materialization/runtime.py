@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
+from uuid import uuid4
+from datetime import datetime
 from typing import Any
 from time import monotonic
 from threading import Lock, RLock
 from rdflib import Graph, Literal, RDF, RDFS, URIRef
 
 from acquirium.Materialization.incremental import (
-    ApplicationGraph, InProcessExecutor, OutputBuilder, RevisionStore, Scheduler, _duration,
+    ApplicationGraph, InProcessExecutor, OutputBuilder, RevisionStore, Scheduler, TimeWindow, _duration,
 )
 from acquirium.Materialization.planner import BindingPlanner, Deployment
 from acquirium.Storage.graph_registry import ACQUIRIUM_GRAPH_URI
@@ -44,12 +47,14 @@ def _default_label(binding, port: str, spec) -> str:
 class Materializer:
     """Small orchestration facade; all recoverable state remains in DuckDB."""
     def __init__(self, store: Any, graph: Any, *, query_resolver=None, record_resolver=None,
-                 unit_converter=None) -> None:
+                 unit_converter=None, max_workers: int = 2) -> None:
         self._store, self._graph = store, graph
         self._planner = BindingPlanner(graph, query_resolver=query_resolver, record_resolver=record_resolver)
         self._revisions = RevisionStore(store, unit_converter=unit_converter)
-        self._scheduler: Scheduler | None = None
-        self._scheduler_lock = Lock()
+        self._scheduler = Scheduler(self._revisions, InProcessExecutor(), max_workers=max_workers)
+        self._coordinator_lock = Lock()
+        self._generations: dict[str, str] = {}
+        self._plan_errors: dict[str, str] = {}
         # The DAG and its application instances are one immutable plan. A
         # graph refresh replaces them together, while workers execute a local
         # snapshot without holding this lock.
@@ -76,24 +81,55 @@ class Materializer:
         return conn.execute(query, list(params))
 
     def deploy(self, deployment: Deployment) -> None:
-        with self._store._lock, self._store._write_conn() as conn:
-            self._execute(conn, "INSERT INTO materialization_deployments VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET deployment_json=EXCLUDED.deployment_json", [deployment.name, deployment.to_json()])
         with self._plan_lock:
-            # Deployment changes share the graph-refresh path, avoiding a
-            # second invalidation mechanism with different semantics.
+            deployments = [d for d in self._deployments() if d.name != deployment.name]
+            deployments.append(deployment)
+            revision = int(self._graph.graph_status().get("published_version", 0))
+            self._planner.compile(deployments, revision)
+            with self._store._lock, self._store._write_conn() as conn:
+                self._execute(conn, "INSERT INTO materialization_deployments VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET deployment_json=EXCLUDED.deployment_json", [deployment.name, deployment.to_json()])
+                self._generations[deployment.name] = uuid4().hex
+                self._revoke(deployment.name)
             self._graph_revision = -1
 
+    def _revoke(self, name: str) -> None:
+        if self._revisions.active_bindings is not None:
+            for binding in self._dag.bindings:
+                if binding.application_name == name:
+                    self._revisions.active_bindings.pop(binding.progress_key, None)
+
     def remove(self, name: str) -> None:
-        with self._store._lock, self._store._write_conn() as conn:
+        with self._plan_lock, self._store._lock, self._store._write_conn() as conn:
             if self._execute(conn, "DELETE FROM materialization_deployments WHERE name=? RETURNING name", [name]).fetchone() is None:
                 raise KeyError(name)
-            # Forget the removed app's frontier so redeploying the same name is
-            # a fresh start (its start policy applies again), and so progress
-            # rows do not accumulate forever.
             self._execute(conn, """DELETE FROM binding_progress WHERE progress_key IN
                 (SELECT progress_key FROM materialization_lineage WHERE application_name=?)""", [name])
-        with self._plan_lock:
+            self._execute(conn, """DELETE FROM materialization_work WHERE progress_key IN
+                (SELECT progress_key FROM materialization_lineage WHERE application_name=?)""", [name])
+            self._revoke(name)
+            self._generations.pop(name, None)
             self._graph_revision = -1
+
+    def close(self) -> None:
+        with self._coordinator_lock:
+            self._scheduler.close()
+
+    def configure_workers(self, count: int) -> None:
+        with self._coordinator_lock:
+            self._scheduler.close()
+            self._scheduler = Scheduler(self._revisions, max_workers=count)
+
+    def reprocess(self, name: str, start: datetime, end: datetime) -> dict[str, Any]:
+        window = TimeWindow(start, end)
+        with self._coordinator_lock, self._plan_lock:
+            if name not in {d.name for d in self._deployments()}:
+                raise KeyError(name)
+            dag, applications = self._plan_snapshot()
+            bindings = [b for b in dag.bindings if b.application_name == name]
+            for binding in bindings:
+                self._revisions.initialise(binding, applications[binding.signature].backfill)
+            self._revisions.request_reprocess(bindings, window)
+        return {"name": name, "status": "reprocessing", "bindings": len(bindings)}
 
     def check(self, deployment: Deployment, *, limit: int | None = None,
               search_path: str | None = None) -> dict[str, Any]:
@@ -167,7 +203,24 @@ class Materializer:
         with self._plan_lock:
             revision = int(self._graph.graph_status().get("published_version", 0))
             if revision == self._graph_revision: return
-            dag, applications = self._planner.compile(self._deployments(), revision)
+            bindings, applications, self._plan_errors = [], {}, {}
+            for deployment in self._deployments():
+                try:
+                    partial, loaded = self._planner.compile((deployment,), revision)
+                    generation = self._generations.setdefault(deployment.name, uuid4().hex)
+                    bindings.extend(replace(b, generation=generation) for b in partial.bindings)
+                    applications.update(loaded)
+                except Exception as error:
+                    self._plan_errors[deployment.name] = f"{type(error).__name__}: {error}"
+                    for binding in self._dag.bindings:
+                        if binding.application_name == deployment.name:
+                            bindings.append(binding)
+                            applications[binding.signature] = self._applications[binding.signature]
+            try:
+                dag = ApplicationGraph(bindings)
+            except ValueError as error:
+                self._plan_errors["graph"] = str(error)
+                return
             # Materialization-owned provenance is a complete projection of the
             # current DAG. Publish it only when the projection actually changed:
             # lineage writes advance the graph's published_version, so publishing
@@ -177,6 +230,7 @@ class Materializer:
                 self._publish_graph_lineage(dag.bindings)
                 self._lineage_signatures = signatures
             with self._store._lock, self._store._write_conn() as conn:
+                self._revisions.active_bindings = {b.progress_key: b.generation for b in dag.bindings}
                 self._execute(conn, "DELETE FROM materialization_lineage")
                 for binding in dag.bindings:
                     rows = [(binding.signature, binding.progress_key, binding.application_name, binding.executable_digest,
@@ -245,24 +299,33 @@ class Materializer:
         )
 
     def run_once(self) -> bool:
+        if not self._coordinator_lock.acquire(blocking=False):
+            return False
+        try:
+            return self._run_once()
+        finally:
+            self._coordinator_lock.release()
+
+    def _run_once(self) -> bool:
         dag, applications = self._plan_snapshot()
-        if self._scheduler is None:
-            with self._scheduler_lock:
-                if self._scheduler is None:
-                    # Materialization has its own bounded server worker pool.
-                    # Keeping its batch execution in-process avoids racing the
-                    # Ray driver supervisor during application startup.
-                    self._scheduler = Scheduler(self._revisions, InProcessExecutor())
         ran = False
+        blocked = set()
+        pending_work = self._revisions.pending_keys()
         # A completed wave publishes before a dependent wave reads its next
         # revision, preserving DAG semantics across this scheduler tick.
         for wave in dag.layers():
-            now, current = monotonic(), self._revisions.current_revision()
+            blocked.update(target for source, target, _ in dag.edges if source in blocked)
+            now = monotonic()
+            current, progress = self._revisions.progress_snapshot()
             ready, previous = [], {}
             for binding in wave:
+                if binding.signature in blocked:
+                    continue
                 app = applications[binding.signature]
-                consumed = self._revisions.initialise(binding, app.backfill)
-                if current <= consumed:
+                consumed = progress.get(binding.progress_key)
+                if consumed is None:
+                    consumed = self._revisions.initialise(binding, app.backfill)
+                if current <= consumed and binding.progress_key not in pending_work:
                     self._pending_since.pop(binding.signature, None)
                     continue
                 first = self._pending_since.setdefault(binding.signature, now)
@@ -280,7 +343,8 @@ class Materializer:
                 previous[binding.signature] = consumed
             if not ready:
                 continue
-            self._scheduler.run_layer(ready, applications)
+            ran = self._scheduler.run_layer(ready, applications) or ran
+            blocked.update(b.signature for b in ready if b.signature in self._scheduler.errors)
             for binding in ready:
                 with self._store._own_conn() as conn:
                     row = self._execute(conn, "SELECT consumed_revision FROM binding_progress WHERE progress_key=?", [binding.progress_key]).fetchone()
@@ -293,6 +357,7 @@ class Materializer:
     def dag(self) -> dict[str, Any]:
         dag, applications = self._plan_snapshot()
         current = self._revisions.current_revision()
+        pending_work = self._revisions.pending_keys()
         nodes = []
         for binding in dag.bindings:
             with self._store._own_conn() as conn:
@@ -302,6 +367,8 @@ class Materializer:
                 "outputs": {key: output.ref_uri for key, output in binding.outputs.items()},
                 "lookback": "all" if binding.lookback is None else str(binding.lookback),
                 "backfill": bool(applications[binding.signature].backfill),
-                "consumed_revision": row[0] if row else None, "current_revision": current, "status": "idle"})
-        return {"graph_revision": self._graph_revision, "nodes": nodes,
+                "consumed_revision": row[0] if row else None, "current_revision": current,
+                "status": "failed" if binding.signature in self._scheduler.errors else ("reprocessing" if binding.progress_key in pending_work else ("pending" if row is None or row[0] < current else "idle")),
+                "error": self._scheduler.errors.get(binding.signature)})
+        return {"graph_revision": self._graph_revision, "nodes": nodes, "errors": dict(self._plan_errors),
                 "edges": [{"source": source, "target": target, "ref_uri": ref} for source,target,ref in dag.edges]}

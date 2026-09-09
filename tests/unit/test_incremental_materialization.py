@@ -72,6 +72,7 @@ class MixedFanOut(App):
 
 
 class NamedTotal(App):
+    grouping = "all_matches"
     name = "named-total"
     outputs = {"total": output.named("plant-total", value_kind="numeric")}
     def build_query(self, plant): return plant.query().measurement(alias="input")
@@ -526,7 +527,7 @@ def test_scheduler_runs_independent_topological_wave_concurrently(tmp_path):
     assert executor.peak == 2
 
 
-def test_scheduler_submits_an_entire_async_wave_before_resolving(tmp_path):
+def test_scheduler_commits_completed_chunk_in_one_revision(tmp_path):
     store = DuckDBStore(tmp_path / "async-wave.duckdb")
     timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
     store.upsert_rows("urn:left", [(timestamp, 1.0)], value_kind="numeric")
@@ -534,11 +535,10 @@ def test_scheduler_submits_an_entire_async_wave_before_resolving(tmp_path):
     spec = Copy.outputs["out"]
     left = Binding("left-copy", "copy", {"source": (StreamDescriptor("urn:left"),)}, {"out": _port(ref="urn:out:left", spec=spec)})
     right = Binding("right-copy", "copy", {"source": (StreamDescriptor("urn:right"),)}, {"out": _port(ref="urn:out:right", spec=spec)})
-    executor = DeferredProbeExecutor()
+    executor = InProcessExecutor()
     scheduler = Scheduler(RevisionStore(store), executor)
 
     assert scheduler.run_graph_once(ApplicationGraph((left, right)), {left.signature: Copy(), right.signature: Copy()})
-    assert executor.submitted_before_first_resolution == 2
     assert RevisionStore(store).current_revision() == 3
 
 

@@ -1240,6 +1240,7 @@ class Manager:
         """
         logger.debug("Manager.close: shutting down")
         steps = [
+            ("materializer", getattr(self, "materializer", None)),
             ("publication store", self.publication),
             ("timeseries store", self.timescale),
             ("graph store", self.graph_store),

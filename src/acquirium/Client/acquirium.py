@@ -374,6 +374,10 @@ class Acquirium:
     def remove_app(self, name: str) -> dict[str, Any]:
         return self.client.remove_app(name)
 
+    def reprocess_app(self, name: str, start: datetime, end: datetime) -> dict[str, Any]:
+        """Recompute a retained output interval without resetting ingestion progress."""
+        return self.client.reprocess_app(name, start, end)
+
     def check_app(
         self, target: object, *, parameters: Mapping[str, Any] | None = None,
         limit: int | None = None, search_path: str | None = None,
