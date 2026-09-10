@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
+import warnings
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -63,10 +65,10 @@ class ExperimentStore:
                 # A label cannot silently change shape: an old experiment must
                 # remain interpretable after the script evolves.
                 if (row[1], row[2], row[3]) != (role, kind, _json(metadata)): raise ValueError(f"variable {label!r} was already declared differently")
-                return {"variable_id": row[0], "label": label, "role": role, "kind": kind, "metadata": metadata}
+                return {"variable_id": row[0], "label": label, "role": role, "kind": kind, "metadata": metadata, "created": False}
             variable_id = str(uuid4())
             conn.execute("INSERT INTO experiment_variables VALUES (?, ?, ?, ?, ?, ?, ?)", [variable_id, template_id, label, role, kind, _json(metadata), _now()])
-            return {"variable_id": variable_id, "label": label, "role": role, "kind": kind, "metadata": metadata}
+            return {"variable_id": variable_id, "label": label, "role": role, "kind": kind, "metadata": metadata, "created": True}
     def start(self, template_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
         # Metadata belongs to this execution, while declarations belong to the
         # reusable study. This is what lets a parameter sweep share variables.
@@ -111,7 +113,19 @@ class _Builder:
     def _make(self, kind: str, **metadata: Any) -> "ExperimentVariable":
         item = self.study.client.declare_experiment_variable(self.study.study_id, label=self.label, role=self.role, kind=kind, metadata=metadata)
         self.study._metadata[item["variable_id"]] = metadata
-        return ExperimentVariable(self.study, item["variable_id"], self.label, kind)
+        collection = self.study._collections[self.role]
+        variable = collection._variables.get(self.label)
+        if variable is None:
+            variable = ExperimentVariable(self.study, item["variable_id"], self.label, kind)
+            collection._variables[self.label] = variable
+        if item.get("created", False) and self.study._experiment is not None:
+            warnings.warn(
+                f"New variable {self.label!r} declared during an active experiment; "
+                "it will also be available to future runs of this study.",
+                UserWarning,
+                stacklevel=3,
+            )
+        return variable
     def json(self, **metadata: Any): return self._make("json", **metadata)
     def text(self, **metadata: Any): return self._make("text", **metadata)
     def scalar(self, *, unit: str | None = None, **metadata: Any): return self._make("scalar", unit=unit, **metadata)
@@ -124,6 +138,20 @@ class ExperimentVariable:
     def run_id(self) -> str:
         if self.study._experiment is None: raise RuntimeError("start an experiment before mutating variables")
         return self.study._experiment.run_id
+    def record(self, value: Any, *, occurred_at: datetime | None = None):
+        """Record a value, event, file path, or time-series rows in the active run."""
+        # Check before file/stream operations, including empty time series.
+        self.run_id
+        if self.kind in {"file", "timeseries"} and occurred_at is not None:
+            raise TypeError("occurred_at is only supported for JSON, text, scalar, and log values")
+        if self.kind == "file":
+            return self.study.client.attach_experiment_file(
+                self.run_id, self.variable_id, value,
+                media_type=self.study._metadata[self.variable_id].get("media_type"),
+            )
+        if self.kind == "timeseries":
+            return self.add(value)
+        return self.set(value, occurred_at=occurred_at)
     def set(self, value: Any, *, occurred_at: datetime | None = None): return self.study.client.observe_experiment(self.run_id, self.variable_id, value=value, occurred_at=occurred_at.isoformat() if occurred_at else None)
     def append(self, value: Any, *, occurred_at: datetime | None = None): return self.set(value, occurred_at=occurred_at)
     def attach(self, path: str | Path): return self.study.client.attach_experiment_file(self.run_id, self.variable_id, path)
@@ -151,22 +179,100 @@ class ExperimentVariable:
         self.study.ac.insert_timeseries(source, ref_name, rows, point_uri=observed)
         return self.use(self.study.ac.reference_uri(source, ref_name), interval=(min(x[0] for x in rows), max(x[0] for x in rows)))
 
+class ExperimentOutputs(Mapping):
+    """Run-scoped assignment convenience; reads return study variable handles."""
+    def __init__(self, experiment: "Experiment"):
+        self.experiment = experiment
+
+    def __getitem__(self, label: str) -> ExperimentVariable:
+        return self.experiment.study.output[label]
+
+    def __iter__(self):
+        return iter(self.experiment.study.output.keys())
+
+    def __len__(self):
+        return len(self.experiment.study.output)
+
+    def __setitem__(self, label: str, value: Any) -> None:
+        study = self.experiment.study
+        if study._experiment is not self.experiment:
+            raise RuntimeError("cannot record through an inactive experiment")
+        if label in study.output:
+            variable = study.output[label]
+        else:
+            # Validate before creating a persistent declaration. Files and streams
+            # need explicit metadata; do not guess their meaning from the payload.
+            try:
+                json.dumps(value, allow_nan=False)
+            except (TypeError, ValueError) as error:
+                raise TypeError("new outputs require a JSON-compatible value; declare files and time series explicitly") from error
+            builder = study.output(label)
+            if isinstance(value, str):
+                variable = builder.text()
+            elif isinstance(value, (int, float)) and not isinstance(value, bool):
+                variable = builder.scalar()
+            else:
+                variable = builder.json()
+        variable.record(value)
+
+
 class Experiment:
     """One execution of a Study; variables route writes to this active object."""
-    def __init__(self, study: "Study", run_id: str): self.study, self.run_id = study, run_id
+    def __init__(self, study: "Study", run_id: str):
+        self.study, self.run_id = study, run_id
+        self.output = ExperimentOutputs(self)
     def finish(self):
         result = self.study.client.finish_experiment(self.run_id); self.study._experiment = None; return result
     def fail(self, error: BaseException | Any):
         result = self.study.client.finish_experiment(self.run_id, failed=True, error={"type": type(error).__name__, "message": str(error)}); self.study._experiment = None; return result
 
+class VariableCollection:
+    """Declare and access handles registered through this Study object.
+
+    Iteration yields handles; items() yields (label, handle) pairs.
+    """
+    def __init__(self, study: "Study", role: str):
+        self.study, self.role = study, role
+        self._variables: dict[str, ExperimentVariable] = {}
+
+    def __call__(self, label: str, **metadata: Any):
+        builder = _Builder(self.study, label, self.role)
+        if self.role == "annotation":
+            return builder._make("log", **metadata)
+        if metadata:
+            raise TypeError("provide metadata to the type constructor, e.g. scalar(unit='USD')")
+        return builder
+
+    def __getitem__(self, label: str) -> ExperimentVariable:
+        return self._variables[label]
+
+    def __iter__(self):
+        return iter(self._variables.values())
+
+    def __len__(self):
+        return len(self._variables)
+
+    def __contains__(self, label: str):
+        return label in self._variables
+
+    def keys(self):
+        return self._variables.keys()
+
+    def values(self):
+        return self._variables.values()
+
+    def items(self):
+        return self._variables.items()
+
+
 class Study:
     """Reusable variable declarations plus a single active Experiment."""
-    def __init__(self, ac: Any, item: dict): self.ac, self.client, self.study_id, self.name, self._experiment, self._metadata = ac, ac.client, item["template_id"], item["name"], None, {}
-    def input(self, label: str): return _Builder(self, label, "input")
-    def output(self, label: str): return _Builder(self, label, "output")
-    def log(self, label: str, **metadata: Any):
-        """Declare an append-only, timestamped log variable."""
-        return _Builder(self, label, "annotation")._make("log", **metadata)
+    def __init__(self, ac: Any, item: dict):
+        self.ac, self.client, self.study_id, self.name, self._experiment, self._metadata = ac, ac.client, item["template_id"], item["name"], None, {}
+        self.input = VariableCollection(self, "input")
+        self.output = VariableCollection(self, "output")
+        self.log = VariableCollection(self, "annotation")
+        self._collections = {"input": self.input, "output": self.output, "annotation": self.log}
     def start(self, metadata: dict | None = None) -> Experiment:
         # Variable objects deliberately route through one active experiment;
         # nested/concurrent experiments on the same Study are not ambiguous.

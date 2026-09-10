@@ -200,7 +200,7 @@ class Manager:
         self.publication = publication
         # Artifact bytes live under the server data directory; DuckDB stores
         # their digest and experiment provenance, not a second blob copy.
-        self.experiments = ExperimentStore(timescale, base / "experiment_artifacts")
+        self.experiments = ExperimentStore(timeseries_store, base / "experiment_artifacts")
         from acquirium.Materialization.runtime import Materializer
         self.materializer = Materializer(timeseries_store, graph,
             query_resolver=self.resolve_text, record_resolver=self.resolve_record,
