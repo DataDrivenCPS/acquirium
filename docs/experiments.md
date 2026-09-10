@@ -20,11 +20,11 @@ solver_log = study.log("solver events")
 for config in configurations:
     e = study.start(metadata={"scenario": config["name"]})
     try:
-        configuration.set(config)
+        configuration.record(config)
         result = solve(config)  # ordinary application code
-        total_cost.set(result.cost)
-        tank_volume.add(result.volume_rows)
-        solver_log.append({"event": "solve-complete"})
+        total_cost.record(result.cost)
+        tank_volume.record(result.volume_rows)
+        solver_log.record({"event": "solve-complete"})
         e.finish()
     except Exception as error:
         e.fail(error)
@@ -37,16 +37,91 @@ for config in configurations:
 value form: `json()`, `text()`, `scalar(unit=...)`, `file(media_type=...)`,
 `timeseries(observed=..., unit=...)`, or the append-only `log()` variable.
 
-The label is required and unique within the study. The returned object is the
-thing scripts interact with: `set()` records a single JSON/text/scalar value,
-`append()` adds an event, `attach()` copies a file into Acquirium's
-content-addressed artifact store, and `add()` writes normal Acquirium time
-series data.
+The label is required and unique within the study. Every returned handle has
+`record(value)`: JSON/text/scalar handles record a value, log handles record an
+event, file handles copy a path into Acquirium's content-addressed artifact
+store, and time-series handles write ordinary `(timestamp, value)` rows.
+Repeated calls add observations to the run's history. The existing `set()`,
+`append()`, `attach()`, and `add()` methods remain available.
 
-Every declaration and value mutation receives a server UTC timestamp and a
-per-run sequence number. `append()`/`set()` can also provide `occurred_at` for
-the time an external event actually happened. Time-series rows retain their
-own sample timestamps.
+Declarations receive a server UTC timestamp; observations also receive a
+per-run sequence number. For JSON, text, scalar, and log handles,
+`record(value, occurred_at=...)` can specify when an external event happened.
+Time-series rows retain their own sample timestamps. File and time-series
+handles reject `occurred_at`.
+
+## Lookup, iteration, and exploratory variables
+
+`study.input`, `study.output`, and `study.log` are callable collections. Calling
+one declares a variable; indexing retrieves its handle. Iteration yields
+handles in declaration order, and `items()` yields label/handle pairs:
+
+```python
+assert study.output["total operating cost"] is total_cost
+
+for output in study.output:
+    print(output.label, output.kind)
+
+for label, output in study.output.items():
+    print(label, output.kind)
+```
+
+Collections also support `len()`, label membership, `keys()`, and `values()`.
+They contain handles declared through this `Study` object; they do not fetch
+other variables from earlier script sessions. Redeclaring a matching variable
+registers its handle locally and reuses the persistent declaration. Repeating
+the declaration on the same object returns the same handle. Conflicting roles,
+types, or metadata (including units) raise an error.
+
+Use the same constructor to add exploratory variables during a run:
+
+```python
+e = study.start()
+total_cost.record(results.total_cost)
+peak_load = study.output("peak load").scalar(unit="KiloW")  # UserWarning if new
+peak_load.record(results.peak_load)
+e.finish()
+```
+
+Creating a new variable during an active run emits a `UserWarning` and adds it
+to the reusable study. Looking up a handle or redeclaring a matching persistent
+variable does not warn. Recording requires an active run.
+
+### Assignment convenience
+
+Prefer `handle.record(value)` for standard outputs. If you do not have a handle
+at the recording site, assign through the active experiment instead:
+
+```python
+experiment = study.start()
+experiment.output["total operating cost"] = results.total_cost
+experiment.output["exploratory score"] = 0.95  # UserWarning if new
+
+# Assignment preserves handles; subsequent recording uses the same object.
+score = study.output["exploratory score"]
+score.record(0.97)
+experiment.finish()
+```
+
+For an output already declared on this `Study` object, assignment calls its
+`record()` method, preserving its type, units, and other metadata. For a new
+label, integers and floats infer a scalar without units, strings infer text,
+and other JSON-compatible values (including booleans, lists, dictionaries,
+and `None`) infer JSON. New declarations emit the same warning as explicit
+declarations during a run. Files and time series should be declared explicitly;
+assignment does not infer them from paths or lists of rows.
+
+Repeated assignments record observations rather than replacing the handle or
+erasing history. A finished experiment rejects assignment even if a newer run
+is active. `experiment.output` is a mapping from labels to study handles;
+iterate its `.values()` for handles, or iterate `study.output` directly.
+Retrieved handles retain the usual behavior of recording to the study's active
+run. Assignment itself is bound to the receiving experiment.
+
+When reopening a study from a previous script session, explicitly redeclare
+outputs with their original metadata before assigning to them. An inferred
+declaration that conflicts with an existing persistent declaration raises an
+error rather than changing its metadata.
 
 ## Time series and graph links
 
@@ -85,7 +160,7 @@ After starting a run, add ordinary `(timestamp, value)` rows:
 
 ```python
 e = study.start(metadata={"scenario": "baseline"})
-tank_volume.add([
+tank_volume.record([
     (aq.timestamp("2025-07-01T00:00:00Z"), 200.0),
     (aq.timestamp("2025-07-01T01:00:00Z"), 245.0),
 ])
@@ -93,7 +168,7 @@ e.finish()
 ```
 
 `aq.timestamp()` accepts an ISO-8601 string and returns a timezone-aware UTC
-`datetime`. `add()` also accepts ISO strings directly, so the compact form
+`datetime`. `record()` also accepts ISO strings directly, so the compact form
 `("2025-07-01T00:00:00Z", 200.0)` works when no `datetime` object is needed.
 
 The run receives a distinct source/ref identity, so a second scenario cannot

@@ -65,9 +65,9 @@ def run_scenario(config_path: Path, *, note: str = "", tags: list[str] | None = 
     })
     try:
         config = load_config(config_path)
-        configuration.set(config)
-        configuration_file.attach(config_path)
-        operator_note.set(note)
+        configuration.record(config)
+        configuration_file.record(config_path)
+        operator_note.record(note)
 
         # This is the original optimization workflow. The experiment API
         # records its inputs and results; it does not orchestrate the solve.
@@ -75,23 +75,23 @@ def run_scenario(config_path: Path, *, note: str = "", tags: list[str] | None = 
         solve_model(model)
         results = extract_results(model, config)
 
-        total_operating_cost.set(results.total_cost)
-        peak_pumping_volume.set(results.peak_pumping)
-        peak_net_energy.set(results.peak_net_energy)
-        solver_result.set({"termination": results.termination, "objective": results.total_cost})
+        total_operating_cost.record(results.total_cost)
+        peak_pumping_volume.record(results.peak_pumping)
+        peak_net_energy.record(results.peak_net_energy)
+        solver_result.record({"termination": results.termination, "objective": results.total_cost})
 
         series = result_series(results)
         # Each named result is written explicitly so this remains the visible
         # contract between the optimizer result object and study variables.
-        facility_net_load.add(series["facility-net-load"])
-        pump_inlet_flow.add(series["pump-in-flow-vol"])
-        tank_volume.add(series["tank-volume"])
+        facility_net_load.record(series["facility-net-load"])
+        pump_inlet_flow.record(series["pump-in-flow-vol"])
+        tank_volume.record(series["tank-volume"])
         if "battery-soc" in series:
-            battery_soc.add(series["battery-soc"])
+            battery_soc.record(series["battery-soc"])
         if "battery-power-net" in series:
-            battery_net_power.add(series["battery-power-net"])
+            battery_net_power.record(series["battery-power-net"])
 
-        solver_log.append({"event": "solve-complete", "termination": results.termination})
+        solver_log.record({"event": "solve-complete", "termination": results.termination})
         return e.finish()
     except Exception as error:
         e.fail(error)
