@@ -14,13 +14,13 @@ The first start builds the text-resolution indexes and can take 5-10 minutes;
 later starts reuse the cache under `data_dir/embedding_cache`.
 See [the embedding indexes](../explanation/server-internals.md#the-embedding-indexes)
 for what is being built and when it is rebuilt.
-The server answers on `http://localhost:8000` (`GET /health`) once the core
+The server answers on `http://127.0.0.1:8000` (`GET /health`) once the core
 is up.
 
 ```python
 from acquirium import Acquirium
 
-acq = Acquirium(server_url="localhost", server_port=8000)
+acq = Acquirium(server_url="127.0.0.1", server_port=8000)
 acq.query().entity("pump").metadata()
 ```
 
