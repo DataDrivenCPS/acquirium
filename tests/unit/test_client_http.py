@@ -331,6 +331,7 @@ class TestConstructorHealthGate:
         assert "health" in http.get.call_args.args[0]
         assert aq.client.base_url == "http://localhost:8000"
         assert aq.address == "http://localhost:8000"
+        assert http.get.call_args.kwargs["timeout"] <= 30.0
 
     def test_unreachable_server_raises_connectionerror(self, http):
         from acquirium import Acquirium
@@ -342,6 +343,15 @@ class TestConstructorHealthGate:
         from acquirium import Acquirium
         Acquirium(server_url="localhost", server_port=9999, health_timeout=None)
         http.get.assert_not_called()
+
+
+def test_health_uses_expanded_default_timeout(http, client):
+    response = MagicMock()
+    response.json.return_value = {"ok": True}
+    http.get.return_value = response
+
+    assert client.health() == {"ok": True}
+    http.get.assert_called_once_with("http://localhost:8000/health", timeout=30.0)
 
 
 # ------------------------------------------------------------------ insert_graph

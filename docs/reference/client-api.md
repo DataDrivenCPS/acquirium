@@ -202,7 +202,7 @@ and are listed once above.
 
 | method | description |
 |---|---|
-| `health(timeout=3.0) -> dict` | `GET /health`; raises on failure. |
+| `health(timeout=30.0) -> dict` | `GET /health`; raises on failure. |
 | `graph_version() -> int`, `graph_status() -> dict` | As on `Acquirium`. |
 | `embedding_status() -> dict` | State of the two embedding indexes. |
 | `validate_graph() -> dict` | As on `Acquirium`. |

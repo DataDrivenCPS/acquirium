@@ -25,6 +25,8 @@ from rdflib.namespace import NamespaceManager, RDF, RDFS
 import logging
 logger = logging.getLogger(__name__)
 
+DEFAULT_HEALTH_REQUEST_TIMEOUT = 30.0
+
 if TYPE_CHECKING:
     import pyarrow as pa
 
@@ -398,7 +400,7 @@ class AcquiriumClient:
         data = response.json()
         return {uri: TimeseriesInfo.model_validate(info) for uri, info in data.items()}
 
-    def health(self, timeout: float = 3.0) -> dict:
+    def health(self, timeout: float = DEFAULT_HEALTH_REQUEST_TIMEOUT) -> dict:
         """GET /health; raises on connection failure or non-200."""
         response = self._http.get(f"{self.base_url}/health", timeout=timeout)
         _raise_for_status(response)
