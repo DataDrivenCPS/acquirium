@@ -482,8 +482,7 @@ class Manager:
             with timed_debug(logger, "graph embedding: merge water+s223 named graphs"):
                 merged = Graph()
                 for iri in (WATER_IRI, S223_IRI):
-                    for triple in self.graph_store.named_graph(iri):
-                        merged.add(triple)
+                    merged += self.graph_store.named_graph(iri)
             logger.debug("graph embedding: merged %d triples", len(merged))
             concepts = self._extract_concepts_for_embedding(merged)
             if concepts:
