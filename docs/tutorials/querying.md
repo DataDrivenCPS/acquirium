@@ -325,6 +325,15 @@ TODO: organize the metadata table to group nulls together.
 ### direction= and nearest=
 
 Both work here too.
+`direction="downstream"` alone returns every measurement within `max_depth`
+flow steps: the source's own outlet connection points, then for each pipe
+and piece of equipment reached, its own points and the points on all of its
+connection points, inlet and outlet.
+For A → pipe → B → pipe → C and `max_depth=1` from A that is A's outlet, the
+pipe, B, and B's inlet and outlet; `max_depth=2` adds the second pipe and C.
+`"upstream"` mirrors this from the source's inlet.
+The extra column `<alias>_downstream_entity` names what each point hangs
+off.
 `direction=` with `nearest=True` finds the closest matching measurement up or
 downstream of the source:
 

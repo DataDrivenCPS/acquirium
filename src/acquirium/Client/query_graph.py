@@ -55,6 +55,11 @@ class QueryEdge:
     # registry name it came from, for display/serialisation only.
     relation: Optional[tuple] = None
     relation_name: Optional[str] = None
+    # Direction edge (explore ``measurement(direction=)``): besides the
+    # entities and connections along the flow, also accept the source's own
+    # connection points of this class as the target, so a downstream query
+    # starts at the source's outlet and an upstream one at its inlet.
+    own_cp_class: Optional[str] = None
 
 
 @dataclass(frozen=True)

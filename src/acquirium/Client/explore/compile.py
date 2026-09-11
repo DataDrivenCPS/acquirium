@@ -157,9 +157,19 @@ def _direction_edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_id
     **Upstream**:   ^<connectsTo>   repeated via <connectsFrom>/^<connectsTo>
 
     Multi-hop spells out k=1..hops repetitions, joined with ``|``.
+    ``hops=0`` means unbounded: the entity-reaching group becomes ``+`` and
+    the connection-reaching group ``(ent_to_conn/conn_to_ent)*/ent_to_conn``.
+    Every predicate is fixed, so the store evaluates these as ordinary
+    property paths.
     """
     hops = int(edge.hops)
     direction = edge.direction
+    own_cp = getattr(edge, "own_cp_class", None)
+    own_alt = (f"{src_var} <{CONNECTION_POINT}> {tgt_var} . "
+               f"{tgt_var} <{_RDF_TYPE}>/<{_SUBCLASS}>* <{own_cp}> ." if own_cp else None)
+
+    def _with_own(pattern: str) -> str:
+        return f"{{ {pattern} }} UNION {{ {own_alt} }}" if own_alt else pattern
 
     ct  = f"<{S223.connectedTo}>"
     cf  = f"<{S223.connectedFrom}>"
@@ -179,6 +189,12 @@ def _direction_edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_id
 
     parts: List[str] = []
 
+    if hops <= 0:
+        parts.append(f"{one_hop_ent}+")
+        parts.append(f"({ent_to_conn}/{conn_to_ent})*/{ent_to_conn}")
+        path = f"({'|'.join(parts)})"
+        return _with_own(f"{src_var} {path} {tgt_var} .")
+
     # entity-reaching paths: 1..hops entity hops
     for k in range(1, hops + 1):
         parts.append("/".join([one_hop_ent] * k))
@@ -194,7 +210,7 @@ def _direction_edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_id
         parts.append("/".join(conn_steps))
 
     path = f"({'|'.join(parts)})"
-    return f"{src_var} {path} {tgt_var} ."
+    return _with_own(f"{src_var} {path} {tgt_var} .")
 
 
 def _program_edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int) -> str:
@@ -256,7 +272,8 @@ def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int,
       from the relation's chains (see ``explore.relations``).
     - If edge.patterns is set (a lowered via program): chains of via steps.
     - If edge.direction is set: delegate to _direction_edge_pattern for full topology traversal.
-    - If edge.predicates is present/non-empty: constrain to those predicates and allow length 1..hops.
+    - If edge.predicates is present/non-empty: constrain to those predicates and allow length 1..hops
+      (``hops=0``: unbounded, rendered as a ``+`` property path).
     - Else: allow any predicates, but length <= hops, via UNION of k-step chains,
       excluding any hidden predicates (see ``hidden.hide``). Edges that
       target a measurement node are exempt from hiding — that's how data
@@ -274,11 +291,13 @@ def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int,
         return _direction_edge_pattern(src_var, tgt_var, edge, edge_idx)
 
     hops = int(edge.hops)
-    if hops < 1:
-        raise ValueError(f"edge.hops must be >= 1, got {edge.hops}")
-
     preds = getattr(edge, "predicates", None) or []
     preds = [p for p in preds if p]  # remove falsy
+    if hops < 1 and not preds:
+        raise ValueError(
+            f"edge.hops must be >= 1 for an any-predicate edge, got {edge.hops}; "
+            f"unbounded any-predicate reach is resolved client-side (via='any')"
+        )
 
     # Case A: constrained predicate set
     if preds:
@@ -293,6 +312,9 @@ def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int,
         if hops == 1:
             alt = "|".join(_format_pred(p) for p in uniq)
             path = f"({alt})"
+        elif hops < 1:
+            alt = "|".join(_format_pred(p) for p in uniq)
+            path = f"({alt})+"
         else:
             parts = []
             for p in uniq:
@@ -304,10 +326,10 @@ def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int,
         normal = f"{src_var} {path} {tgt_var} ."
 
         # CP alternative:
-        # - For hops==1 we can still keep it as a property path because it's all IRIs:
+        # - For hops==1 (and unbounded) we can keep it as a property path because it's all IRIs:
         #     src <cp>/<p> tgt
         # - For hops>1, rewrite as a UNION over k with explicit triples so CP only affects first hop.
-        if hops == 1:
+        if hops <= 1:
             cp_f = getattr(edge, "cp_filter", None)
             if cp_f:
                 cp = f"?cp_e{edge_idx}"

@@ -385,10 +385,14 @@ class Query:
             aq.query().measurement()                    # all registered streams
             aq.query().measurement(quantity_kind="ph")  # filtered
 
-        With ``direction`` set, first traverses up to ``max_depth`` topology
-        hops upstream/downstream through an intermediate entity, then looks
-        for measurements one hop away (inlet connection points for upstream,
-        outlet for downstream).
+        With ``direction`` set, every measurement within ``max_depth`` flow
+        steps: for ``"downstream"`` the source's own outlet connection
+        points, then, for each pipe and piece of equipment reached, its own
+        points and the points on all of its connection points, inlet and
+        outlet. ``"upstream"`` mirrors this from the source's inlet.
+        For A -pipe-> B -pipe-> C and ``max_depth=1`` from A: A's outlet,
+        the pipe, B, B's inlet and outlet. ``max_depth=0`` is unbounded.
+        The intermediate node is exposed as ``<alias>_<direction>_entity``.
 
         With ``nearest=True`` (requires ``direction``), the closest matching
         measurement per source is found by client-side BFS over the
@@ -431,7 +435,8 @@ class Query:
             g = g.with_node(QueryNode(id=data_id, alias=data_alias,
                                       constraints={"is_data_node": True}))
             g = g.with_edge(QueryEdge(source_id=src_id, target_id=data_id,
-                                      hops=max_depth + 1, patterns=program, nearest=True),
+                                      hops=max_depth + 1 if max_depth else 0,
+                                      patterns=program, nearest=True),
                             new_pointer=data_id)
             g = g.with_data_node(DataNodeInfo(node_id=data_id))
             if attrs:
@@ -444,22 +449,27 @@ class Query:
             src_id = self._source_id(frm, verb="measurement")
             src_alias = self._src_alias(src_id)
 
+            # The intermediate node is every entity and connection within
+            # max_depth flow steps, plus the source's own outlet (downstream)
+            # or inlet (upstream) connection points. The data edge is the
+            # ordinary one-hop measurement edge, so each intermediate node
+            # contributes its own points and the points on all of its
+            # connection points, inlet and outlet alike.
+            own_cp = str(S223.OutletConnectionPoint if direction == "downstream"
+                         else S223.InletConnectionPoint)
             mid_id = self._next_id()
             g = g.with_node(QueryNode(id=mid_id,
                                       alias=self._unique_alias(g, f"{src_alias}_{direction}_entity")))
             g = g.with_edge(QueryEdge(source_id=src_id, target_id=mid_id,
-                                      hops=max_depth, direction=direction),
+                                      hops=max_depth, direction=direction, own_cp_class=own_cp),
                             new_pointer=mid_id)
 
-            cp_filter = str(S223.InletConnectionPoint if direction == "upstream"
-                            else S223.OutletConnectionPoint)
             data_id = mid_id + 1
             data_alias = (self._require_free_alias(g, alias, verb="measurement") if alias is not None
                           else self._unique_alias(g, f"{src_alias}_{direction}_data"))
             g = g.with_node(QueryNode(id=data_id, alias=data_alias,
                                       constraints={"is_data_node": True}))
-            g = g.with_edge(QueryEdge(source_id=mid_id, target_id=data_id, hops=1,
-                                      cp_filter=cp_filter),
+            g = g.with_edge(QueryEdge(source_id=mid_id, target_id=data_id, hops=1),
                             new_pointer=data_id)
             g = g.with_data_node(DataNodeInfo(node_id=data_id))
             if attrs:
@@ -976,6 +986,7 @@ class Query:
                     "nearest": e.nearest,
                     "relation": safe(e.relation) if e.relation else None,
                     "relation_name": e.relation_name,
+                    "own_cp_class": e.own_cp_class,
                 }
                 for e in g.edges
             ],
