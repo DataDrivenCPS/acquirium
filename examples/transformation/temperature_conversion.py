@@ -1,4 +1,4 @@
-"""Convert each Fahrenheit input stream to Celsius."""
+"""Convert Fahrenheit water-temperature readings to Celsius."""
 from __future__ import annotations
 
 import polars as pl

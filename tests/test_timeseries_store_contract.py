@@ -6,12 +6,9 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import polars as pl
-import psycopg
 import pytest
 
 from acquirium.Storage.base import TimeseriesStore
-from acquirium.Storage.duckdb_store import DuckDBStore
-from acquirium.Storage.timescale_store import TimescaleStore
 from acquirium.internals.models import LogEntry, TimeIntervalModel
 
 
@@ -19,19 +16,10 @@ def _utc(year: int, month: int, day: int, hour: int = 0) -> datetime:
     return datetime(year, month, day, hour, tzinfo=timezone.utc)
 
 
-@pytest.fixture(params=["duckdb", "timescale"])
-def contract_store(request, tmp_path, pg_dsn):
-    if request.param == "duckdb":
-        store = DuckDBStore(tmp_path / "contract.duckdb", recreate=True)
-    else:
-        try:
-            store = TimescaleStore(dsn=pg_dsn, connect_timeout=2, recreate=False)
-        except psycopg.OperationalError as exc:
-            pytest.skip(f"TimescaleDB is not available: {exc}")
-
-    assert isinstance(store, TimeseriesStore)
-    yield store
-    store.close()
+@pytest.fixture
+def contract_store(materialization_store):
+    assert isinstance(materialization_store, TimeseriesStore)
+    return materialization_store
 
 
 @pytest.fixture
@@ -78,8 +66,8 @@ def test_timeseries_mutation_and_query_contract(contract_store, contract_uri_pre
     assert batch_info[missing_ref].row_count == 0
     assert list(store.timeseries(missing_ref)) == []
 
-    with pytest.raises(NotImplementedError, match="replace/delete"):
-        store.replace_rows(ref_uri, [(_utc(2026, 1, 3), 3.0)], value_kind="numeric")
+    assert store.replace_rows(ref_uri, [(_utc(2026, 1, 3), 3.0)], value_kind="numeric") == 1
+    assert _values(store, ref_uri) == [3.0]
 
 
 def test_numeric_stream_can_store_and_query_text_fallback_rows(contract_store, contract_uri_prefix):
@@ -224,3 +212,73 @@ def test_transaction_and_sql_query_contract(contract_store, contract_uri_prefix)
     result = store.sql_query("SELECT 1 AS contract_value")
     assert result["columns"] == ["contract_value"]
     assert result["rows"] == [[1]] or result["rows"] == [(1,)]
+
+
+def _snapshot(store):
+    with store._own_conn() as conn:
+        return (
+            conn.execute('SELECT current_revision FROM system_state').fetchone()[0],
+            conn.execute('SELECT ref_id, ts, numeric_value, text_value, deleted, last_revision FROM timeseries ORDER BY ref_id, ts').fetchall(),
+            conn.execute('SELECT ref_uri, last_revision FROM stream_resets ORDER BY ref_uri').fetchall(),
+        )
+
+
+@pytest.mark.parametrize('kind,values', [('numeric', [1., 2., 3.]), ('text', ['one', 'two', 'three'])])
+def test_replacement_revision_contract(contract_store, contract_uri_prefix, kind, values):
+    store, ref = contract_store, contract_uri_prefix
+    a, b, c = [_utc(2026, 1, day) for day in (1, 2, 3)]
+    start = _snapshot(store)[0]
+    assert store.replace_rows(ref, [(a, values[0]), (b, values[1])], value_kind=kind) == 2
+    store.upsert_rows(ref + ':other', [(a, values[0])], value_kind=kind)
+    assert store.replace_rows(ref, [(b, values[0]), (b, values[2]), (c, values[1])], value_kind=kind) == 2
+    assert _values(store, ref) == [values[2], values[1]]
+    revision, rows, resets = _snapshot(store)
+    assert revision == start + 3
+    assert len(rows) == 3
+    assert not any(row[4] for row in rows)
+    assert resets == [(ref, revision)]
+    assert store.replace_rows(ref, [], value_kind=kind) == 0
+    assert _values(store, ref) == []
+    assert _values(store, ref + ':other') == [values[0]]
+    assert len(_snapshot(store)[1]) == 1  # Only the unrelated stream remains.
+    assert _snapshot(store)[2] == [(ref, revision + 1)]
+    assert store.replace_rows(ref, [(a, values[2])], value_kind=kind) == 1
+    assert _values(store, ref) == [values[2]]
+    assert _snapshot(store)[0] == revision + 2
+
+
+def test_replacement_validation_and_rollback(contract_store, contract_uri_prefix, monkeypatch):
+    store, ref = contract_store, contract_uri_prefix
+    stamp = _utc(2026, 1, 1)
+    store.upsert_rows(ref, [(stamp, 'original')])
+    original = _snapshot(store)
+    for rows, kind in [([(None, 'invalid')], 'text'), ([(stamp, 'invalid')], 'invalid'), ([], 'invalid')]:
+        with pytest.raises(ValueError):
+            store.replace_rows(ref, rows, value_kind=kind)
+        assert _snapshot(store) == original
+    store.begin()
+    store.replace_rows(ref, [(stamp + timedelta(days=1), 'replacement')])
+    store.rollback()
+    assert _snapshot(store) == original
+    insert = store._insert_frame
+    def fail_after_insert(*args):
+        insert(*args)
+        raise RuntimeError('insertion failure')
+    with monkeypatch.context() as patch:
+        patch.setattr(store, '_insert_frame', fail_after_insert)
+        with pytest.raises(RuntimeError, match='insertion failure'):
+            store.replace_rows(ref, [(stamp, 'replacement')])
+    assert _snapshot(store) == original
+
+
+def test_replacement_normalizes_timestamps_and_preserves_fallback(contract_store, contract_uri_prefix):
+    store, ref = contract_store, contract_uri_prefix
+    utc = _utc(2026, 1, 1)
+    offset = utc.astimezone(timezone(timedelta(hours=-7)))
+    assert store.replace_rows(ref, [(utc, 1.), (offset, 'Manual Control'),
+                                    (utc + timedelta(hours=1), '2.5')], value_kind='numeric') == 2
+    assert _values(store, ref, value_mode='coalesce') == ['Manual Control', '2.5']
+    assert store.timeseries_info(ref).earliest == utc
+    before = _snapshot(store)[0]
+    assert store.replace_rows(ref + ':unwritten', []) == 0
+    assert _snapshot(store)[0] == before + 1

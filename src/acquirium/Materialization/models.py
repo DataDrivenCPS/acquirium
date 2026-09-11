@@ -206,6 +206,8 @@ class InputBatch:
     work_id: str | None = None
     work_cursor: str | None = None
     work_next: str | None = None
+    # A stream reset rebuilds and physically replaces every assigned output.
+    full_reset: bool = False
 
     @property
     def result(self) -> Any:

@@ -109,6 +109,7 @@ class DuckDBStore:
                     "materialization_work",
                     "materialization_lineage",
                     "materialization_deployments",
+                    "stream_resets",
                     BINDING_PROGRESS_TABLE,
                     SYSTEM_STATE_TABLE,
                     TIMESERIES_TABLE,
@@ -186,7 +187,7 @@ class DuckDBStore:
                 ts      TIMESTAMP NOT NULL,
                 numeric_value DOUBLE,
                 text_value    VARCHAR,
-                -- Canonical publication columns (see Storage/publication/duckdb.py).
+                -- Canonical publication columns.
                 -- ``deleted`` marks a physical
                 -- tombstone: the row is kept (not removed) so its
                 -- last_stream_version remains resolvable by a batch reader.
@@ -245,6 +246,7 @@ class DuckDBStore:
             """,
             f"CREATE INDEX IF NOT EXISTS idx_logs_point ON {LOGS_TABLE} (point_uri, timestamp)",
             f"CREATE INDEX IF NOT EXISTS idx_logs_obs ON {LOGS_TABLE} (observed_start, observed_end)",
+            "CREATE TABLE IF NOT EXISTS stream_resets (ref_uri VARCHAR PRIMARY KEY, last_revision BIGINT NOT NULL)",
             f"CREATE TABLE IF NOT EXISTS {SYSTEM_STATE_TABLE} (current_revision BIGINT NOT NULL)",
             f"INSERT INTO {SYSTEM_STATE_TABLE} SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM {SYSTEM_STATE_TABLE})",
             f"CREATE TABLE IF NOT EXISTS {BINDING_PROGRESS_TABLE} (progress_key VARCHAR PRIMARY KEY, consumed_revision BIGINT NOT NULL)",
@@ -289,7 +291,28 @@ class DuckDBStore:
         *,
         value_kind: str = "text",
     ) -> int:
-        raise NotImplementedError("replace/delete is not supported by incremental materialization")
+        value_kind = normalize_value_kind(value_kind)
+        frame = self._prepare_frame(self._rows_frame(ref_uri, list(rows), value_kind))
+        if frame["ts"].null_count():
+            raise ValueError("replacement timestamps must not be null")
+        return self._replace_frame(ref_uri, frame)
+
+    def _replace_frame(self, ref_uri: str, frame: pl.DataFrame) -> int:
+        """Physically replace a stream and record its latest reset atomically."""
+        with self._lock, self._write_conn() as conn:
+            revision = self._next_revision(conn)
+            conn.execute(
+                f"""DELETE FROM {TIMESERIES_TABLE}
+                WHERE ref_id = (SELECT ref_id FROM {REF_IDS_TABLE} WHERE ref_uri = ?)""",
+                [ref_uri],
+            )
+            self._insert_frame(conn, frame, revision)
+            conn.execute(
+                "INSERT INTO stream_resets (ref_uri, last_revision) VALUES (?, ?) "
+                "ON CONFLICT (ref_uri) DO UPDATE SET last_revision=EXCLUDED.last_revision",
+                [ref_uri, revision],
+            )
+        return frame.height
 
     def bulk_insert_polars(self, df: pl.DataFrame) -> int:
         """Bulk-insert a Polars DataFrame with canonical or split value columns.

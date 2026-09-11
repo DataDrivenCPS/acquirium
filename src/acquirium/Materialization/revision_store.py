@@ -7,8 +7,9 @@ progress together. Transform failures therefore leave progress available for
 retry, and stale workers cannot overwrite a newer accepted result.
 
 Revisions identify writes, not event timestamps. The database retains current
-values and deletion tombstones, not historical row versions. A revision range
-selects what needs recalculation; the input window supplies current values from
+values and incremental output tombstones, not historical row versions. Whole-stream
+replacement physically deletes rows and records one latest reset per stream.
+A revision range selects what needs recalculation; the input window supplies current values from
 the read snapshot, including context outside that range.
 """
 from __future__ import annotations
@@ -163,7 +164,10 @@ class RevisionStore:
             if row is None: raise KeyError("binding was not initialised")
             previous = int(row[0]); target = int(self._execute(conn, "SELECT current_revision FROM system_state").fetchone()[0])
             work = self._execute(conn, "SELECT work_id, cursor_ts, end_ts, from_revision, to_revision FROM materialization_work WHERE progress_key=?", [binding.progress_key]).fetchone()
-            batch = self._work_batch(conn, binding, work) if work else self._build_batch(conn, binding, previous, target, partition=True)
+            if self._has_reset(conn, binding, previous, target):
+                batch = self._reset_batch(conn, binding, previous, target, work)
+            else:
+                batch = self._work_batch(conn, binding, work) if work else self._build_batch(conn, binding, previous, target, partition=True)
             conn.commit()
             if batch is None and previous != target:
                 # Revisions for unrelated streams can be safely skipped.  The
@@ -175,6 +179,39 @@ class RevisionStore:
         except BaseException:
             conn.rollback(); raise
         finally: conn.close()
+
+    def _has_reset(self, conn: Any, binding: Binding, previous: int, target: int) -> bool:
+        refs = sorted({d.ref_uri for values in binding.inputs.values() for d in values})
+        if not refs or previous >= target:
+            return False
+        marks = ','.join('?' for _ in refs)
+        return self._execute(conn, f"SELECT 1 FROM stream_resets WHERE ref_uri IN ({marks}) AND last_revision>? AND last_revision<=? LIMIT 1",
+                             [*refs, previous, target]).fetchone() is not None
+
+    def _reset_batch(self, conn: Any, binding: Binding, previous: int, target: int, work) -> Batch:
+        """Rebuild from all current inputs; old outputs also bound the repair.
+
+        Resets are deliberately unpartitioned. Output replacement and progress
+        commit together, so failure/restart retries the full rebuild and an old
+        backfill cursor can only be discarded after the rebuild succeeds.
+        """
+        from dataclasses import replace
+        refs = sorted({d.ref_uri for values in binding.inputs.values() for d in values}
+                      | {p.ref_uri for p in binding.outputs.values()})
+        marks = ','.join('?' for _ in refs)
+        extent = self._execute(conn, f"SELECT min(t.ts), max(t.ts) FROM {self._timeseries_source} WHERE {self._ref} IN ({marks})", refs).fetchone()
+        epoch = datetime(1970, 1, 1, tzinfo=UTC)
+        retained = TimeWindow(*extent) if extent[0] is not None else TimeWindow(epoch, epoch)
+        expanded = self._output_window(binding, retained)
+        window = TimeWindow(min(retained.start, expanded.start), max(retained.end, expanded.end))
+        # All retained rows are changes for a full rebuild, including unchanged
+        # sibling inputs in a multi-input app.
+        inputs = {alias: replace(self._stream_set(conn, alias, descriptors, window, 0, target), every=binding.every, _scheduled=True)
+                  for alias, descriptors in binding.inputs.items()}
+        return Batch(inputs, InputBatch(binding.signature, binding.graph_revision, previous,
+                     target, retained, window, binding.row, binding.result, output_window=window,
+                     work_id=work[0] if work else None, work_cursor=work[1] if work else None,
+                     full_reset=True))
 
     def preview_batch(self, binding: Binding) -> Batch | None:
         """Build a batch over all stored input data, touching no durable state.
@@ -285,7 +322,11 @@ class RevisionStore:
             raw = cursor.to_arrow_table().rename_columns(["ref", "time", "numeric", "text", "revision"])
         numeric = raw["text"].null_count == raw.num_rows
         if not raw.num_rows:
-            numeric = self._execute(conn, f"SELECT 1 FROM {self._timeseries_source} WHERE {self._ref} IN ({marks}) AND t.text_value IS NOT NULL LIMIT 1", refs).fetchone() is None
+            # Physical reset may leave no values from which to infer a type.
+            # Preserve declared text inputs even after their last row is gone.
+            numeric = all(d.value_kind != "text" for d in descriptors) and self._execute(
+                conn, f"SELECT 1 FROM {self._timeseries_source} WHERE {self._ref} IN ({marks}) AND t.text_value IS NOT NULL LIMIT 1", refs
+            ).fetchone() is None
         values = raw["numeric"] if numeric else pc.coalesce(raw["text"], pc.cast(raw["numeric"], pa.string()))
         table = pa.table({"ref_uri": raw["ref"],
                           "time": pc.cast(raw["time"], pa.timestamp("us", tz="UTC")),
@@ -313,10 +354,14 @@ class RevisionStore:
             # transaction would leave a gap in which an obsolete result could
             # become authorized to overwrite the replacement deployment's data.
             accepted = []
+            current = int(self._execute(conn, "SELECT current_revision FROM system_state").fetchone()[0])
             for binding, batch, results in completed:
                 row = self._execute(conn, "SELECT consumed_revision FROM binding_progress WHERE progress_key=?", [binding.progress_key]).fetchone()
                 active = self.active_bindings
                 valid = active is None or active.get(binding.progress_key) == binding.generation
+                # A physical reset invalidates any snapshot prepared before it,
+                # including a pending backfill chunk. Retry against the reset.
+                valid = valid and not self._has_reset(conn, binding, batch.context.to_revision, current)
                 # Intermediate chunks share the same frontier. The work ID and
                 # cursor provide the additional compare-and-swap condition that
                 # prevents a duplicate chunk or cancelled repair from publishing.
@@ -325,12 +370,13 @@ class RevisionStore:
                     valid = valid and work == (batch.context.work_id, batch.context.work_cursor)
                 if valid and row is not None and int(row[0]) == batch.context.from_revision:
                     accepted.append((binding, batch, results))
-            # Assigned ports replace their owned interval. Tombstones remain
-            # discoverable by downstream revision scans, even for empty results.
+            # Incremental writes replace an owned interval using tombstones.
+            # Full rebuilds physically replace assigned streams and propagate
+            # reset markers, including when both old and new streams are empty.
             import polars as pl
             # Allocate a revision for nonempty output or removal of existing
-            # rows. An empty interval with nothing to remove needs only a
-            # progress update, avoiding revisions that wake unrelated bindings.
+            # rows, or a propagated reset. An ordinary empty interval with
+            # nothing to remove needs only a progress update.
             revision = None
             for binding, batch, results in accepted:
                 window = batch.context.output_window
@@ -342,12 +388,17 @@ class RevisionStore:
                     ref_filter = "ref_id IN (SELECT ref_id FROM ref_ids WHERE ref_uri=?)"
                     existing = self._execute(conn, f"SELECT 1 FROM timeseries WHERE {ref_filter} AND ts>=? AND ts<=? AND NOT deleted LIMIT 1",
                                              [port.ref_uri, self._time(window.start), self._time(window.end)]).fetchone()
-                    if not table.num_rows and existing is None:
+                    if not batch.context.full_reset and not table.num_rows and existing is None:
                         continue
                     if revision is None:
                         revision = self.store._next_revision(conn)
-                    self._execute(conn, f"UPDATE timeseries SET deleted=TRUE, last_revision=? WHERE {ref_filter} AND ts>=? AND ts<=? AND NOT deleted",
-                                  [revision, port.ref_uri, self._time(window.start), self._time(window.end)])
+                    if batch.context.full_reset:
+                        self._execute(conn, f"DELETE FROM timeseries WHERE {ref_filter}", [port.ref_uri])
+                        self._execute(conn, "INSERT INTO stream_resets (ref_uri, last_revision) VALUES (?, ?) ON CONFLICT (ref_uri) DO UPDATE SET last_revision=EXCLUDED.last_revision",
+                                      [port.ref_uri, revision])
+                    else:
+                        self._execute(conn, f"UPDATE timeseries SET deleted=TRUE, last_revision=? WHERE {ref_filter} AND ts>=? AND ts<=? AND NOT deleted",
+                                      [revision, port.ref_uri, self._time(window.start), self._time(window.end)])
                     self._execute(conn, """INSERT INTO streams (ref_uri, point_uri, source_id, ref_name, value_kind)
                         VALUES (?, ?, ?, ?, ?) ON CONFLICT (ref_uri) DO NOTHING""",
                         [port.ref_uri, port.point_uri, f"derived:{binding.application_name}", port.ref_name, port.spec.value_kind])
@@ -365,7 +416,11 @@ class RevisionStore:
             # frontier fixed until the final chunk, otherwise restart would skip
             # unfinished portions of the captured revision range.
             for binding, batch, _ in accepted:
-                if batch.context.work_id:
+                if batch.context.full_reset:
+                    # The full rebuild supersedes every older interval, even
+                    # work queued after its read snapshot was prepared.
+                    self._execute(conn, "DELETE FROM materialization_work WHERE progress_key=?", [binding.progress_key])
+                elif batch.context.work_id:
                     if batch.context.work_next:
                         self._execute(conn, "UPDATE materialization_work SET cursor_ts=? WHERE progress_key=?", [batch.context.work_next, binding.progress_key])
                         continue

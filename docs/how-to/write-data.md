@@ -75,8 +75,23 @@ For high volume, `insert_timeseries_arrow(source_id, table)` takes a
 Writes are idempotent on the (stream, timestamp) pair.
 Re-inserting the same timestamps overwrites those rows, so re-running an
 import is safe and will not duplicate anything.
-Whole-stream replacement is not supported by incremental materialization;
-`replace=True` is rejected. Publish corrected timestamps as ordinary upserts.
+Ordinary upserts retain omitted timestamps. With `replace=True`, the stream
+contains exactly the supplied rows; replacing an unwritten stream inserts them.
+Replacement physically deletes the old rows and records a durable stream reset.
+Downstream apps rebuild from their full current inputs, including unchanged
+sibling streams, and replace their outputs. Replacement is intended for
+infrequent reloads: rebuilding can use substantially more time and memory than
+ordinary timestamp-level upserts.
+An empty replacement clears the stream:
+
+```python
+acq.insert_timeseries("lab-import", "effluent-tds", [], replace=True)
+```
+
+Each stream replacement is atomic, including its revision. A multi-stream HTTP
+request does not make all replacements atomic together. Returned row counts
+count only replacement rows written. Publication IDs
+remain correlation identifiers and do not deduplicate retries.
 
 ### The logbook
 

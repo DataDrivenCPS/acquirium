@@ -209,7 +209,8 @@ class Acquirium:
             rows: List of (timestamp, value) tuples.
             point_uri: Compatibility field. Register the point relationship
                 with ``register_streams`` before inserting rows.
-            replace: Must remain False; whole-stream replacement is rejected.
+            replace: Keep exactly the supplied rows, removing omitted timestamps.
+                An empty replacement clears the stream.
 
         Returns:
             dict with ``{"ok": True, "rows_inserted": N}``.

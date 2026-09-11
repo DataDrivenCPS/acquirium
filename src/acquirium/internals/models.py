@@ -92,6 +92,26 @@ class StreamInsert(BaseModel):
     publication_id: str | None = None
 
 
+class AppRegistration(BaseModel):
+    """App definition with explicit grouping and microsecond durations."""
+
+    model_config = {"extra": "forbid"}
+
+    name: str
+    executable_digest: str
+    entrypoint: str
+    outputs: dict[str, Any]
+    # Durations travel as whole microseconds; lookback may be the string "all".
+    lookback: int | str
+    lookahead: int = 0
+    backfill: bool = False
+    batch_delay: int = 0
+    min_interval: int | None = None
+    parameters: dict[str, Any] = {}
+    every: int | None = None
+    grouping: Literal["per_match", "all_matches"]
+
+
 Order = Literal["asc", "desc"]
 
 @dataclass(frozen=True)

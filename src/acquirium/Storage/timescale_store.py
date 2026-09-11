@@ -70,7 +70,7 @@ class TimescaleStore(TimeseriesStore):
             logger.debug("TimescaleStore.__init__: dropping existing tables/views")
             with self.conn.cursor() as cur:
                 cur.execute(sql.SQL("DROP VIEW IF EXISTS {} CASCADE").format(sql.Identifier(TIMESERIES_STREAMS_VIEW)))
-                for table in ("materialization_work", "materialization_lineage", "materialization_deployments", BINDING_PROGRESS_TABLE, SYSTEM_STATE_TABLE, TIMESERIES_TABLE, REF_IDS_TABLE, STREAMS_TABLE, LOGS_TABLE):
+                for table in ("stream_resets", "materialization_work", "materialization_lineage", "materialization_deployments", BINDING_PROGRESS_TABLE, SYSTEM_STATE_TABLE, TIMESERIES_TABLE, REF_IDS_TABLE, STREAMS_TABLE, LOGS_TABLE):
                     cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(table)))
         self.ensure_table()
         logger.debug("TimescaleStore.__init__: ready")
@@ -208,6 +208,7 @@ class TimescaleStore(TimeseriesStore):
             cur.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_logs_observed ON {LOGS_TABLE} USING GIST (observed);"
             )
+            cur.execute("CREATE TABLE IF NOT EXISTS stream_resets (ref_uri TEXT PRIMARY KEY, last_revision BIGINT NOT NULL)")
             cur.execute(f"CREATE TABLE IF NOT EXISTS {SYSTEM_STATE_TABLE} (current_revision BIGINT NOT NULL);")
             cur.execute(f"INSERT INTO {SYSTEM_STATE_TABLE} SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM {SYSTEM_STATE_TABLE});")
             cur.execute(f"CREATE TABLE IF NOT EXISTS {BINDING_PROGRESS_TABLE} (progress_key TEXT PRIMARY KEY, consumed_revision BIGINT NOT NULL);")
@@ -288,7 +289,28 @@ class TimescaleStore(TimeseriesStore):
         *,
         value_kind: str = "text",
     ) -> int:
-        raise NotImplementedError("replace/delete is not supported by incremental materialization")
+        value_kind = normalize_value_kind(value_kind)
+        frame = self._prepare_frame(self._rows_frame(ref_uri, list(rows), value_kind))
+        if frame["ts"].null_count():
+            raise ValueError("replacement timestamps must not be null")
+        return self._replace_frame(ref_uri, frame)
+
+    def _replace_frame(self, ref_uri: str, frame: pl.DataFrame) -> int:
+        """Physically replace a stream and record its latest reset atomically."""
+        with self._lock, self._write_conn() as conn:
+            revision = self._next_revision(conn)
+            conn.execute(
+                f"""DELETE FROM {TIMESERIES_TABLE}
+                WHERE ref_id = (SELECT ref_id FROM {REF_IDS_TABLE} WHERE ref_uri = %s)""",
+                [ref_uri],
+            )
+            self._insert_frame(conn, frame, revision)
+            conn.execute(
+                "INSERT INTO stream_resets (ref_uri, last_revision) VALUES (%s, %s) "
+                "ON CONFLICT (ref_uri) DO UPDATE SET last_revision=EXCLUDED.last_revision",
+                [ref_uri, revision],
+            )
+        return frame.height
 
     def bulk_insert_polars(self, df: pl.DataFrame) -> int:
         """Upsert a Polars frame with columns ``ref_uri, ts, value[, value_kind]``
@@ -465,8 +487,16 @@ class TimescaleStore(TimeseriesStore):
         cols = "(ref_uri, point_uri, source_id, ref_name, value_kind)"
         # The connection runs autocommit, so an explicit transaction is what keeps
         # the staging table alive from COPY through to the upsert (and drops it).
-        with timed_debug(logger, "ensure_stream_refs rows=%d", len(prepared)), self.conn.transaction():
-            with self.conn.cursor() as cur:
+        # ``self.conn`` is the persistent public-transaction connection.  The
+        # staging table name is fixed, so concurrent graph synchronizations must
+        # serialize just like timeseries writers; otherwise one request can
+        # nest a transaction or collide with the other request's temp table.
+        with self._lock, timed_debug(logger, "ensure_stream_refs rows=%d", len(prepared)), self._write_conn() as conn:
+            with conn.cursor() as cur:
+                # A caller-controlled transaction can synchronize references
+                # more than once before commit; remove the prior staging table
+                # because ON COMMIT DROP has not fired yet.
+                cur.execute("DROP TABLE IF EXISTS _acquirium_incoming_refs")
                 cur.execute(
                     f"CREATE TEMP TABLE _acquirium_incoming_refs "
                     f"(LIKE {STREAMS_TABLE}) ON COMMIT DROP"
