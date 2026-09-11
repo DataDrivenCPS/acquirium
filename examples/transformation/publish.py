@@ -1,4 +1,4 @@
-"""Publish Fahrenheit samples and show the Celsius values derived by the server.
+"""Publish water-temperature samples and show the derived Celsius values.
 
     uv run python examples/transformation/publish.py
 """
@@ -24,7 +24,7 @@ def main() -> None:
         "source_id": source_id,
         "ref_name": ref_name,
         "point_uri": "urn:example:temperature:fahrenheit",
-        "label": "Example temperature in Fahrenheit",
+        "label": "Treatment tank water temperature in Fahrenheit",
         "unit": "http://qudt.org/vocab/unit/DEG_F",
         "value_kind": "numeric",
     }])

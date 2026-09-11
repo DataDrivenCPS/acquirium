@@ -1,4 +1,6 @@
-# Incremental materialization: backends and operations
+---
+title: Materialization internals
+---
 
 Acquirium stores both derived values and processing progress in the timeseries
 database. Each row records the revision that last wrote it, and each binding
@@ -7,8 +9,37 @@ to resume after a restart without relying on worker memory.
 
 This page describes how the storage backends support that behavior and which
 settings affect server operation. For an introduction to writing an app, see
-[Apps](apps.md). For the scheduling and recovery algorithm, see
-[How it works](reference/apps.md#how-it-works).
+[Your first app](../tutorials/first-app.md). For the calculation model and
+processing guarantees, see [Apps](apps.md).
+
+## Scheduling and recovery
+
+The timeseries database stores current values and assigns each write a
+monotonically increasing revision. Each binding records the last input revision
+it has processed, called its *consumed frontier*. To prepare the next invocation,
+the runtime opens a consistent database snapshot, finds input timestamps that
+changed after that frontier, and loads the required windows into Arrow tables.
+It closes the read transaction before running user code.
+
+Before publishing the result, the runtime checks that the binding generation
+and consumed frontier still match those used to prepare the work. If the
+binding has been replaced or its progress has changed, the result is discarded.
+Otherwise, output changes and progress commit together. Deleted output rows
+leave revisioned tombstones so downstream apps can observe the removal;
+reinserting a timestamp clears its tombstone.
+
+One coordinator schedules independent bindings through a bounded thread pool.
+The next dependency layer reads its inputs after predecessor work has completed.
+A failed binding keeps its previous frontier and blocks its descendants, while
+unrelated branches can continue processing.
+
+Long, finite work ranges are divided into output intervals of approximately one
+day, rounded to complete buckets where necessary. A durable cursor records which
+intervals have finished, and the input frontier advances when the entire range
+is complete. Corrections newer than the range's captured revision are processed
+afterward. Explicit reprocessing uses the same durable work mechanism while
+preserving the existing input frontier. Whole-history calculations still load
+their complete retained input and are not bounded by these daily intervals.
 
 ## The storage contract
 
@@ -95,6 +126,18 @@ schema so it cannot disturb the API integration server's database. It needs
 output identities and grouping, window construction, progress-key continuity,
 unit conversion, alignment, and DAG validation.
 
+The processing contract is checked across ingestion order, corrections, and
+recovery:
+
+- Together and split ingestion produce equal fixed-bucket and rolling results.
+- Late corrections repair old results without corrupting boundary context.
+- Empty replacement removes rows and propagates through an application chain.
+- Restart preserves progress and pending reprocessing.
+- Failed deployment leaves the active definition intact.
+- Failed transforms leave healthy branches runnable.
+- Worker capacity bounds transformations and loaded batches.
+- PostgreSQL batch reads share a Repeatable Read snapshot.
+
 ## Implementation boundaries
 
 | Module | Responsibility |
@@ -111,13 +154,3 @@ unit conversion, alignment, and DAG validation.
 The top-level `acquirium` package exports the authoring API. Embedders can
 import runtime types from `acquirium.Materialization`; implementation modules
 import their dependencies directly.
-
-## Performance probe
-
-Run `.venv/bin/python scripts/benchmark_materialization.py` for a temporary
-DuckDB workload with eight precompiled bindings, 48,000 rows, two workers,
-a backfill, a correction, and idle polling. It checks the output row count.
-On the development machine on 2026-09-09, this took 0.79 seconds for backfill,
-0.19 seconds for the correction cycle, and 0.52 milliseconds per idle tick.
-These are local measurements, not capacity guarantees or a before/after comparison.
-Graph compilation and module startup are excluded.

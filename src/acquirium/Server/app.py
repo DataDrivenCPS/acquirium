@@ -11,7 +11,7 @@ import sys
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Any, Iterator, Literal, Optional
+from typing import Annotated, Any, Iterator, Optional
 
 # When the server is launched via `uv run`, Ray's uv hook would give every
 # worker a fresh env resolved from pyproject.toml — dropping optional extras
@@ -36,6 +36,7 @@ from acquirium.internals.models import (
     TimeIntervalModel,
     StreamInsert,
     RegisterDatasourceRequest,
+    AppRegistration,
 )
 from acquirium.internals.internals_namespaces import PLANT_URI
 
@@ -509,24 +510,6 @@ def list_namespaces() -> dict[str, str]:
     
 \
 #### MATERIALIZATION API ENDPOINTS ####
-
-
-class AppRegistration(BaseModel):
-    """App definition with explicit grouping and microsecond durations."""
-    model_config = {"extra": "forbid"}
-    name: str
-    executable_digest: str
-    entrypoint: str
-    outputs: dict[str, Any]
-    # Durations travel as whole microseconds; lookback may be the string "all".
-    lookback: int | str
-    lookahead: int = 0
-    backfill: bool = False
-    batch_delay: int = 0
-    min_interval: int | None = None
-    parameters: dict[str, Any] = {}
-    every: int | None = None
-    grouping: Literal["per_match", "all_matches"]
 
 
 @app.put("/apps/{name}")

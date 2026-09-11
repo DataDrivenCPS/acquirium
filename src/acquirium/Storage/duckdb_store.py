@@ -186,7 +186,7 @@ class DuckDBStore:
                 ts      TIMESTAMP NOT NULL,
                 numeric_value DOUBLE,
                 text_value    VARCHAR,
-                -- Canonical publication columns (see Storage/publication/duckdb.py).
+                -- Canonical publication columns.
                 -- ``deleted`` marks a physical
                 -- tombstone: the row is kept (not removed) so its
                 -- last_stream_version remains resolvable by a batch reader.
