@@ -108,7 +108,8 @@ That's why we hide these during traversals.
 
 `via="any"` walks every predicate except a default hidden set: the ones backing
 the attributes (`rdf:type`, `hasUnit`, `hasQuantityKind`, `ofMedium`,
-`hasMedium`, `ofSubstance`, `hasEnumerationKind`, `hasProcess`, `dataSource`),
+`hasMedium`, `ofSubstance`, `hasEnumerationKind`, `hasProcess`, `dataSource`,
+`producedBy`),
 plus `rdfs:subClassOf`, `s223:hasProperty`, `s223:hasConnectionPoint`,
 `s223:cnx` and `ref:hasExternalReference`.
 

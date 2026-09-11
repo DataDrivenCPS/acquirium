@@ -44,14 +44,14 @@ The server and its configured drivers start from one command:
 acquirium server --config acquirium.toml
 ```
 
-A sample `acquirium.toml` is included at the repository root. By default everything is stored on local disk (an embedded Oxigraph RDF store and a DuckDB file under `data_dir`); no external services are required. The first start builds the text-resolution indexes and can take 5-10 minutes; later starts reuse the cache.
+A sample `acquirium.toml` is included at the repository root. By default everything is stored on local disk (an embedded Oxigraph RDF store and a DuckDB file under `data_dir`); no external services are required. The first start builds the text-resolution indexes and can take 5-10 minutes; later starts reuse the cache. The server is intentionally one process because it owns the embedded graph store. `materialization_workers` bounds concurrent transformation execution through the server's in-process worker pool; incremental materialization supports both DuckDB and TimescaleDB backends.
 
 Querying is a Python client:
 
 ```python
 from acquirium import Acquirium
 
-acq = Acquirium(server_url="localhost", server_port=8000)
+acq = Acquirium(server_url="127.0.0.1", server_port=8000)
 acq.query().entity("pump").measurement(quantity_kind="pressure").dataframe(shape="wide")
 ```
 
@@ -75,12 +75,14 @@ guides, reference and explanation.
 [explore a model](./docs/how-to/explore-a-model.md),
 [debug a query](./docs/how-to/debug-an-empty-query.md),
 [insert data](./docs/how-to/write-data.md),
+[write an app](./docs/tutorials/first-app.md),
 [run the server](./docs/how-to/run-the-server.md),
 [resolve text to URIs](./docs/how-to/resolve-text.md).
 
 **Reference** — facts, no narrative:
 [client API](./docs/reference/client-api.md),
 [drivers](./docs/reference/drivers.md),
+[apps](./docs/reference/apps.md),
 [server configuration](./docs/reference/server-config.md),
 [HTTP API](./docs/reference/http-api.md),
 [glossary](./docs/reference/glossary.md).
@@ -89,12 +91,11 @@ guides, reference and explanation.
 [the query model](./docs/explanation/query-model.md),
 [values](./docs/explanation/values.md) and [units](./docs/explanation/units.md),
 [why drivers](./docs/explanation/drivers.md),
+[why apps use recomputed windows](./docs/explanation/apps.md),
 [the data stream lifecycle](./docs/explanation/stream-lifecycle.md),
 [text resolution](./docs/explanation/text-resolution.md),
 [server internals](./docs/explanation/server-internals.md),
 [graph backend](./docs/explanation/graph-backend.md).
-
-App documentation is pending the app infrastructure rework.
 
 ## Docker stack (optional)
 

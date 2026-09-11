@@ -227,61 +227,6 @@ class TestResolveConversion:
             client.resolve_conversion("mg/l", "volts")
 
 
-
-# ── register_app / run_app / stop_app / list_app_runs ──────
-
-
-class TestAppMethods:
-    def test_register_app_success(self, http, client):
-        from acquirium.internals.models import AppSpec
-
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {"app_id": "app123"}
-        mock_resp.raise_for_status = MagicMock()
-        http.post.return_value = mock_resp
-
-        spec = AppSpec(name="test_app")
-        result = client.register_app(spec)
-        assert result["app_id"] == "app123"
-
-    def test_run_app_success(self, http, client):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {"run_id": "run456"}
-        mock_resp.raise_for_status = MagicMock()
-        http.post.return_value = mock_resp
-
-        result = client.run_app("app123")
-        assert result["run_id"] == "run456"
-
-    def test_stop_app_success(self, http, client):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {"status": "stopped"}
-        mock_resp.raise_for_status = MagicMock()
-        http.post.return_value = mock_resp
-
-        result = client.stop_app(app_id="app123")
-        assert result["status"] == "stopped"
-        assert http.post.call_args.kwargs["json"] == {"app_id": "app123"}
-
-    def test_list_app_runs_success(self, http, client):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {"runs": [{"run_id": "r1"}, {"run_id": "r2"}]}
-        mock_resp.raise_for_status = MagicMock()
-        http.get.return_value = mock_resp
-
-        result = client.list_app_runs()
-        assert len(result["runs"]) == 2
-
-    def test_list_app_runs_empty(self, http, client):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {"runs": []}
-        mock_resp.raise_for_status = MagicMock()
-        http.get.return_value = mock_resp
-
-        result = client.list_app_runs()
-        assert result["runs"] == []
-
-
 # ── insert_log ─────────────────────────────────────────────
 
 

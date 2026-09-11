@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta
-from typing import Literal, Any, TYPE_CHECKING
+from typing import Literal, Any
 from dataclasses import dataclass
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 from acquirium.internals.internals_namespaces import ACQUIRIUM_NS
@@ -30,9 +30,11 @@ def looks_like_uri(value: object) -> bool:
 def compute_ref_uri(source_id: str, ref_name: str) -> URIRef:
     """Return a deterministic UUID5 ref URI for a (source_id, ref_name) pair.
 
-    The ref URI is used as the TimescaleDB storage key and stored as
-    ``ref:hasTimeseriesId`` in the RDF graph.  It is stable across restarts
-    and can be recomputed at any time from the same inputs.
+    The ref URI is the canonical stream identity exposed by the graph and
+    client APIs. A point links to this reference node through
+    ``ref:hasExternalReference``. Both SQL backends map it to an internal
+    integer ``ref_id`` for timeseries rows. It is stable across restarts and
+    can be recomputed from the same inputs.
     """
     ref_uri_str = str(uuid.uuid5(_REF_URI_NAMESPACE, f"{source_id}:{ref_name}"))
     return ACQUIRIUM_NS[ref_uri_str]
@@ -40,9 +42,6 @@ def compute_ref_uri(source_id: str, ref_name: str) -> URIRef:
 
 compute_handle = compute_ref_uri
 
-
-if TYPE_CHECKING:
-    from acquirium.Client.explore.core import Query
 
 class TimeseriesInfo(BaseModel):
     table: str
@@ -80,9 +79,9 @@ class StreamInsert(BaseModel):
 
     ``source_id`` identifies the registered datasource (e.g. ``"mybox-metrics"``).
     ``ref_name`` is the source-local stream identifier (e.g. ``"cpu_percent"``).
-    The TimescaleDB storage key (ref URI) is computed deterministically from
-    both via :func:`compute_ref_uri` — so two sources with the same ``ref_name``
-    never collide.
+    The canonical ref URI is computed deterministically from both via
+    :func:`compute_ref_uri`, so two sources with the same ``ref_name`` never
+    collide. The storage backend maps that URI to its internal integer key.
     """
 
     source_id: str
@@ -90,6 +89,27 @@ class StreamInsert(BaseModel):
     point_uri: str | None = None
     replace: bool = False
     values: list[tuple[datetime, float | int | str | None]]
+    publication_id: str | None = None
+
+
+class AppRegistration(BaseModel):
+    """App definition with explicit grouping and microsecond durations."""
+
+    model_config = {"extra": "forbid"}
+
+    name: str
+    executable_digest: str
+    entrypoint: str
+    outputs: dict[str, Any]
+    # Durations travel as whole microseconds; lookback may be the string "all".
+    lookback: int | str
+    lookahead: int = 0
+    backfill: bool = False
+    batch_delay: int = 0
+    min_interval: int | None = None
+    parameters: dict[str, Any] = {}
+    every: int | None = None
+    grouping: Literal["per_match", "all_matches"]
 
 
 Order = Literal["asc", "desc"]
@@ -153,52 +173,3 @@ class LogEntry(BaseModel):
             "observation_end": self.period.end.isoformat() if self.period.end else None,
             "message": self.message,
         }
-    
-
-@dataclass
-class AppContext:
-    app_id: str
-    started_at: datetime
-    start: datetime | None
-    end: datetime | None
-    query: Query | None
-    params: dict[str, Any]
-    queries: dict[str, Query] | None = None
-    data: Any | None = None
-    state: Any | None = None
-
-
-class AppOutputSpec(BaseModel):
-    kind: Literal["timeseries", "event", "trigger"]
-    point_uri: str
-    ref_uri: str | None = None
-    quantity_kind: str | None = None
-    unit: str | None = None
-    data_source: str | None = None
-    storage_backend: str | None = None
-
-
-class AppSpec(BaseModel):
-    name: str
-    version: str = "0.0"
-    app_type: str = "soft_sensor"
-    app_class: str | None = None
-    source_code: str | None = None
-    entry_file: str | None = None
-    queries: dict[str, dict] = Field(default_factory=dict)
-    outputs: list[AppOutputSpec] = Field(default_factory=list)
-    depends_on: list[str] = Field(default_factory=list)
-    params: dict[str, Any] = Field(default_factory=dict)
-
-
-class AppRunRequest(BaseModel):
-    app_id: str
-    start: datetime | None = None
-    end: datetime | None = None
-    params: dict[str, Any] = Field(default_factory=dict)
-    keep_alive: bool = False
-    interval: float = 10.0
-
-
-class AppStopRequest(BaseModel):
-    app_id: str

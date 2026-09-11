@@ -144,16 +144,19 @@ A row goes through five steps between a driver and the store.
    A value on a numeric stream that does not parse as a number falls back to
    the text column instead of failing the batch.
 4. Rows are deduplicated on `(ref_uri, ts)`, keeping the last.
-5. The batch is written as a delete-then-insert on those pairs, in one
-   transaction.
+5. The batch is written in one transaction. DuckDB deletes colliding pairs
+   and inserts the frame; TimescaleDB `COPY`s the frame to a temporary staging
+   table and merges it with `INSERT ... SELECT ... ON CONFLICT`, ordered by
+   `(ref_id, ts)`.
 
-Step 5 makes ingestion idempotent: re-inserting the same timestamps replaces
-those rows instead of duplicating them, so re-running an import or replaying
-a file is safe.
-Note that this also means an insert with changed values silently overwrites
-the history at those timestamps.
-`replace=True` on `insert_timeseries` clears the whole stream before
-inserting.
+Step 5 makes ingestion idempotent by stream and timestamp: re-inserting the
+same timestamps replaces those rows instead of duplicating them, so re-running
+an import or replaying a file is safe. An insert with changed values therefore
+overwrites the current values at those timestamps. Ordinary upserts retain omitted timestamps. Whole-stream replacement with
+`replace=True` keeps exactly the supplied rows; an empty replacement clears the
+stream. Replacement physically removes the old rows and records the stream's
+latest reset revision. Downstream apps rebuild their complete results, allowing
+removals to propagate without retaining deleted timestamps for replacement.
 
 Storage is one `timeseries` table holding `ts`, `numeric_value` and
 `text_value`, with one row per stream and timestamp and a check that only one
@@ -177,7 +180,8 @@ A query follows the same links in reverse.
    [units guide](units.md#automatic-conversion)).
 
 The graph determines which streams to read, and the timeseries store returns
-their values; `ref_uri` is the join key between the two.
+their values. `ref_uri` is the logical join key at this boundary; the backend
+maps it to its internal integer `ref_id`.
 A point with no reference node yields metadata but no data.
 A reference node with no point stores data that semantic queries cannot find.
 
@@ -188,8 +192,8 @@ describes how it behaves.
 
 Every write names an owner.
 `insert_graph` requires a `source_id`, and the triples land in that owner's
-graph: the reserved `plant` source for the shared model, `app:<name>` for an
-app, or the driver's own source.
+graph: the reserved `plant` source for the shared model, a driver's own source,
+or another source explicitly chosen by an external client.
 `replace=True` therefore replaces only that owner's graph, never the plant
 model or another driver's streams.
 
@@ -210,11 +214,27 @@ Register many streams in one call rather than looping over single ones.
 
 ## App outputs are streams too
 
-When an app that produces values (a soft sensor, for instance) is registered, each declared output becomes a point and a
-reference node: `app:<name>` is the `source_id`, the output's point URI
-string is the `ref_name`, and the computed `ref_uri` follows from the pair
-as usual.
-See the [app reference](../reference/apps.md#outputs).
-This means computed values are indistinguishable from measured ones at query
-time.
+When the planner compiles an app's query, it creates references for the output
+streams and generates points for outputs that do not specify an existing
+`point_uri`. Each output uses `derived:<name>` as its timeseries `source_id`.
 
+With `output.stream`, the generated `ref_name` combines the app name, port name,
+and a stable hash of the bound input aliases and reference URIs. The `ref_uri`
+is derived from the source and reference name as usual. This keeps the stream
+identity stable when the app's code or a sensor's metadata changes. An app with
+`grouping="per_match"`, one generated output, and ten distinct sensor matches
+therefore owns ten derived streams.
+
+With `output.named`, the author supplies the reference name. The resulting
+stream keeps that identity when the set of inputs changes, which is useful
+for aggregates such as a plant-wide total. See the
+[app reference](../reference/apps.md#output-declarations) for ownership and
+metadata rules.
+
+Queries can select derived streams by the metadata in their output declarations,
+just as they select measured streams. For example, declaring a quantity kind
+makes an output discoverable alongside sensors measuring that quantity. The
+runtime also records the producing app on each derived point, so
+`measurement(quantity_kind="temperature", app="normalize-temperatures")`
+selects temperature outputs from that app. See
+[query matches](../reference/apps.md#query-matches).

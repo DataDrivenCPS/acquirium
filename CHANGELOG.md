@@ -10,6 +10,47 @@ change in any release.
 
 ## [Unreleased]
 
+### Added
+- Incremental materialization apps on DuckDB and PostgreSQL/TimescaleDB.
+  Apps select streams with a semantic query and implement
+  `transform(inputs, output, context)`. Grouping is explicitly `per_match`
+  or `all_matches`; `aq.output.stream(...)` and `aq.output.named(...)`
+  select generated or explicit stream identities independently.
+- Correction-aware output replacement. Assigned output windows include removals
+  that propagate downstream. Complete buckets (`every`), trailing dependencies
+  (`lookback`), and leading dependencies (`lookahead`) determine which input
+  and output intervals are recomputed from the latest available readings.
+- One bounded materialization executor with per-binding failure isolation,
+  coherent database snapshots, transactional output/progress publication, and
+  active-generation checks. Long finite work ranges and explicit
+  `reprocess_app(name, start, end)` requests use durable cursors.
+- App deployment through `client.deploy_app(...)` or `[[apps]]` configuration.
+  Source definitions are validated before activation. Query-match changes
+  schedule retained output repair; code edits preserve progress and use explicit
+  reprocessing to update history.
+- App scheduling attributes `backfill`, `batch_delay`, and `min_interval`.
+  Durations accept `timedelta` or strings using `ms`, `s`, `m`, `h`, or `d`.
+- `StreamSet.in_unit(...)` for unit conversion and `aq.align(inputs)` for
+  resampling onto the app's declared clock. Stream descriptors, individual
+  matches, the full query result, and calculation windows are available to
+  transforms.
+- App checks through `client.check_app(...)` and
+  `acquirium app check module:Class`. The `--local` option executes in the
+  caller's terminal for debugging.
+- Derived stream metadata, generated labels, and producer selection through
+  `measurement(app="producer-name")`. The materialization DAG endpoint exposes
+  progress, execution status, and errors.
+
+### Changed
+- Preserve `insert_timeseries(..., replace=True)` ingestion compatibility on
+  DuckDB and TimescaleDB: replacement keeps exactly the supplied rows, including
+  clearing with an empty list or inserting into an unwritten stream. One revision
+  atomically records the physical replacement and a durable stream reset.
+  Downstream apps fully rebuild and propagate resets without retaining deleted
+  timestamps for replacement. Ordinary upserts retain omitted timestamps.
+  Reset rebuilds supersede pending backfills atomically and retry after failure
+  or restart; they load full inputs and can require more time and memory.
+
 ## [0.4.0a6] - 2026-09-09
 
 ### Changed
