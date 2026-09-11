@@ -209,6 +209,12 @@ incomplete rows according to the calculation's requirements.
   runs on the server and returns per-binding inputs, windows, outputs, and errors.
 - `acquirium app check module:Class --local` executes in the caller's process.
   Local failures raise with their traceback; server failures appear in results.
+- `aq.console(banner=None, depth=1)` opens an interactive console containing
+  the caller's globals and locals. Ctrl-D or `exit()` resumes execution.
+  Rebinding a name changes only the console snapshot, while mutating a shared
+  object is visible to the app. Without an interactive stdin it logs a warning
+  and returns; run checks with `--local` to use it. `depth` selects an outer
+  caller frame for wrapper helpers.
 - `client.deploy_app(AppClass, parameters=None)` validates before activating.
 - `client.remove_app(name)` forgets deployment, progress, and pending work;
   retained output history is not deleted.
