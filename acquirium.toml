@@ -7,6 +7,7 @@
 # Network
 host = "0.0.0.0"
 port = 8000
+exact_match = true
 
 # Data directory: Oxigraph graph store, embedding cache, and app storage
 # all live under this path.
