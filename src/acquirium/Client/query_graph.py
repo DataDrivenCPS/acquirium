@@ -49,6 +49,12 @@ class QueryEdge:
     # Unconstrained-edge compilation: also try the first hop through a
     # connection point (measurement's include_connection_points flag).
     cp_union: bool = True
+    # Relation edge (explore ``context()``): a tuple of alternative step
+    # chains (see ``explore.relations``) rendered as one fixed SPARQL step
+    # from a data node to the entity it is about. ``relation_name`` is the
+    # registry name it came from, for display/serialisation only.
+    relation: Optional[tuple] = None
+    relation_name: Optional[str] = None
 
 
 @dataclass(frozen=True)

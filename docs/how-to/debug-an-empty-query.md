@@ -155,6 +155,20 @@ shape: (1, 2)
 Only the membrane area is owned by the RO itself; every pressure, flow and
 temperature sits on a connection point.
 
+### 6. `context()` followed the wrong relation
+
+`context()` defaults to `via="entity"`, the entity a point hangs off.
+For a point on a pipe that entity is the connection, so
+`context("pump")` from a pipe pressure returns nothing.
+Ask for the flow neighbour instead:
+
+```python
+acq.query().measurement(quantity_kind="pressure").context("pump", via="upstream").metadata()
+```
+
+`include("type")` on the context node, or `context()` with no class and
+`options("type")`, shows what the points actually hang off.
+
 When in doubt, run `metadata()` after each step and see where the rows
 disappear.
 `facets()` on the last surviving node shows what values actually exist there.

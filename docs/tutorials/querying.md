@@ -342,6 +342,92 @@ shape: (1, 2)
 └────────┴─────────────────────┘
 ```
 
+## context()
+
+`context()` goes the other way from `measurement()`: from a measurement node
+it adds the entity the measurement is about, and moves the pointer there.
+This is how you start from the points and then narrow by the equipment they
+belong to.
+
+```python
+(acq.query().measurement(quantity_kind="pressure")
+ .context(process="reverse osmosis")
+ .metadata())
+```
+<!-- TODO: capture output against seawater-ro -->
+
+The new node is an ordinary entity node: it gets a column, takes an alias,
+and `where(target=)`, `include()`, `related()` and `DataObject.by()` work on
+it.
+The default alias is `<measurement alias>_<relation>`, so the query above
+has the columns `data` and `data_entity`.
+Keyword arguments filter the new node the same way `entity()` does, and
+`uri=` pins one instance.
+With no arguments at all the node is unconstrained, which is the quickest way
+to see what the points hang off:
+
+```python
+acq.query().measurement().context(alias="carrier").include("carrier.type").metadata()
+```
+
+```python
+(acq.query().measurement(substance="dissolved oxygen")
+ .context("aeration basin", alias="basin")
+ .data().by("basin"))
+```
+
+### via=
+
+`via=` names the relation to follow.
+Every relation is one fixed step, compiled to SPARQL, so there is no
+`max_depth` and no client-side walk.
+Three come built in:
+
+| relation | meaning |
+|---|---|
+| `"entity"` (default) | the entity the point hangs off, directly or through one of its connection points |
+| `"upstream"` | the entity the point is directly downstream of |
+| `"downstream"` | the entity the point is directly upstream of |
+
+`upstream` and `downstream` matter for points that sit on a pipe, where
+`entity` returns the connection itself.
+For a pressure reading on the pipe leaving a pump, `upstream` is the pump
+and `downstream` is whatever the pipe feeds.
+For a reading on an outlet connection point, `upstream` is the equipment
+that owns the connection point: the outlet pressure is downstream of the
+pump.
+
+```python
+(acq.query().measurement(quantity_kind="pressure")
+ .context("pipe", alias="pipe")
+ .refocus("data")
+ .context("pump", via="upstream", alias="feed_pump")
+ .metadata())
+```
+<!-- TODO: capture output against seawater-ro -->
+
+`via=` also takes the explicit forms `related()` takes: a predicate
+(`"^"` inverts), a list of predicates, or a tuple of step chains.
+Note that `context()` only starts from a measurement node; from an entity
+node use `related()`.
+
+A deployment can register its own relation and use it by name:
+
+```python
+from acquirium.Client.explore import register_relation
+
+register_relation("system", (
+    (("^http://data.ashrae.org/standard223#hasProperty", None),
+     ("^http://data.ashrae.org/standard223#hasMember", None)),
+))
+acq.query().measurement().context("system", via="system")
+```
+
+Each chain is a tuple of `(predicate, class)` steps; the class, when given,
+constrains the node that step lands on.
+[The query model](../explanation/query-model.md#the-relations-behind-context)
+lists the built-in chains.
+
 ## Getting the values
 
 `dataframe()` returns the timeseries in one frame.

@@ -28,6 +28,7 @@ from rdflib import URIRef
 from acquirium.Client.explore.attributes import REGISTRY, Not, attributes_doc, normalize_value
 from acquirium.Client.explore.compile import compile_sparql
 from acquirium.Client.explore.directions import EQUIPMENT_STEPS, PROPERTY_STEPS
+from acquirium.Client.explore.relations import RELATIONS
 from acquirium.Client.query_graph import DataNodeInfo, QueryEdge, QueryGraph, QueryNode
 from acquirium.internals.internals_namespaces import S223
 
@@ -514,6 +515,104 @@ class Query:
             g = self._apply_attrs(g, created, self._resolve_attr_values(attrs))
         return self._with_graph(g)
 
+    def _lower_context_via(self, via: Any) -> tuple:
+        """Turn ``context(via=...)`` into ``(chains, name)``.
+
+        ``via`` is a registry name (``explore.relations.RELATIONS``), a single
+        predicate (URI or free text, ``"^"`` inverts), a list of predicates
+        (alternatives, one step each), or an explicit tuple of step chains in
+        the program IR. Every form is one fixed step.
+        """
+        if isinstance(via, str) and via in RELATIONS:
+            return RELATIONS[via], via
+        if isinstance(via, str):
+            pred = via.strip()
+            inverted = pred.startswith("^")
+            core = pred[1:] if inverted else pred
+            if not core:
+                raise ValueError("context: empty via predicate")
+            if not _is_uri(core):
+                resolved = self.client.resolve(core, "predicate", min_score=0.4)
+                if resolved is None:
+                    raise ValueError(
+                        f"context: {via!r} is neither a registered relation "
+                        f"({', '.join(RELATIONS)}) nor a resolvable predicate"
+                    )
+                core = resolved
+            return ((((f"^{core}" if inverted else core), None),),), "context"
+        if isinstance(via, (list, tuple)) and via and all(isinstance(c, tuple) for c in via):
+            return tuple(via), "context"
+        if isinstance(via, (list, tuple)) and via:
+            preds = [
+                f"^{self._as_uri(str(p)[1:], 'predicate')}" if str(p).startswith("^")
+                else self._as_uri(p, "predicate")
+                for p in via
+            ]
+            return tuple(((p, None),) for p in preds), "context"
+        raise ValueError(
+            "context: via must be a relation name, a predicate, a list of "
+            "predicates, or a tuple of step chains"
+        )
+
+    def context(self, cls: str | URIRef | None = None, *, uri: str | URIRef | None = None,
+                alias: Optional[str] = None, frm: Optional[str] = None,
+                via: Any = "entity", **attrs: Any) -> "Query":
+        """Add the entity a measurement is about and point at it.
+
+        The reverse of ``measurement()``: from a data node, add the entity
+        node reached through a named relation and move the pointer there.
+        The new node is a normal entity node (alias, ``where(target=)``,
+        ``include()``, further ``related()`` steps, ``DataObject.by()``).
+
+        - ``cls``: class URI or free text for the entity; ``uri`` pins one
+          instance. Both optional: with neither, the node matches whatever
+          the relation reaches (``include("type")`` shows what that is).
+        - ``frm``: alias of the data node (default: current pointer, which
+          must be a data node; from an entity node use ``related()``).
+        - ``via``: which relation. A name from ``explore.relations.RELATIONS``
+          (``"entity"``: the entity the point hangs off, directly or through a
+          connection point; ``"upstream"`` / ``"downstream"``: the entity the
+          point is directly downstream / upstream of, e.g. the pump feeding a
+          pipe the pressure sits on), or an explicit predicate, list of
+          predicates, or tuple of step chains. Always one fixed step, compiled
+          to plain SPARQL.
+        - Keyword arguments filter the new node like ``where()``.
+
+        Default alias is ``<data alias>_<relation>`` (``data_entity``). A point
+        reached from several entities yields several rows::
+
+            aq.query().measurement(quantity_kind="pressure").context(process="reverse osmosis")
+            aq.query().measurement(quantity_kind="pressure").context("pump", via="upstream")
+        """
+        instance_uri = self._normalize_instance_uri(uri)
+        g = self.query_graph
+        src_id = self._source_id(frm, verb="context")
+        if src_id not in g.data_nodes:
+            raise ValueError(
+                f"context: source {self._src_alias(src_id)!r} is not a measurement node; "
+                f"context() starts from a data node (use related() from an entity)"
+            )
+        chains, name = self._lower_context_via(via)
+
+        constraints: Dict[str, Any] = {}
+        if cls is not None:
+            constraints["rdf_class"] = self._as_uri(cls, "class")
+        if instance_uri is not None:
+            constraints["instance_uri"] = instance_uri
+        new_id = self._next_id()
+        if alias is not None:
+            self._require_free_alias(g, alias, verb="context")
+        else:
+            alias = self._unique_alias(g, f"{self._src_alias(src_id)}_{name}")
+        g = g.with_node(QueryNode(id=new_id, alias=alias, constraints=constraints))
+        g = g.with_edge(QueryEdge(source_id=src_id, target_id=new_id, hops=1,
+                                  relation=chains, relation_name=name),
+                        new_pointer=new_id)
+        q2 = self._with_graph(g)
+        if attrs:
+            q2 = q2._with_graph(q2._apply_attrs(q2.query_graph, [new_id], q2._resolve_attr_values(attrs)))
+        return q2
+
     def alias(self, name: str) -> "Query":
         """Name the current node (Cypher AS / Gremlin as-step).
 
@@ -875,6 +974,8 @@ class Query:
                     "direction": e.direction,
                     "patterns": safe(e.patterns) if e.patterns else None,
                     "nearest": e.nearest,
+                    "relation": safe(e.relation) if e.relation else None,
+                    "relation_name": e.relation_name,
                 }
                 for e in g.edges
             ],
@@ -1083,7 +1184,7 @@ class Query:
 
 # Append the attribute registry (single source of truth) to every method
 # that accepts attributes, so help(Query.where) etc. always list the current set.
-for _fn in (Query.entity, Query.related, Query.measurement, Query.where, Query.include, Query.drop,
+for _fn in (Query.entity, Query.related, Query.measurement, Query.context, Query.where, Query.include, Query.drop,
             Query.with_columns, Query.options, Query.facets):
     _fn.__doc__ = (_fn.__doc__ or "") + "\n" + attributes_doc(indent=8) + "\n"
 del _fn
