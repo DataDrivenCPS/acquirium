@@ -77,6 +77,11 @@ class Acquirium:
         if health_timeout:
             self._wait_for_server(health_timeout)
 
+    @property
+    def address(self) -> str:
+        """The HTTP(S) address of the server this client is connected to."""
+        return self.client.address
+
     def _wait_for_server(self, timeout: float) -> None:
         import time as _time
         deadline = _time.monotonic() + timeout

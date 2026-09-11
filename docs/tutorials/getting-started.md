@@ -4,6 +4,21 @@ title: Getting started
 
 <!-- TODO: intro -->
 
+For a script or notebook, you can let Acquirium start a local server:
+
+```python
+import acquirium as aq
+
+acq = aq.init()  # loads ./acquirium.toml if present
+# Load a model and use acq through the usual client interface.
+aq.shutdown()
+```
+
+Pass `aq.init("my-custom-config.toml")` to select another config file.
+Install the package with `pip install acquirium` first. See
+[starting from a script](../how-to/local-runtime.md) for sharing and lifetime
+rules. To run a server independently of a script, use the CLI:
+
 ```bash
 pip install acquirium          # extras: acquirium[mqtt], [xlsx], [watertap]
 

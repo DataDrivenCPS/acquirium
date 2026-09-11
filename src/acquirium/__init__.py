@@ -1,4 +1,5 @@
 from acquirium.Client.acquirium import Acquirium
+from acquirium.runtime import init, shutdown
 from acquirium.Apps.base import App, Output
 from acquirium.Client.explore.core import Query
 from acquirium.Client.query import Q

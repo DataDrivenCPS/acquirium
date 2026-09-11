@@ -235,6 +235,11 @@ class AcquiriumClient:
         )
         self._namespaces_cache: dict[str, str] | None = None
 
+    @property
+    def address(self) -> str:
+        """The HTTP(S) address of the server this client uses."""
+        return self.base_url
+
     def insert_graph(
         self,
         rdf_graph: str,
