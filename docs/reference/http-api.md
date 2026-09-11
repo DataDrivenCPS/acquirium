@@ -226,7 +226,7 @@ Insert observations for one or more streams. Request body is a JSON array; a sin
 | `source_id` | yes | Registered datasource identifier |
 | `ref_name` | yes | Source-local stream name |
 | `point_uri` | no | Compatibility field; register the stream-to-point relationship with `register_streams` before inserting data |
-| `replace` | no (default `false`) | Must remain false; whole-stream replacement is rejected by incremental materialization |
+| `replace` | no (default `false`) | Replace this stream with exactly the supplied rows; an empty `values` list clears it. Atomic per stream; downstream apps fully rebuild after replacement |
 | `publication_id` | no | Identifier echoed into the internal publication receipt; the current revision backend does not deduplicate retries by this value |
 | `values` | yes | List of `[timestamp, value]` pairs |
 

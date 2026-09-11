@@ -219,7 +219,7 @@ DELETE DATA {{
         assert self.TEST_POINT in data
         assert data[self.TEST_POINT]["row_count"] >= 3
 
-    def test_replace_is_rejected(self):
+    def test_replace_rows(self):
         self._insert_data(10)
         self._register_stream()
         values = [
@@ -235,7 +235,11 @@ DELETE DATA {{
                 "values": values,
             }],
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True, "rows_inserted": 1}
+        result = requests.get(f"{BASE_URL}/timeseries", params={"uri": self.TEST_POINT})
+        assert result.status_code == 200
+        assert ipc.open_stream(result.content).read_all().column("value").to_pylist() == [999.0]
 
     def test_empty_uri(self):
         resp = requests.get(f"{BASE_URL}/timeseries", params={

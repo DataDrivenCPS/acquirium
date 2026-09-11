@@ -152,9 +152,11 @@ A row goes through five steps between a driver and the store.
 Step 5 makes ingestion idempotent by stream and timestamp: re-inserting the
 same timestamps replaces those rows instead of duplicating them, so re-running
 an import or replaying a file is safe. An insert with changed values therefore
-overwrites the current values at those timestamps. Whole-stream replacement
-is not supported by incremental materialization, and `replace=True` is
-rejected.
+overwrites the current values at those timestamps. Ordinary upserts retain omitted timestamps. Whole-stream replacement with
+`replace=True` keeps exactly the supplied rows; an empty replacement clears the
+stream. Replacement physically removes the old rows and records the stream's
+latest reset revision. Downstream apps rebuild their complete results, allowing
+removals to propagate without retaining deleted timestamps for replacement.
 
 Storage is one `timeseries` table holding `ts`, `numeric_value` and
 `text_value`, with one row per stream and timestamp and a check that only one

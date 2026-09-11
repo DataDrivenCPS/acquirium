@@ -70,7 +70,8 @@ The notebooks under [`notebooks/watertap/`](https://github.com/DataDrivenCPS/acq
 
 ## How-to guides
 
-- [Apps](apps.md) — write and deploy calculations for derived streams, including averages and alarms
+- [Calculate derived streams](how-to/calculate-derived-streams.md) — water-temperature conversion, averages, and alarms
+- [Check, deploy, and repair an app](how-to/check-deploy-apps.md) — dry runs, deployment, reprocessing, and execution controls
 - [Run the server](how-to/run-the-server.md) — the server command, startup, Docker
 - [Debugging queries for an unexpected result](how-to/debug-an-empty-query.md) — the five usual causes
 - [Explore a model](how-to/explore-a-model.md) — build a query step by step; `options()` and `facets()`
@@ -88,7 +89,7 @@ The reference guides contain complete interface of each module:
 
 - [Acquirium Client API](reference/client-api.md) — every method of `Acquirium`, `Query`, `DataObject`, `AcquiriumClient`
 - [Driver reference](reference/drivers.md) — class hierarchy, hooks, state, config keys, built-in drivers, CLI
-- [App reference](reference/apps.md) — the app API, processing rules, and scheduling and recovery algorithm
+- [App reference](reference/apps.md) — the app API, output requirements, and processing rules
 - [Server configuration](reference/server-config.md) — `[server]`, environment variables, `[ontologies]`, the endpoint table
 - [HTTP API](reference/http-api.md) — the raw endpoints
 - [Glossary](reference/glossary.md) — URIs, CURIEs, free text, the plant model, querying and data terms
@@ -104,6 +105,7 @@ These contain explanation behind the motivation of key design choices we made wh
 - [Apps](explanation/apps.md) — how apps keep derived streams current as readings arrive and are corrected
 - [The data stream lifecycle](explanation/stream-lifecycle.md) — how streams are identified, stored and found again
 - [Text resolution](explanation/text-resolution.md) — how matching works
+- [Materialization internals](explanation/materialization-internals.md) — app scheduling, recovery, storage backends, and tests
 - [Server internals](explanation/server-internals.md) — storage backends, the graph store, the embedding indexes
 - [Graph backend architecture](explanation/graph-backend.md) — graph ownership, inference, query views
 

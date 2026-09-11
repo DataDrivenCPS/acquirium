@@ -75,7 +75,7 @@ guides, reference and explanation.
 [explore a model](./docs/how-to/explore-a-model.md),
 [debug a query](./docs/how-to/debug-an-empty-query.md),
 [insert data](./docs/how-to/write-data.md),
-[write an app](./docs/apps.md),
+[write an app](./docs/tutorials/first-app.md),
 [run the server](./docs/how-to/run-the-server.md),
 [resolve text to URIs](./docs/how-to/resolve-text.md).
 

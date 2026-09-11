@@ -120,7 +120,7 @@ class TestUpsertRows:
 
 
 class TestReplaceRows:
-    def test_replace_is_rejected(self, ts_store, clean_point):
+    def test_replace_rows(self, ts_store, clean_point):
         old_rows = [
             (datetime(2025, 1, 1, tzinfo=timezone.utc), 1.0),
             (datetime(2025, 1, 2, tzinfo=timezone.utc), 2.0),
@@ -129,8 +129,9 @@ class TestReplaceRows:
         assert ts_store.timeseries_info(clean_point).row_count == 2
 
         new_rows = [(datetime(2025, 6, 1, tzinfo=timezone.utc), 99.0)]
-        with pytest.raises(NotImplementedError, match="replace/delete"):
-            ts_store.replace_rows(clean_point, new_rows)
+        assert ts_store.replace_rows(clean_point, new_rows, value_kind="numeric") == 1
+        assert ts_store.timeseries_info(clean_point).row_count == 1
+        assert list(ts_store.timeseries(clean_point))[0].column("value").to_pylist() == [99.0]
 
 
 class TestBulkInsertPolars:

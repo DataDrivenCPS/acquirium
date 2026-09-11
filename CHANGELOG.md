@@ -43,10 +43,14 @@ change in any release.
   progress, execution status, and errors.
 
 ### Changed
-- Timeseries writes accept timestamp-level corrections as upserts but reject
-  whole-stream `replace=True`; the current revision publisher exposes only
-  upserts. App-owned output-window replacement remains supported and records
-  tombstones for downstream materialization.
+- Preserve `insert_timeseries(..., replace=True)` ingestion compatibility on
+  DuckDB and TimescaleDB: replacement keeps exactly the supplied rows, including
+  clearing with an empty list or inserting into an unwritten stream. One revision
+  atomically records the physical replacement and a durable stream reset.
+  Downstream apps fully rebuild and propagate resets without retaining deleted
+  timestamps for replacement. Ordinary upserts retain omitted timestamps.
+  Reset rebuilds supersede pending backfills atomically and retry after failure
+  or restart; they load full inputs and can require more time and memory.
 
 ## [0.4.0a6] - 2026-09-09
 

@@ -42,6 +42,25 @@ defined by `every`, `lookback`, and `lookahead`. Their timing state resets on
 server restart, and failed transforms can retry at the materialization polling
 cadence rather than waiting for `min_interval`.
 
+## Example apps
+
+The repository includes two complete examples in [`scripts/apps/`](../../scripts/apps/):
+
+- [`temperature_normalization.py`](../../scripts/apps/temperature_normalization.py)
+  converts each matched temperature stream to degrees Celsius.
+- [`fill_short_temperature_gaps.py`](../../scripts/apps/fill_short_temperature_gaps.py)
+  copies Celsius history and interpolates gaps shorter than one hour.
+
+Check either app before deploying it:
+
+```bash
+acquirium app check scripts/apps/temperature_normalization.py:TemperatureNormalization
+acquirium app check scripts/apps/fill_short_temperature_gaps.py:FillShortTemperatureGaps
+```
+
+The examples and their assumptions are described in
+[`scripts/apps/README.md`](../../scripts/apps/README.md).
+
 ### Query matches
 
 A per-match invocation receives the streams resolved by one distinct query
@@ -252,35 +271,5 @@ DAG statuses are idle, pending, running, waiting, failed, or reprocessing.
 Errors and last-success timestamps are process diagnostics; consumed progress
 and pending work are durable. Global revision lag can include unrelated writes.
 
-## How it works
-
-The timeseries database stores current values and assigns each write a
-monotonically increasing revision. Each binding records the last input revision
-it has processed, called its *consumed frontier*. To prepare the next invocation,
-the runtime opens a consistent database snapshot, finds input timestamps that
-changed after that frontier, and loads the required windows into Arrow tables.
-It closes the read transaction before running user code.
-
-Before publishing the result, the runtime checks that the binding generation
-and consumed frontier still match those used to prepare the work. If the
-binding has been replaced or its progress has changed, the result is discarded.
-Otherwise, output changes and progress commit together. Deleted output rows
-leave revisioned tombstones so downstream apps can observe the removal;
-reinserting a timestamp clears its tombstone.
-
-One coordinator schedules independent bindings through a bounded thread pool.
-The next dependency layer reads its inputs after predecessor work has completed.
-A failed binding keeps its previous frontier and blocks its descendants, while
-unrelated branches can continue processing.
-
-Long, finite work ranges are divided into output intervals of approximately one
-day, rounded to complete buckets where necessary. A durable cursor records which
-intervals have finished, and the input frontier advances when the entire range
-is complete. Corrections newer than the range's captured revision are processed
-afterward. Explicit reprocessing uses the same durable work mechanism while
-preserving the existing input frontier. Whole-history calculations still load
-their complete retained input and are not bounded by these daily intervals.
-
-Both SQL backends use this algorithm. The
-[operations guide](../materialization-implementation.md) describes their storage
-hooks, transaction behavior, and server settings.
+For the scheduling and recovery algorithm, see
+[Materialization internals](../explanation/materialization-internals.md#scheduling-and-recovery).

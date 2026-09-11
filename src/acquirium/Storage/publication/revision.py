@@ -1,8 +1,6 @@
 """Canonical revisioned writes for the materialization runtime."""
 from __future__ import annotations
 
-from datetime import timezone
-
 import polars as pl
 
 from acquirium.Storage.publication import ids
@@ -35,4 +33,18 @@ class RevisionPublisher:
         return PublicationReceipt(request.publication_id, ids.payload_hash(mutations), writes.height, {})
 
     def replace(self, request: PublicationRequest, ref_uri: str) -> PublicationReceipt:
-        raise ValueError("replace is not supported by incremental materialization")
+        """Replace one stream, including empty requests, at one atomic revision."""
+        frame = pl.from_arrow(request.mutations)
+        if (
+            frame["operation"].is_null() | (frame["operation"] != "upsert")
+            | frame["ref_uri"].is_null() | (frame["ref_uri"] != ref_uri)
+        ).any():
+            raise ValueError("replacement requires only upserts for the specified stream")
+        if frame["ts"].null_count():
+            raise ValueError("replacement timestamps must not be null")
+        if (frame["numeric_value"].is_not_null() & frame["text_value"].is_not_null()).any():
+            raise ValueError("replacement rows cannot contain both numeric and text values")
+        mutations = ids.normalize_mutations(request.mutations)
+        writes = self._store._prepare_frame(pl.from_arrow(mutations))
+        row_count = self._store._replace_frame(ref_uri, writes)
+        return PublicationReceipt(request.publication_id, ids.payload_hash(mutations), row_count, {})
