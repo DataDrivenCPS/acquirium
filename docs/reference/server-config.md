@@ -25,7 +25,7 @@ timeseries_backend = "duckdb"        # or "timescale" (requires pg_dsn)
 |---|---|---|
 | `host` | `"0.0.0.0"` | bind host |
 | `port` | `8000` | bind port |
-| `data_dir` | `".acquirium"` | root directory for everything the server stores |
+| `data_dir` | `".acquirium"` | root directory for local graph, embedding, and default DuckDB files |
 | `timeseries_backend` | `"duckdb"` | `"duckdb"` or `"timescale"` |
 | `pg_dsn` | none | Postgres DSN; required for the timescale backend |
 | `duckdb_path` | `data_dir/timeseries.duckdb` | duckdb file location |
@@ -34,13 +34,17 @@ timeseries_backend = "duckdb"        # or "timescale" (requires pg_dsn)
 | `exact_only` | `false` | index concepts without embedding them; see below |
 | `recreate` | `false` | wipe the data directory and start fresh; see below |
 | `read_batch_size` | `50000` | rows per Arrow batch on timeseries reads |
+| `materialization_workers` | `2` | maximum app transformations that run concurrently in the in-process pool |
+| `materialization_poll_seconds` | `0.25` | idle delay between checks for durable materialization work; must be positive |
+| `materialization_error_log_seconds` | `30.0` | minimum delay between repeated materialization failure logs; must be positive |
 | `workers` | `1` | must stay 1 |
 | `enabled` | `true` | `false` skips the HTTP server and pushes `[[drivers]]` to a remote server |
 
 Relative paths resolve against the config file's directory.
 
-`recreate = true` deletes the following contents of the data directory at
-startup: graph, timeseries, embedding caches, app sources, driver state.
+`recreate = true` clears the local data directory at startup. With the
+Timescale backend it also drops and recreates Acquirium's configured database
+tables and views.
 
 ### Exact-only resolution
 
@@ -83,7 +87,8 @@ Check the environment when a config edit appears to have no effect.
 These declare the drivers the server starts; they are documented in the
 [driver reference](drivers.md#configuration).
 One key concerns the server itself: `[driver] server_url` and `server_port`
-are the address driver and app actors use to reach the server.
+are the address driver actors use to reach the server. The server also uses
+that address for the client which deploys configured `[[apps]]` after startup.
 The default (`127.0.0.1` and the `[server]` port) is right for a single-host
 setup; set them when the bind address is not reachable under that name.
 Note that `127.0.0.1` is preferred over `localhost`: the server listens on IPv4
@@ -143,14 +148,13 @@ A running server also serves the generated OpenAPI schema at `/docs` and
 | timeseries | `POST /register_datasource`, `POST /insert_timeseries`, `POST /insert_timeseries_arrow`, `GET /timeseries`, `POST /timeseries_info` |
 | resolution | `GET /resolve_text`, `POST /resolve_record`, `POST /resolve_unit`, `POST /resolve_conversion`, `POST /conversion_factors` |
 | drivers | `POST /drivers/start`, `POST /drivers/stop`, `GET /drivers/list` |
-| apps | `POST /apps/register`, `POST /apps/delete`, `POST /apps/run`, `POST /apps/stop`, `GET /apps/list` |
+| apps | `PUT /apps/{name}`, `POST /apps/check`, `DELETE /apps/{name}`, `POST /apps/{name}/reprocess`, `GET /materialization/dag` |
 | logbook | `POST /insert_log`, `GET /query_logs`, `DELETE /delete_logs` |
 
 The conventions across all of them:
 
 - Almost every failure is an HTTP 400 with the reason in `detail`.
-  404 is reserved for an unknown driver or app, 409 for registering an app
-  name that already exists.
+  404 is reserved for an unknown driver or app.
 - `GET /timeseries` streams Arrow record batches, not JSON.
 - `/sparql_json` accepts POST with a JSON body because resolved traversal
   queries exceed URL length limits; the client always POSTs.

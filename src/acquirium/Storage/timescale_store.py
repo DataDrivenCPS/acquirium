@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Iterable, Iterator
+from contextlib import contextmanager
 import hashlib
+import threading
 
 import psycopg
 from psycopg import sql
-from psycopg.types.json import Json
 
 from acquirium.internals.models import Order, TimeseriesInfo, TimeInterval, LogEntry, TimeIntervalModel, compute_ref_uri
 from acquirium.Storage.base import TimeseriesStore
@@ -29,6 +30,9 @@ STREAMS_TABLE = "streams"
 LOGS_TABLE = "logs"
 REF_IDS_TABLE = "ref_ids"
 TIMESERIES_STREAMS_VIEW = "timeseries_streams"
+SYSTEM_STATE_TABLE = "system_state"
+BINDING_PROGRESS_TABLE = "binding_progress"
+
 
 # Storage keys: the API speaks ``ref_uri`` strings throughout, but the
 # ``timeseries`` hypertable keys rows by an ``INTEGER ref_id`` -- the rows are
@@ -43,6 +47,7 @@ TIMESERIES_STREAMS_VIEW = "timeseries_streams"
 
 
 class TimescaleStore(TimeseriesStore):
+    materialization_backend = "postgres"
     def __init__(
         self,
         *,
@@ -52,6 +57,10 @@ class TimescaleStore(TimeseriesStore):
     ):
         self.dsn = dsn
         self.db_path = self.dsn
+        # Snapshot reads use independent short-lived connections. Serialized
+        # writes use this persistent connection so the public transaction API
+        # can govern revision updates and rows together.
+        self._lock = threading.Lock()
         # default autocommit so reads don't hold open transactions; explicit begin toggles off
         logger.debug("TimescaleStore.__init__: connecting (recreate=%s)", recreate)
         with timed_debug(logger, "psycopg.connect"):
@@ -61,10 +70,8 @@ class TimescaleStore(TimeseriesStore):
             logger.debug("TimescaleStore.__init__: dropping existing tables/views")
             with self.conn.cursor() as cur:
                 cur.execute(sql.SQL("DROP VIEW IF EXISTS {} CASCADE").format(sql.Identifier(TIMESERIES_STREAMS_VIEW)))
-                cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(TIMESERIES_TABLE)))
-                cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(REF_IDS_TABLE)))
-                cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(STREAMS_TABLE)))
-                cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(LOGS_TABLE)))
+                for table in ("stream_resets", "materialization_work", "materialization_lineage", "materialization_deployments", BINDING_PROGRESS_TABLE, SYSTEM_STATE_TABLE, TIMESERIES_TABLE, REF_IDS_TABLE, STREAMS_TABLE, LOGS_TABLE):
+                    cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(table)))
         self.ensure_table()
         logger.debug("TimescaleStore.__init__: ready")
 
@@ -103,20 +110,19 @@ class TimescaleStore(TimeseriesStore):
                     ts TIMESTAMPTZ NOT NULL,
                     numeric_value DOUBLE PRECISION,
                     text_value TEXT,
+                    deleted BOOLEAN NOT NULL DEFAULT FALSE,
+                    last_revision BIGINT NOT NULL DEFAULT 0,
                     CHECK (numeric_value IS NULL OR text_value IS NULL)
                 );
                 """
             )
-            # Create hypertable before enabling Timescale features. We target
-            # new Acquirium-managed stores here; older point_uri/handle schemas
-            # should be recreated rather than migrated in-place.
-            # No default (ts) index: every query the store issues filters by
-            # ref_id first, which the unique (ref_id, ts) index below serves,
-            # so the default index would only add a second b-tree insert per
-            # row on the write path.
+            cur.execute(f"CREATE INDEX IF NOT EXISTS idx_timeseries_last_revision ON {TIMESERIES_TABLE} (last_revision);")
+            # Every query filters by ref_id first, so the unique (ref_id, ts)
+            # index below serves the read path. Avoid Timescale's redundant
+            # default ts index and its extra write cost.
             cur.execute(
                 sql.SQL(
-                    "SELECT create_hypertable(%s, %s, if_not_exists => TRUE, create_default_indexes => FALSE);"
+                    "SELECT public.create_hypertable(%s, %s, if_not_exists => TRUE, create_default_indexes => FALSE);"
                 ),
                 (TIMESERIES_TABLE, "ts"),
             )
@@ -127,8 +133,8 @@ class TimescaleStore(TimeseriesStore):
                 f"CREATE UNIQUE INDEX IF NOT EXISTS idx_timeseries_ref_ts_unique ON {TIMESERIES_TABLE} (ref_id, ts);"
             )
             # Segment compressed chunks by stream and order newest-first within
-            # each stream. This matches the common "latest values" read path
-            # while still supporting ascending scans via reverse index scans.
+            # each stream. TimescaleDB 2.11+ supports the targeted historical
+            # updates used by materialization on compressed chunks.
             cur.execute(
                 f"""
                 ALTER TABLE {TIMESERIES_TABLE}
@@ -140,7 +146,7 @@ class TimescaleStore(TimeseriesStore):
                 """
             )
             cur.execute(
-                sql.SQL("SELECT add_compression_policy({}, INTERVAL '7 days', if_not_exists => TRUE);").format(
+                sql.SQL("SELECT public.add_compression_policy({}, INTERVAL '7 days', if_not_exists => TRUE);").format(
                     sql.Literal(TIMESERIES_TABLE)
                 )
             )
@@ -180,7 +186,8 @@ class TimescaleStore(TimeseriesStore):
                 JOIN {REF_IDS_TABLE} AS r
                     ON t.ref_id = r.ref_id
                 LEFT JOIN {STREAMS_TABLE} AS s
-                    ON r.ref_uri = s.ref_uri;
+                    ON r.ref_uri = s.ref_uri
+                WHERE NOT t.deleted;
                 """
             )
             cur.execute(
@@ -201,9 +208,47 @@ class TimescaleStore(TimeseriesStore):
             cur.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_logs_observed ON {LOGS_TABLE} USING GIST (observed);"
             )
+            cur.execute("CREATE TABLE IF NOT EXISTS stream_resets (ref_uri TEXT PRIMARY KEY, last_revision BIGINT NOT NULL)")
+            cur.execute(f"CREATE TABLE IF NOT EXISTS {SYSTEM_STATE_TABLE} (current_revision BIGINT NOT NULL);")
+            cur.execute(f"INSERT INTO {SYSTEM_STATE_TABLE} SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM {SYSTEM_STATE_TABLE});")
+            cur.execute(f"CREATE TABLE IF NOT EXISTS {BINDING_PROGRESS_TABLE} (progress_key TEXT PRIMARY KEY, consumed_revision BIGINT NOT NULL);")
         if not self._in_tx:
             self.conn.commit()
         return TIMESERIES_TABLE
+
+    # -------------------- materialization transaction hooks --------------------
+    # These deliberately mirror the small private interface DuckDBStore offers
+    # to RevisionStore.  Keeping it here lets the materializer remain backend
+    # neutral instead of maintaining two schedulers.
+    def _connect(self):
+        return psycopg.connect(self.dsn, autocommit=True)
+
+    @contextmanager
+    def _own_conn(self):
+        conn = self._connect()
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+    @contextmanager
+    def _write_conn(self):
+        # ``begin()`` is the public transaction API.  Its writes must use the
+        # same connection so commit and rollback govern the revision update as
+        # well as the inserted rows.
+        if self._in_tx:
+            yield self.conn
+            return
+        with self.conn.transaction():
+            yield self.conn
+
+    @staticmethod
+    def _next_revision(conn) -> int:
+        # Match DuckDB's global frontier: a revision identifies one committed
+        # visibility boundary even when the write touches several streams.
+        return int(conn.execute(
+            f"UPDATE {SYSTEM_STATE_TABLE} SET current_revision = current_revision + 1 RETURNING current_revision"
+        ).fetchone()[0])
 
     # -------------------- storage keys --------------------
     def _ref_id(self, cur, ref_uri: str) -> int | None:
@@ -244,26 +289,28 @@ class TimescaleStore(TimeseriesStore):
         *,
         value_kind: str = "text",
     ) -> int:
-        rows_list = list(rows)
-        logger.debug("replace_rows ref_uri=%s new_rows=%d kind=%s", ref_uri, len(rows_list), value_kind)
-        df = (
-            self._prepare_frame(self._rows_frame(ref_uri, rows_list, value_kind))
-            if rows_list
-            else pl.DataFrame()
-        )
-        # One transaction for delete + insert: a failure leaves the old rows intact.
-        with timed_debug(logger, "replace_rows ref_uri=%s rows=%d", ref_uri, len(df)), \
-                self.conn.transaction(), self.conn.cursor() as cur:
-            cur.execute(
-                f"""
-                DELETE FROM {TIMESERIES_TABLE}
-                WHERE ref_id = (SELECT ref_id FROM {REF_IDS_TABLE} WHERE ref_uri = %s)
-                """,
+        value_kind = normalize_value_kind(value_kind)
+        frame = self._prepare_frame(self._rows_frame(ref_uri, list(rows), value_kind))
+        if frame["ts"].null_count():
+            raise ValueError("replacement timestamps must not be null")
+        return self._replace_frame(ref_uri, frame)
+
+    def _replace_frame(self, ref_uri: str, frame: pl.DataFrame) -> int:
+        """Physically replace a stream and record its latest reset atomically."""
+        with self._lock, self._write_conn() as conn:
+            revision = self._next_revision(conn)
+            conn.execute(
+                f"""DELETE FROM {TIMESERIES_TABLE}
+                WHERE ref_id = (SELECT ref_id FROM {REF_IDS_TABLE} WHERE ref_uri = %s)""",
                 [ref_uri],
             )
-            if df.is_empty():
-                return 0
-            return self._insert_frame(cur, df)
+            self._insert_frame(conn, frame, revision)
+            conn.execute(
+                "INSERT INTO stream_resets (ref_uri, last_revision) VALUES (%s, %s) "
+                "ON CONFLICT (ref_uri) DO UPDATE SET last_revision=EXCLUDED.last_revision",
+                [ref_uri, revision],
+            )
+        return frame.height
 
     def bulk_insert_polars(self, df: pl.DataFrame) -> int:
         """Upsert a Polars frame with columns ``ref_uri, ts, value[, value_kind]``
@@ -278,15 +325,19 @@ class TimescaleStore(TimeseriesStore):
         with timed_debug(logger, "bulk_insert_polars prepare/dedupe rows=%d", in_rows):
             df = self._prepare_frame(df)
         logger.debug("bulk_insert_polars: %d rows after dedupe (was %d)", len(df), in_rows)
+        # Assigning the revision and writing the rows in this one transaction
+        # is the materialization visibility contract.  It also makes ordinary
+        # writes usable as materializer inputs.
         try:
-            with timed_debug(logger, "bulk_insert_polars COPY+merge rows=%d", len(df)), \
-                    self.conn.transaction(), self.conn.cursor() as cur:
-                merged = self._insert_frame(cur, df)
+            with self._lock, timed_debug(
+                logger, "bulk_insert_polars COPY+merge rows=%d", len(df)
+            ), self._write_conn() as conn:
+                self._insert_frame(conn, df, self._next_revision(conn))
         except Exception:
             logger.exception("acquirium: bulk insert into %s failed", TIMESERIES_TABLE)
             raise
-        logger.info("acquirium: bulk inserted %d rows into %s", merged, TIMESERIES_TABLE)
-        return merged
+        logger.info("acquirium: bulk inserted %d rows into %s", len(df), TIMESERIES_TABLE)
+        return len(df)
 
     @staticmethod
     def _rows_frame(ref_uri: str, rows_list: list[tuple[datetime, Any]], value_kind: str) -> pl.DataFrame:
@@ -318,71 +369,57 @@ class TimescaleStore(TimeseriesStore):
         df = df.with_columns(ts.cast(pl.Datetime("us", "UTC")))
         return df.unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
 
-    def _insert_frame(self, cur, df: pl.DataFrame) -> int:
-        """Merge a prepared frame on *cur*. Call inside a transaction.
-
-        The frame is serialised to CSV by Polars and handed to COPY in one
-        write, so no per-row Python loop touches the data. Polars writes NULL
-        as an empty field and an empty string as ``""``, which is exactly how
-        COPY's CSV format tells the two apart; timestamps carry their UTC
-        offset so the TIMESTAMPTZ column parses them unambiguously.
-        """
+    def _insert_frame(self, conn, df: pl.DataFrame, revision: int) -> None:
+        """COPY and merge a prepared frame at one materialization revision."""
         staging = self.STAGING_TABLE
-        # DROP first: ON COMMIT DROP only fires at the outer commit, so a
-        # second write inside one begin() span would otherwise find the table
-        # still there.
-        cur.execute(f"DROP TABLE IF EXISTS {staging}")
-        cur.execute(
-            f"""
-            CREATE TEMP TABLE {staging} (
-                ref_uri TEXT NOT NULL,
-                ts TIMESTAMPTZ NOT NULL,
-                numeric_value DOUBLE PRECISION,
-                text_value TEXT
-            ) ON COMMIT DROP
-            """
-        )
-        payload = df.select(["ref_uri", "ts", "numeric_value", "text_value"]).write_csv(
-            include_header=False
-        )
-        with timed_debug(logger, "COPY rows=%d bytes=%d", len(df), len(payload)):
-            with cur.copy(
-                f"COPY {staging} (ref_uri, ts, numeric_value, text_value) FROM STDIN WITH (FORMAT csv)"
-            ) as copy:
-                copy.write(payload)
-        # WHERE NOT EXISTS rather than relying on ON CONFLICT alone: a
-        # conflicting insert still draws a sequence value, and every batch
-        # re-mentions its existing streams. ON CONFLICT stays as the guard for
-        # two first writes racing.
-        cur.execute(
-            f"""
-            INSERT INTO {REF_IDS_TABLE} (ref_uri)
-            SELECT DISTINCT i.ref_uri FROM {staging} AS i
-            WHERE NOT EXISTS (
-                SELECT 1 FROM {REF_IDS_TABLE} AS r WHERE r.ref_uri = i.ref_uri
-            )
-            ON CONFLICT (ref_uri) DO NOTHING
-            """
-        )
-        # ORDER BY the unique index's key: a wide batch arrives time-major
-        # across all its streams, so unsorted rows land in a different region
-        # of the (ref_id, ts) b-tree on every row. Sorted input makes the
-        # index inserts sequential per stream and keeps the hot pages cached;
-        # the sort itself is cheap next to the per-row insert work.
-        with timed_debug(logger, "merge into %s rows=%d", TIMESERIES_TABLE, len(df)):
+        with conn.cursor() as cur:
+            # ON COMMIT DROP fires at the outer commit, so a second write in
+            # one materialization transaction needs the previous table removed.
+            cur.execute(f"DROP TABLE IF EXISTS {staging}")
             cur.execute(
                 f"""
-                INSERT INTO {TIMESERIES_TABLE} (ref_id, ts, numeric_value, text_value)
-                SELECT r.ref_id, i.ts, i.numeric_value, i.text_value
-                FROM {staging} AS i
-                JOIN {REF_IDS_TABLE} AS r USING (ref_uri)
-                ORDER BY r.ref_id, i.ts
-                ON CONFLICT (ref_id, ts) DO UPDATE SET
-                    numeric_value = EXCLUDED.numeric_value,
-                    text_value = EXCLUDED.text_value
+                CREATE TEMP TABLE {staging} (
+                    ref_uri TEXT NOT NULL,
+                    ts TIMESTAMPTZ NOT NULL,
+                    numeric_value DOUBLE PRECISION,
+                    text_value TEXT
+                ) ON COMMIT DROP
                 """
             )
-        return cur.rowcount
+            payload = df.select(["ref_uri", "ts", "numeric_value", "text_value"]).write_csv(include_header=False)
+            with timed_debug(logger, "COPY rows=%d bytes=%d", len(df), len(payload)):
+                with cur.copy(
+                    f"COPY {staging} (ref_uri, ts, numeric_value, text_value) FROM STDIN WITH (FORMAT csv)"
+                ) as copy:
+                    copy.write(payload)
+            cur.execute(
+                f"""
+                INSERT INTO {REF_IDS_TABLE} (ref_uri)
+                SELECT DISTINCT i.ref_uri FROM {staging} AS i
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM {REF_IDS_TABLE} AS r WHERE r.ref_uri = i.ref_uri
+                )
+                ON CONFLICT (ref_uri) DO NOTHING
+                """
+            )
+            # Sort by the unique index key so wide time-major input writes
+            # sequentially per stream and keeps the hot b-tree pages cached.
+            with timed_debug(logger, "merge into %s rows=%d", TIMESERIES_TABLE, len(df)):
+                cur.execute(
+                    f"""
+                    INSERT INTO {TIMESERIES_TABLE} (ref_id, ts, numeric_value, text_value, deleted, last_revision)
+                    SELECT r.ref_id, i.ts, i.numeric_value, i.text_value, FALSE, %s
+                    FROM {staging} AS i
+                    JOIN {REF_IDS_TABLE} AS r USING (ref_uri)
+                    ORDER BY r.ref_id, i.ts
+                    ON CONFLICT (ref_id, ts) DO UPDATE SET
+                        numeric_value = EXCLUDED.numeric_value,
+                        text_value = EXCLUDED.text_value,
+                        deleted = FALSE,
+                        last_revision = EXCLUDED.last_revision
+                    """,
+                    (revision,),
+                )
 
     # -------------------- stream references --------------------
     def ensure_stream_ref(
@@ -397,9 +434,9 @@ class TimescaleStore(TimeseriesStore):
 
         The ref URI is computed deterministically from (source_id, ref_name) via
         :func:`compute_ref_uri`, so two sources with the same ref_name never
-        produce the same storage key. The ref URI is also used as the
-        TimescaleDB row key for the stream's data. Pass a precomputed ref_uri
-        to avoid recomputing it when already available.
+        produce the same canonical identity. Timeseries rows use the integer
+        ``ref_id`` assigned through ``ref_ids``. Pass a precomputed ref_uri to
+        avoid recomputing it when already available.
 
         Returns the ref URI.
         """
@@ -450,8 +487,16 @@ class TimescaleStore(TimeseriesStore):
         cols = "(ref_uri, point_uri, source_id, ref_name, value_kind)"
         # The connection runs autocommit, so an explicit transaction is what keeps
         # the staging table alive from COPY through to the upsert (and drops it).
-        with timed_debug(logger, "ensure_stream_refs rows=%d", len(prepared)), self.conn.transaction():
-            with self.conn.cursor() as cur:
+        # ``self.conn`` is the persistent public-transaction connection.  The
+        # staging table name is fixed, so concurrent graph synchronizations must
+        # serialize just like timeseries writers; otherwise one request can
+        # nest a transaction or collide with the other request's temp table.
+        with self._lock, timed_debug(logger, "ensure_stream_refs rows=%d", len(prepared)), self._write_conn() as conn:
+            with conn.cursor() as cur:
+                # A caller-controlled transaction can synchronize references
+                # more than once before commit; remove the prior staging table
+                # because ON COMMIT DROP has not fired yet.
+                cur.execute("DROP TABLE IF EXISTS _acquirium_incoming_refs")
                 cur.execute(
                     f"CREATE TEMP TABLE _acquirium_incoming_refs "
                     f"(LIKE {STREAMS_TABLE}) ON COMMIT DROP"
@@ -475,11 +520,11 @@ class TimescaleStore(TimeseriesStore):
         return list(prepared.keys())
 
     def resolve_storage_key(self, point_uri: str) -> str:
-        """Return the storage key (ref URI) for a point_uri, or point_uri itself if not registered.
+        """Return the canonical ref URI for a point URI, or pass it through.
 
-        Streams inserted via insert_timeseries are stored under their ref URI.
-        This resolves the semantic URI → ref URI so reads find the right rows.
-        Falls back to the URI itself for data inserted directly (e.g. bulk CSV ingest).
+        This resolves the semantic URI to the public stream identity used by
+        reads. Internally, ``ref_ids`` maps that identity to an integer key.
+        An unregistered URI is returned unchanged.
         """
         with self.conn.cursor() as cur:
             cur.execute(
@@ -490,7 +535,7 @@ class TimescaleStore(TimeseriesStore):
             return row[0] if row else point_uri
 
     def resolve_storage_keys(self, point_uris: list[str]) -> dict[str, str]:
-        """Batch-resolve point_uris to storage keys in a single query.
+        """Batch-resolve point URIs to canonical ref URIs in one query.
 
         Returns a mapping of point_uri → ref_uri (or point_uri itself for
         unregistered URIs, preserving the single-URI fallback behaviour).
@@ -528,7 +573,7 @@ class TimescaleStore(TimeseriesStore):
             # Never written to: no id, no rows.
             logger.debug("timeseries ref_uri=%s has no ref_id; yielding nothing", ref_uri)
             return
-        clauses = ["ref_id = %s"]
+        clauses = ["ref_id = %s", "NOT deleted"]
         params: list[Any] = [ref_id]
 
         if start:
@@ -606,6 +651,7 @@ class TimescaleStore(TimeseriesStore):
                 )
                 yield batch
 
+
     def timeseries_info(self, ref_uri: str) -> TimeseriesInfo:
         with timed_debug(logger, "timeseries_info ref_uri=%s", ref_uri), self.conn.cursor() as cur:
             cur.execute(
@@ -613,7 +659,7 @@ class TimescaleStore(TimeseriesStore):
                 SELECT COUNT(*), MIN(ts), MAX(ts)
                 FROM {TIMESERIES_TABLE} AS t
                 JOIN {REF_IDS_TABLE} AS r USING (ref_id)
-                WHERE r.ref_uri = %s
+                WHERE r.ref_uri = %s AND NOT t.deleted
                 """,
                 (ref_uri,),
             )
@@ -630,7 +676,7 @@ class TimescaleStore(TimeseriesStore):
                 SELECT r.ref_uri, COUNT(*), MIN(ts), MAX(ts)
                 FROM {TIMESERIES_TABLE} AS t
                 JOIN {REF_IDS_TABLE} AS r USING (ref_id)
-                WHERE r.ref_uri = ANY(%s)
+                WHERE r.ref_uri = ANY(%s) AND NOT t.deleted
                 GROUP BY r.ref_uri
                 """,
                 (ref_uris,),

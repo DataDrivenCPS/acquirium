@@ -18,14 +18,13 @@ def acquirium_client_nodata():
     )
     acq.insert_graph_file("tests/test_model_nodata.ttl", source_id="plant")
     time.sleep(1)
-    result = acq.client.delete_logs(point_uri="urn:ex/Pump1-out")
-    assert result["ok"] is True
-    result = acq.client.delete_logs(point_uri="urn:ex/Pump1")
-    assert result["ok"] is True
-    result = acq.client.delete_logs(point_uri="urn:ex/Pump1-in")
-    assert result["ok"] is True
-
-    return acq
+    for point_uri in ("urn:ex/Pump1-out", "urn:ex/Pump1", "urn:ex/Pump1-in"):
+        assert acq.client.delete_logs(point_uri=point_uri)["ok"] is True
+    try:
+        yield acq
+    finally:
+        for point_uri in ("urn:ex/Pump1-out", "urn:ex/Pump1", "urn:ex/Pump1-in"):
+            acq.client.delete_logs(point_uri=point_uri)
 
 ##### Log tests backend #####
 def test_log_1(acquirium_client_nodata):

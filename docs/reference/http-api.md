@@ -7,7 +7,9 @@ This is a reference for the HTTP endpoints the acquirium server exposes
 The Python client covers all of these; use the raw endpoints when scripting
 against the server directly.
 
-Timestamps are ISO 8601 strings (e.g. `2026-01-01T00:00:00Z`). Errors return HTTP 400 with a JSON body `{"detail": "<message>"}`. 404 is reserved for an unknown driver or app, and 409 for registering an app name that already exists.
+Timestamps are ISO 8601 strings (e.g. `2026-01-01T00:00:00Z`). Errors return
+HTTP 400 with a JSON body `{"detail": "<message>"}`. Unknown drivers and apps
+return 404.
 
 ---
 
@@ -223,8 +225,9 @@ Insert observations for one or more streams. Request body is a JSON array; a sin
 | --- | --- | --- |
 | `source_id` | yes | Registered datasource identifier |
 | `ref_name` | yes | Source-local stream name |
-| `point_uri` | no | Override the semantic point URI |
-| `replace` | no (default `false`) | If true, delete existing rows before inserting |
+| `point_uri` | no | Compatibility field; register the stream-to-point relationship with `register_streams` before inserting data |
+| `replace` | no (default `false`) | Replace this stream with exactly the supplied rows; an empty `values` list clears it. Atomic per stream; downstream apps fully rebuild after replacement |
+| `publication_id` | no | Identifier echoed into the internal publication receipt; the current revision backend does not deduplicate retries by this value |
 | `values` | yes | List of `[timestamp, value]` pairs |
 
 **Response** `{"ok": true, "rows_inserted": 42}`
@@ -510,51 +513,47 @@ List the drivers running on this server. Takes no parameters.
 
 ## Apps
 
-### `POST /apps/register`
+An app definition is the JSON built by `Deployment.from_class`: its name,
+importable entrypoint, executable digest, output declarations, parameters, and
+window and scheduling attributes. See the [app reference](apps.md) for the
+complete schema.
 
-Register an app spec. See `AppSpec` in `internals/models.py` for the full field list. An optional `replace` query parameter (default `false`) tears the existing app down and re-registers it; without it, a name that already exists returns 409.
+### `PUT /apps/{name}`
 
-**Response** `{"ok": true, ...}` with the registration info.
+Validate and deploy an app definition. The definition's `name` must match the
+path. Redeploying the same name selects the new immutable definition.
 
-### `POST /apps/delete`
+**Response** `{"ok": true, "name": "...", "status": "deployed"}`
 
-Gracefully delete a registered app: stop it, strip its registration triples from its source graph, kill its actor, and remove its persisted source.
+### `POST /apps/check`
 
-**Request body** `{"app_id": "my-app"}`
+Compile an app, read its retained inputs, and run its transform without saving
+the deployment, outputs, progress, or revisions. The request body is an app
+definition.
 
-**Response** `{"ok": true, "name": "my-app", "deleted": true}`
+| Query parameter | Description |
+| --- | --- |
+| `limit` | Keep only the first N returned rows from each output |
+| `search_path` | Server-side directory used to import an otherwise unavailable app module |
 
-An unknown `app_id` returns 404.
+**Response** `{"ok": true, "app": "...", "graph_revision": 1, "bindings": [...]}`
 
-### `POST /apps/run`
+### `DELETE /apps/{name}`
 
-Start an app run.
+Remove a deployment and forget its progress and pending work. Retained derived
+history is not deleted. An unknown name returns 404.
 
-**Request body**
+**Response** `{"ok": true, "name": "...", "status": "removed"}`
 
-```json
-{
-  "app_id": "my-app",
-  "start": "2026-01-01T00:00:00Z",
-  "end": "2026-02-01T00:00:00Z",
-  "params": {},
-  "keep_alive": false,
-  "interval": 10.0
-}
-```
+### `POST /apps/{name}/reprocess`
 
-**Response** `{"ok": true, "run_id": "<uuid>"}`
+Schedule a retained interval for recomputation. `start` and `end` are required
+ISO 8601 query parameters. An unknown app returns 404; an invalid interval
+returns 400.
 
-### `POST /apps/stop`
+**Response** `{"ok": true, "name": "...", "status": "reprocessing", "bindings": 3}`
 
-Stop a running app. Provide `run_id` or `app_id`.
+### `GET /materialization/dag`
 
-**Request body** `{"run_id": "<uuid>"}` or `{"app_id": "my-app"}`
-
-**Response** `{"ok": true, ...}`
-
-### `GET /apps/list`
-
-List app runs. Optional `app_id` query parameter filters by app.
-
-**Response** `{"ok": true, "runs": [...]}`
+Return the active materialization graph as nodes and links, including the
+dependencies between bindings and their current execution state.

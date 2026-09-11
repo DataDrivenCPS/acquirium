@@ -89,8 +89,12 @@ LOGBOOK = ACQUIRIUM_NS.Logbook
 PLANT_URI = str(ACQUIRIUM_NS.Plant)  # Generic URI representing the entire plant
 
 
-# Origin tag literal on a reference node (e.g. "Lab", "SCADA").
+# Origin tag literal on a point (e.g. "Lab", "SCADA").
 DATA_SOURCE = ACQUIRIUM_NS.dataSource
+
+# Name of the app that produced a derived point (e.g. "normalize-temperatures").
+# Recorded by the materializer so a query can ask for one app's output.
+PRODUCED_BY = ACQUIRIUM_NS.producedBy
 
 
 # MQTT Reference predicates. timeKey/valueKey are Acquirium-specific (they

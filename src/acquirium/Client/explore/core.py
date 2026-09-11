@@ -840,8 +840,8 @@ class Query:
     def to_dict(self) -> dict:
         """Return a JSON-serializable representation of this query graph.
 
-        Used by app registration (:meth:`Acquirium.register_app`) to store
-        the query alongside the app spec. ``Not`` markers serialize as
+        Used by declarative clients to store the query alongside their
+        specification. ``Not`` markers serialize as
         ``{"not": value}``; via-programs serialize as nested lists.
         """
         def safe(v: Any) -> Any:

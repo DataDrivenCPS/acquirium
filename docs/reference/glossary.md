@@ -69,7 +69,7 @@ two.
 | entity node | a node holding equipment, systems or connection points | `entity("pump")` |
 | data node | a node holding measurements | `measurement()` |
 | alias | the name of a node, used as its column name and as its handle in `frm=`, `target=` and `of=` | `entity("pump", alias="p1")` |
-| attribute | a property of a node the interface exposes by name instead of by predicate | `unit`, `medium`, `substance`, `quantity_kind`, `process`, `type`, `cp_type`, `enumeration_kind`, `data_source` |
+| attribute | a property of a node the interface exposes by name instead of by predicate | `unit`, `medium`, `substance`, `quantity_kind`, `process`, `type`, `cp_type`, `enumeration_kind`, `data_source`, `app` |
 | pointer | the node the chain is currently on, which is what a bare `where()` or `measurement()` applies to | moved by `refocus()` |
 | hidden predicate | an edge that generic traversal never follows, because it describes a node rather than connects the plant | `rdf:type`, `s223:hasProperty`, `s223:hasConnectionPoint`, `s223:cnx` |
 | `max_depth` | how many hops a traversal may take | `related("tank", max_depth=1)` |

@@ -423,6 +423,7 @@ The attribute vocabulary is one shared registry:
 | `unit` | measurements | QUDT unit (`"mg/l"`, `"PSI"`, `"NTU"`) |
 | `enumeration_kind` | measurements | enumeration kind of a state/enum property (`"on off"`) |
 | `data_source` | measurements | origin tag literal, matched verbatim (`"Lab"`, `"SCADA"`) |
+| `app` | measurements | the [app](../explanation/apps.md) that derived the measurement, matched verbatim (`"normalize-temperatures"`); absent on measurements a driver wrote |
 
 The same table is generated into the docstring of every attribute-taking
 method, so `help(q.where)` has it too.

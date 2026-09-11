@@ -183,6 +183,7 @@ FacetSummary('RO_data')
   unit [matched]: unit:KiloGM-PER-SEC (6), unit:M2 (1)
   enumeration_kind: (no values)
   data_source: (no values)
+  app: (no values)
 ```
 
 ```python

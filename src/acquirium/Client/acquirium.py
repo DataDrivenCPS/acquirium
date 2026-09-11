@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import math
+import json
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable, Sequence, Callable, Optional, TYPE_CHECKING
-import inspect
+from typing import Any, Iterable, Sequence, Callable, Mapping, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     import polars as pl
@@ -17,7 +18,8 @@ import warnings
 
 from acquirium.Client.explore.core import Query
 from acquirium.Client.query import Q
-from acquirium.Client.app_display import AppsResponse
+from acquirium.Materialization.api import App
+from acquirium.Materialization.planner import Deployment
 
 
 def _dt_to_iso(v: "str | datetime | None") -> "str | None":
@@ -27,8 +29,7 @@ def _dt_to_iso(v: "str | datetime | None") -> "str | None":
 
 
 from acquirium.Client.client import AcquiriumClient, DEFAULT_HEALTH_REQUEST_TIMEOUT
-from acquirium.Apps.base import App
-from acquirium.internals.models import AppOutputSpec, AppSpec, compute_ref_uri
+from acquirium.internals.models import compute_ref_uri
 
 
 @dataclass
@@ -191,7 +192,7 @@ class Acquirium:
 
         The ``source_id`` is a user-provided string that scopes stream
         ``ref_name`` values so two sources with the same ``ref_name`` never
-        produce colliding TimescaleDB keys.  Safe to call on every startup —
+        produce colliding canonical reference URIs. Safe to call on every startup —
         the graph write is idempotent.
 
         Returns ``source_id``.
@@ -212,11 +213,12 @@ class Acquirium:
         Args:
             source_id: The registered datasource identifier.
             ref_name: The source-local stream identifier. Combined with
-                ``source_id`` to derive the unique TimescaleDB storage key.
+                ``source_id`` to derive the canonical reference URI.
             rows: List of (timestamp, value) tuples.
-            point_uri: Semantic URI of the measurement point. When provided,
-                a ref_uri mapping is registered in the streams table.
-            replace: If True, replaces any existing data for this stream.
+            point_uri: Compatibility field. Register the point relationship
+                with ``register_streams`` before inserting rows.
+            replace: Keep exactly the supplied rows, removing omitted timestamps.
+                An empty replacement clears the stream.
 
         Returns:
             dict with ``{"ok": True, "rows_inserted": N}``.
@@ -238,7 +240,7 @@ class Acquirium:
 
         Large inputs are split into bounded requests according to
         ``insert_batch_rows``. Drivers can call this method with their natural
-        batch size; the Acquirium facade ref_uris transport/storage chunking.
+        batch size; the Acquirium facade hides transport/storage chunking.
 
         Args:
             source_id: The registered datasource identifier.
@@ -258,9 +260,18 @@ class Acquirium:
             chunk_count += 1
         return {"ok": True, "rows_inserted": total, "batches": chunk_count}
 
-    def insert_timeseries_arrow(self, source_id: str, table: "pa.Table") -> dict[str, Any]:
-        """Insert a (ts, ref_name, value) Arrow table."""
-        return self.client.insert_timeseries_arrow(source_id, table)
+    def insert_timeseries_arrow(
+        self, source_id: str, table: "pa.Table", *, publication_id: str | None = None
+    ) -> dict[str, Any]:
+        """Insert a ``(ts, ref_name, value)`` Arrow table.
+
+        ``publication_id`` is forwarded for request correlation. The current
+        revision backend does not use it to deduplicate retries; repeated rows
+        remain idempotent by stream and timestamp.
+        """
+        return self.client.insert_timeseries_arrow(
+            source_id, table, publication_id=publication_id
+        )
 
     @staticmethod
     def _json_safe_value(value: Any) -> Any:
@@ -369,120 +380,67 @@ class Acquirium:
         """
         self.client.register_streams(streams)
 
-    # ------------------------------------------------------------------
-    # ACQUIRIUM APPS API
-    # ------------------------------------------------------------------
-
-    def register_app(
-        self,
-        app: App,
-        *,
-        app_type: str | None = None,
-        outputs: list[AppOutputSpec | dict[str, Any]] | None = None,
-        depends_on: list[str] | None = None,
-        resolve_dependencies: bool = True,
-        queries: dict[str, Query] | None = None,
-        params: dict[str, Any] | None = None,
-        replace: bool = False,
+    def deploy_app(
+        self, target: object, *, parameters: Mapping[str, Any] | None = None
     ) -> dict[str, Any]:
-        """Register an Acquirium App with the server.
+        """Deploy a stateless app against the current graph."""
+        if not isinstance(target, type) or not issubclass(target, App):
+            raise ValueError("deploy_app expects an App class")
+        deployment = Deployment.from_class(target, parameters=parameters)
+        return self.client.deploy_app(json.loads(deployment.to_json()))
 
-        If an app with the same name is already registered, the server rejects
-        the request unless ``replace=True``, which gracefully tears down the
-        existing app (stopping it and cleaning up its graph registration)
-        before registering this one.
+    def remove_app(self, name: str) -> dict[str, Any]:
+        return self.client.remove_app(name)
 
-        ``params`` are stored with the app and passed to ``build_app`` via
-        ``ctx.params`` during the (one-time) build phase, so build-time
-        configuration — training windows, thresholds — lives with the
-        registration rather than the run.
+    def reprocess_app(self, name: str, start: datetime, end: datetime) -> dict[str, Any]:
+        """Recompute a retained output interval without resetting ingestion progress."""
+        return self.client.reprocess_app(name, start, end)
+
+    def check_app(
+        self, target: object, *, parameters: Mapping[str, Any] | None = None,
+        limit: int | None = None, search_path: str | None = None,
+    ) -> dict[str, Any]:
+        """Run an app against stored data and return what it computed.
+
+        Nothing is saved: the app is not deployed, its derived streams are not
+        created, and the computed rows come back instead of being stored. Use
+        it to confirm a query matches the streams you expect and a transform
+        produces the values you want, before deploying anything.
+
+        Every computed row comes back unless ``limit`` keeps only the first
+        few of each output.
+
+        The directory holding ``target``'s module is sent as a search path, so
+        an app the server cannot otherwise import is still checkable when the
+        two share a filesystem. Pass ``search_path=""`` to send none.
         """
-        query_bundle = queries if queries is not None else app.build_query(self)
-        if not isinstance(query_bundle, dict):
-            # a single Query (or legacy Q) builder
-            query_bundle = {"default": query_bundle}
-
-        query_specs = {name: q.to_dict() for name, q in query_bundle.items()}
-
-        deps = depends_on or []
-        if not depends_on and resolve_dependencies:
-            dep_set: set[str] = set()
-            for q in query_bundle.values():
-                dep_set.update(q.resolved_nodes())
-            deps = sorted(dep_set)
-
-        output_specs: list[AppOutputSpec] = []
-        output_items = outputs if outputs is not None else list(getattr(app, "outputs", []) or [])
-        for item in output_items:
-            if isinstance(item, AppOutputSpec):
-                spec_item = item
-            elif isinstance(item, dict):
-                spec_item = AppOutputSpec(**item)
-            else:
-                raise TypeError("outputs must be AppOutputSpec or dict")
-            output_specs.append(spec_item)
-
-        # The app's Python source is shipped to the server so its AppRunner
-        # actor can load and run the class. Prefer an explicit override on the
-        # app; otherwise read the class's defining module file.
-        source_code = getattr(app, "source_code", None)
-        entry_file = getattr(app, "entry_file", None)
-        if source_code is None:
-            try:
-                src_path = inspect.getsourcefile(app.__class__)
-                if src_path:
-                    source_code = Path(src_path).read_text()
-                    if entry_file is None:
-                        entry_file = Path(src_path).name
-            except Exception:
-                source_code = None
-
-        spec = AppSpec(
-            name=app.name,
-            version=getattr(app, "version", "0.0"),
-            app_type=app_type or getattr(app, "app_type", "soft_sensor"),
-            app_class=app.__class__.__name__,
-            source_code=source_code,
-            entry_file=entry_file,
-            queries=query_specs,
-            outputs=output_specs,
-            depends_on=deps,
-            params=params or {},
+        if not isinstance(target, type) or not issubclass(target, App):
+            raise ValueError("check_app expects an App class")
+        deployment = Deployment.from_class(target, parameters=parameters)
+        if search_path is None:
+            module_file = getattr(sys.modules.get(target.__module__), "__file__", None)
+            search_path = str(Path(module_file).resolve().parent) if module_file else None
+        return self.client.check_app(
+            json.loads(deployment.to_json()), limit=limit, search_path=search_path or None
         )
-        return self.client.register_app(spec, replace=replace)
 
-    def delete_app(self, app_id: str) -> dict[str, Any]:
-        """Gracefully delete a registered app (stop it, clean up its graph
-        registration, and remove its persisted source)."""
-        return AppsResponse(self.client.delete_app(app_id))
+    def app_dag(self):
+        """Return the active materialization plan as a NetworkX DiGraph."""
+        import networkx as nx
 
-    def run_app(
-        self,
-        app_id: str,
-        *,
-        start: datetime | None = None,
-        end: datetime | None = None,
-        params: dict[str, Any] | None = None,
-        keep_alive: bool = False,
-        interval: float = 10.0,
-    ) -> dict[str, Any]:
-        """Trigger an app execution in its own container via the server."""
-        return AppsResponse(self.client.run_app(
-            app_id,
-            start=start,
-            end=end,
-            params=params or {},
-            keep_alive=keep_alive,
-            interval=interval,
-        ))
-
-    def stop_app(self, *, app_id: str) -> dict[str, Any]:
-        """Stop an app's keep-alive loop."""
-        return AppsResponse(self.client.stop_app(app_id=app_id))
-
-    def list_app_runs(self, *, app_id: str | None = None) -> dict[str, Any]:
-        """List registered apps, or one app's build/run status if app_id is given."""
-        return AppsResponse(self.client.list_app_runs(app_id=app_id))
+        payload = self.client.materialization_dag()
+        graph = nx.DiGraph()
+        for node in payload["nodes"]:
+            attributes = dict(node)
+            signature = attributes.pop("binding_signature")
+            graph.add_node(signature, **attributes)
+        for edge in payload["edges"]:
+            source, target = edge["source"], edge["target"]
+            if graph.has_edge(source, target):
+                graph.edges[source, target]["ref_uris"].append(edge["ref_uri"])
+            else:
+                graph.add_edge(source, target, ref_uris=[edge["ref_uri"]])
+        return graph
 
     def generate_grafana_dashboard(self, grafana_server, api_key):
         return self.client.generate_grafana_dashboard(grafana_server, api_key)
