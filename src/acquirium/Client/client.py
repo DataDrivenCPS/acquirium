@@ -735,6 +735,21 @@ class AcquiriumClient:
         response.raise_for_status()
         return response.json()
 
+    def list_apps(self) -> dict:
+        """Read summaries of every deployed app from the server."""
+        response = self._http.get(f"{self.base_url}/apps", timeout=30)
+        _raise_for_status(response)
+        return response.json()
+
+    def inspect_app(self, name: str) -> dict:
+        """Read declared schemas and the latest binding status for an app."""
+        from urllib.parse import quote
+        response = self._http.get(
+            f"{self.base_url}/apps/{quote(name, safe='')}", timeout=30
+        )
+        _raise_for_status(response)
+        return response.json()
+
     def deploy_app(self, definition: dict) -> dict:
         response = self._http.put(
             f"{self.base_url}/apps/{definition['name']}", json=definition

@@ -74,6 +74,8 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 |---|---|
 | `check_app(target: type[App], *, parameters=None, limit=None, search_path=None) -> dict` | Run an app against stored data without saving results. Returns all computed rows unless `limit` restricts each output. `search_path` defaults to the class module's directory, allowing a local server to import it. |
 | `deploy_app(target: type[App], *, parameters=None) -> dict` | Persist and deploy an importable app class; `parameters` are passed to its constructor. |
+| `list_apps() -> dict` | List every deployment with status and binding counts, including unmatched apps and planning failures. |
+| `inspect_app(name: str) -> dict` | Return a deployment's stored definition, normalized output schemas, and latest compiled binding state. |
 | `remove_app(name: str) -> dict` | Remove a durable app deployment by name. |
 | `reprocess_app(name: str, start: datetime, end: datetime) -> dict` | Schedule a retained output interval for recomputation without resetting input progress. |
 | `app_dag() -> nx.DiGraph` | Return the compiled binding DAG; nodes describe concrete inputs, outputs, policies, and revision progress. |
@@ -244,6 +246,7 @@ and are listed once above.
 |---|---|
 | `check_app(definition: dict, limit=None, search_path=None) -> dict` | Raw HTTP form behind `Acquirium.check_app`. |
 | `deploy_app(definition: dict) -> dict` | Raw HTTP form behind `Acquirium.deploy_app`; the high-level client builds the definition from a class. |
+| `list_apps() -> dict`, `inspect_app(name: str) -> dict` | Raw inspection documents behind the high-level methods. |
 | `remove_app(name: str) -> dict` | Remove a deployment. |
 | `reprocess_app(name: str, start: datetime, end: datetime) -> dict` | Schedule retained output repair. |
 | `materialization_dag() -> dict` | Return the server's raw binding-DAG payload. |

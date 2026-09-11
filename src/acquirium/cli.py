@@ -17,6 +17,8 @@ Subcommands:
   acquirium driver list            List drivers running on a server.
   acquirium driver stop --name X   Stop a running driver.
   acquirium app check MODULE:CLASS Dry-run an app locally or on a server.
+  acquirium app list               List deployed apps and binding status.
+  acquirium app inspect NAME       Inspect schemas, settings, streams, and progress.
 """
 
 import importlib
@@ -333,6 +335,88 @@ def driver_stop(
 
 app_app = typer.Typer(help="Check and manage apps on an Acquirium server.", add_completion=False)
 app.add_typer(app_app, name="app")
+
+
+def _read_apps(base: str, name: str | None = None) -> dict:
+    """Fetch deployment inspection data with bounded waits and CLI errors."""
+    import requests
+    from urllib.parse import quote
+
+    path = "/apps" if name is None else f"/apps/{quote(name, safe='')}"
+    try:
+        response = requests.get(f"{base}{path}", timeout=30)
+        if response.status_code == 404 and name is not None:
+            typer.echo(f"Unknown app {name!r} at {base}", err=True)
+            raise typer.Exit(1)
+        response.raise_for_status()
+        return response.json()
+    except (requests.RequestException, ValueError) as error:
+        typer.echo(f"Could not inspect apps at {base}: {error}", err=True)
+        raise typer.Exit(1)
+
+
+@app_app.command("list")
+def app_list(
+    as_json: Annotated[bool, typer.Option("--json", help="Print the raw result document")] = False,
+    config: Annotated[Optional[Path], typer.Option("--config", "-c", help="Path to acquirium.toml (for server address)")] = None,
+    server_url: _ServerUrlOpt = None,
+    server_port: _ServerPortOpt = None,
+) -> None:
+    """List deployed apps, including apps with no matches or planning errors."""
+    result = _read_apps(_server_base_url(_load_config(config), server_url, server_port))
+    if as_json:
+        typer.echo(json.dumps(result, indent=2))
+        return
+    if not result["apps"]:
+        typer.echo("No apps deployed.")
+    for item in result["apps"]:
+        typer.echo(f"{item['name']}  {item['status']}  grouping={item['grouping']}  bindings={item['binding_count']}")
+        if item["error"]:
+            typer.echo(f"  Error: {item['error']}")
+
+
+@app_app.command("inspect")
+def app_inspect(
+    name: Annotated[str, typer.Argument(help="Deployed app name, as shown by 'app list'")],
+    as_json: Annotated[bool, typer.Option("--json", help="Print the raw result document")] = False,
+    config: Annotated[Optional[Path], typer.Option("--config", "-c", help="Path to acquirium.toml (for server address)")] = None,
+    server_url: _ServerUrlOpt = None,
+    server_port: _ServerPortOpt = None,
+) -> None:
+    """Show declared output schemas, settings, resolved streams, and progress."""
+    result = _read_apps(_server_base_url(_load_config(config), server_url, server_port), name)
+    if as_json:
+        typer.echo(json.dumps(result, indent=2))
+        return
+    item = result["app"]
+    definition = item["definition"]
+    typer.echo(f"{item['name']}: {item['status']}")
+    typer.echo(f"Entrypoint: {item['entrypoint']}")
+    typer.echo(f"Grouping: {item['grouping']}")
+    typer.echo(f"Plan: graph revision {item['graph_revision']}, current={item['plan_current']}")
+    for key in ("every", "lookback", "lookahead", "batch_delay", "min_interval"):
+        value = definition[key]
+        rendered = f"{value / 1_000_000:g}s" if isinstance(value, int) else value or "disabled"
+        typer.echo(f"{key}: {rendered}")
+    typer.echo(f"backfill: {definition['backfill']}")
+    typer.echo(f"parameters: {json.dumps(definition['parameters'], sort_keys=True)}")
+    if item["error"]:
+        typer.echo(f"Error: {item['error']}")
+    typer.echo("Declared outputs:")
+    for port, spec in definition["outputs"].items():
+        typer.echo(f"  {port}: {spec['value_kind']}, unit={spec['unit'] or '(unspecified)'}")
+        schema = ", ".join(f"{column}: {field['type']} (non-null)"
+                           for column, field in item["output_schemas"][port].items())
+        typer.echo(f"    schema: {schema}")
+        typer.echo(f"    metadata: {json.dumps(spec, sort_keys=True)}")
+    typer.echo(f"Bindings: {item['binding_count']}")
+    for binding in item["bindings"]:
+        typer.echo(f"  {binding['binding_signature']}: {binding['status']}")
+        typer.echo(f"    inputs: {json.dumps(binding['inputs'], sort_keys=True)}")
+        typer.echo(f"    outputs: {json.dumps(binding['outputs'], sort_keys=True)}")
+        typer.echo(f"    revision: {binding['consumed_revision']} / {binding['current_revision']}; last success: {binding['last_success']}")
+        if binding["error"]:
+            typer.echo(f"    Error: {binding['error']}")
 
 
 def _load_app_target(spec: str) -> tuple[object, str | None]:

@@ -210,6 +210,15 @@ incomplete rows according to the calculation's requirements.
 - `acquirium app check module:Class --local` executes in the caller's process.
   Local failures raise with their traceback; server failures appear in results.
 - `client.deploy_app(AppClass, parameters=None)` validates before activating.
+- `client.list_apps()` returns `{"ok": true, "apps": [...]}` with every
+  deployment's name, entrypoint, grouping, status, binding count and status
+  counts, graph revision, plan freshness, and planning error.
+- `client.inspect_app(name)` returns `{"ok": true, "app": {...}}` with the
+  same summary plus `definition`, `output_schemas`, and `bindings`.
+  Schemas describe the normalized `time` and `value` columns, both non-null:
+  UTC microsecond timestamps and either float64 or string values. Units and
+  semantic metadata are in `definition.outputs`. Bindings contain resolved
+  stream IDs, consumed/current revisions, last-success timestamps, and errors.
 - `client.remove_app(name)` forgets deployment, progress, and pending work;
   retained output history is not deleted.
 - `client.reprocess_app(name, start, end)` schedules retained output repair.
@@ -248,6 +257,8 @@ constructor parameters.
 
 | Method | Endpoint | Purpose |
 |---|---|---|
+| GET | `/apps` | List every deployment |
+| GET | `/apps/{name}` | Inspect definition, schemas, and binding progress; 404 if absent |
 | PUT | `/apps/{name}` | Deploy a definition |
 | POST | `/apps/check` | Dry run |
 | DELETE | `/apps/{name}` | Remove an app |
@@ -262,6 +273,13 @@ and invalid grouping values are rejected when the deployment is constructed.
 Unknown deployment fields are also rejected.
 
 DAG statuses are idle, pending, running, waiting, failed, or reprocessing.
+Deployment summaries prioritize failed, running, reprocessing, waiting,
+pending, then idle binding states. Planning errors report failed. Without a
+planning error, a stale plan reports planning; a current plan with no bindings
+reports no_matches. `plan_current` indicates whether the compiled plan matches
+the published graph revision. Binding details describe the latest compiled plan,
+which can differ from the stored definition while a replan is pending or failing.
+The listing and inspection endpoints do not import app code, replan, or write.
 Errors and last-success timestamps are process diagnostics; consumed progress
 and pending work are durable. Global revision lag can include unrelated writes.
 

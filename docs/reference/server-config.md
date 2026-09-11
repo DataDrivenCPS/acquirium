@@ -148,7 +148,7 @@ A running server also serves the generated OpenAPI schema at `/docs` and
 | timeseries | `POST /register_datasource`, `POST /insert_timeseries`, `POST /insert_timeseries_arrow`, `GET /timeseries`, `POST /timeseries_info` |
 | resolution | `GET /resolve_text`, `POST /resolve_record`, `POST /resolve_unit`, `POST /resolve_conversion`, `POST /conversion_factors` |
 | drivers | `POST /drivers/start`, `POST /drivers/stop`, `GET /drivers/list` |
-| apps | `PUT /apps/{name}`, `POST /apps/check`, `DELETE /apps/{name}`, `POST /apps/{name}/reprocess`, `GET /materialization/dag` |
+| apps | `GET /apps`, `GET /apps/{name}`, `PUT /apps/{name}`, `POST /apps/check`, `DELETE /apps/{name}`, `POST /apps/{name}/reprocess`, `GET /materialization/dag` |
 | logbook | `POST /insert_log`, `GET /query_logs`, `DELETE /delete_logs` |
 
 The conventions across all of them:

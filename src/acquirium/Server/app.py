@@ -512,6 +512,21 @@ def list_namespaces() -> dict[str, str]:
 #### MATERIALIZATION API ENDPOINTS ####
 
 
+@app.get("/apps")
+def list_apps() -> dict[str, Any]:
+    """List all deployments, including unmatched and failed apps."""
+    return {"ok": True, "apps": app.state.manager.materializer.list_apps()}
+
+
+@app.get("/apps/{name}")
+def inspect_app(name: str) -> dict[str, Any]:
+    """Read a deployment's declarations, output schemas, and binding progress."""
+    try:
+        return {"ok": True, "app": app.state.manager.materializer.inspect_app(name)}
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"unknown app {name!r}")
+
+
 @app.put("/apps/{name}")
 def deploy_app(name: str, request: AppRegistration) -> dict[str, Any]:
     """Validate and select an immutable definition for a named deployment."""
