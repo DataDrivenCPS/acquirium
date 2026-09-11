@@ -90,13 +90,12 @@ class TestDirectionSteps:
                     assert isinstance(pred, str)
                     assert node_cls is None or node_cls.startswith("http")
 
-    def test_measurement_nearest_uses_direction_steps(self):
+    def test_measurement_nearest_is_a_placed_direction_edge(self):
         b = q().entity(CLS_A, alias="ro").measurement(
             direction="upstream", nearest=True, max_depth=2)
-        (edge,) = b.query_graph.edges
-        assert edge.patterns == ((EQUIPMENT_STEPS["upstream"], True),
-                                 (PROPERTY_STEPS["upstream"], False))
-        assert edge.hops == 3  # equipment steps + property step
+        mid_edge, _ = b.query_graph.edges
+        assert mid_edge.direction == "upstream" and mid_edge.nearest
+        assert mid_edge.patterns is None and mid_edge.hops == 2
 
     def test_property_steps_check_cp_classes(self):
         outlet = "http://data.ashrae.org/standard223#OutletConnectionPoint"

@@ -11,6 +11,23 @@ change in any release.
 ## [Unreleased]
 
 ### Added
+- `Query.context()`: from a measurement, the entity it is about, following a
+  named relation (`entity`, `upstream`, `downstream`, or one added with
+  `register_relation`). Points on pipes reach the equipment feeding them.
+- `max_depth=0` is unbounded on every edge form; `direction=` edges and
+  predicate lists compile to transitive property paths.
+
+### Changed
+- `measurement(direction=...)` searches the flow in places: the source's own
+  outlet (or inlet) connection points, then alternately the pipe and the next
+  entity with all of its connection points. `nearest` now defaults to `True`
+  with a direction, so each source keeps the first place holding a match and
+  filters walk past places without one; pass `nearest=False` for every point
+  within `max_depth`. The old form filtered the next entity's outlet or inlet
+  points only and skipped the source's own connection points.
+- `related(direction=..., nearest=True)` is supported the same way instead of
+  raising.
+
 - Incremental materialization apps on DuckDB and PostgreSQL/TimescaleDB.
   Apps select streams with a semantic query and implement
   `transform(inputs, output, context)`. Grouping is explicitly `per_match`

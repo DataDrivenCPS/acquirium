@@ -73,7 +73,7 @@ two.
 | pointer | the node the chain is currently on, which is what a bare `where()` or `measurement()` applies to | moved by `refocus()` |
 | hidden predicate | an edge that generic traversal never follows, because it describes a node rather than connects the plant | `rdf:type`, `s223:hasProperty`, `s223:hasConnectionPoint`, `s223:cnx` |
 | `max_depth` | how many hops a traversal may take | `related("tank", max_depth=1)` |
-| `nearest` | keep only the closest match per source instead of every match in range | `related("pump", nearest=False)` |
+| `nearest` | keep only the closest match per source instead of every match in range; along a direction, the first place (own connection points, pipe, entity with its connection points, ...) holding a match | `related("pump", nearest=False)` |
 
 
 ## Data

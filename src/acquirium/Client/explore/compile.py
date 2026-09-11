@@ -189,6 +189,21 @@ def _direction_edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_id
 
     parts: List[str] = []
 
+    place = getattr(edge, "place", None)
+    if place is not None:
+        # One place only. Numbering from the source: the source's own
+        # connection points (when own_cp is set), then for flow step k the
+        # connection (ent_to_conn with k-1 conn/ent pairs before it) and the
+        # entity (k one-hop entity steps).
+        if own_cp and place == 1:
+            return own_alt
+        q = place - (1 if own_cp else 0)
+        k = (q + 1) // 2
+        if q % 2 == 1:
+            conn_steps = [ent_to_conn] + [conn_to_ent, ent_to_conn] * (k - 1)
+            return f"{src_var} {'/'.join(conn_steps)} {tgt_var} ."
+        return f"{src_var} {'/'.join([one_hop_ent] * k)} {tgt_var} ."
+
     if hops <= 0:
         parts.append(f"{one_hop_ent}+")
         parts.append(f"({ent_to_conn}/{conn_to_ent})*/{ent_to_conn}")

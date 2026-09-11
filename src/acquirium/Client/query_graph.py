@@ -60,6 +60,12 @@ class QueryEdge:
     # connection points of this class as the target, so a downstream query
     # starts at the source's outlet and an upstream one at its inlet.
     own_cp_class: Optional[str] = None
+    # Nearest directional edges are executed place by place (see
+    # ``explore.places``); ``place`` selects one place when rendering:
+    # the source's own connection points, then alternately the connection
+    # and the entity at each flow step. None renders every place within
+    # ``hops``.
+    place: Optional[int] = None
 
 
 @dataclass(frozen=True)

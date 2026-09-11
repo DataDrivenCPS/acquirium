@@ -274,9 +274,10 @@ class Query:
         - ``nearest``: keep only the closest match(es) per source instead of
           all reachable ones (equal-distance ties all survive). With
           ``via="any"`` distance means raw RDF hops over all non-hidden
-          predicates (graph-nearest); pass a direction's steps
-          (``via=UPSTREAM_EQUIPMENT``, see ``explore.directions``) when you
-          mean nearest along the process flow.
+          predicates (graph-nearest). With ``direction=`` the flow is
+          searched place by place (the adjacent connection, the next entity,
+          the next connection, ...) and the first place holding a match
+          wins; class and attribute filters decide what counts as a match.
 
         Via-expression and ``via="any"`` edges are resolved by client-side
         BFS at execute time (SPARQL cannot evaluate multi-hop any-predicate
@@ -331,17 +332,12 @@ class Query:
             # default: plain any-relatedness means the *nearest* matches;
             # via expressions / predicate lists / direction default to all
             nearest = via == "any" and direction is None
-        if nearest:
-            if preds is not None:
-                # a predicate list is a one-segment repeatable program
-                patterns = ((tuple(((p, None),) for p in preds), True),)
-                preds = None
-            if patterns is None:  # only reachable when direction is set
-                raise ValueError(
-                    "related: nearest=True with direction is not supported; "
-                    "pass the direction steps instead, e.g. "
-                    "via=UPSTREAM_EQUIPMENT (see explore.directions)"
-                )
+        if nearest and preds is not None:
+            # a predicate list is a one-segment repeatable program
+            patterns = ((tuple(((p, None),) for p in preds), True),)
+            preds = None
+        # nearest with direction: a direction edge executed place by place
+        # (connection, entity, connection, ...); see explore.places.
 
         hops = max_depth if max_depth is not None else default_hops
 
@@ -367,7 +363,7 @@ class Query:
 
     def measurement(self, *, frm: "str | list | tuple | None" = None, alias: Optional[str] = None,
                     direction: Optional[str] = None, max_depth: int = 3,
-                    nearest: bool = False, include_connection_points: bool = True,
+                    nearest: Optional[bool] = None, include_connection_points: bool = True,
                     **attrs: Any) -> "Query":
         """Attach a measurement point (data node) to the pattern and point at it.
 
@@ -385,23 +381,24 @@ class Query:
             aq.query().measurement()                    # all registered streams
             aq.query().measurement(quantity_kind="ph")  # filtered
 
-        With ``direction`` set, every measurement within ``max_depth`` flow
-        steps: for ``"downstream"`` the source's own outlet connection
-        points, then, for each pipe and piece of equipment reached, its own
-        points and the points on all of its connection points, inlet and
-        outlet. ``"upstream"`` mirrors this from the source's inlet.
-        For A -pipe-> B -pipe-> C and ``max_depth=1`` from A: A's outlet,
-        the pipe, B, B's inlet and outlet. ``max_depth=0`` is unbounded.
-        The intermediate node is exposed as ``<alias>_<direction>_entity``.
+        With ``direction`` set, the flow is searched in *places*. For
+        ``"downstream"`` from A in ``A -pipe-> B -pipe-> C``: A's own outlet
+        connection points; the pipe; B together with its inlet and outlet
+        connection points; the next pipe; C with its connection points.
+        ``"upstream"`` mirrors this from the source's inlet. ``max_depth``
+        counts entities (``max_depth=1`` reaches B), ``0`` is unbounded.
 
-        With ``nearest=True`` (requires ``direction``), the closest matching
-        measurement per source is found by client-side BFS over the
-        ``<direction>_equipment*/<direction>_property`` program —
-        ``max_depth`` bounds the equipment steps, attribute filters
-        participate in nearness (a closer non-matching property does not
-        shadow a farther matching one), and equal-distance ties are kept::
+        ``nearest`` defaults to ``True`` with a direction: each source keeps
+        the points of the first place that holds a match, so with
+        ``quantity_kind="pressure"`` the search continues past places without
+        a pressure reading, up to ``max_depth``. Ties within a place all
+        survive. ``nearest=False`` returns every point within ``max_depth``.
+        Without a direction the entity's own points and its connection-point
+        points are one place already, so ``nearest`` has no effect. The node
+        each point hangs off is exposed as ``<alias>_<direction>_entity``::
 
-            q.measurement(direction="upstream", nearest=True, quantity_kind="ph")
+            q.measurement(direction="upstream", quantity_kind="ph")
+            q.measurement(direction="downstream", nearest=False, max_depth=2)
 
         Extra keyword arguments are attribute filters applied to the new
         measurement node(s), same as ``where()``::
@@ -420,28 +417,8 @@ class Query:
                 "points by the direction rule)"
             )
 
-        if nearest:
-            if direction is None:
-                raise ValueError("measurement: nearest=True requires direction ('upstream' or 'downstream')")
-            if direction not in _DIRECTIONS:
-                raise ValueError(f"measurement: direction must be one of {_DIRECTIONS}, got {direction!r}")
-            src_id = self._source_id(frm, verb="measurement")
-            src_alias = self._src_alias(src_id)
-            program = ((EQUIPMENT_STEPS[direction], True),
-                       (PROPERTY_STEPS[direction], False))
-            data_id = self._next_id()
-            data_alias = (self._require_free_alias(g, alias, verb="measurement") if alias is not None
-                          else self._unique_alias(g, f"{src_alias}_{direction}_data"))
-            g = g.with_node(QueryNode(id=data_id, alias=data_alias,
-                                      constraints={"is_data_node": True}))
-            g = g.with_edge(QueryEdge(source_id=src_id, target_id=data_id,
-                                      hops=max_depth + 1 if max_depth else 0,
-                                      patterns=program, nearest=True),
-                            new_pointer=data_id)
-            g = g.with_data_node(DataNodeInfo(node_id=data_id))
-            if attrs:
-                g = self._apply_attrs(g, [data_id], self._resolve_attr_values(attrs))
-            return self._with_graph(g)
+        if nearest is None:
+            nearest = direction is not None
 
         if direction is not None:
             if direction not in _DIRECTIONS:
@@ -461,7 +438,8 @@ class Query:
             g = g.with_node(QueryNode(id=mid_id,
                                       alias=self._unique_alias(g, f"{src_alias}_{direction}_entity")))
             g = g.with_edge(QueryEdge(source_id=src_id, target_id=mid_id,
-                                      hops=max_depth, direction=direction, own_cp_class=own_cp),
+                                      hops=max_depth, direction=direction, own_cp_class=own_cp,
+                                      nearest=bool(nearest)),
                             new_pointer=mid_id)
 
             data_id = mid_id + 1
@@ -940,10 +918,14 @@ class Query:
             if any(getattr(e, "patterns", None) and e.value_pairs is None for e in g.edges):
                 from acquirium.Client.explore.traverse import resolve_program_edges
                 g = resolve_program_edges(g, self.client)
-            self.cache[cache_key] = self.client.sparql_query(
-                compile_sparql(g),
-                include_dependencies=include_dependencies,
-            )
+            if any(e.direction is not None and e.nearest for e in g.edges):
+                from acquirium.Client.explore.places import execute_placed
+                self.cache[cache_key] = execute_placed(g, self.client, include_dependencies)
+            else:
+                self.cache[cache_key] = self.client.sparql_query(
+                    compile_sparql(g),
+                    include_dependencies=include_dependencies,
+                )
         return self.cache[cache_key]
 
     def to_dict(self) -> dict:
@@ -987,6 +969,7 @@ class Query:
                     "relation": safe(e.relation) if e.relation else None,
                     "relation_name": e.relation_name,
                     "own_cp_class": e.own_cp_class,
+                    "place": e.place,
                 }
                 for e in g.edges
             ],

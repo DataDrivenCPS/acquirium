@@ -324,18 +324,22 @@ TODO: organize the metadata table to group nulls together.
 
 ### direction= and nearest=
 
-Both work here too.
-`direction="downstream"` alone returns every measurement within `max_depth`
-flow steps: the source's own outlet connection points, then for each pipe
-and piece of equipment reached, its own points and the points on all of its
-connection points, inlet and outlet.
-For A → pipe → B → pipe → C and `max_depth=1` from A that is A's outlet, the
-pipe, B, and B's inlet and outlet; `max_depth=2` adds the second pipe and C.
+`direction="downstream"` searches the flow in *places*.
+For A → pipe → B → pipe → C, seen from A, the places are: A's own outlet
+connection points; the pipe; B together with its inlet and outlet
+connection points; the second pipe; C with its connection points.
 `"upstream"` mirrors this from the source's inlet.
+`max_depth` counts equipment (the default 3 reaches three pieces of
+equipment downstream), and `0` is unbounded.
+
+With a direction, `nearest` defaults to `True`: each source keeps the points
+of the first place that holds a match.
+Filters decide what counts as a match, so `quantity_kind="pressure"` walks
+past places without a pressure reading, up to `max_depth`.
+Ties within a place all survive.
+`nearest=False` returns every point within `max_depth` instead.
 The extra column `<alias>_downstream_entity` names what each point hangs
 off.
-`direction=` with `nearest=True` finds the closest matching measurement up or
-downstream of the source:
 
 ```python
 (acq.query().entity(uri="wbs:P1", alias="p1")

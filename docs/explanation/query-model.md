@@ -94,6 +94,8 @@ When a step uses `via="any"` or a repeatable predicate, the client resolves it a
 The walk also makes `nearest` exact: distance is counted per source, and ties survive.
 The final SPARQL only ever receives the concrete pairs the walk found.
 Predicate lists and `direction=` compile to SPARQL directly, without the walk.
+`nearest` along a direction is not a walk either: the flow is divided into places (the source's own connection points, then alternately the connection and the entity with all its connection points), each place is one SPARQL query with every filter applied, and a source stops at the first place that returns a row.
+`max_depth=0` continues until an entity place reaches nothing new.
 Layer results are cached until the graph changes, so repeating a query is cheap.
 You can always inspect what will run with `.to_sparql()`.
 

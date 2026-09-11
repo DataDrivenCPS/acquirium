@@ -77,12 +77,12 @@ class TestBuilder:
         assert mid_edge.hops == 0
         assert "()" not in b.to_sparql()
 
-    def test_measurement_nearest_unbounded_passes_zero_through(self):
+    def test_measurement_nearest_unbounded_keeps_zero(self):
         b = self.q().entity(CLS.A, alias="a").measurement(direction="downstream", nearest=True, max_depth=0)
-        (edge,) = b.query_graph.edges
-        assert edge.hops == 0 and edge.nearest
+        mid, _ = b.query_graph.edges
+        assert mid.hops == 0 and mid.nearest
         b3 = self.q().entity(CLS.A, alias="a").measurement(direction="downstream", nearest=True, max_depth=3)
-        assert b3.query_graph.edges[0].hops == 4
+        assert b3.query_graph.edges[0].hops == 3
 
 
 # ------------------------------------------------------------- execution
@@ -145,15 +145,6 @@ class TestExecution:
 
     def test_measurement_direction_unbounded_reaches_far_point(self, cq):
         base = cq.entity(uri=X.e1, alias="s")
-        assert targets(base.measurement(direction="downstream", max_depth=1, alias="m"), "v2") == set()
-        assert targets(base.measurement(direction="downstream", max_depth=0, alias="m"), "v2") == {str(X.p4)}
-
-    def test_measurement_nearest_unbounded_reaches_far_point(self, cq):
-        from acquirium.Client.explore.traverse import resolve_program_edges
-        base = cq.entity(uri=X.e1, alias="s")
-        # bounded: the walk finds nothing (rdflib cannot evaluate the empty
-        # VALUES the compiler then emits, so check the resolved edge instead)
-        bounded = base.measurement(direction="downstream", nearest=True, max_depth=1, alias="m")
-        resolved = resolve_program_edges(bounded.query_graph, cq.client)
-        assert resolved.edges[0].value_pairs == ()
-        assert targets(base.measurement(direction="downstream", nearest=True, max_depth=0, alias="m"), "v1") == {str(X.p4)}
+        for nearest in (False, True):
+            assert targets(base.measurement(direction="downstream", max_depth=1, nearest=nearest, alias="m"), "v2") == set()
+            assert targets(base.measurement(direction="downstream", max_depth=0, nearest=nearest, alias="m"), "v2") == {str(X.p4)}

@@ -25,11 +25,13 @@ segment of nearest-measurement searches). Downstream, from entity A:
                                                          (next entity's inlet)
     A s223:connectedTo B . B s223:hasProperty P          (next entity itself)
 
-Upstream mirrors both sets. The nearest form walks this program client-side.
-The non-nearest ``measurement(direction=...)`` compiles the entity steps as
-property paths (``compile._direction_edge_pattern``) with the source's own
-outlet/inlet connection points as an extra target, then takes every point of
-each reached node and of all its connection points.
+Upstream mirrors both sets. ``measurement(direction=...)`` compiles the entity
+steps as property paths (``compile._direction_edge_pattern``) with the
+source's own outlet/inlet connection points as an extra target, then takes
+every point of each reached node and of all its connection points; with
+``nearest`` (the default) it runs that place by place (``explore.places``).
+These constants remain the program ``related(via=UPSTREAM_EQUIPMENT,
+nearest=True)`` walks client-side.
 """
 from __future__ import annotations
 
