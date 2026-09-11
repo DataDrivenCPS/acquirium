@@ -811,10 +811,8 @@ class Manager:
             }
         )
         if replace:
-            raise ValueError(
-                "replace is not supported by incremental materialization; "
-                "publish corrected rows as upserts"
-            )
+            request = PublicationRequest(publication_id or str(uuid.uuid4()), self._mutation_table(df))
+            return self._after_canonical_publish(self.publication.replace(request, ref_uri))
         return self.publish(self._mutation_table(df), publication_id=publication_id)
 
     def insert_timeseries_batch(

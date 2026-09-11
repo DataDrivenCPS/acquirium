@@ -24,9 +24,26 @@ It closes the read transaction before running user code.
 Before publishing the result, the runtime checks that the binding generation
 and consumed frontier still match those used to prepare the work. If the
 binding has been replaced or its progress has changed, the result is discarded.
-Otherwise, output changes and progress commit together. Deleted output rows
-leave revisioned tombstones so downstream apps can observe the removal;
+Otherwise, output changes and progress commit together. Incremental output
+removals leave revisioned tombstones so downstream apps can observe the removal;
 reinserting a timestamp clears its tombstone.
+
+Whole-stream ingestion replacement (`replace=True`) instead physically deletes
+old rows, inserts the replacement, and records the latest reset revision for the
+stream in the same transaction. A binding whose input has reset since its
+consumed frontier rebuilds from all current inputs, including unchanged sibling
+streams. Its assigned outputs are physically replaced and receive reset markers,
+so descendants also rebuild. Only one reset marker per stream is retained;
+repeated replacements overwrite it rather than accumulate deleted keys.
+
+A reset rebuild runs as one unpartitioned invocation. Existing output timestamps
+help bound the rebuild, including when all inputs were cleared. Output writes,
+output reset markers, removal of superseded backfill work, and progress advance
+commit atomically. A transform or write failure leaves the prior work available
+for retry. A reset committed after a batch's snapshot invalidates that batch at
+publication, preventing old work from restoring removed values. Replacement is
+intended for infrequent reloads: full input loading and recomputation can consume
+substantially more memory and time than incremental work.
 
 One coordinator schedules independent bindings through a bounded thread pool.
 The next dependency layer reads its inputs after predecessor work has completed.
@@ -44,7 +61,9 @@ their complete retained input and are not bounded by these daily intervals.
 ## The storage contract
 
 The timeseries backend stores `system_state` (one global `current_revision`)
-and `binding_progress` (`progress_key` → `consumed_revision`). The materializer
+and `binding_progress` (`progress_key` → `consumed_revision`), plus
+`stream_resets` (`ref_uri` → latest reset `last_revision`). Opening a store creates
+the reset table if it is absent; no existing timeseries columns change. The materializer
 owns `materialization_deployments`, `materialization_lineage`, and
 `materialization_work`. Lineage records output ownership, input references,
 and a query-context fingerprint. Work rows store bounded output cursors for
@@ -103,8 +122,9 @@ Apps must produce the same result for a given batch. The runtime can repeat
 uncommitted work, but it cannot undo external side effects performed by a
 transform. Each write to an existing `(stream, timestamp)` replaces the current
 value and advances its `last_revision`; previous values are not retained as a
-version history. Output removals retain revisioned tombstones so downstream
-calculations can detect them.
+version history. Incremental output removals retain revisioned tombstones so
+downstream calculations can detect them. Whole-stream replacement and its
+resulting rebuilds physically remove old rows and use stream reset markers.
 
 A persistent thread pool bounds the number of concurrent invocations. Finite
 work ranges are divided into roughly one-day output intervals, expanded to

@@ -56,7 +56,7 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 | `register_streams(streams: Iterable[dict]) -> None` | Declare one or more streams' identity and semantic metadata in one graph insert; see the [lifecycle guide](../explanation/stream-lifecycle.md). |
 | `reference_uri(source_id: str, ref_name: str) -> URIRef` | The canonical stream URI for a `(source_id, ref_name)` pair. |
 | `resolve_point_metadata(fields: dict, min_score=0.6) -> dict[str, str \| None]` | Resolve `unit`, `quantity_kind`, `medium`, `substance` text to URIs jointly. |
-| `insert_timeseries(source_id, ref_name, rows: list[tuple[datetime, Any]], *, point_uri=None, replace=False) -> dict` | Insert or correct rows for one stream. Register point metadata separately; `replace=True` is currently rejected. |
+| `insert_timeseries(source_id, ref_name, rows: list[tuple[datetime, Any]], *, point_uri=None, replace=False) -> dict` | Insert or correct rows for one stream. Register point metadata separately; `replace=True` makes the stream contain exactly the supplied rows; an empty list clears it. Downstream apps fully rebuild after replacement. |
 | `insert_timeseries_batch(source_id, streams: dict[str, list[tuple[datetime, Any]]]) -> dict` | Insert rows for several streams; chunked by `insert_batch_rows`. |
 | `insert_timeseries_arrow(source_id, table: pa.Table, *, publication_id=None) -> dict` | Insert a `(ts, ref_name, value)` Arrow table; the path drivers use. The optional ID is for request correlation and does not currently deduplicate retries. |
 
