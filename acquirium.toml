@@ -7,6 +7,7 @@
 # Network
 host = "0.0.0.0"
 port = 8000
+exact_match = true
 
 # Data directory: the Oxigraph graph store, embedding cache, and local DuckDB
 # file live under this path by default. TimescaleDB data remains in PostgreSQL.
