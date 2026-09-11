@@ -42,6 +42,25 @@ defined by `every`, `lookback`, and `lookahead`. Their timing state resets on
 server restart, and failed transforms can retry at the materialization polling
 cadence rather than waiting for `min_interval`.
 
+## Example apps
+
+The repository includes two complete examples in [`scripts/apps/`](../../scripts/apps/):
+
+- [`temperature_normalization.py`](../../scripts/apps/temperature_normalization.py)
+  converts each matched temperature stream to degrees Celsius.
+- [`fill_short_temperature_gaps.py`](../../scripts/apps/fill_short_temperature_gaps.py)
+  copies Celsius history and interpolates gaps shorter than one hour.
+
+Check either app before deploying it:
+
+```bash
+acquirium app check scripts/apps/temperature_normalization.py:TemperatureNormalization
+acquirium app check scripts/apps/fill_short_temperature_gaps.py:FillShortTemperatureGaps
+```
+
+The examples and their assumptions are described in
+[`scripts/apps/README.md`](../../scripts/apps/README.md).
+
 ### Query matches
 
 A per-match invocation receives the streams resolved by one distinct query
