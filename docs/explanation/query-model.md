@@ -94,6 +94,8 @@ When a step uses `via="any"` or a repeatable predicate, the client resolves it a
 The walk also makes `nearest` exact: distance is counted per source, and ties survive.
 The final SPARQL only ever receives the concrete pairs the walk found.
 Predicate lists and `direction=` compile to SPARQL directly, without the walk.
+`nearest` along a direction is not a walk either: the flow is divided into places (the source's own connection points, then alternately the connection and the entity with all its connection points), each place is one SPARQL query with every filter applied, and a source stops at the first place that returns a row.
+`max_depth=0` continues until an entity place reaches nothing new.
 Layer results are cached until the graph changes, so repeating a query is cheap.
 You can always inspect what will run with `.to_sparql()`.
 
@@ -152,6 +154,40 @@ q.related("pump", via=UPSTREAM_EQUIPMENT, nearest=True)
 
 The module docstring of `acquirium.Client.explore.directions` documents
 every step.
+
+### The relations behind context()
+
+`context()` is the reverse of `measurement()`: from a measurement it adds the
+entity the measurement is about.
+Which entity is decided by a named relation from
+`acquirium.Client.explore.relations.RELATIONS`, a registry of step chains in
+the same form as the direction constants above.
+A relation compiles to one fixed SPARQL step, so it never triggers the
+client-side walk.
+
+| relation | chains, read from the measurement |
+|---|---|
+| `entity` | `^hasProperty`; `^hasProperty/^hasConnectionPoint` |
+| `upstream` | `DOWNSTREAM_PROPERTY` read backwards |
+| `downstream` | `UPSTREAM_PROPERTY` read backwards |
+
+`upstream` and `downstream` are not written by hand.
+`DOWNSTREAM_PROPERTY` lists where an entity's downstream measurements live;
+followed from the measurement back to the entity, the same four chains say
+which entity the measurement is downstream of.
+`reverse_chains()` does that flip, keeping each class constraint on the node
+it constrains.
+For a point on a pipe the chain that fires is `^hasProperty` to the
+connection, then `connectsFrom` (upstream) or `connectsTo` (downstream).
+
+`register_relation(name, chains)` adds one, `unregister_relation(name)`
+removes one, and `reset_relations()` restores the defaults.
+Wildcard steps are not allowed in a relation.
+
+Be aware that `entity` names its predicates while `measurement()` follows any
+predicate for one hop, so a model that attaches points with a predicate
+other than `hasProperty` is reached by `measurement()` but not by
+`context()` until that predicate is added to the relation.
 
 
 

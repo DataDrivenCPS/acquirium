@@ -49,6 +49,23 @@ class QueryEdge:
     # Unconstrained-edge compilation: also try the first hop through a
     # connection point (measurement's include_connection_points flag).
     cp_union: bool = True
+    # Relation edge (explore ``context()``): a tuple of alternative step
+    # chains (see ``explore.relations``) rendered as one fixed SPARQL step
+    # from a data node to the entity it is about. ``relation_name`` is the
+    # registry name it came from, for display/serialisation only.
+    relation: Optional[tuple] = None
+    relation_name: Optional[str] = None
+    # Direction edge (explore ``measurement(direction=)``): besides the
+    # entities and connections along the flow, also accept the source's own
+    # connection points of this class as the target, so a downstream query
+    # starts at the source's outlet and an upstream one at its inlet.
+    own_cp_class: Optional[str] = None
+    # Nearest directional edges are executed place by place (see
+    # ``explore.places``); ``place`` selects one place when rendering:
+    # the source's own connection points, then alternately the connection
+    # and the entity at each flow step. None renders every place within
+    # ``hops``.
+    place: Optional[int] = None
 
 
 @dataclass(frozen=True)

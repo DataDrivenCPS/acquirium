@@ -157,9 +157,19 @@ def _direction_edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_id
     **Upstream**:   ^<connectsTo>   repeated via <connectsFrom>/^<connectsTo>
 
     Multi-hop spells out k=1..hops repetitions, joined with ``|``.
+    ``hops=0`` means unbounded: the entity-reaching group becomes ``+`` and
+    the connection-reaching group ``(ent_to_conn/conn_to_ent)*/ent_to_conn``.
+    Every predicate is fixed, so the store evaluates these as ordinary
+    property paths.
     """
     hops = int(edge.hops)
     direction = edge.direction
+    own_cp = getattr(edge, "own_cp_class", None)
+    own_alt = (f"{src_var} <{CONNECTION_POINT}> {tgt_var} . "
+               f"{tgt_var} <{_RDF_TYPE}>/<{_SUBCLASS}>* <{own_cp}> ." if own_cp else None)
+
+    def _with_own(pattern: str) -> str:
+        return f"{{ {pattern} }} UNION {{ {own_alt} }}" if own_alt else pattern
 
     ct  = f"<{S223.connectedTo}>"
     cf  = f"<{S223.connectedFrom}>"
@@ -179,6 +189,27 @@ def _direction_edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_id
 
     parts: List[str] = []
 
+    place = getattr(edge, "place", None)
+    if place is not None:
+        # One place only. Numbering from the source: the source's own
+        # connection points (when own_cp is set), then for flow step k the
+        # connection (ent_to_conn with k-1 conn/ent pairs before it) and the
+        # entity (k one-hop entity steps).
+        if own_cp and place == 1:
+            return own_alt
+        q = place - (1 if own_cp else 0)
+        k = (q + 1) // 2
+        if q % 2 == 1:
+            conn_steps = [ent_to_conn] + [conn_to_ent, ent_to_conn] * (k - 1)
+            return f"{src_var} {'/'.join(conn_steps)} {tgt_var} ."
+        return f"{src_var} {'/'.join([one_hop_ent] * k)} {tgt_var} ."
+
+    if hops <= 0:
+        parts.append(f"{one_hop_ent}+")
+        parts.append(f"({ent_to_conn}/{conn_to_ent})*/{ent_to_conn}")
+        path = f"({'|'.join(parts)})"
+        return _with_own(f"{src_var} {path} {tgt_var} .")
+
     # entity-reaching paths: 1..hops entity hops
     for k in range(1, hops + 1):
         parts.append("/".join([one_hop_ent] * k))
@@ -194,7 +225,7 @@ def _direction_edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_id
         parts.append("/".join(conn_steps))
 
     path = f"({'|'.join(parts)})"
-    return f"{src_var} {path} {tgt_var} ."
+    return _with_own(f"{src_var} {path} {tgt_var} .")
 
 
 def _program_edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int) -> str:
@@ -252,9 +283,12 @@ def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int,
 
     Rules:
     - If edge.value_pairs is set (a resolved nearest edge): paired VALUES.
+    - If edge.relation is set (a ``context()`` edge): one fixed step rendered
+      from the relation's chains (see ``explore.relations``).
     - If edge.patterns is set (a lowered via program): chains of via steps.
     - If edge.direction is set: delegate to _direction_edge_pattern for full topology traversal.
-    - If edge.predicates is present/non-empty: constrain to those predicates and allow length 1..hops.
+    - If edge.predicates is present/non-empty: constrain to those predicates and allow length 1..hops
+      (``hops=0``: unbounded, rendered as a ``+`` property path).
     - Else: allow any predicates, but length <= hops, via UNION of k-step chains,
       excluding any hidden predicates (see ``hidden.hide``). Edges that
       target a measurement node are exempt from hiding — that's how data
@@ -264,17 +298,21 @@ def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int,
     if getattr(edge, "value_pairs", None) is not None:
         pairs = " ".join(f"(<{s}> <{t}>)" for s, t in edge.value_pairs)
         return f"VALUES ({src_var} {tgt_var}) {{ {pairs} }}"
+    if getattr(edge, "relation", None):
+        return render_alternatives(edge.relation, src_var, tgt_var, f"e{edge_idx}_rel")
     if getattr(edge, "patterns", None):
         return _program_edge_pattern(src_var, tgt_var, edge, edge_idx)
     if getattr(edge, "direction", None) is not None:
         return _direction_edge_pattern(src_var, tgt_var, edge, edge_idx)
 
     hops = int(edge.hops)
-    if hops < 1:
-        raise ValueError(f"edge.hops must be >= 1, got {edge.hops}")
-
     preds = getattr(edge, "predicates", None) or []
     preds = [p for p in preds if p]  # remove falsy
+    if hops < 1 and not preds:
+        raise ValueError(
+            f"edge.hops must be >= 1 for an any-predicate edge, got {edge.hops}; "
+            f"unbounded any-predicate reach is resolved client-side (via='any')"
+        )
 
     # Case A: constrained predicate set
     if preds:
@@ -289,6 +327,9 @@ def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int,
         if hops == 1:
             alt = "|".join(_format_pred(p) for p in uniq)
             path = f"({alt})"
+        elif hops < 1:
+            alt = "|".join(_format_pred(p) for p in uniq)
+            path = f"({alt})+"
         else:
             parts = []
             for p in uniq:
@@ -300,10 +341,10 @@ def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int,
         normal = f"{src_var} {path} {tgt_var} ."
 
         # CP alternative:
-        # - For hops==1 we can still keep it as a property path because it's all IRIs:
+        # - For hops==1 (and unbounded) we can keep it as a property path because it's all IRIs:
         #     src <cp>/<p> tgt
         # - For hops>1, rewrite as a UNION over k with explicit triples so CP only affects first hop.
-        if hops == 1:
+        if hops <= 1:
             cp_f = getattr(edge, "cp_filter", None)
             if cp_f:
                 cp = f"?cp_e{edge_idx}"
@@ -618,6 +659,44 @@ def compile_parts(graph: QueryGraph) -> tuple:
     return var_map, select_parts, where_clauses
 
 
+def _branch_closures(graph: QueryGraph) -> dict:
+    """Map each data node to the non-data nodes reachable from it along
+    edges leaving it (``context()`` entities and their descendants).
+
+    A node reachable from two data nodes stays in the shared pattern, as
+    does any node with an incoming edge from the shared pattern.
+    """
+    data_ids = set(graph.data_nodes)
+    out_edges: dict = {}
+    for e in graph.edges:
+        out_edges.setdefault(e.source_id, []).append(e.target_id)
+    closures = {}
+    for nid in data_ids:
+        seen: set = set()
+        frontier = [t for t in out_edges.get(nid, []) if t not in data_ids]
+        while frontier:
+            n = frontier.pop()
+            if n in seen or n in data_ids:
+                continue
+            seen.add(n)
+            frontier.extend(out_edges.get(n, []))
+        closures[nid] = seen
+    # a node claimed by several branches, or fed from outside them, is shared
+    claimed: dict = {}
+    for nid, nodes in closures.items():
+        for n in nodes:
+            claimed.setdefault(n, set()).add(nid)
+    incoming_from_shared = set()
+    branch_all = set(claimed)
+    for e in graph.edges:
+        if e.target_id in branch_all and e.source_id not in branch_all and e.source_id not in data_ids:
+            incoming_from_shared.add(e.target_id)
+    return {
+        nid: {n for n in nodes if len(claimed[n]) == 1 and n not in incoming_from_shared}
+        for nid, nodes in closures.items()
+    }
+
+
 def _compile_parts_multi(graph: QueryGraph) -> tuple:
     """compile_parts for graphs with 2+ measurement nodes.
 
@@ -631,14 +710,21 @@ def _compile_parts_multi(graph: QueryGraph) -> tuple:
     var_map = {nid: f"?v{nid}" for nid in graph.nodes}
     data_ids = set(graph.data_nodes)
 
+    # Nodes hanging *off* a data node (context() entities and anything
+    # chained from them) are bound only inside that node's branch, so their
+    # constraints, edges and projections must live there too.
+    branch_nodes = _branch_closures(graph)
+    branch_only = {n for nodes in branch_nodes.values() for n in nodes}
+
     where_clauses: List[str] = []
     for nid, node in graph.nodes.items():
-        if nid in data_ids:
+        if nid in data_ids or nid in branch_only:
             continue
         where_clauses.extend(_node_constraint_clauses(var_map[nid], node))
 
     for edge_idx, edge in enumerate(graph.edges):
-        if edge.target_id in data_ids:
+        if (edge.target_id in data_ids or edge.source_id in data_ids
+                or edge.target_id in branch_only or edge.source_id in branch_only):
             continue
         where_clauses.append(_edge_pattern(
             var_map[edge.source_id], var_map[edge.target_id], edge, edge_idx,
@@ -647,7 +733,7 @@ def _compile_parts_multi(graph: QueryGraph) -> tuple:
 
     attr_var_pairs: List[tuple] = []  # (node_id, var) in selects order
     for nid, name, required in getattr(graph, "selects", ()):
-        if nid in data_ids:
+        if nid in data_ids or nid in branch_only:
             continue
         clause, avar = _attr_select_clause(var_map[nid], nid, name, required)
         where_clauses.append(clause)
@@ -656,19 +742,27 @@ def _compile_parts_multi(graph: QueryGraph) -> tuple:
     branches: List[str] = []
     for nid, info in graph.data_nodes.items():
         v = var_map[nid]
+        members = {nid} | branch_nodes.get(nid, set())
         b: List[str] = list(_node_constraint_clauses(v, graph.nodes[nid]))
         for edge_idx, edge in enumerate(graph.edges):
             if edge.target_id == nid:
                 b.append(_edge_pattern(
                     var_map[edge.source_id], v, edge, edge_idx, is_data_edge=True))
         b.extend(_data_node_clauses(v, nid, info))
+        for mid in sorted(branch_nodes.get(nid, ())):
+            b.extend(_node_constraint_clauses(var_map[mid], graph.nodes[mid]))
+        for edge_idx, edge in enumerate(graph.edges):
+            if edge.source_id in members and edge.target_id in members and edge.target_id != nid:
+                b.append(_edge_pattern(
+                    var_map[edge.source_id], var_map[edge.target_id], edge, edge_idx,
+                    is_data_edge=False))
         # this node's projected attributes live inside its branch: outside it
         # the unbound variable would turn the binding into an open pattern
         for snid, name, required in getattr(graph, "selects", ()):
-            if snid == nid:
-                clause, avar = _attr_select_clause(v, nid, name, required)
+            if snid in members:
+                clause, avar = _attr_select_clause(var_map[snid], snid, name, required)
                 b.append(clause)
-                attr_var_pairs.append((nid, avar))
+                attr_var_pairs.append((snid, avar))
         branches.append("{ " + " ".join(b) + " }")
     where_clauses.append(" UNION ".join(branches))
 

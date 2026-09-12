@@ -135,15 +135,15 @@ class TestMeasurement:
         assert sorted(g.data_nodes) == [2, 3]
         assert g.aliases["a_data"] == 2 and g.aliases["b_data"] == 3
 
-    def test_direction_builds_mid_node_and_cp_filter(self):
+    def test_direction_builds_mid_node_with_own_connection_point(self):
         b = q().entity(CLS_A, alias="ro").measurement(direction="upstream", max_depth=2)
         g = b.query_graph
         assert g.aliases["ro_upstream_entity"] == 1
         assert g.aliases["ro_upstream_data"] == 2
         mid_edge, data_edge = g.edges
         assert mid_edge.direction == "upstream" and mid_edge.hops == 2
-        assert data_edge.hops == 1
-        assert data_edge.cp_filter == "http://data.ashrae.org/standard223#InletConnectionPoint"
+        assert mid_edge.own_cp_class == "http://data.ashrae.org/standard223#InletConnectionPoint"
+        assert data_edge.hops == 1 and data_edge.cp_filter is None and data_edge.cp_union
         assert 2 in g.data_nodes
 
     def test_root_form_on_empty_query(self):
@@ -280,12 +280,16 @@ class TestSparqlParityWithLegacy:
                .find_data().to_sparql())
         assert canon(new) == canon(old)
 
-    def test_directional_measurement_chain(self):
+    def test_directional_measurement_diverges_from_legacy_on_purpose(self):
+        """Legacy filtered the next entity's inlet/outlet points only; explore
+        also starts at the source's own connection point and takes every
+        connection point of what it reaches, so parity is not expected."""
         new = (q().entity(CLS_A, alias="ro")
                .measurement(direction="upstream", max_depth=3).to_sparql())
         old = (Q(client=None).find_entity(_class=CLS_A, alias="ro")
                .find_related_data(direction="upstream", hops=3).to_sparql())
-        assert canon(new) == canon(old)
+        assert canon(new) != canon(old)
+        assert "InletConnectionPoint" in new
 
     def test_soft_sensor_shape(self):
         """entity -> CP class -> measurement, the copy-pasted notebook chain.

@@ -28,6 +28,7 @@ from rdflib import URIRef
 from acquirium.Client.explore.attributes import REGISTRY, Not, attributes_doc, normalize_value
 from acquirium.Client.explore.compile import compile_sparql
 from acquirium.Client.explore.directions import EQUIPMENT_STEPS, PROPERTY_STEPS
+from acquirium.Client.explore.relations import RELATIONS
 from acquirium.Client.query_graph import DataNodeInfo, QueryEdge, QueryGraph, QueryNode
 from acquirium.internals.internals_namespaces import S223
 
@@ -273,9 +274,10 @@ class Query:
         - ``nearest``: keep only the closest match(es) per source instead of
           all reachable ones (equal-distance ties all survive). With
           ``via="any"`` distance means raw RDF hops over all non-hidden
-          predicates (graph-nearest); pass a direction's steps
-          (``via=UPSTREAM_EQUIPMENT``, see ``explore.directions``) when you
-          mean nearest along the process flow.
+          predicates (graph-nearest). With ``direction=`` the flow is
+          searched place by place (the adjacent connection, the next entity,
+          the next connection, ...) and the first place holding a match
+          wins; class and attribute filters decide what counts as a match.
 
         Via-expression and ``via="any"`` edges are resolved by client-side
         BFS at execute time (SPARQL cannot evaluate multi-hop any-predicate
@@ -330,17 +332,12 @@ class Query:
             # default: plain any-relatedness means the *nearest* matches;
             # via expressions / predicate lists / direction default to all
             nearest = via == "any" and direction is None
-        if nearest:
-            if preds is not None:
-                # a predicate list is a one-segment repeatable program
-                patterns = ((tuple(((p, None),) for p in preds), True),)
-                preds = None
-            if patterns is None:  # only reachable when direction is set
-                raise ValueError(
-                    "related: nearest=True with direction is not supported; "
-                    "pass the direction steps instead, e.g. "
-                    "via=UPSTREAM_EQUIPMENT (see explore.directions)"
-                )
+        if nearest and preds is not None:
+            # a predicate list is a one-segment repeatable program
+            patterns = ((tuple(((p, None),) for p in preds), True),)
+            preds = None
+        # nearest with direction: a direction edge executed place by place
+        # (connection, entity, connection, ...); see explore.places.
 
         hops = max_depth if max_depth is not None else default_hops
 
@@ -366,7 +363,7 @@ class Query:
 
     def measurement(self, *, frm: "str | list | tuple | None" = None, alias: Optional[str] = None,
                     direction: Optional[str] = None, max_depth: int = 3,
-                    nearest: bool = False, include_connection_points: bool = True,
+                    nearest: Optional[bool] = None, include_connection_points: bool = True,
                     **attrs: Any) -> "Query":
         """Attach a measurement point (data node) to the pattern and point at it.
 
@@ -384,19 +381,24 @@ class Query:
             aq.query().measurement()                    # all registered streams
             aq.query().measurement(quantity_kind="ph")  # filtered
 
-        With ``direction`` set, first traverses up to ``max_depth`` topology
-        hops upstream/downstream through an intermediate entity, then looks
-        for measurements one hop away (inlet connection points for upstream,
-        outlet for downstream).
+        With ``direction`` set, the flow is searched in *places*. For
+        ``"downstream"`` from A in ``A -pipe-> B -pipe-> C``: A's own outlet
+        connection points; the pipe; B together with its inlet and outlet
+        connection points; the next pipe; C with its connection points.
+        ``"upstream"`` mirrors this from the source's inlet. ``max_depth``
+        counts entities (``max_depth=1`` reaches B), ``0`` is unbounded.
 
-        With ``nearest=True`` (requires ``direction``), the closest matching
-        measurement per source is found by client-side BFS over the
-        ``<direction>_equipment*/<direction>_property`` program —
-        ``max_depth`` bounds the equipment steps, attribute filters
-        participate in nearness (a closer non-matching property does not
-        shadow a farther matching one), and equal-distance ties are kept::
+        ``nearest`` defaults to ``True`` with a direction: each source keeps
+        the points of the first place that holds a match, so with
+        ``quantity_kind="pressure"`` the search continues past places without
+        a pressure reading, up to ``max_depth``. Ties within a place all
+        survive. ``nearest=False`` returns every point within ``max_depth``.
+        Without a direction the entity's own points and its connection-point
+        points are one place already, so ``nearest`` has no effect. The node
+        each point hangs off is exposed as ``<alias>_<direction>_entity``::
 
-            q.measurement(direction="upstream", nearest=True, quantity_kind="ph")
+            q.measurement(direction="upstream", quantity_kind="ph")
+            q.measurement(direction="downstream", nearest=False, max_depth=2)
 
         Extra keyword arguments are attribute filters applied to the new
         measurement node(s), same as ``where()``::
@@ -415,27 +417,8 @@ class Query:
                 "points by the direction rule)"
             )
 
-        if nearest:
-            if direction is None:
-                raise ValueError("measurement: nearest=True requires direction ('upstream' or 'downstream')")
-            if direction not in _DIRECTIONS:
-                raise ValueError(f"measurement: direction must be one of {_DIRECTIONS}, got {direction!r}")
-            src_id = self._source_id(frm, verb="measurement")
-            src_alias = self._src_alias(src_id)
-            program = ((EQUIPMENT_STEPS[direction], True),
-                       (PROPERTY_STEPS[direction], False))
-            data_id = self._next_id()
-            data_alias = (self._require_free_alias(g, alias, verb="measurement") if alias is not None
-                          else self._unique_alias(g, f"{src_alias}_{direction}_data"))
-            g = g.with_node(QueryNode(id=data_id, alias=data_alias,
-                                      constraints={"is_data_node": True}))
-            g = g.with_edge(QueryEdge(source_id=src_id, target_id=data_id,
-                                      hops=max_depth + 1, patterns=program, nearest=True),
-                            new_pointer=data_id)
-            g = g.with_data_node(DataNodeInfo(node_id=data_id))
-            if attrs:
-                g = self._apply_attrs(g, [data_id], self._resolve_attr_values(attrs))
-            return self._with_graph(g)
+        if nearest is None:
+            nearest = direction is not None
 
         if direction is not None:
             if direction not in _DIRECTIONS:
@@ -443,22 +426,28 @@ class Query:
             src_id = self._source_id(frm, verb="measurement")
             src_alias = self._src_alias(src_id)
 
+            # The intermediate node is every entity and connection within
+            # max_depth flow steps, plus the source's own outlet (downstream)
+            # or inlet (upstream) connection points. The data edge is the
+            # ordinary one-hop measurement edge, so each intermediate node
+            # contributes its own points and the points on all of its
+            # connection points, inlet and outlet alike.
+            own_cp = str(S223.OutletConnectionPoint if direction == "downstream"
+                         else S223.InletConnectionPoint)
             mid_id = self._next_id()
             g = g.with_node(QueryNode(id=mid_id,
                                       alias=self._unique_alias(g, f"{src_alias}_{direction}_entity")))
             g = g.with_edge(QueryEdge(source_id=src_id, target_id=mid_id,
-                                      hops=max_depth, direction=direction),
+                                      hops=max_depth, direction=direction, own_cp_class=own_cp,
+                                      nearest=bool(nearest)),
                             new_pointer=mid_id)
 
-            cp_filter = str(S223.InletConnectionPoint if direction == "upstream"
-                            else S223.OutletConnectionPoint)
             data_id = mid_id + 1
             data_alias = (self._require_free_alias(g, alias, verb="measurement") if alias is not None
                           else self._unique_alias(g, f"{src_alias}_{direction}_data"))
             g = g.with_node(QueryNode(id=data_id, alias=data_alias,
                                       constraints={"is_data_node": True}))
-            g = g.with_edge(QueryEdge(source_id=mid_id, target_id=data_id, hops=1,
-                                      cp_filter=cp_filter),
+            g = g.with_edge(QueryEdge(source_id=mid_id, target_id=data_id, hops=1),
                             new_pointer=data_id)
             g = g.with_data_node(DataNodeInfo(node_id=data_id))
             if attrs:
@@ -513,6 +502,104 @@ class Query:
         if attrs:
             g = self._apply_attrs(g, created, self._resolve_attr_values(attrs))
         return self._with_graph(g)
+
+    def _lower_context_via(self, via: Any) -> tuple:
+        """Turn ``context(via=...)`` into ``(chains, name)``.
+
+        ``via`` is a registry name (``explore.relations.RELATIONS``), a single
+        predicate (URI or free text, ``"^"`` inverts), a list of predicates
+        (alternatives, one step each), or an explicit tuple of step chains in
+        the program IR. Every form is one fixed step.
+        """
+        if isinstance(via, str) and via in RELATIONS:
+            return RELATIONS[via], via
+        if isinstance(via, str):
+            pred = via.strip()
+            inverted = pred.startswith("^")
+            core = pred[1:] if inverted else pred
+            if not core:
+                raise ValueError("context: empty via predicate")
+            if not _is_uri(core):
+                resolved = self.client.resolve(core, "predicate", min_score=0.4)
+                if resolved is None:
+                    raise ValueError(
+                        f"context: {via!r} is neither a registered relation "
+                        f"({', '.join(RELATIONS)}) nor a resolvable predicate"
+                    )
+                core = resolved
+            return ((((f"^{core}" if inverted else core), None),),), "context"
+        if isinstance(via, (list, tuple)) and via and all(isinstance(c, tuple) for c in via):
+            return tuple(via), "context"
+        if isinstance(via, (list, tuple)) and via:
+            preds = [
+                f"^{self._as_uri(str(p)[1:], 'predicate')}" if str(p).startswith("^")
+                else self._as_uri(p, "predicate")
+                for p in via
+            ]
+            return tuple(((p, None),) for p in preds), "context"
+        raise ValueError(
+            "context: via must be a relation name, a predicate, a list of "
+            "predicates, or a tuple of step chains"
+        )
+
+    def context(self, cls: str | URIRef | None = None, *, uri: str | URIRef | None = None,
+                alias: Optional[str] = None, frm: Optional[str] = None,
+                via: Any = "entity", **attrs: Any) -> "Query":
+        """Add the entity a measurement is about and point at it.
+
+        The reverse of ``measurement()``: from a data node, add the entity
+        node reached through a named relation and move the pointer there.
+        The new node is a normal entity node (alias, ``where(target=)``,
+        ``include()``, further ``related()`` steps, ``DataObject.by()``).
+
+        - ``cls``: class URI or free text for the entity; ``uri`` pins one
+          instance. Both optional: with neither, the node matches whatever
+          the relation reaches (``include("type")`` shows what that is).
+        - ``frm``: alias of the data node (default: current pointer, which
+          must be a data node; from an entity node use ``related()``).
+        - ``via``: which relation. A name from ``explore.relations.RELATIONS``
+          (``"entity"``: the entity the point hangs off, directly or through a
+          connection point; ``"upstream"`` / ``"downstream"``: the entity the
+          point is directly downstream / upstream of, e.g. the pump feeding a
+          pipe the pressure sits on), or an explicit predicate, list of
+          predicates, or tuple of step chains. Always one fixed step, compiled
+          to plain SPARQL.
+        - Keyword arguments filter the new node like ``where()``.
+
+        Default alias is ``<data alias>_<relation>`` (``data_entity``). A point
+        reached from several entities yields several rows::
+
+            aq.query().measurement(quantity_kind="pressure").context(process="reverse osmosis")
+            aq.query().measurement(quantity_kind="pressure").context("pump", via="upstream")
+        """
+        instance_uri = self._normalize_instance_uri(uri)
+        g = self.query_graph
+        src_id = self._source_id(frm, verb="context")
+        if src_id not in g.data_nodes:
+            raise ValueError(
+                f"context: source {self._src_alias(src_id)!r} is not a measurement node; "
+                f"context() starts from a data node (use related() from an entity)"
+            )
+        chains, name = self._lower_context_via(via)
+
+        constraints: Dict[str, Any] = {}
+        if cls is not None:
+            constraints["rdf_class"] = self._as_uri(cls, "class")
+        if instance_uri is not None:
+            constraints["instance_uri"] = instance_uri
+        new_id = self._next_id()
+        if alias is not None:
+            self._require_free_alias(g, alias, verb="context")
+        else:
+            alias = self._unique_alias(g, f"{self._src_alias(src_id)}_{name}")
+        g = g.with_node(QueryNode(id=new_id, alias=alias, constraints=constraints))
+        g = g.with_edge(QueryEdge(source_id=src_id, target_id=new_id, hops=1,
+                                  relation=chains, relation_name=name),
+                        new_pointer=new_id)
+        q2 = self._with_graph(g)
+        if attrs:
+            q2 = q2._with_graph(q2._apply_attrs(q2.query_graph, [new_id], q2._resolve_attr_values(attrs)))
+        return q2
 
     def alias(self, name: str) -> "Query":
         """Name the current node (Cypher AS / Gremlin as-step).
@@ -831,10 +918,14 @@ class Query:
             if any(getattr(e, "patterns", None) and e.value_pairs is None for e in g.edges):
                 from acquirium.Client.explore.traverse import resolve_program_edges
                 g = resolve_program_edges(g, self.client)
-            self.cache[cache_key] = self.client.sparql_query(
-                compile_sparql(g),
-                include_dependencies=include_dependencies,
-            )
+            if any(e.direction is not None and e.nearest for e in g.edges):
+                from acquirium.Client.explore.places import execute_placed
+                self.cache[cache_key] = execute_placed(g, self.client, include_dependencies)
+            else:
+                self.cache[cache_key] = self.client.sparql_query(
+                    compile_sparql(g),
+                    include_dependencies=include_dependencies,
+                )
         return self.cache[cache_key]
 
     def to_dict(self) -> dict:
@@ -875,6 +966,10 @@ class Query:
                     "direction": e.direction,
                     "patterns": safe(e.patterns) if e.patterns else None,
                     "nearest": e.nearest,
+                    "relation": safe(e.relation) if e.relation else None,
+                    "relation_name": e.relation_name,
+                    "own_cp_class": e.own_cp_class,
+                    "place": e.place,
                 }
                 for e in g.edges
             ],
@@ -1083,7 +1178,7 @@ class Query:
 
 # Append the attribute registry (single source of truth) to every method
 # that accepts attributes, so help(Query.where) etc. always list the current set.
-for _fn in (Query.entity, Query.related, Query.measurement, Query.where, Query.include, Query.drop,
+for _fn in (Query.entity, Query.related, Query.measurement, Query.context, Query.where, Query.include, Query.drop,
             Query.with_columns, Query.options, Query.facets):
     _fn.__doc__ = (_fn.__doc__ or "") + "\n" + attributes_doc(indent=8) + "\n"
 del _fn
