@@ -9,6 +9,15 @@ from acquirium.Server.config import (
 )
 
 
+def test_repository_config_uses_the_supported_exact_only_key():
+    config = Path(__file__).parents[2] / "acquirium.toml"
+
+    loaded = load_config(config)
+
+    assert loaded.data["server"]["exact_only"] is True
+    assert "exact_match" not in loaded.data["server"]
+
+
 def test_local_config_has_explicit_safe_defaults(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
 
