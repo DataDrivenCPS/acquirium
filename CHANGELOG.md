@@ -11,6 +11,9 @@ change in any release.
 ## [Unreleased]
 
 ### Added
+- A defined zero-config profile for `aq.init()`: project-local DuckDB and
+  Oxigraph storage, loopback on an ephemeral port, one worker, persistence,
+  and fast offline startup with exact-only resolution.
 - Incremental materialization apps on DuckDB and PostgreSQL/TimescaleDB.
   Apps select streams with a semantic query and implement
   `transform(inputs, output, context)`. Grouping is explicitly `per_match`
