@@ -1,0 +1,36 @@
+{
+  "schema_version": "0.0.1",
+  "time": {
+    "start_date": "2025-01-01",
+    "end_date": "2025-01-30",
+    "time_step": "15 min"
+  },
+  "properties": {},
+  "costing": {
+    "tariff_source": "tariff.json",
+    "dr": {"events_source": "dr_events.json"}
+  },
+  "plant": {
+    "name": "waterfacility",
+    "units": {
+      "tank": {
+        "unit_model_class": "Tank"
+      },
+      "plant": {
+        "unit_model_class": "ConstantEnergyIntensityModel",
+        "construction_options": {
+          "energy_intensity": {"value": 0.5, "units": "kWh/m^3"}
+        }
+      },
+      "battery": {
+        "unit_model_class": "BatteryModel",
+        "construction_options": {
+          "capacity": {"value": 1.0, "units": "kWh"}
+        }
+      }
+    },
+    "arcs": [
+      {"source": "tank.outlet", "destination": "plant.inlet"}
+    ]
+  }
+}

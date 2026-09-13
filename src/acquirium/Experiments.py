@@ -175,7 +175,14 @@ class ExperimentVariable:
         if not rows: return None
         # Register graph metadata before writing data. This makes the output
         # discoverable by its observed plant property immediately.
-        self.study.ac.register_streams([{ "source_id": source, "ref_name": ref_name, "point_uri": observed, "unit": metadata.get("unit"), "label": self.label }])
+        self.study.ac.register_streams([{
+            "source_id": source,
+            "ref_name": ref_name,
+            "point_uri": observed,
+            "unit": metadata.get("unit"),
+            "label": self.label,
+            "value_kind": "numeric",
+        }])
         self.study.ac.insert_timeseries(source, ref_name, rows, point_uri=observed)
         return self.use(self.study.ac.reference_uri(source, ref_name), interval=(min(x[0] for x in rows), max(x[0] for x in rows)))
 

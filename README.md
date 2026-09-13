@@ -60,7 +60,7 @@ acq.query().entity("pump").measurement(quantity_kind="pressure").dataframe(shape
 The guides live in [docs/](./docs/_index.md), organized as tutorials, how-to
 guides, reference and explanation.
 
-**Start here** — learning by doing, on the WaterTAP seawater-ro model:
+**Start here** — learning by doing:
 
 | tutorial | covers |
 |---|---|
@@ -69,6 +69,7 @@ guides, reference and explanation.
 | [Query cookbook](./docs/tutorials/query-cookbook.md) | domain questions, how to phrase them, the query |
 | [Working with data](./docs/tutorials/data.md) | lazy fetching, shapes, units, taking a result apart |
 | [Your first driver](./docs/tutorials/first-driver.md) | authoring a CSV driver step by step |
+| [Your first experiment](./docs/tutorials/first-experiment.md) | record a FlexPSE optimization run and its results |
 
 **How-to guides** — one task each:
 [start from a script](./docs/how-to/local-runtime.md),
@@ -77,6 +78,7 @@ guides, reference and explanation.
 [debug a query](./docs/how-to/debug-an-empty-query.md),
 [insert data](./docs/how-to/write-data.md),
 [write an app](./docs/tutorials/first-app.md),
+[record an experiment](./docs/how-to/record-experiments.md),
 [run the server](./docs/how-to/run-the-server.md),
 [resolve text to URIs](./docs/how-to/resolve-text.md).
 
@@ -84,6 +86,7 @@ guides, reference and explanation.
 [client API](./docs/reference/client-api.md),
 [drivers](./docs/reference/drivers.md),
 [apps](./docs/reference/apps.md),
+[experiments](./docs/reference/experiments.md),
 [server configuration](./docs/reference/server-config.md),
 [HTTP API](./docs/reference/http-api.md),
 [glossary](./docs/reference/glossary.md).
@@ -93,6 +96,7 @@ guides, reference and explanation.
 [values](./docs/explanation/values.md) and [units](./docs/explanation/units.md),
 [why drivers](./docs/explanation/drivers.md),
 [why apps use recomputed windows](./docs/explanation/apps.md),
+[how experiments preserve context](./docs/explanation/experiments.md),
 [the data stream lifecycle](./docs/explanation/stream-lifecycle.md),
 [text resolution](./docs/explanation/text-resolution.md),
 [server internals](./docs/explanation/server-internals.md),

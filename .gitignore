@@ -1,6 +1,7 @@
 # default data location
 .acquirium
 examples/transformation/.data/
+examples/flexpse/.data/
 
 scripts/dev_examples
 # Byte-compiled / optimized / DLL files

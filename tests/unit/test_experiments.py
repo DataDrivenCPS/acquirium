@@ -142,6 +142,7 @@ def test_record_files_and_streams(study_api, tmp_path):
     stream.record([(when.isoformat(), 10)])
     ac.insert_timeseries.assert_called_once_with(f"experiment/{run.run_id}", "volume", [(when, 10)], point_uri="urn:tank")
     assert ac.register_streams.call_args.args[0][0]["unit"] == "M3"
+    assert ac.register_streams.call_args.args[0][0]["value_kind"] == "numeric"
     client.observe_experiment.assert_called_once_with(run.run_id, stream.variable_id, ref_uri=str(ac.reference_uri.return_value), start=when.isoformat(), end=when.isoformat())
     for variable in (file, stream):
         with pytest.raises(TypeError, match="occurred_at"):

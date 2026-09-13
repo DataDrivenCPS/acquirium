@@ -1,0 +1,16 @@
+[project]
+name = "acquirium-flexpse-example"
+version = "0.1.0"
+description = "Runnable FlexPSE experiment-tracking example for Acquirium"
+requires-python = ">=3.11"
+dependencies = [
+    "acquirium",
+    "flex-pse[solvers]",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+acquirium = { path = "../..", editable = true }
+flex-pse = { git = "https://github.com/flex-pse/flex-pse.git", tag = "v0.1.0" }
