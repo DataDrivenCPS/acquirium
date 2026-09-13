@@ -93,12 +93,30 @@ def test_stale_registry_is_removed_only_when_no_server_holds_lock(tmp_path):
     assert registry.read_text() == "live"
 
 
-def test_dead_child_reports_log_and_can_retry(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    ("exact_only", "expected_exact_only"),
+    [(None, "true"), (False, "false")],
+)
+def test_dead_child_reports_log_and_can_retry(
+    monkeypatch, tmp_path, exact_only, expected_exact_only
+):
     process = Mock()
     process.poll.return_value = 1
-    monkeypatch.setattr(runtime.subprocess, "Popen", Mock(return_value=process))
+    popen = Mock(return_value=process)
+    monkeypatch.setattr(runtime.subprocess, "Popen", popen)
     with pytest.raises(RuntimeError, match="server.log"):
-        runtime.init(data_dir=tmp_path)
+        runtime.init(data_dir=tmp_path, exact_only=exact_only)
+    command = popen.call_args.args[0]
+    assert command[:4] == [runtime.sys.executable, "-m", "acquirium.cli", "server"]
+    assert command[-2:] == ["--runtime-directory", str(tmp_path / ".runtime")]
+    assert "--config" not in command
+    assert "acquirium._local_server" not in command
+    assert (
+        popen.call_args.kwargs["env"]["ACQUIRIUM_EXACT_ONLY"]
+        == expected_exact_only
+    )
+    assert popen.call_args.kwargs["env"]["ACQUIRIUM_TIMESERIES_BACKEND"] == "duckdb"
+    assert not (tmp_path / ".runtime" / "server.toml").exists()
     assert runtime._session is None
     assert not runtime._running(tmp_path / ".runtime")
 
@@ -133,13 +151,15 @@ def test_configuration_discovery_and_relative_paths(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     config = tmp_path / "acquirium.toml"
     config.write_text('[server]\ndata_dir = "stored"\nexact_only = true\n')
-    path, root, cfg = runtime._configuration(None, None)
-    assert path == config
+    loaded, root = runtime._configuration(None, None)
+    assert loaded.path == config
     assert root == tmp_path / "stored"
-    assert cfg["server"]["exact_only"] is True
+    assert loaded.data["server"]["exact_only"] is True
     # An explicit data directory requests local defaults, not the cwd config.
-    path, root, cfg = runtime._configuration(None, tmp_path / "other")
-    assert path is None and cfg == {}
+    loaded, root = runtime._configuration(None, tmp_path / "other")
+    assert loaded.path is None
+    assert loaded.data["server"]["exact_only"] is True
+    assert loaded.data["server"]["timeseries_backend"] == "duckdb"
     assert root == tmp_path / "other"
     monkeypatch.chdir(tmp_path.parent)
     assert runtime._configuration(config, None)[1] == tmp_path / "stored"

@@ -2,8 +2,10 @@
 
 `aq.init()` starts a local Acquirium server and returns a client connected to
 it. It loads `acquirium.toml` from the current directory when present, or uses
-local DuckDB and Oxigraph defaults when there is no config. You can also choose
-the config file explicitly:
+an explicit local profile when there is no config: persistent DuckDB and
+Oxigraph storage under `./.acquirium`, exact-only resolution, one worker, and
+an automatically selected loopback port. You can also choose the config file
+explicitly:
 
 ```python
 import acquirium as aq
@@ -73,13 +75,15 @@ with the same options return it; changing the destination requires
 | `config` | `./acquirium.toml` if present | Optional first positional argument; an explicitly named file must exist |
 | `data_dir` | config value, or `./.acquirium` | Explicit argument selects local defaults without config discovery; cannot be combined with `config` |
 | `address` | none | Connect to an existing HTTP(S) server instead of managing a local one |
-| `exact_only` | config value, otherwise none | Use `True` to disable embeddings; overrides the config when supplied |
+| `exact_only` | config value, otherwise `true` | Use `False` to build embedding indexes; an explicit argument overrides the config |
 | `timeout` | `600` | Seconds to wait for startup or attachment |
 
-First startup loads bundled ontologies and, unless `exact_only=True`, builds
-embedding indexes. This may take several minutes. Later startups reuse the
-stored data and caches. Omitting `exact_only` when attaching accepts the
-existing server's mode; an explicitly conflicting mode raises an error.
+The zero-config profile uses exact-only resolution, so startup does not need to
+download an embedding model or build embedding indexes. Pass
+`exact_only=False`, or set it in `acquirium.toml`, to enable semantic matching;
+its first startup may take several minutes. Later startups reuse the stored
+indexes. Scripts sharing a runtime must resolve to the same mode; an explicitly
+conflicting mode raises an error.
 
 Local startup uses the standard server lifecycle, including Ray for drivers
 and apps. Configured drivers start in the background after the server becomes
@@ -88,8 +92,9 @@ config or redirect its storage. The Timescale backend still requires an
 available PostgreSQL service and its configured DSN (or `PG_DSN`).
 
 The local runtime binds to loopback even if the config specifies another host.
-If `[driver]` specifies a server address, it must be local HTTP on the same
-port as `[server]`. Use the CLI for a server that listens on other interfaces.
+Drivers and apps launched by the managed runtime use its actual loopback port,
+even if `[driver]` contains an address for another deployment. Use the CLI for
+a server that listens on other interfaces.
 `aq.init()` rejects `recreate=true`, `enabled=false`, and multiple server
 workers. `address` cannot be combined with a config or local startup options.
 

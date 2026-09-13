@@ -27,6 +27,7 @@ from dateutil import parser as dtparser
 from pydantic import BaseModel, Field
 from datetime import datetime
 
+from acquirium.Server.config import load_active_config
 from acquirium.Server.manager import Manager
 from acquirium.Materialization import App as MaterializationApp
 from acquirium.Materialization.planner import Deployment
@@ -111,6 +112,13 @@ def _accepted_sparql_formats(accept: str) -> tuple[ox.QueryResultsFormat, ox.Rdf
 
 def _self_connect_cfg(cfg: dict) -> tuple[str, int, bool]:
     """Return (host, port, use_ssl) that driver actors use to reach this server."""
+    if local_host := os.environ.get("ACQUIRIUM_SELF_HOST"):
+        port = int(
+            os.environ.get("ACQUIRIUM_SELF_PORT")
+            or cfg.get("server", {}).get("port", 8000)
+        )
+        return local_host, port, False
+
     driver_cfg = cfg.get("driver", {})
     # 127.0.0.1 rather than "localhost": see AcquiriumClient (issue #85).
     host = driver_cfg.get("server_url", "127.0.0.1")
@@ -296,10 +304,9 @@ async def lifespan(app: FastAPI):
     from acquirium.internals._log import configure_logging
     configure_logging()  # honors ACQUIRIUM_VERBOSE env var set by `acquirium server -v`
 
-    from acquirium.cli import _load_config
-    _config_path = os.environ.get("ACQUIRIUM_CONFIG")
-    _cfg = _load_config(Path(_config_path) if _config_path else None)
-    config_dir = str(Path(_cfg.get("__config_dir", Path.cwd())).resolve())
+    loaded_config = load_active_config()
+    _cfg = loaded_config.data
+    config_dir = str(loaded_config.directory)
     if config_dir not in sys.path:
         sys.path.insert(0, config_dir)
     server_cfg = _cfg.get("server", {})

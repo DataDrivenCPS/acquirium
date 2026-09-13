@@ -16,7 +16,9 @@ Type hints are shortened; `pl` is polars, `pa` is pyarrow.
 `acquirium.init(config=None, *, data_dir=None, address=None, exact_only=None, timeout=600)`
 returns an `Acquirium` client. `config` accepts a TOML path; with no arguments,
 `init()` loads `./acquirium.toml` if it exists. Without an address, it starts or
-attaches to a local server for the resolved data directory.
+attaches to a local server for the resolved data directory. With no config, the
+local profile uses persistent DuckDB and Oxigraph storage in `./.acquirium`, an
+ephemeral loopback port, one worker, and exact-only text resolution.
 Pass `address="https://acquirium.example.org"` to connect to a separately
 managed remote server. This does not start or stop that server. Every
 `Acquirium` instance exposes its connected server as `acq.address`.

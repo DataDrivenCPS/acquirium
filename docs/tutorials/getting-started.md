@@ -25,8 +25,11 @@ pip install acquirium          # extras: acquirium[mqtt], [xlsx], [watertap]
 acquirium server --config acquirium.toml
 ```
 
-The first start builds the text-resolution indexes and can take 5-10 minutes;
-later starts reuse the cache under `data_dir/embedding_cache`.
+Zero-config `aq.init()` uses exact-only text resolution and starts without
+downloading an embedding model. A standalone server, or `aq.init()` with
+`exact_only=False`, builds the semantic text-resolution indexes on its first
+start and can take 5-10 minutes; later starts reuse the cache under
+`data_dir/embedding_cache`.
 See [the embedding indexes](../explanation/server-internals.md#the-embedding-indexes)
 for what is being built and when it is rebuilt.
 The server answers on `http://127.0.0.1:8000` (`GET /health`) once the core

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import atexit
-from hashlib import sha256
 import json
 import math
 import os
@@ -18,6 +17,7 @@ from filelock import FileLock, Timeout
 import requests
 
 from acquirium.Client.acquirium import Acquirium
+from acquirium.Server.config import LoadedConfig, load_local_config
 
 _lock = threading.RLock()
 _session = None
@@ -25,13 +25,24 @@ _session = None
 
 def _client(address: str, timeout: float | None) -> Acquirium:
     url = urlsplit(address)
-    if (url.scheme not in {"http", "https"} or not url.hostname
-            or url.username or url.password or url.path not in {"", "/"}
-            or url.query or url.fragment):
-        raise ValueError("address must be an http(s) server URL without credentials or a path")
-    return Acquirium(server_url=url.hostname,
-                     server_port=url.port or (443 if url.scheme == "https" else 80),
-                     use_ssl=url.scheme == "https", health_timeout=timeout)
+    if (
+        url.scheme not in {"http", "https"}
+        or not url.hostname
+        or url.username
+        or url.password
+        or url.path not in {"", "/"}
+        or url.query
+        or url.fragment
+    ):
+        raise ValueError(
+            "address must be an http(s) server URL without credentials or a path"
+        )
+    return Acquirium(
+        server_url=url.hostname,
+        server_port=url.port or (443 if url.scheme == "https" else 80),
+        use_ssl=url.scheme == "https",
+        health_timeout=timeout,
+    )
 
 
 def _stop(process: subprocess.Popen) -> None:
@@ -43,7 +54,10 @@ def _stop(process: subprocess.Popen) -> None:
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait()
-        warnings.warn("Local Acquirium server did not shut down within 30 seconds and was killed.", RuntimeWarning)
+        warnings.warn(
+            "Local Acquirium server did not shut down within 30 seconds and was killed.",
+            RuntimeWarning,
+        )
 
 
 def _running(directory: Path) -> bool:
@@ -79,29 +93,35 @@ def _forget_stale_runtime(directory: Path) -> None:
         (directory / "server.json").unlink(missing_ok=True)
 
 
-def _configuration(config, data_dir):
-    from acquirium.cli import _load_config
-
+def _configuration(
+    config: str | Path | None, data_dir: str | Path | None
+) -> tuple[LoadedConfig, Path]:
     if config is not None and data_dir is not None:
         raise ValueError("set data_dir in the config file when supplying config")
     path = Path(config).expanduser().resolve() if config is not None else None
-    if path is None and data_dir is None and Path("acquirium.toml").is_file():
-        path = Path("acquirium.toml").resolve()
-    cfg = _load_config(path) if path else {}
-    server = cfg.get("server", {})
-    if server.get("recreate", False):
+    loaded = load_local_config(path, discover=data_dir is None)
+    server = loaded.data["server"]
+    if server["recreate"]:
         raise ValueError("aq.init() requires recreate=false to preserve existing data")
-    if not server.get("enabled", True):
-        raise ValueError("aq.init() requires server.enabled=true; use address= to connect remotely")
-    if server.get("workers", 1) != 1:
+    if not server["enabled"]:
+        raise ValueError(
+            "aq.init() requires server.enabled=true; use address= to connect remotely"
+        )
+    if server["workers"] != 1:
         raise ValueError("aq.init() requires one server worker")
-    base = path.parent if path else Path.cwd()
-    root = (base / Path(data_dir if data_dir is not None else server.get("data_dir", ".acquirium")).expanduser()).resolve()
-    return path, root, cfg
+    selected_data_dir = data_dir if data_dir is not None else server["data_dir"]
+    root = (loaded.directory / Path(selected_data_dir).expanduser()).resolve()
+    return loaded, root
 
 
-def init(config: str | Path | None = None, *, data_dir: str | Path | None = None, address: str | None = None,
-         exact_only: bool | None = None, timeout: float = 600.0) -> Acquirium:
+def init(
+    config: str | Path | None = None,
+    *,
+    data_dir: str | Path | None = None,
+    address: str | None = None,
+    exact_only: bool | None = None,
+    timeout: float = 600.0,
+) -> Acquirium:
     """Return a client, starting a local server when necessary.
 
     Scripts using the same resolved data directory share a server. Its first
@@ -114,13 +134,19 @@ def init(config: str | Path | None = None, *, data_dir: str | Path | None = None
     global _session
     if not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("timeout must be finite and positive")
-    if address is not None and (config is not None or data_dir is not None or exact_only is not None):
+    if address is not None and (
+        config is not None or data_dir is not None or exact_only is not None
+    ):
         raise ValueError("address cannot be combined with local server options")
-    config_path, root, cfg = _configuration(config, data_dir) if address is None else (None, None, {})
-    if exact_only is None:
-        exact_only = cfg.get("server", {}).get("exact_only")
-    fingerprint = sha256(json.dumps(cfg, sort_keys=True, default=str).encode()).hexdigest() if config_path else None
-    key = address if address is not None else (str(root), fingerprint)
+    if address is None:
+        loaded_config, root = _configuration(config, data_dir)
+        if exact_only is None:
+            exact_only = bool(loaded_config.data["server"]["exact_only"])
+        fingerprint = loaded_config.fingerprint
+        key = (str(root), fingerprint)
+    else:
+        loaded_config, root = None, None
+        key = address
     with _lock:
         # A forked child must never terminate its parent's server.
         if _session is not None and _session[0] != os.getpid():
@@ -128,13 +154,17 @@ def init(config: str | Path | None = None, *, data_dir: str | Path | None = None
         if _session is not None:
             _, previous, client, _, mode = _session
             if previous != key or (exact_only is not None and exact_only != mode):
-                raise ValueError("Acquirium is already initialized with different options; call shutdown() first")
+                raise ValueError(
+                    "Acquirium is already initialized with different options; "
+                    "call shutdown() first"
+                )
             return client
         if address is not None:
             client = _client(address, timeout)
             _session = (os.getpid(), key, client, None, None)
             return client
 
+        assert loaded_config is not None and root is not None
         directory = root / ".runtime"
         directory.mkdir(parents=True, exist_ok=True)
         deadline = time.monotonic() + timeout
@@ -144,20 +174,20 @@ def init(config: str | Path | None = None, *, data_dir: str | Path | None = None
             with FileLock(directory / "startup.lock", timeout=timeout):
                 if not _running(directory):
                     _forget_stale_runtime(directory)
-                    env = os.environ.copy()
                     # Config and explicit options determine storage. Inherited
                     # server paths/recreate flags must not redirect this runtime.
-                    for name in list(env):
-                        if name.startswith("ACQUIRIUM_"):
-                            del env[name]
+                    env = {
+                        name: value
+                        for name, value in os.environ.items()
+                        if not name.startswith("ACQUIRIUM_")
+                    }
+                    loaded_config.apply_server_env(env)
                     env["ACQUIRIUM_DATA_DIR"] = str(root)
                     env["ACQUIRIUM_EXACT_ONLY"] = str(bool(exact_only)).lower()
-                    env["ACQUIRIUM_TIMESERIES_BACKEND"] = "duckdb"
-                    command = [sys.executable, "-m", "acquirium._local_server", str(root)]
-                    if config_path:
-                        command.append(str(config_path))
-                        # Let the shared config loader choose the backend.
-                        del env["ACQUIRIUM_TIMESERIES_BACKEND"]
+                    command = [sys.executable, "-m", "acquirium.cli", "server"]
+                    if loaded_config.path:
+                        command.extend(["--config", str(loaded_config.path)])
+                    command.extend(["--runtime-directory", str(directory)])
                     with (directory / "server.log").open("w") as log:
                         process = subprocess.Popen(
                             command,
@@ -166,18 +196,30 @@ def init(config: str | Path | None = None, *, data_dir: str | Path | None = None
                         )
                 while time.monotonic() < deadline:
                     if process is not None and process.poll() is not None:
-                        raise RuntimeError(f"Local Acquirium server exited; see {directory / 'server.log'}")
+                        raise RuntimeError(
+                            f"Local Acquirium server exited; "
+                            f"see {directory / 'server.log'}"
+                        )
                     info = _discover(directory)
                     if info is not None and _running(directory):
                         if fingerprint is not None and fingerprint != info["config"]:
-                            raise ValueError("The local server is running with a different config; stop its owner before changing configuration")
+                            raise ValueError(
+                                "The local server is running with a different config; "
+                                "stop its owner before changing configuration"
+                            )
                         if exact_only is not None and exact_only != info["exact_only"]:
-                            raise ValueError("The local server already uses a different exact_only setting")
+                            raise ValueError(
+                                "The local server already uses a different "
+                                "exact_only setting"
+                            )
                         client = _client(f"http://127.0.0.1:{info['port']}", None)
                         _session = (os.getpid(), key, client, process, info["exact_only"])
                         return client
                     time.sleep(0.1)
-                raise TimeoutError(f"Local Acquirium server did not become ready; see {directory / 'server.log'}")
+                raise TimeoutError(
+                    f"Local Acquirium server did not become ready; "
+                    f"see {directory / 'server.log'}"
+                )
         except BaseException:
             if process is not None:
                 _stop(process)

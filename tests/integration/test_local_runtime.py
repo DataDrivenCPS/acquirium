@@ -14,7 +14,7 @@ import json, sys
 import acquirium as aq
 from acquirium import runtime
 options = {'config': sys.argv[1]} if sys.argv[1].endswith('.toml') else {'data_dir': sys.argv[1]}
-ac = aq.init(**options, exact_only=True, timeout=180)
+ac = aq.init(**options, timeout=180)
 print(json.dumps({'address': ac.client.base_url, 'owner': runtime._session[3] is not None}), flush=True)
 sys.stdin.readline()
 # Normal interpreter exit must invoke shutdown through atexit.
