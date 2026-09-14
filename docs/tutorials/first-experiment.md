@@ -171,7 +171,7 @@ saves them:
 ```python
     # --- Acquirium: save the results and complete the experiment -------------
     operating_cost.record(objective)
-    electrical_power.record(power_rows)
+    recorded_power = electrical_power.record(power_rows)
     solver_events.record(
         {
             "event": "solve-complete",
@@ -185,8 +185,9 @@ saves them:
 `operating_cost.record(objective)` stores one scalar observation.
 `electrical_power.record(power_rows)` dispatches to the time-series operation:
 it accepts the timestamp/value pairs, creates a stream unique to this run, and
-records that stream's URI and time range in the Experiment ledger. The
-example's timezone-naive model timestamps are interpreted as UTC.
+records that stream's URI and time range in the Experiment ledger. It returns
+a `RecordedSeries` handle for reading those samples. The example's
+timezone-naive model timestamps are interpreted as UTC.
 
 The same method name deliberately covers each variable kind so recording sites
 stay small. Calling `record()` repeatedly adds observations; it does not
@@ -211,17 +212,14 @@ available when diagnosing how far the run progressed.
 
 ## 7. Read and plot the time-series output
 
-Time-series results use Acquirium's ordinary stream storage. The final block
-reconstructs this run's deterministic reference URI and reads the samples back
-as a Polars DataFrame:
+Time-series results use Acquirium's ordinary stream storage. The value returned
+by `record()` remembers which stream was created, so the final block reads the
+samples back as a Polars DataFrame without knowing Acquirium's internal source
+naming convention:
 
 ```python
 # --- Acquirium: read back the time-series result -----------------------------
-power_ref = ac.reference_uri(
-    f"experiment/{experiment.run_id}",
-    electrical_power.label,
-)
-stored_power = ac.client.timeseries_df(str(power_ref))
+stored_power = recorded_power.dataframe()
 ```
 
 In a notebook, that frame can be plotted directly with the usual dataframe and

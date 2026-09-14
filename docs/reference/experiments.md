@@ -64,7 +64,7 @@ Every variable handle exposes `variable_id`, `label`, `kind`, and these methods:
 
 | Method | Intended kinds | Behavior |
 |---|---|---|
-| `record(value, occurred_at=None)` | all | Dispatch to the operation for the declared kind |
+| `record(value, occurred_at=None)` | all | Dispatch to the operation for the declared kind; time series return `RecordedSeries` |
 | `set(value, occurred_at=None)` | JSON, text, scalar | Record one value observation |
 | `append(value, occurred_at=None)` | log | Record one event |
 | `attach(path)` | file | Copy a file into artifact storage |
@@ -83,8 +83,10 @@ type.
 
 Time-series rows may be an iterable of `(timestamp, value)` pairs or an Arrow
 or Polars table containing `time` (or `ts`) and `value`. Timestamp strings must
-be ISO 8601. Naive datetimes are interpreted as UTC. An empty row collection
-does not write data or a ledger observation.
+be ISO 8601. Naive datetimes are interpreted as UTC. A successful write returns
+a `RecordedSeries`; call `.dataframe()` on it to fetch the stored samples, or
+read its `.ref_uri`. An empty row collection does not write data or a ledger
+observation and returns `None`.
 
 `use()` accepts a reference URI string or `Point`. Its optional interval is a
 two-datetime tuple. It records provenance only and does not copy the referenced
@@ -147,13 +149,17 @@ digest.
 
 ## Reading recorded data
 
-Time-series variables are ordinary Acquirium streams. Given an Experiment's
-`run_id` and the variable label, construct and fetch its reference with:
+Time-series variables are ordinary Acquirium streams. Retain the handle returned
+by `record()` and fetch its samples with:
 
 ```python
-ref = ac.reference_uri(f"experiment/{run_id}", variable.label)
-frame = ac.client.timeseries_df(str(ref))
+recorded_power = electrical_power.record(power_rows)
+frame = recorded_power.dataframe()
 ```
+
+`RecordedSeries.dataframe()` accepts the same `start`, `end`, `limit`, `order`,
+`timeout`, and `value_mode` keyword arguments as the low-level time-series
+client. Its `ref_uri` attribute is the persistent stream reference.
 
 The experiment interface currently has no public read endpoint for enumerating
 a Study's runs or retrieving scalar, JSON, text, file, and log observations

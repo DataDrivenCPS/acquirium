@@ -85,7 +85,7 @@ try:
 
     # --- Acquirium: save the results and complete the experiment -------------
     operating_cost.record(objective)
-    electrical_power.record(power_rows)
+    recorded_power = electrical_power.record(power_rows)
     solver_events.record(
         {
             "event": "solve-complete",
@@ -99,15 +99,11 @@ except Exception as error:
     raise
 
 # --- Acquirium: read back the time-series result -----------------------------
-power_ref = ac.reference_uri(
-    f"experiment/{experiment.run_id}",
-    electrical_power.label,
-)
-stored_power = ac.client.timeseries_df(str(power_ref))
+stored_power = recorded_power.dataframe()
 
 print(f"experiment: {experiment.run_id}")
 print(f"aggregate operating cost: {objective:.2f} USD")
-print(f"electrical power: {power_ref}")
+print(f"electrical power: {recorded_power.ref_uri}")
 print(stored_power.head())
 
 aq.shutdown()
