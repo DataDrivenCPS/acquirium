@@ -37,30 +37,10 @@ under `examples/flexpse/.data/`.
 
 ## 2. Describe the experiment record
 
-Open `record_experiment.py`. The first executable line initializes Acquirium
-with a persistent data directory. The script then defines a reusable Study and
-declares what each run will record:
-
-```python
-# --- Acquirium: describe what each experiment records -----------------------
-ac = aq.init(data_dir=HERE / ".data")
-study = ac.study.define("flexpse-api-freeze")
-
-model_inputs = study.input("model input files").file(
-    media_type="application/json"
-)
-treatment_flow = study.input("treatment flow").scalar(unit="M3-PER-HR")
-operating_cost = study.output("aggregate operating cost").scalar(unit="USD")
-electrical_power = study.output("aggregate electrical power").timeseries(
-    observed="urn:flex-pse:api-freeze:aggregate-electrical-power",
-    unit="KiloW",
-)
-solver_events = study.log("solver events")
-```
-
-`aq.init()` starts the embedded services on an available loopback port and
-returns the usual Acquirium client. Exact-only mode avoids building the
-semantic-resolution indexes this example does not use. See
+Open `record_experiment.py`. The script first calls `aq.init()` to start the
+embedded services on an available loopback port and return an Acquirium client.
+Passing a data directory makes the records persistent. Exact-only mode avoids
+building the semantic-resolution indexes this example does not use. See
 [Run Acquirium locally](../how-to/local-runtime.md) for other initialization
 options.
 
@@ -87,11 +67,40 @@ are ordinary Acquirium streams. This standalone example uses a stable URI for
 the modeled facility load. When a plant knowledge graph is available, use the
 URI of the matching observable property instead.
 
+With those concepts in place, the first block initializes Acquirium, defines
+the Study, and declares its variables:
+
+```python
+# --- Acquirium: describe what each experiment records -----------------------
+ac = aq.init(data_dir=HERE / ".data")
+study = ac.study.define("flexpse-api-freeze")
+
+model_inputs = study.input("model input files").file(
+    media_type="application/json"
+)
+treatment_flow = study.input("treatment flow").scalar(unit="M3-PER-HR")
+operating_cost = study.output("aggregate operating cost").scalar(unit="USD")
+electrical_power = study.output("aggregate electrical power").timeseries(
+    observed="urn:flex-pse:api-freeze:aggregate-electrical-power",
+    unit="KiloW",
+)
+solver_events = study.log("solver events")
+```
+
 ## 3. Start a run and capture its inputs
 
-The first recording block is entirely Acquirium code. It starts one Experiment
-for the baseline scenario, copies the three input files, and records the
-treatment flow that this execution will use:
+An Experiment is one execution of a Study. `study.start()` creates it and makes
+it active; until `finish()` or `fail()`, calls on the Study's variable handles
+are routed to that Experiment. Its metadata describes the execution as a whole,
+while its recorded variables hold the inputs and outputs that vary between
+executions.
+
+Here, `model_inputs.record(path)` uses the file declaration to copy each input
+into immutable artifact storage. `treatment_flow.record(TREATMENT_FLOW)` uses
+the scalar declaration to store the number with its `M3-PER-HR` unit.
+
+The first recording block is therefore entirely Acquirium code: it starts the
+baseline Experiment and captures the inputs that FlexPSE is about to consume.
 
 ```python
 # --- Acquirium: start this experiment and snapshot its inputs ----------------
@@ -108,22 +117,16 @@ try:
     treatment_flow.record(TREATMENT_FLOW)
 ```
 
-`study.start()` makes this run active. From that point until `finish()` or
-`fail()`, calls on the Study's handles are routed to this Experiment.
-
-`model_inputs.record(path)` sees that `model_inputs` was declared as a file and
-copies the file at `path`. The Experiment therefore retains its own immutable
-input artifacts if the working files change later.
-
-`treatment_flow.record(TREATMENT_FLOW)` sees a scalar handle and stores the
-number with the handle's declared `M3-PER-HR` unit. Metadata describes the run
-as a whole; recorded variables are the inputs and outputs you want to compare
-across runs.
-
 ## 4. Build and solve with FlexPSE
 
 The next block is the model calculation. It uses FlexPSE and Pyomo in the usual
-way; the experiment interface does not replace or wrap the model or solver:
+way; the experiment interface does not replace or wrap the model or solver.
+
+The config-driven builder follows FlexPSE's imperative `api_freeze.py` example.
+Its configuration refers to the other two inputs by bare filename, so the
+script uses their directory while constructing the model. The two fixed flow
+variables are this example's added operating condition; they give the solve a
+nonzero load while preserving tank inventory.
 
 ```python
     # --- FlexPSE: build and solve the model ----------------------------------
@@ -157,16 +160,20 @@ way; the experiment interface does not replace or wrap the model or solver:
     ]
 ```
 
-The config-driven builder produces the same model as FlexPSE's imperative
-`api_freeze.py`. Its configuration refers to the other two inputs by bare
-filename, so the script uses their directory while constructing the model. The
-two fixed flow variables are this example's added operating condition; they
-give the solve a nonzero load while preserving tank inventory.
-
 ## 5. Record the results
 
 Once FlexPSE has produced ordinary Python values, a second Acquirium block
-saves them:
+saves them. `operating_cost.record(objective)` stores one scalar observation.
+`electrical_power.record(power_rows)` creates a stream unique to this
+Experiment, writes the timestamp/value pairs, and records the stream's URI and
+time range in the Experiment ledger. Timezone-naive model timestamps are
+interpreted as UTC.
+
+The time-series call returns a `RecordedSeries` handle, which can fetch the
+stored samples later. Repeated `record()` calls add observations rather than
+replacing earlier values; on a log handle, they append events in order.
+Finally, `finish()` marks the Experiment as succeeded and prevents further
+recording.
 
 ```python
     # --- Acquirium: save the results and complete the experiment -------------
@@ -182,33 +189,18 @@ saves them:
     experiment.finish()
 ```
 
-`operating_cost.record(objective)` stores one scalar observation.
-`electrical_power.record(power_rows)` dispatches to the time-series operation:
-it accepts the timestamp/value pairs, creates a stream unique to this run, and
-records that stream's URI and time range in the Experiment ledger. It returns
-a `RecordedSeries` handle for reading those samples. The example's
-timezone-naive model timestamps are interpreted as UTC.
-
-The same method name deliberately covers each variable kind so recording sites
-stay small. Calling `record()` repeatedly adds observations; it does not
-replace an earlier value. On a log handle it appends events in order.
-`finish()` makes the run terminal with status `succeeded` and prevents further
-recording.
-
 ## 6. Preserve failures
 
 The solver and recording operations stay inside a `try` block so failures also
-become part of the record:
+become part of the record. `fail(error)` marks the Experiment as failed, stores
+the exception type and message, and prevents further recording. Inputs and
+events recorded before the failure remain available for diagnosis.
 
 ```python
 except Exception as error:
     experiment.fail(error)
     raise
 ```
-
-`fail(error)` makes the run terminal with status `failed` and records the
-exception type and message. Inputs and events written before the failure remain
-available when diagnosing how far the run progressed.
 
 ## 7. Read and plot the time-series output
 
@@ -248,8 +240,8 @@ Execute the example:
 uv run python record_experiment.py
 ```
 
-The script fetches the stored power samples through their deterministic
-reference URI and prints output resembling:
+The script uses the returned `RecordedSeries` to fetch the stored power samples
+and prints output resembling:
 
 ```text
 experiment: 5a38...
