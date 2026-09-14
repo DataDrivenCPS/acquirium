@@ -518,6 +518,24 @@ importable entrypoint, executable digest, output declarations, parameters, and
 window and scheduling attributes. See the [app reference](apps.md) for the
 complete schema.
 
+### `GET /apps`
+
+List every stored deployment, including apps whose query has no matches or
+whose latest plan failed. Each summary contains `name`, `entrypoint`,
+`grouping`, `status`, `binding_count`, `binding_statuses`, `graph_revision`,
+`plan_current`, and `error`.
+
+**Response** `{"ok": true, "apps": [...]}`
+
+### `GET /apps/{name}`
+
+Return the same summary for one deployment plus its stored `definition`,
+normalized `output_schemas`, and latest compiled `bindings`. This endpoint
+only reads the current state; it does not import code, refresh the plan, or run
+a transform. An unknown name returns 404.
+
+**Response** `{"ok": true, "app": {...}}`
+
 ### `PUT /apps/{name}`
 
 Validate and deploy an app definition. The definition's `name` must match the

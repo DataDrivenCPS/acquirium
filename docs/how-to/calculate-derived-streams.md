@@ -9,7 +9,7 @@ starts with water-temperature conversion, then extends it to averages and alarms
 It assumes you have worked through [Your first app](../tutorials/first-app.md).
 The input source tags used below should match those registered by your drivers.
 
-## Convert each water-temperature sensor
+## Normalize water temperatures to Celsius
 
 Put the class in an importable module, such as `plant_apps.py`:
 
@@ -190,3 +190,14 @@ readings; it is not an immutable record of notifications previously sent.
 
 See [Check, deploy, and repair an app](check-deploy-apps.md) to run these
 calculations against your data and keep their outputs current.
+
+Most apps can leave `batch_delay` and `min_interval` at their defaults. These
+advanced settings control how often the runtime performs a calculation, while
+`every`, `lookback`, and `lookahead` describe which readings the calculation
+needs. A ten-minute rolling average, for example, may be cheap enough to update
+on every arrival or expensive enough to run less often. Its lookback alone
+does not determine an appropriate delay.
+
+Both controls measure elapsed wall-clock time, and their timing state resets
+on server restart. They do not delay failure retries; a failed transform can
+retry at the materialization polling cadence.
