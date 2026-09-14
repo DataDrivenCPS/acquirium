@@ -9,7 +9,7 @@ starts with water-temperature conversion, then extends it to averages and alarms
 It assumes you have worked through [Your first app](../tutorials/first-app.md).
 The input source tags used below should match those registered by your drivers.
 
-## Convert each water-temperature sensor
+## Normalize water temperatures to Celsius
 
 Put the class in an importable module, such as `plant_apps.py`:
 
