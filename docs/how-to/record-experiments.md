@@ -175,11 +175,13 @@ permeate_flow = study.output("permeate flow").timeseries(
 )
 
 experiment = study.start(metadata={"scenario": "baseline"})
-permeate_flow.record([
+recorded_flow = permeate_flow.record([
     ("2026-08-01T12:00:00Z", 55.2),
     ("2026-08-01T12:15:00Z", 55.0),
 ])
 experiment.finish()
+
+frame = recorded_flow.dataframe()
 ```
 
 Use the property URI, not the equipment URI. Passing the URI string directly
@@ -191,6 +193,9 @@ Every run writes to a distinct source named `experiment/<run_id>`, so two
 scenarios can record the same timestamps for the same property without
 overwriting each other. The result is an ordinary Acquirium time series and is
 available through the usual query and stream APIs.
+
+`record()` returns the `RecordedSeries` used above, so fetching that run's
+samples does not require constructing the internal source name.
 
 For example, this finds mass-flow streams connected to the RO stage, including
 the recorded output:

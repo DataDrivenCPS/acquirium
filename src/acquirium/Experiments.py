@@ -1,7 +1,7 @@
 """Reusable, variable-centric experiment tracking."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -107,6 +107,19 @@ class Point:
     """A deliberately small semantic handle; storage only needs its URI."""
     uri: str
 
+@dataclass(frozen=True)
+class RecordedSeries:
+    """A time-series output recorded by one Experiment."""
+    ref_uri: str
+    _client: Any = field(repr=False, compare=False)
+
+    def dataframe(self, **kwargs: Any):
+        """Fetch the recorded samples as a Polars DataFrame."""
+        return self._client.timeseries_df(self.ref_uri, **kwargs)
+
+    def __str__(self) -> str:
+        return self.ref_uri
+
 class _Builder:
     """Delay declaration until the caller selects the variable's value kind."""
     def __init__(self, study: "Study", label: str, role: str): self.study, self.label, self.role = study, label, role
@@ -184,7 +197,9 @@ class ExperimentVariable:
             "value_kind": "numeric",
         }])
         self.study.ac.insert_timeseries(source, ref_name, rows, point_uri=observed)
-        return self.use(self.study.ac.reference_uri(source, ref_name), interval=(min(x[0] for x in rows), max(x[0] for x in rows)))
+        ref_uri = self.study.ac.reference_uri(source, ref_name)
+        self.use(ref_uri, interval=(min(x[0] for x in rows), max(x[0] for x in rows)))
+        return RecordedSeries(str(ref_uri), self.study.client)
 
 class ExperimentOutputs(Mapping):
     """Run-scoped assignment convenience; reads return study variable handles."""
