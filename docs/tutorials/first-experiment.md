@@ -35,13 +35,14 @@ The script starts its own exact-only local Acquirium runtime, so there is no
 server or configuration file to manage. Its graph and time-series data remain
 under `examples/flexpse/.data/`.
 
-## 2. Initialize Acquirium and define the Study
+## 2. Describe the experiment record
 
 Open `record_experiment.py`. The first executable line initializes Acquirium
 with a persistent data directory. The script then defines a reusable Study and
 declares what each run will record:
 
 ```python
+# --- Acquirium: describe what each experiment records -----------------------
 ac = aq.init(data_dir=HERE / ".data")
 study = ac.study.define("flexpse-api-freeze")
 
@@ -64,9 +65,22 @@ semantic-resolution indexes this example does not use. See
 options.
 
 A Study describes a family of comparable calculations. Its inputs, outputs,
-and logs are declared once and reused by each execution. The labels are the
-names stored by Acquirium; the Python variables are handles used to record
-values during the active run.
+and logs are declared once and reused by each execution. These declarations do
+not save any values. They return typed handles—`model_inputs`,
+`treatment_flow`, `operating_cost`, and so on—that know how a later
+`record()` call should store a value.
+
+The declaration controls what `record()` does:
+
+| Handle declaration | Effect of `record(value)` |
+|---|---|
+| `.file(...)` | Copy the file at `value` into Acquirium's artifact store |
+| `.scalar(...)` | Store the number, including its declared unit, in the Experiment ledger |
+| `.timeseries(...)` | Write timestamp/value rows to a stream owned by this Experiment |
+| `study.log(...)` | Append an event to the Experiment ledger |
+
+The labels are the persistent names stored by Acquirium; the Python variables
+are only handles for recording values into the currently active Experiment.
 
 The electrical-power output needs an `observed` URI because time-series results
 are ordinary Acquirium streams. This standalone example uses a stable URI for
@@ -75,54 +89,56 @@ URI of the matching observable property instead.
 
 ## 3. Start a run and capture its inputs
 
-The script starts one Experiment for the baseline scenario:
+The first recording block is entirely Acquirium code. It starts one Experiment
+for the baseline scenario, copies the three input files, and records the
+treatment flow that this execution will use:
 
 ```python
+# --- Acquirium: start this experiment and snapshot its inputs ----------------
 experiment = study.start(
     metadata={"model": "api-freeze", "scenario": "baseline"}
 )
 try:
-    input_paths = (
+    for path in (
         INPUTS / "model.json",
         INPUTS / "tariff.json",
         INPUTS / "dr_events.json",
-    )
-    for path in input_paths:
+    ):
         model_inputs.record(path)
     treatment_flow.record(TREATMENT_FLOW)
+```
 
+`study.start()` makes this run active. From that point until `finish()` or
+`fail()`, calls on the Study's handles are routed to this Experiment.
+
+`model_inputs.record(path)` sees that `model_inputs` was declared as a file and
+copies the file at `path`. The Experiment therefore retains its own immutable
+input artifacts if the working files change later.
+
+`treatment_flow.record(TREATMENT_FLOW)` sees a scalar handle and stores the
+number with the handle's declared `M3-PER-HR` unit. Metadata describes the run
+as a whole; recorded variables are the inputs and outputs you want to compare
+across runs.
+
+## 4. Build and solve with FlexPSE
+
+The next block is the model calculation. It uses FlexPSE and Pyomo in the usual
+way; the experiment interface does not replace or wrap the model or solver:
+
+```python
+    # --- FlexPSE: build and solve the model ----------------------------------
     os.chdir(INPUTS)
     model = build_model(load_model_config(INPUTS / "model.json"))
+
     for t in model.time_block.time_index:
         model.waterfacility.tank.flow_in[t].fix(TREATMENT_FLOW)
         model.waterfacility.plant.flow_out[t].fix(TREATMENT_FLOW)
-    solver_events.record({"event": "model-built"})
-```
 
-Metadata describes this execution. The file handle copies the configuration,
-tariff, and demand-response inputs into Acquirium, so the record remains stable
-if the working files change later. The scalar handle records the scenario's
-10 m³/h treatment flow.
-
-The config-driven builder produces the same model as FlexPSE's imperative
-`api_freeze.py`. Its configuration refers to the other two inputs by bare
-filename, so the script uses their directory while constructing the model. The
-two fixed flow variables add the constant treatment condition while preserving
-tank inventory.
-
-## 4. Solve and record the results
-
-The next part follows FlexPSE's documented solve sequence, then records the
-scalar objective and the time-varying aggregate electrical power:
-
-```python
     pyo.TransformationFactory("network.expand_arcs").apply_to(model)
     results = get_solver(model=model, prefer="highs").solve(model)
     assert_optimal_termination(results)
 
     objective = float(pyo.value(model.objective))
-    operating_cost.record(objective)
-
     power_rows = [
         (
             timestamp,
@@ -139,8 +155,23 @@ scalar objective and the time-varying aggregate electrical power:
             strict=True,
         )
     ]
-    electrical_power.record(power_rows)
+```
 
+The config-driven builder produces the same model as FlexPSE's imperative
+`api_freeze.py`. Its configuration refers to the other two inputs by bare
+filename, so the script uses their directory while constructing the model. The
+two fixed flow variables are this example's added operating condition; they
+give the solve a nonzero load while preserving tank inventory.
+
+## 5. Record the results
+
+Once FlexPSE has produced ordinary Python values, a second Acquirium block
+saves them:
+
+```python
+    # --- Acquirium: save the results and complete the experiment -------------
+    operating_cost.record(objective)
+    electrical_power.record(power_rows)
     solver_events.record(
         {
             "event": "solve-complete",
@@ -151,15 +182,19 @@ scalar objective and the time-varying aggregate electrical power:
     experiment.finish()
 ```
 
-The scalar handle records one objective value. The time-series handle accepts
-timestamp/value pairs and stores the month-long trajectory under a source
-unique to this run. The example's timezone-naive model timestamps are
-interpreted as UTC by the experiment interface.
+`operating_cost.record(objective)` stores one scalar observation.
+`electrical_power.record(power_rows)` dispatches to the time-series operation:
+it accepts the timestamp/value pairs, creates a stream unique to this run, and
+records that stream's URI and time range in the Experiment ledger. The
+example's timezone-naive model timestamps are interpreted as UTC.
 
-Calling `record()` on the log again appends an event rather than replacing the
-first. `finish()` makes the run terminal with status `succeeded`.
+The same method name deliberately covers each variable kind so recording sites
+stay small. Calling `record()` repeatedly adds observations; it does not
+replace an earlier value. On a log handle it appends events in order.
+`finish()` makes the run terminal with status `succeeded` and prevents further
+recording.
 
-## 5. Preserve failures
+## 6. Preserve failures
 
 The solver and recording operations stay inside a `try` block so failures also
 become part of the record:
@@ -174,7 +209,40 @@ except Exception as error:
 exception type and message. Inputs and events written before the failure remain
 available when diagnosing how far the run progressed.
 
-## 6. Run the experiment
+## 7. Read and plot the time-series output
+
+Time-series results use Acquirium's ordinary stream storage. The final block
+reconstructs this run's deterministic reference URI and reads the samples back
+as a Polars DataFrame:
+
+```python
+# --- Acquirium: read back the time-series result -----------------------------
+power_ref = ac.reference_uri(
+    f"experiment/{experiment.run_id}",
+    electrical_power.label,
+)
+stored_power = ac.client.timeseries_df(str(power_ref))
+```
+
+In a notebook, that frame can be plotted directly with the usual dataframe and
+plotting tools:
+
+```python
+import matplotlib.pyplot as plt
+
+plt.plot(stored_power["ts"], stored_power["value"])
+plt.ylabel("Aggregate electrical power (kW)")
+plt.show()
+```
+
+The current experiment interface does not yet expose a public read API for
+listing a Study's completed Experiments or retrieving their scalar, JSON,
+text, and log observations. Cross-run tables, comparisons, and operations such
+as “which Experiment had the highest operating cost?” therefore cannot yet be
+expressed through `study`. That is a missing query surface, not something the
+time-series query API solves.
+
+## 8. Run the experiment
 
 Execute the example:
 
@@ -189,7 +257,7 @@ reference URI and prints output resembling:
 experiment: 5a38...
 aggregate operating cost: 465.89 USD
 electrical power: urn:acquirium#...
-shape: (5, 2)
+shape: (5, 3)
 ...
 ```
 
