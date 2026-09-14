@@ -283,7 +283,7 @@ def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int,
       (``hops=0``: unbounded, rendered as a ``+`` property path).
     - Else, for an edge onto a measurement node (``is_data_edge``): the
       ``entity`` relation of ``explore.relations`` read forwards
-      (hasProperty directly or through a connection point, observes,
+      (hasProperty directly or through a connection point,
       actuatedByProperty), so ``measurement()`` and ``context()`` are exact
       inverses and the store never scans every predicate. ``cp_union=False``
       drops the chains that pass through a connection point.

@@ -111,9 +111,11 @@ That's why we hide these during traversals.
 
 A measurement edge does not walk predicates at all: `measurement()` follows
 the `entity` relation of `acquirium.Client.explore.relations` read forwards
-(`hasProperty`, directly or through a connection point, `observes` for a
-sensor, `actuatedByProperty` for an actuator), and `context()` follows it
-backwards, so the two are exact inverses.
+(`hasProperty`, directly or through a connection point, and
+`actuatedByProperty` for an actuator), and `context()` follows it backwards,
+so the two are exact inverses.
+Sensors are not part of it: a point a sensor `observes` is reached through
+the equipment or connection point that has it, not through the sensor.
 A deployment that attaches points with another predicate registers it on
 that relation once and both verbs follow it.
 

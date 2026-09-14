@@ -19,12 +19,13 @@ change in any release.
 
 ### Changed
 - `measurement()` follows a fixed set of attach predicates (`hasProperty`,
-  directly or through a connection point, `observes`, `actuatedByProperty`),
-  the `entity` relation of `context()` read forwards, instead of any
-  predicate. Results are unchanged on every model in the repository and the
-  query no longer scans the whole dataset (two seconds down to milliseconds
-  on the DPR model). A deployment attaching points by another predicate adds
-  it with `register_relation("entity", ...)`.
+  directly or through a connection point, and `actuatedByProperty`), the
+  `entity` relation of `context()` read forwards, instead of any predicate.
+  Points a sensor `observes` are no longer returned for the sensor; they are
+  reached through the equipment or connection point that has them. The query
+  no longer scans the whole dataset (two seconds down to milliseconds on the
+  DPR model). A deployment attaching points by another predicate adds it with
+  `register_relation("entity", ...)`.
 - `measurement(direction=...)` searches the flow in places: the source's own
   outlet (or inlet) connection points, then alternately the pipe and the next
   entity with all of its connection points. `nearest` now defaults to `True`

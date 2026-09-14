@@ -11,9 +11,10 @@ predicates, so relations compile to plain SPARQL (no client-side walk).
 Three relations ship by default:
 
 - ``entity``: the entity the point hangs off: ``hasProperty`` (directly or
-  through one of its connection points), ``observes`` (a sensor), or
-  ``actuatedByProperty`` (an actuator). ``measurement()`` compiles its data
-  edge from this relation read forwards, so the two are exact inverses.
+  through one of its connection points) or ``actuatedByProperty`` (an
+  actuator). Sensors (``observes``) are deliberately not part of it.
+  ``measurement()`` compiles its data edge from this relation read
+  forwards, so the two are exact inverses.
 - ``upstream``: the entity the point is directly downstream of. This is
   :data:`~acquirium.Client.explore.directions.DOWNSTREAM_PROPERTY` read
   backwards: the four chains that say where an entity's downstream
@@ -41,7 +42,6 @@ Chains = Tuple[Chain, ...]
 
 _HAS_PROP = str(S223.hasProperty)
 _HAS_CP = str(S223.hasConnectionPoint)
-_OBSERVES = str(S223.observes)
 _ACTUATED_BY = str(S223.actuatedByProperty)
 
 
@@ -79,7 +79,6 @@ _DEFAULTS: Dict[str, Chains] = {
     "entity": (
         ((f"^{_HAS_PROP}", None),),
         ((f"^{_HAS_PROP}", None), (f"^{_HAS_CP}", None)),
-        ((f"^{_OBSERVES}", None),),
         ((f"^{_ACTUATED_BY}", None),),
     ),
     "upstream": reverse_chains(DOWNSTREAM_PROPERTY),

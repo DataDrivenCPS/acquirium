@@ -28,7 +28,6 @@ X = Namespace("urn:x/")
 CLS = Namespace("urn:x#")
 HAS_PROP = str(S223.hasProperty)
 HAS_CP = str(S223.hasConnectionPoint)
-OBSERVES = str(S223.observes)
 ACTUATED = str(S223.actuatedByProperty)
 
 
@@ -75,7 +74,6 @@ class TestRegistry:
         assert RELATIONS["entity"] == (
             ((f"^{HAS_PROP}", None),),
             ((f"^{HAS_PROP}", None), (f"^{HAS_CP}", None)),
-            ((f"^{OBSERVES}", None),),
             ((f"^{ACTUATED}", None),),
         )
 
@@ -185,7 +183,6 @@ class TestContextBuilder:
         assert d["edges"][0]["relation_name"] == "entity"
         assert d["edges"][0]["relation"] == [[[f"^{HAS_PROP}", None]],
                                              [[f"^{HAS_PROP}", None], [f"^{HAS_CP}", None]],
-                                             [[f"^{OBSERVES}", None]],
                                              [[f"^{ACTUATED}", None]]]
 
     def test_immutability(self):

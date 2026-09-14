@@ -56,7 +56,6 @@ _DATA_EDGE = re.compile(
     r"\{ \{ (\?v\d+) <http://data\.ashrae\.org/standard223#hasProperty> (\?v\d+) \. \} UNION "
     r"\{ \1 <http://data\.ashrae\.org/standard223#hasConnectionPoint> \?m_e(\d+)_data_a1_0 \. "
     r"\?m_e\3_data_a1_0 <http://data\.ashrae\.org/standard223#hasProperty> \2 \. \} UNION "
-    r"\{ \1 <http://data\.ashrae\.org/standard223#observes> \2 \. \} UNION "
     r"\{ \1 <http://data\.ashrae\.org/standard223#actuatedByProperty> \2 \. \} \}"
 )
 

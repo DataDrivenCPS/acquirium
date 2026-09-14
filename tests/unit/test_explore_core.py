@@ -244,7 +244,6 @@ def canon(s: str) -> str:
         r"\{ \{ (\?v\d+) <http://data\.ashrae\.org/standard223#hasProperty> (\?v\d+) \. \} UNION "
         r"\{ \1 <http://data\.ashrae\.org/standard223#hasConnectionPoint> \?m_e(\d+)_data_a1_0 \. "
         r"\?m_e\3_data_a1_0 <http://data\.ashrae\.org/standard223#hasProperty> \2 \. \} UNION "
-        r"\{ \1 <http://data\.ashrae\.org/standard223#observes> \2 \. \} UNION "
         r"\{ \1 <http://data\.ashrae\.org/standard223#actuatedByProperty> \2 \. \} \}",
         lambda m: (f"{{ {m.group(1)} ?p_e{m.group(3)}_1 {m.group(2)} . }} UNION "
                    f"{{ {m.group(1)} <http://data.ashrae.org/standard223#hasConnectionPoint> ?cp_e{m.group(3)}_k1 . "
@@ -332,7 +331,7 @@ class TestIncludeConnectionPoints:
              .measurement(alias="m", include_connection_points=False).to_sparql())
         assert "hasConnectionPoint" not in s
         assert "?v0 <http://data.ashrae.org/standard223#hasProperty> ?v1 ." in s
-        assert "?v0 <http://data.ashrae.org/standard223#observes> ?v1 ." in s
+        assert "?v0 <http://data.ashrae.org/standard223#actuatedByProperty> ?v1 ." in s
 
     def test_star_respects_flag(self):
         b = (q().entity(CLS_A, alias="a").entity(CLS_A, alias="b")

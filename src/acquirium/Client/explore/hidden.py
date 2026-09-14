@@ -8,7 +8,7 @@ which is both semantically wrong and the main any-traversal fan-out
 explosion. Explicitly named predicates (``via=`` values, direction patterns)
 are never filtered — naming a predicate overrides hiding. Edges onto a
 measurement node do not walk predicates at all: they follow the ``entity``
-relation of ``explore.relations`` (hasProperty, observes, actuatedByProperty).
+relation of ``explore.relations`` (hasProperty, actuatedByProperty).
 """
 from __future__ import annotations
 
