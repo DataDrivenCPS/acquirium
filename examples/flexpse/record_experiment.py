@@ -20,6 +20,7 @@ HERE = Path(__file__).resolve().parent
 INPUTS = HERE / "inputs"
 TREATMENT_FLOW = 10.0  # m^3/h
 
+# --- Acquirium: describe what each experiment records -----------------------
 ac = aq.init(data_dir=HERE / ".data")
 study = ac.study.define("flexpse-api-freeze")
 
@@ -34,6 +35,7 @@ electrical_power = study.output("aggregate electrical power").timeseries(
 )
 solver_events = study.log("solver events")
 
+# --- Acquirium: start this experiment and snapshot its inputs ----------------
 experiment = study.start(
     metadata={"model": "api-freeze", "scenario": "baseline"}
 )
@@ -46,6 +48,7 @@ try:
         model_inputs.record(path)
     treatment_flow.record(TREATMENT_FLOW)
 
+    # --- FlexPSE: build and solve the model ----------------------------------
     # The model config refers to tariff.json and dr_events.json by bare
     # filename, matching the upstream api_freeze fixture.
     os.chdir(INPUTS)
@@ -57,15 +60,12 @@ try:
     for t in model.time_block.time_index:
         model.waterfacility.tank.flow_in[t].fix(TREATMENT_FLOW)
         model.waterfacility.plant.flow_out[t].fix(TREATMENT_FLOW)
-    solver_events.record({"event": "model-built"})
 
     pyo.TransformationFactory("network.expand_arcs").apply_to(model)
     results = get_solver(model=model, prefer="highs").solve(model)
     assert_optimal_termination(results)
 
     objective = float(pyo.value(model.objective))
-    operating_cost.record(objective)
-
     power_rows = [
         (
             timestamp,
@@ -82,8 +82,10 @@ try:
             strict=True,
         )
     ]
-    electrical_power.record(power_rows)
 
+    # --- Acquirium: save the results and complete the experiment -------------
+    operating_cost.record(objective)
+    electrical_power.record(power_rows)
     solver_events.record(
         {
             "event": "solve-complete",
@@ -96,6 +98,7 @@ except Exception as error:
     experiment.fail(error)
     raise
 
+# --- Acquirium: read back the time-series result -----------------------------
 power_ref = ac.reference_uri(
     f"experiment/{experiment.run_id}",
     electrical_power.label,

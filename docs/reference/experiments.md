@@ -145,6 +145,21 @@ Files are identified by SHA-256 digest and deduplicated by content. Artifact
 metadata uses the filename and media type from the first attachment with that
 digest.
 
+## Reading recorded data
+
+Time-series variables are ordinary Acquirium streams. Given an Experiment's
+`run_id` and the variable label, construct and fetch its reference with:
+
+```python
+ref = ac.reference_uri(f"experiment/{run_id}", variable.label)
+frame = ac.client.timeseries_df(str(ref))
+```
+
+The experiment interface currently has no public read endpoint for enumerating
+a Study's runs or retrieving scalar, JSON, text, file, and log observations
+from the Experiment ledger. Cross-run dataframes, filtering, aggregation, and
+operations such as `argmax` are therefore not yet part of the interface.
+
 ## HTTP API
 
 The HTTP API calls a Study a `template`. `template_id`, `variable_id`, and

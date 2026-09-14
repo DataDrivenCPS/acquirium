@@ -36,9 +36,13 @@ The script records:
 
 - the model configuration, tariff, and demand-response files;
 - the scenario's treatment flow;
-- ordered model-build and solver events;
+- a structured solver-completion event;
 - the aggregate operating cost;
 - the optimized aggregate electrical-power trajectory.
+
+Section comments in `record_experiment.py` separate the ordinary FlexPSE model
+build and solve from the Acquirium calls that declare variables, record inputs
+and outputs, and finish the Experiment.
 
 It prints the Experiment ID, objective value, time-series reference URI, and
 the first five stored power samples. Run it again to reuse the Study definition
