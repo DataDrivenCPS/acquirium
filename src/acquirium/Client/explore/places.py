@@ -1,29 +1,82 @@
 """Nearest along the flow, executed place by place.
 
-A directional edge with ``nearest=True`` is not one SPARQL query but a
-sequence of them. The flow from a source is divided into *places*: for
-``measurement(direction="downstream")`` the source's own outlet connection
-points, then for each flow step the connection and then the entity together
-with all of its connection points; for ``related(direction=...)`` the same
-without the source's own connection points. Each place is queried with the
-full pattern (class, attribute and data filters included), so a place counts
-as a hit only when it holds a matching row. Every source keeps the rows of
-the first place where it hit; sources already satisfied are ignored in
-later places. Ties within a place all survive.
+A directional edge with ``nearest=True`` is resolved per source, walking
+the flow one place at a time. The places, seen from a source, are its own
+outlet (downstream) or inlet (upstream) connection points when the edge
+carries ``own_cp_class`` (``measurement``), then for each flow step the
+connection leaving the current entities and then the entities they lead
+to. Each place's candidate pairs ``(source, target)`` go into the full
+pattern as paired ``VALUES`` (class, attribute and data filters included),
+so a place counts as a hit only when it yields a row; a source keeps the
+rows of its first hit and drops out. Ties within a place all survive.
 
-``max_depth`` bounds the number of entity places. ``max_depth=0`` continues
-until an entity place reaches no entity that an earlier entity place has not
-already reached, which ends the search on plants with loops.
+The one-step adjacency (entity to entity, entity to connection, entity to
+its own connection points) is materialized once per graph version and
+cached, and frontiers advance in Python with a visited set per source, so
+loops terminate and no long property path is ever sent to the store. The
+source is never its own target. ``max_depth`` bounds the entity steps;
+``0`` walks until every pending source's frontier is empty.
 """
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 from acquirium.Client.explore.compile import compile_sparql
+from acquirium.Client.explore.traverse import _fetch_source_uris, _fetch_target_accept, _prune_target_subtree
 from acquirium.Client.query_graph import QueryEdge, QueryGraph, QueryNode
+from acquirium.internals.internals_namespaces import CONNECTED_THROUGH, CONNECTS_FROM, CONNECTS_TO, S223
 
-_SAFETY_CAP = 400  # places; only reachable with max_depth=0 on a pathological graph
+_RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
+_SUBCLASS = "http://www.w3.org/2000/01/rdf-schema#subClassOf"
+_SAFETY_CAP = 1000  # entity steps; only reachable with max_depth=0
+
+# (server_key, kind, direction/class, graph_version) -> {source: {targets}}
+_ADJ_CACHE: Dict[tuple, Dict[str, Set[str]]] = {}
+
+
+def _server_key(client) -> str:
+    return str(getattr(client, "base_url", id(client)))
+
+
+def _adjacency(client, key: tuple, body: str) -> Dict[str, Set[str]]:
+    cached = _ADJ_CACHE.get(key)
+    if cached is not None:
+        return cached
+    res = client.sparql_query(f"SELECT DISTINCT ?s ?t\nWHERE {{\n  {body}\n}}", include_dependencies=True)
+    cols = res.get("columns", [])
+    adj: Dict[str, Set[str]] = {}
+    if "s" in cols and "t" in cols:
+        si, ti = cols.index("s"), cols.index("t")
+        for r in res.get("rows", []):
+            if r[si] is not None and r[ti] is not None and r[si] != r[ti]:
+                adj.setdefault(str(r[si]), set()).add(str(r[ti]))
+    _ADJ_CACHE[key] = adj
+    return adj
+
+
+def _steps(client, direction: str, own_cp: Optional[str], version: int):
+    """The three one-step maps for a direction: entity->entity,
+    entity->connection, entity->own connection point (may be empty)."""
+    ct, cf = f"<{S223.connectedTo}>", f"<{S223.connectedFrom}>"
+    cst, csf = f"<{CONNECTS_TO}>", f"<{CONNECTS_FROM}>"
+    if direction == "downstream":
+        ent = f"?s ({ct}|^{cf}) ?t ."
+        conn = f"?s ^{csf} ?t ."
+    else:
+        ent = f"?s (^{ct}|{cf}) ?t ."
+        conn = f"?s ^{cst} ?t ."
+    sk = _server_key(client)
+    ent_map = _adjacency(client, (sk, "ent", direction, version), ent)
+    conn_map = _adjacency(client, (sk, "conn", direction, version), conn)
+    own_map: Dict[str, Set[str]] = {}
+    if own_cp:
+        # anchored sub-SELECT fence, as the compiler does for class matches:
+        # an unanchored rdf:type/subClassOf* path is far slower on Oxigraph
+        own = (f"?s <{S223.hasConnectionPoint}> ?t . ?t <{_RDF_TYPE}> ?own_typ . "
+               f"{{ SELECT DISTINCT ?own_typ WHERE {{ ?own_typ <{_SUBCLASS}>* <{own_cp}> . }} }}")
+        own_map = _adjacency(client, (sk, "own", own_cp, version), own)
+    return ent_map, conn_map, own_map
 
 
 def _placed_edge(graph: QueryGraph) -> QueryEdge:
@@ -35,16 +88,17 @@ def _placed_edge(graph: QueryGraph) -> QueryEdge:
     return edges[0]
 
 
-def _with_edge(graph: QueryGraph, old: QueryEdge, new: QueryEdge, *, undrop: Optional[int] = None) -> QueryGraph:
+def _with_pairs(graph: QueryGraph, edge: QueryEdge, pairs: List[Tuple[str, str]], *, undrop: bool) -> QueryGraph:
     nodes = dict(graph.nodes)
-    if undrop is not None:
-        node = nodes[undrop]
+    if undrop:
+        node = nodes[edge.source_id]
         constraints = dict(node.constraints or {})
         constraints.pop("dropped", None)
-        nodes[undrop] = QueryNode(id=node.id, alias=node.alias, constraints=constraints)
+        nodes[edge.source_id] = QueryNode(id=node.id, alias=node.alias, constraints=constraints)
+    resolved = replace(edge, value_pairs=tuple(pairs))
     return QueryGraph(
         nodes=nodes,
-        edges=[new if e is old else e for e in graph.edges],
+        edges=[resolved if e is edge else e for e in graph.edges],
         aliases=dict(graph.aliases),
         aliases_reverse=dict(graph.aliases_reverse),
         current_pointer=graph.current_pointer,
@@ -53,61 +107,72 @@ def _with_edge(graph: QueryGraph, old: QueryEdge, new: QueryEdge, *, undrop: Opt
     )
 
 
-def _reachable(client, edge: QueryEdge, src_node: QueryNode, place: int, include_dependencies: bool) -> Set[str]:
-    """Targets of one place from the source's own constraints alone; a probe
-    used to end an unbounded search."""
-    constraints = dict(src_node.constraints or {})
-    constraints.pop("dropped", None)
-    g = QueryGraph().with_node(QueryNode(id=0, alias="s", constraints=constraints))
-    g = g.with_node(QueryNode(id=1, alias="t", constraints={}))
-    g = g.with_edge(replace(edge, source_id=0, target_id=1, place=place, nearest=False))
-    res = client.sparql_query(compile_sparql(g), include_dependencies=include_dependencies)
-    cols = res.get("columns", [])
-    if "v1" not in cols:
-        return set()
-    i = cols.index("v1")
-    return {r[i] for r in res.get("rows", []) if r[i] is not None}
-
-
 def execute_placed(graph: QueryGraph, client, include_dependencies: bool = True) -> dict:
     """Run a query holding one nearest directional edge; return ``{"columns", "rows"}``."""
     edge = _placed_edge(graph)
     src_node = graph.nodes[edge.source_id]
     src_dropped = bool((src_node.constraints or {}).get("dropped"))
     src_col = f"v{edge.source_id}"
-    own = 1 if edge.own_cp_class else 0
-    bounded = int(edge.hops) > 0
-    last_place = 2 * int(edge.hops) + own if bounded else _SAFETY_CAP
+    version = client.graph_version()
+    ent_map, conn_map, own_map = _steps(client, edge.direction, edge.own_cp_class, version)
+
+    sources = _fetch_source_uris(client, _prune_target_subtree(graph, edge), edge.source_id)
+    # nodes that can satisfy the target's own constraints (class, attributes);
+    # a place whose candidates all fall outside needs no query. None when the
+    # target node is unconstrained (a measurement's intermediate node).
+    accept = _fetch_target_accept(client, graph, edge)
+    pending: Set[str] = set(sources)
+    frontier: Dict[str, Set[str]] = {s: {s} for s in sources}
+    visited: Dict[str, Set[str]] = {s: {s} for s in sources}
 
     columns: Optional[List[str]] = None
     rows_out: List[list] = []
-    satisfied: Set[str] = set()
-    seen_entities: Set[str] = set()
 
-    for place in range(1, last_place + 1):
-        placed = replace(edge, place=place)
-        g = _with_edge(graph, edge, placed, undrop=edge.source_id if src_dropped else None)
+    def run_place(candidates: Dict[str, Set[str]]) -> None:
+        nonlocal columns
+        pairs = [(s, t) for s in sorted(candidates) for t in sorted(candidates[s])
+                 if s in pending and (accept is None or t in accept)]
+        if not pairs:
+            return
+        g = _with_pairs(graph, edge, pairs, undrop=src_dropped)
         res = client.sparql_query(compile_sparql(g), include_dependencies=include_dependencies)
         cols = res.get("columns", [])
         if columns is None:
             columns = list(cols)
+        rows = res.get("rows", [])
         if src_col in cols:
             si = cols.index(src_col)
-            new_rows = [r for r in res.get("rows", []) if r[si] not in satisfied]
-            satisfied.update(r[si] for r in new_rows)
-        else:
-            new_rows = list(res.get("rows", []))
-        rows_out.extend(new_rows)
+            hit = {r[si] for r in rows if r[si] is not None}
+            pending.difference_update(hit)
+        rows_out.extend(rows)
 
-        if not bounded:
-            is_entity_place = place > own and (place - own) % 2 == 0
-            if is_entity_place:
-                reached = _reachable(client, edge, src_node, place, include_dependencies)
-                if not reached - seen_entities:
-                    break
-                seen_entities |= reached
+    # place: the source's own connection points
+    if own_map:
+        run_place({s: own_map.get(s, set()) for s in pending})
 
-    columns = columns or []
+    max_steps = int(edge.hops) if int(edge.hops) > 0 else _SAFETY_CAP
+    for _ in range(max_steps):
+        if not pending:
+            break
+        # place: the connections leaving the current entities
+        conns = {s: {c for e in frontier[s] for c in conn_map.get(e, set())} for s in pending}
+        run_place(conns)
+        # place: the entities those connections (or direct links) lead to
+        nxt: Dict[str, Set[str]] = {}
+        for s in list(pending):
+            reach = {t for e in frontier[s] for t in ent_map.get(e, set())} - visited[s]
+            visited[s] |= reach
+            nxt[s] = reach
+        run_place(nxt)
+        frontier = {s: nxt.get(s, set()) for s in pending}
+        if not any(frontier.values()):
+            break
+
+    if columns is None:
+        # nothing was ever queried: fall back to an empty result with the
+        # ordinary column set
+        probe = compile_sparql(_with_pairs(graph, edge, [], undrop=src_dropped))
+        columns = [c.lstrip("?") for c in probe.split("\n", 1)[0].split()[2:]]
     if src_dropped and src_col in columns:
         si = columns.index(src_col)
         columns = [c for i, c in enumerate(columns) if i != si]

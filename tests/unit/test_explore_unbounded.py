@@ -102,10 +102,10 @@ def chain() -> Graph:
 
 
 class FakeClient:
-    base_url = "fake://chain"
-
     def __init__(self, graph: Graph):
         self.graph = graph
+        # distinct per fixture graph: adjacency and segment caches key on it
+        self.base_url = f"fake://{id(graph)}"
 
     def sparql_query(self, sparql: str, include_dependencies: bool = True) -> dict:
         res = self.graph.query(sparql)

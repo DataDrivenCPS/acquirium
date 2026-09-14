@@ -52,10 +52,10 @@ def _prop(g: Graph, carrier: URIRef, p: URIRef) -> None:
 
 
 class FakeClient:
-    base_url = "fake://chain"
-
     def __init__(self, graph: Graph):
         self.graph = graph
+        # distinct per fixture graph: adjacency and segment caches key on it
+        self.base_url = f"fake://{id(graph)}"
 
     def sparql_query(self, sparql: str, include_dependencies: bool = True) -> dict:
         res = self.graph.query(sparql)
@@ -163,3 +163,48 @@ class TestNearest:
         assert {r[1].rsplit("/", 1)[-1] for r in pipes["rows"]} == {"pipe1"}
         everything = a.related(CLS.Unit, alias="t", direction="downstream", nearest=False, max_depth=2).execute()
         assert {r[1].rsplit("/", 1)[-1] for r in everything["rows"]} == {"B", "C"}
+
+
+def loop() -> Graph:
+    """A -> B -> A recirculation, each with a property; C dangling off B."""
+    g = Graph()
+    for e in (X.A, X.B, X.C):
+        g.add((e, RDF.type, CLS.Unit))
+        _prop(g, e, URIRef(f"{e}_p"))
+    for a, b in ((X.A, X.B), (X.B, X.A), (X.B, X.C)):
+        g.add((a, S223.connectedTo, b))
+        g.add((b, S223.connectedFrom, a))
+    return g
+
+
+@pytest.fixture
+def lq() -> Query:
+    return Query(client=FakeClient(loop()))
+
+
+class TestLoops:
+    def test_source_is_never_its_own_downstream(self, lq):
+        for depth in (1, 3, 0):
+            for nearest in (False, True):
+                res = lq.entity(uri=X.A, alias="a").related(
+                    CLS.Unit, alias="t", direction="downstream", max_depth=depth, nearest=nearest).execute()
+                assert str(X.A) not in {r[1] for r in res["rows"]}
+
+    def test_unbounded_nearest_terminates_and_is_a_superset_of_bounded(self, lq):
+        base = lq.entity(CLS.Unit, alias="u")
+        def pairs(q):
+            res = q.execute(); c = res["columns"]
+            return {(r[c.index("v0")].rsplit("/", 1)[-1], r[c.index("v1")].rsplit("/", 1)[-1]) for r in res["rows"]}
+        one = pairs(base.related(CLS.Unit, alias="t", direction="downstream", nearest=True, max_depth=1))
+        unbounded = pairs(base.related(CLS.Unit, alias="t", direction="downstream", nearest=True, max_depth=0))
+        assert one <= unbounded
+        assert unbounded == {("A", "B"), ("B", "A"), ("B", "C")}
+
+    def test_unbounded_continues_for_a_source_that_needs_more_hops(self, lq):
+        # only C matches by uri; from A it is two hops away, and A's hop-1
+        # entity (B) is already "seen" from B's own point of view
+        res = lq.entity(CLS.Unit, alias="u").related(
+            uri=X.C, alias="t", direction="downstream", nearest=True, max_depth=0).execute()
+        c = res["columns"]
+        got = {(r[c.index("v0")].rsplit("/", 1)[-1], r[c.index("v1")].rsplit("/", 1)[-1]) for r in res["rows"]}
+        assert got == {("A", "C"), ("B", "C")}

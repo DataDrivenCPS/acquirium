@@ -94,8 +94,9 @@ When a step uses `via="any"` or a repeatable predicate, the client resolves it a
 The walk also makes `nearest` exact: distance is counted per source, and ties survive.
 The final SPARQL only ever receives the concrete pairs the walk found.
 Predicate lists and `direction=` compile to SPARQL directly, without the walk.
-`nearest` along a direction is not a walk either: the flow is divided into places (the source's own connection points, then alternately the connection and the entity with all its connection points), each place is one SPARQL query with every filter applied, and a source stops at the first place that returns a row.
-`max_depth=0` continues until an entity place reaches nothing new.
+`nearest` along a direction is a walk of its own: the flow is divided into places (the source's own connection points, then alternately the connection and the entity with all its connection points), the one-step neighbours are fetched once and cached, frontiers advance per source with a visited set, and the candidates of each place are checked against the full pattern, filters included, as paired `VALUES`.
+A source stops at the first place that returns a row.
+`max_depth=0` continues until every pending source's frontier is empty, so loops end.
 Layer results are cached until the graph changes, so repeating a query is cheap.
 You can always inspect what will run with `.to_sparql()`.
 
@@ -107,6 +108,14 @@ However, s223 graphs contain some predicates that are not useful or meaningful f
 Additionally, certain edges in our graphs are attributes of the node.
 These predicates describe a node rather than connect the plant, and walking them returns ontology terms instead of nearby equipment.
 That's why we hide these during traversals.
+
+A measurement edge does not walk predicates at all: `measurement()` follows
+the `entity` relation of `acquirium.Client.explore.relations` read forwards
+(`hasProperty`, directly or through a connection point, `observes` for a
+sensor, `actuatedByProperty` for an actuator), and `context()` follows it
+backwards, so the two are exact inverses.
+A deployment that attaches points with another predicate registers it on
+that relation once and both verbs follow it.
 
 `via="any"` walks every predicate except a default hidden set: the ones backing
 the attributes (`rdf:type`, `hasUnit`, `hasQuantityKind`, `ofMedium`,

@@ -165,11 +165,18 @@ def _direction_edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_id
     hops = int(edge.hops)
     direction = edge.direction
     own_cp = getattr(edge, "own_cp_class", None)
-    own_alt = (f"{src_var} <{CONNECTION_POINT}> {tgt_var} . "
-               f"{tgt_var} <{_RDF_TYPE}>/<{_SUBCLASS}>* <{own_cp}> ." if own_cp else None)
+    own_typ = f"{tgt_var}_owncp_typ"
+    own_alt = (f"{src_var} <{CONNECTION_POINT}> {tgt_var} . {tgt_var} <{_RDF_TYPE}> {own_typ} . "
+               f"{{ SELECT DISTINCT {own_typ} WHERE {{ {own_typ} <{_SUBCLASS}>* <{own_cp}> . }} }}"
+               if own_cp else None)
+
+    not_self = f"FILTER({tgt_var} != {src_var})"
 
     def _with_own(pattern: str) -> str:
-        return f"{{ {pattern} }} UNION {{ {own_alt} }}" if own_alt else pattern
+        # Loops (recirculation) lead back to the source; "downstream of X"
+        # never means X itself.
+        body = f"{{ {pattern} }} UNION {{ {own_alt} }}" if own_alt else pattern
+        return f"{body} {not_self}"
 
     ct  = f"<{S223.connectedTo}>"
     cf  = f"<{S223.connectedFrom}>"
@@ -188,21 +195,6 @@ def _direction_edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_id
         conn_to_ent = csf          # connection → upstream entity
 
     parts: List[str] = []
-
-    place = getattr(edge, "place", None)
-    if place is not None:
-        # One place only. Numbering from the source: the source's own
-        # connection points (when own_cp is set), then for flow step k the
-        # connection (ent_to_conn with k-1 conn/ent pairs before it) and the
-        # entity (k one-hop entity steps).
-        if own_cp and place == 1:
-            return own_alt
-        q = place - (1 if own_cp else 0)
-        k = (q + 1) // 2
-        if q % 2 == 1:
-            conn_steps = [ent_to_conn] + [conn_to_ent, ent_to_conn] * (k - 1)
-            return f"{src_var} {'/'.join(conn_steps)} {tgt_var} ."
-        return f"{src_var} {'/'.join([one_hop_ent] * k)} {tgt_var} ."
 
     if hops <= 0:
         parts.append(f"{one_hop_ent}+")
@@ -289,11 +281,14 @@ def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int,
     - If edge.direction is set: delegate to _direction_edge_pattern for full topology traversal.
     - If edge.predicates is present/non-empty: constrain to those predicates and allow length 1..hops
       (``hops=0``: unbounded, rendered as a ``+`` property path).
+    - Else, for an edge onto a measurement node (``is_data_edge``): the
+      ``entity`` relation of ``explore.relations`` read forwards
+      (hasProperty directly or through a connection point, observes,
+      actuatedByProperty), so ``measurement()`` and ``context()`` are exact
+      inverses and the store never scans every predicate. ``cp_union=False``
+      drops the chains that pass through a connection point.
     - Else: allow any predicates, but length <= hops, via UNION of k-step chains,
-      excluding any hidden predicates (see ``hidden.hide``). Edges that
-      target a measurement node are exempt from hiding — that's how data
-      attaches (hasProperty/observes/...), and the external-reference
-      requirement bounds them.
+      excluding any hidden predicates (see ``hidden.hide``).
     """
     if getattr(edge, "value_pairs", None) is not None:
         pairs = " ".join(f"(<{s}> <{t}>)" for s, t in edge.value_pairs)
@@ -308,6 +303,13 @@ def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int,
     hops = int(edge.hops)
     preds = getattr(edge, "predicates", None) or []
     preds = [p for p in preds if p]  # remove falsy
+    if is_data_edge and not preds and hops == 1 and not getattr(edge, "cp_filter", None):
+        from acquirium.Client.explore.relations import RELATIONS, reverse_chains
+        chains = reverse_chains(RELATIONS["entity"])
+        if not getattr(edge, "cp_union", True):
+            chains = tuple(c for c in chains
+                           if not any(p.lstrip("^") == str(CONNECTION_POINT) for p, _ in c))
+        return render_alternatives(chains, src_var, tgt_var, f"e{edge_idx}_data")
     if hops < 1 and not preds:
         raise ValueError(
             f"edge.hops must be >= 1 for an any-predicate edge, got {edge.hops}; "

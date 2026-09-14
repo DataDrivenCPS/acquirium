@@ -6,9 +6,9 @@ edges. Traversing them walks into attribute-value hub nodes (e.g.
 s223:Fluid-Water) or the ontology TBox (rdf:type/subClassOf into QUDT),
 which is both semantically wrong and the main any-traversal fan-out
 explosion. Explicitly named predicates (``via=`` values, direction patterns)
-are never filtered — naming a predicate overrides hiding. Edges that target
-a measurement node are also exempt (that's how data attaches, and the
-external-reference requirement bounds them).
+are never filtered — naming a predicate overrides hiding. Edges onto a
+measurement node do not walk predicates at all: they follow the ``entity``
+relation of ``explore.relations`` (hasProperty, observes, actuatedByProperty).
 """
 from __future__ import annotations
 

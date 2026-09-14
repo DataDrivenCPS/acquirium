@@ -28,6 +28,8 @@ X = Namespace("urn:x/")
 CLS = Namespace("urn:x#")
 HAS_PROP = str(S223.hasProperty)
 HAS_CP = str(S223.hasConnectionPoint)
+OBSERVES = str(S223.observes)
+ACTUATED = str(S223.actuatedByProperty)
 
 
 def q() -> Query:
@@ -73,6 +75,8 @@ class TestRegistry:
         assert RELATIONS["entity"] == (
             ((f"^{HAS_PROP}", None),),
             ((f"^{HAS_PROP}", None), (f"^{HAS_CP}", None)),
+            ((f"^{OBSERVES}", None),),
+            ((f"^{ACTUATED}", None),),
         )
 
     def test_register_and_unregister(self):
@@ -180,7 +184,9 @@ class TestContextBuilder:
         d = q().measurement().context(CLS.Pump).to_dict()
         assert d["edges"][0]["relation_name"] == "entity"
         assert d["edges"][0]["relation"] == [[[f"^{HAS_PROP}", None]],
-                                             [[f"^{HAS_PROP}", None], [f"^{HAS_CP}", None]]]
+                                             [[f"^{HAS_PROP}", None], [f"^{HAS_CP}", None]],
+                                             [[f"^{OBSERVES}", None]],
+                                             [[f"^{ACTUATED}", None]]]
 
     def test_immutability(self):
         base = q().measurement()
@@ -268,10 +274,10 @@ def plant() -> Graph:
 class FakeClient:
     """Answers sparql_query with rdflib over the fixture graph."""
 
-    base_url = "fake://plant"
-
     def __init__(self, graph: Graph):
         self.graph = graph
+        # distinct per fixture graph: adjacency and segment caches key on it
+        self.base_url = f"fake://{id(graph)}"
 
     def sparql_query(self, sparql: str, include_dependencies: bool = True) -> dict:
         res = self.graph.query(sparql)

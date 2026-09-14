@@ -969,7 +969,6 @@ class Query:
                     "relation": safe(e.relation) if e.relation else None,
                     "relation_name": e.relation_name,
                     "own_cp_class": e.own_cp_class,
-                    "place": e.place,
                 }
                 for e in g.edges
             ],

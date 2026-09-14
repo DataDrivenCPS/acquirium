@@ -242,7 +242,9 @@ Be aware that unbounded walks over a large plant can be slow.
 
 ## measurement()
 
-`measurement()` adds the data-bearing points of the node the pointer is on.
+`measurement()` adds the data-bearing points of the node the pointer is on:
+the points it has (`hasProperty`), observes (a sensor) or is actuated by (an
+actuator).
 Equipment owns some points directly, but most hang off its connection points
 (inlets and outlets), so those are included by default
 (`include_connection_points=False` limits to directly-owned points; for
