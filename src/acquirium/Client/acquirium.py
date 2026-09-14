@@ -28,7 +28,8 @@ def _dt_to_iso(v: "str | datetime | None") -> "str | None":
     return v.isoformat() if isinstance(v, datetime) else v
 
 
-from acquirium.Client.client import AcquiriumClient
+from acquirium.Client.client import AcquiriumClient, DEFAULT_HEALTH_REQUEST_TIMEOUT
+from acquirium.Experiments import Point, StudyService
 from acquirium.internals.models import compute_ref_uri
 
 
@@ -73,24 +74,35 @@ class Acquirium:
             use_ssl=use_ssl,
         )
         self.insert_batch_rows = int(insert_batch_rows)
+        # Study owns user-facing declarations; the raw HTTP client remains
+        # available below for ordinary Acquirium APIs.
+        self.study = StudyService(self)
         if self.insert_batch_rows <= 0:
             raise ValueError("insert_batch_rows must be greater than zero")
         if health_timeout:
             self._wait_for_server(health_timeout)
+
+    @property
+    def address(self) -> str:
+        """The HTTP(S) address of the server this client is connected to."""
+        return self.client.address
 
     def _wait_for_server(self, timeout: float) -> None:
         import time as _time
         deadline = _time.monotonic() + timeout
         last_err: Exception | None = None
         while True:
+            remaining = deadline - _time.monotonic()
+            if remaining <= 0:
+                break
             try:
-                self.client.health(timeout=3.0)
+                self.client.health(timeout=min(DEFAULT_HEALTH_REQUEST_TIMEOUT, remaining))
                 return
             except Exception as e:
                 last_err = e
-            if _time.monotonic() >= deadline:
-                break
-            _time.sleep(min(2.0, max(0.1, deadline - _time.monotonic())))
+            remaining = deadline - _time.monotonic()
+            if remaining > 0:
+                _time.sleep(min(2.0, remaining))
         raise ConnectionError(
             f"Acquirium server at {self.client.base_url} did not answer /health "
             f"within {timeout:.0f}s (last error: {last_err}). Is the server "
@@ -342,6 +354,19 @@ class Acquirium:
     def reference_uri(self, source_id: str, ref_name: str) -> URIRef:
         """Return the canonical Acquirium reference URI for ``(source_id, ref_name)``."""
         return compute_ref_uri(source_id, ref_name)
+
+    def point(self, uri: str) -> Point:
+        """Return a lightweight semantic point handle for experiment variables."""
+        return Point(uri)
+
+    def resolve(self, text: str, *, kind: str | None = None, min_score: float = 0.6) -> Point:
+        """Resolve a human description to one graph resource for experiment use."""
+        # Keep text matching at the boundary. Persisted variable metadata is
+        # always the resolved URI, never an ambiguous natural-language string.
+        uri = self.client.resolve(text, kind=kind, top_k=1, min_score=min_score)
+        if uri is None:
+            raise ValueError(f"could not resolve graph resource {text!r}")
+        return Point(str(uri))
 
     def register_streams(
         self,

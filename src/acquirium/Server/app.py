@@ -27,6 +27,7 @@ from dateutil import parser as dtparser
 from pydantic import BaseModel, Field
 from datetime import datetime
 
+from acquirium.Server.config import load_active_config
 from acquirium.Server.manager import Manager
 from acquirium.Materialization import App as MaterializationApp
 from acquirium.Materialization.planner import Deployment
@@ -50,6 +51,62 @@ from acquirium.Drivers.supervisor import DriverSupervisor
 
 
 log = logging.getLogger("acquirium.api")
+
+
+class ExperimentTemplateRequest(BaseModel):
+    """Transport names retain template/run wording; the Python API says Study."""
+    name: str
+class ExperimentVariableRequest(BaseModel):
+    label: str
+    role: str
+    kind: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+class ExperimentStartRequest(BaseModel):
+    metadata: dict[str, Any] = Field(default_factory=dict)
+class ExperimentObservationRequest(BaseModel):
+    value: Any = None
+    occurred_at: datetime | None = None
+    ref_uri: str | None = None
+    start: datetime | None = None
+    end: datetime | None = None
+class ExperimentFinishRequest(BaseModel):
+    error: Any = None
+
+def define_experiment(request: ExperimentTemplateRequest):
+    try: return app.state.manager.experiments.define(request.name)
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def declare_experiment_variable(template_id: str, request: ExperimentVariableRequest):
+    try: return app.state.manager.experiments.declare(template_id, request.label, request.role, request.kind, request.metadata)
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def start_experiment(template_id: str, request: ExperimentStartRequest):
+    try: return app.state.manager.experiments.start(template_id, request.metadata)
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def observe_experiment_variable(run_id: str, variable_id: str, request: ExperimentObservationRequest):
+    try:
+        # A range accompanies a stream attachment. Scalar and log observations
+        # leave it null, so one append-only ledger covers every variable kind.
+        interval = (request.start, request.end) if request.start and request.end else None
+        return app.state.manager.experiments.observe(run_id, variable_id, value=request.value, occurred_at=request.occurred_at, ref_uri=request.ref_uri, interval=interval)
+    except KeyError: raise HTTPException(status_code=404, detail="unknown experiment run")
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+async def attach_experiment_file(run_id: str, variable_id: str, request: Request):
+    try:
+        # The body is raw file bytes to avoid forcing script users through a
+        # multipart/form-data API for a single artifact.
+        return app.state.manager.experiments.attach_file(run_id, variable_id, request.headers.get("X-Filename", "attachment"), request.headers.get("Content-Type"), await request.body())
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def finish_experiment(run_id: str, request: ExperimentFinishRequest):
+    try: return app.state.manager.experiments.finish(run_id, "succeeded")
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def fail_experiment(run_id: str, request: ExperimentFinishRequest):
+    try: return app.state.manager.experiments.finish(run_id, "failed", request.error)
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
 
 
 def _sparql_results_to_rows(serialized: bytes) -> dict[str, Any]:
@@ -111,6 +168,13 @@ def _accepted_sparql_formats(accept: str) -> tuple[ox.QueryResultsFormat, ox.Rdf
 
 def _self_connect_cfg(cfg: dict) -> tuple[str, int, bool]:
     """Return (host, port, use_ssl) that driver actors use to reach this server."""
+    if local_host := os.environ.get("ACQUIRIUM_SELF_HOST"):
+        port = int(
+            os.environ.get("ACQUIRIUM_SELF_PORT")
+            or cfg.get("server", {}).get("port", 8000)
+        )
+        return local_host, port, False
+
     driver_cfg = cfg.get("driver", {})
     # 127.0.0.1 rather than "localhost": see AcquiriumClient (issue #85).
     host = driver_cfg.get("server_url", "127.0.0.1")
@@ -296,10 +360,9 @@ async def lifespan(app: FastAPI):
     from acquirium.internals._log import configure_logging
     configure_logging()  # honors ACQUIRIUM_VERBOSE env var set by `acquirium server -v`
 
-    from acquirium.cli import _load_config
-    _config_path = os.environ.get("ACQUIRIUM_CONFIG")
-    _cfg = _load_config(Path(_config_path) if _config_path else None)
-    config_dir = str(Path(_cfg.get("__config_dir", Path.cwd())).resolve())
+    loaded_config = load_active_config()
+    _cfg = loaded_config.data
+    config_dir = str(loaded_config.directory)
     if config_dir not in sys.path:
         sys.path.insert(0, config_dir)
     server_cfg = _cfg.get("server", {})
@@ -398,6 +461,16 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Acquirium API", version="0.1", lifespan=lifespan)
+
+# The client facade owns the pleasant Study/Experiment vocabulary. These
+# stable endpoint names stay deliberately storage-oriented and small.
+app.post("/experiments/templates")(define_experiment)
+app.post("/experiments/templates/{template_id}/variables")(declare_experiment_variable)
+app.post("/experiments/templates/{template_id}/runs")(start_experiment)
+app.post("/experiments/runs/{run_id}/variables/{variable_id}/observations")(observe_experiment_variable)
+app.post("/experiments/runs/{run_id}/variables/{variable_id}/file")(attach_experiment_file)
+app.post("/experiments/runs/{run_id}/finish")(finish_experiment)
+app.post("/experiments/runs/{run_id}/fail")(fail_experiment)
 
 
 @app.middleware("http")

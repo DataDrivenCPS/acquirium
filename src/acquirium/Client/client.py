@@ -23,6 +23,8 @@ from rdflib.namespace import NamespaceManager, RDF, RDFS
 import logging
 logger = logging.getLogger(__name__)
 
+DEFAULT_HEALTH_REQUEST_TIMEOUT = 30.0
+
 if TYPE_CHECKING:
     import pyarrow as pa
 
@@ -233,6 +235,25 @@ class AcquiriumClient:
         )
         self._namespaces_cache: dict[str, str] | None = None
 
+    @property
+    def address(self) -> str:
+        """The HTTP(S) address of the server this client uses."""
+        return self.base_url
+
+    # These intentionally thin methods are transport only. The public client
+    # turns them into Study/Experiment/Variable objects in Experiments.py.
+    def define_experiment(self, name: str) -> dict: return self._experiment_post("/experiments/templates", {"name": name})
+    def declare_experiment_variable(self, template_id: str, **body: Any) -> dict: return self._experiment_post(f"/experiments/templates/{template_id}/variables", body)
+    def start_experiment(self, template_id: str, metadata: dict | None = None) -> dict: return self._experiment_post(f"/experiments/templates/{template_id}/runs", {"metadata": metadata or {}})
+    def observe_experiment(self, run_id: str, variable_id: str, **body: Any) -> dict: return self._experiment_post(f"/experiments/runs/{run_id}/variables/{variable_id}/observations", body)
+    def finish_experiment(self, run_id: str, failed: bool = False, error: Any = None) -> dict: return self._experiment_post(f"/experiments/runs/{run_id}/{'fail' if failed else 'finish'}", {"error": error})
+    def attach_experiment_file(self, run_id: str, variable_id: str, path: str | Path, media_type: str | None = None) -> dict:
+        # Send bytes, not a client-local filename. The server owns the durable
+        # artifact copy so experiments survive the originating machine.
+        source = Path(path); response = requests.post(f"{self.base_url}/experiments/runs/{run_id}/variables/{variable_id}/file", data=source.read_bytes(), headers={"X-Filename": source.name, "Content-Type": media_type or "application/octet-stream"}); _raise_for_status(response); return response.json()
+    def _experiment_post(self, path: str, body: dict) -> dict:
+        response = requests.post(f"{self.base_url}{path}", json=body); _raise_for_status(response); return response.json()
+
     def insert_graph(
         self,
         rdf_graph: str,
@@ -391,7 +412,7 @@ class AcquiriumClient:
         data = response.json()
         return {uri: TimeseriesInfo.model_validate(info) for uri, info in data.items()}
 
-    def health(self, timeout: float = 3.0) -> dict:
+    def health(self, timeout: float = DEFAULT_HEALTH_REQUEST_TIMEOUT) -> dict:
         """GET /health; raises on connection failure or non-200."""
         response = self._http.get(f"{self.base_url}/health", timeout=timeout)
         _raise_for_status(response)

@@ -42,6 +42,12 @@ timeseries_backend = "duckdb"        # or "timescale" (requires pg_dsn)
 
 Relative paths resolve against the config file's directory.
 
+These are the standalone `acquirium server` defaults. The managed local
+runtime started by `aq.init()` uses `host="127.0.0.1"`, `port=0`, one worker,
+and `exact_only=true`. A supplied config can override supported settings such
+as the port, storage backend, paths, and resolution mode; the managed runtime
+still enforces loopback, persistence, and a single worker.
+
 `recreate = true` clears the local data directory at startup. With the
 Timescale backend it also drops and recreates Acquirium's configured database
 tables and views.
@@ -62,8 +68,9 @@ URIs and kinds it would with embeddings on; near-misses (`"basin for
 aeration"`) resolve to nothing instead of to the closest concept.
 `GET /embedding_status` reports `"semantic": false`.
 
-The flag is a start-time choice, not a property of the data directory: a
-later start without it builds the embeddings normally.
+The flag is a start-time choice, not a property of the data directory. A later
+standalone server start without it builds the embeddings normally; zero-config
+`aq.init()` continues to default to exact-only resolution.
 
 ### Environment variables
 
