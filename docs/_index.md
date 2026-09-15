@@ -62,7 +62,7 @@ Tutorials walk through the capabilities of Acquirium. We recommend starting here
 - [Your first driver](tutorials/first-driver.md) — authoring a CSV driver step by step without a plant model
 - [A driver against an existing plant model](tutorials/driver-with-a-plant-model.md) — the same driver with a plant model, binding its streams to the model's points
 - [Your first app](tutorials/first-app.md) — derive a new stream from stored data and watch it stay current
-- [Your first experiment](tutorials/first-experiment.md) — record a FlexPSE optimization run and its results
+- [Your first experiment](tutorials/first-experiment.py) — run a notebook that records and compares FlexPSE optimization results
 
 The notebooks under [`notebooks/watertap/`](https://github.com/DataDrivenCPS/acquirium/tree/main/notebooks/watertap) are runnable tutorials too: a quick start, the query interface feature by feature, a regulatory-compliance check and a soft sensor.
 

@@ -21,6 +21,23 @@ From this directory, create the environment:
 uv sync
 ```
 
+Open the guided notebook:
+
+```bash
+uv run marimo edit ../../docs/tutorials/first-experiment.py
+```
+
+The notebook loads `flexpse-watr-model.ttl`, which represents the facility,
+tank, plant, battery, and their properties in the plant graph. It runs three
+scenarios, reopens their Study without redeclaring variables, and compares the
+baseline tank trajectory with an explicitly synthetic deployment stream. Both
+streams point at the model's `tank-volume` property but retain separate
+simulation and deployment provenance.
+
+The synthetic rows demonstrate where data from a real driver would enter. They
+are generated only because this example does not ship measurements from an
+actual facility.
+
 Run the model and record its Experiment:
 
 ```bash
@@ -56,4 +73,4 @@ redistributed under FlexPSE's
 [Apache-2.0 license](https://github.com/flex-pse/flex-pse/blob/v0.1.0/LICENSE).
 
 For a guided walkthrough, see
-[`docs/tutorials/first-experiment.md`](../../docs/tutorials/first-experiment.md).
+[`docs/tutorials/first-experiment.py`](../../docs/tutorials/first-experiment.py).

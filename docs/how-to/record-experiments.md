@@ -2,7 +2,7 @@
 
 Use experiments to record the inputs, outputs, and events produced by a script
 or notebook without changing how the calculation itself runs. For a complete
-example, start with [Your first experiment](../tutorials/first-experiment.md).
+example, start with [Your first experiment](../tutorials/first-experiment.py).
 
 ## Wrap an analysis in an experiment
 
@@ -135,17 +135,20 @@ from the value. Prefer a declared handle in reusable analysis code.
 ## Reuse a Study in another session
 
 Study definitions persist. Calling `define()` again with the same name reuses
-the stored Study, but the new Python object does not automatically load its
-previous handles. Repeat the same declarations to make those handles available:
+the stored Study and loads its previous variable handles. Use `get()` when the
+process is only reading existing experiments:
 
 ```python
 study = ac.study.define("operating-scenarios")
-cost = study.output("total operating cost").scalar(unit="USD")
+cost = study.output["total operating cost"]
+
+historical = ac.study.get("operating-scenarios")
+historical.variables.frame()
 ```
 
-The role, type, unit, and other metadata must match the original declaration.
-Acquirium rejects a conflicting declaration rather than changing how earlier
-runs should be interpreted.
+Calling the declaration syntax remains idempotent. The role, type, unit, and
+other metadata must match the stored declaration; Acquirium rejects conflicts
+rather than changing how earlier runs should be interpreted.
 
 Collections can also retrieve or enumerate the handles declared through the
 current Study object:
@@ -161,6 +164,15 @@ for label, output in study.output.items():
 ```
 
 `study.input` and `study.log` support the same collection operations.
+
+For all declarations together, including their persisted metadata:
+
+```python
+for variable in historical.variables:
+    print(variable.label, variable.role, variable.kind, variable.metadata)
+
+timeseries_variables = historical.variables.where(kind="timeseries").frame()
+```
 
 ## Connect a time-series result to the facility
 

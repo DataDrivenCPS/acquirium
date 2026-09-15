@@ -69,7 +69,7 @@ guides, reference and explanation.
 | [Query cookbook](./docs/tutorials/query-cookbook.md) | domain questions, how to phrase them, the query |
 | [Working with data](./docs/tutorials/data.md) | lazy fetching, shapes, units, taking a result apart |
 | [Your first driver](./docs/tutorials/first-driver.md) | authoring a CSV driver step by step |
-| [Your first experiment](./docs/tutorials/first-experiment.md) | record a FlexPSE optimization run and its results |
+| [Your first experiment](./docs/tutorials/first-experiment.py) | run a notebook that records and compares FlexPSE optimization results |
 
 **How-to guides** — one task each:
 [start from a script](./docs/how-to/local-runtime.md),
