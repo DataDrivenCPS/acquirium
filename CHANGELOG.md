@@ -11,31 +11,15 @@ change in any release.
 ## [Unreleased]
 
 ### Added
+- Read-only `acquirium app list` and `acquirium app inspect NAME` commands,
+  with JSON output and matching HTTP/Python APIs. Inspection includes declared
+  output schemas, units, settings, resolved streams, progress, and errors,
+  including deployments with no matches or planning failures.
 - `Query.context()`: from a measurement, the entity it is about, following a
   named relation (`entity`, `upstream`, `downstream`, or one added with
   `register_relation`). Points on pipes reach the equipment feeding them.
 - `max_depth=0` is unbounded on every edge form; `direction=` edges and
   predicate lists compile to transitive property paths.
-
-### Changed
-- `measurement()` follows a fixed set of attach predicates (`hasProperty`,
-  directly or through a connection point, and `actuatedByProperty`), the
-  `entity` relation of `context()` read forwards, instead of any predicate.
-  Points a sensor `observes` are no longer returned for the sensor; they are
-  reached through the equipment or connection point that has them. The query
-  no longer scans the whole dataset (two seconds down to milliseconds on the
-  DPR model). A deployment attaching points by another predicate adds it with
-  `register_relation("entity", ...)`.
-- `measurement(direction=...)` searches the flow in places: the source's own
-  outlet (or inlet) connection points, then alternately the pipe and the next
-  entity with all of its connection points. `nearest` now defaults to `True`
-  with a direction, so each source keeps the first place holding a match and
-  filters walk past places without one; pass `nearest=False` for every point
-  within `max_depth`. The old form filtered the next entity's outlet or inlet
-  points only and skipped the source's own connection points.
-- `related(direction=..., nearest=True)` is supported the same way instead of
-  raising.
-
 - Incremental materialization apps on DuckDB and PostgreSQL/TimescaleDB.
   Apps select streams with a semantic query and implement
   `transform(inputs, output, context)`. Grouping is explicitly `per_match`
@@ -67,6 +51,23 @@ change in any release.
   progress, execution status, and errors.
 
 ### Changed
+- `measurement()` follows a fixed set of attach predicates (`hasProperty`,
+  directly or through a connection point, and `actuatedByProperty`), the
+  `entity` relation of `context()` read forwards, instead of any predicate.
+  Points a sensor `observes` are no longer returned for the sensor; they are
+  reached through the equipment or connection point that has them. The query
+  no longer scans the whole dataset (two seconds down to milliseconds on the
+  DPR model). A deployment attaching points by another predicate adds it with
+  `register_relation("entity", ...)`.
+- `measurement(direction=...)` searches the flow in places: the source's own
+  outlet (or inlet) connection points, then alternately the pipe and the next
+  entity with all of its connection points. `nearest` now defaults to `True`
+  with a direction, so each source keeps the first place holding a match and
+  filters walk past places without one; pass `nearest=False` for every point
+  within `max_depth`. The old form filtered the next entity's outlet or inlet
+  points only and skipped the source's own connection points.
+- `related(direction=..., nearest=True)` is supported the same way instead of
+  raising.
 - Preserve `insert_timeseries(..., replace=True)` ingestion compatibility on
   DuckDB and TimescaleDB: replacement keeps exactly the supplied rows, including
   clearing with an empty list or inserting into an unwritten stream. One revision
