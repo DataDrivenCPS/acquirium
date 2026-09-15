@@ -80,9 +80,75 @@ def declare_experiment_variable(template_id: str, request: ExperimentVariableReq
     try: return app.state.manager.experiments.declare(template_id, request.label, request.role, request.kind, request.metadata)
     except Exception as error: raise HTTPException(status_code=400, detail=str(error))
 
+def list_experiment_studies(name: str | None = None):
+    return app.state.manager.experiments.studies(name=name)
+
+def get_experiment_study(identifier: str):
+    try: return app.state.manager.experiments.study(identifier)
+    except KeyError: raise HTTPException(status_code=404, detail="unknown study")
+
+def list_experiment_variables(template_id: str):
+    try: return app.state.manager.experiments.variables(template_id)
+    except KeyError: raise HTTPException(status_code=404, detail="unknown study")
+
+def _experiment_metadata_filter(value: str | None) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as error:
+        raise HTTPException(status_code=400, detail="metadata must be a JSON object") from error
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=400, detail="metadata must be a JSON object")
+    return parsed
+
 def start_experiment(template_id: str, request: ExperimentStartRequest):
     try: return app.state.manager.experiments.start(template_id, request.metadata)
     except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def list_experiments(
+    template_id: str,
+    status: str | None = None,
+    started_after: datetime | None = None,
+    started_before: datetime | None = None,
+    metadata: str | None = None,
+):
+    try:
+        return app.state.manager.experiments.runs(
+            template_id,
+            status=status,
+            started_after=started_after,
+            started_before=started_before,
+            metadata=_experiment_metadata_filter(metadata),
+        )
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+def get_experiment(run_id: str):
+    try: return app.state.manager.experiments.run(run_id)
+    except KeyError: raise HTTPException(status_code=404, detail="unknown experiment")
+
+def list_experiment_observations(
+    template_id: str,
+    run_id: str | None = None,
+    variable_id: str | None = None,
+    status: str | None = None,
+    started_after: datetime | None = None,
+    started_before: datetime | None = None,
+    metadata: str | None = None,
+):
+    try:
+        return app.state.manager.experiments.observations(
+            template_id,
+            run_id=run_id,
+            variable_id=variable_id,
+            status=status,
+            started_after=started_after,
+            started_before=started_before,
+            metadata=_experiment_metadata_filter(metadata),
+        )
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error))
 
 def observe_experiment_variable(run_id: str, variable_id: str, request: ExperimentObservationRequest):
     try:
@@ -465,8 +531,14 @@ app = FastAPI(title="Acquirium API", version="0.1", lifespan=lifespan)
 # The client facade owns the pleasant Study/Experiment vocabulary. These
 # stable endpoint names stay deliberately storage-oriented and small.
 app.post("/experiments/templates")(define_experiment)
+app.get("/experiments/templates")(list_experiment_studies)
+app.get("/experiments/templates/lookup")(get_experiment_study)
 app.post("/experiments/templates/{template_id}/variables")(declare_experiment_variable)
+app.get("/experiments/templates/{template_id}/variables")(list_experiment_variables)
 app.post("/experiments/templates/{template_id}/runs")(start_experiment)
+app.get("/experiments/templates/{template_id}/runs")(list_experiments)
+app.get("/experiments/templates/{template_id}/observations")(list_experiment_observations)
+app.get("/experiments/runs/{run_id}")(get_experiment)
 app.post("/experiments/runs/{run_id}/variables/{variable_id}/observations")(observe_experiment_variable)
 app.post("/experiments/runs/{run_id}/variables/{variable_id}/file")(attach_experiment_file)
 app.post("/experiments/runs/{run_id}/finish")(finish_experiment)

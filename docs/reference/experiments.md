@@ -8,6 +8,8 @@ the observations produced by individual executions.
 | Interface | Returns | Meaning |
 |---|---|---|
 | `ac.study.define(name)` | `Study` | Define or reuse a Study by name |
+| `ac.study.get(name_or_id)` | `Study` | Reopen a persisted Study and hydrate its variables |
+| `ac.study.all()` | `list[Study]` | List persisted Studies |
 | `ac.point(uri)` | `Point` | Wrap a property URI for a time-series declaration |
 | `ac.resolve(text, kind=None, min_score=0.6)` | `Point` | Resolve text to one graph resource |
 | `aq.timestamp(value)` | `datetime` | Parse a string or normalize a datetime to UTC |
@@ -26,6 +28,8 @@ A `Study` exposes:
 | `input` | Callable collection of input variables |
 | `output` | Callable collection of output variables |
 | `log` | Callable collection of log variables |
+| `variables` | All persisted declarations, across roles |
+| `experiments` | Queryable collection of current and historical Experiments |
 | `start(metadata=None)` | Start and return an `Experiment` |
 
 One Study object can have only one active Experiment. Calling `start()` before
@@ -51,16 +55,31 @@ identical declaration reuses the persistent variable and, on the same Study
 object, returns the same handle. Changing its role, kind, or metadata raises
 `ValueError`.
 
-Collections support indexing by label, label membership, `len()`, iteration,
-`keys()`, `values()`, and `items()`. Iteration yields handles in declaration
-order. A newly created Study object contains only handles declared through that
-object; it does not fetch prior declarations automatically.
+The role-specific collections support indexing by label, label membership,
+`len()`, iteration, `keys()`, `values()`, and `items()`. Iteration yields
+handles in declaration order. Both `define()` and `get()` load declarations
+that were persisted by earlier processes, so post-hoc analysis does not need
+to repeat the declarations.
+
+`study.variables` combines the three roles. Index it by label or persistent
+variable ID, call `.all()` for handles, `.where(role=..., kind=...)` to select
+them, or `.frame()` for a Polars table containing IDs, labels, roles, kinds,
+creation times, and complete metadata:
+
+```python
+study = ac.study.get("operating-scenarios")
+study.variables.frame()
+
+cost = study.variables["total operating cost"]
+series_variables = study.variables.where(kind="timeseries").all()
+```
 
 Declaring a new variable during an active Experiment emits `UserWarning`.
 
 ## ExperimentVariable
 
-Every variable handle exposes `variable_id`, `label`, `kind`, and these methods:
+Every variable handle exposes `variable_id`, `label`, `role`, `kind`,
+`metadata`, `created_at`, and these methods:
 
 | Method | Intended kinds | Behavior |
 |---|---|---|
@@ -70,6 +89,7 @@ Every variable handle exposes `variable_id`, `label`, `kind`, and these methods:
 | `attach(path)` | file | Copy a file into artifact storage |
 | `add(rows)` | time series | Write timestamp/value rows to a run-scoped stream |
 | `use(ref_uri, interval=None)` | all | Record a reference and optional datetime interval |
+| `observations(experiments=None)` | all | Select persisted observations, optionally within an Experiment collection |
 
 `record()` dispatches files to the attachment operation, time series to
 `add()`, and other kinds to `set()`. `occurred_at` is supported for JSON, text,
@@ -101,8 +121,11 @@ Mutation requires an active Experiment on the variable's Study.
 | Member | Meaning |
 |---|---|
 | `run_id` | Persistent identifier for this execution |
+| `experiment_id` | Alias for `run_id` used by analysis tables |
 | `study` | Owning Study |
+| `status`, `metadata`, timestamps, `error` | Persisted execution context |
 | `output` | Run-bound output mapping |
+| `observations(variable=None)` | Select all observations or those for one variable |
 | `finish()` | Set status to `succeeded` and make the run terminal |
 | `fail(error)` | Set status to `failed`, store its type and message, and make the run terminal |
 
@@ -149,6 +172,43 @@ digest.
 
 ## Reading recorded data
 
+Reopen a Study without repeating its declarations:
+
+```python
+study = ac.study.get("operating-scenarios")
+variables = study.variables.frame()
+```
+
+`study.experiments` is a lazy selection. `.where()` accepts `status`,
+`started_after`, `started_before`, and an exact-match subset of run metadata.
+Use `.all()` for `Experiment` objects, `.frame()` for one Polars row per
+Experiment, and `.get(experiment_id)` for an individual Experiment:
+
+```python
+runs = study.experiments.where(
+    status="succeeded",
+    metadata={"batch": "september-sweep"},
+)
+run_table = runs.frame()
+experiment = study.experiments.get(run_table["experiment_id"][0])
+```
+
+An Experiment collection, individual Experiment, or variable can select
+observations. `.all()` returns `Observation` objects, `.frame()` returns a tidy
+Polars table, and `.latest()` returns the last matching observation:
+
+```python
+cost = study.variables["total operating cost"]
+cost_history = runs.observations(cost).frame()
+same_history = cost.observations(runs).frame()
+
+one_run = experiment.observations().frame()
+latest_cost = experiment.observations(cost).latest().value
+```
+
+These are retrieval primitives, not an analysis language. Sort, group, join,
+plot, or calculate extrema with Polars and the plotting library of your choice.
+
 Time-series variables are ordinary Acquirium streams. Retain the handle returned
 by `record()` and fetch its samples with:
 
@@ -161,10 +221,21 @@ frame = recorded_power.dataframe()
 `timeout`, and `value_mode` keyword arguments as the low-level time-series
 client. Its `ref_uri` attribute is the persistent stream reference.
 
-The experiment interface currently has no public read endpoint for enumerating
-a Study's runs or retrieving scalar, JSON, text, file, and log observations
-from the Experiment ledger. Cross-run dataframes, filtering, aggregation, and
-operations such as `argmax` are therefore not yet part of the interface.
+A historical time-series `Observation` exposes the same `ref_uri` and recorded
+range. Pass that URI to the normal time-series client; experiment storage does
+not duplicate samples or implement a separate time-series query path:
+
+```python
+power = experiment.observations("electrical power").latest()
+frame = ac.client.timeseries_df(
+    power.ref_uri,
+    start=power.range_start.isoformat(),
+    end=power.range_end.isoformat(),
+)
+```
+
+`Observation.dataframe()` is a convenience that delegates this same call and
+defaults to the observation's recorded range.
 
 ## HTTP API
 
@@ -174,8 +245,14 @@ The HTTP API calls a Study a `template`. `template_id`, `variable_id`, and
 | Method | Endpoint | Purpose |
 |---|---|---|
 | `POST` | `/experiments/templates` | Define or reuse a Study |
+| `GET` | `/experiments/templates` | List Studies; optionally filter by exact name |
+| `GET` | `/experiments/templates/lookup?identifier=...` | Retrieve a Study by name or ID |
 | `POST` | `/experiments/templates/{template_id}/variables` | Declare a variable |
+| `GET` | `/experiments/templates/{template_id}/variables` | List declarations and metadata |
 | `POST` | `/experiments/templates/{template_id}/runs` | Start an Experiment |
+| `GET` | `/experiments/templates/{template_id}/runs` | Filter and list Experiments |
+| `GET` | `/experiments/runs/{run_id}` | Retrieve one Experiment |
+| `GET` | `/experiments/templates/{template_id}/observations` | Filter and list observations |
 | `POST` | `/experiments/runs/{run_id}/variables/{variable_id}/observations` | Record a value or reference |
 | `POST` | `/experiments/runs/{run_id}/variables/{variable_id}/file` | Attach a file |
 | `POST` | `/experiments/runs/{run_id}/finish` | Mark the run succeeded |

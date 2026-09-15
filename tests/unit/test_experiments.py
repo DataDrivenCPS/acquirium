@@ -5,7 +5,7 @@ import warnings
 
 import pytest
 
-from acquirium.Experiments import ExperimentStore, Study
+from acquirium.Experiments import ExperimentStore, Study, StudyService, timestamp
 from acquirium.Storage.duckdb_store import DuckDBStore
 
 
@@ -49,8 +49,25 @@ def study_api(tmp_path):
     store = DuckDBStore(tmp_path / "api.duckdb", recreate=True)
     ledger = ExperimentStore(store, tmp_path / "artifacts")
     client = Mock()
+    client.define_experiment.side_effect = ledger.define
     client.declare_experiment_variable.side_effect = ledger.declare
+    client.list_experiment_studies.side_effect = ledger.studies
+    client.get_experiment_study.side_effect = ledger.study
+    client.list_experiment_variables.side_effect = ledger.variables
     client.start_experiment.side_effect = ledger.start
+    client.list_experiments.side_effect = ledger.runs
+    client.get_experiment.side_effect = ledger.run
+    client.list_experiment_observations.side_effect = ledger.observations
+    def observe(run_id, variable_id, *, start=None, end=None, occurred_at=None, **body):
+        interval = (timestamp(start), timestamp(end)) if start and end else None
+        return ledger.observe(
+            run_id,
+            variable_id,
+            occurred_at=timestamp(occurred_at) if occurred_at else None,
+            interval=interval,
+            **body,
+        )
+    client.observe_experiment.side_effect = observe
     client.finish_experiment.side_effect = lambda run_id: ledger.finish(run_id, "succeeded")
     ac = Mock(client=client)
     item = ledger.define("study")
@@ -83,6 +100,80 @@ def test_collections_preserve_handles_and_roles(study_api):
     with pytest.raises(ValueError, match="declared differently"):
         study.input("cost").scalar(unit="USD")
     assert study.output["cost"] is cost
+
+
+def test_reopened_study_hydrates_variables_and_reads_experiments(study_api):
+    study, ac, client = study_api.study, study_api.ac, study_api.client
+    cost = study.output("operating cost").scalar(unit="USD", objective="minimize")
+    power = study.output("electrical power").timeseries(
+        observed="urn:plant:tank",
+        unit="kW",
+    )
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    end = datetime(2026, 1, 1, 1, tzinfo=timezone.utc)
+
+    first = study.start({"scenario": "baseline", "batch": "notebook-1"})
+    cost.record(12.5)
+    power.use("urn:acquirium:power-1", interval=(start, end))
+    first.finish()
+
+    reopened = StudyService(ac).get("study")
+
+    assert reopened.study_id == study.study_id
+    assert reopened.variables["operating cost"].variable_id == cost.variable_id
+    assert reopened.variables[power.variable_id].label == "electrical power"
+    assert reopened.variables["operating cost"].metadata == {
+        "objective": "minimize",
+        "unit": "USD",
+    }
+    assert reopened.output["electrical power"].metadata == {
+        "observed": "urn:plant:tank",
+        "unit": "kW",
+    }
+    assert reopened.variables.where(role="output").frame().select(
+        "label", "role", "kind", "metadata"
+    ).to_dicts() == [
+        {
+            "label": "operating cost",
+            "role": "output",
+            "kind": "scalar",
+            "metadata": {"objective": "minimize", "unit": "USD", "observed": None},
+        },
+        {
+            "label": "electrical power",
+            "role": "output",
+            "kind": "timeseries",
+            "metadata": {"objective": None, "observed": "urn:plant:tank", "unit": "kW"},
+        },
+    ]
+
+    selected = reopened.experiments.where(
+        status="succeeded",
+        metadata={"batch": "notebook-1"},
+    )
+    experiments = selected.all()
+    assert [experiment.experiment_id for experiment in experiments] == [first.run_id]
+    assert selected.frame()["metadata"].to_list() == [
+        {"batch": "notebook-1", "scenario": "baseline"}
+    ]
+    assert reopened.experiments.get(first.run_id).metadata["scenario"] == "baseline"
+
+    costs = selected.observations("operating cost")
+    assert costs.frame().select("experiment_id", "value").to_dicts() == [
+        {"experiment_id": first.run_id, "value": 12.5}
+    ]
+    assert reopened.variables["operating cost"].observations(selected).latest().value == 12.5
+
+    power_observation = reopened.experiments.get(first.run_id).observations(power.variable_id).latest()
+    expected_frame = object()
+    client.timeseries_df.return_value = expected_frame
+    assert power_observation.ref_uri == "urn:acquirium:power-1"
+    assert power_observation.dataframe() is expected_frame
+    client.timeseries_df.assert_called_once_with(
+        power_observation.ref_uri,
+        start=start.isoformat(),
+        end=end.isoformat(),
+    )
 
 
 def test_only_new_active_run_declarations_warn(study_api):
