@@ -10,6 +10,8 @@ change in any release.
 
 ## [Unreleased]
 
+## [0.4.0a7] - 2026-09-14
+
 ### Added
 - Read-only `acquirium app list` and `acquirium app inspect NAME` commands,
   with JSON output and matching HTTP/Python APIs. Inspection includes declared
@@ -498,7 +500,8 @@ change in any release.
 - Text matcher backed by FastEmbed with QUDT and graph indexes.
 - Grafana dashboard helpers.
 
-[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a6...HEAD
+[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a7...HEAD
+[0.4.0a7]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a6...v0.4.0a7
 [0.4.0a6]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a5...v0.4.0a6
 [0.4.0a5]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a4...v0.4.0a5
 [0.4.0a4]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a3...v0.4.0a4
