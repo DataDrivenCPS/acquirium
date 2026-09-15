@@ -94,6 +94,9 @@ When a step uses `via="any"` or a repeatable predicate, the client resolves it a
 The walk also makes `nearest` exact: distance is counted per source, and ties survive.
 The final SPARQL only ever receives the concrete pairs the walk found.
 Predicate lists and `direction=` compile to SPARQL directly, without the walk.
+`nearest` along a direction is a walk of its own: the flow is divided into places (the source's own connection points, then alternately the connection and the entity with all its connection points), the one-step neighbours are fetched once and cached, frontiers advance per source with a visited set, and the candidates of each place are checked against the full pattern, filters included, as paired `VALUES`.
+A source stops at the first place that returns a row.
+`max_depth=0` continues until every pending source's frontier is empty, so loops end.
 Layer results are cached until the graph changes, so repeating a query is cheap.
 You can always inspect what will run with `.to_sparql()`.
 
@@ -105,6 +108,16 @@ However, s223 graphs contain some predicates that are not useful or meaningful f
 Additionally, certain edges in our graphs are attributes of the node.
 These predicates describe a node rather than connect the plant, and walking them returns ontology terms instead of nearby equipment.
 That's why we hide these during traversals.
+
+A measurement edge does not walk predicates at all: `measurement()` follows
+the `entity` relation of `acquirium.Client.explore.relations` read forwards
+(`hasProperty`, directly or through a connection point, and
+`actuatedByProperty` for an actuator), and `context()` follows it backwards,
+so the two are exact inverses.
+Sensors are not part of it: a point a sensor `observes` is reached through
+the equipment or connection point that has it, not through the sensor.
+A deployment that attaches points with another predicate registers it on
+that relation once and both verbs follow it.
 
 `via="any"` walks every predicate except a default hidden set: the ones backing
 the attributes (`rdf:type`, `hasUnit`, `hasQuantityKind`, `ofMedium`,
@@ -152,6 +165,40 @@ q.related("pump", via=UPSTREAM_EQUIPMENT, nearest=True)
 
 The module docstring of `acquirium.Client.explore.directions` documents
 every step.
+
+### The relations behind context()
+
+`context()` is the reverse of `measurement()`: from a measurement it adds the
+entity the measurement is about.
+Which entity is decided by a named relation from
+`acquirium.Client.explore.relations.RELATIONS`, a registry of step chains in
+the same form as the direction constants above.
+A relation compiles to one fixed SPARQL step, so it never triggers the
+client-side walk.
+
+| relation | chains, read from the measurement |
+|---|---|
+| `entity` | `^hasProperty`; `^hasProperty/^hasConnectionPoint` |
+| `upstream` | `DOWNSTREAM_PROPERTY` read backwards |
+| `downstream` | `UPSTREAM_PROPERTY` read backwards |
+
+`upstream` and `downstream` are not written by hand.
+`DOWNSTREAM_PROPERTY` lists where an entity's downstream measurements live;
+followed from the measurement back to the entity, the same four chains say
+which entity the measurement is downstream of.
+`reverse_chains()` does that flip, keeping each class constraint on the node
+it constrains.
+For a point on a pipe the chain that fires is `^hasProperty` to the
+connection, then `connectsFrom` (upstream) or `connectsTo` (downstream).
+
+`register_relation(name, chains)` adds one, `unregister_relation(name)`
+removes one, and `reset_relations()` restores the defaults.
+Wildcard steps are not allowed in a relation.
+
+Be aware that `entity` names its predicates while `measurement()` follows any
+predicate for one hop, so a model that attaches points with a predicate
+other than `hasProperty` is reached by `measurement()` but not by
+`context()` until that predicate is added to the relation.
 
 
 

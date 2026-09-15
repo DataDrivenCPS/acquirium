@@ -238,6 +238,27 @@ The filter feeds the two high-pressure pumps and the pressure exchanger, and
 the first thing measured after it is the connection to the splitter: TOC,
 temperature, mass flows and pressure.
 
+## Which pump feeds each pressure reading on a pipe?
+
+**How to phrase it.**
+Start from the readings, not the pumps.
+`context()` adds the entity a measurement is about; with the default
+relation that is the pipe itself, so ask for `via="upstream"`, the entity the
+reading is directly downstream of.
+
+```python
+(acq.query().measurement(quantity_kind="pressure", alias="p")
+ .context("pump", via="upstream", alias="pump")
+ .metadata())
+```
+<!-- TODO: capture output against seawater-ro -->
+
+Readings on a pump's own outlet connection point appear too, because the
+outlet pressure is downstream of the pump.
+To keep only the pipe readings, add `.context("pipe", frm="p")` before the
+upstream step, or `where(target="p", ...)` with an attribute that
+distinguishes them.
+
 ## Which measurement points carry no unit?
 
 **How to phrase it.**
