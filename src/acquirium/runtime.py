@@ -95,6 +95,11 @@ def _forget_stale_runtime(directory: Path) -> None:
         (directory / "server.json").unlink(missing_ok=True)
 
 
+def _progress(message: str) -> None:
+    # stderr keeps the caller's stdout free for its own output.
+    print(f"Acquirium: {message}", file=sys.stderr, flush=True)
+
+
 def _cold_start(root: Path) -> bool:
     """True when either embedding index has no cached vectors under root."""
     cache = root / "embedding_cache"
@@ -172,7 +177,7 @@ def init(
                 )
             return client
         if address is not None:
-            print(f"Acquirium: connecting to {address}")
+            _progress(f"connecting to {address}")
             client = _client(address, timeout)
             _session = (os.getpid(), key, client, None, None)
             return client
@@ -189,9 +194,9 @@ def init(
         try:
             with FileLock(directory / "startup.lock", timeout=timeout):
                 if _running(directory):
-                    print(f"Acquirium: connecting to the local server for {root}")
+                    _progress(f"connecting to the local server for {root}")
                 else:
-                    print(f"Acquirium: starting a local server for {root}")
+                    _progress(f"starting a local server for {root}")
                     _forget_stale_runtime(directory)
                     # Config and explicit options determine storage. Inherited
                     # server paths/recreate flags must not redirect this runtime.
@@ -214,8 +219,8 @@ def init(
                             stderr=subprocess.STDOUT, start_new_session=True,
                         )
                     if cold:
-                        print(
-                            "Acquirium: building text-matching indexes for the first "
+                        _progress(
+                            "building text-matching indexes for the first "
                             "time; this can take up to 15 minutes. "
                             f"Progress: {directory / 'server.log'}"
                         )
@@ -238,7 +243,7 @@ def init(
                                 "exact_only setting"
                             )
                         client = _client(f"http://127.0.0.1:{info['port']}", None)
-                        print(f"Acquirium: ready at {client.address}")
+                        _progress(f"ready at {client.address}")
                         _session = (os.getpid(), key, client, process, info["exact_only"])
                         return client
                     time.sleep(0.1)
