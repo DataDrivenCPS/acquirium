@@ -360,3 +360,41 @@ def test_insert_graph_rejects_path_objects(tmp_path):
     path.write_text("@prefix ex: <urn:ex#> .")
     with pytest.raises(TypeError, match="insert_graph_file"):
         AcquiriumClient().insert_graph(path, source_id="s")
+
+
+class TestResolveCurie:
+    @pytest.fixture(autouse=True)
+    def namespaces(self, http):
+        prefixes = MagicMock()
+        prefixes.json.return_value = {
+            "watr": "urn:nawi-water-ontology#",
+            "quantitykind": "http://qudt.org/vocab/quantitykind/",
+        }
+        http.get.return_value = prefixes
+
+    def test_bound_curie_expands_without_matching(self, http, client):
+        assert client.resolve("watr:UltrafiltrationUnit", "class") == (
+            "urn:nawi-water-ontology#UltrafiltrationUnit"
+        )
+        assert client.resolve("quantitykind:Pressure", "quantity_kind", top_k=2) == [{
+            "uri": "http://qudt.org/vocab/quantitykind/Pressure",
+            "kind": "quantity_kind", "score": 1.0, "match_stage": "passthrough",
+        }]
+        http.get.assert_called_once_with("http://localhost:8000/namespace/list")
+
+    def test_record_expands_bound_curies_only(self, http, client):
+        response = MagicMock()
+        response.json.return_value = {"matches": {"u": [{"uri": "urn:unit"}]}}
+        http.post.return_value = response
+        out = client.resolve({
+            "qk": ("quantitykind:Pressure", "quantity_kind"),
+            "u": ("mg/l", "unit"),
+        })
+        assert out == {"qk": "http://qudt.org/vocab/quantitykind/Pressure", "u": "urn:unit"}
+        fields = http.post.call_args.kwargs["json"]["fields"]
+        assert [f["name"] for f in fields] == ["u"]
+
+    @pytest.mark.parametrize("text", ["nope:Pump", "flow: water", "a:b:c"])
+    def test_other_text_is_matched(self, http, client, text):
+        client.resolve(text, "class")
+        assert http.get.call_args.kwargs["params"]["text"] == text
