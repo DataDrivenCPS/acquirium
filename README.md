@@ -71,6 +71,7 @@ guides, reference and explanation.
 | [Your first driver](./docs/tutorials/first-driver.md) | authoring a CSV driver step by step |
 
 **How-to guides** — one task each:
+[start from a script](./docs/how-to/local-runtime.md),
 [load a plant model](./docs/how-to/load-a-plant-model.md),
 [explore a model](./docs/how-to/explore-a-model.md),
 [debug a query](./docs/how-to/debug-an-empty-query.md),

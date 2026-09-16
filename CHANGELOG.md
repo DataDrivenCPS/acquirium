@@ -10,7 +10,16 @@ change in any release.
 
 ## [Unreleased]
 
+### Added
+- A defined zero-config profile for `aq.init()`: project-local DuckDB and
+  Oxigraph storage, loopback on an ephemeral port, one worker, persistence,
+  and fast offline startup with exact-only resolution.
+
 ### Fixed
+- CURIEs such as `watr:UltrafiltrationUnit` or `quantitykind:Pressure` given as
+  a class, relation or attribute value are expanded with the server's prefix
+  table. They were sent to text matching instead, which fails in exact-only
+  mode and can pick a similar concept (`PressureBasedQuantity`) otherwise.
 - `GET /namespace/list` serves a stable prefix table. The bundled ontologies are
   loaded as N-Triples, which carries no `@prefix` declarations, so `unit:`,
   `quantitykind:` and acquirium's own namespaces were never bound: clients fell

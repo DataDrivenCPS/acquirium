@@ -16,6 +16,7 @@ from acquirium.Storage import (
     TimeseriesStore,
     create_timeseries_store,
 )
+from acquirium.Storage.graph_store import select_values
 from acquirium.Storage.publication.types import PublicationReceipt, PublicationRequest, PublicationStore
 from acquirium.Storage.values import normalize_value_kind
 from acquirium.internals.qudt_units import QUDTUnitConverter
@@ -359,14 +360,16 @@ class Manager:
 
     # ----- Embedding index methods -----
 
-    def _extract_concepts_for_embedding(self, graph: "Graph") -> list[dict[str, Any]]:
-        """Extract class / predicate / substance concepts from *graph*.
+    def _extract_concepts_for_embedding(self, iris: list[str]) -> list[dict[str, Any]]:
+        """Extract class / predicate / substance / process concepts.
 
-        *graph* is the merged water + s223 vocabulary (read out of ontoenv,
-        imports not followed). Unit / quantity_kind concepts come separately
-        from the QUDT graphs via :class:`QUDTStore`.
+        The queries run over an in-memory Oxigraph copy of the union of the
+        ontology graphs named by *iris* (water + s223; imports not followed).
+        Unit / quantity_kind concepts come separately via :class:`QUDTStore`.
         """
         concepts: list[dict[str, Any]] = []
+        with timed_debug(logger, "graph embedding: copy %s", iris):
+            vocabulary = self.graph_store.copy_graphs(iris)
 
         label_block_basic = f"""
           OPTIONAL {{
@@ -436,7 +439,7 @@ class Manager:
             seen: set[str] = set()
             try:
                 with timed_debug(logger, "extract %s concepts (SPARQL)", kind):
-                    rows = list(graph.query(query))
+                    rows = select_values(vocabulary, query, iris)
                 logger.debug("extract %s: %d raw rows", kind, len(rows))
                 _aggregate_uri_label_rows(rows, seen, kind, concepts)
             except Exception:
@@ -464,9 +467,9 @@ class Manager:
     def _build_embedding_indexes(self) -> None:
         """Build both embedding indexes once from the static ontoenv graphs.
 
-        graph matcher <- water + s223 vocabularies merged (class / predicate
-        / substance); qudt matcher <- the QUDT unit + quantity_kind
-        vocabularies. Graphs are read out of ontoenv by IRI (owl:imports
+        graph matcher <- water + s223 vocabularies (class / predicate /
+        substance / process); qudt matcher <- the QUDT unit + quantity_kind
+        vocabularies. Both are queried in Oxigraph by graph IRI (owl:imports
         not followed); no inserted data is embedded.
 
         Runs the same way in exact-only mode — same concepts, same counts —
@@ -479,12 +482,7 @@ class Manager:
         self._update_embedding_status("graph", state="building")
         t0 = perf_counter()
         try:
-            with timed_debug(logger, "graph embedding: merge water+s223 named graphs"):
-                merged = Graph()
-                for iri in (WATER_IRI, S223_IRI):
-                    merged += self.graph_store.named_graph(iri)
-            logger.debug("graph embedding: merged %d triples", len(merged))
-            concepts = self._extract_concepts_for_embedding(merged)
+            concepts = self._extract_concepts_for_embedding([WATER_IRI, S223_IRI])
             if concepts:
                 with timed_debug(logger, "graph embedding: build_index n=%d", len(concepts)):
                     self._graph_matcher.build_index(concepts)
@@ -500,15 +498,15 @@ class Manager:
         t0 = perf_counter()
         try:
             qc: list[dict[str, Any]] = []
-            with timed_debug(logger, "qudt embedding: extract Unit concepts"):
-                qc += QUDTStore.extract_concepts(
-                    self.graph_store.named_graph(QUDT_UNIT_IRI), str(QUDT.Unit)
-                )
-            with timed_debug(logger, "qudt embedding: extract QuantityKind concepts"):
-                qc += QUDTStore.extract_concepts(
-                    self.graph_store.named_graph(QUDT_QK_IRI),
-                    str(QUDT.QuantityKind),
-                )
+            for iri, rdf_type in (
+                (QUDT_UNIT_IRI, str(QUDT.Unit)),
+                (QUDT_QK_IRI, str(QUDT.QuantityKind)),
+            ):
+                with timed_debug(logger, "qudt embedding: extract %s concepts", rdf_type):
+                    rows = self.graph_store.select_in_graphs(
+                        QUDTStore.concept_query(rdf_type), [iri]
+                    )
+                    qc += QUDTStore.extract_concepts(rows, rdf_type)
             logger.debug("qudt embedding: %d total concepts", len(qc))
             if qc:
                 with timed_debug(logger, "qudt embedding: build_index n=%d", len(qc)):

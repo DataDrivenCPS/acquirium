@@ -28,7 +28,7 @@ def _dt_to_iso(v: "str | datetime | None") -> "str | None":
     return v.isoformat() if isinstance(v, datetime) else v
 
 
-from acquirium.Client.client import AcquiriumClient
+from acquirium.Client.client import AcquiriumClient, DEFAULT_HEALTH_REQUEST_TIMEOUT
 from acquirium.internals.models import compute_ref_uri
 
 
@@ -78,19 +78,27 @@ class Acquirium:
         if health_timeout:
             self._wait_for_server(health_timeout)
 
+    @property
+    def address(self) -> str:
+        """The HTTP(S) address of the server this client is connected to."""
+        return self.client.address
+
     def _wait_for_server(self, timeout: float) -> None:
         import time as _time
         deadline = _time.monotonic() + timeout
         last_err: Exception | None = None
         while True:
+            remaining = deadline - _time.monotonic()
+            if remaining <= 0:
+                break
             try:
-                self.client.health(timeout=3.0)
+                self.client.health(timeout=min(DEFAULT_HEALTH_REQUEST_TIMEOUT, remaining))
                 return
             except Exception as e:
                 last_err = e
-            if _time.monotonic() >= deadline:
-                break
-            _time.sleep(min(2.0, max(0.1, deadline - _time.monotonic())))
+            remaining = deadline - _time.monotonic()
+            if remaining > 0:
+                _time.sleep(min(2.0, remaining))
         raise ConnectionError(
             f"Acquirium server at {self.client.base_url} did not answer /health "
             f"within {timeout:.0f}s (last error: {last_err}). Is the server "

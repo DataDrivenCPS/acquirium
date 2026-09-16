@@ -3,7 +3,27 @@
 import pytest
 from datetime import datetime, timezone
 
-from acquirium.Server.app import _accepted_sparql_formats, _parse_dt, _sparql_results_to_rows
+from acquirium.Server.app import (
+    _accepted_sparql_formats,
+    _parse_dt,
+    _self_connect_cfg,
+    _sparql_results_to_rows,
+)
+
+
+def test_local_runtime_self_address_overrides_reusable_driver_config(monkeypatch):
+    monkeypatch.setenv("ACQUIRIUM_SELF_HOST", "127.0.0.1")
+    monkeypatch.setenv("ACQUIRIUM_SELF_PORT", "49152")
+    config = {
+        "server": {"port": 8000},
+        "driver": {
+            "server_url": "acquirium.example.org",
+            "server_port": 443,
+            "use_ssl": True,
+        },
+    }
+
+    assert _self_connect_cfg(config) == ("127.0.0.1", 49152, False)
 
 
 class TestParseDt:

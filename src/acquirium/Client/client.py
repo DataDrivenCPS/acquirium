@@ -1,6 +1,7 @@
 from typing import Optional, Iterator, Iterable, Any, Callable, TYPE_CHECKING
 from datetime import datetime, timezone
 import json
+import re
 import requests
 from requests import HTTPError
 from pathlib import Path
@@ -22,6 +23,9 @@ from rdflib import Graph, URIRef, Literal
 from rdflib.namespace import NamespaceManager, RDF, RDFS
 import logging
 logger = logging.getLogger(__name__)
+
+DEFAULT_HEALTH_REQUEST_TIMEOUT = 30.0
+_CURIE = re.compile(r"[A-Za-z_][\w.-]*:[^\s:]+")
 
 if TYPE_CHECKING:
     import pyarrow as pa
@@ -233,6 +237,11 @@ class AcquiriumClient:
         )
         self._namespaces_cache: dict[str, str] | None = None
 
+    @property
+    def address(self) -> str:
+        """The HTTP(S) address of the server this client uses."""
+        return self.base_url
+
     def insert_graph(
         self,
         rdf_graph: str,
@@ -391,7 +400,7 @@ class AcquiriumClient:
         data = response.json()
         return {uri: TimeseriesInfo.model_validate(info) for uri, info in data.items()}
 
-    def health(self, timeout: float = 3.0) -> dict:
+    def health(self, timeout: float = DEFAULT_HEALTH_REQUEST_TIMEOUT) -> dict:
         """GET /health; raises on connection failure or non-200."""
         response = self._http.get(f"{self.base_url}/health", timeout=timeout)
         _raise_for_status(response)
@@ -499,6 +508,16 @@ class AcquiriumClient:
         except Exception as e:
             raise ValueError(f"Cannot expand '{s}': no matching namespace for CURIE and not a full URI")
 
+    def _expand_curie(self, text: str) -> Optional[str]:
+        """Expand ``prefix:local`` when the server binds the prefix, else None."""
+        if not _CURIE.fullmatch(text):
+            return None
+        prefix = text.split(":", 1)[0]
+        nm = self.namespace_manager()
+        if nm.store.namespace(prefix) is None:
+            return None
+        return str(nm.expand_curie(text))
+
     def resolve(
         self,
         query: "str | dict[str, tuple[Any, Optional[str]]]",
@@ -513,7 +532,8 @@ class AcquiriumClient:
         Three forms, chosen by the input:
 
         - ``resolve("mg/l", "unit")`` -> best URI or ``None``. Values that
-          already look like URIs pass through unchanged.
+          already look like URIs pass through unchanged, and CURIEs with a
+          prefix bound on the server expand without text matching.
         - ``resolve("mg/l", "unit", top_k=3)`` -> ranked candidate dicts
           (``uri``/``score``/``match_stage``/...), for disambiguation UIs and
           debugging what a text almost matched.
@@ -533,6 +553,8 @@ class AcquiriumClient:
                     out[name] = None
                 elif looks_like_uri(text):
                     out[name] = str(text)
+                elif (expanded := self._expand_curie(str(text))) is not None:
+                    out[name] = expanded
                 else:
                     to_resolve[name] = (str(text), k)
             if to_resolve:
@@ -553,10 +575,11 @@ class AcquiriumClient:
             return out
 
         text = str(query)
-        if looks_like_uri(text):
+        uri = text if looks_like_uri(text) else self._expand_curie(text)
+        if uri is not None:
             if top_k == 1:
-                return text
-            return [{"uri": text, "kind": kind, "score": 1.0, "match_stage": "passthrough"}]
+                return uri
+            return [{"uri": uri, "kind": kind, "score": 1.0, "match_stage": "passthrough"}]
         params: dict[str, Any] = {"text": text, "top_k": top_k, "min_score": min_score}
         if kind:
             params["kind"] = kind

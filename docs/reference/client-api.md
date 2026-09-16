@@ -11,6 +11,21 @@ builds, the `DataObject` a query returns, and the lower-level
 `AcquiriumClient` behind all three.
 Type hints are shortened; `pl` is polars, `pa` is pyarrow.
 
+## init and shutdown
+
+`acquirium.init(config=None, *, data_dir=None, address=None, exact_only=None, timeout=600)`
+returns an `Acquirium` client. `config` accepts a TOML path; with no arguments,
+`init()` loads `./acquirium.toml` if it exists. Without an address, it starts or
+attaches to a local server for the resolved data directory. With no config, the
+local profile uses persistent DuckDB and Oxigraph storage in `./.acquirium`, an
+ephemeral loopback port, one worker, and exact-only text resolution.
+Pass `address="https://acquirium.example.org"` to connect to a separately
+managed remote server. This does not start or stop that server. Every
+`Acquirium` instance exposes its connected server as `acq.address`.
+`acquirium.shutdown()` disconnects and stops only a server this process started.
+It also runs at normal interpreter exit. See
+[local runtime](../how-to/local-runtime.md) for ownership, options, and cleanup.
+
 ## Acquirium
 
 ```python
@@ -194,7 +209,7 @@ and are listed once above.
 
 | method | description |
 |---|---|
-| `health(timeout=3.0) -> dict` | `GET /health`; raises on failure. |
+| `health(timeout=30.0) -> dict` | `GET /health`; raises on failure. |
 | `graph_version() -> int`, `graph_status() -> dict` | As on `Acquirium`. |
 | `embedding_status() -> dict` | State of the two embedding indexes. |
 | `validate_graph() -> dict` | As on `Acquirium`. |

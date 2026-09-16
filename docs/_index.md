@@ -73,6 +73,7 @@ The notebooks under [`notebooks/watertap/`](https://github.com/DataDrivenCPS/acq
 - [Calculate derived streams](how-to/calculate-derived-streams.md) — water-temperature conversion, averages, and alarms
 - [Check, deploy, and repair an app](how-to/check-deploy-apps.md) — dry runs, deployment, reprocessing, and execution controls
 - [Run the server](how-to/run-the-server.md) — the server command, startup, Docker
+- [Start from a script](how-to/local-runtime.md) — `aq.init()`, config discovery, and local server ownership
 - [Debugging queries for an unexpected result](how-to/debug-an-empty-query.md) — the five usual causes
 - [Explore a model](how-to/explore-a-model.md) — build a query step by step; `options()` and `facets()`
 - [Load a plant model](how-to/load-a-plant-model.md) — insert the model, check it landed, validate it against the shapes
