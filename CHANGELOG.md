@@ -10,6 +10,16 @@ change in any release.
 
 ## [Unreleased]
 
+### Fixed
+- `GET /namespace/list` serves a stable prefix table. The bundled ontologies are
+  loaded as N-Triples, which carries no `@prefix` declarations, so `unit:`,
+  `quantitykind:` and acquirium's own namespaces were never bound: clients fell
+  back to rdflib's generated `ns1`, `ns2` names, which are assigned in whatever
+  order URIs happen to be serialized. The same URI compacted to a different CURIE
+  in two clients, and to another one after a restart. The store now seeds its
+  namespace manager from a canonical set on every open, and never binds a
+  generated name, whether it arrives from rdflib or in an inserted model.
+
 ## [0.4.0a7] - 2026-09-14
 
 ### Added

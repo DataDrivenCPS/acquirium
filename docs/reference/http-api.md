@@ -110,7 +110,12 @@ Validate all registered deployment data against the ontology shapes and SHACL ru
 
 ### `GET /namespace/list`
 
-Returns all namespace prefix bindings in the union graph as a `{prefix: uri}` map.
+Returns the server's prefix bindings as a `{prefix: uri}` map: acquirium's own
+prefixes (`acq`, `point`, `qudt`, `unit`, `quantitykind`, `s223`, `g36`, `watr`,
+`brick`, `ref`), the prefixes inserted models declared for their own
+vocabularies, and rdflib's defaults. Generated names (`ns1`, `ns2`, ...) are
+never bound, so a URI compacts to the same CURIE in every client and after a
+restart.
 
 ---
 
