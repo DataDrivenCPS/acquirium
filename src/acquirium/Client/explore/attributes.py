@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from rdflib.namespace import RDF
+from rdflib.namespace import RDF, RDFS
 
 from acquirium.internals.internals_namespaces import (
     CONNECTION_POINT,
@@ -99,6 +99,9 @@ REGISTRY: dict[str, Attr] = {
         # materializer. Absent on measurements that came from a driver.
         Attr("app", (str(PRODUCED_BY),), "any", DATA, literal=True,
              doc='app that derived the measurement ("normalize-temperatures")'),
+        # rdfs:label literal on a data node (stream label / CSV column name).
+        Attr("label", (str(RDFS.label),), "any", DATA, literal=True,
+             doc='stream label, matched verbatim ("Influent flow")'),
     )
 }
 
