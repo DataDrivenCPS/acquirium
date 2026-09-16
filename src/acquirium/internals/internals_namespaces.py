@@ -1,5 +1,5 @@
-from rdflib.namespace import Namespace
-from rdflib import URIRef, RDF, RDFS
+from rdflib.namespace import Namespace, NamespaceManager
+from rdflib import Graph, URIRef, RDF, RDFS
 
 ### ACQUIRIUM INTERNAL NAMESPACES
 ACQUIRIUM_NS = Namespace("urn:acquirium#")
@@ -11,6 +11,7 @@ QUDT_UNIT = Namespace("http://qudt.org/vocab/unit/")
 QUDT_QUANTITY_KIND = Namespace("http://qudt.org/vocab/quantitykind/")
 UNIT = Namespace("http://qudt.org/vocab/unit/")
 S223 = Namespace("http://data.ashrae.org/standard223#")
+G36 = Namespace("http://data.ashrae.org/standard223/1.0/extensions/g36#")
 WATR = Namespace("urn:nawi-water-ontology#")
 BRICK = Namespace("https://brickschema.org/schema/Brick#")
 BRICK_REF = Namespace("https://brickschema.org/schema/Brick/ref#")
@@ -127,3 +128,28 @@ CONNECTION_POINT = S223.hasConnectionPoint
 CONNECTED_THROUGH = S223.connectedThrough
 CONNECTS_TO = S223.connectsTo
 CONNECTS_FROM = S223.connectsFrom
+
+
+# The prefix acquirium uses for each namespace it owns or ships an ontology
+# for. The store seeds its own namespace manager from this one on every open
+# and these bindings win: the bundled ontologies are loaded as N-Triples,
+# which carries no prefix declarations, so nothing else ever names them.
+def _canonical_namespace_manager() -> NamespaceManager:
+    graph = Graph(bind_namespaces="none")
+    for prefix, namespace in (
+        ("acq", ACQUIRIUM_NS),
+        ("point", ACQUIRIUM_POINT_NS),
+        ("qudt", QUDT),
+        ("unit", QUDT_UNIT),
+        ("quantitykind", QUDT_QUANTITY_KIND),
+        ("s223", S223),
+        ("g36", G36),
+        ("watr", WATR),
+        ("brick", BRICK),
+        ("ref", BRICK_REF),
+    ):
+        graph.namespace_manager.bind(prefix, namespace, override=True, replace=True)
+    return graph.namespace_manager
+
+
+CANONICAL_NAMESPACES: NamespaceManager = _canonical_namespace_manager()
