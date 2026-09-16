@@ -155,3 +155,88 @@ def test_close_releases_the_ontoenv_lock(tmp_path, monkeypatch):
     store, env, _ = _build_store(tmp_path, monkeypatch, source_ready=False)
     store.close()
     env.close.assert_called_once()
+
+
+def _real_store(tmp_path: Path, monkeypatch):
+    """A store over a real Oxigraph dataset: prefix bindings live on rdflib's
+    namespace manager, which the fakes above do not have. Only ontoenv and the
+    bundled-ontology parse are stubbed; neither feeds the namespace manager."""
+    from rdflib import Graph
+
+    class FakeOntoEnv:
+        def __init__(self, *args, **kwargs):
+            self.update = MagicMock()
+            self.add = MagicMock()
+            self.close = MagicMock()
+
+        @classmethod
+        def connect(cls, *args, **kwargs):
+            return cls()
+
+    monkeypatch.setattr(graph_store_module, "OntoEnv", FakeOntoEnv)
+    monkeypatch.setattr(graph_store_module, "load_bundled_graph", lambda fname, canonical: Graph())
+    return graph_store_module.OxigraphGraphStore(
+        store_path=tmp_path / "store", env_root=tmp_path / "env"
+    )
+
+
+def _bound(store) -> dict[str, str]:
+    return {str(p): str(n) for p, n in store.namespace_manager().namespaces()}
+
+
+def test_canonical_prefixes_are_seeded_on_open(tmp_path, monkeypatch):
+    """The bundled ontologies load as prefix-less N-Triples, so nothing else
+    would name unit:, quantitykind: or acquirium's own namespaces."""
+    from acquirium.internals.internals_namespaces import CANONICAL_NAMESPACES
+
+    store = _real_store(tmp_path, monkeypatch)
+    try:
+        bound = _bound(store)
+        for prefix, namespace in CANONICAL_NAMESPACES.namespaces():
+            assert bound[str(prefix)] == str(namespace)
+    finally:
+        store.close()
+
+
+def test_an_insert_adds_its_prefixes_without_renaming_canonical_ones(tmp_path, monkeypatch):
+    from rdflib import Graph, URIRef
+
+    store = _real_store(tmp_path, monkeypatch)
+    try:
+        incoming = Graph()
+        incoming.parse(
+            data="@prefix dpr: <urn:dpr/> . "
+                 "@prefix qudtqk: <http://qudt.org/vocab/quantitykind/> . "
+                 "dpr:a dpr:b qudtqk:Pressure .",
+            format="turtle",
+        )
+        store._apply_graph_write(
+            incoming, target=store.query_dataset.graph(URIRef("urn:test:g")), replace=False
+        )
+        bound = _bound(store)
+        assert bound["dpr"] == "urn:dpr/"                       # the model's own name, kept
+        assert bound["quantitykind"] == "http://qudt.org/vocab/quantitykind/"
+        assert "qudtqk" not in bound                            # an alias never displaces it
+    finally:
+        store.close()
+
+
+def test_a_generated_name_is_never_bound(tmp_path, monkeypatch):
+    """A client that serializes a bare rdflib Graph sends `@prefix ns1:` for
+    whatever namespace it happened to write first."""
+    from rdflib import Graph, URIRef
+
+    store = _real_store(tmp_path, monkeypatch)
+    try:
+        incoming = Graph()
+        incoming.parse(
+            data="@prefix ns1: <urn:acquirium#> . ns1:a ns1:b ns1:c .", format="turtle"
+        )
+        store._apply_graph_write(
+            incoming, target=store.query_dataset.graph(URIRef("urn:test:g")), replace=False
+        )
+        bound = _bound(store)
+        assert "ns1" not in bound
+        assert bound["acq"] == "urn:acquirium#"
+    finally:
+        store.close()

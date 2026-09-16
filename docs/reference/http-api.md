@@ -110,7 +110,12 @@ Validate all registered deployment data against the ontology shapes and SHACL ru
 
 ### `GET /namespace/list`
 
-Returns all namespace prefix bindings in the union graph as a `{prefix: uri}` map.
+Returns the server's prefix bindings as a `{prefix: uri}` map: acquirium's own
+prefixes (`acq`, `point`, `qudt`, `unit`, `quantitykind`, `s223`, `g36`, `watr`,
+`brick`, `ref`), the prefixes inserted models declared for their own
+vocabularies, and rdflib's defaults. Generated names (`ns1`, `ns2`, ...) are
+never bound, so a URI compacts to the same CURIE in every client and after a
+restart.
 
 ---
 
@@ -517,6 +522,24 @@ An app definition is the JSON built by `Deployment.from_class`: its name,
 importable entrypoint, executable digest, output declarations, parameters, and
 window and scheduling attributes. See the [app reference](apps.md) for the
 complete schema.
+
+### `GET /apps`
+
+List every stored deployment, including apps whose query has no matches or
+whose latest plan failed. Each summary contains `name`, `entrypoint`,
+`grouping`, `status`, `binding_count`, `binding_statuses`, `graph_revision`,
+`plan_current`, and `error`.
+
+**Response** `{"ok": true, "apps": [...]}`
+
+### `GET /apps/{name}`
+
+Return the same summary for one deployment plus its stored `definition`,
+normalized `output_schemas`, and latest compiled `bindings`. This endpoint
+only reads the current state; it does not import code, refresh the plan, or run
+a transform. An unknown name returns 404.
+
+**Response** `{"ok": true, "app": {...}}`
 
 ### `PUT /apps/{name}`
 

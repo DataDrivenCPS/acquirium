@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,6 +34,12 @@ from acquirium.Storage.graph_registry import ACQUIRIUM_GRAPH_URI, SOURCE_GRAPH_P
 from acquirium.Storage.graph_registry import source_graph_uri as _compute_source_graph_uri
 
 _logger = logging.getLogger("acquirium.graph_store")
+
+# rdflib's name for a namespace nothing declared. Which number a namespace
+# gets depends only on the order URIs happened to be serialized in, so these
+# are never bound: they would make the same URI read differently from one
+# client, or one restart, to the next.
+_GENERATED_PREFIX = re.compile(r"^ns\d+$")
 
 
 def _literal_dt(value: datetime) -> Literal:
@@ -241,6 +248,13 @@ class OxigraphGraphStore:
         self._query_cache_closure_version = -1
         self._dependency_query_graph_closure_version = -1
         self._named_graph_cache: dict[str, Graph] = {}
+        # Oxigraph holds prefix bindings in memory, so the namespace manager
+        # behind /namespace/list is seeded on every open. The canonical
+        # bindings go on first and win: the bundled ontologies are loaded as
+        # N-Triples, which drops their @prefix declarations, so without this
+        # nothing would name unit:, quantitykind: or acquirium's own
+        # namespaces and every client would invent its own name for them.
+        self._bind_prefixes(CANONICAL_NAMESPACES.namespaces(), override=True)
 
         # ontoenv shares this Oxigraph store via the graph-store protocol,
         # over the authoritative source dataset. SPARQL reads query that
@@ -596,21 +610,39 @@ class OxigraphGraphStore:
             target.remove((None, None, None))
         for triple in incoming:
             target.add(triple)
-        # Propagate prefix bindings declared in the incoming Turtle/RDF
-        # (rdflib's parser populates incoming.namespace_manager from
-        # `@prefix` directives) so they survive into the stores that back
-        # the public /namespace/list endpoint.
-        for prefix, ns_uri in incoming.namespaces():
-            try:
-                target.bind(prefix, ns_uri, override=False)
-                self.query_dataset.namespace_manager.bind(
-                    prefix, ns_uri, override=False
-                )
-            except Exception:
-                _logger.debug(
-                    "namespace bind failed for %s=%s", prefix, ns_uri, exc_info=True
-                )
+        # Prefix bindings declared in the incoming Turtle/RDF (rdflib's parser
+        # populates incoming.namespace_manager from `@prefix` directives) so
+        # they survive into the stores that back the public /namespace/list
+        # endpoint. A model keeps the name its author chose for its own
+        # vocabulary, but never renames a canonical namespace.
+        self._bind_prefixes(incoming.namespaces(), override=False, target=target)
         return target
+
+    def _bind_prefixes(
+        self,
+        bindings: Iterable[tuple[str, URIRef]],
+        *,
+        override: bool,
+        target: Graph | None = None,
+    ) -> None:
+        """Bind *bindings* on the namespace manager behind /namespace/list, and
+        on *target* when a write supplied one. Generated names are skipped."""
+        # the fake datasets in the unit tests have no namespace manager
+        nm = getattr(self.query_dataset, "namespace_manager", None)
+        for prefix, namespace in bindings:
+            if _GENERATED_PREFIX.match(str(prefix)):
+                continue
+            for binder in (nm, target):
+                if binder is None:
+                    continue
+                try:
+                    binder.bind(
+                        str(prefix), URIRef(namespace), override=override, replace=override
+                    )
+                except Exception:
+                    _logger.debug(
+                        "namespace bind failed for %s=%s", prefix, namespace, exc_info=True
+                    )
 
     def _is_registered_data_graph_uri(self, uri: URIRef) -> bool:
         """Recognize an acquirium-owned deployment data graph by its URI shape.

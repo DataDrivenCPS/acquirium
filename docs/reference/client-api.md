@@ -89,6 +89,8 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 |---|---|
 | `check_app(target: type[App], *, parameters=None, limit=None, search_path=None) -> dict` | Run an app against stored data without saving results. Returns all computed rows unless `limit` restricts each output. `search_path` defaults to the class module's directory, allowing a local server to import it. |
 | `deploy_app(target: type[App], *, parameters=None) -> dict` | Persist and deploy an importable app class; `parameters` are passed to its constructor. |
+| `list_apps() -> dict` | List every deployment with status and binding counts, including unmatched apps and planning failures. |
+| `inspect_app(name: str) -> dict` | Return a deployment's stored definition, normalized output schemas, and latest compiled binding state. |
 | `remove_app(name: str) -> dict` | Remove a durable app deployment by name. |
 | `reprocess_app(name: str, start: datetime, end: datetime) -> dict` | Schedule a retained output interval for recomputation without resetting input progress. |
 | `app_dag() -> nx.DiGraph` | Return the compiled binding DAG; nodes describe concrete inputs, outputs, policies, and revision progress. |
@@ -117,7 +119,8 @@ See the [querying tutorial](../tutorials/querying.md) and
 |---|---|
 | `entity(cls=None, *, uri=None, alias=None, **attrs) -> Query` | Add an entity node for a class (URI or free text) or one instance (`uri=`, CURIEs accepted); keyword attributes filter inline. |
 | `related(cls=None, *, uri=None, alias=None, frm=None, via="any", direction=None, max_depth=None, nearest=None, **attrs) -> Query` | Add an entity connected to `frm` (default: the current node); `via=` restricts predicates, `direction=` walks the piping topology; `max_depth` defaults to 3 (1 for predicate lists), `nearest` to `True` for plain `via="any"`. |
-| `measurement(*, frm=None, alias=None, direction=None, max_depth=3, nearest=False, include_connection_points=True, **attrs) -> Query` | Attach the measurement points of `frm` (default: the current node; `"*"` for every entity, or a list of aliases); on an empty query, every registered stream. |
+| `measurement(*, frm=None, alias=None, direction=None, max_depth=3, nearest=None, include_connection_points=True, **attrs) -> Query` | Attach the measurement points of `frm` (default: the current node; `"*"` for every entity, or a list of aliases); on an empty query, every registered stream. With `direction=`, `nearest` defaults to `True` and each source keeps the first place along the flow (own connection points, pipe, next entity with its connection points, ...) holding a match; `nearest=False` returns everything within `max_depth`. |
+| `context(cls=None, *, uri=None, alias=None, frm=None, via="entity", **attrs) -> Query` | From a measurement node, add the entity it is about and point at it; `via=` names a relation (`"entity"`, `"upstream"`, `"downstream"`, or one registered with `register_relation`) or gives explicit predicates or step chains. One fixed step, compiled to SPARQL. |
 | `where(target=None, **attrs) -> Query` | Filter a node (`target=` by alias, default the current node) by attribute; values are URIs, free text, lists (OR) or `Not(value)`. |
 | `include(*names, of=None, required=False) -> Query` | Add `alias.attr` columns for a node, or un-drop a node; `required=True` drops rows lacking the attribute. |
 | `drop(*names) -> Query` | Hide a node's column or un-include an attribute; with no arguments, drop the current node. |
@@ -259,6 +262,7 @@ and are listed once above.
 |---|---|
 | `check_app(definition: dict, limit=None, search_path=None) -> dict` | Raw HTTP form behind `Acquirium.check_app`. |
 | `deploy_app(definition: dict) -> dict` | Raw HTTP form behind `Acquirium.deploy_app`; the high-level client builds the definition from a class. |
+| `list_apps() -> dict`, `inspect_app(name: str) -> dict` | Raw inspection documents behind the high-level methods. |
 | `remove_app(name: str) -> dict` | Remove a deployment. |
 | `reprocess_app(name: str, start: datetime, end: datetime) -> dict` | Schedule retained output repair. |
 | `materialization_dag() -> dict` | Return the server's raw binding-DAG payload. |
