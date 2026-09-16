@@ -177,3 +177,39 @@ def test_config_rejects_unsupported_lifecycle_settings(tmp_path, setting):
     with pytest.raises(ValueError):
         runtime.init(config)
     assert not (tmp_path / ".acquirium").exists()
+
+
+def test_cold_start_requires_both_cached_indexes(tmp_path):
+    assert runtime._cold_start(tmp_path)
+    for name in ("graph", "qudt"):
+        (tmp_path / "embedding_cache" / name).mkdir(parents=True)
+    (tmp_path / "embedding_cache" / "graph" / "h_vectors.npz").touch()
+    assert runtime._cold_start(tmp_path)
+    (tmp_path / "embedding_cache" / "qudt" / "h_vectors.npz").touch()
+    assert not runtime._cold_start(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("exact_only", "expected"),
+    [(False, runtime._COLD_START_TIMEOUT), (True, 0.01)],
+)
+def test_cold_semantic_start_waits_longer(monkeypatch, tmp_path, exact_only, expected):
+    process = Mock()
+    process.poll.return_value = None
+    locks = []
+    real_lock = runtime.FileLock
+
+    def lock(path, timeout):
+        locks.append((path, timeout))
+        return real_lock(path, timeout=timeout)
+
+    monkeypatch.setattr(runtime, "FileLock", lock)
+    monkeypatch.setattr(runtime.subprocess, "Popen", Mock(return_value=process))
+    monkeypatch.setattr(runtime, "_stop", Mock())
+    # Readiness never arrives; the deadline check ends the wait immediately.
+    clock = iter([0.0, 0.0, expected + 1])
+    monkeypatch.setattr(runtime.time, "monotonic", lambda: next(clock))
+    with pytest.raises(TimeoutError):
+        runtime.init(data_dir=tmp_path, exact_only=exact_only, timeout=0.01)
+    startup = [t for p, t in locks if p.name == "startup.lock"]
+    assert startup == [expected]

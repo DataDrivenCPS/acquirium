@@ -76,7 +76,7 @@ with the same options return it; changing the destination requires
 | `data_dir` | config value, or `./.acquirium` | Explicit argument selects local defaults without config discovery; cannot be combined with `config` |
 | `address` | none | Connect to an existing HTTP(S) server instead of managing a local one |
 | `exact_only` | config value, otherwise `true` | Use `False` to build embedding indexes; an explicit argument overrides the config |
-| `timeout` | `600` | Seconds to wait for startup or attachment |
+| `timeout` | `600` | Seconds to wait for startup or attachment; at least 3600 when `exact_only=False` and the embedding indexes are not cached yet |
 
 The zero-config profile uses exact-only resolution, so startup does not need to
 download an embedding model or build embedding indexes. Pass

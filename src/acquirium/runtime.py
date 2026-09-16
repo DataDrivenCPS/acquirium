@@ -21,6 +21,8 @@ from acquirium.Server.config import LoadedConfig, load_local_config
 
 _lock = threading.RLock()
 _session = None
+# Embedding both text-matching indexes from scratch can take ~15 minutes.
+_COLD_START_TIMEOUT = 3600.0
 
 
 def _client(address: str, timeout: float | None) -> Acquirium:
@@ -93,6 +95,14 @@ def _forget_stale_runtime(directory: Path) -> None:
         (directory / "server.json").unlink(missing_ok=True)
 
 
+def _cold_start(root: Path) -> bool:
+    """True when either embedding index has no cached vectors under root."""
+    cache = root / "embedding_cache"
+    return not all(
+        any((cache / name).glob("*_vectors.npz")) for name in ("graph", "qudt")
+    )
+
+
 def _configuration(
     config: str | Path | None, data_dir: str | Path | None
 ) -> tuple[LoadedConfig, Path]:
@@ -130,6 +140,8 @@ def init(
     An explicit address connects to an independently managed server.
     With no arguments, load ./acquirium.toml if present. An explicit data_dir
     selects local defaults instead; config paths resolve relative to their file.
+    A server started without exact_only and without cached embedding indexes
+    waits at least an hour, since building them can take several minutes.
     """
     global _session
     if not math.isfinite(timeout) or timeout <= 0:
@@ -160,6 +172,7 @@ def init(
                 )
             return client
         if address is not None:
+            print(f"Acquirium: connecting to {address}")
             client = _client(address, timeout)
             _session = (os.getpid(), key, client, None, None)
             return client
@@ -167,12 +180,18 @@ def init(
         assert loaded_config is not None and root is not None
         directory = root / ".runtime"
         directory.mkdir(parents=True, exist_ok=True)
+        cold = not exact_only and _cold_start(root)
+        if cold:
+            timeout = max(timeout, _COLD_START_TIMEOUT)
         deadline = time.monotonic() + timeout
         process = None
         # Serialize discovery/startup across scripts, including the readiness wait.
         try:
             with FileLock(directory / "startup.lock", timeout=timeout):
-                if not _running(directory):
+                if _running(directory):
+                    print(f"Acquirium: connecting to the local server for {root}")
+                else:
+                    print(f"Acquirium: starting a local server for {root}")
                     _forget_stale_runtime(directory)
                     # Config and explicit options determine storage. Inherited
                     # server paths/recreate flags must not redirect this runtime.
@@ -194,6 +213,12 @@ def init(
                             env=env, stdin=subprocess.DEVNULL, stdout=log,
                             stderr=subprocess.STDOUT, start_new_session=True,
                         )
+                    if cold:
+                        print(
+                            "Acquirium: building text-matching indexes for the first "
+                            "time; this can take up to 15 minutes. "
+                            f"Progress: {directory / 'server.log'}"
+                        )
                 while time.monotonic() < deadline:
                     if process is not None and process.poll() is not None:
                         raise RuntimeError(
@@ -213,6 +238,7 @@ def init(
                                 "exact_only setting"
                             )
                         client = _client(f"http://127.0.0.1:{info['port']}", None)
+                        print(f"Acquirium: ready at {client.address}")
                         _session = (os.getpid(), key, client, process, info["exact_only"])
                         return client
                     time.sleep(0.1)
