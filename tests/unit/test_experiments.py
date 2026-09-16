@@ -176,6 +176,44 @@ def test_reopened_study_hydrates_variables_and_reads_experiments(study_api):
     )
 
 
+def test_variable_catalog_expands_non_null_metadata_without_overwriting_columns(study_api):
+    study = study_api.study
+    study.input("configuration").json(
+        category="simulation",
+        objective=None,
+        only_null=None,
+        label="metadata label",
+        created_at="metadata timestamp",
+    )
+    study.output("cost").scalar(unit="USD", objective="minimize")
+
+    frame = StudyService(study_api.ac).get("study").variables.frame()
+
+    assert frame.columns == [
+        "variable_id", "label", "role", "kind", "metadata", "created_at",
+        "category", "objective", "unit",
+    ]
+    assert frame.select("label", "category", "objective", "unit").to_dicts() == [
+        {
+            "label": "configuration",
+            "category": "simulation",
+            "objective": None,
+            "unit": None,
+        },
+        {
+            "label": "cost",
+            "category": None,
+            "objective": "minimize",
+            "unit": "USD",
+        },
+    ]
+    assert frame["metadata"].to_list()[0]["label"] == "metadata label"
+    assert frame["metadata"].to_list()[0]["created_at"] == "metadata timestamp"
+    assert frame["metadata"].to_list()[0]["only_null"] is None
+    assert frame["metadata"].to_list()[1]["objective"] == "minimize"
+    assert frame["created_at"].dtype.is_temporal()
+
+
 def test_only_new_active_run_declarations_warn(study_api):
     study = study_api.study
     study.output("cost").scalar(unit="USD")

@@ -684,6 +684,18 @@ class VariableCatalog:
 
     def frame(self) -> pl.DataFrame:
         variables = self._items()
+        if not variables:
+            return pl.DataFrame()
+
+        base_columns = {
+            "variable_id", "label", "role", "kind", "metadata", "created_at",
+        }
+        metadata_columns = sorted({
+            key
+            for variable in variables
+            for key, value in variable.metadata.items()
+            if value is not None and key not in base_columns
+        })
         return pl.from_dicts(
             [
                 {
@@ -693,11 +705,13 @@ class VariableCatalog:
                     "kind": variable.kind,
                     "metadata": variable.metadata,
                     "created_at": variable.created_at,
+                    **{key: variable.metadata.get(key) for key in metadata_columns},
                 }
                 for variable in variables
             ],
             strict=False,
-        ) if variables else pl.DataFrame()
+            infer_schema_length=None,
+        )
 
 
 class ExperimentCollection:

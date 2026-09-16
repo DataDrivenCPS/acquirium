@@ -64,7 +64,10 @@ to repeat the declarations.
 `study.variables` combines the three roles. Index it by label or persistent
 variable ID, call `.all()` for handles, `.where(role=..., kind=...)` to select
 them, or `.frame()` for a Polars table containing IDs, labels, roles, kinds,
-creation times, and complete metadata:
+creation times, and complete metadata. The frame also exposes metadata keys
+with at least one non-null value as columns, with nulls for variables that do
+not define them. Keys conflicting with a built-in column stay only in the
+`metadata` column; the complete metadata is retained there in all cases:
 
 ```python
 study = ac.study.get("operating-scenarios")
