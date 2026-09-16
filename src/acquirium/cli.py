@@ -315,7 +315,7 @@ def app_list(
     server_port: _ServerPortOpt = None,
 ) -> None:
     """List deployed apps, including apps with no matches or planning errors."""
-    result = _read_apps(_server_base_url(_load_config(config), server_url, server_port))
+    result = _read_apps(_server_base_url(load_config(config).data, server_url, server_port))
     if as_json:
         typer.echo(json.dumps(result, indent=2))
         return
@@ -336,7 +336,7 @@ def app_inspect(
     server_port: _ServerPortOpt = None,
 ) -> None:
     """Show declared output schemas, settings, resolved streams, and progress."""
-    result = _read_apps(_server_base_url(_load_config(config), server_url, server_port), name)
+    result = _read_apps(_server_base_url(load_config(config).data, server_url, server_port), name)
     if as_json:
         typer.echo(json.dumps(result, indent=2))
         return
