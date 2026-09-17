@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from rdflib.namespace import RDF
+from rdflib.namespace import RDF, RDFS
 
 from acquirium.internals.internals_namespaces import (
     CONNECTION_POINT,
@@ -99,7 +99,18 @@ REGISTRY: dict[str, Attr] = {
         # materializer. Absent on measurements that came from a driver.
         Attr("app", (str(PRODUCED_BY),), "any", DATA, literal=True,
              doc='app that derived the measurement ("normalize-temperatures")'),
+        # rdfs:label literal on a data node (stream label / CSV column name).
+        Attr("label", (str(RDFS.label),), "any", BOTH, literal=True,
+             doc='stream or entity label, matched verbatim ("Influent flow")'),
     )
+}
+
+# Attributes include("all") leaves out, per node role. type and cp_type
+# project one row per asserted type / connection point; a measurement's
+# label is already a metadata() column.
+NOT_IN_ALL = {
+    "entity": frozenset({"type", "cp_type"}),
+    "data": frozenset({"type", "app", "label"}),
 }
 
 
