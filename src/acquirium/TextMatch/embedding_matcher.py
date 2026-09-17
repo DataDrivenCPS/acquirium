@@ -15,6 +15,39 @@ logger = logging.getLogger("acquirium.embedding_matcher")
 
 MatchStage = Literal["exact", "semantic"]
 
+# fastembed's own "BAAI/bge-small-en-v1.5" entry points at an FP16 export,
+# which ONNX Runtime's CPU provider runs several times slower than FP32.
+# This name is registered with fastembed as the FP32 export of the same
+# model, from the original BAAI repository.
+DEFAULT_MODEL = "BAAI/bge-small-en-v1.5-fp32"
+
+# Texts per inference batch. A batch is padded to its longest member, so a
+# smaller batch limits how many rows one long text can inflate.
+_EMBED_BATCH_SIZE = 64
+
+
+def load_embedding_model(model_name: str = DEFAULT_MODEL, cache_dir: str | None = None):
+    """Return a fastembed ``TextEmbedding`` for *model_name*.
+
+    Registers :data:`DEFAULT_MODEL` with fastembed first. Any other name is
+    passed to fastembed unchanged.
+    """
+    from fastembed import TextEmbedding
+    from fastembed.common.model_description import ModelSource, PoolingType
+
+    registered = {m["model"].lower() for m in TextEmbedding.list_supported_models()}
+    if DEFAULT_MODEL.lower() not in registered:
+        TextEmbedding.add_custom_model(
+            model=DEFAULT_MODEL,
+            pooling=PoolingType.CLS,
+            normalization=True,
+            sources=ModelSource(hf="BAAI/bge-small-en-v1.5"),
+            dim=384,
+            model_file="onnx/model.onnx",
+            size_in_gb=0.13,
+        )
+    return TextEmbedding(model_name, cache_dir=cache_dir)
+
 
 @dataclass
 class ResolveResult:
@@ -84,7 +117,7 @@ class EmbeddingMatcher:
 
     def __init__(
         self,
-        model_name: str = "BAAI/bge-small-en-v1.5",
+        model_name: str = DEFAULT_MODEL,
         cache_dir: str | Path | None = None,
         model_cache_dir: str | Path | None = None,
         exact_only: bool = False,
@@ -139,22 +172,27 @@ class EmbeddingMatcher:
     def _ensure_model(self) -> None:
         if self._model is not None:
             return
-        from fastembed import TextEmbedding
-
         cache_dir = str(self._model_cache_dir) if self._model_cache_dir else None
         if cache_dir:
             self._model_cache_dir.mkdir(parents=True, exist_ok=True)
-        self._model = TextEmbedding(self._model_name, cache_dir=cache_dir)
+        self._model = load_embedding_model(self._model_name, cache_dir=cache_dir)
 
     def _embed(self, texts: list[str]) -> np.ndarray:
         self._ensure_model()
+        # Inference cost grows with the padded length of a batch, and the
+        # surfaces are mostly a few tokens long with a handful of long ones.
+        # Embed each distinct text once, in length order so a batch holds
+        # texts of similar length, then put the rows back in caller order.
+        unique = sorted(set(texts), key=lambda t: (len(t), t))
         # fastembed returns a generator of numpy arrays
-        vecs = list(self._model.embed(texts))
+        vecs = list(self._model.embed(unique, batch_size=_EMBED_BATCH_SIZE))
         arr = np.array(vecs, dtype=np.float32)
         # L2-normalize so dot product = cosine similarity
         norms = np.linalg.norm(arr, axis=1, keepdims=True)
         norms = np.where(norms == 0, 1.0, norms)
-        return arr / norms
+        arr = arr / norms
+        row = {t: i for i, t in enumerate(unique)}
+        return arr[[row[t] for t in texts]]
 
     @staticmethod
     def _concepts_hash(concepts: list[dict[str, Any]]) -> str:

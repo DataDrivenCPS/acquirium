@@ -92,7 +92,7 @@ offsets when both URIs are already known.
   back `None`.
 - `top_k` is diagnostic; keep production calls at the default of 1.
 - The embedding model is `[server] embedding_model`
-  (`BAAI/bge-small-en-v1.5` by default); changing it rebuilds the indexes on
+  (`BAAI/bge-small-en-v1.5-fp32` by default); changing it rebuilds the indexes on
   next start.
 - `GET /embedding_status` reports index state when resolution returns
   nothing at all: an index still building resolves nothing until it is done.

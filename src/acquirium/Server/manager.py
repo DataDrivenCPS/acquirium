@@ -29,7 +29,11 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     import pyarrow as pa
 import shutil
-from acquirium.TextMatch.embedding_matcher import EmbeddingMatcher, _split_local_name
+from acquirium.TextMatch.embedding_matcher import (
+    DEFAULT_MODEL,
+    EmbeddingMatcher,
+    _split_local_name,
+)
 from acquirium.TextMatch.qudt_store import QUDTStore
 from acquirium.TextMatch.resolver import ConceptResolver
 
@@ -217,7 +221,7 @@ class Manager:
         # under embedding_cache/. See EmbeddingMatcher.
         self.exact_only = exact_only
 
-        _emb_model = os.getenv("ACQUIRIUM_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
+        _emb_model = os.getenv("ACQUIRIUM_EMBEDDING_MODEL", DEFAULT_MODEL)
 
         # Persist the downloaded embedding model under the data dir so it
         # survives OS temp-dir purges (fastembed defaults to $TMPDIR). A
