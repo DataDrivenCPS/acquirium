@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from rdflib.namespace import RDF
+from rdflib.namespace import RDF, RDFS
 
 from acquirium.internals.internals_namespaces import (
     CONNECTION_POINT,
@@ -22,6 +22,7 @@ from acquirium.internals.internals_namespaces import (
     HAS_UNIT,
     OF_MEDIUM,
     OF_SUBSTANCE,
+    PRODUCED_BY,
     WATR,
 )
 
@@ -91,10 +92,25 @@ REGISTRY: dict[str, Attr] = {
              doc='QUDT unit ("mg/l", "PSI", "NTU")'),
         Attr("enumeration_kind", (str(HAS_ENUMERATION_KIND),), "class", DATA,
              doc='enumeration kind of a state/enum property ("on off", "run status")'),
-        # Origin tag literal on a reference node (e.g. "Lab", "SCADA").
+        # Origin tag literal on a data node (e.g. "Lab", "SCADA").
         Attr("data_source", (str(DATA_SOURCE),), "any", DATA, literal=True,
              doc='origin tag literal, matched verbatim ("Lab", "SCADA")'),
+        # Name of the app that derived this measurement, recorded by the
+        # materializer. Absent on measurements that came from a driver.
+        Attr("app", (str(PRODUCED_BY),), "any", DATA, literal=True,
+             doc='app that derived the measurement ("normalize-temperatures")'),
+        # rdfs:label literal on a data node (stream label / CSV column name).
+        Attr("label", (str(RDFS.label),), "any", BOTH, literal=True,
+             doc='stream or entity label, matched verbatim ("Influent flow")'),
     )
+}
+
+# Attributes include("all") leaves out, per node role. type and cp_type
+# project one row per asserted type / connection point; a measurement's
+# label is already a metadata() column.
+NOT_IN_ALL = {
+    "entity": frozenset({"type", "cp_type"}),
+    "data": frozenset({"type", "app", "label"}),
 }
 
 

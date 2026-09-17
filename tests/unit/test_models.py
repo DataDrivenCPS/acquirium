@@ -8,8 +8,6 @@ from acquirium.internals.models import (
     TimeIntervalModel,
     LogEntry,
     Point,
-    AppSpec,
-    AppOutputSpec,
 )
 
 
@@ -145,24 +143,6 @@ class TestPoint:
         assert p.ref_uri == "h1"
         assert p.types == ["TypeA"]
         assert p.unit == "degC"
-
-
-# ── AppSpec ────────────────────────────────────────────────
-
-
-class TestAppSpec:
-    def test_minimal(self):
-        spec = AppSpec(name="my_app")
-        assert spec.name == "my_app"
-        assert spec.version == "0.0"
-        assert spec.outputs == []
-        assert spec.depends_on == []
-
-    def test_with_outputs(self):
-        out = AppOutputSpec(kind="timeseries", point_uri="urn:test:p1")
-        spec = AppSpec(name="my_app", outputs=[out])
-        assert len(spec.outputs) == 1
-        assert spec.outputs[0].kind == "timeseries"
 
 
 # ── TimeIntervalModel ─────────────────────────────────────

@@ -161,7 +161,7 @@ When `point_uri` exists in the graph, the declared metadata is checked against
 it; see [units](../explanation/units.md#how-a-unit-gets-recorded) and the
 [lifecycle guide](../explanation/stream-lifecycle.md).
 Without `point_uri`, a placeholder point `<ref_uri>__point` labelled
-`source_id__ref_name` is minted.
+with its `ref_name` is minted.
 
 | method | meaning |
 |---|---|
@@ -262,7 +262,7 @@ keys need no declaration.
 | `graph_poll_interval` | `max(interval, 10.0)` | seconds between checks for a graph change |
 | `driver_id` | derived from `spec` | names the state file; set it when running one class twice |
 | `source_id` | none | the driver's datasource; required by the ingest bases unless set in `setup()` |
-| `server_url`, `server_port` | `localhost`, the `[server]` port | under `[driver]`: where the actors reach the server |
+| `server_url`, `server_port` | `127.0.0.1`, the `[server]` port | under `[driver]`: where the actors reach the server |
 
 **TODO:** We can make default driver naming unique to avoid collisions.
 

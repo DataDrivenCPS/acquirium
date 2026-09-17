@@ -46,7 +46,7 @@ streams to, so renaming one later orphans its data.
 ```python
 from acquirium import Acquirium
 
-acq = Acquirium(server_url="localhost", server_port=8000)
+acq = Acquirium(server_url="127.0.0.1", server_port=8000)
 
 acq.insert_graph_file(
     "deployments/WATERTAP/models/seawater-ro/model.ttl",
@@ -200,8 +200,10 @@ acq.sparql_update(
 Note that a point's `rdfs:label` is what result columns display in place of
 its CURIE, so labels are worth adding even when nothing else changes.
 
-Existing timeseries are untouched by any of this. Rows live in the timeseries
-store keyed by `ref_uri`, and the graph only says which streams to read; a
-reload that keeps the point URIs keeps the data reachable. A reload that
-renames a point leaves its rows stored but unreachable through that point, as
-described in [the stream lifecycle](../explanation/stream-lifecycle.md#the-read-path).
+Existing timeseries are untouched by any of this. The graph joins a point to
+its canonical `ref_uri`; both storage backends map that URI to an internal
+integer `ref_id` used by timeseries rows. A reload that keeps the point and
+reference relationship keeps the data reachable. A reload that renames a
+point without preserving that relationship leaves its rows stored but
+unreachable through the new point, as described in
+[the stream lifecycle](../explanation/stream-lifecycle.md#the-read-path).

@@ -170,9 +170,11 @@ class TestNearestValidation:
         assert edge.patterns == ((alternatives, True),)
         assert edge.nearest and edge.hops == 3  # bounded default; 0 = unbounded
 
-    def test_related_nearest_any_with_direction_errors(self):
-        with pytest.raises(ValueError, match="direction steps"):
-            Query(client=None).entity(CLS_A).related(TANK, nearest=True, direction="upstream")
+    def test_related_nearest_with_direction_is_a_placed_direction_edge(self):
+        b = Query(client=None).entity(CLS_A).related(TANK, nearest=True, direction="upstream")
+        (edge,) = b.query_graph.edges
+        assert edge.direction == "upstream" and edge.nearest
+        assert edge.patterns is None and edge.own_cp_class is None
 
     def test_related_nearest_with_predicate_list(self):
         b = Query(client=None).entity(CLS_A).related(TANK, via=["urn:test#p"],
@@ -180,20 +182,26 @@ class TestNearestValidation:
         (edge,) = b.query_graph.edges
         assert edge.nearest and edge.patterns == ((((("urn:test#p", None),),), True),)
 
-    def test_measurement_nearest_needs_direction(self):
-        with pytest.raises(ValueError, match="requires direction"):
-            Query(client=None).entity(CLS_A).measurement(nearest=True)
+    def test_measurement_nearest_without_direction_is_a_no_op(self):
+        plain = Query(client=None).entity(CLS_A).measurement()
+        near = Query(client=None).entity(CLS_A).measurement(nearest=True)
+        assert near.query_graph == plain.query_graph
 
-    def test_measurement_nearest_builds_program_edge(self):
+    def test_measurement_nearest_is_a_placed_direction_edge(self):
         b = Query(client=None).entity(CLS_A, alias="ro").measurement(
             direction="upstream", nearest=True, max_depth=2)
         g = b.query_graph
-        (edge,) = g.edges
-        assert edge.nearest and edge.hops == 3  # 2 equipment steps + property step
-        assert [star for _, star in edge.patterns] == [True, False]
-        assert 1 in g.data_nodes and g.aliases["ro_upstream_data"] == 1
-        # no intermediate entity node, unlike the non-nearest direction branch
-        assert len(g.nodes) == 2
+        mid_edge, data_edge = g.edges
+        assert mid_edge.nearest and mid_edge.direction == "upstream" and mid_edge.hops == 2
+        assert mid_edge.own_cp_class == "http://data.ashrae.org/standard223#InletConnectionPoint"
+        assert mid_edge.patterns is None
+        assert 2 in g.data_nodes and g.aliases["ro_upstream_data"] == 2
+
+    def test_measurement_direction_defaults_to_nearest(self):
+        b = Query(client=None).entity(CLS_A, alias="ro").measurement(direction="downstream")
+        assert b.query_graph.edges[0].nearest
+        b2 = Query(client=None).entity(CLS_A, alias="ro").measurement(direction="downstream", nearest=False)
+        assert not b2.query_graph.edges[0].nearest
 
 
 class TestWildcardSegment:

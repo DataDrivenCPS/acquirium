@@ -88,7 +88,11 @@ def clean_point(ts_store):
     """Provides a test point URI and cleans up its data after each test."""
     yield TEST_POINT_URI
     with ts_store.conn.cursor() as cur:
-        cur.execute("DELETE FROM timeseries WHERE ref_uri = %s", [TEST_POINT_URI])
+        cur.execute(
+            "DELETE FROM timeseries WHERE ref_id = (SELECT ref_id FROM ref_ids WHERE ref_uri = %s)",
+            [TEST_POINT_URI],
+        )
+        cur.execute("DELETE FROM ref_ids WHERE ref_uri = %s", [TEST_POINT_URI])
         cur.execute("DELETE FROM streams WHERE point_uri = %s", [TEST_POINT_URI])
         cur.execute("DELETE FROM logs WHERE point_uri = %s", [TEST_POINT_URI])
 
@@ -112,3 +116,35 @@ def insert_sample_csv_streams(acq, *, source_id: str = SAMPLE_SOURCE_ID) -> None
         stream_rows[ref_name] = rows
     acq.register_streams(stream_specs)
     acq.insert_timeseries_batch(source_id, stream_rows)
+
+
+@pytest.fixture(params=["duckdb", "timescale"])
+def materialization_store(request, tmp_path):
+    import uuid
+    import psycopg
+    from psycopg.conninfo import make_conninfo
+    from acquirium.Storage.duckdb_store import DuckDBStore
+
+    if request.param == "duckdb":
+        store = DuckDBStore(tmp_path / "contract.duckdb")
+    else:
+        dsn = os.getenv("ACQUIRIUM_TEST_PG_DSN")
+        if not dsn:
+            pytest.skip("ACQUIRIUM_TEST_PG_DSN is required for the Timescale contract target")
+        # The API integration suite shares its database with the server.  Use
+        # an isolated schema so ``recreate`` cannot drop the server's tables.
+        schema = f"materialization_contract_{uuid.uuid4().hex}"
+        with psycopg.connect(dsn, autocommit=True) as conn:
+            conn.execute(f'CREATE SCHEMA "{schema}"')
+        # Use only the private schema.  Including ``public`` would cause
+        # ``CREATE TABLE IF NOT EXISTS`` to reuse the live server's tables.
+        # TimescaleStore qualifies the extension function it needs from public.
+        isolated_dsn = make_conninfo(dsn, options=f"-c search_path={schema}")
+        store = TimescaleStore(dsn=isolated_dsn, recreate=True)
+    try:
+        yield store
+    finally:
+        store.close()
+        if request.param == "timescale":
+            with psycopg.connect(dsn, autocommit=True) as conn:
+                conn.execute(f'DROP SCHEMA "{schema}" CASCADE')

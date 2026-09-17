@@ -197,9 +197,9 @@ acq.query().measurement(alias="m").metadata()
 ```
 
 `metadata()` adds an `m.label` column whenever the matched points carry an
-`rdfs:label`, and a placeholder's label is `ro-skid__Feed Flow` — the
-`source_id` and the `ref_name` joined by a double underscore. A row like that
-next to a URI ending in `__point` is a binding that missed.
+`rdfs:label`, and a placeholder's label is its `ref_name`, here the column
+name `Feed Flow`. A row like that next to a URI ending in `__point` is a
+binding that missed.
 
 Fix the URI and re-declare. The misdirected rows stay under the placeholder,
 so clear them or leave them orphaned deliberately; re-declaring does not move

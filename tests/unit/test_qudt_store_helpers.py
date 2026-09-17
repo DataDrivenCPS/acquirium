@@ -56,7 +56,7 @@ class TestBuildSurfaces:
         assert "degC" in result
 
 
-# ── QUDTStore.extract_concepts (graph-fed) ─────────────────
+# ── QUDTStore.extract_concepts (query-fed) ─────────────────
 
 
 class TestExtractConcepts:
@@ -79,10 +79,13 @@ class TestExtractConcepts:
         )
         return g
 
+    def _extract(self, rdf_type):
+        rows = self._graph().query(QUDTStore.concept_query(rdf_type))
+        values = [tuple(None if cell is None else str(cell) for cell in row) for row in rows]
+        return QUDTStore.extract_concepts(values, rdf_type)
+
     def test_unit_extraction(self):
-        c = QUDTStore.extract_concepts(
-            self._graph(), "http://qudt.org/schema/qudt/Unit"
-        )
+        c = self._extract("http://qudt.org/schema/qudt/Unit")
         assert len(c) == 1
         u = c[0]
         assert u["uri"] == "http://qudt.org/vocab/unit/KiloGM"
@@ -91,11 +94,26 @@ class TestExtractConcepts:
         assert u["related"] == ["http://qudt.org/vocab/quantitykind/Mass"]
 
     def test_quantity_kind_extraction(self):
-        c = QUDTStore.extract_concepts(
-            self._graph(), "http://qudt.org/schema/qudt/QuantityKind"
-        )
+        c = self._extract("http://qudt.org/schema/qudt/QuantityKind")
         assert [x["uri"] for x in c] == [
             "http://qudt.org/vocab/quantitykind/Mass"
         ]
         assert c[0]["kind"] == "quantity_kind"
         assert c[0]["related"] == ["http://qudt.org/vocab/unit/KiloGM"]
+
+    def test_label_rules_and_bare_subjects(self):
+        unit = "http://qudt.org/schema/qudt/Unit"
+        label = "http://www.w3.org/2000/01/rdf-schema#label"
+        alt = "http://www.w3.org/2004/02/skos/core#altLabel"
+        rows = [
+            ("http://ex.org/u/B", label, "Zeta", ""),
+            ("http://ex.org/u/B", label, "Alpha", "en-US"),
+            ("http://ex.org/u/B", label, "Kilogramm", "de"),
+            ("http://ex.org/u/B", alt, "Alpha", None),
+            ("http://ex.org/u/A-Bare", None, None, None),
+        ]
+        a, b = QUDTStore.extract_concepts(rows, unit)
+        assert a["uri"] == "http://ex.org/u/A-Bare" and a["label"] == "a bare"
+        assert b["label"] == "Alpha"
+        assert b["surfaces"][:2] == ["alpha", "zeta"]
+        assert "kilogramm" not in b["surfaces"]

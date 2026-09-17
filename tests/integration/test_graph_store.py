@@ -477,7 +477,8 @@ ex:item a ex:Thing .
             "INSERT DATA { <http://example.org/sensor99> a <http://example.org/NewSensor> }"
         )
         result = graph_store.sparql_query(
-            "SELECT ?s WHERE { ?s a <http://example.org/NewSensor> }"
+            "SELECT ?s WHERE { ?s a <http://example.org/NewSensor> }",
+            wait_for_fresh=True,
         )
         assert len(result["rows"]) == 1
 

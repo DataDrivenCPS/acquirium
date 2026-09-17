@@ -35,7 +35,7 @@ This is a reference for the vocabulary of the other guides.
 | connection point | the inlet or outlet of a piece of equipment; most points hang off one | `wbs:RO-in` |
 | reference node | the RDF node linking a point to its stream, through `ref:hasExternalReference` | `urn:acquirium#399ce39c-...` |
 | label | a point's display name (`rdfs:label`), shown in place of its CURIE in results | `"P1 outlet pressure"` |
-| placeholder point | the point minted for a stream registered without a `point_uri`, labelled `source_id__ref_name` | `<ref_uri>__point` |
+| placeholder point | the point minted for a stream registered without a `point_uri`, labelled with its `ref_name` | `<ref_uri>__point` |
 | stream | the timeseries behind a point | the rows stored under that reference node |
 | source | the owner of a set of streams and of its own graph | a driver, an app, `plant` |
 | datasource | who writes a set of streams; the graph-side record of a source | `watertap-seawater-ro` |
@@ -69,11 +69,11 @@ two.
 | entity node | a node holding equipment, systems or connection points | `entity("pump")` |
 | data node | a node holding measurements | `measurement()` |
 | alias | the name of a node, used as its column name and as its handle in `frm=`, `target=` and `of=` | `entity("pump", alias="p1")` |
-| attribute | a property of a node the interface exposes by name instead of by predicate | `unit`, `medium`, `substance`, `quantity_kind`, `process`, `type`, `cp_type`, `enumeration_kind`, `data_source` |
+| attribute | a property of a node the interface exposes by name instead of by predicate | `unit`, `medium`, `substance`, `quantity_kind`, `process`, `type`, `cp_type`, `enumeration_kind`, `data_source`, `app`, `label` |
 | pointer | the node the chain is currently on, which is what a bare `where()` or `measurement()` applies to | moved by `refocus()` |
 | hidden predicate | an edge that generic traversal never follows, because it describes a node rather than connects the plant | `rdf:type`, `s223:hasProperty`, `s223:hasConnectionPoint`, `s223:cnx` |
 | `max_depth` | how many hops a traversal may take | `related("tank", max_depth=1)` |
-| `nearest` | keep only the closest match per source instead of every match in range | `related("pump", nearest=False)` |
+| `nearest` | keep only the closest match per source instead of every match in range; along a direction, the first place (own connection points, pipe, entity with its connection points, ...) holding a match | `related("pump", nearest=False)` |
 
 
 ## Data

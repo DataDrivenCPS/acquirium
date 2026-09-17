@@ -11,17 +11,39 @@ builds, the `DataObject` a query returns, and the lower-level
 `AcquiriumClient` behind all three.
 Type hints are shortened; `pl` is polars, `pa` is pyarrow.
 
+## init and shutdown
+
+`acquirium.init(config=None, *, data_dir=None, address=None, exact_only=None, timeout=600)`
+returns an `Acquirium` client. `config` accepts a TOML path; with no arguments,
+`init()` loads `./acquirium.toml` if it exists. Without an address, it starts or
+attaches to a local server for the resolved data directory. With no config, the
+local profile uses persistent DuckDB and Oxigraph storage in `./.acquirium`, an
+ephemeral loopback port, one worker, and exact-only text resolution.
+Pass `address="https://acquirium.example.org"` to connect to a separately
+managed remote server. This does not start or stop that server. Every
+`Acquirium` instance exposes its connected server as `acq.address`.
+`acquirium.shutdown()` disconnects and stops only a server this process started.
+It also runs at normal interpreter exit. See
+[local runtime](../how-to/local-runtime.md) for ownership, options, and cleanup.
+
 ## Acquirium
 
 ```python
 from acquirium import Acquirium
 
-acq = Acquirium(server_url="localhost", server_port=8000, use_ssl=False,
+acq = Acquirium(server_url="127.0.0.1", server_port=8000, use_ssl=False,
                 insert_batch_rows=50000, health_timeout=60.0)
 ```
 
 The constructor waits for `GET /health` for up to `health_timeout` seconds.
 `acq.client` is the underlying [`AcquiriumClient`](#acquiriumclient).
+
+> **Note:** use `127.0.0.1`, not `localhost`, for a server on the same machine.
+> The server listens on IPv4 only and `localhost` resolves to `::1` first. On
+> Windows each new connection waits about 2 s for the IPv6 attempt to fail
+> before it falls back to IPv4. The client keeps one connection open, so the
+> cost is paid per connection rather than per request, but a client that
+> reconnects, for instance a driver ticking every 10 s, pays it on every tick.
 
 ### Querying
 
@@ -49,9 +71,9 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 | `register_streams(streams: Iterable[dict]) -> None` | Declare one or more streams' identity and semantic metadata in one graph insert; see the [lifecycle guide](../explanation/stream-lifecycle.md). |
 | `reference_uri(source_id: str, ref_name: str) -> URIRef` | The canonical stream URI for a `(source_id, ref_name)` pair. |
 | `resolve_point_metadata(fields: dict, min_score=0.6) -> dict[str, str \| None]` | Resolve `unit`, `quantity_kind`, `medium`, `substance` text to URIs jointly. |
-| `insert_timeseries(source_id, ref_name, rows: list[tuple[datetime, Any]], *, point_uri=None, replace=False) -> dict` | Insert rows for one stream. |
+| `insert_timeseries(source_id, ref_name, rows: list[tuple[datetime, Any]], *, point_uri=None, replace=False) -> dict` | Insert or correct rows for one stream. Register point metadata separately; `replace=True` makes the stream contain exactly the supplied rows; an empty list clears it. Downstream apps fully rebuild after replacement. |
 | `insert_timeseries_batch(source_id, streams: dict[str, list[tuple[datetime, Any]]]) -> dict` | Insert rows for several streams; chunked by `insert_batch_rows`. |
-| `insert_timeseries_arrow(source_id, table: pa.Table) -> dict` | Insert a `(ts, ref_name, value)` Arrow table; the path drivers use. |
+| `insert_timeseries_arrow(source_id, table: pa.Table, *, publication_id=None) -> dict` | Insert a `(ts, ref_name, value)` Arrow table; the path drivers use. The optional ID is for request correlation and does not currently deduplicate retries. |
 
 ### Logbook
 
@@ -65,11 +87,15 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 
 | method | description |
 |---|---|
-| `register_app(app: App, *, app_type=None, outputs=None, depends_on=None, resolve_dependencies=True, queries=None, params=None, replace=False) -> dict` | Register an `App` with the server. |
-| `run_app(app_id, *, start=None, end=None, params=None, keep_alive=False, interval=10.0) -> dict` | Run an app once, or keep it alive on `interval`. |
-| `stop_app(*, app_id) -> dict` | Stop an app's keep-alive loop. |
-| `delete_app(app_id) -> dict` | Stop a registered app and remove its graph registration. |
-| `list_app_runs(*, app_id=None) -> dict` | List registered apps, or one app's build and run status. |
+| `check_app(target: type[App], *, parameters=None, limit=None, search_path=None) -> dict` | Run an app against stored data without saving results. Returns all computed rows unless `limit` restricts each output. `search_path` defaults to the class module's directory, allowing a local server to import it. |
+| `deploy_app(target: type[App], *, parameters=None) -> dict` | Persist and deploy an importable app class; `parameters` are passed to its constructor. |
+| `list_apps() -> dict` | List every deployment with status and binding counts, including unmatched apps and planning failures. |
+| `inspect_app(name: str) -> dict` | Return a deployment's stored definition, normalized output schemas, and latest compiled binding state. |
+| `remove_app(name: str) -> dict` | Remove a durable app deployment by name. |
+| `reprocess_app(name: str, start: datetime, end: datetime) -> dict` | Schedule a retained output interval for recomputation without resetting input progress. |
+| `app_dag() -> nx.DiGraph` | Return the compiled binding DAG; nodes describe concrete inputs, outputs, policies, and revision progress. |
+
+See the [app reference](apps.md) for the transformation class contract.
 
 ### Deprecated
 
@@ -93,17 +119,18 @@ See the [querying tutorial](../tutorials/querying.md) and
 |---|---|
 | `entity(cls=None, *, uri=None, alias=None, **attrs) -> Query` | Add an entity node for a class (URI or free text) or one instance (`uri=`, CURIEs accepted); keyword attributes filter inline. |
 | `related(cls=None, *, uri=None, alias=None, frm=None, via="any", direction=None, max_depth=None, nearest=None, **attrs) -> Query` | Add an entity connected to `frm` (default: the current node); `via=` restricts predicates, `direction=` walks the piping topology; `max_depth` defaults to 3 (1 for predicate lists), `nearest` to `True` for plain `via="any"`. |
-| `measurement(*, frm=None, alias=None, direction=None, max_depth=3, nearest=False, include_connection_points=True, **attrs) -> Query` | Attach the measurement points of `frm` (default: the current node; `"*"` for every entity, or a list of aliases); on an empty query, every registered stream. |
+| `measurement(*, frm=None, alias=None, direction=None, max_depth=3, nearest=None, include_connection_points=True, **attrs) -> Query` | Attach the measurement points of `frm` (default: the current node; `"*"` for every entity, or a list of aliases); on an empty query, every registered stream. With `direction=`, `nearest` defaults to `True` and each source keeps the first place along the flow (own connection points, pipe, next entity with its connection points, ...) holding a match; `nearest=False` returns everything within `max_depth`. |
+| `context(cls=None, *, uri=None, alias=None, frm=None, via="entity", **attrs) -> Query` | From a measurement node, add the entity it is about and point at it; `via=` names a relation (`"entity"`, `"upstream"`, `"downstream"`, or one registered with `register_relation`) or gives explicit predicates or step chains. One fixed step, compiled to SPARQL. |
 | `where(target=None, **attrs) -> Query` | Filter a node (`target=` by alias, default the current node) by attribute; values are URIs, free text, lists (OR) or `Not(value)`. |
-| `include(*names, of=None, required=False) -> Query` | Add `alias.attr` columns for a node, or un-drop a node; `required=True` drops rows lacking the attribute. |
+| `include(*names, of=None, required=False) -> Query` | Add `alias.attr` columns for a node, or un-drop a node; `required=True` drops rows lacking the attribute. `"all"` adds the node's attributes except `type` and `cp_type`, and on measurements `app` and `label`. |
 | `drop(*names) -> Query` | Hide a node's column or un-include an attribute; with no arguments, drop the current node. |
 | `with_columns(*specs, of=None, required=False) -> Query` | `include()` and `drop()` in one call: plain specs include, `"-"`-prefixed specs drop, `"alias.attr"` targets any node. |
-| `alias(name) -> Query` | Name the current node. |
+| `alias(name) -> Query` | Name the current node; `all` is reserved. |
 | `refocus(alias) -> Query` | Move the pointer back to an existing node. |
 
 Attributes accepted by `where()`, `include()`, `options()` and the inline
 keywords: `type`, `process`, `cp_type`, `medium`, `substance`,
-`quantity_kind`, `unit`, `enumeration_kind`, `data_source`.
+`quantity_kind`, `unit`, `enumeration_kind`, `data_source`, `app`, `label`.
 
 ### Terminals
 
@@ -171,7 +198,7 @@ See the [data tutorial](../tutorials/data.md).
 ```python
 from acquirium.Client.client import AcquiriumClient
 
-client = AcquiriumClient(server_url="localhost", server_port=8000, use_ssl=False)
+client = AcquiriumClient(server_url="127.0.0.1", server_port=8000, use_ssl=False)
 ```
 
 `Acquirium` delegates to this class; the methods it shares (`insert_graph`,
@@ -182,7 +209,7 @@ and are listed once above.
 
 | method | description |
 |---|---|
-| `health(timeout=3.0) -> dict` | `GET /health`; raises on failure. |
+| `health(timeout=30.0) -> dict` | `GET /health`; raises on failure. |
 | `graph_version() -> int`, `graph_status() -> dict` | As on `Acquirium`. |
 | `embedding_status() -> dict` | State of the two embedding indexes. |
 | `validate_graph() -> dict` | As on `Acquirium`. |
@@ -213,9 +240,10 @@ and are listed once above.
 | method | description |
 |---|---|
 | `register_datasource(source_id) -> str`, `register_streams(streams) -> None` | As on `Acquirium`. |
-| `insert_timeseries(*, source_id, ref_name, rows, point_uri=None, replace=False) -> dict` | Keyword-only form of the `Acquirium` method. |
+| `insert_timeseries(*, source_id, ref_name, rows, point_uri=None, replace=False, publication_id=None) -> dict` | Keyword-only form of the `Acquirium` method; `publication_id` is forwarded but does not currently deduplicate retries. |
 | `insert_timeseries_batch(source_id, streams) -> dict` | One HTTP request for several streams (unchunked). |
-| `insert_timeseries_arrow(source_id, table) -> dict` | As on `Acquirium`. |
+| `insert_timeseries_arrow(source_id, table, *, publication_id=None) -> dict` | As on `Acquirium`; the optional ID is forwarded but does not currently deduplicate retries. |
+| `resolve_storage_keys(uris: list[str]) -> dict[str, str]` | Map point URIs to the canonical ref URIs used by timeseries APIs; canonical ref URIs pass through. |
 | `timeseries_df(uri, start=None, end=None, limit=None, order="asc", timeout=60.0, *, value_mode="default") -> pl.DataFrame` | All rows of one stream by `ref_uri`. |
 | `timeseries_batches(uri, start=None, end=None, limit=None, order="asc", *, value_mode="default", timeout=60.0) -> Iterator[pl.DataFrame]` | The same, one frame per Arrow record batch. |
 | `timeseries_info_batch(uris: list[str]) -> dict` | `row_count`, `earliest`, `latest` for several streams in one request. |
@@ -230,9 +258,14 @@ and are listed once above.
 
 ### Apps
 
-`register_app(spec: AppSpec, *, replace=False)`, `run_app(...)`, `stop_app(*, app_id)`,
-`delete_app(app_id)`, `list_app_runs(*, app_id=None)`: the raw forms behind the
-`Acquirium` methods; `register_app` takes a built `AppSpec` rather than an `App`.
+| method | description |
+|---|---|
+| `check_app(definition: dict, limit=None, search_path=None) -> dict` | Raw HTTP form behind `Acquirium.check_app`. |
+| `deploy_app(definition: dict) -> dict` | Raw HTTP form behind `Acquirium.deploy_app`; the high-level client builds the definition from a class. |
+| `list_apps() -> dict`, `inspect_app(name: str) -> dict` | Raw inspection documents behind the high-level methods. |
+| `remove_app(name: str) -> dict` | Remove a deployment. |
+| `reprocess_app(name: str, start: datetime, end: datetime) -> dict` | Schedule retained output repair. |
+| `materialization_dag() -> dict` | Return the server's raw binding-DAG payload. |
 
 ### Grafana
 

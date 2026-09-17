@@ -15,7 +15,7 @@ from urllib.parse import quote
 
 from rdflib import URIRef
 
-# Preserve the existing main graph as the plant graph during migration.
+# The plant source owns the canonical main graph.
 PLANT_GRAPH_URI = "urn:acquirium#MainGraph"
 # The plant model is a first-class deployment source. Public callers must use
 # this ID instead of relying on an omitted source owner.

@@ -15,7 +15,7 @@ and connect to acquirium:
 ```python
 from acquirium import Acquirium
 
-acq = Acquirium(server_url="localhost", server_port=8000)
+acq = Acquirium(server_url="127.0.0.1", server_port=8000)
 ```
 
 ## entity()
@@ -103,6 +103,7 @@ shape: (1, 1)
 Aliases are unique per query.
 If two nodes derive the same name, the second default alias becomes `pump_2`.
 Explicitly reusing an alias raises an error.
+`all` is reserved for [`include("all")`](#include), so it cannot be an alias.
 
 ## related()
 
@@ -250,7 +251,8 @@ Be aware that unbounded walks over a large plant can be slow.
 
 ## measurement()
 
-`measurement()` adds the data-bearing points of the node the pointer is on.
+`measurement()` adds the data-bearing points of the node the pointer is on:
+the points it has (`hasProperty`) or is actuated by (an actuator).
 Equipment owns some points directly, but most hang off its connection points
 (inlets and outlets), so those are included by default
 (`include_connection_points=False` limits to directly-owned points; for
@@ -332,9 +334,22 @@ TODO: organize the metadata table to group nulls together.
 
 ### direction= and nearest=
 
-Both work here too.
-`direction=` with `nearest=True` finds the closest matching measurement up or
-downstream of the source:
+`direction="downstream"` searches the flow in *places*.
+For A → pipe → B → pipe → C, seen from A, the places are: A's own outlet
+connection points; the pipe; B together with its inlet and outlet
+connection points; the second pipe; C with its connection points.
+`"upstream"` mirrors this from the source's inlet.
+`max_depth` counts equipment (the default 3 reaches three pieces of
+equipment downstream), and `0` is unbounded.
+
+With a direction, `nearest` defaults to `True`: each source keeps the points
+of the first place that holds a match.
+Filters decide what counts as a match, so `quantity_kind="pressure"` walks
+past places without a pressure reading, up to `max_depth`.
+Ties within a place all survive.
+`nearest=False` returns every point within `max_depth` instead.
+The extra column `<alias>_downstream_entity` names what each point hangs
+off.
 
 ```python
 (acq.query().entity(uri="wbs:P1", alias="p1")
@@ -349,6 +364,92 @@ shape: (1, 2)
 │ wbs:P1 ┆ wbs:P1-out-pressure │
 └────────┴─────────────────────┘
 ```
+
+## context()
+
+`context()` goes the other way from `measurement()`: from a measurement node
+it adds the entity the measurement is about, and moves the pointer there.
+This is how you start from the points and then narrow by the equipment they
+belong to.
+
+```python
+(acq.query().measurement(quantity_kind="pressure")
+ .context(process="reverse osmosis")
+ .metadata())
+```
+<!-- TODO: capture output against seawater-ro -->
+
+The new node is an ordinary entity node: it gets a column, takes an alias,
+and `where(target=)`, `include()`, `related()` and `DataObject.by()` work on
+it.
+The default alias is `<measurement alias>_<relation>`, so the query above
+has the columns `data` and `data_entity`.
+Keyword arguments filter the new node the same way `entity()` does, and
+`uri=` pins one instance.
+With no arguments at all the node is unconstrained, which is the quickest way
+to see what the points hang off:
+
+```python
+acq.query().measurement().context(alias="carrier").include("carrier.type").metadata()
+```
+
+```python
+(acq.query().measurement(substance="dissolved oxygen")
+ .context("aeration basin", alias="basin")
+ .data().by("basin"))
+```
+
+### via=
+
+`via=` names the relation to follow.
+Every relation is one fixed step, compiled to SPARQL, so there is no
+`max_depth` and no client-side walk.
+Three come built in:
+
+| relation | meaning |
+|---|---|
+| `"entity"` (default) | the entity the point hangs off, directly or through one of its connection points |
+| `"upstream"` | the entity the point is directly downstream of |
+| `"downstream"` | the entity the point is directly upstream of |
+
+`upstream` and `downstream` matter for points that sit on a pipe, where
+`entity` returns the connection itself.
+For a pressure reading on the pipe leaving a pump, `upstream` is the pump
+and `downstream` is whatever the pipe feeds.
+For a reading on an outlet connection point, `upstream` is the equipment
+that owns the connection point: the outlet pressure is downstream of the
+pump.
+
+```python
+(acq.query().measurement(quantity_kind="pressure")
+ .context("pipe", alias="pipe")
+ .refocus("data")
+ .context("pump", via="upstream", alias="feed_pump")
+ .metadata())
+```
+<!-- TODO: capture output against seawater-ro -->
+
+`via=` also takes the explicit forms `related()` takes: a predicate
+(`"^"` inverts), a list of predicates, or a tuple of step chains.
+Note that `context()` only starts from a measurement node; from an entity
+node use `related()`.
+
+A deployment can register its own relation and use it by name:
+
+```python
+from acquirium.Client.explore import register_relation
+
+register_relation("system", (
+    (("^http://data.ashrae.org/standard223#hasProperty", None),
+     ("^http://data.ashrae.org/standard223#hasMember", None)),
+))
+acq.query().measurement().context("system", via="system")
+```
+
+Each chain is a tuple of `(predicate, class)` steps; the class, when given,
+constrains the node that step lands on.
+[The query model](../explanation/query-model.md#the-relations-behind-context)
+lists the built-in chains.
 
 ## Getting the values
 
@@ -431,6 +532,8 @@ The attribute vocabulary is one shared registry:
 | `unit` | measurements | QUDT unit (`"mg/l"`, `"PSI"`, `"NTU"`) |
 | `enumeration_kind` | measurements | enumeration kind of a state/enum property (`"on off"`) |
 | `data_source` | measurements | origin tag literal, matched verbatim (`"Lab"`, `"SCADA"`) |
+| `app` | measurements | the [app](../explanation/apps.md) that derived the measurement, matched verbatim (`"normalize-temperatures"`); absent on measurements a driver wrote |
+| `label` | both | display name (`rdfs:label`), matched verbatim (`"Influent flow"`) |
 
 The same table is generated into the docstring of every attribute-taking
 method, so `help(q.where)` has it too.
@@ -574,6 +677,25 @@ Note that the four points dropped by `required=True` are the three pressures
 and the temperature, which is what [Which measurement points carry no
 unit?](query-cookbook.md#which-measurement-points-carry-no-unit) lists
 plant-wide.
+
+`include("all")` adds the attributes of a node in one call.
+It works with `of=` and next to other names.
+
+```python
+(acq.query().entity(uri="wbs:RO", alias="ro").include("all")
+ .measurement(alias="m").include("all")
+ .metadata())
+```
+
+On an entity this is `process`, `medium` and `label`.
+On a measurement it is `medium`, `substance`, `quantity_kind`, `unit`,
+`enumeration_kind` and `data_source`.
+`type` and `cp_type` are left out because they give one row per class or per
+connection point.
+`app` is left out too, and so is a measurement's `label`, which
+`metadata()` already shows.
+Note that a node with two values for one attribute, such as two media, shows
+up once per value.
 
 ### drop()
 

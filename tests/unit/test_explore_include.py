@@ -154,3 +154,55 @@ class TestColumnControl:
         ## a node aliased like a registry attr is shadowed by the attribute
         b = q().entity(CLS_A, alias="unit").measurement(alias="m").include("unit")
         assert b.query_graph.selects == ((1, "unit", False),)
+
+
+class TestIncludeAll:
+    DATA_ATTRS = ["medium", "substance", "quantity_kind", "unit",
+                  "enumeration_kind", "data_source"]
+    ENTITY_ATTRS = ["process", "medium", "label"]
+
+    def test_measurement_node(self):
+        b = base().include("all")
+        assert b.query_graph.selects == tuple((1, n, False) for n in self.DATA_ATTRS)
+
+    def test_entity_node(self):
+        b = q().entity(CLS_A, alias="ro").include("all")
+        assert b.query_graph.selects == tuple((0, n, False) for n in self.ENTITY_ATTRS)
+
+    def test_of_targets_alias(self):
+        b = base().include("all", of="ro")
+        assert b.query_graph.selects == tuple((0, n, False) for n in self.ENTITY_ATTRS)
+
+    def test_mixed_with_names_dedups(self):
+        b = base().include("unit", "all")
+        assert [s[1] for s in b.query_graph.selects] == self.DATA_ATTRS[3:4] + [
+            n for n in self.DATA_ATTRS if n != "unit"]
+
+    def test_required_passthrough(self):
+        b = base().include("all", required=True)
+        assert all(r for _, _, r in b.query_graph.selects)
+
+    def test_no_current_node(self):
+        with pytest.raises(ValueError, match="no current node"):
+            q().include("all")
+
+    def test_unknown_of(self):
+        with pytest.raises(ValueError, match="unknown alias"):
+            base().include("all", of="nope")
+
+
+class TestReservedAlias:
+    def test_verbs_reject_all(self):
+        with pytest.raises(ValueError, match="entity: alias 'all' is reserved"):
+            q().entity(CLS_A, alias="all")
+        with pytest.raises(ValueError, match="related: alias 'all' is reserved"):
+            q().entity(CLS_A, alias="a").related(CLS_A, alias="all")
+        with pytest.raises(ValueError, match="measurement: alias 'all' is reserved"):
+            base().measurement(frm="ro", alias="all")
+        with pytest.raises(ValueError, match="measurement: alias 'all' is reserved"):
+            q().measurement(alias="all")
+        with pytest.raises(ValueError, match="alias: alias 'all' is reserved"):
+            q().entity(CLS_A).alias("all")
+
+    def test_derived_alias_skips_all(self):
+        assert q()._unique_alias(QueryGraph(), "all") == "all_2"

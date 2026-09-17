@@ -3,11 +3,13 @@ title: HTTP API
 ---
 
 This is a reference for the HTTP endpoints the acquirium server exposes
-(default `http://localhost:8000`).
+(default `http://127.0.0.1:8000`).
 The Python client covers all of these; use the raw endpoints when scripting
 against the server directly.
 
-Timestamps are ISO 8601 strings (e.g. `2026-01-01T00:00:00Z`). Errors return HTTP 400 with a JSON body `{"detail": "<message>"}`. 404 is reserved for an unknown driver or app, and 409 for registering an app name that already exists.
+Timestamps are ISO 8601 strings (e.g. `2026-01-01T00:00:00Z`). Errors return
+HTTP 400 with a JSON body `{"detail": "<message>"}`. Unknown drivers and apps
+return 404.
 
 ---
 
@@ -108,7 +110,12 @@ Validate all registered deployment data against the ontology shapes and SHACL ru
 
 ### `GET /namespace/list`
 
-Returns all namespace prefix bindings in the union graph as a `{prefix: uri}` map.
+Returns the server's prefix bindings as a `{prefix: uri}` map: acquirium's own
+prefixes (`acq`, `point`, `qudt`, `unit`, `quantitykind`, `s223`, `g36`, `watr`,
+`brick`, `ref`), the prefixes inserted models declared for their own
+vocabularies, and rdflib's defaults. Generated names (`ns1`, `ns2`, ...) are
+never bound, so a URI compacts to the same CURIE in every client and after a
+restart.
 
 ---
 
@@ -223,8 +230,9 @@ Insert observations for one or more streams. Request body is a JSON array; a sin
 | --- | --- | --- |
 | `source_id` | yes | Registered datasource identifier |
 | `ref_name` | yes | Source-local stream name |
-| `point_uri` | no | Override the semantic point URI |
-| `replace` | no (default `false`) | If true, delete existing rows before inserting |
+| `point_uri` | no | Compatibility field; register the stream-to-point relationship with `register_streams` before inserting data |
+| `replace` | no (default `false`) | Replace this stream with exactly the supplied rows; an empty `values` list clears it. Atomic per stream; downstream apps fully rebuild after replacement |
+| `publication_id` | no | Identifier echoed into the internal publication receipt; the current revision backend does not deduplicate retries by this value |
 | `values` | yes | List of `[timestamp, value]` pairs |
 
 **Response** `{"ok": true, "rows_inserted": 42}`
@@ -510,51 +518,65 @@ List the drivers running on this server. Takes no parameters.
 
 ## Apps
 
-### `POST /apps/register`
+An app definition is the JSON built by `Deployment.from_class`: its name,
+importable entrypoint, executable digest, output declarations, parameters, and
+window and scheduling attributes. See the [app reference](apps.md) for the
+complete schema.
 
-Register an app spec. See `AppSpec` in `internals/models.py` for the full field list. An optional `replace` query parameter (default `false`) tears the existing app down and re-registers it; without it, a name that already exists returns 409.
+### `GET /apps`
 
-**Response** `{"ok": true, ...}` with the registration info.
+List every stored deployment, including apps whose query has no matches or
+whose latest plan failed. Each summary contains `name`, `entrypoint`,
+`grouping`, `status`, `binding_count`, `binding_statuses`, `graph_revision`,
+`plan_current`, and `error`.
 
-### `POST /apps/delete`
+**Response** `{"ok": true, "apps": [...]}`
 
-Gracefully delete a registered app: stop it, strip its registration triples from its source graph, kill its actor, and remove its persisted source.
+### `GET /apps/{name}`
 
-**Request body** `{"app_id": "my-app"}`
+Return the same summary for one deployment plus its stored `definition`,
+normalized `output_schemas`, and latest compiled `bindings`. This endpoint
+only reads the current state; it does not import code, refresh the plan, or run
+a transform. An unknown name returns 404.
 
-**Response** `{"ok": true, "name": "my-app", "deleted": true}`
+**Response** `{"ok": true, "app": {...}}`
 
-An unknown `app_id` returns 404.
+### `PUT /apps/{name}`
 
-### `POST /apps/run`
+Validate and deploy an app definition. The definition's `name` must match the
+path. Redeploying the same name selects the new immutable definition.
 
-Start an app run.
+**Response** `{"ok": true, "name": "...", "status": "deployed"}`
 
-**Request body**
+### `POST /apps/check`
 
-```json
-{
-  "app_id": "my-app",
-  "start": "2026-01-01T00:00:00Z",
-  "end": "2026-02-01T00:00:00Z",
-  "params": {},
-  "keep_alive": false,
-  "interval": 10.0
-}
-```
+Compile an app, read its retained inputs, and run its transform without saving
+the deployment, outputs, progress, or revisions. The request body is an app
+definition.
 
-**Response** `{"ok": true, "run_id": "<uuid>"}`
+| Query parameter | Description |
+| --- | --- |
+| `limit` | Keep only the first N returned rows from each output |
+| `search_path` | Server-side directory used to import an otherwise unavailable app module |
 
-### `POST /apps/stop`
+**Response** `{"ok": true, "app": "...", "graph_revision": 1, "bindings": [...]}`
 
-Stop a running app. Provide `run_id` or `app_id`.
+### `DELETE /apps/{name}`
 
-**Request body** `{"run_id": "<uuid>"}` or `{"app_id": "my-app"}`
+Remove a deployment and forget its progress and pending work. Retained derived
+history is not deleted. An unknown name returns 404.
 
-**Response** `{"ok": true, ...}`
+**Response** `{"ok": true, "name": "...", "status": "removed"}`
 
-### `GET /apps/list`
+### `POST /apps/{name}/reprocess`
 
-List app runs. Optional `app_id` query parameter filters by app.
+Schedule a retained interval for recomputation. `start` and `end` are required
+ISO 8601 query parameters. An unknown app returns 404; an invalid interval
+returns 400.
 
-**Response** `{"ok": true, "runs": [...]}`
+**Response** `{"ok": true, "name": "...", "status": "reprocessing", "bindings": 3}`
+
+### `GET /materialization/dag`
+
+Return the active materialization graph as nodes and links, including the
+dependencies between bindings and their current execution state.

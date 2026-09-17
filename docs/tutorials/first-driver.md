@@ -72,7 +72,7 @@ acquirium driver list
 
 Every column is now a stream, `measurement()` on an empty query finds them,
 and each one has a *placeholder point*: a node minted for the stream, labelled
-`ro-skid__Feed Flow` and so on.
+with its column name (`Feed Flow` and so on).
 
 ```python
 acq.query().measurement(alias="m").metadata()
@@ -153,7 +153,7 @@ acq.query().measurement(quantity_kind="pressure").metadata()
 acq.query().measurement(unit="gal/min").metadata()
 ```
 
-`label` replaces the default `ro-skid__Feed Flow` and is what result columns
+`label` replaces the default `Feed Flow` and is what result columns
 display in place of the URI to improve readability.
 
 Note that the driver does not pick point URIs here.

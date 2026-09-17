@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
+import re
 from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,6 +34,12 @@ from acquirium.Storage.graph_registry import ACQUIRIUM_GRAPH_URI, SOURCE_GRAPH_P
 from acquirium.Storage.graph_registry import source_graph_uri as _compute_source_graph_uri
 
 _logger = logging.getLogger("acquirium.graph_store")
+
+# rdflib's name for a namespace nothing declared. Which number a namespace
+# gets depends only on the order URIs happened to be serialized in, so these
+# are never bound: they would make the same URI read differently from one
+# client, or one restart, to the next.
+_GENERATED_PREFIX = re.compile(r"^ns\d+$")
 
 
 def _literal_dt(value: datetime) -> Literal:
@@ -80,11 +88,49 @@ def _graph_affects_closure(graph: Graph) -> bool:
 # ``inferred + dependencies`` cache instead of leaving it in the query dataset.
 _DEPENDENCY_QUERY_GRAPH = URIRef(str(ACQUIRIUM_NS.ImportsUnionGraph))
 _INFERRED_DATA_GRAPH = URIRef(str(ACQUIRIUM_NS.InferredDataGraph))
-# ``Store.load`` is much lower latency for small in-memory payloads; it avoids
-# the SST-file creation that makes ``bulk_load`` preferable only for large RDF
-# documents. The payload has already been materialized for serialization, so
-# retaining it in memory for this bounded path is not an extra copy.
-_QUERY_LOAD_THRESHOLD_BYTES = 8 * 1024 * 1024
+
+
+def _replace_named_graph(dataset: Dataset, graph: Graph, graph_uri: URIRef) -> None:
+    """Clear ``graph_uri`` in *dataset* and reload it from *graph*.
+
+    Serializes once to N-Triples (rdflib's fastest writer) and loads through
+    pyoxigraph in a single call — far cheaper than rdflib's per-triple,
+    per-FFI-crossing ``ctx.add()`` on the ~500k-triple bundled ontologies.
+
+    Uses ``Store.load``, never ``Store.bulk_load``: the bulk loader parses
+    N-Triples in parallel batches without a consistent blank-node label -> id
+    mapping across them, so a blank node referenced in one batch and described
+    in another is split into two nodes. That silently shreds every multi-triple
+    blank-node structure in the SHACL-heavy ontologies (s223's ``sh:sparql`` /
+    ``sh:rule`` / ``sh:path``), which shifty >=0.4 then rejects as an invalid
+    shapes graph. ``load`` keeps one mapping and is faster here anyway.
+    """
+    dataset.graph(graph_uri).remove((None, None, None))
+    if not len(graph):
+        return
+    nt = graph.serialize(format="nt", encoding="utf-8")
+    dataset.store._inner.load(
+        input=nt, format=RdfFormat.N_TRIPLES, to_graph=NamedNode(str(graph_uri)),
+    )
+
+
+def select_values(
+    store: ox.Store, query: str, iris: Iterable[str]
+) -> list[tuple[str | None, ...]]:
+    """Run a SELECT over the union of *iris* in *store*.
+
+    Cells are lexical values, or None when unbound.
+    """
+    result = store.query(
+        query,
+        use_default_graph_as_union=False,
+        default_graph=[NamedNode(iri) for iri in iris],
+    )
+    return [
+        tuple(None if cell is None else cell.value for cell in row)
+        for row in result
+    ]
+
 
 class _OntoenvOxigraphStore:
     """ontoenv graph-store protocol over the shared Oxigraph dataset.
@@ -126,24 +172,12 @@ class _OntoenvOxigraphStore:
         if len(ctx) and not overwrite:
             _logger.debug("add_graph skip (already populated): %s (%d triples)", iri, len(ctx))
             return
-        ctx.remove((None, None, None))
-        # rdflib's per-triple ctx.add() crosses the Rust FFI once per triple
-        # — ~76s for the ~535k-triple bundled-ontology load on a cold start.
-        # Serialise to N-Triples (rdflib's fastest writer) once and bulk-load
-        # through pyoxigraph, which writes straight to SST. ~10× faster.
-        with timed_debug(_logger, "add_graph serialize %s (%d triples)", iri, len(graph)):
-            nt = graph.serialize(format="nt", encoding="utf-8")
-        with timed_debug(_logger, "add_graph bulk_load %s (%d bytes)", iri, len(nt)):
-            self._ds.store._inner.bulk_load(
-                input=nt, format=RdfFormat.N_TRIPLES, to_graph=NamedNode(iri),
-            )
+        with timed_debug(_logger, "add_graph load %s (%d triples)", iri, len(graph)):
+            _replace_named_graph(self._ds, graph, URIRef(iri))
         self._on_change()
 
     def get_graph(self, iri: str) -> Graph:
-        out = Graph()
-        for triple in self._ds.graph(URIRef(iri)):
-            out.add(triple)
-        return out
+        return Graph() + self._ds.graph(URIRef(iri))
 
     def remove_graph(self, iri: str) -> None:
         graph = self._ds.graph(URIRef(iri))
@@ -232,6 +266,13 @@ class OxigraphGraphStore:
         self._query_cache_closure_version = -1
         self._dependency_query_graph_closure_version = -1
         self._named_graph_cache: dict[str, Graph] = {}
+        # Oxigraph holds prefix bindings in memory, so the namespace manager
+        # behind /namespace/list is seeded on every open. The canonical
+        # bindings go on first and win: the bundled ontologies are loaded as
+        # N-Triples, which drops their @prefix declarations, so without this
+        # nothing would name unit:, quantitykind: or acquirium's own
+        # namespaces and every client would invent its own name for them.
+        self._bind_prefixes(CANONICAL_NAMESPACES.namespaces(), override=True)
 
         # ontoenv shares this Oxigraph store via the graph-store protocol,
         # over the authoritative source dataset. SPARQL reads query that
@@ -293,27 +334,45 @@ class OxigraphGraphStore:
         """One ontology's own graph, materialized in memory (owl:imports NOT
         followed). Cached per IRI until an ontology graph changes.
 
-        Deliberately NOT ontoenv's store-backed view: iterating that view
-        calls into ontoenv's Rust backend, which locks an internal mutex and
-        then re-enters Python to build result terms. Two threads iterating
-        concurrently deadlock — one holds the GIL waiting for the mutex, the
-        other holds the mutex waiting for the GIL — freezing the whole
-        process. Copying the triples out once under ``self._lock`` keeps
-        every later read (QUDT converter lookups, embedding extraction) in
-        plain rdflib memory, off ontoenv entirely.
+        ``env.copy_graph`` does the copy (triples plus namespace bindings)
+        Rust-side in one call. The cache then keeps every later read (QUDT
+        converter lookups, embedding extraction) in plain rdflib memory.
         """
         with self._lock:
             cached = self._named_graph_cache.get(iri)
             if cached is not None:
                 return cached
-            copy = Graph()
-            source = self.env.get_graph(iri)
-            for prefix, ns in source.namespaces():
-                copy.bind(prefix, ns)
-            for triple in source:
-                copy.add(triple)
+            copy = self.env.copy_graph(iri)
             self._named_graph_cache[iri] = copy
             return copy
+
+    def select_in_graphs(
+        self, query: str, iris: Iterable[str]
+    ) -> list[tuple[str | None, ...]]:
+        """Run a SELECT natively over the union of named source graphs.
+
+        Nothing is copied into rdflib, which makes this much faster than
+        querying ``named_graph`` for large ontologies.
+        """
+        with self._lock:
+            return select_values(self.source_dataset.store._inner, query, iris)
+
+    def copy_graphs(self, iris: Iterable[str]) -> ox.Store:
+        """Copy named source graphs into an in-memory Oxigraph store.
+
+        Scan-heavy queries over small graphs run several times faster there
+        than against the persisted store; for large graphs the copy costs
+        more than it saves.
+        """
+        memory = ox.Store()
+        with self._lock:
+            for iri in iris:
+                memory.extend(
+                    self.source_dataset.store._inner.quads_for_pattern(
+                        None, None, None, NamedNode(iri)
+                    )
+                )
+        return memory
 
 # -------------------- source + dependency cache coordination --------------------
     def _source_state_path(self) -> Path:
@@ -441,20 +500,15 @@ class OxigraphGraphStore:
 
     def _refresh_dependency_cache(self) -> Graph:
         with timed_debug(_logger, "_refresh_dependency_cache (closure_v=%d)", self._closure_version):
-            # Imports may be declared by the plant or by a source-owned graph.
-            # Use the complete deployment-data union as the working graph, then
-            # retain only triples introduced by import resolution as shapes.
+            # owl:imports may be declared by the plant or any source-owned
+            # graph, so the whole deployment-data union is the working graph.
+            # import_dependencies resolves those imports into it in place (and
+            # drops the now-resolved owl:imports triples); keep only the delta
+            # it introduced as the dependency/shape cache.
             data_graph = self._source_data_graph()
-            closure = Graph()
-            for triple in data_graph:
-                closure.add(triple)
-            # OntoEnv mutates the working graph in place by loading imported
-            # ontologies, so keep only the dependency delta in the cache.
+            closure = Graph() + data_graph
             self.env.import_dependencies(closure)
-            deps = Graph()
-            for triple in closure:
-                if triple not in data_graph:
-                    deps.add(triple)
+            deps = closure - data_graph
             self._dependency_graph_cache = deps
             self._dependency_graph_closure_version = self._closure_version
         _logger.debug("_refresh_dependency_cache: %d dep triples", len(deps))
@@ -462,11 +516,8 @@ class OxigraphGraphStore:
 
     def _source_graph_with_dependencies(self) -> Graph:
         """Materialize the export view: source graph plus imported triples."""
-        merged = Graph()
-        for triple in self._source_data_graph():
-            merged.add(triple)
-        for triple in self._ensure_dependency_cache_current():
-            merged.add(triple)
+        merged = Graph() + self._source_data_graph()
+        merged += self._ensure_dependency_cache_current()
         return merged
 
     def _dependency_query_graph(self) -> Graph:
@@ -482,20 +533,17 @@ class OxigraphGraphStore:
             and self._query_cache_closure_version == self._closure_version
         )
 
-    @staticmethod
-    def _copy_graph(graph: Graph) -> Graph:
-        """Return an inference input snapshot detached from mutable store state."""
-        snapshot = Graph()
-        for triple in graph:
-            snapshot.add(triple)
-        return snapshot
-
     def _snapshot_query_inputs(self) -> tuple[int, int, Graph, Graph]:
-        """Capture one consistent data/shapes generation while holding ``_lock``."""
+        """Capture one consistent data/shapes generation while holding ``_lock``.
+
+        ``_source_data_graph`` already returns a fresh graph; the shapes are
+        copied off the shared dependency cache so inference reads a snapshot
+        detached from a concurrent refresh.
+        """
         with timed_debug(_logger, "derived snapshot data"):
             data = self._source_data_graph()
         with timed_debug(_logger, "derived snapshot shapes"):
-            shapes = self._copy_graph(self._ensure_dependency_cache_current())
+            shapes = Graph() + self._ensure_dependency_cache_current()
         return self._source_version, self._closure_version, data, shapes
 
     def _build_query_views(self, data: Graph, shapes: Graph) -> Graph:
@@ -512,30 +560,8 @@ class OxigraphGraphStore:
 
     def _replace_query_graph(self, graph: Graph, graph_uri: URIRef, *, label: str) -> None:
         """Replace one disposable query graph while publication is locked."""
-        target = self.query_dataset.graph(graph_uri)
-        with timed_debug(_logger, "derived publish %s clear", label):
-            target.remove((None, None, None))
-        if not len(graph):
-            return
-        with timed_debug(_logger, "derived publish %s serialize", label):
-            nt = graph.serialize(format="nt", encoding="utf-8")
-        load_method = (
-            self.query_dataset.store._inner.load
-            if len(nt) <= _QUERY_LOAD_THRESHOLD_BYTES
-            else self.query_dataset.store._inner.bulk_load
-        )
-        with timed_debug(
-            _logger,
-            "derived publish %s %s (%d bytes)",
-            label,
-            load_method.__name__,
-            len(nt),
-        ):
-            load_method(
-                input=nt,
-                format=RdfFormat.N_TRIPLES,
-                to_graph=NamedNode(str(graph_uri)),
-            )
+        with timed_debug(_logger, "derived publish %s (%d triples)", label, len(graph)):
+            _replace_named_graph(self.query_dataset, graph, graph_uri)
 
     def _publish_query_views(self, inferred: Graph, shapes: Graph) -> None:
         """Publish inferred data and, when needed, the dependency graph.
@@ -630,21 +656,39 @@ class OxigraphGraphStore:
             target.remove((None, None, None))
         for triple in incoming:
             target.add(triple)
-        # Propagate prefix bindings declared in the incoming Turtle/RDF
-        # (rdflib's parser populates incoming.namespace_manager from
-        # `@prefix` directives) so they survive into the stores that back
-        # the public /namespace/list endpoint.
-        for prefix, ns_uri in incoming.namespaces():
-            try:
-                target.bind(prefix, ns_uri, override=False)
-                self.query_dataset.namespace_manager.bind(
-                    prefix, ns_uri, override=False
-                )
-            except Exception:
-                _logger.debug(
-                    "namespace bind failed for %s=%s", prefix, ns_uri, exc_info=True
-                )
+        # Prefix bindings declared in the incoming Turtle/RDF (rdflib's parser
+        # populates incoming.namespace_manager from `@prefix` directives) so
+        # they survive into the stores that back the public /namespace/list
+        # endpoint. A model keeps the name its author chose for its own
+        # vocabulary, but never renames a canonical namespace.
+        self._bind_prefixes(incoming.namespaces(), override=False, target=target)
         return target
+
+    def _bind_prefixes(
+        self,
+        bindings: Iterable[tuple[str, URIRef]],
+        *,
+        override: bool,
+        target: Graph | None = None,
+    ) -> None:
+        """Bind *bindings* on the namespace manager behind /namespace/list, and
+        on *target* when a write supplied one. Generated names are skipped."""
+        # the fake datasets in the unit tests have no namespace manager
+        nm = getattr(self.query_dataset, "namespace_manager", None)
+        for prefix, namespace in bindings:
+            if _GENERATED_PREFIX.match(str(prefix)):
+                continue
+            for binder in (nm, target):
+                if binder is None:
+                    continue
+                try:
+                    binder.bind(
+                        str(prefix), URIRef(namespace), override=override, replace=override
+                    )
+                except Exception:
+                    _logger.debug(
+                        "namespace bind failed for %s=%s", prefix, namespace, exc_info=True
+                    )
 
     def _is_registered_data_graph_uri(self, uri: URIRef) -> bool:
         """Recognize an acquirium-owned deployment data graph by its URI shape.
@@ -686,6 +730,20 @@ class OxigraphGraphStore:
                 "rebuild_in_progress": self._query_rebuild_in_progress,
             }
 
+    def published_query_digest(self) -> str:
+        """Return a stable digest of the complete published inferred graph.
+
+        This deliberately waits for the query-cache publication boundary, so
+        runtime SQL never records a revision for a partial graph rebuild.
+        """
+        result = self.sparql_query(
+            "SELECT ?s ?p ?o WHERE { ?s ?p ?o } ORDER BY ?s ?p ?o",
+            include_dependencies=False,
+            wait_for_fresh=True,
+        )
+        payload = json.dumps(result["rows"], ensure_ascii=False, separators=(",", ":"), default=str)
+        return hashlib.sha256(payload.encode()).hexdigest()
+
     def refresh_union(self, snapshot_path: str | Path | None = None) -> dict[str, int]:
         """Refresh inferred query views from all data graphs and shape graphs."""
         # Do not hold the store lock while inference runs: the single-flight
@@ -698,11 +756,8 @@ class OxigraphGraphStore:
             if snapshot_path:
                 snapshot_path = Path(snapshot_path)
                 snapshot_path.parent.mkdir(parents=True, exist_ok=True)
-                merged = Graph()
-                for triple in source_data:
-                    merged.add(triple)
-                for triple in dependencies:
-                    merged.add(triple)
+                merged = Graph() + source_data
+                merged += dependencies
                 merged.serialize(destination=str(snapshot_path), format="turtle")
             return {
                 "main_triples": len(source_data),
@@ -731,7 +786,7 @@ class OxigraphGraphStore:
     ) -> dict:
         _logger.debug("sparql_query dependencies=%s query=%s", include_dependencies, query)
         # Take Oxigraph's repeatable-read snapshot while publication is locked.
-        # Publication clears then bulk-loads its named graph, so starting a
+        # Publication clears then reloads its named graph, so starting a
         # query outside this short critical section could select that empty
         # intermediate state. Result iteration remains outside the lock.
         default_graphs = self._query_default_graphs(
@@ -915,10 +970,8 @@ class OxigraphGraphStore:
         """Materialize the union of registered deployment data graphs only."""
         merged = Graph()
         for context in self.source_dataset.graphs():
-            if not self._is_registered_data_graph_uri(context.identifier):
-                continue
-            for triple in context:
-                merged.add(triple)
+            if self._is_registered_data_graph_uri(context.identifier):
+                merged += context
         return merged
 
     @staticmethod

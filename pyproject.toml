@@ -1,6 +1,6 @@
 [project]
 name = "acquirium"
-version = "0.4.0a5"
+version = "0.4.0a7"
 description = "Acquirium: A data-metadata management platform for water treatment systems"
 readme = "README.md"
 authors = [
@@ -34,10 +34,10 @@ classifiers = [
 ]
 
 dependencies = [
-    "adbc-driver-postgresql>=1.9.0",
     "duckdb>=0.10.0",
     "typer>=0.12.0",
     "fastembed>=0.4.0",
+    "filelock>=3.15",
     "fastapi>=0.125.0",
     "fastexcel>=0.17.2",
     "grafanalib>=0.7.1",
@@ -50,13 +50,14 @@ dependencies = [
     "pydantic>=2.12.5",
     "pyontoenv>=0.6.0,<0.7",
     "pyoxigraph>=0.5.2",
-    "pyshifty>=0.3.0,<0.4",
+    "pyshifty>=0.4.0,<0.5",
     "python-dateutil>=2.9.0.post0",
     "python-multipart>=0.0.21",
     "requests>=2.32.5",
     "rich>=14.2.0",
     "uvicorn>=0.38.0",
     "ray>=2.56.0",
+    "networkx>=3.6.1",
 ]
 
 [project.optional-dependencies]
@@ -118,6 +119,10 @@ constraint-dependencies = ["py-rust-stemmers>=0.1.7"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The live integration tests and the test server share application modules by
+# the importable name tests.integration.materialization_targets; the repo root
+# on sys.path makes that name resolve identically on both sides.
+pythonpath = ["."]
 markers = [
     "unit: Unit tests (no external services required)",
     "integration: Integration tests (require Docker services)",

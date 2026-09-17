@@ -46,7 +46,7 @@ class _FailingBulkStore(_BulkStore):
 def test_insert_timeseries_batch_uses_computed_ref_uris_in_one_bulk_insert():
     mgr = Manager.__new__(Manager)
     store = _BulkStore()
-    mgr.timescale = store
+    mgr.timeseries_store = store
 
     ts = datetime(2026, 4, 28, tzinfo=timezone.utc)
     count = mgr.insert_timeseries_batch(
@@ -78,7 +78,7 @@ def test_insert_timeseries_batch_uses_computed_ref_uris_in_one_bulk_insert():
 def test_insert_timeseries_uses_computed_ref_uris_in_one_bulk_insert():
     mgr = Manager.__new__(Manager)
     store = _BulkStore()
-    mgr.timescale = store
+    mgr.timeseries_store = store
 
     ts = datetime(2026, 4, 28, tzinfo=timezone.utc)
     df = pl.DataFrame(
@@ -114,7 +114,7 @@ def test_insert_timeseries_uses_computed_ref_uris_in_one_bulk_insert():
 def test_insert_timeseries_ignores_input_value_kind_column():
     mgr = Manager.__new__(Manager)
     store = _BulkStore()
-    mgr.timescale = store
+    mgr.timeseries_store = store
 
     ts = datetime(2026, 4, 28, tzinfo=timezone.utc)
     df = pl.DataFrame(
@@ -139,7 +139,7 @@ def test_insert_timeseries_ignores_input_value_kind_column():
 def test_insert_timeseries_batch_does_not_register_streams_when_bulk_insert_fails():
     mgr = Manager.__new__(Manager)
     store = _FailingBulkStore()
-    mgr.timescale = store
+    mgr.timeseries_store = store
 
     ts = datetime(2026, 4, 28, tzinfo=timezone.utc)
     with pytest.raises(RuntimeError, match="bulk insert failed"):
