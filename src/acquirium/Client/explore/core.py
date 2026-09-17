@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 import polars as pl
 from rdflib import URIRef
 
-from acquirium.Client.explore.attributes import REGISTRY, Not, attributes_doc, normalize_value
+from acquirium.Client.explore.attributes import NOT_IN_ALL, REGISTRY, Not, attributes_doc, normalize_value
 from acquirium.Client.explore.compile import compile_sparql
 from acquirium.Client.explore.directions import EQUIPMENT_STEPS, PROPERTY_STEPS
 from acquirium.Client.explore.relations import RELATIONS
@@ -38,6 +38,8 @@ if TYPE_CHECKING:
     from acquirium.Client.explore.facets import FacetSummary
 
 _DIRECTIONS = ("upstream", "downstream")
+# "all" names every attribute in include(), so it cannot name a node
+_RESERVED_ALIASES = frozenset({"all"})
 
 
 def _is_uri(text: Any) -> bool:
@@ -100,6 +102,8 @@ class Query:
 
         Derived aliases (class-name defaults, ``{src}_data``) are silently
         uniquified instead — see ``_unique_alias``."""
+        if alias in _RESERVED_ALIASES:
+            raise ValueError(f"{verb}: alias {alias!r} is reserved; pick a different name")
         if alias in g.aliases:
             raise ValueError(
                 f"{verb}: alias {alias!r} is already used by another node; "
@@ -108,7 +112,7 @@ class Query:
         return alias
 
     def _unique_alias(self, g: QueryGraph, base: str) -> str:
-        if base not in g.aliases:
+        if base not in g.aliases and base not in _RESERVED_ALIASES:
             return base
         i = 2
         while f"{base}_{i}" in g.aliases:
@@ -459,6 +463,8 @@ class Query:
             # anchor (the legacy find_all_data). A standalone data node —
             # still bounded by the external-reference requirement.
             new_id = self._next_id()
+            if alias is not None:
+                self._require_free_alias(g, alias, verb="measurement")
             g = g.with_node(QueryNode(id=new_id, alias=alias if alias is not None else "data",
                                       constraints={"is_data_node": True}))
             g = g.with_data_node(DataNodeInfo(node_id=new_id))
@@ -614,7 +620,7 @@ class Query:
             raise ValueError("alias: no current node (start with entity())")
         node = g.nodes[g.current_pointer]
         owner = g.aliases.get(name)
-        if owner is not None and owner != node.id:
+        if name in _RESERVED_ALIASES or (owner is not None and owner != node.id):
             self._require_free_alias(g, name, verb="alias")
         return self._with_graph(g.with_node(replace(node, alias=name)))
 
@@ -689,16 +695,35 @@ class Query:
 
         ``of`` targets a node by alias (default: current pointer); dotted
         ``"alias.attr"`` targets explicitly. Attribute values bind OPTIONALly
-        (``None`` where absent) unless ``required=True``::
+        (``None`` where absent) unless ``required=True``.
+
+        ``"all"`` expands to the node's usual metadata attributes. ``type``,
+        ``cp_type`` and ``app`` are left out, and so is ``label`` on
+        measurement nodes, which already show it. A node with several values
+        for one attribute (two media, say) yields one row per value::
 
             q.include("medium", "unit")             # attrs of the current node
             q.include("unit", required=True)        # only rows with a unit
             q.include("ro.process")                 # attr of another node
             q.include("Backwash")                   # un-drop a hidden node
+            q.include("all")                        # every attr of the current node
+            q.include("all", of="ro")               # every attr of another node
         """
         if not names:
             raise ValueError('include: provide at least one column name, e.g. include("medium")')
         g = self.query_graph
+        if "all" in names:
+            nid = g.resolve_alias(of)
+            if nid is None:
+                raise ValueError(
+                    f"include: unknown alias {of!r}" if of is not None
+                    else "include: no current node (start with entity())"
+                )
+            role = "data" if nid in g.data_nodes else "entity"
+            expanded = [a.name for a in REGISTRY.values()
+                        if role in a.roles and a.name not in NOT_IN_ALL[role]]
+            names = tuple(n for name in names
+                          for n in (expanded if name == "all" else [name]))
         for name in names:
             try:
                 target = self._column_target(g, name, of)

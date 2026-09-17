@@ -100,9 +100,17 @@ REGISTRY: dict[str, Attr] = {
         Attr("app", (str(PRODUCED_BY),), "any", DATA, literal=True,
              doc='app that derived the measurement ("normalize-temperatures")'),
         # rdfs:label literal on a data node (stream label / CSV column name).
-        Attr("label", (str(RDFS.label),), "any", DATA, literal=True,
-             doc='stream label, matched verbatim ("Influent flow")'),
+        Attr("label", (str(RDFS.label),), "any", BOTH, literal=True,
+             doc='stream or entity label, matched verbatim ("Influent flow")'),
     )
+}
+
+# Attributes include("all") leaves out, per node role. type and cp_type
+# project one row per asserted type / connection point; a measurement's
+# label is already a metadata() column.
+NOT_IN_ALL = {
+    "entity": frozenset({"type", "cp_type"}),
+    "data": frozenset({"type", "app", "label"}),
 }
 
 

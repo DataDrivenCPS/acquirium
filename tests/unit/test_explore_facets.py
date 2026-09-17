@@ -18,7 +18,7 @@ CLS_A = "urn:test#TypeA"
 
 DATA_ATTRS = ["type", "medium", "substance", "quantity_kind", "unit",
               "enumeration_kind", "data_source", "app"]
-ENTITY_ATTRS = ["type", "process", "cp_type", "medium"]
+ENTITY_ATTRS = ["type", "process", "cp_type", "medium", "label"]
 
 
 @pytest.fixture(autouse=True)
