@@ -96,6 +96,7 @@ shape: (1, 1)
 Aliases are unique per query.
 If two nodes derive the same name, the second default alias becomes `pump_2`.
 Explicitly reusing an alias raises an error.
+`all` is reserved for [`include("all")`](#include), so it cannot be an alias.
 
 ## related()
 
@@ -524,6 +525,7 @@ The attribute vocabulary is one shared registry:
 | `enumeration_kind` | measurements | enumeration kind of a state/enum property (`"on off"`) |
 | `data_source` | measurements | origin tag literal, matched verbatim (`"Lab"`, `"SCADA"`) |
 | `app` | measurements | the [app](../explanation/apps.md) that derived the measurement, matched verbatim (`"normalize-temperatures"`); absent on measurements a driver wrote |
+| `label` | both | display name (`rdfs:label`), matched verbatim (`"Influent flow"`) |
 
 The same table is generated into the docstring of every attribute-taking
 method, so `help(q.where)` has it too.
@@ -667,6 +669,25 @@ Note that the four points dropped by `required=True` are the three pressures
 and the temperature, which is what [Which measurement points carry no
 unit?](query-cookbook.md#which-measurement-points-carry-no-unit) lists
 plant-wide.
+
+`include("all")` adds the attributes of a node in one call.
+It works with `of=` and next to other names.
+
+```python
+(acq.query().entity(uri="wbs:RO", alias="ro").include("all")
+ .measurement(alias="m").include("all")
+ .metadata())
+```
+
+On an entity this is `process`, `medium` and `label`.
+On a measurement it is `medium`, `substance`, `quantity_kind`, `unit`,
+`enumeration_kind` and `data_source`.
+`type` and `cp_type` are left out because they give one row per class or per
+connection point.
+`app` is left out too, and so is a measurement's `label`, which
+`metadata()` already shows.
+Note that a node with two values for one attribute, such as two media, shows
+up once per value.
 
 ### drop()
 

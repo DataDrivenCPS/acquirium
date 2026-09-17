@@ -54,7 +54,7 @@ For the stream itself, a reference node under the computed `ref_uri`:
 
 And the point node with its semantic metadata and the link between the two.
 This is the given `point_uri`, or the placeholder `<ref_uri>__point` labelled
-`source_id__ref_name` when none was given:
+with its `ref_name` when none was given:
 
 ```turtle
 <urn:swro/P1-out-pressure>
