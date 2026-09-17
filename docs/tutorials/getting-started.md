@@ -43,8 +43,11 @@ acq.query().entity("pump").metadata()
 ```
 
 A fresh server starts with no model loaded.
-The examples throughout these docs run on the public WaterTAP seawater-ro
-model.
-Getting one running is the [WaterTAP deployment guide](https://github.com/DataDrivenCPS/acquirium/blob/main/deployments/WATERTAP/readme.md):
+
+The examples in these tutorials use the public WaterTAP seawater-ro
+model, which produces simulated data.
+
+To run WaterTAP, follow the [WaterTAP deployment guide](https://github.com/DataDrivenCPS/acquirium/blob/main/deployments/WATERTAP/readme.md):
+
 clone the repo, install the `watertap` extra, and start the server against
 `deployments/WATERTAP/models/seawater-ro/acquirium.toml`.
