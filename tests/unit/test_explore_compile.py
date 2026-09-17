@@ -52,6 +52,26 @@ def strip_labels(s: str) -> str:
     return norm(re.sub(r" \?lbl\d+", "", s))
 
 
+_DATA_EDGE = re.compile(
+    r"\{ \{ (\?v\d+) <http://data\.ashrae\.org/standard223#hasProperty> (\?v\d+) \. \} UNION "
+    r"\{ \1 <http://data\.ashrae\.org/standard223#hasConnectionPoint> \?m_e(\d+)_data_a1_0 \. "
+    r"\?m_e\3_data_a1_0 <http://data\.ashrae\.org/standard223#hasProperty> \2 \. \} UNION "
+    r"\{ \1 <http://data\.ashrae\.org/standard223#actuatedByProperty> \2 \. \} \}"
+)
+
+
+def legacy_data_edge(s: str) -> str:
+    """Rewrite explore's fixed-predicate data edge (the ``entity`` relation)
+    into the any-predicate block the frozen legacy compiler emits, so the
+    rest of the query can still be compared for parity."""
+    return _DATA_EDGE.sub(
+        lambda m: (f"{{ {m.group(1)} ?p_e{m.group(3)}_1 {m.group(2)} . }} UNION "
+                   f"{{ {m.group(1)} <http://data.ashrae.org/standard223#hasConnectionPoint> ?cp_e{m.group(3)}_k1 . "
+                   f"?cp_e{m.group(3)}_k1 ?p_e{m.group(3)}_1 {m.group(2)} . }}"),
+        s,
+    )
+
+
 def legacy_sparql(g: QueryGraph) -> str:
     return Q(client=None, query_graph=g).to_sparql()
 
@@ -74,7 +94,7 @@ def data_node(g: QueryGraph, nid: int, *, filters: dict) -> QueryGraph:
 def assert_parity(g: QueryGraph, g_legacy: QueryGraph | None = None):
     new = compile_sparql(g)
     old = legacy_sparql(g_legacy if g_legacy is not None else g)
-    assert strip_labels(norm(new)) == norm(old)
+    assert strip_labels(norm(legacy_data_edge(norm(new)))) == norm(old)
 
 
 class TestNodeConstraints:
@@ -116,9 +136,13 @@ class TestEdges:
     @pytest.mark.parametrize("direction", ["upstream", "downstream"])
     @pytest.mark.parametrize("hops", [1, 3])
     def test_direction(self, direction, hops):
+        """Parity modulo the not-self filter the explore compiler adds so a
+        loop never returns the source as its own downstream."""
         g = self.two_nodes().with_edge(
             QueryEdge(source_id=0, target_id=1, hops=hops, direction=direction))
-        assert_parity(g)
+        new = compile_sparql(g)
+        assert "FILTER(?v1 != ?v0)" in new
+        assert strip_labels(norm(new.replace("FILTER(?v1 != ?v0)", ""))) == norm(legacy_sparql(g))
 
     @pytest.mark.parametrize("hops", [1, 2])
     @pytest.mark.parametrize("predicates", [None, [PRED_P]])

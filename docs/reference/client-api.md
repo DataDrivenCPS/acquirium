@@ -11,6 +11,21 @@ builds, the `DataObject` a query returns, and the lower-level
 `AcquiriumClient` behind all three.
 Type hints are shortened; `pl` is polars, `pa` is pyarrow.
 
+## init and shutdown
+
+`acquirium.init(config=None, *, data_dir=None, address=None, exact_only=None, timeout=600)`
+returns an `Acquirium` client. `config` accepts a TOML path; with no arguments,
+`init()` loads `./acquirium.toml` if it exists. Without an address, it starts or
+attaches to a local server for the resolved data directory. With no config, the
+local profile uses persistent DuckDB and Oxigraph storage in `./.acquirium`, an
+ephemeral loopback port, one worker, and exact-only text resolution.
+Pass `address="https://acquirium.example.org"` to connect to a separately
+managed remote server. This does not start or stop that server. Every
+`Acquirium` instance exposes its connected server as `acq.address`.
+`acquirium.shutdown()` disconnects and stops only a server this process started.
+It also runs at normal interpreter exit. See
+[local runtime](../how-to/local-runtime.md) for ownership, options, and cleanup.
+
 ## Acquirium
 
 ```python
@@ -104,7 +119,8 @@ See the [querying tutorial](../tutorials/querying.md) and
 |---|---|
 | `entity(cls=None, *, uri=None, alias=None, **attrs) -> Query` | Add an entity node for a class (URI or free text) or one instance (`uri=`, CURIEs accepted); keyword attributes filter inline. |
 | `related(cls=None, *, uri=None, alias=None, frm=None, via="any", direction=None, max_depth=None, nearest=None, **attrs) -> Query` | Add an entity connected to `frm` (default: the current node); `via=` restricts predicates, `direction=` walks the piping topology; `max_depth` defaults to 3 (1 for predicate lists), `nearest` to `True` for plain `via="any"`. |
-| `measurement(*, frm=None, alias=None, direction=None, max_depth=3, nearest=False, include_connection_points=True, **attrs) -> Query` | Attach the measurement points of `frm` (default: the current node; `"*"` for every entity, or a list of aliases); on an empty query, every registered stream. |
+| `measurement(*, frm=None, alias=None, direction=None, max_depth=3, nearest=None, include_connection_points=True, **attrs) -> Query` | Attach the measurement points of `frm` (default: the current node; `"*"` for every entity, or a list of aliases); on an empty query, every registered stream. With `direction=`, `nearest` defaults to `True` and each source keeps the first place along the flow (own connection points, pipe, next entity with its connection points, ...) holding a match; `nearest=False` returns everything within `max_depth`. |
+| `context(cls=None, *, uri=None, alias=None, frm=None, via="entity", **attrs) -> Query` | From a measurement node, add the entity it is about and point at it; `via=` names a relation (`"entity"`, `"upstream"`, `"downstream"`, or one registered with `register_relation`) or gives explicit predicates or step chains. One fixed step, compiled to SPARQL. |
 | `where(target=None, **attrs) -> Query` | Filter a node (`target=` by alias, default the current node) by attribute; values are URIs, free text, lists (OR) or `Not(value)`. |
 | `include(*names, of=None, required=False) -> Query` | Add `alias.attr` columns for a node, or un-drop a node; `required=True` drops rows lacking the attribute. |
 | `drop(*names) -> Query` | Hide a node's column or un-include an attribute; with no arguments, drop the current node. |
@@ -193,7 +209,7 @@ and are listed once above.
 
 | method | description |
 |---|---|
-| `health(timeout=3.0) -> dict` | `GET /health`; raises on failure. |
+| `health(timeout=30.0) -> dict` | `GET /health`; raises on failure. |
 | `graph_version() -> int`, `graph_status() -> dict` | As on `Acquirium`. |
 | `embedding_status() -> dict` | State of the two embedding indexes. |
 | `validate_graph() -> dict` | As on `Acquirium`. |

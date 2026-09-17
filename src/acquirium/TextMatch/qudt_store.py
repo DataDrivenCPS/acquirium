@@ -1,17 +1,17 @@
 """QUDT Unit / QuantityKind concept extraction.
 
-Pure extractor: given an ``rdflib.Graph`` (read out of ontoenv) and an RDF
-type, return concept dicts (uri, kind, label, surfaces, symbol, ucum,
-related) for the embedding index. The graphs are sourced and cached by
-ontoenv; this module does no parsing, fetching, or disk caching.
+Pure extractor: given the rows of :meth:`QUDTStore.concept_query` (run over
+an ontology graph) and an RDF type, return concept dicts (uri, kind, label,
+surfaces, symbol, ucum, related) for the embedding index. This module does
+no querying, parsing, fetching, or disk caching.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from typing import Any
 
-from rdflib import Graph, URIRef
 from rdflib.namespace import SKOS
 
 from acquirium.internals.internals_namespaces import *  # noqa: F403
@@ -48,62 +48,80 @@ def _build_surfaces(uri: str, labels: list[str], symbol: str | None, ucum: str |
 
 
 class QUDTStore:
-    """Extract QUDT unit / quantity-kind concepts from a given graph."""
+    """Extract QUDT unit / quantity-kind concepts from SPARQL rows."""
 
     @staticmethod
-    def extract_concepts(graph: Graph, rdf_type: str) -> list[dict[str, Any]]:
-        """Concept dicts for every ``rdf_type`` subject in *graph*.
+    def concept_query(rdf_type: str) -> str:
+        """SELECT ``?s ?p ?o ?lang`` for every ``rdf_type`` subject.
+
+        One row per indexed property value, plus an unbound row for subjects
+        with none (their local name still yields a surface).
+        """
+        is_unit = rdf_type == str(QUDT.Unit)  # noqa: F405
+        preds = [
+            RDFS.label, SKOS.prefLabel, SKOS.altLabel,  # noqa: F405
+            QUDT.symbol, QUDT.ucumCode,  # noqa: F405
+            QUDT.hasQuantityKind if is_unit else QUDT.applicableUnit,  # noqa: F405
+        ]
+        values = " ".join(f"<{p}>" for p in preds)
+        return f"""
+        SELECT ?s ?p ?o ?lang WHERE {{
+          ?s a <{rdf_type}> .
+          OPTIONAL {{
+            VALUES ?p {{ {values} }}
+            ?s ?p ?o .
+            BIND(LANG(?o) AS ?lang)
+          }}
+        }}
+        """
+
+    @staticmethod
+    def extract_concepts(
+        rows: Iterable[tuple[str | None, ...]], rdf_type: str
+    ) -> list[dict[str, Any]]:
+        """Concept dicts from :meth:`concept_query` rows, sorted by URI.
 
         ``related`` captures the cross-reference used by joint/context
         rerank: a unit's ``qudt:hasQuantityKind``, a quantity kind's
         ``qudt:applicableUnit``.
         """
-        type_uri = URIRef(rdf_type)
         is_unit = rdf_type == str(QUDT.Unit)  # noqa: F405
-        label_preds = [RDFS.label, SKOS.prefLabel, SKOS.altLabel]  # noqa: F405
-        relation_preds = (
-            [QUDT.hasQuantityKind] if is_unit else [QUDT.applicableUnit]  # noqa: F405
-        )
+        label_preds = [str(RDFS.label), str(SKOS.prefLabel), str(SKOS.altLabel)]  # noqa: F405
+        relation_pred = str(QUDT.hasQuantityKind if is_unit else QUDT.applicableUnit)  # noqa: F405
+
+        values: dict[str, dict[str, list[tuple[str, str | None]]]] = {}
+        for subj, pred, obj, lang in rows:
+            by_pred = values.setdefault(subj, {})
+            if pred is not None and obj is not None:
+                by_pred.setdefault(pred, []).append((obj, lang))
 
         concepts: list[dict[str, Any]] = []
-        for subj in graph.subjects(RDF.type, type_uri):  # noqa: F405
-            uri = str(subj)
-            # Sort within each predicate so iteration order from the
-            # underlying store doesn't change the resulting concept dict —
-            # otherwise the cache hash drifts and warm starts re-embed.
+        # Sort everything so store iteration order never changes the concept
+        # dicts; otherwise the cache hash drifts and warm starts re-embed.
+        for uri in sorted(values):
+            by_pred = values[uri]
             labels: list[str] = []
             display_label: str | None = None
             for pred in label_preds:
-                pred_labels: list[str] = []
-                for lit in graph.objects(subj, pred):
-                    lang = getattr(lit, "language", None)
-                    if lang and not lang.startswith("en"):
-                        continue
-                    text = str(lit)
-                    if text:
-                        pred_labels.append(text)
-                for text in sorted((set(pred_labels))):
+                pred_labels = {
+                    text for text, lang in by_pred.get(pred, ())
+                    if text and not (lang and not lang.startswith("en"))
+                }
+                for text in sorted(pred_labels):
                     if text not in labels:
                         labels.append(text)
                     if display_label is None:
                         display_label = text
 
-            symbols = sorted({str(s) for s in graph.objects(subj, QUDT.symbol)})  # noqa: F405
+            symbols = sorted({o for o, _ in by_pred.get(str(QUDT.symbol), ())})  # noqa: F405
             symbol = symbols[0] if symbols else None
-            ucums = sorted({str(u) for u in graph.objects(subj, QUDT.ucumCode)})  # noqa: F405
+            ucums = sorted({o for o, _ in by_pred.get(str(QUDT.ucumCode), ())})  # noqa: F405
             ucum = ucums[0] if ucums else None
 
             surfaces = _build_surfaces(uri, labels, symbol, ucum)
             if not surfaces:
                 continue
 
-            related = sorted(
-                {
-                    str(obj)
-                    for pred in relation_preds
-                    for obj in graph.objects(subj, pred)
-                }
-            )
             concepts.append({
                 "uri": uri,
                 "kind": "unit" if is_unit else "quantity_kind",
@@ -111,6 +129,6 @@ class QUDTStore:
                 "surfaces": surfaces,
                 "symbol": symbol,
                 "ucum": ucum,
-                "related": related,
+                "related": sorted({o for o, _ in by_pred.get(relation_pred, ())}),
             })
         return concepts

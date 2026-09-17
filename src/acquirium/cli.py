@@ -28,11 +28,17 @@ import json
 import os
 import signal
 import sys
-import tomllib
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, Iterator, Optional
 
 import typer
+
+from acquirium.Server.config import (
+    DEFAULT_LOCAL_CONFIG,
+    load_config,
+    load_local_config,
+)
 
 app = typer.Typer(
     name="acquirium",
@@ -45,60 +51,6 @@ app = typer.Typer(
 def _root() -> None:
     """Keep Typer in multi-command mode so `acquirium server ...` works
     even when `server` is the only registered subcommand."""
-
-# ---------------------------------------------------------------------------
-# Config helpers
-# ---------------------------------------------------------------------------
-
-# Mapping from acquirium.toml [server] keys to environment variable names.
-_SERVER_ENV_MAP: dict[str, str] = {
-    "data_dir":               "ACQUIRIUM_DATA_DIR",
-    "pg_dsn":                 "PG_DSN",
-    "duckdb_path":            "ACQUIRIUM_DUCKDB_PATH",
-    "timeseries_backend":     "ACQUIRIUM_TIMESERIES_BACKEND",
-    "graph_path":             "ACQUIRIUM_GRAPH_PATH",
-    "embedding_model":        "ACQUIRIUM_EMBEDDING_MODEL",
-    "exact_only":             "ACQUIRIUM_EXACT_ONLY",
-    "recreate":               "ACQUIRIUM_RECREATE",
-    "workers":                "ACQUIRIUM_WORKERS",
-}
-
-
-def _load_config(path: Path | None) -> dict:
-    """Load an acquirium.toml file.  Falls back to cwd/acquirium.toml if path is None."""
-    if path is None:
-        default = Path("acquirium.toml")
-        if default.exists():
-            path = default
-        else:
-            return {}
-    with open(path, "rb") as f:
-        cfg = tomllib.load(f)
-    cfg["__config_dir"] = str(path.resolve().parent)
-    return cfg
-
-
-def _apply_server_env(cfg: dict) -> None:
-    """Set env var defaults from cfg['server'].  Existing env vars are never overwritten."""
-    server = cfg.get("server", {})
-    config_dir = Path(cfg.get("__config_dir", Path.cwd()))
-    for key, env_var in _SERVER_ENV_MAP.items():
-        if key not in server:
-            continue
-        value = server[key]
-        if key in {"data_dir", "duckdb_path", "graph_path"}:
-            value = str((config_dir / value).resolve()) if not Path(value).is_absolute() else str(value)
-        if isinstance(value, list):
-            str_value = ",".join(str(v) for v in value)
-        elif isinstance(value, bool):
-            str_value = "true" if value else "false"
-        else:
-            str_value = str(value)
-        os.environ.setdefault(env_var, str_value)
-
-    # `[ontologies] sources` is read directly from acquirium.toml by
-    # Manager — see acquirium.Server.config.load_ontology_config.
-
 
 # ---------------------------------------------------------------------------
 # Driver import helpers
@@ -270,7 +222,7 @@ def driver_start(
     server_port: _ServerPortOpt = None,
 ) -> None:
     """Start the drivers declared in the config on the server and exit."""
-    cfg = _load_config(config)
+    cfg = load_config(config).data
     _push_drivers_to_server(cfg, server_url, server_port)
 
 
@@ -283,7 +235,7 @@ def driver_list(
     """List drivers running on the server."""
     import requests
 
-    cfg = _load_config(config)
+    cfg = load_config(config).data
     base = _server_base_url(cfg, server_url, server_port)
     try:
         resp = requests.get(f"{base}/drivers/list", timeout=30)
@@ -314,7 +266,7 @@ def driver_stop(
     """Stop a running driver by name."""
     import requests
 
-    cfg = _load_config(config)
+    cfg = load_config(config).data
     base = _server_base_url(cfg, server_url, server_port)
     try:
         resp = requests.post(f"{base}/drivers/stop", json={"name": name}, timeout=60)
@@ -363,7 +315,7 @@ def app_list(
     server_port: _ServerPortOpt = None,
 ) -> None:
     """List deployed apps, including apps with no matches or planning errors."""
-    result = _read_apps(_server_base_url(_load_config(config), server_url, server_port))
+    result = _read_apps(_server_base_url(load_config(config).data, server_url, server_port))
     if as_json:
         typer.echo(json.dumps(result, indent=2))
         return
@@ -384,7 +336,7 @@ def app_inspect(
     server_port: _ServerPortOpt = None,
 ) -> None:
     """Show declared output schemas, settings, resolved streams, and progress."""
-    result = _read_apps(_server_base_url(_load_config(config), server_url, server_port), name)
+    result = _read_apps(_server_base_url(load_config(config).data, server_url, server_port), name)
     if as_json:
         typer.echo(json.dumps(result, indent=2))
         return
@@ -478,7 +430,7 @@ def app_check(
     if limit < 0:
         typer.echo("--limit must not be negative", err=True)
         raise typer.Exit(1)
-    cfg = _load_config(config)
+    cfg = load_config(config).data
     base = _server_base_url(cfg, server_url, server_port)
     try:
         target, source_dir = _load_app_target(spec)
@@ -580,6 +532,74 @@ def _check_failures(result: dict) -> bool:
 # server subcommand
 # ---------------------------------------------------------------------------
 
+def _run_uvicorn(
+    application: object,
+    *,
+    host: str,
+    port: int,
+    reload: bool,
+    workers: int,
+    sockets: list[object] | None = None,
+) -> None:
+    """Run uvicorn for both the public CLI and aq.init()'s private mode."""
+    import uvicorn
+
+    signal.signal(signal.SIGTERM, _sigterm_as_keyboard_interrupt)
+    typer.echo(f"Starting Acquirium server on {host}:{port}")
+    if sockets is None:
+        uvicorn.run(application, host=host, port=port, reload=reload, workers=workers)
+        return
+
+    server = uvicorn.Server(
+        uvicorn.Config(application, host=host, port=port, reload=reload, workers=workers)
+    )
+    server.run(sockets=sockets)
+
+
+@contextmanager
+def _local_runtime_setup(
+    *,
+    directory: Path,
+    host: str,
+    port: int,
+    config_fingerprint: str | None,
+) -> Iterator[tuple[object, int, list[object]]]:
+    """Prepare aq.init() discovery around the shared uvicorn runner."""
+    import socket
+    from uuid import uuid4
+
+    from filelock import FileLock
+
+    with FileLock(directory / "server.lock", timeout=0):
+        with socket.socket() as listener:
+            listener.bind((host, port))
+            actual_port = listener.getsockname()[1]
+            os.environ["ACQUIRIUM_SELF_HOST"] = host
+            os.environ["ACQUIRIUM_SELF_PORT"] = str(actual_port)
+
+            from acquirium.Server.app import app as application
+
+            info = {
+                "port": actual_port,
+                "token": uuid4().hex,
+                "config": config_fingerprint,
+                "exact_only": os.environ.get("ACQUIRIUM_EXACT_ONLY") == "true",
+            }
+
+            @application.get("/_local_runtime", include_in_schema=False)
+            def local_runtime():
+                return info
+
+            registry = directory / "server.json"
+            temporary = directory / "server.json.tmp"
+            temporary.write_text(json.dumps(info))
+            temporary.replace(registry)
+            try:
+                yield application, actual_port, [listener]
+            finally:
+                registry.unlink(missing_ok=True)
+
+
 @app.command("server")
 def server_cmd(
     config: Annotated[Optional[Path], typer.Option("--config", "-c", help="Path to acquirium.toml")] = None,
@@ -588,6 +608,7 @@ def server_cmd(
     reload: Annotated[bool, typer.Option("--reload", help="Enable uvicorn auto-reload (development)")] = False,
     workers: Annotated[Optional[int], typer.Option("--workers", "-w", help="Uvicorn worker processes; must be 1 — the embedded Oxigraph graph store is single-process on every backend")] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Enable DEBUG logs in acquirium.* (server, storage, drivers)")] = False,
+    runtime_directory: Annotated[Optional[Path], typer.Option("--runtime-directory", hidden=True)] = None,
 ) -> None:
     """Start the server, configured drivers, and configured apps.
 
@@ -601,25 +622,30 @@ def server_cmd(
     from acquirium.internals._log import configure_logging
     configure_logging(verbose=verbose or os.environ.get("ACQUIRIUM_VERBOSE") == "1")
 
-    cfg = _load_config(config)
-    _apply_server_env(cfg)
+    loaded_config = (
+        load_local_config(config, discover=False)
+        if runtime_directory is not None
+        else load_config(config)
+    )
+    cfg = loaded_config.data
+    loaded_config.apply_server_env()
 
     server_cfg = cfg.get("server", {})
     if not server_cfg.get("enabled", True):
         _push_drivers_to_server(cfg)
         return
 
-    import uvicorn
+    # The lifespan, ontology loader, and reload child all consume this exact
+    # selection. An empty value deliberately means no config.
+    loaded_config.activate()
 
-    # Propagate the config path so the lifespan can start [[drivers]] and
-    # deploy [[apps]].
-    if config:
-        os.environ.setdefault("ACQUIRIUM_CONFIG", str(config.resolve()))
-    elif Path("acquirium.toml").exists():
-        os.environ.setdefault("ACQUIRIUM_CONFIG", str(Path("acquirium.toml").resolve()))
-
-    effective_host = host or server_cfg.get("host", "0.0.0.0")
-    effective_port = port or server_cfg.get("port", 8000)
+    if runtime_directory is None:
+        effective_host = host if host is not None else server_cfg.get("host", "0.0.0.0")
+        effective_port = port if port is not None else server_cfg.get("port", 8000)
+    else:
+        # aq.init() is always loopback-only and defaults to an ephemeral port.
+        effective_host = str(DEFAULT_LOCAL_CONFIG["server"]["host"])
+        effective_port = port if port is not None else server_cfg["port"]
     # Driver actors connect back to this server over HTTP; the lifespan reads
     # this to know its own port when [driver] server_port is not set.
     os.environ["ACQUIRIUM_SELF_PORT"] = str(effective_port)
@@ -645,10 +671,25 @@ def server_cmd(
         )
         raise typer.Exit(1)
 
-    signal.signal(signal.SIGTERM, _sigterm_as_keyboard_interrupt)
+    if runtime_directory is not None:
+        directory = runtime_directory.resolve()
+        with _local_runtime_setup(
+            directory=directory,
+            host=effective_host,
+            port=int(effective_port),
+            config_fingerprint=loaded_config.fingerprint,
+        ) as (application, actual_port, sockets):
+            _run_uvicorn(
+                application,
+                host=effective_host,
+                port=actual_port,
+                reload=False,
+                workers=1,
+                sockets=sockets,
+            )
+        return
 
-    typer.echo(f"Starting Acquirium server on {effective_host}:{effective_port}")
-    uvicorn.run(
+    _run_uvicorn(
         "acquirium.Server.app:app",
         host=effective_host,
         port=effective_port,

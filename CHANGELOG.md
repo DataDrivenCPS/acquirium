@@ -11,10 +11,36 @@ change in any release.
 ## [Unreleased]
 
 ### Added
+- A defined zero-config profile for `aq.init()`: project-local DuckDB and
+  Oxigraph storage, loopback on an ephemeral port, one worker, persistence,
+  and fast offline startup with exact-only resolution.
+
+### Fixed
+- CURIEs such as `watr:UltrafiltrationUnit` or `quantitykind:Pressure` given as
+  a class, relation or attribute value are expanded with the server's prefix
+  table. They were sent to text matching instead, which fails in exact-only
+  mode and can pick a similar concept (`PressureBasedQuantity`) otherwise.
+- `GET /namespace/list` serves a stable prefix table. The bundled ontologies are
+  loaded as N-Triples, which carries no `@prefix` declarations, so `unit:`,
+  `quantitykind:` and acquirium's own namespaces were never bound: clients fell
+  back to rdflib's generated `ns1`, `ns2` names, which are assigned in whatever
+  order URIs happen to be serialized. The same URI compacted to a different CURIE
+  in two clients, and to another one after a restart. The store now seeds its
+  namespace manager from a canonical set on every open, and never binds a
+  generated name, whether it arrives from rdflib or in an inserted model.
+
+## [0.4.0a7] - 2026-09-14
+
+### Added
 - Read-only `acquirium app list` and `acquirium app inspect NAME` commands,
   with JSON output and matching HTTP/Python APIs. Inspection includes declared
   output schemas, units, settings, resolved streams, progress, and errors,
   including deployments with no matches or planning failures.
+- `Query.context()`: from a measurement, the entity it is about, following a
+  named relation (`entity`, `upstream`, `downstream`, or one added with
+  `register_relation`). Points on pipes reach the equipment feeding them.
+- `max_depth=0` is unbounded on every edge form; `direction=` edges and
+  predicate lists compile to transitive property paths.
 - Incremental materialization apps on DuckDB and PostgreSQL/TimescaleDB.
   Apps select streams with a semantic query and implement
   `transform(inputs, output, context)`. Grouping is explicitly `per_match`
@@ -47,6 +73,23 @@ change in any release.
   progress, execution status, and errors.
 
 ### Changed
+- `measurement()` follows a fixed set of attach predicates (`hasProperty`,
+  directly or through a connection point, and `actuatedByProperty`), the
+  `entity` relation of `context()` read forwards, instead of any predicate.
+  Points a sensor `observes` are no longer returned for the sensor; they are
+  reached through the equipment or connection point that has them. The query
+  no longer scans the whole dataset (two seconds down to milliseconds on the
+  DPR model). A deployment attaching points by another predicate adds it with
+  `register_relation("entity", ...)`.
+- `measurement(direction=...)` searches the flow in places: the source's own
+  outlet (or inlet) connection points, then alternately the pipe and the next
+  entity with all of its connection points. `nearest` now defaults to `True`
+  with a direction, so each source keeps the first place holding a match and
+  filters walk past places without one; pass `nearest=False` for every point
+  within `max_depth`. The old form filtered the next entity's outlet or inlet
+  points only and skipped the source's own connection points.
+- `related(direction=..., nearest=True)` is supported the same way instead of
+  raising.
 - Preserve `insert_timeseries(..., replace=True)` ingestion compatibility on
   DuckDB and TimescaleDB: replacement keeps exactly the supplied rows, including
   clearing with an empty list or inserting into an unwritten stream. One revision
@@ -477,7 +520,8 @@ change in any release.
 - Text matcher backed by FastEmbed with QUDT and graph indexes.
 - Grafana dashboard helpers.
 
-[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a6...HEAD
+[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a7...HEAD
+[0.4.0a7]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a6...v0.4.0a7
 [0.4.0a6]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a5...v0.4.0a6
 [0.4.0a5]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a4...v0.4.0a5
 [0.4.0a4]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a3...v0.4.0a4
