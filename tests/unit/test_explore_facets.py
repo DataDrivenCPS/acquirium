@@ -17,8 +17,8 @@ from acquirium.Client.explore.attributes import REGISTRY
 CLS_A = "urn:test#TypeA"
 
 DATA_ATTRS = ["type", "medium", "substance", "quantity_kind", "unit",
-              "enumeration_kind", "data_source", "app"]
-ENTITY_ATTRS = ["type", "process", "cp_type", "medium"]
+              "enumeration_kind", "data_source", "app", "label"]
+ENTITY_ATTRS = ["type", "process", "cp_type", "medium", "label"]
 
 
 @pytest.fixture(autouse=True)

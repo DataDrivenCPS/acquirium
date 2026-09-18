@@ -33,7 +33,7 @@ acq.register_streams([{
 `point_uri` ties the stream to a point in the semantic model.
 This link makes the rows reachable by queries.
 A stream registered without it gets a placeholder point, `<ref_uri>__point`,
-labelled `source_id__ref_name` unless you pass `label`.
+labelled with its `ref_name` unless you pass `label`.
 `measurement()` on an empty query finds it, but no equipment refers to it, so
 topology queries do not reach it.
 `unit`, `quantity_kind`, `medium` and `substance` accept free text or URIs,

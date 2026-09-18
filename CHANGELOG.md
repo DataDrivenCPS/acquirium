@@ -10,10 +10,58 @@ change in any release.
 
 ## [Unreleased]
 
+## [0.4.0a8] - 2026-09-17
+
 ### Added
-- A defined zero-config profile for `aq.init()`: project-local DuckDB and
-  Oxigraph storage, loopback on an ephemeral port, one worker, persistence,
-  and fast offline startup with exact-only resolution.
+- `aq.init()` returns a client and starts a local server when none is running
+  for the resolved data directory. With no arguments it loads
+  `./acquirium.toml` if present; otherwise it uses a zero-config profile:
+  DuckDB and Oxigraph storage under `./.acquirium`, loopback on an ephemeral
+  port, one worker, persistent data, and exact-only resolution. `config=`
+  takes a TOML path, `data_dir=` selects the local defaults for another
+  directory, and `exact_only=` overrides the resolution mode. `recreate = true`,
+  `enabled = false` and more than one worker are refused.
+- Scripts that resolve to the same data directory share one server. The first
+  caller owns it: `aq.shutdown()`, which also runs at normal interpreter exit,
+  stops a server this process started and only closes the client otherwise.
+  A second `init()` with a different config or `exact_only` setting raises
+  instead of attaching. The server log is `<data_dir>/.runtime/server.log`.
+- `aq.init(address="https://...")` connects to a separately managed server
+  without starting or stopping it.
+- `Acquirium.address` and `AcquiriumClient.address`: the URL of the connected
+  server.
+- `include("all")` adds every metadata attribute that applies to the node.
+  `type` and `cp_type` are left out, and on measurement nodes `app` and
+  `label` as well. `all` is now a reserved alias: `alias("all")` and
+  `alias="all"` raise, and a derived alias of that name is renamed.
+- A `label` attribute for `where()`, `include()`, `options()` and the inline
+  keywords. It matches the `rdfs:label` of an entity or a stream verbatim.
+- `ACQUIRIUM_SELF_HOST` sets the host driver actors use to reach the server,
+  ahead of `[driver] server_url`.
+
+### Changed
+- A stream registered without a point and without a `label` gets a point
+  labeled with its `ref_name` (the CSV column name, for example) instead of
+  `{source_id}__{ref_name}`. Note that graphs written by earlier versions are
+  not relabeled.
+- `aq.init()` prints its progress to stderr. When the server is started
+  without `exact_only` and an embedding index is not cached, the wait is
+  raised to at least one hour, since building both indexes takes about 15
+  minutes and a timeout discards the unfinished index.
+- `AcquiriumClient.health()` defaults to a 30 s request timeout instead of
+  3 s, and the `health_timeout` wait of `Acquirium(...)` no longer overruns
+  its deadline.
+- Startup extracts the text-matching concepts with SPARQL inside Oxigraph
+  instead of copying the water, s223 and QUDT ontologies into rdflib, which
+  took about 25 s on every start. The concept lists are unchanged, so cached
+  embedding indexes stay valid.
+- Configuration loading is shared by the CLI, the server and `aq.init()`
+  (`acquirium.Server.config.load_config`). An empty `ACQUIRIUM_CONFIG` means
+  no config file, and suppresses the lookup of `./acquirium.toml`.
+- `acquirium server --port 0` is passed through to uvicorn instead of falling
+  back to the configured port.
+- The shipped `acquirium.toml` sets `exact_only = true`.
+- New dependency: `filelock`.
 
 ### Changed
 - Building the text-matching indexes from scratch is several times faster.
@@ -28,16 +76,21 @@ change in any release.
 ### Fixed
 - CURIEs such as `watr:UltrafiltrationUnit` or `quantitykind:Pressure` given as
   a class, relation or attribute value are expanded with the server's prefix
-  table. They were sent to text matching instead, which fails in exact-only
-  mode and can pick a similar concept (`PressureBasedQuantity`) otherwise.
+  table, in `client.resolve()` as well. They were sent to text matching
+  instead, which fails in exact-only mode and can pick a similar concept
+  (`PressureBasedQuantity`) otherwise.
 - `GET /namespace/list` serves a stable prefix table. The bundled ontologies are
   loaded as N-Triples, which carries no `@prefix` declarations, so `unit:`,
-  `quantitykind:` and acquirium's own namespaces were never bound: clients fell
-  back to rdflib's generated `ns1`, `ns2` names, which are assigned in whatever
-  order URIs happen to be serialized. The same URI compacted to a different CURIE
-  in two clients, and to another one after a restart. The store now seeds its
-  namespace manager from a canonical set on every open, and never binds a
-  generated name, whether it arrives from rdflib or in an inserted model.
+  `quantitykind:`, `g36:` and acquirium's own namespaces were never bound:
+  clients fell back to rdflib's generated `ns1`, `ns2` names, which are assigned
+  in whatever order URIs happen to be serialized. The same URI compacted to a
+  different CURIE in two clients, and to another one after a restart. The store
+  now seeds its namespace manager from a canonical set on every open, and never
+  binds a generated name, whether it arrives from rdflib or in an inserted
+  model. An inserted model keeps the prefixes it declares for its own
+  vocabulary but cannot rename a canonical namespace.
+- `measurement(alias=...)` on an empty query accepted an alias that was already
+  in use.
 
 ## [0.4.0a7] - 2026-09-14
 
@@ -529,7 +582,8 @@ change in any release.
 - Text matcher backed by FastEmbed with QUDT and graph indexes.
 - Grafana dashboard helpers.
 
-[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a7...HEAD
+[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a8...HEAD
+[0.4.0a8]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a7...v0.4.0a8
 [0.4.0a7]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a6...v0.4.0a7
 [0.4.0a6]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a5...v0.4.0a6
 [0.4.0a5]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a4...v0.4.0a5

@@ -18,12 +18,10 @@ by extending the built-in `CSVIngestDriver`.
 By the end you have a driver that watches a folder, ingests every new row of
 every new file, and gives every column its unit and quantity kind.
 
-**No plant model is involved.** This is data ingest on its own: getting the
-rows in, stored, and described well enough to query by what they measure.
-Attaching them to equipment is what a plant model is for, and that is the
+This tutorial focuses on setting up a driver for ingesting timeseries data, and 
+minimally classifying that data so that it can be used.
+Attaching this data to a model of the plant is in the
 [next tutorial](driver-with-a-plant-model.md).
-Starting here is deliberate — a driver you can run and watch insert rows is a
-much easier thing to debug than one that also has to match a model.
 
 ## The source
 
@@ -36,8 +34,6 @@ Date,Time,Feed Flow,Permeate Flow,Feed Pressure,Permeate TDS
 8/1/2026,12:15:00 AM,120.1,55.0,803,208
 8/1/2026,12:30:00 AM,NaN,54.9,802,211
 ```
-
-Three things to notice, because they decide the configuration:
 
 - the layout is **wide**: one column per stream, one row per timestamp;
 - the timestamp is split over two columns, `Date` and `Time`, in US format;
@@ -76,18 +72,19 @@ acquirium driver list
 
 Every column is now a stream, `measurement()` on an empty query finds them,
 and each one has a *placeholder point*: a node minted for the stream, labelled
-`ro-skid__Feed Flow` and so on.
+with its column name (`Feed Flow` and so on).
 
 ```python
 acq.query().measurement(alias="m").metadata()
 ```
 
-The rows are safely stored and reachable. What is missing is meaning: nothing
-says that `Feed Flow` is in gallons per minute, or that it is a flow rate at
-all, so you cannot ask for it by anything except its name.
+The rows are safely stored and reachable. Next, we need to define the 
+minimal necessary information for interpretting the data in each column. 
+For example, to interpet `Feed Flow`, we need to know that it's in gallons per minute 
+and describes a flow rate.
 That is what the subclass adds.
 
-## Step 2: subclass and keep what works
+## Step 2: subclass 
 
 Create `ro_skid_driver.py` next to the config:
 
@@ -156,19 +153,11 @@ acq.query().measurement(quantity_kind="pressure").metadata()
 acq.query().measurement(unit="gal/min").metadata()
 ```
 
-`label` replaces the default `ro-skid__Feed Flow` and is what result columns
-display in place of the URI, which is worth setting for readability alone.
-
-Declaring is idempotent and cheap, so it is fine that this runs on every batch;
-only the first call for each column does anything.
-A column not in `COLUMNS` is still ingested, as in step 1 — an undescribed
-stream is better than a dropped one.
+`label` replaces the default `Feed Flow` and is what result columns
+display in place of the URI to improve readability.
 
 Note that the driver does not pick point URIs here.
-Without a plant model there is nothing to attach to, and inventing URIs now
-would only make it harder to adopt a real model later: the invented points
-would sit beside the real ones rather than becoming them.
-Let the platform mint the placeholders and describe them.
+URIs may be minted later, attached to a plant model.
 
 ## Step 4: fix the frame before it is parsed
 
@@ -238,17 +227,13 @@ An unreadable file is logged and skipped without stalling the others.
 Every column is stored, described by unit and quantity kind, and findable with
 `measurement()` and the attribute filters.
 
-What the placeholder points cannot do is topology. Nothing in the graph says
+These points cannot do are not yet connected to a system topology. Nothing in the graph says
 `Feed Pressure` is measured at the RO inlet, so no query that starts from
 equipment reaches it: `entity("pump").measurement()` will not find these
-streams, and neither will `direction="upstream"`. They are readings without a
-place.
+streams, and neither will `direction="upstream"`. 
 
-That is not a defect of the driver, it is the absence of a plant model. When
-one exists, the same driver binds its columns to the points already in it and
-the readings join the plant proper: [a driver against an existing plant
-model](driver-with-a-plant-model.md) is this driver again, with that one
-change.
+[The next tutorial](driver-with-a-plant-model.md) connects this driver to 
+enable these functionlaities.
 
 Every option of the built-in drivers, the other base classes and the full
 driver contract are in the [driver reference](../reference/drivers.md).

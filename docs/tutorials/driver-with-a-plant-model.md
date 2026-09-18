@@ -4,20 +4,13 @@ title: A driver against an existing plant model
 
 [Your first driver](first-driver.md) ingested a CSV export with no plant model
 at all. Every column got a placeholder point, described by its unit and
-quantity kind, and the readings were queryable by what they measure — but not
-by where they were measured, because nothing said where that was.
+quantity kind.
 
-This tutorial is the same driver, the same CSV file, and the same four
-columns, in the situation you are actually in most of the time: **the plant
-model already exists**. Somebody has loaded it with
-[load a plant model](../how-to/load-a-plant-model.md), the RO skid is already
-described in it, and the points your columns measure are already there with
-their units and quantity kinds.
+This tutorial continues from the same driver and matches the data points to a model of the RO skid 
+[loaded in based on this guide](../how-to/load-a-plant-model.md).
 
 What changes is one argument. `declare()` gains a `point_uri` naming a point
-already in the graph, and the stream attaches to it instead of to a
-placeholder. In exchange the driver gets shorter — the model already owns the
-units — and the graph gets a consistency check it did not have before.
+already in the graph, and attaching the data stream to that point. 
 
 ## The situation
 
@@ -47,10 +40,7 @@ wbs:RO-in-pressure  a s223:QuantifiableObservableProperty ;
     qudt:hasQuantityKind qudtqk:Pressure .
 ```
 
-Note the asymmetry, because it drives everything below: the flow point carries
-a unit, the pressure point does not. Real models are like this.
-
-## Step 1: find the points, do not invent them
+## Step 1: find the points
 
 Before writing any code, ask the server which points exist and what they
 already say. This is the step that replaces choosing URIs:
@@ -81,8 +71,7 @@ shape: (11, 4)
 ```
 
 Every URI in the `m` column is a binding target. Copy them exactly; a typo
-mints a placeholder point instead of failing, which is the one mistake in this
-tutorial that stays silent.
+mints a new URI rather than attaching the point to your model.
 
 Note also what is *not* there: the model has no TDS concentration point on the
 RO, so the `Permeate TDS` column has nothing to bind to. That is the normal
@@ -91,7 +80,7 @@ state of affairs, and step 2 handles it.
 ## Step 2: declare against those points
 
 The driver is the same class as before, with one difference in
-`declare_stream()`: `point_uri` names a point that already exists.
+`declare_stream()`: `point_uri` names a point in your model.
 
 ```python
 from acquirium import CSVIngestDriver
@@ -113,15 +102,12 @@ class ROSkidDriver(CSVIngestDriver):
 ```
 
 The `unit` and `quantity_kind` arguments are gone. The point already carries
-both, and they are the model's business, not the driver's. Passing them again
-is allowed but only creates a chance to contradict the model.
+both in the model for this example. 
 
-`Permeate TDS` falls through to the bare `self.declare(ref_name)`. It still
-gets ingested and still gets a placeholder point, exactly as in the first
-tutorial — the rows are kept, they are just not reachable through `wbs:RO`
-until somebody adds the point to the model. Keeping the column is the right
-call: dropping data because the model is incomplete is a worse trade than
-storing it somewhere findable.
+`Permeate TDS` does not have a corresponding point in the model, so just its reference is added
+ `self.declare(ref_name)`. It still
+gets ingested and still gets a placeholder point, but they aren't reachable
+through `wbs:RO` until somebody adds the point to the model. 
 
 The config from the first tutorial is unchanged:
 
@@ -154,7 +140,7 @@ what the graph says, and refuses to write a contradiction:
 | the same value | the same value | no change |
 | `qudtqk:Pressure` | `quantity_kind="temperature"` | `ValueError`, nothing inserted |
 
-That check is the whole reason to bind. In the first tutorial nothing could
+In the first tutorial nothing could
 contradict you: a placeholder point has no prior opinion, so declaring
 `quantity_kind="temperature"` on a pressure column produced a confidently
 wrong point and no complaint. Here the model already holds the opinion, and
@@ -184,14 +170,12 @@ are in [units](../explanation/units.md#how-a-unit-gets-recorded).
 
 For `wbs:RO-in-pressure` as the model actually ships it — no unit at all —
 declaring `unit="psi"` writes psi onto the point, because a field the point
-lacks is added rather than compared. That is a real improvement to the model,
-and it is the one case where a driver should pass a unit for a point it does
-not own.
+lacks is added rather than compared.
 
 ## Step 5: check the binding
 
 Drop a file in, wait one interval, and confirm the rows arrived through the
-plant model rather than beside it. The test is that a query starting from
+plant model. The test is that a query starting from
 *equipment* reaches them:
 
 ```python
@@ -201,7 +185,7 @@ plant model rather than beside it. The test is that a query starting from
 ```
 
 If that has rows, the binding worked: the driver's data is now reachable by
-topology, by quantity kind, and by everything else in the
+equipment topology, by quantity kind, and by everything else in the
 [querying tutorial](querying.md), exactly like every other point on the skid.
 
 If instead the data only shows up under `measurement()` on an empty query, the
@@ -213,9 +197,9 @@ acq.query().measurement(alias="m").metadata()
 ```
 
 `metadata()` adds an `m.label` column whenever the matched points carry an
-`rdfs:label`, and a placeholder's label is `ro-skid__Feed Flow` — the
-`source_id` and the `ref_name` joined by a double underscore. A row like that
-next to a URI ending in `__point` is a binding that missed.
+`rdfs:label`, and a placeholder's label is its `ref_name`, here the column
+name `Feed Flow`. A row like that next to a URI ending in `__point` is a
+binding that missed.
 
 Fix the URI and re-declare. The misdirected rows stay under the placeholder,
 so clear them or leave them orphaned deliberately; re-declaring does not move

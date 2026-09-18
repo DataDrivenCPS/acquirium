@@ -161,7 +161,7 @@ When `point_uri` exists in the graph, the declared metadata is checked against
 it; see [units](../explanation/units.md#how-a-unit-gets-recorded) and the
 [lifecycle guide](../explanation/stream-lifecycle.md).
 Without `point_uri`, a placeholder point `<ref_uri>__point` labelled
-`source_id__ref_name` is minted.
+with its `ref_name` is minted.
 
 | method | meaning |
 |---|---|
