@@ -1,0 +1,362 @@
+{
+  "group": "abbr",
+  "kind": "unit",
+  "cases": [
+    {
+      "text": "gpm",
+      "expected": [
+        "http://qudt.org/vocab/unit/GAL_US-PER-MIN"
+      ]
+    },
+    {
+      "text": "GPM",
+      "expected": [
+        "http://qudt.org/vocab/unit/GAL_US-PER-MIN"
+      ]
+    },
+    {
+      "text": "gal/min",
+      "expected": [
+        "http://qudt.org/vocab/unit/GAL_US-PER-MIN"
+      ]
+    },
+    {
+      "text": "gpd",
+      "expected": [
+        "http://qudt.org/vocab/unit/GAL_US-PER-DAY"
+      ]
+    },
+    {
+      "text": "gal/day",
+      "expected": [
+        "http://qudt.org/vocab/unit/GAL_US-PER-DAY"
+      ]
+    },
+    {
+      "text": "gph",
+      "expected": [
+        "http://qudt.org/vocab/unit/GAL_US-PER-HR"
+      ]
+    },
+    {
+      "text": "cfs",
+      "expected": [
+        "http://qudt.org/vocab/unit/FT3-PER-SEC"
+      ]
+    },
+    {
+      "text": "cfm",
+      "expected": [
+        "http://qudt.org/vocab/unit/FT3-PER-MIN"
+      ]
+    },
+    {
+      "text": "scfm",
+      "expected": [
+        "http://qudt.org/vocab/unit/SCF-PER-MIN"
+      ]
+    },
+    {
+      "text": "m3/h",
+      "expected": [
+        "http://qudt.org/vocab/unit/M3-PER-HR"
+      ]
+    },
+    {
+      "text": "m3/hr",
+      "expected": [
+        "http://qudt.org/vocab/unit/M3-PER-HR"
+      ]
+    },
+    {
+      "text": "m^3/h",
+      "expected": [
+        "http://qudt.org/vocab/unit/M3-PER-HR"
+      ]
+    },
+    {
+      "text": "m³/h",
+      "expected": [
+        "http://qudt.org/vocab/unit/M3-PER-HR"
+      ]
+    },
+    {
+      "text": "m3/d",
+      "expected": [
+        "http://qudt.org/vocab/unit/M3-PER-DAY"
+      ]
+    },
+    {
+      "text": "m3/day",
+      "expected": [
+        "http://qudt.org/vocab/unit/M3-PER-DAY"
+      ]
+    },
+    {
+      "text": "L/min",
+      "expected": [
+        "http://qudt.org/vocab/unit/L-PER-MIN"
+      ]
+    },
+    {
+      "text": "lpm",
+      "expected": [
+        "http://qudt.org/vocab/unit/L-PER-MIN"
+      ]
+    },
+    {
+      "text": "L/s",
+      "expected": [
+        "http://qudt.org/vocab/unit/L-PER-SEC"
+      ]
+    },
+    {
+      "text": "lps",
+      "expected": [
+        "http://qudt.org/vocab/unit/L-PER-SEC"
+      ]
+    },
+    {
+      "text": "mg/l",
+      "expected": [
+        "http://qudt.org/vocab/unit/MilliGM-PER-L"
+      ]
+    },
+    {
+      "text": "ug/L",
+      "expected": [
+        "http://qudt.org/vocab/unit/MicroGM-PER-L"
+      ]
+    },
+    {
+      "text": "µg/L",
+      "expected": [
+        "http://qudt.org/vocab/unit/MicroGM-PER-L"
+      ]
+    },
+    {
+      "text": "ppb",
+      "expected": [
+        "http://qudt.org/vocab/unit/PPB"
+      ]
+    },
+    {
+      "text": "ppm",
+      "expected": [
+        "http://qudt.org/vocab/unit/PPM"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "psig",
+      "expected": [
+        "http://qudt.org/vocab/unit/PSI"
+      ]
+    },
+    {
+      "text": "inHg",
+      "expected": [
+        "http://qudt.org/vocab/unit/IN_HG"
+      ]
+    },
+    {
+      "text": "inH2O",
+      "expected": [
+        "http://qudt.org/vocab/unit/IN_H2O"
+      ]
+    },
+    {
+      "text": "mbar",
+      "expected": [
+        "http://qudt.org/vocab/unit/MilliBAR"
+      ]
+    },
+    {
+      "text": "degC",
+      "expected": [
+        "http://qudt.org/vocab/unit/DEG_C"
+      ]
+    },
+    {
+      "text": "deg C",
+      "expected": [
+        "http://qudt.org/vocab/unit/DEG_C"
+      ]
+    },
+    {
+      "text": "degF",
+      "expected": [
+        "http://qudt.org/vocab/unit/DEG_F"
+      ]
+    },
+    {
+      "text": "deg F",
+      "expected": [
+        "http://qudt.org/vocab/unit/DEG_F"
+      ]
+    },
+    {
+      "text": "uS/cm",
+      "expected": [
+        "http://qudt.org/vocab/unit/MicroS-PER-CentiM"
+      ]
+    },
+    {
+      "text": "µS/cm",
+      "expected": [
+        "http://qudt.org/vocab/unit/MicroS-PER-CentiM"
+      ]
+    },
+    {
+      "text": "mS/cm",
+      "expected": [
+        "http://qudt.org/vocab/unit/MilliS-PER-CentiM"
+      ]
+    },
+    {
+      "text": "rpm",
+      "expected": [
+        "http://qudt.org/vocab/unit/REV-PER-MIN"
+      ]
+    },
+    {
+      "text": "RPM",
+      "expected": [
+        "http://qudt.org/vocab/unit/REV-PER-MIN"
+      ]
+    },
+    {
+      "text": "kWh",
+      "expected": [
+        "http://qudt.org/vocab/unit/KiloW-HR"
+      ]
+    },
+    {
+      "text": "kW",
+      "expected": [
+        "http://qudt.org/vocab/unit/KiloW"
+      ]
+    },
+    {
+      "text": "hp",
+      "expected": [
+        "http://qudt.org/vocab/unit/HP"
+      ]
+    },
+    {
+      "text": "kVA",
+      "expected": [
+        "http://qudt.org/vocab/unit/KiloV-A",
+        "http://qudt.org/vocab/unit/KiloVA"
+      ]
+    },
+    {
+      "text": "mA",
+      "expected": [
+        "http://qudt.org/vocab/unit/MilliA"
+      ]
+    },
+    {
+      "text": "mV",
+      "expected": [
+        "http://qudt.org/vocab/unit/MilliV"
+      ]
+    },
+    {
+      "text": "%",
+      "expected": [
+        "http://qudt.org/vocab/unit/PERCENT"
+      ]
+    },
+    {
+      "text": "pct",
+      "expected": [
+        "http://qudt.org/vocab/unit/PERCENT"
+      ]
+    },
+    {
+      "text": "ft",
+      "expected": [
+        "http://qudt.org/vocab/unit/FT"
+      ]
+    },
+    {
+      "text": "in",
+      "expected": [
+        "http://qudt.org/vocab/unit/IN"
+      ]
+    },
+    {
+      "text": "gal",
+      "expected": [
+        "http://qudt.org/vocab/unit/GAL_US"
+      ]
+    },
+    {
+      "text": "lb",
+      "expected": [
+        "http://qudt.org/vocab/unit/LB"
+      ]
+    },
+    {
+      "text": "lbs",
+      "expected": [
+        "http://qudt.org/vocab/unit/LB"
+      ]
+    },
+    {
+      "text": "lb/day",
+      "expected": [
+        "http://qudt.org/vocab/unit/LB-PER-DAY"
+      ]
+    },
+    {
+      "text": "sec",
+      "expected": [
+        "http://qudt.org/vocab/unit/SEC"
+      ]
+    },
+    {
+      "text": "hr",
+      "expected": [
+        "http://qudt.org/vocab/unit/HR"
+      ]
+    },
+    {
+      "text": "hrs",
+      "expected": [
+        "http://qudt.org/vocab/unit/HR"
+      ]
+    },
+    {
+      "text": "min",
+      "expected": [
+        "http://qudt.org/vocab/unit/MIN"
+      ]
+    },
+    {
+      "text": "pH",
+      "expected": [
+        "http://qudt.org/vocab/unit/PH"
+      ]
+    },
+    {
+      "text": "ac-ft",
+      "expected": [
+        "http://qudt.org/vocab/unit/AC-FT"
+      ]
+    },
+    {
+      "text": "mol/L",
+      "expected": [
+        "http://qudt.org/vocab/unit/MOL-PER-L"
+      ]
+    },
+    {
+      "text": "kg/m3",
+      "expected": [
+        "http://qudt.org/vocab/unit/KiloGM-PER-M3"
+      ]
+    }
+  ]
+}

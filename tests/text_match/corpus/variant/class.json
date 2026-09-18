@@ -1,0 +1,1003 @@
+{
+  "group": "variant",
+  "kind": "class",
+  "cases": [
+    {
+      "text": "pumps",
+      "expected": [
+        "urn:nawi-water-ontology#Pump",
+        "http://data.ashrae.org/standard223#Pump"
+      ]
+    },
+    {
+      "text": "Valves",
+      "expected": [
+        "urn:nawi-water-ontology#Valve",
+        "http://data.ashrae.org/standard223#Valve"
+      ]
+    },
+    {
+      "text": "SedimentationTank",
+      "expected": [
+        "urn:nawi-water-ontology#SedimentationTank"
+      ]
+    },
+    {
+      "text": "sedimentation_tank",
+      "expected": [
+        "urn:nawi-water-ontology#SedimentationTank"
+      ]
+    },
+    {
+      "text": "sedimentation-tank",
+      "expected": [
+        "urn:nawi-water-ontology#SedimentationTank"
+      ]
+    },
+    {
+      "text": "tank, sedimentation",
+      "expected": [
+        "urn:nawi-water-ontology#SedimentationTank"
+      ]
+    },
+    {
+      "text": "sensor for pressure",
+      "expected": [
+        "urn:nawi-water-ontology#PressureSensor",
+        "http://data.ashrae.org/standard223#PressureSensor"
+      ]
+    },
+    {
+      "text": "presure sensor",
+      "expected": [
+        "urn:nawi-water-ontology#PressureSensor",
+        "http://data.ashrae.org/standard223#PressureSensor"
+      ]
+    },
+    {
+      "text": "temprature sensor",
+      "expected": [
+        "urn:nawi-water-ontology#TemperatureSensor",
+        "http://data.ashrae.org/standard223#TemperatureSensor"
+      ]
+    },
+    {
+      "text": "membrane bio-reactor",
+      "expected": [
+        "urn:nawi-water-ontology#MembraneBioreactor"
+      ]
+    },
+    {
+      "text": "micro filtration unit",
+      "expected": [
+        "urn:nawi-water-ontology#MicrofiltrationUnit"
+      ]
+    },
+    {
+      "text": "ultra-filtration unit",
+      "expected": [
+        "urn:nawi-water-ontology#UltrafiltrationUnit"
+      ]
+    },
+    {
+      "text": "reverse-osmosis membrane",
+      "expected": [
+        "urn:nawi-water-ontology#ReverseOsmosisMembrane"
+      ]
+    },
+    {
+      "text": "UV light unit",
+      "expected": [
+        "urn:nawi-water-ontology#UltravioletLightUnit"
+      ]
+    },
+    {
+      "text": "ultraviolet light unit",
+      "expected": [
+        "urn:nawi-water-ontology#UltravioletLightUnit"
+      ]
+    },
+    {
+      "text": "butterfly valves",
+      "expected": [
+        "urn:nawi-water-ontology#ButterflyValve"
+      ]
+    },
+    {
+      "text": "3-way valve",
+      "expected": [
+        "urn:nawi-water-ontology#ThreeWayValve",
+        "http://data.ashrae.org/standard223#ThreeWayValve"
+      ]
+    },
+    {
+      "text": "aerobic digestor",
+      "expected": [
+        "urn:nawi-water-ontology#AerobicDigester"
+      ]
+    },
+    {
+      "text": "electro-coagulation unit",
+      "expected": [
+        "urn:nawi-water-ontology#ElectrocoagulationUnit"
+      ]
+    },
+    {
+      "text": "PUMP",
+      "expected": [
+        "urn:nawi-water-ontology#Pump",
+        "http://data.ashrae.org/standard223#Pump"
+      ]
+    },
+    {
+      "text": "Pump.",
+      "expected": [
+        "urn:nawi-water-ontology#Pump",
+        "http://data.ashrae.org/standard223#Pump"
+      ]
+    },
+    {
+      "text": "pump ",
+      "expected": [
+        "urn:nawi-water-ontology#Pump",
+        "http://data.ashrae.org/standard223#Pump"
+      ]
+    },
+    {
+      "text": "pmup",
+      "expected": [
+        "urn:nawi-water-ontology#Pump",
+        "http://data.ashrae.org/standard223#Pump"
+      ]
+    },
+    {
+      "text": "  check   valve ",
+      "expected": [
+        "urn:nawi-water-ontology#CheckValve"
+      ]
+    },
+    {
+      "text": "CHECK_VALVE",
+      "expected": [
+        "urn:nawi-water-ontology#CheckValve"
+      ]
+    },
+    {
+      "text": "checkValve",
+      "expected": [
+        "urn:nawi-water-ontology#CheckValve"
+      ]
+    },
+    {
+      "text": "check-valve",
+      "expected": [
+        "urn:nawi-water-ontology#CheckValve"
+      ]
+    },
+    {
+      "text": "valve (check)",
+      "expected": [
+        "urn:nawi-water-ontology#CheckValve"
+      ]
+    },
+    {
+      "text": "chek valve",
+      "expected": [
+        "urn:nawi-water-ontology#CheckValve"
+      ]
+    },
+    {
+      "text": "buterfly valve",
+      "expected": [
+        "urn:nawi-water-ontology#ButterflyValve"
+      ]
+    },
+    {
+      "text": "Butterfly-Valve",
+      "expected": [
+        "urn:nawi-water-ontology#ButterflyValve"
+      ]
+    },
+    {
+      "text": "BUTTERFLY VALVE",
+      "expected": [
+        "urn:nawi-water-ontology#ButterflyValve"
+      ]
+    },
+    {
+      "text": "globe valves",
+      "expected": [
+        "urn:nawi-water-ontology#GlobeValve"
+      ]
+    },
+    {
+      "text": "globe-valve",
+      "expected": [
+        "urn:nawi-water-ontology#GlobeValve"
+      ]
+    },
+    {
+      "text": "ball_valve",
+      "expected": [
+        "urn:nawi-water-ontology#BallValve"
+      ]
+    },
+    {
+      "text": "BallValve",
+      "expected": [
+        "urn:nawi-water-ontology#BallValve"
+      ]
+    },
+    {
+      "text": "bal valve",
+      "expected": [
+        "urn:nawi-water-ontology#BallValve"
+      ]
+    },
+    {
+      "text": "GritChamber",
+      "expected": [
+        "urn:nawi-water-ontology#GritChamber"
+      ]
+    },
+    {
+      "text": "grit-chamber",
+      "expected": [
+        "urn:nawi-water-ontology#GritChamber"
+      ]
+    },
+    {
+      "text": "gritt chamber",
+      "expected": [
+        "urn:nawi-water-ontology#GritChamber"
+      ]
+    },
+    {
+      "text": "chamber, grit",
+      "expected": [
+        "urn:nawi-water-ontology#GritChamber"
+      ]
+    },
+    {
+      "text": "aeration basins",
+      "expected": [
+        "urn:nawi-water-ontology#AerationBasin"
+      ]
+    },
+    {
+      "text": "AERATION BASIN",
+      "expected": [
+        "urn:nawi-water-ontology#AerationBasin"
+      ]
+    },
+    {
+      "text": "basin, aeration",
+      "expected": [
+        "urn:nawi-water-ontology#AerationBasin"
+      ]
+    },
+    {
+      "text": "aerationbasin",
+      "expected": [
+        "urn:nawi-water-ontology#AerationBasin"
+      ]
+    },
+    {
+      "text": "areation basin",
+      "expected": [
+        "urn:nawi-water-ontology#AerationBasin"
+      ]
+    },
+    {
+      "text": "Aeration_Basin",
+      "expected": [
+        "urn:nawi-water-ontology#AerationBasin"
+      ]
+    },
+    {
+      "text": "membrane bioreactors",
+      "expected": [
+        "urn:nawi-water-ontology#MembraneBioreactor"
+      ]
+    },
+    {
+      "text": "MembraneBioReactor",
+      "expected": [
+        "urn:nawi-water-ontology#MembraneBioreactor"
+      ]
+    },
+    {
+      "text": "membrane bio reactor",
+      "expected": [
+        "urn:nawi-water-ontology#MembraneBioreactor"
+      ]
+    },
+    {
+      "text": "membrain bioreactor",
+      "expected": [
+        "urn:nawi-water-ontology#MembraneBioreactor"
+      ]
+    },
+    {
+      "text": "MEMBRANE BIOREACTOR",
+      "expected": [
+        "urn:nawi-water-ontology#MembraneBioreactor"
+      ]
+    },
+    {
+      "text": "ph sensor",
+      "expected": [
+        "urn:nawi-water-ontology#pHSensor"
+      ]
+    },
+    {
+      "text": "PH SENSOR",
+      "expected": [
+        "urn:nawi-water-ontology#pHSensor"
+      ]
+    },
+    {
+      "text": "pH-sensor",
+      "expected": [
+        "urn:nawi-water-ontology#pHSensor"
+      ]
+    },
+    {
+      "text": "P.H. sensor",
+      "expected": [
+        "urn:nawi-water-ontology#pHSensor"
+      ]
+    },
+    {
+      "text": "sensor, pH",
+      "expected": [
+        "urn:nawi-water-ontology#pHSensor"
+      ]
+    },
+    {
+      "text": "ph_sensor",
+      "expected": [
+        "urn:nawi-water-ontology#pHSensor"
+      ]
+    },
+    {
+      "text": "flow sensors",
+      "expected": [
+        "urn:nawi-water-ontology#FlowSensor",
+        "http://data.ashrae.org/standard223#FlowSensor"
+      ]
+    },
+    {
+      "text": "FlowSensor",
+      "expected": [
+        "urn:nawi-water-ontology#FlowSensor",
+        "http://data.ashrae.org/standard223#FlowSensor"
+      ]
+    },
+    {
+      "text": "flow_sensor",
+      "expected": [
+        "urn:nawi-water-ontology#FlowSensor",
+        "http://data.ashrae.org/standard223#FlowSensor"
+      ]
+    },
+    {
+      "text": "folw sensor",
+      "expected": [
+        "urn:nawi-water-ontology#FlowSensor",
+        "http://data.ashrae.org/standard223#FlowSensor"
+      ]
+    },
+    {
+      "text": "FLOW SENSOR",
+      "expected": [
+        "urn:nawi-water-ontology#FlowSensor",
+        "http://data.ashrae.org/standard223#FlowSensor"
+      ]
+    },
+    {
+      "text": "flow-sensor",
+      "expected": [
+        "urn:nawi-water-ontology#FlowSensor",
+        "http://data.ashrae.org/standard223#FlowSensor"
+      ]
+    },
+    {
+      "text": "level-sensor",
+      "expected": [
+        "urn:nawi-water-ontology#LevelSensor"
+      ]
+    },
+    {
+      "text": "LEVEL SENSOR",
+      "expected": [
+        "urn:nawi-water-ontology#LevelSensor"
+      ]
+    },
+    {
+      "text": "levl sensor",
+      "expected": [
+        "urn:nawi-water-ontology#LevelSensor"
+      ]
+    },
+    {
+      "text": "LevelSensor",
+      "expected": [
+        "urn:nawi-water-ontology#LevelSensor"
+      ]
+    },
+    {
+      "text": "turbidity meters",
+      "expected": [
+        "urn:nawi-water-ontology#TurbidityMeter"
+      ]
+    },
+    {
+      "text": "turbiditymeter",
+      "expected": [
+        "urn:nawi-water-ontology#TurbidityMeter"
+      ]
+    },
+    {
+      "text": "turbidty meter",
+      "expected": [
+        "urn:nawi-water-ontology#TurbidityMeter"
+      ]
+    },
+    {
+      "text": "Turbidity-Meter",
+      "expected": [
+        "urn:nawi-water-ontology#TurbidityMeter"
+      ]
+    },
+    {
+      "text": "conductivity sensors",
+      "expected": [
+        "urn:nawi-water-ontology#ConductivitySensor"
+      ]
+    },
+    {
+      "text": "conductivty sensor",
+      "expected": [
+        "urn:nawi-water-ontology#ConductivitySensor"
+      ]
+    },
+    {
+      "text": "ConductivitySensor",
+      "expected": [
+        "urn:nawi-water-ontology#ConductivitySensor"
+      ]
+    },
+    {
+      "text": "conductivity_sensor",
+      "expected": [
+        "urn:nawi-water-ontology#ConductivitySensor"
+      ]
+    },
+    {
+      "text": "TemperatureSensor",
+      "expected": [
+        "urn:nawi-water-ontology#TemperatureSensor",
+        "http://data.ashrae.org/standard223#TemperatureSensor"
+      ]
+    },
+    {
+      "text": "temperature-sensor",
+      "expected": [
+        "urn:nawi-water-ontology#TemperatureSensor",
+        "http://data.ashrae.org/standard223#TemperatureSensor"
+      ]
+    },
+    {
+      "text": "TEMPERATURE SENSOR",
+      "expected": [
+        "urn:nawi-water-ontology#TemperatureSensor",
+        "http://data.ashrae.org/standard223#TemperatureSensor"
+      ]
+    },
+    {
+      "text": "tempurature sensor",
+      "expected": [
+        "urn:nawi-water-ontology#TemperatureSensor",
+        "http://data.ashrae.org/standard223#TemperatureSensor"
+      ]
+    },
+    {
+      "text": "sensor (temperature)",
+      "expected": [
+        "urn:nawi-water-ontology#TemperatureSensor",
+        "http://data.ashrae.org/standard223#TemperatureSensor"
+      ]
+    },
+    {
+      "text": "PressureSensor",
+      "expected": [
+        "urn:nawi-water-ontology#PressureSensor",
+        "http://data.ashrae.org/standard223#PressureSensor"
+      ]
+    },
+    {
+      "text": "pressure_sensor",
+      "expected": [
+        "urn:nawi-water-ontology#PressureSensor",
+        "http://data.ashrae.org/standard223#PressureSensor"
+      ]
+    },
+    {
+      "text": "PRESSURE SENSOR",
+      "expected": [
+        "urn:nawi-water-ontology#PressureSensor",
+        "http://data.ashrae.org/standard223#PressureSensor"
+      ]
+    },
+    {
+      "text": "pressure sensors",
+      "expected": [
+        "urn:nawi-water-ontology#PressureSensor",
+        "http://data.ashrae.org/standard223#PressureSensor"
+      ]
+    },
+    {
+      "text": "pressur sensor",
+      "expected": [
+        "urn:nawi-water-ontology#PressureSensor",
+        "http://data.ashrae.org/standard223#PressureSensor"
+      ]
+    },
+    {
+      "text": "VariableFrequencyDrive",
+      "expected": [
+        "urn:nawi-water-ontology#VariableFrequencyDrive",
+        "http://data.ashrae.org/standard223#VariableFrequencyDrive"
+      ]
+    },
+    {
+      "text": "variable-frequency drive",
+      "expected": [
+        "urn:nawi-water-ontology#VariableFrequencyDrive",
+        "http://data.ashrae.org/standard223#VariableFrequencyDrive"
+      ]
+    },
+    {
+      "text": "variable frequency drives",
+      "expected": [
+        "urn:nawi-water-ontology#VariableFrequencyDrive",
+        "http://data.ashrae.org/standard223#VariableFrequencyDrive"
+      ]
+    },
+    {
+      "text": "varible frequency drive",
+      "expected": [
+        "urn:nawi-water-ontology#VariableFrequencyDrive",
+        "http://data.ashrae.org/standard223#VariableFrequencyDrive"
+      ]
+    },
+    {
+      "text": "drive, variable frequency",
+      "expected": [
+        "urn:nawi-water-ontology#VariableFrequencyDrive",
+        "http://data.ashrae.org/standard223#VariableFrequencyDrive"
+      ]
+    },
+    {
+      "text": "reverse osmosis membranes",
+      "expected": [
+        "urn:nawi-water-ontology#ReverseOsmosisMembrane"
+      ]
+    },
+    {
+      "text": "ReverseOsmosisMembrane",
+      "expected": [
+        "urn:nawi-water-ontology#ReverseOsmosisMembrane"
+      ]
+    },
+    {
+      "text": "reverse osmossis membrane",
+      "expected": [
+        "urn:nawi-water-ontology#ReverseOsmosisMembrane"
+      ]
+    },
+    {
+      "text": "revers osmosis membrane",
+      "expected": [
+        "urn:nawi-water-ontology#ReverseOsmosisMembrane"
+      ]
+    },
+    {
+      "text": "REVERSE OSMOSIS MEMBRANE",
+      "expected": [
+        "urn:nawi-water-ontology#ReverseOsmosisMembrane"
+      ]
+    },
+    {
+      "text": "membrane, reverse osmosis",
+      "expected": [
+        "urn:nawi-water-ontology#ReverseOsmosisMembrane"
+      ]
+    },
+    {
+      "text": "nano-filtration unit",
+      "expected": [
+        "urn:nawi-water-ontology#NanofiltrationUnit"
+      ]
+    },
+    {
+      "text": "nano filtration unit",
+      "expected": [
+        "urn:nawi-water-ontology#NanofiltrationUnit"
+      ]
+    },
+    {
+      "text": "NanofiltrationUnit",
+      "expected": [
+        "urn:nawi-water-ontology#NanofiltrationUnit"
+      ]
+    },
+    {
+      "text": "nanofiltraton unit",
+      "expected": [
+        "urn:nawi-water-ontology#NanofiltrationUnit"
+      ]
+    },
+    {
+      "text": "ultrafiltraton unit",
+      "expected": [
+        "urn:nawi-water-ontology#UltrafiltrationUnit"
+      ]
+    },
+    {
+      "text": "UltrafiltrationUnit",
+      "expected": [
+        "urn:nawi-water-ontology#UltrafiltrationUnit"
+      ]
+    },
+    {
+      "text": "ULTRAFILTRATION UNIT",
+      "expected": [
+        "urn:nawi-water-ontology#UltrafiltrationUnit"
+      ]
+    },
+    {
+      "text": "ultra filtration unit",
+      "expected": [
+        "urn:nawi-water-ontology#UltrafiltrationUnit"
+      ]
+    },
+    {
+      "text": "MicrofiltrationUnit",
+      "expected": [
+        "urn:nawi-water-ontology#MicrofiltrationUnit"
+      ]
+    },
+    {
+      "text": "micro-filtration unit",
+      "expected": [
+        "urn:nawi-water-ontology#MicrofiltrationUnit"
+      ]
+    },
+    {
+      "text": "microfiltraton unit",
+      "expected": [
+        "urn:nawi-water-ontology#MicrofiltrationUnit"
+      ]
+    },
+    {
+      "text": "heat-exchanger",
+      "expected": [
+        "http://data.ashrae.org/standard223#HeatExchanger"
+      ]
+    },
+    {
+      "text": "HeatExchanger",
+      "expected": [
+        "http://data.ashrae.org/standard223#HeatExchanger"
+      ]
+    },
+    {
+      "text": "heat exchangers",
+      "expected": [
+        "http://data.ashrae.org/standard223#HeatExchanger"
+      ]
+    },
+    {
+      "text": "heat exchager",
+      "expected": [
+        "http://data.ashrae.org/standard223#HeatExchanger"
+      ]
+    },
+    {
+      "text": "HEAT EXCHANGER",
+      "expected": [
+        "http://data.ashrae.org/standard223#HeatExchanger"
+      ]
+    },
+    {
+      "text": "cooling towers",
+      "expected": [
+        "http://data.ashrae.org/standard223#CoolingTower"
+      ]
+    },
+    {
+      "text": "CoolingTower",
+      "expected": [
+        "http://data.ashrae.org/standard223#CoolingTower"
+      ]
+    },
+    {
+      "text": "cooling-tower",
+      "expected": [
+        "http://data.ashrae.org/standard223#CoolingTower"
+      ]
+    },
+    {
+      "text": "coolng tower",
+      "expected": [
+        "http://data.ashrae.org/standard223#CoolingTower"
+      ]
+    },
+    {
+      "text": "anaerobic digestor",
+      "expected": [
+        "urn:nawi-water-ontology#AnaerobicDigester"
+      ]
+    },
+    {
+      "text": "anaerobic digesters",
+      "expected": [
+        "urn:nawi-water-ontology#AnaerobicDigester"
+      ]
+    },
+    {
+      "text": "AnaerobicDigester",
+      "expected": [
+        "urn:nawi-water-ontology#AnaerobicDigester"
+      ]
+    },
+    {
+      "text": "anerobic digester",
+      "expected": [
+        "urn:nawi-water-ontology#AnaerobicDigester"
+      ]
+    },
+    {
+      "text": "digester (anaerobic)",
+      "expected": [
+        "urn:nawi-water-ontology#AnaerobicDigester"
+      ]
+    },
+    {
+      "text": "sluice-gate",
+      "expected": [
+        "urn:nawi-water-ontology#SluiceGate"
+      ]
+    },
+    {
+      "text": "SluiceGate",
+      "expected": [
+        "urn:nawi-water-ontology#SluiceGate"
+      ]
+    },
+    {
+      "text": "sluce gate",
+      "expected": [
+        "urn:nawi-water-ontology#SluiceGate"
+      ]
+    },
+    {
+      "text": "rapid sand filters",
+      "expected": [
+        "urn:nawi-water-ontology#RapidSandFilter"
+      ]
+    },
+    {
+      "text": "RapidSandFilter",
+      "expected": [
+        "urn:nawi-water-ontology#RapidSandFilter"
+      ]
+    },
+    {
+      "text": "rapid-sand filter",
+      "expected": [
+        "urn:nawi-water-ontology#RapidSandFilter"
+      ]
+    },
+    {
+      "text": "rapid sand fliter",
+      "expected": [
+        "urn:nawi-water-ontology#RapidSandFilter"
+      ]
+    },
+    {
+      "text": "trickling filters",
+      "expected": [
+        "urn:nawi-water-ontology#TricklingFilter"
+      ]
+    },
+    {
+      "text": "TricklingFilter",
+      "expected": [
+        "urn:nawi-water-ontology#TricklingFilter"
+      ]
+    },
+    {
+      "text": "trickling-filter",
+      "expected": [
+        "urn:nawi-water-ontology#TricklingFilter"
+      ]
+    },
+    {
+      "text": "trikling filter",
+      "expected": [
+        "urn:nawi-water-ontology#TricklingFilter"
+      ]
+    },
+    {
+      "text": "rotary drum thickeners",
+      "expected": [
+        "urn:nawi-water-ontology#RotaryDrumThickener"
+      ]
+    },
+    {
+      "text": "rotary-drum thickener",
+      "expected": [
+        "urn:nawi-water-ontology#RotaryDrumThickener"
+      ]
+    },
+    {
+      "text": "rotary drum thickner",
+      "expected": [
+        "urn:nawi-water-ontology#RotaryDrumThickener"
+      ]
+    },
+    {
+      "text": "oxidation ditches",
+      "expected": [
+        "urn:nawi-water-ontology#OxidationDitch"
+      ]
+    },
+    {
+      "text": "OxidationDitch",
+      "expected": [
+        "urn:nawi-water-ontology#OxidationDitch"
+      ]
+    },
+    {
+      "text": "oxidaton ditch",
+      "expected": [
+        "urn:nawi-water-ontology#OxidationDitch"
+      ]
+    },
+    {
+      "text": "dewatering units",
+      "expected": [
+        "urn:nawi-water-ontology#DewateringUnit"
+      ]
+    },
+    {
+      "text": "de-watering unit",
+      "expected": [
+        "urn:nawi-water-ontology#DewateringUnit"
+      ]
+    },
+    {
+      "text": "DewateringUnit",
+      "expected": [
+        "urn:nawi-water-ontology#DewateringUnit"
+      ]
+    },
+    {
+      "text": "ozonation-unit",
+      "expected": [
+        "urn:nawi-water-ontology#OzonationUnit"
+      ]
+    },
+    {
+      "text": "OzonationUnit",
+      "expected": [
+        "urn:nawi-water-ontology#OzonationUnit"
+      ]
+    },
+    {
+      "text": "ozonization unit",
+      "expected": [
+        "urn:nawi-water-ontology#OzonationUnit"
+      ]
+    },
+    {
+      "text": "gravity belt thickner",
+      "expected": [
+        "urn:nawi-water-ontology#GravityBeltThickener"
+      ]
+    },
+    {
+      "text": "gravity-belt thickener",
+      "expected": [
+        "urn:nawi-water-ontology#GravityBeltThickener"
+      ]
+    },
+    {
+      "text": "GravityBeltThickener",
+      "expected": [
+        "urn:nawi-water-ontology#GravityBeltThickener"
+      ]
+    },
+    {
+      "text": "compressors",
+      "expected": [
+        "urn:nawi-water-ontology#Compressor",
+        "http://data.ashrae.org/standard223#Compressor"
+      ]
+    },
+    {
+      "text": "COMPRESSOR",
+      "expected": [
+        "urn:nawi-water-ontology#Compressor",
+        "http://data.ashrae.org/standard223#Compressor"
+      ]
+    },
+    {
+      "text": "compresor",
+      "expected": [
+        "urn:nawi-water-ontology#Compressor",
+        "http://data.ashrae.org/standard223#Compressor"
+      ]
+    },
+    {
+      "text": "boilers",
+      "expected": [
+        "urn:nawi-water-ontology#Boiler",
+        "http://data.ashrae.org/standard223#Boiler"
+      ]
+    },
+    {
+      "text": "BOILER",
+      "expected": [
+        "urn:nawi-water-ontology#Boiler",
+        "http://data.ashrae.org/standard223#Boiler"
+      ]
+    },
+    {
+      "text": "boilr",
+      "expected": [
+        "urn:nawi-water-ontology#Boiler",
+        "http://data.ashrae.org/standard223#Boiler"
+      ]
+    },
+    {
+      "text": "crystalliser",
+      "expected": [
+        "urn:nawi-water-ontology#Crystallizer"
+      ]
+    },
+    {
+      "text": "crystallizers",
+      "expected": [
+        "urn:nawi-water-ontology#Crystallizer"
+      ]
+    },
+    {
+      "text": "cristallizer",
+      "expected": [
+        "urn:nawi-water-ontology#Crystallizer"
+      ]
+    },
+    {
+      "text": "reservoirs",
+      "expected": [
+        "urn:nawi-water-ontology#Reservoir"
+      ]
+    },
+    {
+      "text": "resevoir",
+      "expected": [
+        "urn:nawi-water-ontology#Reservoir"
+      ]
+    },
+    {
+      "text": "RESERVOIR",
+      "expected": [
+        "urn:nawi-water-ontology#Reservoir"
+      ]
+    }
+  ]
+}

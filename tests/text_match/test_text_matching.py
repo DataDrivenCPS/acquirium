@@ -13,8 +13,18 @@ Two managers are built once per run:
   at a copy.
 - ``exact``    — ``exact_only=True``: same indexes, no model, no vectors.
 
-The cases live in ``corpus/*.json``, one file per kind. To add a case,
-append an object to ``cases``::
+The cases live in ``corpus/<group>/<kind>.json``. A group says how the text
+relates to the concept it should resolve to:
+
+- ``label``    the text is an ontology label, or nearly one
+- ``abbr``     a practitioner abbreviation ("RO", "TSS", "gpm")
+- ``synonym``  another term for the same thing ("clarifier", "flow meter")
+- ``variant``  casing, spelling, word order, typos ("ReverseOsmosis", "presure")
+- ``generic``  a head word many concepts share ("pressure", "flow")
+- ``tag``      a noisy point or column description ("RO feed pressure (psi)")
+
+To add a case, append an object to ``cases`` in the file for its group and
+kind::
 
     {
       "text": "pump",                  free text to resolve
@@ -24,16 +34,19 @@ append an object to ``cases``::
       "context": ["http://..."]        optional resolve context URIs
     }
 
-A case without ``stage`` counts toward its kind's top-1 and recall@3
-rates, which must stay above a threshold. ``"stage": "exact"`` claims the
-text resolves deterministically (exact surface or the QUDT converter):
-such a case must resolve, with score 1.0, in both managers.
+Every case counts toward its group's top-1 and recall@3 rates. Each group
+has its own thresholds in ``GROUP_THRESHOLDS``: labels must nearly always
+resolve, abbreviations are expected to be much harder. ``"stage": "exact"``
+additionally claims the text resolves deterministically (exact surface or
+the QUDT converter): such a case must resolve, with score 1.0, in both
+managers.
 
 ``records.json`` holds joint cases for ``resolve_record`` and
 ``no_match.json`` holds text that must resolve to nothing.
 
-Each run appends per-kind rates to ``tests/text_match_results/accuracy.csv``
-and rewrites ``failures.txt`` there with the misses.
+Each run appends the rates per group and kind to
+``tests/text_match_results/group_accuracy.csv`` and rewrites ``failures.txt``
+there with the misses.
 """
 
 from __future__ import annotations
@@ -59,21 +72,40 @@ _OUTPUT_DIR = Path(__file__).parent.parent / "text_match_results"
 KINDS = ["class", "predicate", "unit", "quantity_kind", "substance", "process"]
 
 MIN_SCORE = 0.6
-MIN_TOP1_PERCENT = 70
-MIN_RECALL3_PERCENT = 85
+
+# group -> (minimum top-1 %, minimum recall@3 %), over all kinds of the group.
+# Set a few points under the measured rates, so a drop fails the run. Raise
+# them when the matcher improves.
+GROUP_THRESHOLDS: dict[str, tuple[int, int]] = {
+    "label": (97, 99),
+    "abbr": (50, 55),
+    "synonym": (73, 84),
+    "variant": (80, 83),
+    "generic": (86, 94),
+    "tag": (40, 63),
+}
+GROUPS = list(GROUP_THRESHOLDS)
 
 
 def _load(name: str) -> dict[str, Any]:
     return json.loads((_CORPUS_DIR / f"{name}.json").read_text())
 
 
-CORPUS: dict[str, list[dict[str, Any]]] = {k: _load(k)["cases"] for k in KINDS}
+# (group, kind) -> cases. Not every group has a file for every kind.
+CORPUS: dict[tuple[str, str], list[dict[str, Any]]] = {
+    (g, k): _load(f"{g}/{k}")["cases"]
+    for g in GROUPS for k in KINDS
+    if (_CORPUS_DIR / g / f"{k}.json").exists()
+}
 RECORDS: list[dict[str, Any]] = _load("records")["cases"]
 NO_MATCH: dict[str, Any] = _load("no_match")
 
 
 def _exact_cases(kind: str) -> list[dict[str, Any]]:
-    return [c for c in CORPUS[kind] if c.get("stage") == "exact"]
+    return [
+        c for (_g, k), cases in CORPUS.items() if k == kind
+        for c in cases if c.get("stage") == "exact"
+    ]
 
 
 def _resolve(manager: Manager, case: dict[str, Any], kind: str, top_k: int) -> list[dict[str, Any]]:
@@ -93,7 +125,7 @@ def _describe(case: dict[str, Any], got: list[dict[str, Any]]) -> str:
 # Managers and the run report
 # ──────────────────────────────────────────────────────────────
 
-_report: dict[str, Any] = {"build_s": None, "model": None, "kinds": {}}
+_report: dict[str, Any] = {"build_s": None, "model": None, "cells": {}}
 
 
 def _git_sha() -> str:
@@ -111,21 +143,21 @@ def _write_report() -> None:
 
     with open(_OUTPUT_DIR / "failures.txt", "w") as f:
         f.write(f"Text-matcher misses — {now}\n{'=' * 60}\n")
-        for kind, r in _report["kinds"].items():
-            f.write(f"\n{kind} top-1 misses ({len(r['misses'])} of {r['n']}):\n")
+        for (group, kind), r in _report["cells"].items():
+            f.write(f"\n{group} / {kind} top-1 misses ({len(r['misses'])} of {r['n']}):\n")
             for line in r["misses"]:
                 f.write(f"  {line}\n")
 
-    path = _OUTPUT_DIR / "accuracy.csv"
+    path = _OUTPUT_DIR / "group_accuracy.csv"
     write_header = not path.exists()
     with open(path, "a", newline="") as f:
         w = csv.writer(f)
         if write_header:
-            w.writerow(["timestamp", "git_sha", "model", "build_s", "kind", "n",
-                        "top1_pct", "recall3_pct"])
-        for kind, r in _report["kinds"].items():
-            w.writerow([now, _git_sha(), _report["model"], _report["build_s"], kind,
-                        r["n"], f"{r['top1_pct']:.1f}", f"{r['recall3_pct']:.1f}"])
+            w.writerow(["timestamp", "git_sha", "model", "build_s", "group", "kind",
+                        "n", "top1_pct", "recall3_pct"])
+        for (group, kind), r in _report["cells"].items():
+            w.writerow([now, _git_sha(), _report["model"], _report["build_s"], group,
+                        kind, r["n"], f"{r['top1_pct']:.1f}", f"{r['recall3_pct']:.1f}"])
 
 
 @pytest.fixture(scope="module")
@@ -149,7 +181,7 @@ def semantic(tmp_path_factory: pytest.TempPathFactory):
     _report["model"] = m._graph_matcher._model_name
     yield m
     m.close()
-    if _report["kinds"]:
+    if _report["cells"]:
         _write_report()
 
 
@@ -237,29 +269,40 @@ def test_every_kind_is_indexed(semantic: Manager) -> None:
 # Semantic manager: the corpus
 # ──────────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("kind", KINDS)
-def test_resolve_rates(semantic: Manager, kind: str) -> None:
-    """Top-1 and recall@3 over the kind's cases stay above the thresholds."""
-    cases = CORPUS[kind]
+@pytest.mark.parametrize("group", GROUPS)
+def test_resolve_rates(semantic: Manager, group: str) -> None:
+    """Top-1 and recall@3 over the group's cases stay above its thresholds."""
+    min_top1, min_recall3 = GROUP_THRESHOLDS[group]
+    n = 0
     top1_misses, top3_misses = [], []
-    for case in cases:
-        got = _resolve(semantic, case, kind, top_k=3)
-        if not (got and got[0]["uri"] in case["expected"]):
-            top1_misses.append(_describe(case, got[:1]))
-        if not any(m["uri"] in case["expected"] for m in got):
-            top3_misses.append(_describe(case, got))
+    for (g, kind), cases in CORPUS.items():
+        if g != group:
+            continue
+        cell_top1, cell_top3 = [], []
+        for case in cases:
+            got = _resolve(semantic, case, kind, top_k=3)
+            if not (got and got[0]["uri"] in case["expected"]):
+                cell_top1.append(f"[{kind}] " + _describe(case, got[:1]))
+            if not any(m["uri"] in case["expected"] for m in got):
+                cell_top3.append(f"[{kind}] " + _describe(case, got))
+        _report["cells"][(group, kind)] = {
+            "n": len(cases),
+            "top1_pct": (len(cases) - len(cell_top1)) / len(cases) * 100,
+            "recall3_pct": (len(cases) - len(cell_top3)) / len(cases) * 100,
+            "misses": cell_top1,
+        }
+        n += len(cases)
+        top1_misses += cell_top1
+        top3_misses += cell_top3
 
-    top1 = (len(cases) - len(top1_misses)) / len(cases) * 100
-    recall3 = (len(cases) - len(top3_misses)) / len(cases) * 100
-    _report["kinds"][kind] = {
-        "n": len(cases), "top1_pct": top1, "recall3_pct": recall3, "misses": top1_misses,
-    }
-    assert top1 >= MIN_TOP1_PERCENT, (
-        f"{kind} top-1 rate {top1:.0f}% is below {MIN_TOP1_PERCENT}%.\nMisses:\n"
+    top1 = (n - len(top1_misses)) / n * 100
+    recall3 = (n - len(top3_misses)) / n * 100
+    assert top1 >= min_top1, (
+        f"{group} top-1 rate {top1:.1f}% is below {min_top1}%.\nMisses:\n"
         + "\n".join(top1_misses)
     )
-    assert recall3 >= MIN_RECALL3_PERCENT, (
-        f"{kind} recall@3 {recall3:.0f}% is below {MIN_RECALL3_PERCENT}%.\nMisses:\n"
+    assert recall3 >= min_recall3, (
+        f"{group} recall@3 {recall3:.1f}% is below {min_recall3}%.\nMisses:\n"
         + "\n".join(top3_misses)
     )
 

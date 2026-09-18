@@ -1,0 +1,84 @@
+{
+  "group": "abbr",
+  "kind": "quantity_kind",
+  "cases": [
+    {
+      "text": "temp",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Temperature"
+      ]
+    },
+    {
+      "text": "press",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Pressure"
+      ]
+    },
+    {
+      "text": "pH",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Acidity"
+      ]
+    },
+    {
+      "text": "RH",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/RelativeHumidity"
+      ]
+    },
+    {
+      "text": "SOC",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/StateOfCharge"
+      ]
+    },
+    {
+      "text": "EC",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/ElectricConductivity",
+        "http://qudt.org/vocab/quantitykind/Conductivity"
+      ]
+    },
+    {
+      "text": "TMP",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Pressure"
+      ]
+    },
+    {
+      "text": "vol flow",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/VolumeFlowRate",
+        "http://qudt.org/vocab/quantitykind/VolumePerTime"
+      ]
+    },
+    {
+      "text": "conc",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Concentration",
+        "http://qudt.org/vocab/quantitykind/MassConcentration"
+      ]
+    },
+    {
+      "text": "cond",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Conductivity",
+        "http://qudt.org/vocab/quantitykind/ElectricConductivity"
+      ]
+    },
+    {
+      "text": "freq",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Frequency"
+      ]
+    },
+    {
+      "text": "RPM",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/RotationalVelocity",
+        "http://qudt.org/vocab/quantitykind/RotationalFrequency",
+        "http://qudt.org/vocab/quantitykind/AngularVelocity"
+      ]
+    }
+  ]
+}

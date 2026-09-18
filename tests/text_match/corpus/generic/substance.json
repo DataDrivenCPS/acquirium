@@ -1,0 +1,47 @@
+{
+  "group": "generic",
+  "kind": "substance",
+  "cases": [
+    {
+      "text": "water",
+      "expected": [
+        "http://data.ashrae.org/standard223#Fluid-Water"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "oil",
+      "expected": [
+        "http://data.ashrae.org/standard223#Fluid-Oil",
+        "http://data.ashrae.org/standard223#Constituent-Oil"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "chlorine",
+      "expected": [
+        "urn:nawi-water-ontology#Disinfectant-Chlorine"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "coagulant",
+      "expected": [
+        "urn:nawi-water-ontology#Coagulant"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "flocculant",
+      "expected": [
+        "urn:nawi-water-ontology#Flocculant"
+      ]
+    },
+    {
+      "text": "electricity",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-Electricity"
+      ]
+    }
+  ]
+}

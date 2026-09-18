@@ -1,0 +1,1091 @@
+{
+  "group": "synonym",
+  "kind": "process",
+  "cases": [
+    {
+      "text": "settling",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Sedimentation"
+      ]
+    },
+    {
+      "text": "clarification",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Sedimentation"
+      ]
+    },
+    {
+      "text": "carbon adsorption",
+      "expected": [
+        "urn:nawi-water-ontology#Process-GranularActivatedCarbon",
+        "urn:nawi-water-ontology#Process-Adsorption"
+      ]
+    },
+    {
+      "text": "chlorine disinfection",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Chlorination"
+      ]
+    },
+    {
+      "text": "ozone treatment",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Ozonation"
+      ]
+    },
+    {
+      "text": "ozone disinfection",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Ozonation"
+      ]
+    },
+    {
+      "text": "ultraviolet disinfection",
+      "expected": [
+        "urn:nawi-water-ontology#Process-UVDisinfection"
+      ]
+    },
+    {
+      "text": "lime softening",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Softening"
+      ]
+    },
+    {
+      "text": "hardness removal",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Softening"
+      ]
+    },
+    {
+      "text": "air stripping",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Stripping"
+      ]
+    },
+    {
+      "text": "ammonia stripping",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Stripping"
+      ]
+    },
+    {
+      "text": "sand filtration",
+      "expected": [
+        "urn:nawi-water-ontology#Process-RapidSandFiltration",
+        "urn:nawi-water-ontology#Process-SlowSandFiltration",
+        "urn:nawi-water-ontology#Process-MediaFiltration"
+      ]
+    },
+    {
+      "text": "membrane filtration",
+      "expected": [
+        "urn:nawi-water-ontology#Process-MembraneProcess",
+        "urn:nawi-water-ontology#Process-Microfiltration",
+        "urn:nawi-water-ontology#Process-Ultrafiltration"
+      ]
+    },
+    {
+      "text": "biological treatment",
+      "expected": [
+        "urn:nawi-water-ontology#Process-BiologicalProcess"
+      ]
+    },
+    {
+      "text": "chemical dosing",
+      "expected": [
+        "urn:nawi-water-ontology#Process-ChemicalAddition"
+      ]
+    },
+    {
+      "text": "chemical feed",
+      "expected": [
+        "urn:nawi-water-ontology#Process-ChemicalAddition"
+      ]
+    },
+    {
+      "text": "sludge digestion",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Digestion",
+        "urn:nawi-water-ontology#Process-AnaerobicDigestion",
+        "urn:nawi-water-ontology#Process-AerobicDigestion"
+      ]
+    },
+    {
+      "text": "sludge drying",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Drying"
+      ]
+    },
+    {
+      "text": "sludge incineration",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Incineration"
+      ]
+    },
+    {
+      "text": "sludge dewatering",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Dewatering"
+      ]
+    },
+    {
+      "text": "landfilling",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Landfill"
+      ]
+    },
+    {
+      "text": "grinding",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Comminution"
+      ]
+    },
+    {
+      "text": "dissolved air flotation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Flotation"
+      ]
+    },
+    {
+      "text": "bar screening",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Screening"
+      ]
+    },
+    {
+      "text": "pH control",
+      "expected": [
+        "urn:nawi-water-ontology#Process-pHAdjustment"
+      ]
+    },
+    {
+      "text": "pH correction",
+      "expected": [
+        "urn:nawi-water-ontology#Process-pHAdjustment"
+      ]
+    },
+    {
+      "text": "acid dosing",
+      "expected": [
+        "urn:nawi-water-ontology#Process-pHAdjustment",
+        "urn:nawi-water-ontology#Process-ChemicalAddition"
+      ]
+    },
+    {
+      "text": "combined heat and power",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Cogeneration"
+      ]
+    },
+    {
+      "text": "rapid mix",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Mixing"
+      ]
+    },
+    {
+      "text": "precipitation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-ChemicalPrecipitation"
+      ]
+    },
+    {
+      "text": "bardenpho",
+      "expected": [
+        "urn:nawi-water-ontology#Process-FourStageBardenpho",
+        "urn:nawi-water-ontology#Process-FiveStageBardenpho"
+      ]
+    },
+    {
+      "text": "5-stage bardenpho",
+      "expected": [
+        "urn:nawi-water-ontology#Process-FiveStageBardenpho"
+      ]
+    },
+    {
+      "text": "membrane cleaning",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Cleaning"
+      ]
+    },
+    {
+      "text": "clean in place",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Cleaning"
+      ]
+    },
+    {
+      "text": "backwash",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Backwashing"
+      ]
+    },
+    {
+      "text": "filter backwash",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Backwashing"
+      ]
+    },
+    {
+      "text": "air scour",
+      "expected": [
+        "urn:nawi-water-ontology#Process-AirScouring"
+      ]
+    },
+    {
+      "text": "electrodialysis reversal",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Electrodialysis"
+      ]
+    },
+    {
+      "text": "pasteurization",
+      "expected": [
+        "urn:nawi-water-ontology#Process-ThermalDisinfection"
+      ]
+    },
+    {
+      "text": "water softening",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Softening"
+      ]
+    },
+    {
+      "text": "advanced oxidation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-AdvancedOxidation"
+      ]
+    },
+    {
+      "text": "desalination",
+      "expected": [
+        "urn:nawi-water-ontology#Process-ReverseOsmosis",
+        "urn:nawi-water-ontology#Process-MembraneProcess",
+        "urn:nawi-water-ontology#Process-Electrodialysis",
+        "urn:nawi-water-ontology#Process-MembraneDistillation"
+      ]
+    },
+    {
+      "text": "oxygen transfer",
+      "expected": [
+        "urn:nawi-water-ontology#Process-GasTransfer",
+        "urn:nawi-water-ontology#Process-Aeration"
+      ]
+    },
+    {
+      "text": "reverse osmosis desalination",
+      "expected": [
+        "urn:nawi-water-ontology#Process-ReverseOsmosis"
+      ]
+    },
+    {
+      "text": "reverse osmosis filtration",
+      "expected": [
+        "urn:nawi-water-ontology#Process-ReverseOsmosis"
+      ]
+    },
+    {
+      "text": "reverse osmosis treatment",
+      "expected": [
+        "urn:nawi-water-ontology#Process-ReverseOsmosis"
+      ]
+    },
+    {
+      "text": "hyperfiltration",
+      "expected": [
+        "urn:nawi-water-ontology#Process-ReverseOsmosis"
+      ]
+    },
+    {
+      "text": "reverse osmosis membrane separation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-ReverseOsmosis"
+      ]
+    },
+    {
+      "text": "ultrafiltration membrane process",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Ultrafiltration"
+      ]
+    },
+    {
+      "text": "ultrafiltration treatment",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Ultrafiltration"
+      ]
+    },
+    {
+      "text": "microfiltration membrane process",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Microfiltration"
+      ]
+    },
+    {
+      "text": "microfiltration treatment",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Microfiltration"
+      ]
+    },
+    {
+      "text": "activated sludge process",
+      "expected": [
+        "urn:nawi-water-ontology#Process-ActivatedSludge"
+      ]
+    },
+    {
+      "text": "activated sludge treatment",
+      "expected": [
+        "urn:nawi-water-ontology#Process-ActivatedSludge"
+      ]
+    },
+    {
+      "text": "conventional activated sludge",
+      "expected": [
+        "urn:nawi-water-ontology#Process-ActivatedSludge"
+      ]
+    },
+    {
+      "text": "air injection",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Aeration"
+      ]
+    },
+    {
+      "text": "diffused aeration",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Aeration"
+      ]
+    },
+    {
+      "text": "air bubbling",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Aeration"
+      ]
+    },
+    {
+      "text": "anaerobic sludge digestion",
+      "expected": [
+        "urn:nawi-water-ontology#Process-AnaerobicDigestion"
+      ]
+    },
+    {
+      "text": "anaerobic treatment",
+      "expected": [
+        "urn:nawi-water-ontology#Process-AnaerobicDigestion"
+      ]
+    },
+    {
+      "text": "biogas production",
+      "expected": [
+        "urn:nawi-water-ontology#Process-AnaerobicDigestion"
+      ]
+    },
+    {
+      "text": "aerobic sludge stabilization",
+      "expected": [
+        "urn:nawi-water-ontology#Process-AerobicDigestion"
+      ]
+    },
+    {
+      "text": "chlorine addition",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Chlorination"
+      ]
+    },
+    {
+      "text": "chlorine dosing",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Chlorination"
+      ]
+    },
+    {
+      "text": "chlorine treatment",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Chlorination"
+      ]
+    },
+    {
+      "text": "chlorine removal",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Dechlorination"
+      ]
+    },
+    {
+      "text": "chlorine neutralization",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Dechlorination"
+      ]
+    },
+    {
+      "text": "coagulant addition",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Coagulation"
+      ]
+    },
+    {
+      "text": "particle destabilization",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Coagulation"
+      ]
+    },
+    {
+      "text": "coagulant dosing",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Coagulation",
+        "urn:nawi-water-ontology#Process-ChemicalAddition"
+      ]
+    },
+    {
+      "text": "floc formation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Flocculation"
+      ]
+    },
+    {
+      "text": "floc growth",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Flocculation"
+      ]
+    },
+    {
+      "text": "slow mixing",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Flocculation"
+      ]
+    },
+    {
+      "text": "gravity settling",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Sedimentation"
+      ]
+    },
+    {
+      "text": "primary sedimentation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Sedimentation"
+      ]
+    },
+    {
+      "text": "primary settling",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Sedimentation"
+      ]
+    },
+    {
+      "text": "solids settling",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Sedimentation"
+      ]
+    },
+    {
+      "text": "gravity separation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Sedimentation",
+        "urn:nawi-water-ontology#Process-Separation"
+      ]
+    },
+    {
+      "text": "pathogen inactivation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Disinfection"
+      ]
+    },
+    {
+      "text": "pathogen removal",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Disinfection"
+      ]
+    },
+    {
+      "text": "microbial inactivation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Disinfection"
+      ]
+    },
+    {
+      "text": "germicidal UV",
+      "expected": [
+        "urn:nawi-water-ontology#Process-UVDisinfection"
+      ]
+    },
+    {
+      "text": "UV irradiation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-UVDisinfection"
+      ]
+    },
+    {
+      "text": "ultraviolet light treatment",
+      "expected": [
+        "urn:nawi-water-ontology#Process-UVDisinfection"
+      ]
+    },
+    {
+      "text": "UV light disinfection",
+      "expected": [
+        "urn:nawi-water-ontology#Process-UVDisinfection"
+      ]
+    },
+    {
+      "text": "ozone oxidation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Ozonation"
+      ]
+    },
+    {
+      "text": "ozone dosing",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Ozonation"
+      ]
+    },
+    {
+      "text": "ozone contacting",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Ozonation"
+      ]
+    },
+    {
+      "text": "ammonia oxidation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Nitrification"
+      ]
+    },
+    {
+      "text": "biological ammonia removal",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Nitrification"
+      ]
+    },
+    {
+      "text": "nitrate removal",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Denitrification"
+      ]
+    },
+    {
+      "text": "nitrate reduction",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Denitrification"
+      ]
+    },
+    {
+      "text": "biological nitrate removal",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Denitrification"
+      ]
+    },
+    {
+      "text": "resin ion exchange",
+      "expected": [
+        "urn:nawi-water-ontology#Process-IonExchange"
+      ]
+    },
+    {
+      "text": "ion exchange resin treatment",
+      "expected": [
+        "urn:nawi-water-ontology#Process-IonExchange"
+      ]
+    },
+    {
+      "text": "ion exchange softening",
+      "expected": [
+        "urn:nawi-water-ontology#Process-IonExchange",
+        "urn:nawi-water-ontology#Process-Softening"
+      ]
+    },
+    {
+      "text": "demineralization",
+      "expected": [
+        "urn:nawi-water-ontology#Process-IonExchange",
+        "urn:nawi-water-ontology#Process-ReverseOsmosis"
+      ]
+    },
+    {
+      "text": "solids dewatering",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Dewatering"
+      ]
+    },
+    {
+      "text": "water removal from sludge",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Dewatering"
+      ]
+    },
+    {
+      "text": "biosolids dewatering",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Dewatering"
+      ]
+    },
+    {
+      "text": "mechanical dewatering",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Dewatering"
+      ]
+    },
+    {
+      "text": "granular media filtration",
+      "expected": [
+        "urn:nawi-water-ontology#Process-MediaFiltration"
+      ]
+    },
+    {
+      "text": "multimedia filtration",
+      "expected": [
+        "urn:nawi-water-ontology#Process-MediaFiltration"
+      ]
+    },
+    {
+      "text": "dual media filtration",
+      "expected": [
+        "urn:nawi-water-ontology#Process-MediaFiltration"
+      ]
+    },
+    {
+      "text": "depth filtration",
+      "expected": [
+        "urn:nawi-water-ontology#Process-MediaFiltration",
+        "urn:nawi-water-ontology#Process-Filtration"
+      ]
+    },
+    {
+      "text": "gravity sand filtration",
+      "expected": [
+        "urn:nawi-water-ontology#Process-RapidSandFiltration",
+        "urn:nawi-water-ontology#Process-SlowSandFiltration"
+      ]
+    },
+    {
+      "text": "activated carbon adsorption",
+      "expected": [
+        "urn:nawi-water-ontology#Process-GranularActivatedCarbon",
+        "urn:nawi-water-ontology#Process-Adsorption"
+      ]
+    },
+    {
+      "text": "activated carbon filtration",
+      "expected": [
+        "urn:nawi-water-ontology#Process-GranularActivatedCarbon"
+      ]
+    },
+    {
+      "text": "carbon filtration",
+      "expected": [
+        "urn:nawi-water-ontology#Process-GranularActivatedCarbon"
+      ]
+    },
+    {
+      "text": "granular carbon treatment",
+      "expected": [
+        "urn:nawi-water-ontology#Process-GranularActivatedCarbon"
+      ]
+    },
+    {
+      "text": "UV peroxide oxidation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-AdvancedOxidation"
+      ]
+    },
+    {
+      "text": "hydroxyl radical oxidation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-AdvancedOxidation"
+      ]
+    },
+    {
+      "text": "UV/H2O2 treatment",
+      "expected": [
+        "urn:nawi-water-ontology#Process-AdvancedOxidation"
+      ]
+    },
+    {
+      "text": "thermal membrane distillation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-MembraneDistillation"
+      ]
+    },
+    {
+      "text": "distillation through a membrane",
+      "expected": [
+        "urn:nawi-water-ontology#Process-MembraneDistillation"
+      ]
+    },
+    {
+      "text": "electrodialysis desalination",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Electrodialysis"
+      ]
+    },
+    {
+      "text": "electrically driven membrane separation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Electrodialysis"
+      ]
+    },
+    {
+      "text": "pH neutralization",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Neutralization",
+        "urn:nawi-water-ontology#Process-pHAdjustment"
+      ]
+    },
+    {
+      "text": "acid neutralization",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Neutralization"
+      ]
+    },
+    {
+      "text": "neutralizing",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Neutralization"
+      ]
+    },
+    {
+      "text": "filter backwashing",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Backwashing"
+      ]
+    },
+    {
+      "text": "backflushing",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Backwashing"
+      ]
+    },
+    {
+      "text": "reverse flow cleaning",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Backwashing"
+      ]
+    },
+    {
+      "text": "membrane backwash",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Backwashing"
+      ]
+    },
+    {
+      "text": "coarse screening",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Screening"
+      ]
+    },
+    {
+      "text": "fine screening",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Screening"
+      ]
+    },
+    {
+      "text": "debris removal",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Screening"
+      ]
+    },
+    {
+      "text": "evaporative concentration",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Evaporation"
+      ]
+    },
+    {
+      "text": "thermal evaporation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Evaporation"
+      ]
+    },
+    {
+      "text": "brine evaporation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Evaporation"
+      ]
+    },
+    {
+      "text": "sludge burning",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Incineration"
+      ]
+    },
+    {
+      "text": "thermal destruction",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Incineration"
+      ]
+    },
+    {
+      "text": "combustion",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Incineration"
+      ]
+    },
+    {
+      "text": "metals precipitation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-ChemicalPrecipitation"
+      ]
+    },
+    {
+      "text": "precipitation of dissolved metals",
+      "expected": [
+        "urn:nawi-water-ontology#Process-ChemicalPrecipitation"
+      ]
+    },
+    {
+      "text": "phosphorus precipitation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-ChemicalPrecipitation"
+      ]
+    },
+    {
+      "text": "salt crystallization",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Crystallization"
+      ]
+    },
+    {
+      "text": "crystal formation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Crystallization"
+      ]
+    },
+    {
+      "text": "centrifuging",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Centrifugation"
+      ]
+    },
+    {
+      "text": "centrifugal separation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Centrifugation"
+      ]
+    },
+    {
+      "text": "biological filtration",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Biofiltration",
+        "urn:nawi-water-ontology#Process-BiologicallyActiveFiltration"
+      ]
+    },
+    {
+      "text": "biofilter treatment",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Biofiltration"
+      ]
+    },
+    {
+      "text": "cogeneration of heat and power",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Cogeneration"
+      ]
+    },
+    {
+      "text": "heat and power generation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Cogeneration"
+      ]
+    },
+    {
+      "text": "recycle",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Recirculation"
+      ]
+    },
+    {
+      "text": "return flow",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Recirculation"
+      ]
+    },
+    {
+      "text": "internal recycle",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Recirculation"
+      ]
+    },
+    {
+      "text": "blending",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Mixing"
+      ]
+    },
+    {
+      "text": "agitation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Mixing"
+      ]
+    },
+    {
+      "text": "stirring",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Mixing"
+      ]
+    },
+    {
+      "text": "land spreading",
+      "expected": [
+        "urn:nawi-water-ontology#Process-LandApplication"
+      ]
+    },
+    {
+      "text": "biosolids land application",
+      "expected": [
+        "urn:nawi-water-ontology#Process-LandApplication"
+      ]
+    },
+    {
+      "text": "sludge landfill",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Landfill"
+      ]
+    },
+    {
+      "text": "landfill disposal",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Landfill"
+      ]
+    },
+    {
+      "text": "liquid-liquid extraction",
+      "expected": [
+        "urn:nawi-water-ontology#Process-SolventExtraction"
+      ]
+    },
+    {
+      "text": "extraction with solvent",
+      "expected": [
+        "urn:nawi-water-ontology#Process-SolventExtraction"
+      ]
+    },
+    {
+      "text": "electrochemical oxidation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Electrooxidation"
+      ]
+    },
+    {
+      "text": "anodic oxidation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Electrooxidation"
+      ]
+    },
+    {
+      "text": "electrolytic treatment",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Electrolysis"
+      ]
+    },
+    {
+      "text": "water electrolysis",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Electrolysis"
+      ]
+    },
+    {
+      "text": "heat drying",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Drying"
+      ]
+    },
+    {
+      "text": "thermal drying",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Drying"
+      ]
+    },
+    {
+      "text": "biosolids drying",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Drying"
+      ]
+    },
+    {
+      "text": "stabilization and solidification",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Solidification"
+      ]
+    },
+    {
+      "text": "steam condensation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Condensation"
+      ]
+    },
+    {
+      "text": "vapor condensation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Condensation"
+      ]
+    },
+    {
+      "text": "gas stripping",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Stripping"
+      ]
+    },
+    {
+      "text": "degassing",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Stripping",
+        "urn:nawi-water-ontology#Process-GasTransfer"
+      ]
+    },
+    {
+      "text": "calcium and magnesium removal",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Softening"
+      ]
+    },
+    {
+      "text": "slow sand filter treatment",
+      "expected": [
+        "urn:nawi-water-ontology#Process-SlowSandFiltration"
+      ]
+    },
+    {
+      "text": "flotation separation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Flotation"
+      ]
+    },
+    {
+      "text": "air flotation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Flotation"
+      ]
+    },
+    {
+      "text": "sorption onto media",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Adsorption"
+      ]
+    },
+    {
+      "text": "solids size reduction",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Comminution"
+      ]
+    },
+    {
+      "text": "shredding",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Comminution"
+      ]
+    },
+    {
+      "text": "chemical cleaning",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Cleaning"
+      ]
+    },
+    {
+      "text": "clean-in-place",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Cleaning"
+      ]
+    }
+  ]
+}

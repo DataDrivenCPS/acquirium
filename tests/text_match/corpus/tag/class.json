@@ -1,0 +1,236 @@
+{
+  "group": "tag",
+  "kind": "class",
+  "cases": [
+    {
+      "text": "RO feed pump",
+      "expected": [
+        "urn:nawi-water-ontology#Pump",
+        "http://data.ashrae.org/standard223#Pump"
+      ]
+    },
+    {
+      "text": "high pressure pump",
+      "expected": [
+        "urn:nawi-water-ontology#Pump",
+        "http://data.ashrae.org/standard223#Pump"
+      ]
+    },
+    {
+      "text": "permeate flow meter",
+      "expected": [
+        "urn:nawi-water-ontology#FlowSensor",
+        "http://data.ashrae.org/standard223#FlowSensor"
+      ]
+    },
+    {
+      "text": "feed pressure transmitter",
+      "expected": [
+        "urn:nawi-water-ontology#PressureSensor",
+        "http://data.ashrae.org/standard223#PressureSensor"
+      ]
+    },
+    {
+      "text": "effluent turbidity analyzer",
+      "expected": [
+        "urn:nawi-water-ontology#TurbidityMeter"
+      ]
+    },
+    {
+      "text": "aeration tank",
+      "expected": [
+        "urn:nawi-water-ontology#AerationBasin"
+      ]
+    },
+    {
+      "text": "chlorine dosing pump",
+      "expected": [
+        "urn:nawi-water-ontology#Pump",
+        "http://data.ashrae.org/standard223#Pump"
+      ]
+    },
+    {
+      "text": "brine tank",
+      "expected": [
+        "urn:nawi-water-ontology#Tank"
+      ]
+    },
+    {
+      "text": "influent pH analyzer",
+      "expected": [
+        "urn:nawi-water-ontology#pHSensor"
+      ]
+    },
+    {
+      "text": "tank level sensor",
+      "expected": [
+        "urn:nawi-water-ontology#LevelSensor"
+      ]
+    },
+    {
+      "text": "inlet isolation valve",
+      "expected": [
+        "urn:nawi-water-ontology#Valve",
+        "http://data.ashrae.org/standard223#Valve"
+      ]
+    },
+    {
+      "text": "product water conductivity probe",
+      "expected": [
+        "urn:nawi-water-ontology#ConductivitySensor"
+      ]
+    },
+    {
+      "text": "permeate transfer pump",
+      "expected": [
+        "urn:nawi-water-ontology#Pump",
+        "http://data.ashrae.org/standard223#Pump"
+      ]
+    },
+    {
+      "text": "sludge recirculation pump",
+      "expected": [
+        "urn:nawi-water-ontology#Pump",
+        "http://data.ashrae.org/standard223#Pump"
+      ]
+    },
+    {
+      "text": "backwash supply pump",
+      "expected": [
+        "urn:nawi-water-ontology#Pump",
+        "http://data.ashrae.org/standard223#Pump"
+      ]
+    },
+    {
+      "text": "booster pump station 2",
+      "expected": [
+        "urn:nawi-water-ontology#Pump",
+        "http://data.ashrae.org/standard223#Pump"
+      ]
+    },
+    {
+      "text": "brine discharge valve",
+      "expected": [
+        "urn:nawi-water-ontology#Valve",
+        "http://data.ashrae.org/standard223#Valve"
+      ]
+    },
+    {
+      "text": "feed control valve",
+      "expected": [
+        "urn:nawi-water-ontology#Valve",
+        "http://data.ashrae.org/standard223#Valve"
+      ]
+    },
+    {
+      "text": "permeate storage tank",
+      "expected": [
+        "urn:nawi-water-ontology#Tank"
+      ]
+    },
+    {
+      "text": "chemical day tank",
+      "expected": [
+        "urn:nawi-water-ontology#Tank"
+      ]
+    },
+    {
+      "text": "backwash water tank",
+      "expected": [
+        "urn:nawi-water-ontology#Tank"
+      ]
+    },
+    {
+      "text": "influent flow transmitter FT-101",
+      "expected": [
+        "urn:nawi-water-ontology#FlowSensor",
+        "http://data.ashrae.org/standard223#FlowSensor"
+      ]
+    },
+    {
+      "text": "RO concentrate flow meter",
+      "expected": [
+        "urn:nawi-water-ontology#FlowSensor",
+        "http://data.ashrae.org/standard223#FlowSensor"
+      ]
+    },
+    {
+      "text": "RO feed pressure sensor",
+      "expected": [
+        "urn:nawi-water-ontology#PressureSensor",
+        "http://data.ashrae.org/standard223#PressureSensor"
+      ]
+    },
+    {
+      "text": "membrane differential pressure transmitter",
+      "expected": [
+        "urn:nawi-water-ontology#PressureSensor",
+        "http://data.ashrae.org/standard223#PressureSensor"
+      ]
+    },
+    {
+      "text": "feed water temperature sensor",
+      "expected": [
+        "urn:nawi-water-ontology#TemperatureSensor",
+        "http://data.ashrae.org/standard223#TemperatureSensor"
+      ]
+    },
+    {
+      "text": "digester temperature probe",
+      "expected": [
+        "urn:nawi-water-ontology#TemperatureSensor",
+        "http://data.ashrae.org/standard223#TemperatureSensor"
+      ]
+    },
+    {
+      "text": "clearwell level transmitter",
+      "expected": [
+        "urn:nawi-water-ontology#LevelSensor"
+      ]
+    },
+    {
+      "text": "wet well level sensor",
+      "expected": [
+        "urn:nawi-water-ontology#LevelSensor"
+      ]
+    },
+    {
+      "text": "effluent pH sensor",
+      "expected": [
+        "urn:nawi-water-ontology#pHSensor"
+      ]
+    },
+    {
+      "text": "permeate conductivity analyzer",
+      "expected": [
+        "urn:nawi-water-ontology#ConductivitySensor"
+      ]
+    },
+    {
+      "text": "filter effluent turbidimeter",
+      "expected": [
+        "urn:nawi-water-ontology#TurbidityMeter"
+      ]
+    },
+    {
+      "text": "aeration basin DO probe",
+      "expected": [
+        "urn:nawi-water-ontology#OxygenMeter"
+      ]
+    },
+    {
+      "text": "blower VFD",
+      "expected": [
+        "urn:nawi-water-ontology#VariableFrequencyDrive",
+        "http://data.ashrae.org/standard223#VariableFrequencyDrive"
+      ]
+    },
+    {
+      "text": "high pressure pump VFD",
+      "expected": [
+        "urn:nawi-water-ontology#VariableFrequencyDrive",
+        "http://data.ashrae.org/standard223#VariableFrequencyDrive"
+      ]
+    }
+  ]
+}

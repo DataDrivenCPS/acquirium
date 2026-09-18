@@ -1,0 +1,266 @@
+{
+  "group": "tag",
+  "kind": "quantity_kind",
+  "cases": [
+    {
+      "text": "Flow Rate (gpm)",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/VolumeFlowRate",
+        "http://qudt.org/vocab/quantitykind/VolumePerTime"
+      ]
+    },
+    {
+      "text": "Pressure (psi)",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Pressure"
+      ]
+    },
+    {
+      "text": "Temp (°C)",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Temperature"
+      ]
+    },
+    {
+      "text": "RO feed pressure",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Pressure"
+      ]
+    },
+    {
+      "text": "inlet pressure",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Pressure"
+      ]
+    },
+    {
+      "text": "suction pressure",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Pressure"
+      ]
+    },
+    {
+      "text": "discharge pressure",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Pressure"
+      ]
+    },
+    {
+      "text": "permeate flow",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/VolumeFlowRate",
+        "http://qudt.org/vocab/quantitykind/VolumePerTime"
+      ]
+    },
+    {
+      "text": "influent flow rate",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/VolumeFlowRate",
+        "http://qudt.org/vocab/quantitykind/VolumePerTime"
+      ]
+    },
+    {
+      "text": "effluent turbidity",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Turbidity"
+      ]
+    },
+    {
+      "text": "permeate conductivity",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/ElectricConductivity",
+        "http://qudt.org/vocab/quantitykind/Conductivity"
+      ]
+    },
+    {
+      "text": "pump speed",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/RotationalVelocity",
+        "http://qudt.org/vocab/quantitykind/RotationalFrequency",
+        "http://qudt.org/vocab/quantitykind/AngularVelocity",
+        "http://qudt.org/vocab/quantitykind/Speed"
+      ]
+    },
+    {
+      "text": "motor current",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/ElectricCurrent"
+      ]
+    },
+    {
+      "text": "feed water temperature",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Temperature"
+      ]
+    },
+    {
+      "text": "pump power",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Power",
+        "http://qudt.org/vocab/quantitykind/ElectricPower"
+      ]
+    },
+    {
+      "text": "basin level",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Height",
+        "http://qudt.org/vocab/quantitykind/Depth"
+      ]
+    },
+    {
+      "text": "HP pump discharge pressure (bar)",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Pressure"
+      ]
+    },
+    {
+      "text": "PT-201 membrane feed pressure",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Pressure"
+      ]
+    },
+    {
+      "text": "filter inlet press.",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Pressure"
+      ]
+    },
+    {
+      "text": "digester temp degC",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Temperature"
+      ]
+    },
+    {
+      "text": "TT-105 Feed Temp",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Temperature"
+      ]
+    },
+    {
+      "text": "effluent water temperature [C]",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Temperature"
+      ]
+    },
+    {
+      "text": "FT-101 Influent Flow (MGD)",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/VolumeFlowRate",
+        "http://qudt.org/vocab/quantitykind/VolumePerTime"
+      ]
+    },
+    {
+      "text": "brine flow m3/h",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/VolumeFlowRate",
+        "http://qudt.org/vocab/quantitykind/VolumePerTime"
+      ]
+    },
+    {
+      "text": "RAS flow rate",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/VolumeFlowRate",
+        "http://qudt.org/vocab/quantitykind/VolumePerTime"
+      ]
+    },
+    {
+      "text": "backwash flow",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/VolumeFlowRate",
+        "http://qudt.org/vocab/quantitykind/VolumePerTime"
+      ]
+    },
+    {
+      "text": "LT-300 clearwell level (ft)",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Height",
+        "http://qudt.org/vocab/quantitykind/Depth"
+      ]
+    },
+    {
+      "text": "wet well level",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Height",
+        "http://qudt.org/vocab/quantitykind/Depth"
+      ]
+    },
+    {
+      "text": "CT-410 permeate conductivity uS/cm",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/ElectricConductivity",
+        "http://qudt.org/vocab/quantitykind/Conductivity",
+        "http://qudt.org/vocab/quantitykind/ElectrolyticConductivity"
+      ]
+    },
+    {
+      "text": "filtered water turbidity NTU",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Turbidity"
+      ]
+    },
+    {
+      "text": "effluent pH",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Acidity"
+      ]
+    },
+    {
+      "text": "AIT-220 pH",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Acidity"
+      ]
+    },
+    {
+      "text": "free chlorine residual mg/L",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/MassConcentration",
+        "http://qudt.org/vocab/quantitykind/Concentration"
+      ]
+    },
+    {
+      "text": "effluent ammonia concentration",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/MassConcentration",
+        "http://qudt.org/vocab/quantitykind/Concentration"
+      ]
+    },
+    {
+      "text": "blower power kW",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/ElectricPower",
+        "http://qudt.org/vocab/quantitykind/Power",
+        "http://qudt.org/vocab/quantitykind/ActivePower"
+      ]
+    },
+    {
+      "text": "RO train 1 power draw",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/ElectricPower",
+        "http://qudt.org/vocab/quantitykind/Power",
+        "http://qudt.org/vocab/quantitykind/ActivePower"
+      ]
+    },
+    {
+      "text": "P-101 motor amps",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/ElectricCurrent"
+      ]
+    },
+    {
+      "text": "VFD output frequency Hz",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Frequency"
+      ]
+    },
+    {
+      "text": "blower speed rpm",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/RotationalVelocity",
+        "http://qudt.org/vocab/quantitykind/RotationalFrequency",
+        "http://qudt.org/vocab/quantitykind/AngularVelocity",
+        "http://qudt.org/vocab/quantitykind/Speed"
+      ]
+    }
+  ]
+}

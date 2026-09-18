@@ -1,10 +1,85 @@
 {
+  "group": "label",
   "kind": "substance",
   "cases": [
     {
-      "text": "water",
+      "text": "dissolved oxygen",
       "expected": [
-        "http://data.ashrae.org/standard223#Fluid-Water"
+        "urn:nawi-water-ontology#Constituent-DissolvedOxygen"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "suspended solids",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-SuspendedSolids"
+      ]
+    },
+    {
+      "text": "cyanide",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Cyanide"
+      ]
+    },
+    {
+      "text": "bacteria",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Bacteria"
+      ]
+    },
+    {
+      "text": "metals",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Metals"
+      ]
+    },
+    {
+      "text": "organics",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Organics"
+      ]
+    },
+    {
+      "text": "solids",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Solids"
+      ]
+    },
+    {
+      "text": "particles",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Particles"
+      ]
+    },
+    {
+      "text": "seawater",
+      "expected": [
+        "urn:nawi-water-ontology#Water-Seawater"
+      ]
+    },
+    {
+      "text": "brine",
+      "expected": [
+        "urn:nawi-water-ontology#Water-Brine"
+      ]
+    },
+    {
+      "text": "freshwater",
+      "expected": [
+        "urn:nawi-water-ontology#Water-Freshwater"
+      ]
+    },
+    {
+      "text": "polyaluminum chloride",
+      "expected": [
+        "urn:nawi-water-ontology#Coagulant-PolyaluminumChloride"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "volatile organic compounds",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-VolatileOrganicCompounds"
       ],
       "stage": "exact"
     },
@@ -19,14 +94,6 @@
       "text": "natural gas",
       "expected": [
         "http://data.ashrae.org/standard223#Fluid-NaturalGas"
-      ],
-      "stage": "exact"
-    },
-    {
-      "text": "oil",
-      "expected": [
-        "http://data.ashrae.org/standard223#Fluid-Oil",
-        "http://data.ashrae.org/standard223#Constituent-Oil"
       ],
       "stage": "exact"
     },
@@ -59,19 +126,6 @@
       "stage": "exact"
     },
     {
-      "text": "CO2",
-      "expected": [
-        "http://data.ashrae.org/standard223#Constituent-CO2"
-      ],
-      "stage": "exact"
-    },
-    {
-      "text": "carbon dioxide",
-      "expected": [
-        "http://data.ashrae.org/standard223#Constituent-CO2"
-      ]
-    },
-    {
       "text": "ac electricity",
       "expected": [
         "http://data.ashrae.org/standard223#Electricity-AC"
@@ -82,13 +136,6 @@
       "text": "refrigerant",
       "expected": [
         "http://data.ashrae.org/standard223#Constituent-Refrigerant"
-      ],
-      "stage": "exact"
-    },
-    {
-      "text": "chlorine",
-      "expected": [
-        "urn:nawi-water-ontology#Disinfectant-Chlorine"
       ],
       "stage": "exact"
     },
@@ -137,19 +184,6 @@
       "stage": "exact"
     },
     {
-      "text": "dissolved oxygen",
-      "expected": [
-        "urn:nawi-water-ontology#Constituent-DissolvedOxygen"
-      ],
-      "stage": "exact"
-    },
-    {
-      "text": "DO",
-      "expected": [
-        "urn:nawi-water-ontology#Constituent-DissolvedOxygen"
-      ]
-    },
-    {
       "text": "organic carbon",
       "expected": [
         "urn:nawi-water-ontology#Constituent-OrganicCarbon"
@@ -157,53 +191,11 @@
       "stage": "exact"
     },
     {
-      "text": "suspended solids",
-      "expected": [
-        "urn:nawi-water-ontology#Constituent-SuspendedSolids"
-      ]
-    },
-    {
-      "text": "TSS",
-      "expected": [
-        "urn:nawi-water-ontology#Constituent-SuspendedSolids"
-      ]
-    },
-    {
       "text": "sludge",
       "expected": [
         "urn:nawi-water-ontology#Fluid-Sludge"
       ],
       "stage": "exact"
-    },
-    {
-      "text": "seawater",
-      "expected": [
-        "urn:nawi-water-ontology#Water-Seawater"
-      ]
-    },
-    {
-      "text": "sea water",
-      "expected": [
-        "urn:nawi-water-ontology#Water-Seawater"
-      ]
-    },
-    {
-      "text": "brine",
-      "expected": [
-        "urn:nawi-water-ontology#Water-Brine"
-      ]
-    },
-    {
-      "text": "brackish water",
-      "expected": [
-        "urn:nawi-water-ontology#Water-Brackish"
-      ]
-    },
-    {
-      "text": "fresh water",
-      "expected": [
-        "urn:nawi-water-ontology#Water-Freshwater"
-      ]
     },
     {
       "text": "lime",
@@ -230,32 +222,6 @@
       "text": "activated carbon",
       "expected": [
         "urn:nawi-water-ontology#OdorControlAgent-ActivatedCarbon"
-      ],
-      "stage": "exact"
-    },
-    {
-      "text": "polymer",
-      "expected": [
-        "urn:nawi-water-ontology#Flocculant-Polymer"
-      ]
-    },
-    {
-      "text": "sodium chloride",
-      "expected": [
-        "urn:nawi-water-ontology#Salt-NaCl"
-      ]
-    },
-    {
-      "text": "salt",
-      "expected": [
-        "urn:nawi-water-ontology#Salt-NaCl",
-        "urn:nawi-water-ontology#Constituent-Salt"
-      ]
-    },
-    {
-      "text": "coagulant",
-      "expected": [
-        "urn:nawi-water-ontology#Coagulant"
       ],
       "stage": "exact"
     },
