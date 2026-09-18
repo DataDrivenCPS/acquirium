@@ -1,6 +1,7 @@
 from acquirium.Client.acquirium import Acquirium
 from acquirium.runtime import init, shutdown
 from acquirium.Materialization import App, OutputSpec, align, output
+from acquirium.Experiments import RecordedSeries, timestamp
 from acquirium.Client.explore.core import Query
 from acquirium.Client.query import Q
 from acquirium.Client.data_object import DataObject

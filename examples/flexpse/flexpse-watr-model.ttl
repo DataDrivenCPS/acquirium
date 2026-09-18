@@ -1,0 +1,106 @@
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix flex: <urn:flex-pse:api-freeze:> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix quantitykind: <http://qudt.org/vocab/quantitykind/> .
+@prefix qudt: <http://qudt.org/schema/qudt/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix s223: <http://data.ashrae.org/standard223#> .
+@prefix unit: <http://qudt.org/vocab/unit/> .
+@prefix watr: <https://watermetadata.org/ontology/watr#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+flex: a owl:Ontology ;
+    rdfs:comment "WaTr-on-223 representation of the FlexPSE api-freeze water facility"^^xsd:string .
+
+flex:tank-to-plant a s223:Pipe ;
+    rdfs:label "tank.outlet to plant.inlet"^^xsd:string ;
+    s223:cnx flex:plant-inlet,
+        flex:tank-outlet ;
+    s223:hasMedium s223:Fluid-Water ;
+    dcterms:source "flexpse/inputs/model.json:plant.arcs[0]"^^xsd:string .
+
+flex:waterfacility a s223:System ;
+    rdfs:label "waterfacility"^^xsd:string ;
+    s223:hasBoundaryConnectionPoint flex:battery-terminal,
+        flex:plant-outlet,
+        flex:tank-inlet ;
+    s223:hasMember flex:battery,
+        flex:plant,
+        flex:tank ;
+    s223:hasProperty flex:aggregate-electrical-power ;
+    dcterms:source "flexpse/inputs/model.json:plant"^^xsd:string .
+
+flex:battery a s223:Battery ;
+    rdfs:label "battery"^^xsd:string ;
+    s223:hasConnectionPoint flex:battery-terminal ;
+    s223:hasProperty flex:battery-capacity ;
+    dcterms:source "flexpse/inputs/model.json:plant.units.battery"^^xsd:string .
+
+flex:battery-capacity a s223:QuantifiableProperty ;
+    rdfs:label "battery capacity"^^xsd:string ;
+    s223:hasValue 1e+00 ;
+    dcterms:source "flexpse/inputs/model.json:plant.units.battery.construction_options.capacity"^^xsd:string ;
+    qudt:hasQuantityKind quantitykind:Energy ;
+    qudt:hasUnit unit:KiloW-HR .
+
+flex:energy-intensity a s223:QuantifiableProperty ;
+    rdfs:label "constant treatment energy intensity (source: 0.5 kWh/m3)"^^xsd:string ;
+    s223:hasValue 5e+02 ;
+    dcterms:source "flexpse/inputs/model.json:plant.units.plant.construction_options.energy_intensity"^^xsd:string ;
+    qudt:hasQuantityKind quantitykind:EnergyDensity ;
+    qudt:hasUnit unit:W-HR-PER-M3 .
+
+flex:plant a watr:UnitProcess ;
+    rdfs:label "plant"^^xsd:string ;
+    s223:hasConnectionPoint flex:plant-inlet,
+        flex:plant-outlet ;
+    s223:hasProperty flex:energy-intensity,
+        flex:treatment-flow ;
+    dcterms:source "flexpse/inputs/model.json:plant.units.plant"^^xsd:string ;
+    watr:hasProcess flex:unspecified-treatment-process .
+
+flex:tank a watr:Tank ;
+    rdfs:label "tank"^^xsd:string ;
+    s223:hasConnectionPoint flex:tank-inlet,
+        flex:tank-outlet ;
+    s223:hasProperty flex:tank-volume ;
+    dcterms:source "flexpse/inputs/model.json:plant.units.tank"^^xsd:string .
+
+flex:tank-volume a s223:QuantifiableObservableProperty ;
+    rdfs:label "tank volume"^^xsd:string ;
+    rdfs:comment "Tank volume as a scenario state or deployed measurement."^^xsd:string ;
+    qudt:hasQuantityKind quantitykind:Volume ;
+    qudt:hasUnit unit:M3 .
+
+flex:aggregate-electrical-power a s223:QuantifiableObservableProperty ;
+    rdfs:label "aggregate electrical power"^^xsd:string ;
+    rdfs:comment "Total modeled electrical power at the water facility boundary."^^xsd:string ;
+    qudt:hasQuantityKind quantitykind:ElectricPower ;
+    qudt:hasUnit unit:KiloW .
+
+flex:treatment-flow a s223:QuantifiableProperty ;
+    rdfs:label "scenario treatment flow"^^xsd:string ;
+    s223:hasValue 1e+01 ;
+    dcterms:source "flexpse/record_experiment.py:TREATMENT_FLOW"^^xsd:string ;
+    qudt:hasQuantityKind quantitykind:VolumeFlowRate ;
+    qudt:hasUnit unit:M3-PER-HR .
+
+flex:unspecified-treatment-process a watr:Process ;
+    rdfs:label "unspecified treatment process"^^xsd:string ;
+    dcterms:source "flexpse/README.md"^^xsd:string ;
+    rdfs:comment "Treatment process stated by FlexPSE; technology not specified."^^xsd:string .
+
+flex:battery-terminal a s223:BidirectionalConnectionPoint ;
+    s223:hasMedium s223:Constituent-Electricity .
+
+flex:plant-inlet a s223:InletConnectionPoint ;
+    s223:hasMedium s223:Fluid-Water .
+
+flex:plant-outlet a s223:OutletConnectionPoint ;
+    s223:hasMedium s223:Fluid-Water .
+
+flex:tank-inlet a s223:InletConnectionPoint ;
+    s223:hasMedium s223:Fluid-Water .
+
+flex:tank-outlet a s223:OutletConnectionPoint ;
+    s223:hasMedium s223:Fluid-Water .

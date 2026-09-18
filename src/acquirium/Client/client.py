@@ -242,6 +242,49 @@ class AcquiriumClient:
         """The HTTP(S) address of the server this client uses."""
         return self.base_url
 
+    # These intentionally thin methods are transport only. The public client
+    # turns them into Study/Experiment/Variable objects in Experiments.py.
+    def define_experiment(self, name: str) -> dict: return self._experiment_post("/experiments/templates", {"name": name})
+    def declare_experiment_variable(self, template_id: str, **body: Any) -> dict: return self._experiment_post(f"/experiments/templates/{template_id}/variables", body)
+    def list_experiment_studies(self, name: str | None = None) -> list[dict]:
+        return self._experiment_get("/experiments/templates", {"name": name})
+    def get_experiment_study(self, identifier: str) -> dict:
+        return self._experiment_get("/experiments/templates/lookup", {"identifier": identifier})
+    def list_experiment_variables(self, template_id: str) -> list[dict]:
+        return self._experiment_get(f"/experiments/templates/{template_id}/variables")
+    def start_experiment(self, template_id: str, metadata: dict | None = None) -> dict: return self._experiment_post(f"/experiments/templates/{template_id}/runs", {"metadata": metadata or {}})
+    def list_experiments(self, template_id: str, **filters: Any) -> list[dict]:
+        return self._experiment_get(f"/experiments/templates/{template_id}/runs", self._experiment_params(filters))
+    def get_experiment(self, run_id: str) -> dict:
+        return self._experiment_get(f"/experiments/runs/{run_id}")
+    def observe_experiment(self, run_id: str, variable_id: str, **body: Any) -> dict: return self._experiment_post(f"/experiments/runs/{run_id}/variables/{variable_id}/observations", body)
+    def list_experiment_observations(self, template_id: str, **filters: Any) -> list[dict]:
+        return self._experiment_get(f"/experiments/templates/{template_id}/observations", self._experiment_params(filters))
+    def finish_experiment(self, run_id: str, failed: bool = False, error: Any = None) -> dict: return self._experiment_post(f"/experiments/runs/{run_id}/{'fail' if failed else 'finish'}", {"error": error})
+    def attach_experiment_file(self, run_id: str, variable_id: str, path: str | Path, media_type: str | None = None) -> dict:
+        # Send bytes, not a client-local filename. The server owns the durable
+        # artifact copy so experiments survive the originating machine.
+        source = Path(path); response = requests.post(f"{self.base_url}/experiments/runs/{run_id}/variables/{variable_id}/file", data=source.read_bytes(), headers={"X-Filename": source.name, "Content-Type": media_type or "application/octet-stream"}); _raise_for_status(response); return response.json()
+    def _experiment_post(self, path: str, body: dict) -> dict:
+        response = requests.post(f"{self.base_url}{path}", json=body); _raise_for_status(response); return response.json()
+    def _experiment_get(self, path: str, params: dict[str, Any] | None = None):
+        response = self._http.get(
+            f"{self.base_url}{path}",
+            params={key: value for key, value in (params or {}).items() if value is not None},
+        )
+        _raise_for_status(response)
+        return response.json()
+    @staticmethod
+    def _experiment_params(filters: dict[str, Any]) -> dict[str, Any]:
+        params = dict(filters)
+        if params.get("metadata") is not None:
+            params["metadata"] = json.dumps(params["metadata"], sort_keys=True)
+        for key in ("started_after", "started_before"):
+            value = params.get(key)
+            if isinstance(value, datetime):
+                params[key] = value.isoformat()
+        return params
+
     def insert_graph(
         self,
         rdf_graph: str,
