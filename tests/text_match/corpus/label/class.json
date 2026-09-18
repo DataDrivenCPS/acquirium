@@ -1,6 +1,132 @@
 {
+  "group": "label",
   "kind": "class",
   "cases": [
+    {
+      "text": "sedimentation tank",
+      "expected": [
+        "urn:nawi-water-ontology#SedimentationTank"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "heat exchanger",
+      "expected": [
+        "http://data.ashrae.org/standard223#HeatExchanger"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "variable frequency drive",
+      "expected": [
+        "urn:nawi-water-ontology#VariableFrequencyDrive",
+        "http://data.ashrae.org/standard223#VariableFrequencyDrive"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "cooling tower",
+      "expected": [
+        "http://data.ashrae.org/standard223#CoolingTower"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "grit chamber",
+      "expected": [
+        "urn:nawi-water-ontology#GritChamber"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "trickling filter",
+      "expected": [
+        "urn:nawi-water-ontology#TricklingFilter"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "static mixer",
+      "expected": [
+        "urn:nawi-water-ontology#StaticMixer"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "plug flow reactor",
+      "expected": [
+        "urn:nawi-water-ontology#PlugFlowReactor"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "sequencing batch reactor",
+      "expected": [
+        "urn:nawi-water-ontology#SequencingBatchReactor"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "pressure exchanger",
+      "expected": [
+        "urn:nawi-water-ontology#PressureExchanger"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "continuously stirred tank reactor",
+      "expected": [
+        "urn:nawi-water-ontology#ContinuouslyStirredTankReactor"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "oxygen demand sensor",
+      "expected": [
+        "urn:nawi-water-ontology#OxygenDemandSensor"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "media filtration unit",
+      "expected": [
+        "urn:nawi-water-ontology#MediaFiltration"
+      ]
+    },
+    {
+      "text": "rotating biological contactor",
+      "expected": [
+        "urn:nawi-water-ontology#RotatingBiologicalContactor"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "biological aerated filter",
+      "expected": [
+        "urn:nawi-water-ontology#BiologicalAeratedFilter"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "granular activated carbon adsorber",
+      "expected": [
+        "urn:nawi-water-ontology#GranularActivatedCarbonAdsorber"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "electromagnetic field device",
+      "expected": [
+        "urn:nawi-water-ontology#ElectromagneticFieldDevice"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "dimethyl ether recovery system",
+      "expected": [
+        "urn:nawi-water-ontology#DMERecoverySystem"
+      ]
+    },
     {
       "text": "inlet connection point",
       "expected": [
@@ -127,13 +253,6 @@
       "stage": "exact"
     },
     {
-      "text": "sedimentation tank",
-      "expected": [
-        "urn:nawi-water-ontology#SedimentationTank"
-      ],
-      "stage": "exact"
-    },
-    {
       "text": "temperature sensor",
       "expected": [
         "urn:nawi-water-ontology#TemperatureSensor",
@@ -201,18 +320,6 @@
       "stage": "exact"
     },
     {
-      "text": "RO membrane",
-      "expected": [
-        "urn:nawi-water-ontology#ReverseOsmosisMembrane"
-      ]
-    },
-    {
-      "text": "RO",
-      "expected": [
-        "urn:nawi-water-ontology#ReverseOsmosisMembrane"
-      ]
-    },
-    {
       "text": "nanofiltration unit",
       "expected": [
         "urn:nawi-water-ontology#NanofiltrationUnit"
@@ -227,18 +334,6 @@
       "stage": "exact"
     },
     {
-      "text": "UF unit",
-      "expected": [
-        "urn:nawi-water-ontology#UltrafiltrationUnit"
-      ]
-    },
-    {
-      "text": "UF",
-      "expected": [
-        "urn:nawi-water-ontology#UltrafiltrationUnit"
-      ]
-    },
-    {
       "text": "microfiltration unit",
       "expected": [
         "urn:nawi-water-ontology#MicrofiltrationUnit"
@@ -251,12 +346,6 @@
         "urn:nawi-water-ontology#MembraneBioreactor"
       ],
       "stage": "exact"
-    },
-    {
-      "text": "chlorination basin",
-      "expected": [
-        "urn:nawi-water-ontology#ChlorinationBasin"
-      ]
     },
     {
       "text": "flocculation basin",

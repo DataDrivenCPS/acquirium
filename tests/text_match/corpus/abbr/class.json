@@ -1,0 +1,201 @@
+{
+  "group": "abbr",
+  "kind": "class",
+  "cases": [
+    {
+      "text": "RO",
+      "expected": [
+        "urn:nawi-water-ontology#ReverseOsmosisMembrane"
+      ]
+    },
+    {
+      "text": "UF",
+      "expected": [
+        "urn:nawi-water-ontology#UltrafiltrationUnit"
+      ]
+    },
+    {
+      "text": "MF",
+      "expected": [
+        "urn:nawi-water-ontology#MicrofiltrationUnit"
+      ]
+    },
+    {
+      "text": "NF",
+      "expected": [
+        "urn:nawi-water-ontology#NanofiltrationUnit"
+      ]
+    },
+    {
+      "text": "MBR",
+      "expected": [
+        "urn:nawi-water-ontology#MembraneBioreactor"
+      ]
+    },
+    {
+      "text": "VFD",
+      "expected": [
+        "urn:nawi-water-ontology#VariableFrequencyDrive",
+        "http://data.ashrae.org/standard223#VariableFrequencyDrive"
+      ]
+    },
+    {
+      "text": "GAC",
+      "expected": [
+        "urn:nawi-water-ontology#GranularActivatedCarbonAdsorber"
+      ]
+    },
+    {
+      "text": "RBC",
+      "expected": [
+        "urn:nawi-water-ontology#RotatingBiologicalContactor"
+      ]
+    },
+    {
+      "text": "SBR",
+      "expected": [
+        "urn:nawi-water-ontology#SequencingBatchReactor"
+      ]
+    },
+    {
+      "text": "CSTR",
+      "expected": [
+        "urn:nawi-water-ontology#ContinuouslyStirredTankReactor"
+      ]
+    },
+    {
+      "text": "PFR",
+      "expected": [
+        "urn:nawi-water-ontology#PlugFlowReactor"
+      ]
+    },
+    {
+      "text": "BAF",
+      "expected": [
+        "urn:nawi-water-ontology#BiologicalAeratedFilter"
+      ]
+    },
+    {
+      "text": "AHU",
+      "expected": [
+        "http://data.ashrae.org/standard223#AirHandlingUnit"
+      ]
+    },
+    {
+      "text": "MABR",
+      "expected": [
+        "urn:nawi-water-ontology#MembraneAeratedBiofilmReaactor"
+      ]
+    },
+    {
+      "text": "EDC",
+      "expected": [
+        "urn:nawi-water-ontology#ElectroDialyticCrystallizer"
+      ]
+    },
+    {
+      "text": "RO membrane",
+      "expected": [
+        "urn:nawi-water-ontology#ReverseOsmosisMembrane"
+      ]
+    },
+    {
+      "text": "RO unit",
+      "expected": [
+        "urn:nawi-water-ontology#ReverseOsmosisMembrane"
+      ]
+    },
+    {
+      "text": "RO skid",
+      "expected": [
+        "urn:nawi-water-ontology#ReverseOsmosisMembrane"
+      ]
+    },
+    {
+      "text": "UF unit",
+      "expected": [
+        "urn:nawi-water-ontology#UltrafiltrationUnit"
+      ]
+    },
+    {
+      "text": "UF membrane",
+      "expected": [
+        "urn:nawi-water-ontology#UltrafiltrationUnit"
+      ]
+    },
+    {
+      "text": "NF membrane",
+      "expected": [
+        "urn:nawi-water-ontology#NanofiltrationUnit"
+      ]
+    },
+    {
+      "text": "MF unit",
+      "expected": [
+        "urn:nawi-water-ontology#MicrofiltrationUnit"
+      ]
+    },
+    {
+      "text": "UV unit",
+      "expected": [
+        "urn:nawi-water-ontology#UltravioletLightUnit"
+      ]
+    },
+    {
+      "text": "UV reactor",
+      "expected": [
+        "urn:nawi-water-ontology#UltravioletLightUnit",
+        "urn:nawi-water-ontology#UVH2O2Reactor"
+      ]
+    },
+    {
+      "text": "TOC analyzer",
+      "expected": [
+        "urn:nawi-water-ontology#TotalOrganicCompoundConcentrationSensor"
+      ]
+    },
+    {
+      "text": "DO sensor",
+      "expected": [
+        "urn:nawi-water-ontology#OxygenMeter"
+      ]
+    },
+    {
+      "text": "DO meter",
+      "expected": [
+        "urn:nawi-water-ontology#OxygenMeter"
+      ]
+    },
+    {
+      "text": "DAF thickener",
+      "expected": [
+        "urn:nawi-water-ontology#DissolvedAirFlotationThickener"
+      ]
+    },
+    {
+      "text": "GAC filter",
+      "expected": [
+        "urn:nawi-water-ontology#GranularActivatedCarbonAdsorber"
+      ]
+    },
+    {
+      "text": "ED unit",
+      "expected": [
+        "urn:nawi-water-ontology#ElectrodialysisUnit"
+      ]
+    },
+    {
+      "text": "PV module",
+      "expected": [
+        "http://data.ashrae.org/standard223#PhotovoltaicModule"
+      ]
+    },
+    {
+      "text": "VFD drive",
+      "expected": [
+        "urn:nawi-water-ontology#VariableFrequencyDrive",
+        "http://data.ashrae.org/standard223#VariableFrequencyDrive"
+      ]
+    }
+  ]
+}

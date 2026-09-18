@@ -1,20 +1,7 @@
 {
+  "group": "label",
   "kind": "quantity_kind",
   "cases": [
-    {
-      "text": "temperature",
-      "expected": [
-        "http://qudt.org/vocab/quantitykind/Temperature"
-      ],
-      "stage": "exact"
-    },
-    {
-      "text": "pressure",
-      "expected": [
-        "http://qudt.org/vocab/quantitykind/Pressure"
-      ],
-      "stage": "exact"
-    },
     {
       "text": "volume flow rate",
       "expected": [
@@ -23,37 +10,9 @@
       "stage": "exact"
     },
     {
-      "text": "mass",
+      "text": "mass flow rate",
       "expected": [
-        "http://qudt.org/vocab/quantitykind/Mass"
-      ],
-      "stage": "exact"
-    },
-    {
-      "text": "electric current",
-      "expected": [
-        "http://qudt.org/vocab/quantitykind/ElectricCurrent"
-      ],
-      "stage": "exact"
-    },
-    {
-      "text": "density",
-      "expected": [
-        "http://qudt.org/vocab/quantitykind/Density"
-      ],
-      "stage": "exact"
-    },
-    {
-      "text": "viscosity",
-      "expected": [
-        "http://qudt.org/vocab/quantitykind/Viscosity"
-      ],
-      "stage": "exact"
-    },
-    {
-      "text": "dynamic viscosity",
-      "expected": [
-        "http://qudt.org/vocab/quantitykind/DynamicViscosity"
+        "http://qudt.org/vocab/quantitykind/MassFlowRate"
       ],
       "stage": "exact"
     },
@@ -65,85 +24,86 @@
       "stage": "exact"
     },
     {
-      "text": "concentration",
+      "text": "electric conductivity",
       "expected": [
-        "http://qudt.org/vocab/quantitykind/Concentration"
+        "http://qudt.org/vocab/quantitykind/ElectricConductivity"
       ],
       "stage": "exact"
     },
     {
-      "text": "power",
+      "text": "turbidity",
       "expected": [
-        "http://qudt.org/vocab/quantitykind/Power"
+        "http://qudt.org/vocab/quantitykind/Turbidity"
       ],
       "stage": "exact"
     },
     {
-      "text": "force",
+      "text": "osmotic pressure",
       "expected": [
-        "http://qudt.org/vocab/quantitykind/Force"
+        "http://qudt.org/vocab/quantitykind/OsmoticPressure"
       ],
       "stage": "exact"
     },
     {
-      "text": "energy",
+      "text": "gauge pressure",
       "expected": [
-        "http://qudt.org/vocab/quantitykind/Energy"
+        "http://qudt.org/vocab/quantitykind/GaugePressure"
       ],
       "stage": "exact"
     },
     {
-      "text": "length",
+      "text": "state of charge",
       "expected": [
-        "http://qudt.org/vocab/quantitykind/Length"
+        "http://qudt.org/vocab/quantitykind/StateOfCharge"
       ],
       "stage": "exact"
     },
     {
-      "text": "time",
+      "text": "specific energy",
       "expected": [
-        "http://qudt.org/vocab/quantitykind/Time"
+        "http://qudt.org/vocab/quantitykind/SpecificEnergy"
       ],
       "stage": "exact"
     },
     {
-      "text": "velocity",
+      "text": "relative humidity",
       "expected": [
-        "http://qudt.org/vocab/quantitykind/Velocity"
+        "http://qudt.org/vocab/quantitykind/RelativeHumidity"
       ],
       "stage": "exact"
     },
     {
-      "text": "voltage",
+      "text": "electric power",
       "expected": [
-        "http://qudt.org/vocab/quantitykind/Voltage"
+        "http://qudt.org/vocab/quantitykind/ElectricPower"
       ],
       "stage": "exact"
     },
     {
-      "text": "frequency",
+      "text": "rotational velocity",
       "expected": [
-        "http://qudt.org/vocab/quantitykind/Frequency"
+        "http://qudt.org/vocab/quantitykind/RotationalVelocity"
       ],
       "stage": "exact"
     },
     {
-      "text": "area",
+      "text": "dynamic viscosity",
       "expected": [
-        "http://qudt.org/vocab/quantitykind/Area"
+        "http://qudt.org/vocab/quantitykind/DynamicViscosity"
       ],
       "stage": "exact"
     },
     {
-      "text": "volume",
+      "text": "acidity",
       "expected": [
-        "http://qudt.org/vocab/quantitykind/Volume"
-      ]
+        "http://qudt.org/vocab/quantitykind/Acidity"
+      ],
+      "stage": "exact"
     },
     {
-      "text": "speed",
+      "text": "electric current",
       "expected": [
-        "http://qudt.org/vocab/quantitykind/Speed"
+        "http://qudt.org/vocab/quantitykind/ElectricCurrent"
       ],
       "stage": "exact"
     },
@@ -179,20 +139,6 @@
       "text": "capacitance",
       "expected": [
         "http://qudt.org/vocab/quantitykind/Capacitance"
-      ],
-      "stage": "exact"
-    },
-    {
-      "text": "turbidity",
-      "expected": [
-        "http://qudt.org/vocab/quantitykind/Turbidity"
-      ],
-      "stage": "exact"
-    },
-    {
-      "text": "electric conductivity",
-      "expected": [
-        "http://qudt.org/vocab/quantitykind/ElectricConductivity"
       ],
       "stage": "exact"
     },

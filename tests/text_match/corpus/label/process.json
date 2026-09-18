@@ -1,14 +1,9 @@
 {
+  "group": "label",
   "kind": "process",
   "cases": [
     {
       "text": "reverse osmosis",
-      "expected": [
-        "urn:nawi-water-ontology#Process-ReverseOsmosis"
-      ]
-    },
-    {
-      "text": "RO",
       "expected": [
         "urn:nawi-water-ontology#Process-ReverseOsmosis"
       ]
@@ -19,6 +14,66 @@
         "urn:nawi-water-ontology#Process-Ultrafiltration"
       ],
       "stage": "exact"
+    },
+    {
+      "text": "granular activated carbon",
+      "expected": [
+        "urn:nawi-water-ontology#Process-GranularActivatedCarbon"
+      ]
+    },
+    {
+      "text": "advanced oxidation process",
+      "expected": [
+        "urn:nawi-water-ontology#Process-AdvancedOxidation"
+      ]
+    },
+    {
+      "text": "membrane distillation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-MembraneDistillation"
+      ]
+    },
+    {
+      "text": "trickling filtration",
+      "expected": [
+        "urn:nawi-water-ontology#Process-TricklingFiltration"
+      ]
+    },
+    {
+      "text": "biosolids disposal",
+      "expected": [
+        "urn:nawi-water-ontology#Process-BiosolidsDisposal"
+      ]
+    },
+    {
+      "text": "electrocoagulation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Electrocoagulation"
+      ]
+    },
+    {
+      "text": "closed circuit reverse osmosis",
+      "expected": [
+        "urn:nawi-water-ontology#Process-ClosedCircuitReverseOsmosis"
+      ]
+    },
+    {
+      "text": "modified ludzack-ettinger",
+      "expected": [
+        "urn:nawi-water-ontology#Process-MLE"
+      ]
+    },
+    {
+      "text": "high-density sludge process",
+      "expected": [
+        "urn:nawi-water-ontology#Process-HighDensitySludge"
+      ]
+    },
+    {
+      "text": "solvent extraction",
+      "expected": [
+        "urn:nawi-water-ontology#Process-SolventExtraction"
+      ]
     },
     {
       "text": "microfiltration",
@@ -91,30 +146,11 @@
       "stage": "exact"
     },
     {
-      "text": "settling",
-      "expected": [
-        "urn:nawi-water-ontology#Process-Sedimentation"
-      ]
-    },
-    {
-      "text": "disinfection",
-      "expected": [
-        "urn:nawi-water-ontology#Process-Disinfection"
-      ],
-      "stage": "exact"
-    },
-    {
       "text": "UV disinfection",
       "expected": [
         "urn:nawi-water-ontology#Process-UVDisinfection"
       ],
       "stage": "exact"
-    },
-    {
-      "text": "ultraviolet disinfection",
-      "expected": [
-        "urn:nawi-water-ontology#Process-UVDisinfection"
-      ]
     },
     {
       "text": "ozonation",
@@ -152,19 +188,6 @@
       "stage": "exact"
     },
     {
-      "text": "sludge dewatering",
-      "expected": [
-        "urn:nawi-water-ontology#Process-Dewatering"
-      ]
-    },
-    {
-      "text": "filtration",
-      "expected": [
-        "urn:nawi-water-ontology#Process-Filtration"
-      ],
-      "stage": "exact"
-    },
-    {
       "text": "media filtration",
       "expected": [
         "urn:nawi-water-ontology#Process-MediaFiltration"
@@ -177,36 +200,6 @@
         "urn:nawi-water-ontology#Process-RapidSandFiltration"
       ],
       "stage": "exact"
-    },
-    {
-      "text": "granular activated carbon",
-      "expected": [
-        "urn:nawi-water-ontology#Process-GranularActivatedCarbon"
-      ]
-    },
-    {
-      "text": "GAC",
-      "expected": [
-        "urn:nawi-water-ontology#Process-GranularActivatedCarbon"
-      ]
-    },
-    {
-      "text": "advanced oxidation",
-      "expected": [
-        "urn:nawi-water-ontology#Process-AdvancedOxidation"
-      ]
-    },
-    {
-      "text": "AOP",
-      "expected": [
-        "urn:nawi-water-ontology#Process-AdvancedOxidation"
-      ]
-    },
-    {
-      "text": "membrane distillation",
-      "expected": [
-        "urn:nawi-water-ontology#Process-MembraneDistillation"
-      ]
     },
     {
       "text": "electrodialysis",
@@ -223,12 +216,6 @@
       "stage": "exact"
     },
     {
-      "text": "backwash",
-      "expected": [
-        "urn:nawi-water-ontology#Process-Backwashing"
-      ]
-    },
-    {
       "text": "screening",
       "expected": [
         "urn:nawi-water-ontology#Process-Screening"
@@ -243,22 +230,9 @@
       "stage": "exact"
     },
     {
-      "text": "water softening",
-      "expected": [
-        "urn:nawi-water-ontology#Process-Softening"
-      ]
-    },
-    {
       "text": "evaporation",
       "expected": [
         "urn:nawi-water-ontology#Process-Evaporation"
-      ],
-      "stage": "exact"
-    },
-    {
-      "text": "incineration",
-      "expected": [
-        "urn:nawi-water-ontology#Process-Incineration"
       ],
       "stage": "exact"
     },

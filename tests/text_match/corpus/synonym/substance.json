@@ -1,0 +1,1092 @@
+{
+  "group": "synonym",
+  "kind": "substance",
+  "cases": [
+    {
+      "text": "methane",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-CH4"
+      ]
+    },
+    {
+      "text": "hydrogen sulfide",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-H2S"
+      ]
+    },
+    {
+      "text": "nitrogen",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-N2"
+      ]
+    },
+    {
+      "text": "oxygen",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-O2",
+        "urn:nawi-water-ontology#HighPurityOxygen"
+      ]
+    },
+    {
+      "text": "argon",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-Ar"
+      ]
+    },
+    {
+      "text": "carbon monoxide",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-CO"
+      ]
+    },
+    {
+      "text": "carbon dioxide",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-CO2"
+      ]
+    },
+    {
+      "text": "sulfur dioxide",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-SO2"
+      ]
+    },
+    {
+      "text": "water vapor",
+      "expected": [
+        "http://data.ashrae.org/standard223#Water-Steam",
+        "http://data.ashrae.org/standard223#Constituent-H2O"
+      ]
+    },
+    {
+      "text": "sea water",
+      "expected": [
+        "urn:nawi-water-ontology#Water-Seawater"
+      ]
+    },
+    {
+      "text": "ocean water",
+      "expected": [
+        "urn:nawi-water-ontology#Water-Seawater"
+      ]
+    },
+    {
+      "text": "concentrate",
+      "expected": [
+        "urn:nawi-water-ontology#Water-Brine"
+      ]
+    },
+    {
+      "text": "brackish water",
+      "expected": [
+        "urn:nawi-water-ontology#Water-Brackish"
+      ]
+    },
+    {
+      "text": "brackish groundwater",
+      "expected": [
+        "urn:nawi-water-ontology#Water-Brackish"
+      ]
+    },
+    {
+      "text": "fresh water",
+      "expected": [
+        "urn:nawi-water-ontology#Water-Freshwater"
+      ]
+    },
+    {
+      "text": "saline water",
+      "expected": [
+        "urn:nawi-water-ontology#Water-Seawater",
+        "urn:nawi-water-ontology#Water-Brackish",
+        "urn:nawi-water-ontology#Water-Brine"
+      ]
+    },
+    {
+      "text": "biosolids",
+      "expected": [
+        "urn:nawi-water-ontology#Fluid-Sludge"
+      ]
+    },
+    {
+      "text": "waste activated sludge",
+      "expected": [
+        "urn:nawi-water-ontology#Fluid-Sludge"
+      ]
+    },
+    {
+      "text": "bleach",
+      "expected": [
+        "urn:nawi-water-ontology#Disinfectant-Chlorine"
+      ]
+    },
+    {
+      "text": "sodium hypochlorite",
+      "expected": [
+        "urn:nawi-water-ontology#Disinfectant-Chlorine"
+      ]
+    },
+    {
+      "text": "hypochlorite",
+      "expected": [
+        "urn:nawi-water-ontology#Disinfectant-Chlorine"
+      ]
+    },
+    {
+      "text": "free chlorine",
+      "expected": [
+        "urn:nawi-water-ontology#Disinfectant-Chlorine"
+      ]
+    },
+    {
+      "text": "aluminum sulfate",
+      "expected": [
+        "urn:nawi-water-ontology#Coagulant-Alum"
+      ]
+    },
+    {
+      "text": "ferric",
+      "expected": [
+        "urn:nawi-water-ontology#Coagulant-FerricChloride"
+      ]
+    },
+    {
+      "text": "iron chloride",
+      "expected": [
+        "urn:nawi-water-ontology#Coagulant-FerricChloride"
+      ]
+    },
+    {
+      "text": "quicklime",
+      "expected": [
+        "urn:nawi-water-ontology#pHAdjuster-Lime"
+      ]
+    },
+    {
+      "text": "calcium hydroxide",
+      "expected": [
+        "urn:nawi-water-ontology#pHAdjuster-Lime"
+      ]
+    },
+    {
+      "text": "acid",
+      "expected": [
+        "urn:nawi-water-ontology#pHAdjuster-SulfuricAcid"
+      ]
+    },
+    {
+      "text": "peroxide",
+      "expected": [
+        "urn:nawi-water-ontology#OxidizingAgent-HydrogenPeroxide"
+      ]
+    },
+    {
+      "text": "polymer",
+      "expected": [
+        "urn:nawi-water-ontology#Flocculant-Polymer"
+      ]
+    },
+    {
+      "text": "anionic polymer",
+      "expected": [
+        "urn:nawi-water-ontology#Flocculant-Polymer",
+        "urn:nawi-water-ontology#Flocculant-Polyacrylamide"
+      ]
+    },
+    {
+      "text": "sodium chloride",
+      "expected": [
+        "urn:nawi-water-ontology#Salt-NaCl"
+      ]
+    },
+    {
+      "text": "table salt",
+      "expected": [
+        "urn:nawi-water-ontology#Salt-NaCl"
+      ]
+    },
+    {
+      "text": "salt",
+      "expected": [
+        "urn:nawi-water-ontology#Salt-NaCl",
+        "urn:nawi-water-ontology#Constituent-Salt"
+      ]
+    },
+    {
+      "text": "salinity",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Salt",
+        "urn:nawi-water-ontology#Salt-NaCl"
+      ]
+    },
+    {
+      "text": "pathogens",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Bacteria"
+      ]
+    },
+    {
+      "text": "coliform",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Bacteria"
+      ]
+    },
+    {
+      "text": "E. coli",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Bacteria"
+      ]
+    },
+    {
+      "text": "heavy metals",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Metals"
+      ]
+    },
+    {
+      "text": "particulates",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Particles",
+        "http://data.ashrae.org/standard223#Substance-Particulate"
+      ]
+    },
+    {
+      "text": "total suspended solids",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-SuspendedSolids"
+      ]
+    },
+    {
+      "text": "total dissolved solids",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Solids",
+        "urn:nawi-water-ontology#Constituent-Salt"
+      ]
+    },
+    {
+      "text": "organic matter",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Organics",
+        "urn:nawi-water-ontology#Constituent-OrganicCarbon"
+      ]
+    },
+    {
+      "text": "dissolved organic carbon",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-OrganicCarbon"
+      ]
+    },
+    {
+      "text": "total organic carbon",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-OrganicCarbon"
+      ]
+    },
+    {
+      "text": "ammonium",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Ammonia",
+        "http://data.ashrae.org/standard223#Constituent-NH3"
+      ]
+    },
+    {
+      "text": "ammonia nitrogen",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Ammonia",
+        "http://data.ashrae.org/standard223#Constituent-NH3"
+      ]
+    },
+    {
+      "text": "nitrate nitrogen",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Nitrate"
+      ]
+    },
+    {
+      "text": "biogas",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-CH4",
+        "http://data.ashrae.org/standard223#Fluid-NaturalGas"
+      ]
+    },
+    {
+      "text": "compressed air",
+      "expected": [
+        "http://data.ashrae.org/standard223#Fluid-Air"
+      ]
+    },
+    {
+      "text": "drinking water",
+      "expected": [
+        "http://data.ashrae.org/standard223#Fluid-Water",
+        "urn:nawi-water-ontology#Water-Freshwater"
+      ]
+    },
+    {
+      "text": "potable water",
+      "expected": [
+        "http://data.ashrae.org/standard223#Fluid-Water",
+        "urn:nawi-water-ontology#Water-Freshwater"
+      ]
+    },
+    {
+      "text": "cooling water",
+      "expected": [
+        "http://data.ashrae.org/standard223#Water-ChilledWater",
+        "http://data.ashrae.org/standard223#Fluid-Water"
+      ]
+    },
+    {
+      "text": "power",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-Electricity",
+        "http://data.ashrae.org/standard223#Electricity-AC"
+      ]
+    },
+    {
+      "text": "ethylene glycol",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-Glycol"
+      ]
+    },
+    {
+      "text": "lube oil",
+      "expected": [
+        "http://data.ashrae.org/standard223#Fluid-Oil",
+        "http://data.ashrae.org/standard223#Constituent-Oil"
+      ]
+    },
+    {
+      "text": "carbon",
+      "expected": [
+        "urn:nawi-water-ontology#OdorControlAgent-ActivatedCarbon",
+        "urn:nawi-water-ontology#Constituent-OrganicCarbon",
+        "urn:nawi-water-ontology#Constituent-InorganicCarbon"
+      ]
+    },
+    {
+      "text": "raw water",
+      "expected": [
+        "http://data.ashrae.org/standard223#Fluid-Water",
+        "urn:nawi-water-ontology#Water-Freshwater"
+      ]
+    },
+    {
+      "text": "tap water",
+      "expected": [
+        "http://data.ashrae.org/standard223#Fluid-Water",
+        "urn:nawi-water-ontology#Water-Freshwater"
+      ]
+    },
+    {
+      "text": "liquid water",
+      "expected": [
+        "http://data.ashrae.org/standard223#Fluid-Water"
+      ]
+    },
+    {
+      "text": "process water",
+      "expected": [
+        "http://data.ashrae.org/standard223#Fluid-Water"
+      ]
+    },
+    {
+      "text": "ambient air",
+      "expected": [
+        "http://data.ashrae.org/standard223#Fluid-Air"
+      ]
+    },
+    {
+      "text": "atmospheric air",
+      "expected": [
+        "http://data.ashrae.org/standard223#Fluid-Air"
+      ]
+    },
+    {
+      "text": "process air",
+      "expected": [
+        "http://data.ashrae.org/standard223#Fluid-Air"
+      ]
+    },
+    {
+      "text": "methane gas",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-CH4",
+        "http://data.ashrae.org/standard223#Fluid-NaturalGas"
+      ]
+    },
+    {
+      "text": "fuel gas",
+      "expected": [
+        "http://data.ashrae.org/standard223#Fluid-NaturalGas"
+      ]
+    },
+    {
+      "text": "pipeline gas",
+      "expected": [
+        "http://data.ashrae.org/standard223#Fluid-NaturalGas"
+      ]
+    },
+    {
+      "text": "lubricating oil",
+      "expected": [
+        "http://data.ashrae.org/standard223#Fluid-Oil",
+        "http://data.ashrae.org/standard223#Constituent-Oil"
+      ]
+    },
+    {
+      "text": "hydraulic oil",
+      "expected": [
+        "http://data.ashrae.org/standard223#Fluid-Oil",
+        "http://data.ashrae.org/standard223#Constituent-Oil"
+      ]
+    },
+    {
+      "text": "saturated steam",
+      "expected": [
+        "http://data.ashrae.org/standard223#Water-Steam"
+      ]
+    },
+    {
+      "text": "steam vapor",
+      "expected": [
+        "http://data.ashrae.org/standard223#Water-Steam"
+      ]
+    },
+    {
+      "text": "heating hot water",
+      "expected": [
+        "http://data.ashrae.org/standard223#Water-HotWater"
+      ]
+    },
+    {
+      "text": "heated water",
+      "expected": [
+        "http://data.ashrae.org/standard223#Water-HotWater"
+      ]
+    },
+    {
+      "text": "chilled water supply",
+      "expected": [
+        "http://data.ashrae.org/standard223#Water-ChilledWater"
+      ]
+    },
+    {
+      "text": "cold water",
+      "expected": [
+        "http://data.ashrae.org/standard223#Water-ChilledWater",
+        "http://data.ashrae.org/standard223#Fluid-Water"
+      ]
+    },
+    {
+      "text": "propylene glycol",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-Glycol"
+      ]
+    },
+    {
+      "text": "antifreeze",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-Glycol",
+        "http://data.ashrae.org/standard223#Water-GlycolSolution"
+      ]
+    },
+    {
+      "text": "CO2 gas",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-CO2"
+      ]
+    },
+    {
+      "text": "carbon dioxide gas",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-CO2"
+      ]
+    },
+    {
+      "text": "alternating current",
+      "expected": [
+        "http://data.ashrae.org/standard223#Electricity-AC"
+      ]
+    },
+    {
+      "text": "AC power",
+      "expected": [
+        "http://data.ashrae.org/standard223#Electricity-AC"
+      ]
+    },
+    {
+      "text": "direct current",
+      "expected": [
+        "http://data.ashrae.org/standard223#Electricity-DC"
+      ]
+    },
+    {
+      "text": "DC power",
+      "expected": [
+        "http://data.ashrae.org/standard223#Electricity-DC"
+      ]
+    },
+    {
+      "text": "refrigerant gas",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-Refrigerant"
+      ]
+    },
+    {
+      "text": "refrigerant fluid",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-Refrigerant"
+      ]
+    },
+    {
+      "text": "chlorine disinfectant",
+      "expected": [
+        "urn:nawi-water-ontology#Disinfectant-Chlorine"
+      ]
+    },
+    {
+      "text": "residual chlorine",
+      "expected": [
+        "urn:nawi-water-ontology#Disinfectant-Chlorine"
+      ]
+    },
+    {
+      "text": "chlorine residual",
+      "expected": [
+        "urn:nawi-water-ontology#Disinfectant-Chlorine"
+      ]
+    },
+    {
+      "text": "total chlorine",
+      "expected": [
+        "urn:nawi-water-ontology#Disinfectant-Chlorine"
+      ]
+    },
+    {
+      "text": "ozone disinfectant",
+      "expected": [
+        "urn:nawi-water-ontology#Disinfectant-Ozone"
+      ]
+    },
+    {
+      "text": "dissolved ozone",
+      "expected": [
+        "urn:nawi-water-ontology#Disinfectant-Ozone",
+        "http://data.ashrae.org/standard223#Constituent-O3"
+      ]
+    },
+    {
+      "text": "alum coagulant",
+      "expected": [
+        "urn:nawi-water-ontology#Coagulant-Alum"
+      ]
+    },
+    {
+      "text": "aluminium sulphate",
+      "expected": [
+        "urn:nawi-water-ontology#Coagulant-Alum"
+      ]
+    },
+    {
+      "text": "ferric chloride coagulant",
+      "expected": [
+        "urn:nawi-water-ontology#Coagulant-FerricChloride"
+      ]
+    },
+    {
+      "text": "iron(III) chloride",
+      "expected": [
+        "urn:nawi-water-ontology#Coagulant-FerricChloride"
+      ]
+    },
+    {
+      "text": "ferric salt",
+      "expected": [
+        "urn:nawi-water-ontology#Coagulant-FerricChloride"
+      ]
+    },
+    {
+      "text": "ammonia gas",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Ammonia",
+        "http://data.ashrae.org/standard223#Constituent-NH3"
+      ]
+    },
+    {
+      "text": "total ammonia",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Ammonia",
+        "http://data.ashrae.org/standard223#Constituent-NH3"
+      ]
+    },
+    {
+      "text": "free ammonia",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Ammonia",
+        "http://data.ashrae.org/standard223#Constituent-NH3"
+      ]
+    },
+    {
+      "text": "nitrate ion",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Nitrate"
+      ]
+    },
+    {
+      "text": "nitrate concentration",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Nitrate"
+      ]
+    },
+    {
+      "text": "nitrite ion",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Nitrite"
+      ]
+    },
+    {
+      "text": "nitrite nitrogen",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Nitrite"
+      ]
+    },
+    {
+      "text": "oxygen dissolved in water",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-DissolvedOxygen"
+      ]
+    },
+    {
+      "text": "dissolved O2",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-DissolvedOxygen"
+      ]
+    },
+    {
+      "text": "organic carbon content",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-OrganicCarbon"
+      ]
+    },
+    {
+      "text": "total inorganic carbon",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-InorganicCarbon"
+      ]
+    },
+    {
+      "text": "dissolved inorganic carbon",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-InorganicCarbon"
+      ]
+    },
+    {
+      "text": "suspended particles",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-SuspendedSolids",
+        "urn:nawi-water-ontology#Constituent-Particles"
+      ]
+    },
+    {
+      "text": "suspended matter",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-SuspendedSolids"
+      ]
+    },
+    {
+      "text": "suspended sediment",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-SuspendedSolids"
+      ]
+    },
+    {
+      "text": "sewage sludge",
+      "expected": [
+        "urn:nawi-water-ontology#Fluid-Sludge"
+      ]
+    },
+    {
+      "text": "primary sludge",
+      "expected": [
+        "urn:nawi-water-ontology#Fluid-Sludge"
+      ]
+    },
+    {
+      "text": "digested sludge",
+      "expected": [
+        "urn:nawi-water-ontology#Fluid-Sludge"
+      ]
+    },
+    {
+      "text": "saltwater",
+      "expected": [
+        "urn:nawi-water-ontology#Water-Seawater",
+        "urn:nawi-water-ontology#Water-Brine"
+      ]
+    },
+    {
+      "text": "marine water",
+      "expected": [
+        "urn:nawi-water-ontology#Water-Seawater"
+      ]
+    },
+    {
+      "text": "seawater feed",
+      "expected": [
+        "urn:nawi-water-ontology#Water-Seawater"
+      ]
+    },
+    {
+      "text": "RO concentrate",
+      "expected": [
+        "urn:nawi-water-ontology#Water-Brine"
+      ]
+    },
+    {
+      "text": "reject brine",
+      "expected": [
+        "urn:nawi-water-ontology#Water-Brine"
+      ]
+    },
+    {
+      "text": "concentrated brine",
+      "expected": [
+        "urn:nawi-water-ontology#Water-Brine"
+      ]
+    },
+    {
+      "text": "brackish",
+      "expected": [
+        "urn:nawi-water-ontology#Water-Brackish"
+      ]
+    },
+    {
+      "text": "brackish feed water",
+      "expected": [
+        "urn:nawi-water-ontology#Water-Brackish"
+      ]
+    },
+    {
+      "text": "hydrated lime",
+      "expected": [
+        "urn:nawi-water-ontology#pHAdjuster-Lime"
+      ]
+    },
+    {
+      "text": "slaked lime",
+      "expected": [
+        "urn:nawi-water-ontology#pHAdjuster-Lime"
+      ]
+    },
+    {
+      "text": "calcium oxide",
+      "expected": [
+        "urn:nawi-water-ontology#pHAdjuster-Lime"
+      ]
+    },
+    {
+      "text": "sulfuric acid solution",
+      "expected": [
+        "urn:nawi-water-ontology#pHAdjuster-SulfuricAcid"
+      ]
+    },
+    {
+      "text": "battery acid",
+      "expected": [
+        "urn:nawi-water-ontology#pHAdjuster-SulfuricAcid"
+      ]
+    },
+    {
+      "text": "hydrogen peroxide solution",
+      "expected": [
+        "urn:nawi-water-ontology#OxidizingAgent-HydrogenPeroxide"
+      ]
+    },
+    {
+      "text": "powdered activated carbon",
+      "expected": [
+        "urn:nawi-water-ontology#OdorControlAgent-ActivatedCarbon"
+      ]
+    },
+    {
+      "text": "activated charcoal",
+      "expected": [
+        "urn:nawi-water-ontology#OdorControlAgent-ActivatedCarbon"
+      ]
+    },
+    {
+      "text": "granular activated carbon",
+      "expected": [
+        "urn:nawi-water-ontology#OdorControlAgent-ActivatedCarbon"
+      ]
+    },
+    {
+      "text": "polyelectrolyte",
+      "expected": [
+        "urn:nawi-water-ontology#Flocculant-Polymer",
+        "urn:nawi-water-ontology#Flocculant-Polyacrylamide"
+      ]
+    },
+    {
+      "text": "cationic polymer",
+      "expected": [
+        "urn:nawi-water-ontology#Flocculant-Polymer",
+        "urn:nawi-water-ontology#Flocculant-Polyacrylamide"
+      ]
+    },
+    {
+      "text": "flocculant polymer",
+      "expected": [
+        "urn:nawi-water-ontology#Flocculant-Polymer"
+      ]
+    },
+    {
+      "text": "rock salt",
+      "expected": [
+        "urn:nawi-water-ontology#Salt-NaCl"
+      ]
+    },
+    {
+      "text": "dissolved salts",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Salt"
+      ]
+    },
+    {
+      "text": "salt content",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Salt",
+        "urn:nawi-water-ontology#Salt-NaCl"
+      ]
+    },
+    {
+      "text": "coagulating agent",
+      "expected": [
+        "urn:nawi-water-ontology#Coagulant"
+      ]
+    },
+    {
+      "text": "coagulation chemical",
+      "expected": [
+        "urn:nawi-water-ontology#Coagulant"
+      ]
+    },
+    {
+      "text": "disinfecting agent",
+      "expected": [
+        "urn:nawi-water-ontology#Disinfectant"
+      ]
+    },
+    {
+      "text": "disinfection chemical",
+      "expected": [
+        "urn:nawi-water-ontology#Disinfectant"
+      ]
+    },
+    {
+      "text": "flocculating agent",
+      "expected": [
+        "urn:nawi-water-ontology#Flocculant"
+      ]
+    },
+    {
+      "text": "oxidant",
+      "expected": [
+        "urn:nawi-water-ontology#OxidizingAgent"
+      ]
+    },
+    {
+      "text": "oxidizer",
+      "expected": [
+        "urn:nawi-water-ontology#OxidizingAgent"
+      ]
+    },
+    {
+      "text": "pH adjusting chemical",
+      "expected": [
+        "urn:nawi-water-ontology#pHAdjuster"
+      ]
+    },
+    {
+      "text": "pH control chemical",
+      "expected": [
+        "urn:nawi-water-ontology#pHAdjuster"
+      ]
+    },
+    {
+      "text": "odor control chemical",
+      "expected": [
+        "urn:nawi-water-ontology#OdorControlAgent"
+      ]
+    },
+    {
+      "text": "odour control agent",
+      "expected": [
+        "urn:nawi-water-ontology#OdorControlAgent"
+      ]
+    },
+    {
+      "text": "treatment chemical",
+      "expected": [
+        "urn:nawi-water-ontology#WastewaterTreatmentChemical"
+      ]
+    },
+    {
+      "text": "pure oxygen",
+      "expected": [
+        "urn:nawi-water-ontology#HighPurityOxygen",
+        "http://data.ashrae.org/standard223#Constituent-O2"
+      ]
+    },
+    {
+      "text": "oxygen gas",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-O2",
+        "urn:nawi-water-ontology#HighPurityOxygen"
+      ]
+    },
+    {
+      "text": "nitrogen gas",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-N2"
+      ]
+    },
+    {
+      "text": "microorganisms",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Bacteria"
+      ]
+    },
+    {
+      "text": "microbes",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Bacteria"
+      ]
+    },
+    {
+      "text": "fecal coliform",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Bacteria"
+      ]
+    },
+    {
+      "text": "dissolved metals",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Metals"
+      ]
+    },
+    {
+      "text": "trace metals",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Metals"
+      ]
+    },
+    {
+      "text": "inorganic compounds",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Inorganics"
+      ]
+    },
+    {
+      "text": "inorganic contaminants",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Inorganics"
+      ]
+    },
+    {
+      "text": "organic compounds",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Organics",
+        "http://data.ashrae.org/standard223#Constituent-VolatileOrganicCompounds"
+      ]
+    },
+    {
+      "text": "organic contaminants",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Organics"
+      ]
+    },
+    {
+      "text": "particulate matter",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Particles",
+        "http://data.ashrae.org/standard223#Substance-Particulate"
+      ]
+    },
+    {
+      "text": "smoke particles",
+      "expected": [
+        "http://data.ashrae.org/standard223#Particulate-Smoke"
+      ]
+    },
+    {
+      "text": "NOx gases",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-NOX",
+        "urn:nawi-water-ontology#Constituent-NitrogenOxides"
+      ]
+    },
+    {
+      "text": "oxides of nitrogen",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-NOX",
+        "urn:nawi-water-ontology#Constituent-NitrogenOxides"
+      ]
+    },
+    {
+      "text": "nitric oxide",
+      "expected": [
+        "http://data.ashrae.org/standard223#NOX-NO"
+      ]
+    },
+    {
+      "text": "nitrogen dioxide",
+      "expected": [
+        "http://data.ashrae.org/standard223#NOX-NO2"
+      ]
+    },
+    {
+      "text": "radon gas",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-Radon"
+      ]
+    },
+    {
+      "text": "UV light",
+      "expected": [
+        "http://data.ashrae.org/standard223#Light-Ultraviolet"
+      ]
+    },
+    {
+      "text": "infrared",
+      "expected": [
+        "http://data.ashrae.org/standard223#Light-Infrared"
+      ]
+    },
+    {
+      "text": "sodium sulphide",
+      "expected": [
+        "urn:nawi-water-ontology#HeavyMetalRemovalAgent-SodiumSulfide"
+      ]
+    },
+    {
+      "text": "cyanide ion",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Cyanide"
+      ]
+    },
+    {
+      "text": "free cyanide",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Cyanide"
+      ]
+    },
+    {
+      "text": "polyacrylamide flocculant",
+      "expected": [
+        "urn:nawi-water-ontology#Flocculant-Polyacrylamide"
+      ]
+    }
+  ]
+}

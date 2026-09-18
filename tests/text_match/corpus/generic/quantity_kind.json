@@ -1,0 +1,197 @@
+{
+  "group": "generic",
+  "kind": "quantity_kind",
+  "cases": [
+    {
+      "text": "pressure",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Pressure"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "temperature",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Temperature"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "power",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Power"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "energy",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Energy"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "density",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Density"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "volume",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Volume"
+      ]
+    },
+    {
+      "text": "mass",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Mass"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "time",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Time"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "length",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Length"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "area",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Area"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "velocity",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Velocity"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "speed",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Speed"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "force",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Force"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "frequency",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Frequency"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "voltage",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Voltage"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "concentration",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Concentration"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "conductivity",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Conductivity",
+        "http://qudt.org/vocab/quantitykind/ElectricConductivity"
+      ]
+    },
+    {
+      "text": "efficiency",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Efficiency"
+      ]
+    },
+    {
+      "text": "viscosity",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Viscosity"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "ratio",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Ratio",
+        "http://qudt.org/vocab/quantitykind/DimensionlessRatio"
+      ]
+    },
+    {
+      "text": "flow",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/VolumeFlowRate",
+        "http://qudt.org/vocab/quantitykind/VolumePerTime"
+      ]
+    },
+    {
+      "text": "flow rate",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/VolumeFlowRate",
+        "http://qudt.org/vocab/quantitykind/VolumePerTime"
+      ]
+    },
+    {
+      "text": "level",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Height",
+        "http://qudt.org/vocab/quantitykind/Depth"
+      ]
+    },
+    {
+      "text": "current",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/ElectricCurrent"
+      ]
+    },
+    {
+      "text": "humidity",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/RelativeHumidity",
+        "http://qudt.org/vocab/quantitykind/AbsoluteHumidity"
+      ]
+    },
+    {
+      "text": "flux",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Flux",
+        "http://qudt.org/vocab/quantitykind/VolumetricFlux"
+      ]
+    },
+    {
+      "text": "heat",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Heat"
+      ]
+    },
+    {
+      "text": "charge",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/ElectricCharge"
+      ]
+    }
+  ]
+}
