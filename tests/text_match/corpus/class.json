@@ -1,0 +1,297 @@
+{
+  "kind": "class",
+  "cases": [
+    {
+      "text": "inlet connection point",
+      "expected": [
+        "http://data.ashrae.org/standard223#InletConnectionPoint"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "outlet connection point",
+      "expected": [
+        "http://data.ashrae.org/standard223#OutletConnectionPoint"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "observable property",
+      "expected": [
+        "http://data.ashrae.org/standard223#QuantifiableObservableProperty",
+        "http://data.ashrae.org/standard223#ObservableProperty"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "aeration basin",
+      "expected": [
+        "urn:nawi-water-ontology#AerationBasin"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "pump",
+      "expected": [
+        "urn:nawi-water-ontology#Pump",
+        "http://data.ashrae.org/standard223#Pump"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "boiler",
+      "expected": [
+        "urn:nawi-water-ontology#Boiler",
+        "http://data.ashrae.org/standard223#Boiler"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "compressor",
+      "expected": [
+        "urn:nawi-water-ontology#Compressor",
+        "http://data.ashrae.org/standard223#Compressor"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "condenser",
+      "expected": [
+        "urn:nawi-water-ontology#Condenser"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "valve",
+      "expected": [
+        "urn:nawi-water-ontology#Valve",
+        "http://data.ashrae.org/standard223#Valve"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "filter",
+      "expected": [
+        "urn:nawi-water-ontology#Filter",
+        "http://data.ashrae.org/standard223#Filter"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "evaporator",
+      "expected": [
+        "urn:nawi-water-ontology#Evaporator"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "screen",
+      "expected": [
+        "urn:nawi-water-ontology#Screen"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "reservoir",
+      "expected": [
+        "urn:nawi-water-ontology#Reservoir"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "crystallizer",
+      "expected": [
+        "urn:nawi-water-ontology#Crystallizer"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "digester",
+      "expected": [
+        "urn:nawi-water-ontology#Digester"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "check valve",
+      "expected": [
+        "urn:nawi-water-ontology#CheckValve"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "dewatering unit",
+      "expected": [
+        "urn:nawi-water-ontology#DewateringUnit"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "sedimentation tank",
+      "expected": [
+        "urn:nawi-water-ontology#SedimentationTank"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "temperature sensor",
+      "expected": [
+        "urn:nawi-water-ontology#TemperatureSensor",
+        "http://data.ashrae.org/standard223#TemperatureSensor"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "pressure sensor",
+      "expected": [
+        "urn:nawi-water-ontology#PressureSensor",
+        "http://data.ashrae.org/standard223#PressureSensor"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "flow sensor",
+      "expected": [
+        "urn:nawi-water-ontology#FlowSensor",
+        "http://data.ashrae.org/standard223#FlowSensor"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "conductivity sensor",
+      "expected": [
+        "urn:nawi-water-ontology#ConductivitySensor"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "pH sensor",
+      "expected": [
+        "urn:nawi-water-ontology#pHSensor"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "turbidity meter",
+      "expected": [
+        "urn:nawi-water-ontology#TurbidityMeter"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "level sensor",
+      "expected": [
+        "urn:nawi-water-ontology#LevelSensor"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "concentration sensor",
+      "expected": [
+        "urn:nawi-water-ontology#ConcentrationSensor",
+        "http://data.ashrae.org/standard223#ConcentrationSensor"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "reverse osmosis membrane",
+      "expected": [
+        "urn:nawi-water-ontology#ReverseOsmosisMembrane"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "RO membrane",
+      "expected": [
+        "urn:nawi-water-ontology#ReverseOsmosisMembrane"
+      ]
+    },
+    {
+      "text": "RO",
+      "expected": [
+        "urn:nawi-water-ontology#ReverseOsmosisMembrane"
+      ]
+    },
+    {
+      "text": "nanofiltration unit",
+      "expected": [
+        "urn:nawi-water-ontology#NanofiltrationUnit"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "ultrafiltration unit",
+      "expected": [
+        "urn:nawi-water-ontology#UltrafiltrationUnit"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "UF unit",
+      "expected": [
+        "urn:nawi-water-ontology#UltrafiltrationUnit"
+      ]
+    },
+    {
+      "text": "UF",
+      "expected": [
+        "urn:nawi-water-ontology#UltrafiltrationUnit"
+      ]
+    },
+    {
+      "text": "microfiltration unit",
+      "expected": [
+        "urn:nawi-water-ontology#MicrofiltrationUnit"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "membrane bioreactor",
+      "expected": [
+        "urn:nawi-water-ontology#MembraneBioreactor"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "chlorination basin",
+      "expected": [
+        "urn:nawi-water-ontology#ChlorinationBasin"
+      ]
+    },
+    {
+      "text": "flocculation basin",
+      "expected": [
+        "urn:nawi-water-ontology#FlocculationBasin"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "coagulation basin",
+      "expected": [
+        "urn:nawi-water-ontology#CoagulationBasin"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "aerobic digester",
+      "expected": [
+        "urn:nawi-water-ontology#AerobicDigester"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "anaerobic digester",
+      "expected": [
+        "urn:nawi-water-ontology#AnaerobicDigester"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "oxidation ditch",
+      "expected": [
+        "urn:nawi-water-ontology#OxidationDitch"
+      ],
+      "stage": "exact"
+    }
+  ]
+}

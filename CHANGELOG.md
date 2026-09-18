@@ -63,6 +63,16 @@ change in any release.
 - The shipped `acquirium.toml` sets `exact_only = true`.
 - New dependency: `filelock`.
 
+### Changed
+- Building the text-matching indexes from scratch is several times faster.
+  The default `embedding_model` is now `BAAI/bge-small-en-v1.5-fp32`, the FP32
+  export of the same model. The export fastembed ships under
+  `BAAI/bge-small-en-v1.5` stores FP16 weights, which ONNX Runtime runs slowly
+  on CPU. Surfaces are also embedded once each and in length order, so batches
+  are not padded to their longest member. Scores differ from the previous
+  default by less than 0.001 and existing embedding caches stay valid. The
+  model download grows from 66 MB to 133 MB.
+
 ### Fixed
 - CURIEs such as `watr:UltrafiltrationUnit` or `quantitykind:Pressure` given as
   a class, relation or attribute value are expanded with the server's prefix

@@ -126,4 +126,5 @@ pythonpath = ["."]
 markers = [
     "unit: Unit tests (no external services required)",
     "integration: Integration tests (require Docker services)",
+    "textmatch: Text-matching tests against the real embedding model (no services; cold index build)",
 ]

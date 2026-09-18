@@ -30,7 +30,7 @@ timeseries_backend = "duckdb"        # or "timescale" (requires pg_dsn)
 | `pg_dsn` | none | Postgres DSN; required for the timescale backend |
 | `duckdb_path` | `data_dir/timeseries.duckdb` | duckdb file location |
 | `graph_path` | `data_dir/.oxigraph` | graph store location |
-| `embedding_model` | `"BAAI/bge-small-en-v1.5"` | model for the text-resolution index |
+| `embedding_model` | `"BAAI/bge-small-en-v1.5-fp32"` | model for the text-resolution index |
 | `exact_only` | `false` | index concepts without embedding them; see below |
 | `recreate` | `false` | wipe the data directory and start fresh; see below |
 | `read_batch_size` | `50000` | rows per Arrow batch on timeseries reads |

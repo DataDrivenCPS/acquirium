@@ -27,7 +27,7 @@ COPY acquirium.docker.toml ./acquirium.toml
 
 # Pre-warm the embedding model so the first request isn't slow.
 ENV FASTEMBED_CACHE_PATH=/app/.fastembed_cache
-RUN uv run python -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5')"
+RUN uv run python -c "from acquirium.TextMatch.embedding_matcher import load_embedding_model; load_embedding_model()"
 
 EXPOSE 8000
 

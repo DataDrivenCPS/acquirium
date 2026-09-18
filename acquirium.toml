@@ -27,7 +27,7 @@ duckdb_path = ".acquirium/timeseries.duckdb"
 # graph_path = ".acquirium/.oxigraph"
 
 # Embedding model for text → URI resolution.
-# embedding_model = "BAAI/bge-small-en-v1.5"
+# embedding_model = "BAAI/bge-small-en-v1.5-fp32"
 
 # Set to true to wipe all data on server startup (useful for development).
 recreate = false

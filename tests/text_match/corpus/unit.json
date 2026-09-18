@@ -1,0 +1,460 @@
+{
+  "kind": "unit",
+  "cases": [
+    {
+      "text": "kilogram",
+      "expected": [
+        "http://qudt.org/vocab/unit/KiloGM"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "kg",
+      "expected": [
+        "http://qudt.org/vocab/unit/KiloGM"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "meter per second",
+      "expected": [
+        "http://qudt.org/vocab/unit/M-PER-SEC"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "m/s",
+      "expected": [
+        "http://qudt.org/vocab/unit/M-PER-SEC"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "liter",
+      "expected": [
+        "http://qudt.org/vocab/unit/L"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "pascal",
+      "expected": [
+        "http://qudt.org/vocab/unit/PA"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "milligram per liter",
+      "expected": [
+        "http://qudt.org/vocab/unit/MilliGM-PER-L"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "mg/L",
+      "expected": [
+        "http://qudt.org/vocab/unit/MilliGM-PER-L"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "degree celsius",
+      "expected": [
+        "http://qudt.org/vocab/unit/DEG_C"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "watt",
+      "expected": [
+        "http://qudt.org/vocab/unit/W"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "bar",
+      "expected": [
+        "http://qudt.org/vocab/unit/BAR"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "cubic meter per second",
+      "expected": [
+        "http://qudt.org/vocab/unit/M3-PER-SEC"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "gallon per minute",
+      "expected": [
+        "http://qudt.org/vocab/unit/GAL_US-PER-MIN"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "ampere",
+      "expected": [
+        "http://qudt.org/vocab/unit/A"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "psi",
+      "expected": [
+        "http://qudt.org/vocab/unit/PSI"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "Psi",
+      "expected": [
+        "http://qudt.org/vocab/unit/PSI"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "kPa",
+      "expected": [
+        "http://qudt.org/vocab/unit/KiloPA"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "kilopascal",
+      "expected": [
+        "http://qudt.org/vocab/unit/KiloPA"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "°C",
+      "expected": [
+        "http://qudt.org/vocab/unit/DEG_C"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "second",
+      "expected": [
+        "http://qudt.org/vocab/unit/SEC"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "minute",
+      "expected": [
+        "http://qudt.org/vocab/unit/MIN"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "hour",
+      "expected": [
+        "http://qudt.org/vocab/unit/HR"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "gram",
+      "expected": [
+        "http://qudt.org/vocab/unit/GM"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "newton",
+      "expected": [
+        "http://qudt.org/vocab/unit/N"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "volt",
+      "expected": [
+        "http://qudt.org/vocab/unit/V"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "percent",
+      "expected": [
+        "http://qudt.org/vocab/unit/PERCENT"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "milliliter",
+      "expected": [
+        "http://qudt.org/vocab/unit/MilliL"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "mL",
+      "expected": [
+        "http://qudt.org/vocab/unit/MilliL"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "cubic meter",
+      "expected": [
+        "http://qudt.org/vocab/unit/M3"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "cubic meter per hour",
+      "expected": [
+        "http://qudt.org/vocab/unit/M3-PER-HR"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "liter per second",
+      "expected": [
+        "http://qudt.org/vocab/unit/L-PER-SEC"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "gram per liter",
+      "expected": [
+        "http://qudt.org/vocab/unit/GM-PER-L"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "microgram per liter",
+      "expected": [
+        "http://qudt.org/vocab/unit/MicroGM-PER-L"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "kilowatt",
+      "expected": [
+        "http://qudt.org/vocab/unit/KiloW"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "megawatt",
+      "expected": [
+        "http://qudt.org/vocab/unit/MegaW"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "kilowatt hour",
+      "expected": [
+        "http://qudt.org/vocab/unit/KiloW-HR"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "siemens per meter",
+      "expected": [
+        "http://qudt.org/vocab/unit/S-PER-M"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "S/m",
+      "expected": [
+        "http://qudt.org/vocab/unit/S-PER-M"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "microsiemens per centimeter",
+      "expected": [
+        "http://qudt.org/vocab/unit/MicroS-PER-CentiM"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "nephelometric turbidity unit",
+      "expected": [
+        "http://qudt.org/vocab/unit/NTU"
+      ]
+    },
+    {
+      "text": "NTU",
+      "expected": [
+        "http://qudt.org/vocab/unit/NTU"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "parts per million",
+      "expected": [
+        "http://qudt.org/vocab/unit/PPM"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "ppm",
+      "expected": [
+        "http://qudt.org/vocab/unit/PPM"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "kelvin",
+      "expected": [
+        "http://qudt.org/vocab/unit/K"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "degree fahrenheit",
+      "expected": [
+        "http://qudt.org/vocab/unit/DEG_F"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "°F",
+      "expected": [
+        "http://qudt.org/vocab/unit/DEG_F"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "megapascal",
+      "expected": [
+        "http://qudt.org/vocab/unit/MegaPA"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "MPa",
+      "expected": [
+        "http://qudt.org/vocab/unit/MegaPA"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "hertz",
+      "expected": [
+        "http://qudt.org/vocab/unit/HZ"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "Hz",
+      "expected": [
+        "http://qudt.org/vocab/unit/HZ"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "joule",
+      "expected": [
+        "http://qudt.org/vocab/unit/J"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "mole",
+      "expected": [
+        "http://qudt.org/vocab/unit/MOL"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "mol",
+      "expected": [
+        "http://qudt.org/vocab/unit/MOL"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "millimeter",
+      "expected": [
+        "http://qudt.org/vocab/unit/MilliM"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "centimeter",
+      "expected": [
+        "http://qudt.org/vocab/unit/CentiM"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "kilometer",
+      "expected": [
+        "http://qudt.org/vocab/unit/KiloM"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "horsepower",
+      "expected": [
+        "http://qudt.org/vocab/unit/HP"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "PSI",
+      "expected": [
+        "http://qudt.org/vocab/unit/PSI"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "  kPa  ",
+      "expected": [
+        "http://qudt.org/vocab/unit/KiloPA"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "Second",
+      "expected": [
+        "http://qudt.org/vocab/unit/SEC"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "kg",
+      "context": [
+        "http://qudt.org/vocab/quantitykind/Mass"
+      ],
+      "expected": [
+        "http://qudt.org/vocab/unit/KiloGM"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "kg",
+      "context": [
+        "http://qudt.org/vocab/quantitykind/MagneticFluxDensity"
+      ],
+      "expected": [
+        "http://qudt.org/vocab/unit/KiloGAUSS"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "pascal",
+      "context": [
+        "http://example.org/unrelated/Thing"
+      ],
+      "expected": [
+        "http://qudt.org/vocab/unit/PA"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "gal/min",
+      "expected": [
+        "http://qudt.org/vocab/unit/GAL_US-PER-MIN"
+      ]
+    }
+  ]
+}
