@@ -1,0 +1,131 @@
+{
+  "cases": [
+    {
+      "name": "kg + mass",
+      "fields": {
+        "unit": {
+          "text": "kg",
+          "kind": "unit"
+        },
+        "quantity_kind": {
+          "text": "mass",
+          "kind": "quantity_kind"
+        }
+      },
+      "expected": {
+        "unit": [
+          "http://qudt.org/vocab/unit/KiloGM"
+        ],
+        "quantity_kind": [
+          "http://qudt.org/vocab/quantitykind/Mass"
+        ]
+      }
+    },
+    {
+      "name": "mg/L + mass concentration + medium",
+      "fields": {
+        "unit": {
+          "text": "mg/L",
+          "kind": "unit"
+        },
+        "quantity_kind": {
+          "text": "mass concentration",
+          "kind": "quantity_kind"
+        },
+        "medium": {
+          "text": "treated water",
+          "kind": "substance"
+        }
+      },
+      "expected": {
+        "unit": [
+          "http://qudt.org/vocab/unit/MilliGM-PER-L"
+        ],
+        "quantity_kind": [
+          "http://qudt.org/vocab/quantitykind/MassConcentration"
+        ]
+      }
+    },
+    {
+      "name": "deg C + water temperature",
+      "fields": {
+        "unit": {
+          "text": "deg C",
+          "kind": "unit"
+        },
+        "quantity_kind": {
+          "text": "water temperature",
+          "kind": "quantity_kind"
+        }
+      },
+      "expected": {
+        "unit": [
+          "http://qudt.org/vocab/unit/DEG_C"
+        ],
+        "quantity_kind": [
+          "http://qudt.org/vocab/quantitykind/Temperature"
+        ]
+      }
+    },
+    {
+      "name": "psi + pressure",
+      "fields": {
+        "unit": {
+          "text": "psi",
+          "kind": "unit"
+        },
+        "quantity_kind": {
+          "text": "pressure",
+          "kind": "quantity_kind"
+        }
+      },
+      "expected": {
+        "unit": [
+          "http://qudt.org/vocab/unit/PSI"
+        ],
+        "quantity_kind": [
+          "http://qudt.org/vocab/quantitykind/Pressure"
+        ]
+      }
+    },
+    {
+      "name": "NTU + turbidity",
+      "fields": {
+        "unit": {
+          "text": "NTU",
+          "kind": "unit"
+        },
+        "quantity_kind": {
+          "text": "turbidity",
+          "kind": "quantity_kind"
+        }
+      },
+      "expected": {
+        "unit": [
+          "http://qudt.org/vocab/unit/NTU"
+        ],
+        "quantity_kind": [
+          "http://qudt.org/vocab/quantitykind/Turbidity"
+        ]
+      }
+    },
+    {
+      "name": "exact unit is not moved by a weak sibling",
+      "fields": {
+        "unit": {
+          "text": "byte",
+          "kind": "unit"
+        },
+        "quantity_kind": {
+          "text": "data size",
+          "kind": "quantity_kind"
+        }
+      },
+      "expected": {
+        "unit": [
+          "http://qudt.org/vocab/unit/BYTE"
+        ]
+      }
+    }
+  ]
+}

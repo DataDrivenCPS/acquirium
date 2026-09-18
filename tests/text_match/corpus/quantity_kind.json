@@ -1,0 +1,221 @@
+{
+  "kind": "quantity_kind",
+  "cases": [
+    {
+      "text": "temperature",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Temperature"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "pressure",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Pressure"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "volume flow rate",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/VolumeFlowRate"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "mass",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Mass"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "electric current",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/ElectricCurrent"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "density",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Density"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "viscosity",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Viscosity"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "dynamic viscosity",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/DynamicViscosity"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "mass concentration",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/MassConcentration"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "concentration",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Concentration"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "power",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Power"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "force",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Force"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "energy",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Energy"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "length",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Length"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "time",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Time"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "velocity",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Velocity"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "voltage",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Voltage"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "frequency",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Frequency"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "area",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Area"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "volume",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Volume"
+      ]
+    },
+    {
+      "text": "speed",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Speed"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "acceleration",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Acceleration"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "torque",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Torque"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "electric charge",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/ElectricCharge"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "resistance",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Resistance"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "capacitance",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Capacitance"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "turbidity",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Turbidity"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "electric conductivity",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/ElectricConductivity"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "kinematic viscosity",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/KinematicViscosity"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "amount of substance",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/AmountOfSubstance"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "work",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Work"
+      ],
+      "stage": "exact"
+    }
+  ]
+}

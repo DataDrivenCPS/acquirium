@@ -1,0 +1,117 @@
+{
+  "kind": "predicate",
+  "cases": [
+    {
+      "text": "has unit",
+      "expected": [
+        "http://qudt.org/schema/qudt/hasUnit"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "has quantity kind",
+      "expected": [
+        "http://qudt.org/schema/qudt/hasQuantityKind"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "has medium",
+      "expected": [
+        "http://data.ashrae.org/standard223#hasMedium"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "has connection point",
+      "expected": [
+        "http://data.ashrae.org/standard223#hasConnectionPoint"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "has property",
+      "expected": [
+        "http://data.ashrae.org/standard223#hasProperty"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "has accuracy",
+      "expected": [
+        "urn:nawi-water-ontology#hasAccuracy"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "has precision",
+      "expected": [
+        "urn:nawi-water-ontology#hasPrecision"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "has bias",
+      "expected": [
+        "urn:nawi-water-ontology#hasBias"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "has response time",
+      "expected": [
+        "urn:nawi-water-ontology#hasResponseTime"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "has drop rate",
+      "expected": [
+        "urn:nawi-water-ontology#hasDropRate"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "has measurement range",
+      "expected": [
+        "urn:nawi-water-ontology#hasMeasurementRange"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "has numeric resolution",
+      "expected": [
+        "urn:nawi-water-ontology#hasNumericResolution"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "has temporal resolution",
+      "expected": [
+        "urn:nawi-water-ontology#hasTemporalResolution"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "has process",
+      "expected": [
+        "urn:nawi-water-ontology#hasProcess"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "has calibration curve",
+      "expected": [
+        "urn:nawi-water-ontology#hasCalibrationCurve"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "has processed data",
+      "expected": [
+        "urn:nawi-water-ontology#hasProcessedData"
+      ],
+      "stage": "exact"
+    }
+  ]
+}

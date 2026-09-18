@@ -1,0 +1,270 @@
+{
+  "kind": "substance",
+  "cases": [
+    {
+      "text": "water",
+      "expected": [
+        "http://data.ashrae.org/standard223#Fluid-Water"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "air",
+      "expected": [
+        "http://data.ashrae.org/standard223#Fluid-Air"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "natural gas",
+      "expected": [
+        "http://data.ashrae.org/standard223#Fluid-NaturalGas"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "oil",
+      "expected": [
+        "http://data.ashrae.org/standard223#Fluid-Oil",
+        "http://data.ashrae.org/standard223#Constituent-Oil"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "steam",
+      "expected": [
+        "http://data.ashrae.org/standard223#Water-Steam"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "hot water",
+      "expected": [
+        "http://data.ashrae.org/standard223#Water-HotWater"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "chilled water",
+      "expected": [
+        "http://data.ashrae.org/standard223#Water-ChilledWater"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "glycol",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-Glycol"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "CO2",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-CO2"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "carbon dioxide",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-CO2"
+      ]
+    },
+    {
+      "text": "ac electricity",
+      "expected": [
+        "http://data.ashrae.org/standard223#Electricity-AC"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "refrigerant",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-Refrigerant"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "chlorine",
+      "expected": [
+        "urn:nawi-water-ontology#Disinfectant-Chlorine"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "ozone",
+      "expected": [
+        "urn:nawi-water-ontology#Disinfectant-Ozone",
+        "http://data.ashrae.org/standard223#Constituent-O3"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "alum",
+      "expected": [
+        "urn:nawi-water-ontology#Coagulant-Alum"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "ferric chloride",
+      "expected": [
+        "urn:nawi-water-ontology#Coagulant-FerricChloride"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "ammonia",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Ammonia",
+        "http://data.ashrae.org/standard223#Constituent-NH3"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "nitrate",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Nitrate"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "nitrite",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Nitrite"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "dissolved oxygen",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-DissolvedOxygen"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "DO",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-DissolvedOxygen"
+      ]
+    },
+    {
+      "text": "organic carbon",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-OrganicCarbon"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "suspended solids",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-SuspendedSolids"
+      ]
+    },
+    {
+      "text": "TSS",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-SuspendedSolids"
+      ]
+    },
+    {
+      "text": "sludge",
+      "expected": [
+        "urn:nawi-water-ontology#Fluid-Sludge"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "seawater",
+      "expected": [
+        "urn:nawi-water-ontology#Water-Seawater"
+      ]
+    },
+    {
+      "text": "sea water",
+      "expected": [
+        "urn:nawi-water-ontology#Water-Seawater"
+      ]
+    },
+    {
+      "text": "brine",
+      "expected": [
+        "urn:nawi-water-ontology#Water-Brine"
+      ]
+    },
+    {
+      "text": "brackish water",
+      "expected": [
+        "urn:nawi-water-ontology#Water-Brackish"
+      ]
+    },
+    {
+      "text": "fresh water",
+      "expected": [
+        "urn:nawi-water-ontology#Water-Freshwater"
+      ]
+    },
+    {
+      "text": "lime",
+      "expected": [
+        "urn:nawi-water-ontology#pHAdjuster-Lime"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "sulfuric acid",
+      "expected": [
+        "urn:nawi-water-ontology#pHAdjuster-SulfuricAcid"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "hydrogen peroxide",
+      "expected": [
+        "urn:nawi-water-ontology#OxidizingAgent-HydrogenPeroxide"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "activated carbon",
+      "expected": [
+        "urn:nawi-water-ontology#OdorControlAgent-ActivatedCarbon"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "polymer",
+      "expected": [
+        "urn:nawi-water-ontology#Flocculant-Polymer"
+      ]
+    },
+    {
+      "text": "sodium chloride",
+      "expected": [
+        "urn:nawi-water-ontology#Salt-NaCl"
+      ]
+    },
+    {
+      "text": "salt",
+      "expected": [
+        "urn:nawi-water-ontology#Salt-NaCl",
+        "urn:nawi-water-ontology#Constituent-Salt"
+      ]
+    },
+    {
+      "text": "coagulant",
+      "expected": [
+        "urn:nawi-water-ontology#Coagulant"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "disinfectant",
+      "expected": [
+        "urn:nawi-water-ontology#Disinfectant"
+      ],
+      "stage": "exact"
+    }
+  ]
+}

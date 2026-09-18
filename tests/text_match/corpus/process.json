@@ -1,0 +1,273 @@
+{
+  "kind": "process",
+  "cases": [
+    {
+      "text": "reverse osmosis",
+      "expected": [
+        "urn:nawi-water-ontology#Process-ReverseOsmosis"
+      ]
+    },
+    {
+      "text": "RO",
+      "expected": [
+        "urn:nawi-water-ontology#Process-ReverseOsmosis"
+      ]
+    },
+    {
+      "text": "ultrafiltration",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Ultrafiltration"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "microfiltration",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Microfiltration"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "activated sludge",
+      "expected": [
+        "urn:nawi-water-ontology#Process-ActivatedSludge"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "aeration",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Aeration"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "aerobic digestion",
+      "expected": [
+        "urn:nawi-water-ontology#Process-AerobicDigestion"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "anaerobic digestion",
+      "expected": [
+        "urn:nawi-water-ontology#Process-AnaerobicDigestion"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "chlorination",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Chlorination"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "dechlorination",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Dechlorination"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "coagulation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Coagulation"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "flocculation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Flocculation"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "sedimentation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Sedimentation"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "settling",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Sedimentation"
+      ]
+    },
+    {
+      "text": "disinfection",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Disinfection"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "UV disinfection",
+      "expected": [
+        "urn:nawi-water-ontology#Process-UVDisinfection"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "ultraviolet disinfection",
+      "expected": [
+        "urn:nawi-water-ontology#Process-UVDisinfection"
+      ]
+    },
+    {
+      "text": "ozonation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Ozonation"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "nitrification",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Nitrification"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "denitrification",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Denitrification"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "ion exchange",
+      "expected": [
+        "urn:nawi-water-ontology#Process-IonExchange"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "dewatering",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Dewatering"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "sludge dewatering",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Dewatering"
+      ]
+    },
+    {
+      "text": "filtration",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Filtration"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "media filtration",
+      "expected": [
+        "urn:nawi-water-ontology#Process-MediaFiltration"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "rapid sand filtration",
+      "expected": [
+        "urn:nawi-water-ontology#Process-RapidSandFiltration"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "granular activated carbon",
+      "expected": [
+        "urn:nawi-water-ontology#Process-GranularActivatedCarbon"
+      ]
+    },
+    {
+      "text": "GAC",
+      "expected": [
+        "urn:nawi-water-ontology#Process-GranularActivatedCarbon"
+      ]
+    },
+    {
+      "text": "advanced oxidation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-AdvancedOxidation"
+      ]
+    },
+    {
+      "text": "AOP",
+      "expected": [
+        "urn:nawi-water-ontology#Process-AdvancedOxidation"
+      ]
+    },
+    {
+      "text": "membrane distillation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-MembraneDistillation"
+      ]
+    },
+    {
+      "text": "electrodialysis",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Electrodialysis"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "pH adjustment",
+      "expected": [
+        "urn:nawi-water-ontology#Process-pHAdjustment"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "backwash",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Backwashing"
+      ]
+    },
+    {
+      "text": "screening",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Screening"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "softening",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Softening"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "water softening",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Softening"
+      ]
+    },
+    {
+      "text": "evaporation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Evaporation"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "incineration",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Incineration"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "chemical precipitation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-ChemicalPrecipitation"
+      ],
+      "stage": "exact"
+    }
+  ]
+}
