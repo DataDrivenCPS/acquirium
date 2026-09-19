@@ -330,7 +330,8 @@ class ConceptResolver:
             unit_def = conv.resolve_unit(text)
         except UnitNotFound:
             try:
-                unit_def = conv.infer_unit(text)
+                # No substring guesses: this tier reports score 1.0.
+                unit_def = conv.infer_unit(text, fuzzy=False)
             except UnitNotFound:
                 return []
             except Exception:

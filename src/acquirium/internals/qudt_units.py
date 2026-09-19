@@ -288,13 +288,19 @@ class QUDTUnitConverter:
         result = (value_si / tgt_mult) - tgt_offset
         return float(result)
 
-    def infer_unit(self, text: str) -> UnitDefinition:
+    def infer_unit(self, text: str, *, fuzzy: bool = True) -> UnitDefinition:
         """Best-effort unit inference from an arbitrary string.
 
         Heuristics (ordered):
         - direct :meth:`resolve_unit` call (handles symbols, UCUM codes, and ratio notation like "mg/L").
         - if the string looks like a URI, try its fragment or last path segment.
-        - try the last path segment even when not a URI (value-part of a URL).
+        - a ratio such as "gal/min" or "gallon per minute", resolved part by part.
+        - with ``fuzzy``, a substring search over labels and symbols.
+
+        The substring search returns the first unit whose label merely
+        contains the text ("watts" is inside "Terawatt Hour per Year"), so a
+        caller that reports the result as an exact match passes
+        ``fuzzy=False``.
 
         Raises :class:`UnitNotFound` if no match is found.
         """
@@ -315,7 +321,8 @@ class QUDTUnitConverter:
             except UnitNotFound:
                 pass
 
-        if "/" in text:
+        # Only for a URI: in a unit, "/" is a division ("m3/h" is not "h").
+        if "/" in text and self._looks_like_uri(text):
             last_seg = text.rstrip("/").rsplit("/", 1)[-1]
             try:
                 return self.resolve_unit(last_seg)
@@ -332,11 +339,11 @@ class QUDTUnitConverter:
                     try:
                         num = self.resolve_unit(left)
                     except UnitNotFound:
-                        num = self._search_label_contains(left)
+                        num = self._search_label_contains(left) if fuzzy else None
                     try:
                         den = self.resolve_unit(right)
                     except UnitNotFound:
-                        den = self._search_label_contains(right)
+                        den = self._search_label_contains(right) if fuzzy else None
 
                     if isinstance(num, URIRef):
                         num = self._from_uri(num)
@@ -345,13 +352,13 @@ class QUDTUnitConverter:
 
                     if num is None:
                         try:
-                            num = self.infer_unit(left)
+                            num = self.infer_unit(left, fuzzy=fuzzy)
                         except UnitNotFound:
                             num = None
 
                     if den is None:
                         try:
-                            den = self.infer_unit(right)
+                            den = self.infer_unit(right, fuzzy=fuzzy)
                         except UnitNotFound:
                             den = None
 
@@ -372,14 +379,19 @@ class QUDTUnitConverter:
             pass
 
         # 5) fallback: substring match in labels/symbols
-        unit_def = self._search_label_contains(text)
-        if unit_def is not None:
-            return unit_def
+        if fuzzy:
+            unit_def = self._search_label_contains(text)
+            if unit_def is not None:
+                return unit_def
 
         # Nothing matched
         raise UnitNotFound(f"Could not infer unit from '{text}'")
 
     # -------------------- internal helpers --------------------
+    @staticmethod
+    def _looks_like_uri(text: str) -> bool:
+        return "://" in text or text.startswith("urn:")
+
     def _looks_like_unit(self, subject: URIRef) -> bool:
         return (subject, RDF.type, QUDT.Unit) in self.graph or (subject, QUDT.conversionMultiplier, None) in self.graph
 

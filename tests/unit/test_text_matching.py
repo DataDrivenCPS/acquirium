@@ -568,7 +568,7 @@ class FakeConverter:
             return self._mapping[text]
         raise UnitNotFound(text)
 
-    def infer_unit(self, text):
+    def infer_unit(self, text, *, fuzzy=True):
         self.calls.append(f"infer:{text}")
         if text in self._mapping:
             return self._mapping[text]

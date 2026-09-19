@@ -54,6 +54,35 @@ class TestResolveUnit:
 
 
 # ---------------------------------------------------------------------------
+# QUDTUnitConverter.infer_unit
+# ---------------------------------------------------------------------------
+
+class TestInferUnit:
+    @pytest.mark.parametrize("text, local", [
+        ("gal/min", "GAL_US-PER-MIN"),
+        ("kg/m3", "KiloGM-PER-M3"),
+    ])
+    def test_slash_is_a_division_not_a_path(self, converter, text, local):
+        # "gal/min" used to resolve its last path segment, "min".
+        assert str(converter.infer_unit(text).uri).endswith("/" + local)
+
+    def test_ratio_is_never_reduced_to_its_denominator(self, converter):
+        # No M3-PER-H unit exists, so this composes a ratio of both parts.
+        uri = str(converter.infer_unit("m3/h").uri)
+        assert "unit/M3" in uri and uri != "http://qudt.org/vocab/unit/H"
+
+    def test_last_segment_of_a_uri_still_resolves(self, converter):
+        u = converter.infer_unit("https://example.org/some/path/L-PER-MIN")
+        assert str(u.uri).endswith("/L-PER-MIN")
+
+    def test_substring_guess_is_off_without_fuzzy(self, converter):
+        # "watts" is only a substring of other units' labels.
+        with pytest.raises(UnitNotFound):
+            converter.infer_unit("watts", fuzzy=False)
+        assert converter.infer_unit("watts") is not None
+
+
+# ---------------------------------------------------------------------------
 # QUDTUnitConverter.convert — compatibility and correctness
 # ---------------------------------------------------------------------------
 
