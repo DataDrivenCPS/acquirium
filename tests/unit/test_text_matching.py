@@ -462,6 +462,74 @@ def test_semantic_matcher_still_runs_both_stages(
     )
 
 
+# ── exact_surfaces: looked up, never embedded ─────────────────────────
+
+def _abbr_concepts() -> list[dict[str, Any]]:
+    return [
+        {"uri": "urn:t:RO", "kind": "process", "label": "Reverse Osmosis",
+         "surfaces": ["reverse osmosis"], "exact_surfaces": ["ro"]},
+        {"uri": "urn:t:VFD", "kind": "class", "label": "Variable Frequency Drive",
+         "surfaces": ["variable frequency drive", "motor drive"], "exact_surfaces": ["vfd"]},
+    ]
+
+
+def test_exact_surfaces_come_after_the_embedded_rows() -> None:
+    surfaces, meta = EmbeddingMatcher._build_surfaces_and_meta(_abbr_concepts())
+    assert surfaces == ["reverse osmosis", "variable frequency drive", "motor drive"]
+    assert [m["surface"] for m in meta] == surfaces + ["ro", "vfd"]
+    assert meta[-1]["uri"] == "urn:t:VFD" and meta[-1]["label"] == "Variable Frequency Drive"
+
+
+def test_exact_surfaces_are_looked_up_but_not_embedded(stub_embed: dict[str, int]) -> None:
+    m = EmbeddingMatcher()
+    m.build_index(_abbr_concepts())
+    assert stub_embed["last_n"] == 3
+    assert m._vectors.shape[0] == 3 and len(m._meta) == 5
+
+    hit = m.query("VFD", kind="class", top_k=1)[0]
+    assert (hit.uri, hit.score, hit.match_stage) == ("urn:t:VFD", 1.0, "exact")
+    assert hit.matched_surface == "vfd"
+
+
+def test_semantic_stage_never_answers_from_an_exact_surface(stub_embed: dict[str, int]) -> None:
+    m = EmbeddingMatcher()
+    m.build_index(_abbr_concepts())
+    hits = m.query("something else entirely", top_k=5, min_score=-1.0)
+    assert hits and all(h.match_stage == "semantic" for h in hits)
+    assert not {h.matched_surface for h in hits} & {"ro", "vfd"}
+
+
+def test_exact_surfaces_survive_the_disk_cache(tmp_path: Path, stub_embed: dict[str, int]) -> None:
+    _cache_matcher(tmp_path / "cache").build_index(_abbr_concepts())
+    calls = stub_embed["calls"]
+
+    warm = _cache_matcher(tmp_path / "cache")
+    warm.build_index(_abbr_concepts())
+    assert stub_embed["calls"] == calls, "warm start must load from the cache"
+    assert warm.query("ro", kind="process", top_k=1)[0].uri == "urn:t:RO"
+    assert warm.query("anything", top_k=5, min_score=-1.0)  # rows still line up with vectors
+
+
+def test_update_index_keeps_embedded_rows_aligned_with_vectors(stub_embed: dict[str, int]) -> None:
+    m = EmbeddingMatcher()
+    m.build_index(_abbr_concepts())
+    added = [{"uri": "urn:t:UF", "kind": "process", "label": "Ultrafiltration",
+              "surfaces": ["ultrafiltration"], "exact_surfaces": ["uf"]}]
+    m.update_index(added, removed_uris=["urn:t:RO"], all_concepts=_abbr_concepts()[1:] + added)
+
+    n = m._vectors.shape[0]
+    assert [r["surface"] for r in m._meta[:n]] == ["variable frequency drive", "motor drive", "ultrafiltration"]
+    assert [r["surface"] for r in m._meta[n:]] == ["vfd", "uf"]
+    assert m.query("uf", kind="process", top_k=1)[0].uri == "urn:t:UF"
+    assert m.query("ro", kind="process") == [] or m.query("ro", kind="process")[0].match_stage == "semantic"
+
+
+def test_exact_only_matcher_indexes_exact_surfaces_too(tmp_path: Path) -> None:
+    m = EmbeddingMatcher(cache_dir=tmp_path / "cache", exact_only=True)
+    m.build_index(_abbr_concepts())
+    assert m.query("ro", kind="process", top_k=1)[0].uri == "urn:t:RO"
+
+
 def _make_manager(data_dir: Path, *, exact_only: bool) -> Manager:
     return Manager(
         data_dir=data_dir,

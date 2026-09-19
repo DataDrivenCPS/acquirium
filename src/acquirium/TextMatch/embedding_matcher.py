@@ -136,8 +136,11 @@ class EmbeddingMatcher:
         # Index state — read/swapped under self._lock via _set_index().
         # _vectors stays None in exact-only mode; every other field is the
         # same either way, so the exact stage needs no special case.
-        self._vectors: np.ndarray | None = None  # shape (N, dim), L2-normalized
-        self._meta: list[dict[str, Any]] = []  # parallel: uri, kind, label, surface, related
+        self._vectors: np.ndarray | None = None  # shape (E, dim), L2-normalized
+        # One row per surface: uri, kind, label, surface, related. The first
+        # E rows are the embedded surfaces, parallel to _vectors; the rows
+        # after them are exact-only surfaces, which have no vector.
+        self._meta: list[dict[str, Any]] = []
         self._index_hash: str | None = None
         # surface -> meta row indices, derived from _meta. Two keyings:
         # _cs preserves case (QUDT symbols are case-significant: "kg" vs "kG"),
@@ -212,9 +215,17 @@ class EmbeddingMatcher:
 
     @staticmethod
     def _build_surfaces_and_meta(concepts: list[dict[str, Any]]) -> tuple[list[str], list[dict[str, Any]]]:
-        """Extract surface strings and parallel metadata from concept dicts."""
+        """Extract the surfaces to embed, and the metadata rows, from concept dicts.
+
+        A concept's ``surfaces`` are embedded and answer exact lookups. Its
+        ``exact_surfaces`` only answer exact lookups: codes and abbreviations
+        ("ro", "vfd", "m3.h-1") whose embedding carries no meaning. The
+        returned metadata has one row per embedded surface, in the order of
+        the returned surfaces, followed by one row per exact-only surface.
+        """
         surfaces: list[str] = []
         meta: list[dict[str, Any]] = []
+        exact_meta: list[dict[str, Any]] = []
         for concept in concepts:
             uri = concept["uri"]
             kind = concept.get("kind", "class")
@@ -241,10 +252,26 @@ class EmbeddingMatcher:
                         "related": related,
                     }
                 )
-        return surfaces, meta
+            for surface in concept.get("exact_surfaces", []):
+                if surface in concept_surfaces:
+                    continue
+                exact_meta.append(
+                    {
+                        "uri": uri,
+                        "kind": kind,
+                        "label": label or concept_surfaces[0],
+                        "surface": surface,
+                        "related": related,
+                    }
+                )
+        return surfaces, meta + exact_meta
 
     def build_index(self, concepts: list[dict[str, Any]]) -> None:
-        """Build the index from concept dicts with keys: uri, kind, label, surfaces."""
+        """Build the index from concept dicts.
+
+        Keys: ``uri``, ``kind``, ``label``, ``surfaces`` (embedded and looked
+        up), and optionally ``exact_surfaces`` (looked up only) and ``related``.
+        """
         if self.exact_only:
             _surfaces, meta = self._build_surfaces_and_meta(concepts)
             self._set_index(None, meta, None)
@@ -280,7 +307,10 @@ class EmbeddingMatcher:
         if self._cache_dir:
             self._save_cache(new_hash)
 
-        logger.info("[%s] embedding index built with %d entries", self.name, len(meta))
+        logger.info(
+            "[%s] embedding index built with %d entries (%d embedded)",
+            self.name, len(meta), len(surfaces),
+        )
 
     @staticmethod
     def _row_to_result(m: dict[str, Any], score: float, stage: MatchStage) -> ResolveResult:
@@ -386,6 +416,7 @@ class EmbeddingMatcher:
         exclude_uris: set[str],
     ) -> list[ResolveResult]:
         """Embedding cosine-similarity search, skipping already-seen URIs."""
+        meta = meta[: len(vectors)]  # the rows after these are exact-only
         q_vec = self._embed([text])  # shape (1, dim)
         scores = (q_vec @ vectors.T).squeeze(0)  # shape (N,)
 
@@ -443,22 +474,30 @@ class EmbeddingMatcher:
                 self.build_index(added_concepts)
             return
 
+        # Embedded rows come first in _meta; keep the two parts apart so the
+        # new embedded rows land next to their vectors.
+        embedded, exact = meta[: len(vectors)], meta[len(vectors):]
+
         # 1. Filter out removed URIs
         removed_set = set(removed_uris)
         if removed_set:
-            keep = [i for i, m in enumerate(meta) if m["uri"] not in removed_set]
-            meta = [meta[i] for i in keep]
+            keep = [i for i, m in enumerate(embedded) if m["uri"] not in removed_set]
+            embedded = [embedded[i] for i in keep]
             vectors = vectors[keep]
+            exact = [m for m in exact if m["uri"] not in removed_set]
 
         # 2. Build surfaces for added concepts and embed them
         if added_concepts:
             new_surfaces, new_meta = self._build_surfaces_and_meta(added_concepts)
+            exact = exact + new_meta[len(new_surfaces):]
 
             if new_surfaces:
                 logger.info("[%s] embedding %d new surfaces from %d added concepts...", self.name, len(new_surfaces), len(added_concepts))
                 new_vectors = self._embed(new_surfaces)
                 vectors = np.concatenate([vectors, new_vectors], axis=0)
-                meta = meta + new_meta
+                embedded = embedded + new_meta[: len(new_surfaces)]
+
+        meta = embedded + exact
 
         # 3. Compute hash from full concept list (matches build_index output)
         if all_concepts is not None:
