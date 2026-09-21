@@ -957,6 +957,13 @@ _UNITS = [
     _unit("MicroS-PER-CentiM", "µS/cm", "uS.cm-1"),
     _unit("FT", "ft", "[ft_i]"),
     _unit("FT_US", "ft{US Survey}", "[ft_us]"),
+    _unit("HR", "h", "h"),
+    _unit("H", "H", "H"),
+    _unit("MilliSEC", "ms", "ms"),
+    _unit("LB", "lbm", "[lb_av]"),
+    _unit("A-PER-A-HR", "A/(A·h)", "A.A-1.h-1"),
+    _unit("DAY", "d", "d"),
+    _unit("DAY_Sidereal", "day{sidereal}", "d"),
     _unit("NoCodes"),
 ]
 
@@ -990,6 +997,44 @@ class TestUnitKeyIndex:
 
     def test_reports_the_symbol_or_code_that_matched(self):
         assert UnitKeyIndex(_UNITS).lookup("m3.h-1")[0][1] == "m³/h"
+
+    def test_local_name_finds_the_unit(self):
+        idx = UnitKeyIndex(_UNITS)
+        assert _locals(idx.lookup("hr")) == ["HR"]
+        assert _locals(idx.lookup("lb")) == ["LB"]
+        assert _locals(idx.lookup("m3/hr")) == ["M3-PER-HR"]
+
+    def test_symbol_leads_over_a_local_name(self):
+        # "h" is the symbol of the hour and the (folded) local name of the henry
+        assert _locals(UnitKeyIndex(_UNITS).lookup("h")) == ["HR", "H"]
+
+    @pytest.mark.parametrize("text, local", [
+        ("hrs", "HR"), ("Hrs", "HR"), ("hr.", "HR"), ("lbs", "LB"), ("gals/min", "GAL_US-PER-MIN"),
+    ])
+    def test_plural_and_trailing_period(self, text, local):
+        assert _locals(UnitKeyIndex(_UNITS).lookup(text))[0] == local
+
+    def test_a_unit_whose_atoms_cancel_is_not_filed_under_what_is_left(self):
+        idx = UnitKeyIndex(_UNITS)
+        assert _locals(idx.lookup("hr")) == ["HR"]
+        assert "A-PER-A-HR" not in _locals(idx.lookup("h-1"))
+        # "m²/m" reduces to "m" without losing an atom outright
+        assert _locals(UnitKeyIndex([_unit("M", "m", "m"), _unit("M2-PER-M", "m²/m", "m2.m-1")]).lookup("m")) == ["M"]
+
+    def test_unqualified_spelling_leads_over_an_annotated_one(self):
+        assert _locals(UnitKeyIndex(_UNITS).lookup("days"))[0] == "DAY"
+
+    def test_case_exact_annotated_spelling_leads_over_a_case_folded_plain_one(self):
+        # "gal" is the gallon ("gal{US}"), not the galileo ("Gal")
+        units = _UNITS + [_unit("GALILEO", "Gal", "Gal")]
+        assert _locals(UnitKeyIndex(units).lookup("gal/min"))[0] == "GAL_US-PER-MIN"
+        idx = UnitKeyIndex([_unit("GALILEO", "Gal", "Gal"), _unit("GAL_US", "gal{US}", "[gal_us]")])
+        assert _locals(idx.lookup("gal")) == ["GAL_US", "GALILEO"]
+        assert _locals(idx.lookup("Gal")) == ["GALILEO", "GAL_US"]
+
+    def test_a_unit_as_written_is_never_made_singular(self):
+        # "ms" is the millisecond, not a plural of "m"
+        assert _locals(UnitKeyIndex(_UNITS).lookup("ms")) == ["MilliSEC"]
 
     def test_words_are_not_units(self):
         assert UnitKeyIndex(_UNITS).lookup("sedimentation tank") == []
