@@ -36,16 +36,21 @@ def _build_surfaces(
     for label in labels:
         _add(label.lower(), surfaces)
 
+    # For a unit with a label, everything else is looked up, never embedded.
+    # Its local name is the QUDT code spelled out ("gal us per min", "milli gm
+    # per l"), which the label already says in words. Its symbol and UCUM code
+    # are answered by the matcher's exact stage ("kg", "KG", "mg/L") and, for
+    # every other spelling ("mg·L⁻¹", "mg per L"), by UnitKeyIndex.
+    # A unit without a label embeds its local name instead. A quantity kind
+    # keeps its local name embedded: most have no label.
+    def _rest() -> list[str]:
+        return exact if (is_unit and surfaces) else surfaces
+
     tokens = _split_local_name(uri)
     if tokens:
-        _add(" ".join(tokens), surfaces)
-
-    # A unit's symbol and UCUM code are looked up, never embedded: the
-    # matcher's exact stage answers "kg" / "KG" / "mg/L", and UnitKeyIndex
-    # answers every other spelling of the expression ("mg·L⁻¹", "mg per L").
-    code_target = exact if (is_unit and surfaces) else surfaces
-    _add(symbol, code_target)
-    _add(ucum, code_target)
+        _add(" ".join(tokens), _rest())
+    _add(symbol, _rest())
+    _add(ucum, _rest())
 
     return surfaces, exact
 

@@ -40,6 +40,23 @@ class TestBuildSurfaces:
         assert surfaces == ["kelvin"]
         assert exact == ["K"]
 
+    def test_unit_local_name_is_exact_only_when_there_is_a_label(self):
+        surfaces, exact = _build_surfaces(
+            "http://qudt.org/vocab/unit/GAL_US-PER-MIN", ["US Gallon per Minute"], None, None, True
+        )
+        assert surfaces == ["us gallon per minute"]
+        assert exact == ["gal us per min"]
+
+    def test_quantity_kind_local_name_stays_embedded(self):
+        surfaces, exact = _build_surfaces(
+            "http://qudt.org/vocab/quantitykind/VolumeFlowRate", ["Volume Flow Rate"], None, None, False
+        )
+        assert surfaces == ["volume flow rate"] and exact == []
+        surfaces, _ = _build_surfaces(
+            "http://qudt.org/vocab/quantitykind/VolumeFlowRate", ["Volumetric Flow"], None, None, False
+        )
+        assert surfaces == ["volumetric flow", "volume flow rate"]
+
     def test_quantity_kind_symbol_stays_embedded(self):
         surfaces, exact = _build_surfaces(
             "http://qudt.org/vocab/quantitykind/Temperature", ["Temperature"], "T", None, False
@@ -66,9 +83,10 @@ class TestBuildSurfaces:
         assert surfaces == ["degC"]
         assert exact == []
 
-    def test_symbol_preserved_case(self):
-        _, exact = _build_surfaces("http://qudt.org/vocab/unit/DegreeCelsius", [], "degC", None, True)
-        assert "degC" in exact
+    def test_unit_without_a_label_embeds_its_local_name(self):
+        surfaces, exact = _build_surfaces("http://qudt.org/vocab/unit/DegreeCelsius", [], "degC", None, True)
+        assert surfaces == ["degree celsius"]
+        assert exact == ["degC"]  # case preserved
 
 
 # ── QUDTStore.extract_concepts (query-fed) ─────────────────
@@ -106,7 +124,7 @@ class TestExtractConcepts:
         assert u["uri"] == "http://qudt.org/vocab/unit/KiloGM"
         assert u["kind"] == "unit"
         assert "kilogram" in u["surfaces"]
-        assert u["exact_surfaces"] == ["kg"]
+        assert u["exact_surfaces"] == ["kilo gm", "kg"]
         assert u["related"] == ["http://qudt.org/vocab/quantitykind/Mass"]
 
     def test_quantity_kind_extraction(self):
