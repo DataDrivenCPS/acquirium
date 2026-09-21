@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import os
 import logging
+import re
 from threading import Lock
 import pyoxigraph as ox
 from time import perf_counter
@@ -96,6 +97,55 @@ def _aggregate_uri_label_rows(
             "surfaces": surfaces,
             "related": [],
         })
+
+
+_INITIALISM_MIN_WORDS = 3
+_WORD_BREAK = re.compile(r"[\s\-/]+")
+
+
+def _local_name(uri: str) -> str:
+    return uri.rsplit("#", 1)[-1].rsplit("/", 1)[-1]
+
+
+def _add_initialisms(concepts: list[dict[str, Any]]) -> None:
+    """Add the initialism of a long label as an exact-only surface.
+
+    Practitioners type "VFD", "SBR", "CSTR" for equipment whose ontology label
+    is spelled out. A label of three or more words gives its initial letters
+    as an ``exact_surfaces`` entry (looked up, never embedded), but only when
+    one concept of that kind owns them and they are not already a surface of
+    that kind. The same local name in the water and s223 ontologies counts as
+    one owner. Predicates get none.
+    """
+    def _initialism(surface: str) -> str | None:
+        words = [w for w in _WORD_BREAK.split(surface) if w]
+        if len(words) < _INITIALISM_MIN_WORDS or not all(w[0].isalpha() for w in words):
+            return None
+        return "".join(w[0] for w in words)
+
+    owners: dict[tuple[str, str], set[str]] = {}
+    candidates: list[tuple[dict[str, Any], str]] = []
+    taken: set[tuple[str, str]] = set()
+    for c in concepts:
+        if c["kind"] == "predicate":
+            continue
+        local = _local_name(c["uri"])
+        # "Constituent-DissolvedOxygen" splits to "constituent dissolved
+        # oxygen": the enumeration prefix is not part of the name.
+        prefixed = " ".join(_split_local_name(c["uri"])) if "-" in local else None
+        for s in c["surfaces"]:
+            taken.add((c["kind"], s.lower()))
+            if s == prefixed or "(" in s:
+                continue
+            ini = _initialism(s)
+            if ini:
+                owners.setdefault((c["kind"], ini), set()).add(local)
+                candidates.append((c, ini))
+    for c, ini in candidates:
+        if len(owners[(c["kind"], ini)]) == 1 and (c["kind"], ini) not in taken:
+            exact = c.setdefault("exact_surfaces", [])
+            if ini not in exact:
+                exact.append(ini)
 
 
 def pick_convertible_pair(from_candidates, to_candidates, are_compatible):
@@ -454,6 +504,7 @@ class Manager:
             except Exception:
                 logger.warning("Failed to extract %s concepts", kind, exc_info=True)
 
+        _add_initialisms(concepts)
         logger.debug("_extract_concepts_for_embedding: %d total concepts", len(concepts))
         return concepts
 

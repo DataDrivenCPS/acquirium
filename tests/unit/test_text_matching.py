@@ -23,7 +23,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from acquirium.Server.manager import Manager
+from acquirium.Server.manager import Manager, _add_initialisms
 from acquirium.TextMatch.embedding_matcher import (
     DEFAULT_MODEL,
     EmbeddingMatcher,
@@ -529,6 +529,71 @@ def test_exact_only_matcher_indexes_exact_surfaces_too(tmp_path: Path) -> None:
     m = EmbeddingMatcher(cache_dir=tmp_path / "cache", exact_only=True)
     m.build_index(_abbr_concepts())
     assert m.query("ro", kind="process", top_k=1)[0].uri == "urn:t:RO"
+
+
+# ── initialisms of long labels ────────────────────────────────────────
+
+W, S = "urn:nawi-water-ontology#", "http://data.ashrae.org/standard223#"
+
+
+def _concept(uri: str, kind: str, *surfaces: str) -> dict[str, Any]:
+    return {"uri": uri, "kind": kind, "label": surfaces[0], "surfaces": list(surfaces), "related": []}
+
+
+def _initialisms_of(concepts: list[dict[str, Any]]) -> dict[str, list[str]]:
+    _add_initialisms(concepts)
+    return {c["uri"].split("#")[1]: c.get("exact_surfaces", []) for c in concepts}
+
+
+def test_initialism_of_a_label_with_three_or_more_words() -> None:
+    got = _initialisms_of([
+        _concept(W + "VariableFrequencyDrive", "class", "variable frequency drive"),
+        _concept(W + "MembraneBioreactor", "class", "membrane bioreactor"),
+        _concept(W + "Pump", "class", "pump"),
+    ])
+    assert got == {"VariableFrequencyDrive": ["vfd"], "MembraneBioreactor": [], "Pump": []}
+
+
+def test_same_local_name_in_two_ontologies_is_one_owner() -> None:
+    got = _initialisms_of([
+        _concept(W + "VariableFrequencyDrive", "class", "variable frequency drive"),
+        _concept(S + "VariableFrequencyDrive", "class", "variable frequency drive"),
+    ])
+    assert got == {"VariableFrequencyDrive": ["vfd"]}
+
+
+def test_initialism_shared_by_two_concepts_of_a_kind_is_dropped() -> None:
+    got = _initialisms_of([
+        _concept(W + "RapidSandFilter", "class", "rapid sand filter"),
+        _concept(W + "RotarySludgeFeeder", "class", "rotary sludge feeder"),
+    ])
+    assert got == {"RapidSandFilter": [], "RotarySludgeFeeder": []}
+
+
+def test_initialism_is_scoped_to_its_kind() -> None:
+    got = _initialisms_of([
+        _concept(W + "RapidSandFilter", "class", "rapid sand filter"),
+        _concept(W + "Process-RapidSandFiltration", "process", "rapid sand filtration"),
+    ])
+    assert got == {"RapidSandFilter": ["rsf"], "Process-RapidSandFiltration": ["rsf"]}
+
+
+def test_no_initialism_from_a_prefixed_local_name_a_predicate_or_a_parenthetical() -> None:
+    got = _initialisms_of([
+        # "constituent dissolved oxygen" would give "cdo": the prefix is not part of the name
+        _concept(W + "Constituent-DissolvedOxygen", "substance", "dissolved oxygen", "constituent dissolved oxygen"),
+        _concept(W + "hasProcessedData", "predicate", "has processed data"),
+        _concept(W + "Process-GAC", "process", "granular activated carbon (gac)"),
+    ])
+    assert got == {"Constituent-DissolvedOxygen": [], "hasProcessedData": [], "Process-GAC": []}
+
+
+def test_initialism_never_shadows_an_existing_surface() -> None:
+    got = _initialisms_of([
+        _concept(W + "PressureExchangerUnit", "class", "pressure exchanger unit"),
+        _concept(W + "Peu", "class", "peu"),
+    ])
+    assert got["PressureExchangerUnit"] == []
 
 
 def _make_manager(data_dir: Path, *, exact_only: bool) -> Manager:
