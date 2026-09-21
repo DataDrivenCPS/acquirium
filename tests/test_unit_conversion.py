@@ -75,11 +75,33 @@ class TestInferUnit:
         u = converter.infer_unit("https://example.org/some/path/L-PER-MIN")
         assert str(u.uri).endswith("/L-PER-MIN")
 
+    @pytest.mark.parametrize("text, local", [
+        ("h", "HR"), ("s", "SEC"), ("hrs", "HR"), ("m3/h", "M3-PER-HR"), ("m³·h⁻¹", "M3-PER-HR"),
+        ("mg/L", "MilliGM-PER-L"), ("gal", "GAL_US"), ("gal/min", "GAL_US-PER-MIN"), ("ft", "FT"),
+        ("kg", "KiloGM"), ("kG", "KiloGAUSS"), ("°C", "DEG_C"), ("deg C", "DEG_C"),
+        ("l-per-min", "L-PER-MIN"), ("L-PER-MIN", "L-PER-MIN"), ("Kilogram", "KiloGM"), ("kilogram", "KiloGM"),
+        ("celsius", "DEG_C"),
+    ])
+    def test_resolve_unit_reads_the_typed_expression(self, converter, text, local):
+        assert str(converter.resolve_unit(text).uri).endswith("/" + local)
+
+    def test_convert_reads_typed_units(self, converter):
+        assert converter.convert(1.0, "m3/h", "L/min") == pytest.approx(1000 / 60, rel=1e-6)
+        assert converter.convert(2.0, "hrs", "min") == pytest.approx(120.0)
+        assert converter.convert(1.0, "gal", "L") == pytest.approx(3.785411784, rel=1e-6)
+
+    def test_convert_never_guesses_a_unit(self, converter):
+        # "watts" is only a substring of other units' labels
+        with pytest.raises(UnitNotFound):
+            converter.convert(1.0, "watts", "kW")
+        with pytest.raises(UnitNotFound):
+            converter.are_compatible("watts", "kW")
+
     def test_substring_guess_is_off_without_fuzzy(self, converter):
         # "watts" is only a substring of other units' labels.
         with pytest.raises(UnitNotFound):
-            converter.infer_unit("watts", fuzzy=False)
-        assert converter.infer_unit("watts") is not None
+            converter.infer_unit("watts")
+        assert converter.infer_unit("watts", fuzzy=True) is not None
 
 
 # ---------------------------------------------------------------------------

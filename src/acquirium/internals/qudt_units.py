@@ -23,13 +23,14 @@ from __future__ import annotations
 
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Iterable, Iterator
+from typing import Iterable
 from decimal import Decimal, getcontext
 
 from rdflib import Graph, Literal, URIRef
 from rdflib.namespace import RDF, RDFS, SKOS, XSD
 
 from acquirium.internals.internals_namespaces import QUDT, UNIT, QUDT_QUANTITY_KIND
+from acquirium.TextMatch.unit_key import UnitKeyIndex
 
 
 COMMON_ALIASES: dict[str, URIRef] = {
@@ -153,6 +154,9 @@ class QUDTUnitConverter:
             self.graph = qudt_graph
         else:
             raise TypeError("qudt_graph must be an rdflib.Graph, path/URL string, or None")
+        # Lookup tables over the graph, built on first use.
+        self._key_index: UnitKeyIndex | None = None
+        self._literal_index: tuple[dict[str, list[URIRef]], dict[str, list[URIRef]]] | None = None
 
     # -------------------- public API --------------------
     def resolve_unit(self, identifier: str | URIRef) -> UnitDefinition:
@@ -160,15 +164,17 @@ class QUDTUnitConverter:
 
         Resolution order (first match wins):
         1. Exact URI provided (and present in graph).
-        2. URI whose local name matches the identifier (e.g., "M" -> UNIT.M).
-        3. rdfs:label or skos:prefLabel literal equality (case sensitive).
-        4. qudt:symbol literal equality (case sensitive).
-        5. qudt:ucumCode literal equality (case sensitive).
+        2. URI whose local name is the identifier as typed ("M" -> UNIT.M).
+        3. The unit expression, through :class:`UnitKeyIndex`: any spelling of
+           the symbol, UCUM code or local name ("m3/h", "m³·h⁻¹", "hrs"), with
+           its tie rules ("h" is the hour, "gal" the US gallon).
+        4. URI whose local name is the identifier upper-cased ("l-per-min").
+        5. A common alias ("gallon", "celsius").
+        6. Label, symbol, UCUM or UN/ECE code equality, case-sensitive and
+           then case-folded.
 
-        The search stays narrow to keep performance reasonable while avoiding
-        surprising fuzzy matches. If multiple candidates satisfy the lookup, the
-        first in graph order is returned; the caller can always disambiguate by
-        passing the full URI.
+        Nothing here is fuzzy: a text is a unit's name or code, or it is not
+        found. The caller can always disambiguate by passing the full URI.
 
         Example::
 
@@ -191,6 +197,12 @@ class QUDTUnitConverter:
         if (candidate_uri, None, None) in self.graph:
             return self._from_uri(candidate_uri)
 
+        # 3) The typed expression. Ahead of the upper-cased local name, which
+        # reads "h" as the henry and "s" as the siemens.
+        hits = self._unit_keys().lookup(identifier)
+        if hits:
+            return self._from_uri(URIRef(hits[0][0]["uri"]))
+
         upper_candidate = UNIT[identifier.upper()]
         if (upper_candidate, None, None) in self.graph:
             return self._from_uri(upper_candidate)
@@ -204,19 +216,11 @@ class QUDTUnitConverter:
         if alias and (alias, None, None) in self.graph:
             return self._from_uri(alias)
 
-        # 3-5) Literal-based search across known labeling predicates
-        predicates = [RDFS.label, SKOS.prefLabel, QUDT.symbol, QUDT.ucumCode, QUDT.uneceCommonCode]
-
-        # case-sensitive first
-        for predicate in predicates:
-            for subject in self.graph.subjects(predicate, Literal(identifier)):
-                if self._looks_like_unit(subject):
-                    return self._from_uri(subject)
-
-        # then case-insensitive match on literals
-        for subject in self._subjects_with_literal_casefold(predicates, identifier):
-            if self._looks_like_unit(subject):
-                return self._from_uri(subject)
+        # 6) Literal equality across the labeling predicates: case-sensitive
+        # first, then case-folded.
+        exact, folded = self._literals()
+        for subject in (*exact.get(identifier, ()), *folded.get(identifier.casefold(), ())):
+            return self._from_uri(subject)
 
         raise UnitNotFound(f"Unit '{identifier}' not found in provided QUDT graph")
 
@@ -226,15 +230,7 @@ class QUDTUnitConverter:
         Uses dimension vectors (most reliable), then falls back to
         quantity kind overlap.
         """
-        try:
-            a = self.resolve_unit(unit_a)
-        except UnitNotFound:
-            a = self.infer_unit(str(unit_a))
-        try:
-            b = self.resolve_unit(unit_b)
-        except UnitNotFound:
-            b = self.infer_unit(str(unit_b))
-        return self._check_compatible(a, b)
+        return self._check_compatible(self.infer_unit(str(unit_a)), self.infer_unit(str(unit_b)))
 
     @staticmethod
     def _check_compatible(src: UnitDefinition, tgt: UnitDefinition) -> bool:
@@ -260,15 +256,9 @@ class QUDTUnitConverter:
         Raises :class:`IncompatibleUnits` when units are incompatible.
         """
 
-        try:
-            src = self.resolve_unit(from_unit)
-        except UnitNotFound:
-            src = self.infer_unit(str(from_unit))
-
-        try:
-            tgt = self.resolve_unit(to_unit)
-        except UnitNotFound:
-            tgt = self.infer_unit(str(to_unit))
+        # Never a substring guess: a wrong unit here silently rescales data.
+        src = self.infer_unit(str(from_unit))
+        tgt = self.infer_unit(str(to_unit))
 
         if not self._check_compatible(src, tgt):
             raise IncompatibleUnits(
@@ -288,7 +278,7 @@ class QUDTUnitConverter:
         result = (value_si / tgt_mult) - tgt_offset
         return float(result)
 
-    def infer_unit(self, text: str, *, fuzzy: bool = True) -> UnitDefinition:
+    def infer_unit(self, text: str, *, fuzzy: bool = False) -> UnitDefinition:
         """Best-effort unit inference from an arbitrary string.
 
         Heuristics (ordered):
@@ -298,9 +288,8 @@ class QUDTUnitConverter:
         - with ``fuzzy``, a substring search over labels and symbols.
 
         The substring search returns the first unit whose label merely
-        contains the text ("watts" is inside "Terawatt Hour per Year"), so a
-        caller that reports the result as an exact match passes
-        ``fuzzy=False``.
+        contains the text ("watts" is inside "Terawatt Hour per Year"). It is
+        off by default, and nothing in this module turns it on.
 
         Raises :class:`UnitNotFound` if no match is found.
         """
@@ -395,12 +384,45 @@ class QUDTUnitConverter:
     def _looks_like_unit(self, subject: URIRef) -> bool:
         return (subject, RDF.type, QUDT.Unit) in self.graph or (subject, QUDT.conversionMultiplier, None) in self.graph
 
-    def _subjects_with_literal_casefold(self, predicates: list[URIRef], identifier: str) -> Iterator[URIRef]:
-        target = identifier.casefold()
-        for predicate in predicates:
-            for subj, _, lit in self.graph.triples((None, predicate, None)):
-                if isinstance(lit, Literal) and str(lit).casefold() == target:
-                    yield subj
+    def _unit_keys(self) -> UnitKeyIndex:
+        """Units by typed expression, built once from the graph."""
+        if self._key_index is None:
+            units = [
+                {
+                    "uri": str(unit),
+                    "symbol": next((str(o) for o in self.graph.objects(unit, QUDT.symbol)), None),
+                    "ucum": next((str(o) for o in self.graph.objects(unit, QUDT.ucumCode)), None),
+                    "related": [str(o) for o in self.graph.objects(unit, QUDT.hasQuantityKind)],
+                }
+                for unit in sorted(set(self.graph.subjects(RDF.type, QUDT.Unit)))
+            ]
+            self._key_index = UnitKeyIndex(units)
+        return self._key_index
+
+    def _literals(self) -> tuple[dict[str, list[URIRef]], dict[str, list[URIRef]]]:
+        """``(by text, by case-folded text)`` over the labeling predicates, built once.
+
+        Predicate order is the precedence: a label before a symbol before a
+        UCUM code. Only plain (untagged) and English literals of units.
+        """
+        if self._literal_index is None:
+            exact: dict[str, list[URIRef]] = {}
+            folded: dict[str, list[URIRef]] = {}
+            for predicate in (RDFS.label, SKOS.prefLabel, QUDT.symbol, QUDT.ucumCode, QUDT.uneceCommonCode):
+                triples = self.graph.triples((None, predicate, None))
+                for subj, _, lit in sorted(triples, key=lambda t: (str(t[0]), str(t[2]))):
+                    if not isinstance(lit, Literal) or not isinstance(subj, URIRef):
+                        continue
+                    if lit.language and not lit.language.startswith("en"):
+                        continue
+                    if not self._looks_like_unit(subj):
+                        continue
+                    for table, key in ((exact, str(lit)), (folded, str(lit).casefold())):
+                        bucket = table.setdefault(key, [])
+                        if subj not in bucket:
+                            bucket.append(subj)
+            self._literal_index = (exact, folded)
+        return self._literal_index
 
     def _search_label_contains(self, text: str) -> UnitDefinition | None:
         target = text.casefold()
