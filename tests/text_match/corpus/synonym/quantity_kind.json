@@ -803,7 +803,8 @@
     {
       "text": "vapour pressure",
       "expected": [
-        "http://qudt.org/vocab/quantitykind/VaporPressure"
+        "http://qudt.org/vocab/quantitykind/VaporPressure",
+        "http://qudt.org/vocab/quantitykind/VapourPressure"
       ]
     },
     {

@@ -388,12 +388,29 @@ class EmbeddingMatcher:
         are case-significant ("kg"=kilogram vs "kG"=kilogauss), so without
         context the case-exact reading should lead. Both are returned so a
         context rerank can still pick a case-folded alternative.
+
+        Several concepts can share a surface: "volume" is the name of
+        qk:Volume and an alternative label of qk:CartesianVolume. Within one
+        case reading, the concept the text names comes first, then one whose
+        primary label it is, then the rest; index order breaks what is left.
         """
-        cs_rows = surface_index_cs.get(_collapse_ws(text), [])
-        cf_rows = surface_index.get(_normalize_surface(text), [])
+        cs_rows = set(surface_index_cs.get(_collapse_ws(text), ()))
+        rows = [*cs_rows, *surface_index.get(_normalize_surface(text), ())]
+        wanted = _normalize_surface(text)
+
+        def _rank(idx: int) -> tuple[int, int, int]:
+            m = meta[idx]
+            if " ".join(_split_local_name(m["uri"])) == wanted:
+                naming = 0
+            elif _normalize_surface(m["label"]) == wanted:
+                naming = 1
+            else:
+                naming = 2
+            return (0 if idx in cs_rows else 1, naming, idx)
+
         hits: list[ResolveResult] = []
         seen: set[str] = set()
-        for idx in (*cs_rows, *cf_rows):
+        for idx in sorted(set(rows), key=_rank):
             m = meta[idx]
             if kind and m["kind"] != kind:
                 continue

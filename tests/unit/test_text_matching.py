@@ -464,6 +464,46 @@ def test_semantic_matcher_still_runs_both_stages(
     )
 
 
+# ── exact stage: which concept leads when several share a surface ─────
+
+_QK = "http://qudt.org/vocab/quantitykind/"
+
+
+def _shared_surface_matcher(tmp_path: Path, concepts: list[dict[str, Any]]) -> EmbeddingMatcher:
+    m = EmbeddingMatcher(cache_dir=tmp_path / "cache", exact_only=True)
+    m.build_index(concepts)
+    return m
+
+
+def test_the_concept_named_by_the_text_leads(tmp_path: Path) -> None:
+    # CartesianVolume sorts first by URI and carries "volume" as an alternative label.
+    m = _shared_surface_matcher(tmp_path, [
+        {"uri": _QK + "CartesianVolume", "kind": "quantity_kind", "label": "Cartesian Volume",
+         "surfaces": ["cartesian volume", "volume"]},
+        {"uri": _QK + "Volume", "kind": "quantity_kind", "label": "Volume", "surfaces": ["volume"]},
+    ])
+    assert [h.uri for h in m.query("volume", kind="quantity_kind")] == [_QK + "Volume", _QK + "CartesianVolume"]
+    assert [h.uri for h in m.query("VOLUME", kind="quantity_kind")][0] == _QK + "Volume"
+
+
+def test_primary_label_leads_over_an_alternative_label(tmp_path: Path) -> None:
+    m = _shared_surface_matcher(tmp_path, [
+        {"uri": "urn:t:A-Tank", "kind": "class", "label": "Basin", "surfaces": ["basin", "clarifier"]},
+        {"uri": "urn:t:SedimentationTank", "kind": "class", "label": "Clarifier", "surfaces": ["clarifier"]},
+    ])
+    assert m.query("clarifier", kind="class", top_k=1)[0].uri == "urn:t:SedimentationTank"
+
+
+def test_case_exact_reading_still_leads_over_naming(tmp_path: Path) -> None:
+    # "kG" is kilogauss even though "kg" names nothing better
+    m = _shared_surface_matcher(tmp_path, [
+        {"uri": "urn:u:KiloGAUSS", "kind": "unit", "label": "Kilogauss", "surfaces": ["kilogauss"], "exact_surfaces": ["kG"]},
+        {"uri": "urn:u:KiloGM", "kind": "unit", "label": "Kilogram", "surfaces": ["kilogram"], "exact_surfaces": ["kg"]},
+    ])
+    assert [h.uri for h in m.query("kG", kind="unit")] == ["urn:u:KiloGAUSS", "urn:u:KiloGM"]
+    assert [h.uri for h in m.query("kg", kind="unit")] == ["urn:u:KiloGM", "urn:u:KiloGAUSS"]
+
+
 # ── exact_surfaces: looked up, never embedded ─────────────────────────
 
 def _abbr_concepts() -> list[dict[str, Any]]:
