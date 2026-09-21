@@ -86,6 +86,19 @@ def _canonicalize_jsonish(value: Any) -> Any:
     return value
 
 
+# Mixed-case words that no CamelCase rule splits correctly: "BACnet" came out
+# as "ba cnet", "pH" as "p h", "PoE" as "po e". They are kept whole. A word
+# starting in lower case must not follow a letter ("pH" is not in
+# "StepHeight"), and none may run on into lower case ("PoE" is not in "PoEm").
+_WHOLE_WORDS = ("BACnet", "LoRaWAN", "NaCl", "PoE", "mA", "pH")
+_WHOLE_WORD = re.compile(
+    "|".join(
+        (r"(?<![A-Za-z])" if w[0].islower() else "") + re.escape(w) + r"(?![a-z])"
+        for w in _WHOLE_WORDS
+    )
+)
+
+
 def _split_local_name(uri: str) -> list[str]:
     """Split a URI local name on CamelCase, underscores, and hyphens into lowercase tokens."""
     # Extract local name from URI
@@ -95,6 +108,9 @@ def _split_local_name(uri: str) -> list[str]:
             break
     else:
         local = uri
+
+    # Set the whole words apart, in lower case so the rules below leave them alone
+    local = _WHOLE_WORD.sub(lambda m: f" {m.group(0).lower()} ", local)
 
     # Split CamelCase
     tokens = re.sub(r"([a-z])([A-Z])", r"\1 \2", local)

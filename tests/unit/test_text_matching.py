@@ -84,6 +84,29 @@ class TestSplitLocalName:
         assert result == []
 
 
+    @pytest.mark.parametrize("local, tokens", [
+        ("BACnetExternalReference", ["bacnet", "external", "reference"]),
+        ("pHAdjuster", ["ph", "adjuster"]),
+        ("Process-pHAdjustment", ["process", "ph", "adjustment"]),
+        ("PowerAndSignal-PoE", ["power", "and", "signal", "poe"]),
+        ("PoE-802.3af-1", ["poe", "802.3af", "1"]),
+        ("ISMBand-LoRaWAN", ["ism", "band", "lorawan"]),
+        ("Salt-NaCl", ["salt", "nacl"]),
+        ("Modulated-4-20mA", ["modulated", "4", "20", "ma"]),
+    ])
+    def test_mixed_case_words_stay_whole(self, local, tokens):
+        assert _split_local_name("urn:x#" + local) == tokens
+
+    @pytest.mark.parametrize("local, tokens", [
+        ("StepHeight", ["step", "height"]),       # "pH" sits inside two words
+        ("GraphHandle", ["graph", "handle"]),
+        ("PoEmitter", ["po", "emitter"]),         # runs on into lower case: not "PoE"
+        ("HTTPServer", ["http", "server"]),
+    ])
+    def test_whole_words_do_not_match_inside_other_words(self, local, tokens):
+        assert _split_local_name("urn:x#" + local) == tokens
+
+
 # ── EmbeddingMatcher._concepts_hash ───────────────────────
 
 
