@@ -49,8 +49,13 @@ def _build_surfaces(
     tokens = _split_local_name(uri)
     if tokens:
         _add(" ".join(tokens), _rest())
-    _add(symbol, _rest())
-    _add(ucum, _rest())
+
+    # A quantity kind's symbol is a formula letter ("T", "ε", "C_D", "l_{ph}")
+    # that nobody types for it, and as text it attracts unrelated short
+    # queries ("pH" matched "l_{ph}"). It is not a surface at all.
+    if is_unit:
+        _add(symbol, _rest())
+        _add(ucum, _rest())
 
     return surfaces, exact
 

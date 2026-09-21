@@ -57,11 +57,11 @@ class TestBuildSurfaces:
         )
         assert surfaces == ["volumetric flow", "volume flow rate"]
 
-    def test_quantity_kind_symbol_stays_embedded(self):
+    def test_quantity_kind_symbol_is_not_a_surface(self):
         surfaces, exact = _build_surfaces(
-            "http://qudt.org/vocab/quantitykind/Temperature", ["Temperature"], "T", None, False
+            "http://qudt.org/vocab/quantitykind/Temperature", ["Temperature"], "T", "T", False
         )
-        assert "T" in surfaces
+        assert surfaces == ["temperature"]
         assert exact == []
 
     def test_deduplication(self):
