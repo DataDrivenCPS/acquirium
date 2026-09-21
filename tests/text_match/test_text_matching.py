@@ -69,7 +69,7 @@ pytestmark = pytest.mark.textmatch
 _CORPUS_DIR = Path(__file__).parent / "corpus"
 _OUTPUT_DIR = Path(__file__).parent.parent / "text_match_results"
 
-KINDS = ["class", "predicate", "unit", "quantity_kind", "substance", "process"]
+KINDS = ["class", "predicate", "unit", "quantity_kind", "substance", "process", "role"]
 
 MIN_SCORE = 0.6
 

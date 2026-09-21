@@ -146,7 +146,7 @@ class ConceptResolver:
                 "graph",
                 kinds=frozenset(
                     {None, "class", "predicate", "unit", "quantity_kind",
-                     "substance", "process"}
+                     "substance", "process", "role"}
                 ),
                 produce=_matcher(graph_matcher),
                 floor=0.8,

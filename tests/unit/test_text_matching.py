@@ -532,6 +532,56 @@ def test_exact_only_matcher_indexes_exact_surfaces_too(tmp_path: Path) -> None:
     assert m.query("ro", kind="process", top_k=1)[0].uri == "urn:t:RO"
 
 
+# ── GraphConcepts: roles are a kind of their own ──────────────────────
+
+_ROLE_TTL = """
+@prefix s223: <http://data.ashrae.org/standard223#> .
+@prefix watr: <urn:nawi-water-ontology#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix ex:   <urn:ex#> .
+
+s223:Condenser a s223:Class ; rdfs:subClassOf s223:Equipment ; rdfs:label "Condenser" .
+s223:Role-Condenser a s223:EnumerationKind-Role ; rdfs:subClassOf s223:EnumerationKind-Role ;
+    rdfs:label "Condenser Role" .
+watr:Role-Backwash rdfs:subClassOf s223:EnumerationKind-Role ; rdfs:label "Role-Backwash" .
+# typed as a role, but its superclass is a URI nobody declares
+watr:Role-NitrogenRemoval a s223:EnumerationKind-Role ; rdfs:subClassOf s223:Role-Missing .
+# a model using something as a role makes it one
+ex:pump1 s223:hasRole ex:Role-Standby .
+ex:Role-Standby rdfs:subClassOf ex:SomethingElse .
+"""
+
+
+def _graph_concepts(kind: str) -> dict[str, dict[str, Any]]:
+    from rdflib import Graph
+
+    g = Graph().parse(data=_ROLE_TTL, format="turtle")
+    rows = [tuple(None if cell is None else str(cell) for cell in row)
+            for row in g.query(GraphConcepts.concept_query(kind))]
+    return {c["uri"].split("#")[1]: c for c in GraphConcepts.extract_concepts(rows, kind)}
+
+
+def test_role_kind_holds_the_roles() -> None:
+    assert set(_graph_concepts("role")) == {
+        "EnumerationKind-Role", "Role-Condenser", "Role-Backwash", "Role-NitrogenRemoval", "Role-Standby",
+    }
+
+
+def test_roles_are_left_out_of_class() -> None:
+    classes = set(_graph_concepts("class"))
+    assert "Condenser" in classes
+    assert not {c for c in classes if c.startswith("Role-")} - {"Role-Missing"}
+    assert "EnumerationKind-Role" not in classes
+
+
+def test_role_is_found_by_its_bare_name() -> None:
+    roles = _graph_concepts("role")
+    assert roles["Role-Condenser"]["surfaces"] == ["condenser role", "condenser", "role condenser"]
+    assert roles["Role-Backwash"]["surfaces"] == ["role-backwash", "backwash", "role backwash"]
+    # only the role kind gets it: a class named Role-Missing keeps its full name
+    assert _graph_concepts("class")["Role-Missing"]["surfaces"] == ["role missing"]
+
+
 # ── initialisms of long labels ────────────────────────────────────────
 
 W, S = "urn:nawi-water-ontology#", "http://data.ashrae.org/standard223#"

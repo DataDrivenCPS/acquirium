@@ -51,7 +51,9 @@ Unit and quantity-kind fields are cross-checked against QUDT, so a compatible
 pair is preferred over two individually best matches that are incompatible.
 
 The `kind` argument picks the vocabulary: `class`, `predicate`, `process`,
-`substance`, `unit`, `quantity_kind`.
+`role`, `substance`, `unit`, `quantity_kind`.
+Note that roles are not classes: `"condenser"` resolves to the equipment with
+`kind="class"` and to `s223:Role-Condenser` with `kind="role"`.
 Anything that already looks like a URI passes through unchanged.
 
 ## Units and conversion

@@ -1,0 +1,343 @@
+{
+  "group": "synonym",
+  "kind": "role",
+  "cases": [
+    {
+      "text": "feed water",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Feed"
+      ]
+    },
+    {
+      "text": "influent feed",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Feed"
+      ]
+    },
+    {
+      "text": "product water",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Permeate"
+      ]
+    },
+    {
+      "text": "filtrate",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Permeate"
+      ]
+    },
+    {
+      "text": "permeate stream",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Permeate"
+      ]
+    },
+    {
+      "text": "makeup water",
+      "expected": [
+        "urn:nawi-water-ontology#Role-MakeUp"
+      ]
+    },
+    {
+      "text": "make-up supply",
+      "expected": [
+        "urn:nawi-water-ontology#Role-MakeUp"
+      ]
+    },
+    {
+      "text": "biosolids handling",
+      "expected": [
+        "urn:nawi-water-ontology#Role-SolidsHandling"
+      ]
+    },
+    {
+      "text": "sludge handling",
+      "expected": [
+        "urn:nawi-water-ontology#Role-SolidsHandling"
+      ]
+    },
+    {
+      "text": "solids processing",
+      "expected": [
+        "urn:nawi-water-ontology#Role-SolidsHandling"
+      ]
+    },
+    {
+      "text": "holding",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Storage",
+        "urn:nawi-water-ontology#Role-Retention",
+        "urn:nawi-water-ontology#Role-Detention"
+      ]
+    },
+    {
+      "text": "heat reclaim",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-HeatRecovery"
+      ]
+    },
+    {
+      "text": "waste heat recovery",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-HeatRecovery"
+      ]
+    },
+    {
+      "text": "recirculation",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-Recirculating"
+      ]
+    },
+    {
+      "text": "recycle loop",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-Recirculating"
+      ]
+    },
+    {
+      "text": "exhaust air",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-Exhaust"
+      ]
+    },
+    {
+      "text": "supply air",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-Supply"
+      ]
+    },
+    {
+      "text": "supply side",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-Supply"
+      ]
+    },
+    {
+      "text": "return air",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-Return"
+      ]
+    },
+    {
+      "text": "return side",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-Return"
+      ]
+    },
+    {
+      "text": "flow equalization",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Equalization"
+      ]
+    },
+    {
+      "text": "flow balancing",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Equalization"
+      ]
+    },
+    {
+      "text": "nitrogen reduction",
+      "expected": [
+        "urn:nawi-water-ontology#Role-NitrogenRemoval"
+      ]
+    },
+    {
+      "text": "removing nitrogen",
+      "expected": [
+        "urn:nawi-water-ontology#Role-NitrogenRemoval"
+      ]
+    },
+    {
+      "text": "phosphate removal",
+      "expected": [
+        "urn:nawi-water-ontology#Role-PhosphorusRemoval"
+      ]
+    },
+    {
+      "text": "removing phosphorus",
+      "expected": [
+        "urn:nawi-water-ontology#Role-PhosphorusRemoval"
+      ]
+    },
+    {
+      "text": "nutrient reduction",
+      "expected": [
+        "urn:nawi-water-ontology#Role-NutrientRemoval"
+      ]
+    },
+    {
+      "text": "oxygen-free",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Anaerobic",
+        "urn:nawi-water-ontology#Role-Anoxic"
+      ]
+    },
+    {
+      "text": "aerated",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Aerobic"
+      ]
+    },
+    {
+      "text": "with oxygen",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Aerobic"
+      ]
+    },
+    {
+      "text": "third stage",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Tertiary"
+      ]
+    },
+    {
+      "text": "tertiary treatment",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Tertiary"
+      ]
+    },
+    {
+      "text": "first stage",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Primary",
+        "http://data.ashrae.org/standard223#Role-Primary"
+      ]
+    },
+    {
+      "text": "primary treatment",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Primary",
+        "http://data.ashrae.org/standard223#Role-Primary"
+      ]
+    },
+    {
+      "text": "second stage",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Secondary",
+        "http://data.ashrae.org/standard223#Role-Secondary"
+      ]
+    },
+    {
+      "text": "secondary treatment",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Secondary",
+        "http://data.ashrae.org/standard223#Role-Secondary"
+      ]
+    },
+    {
+      "text": "preliminary treatment",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Pretreatment"
+      ]
+    },
+    {
+      "text": "upstream treatment",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Pretreatment"
+      ]
+    },
+    {
+      "text": "final treatment",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Posttreatment"
+      ]
+    },
+    {
+      "text": "polishing treatment",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Posttreatment"
+      ]
+    },
+    {
+      "text": "backwashing",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Backwash"
+      ]
+    },
+    {
+      "text": "filter backwash",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Backwash"
+      ]
+    },
+    {
+      "text": "drainage",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Drain"
+      ]
+    },
+    {
+      "text": "draining",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Drain"
+      ]
+    },
+    {
+      "text": "spill containment",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Containment"
+      ]
+    },
+    {
+      "text": "heat supply",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-Heating"
+      ]
+    },
+    {
+      "text": "chilling",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-Cooling"
+      ]
+    },
+    {
+      "text": "stabilizing",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Stabilization"
+      ]
+    },
+    {
+      "text": "outfall",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-Discharge"
+      ]
+    },
+    {
+      "text": "discharging",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-Discharge"
+      ]
+    },
+    {
+      "text": "fresh air intake",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-OutdoorAirIntake"
+      ]
+    },
+    {
+      "text": "outside air intake",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-OutdoorAirIntake"
+      ]
+    },
+    {
+      "text": "ventilation",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-Ventilating"
+      ]
+    },
+    {
+      "text": "moisture removal",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-Dehumidifying"
+      ]
+    },
+    {
+      "text": "dehumidification",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-Dehumidifying"
+      ]
+    }
+  ]
+}

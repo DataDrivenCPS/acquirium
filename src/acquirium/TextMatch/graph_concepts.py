@@ -1,4 +1,4 @@
-"""Class / predicate / substance / process concept extraction.
+"""Class / predicate / substance / process / role concept extraction.
 
 Pure extractor, the graph-side counterpart of :class:`QUDTStore`: it holds the
 SPARQL query of each kind and turns the query's rows into concept dicts (uri,
@@ -37,6 +37,20 @@ _LABEL_BLOCK = f"""
   }}
 """
 
+# A role ("backwash", "permeate", "primary") qualifies equipment; it is not
+# equipment. The s223 role enumeration, which the NAWI roles extend, plus
+# whatever the loaded model actually uses as a role. An enumeration member is
+# both a subclass and an instance of its enumeration kind; either one counts.
+# (?roleHolder, not ?x: the class query binds ?x, and this block is also used
+# inside its FILTER NOT EXISTS.)
+_ROLE_ROOT = S223["EnumerationKind-Role"]
+_IS_ROLE = f"""
+  {{ ?uri (<{RDFS.subClassOf}>)* <{_ROLE_ROOT}> . }}
+  UNION {{ ?uri a <{_ROLE_ROOT}> . }}
+  UNION {{ ?roleHolder <{S223.hasRole}> ?uri . }}
+"""
+_ROLE_WHERE = _IS_ROLE
+
 _CLASS_WHERE = f"""
   {{ ?uri a <{RDFS.Class}> . }}
   UNION {{ ?uri a <{OWL_CLASS}> . }}
@@ -49,6 +63,7 @@ _CLASS_WHERE = f"""
   UNION {{ ?x <{HAS_MEDIUM}> ?uri . }}
   FILTER NOT EXISTS {{ ?uri (<{RDFS.subClassOf}>)* <{WATR.Process}> . }}
   FILTER(!STRSTARTS(STR(?uri), "{WATR}Process"))
+  FILTER NOT EXISTS {{ {_IS_ROLE} }}
 """
 
 _PREDICATE_WHERE = f"""
@@ -85,6 +100,7 @@ _WHERE = {
     "predicate": _PREDICATE_WHERE,
     "substance": _SUBSTANCE_WHERE,
     "process": _PROCESS_WHERE,
+    "role": _ROLE_WHERE,
 }
 
 _INITIALISM_MIN_WORDS = 3
@@ -96,9 +112,13 @@ def _local_name(uri: str) -> str:
 
 
 class GraphConcepts:
-    """Extract class / predicate / substance / process concepts from SPARQL rows."""
+    """Extract class / predicate / substance / process / role concepts from SPARQL rows.
 
-    KINDS: tuple[str, ...] = ("class", "predicate", "substance", "process")
+    Processes and roles are kinds of their own and are left out of ``class``,
+    so "condenser" as a class is the equipment and as a role is the role.
+    """
+
+    KINDS: tuple[str, ...] = ("class", "predicate", "substance", "process", "role")
 
     @staticmethod
     def concept_query(kind: str) -> str:
@@ -142,6 +162,13 @@ class GraphConcepts:
                 if lbl_lower not in surfaces:
                     surfaces.append(lbl_lower)
             tokens = _split_local_name(uri)
+            # "Role-Backwash" is asked for as "backwash". Within the role kind
+            # the bare name is unambiguous; within class it was not, because
+            # "condenser" is also a piece of equipment.
+            if kind == "role" and len(tokens) > 1 and tokens[0] == "role":
+                bare = " ".join(tokens[1:])
+                if bare not in surfaces:
+                    surfaces.append(bare)
             if tokens:
                 joined = " ".join(tokens)
                 if joined not in surfaces:

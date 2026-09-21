@@ -319,7 +319,7 @@ class Manager:
     # ----- Embedding index methods -----
 
     def _extract_concepts_for_embedding(self, iris: list[str]) -> list[dict[str, Any]]:
-        """Extract class / predicate / substance / process concepts.
+        """Extract class / predicate / substance / process / role concepts.
 
         The queries run over an in-memory Oxigraph copy of the union of the
         ontology graphs named by *iris* (water + s223; imports not followed).
@@ -363,7 +363,7 @@ class Manager:
         """Build both embedding indexes once from the static ontoenv graphs.
 
         graph matcher <- water + s223 vocabularies (class / predicate /
-        substance / process); qudt matcher <- the QUDT unit + quantity_kind
+        substance / process / role); qudt matcher <- the QUDT unit + quantity_kind
         vocabularies. Both are queried in Oxigraph by graph IRI (owl:imports
         not followed); no inserted data is embedded.
 

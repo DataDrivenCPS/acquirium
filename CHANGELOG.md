@@ -10,6 +10,17 @@ change in any release.
 
 ## [Unreleased]
 
+### Added
+- Text resolution has a `role` kind: the s223 role enumeration, the NAWI roles
+  that extend it, and whatever a loaded model uses with `s223:hasRole`. A role
+  is found by its bare name, so `resolve_text("backwash", kind="role")` returns
+  `nawi:Role-Backwash`.
+
+### Changed
+- Roles are no longer part of `kind="class"`. `resolve_text("condenser",
+  kind="class")` returns the equipment class only; the role needs
+  `kind="role"`.
+
 ## [0.4.0a8] - 2026-09-17
 
 ### Added
