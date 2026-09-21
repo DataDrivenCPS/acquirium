@@ -439,7 +439,7 @@ class ConceptResolver:
           quantity kind's ``qudt:applicableUnit`` (see ``QUDTStore``; the
           converter source carries ``unit_def.quantity_kinds``).
           Graph-matcher concepts always have ``related == ()``
-          (``_aggregate_uri_label_rows``), so context can never move a
+          (``GraphConcepts.extract_concepts``), so context can never move a
           class/predicate or a graph-defined unit/QK.
 
         Consequences (the narrowness is deliberate, but real):

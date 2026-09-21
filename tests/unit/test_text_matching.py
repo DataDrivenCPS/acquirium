@@ -23,7 +23,8 @@ from typing import Any
 import numpy as np
 import pytest
 
-from acquirium.Server.manager import Manager, _add_initialisms
+from acquirium.Server.manager import Manager
+from acquirium.TextMatch.graph_concepts import GraphConcepts
 from acquirium.TextMatch.embedding_matcher import (
     DEFAULT_MODEL,
     EmbeddingMatcher,
@@ -541,7 +542,7 @@ def _concept(uri: str, kind: str, *surfaces: str) -> dict[str, Any]:
 
 
 def _initialisms_of(concepts: list[dict[str, Any]]) -> dict[str, list[str]]:
-    _add_initialisms(concepts)
+    GraphConcepts.add_initialisms(concepts)
     return {c["uri"].split("#")[1]: c.get("exact_surfaces", []) for c in concepts}
 
 
