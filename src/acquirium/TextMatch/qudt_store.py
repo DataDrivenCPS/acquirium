@@ -2,7 +2,7 @@
 
 Pure extractor: given the rows of :meth:`QUDTStore.concept_query` (run over
 an ontology graph) and an RDF type, return concept dicts (uri, kind, label,
-surfaces, symbol, ucum, related) for the embedding index. This module does
+surfaces, exact_surfaces, symbol, ucum, related) for the embedding index. This module does
 no querying, parsing, fetching, or disk caching.
 """
 
@@ -20,31 +20,34 @@ from acquirium.TextMatch.embedding_matcher import _split_local_name
 logger = logging.getLogger("acquirium.qudt_store")
 
 
-def _build_surfaces(uri: str, labels: list[str], symbol: str | None, ucum: str | None) -> list[str]:
-    """Build the set of surface forms for a single QUDT concept."""
+def _build_surfaces(
+    uri: str, labels: list[str], symbol: str | None, ucum: str | None, is_unit: bool
+) -> tuple[list[str], list[str]]:
+    """Surface forms of a single QUDT concept: ``(embedded, exact-only)``."""
     surfaces: list[str] = []
+    exact: list[str] = []
     seen: set[str] = set()
 
-    def _add(s: str) -> None:
+    def _add(s: str | None, into: list[str]) -> None:
         if s and s not in seen:
             seen.add(s)
-            surfaces.append(s)
+            into.append(s)
 
     for label in labels:
-        _add(label.lower())
+        _add(label.lower(), surfaces)
 
     tokens = _split_local_name(uri)
     if tokens:
-        _add(" ".join(tokens))
+        _add(" ".join(tokens), surfaces)
 
-    # Symbol / UCUM code as surfaces; the matcher's exact stage normalizes
-    # case and whitespace so "kg", "KG", "mg/L" match without embeddings.
-    if symbol:
-        _add(symbol)
-    if ucum:
-        _add(ucum)
+    # A unit's symbol and UCUM code are looked up, never embedded: the
+    # matcher's exact stage answers "kg" / "KG" / "mg/L", and UnitKeyIndex
+    # answers every other spelling of the expression ("mg·L⁻¹", "mg per L").
+    code_target = exact if (is_unit and surfaces) else surfaces
+    _add(symbol, code_target)
+    _add(ucum, code_target)
 
-    return surfaces
+    return surfaces, exact
 
 
 class QUDTStore:
@@ -118,7 +121,7 @@ class QUDTStore:
             ucums = sorted({o for o, _ in by_pred.get(str(QUDT.ucumCode), ())})  # noqa: F405
             ucum = ucums[0] if ucums else None
 
-            surfaces = _build_surfaces(uri, labels, symbol, ucum)
+            surfaces, exact_surfaces = _build_surfaces(uri, labels, symbol, ucum, is_unit)
             if not surfaces:
                 continue
 
@@ -127,6 +130,7 @@ class QUDTStore:
                 "kind": "unit" if is_unit else "quantity_kind",
                 "label": display_label or " ".join(_split_local_name(uri)) or uri,
                 "surfaces": surfaces,
+                "exact_surfaces": exact_surfaces,
                 "symbol": symbol,
                 "ucum": ucum,
                 "related": sorted({o for o, _ in by_pred.get(relation_pred, ())}),

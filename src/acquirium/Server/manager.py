@@ -36,6 +36,7 @@ from acquirium.TextMatch.embedding_matcher import (
 )
 from acquirium.TextMatch.qudt_store import QUDTStore
 from acquirium.TextMatch.resolver import ConceptResolver
+from acquirium.TextMatch.unit_key import UnitKeyIndex
 
 from acquirium.internals._log import timed_debug
 
@@ -247,11 +248,15 @@ class Manager:
             name="qudt",
         )
 
+        # Units by typed expression; built with the QUDT index, no model needed.
+        self._unit_key_index: UnitKeyIndex | None = None
+
         # Single normalization façade, sharing the lazily-built converter.
         self._concept_resolver = ConceptResolver(
             graph_matcher=self._graph_matcher,
             qudt_matcher=self._qudt_matcher,
             converter_provider=self._ensure_qudt_converter,
+            unit_keys_provider=lambda: self._unit_key_index,
         )
 
         # Kept for backward compat — points to graph matcher
@@ -512,6 +517,7 @@ class Manager:
                     )
                     qc += QUDTStore.extract_concepts(rows, rdf_type)
             logger.debug("qudt embedding: %d total concepts", len(qc))
+            self._unit_key_index = UnitKeyIndex([c for c in qc if c["kind"] == "unit"])
             if qc:
                 with timed_debug(logger, "qudt embedding: build_index n=%d", len(qc)):
                     self._qudt_matcher.build_index(qc)

@@ -32,6 +32,7 @@ from acquirium.TextMatch.embedding_matcher import (
     load_embedding_model,
 )
 from acquirium.TextMatch.qudt_store import QUDTStore
+from acquirium.TextMatch.unit_key import UnitKeyIndex, unit_key
 from acquirium.TextMatch.resolver import ConceptResolver
 from acquirium.internals.qudt_units import UnitNotFound
 
@@ -749,6 +750,118 @@ class TestProcessKindRouting:
         ])
         out = r.resolve("reverse osmosis", kind="process", min_score=0.4)
         assert out and out[0].uri == "urn:nawi-water-ontology#Process-ReverseOsmosis"
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 5b. Unit expressions: unit_key and the unit_key source
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestUnitKey:
+    @pytest.mark.parametrize("spellings", [
+        ["m3/h", "m^3/h", "m³/h", "m3 / h", "m3.h-1", "m³·h⁻¹", "m3 per h", "m**3/h"],
+        ["mg/L", "mg / L", "mg L-1", "mg·L⁻¹", "mg.L-1", "mg per L"],
+        ["Btu{IT}/(ft²·s)", "Btu/(ft2.s)", "Btu.ft-2.s-1"],
+        ["°C", "deg C", "degC", "Deg. C", "° C", "ºC"],
+        ["J/(kg·K)", "J.kg-1.K-1", "J/kg/K"],
+        ["kW·h", "kW.h", "kW h", "kW-h"],
+        ["µS/cm", "μS/cm"],
+    ])
+    def test_spellings_of_one_expression_share_a_key(self, spellings):
+        assert len({unit_key(s) for s in spellings}) == 1
+        assert unit_key(spellings[0]) is not None
+
+    def test_key_is_sorted_atoms_with_exponents(self):
+        assert unit_key("m3/h") == "h^-1|m^3"
+        assert unit_key("m/s2") == unit_key("m.s-2") == "m^1|s^-2"
+
+    def test_case_is_kept_unless_folded(self):
+        assert unit_key("mW") != unit_key("MW")
+        assert unit_key("mW", fold_case=True) == unit_key("MW", fold_case=True)
+
+    def test_atoms_with_inner_digits(self):
+        assert unit_key("inH2O") == "inH2O^1"
+
+    @pytest.mark.parametrize("text", ["", "   ", "10*3/uL", "m3/(h", "x" * 60])
+    def test_not_an_expression(self, text):
+        assert unit_key(text) is None
+
+
+def _unit(local, symbol=None, ucum=None, related=()):
+    return {"uri": f"http://qudt.org/vocab/unit/{local}", "kind": "unit", "label": local,
+            "symbol": symbol, "ucum": ucum, "related": list(related)}
+
+
+_UNITS = [
+    _unit("M3-PER-HR", "m³/h", "m3.h-1"),
+    _unit("GAL_UK-PER-MIN", "gal{UK}/min", "[gal_br].min-1"),
+    _unit("GAL_US-PER-MIN", "gal{US}/min", "[gal_us].min-1"),
+    _unit("KiloGAUSS", "kG", "kG"),
+    _unit("KiloGM", "kg", "kg", related=["urn:qk:Mass", "urn:qk:Weight"]),
+    _unit("MicroS-PER-CentiM", "µS/cm", "uS.cm-1"),
+    _unit("FT", "ft", "[ft_i]"),
+    _unit("FT_US", "ft{US Survey}", "[ft_us]"),
+    _unit("NoCodes"),
+]
+
+
+def _locals(hits):
+    return [c["uri"].rsplit("/", 1)[-1] for c, _matched in hits]
+
+
+class TestUnitKeyIndex:
+    def test_any_spelling_finds_the_unit(self):
+        idx = UnitKeyIndex(_UNITS)
+        for text in ("m3/h", "m^3/h", "m³·h⁻¹", "m3 per h", "M3/H"):
+            assert _locals(idx.lookup(text)) == ["M3-PER-HR"], text
+
+    def test_symbol_and_ucum_spellings_both_work(self):
+        idx = UnitKeyIndex(_UNITS)
+        assert _locals(idx.lookup("µS/cm")) == _locals(idx.lookup("uS/cm")) == ["MicroS-PER-CentiM"]
+
+    def test_us_customary_first_among_units_sharing_a_key(self):
+        assert _locals(UnitKeyIndex(_UNITS).lookup("gal/min")) == ["GAL_US-PER-MIN", "GAL_UK-PER-MIN"]
+
+    def test_us_survey_units_are_not_preferred(self):
+        assert _locals(UnitKeyIndex(_UNITS).lookup("ft")) == ["FT", "FT_US"]
+
+    def test_case_exact_reading_first(self):
+        idx = UnitKeyIndex(_UNITS)
+        assert _locals(idx.lookup("kG")) == ["KiloGAUSS", "KiloGM"]
+        assert _locals(idx.lookup("kg")) == ["KiloGM", "KiloGAUSS"]
+        # neither reading is case-exact: the unit with more quantity kinds leads
+        assert _locals(idx.lookup("KG")) == ["KiloGM", "KiloGAUSS"]
+
+    def test_reports_the_symbol_or_code_that_matched(self):
+        assert UnitKeyIndex(_UNITS).lookup("m3.h-1")[0][1] == "m³/h"
+
+    def test_words_are_not_units(self):
+        assert UnitKeyIndex(_UNITS).lookup("sedimentation tank") == []
+
+
+class TestUnitKeySource:
+    def _resolver(self, conv=None):
+        idx = UnitKeyIndex(_UNITS)
+        return ConceptResolver(
+            graph_matcher=FakeMatcher([]), qudt_matcher=FakeMatcher([]),
+            converter_provider=(lambda: conv) if conv is not None else _no_converter,
+            unit_keys_provider=lambda: idx,
+        )
+
+    def test_expression_is_answered_before_the_converter(self):
+        # converter_provider raises if invoked: the early exit must stop first.
+        hit = self._resolver().resolve("m3/h", kind="unit", top_k=1)[0]
+        assert hit.uri.endswith("/M3-PER-HR")
+        assert (hit.score, hit.match_stage, hit.matched_surface) == (1.0, "exact", "m³/h")
+
+    def test_only_units_use_it(self):
+        assert self._resolver().resolve("m3/h", kind="quantity_kind") == []
+
+    def test_no_index_yet_falls_through(self):
+        conv = FakeConverter({})
+        r = ConceptResolver(FakeMatcher([]), FakeMatcher([]), lambda: conv, unit_keys_provider=lambda: None)
+        assert r.resolve("m3/h", kind="unit") == []
+        assert conv.calls, "the converter tier still runs"
 
 
 # ══════════════════════════════════════════════════════════════════════
