@@ -524,18 +524,23 @@ class AcquiriumClient:
     def expand_uri(self, text: Any) -> str:
         """Expand a ``prefix:local`` CURIE to a full URI using bound namespaces.
 
-        Passes already-full URIs (``urn:``, ``http://``, ``https://``)
-        through unchanged. Non-string inputs are cast to ``str``. Returns
-        the input unchanged if the prefix is not bound.
+        Accepts a CURIE only: a full URI (``urn:``, ``http://``, ...) or an
+        unbound prefix raises ``ValueError``. Non-string inputs are cast to
+        ``str``. Use :meth:`node_uri` where either form is acceptable.
         """
         s = str(text)
-        if s.startswith(("urn:", "http://", "https://")):
-            return s
         nm = self.namespace_manager()
         try:
             return str(nm.expand_curie(s))
         except Exception as e:
             raise ValueError(f"Cannot expand '{s}': no matching namespace for CURIE and not a full URI")
+
+    def node_uri(self, text: Any) -> str:
+        """A node given as a full URI or a bound CURIE, as a full URI string."""
+        s = str(text)
+        if s.startswith(("urn:", "http://", "https://")):
+            return s
+        return self.expand_uri(s)
 
     def _expand_curie(self, text: str) -> Optional[str]:
         """Expand ``prefix:local`` when the server binds the prefix, else None."""
@@ -950,7 +955,7 @@ class AcquiriumClient:
                 # Same map insert_metadata takes; a stream is born with its
                 # equipment link and annotations, in its own graph.
                 write = plan_write(str(subj), extra, role="data",
-                                   resolve=self._resolve_one, expand_uri=self.expand_uri)
+                                   resolve=self._resolve_one, expand_uri=self.node_uri)
                 for triple in write.triples:
                     graph.add(triple)
         for source_id, graph in graphs.items():
@@ -1006,7 +1011,7 @@ class AcquiriumClient:
         from acquirium.Client.metadata import plan_write, update_text
         from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
 
-        subjects = {self.expand_uri(uri): values for uri, values in records.items()}
+        subjects = {self.node_uri(uri): values for uri, values in records.items()}
         if not subjects:
             return {"ok": True, "nodes": 0}
         roles = self.node_roles(subjects)
@@ -1015,7 +1020,7 @@ class AcquiriumClient:
             raise ValueError(f"unknown node(s), not in any data graph: {missing}")
         writes = [
             plan_write(uri, values, role=roles[uri],
-                       resolve=self._resolve_one, expand_uri=self.expand_uri)
+                       resolve=self._resolve_one, expand_uri=self.node_uri)
             for uri, values in subjects.items()
         ]
         update = update_text(writes)

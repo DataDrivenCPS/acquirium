@@ -187,14 +187,16 @@ class TestClientInsert:
         assert f"<urn:x#e> <{HAS_PROP}> <{NODE}>" in update
         assert f'<{NODE}> <{ATTR_NS}tags.0> "a"' in update
 
-    def test_full_uri_subjects_pass_expand_uri(self):
-        client = AcquiriumClient.__new__(AcquiriumClient)
-        client.base_url = "http://test:8000"
-        client._namespaces_cache = Graph()  # no prefixes bound at all
-        for uri in ("urn:x#a", "http://example.org/a", "https://example.org/a"):
-            assert client.expand_uri(uri) == uri
-        with pytest.raises(ValueError, match="Cannot expand"):
-            client.expand_uri("nope:a")
+    def test_full_uris_bypass_curie_expansion(self):
+        # expand_uri accepts CURIEs only (an integration test pins that); the
+        # URIs a query matched, and relation values, must still be accepted.
+        client = make_client([[NODE, "urn:x#ref"]])
+        client.expand_uri = MagicMock(side_effect=lambda s: (_ for _ in ()).throw(ValueError(s))
+                                      if "://" in s or s.startswith("urn:") else expand(s))
+        client.insert_metadata({NODE: {"entity": ["urn:x#e", "x:e2"]}})
+        update = client.sparql_update.call_args[0][0]
+        assert f"<urn:x#e> <{HAS_PROP}> <{NODE}>" in update and f"<urn:x#e2> <{HAS_PROP}> <{NODE}>" in update
+        assert client.node_uri("x:e2") == "urn:x#e2" and client.node_uri(NODE) == NODE
 
     def test_unknown_subject_raises(self):
         client = make_client([])

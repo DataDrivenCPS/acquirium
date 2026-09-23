@@ -323,7 +323,8 @@ and are listed once above.
 | `node_roles(uris) -> dict[str, str]` | `"data"` or `"entity"` per URI the data graphs know; unknown URIs are left out. |
 | `namespace_manager() -> NamespaceManager` | The prefix table bound on the server, cached. |
 | `compact_uri(item) -> str` | URI to `prefix:local`. |
-| `expand_uri(text) -> str` | `prefix:local` to URI; full URIs pass through. |
+| `expand_uri(text) -> str` | `prefix:local` to URI; a full URI or an unbound prefix raises. |
+| `node_uri(text) -> str` | A node as a full URI or a bound CURIE, returned as a full URI. |
 
 ### Resolution
 
