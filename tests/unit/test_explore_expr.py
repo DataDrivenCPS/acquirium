@@ -111,10 +111,13 @@ class TestExpressions:
 
 class TestTerms:
     def test_typed_rendering(self):
-        assert _term(2015) == "2015" and _term(2.5) == "2.5" and _term(True) == "true"
+        xsd = "http://www.w3.org/2001/XMLSchema#"
+        assert _term(2015) == f'"2015"^^<{xsd}integer>'
+        assert _term(2.5) == f'"2.5"^^<{xsd}double>'
+        assert _term(True) == f'"true"^^<{xsd}boolean>'
         assert _term("a") == '"a"' and _term('say "hi"') == '"say \\"hi\\""'
-        assert _term(date(2020, 1, 2)).startswith('"2020-01-02"^^')
-        assert _term(datetime(2020, 1, 2, 3, 4)).startswith('"2020-01-02T03:04:00"^^')
+        assert _term(date(2020, 1, 2)) == f'"2020-01-02"^^<{xsd}date>'
+        assert _term(datetime(2020, 1, 2, 3, 4)) == f'"2020-01-02T03:04:00"^^<{xsd}dateTime>'
         assert _term("urn:x#y") == "<urn:x#y>"
 
 
@@ -142,17 +145,17 @@ class TestWhereWithExpressions:
     def test_ordering_compiles_to_exists_filter(self):
         a = attr(make_client())
         q = Query(client=make_client()).entity(CLS_A, alias="ro").where(a.product_info.year >= 2015)
-        assert (f"FILTER(EXISTS {{ ?v0 (<{ATTR_NS}product_info.year>) ?_x . FILTER(?_x >= 2015) }})"
-                in q.to_sparql())
+        assert (f"FILTER(EXISTS {{ ?v0 (<{ATTR_NS}product_info.year>) ?_x . "
+                f"FILTER(?_x >= {_term(2015)}) }})" in q.to_sparql())
 
     def test_or_and_not(self):
         a = attr(make_client())
         q = (Query(client=make_client()).entity(CLS_A, alias="ro")
              .where((a.product_info.year >= 2015) | ~(a.product_info.manufacturer == "Siemens")))
         s = q.to_sparql()
-        assert ("FILTER((EXISTS { ?v0 (<%sproduct_info.year>) ?_x . FILTER(?_x >= 2015) } || "
+        assert ("FILTER((EXISTS { ?v0 (<%sproduct_info.year>) ?_x . FILTER(?_x >= %s) } || "
                 "!(EXISTS { ?v0 (<%sproduct_info.manufacturer>) \"Siemens\" . })))"
-                % (ATTR_NS, ATTR_NS)) in s
+                % (ATTR_NS, _term(2015), ATTR_NS)) in s
 
     def test_list_any_element_and_exists(self):
         a = attr(make_client())

@@ -154,6 +154,30 @@ class Acquirium:
             source_id=source_id,
         )
 
+    def insert_metadata(self, uri: str | URIRef, values: Mapping[str, Any]) -> dict[str, Any]:
+        """Attach metadata to one node (entity or measurement) by URI or CURIE.
+
+        ``values`` is a plain map. A key that names a built-in attribute
+        (``unit``, ``medium``, ``label``, ``type``, ...) is written with that
+        attribute's predicate, text resolved to a URI. ``entity`` on a
+        measurement links it to its equipment; ``measurement`` on an entity
+        does the reverse. Any other key is a user attribute, nested dicts
+        and lists flattened to dotted paths, that ``where``/``include``/
+        ``options``/``facets`` then accept, and ``aq.attr`` completes::
+
+            aq.insert_metadata("dpr:valve-1", {
+                "last_cleaned": "03-12-1999",
+                "product_info": {"manufacturer": "Siemens", "year": 2019},
+                "tags": ["lab", "critical"],
+                "entity": "dpr:ozone-generator",
+            })
+            aq.query().measurement().where(aq.attr.product_info.year >= 2015)
+
+        Writing a key replaces its previous value; ``None`` removes it. Keys
+        not mentioned stay. Metadata lives as long as the node does.
+        """
+        return self.client.insert_metadata({str(uri): values})
+
     def sparql_update(self, update: str, *, source_id: str) -> dict[str, Any]:
         """Execute a SPARQL update against one explicitly owned data graph.
 

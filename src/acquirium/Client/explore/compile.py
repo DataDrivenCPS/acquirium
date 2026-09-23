@@ -12,11 +12,11 @@ used a private ``_Exclude`` wrapper with identical SPARQL output).
 """
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping
 from datetime import date, datetime
 from typing import Any, List
 
+from rdflib import Literal
 from rdflib.namespace import RDF, RDFS
 
 import itertools
@@ -47,28 +47,18 @@ def _is_iri(x: object) -> bool:
     return isinstance(x, str) and ("://" in x or x.startswith("urn:"))
 
 
-_XSD = "http://www.w3.org/2001/XMLSchema#"
-
-
 def _term(x: object) -> str:
     """Return the SPARQL term for a Python value.
 
-    URIs render as ``<iri>``; ``bool``/``int``/``float`` as SPARQL numeric
-    and boolean literals; ``datetime``/``date`` as typed ``xsd:`` literals;
-    anything else as a quoted string. Typed rendering is what lets a filter
-    on an ``insert_metadata`` value (``xsd:integer`` in the graph) compare
-    numerically instead of by string.
+    URIs render as ``<iri>``; ``bool``/``int``/``float``/``datetime``/
+    ``date`` as the typed literal rdflib writes for the same Python value
+    (``"2.5"^^xsd:double``, never SPARQL's bare ``2.5``, which is a
+    decimal and a different term); anything else as a quoted string. The
+    same rendering on both sides is what makes an equality filter match a
+    value ``insert_metadata`` wrote, and a typed value compare numerically.
     """
-    if isinstance(x, bool):
-        return "true" if x else "false"
-    if isinstance(x, int):
-        return str(x)
-    if isinstance(x, float):
-        return repr(x) if math.isfinite(x) else f'"{x}"^^<{_XSD}double>'
-    if isinstance(x, datetime):
-        return f'"{x.isoformat()}"^^<{_XSD}dateTime>'
-    if isinstance(x, date):
-        return f'"{x.isoformat()}"^^<{_XSD}date>'
+    if isinstance(x, (bool, int, float, datetime, date)):
+        return Literal(x).n3()
     if _is_iri(x):
         return f"<{x}>"
     text = str(x).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")

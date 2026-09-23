@@ -944,6 +944,33 @@ class Query:
             raise ValueError(f"at: unknown alias {alias!r}")
         return self._with_graph(replace(self.query_graph, current_pointer=nid))
 
+    # ---------- writes ----------
+
+    def insert_metadata(self, values: Dict[str, Any], *, of: Optional[str] = None,
+                        include_dependencies: bool = True) -> dict:
+        """Attach the same metadata to every node the pattern matches.
+
+        ``of`` targets a node by alias (default: current pointer). The
+        pattern runs, and the value map is written on each matched node as
+        :meth:`Acquirium.insert_metadata` would, in one update::
+
+            (aq.query().entity("Valve").measurement()
+               .where(unit="mg/L")
+               .insert_metadata({"reviewed": True}))
+
+        Returns the server's result with ``nodes``, the number written.
+        """
+        g = self.query_graph
+        nid = g.resolve_alias(of)
+        if nid is None:
+            raise ValueError(
+                f"insert_metadata: unknown alias {of!r}" if of is not None
+                else "insert_metadata: no current node (start with entity())"
+            )
+        alias = g.aliases_reverse.get(nid, str(nid))
+        uris = self.resolved_nodes(alias=alias, include_dependencies=include_dependencies)
+        return self.client.insert_metadata({uri: values for uri in uris})
+
     # ---------- faceted exploration ----------
 
     def options(self, attr_name: str, *, of: Optional[str] = None,

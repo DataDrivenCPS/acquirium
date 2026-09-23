@@ -1,4 +1,4 @@
-from typing import Optional, Iterator, Iterable, Any, Callable, TYPE_CHECKING
+from typing import Optional, Iterator, Iterable, Any, Callable, Mapping, TYPE_CHECKING
 from datetime import datetime, timezone
 import json
 import re
@@ -216,6 +216,33 @@ def _build_stream_triples(
     target = ref_uri if ref_uri is not None else subj
     for pred, value in (stream.get("properties") or {}).items():
         _add_triple(g, target, pred, value)
+    return subj
+
+
+def _split_stream_metadata(stream: dict) -> tuple[dict, dict]:
+    """Return ``(stream with metadata fields merged in, remaining metadata)``.
+
+    A ``metadata`` key naming a top-level stream field (``unit``, ``label``,
+    ...) is the same declaration and merges into the stream; giving both
+    with different values is an error. Everything else (user attributes,
+    relations, other built-ins) is written on the point by the metadata
+    builder.
+    """
+    from acquirium.Client.metadata import STREAM_FIELDS
+
+    meta = dict(stream.get("metadata") or {})
+    merged = {k: v for k, v in stream.items() if k != "metadata"}
+    rest: dict = {}
+    for key, value in meta.items():
+        if key in STREAM_FIELDS:
+            current = merged.get(key)
+            if current is not None and str(current) != str(value):
+                raise ValueError(
+                    f"stream gives {key}={current!r} and metadata gives {key}={value!r}")
+            merged[key] = value
+        else:
+            rest[key] = value
+    return merged, rest
 
 
 class AcquiriumClient:
@@ -899,8 +926,11 @@ class AcquiriumClient:
         the same ``source_id`` and source-local ``ref_name``. Acquirium resolves
         those inserts to the same canonical reference URI internally.
         """
+        from acquirium.Client.metadata import plan_write
+
         graphs: dict[str, Graph] = {}
         for stream in streams:
+            stream, extra = _split_stream_metadata(stream)
             source_id = stream.get("source_id")
             if not isinstance(source_id, str) or not source_id:
                 raise ValueError("each stream registration requires a non-empty source_id")
@@ -913,7 +943,14 @@ class AcquiriumClient:
             resolved = self.resolve_point_metadata(meta) if meta else {}
             point_uri = stream.get("point_uri")
             existing = self._point_metadata(str(point_uri)) if point_uri is not None else {}
-            _build_stream_triples(graph, stream, resolved, existing, self._units_compatible)
+            subj = _build_stream_triples(graph, stream, resolved, existing, self._units_compatible)
+            if extra:
+                # Same map insert_metadata takes; a stream is born with its
+                # equipment link and annotations, in its own graph.
+                write = plan_write(str(subj), extra, role="data",
+                                   resolve=self._resolve_one, expand_uri=self.expand_uri)
+                for triple in write.triples:
+                    graph.add(triple)
         for source_id, graph in graphs.items():
             if len(graph):
                 self.insert_graph(
@@ -922,6 +959,68 @@ class AcquiriumClient:
                     replace=False,
                     source_id=source_id,
                 )
+
+    def _resolve_one(self, text: str, kind: str) -> Optional[str]:
+        """Resolve one text value of the given kind to a URI, or None."""
+        hits = self.resolve({"v": (text, kind)}, min_score=0.4) or {}
+        return hits.get("v")
+
+    def node_roles(self, uris: Iterable[str]) -> dict[str, str]:
+        """``{uri: "data" | "entity"}`` for the nodes the data graphs know.
+
+        A node is a data node when it carries an external reference, the
+        same rule the explore layer's measurement nodes follow. A URI the
+        graphs do not mention (as subject or object) is left out.
+        """
+        uris = list(dict.fromkeys(str(u) for u in uris))
+        roles: dict[str, str] = {}
+        for i in range(0, len(uris), 500):
+            chunk = " ".join(f"<{u}>" for u in uris[i:i + 500])
+            sparql = (
+                "SELECT DISTINCT ?s ?ref\nWHERE {\n"
+                f"  VALUES ?s {{ {chunk} }}\n"
+                "  { ?s ?p ?o . } UNION { ?x ?q ?s . }\n"
+                f"  OPTIONAL {{ ?s <{HAS_EXTERNAL_REFERENCE}> ?ref . }}\n}}"
+            )
+            res = self.sparql_query(sparql, include_dependencies=False)
+            cols = res.get("columns", [])
+            si = cols.index("s") if "s" in cols else 0
+            ri = cols.index("ref") if "ref" in cols else 1
+            for row in res.get("rows", []):
+                s = str(row[si])
+                if row[ri] is not None or s not in roles:
+                    roles[s] = "data" if row[ri] is not None else "entity"
+        return roles
+
+    def insert_metadata(self, records: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+        """Write value maps on nodes: ``{node_uri: {key: value}}``.
+
+        See :mod:`acquirium.Client.metadata` for what a value map may hold.
+        Subjects may be CURIEs. Every subject must already exist in a data
+        graph; text on a URI-valued built-in is resolved. Writes land in the
+        reserved metadata source graph as one SPARQL update, so each key is
+        replaced atomically and nothing outside that graph is touched.
+        """
+        from acquirium.Client.metadata import plan_write, update_text
+        from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
+
+        subjects = {self.expand_uri(uri): values for uri, values in records.items()}
+        if not subjects:
+            return {"ok": True, "nodes": 0}
+        roles = self.node_roles(subjects)
+        missing = sorted(set(subjects) - set(roles))
+        if missing:
+            raise ValueError(f"unknown node(s), not in any data graph: {missing}")
+        writes = [
+            plan_write(uri, values, role=roles[uri],
+                       resolve=self._resolve_one, expand_uri=self.expand_uri)
+            for uri, values in subjects.items()
+        ]
+        update = update_text(writes)
+        if not update:
+            return {"ok": True, "nodes": len(writes)}
+        result = self.sparql_update(update, source_id=METADATA_SOURCE_ID)
+        return {**result, "nodes": len(writes)}
 
     def insert_timeseries(
         self,
