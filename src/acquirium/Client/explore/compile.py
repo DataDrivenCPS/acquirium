@@ -12,7 +12,9 @@ used a private ``_Exclude`` wrapper with identical SPARQL output).
 """
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
+from datetime import date, datetime
 from typing import Any, List
 
 from rdflib.namespace import RDF, RDFS
@@ -20,6 +22,7 @@ from rdflib.namespace import RDF, RDFS
 import itertools
 
 from acquirium.Client.explore.attributes import REGISTRY, Attr, Not, normalize_value
+from acquirium.Client.explore.expr import BoolOp
 from acquirium.Client.explore.hidden import hidden_filter
 from acquirium.Client.query_graph import QueryEdge, QueryGraph
 from acquirium.internals.internals_namespaces import (
@@ -44,11 +47,64 @@ def _is_iri(x: object) -> bool:
     return isinstance(x, str) and ("://" in x or x.startswith("urn:"))
 
 
+_XSD = "http://www.w3.org/2001/XMLSchema#"
+
+
 def _term(x: object) -> str:
-    """Return SPARQL term for x: <iri> or "literal"."""
+    """Return the SPARQL term for a Python value.
+
+    URIs render as ``<iri>``; ``bool``/``int``/``float`` as SPARQL numeric
+    and boolean literals; ``datetime``/``date`` as typed ``xsd:`` literals;
+    anything else as a quoted string. Typed rendering is what lets a filter
+    on an ``insert_metadata`` value (``xsd:integer`` in the graph) compare
+    numerically instead of by string.
+    """
+    if isinstance(x, bool):
+        return "true" if x else "false"
+    if isinstance(x, int):
+        return str(x)
+    if isinstance(x, float):
+        return repr(x) if math.isfinite(x) else f'"{x}"^^<{_XSD}double>'
+    if isinstance(x, datetime):
+        return f'"{x.isoformat()}"^^<{_XSD}dateTime>'
+    if isinstance(x, date):
+        return f'"{x.isoformat()}"^^<{_XSD}date>'
     if _is_iri(x):
         return f"<{x}>"
-    return f"\"{x}\""
+    text = str(x).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+    return f'"{text}"'
+
+
+def _expr_sparql(v: str, expr, registry: Mapping) -> str:
+    """Boolean SPARQL for one attribute expression on node variable ``v``.
+
+    Every comparison is an ``EXISTS`` over the attribute's predicates, so it
+    reads "some value satisfies", and ``!=`` is exactly the negation of
+    ``==`` (a node with two tags is excluded by ``tags != "lab"`` when
+    either is lab, as the kwarg ``Not`` does).
+    """
+    if isinstance(expr, BoolOp):
+        parts = [_expr_sparql(v, e, registry) for e in expr.operands]
+        if expr.op == "not":
+            return f"!({parts[0]})"
+        return "(" + (" && " if expr.op == "and" else " || ").join(parts) + ")"
+    attr = registry[expr.attr]
+    path = "|".join(f"<{p}>" for p in attr.predicates)
+    x = "?_x"
+    if expr.op == "exists":
+        return f"EXISTS {{ {v} ({path}) {x} . }}"
+    if expr.op == "==":
+        return f"EXISTS {{ {v} ({path}) {_term(expr.value)} . }}"
+    if expr.op == "!=":
+        return f"!EXISTS {{ {v} ({path}) {_term(expr.value)} . }}"
+    if expr.op == "in":
+        terms = ", ".join(_term(t) for t in expr.value)
+        return f"EXISTS {{ {v} ({path}) {x} . FILTER({x} IN ({terms})) }}"
+    return f"EXISTS {{ {v} ({path}) {x} . FILTER({x} {expr.op} {_term(expr.value)}) }}"
+
+
+def _expr_clauses(v: str, exprs, registry: Mapping) -> List[str]:
+    return [f"FILTER({_expr_sparql(v, e, registry)})" for e in exprs or ()]
 
 
 _RDF_TYPE = str(RDF.type)
@@ -456,6 +512,7 @@ def _node_constraint_clauses(v: str, node, registry: Mapping = REGISTRY) -> List
         )
     for name, aval in ((node.constraints or {}).get("attrs") or {}).items():
         clauses.extend(_attr_clauses(v, registry[name], aval))
+    clauses.extend(_expr_clauses(v, (node.constraints or {}).get("exprs"), registry))
     return clauses
 
 
@@ -496,6 +553,7 @@ def _data_node_clauses(v: str, nid: int, info, registry: Mapping = REGISTRY) -> 
                 clauses.append(f'FILTER NOT EXISTS {{ {v} <{pred}> "{val}" . }}')
             else:
                 clauses.append(f'{v} <{pred}> "{val}" .')
+    clauses.extend(_expr_clauses(v, getattr(info, "exprs", ()), registry))
     return clauses
 
 
@@ -553,6 +611,7 @@ def compile_parts(graph: QueryGraph, registry: Mapping = REGISTRY) -> tuple:
             )
         for name, aval in ((node.constraints or {}).get("attrs") or {}).items():
             where_clauses.extend(_attr_clauses(v, registry[name], aval))
+        where_clauses.extend(_expr_clauses(v, (node.constraints or {}).get("exprs"), registry))
 
     # edge constraints
     for edge_idx, edge in enumerate(graph.edges):
@@ -624,6 +683,7 @@ def compile_parts(graph: QueryGraph, registry: Mapping = REGISTRY) -> tuple:
                     where_clauses.append(f'FILTER NOT EXISTS {{ {v} <{pred}> "{val}" . }}')
                 else:
                     where_clauses.append(f'{v} <{pred}> "{val}" .')
+        where_clauses.extend(_expr_clauses(v, getattr(info, "exprs", ()), registry))
 
     # projected attribute columns (?attr<N>_<name>, OPTIONAL so rows without
     # the attribute survive; the prefix is disjoint from v/ext/unit/extunit

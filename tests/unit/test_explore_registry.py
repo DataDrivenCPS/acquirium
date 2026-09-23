@@ -88,6 +88,21 @@ class TestUserAttributes:
         attrs = user_attributes(["urn:x#foo", f"{ATTR_NS}unit", ATTR_NS])
         assert attrs == {}
 
+    def test_ignores_malformed_local_names(self):
+        attrs = user_attributes([f"{ATTR_NS}has%20space", f"{ATTR_NS}a..b", f"{ATTR_NS}1abc",
+                                 f"{ATTR_NS}ok-key", f"{ATTR_NS}nested.0.k_1"])
+        assert set(attrs) == {"ok-key", "nested.0.k_1", "nested.k_1"}
+
+
+class TestKeys:
+    def test_check_key(self):
+        from acquirium.Client.explore.attributes import check_key
+        for k in ("a", "_a", "a1", "last-cleaned", "Product_Info"):
+            assert check_key(k) == k
+        for k in ("1a", "a b", "a.b", "", "ä", None, 3, "a/b", 'a"b'):
+            with pytest.raises(ValueError, match="invalid metadata key"):
+                check_key(k)
+
 
 class TestRegistry:
     def test_no_client_is_builtins_only(self):

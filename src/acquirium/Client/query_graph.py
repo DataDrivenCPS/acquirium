@@ -5,6 +5,10 @@ from typing import Dict, List, Optional, Any
 class DataNodeInfo:
     node_id: int
     filters: Dict[str, Any] = field(default_factory=dict)
+    # Attribute expressions (explore ``where(aq.attr... )``), compiled to
+    # FILTER(EXISTS {...}) on the node; entity nodes keep theirs under
+    # constraints["exprs"].
+    exprs: tuple = ()
 
 
 

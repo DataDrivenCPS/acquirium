@@ -17,6 +17,7 @@ per graph version.
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, Optional
@@ -127,6 +128,28 @@ NOT_IN_ALL = {
 
 ATTR_NS = str(ACQUIRIUM_ATTR_NS)
 
+# One segment of a user attribute path: a key of the value map, or a list
+# index. Keys are identifier-like so the predicate stays a readable IRI and
+# the dot stays the separator; an all-digit segment is a list index.
+KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
+
+
+def check_key(key: object) -> str:
+    """Validate one metadata key; returns it. Raises ``ValueError`` otherwise."""
+    if not isinstance(key, str) or not KEY_PATTERN.match(key):
+        raise ValueError(
+            f"invalid metadata key {key!r}: letters, digits, underscore and hyphen, "
+            "starting with a letter or underscore"
+        )
+    return key
+
+
+def valid_path(path: str) -> bool:
+    """A dotted path whose segments are all valid keys or list indices."""
+    return bool(path) and all(
+        seg.isdigit() or KEY_PATTERN.match(seg) for seg in path.split(".")
+    )
+
 # Data graphs only: the ``attr:`` namespace never appears in an ontology, and
 # the union with dependencies is orders of magnitude larger to scan.
 DISCOVERY_SPARQL = (
@@ -173,7 +196,7 @@ def user_attributes(predicates: "list[str] | tuple[str, ...]") -> Dict[str, Attr
         if not pred.startswith(ATTR_NS):
             continue
         path = pred[len(ATTR_NS):]
-        if not path:
+        if not valid_path(path):
             continue
         groups.setdefault(path, []).append(pred)
         collapsed = _collapse_indices(path)

@@ -17,6 +17,7 @@ from rdflib import URIRef
 import warnings
 
 from acquirium.Client.explore.core import Query
+from acquirium.Client.explore.expr import AttrProxy
 from acquirium.Client.query import Q
 from acquirium.Materialization.api import App
 from acquirium.Materialization.planner import Deployment
@@ -164,6 +165,17 @@ class Acquirium:
     def query(self) -> Query:
         """Create a new empty Query (the explore builder) bound to this instance."""
         return Query(client=self.client)
+
+    @property
+    def attr(self) -> AttrProxy:
+        """Attribute paths for ``where``: ``aq.attr.unit``, ``aq.attr.product_info.year``.
+
+        Bound to this server, so ``aq.attr.<TAB>`` lists the built-in
+        attributes and those written with ``insert_metadata``, and an
+        unknown name fails here rather than inside the query. Comparisons
+        and ``&``/``|``/``~`` build the expressions ``Query.where`` takes.
+        """
+        return AttrProxy(self.client)
 
     def explore(self) -> Query:
         """Alias of :meth:`query`."""
