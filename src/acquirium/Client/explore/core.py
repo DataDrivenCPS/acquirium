@@ -25,9 +25,11 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 import polars as pl
 from rdflib import URIRef
 
-from acquirium.Client.explore.attributes import NOT_IN_ALL, REGISTRY, Not, attributes_doc, normalize_value
-from acquirium.Client.explore.compile import compile_sparql
+from acquirium.Client.explore.attributes import NOT_IN_ALL, Not, Registry, attributes_doc, normalize_value
+from acquirium.Client.explore.compile import attr_var, compile_sparql
 from acquirium.Client.explore.directions import EQUIPMENT_STEPS, PROPERTY_STEPS
+from acquirium.Client.explore.expr import ORDERING, BoolOp, Compare, Expr
+from acquirium.Client.explore.expr import attr_name as _path_name
 from acquirium.Client.explore.relations import RELATIONS
 from acquirium.Client.query_graph import DataNodeInfo, QueryEdge, QueryGraph, QueryNode
 from acquirium.internals.internals_namespaces import S223
@@ -57,6 +59,12 @@ class Query:
     cache: Dict[str, Any] = field(default_factory=dict, compare=False)
 
     # ---------- internal helpers ----------
+
+    @property
+    def registry(self) -> Registry:
+        """Attributes this query can name: built-ins plus those discovered
+        from the connected server (see ``explore.attributes.Registry``)."""
+        return Registry(self.client)
 
     def _next_id(self) -> int:
         return max(self.query_graph.nodes, default=-1) + 1
@@ -167,13 +175,14 @@ class Query:
         ``client.resolve`` so siblings disambiguate each other.
         ``Not`` markers are preserved around the resolved value.
         """
-        unknown = [k for k in attrs if k not in REGISTRY]
+        registry = self.registry
+        unknown = [k for k in attrs if k not in registry]
         if unknown:
-            raise ValueError(f"unknown attribute(s) {unknown}; known: {sorted(REGISTRY)}")
+            raise ValueError(f"unknown attribute(s) {unknown}; known: {sorted(registry)}")
 
         record: Dict[str, Any] = {}
         for name, raw in attrs.items():
-            attr = REGISTRY[name]
+            attr = registry[name]
             values, _ = normalize_value(raw)
             for i, v in enumerate(values):
                 if attr.literal or isinstance(v, URIRef) or _is_uri(v):
@@ -183,7 +192,7 @@ class Query:
 
         out: Dict[str, Any] = {}
         for name, raw in attrs.items():
-            attr = REGISTRY[name]
+            attr = registry[name]
             values, negated = normalize_value(raw)
             if not values:
                 continue
@@ -202,14 +211,107 @@ class Query:
             out[name] = Not(value) if negated else value
         return out
 
+    def _resolve_expr_values(self, exprs: "tuple[Expr, ...]") -> "tuple[Expr, ...]":
+        """Validate the attributes an expression tree names and resolve text.
+
+        Same rules as the kwargs: a text value on a URI-valued built-in
+        (``aq.attr.unit == "mg/L"``) is resolved jointly with its siblings;
+        literal attributes keep their value. Ordering comparisons apply to
+        literal attributes only, and subclass-matched attributes (``type``,
+        ``process``, ``cp_type``) only as a bare ``==``, which is the kwarg
+        form; inside ``|``/``~`` they would need the class closure in a
+        FILTER, which the compiler does not do.
+        """
+        registry = self.registry
+        leaves: List[Compare] = []
+
+        def walk(e: Expr, nested: bool) -> None:
+            if isinstance(e, BoolOp):
+                for o in e.operands:
+                    walk(o, True)
+                return
+            if e.attr not in registry:
+                raise ValueError(f"unknown attribute {e.attr!r}; known: {sorted(registry)}")
+            attr = registry[e.attr]
+            if e.op in ORDERING and not attr.literal:
+                raise ValueError(
+                    f"{e.op!r} applies to literal attributes; {e.attr!r} holds URIs")
+            if attr.via_subclass and (nested or e.op != "=="):
+                raise ValueError(
+                    f"attribute {e.attr!r} matches by class closure and supports only a "
+                    f"bare == (use where({e.attr}=...))")
+            leaves.append(e)
+
+        for e in exprs:
+            walk(e, False)
+
+        record: Dict[str, Any] = {}
+        for i, e in enumerate(leaves):
+            attr = registry[e.attr]
+            if attr.literal or e.op in ("exists",) or e.op in ORDERING:
+                continue
+            values = e.value if e.op == "in" else [e.value]
+            for j, v in enumerate(values):
+                if not (isinstance(v, URIRef) or _is_uri(v)):
+                    record[f"{i}_{j}"] = (str(v), attr.kind)
+        resolved = self.client.resolve(record, min_score=0.4) if record else {}
+
+        def coerce(i: int, e: Compare) -> Compare:
+            attr = registry[e.attr]
+            if attr.literal or e.op == "exists" or e.op in ORDERING:
+                return e
+            values = e.value if e.op == "in" else [e.value]
+            out = []
+            for j, v in enumerate(values):
+                if isinstance(v, URIRef) or _is_uri(v):
+                    out.append(str(v))
+                    continue
+                uri = resolved.get(f"{i}_{j}")
+                if uri is None:
+                    raise ValueError(f"Could not resolve {v!r} as {attr.kind} for attribute {e.attr!r}")
+                out.append(uri)
+            return Compare(e.attr, e.op, out if e.op == "in" else out[0])
+
+        counter = iter(range(len(leaves)))
+
+        def rebuild(e: Expr) -> Expr:
+            if isinstance(e, BoolOp):
+                return BoolOp(e.op, tuple(rebuild(o) for o in e.operands))
+            return coerce(next(counter), e)
+
+        return tuple(rebuild(e) for e in exprs)
+
+    def _apply_exprs(self, g: QueryGraph, node_ids: List[int], exprs: "tuple[Expr, ...]") -> QueryGraph:
+        """Store expressions on the given nodes (role-checked)."""
+        ptr = g.current_pointer
+        registry = self.registry
+        for nid in node_ids:
+            is_data = nid in g.data_nodes
+            role = "data" if is_data else "entity"
+            for e in exprs:
+                for name in e.attributes():
+                    if role not in registry[name].roles:
+                        alias = g.aliases_reverse.get(nid, str(nid))
+                        raise ValueError(f"attribute {name!r} does not apply to {role} node {alias!r}")
+            if is_data:
+                info = g.data_nodes[nid]
+                g = g.with_data_node(replace(info, exprs=tuple(info.exprs) + exprs))
+            else:
+                node = g.nodes[nid]
+                constraints = dict(node.constraints)
+                constraints["exprs"] = tuple(constraints.get("exprs") or ()) + exprs
+                g = g.with_node(replace(node, constraints=constraints))
+        return replace(g, current_pointer=ptr)
+
     def _apply_attrs(self, g: QueryGraph, node_ids: List[int], resolved: Dict[str, Any]) -> QueryGraph:
         """Store resolved attribute constraints on the given nodes (role-checked)."""
         ptr = g.current_pointer
+        registry = self.registry
         for nid in node_ids:
             is_data = nid in g.data_nodes
             role = "data" if is_data else "entity"
             for name in resolved:
-                if role not in REGISTRY[name].roles:
+                if role not in registry[name].roles:
                     alias = g.aliases_reverse.get(nid, str(nid))
                     raise ValueError(f"attribute {name!r} does not apply to {role} node {alias!r}")
             if is_data:
@@ -624,19 +726,36 @@ class Query:
             self._require_free_alias(g, name, verb="alias")
         return self._with_graph(g.with_node(replace(node, alias=name)))
 
-    def where(self, target: Optional[str] = None, **attrs: Any) -> "Query":
-        """Filter a node by registry attributes (see ``explore.attributes.REGISTRY``).
+    def where(self, target: "str | Expr | None" = None, *exprs: Expr, **attrs: Any) -> "Query":
+        """Filter a node by attributes: kwargs, expressions, or both (AND).
 
         - ``target``: alias to filter (default: current pointer); ``"*"``
           applies to every measurement node.
-        - Values may be URIs, free text (server-resolved), lists (OR), or
-          wrapped in :class:`Not` to exclude::
+        - Kwargs are the shorthand for equality. Values may be URIs, free
+          text (server-resolved), lists (OR), or wrapped in :class:`Not`::
 
               q.where(quantity_kind="mass flow rate", medium=Not("brine"))
+
+        - Expressions on ``aq.attr`` carry comparisons and boolean logic
+          (see ``explore.expr``)::
+
+              q.where(aq.attr.product_info.year >= 2015, unit="mg/L")
+              q.where((aq.attr.product_info.year >= 2015) | (aq.attr.manufacturer == "Siemens"))
+
+          A bare ``==`` / ``!=`` / ``is_in`` expression is the same filter as
+          the kwarg form and compiles identically.
         """
-        if not attrs:
+        if isinstance(target, Expr):
+            exprs = (target,) + exprs
+            target = None
+        for e in exprs:
+            if not isinstance(e, Expr):
+                raise TypeError(f"where: expected an attribute expression, got {e!r}")
+        exprs, attrs = self._fold_equalities(exprs, attrs)
+        if not attrs and not exprs:
             raise ValueError('where: provide at least one attribute filter, e.g. where(medium="water")')
-        resolved = self._resolve_attr_values(attrs)
+        resolved = self._resolve_attr_values(attrs) if attrs else {}
+        resolved_exprs = self._resolve_expr_values(exprs) if exprs else ()
         g = self.query_graph
         if isinstance(target, str) and target.strip().lower() in {"*", "all"}:
             ids = sorted(g.data_nodes)
@@ -650,7 +769,29 @@ class Query:
                     else "where: no current node (start with entity())"
                 )
             ids = [nid]
-        return self._with_graph(self._apply_attrs(g, ids, resolved))
+        if resolved:
+            g = self._apply_attrs(g, ids, resolved)
+        if resolved_exprs:
+            g = self._apply_exprs(g, ids, resolved_exprs)
+        return self._with_graph(g)
+
+    @staticmethod
+    def _fold_equalities(exprs: "tuple[Expr, ...]", attrs: Dict[str, Any]) -> tuple:
+        """Move top-level ``==`` / ``!=`` / ``is_in`` terms into the kwargs.
+
+        They are the same filter, so they compile to the same triple
+        patterns the kwargs do. An attribute already given as a kwarg stays
+        an expression, so two conditions on one attribute both apply.
+        """
+        attrs = dict(attrs)
+        kept: List[Expr] = []
+        for e in exprs:
+            if isinstance(e, Compare) and e.op in ("==", "!=", "in") and e.attr not in attrs:
+                attrs[e.attr] = (Not(e.value) if e.op == "!=" else
+                                 list(e.value) if e.op == "in" else e.value)
+            else:
+                kept.append(e)
+        return tuple(kept), attrs
 
     def _column_target(self, g: QueryGraph, name: str, of: Optional[str]) -> tuple:
         """Resolve a column spec to ("attr", nid, attr_name) or ("node", nid).
@@ -658,11 +799,12 @@ class Query:
         Bare registry attribute names win over aliases; ``"alias.attr"``
         targets an attribute of a specific node.
         """
+        registry = self.registry
         if "." in name:
-            alias, _, attr_name = name.rpartition(".")
-            if attr_name in REGISTRY and alias in g.aliases:
+            alias, _, attr_name = name.partition(".")
+            if alias in g.aliases and attr_name in registry:
                 return ("attr", g.aliases[alias], attr_name)
-        if name in REGISTRY:
+        if name in registry:
             nid = g.resolve_alias(of)
             if nid is None:
                 raise ValueError(
@@ -673,7 +815,7 @@ class Query:
         if name in g.aliases:
             return ("node", g.aliases[name])
         raise ValueError(
-            f"unknown column {name!r}: not an attribute ({sorted(REGISTRY)}) "
+            f"unknown column {name!r}: not an attribute ({sorted(registry)}) "
             f"or a node alias ({sorted(g.aliases)})"
         )
 
@@ -711,6 +853,7 @@ class Query:
         """
         if not names:
             raise ValueError('include: provide at least one column name, e.g. include("medium")')
+        names = tuple(_path_name(n) for n in names)
         g = self.query_graph
         if "all" in names:
             nid = g.resolve_alias(of)
@@ -720,8 +863,8 @@ class Query:
                     else "include: no current node (start with entity())"
                 )
             role = "data" if nid in g.data_nodes else "entity"
-            expanded = [a.name for a in REGISTRY.values()
-                        if role in a.roles and a.name not in NOT_IN_ALL[role]]
+            expanded = [a.name for a in self.registry.for_role(role, summary=True)
+                        if a.name not in NOT_IN_ALL[role]]
             names = tuple(n for name in names
                           for n in (expanded if name == "all" else [name]))
         for name in names:
@@ -734,7 +877,7 @@ class Query:
                 continue
             _, nid, attr_name = target
             role = "data" if nid in g.data_nodes else "entity"
-            if role not in REGISTRY[attr_name].roles:
+            if role not in self.registry[attr_name].roles:
                 alias = g.aliases_reverse.get(nid, str(nid))
                 raise ValueError(
                     f"include: attribute {attr_name!r} does not apply to {role} node {alias!r}")
@@ -754,6 +897,7 @@ class Query:
             q.drop("ro.process")     # un-include an attr of another node
         """
         g = self.query_graph
+        names = tuple(_path_name(n) for n in names)
         if not names:
             if g.current_pointer is None:
                 raise ValueError("drop: no current node (start with entity())")
@@ -800,6 +944,33 @@ class Query:
             raise ValueError(f"at: unknown alias {alias!r}")
         return self._with_graph(replace(self.query_graph, current_pointer=nid))
 
+    # ---------- writes ----------
+
+    def insert_metadata(self, values: Dict[str, Any], *, of: Optional[str] = None,
+                        include_dependencies: bool = True) -> dict:
+        """Attach the same metadata to every node the pattern matches.
+
+        ``of`` targets a node by alias (default: current pointer). The
+        pattern runs, and the value map is written on each matched node as
+        :meth:`Acquirium.insert_metadata` would, in one update::
+
+            (aq.query().entity("Valve").measurement()
+               .where(unit="mg/L")
+               .insert_metadata({"reviewed": True}))
+
+        Returns the server's result with ``nodes``, the number written.
+        """
+        g = self.query_graph
+        nid = g.resolve_alias(of)
+        if nid is None:
+            raise ValueError(
+                f"insert_metadata: unknown alias {of!r}" if of is not None
+                else "insert_metadata: no current node (start with entity())"
+            )
+        alias = g.aliases_reverse.get(nid, str(nid))
+        uris = self.resolved_nodes(alias=alias, include_dependencies=include_dependencies)
+        return self.client.insert_metadata({uri: values for uri in uris})
+
     # ---------- faceted exploration ----------
 
     def options(self, attr_name: str, *, of: Optional[str] = None,
@@ -812,8 +983,10 @@ class Query:
 
             aq.query().entity("Equipment").measurement(frm="*").options("quantity_kind")
         """
-        if attr_name not in REGISTRY:
-            raise ValueError(f"unknown attribute {attr_name!r}; known: {sorted(REGISTRY)}")
+        registry = self.registry
+        attr_name = _path_name(attr_name)
+        if attr_name not in registry:
+            raise ValueError(f"unknown attribute {attr_name!r}; known: {sorted(registry)}")
         g = self.query_graph
         nid = g.resolve_alias(of)
         if nid is None:
@@ -821,7 +994,7 @@ class Query:
                 f"options: unknown alias {of!r}" if of is not None
                 else "options: no current node (start with entity())"
             )
-        attr = REGISTRY[attr_name]
+        attr = registry[attr_name]
         role = "data" if nid in g.data_nodes else "entity"
         if role not in attr.roles:
             alias = g.aliases_reverse.get(nid, str(nid))
@@ -903,9 +1076,8 @@ class Query:
         version = self.client.graph_version()
 
         summary = FacetSummary(node_alias=alias)
-        for name, attr in REGISTRY.items():
-            if role not in attr.roles:
-                continue
+        for attr in self.registry.for_role(role, summary=True):
+            name = attr.name
             df = self.options(name, of=alias, include_dependencies=include_dependencies)
             scope = "matched"
             if df.height == 0:
@@ -926,7 +1098,7 @@ class Query:
     # ---------- terminals ----------
 
     def to_sparql(self) -> str:
-        return compile_sparql(self.query_graph)
+        return compile_sparql(self.query_graph, self.registry)
 
     def execute(self, include_dependencies: bool = True) -> dict:
         """Execute the compiled SPARQL against the metadata graph (cached).
@@ -948,7 +1120,7 @@ class Query:
                 self.cache[cache_key] = execute_placed(g, self.client, include_dependencies)
             else:
                 self.cache[cache_key] = self.client.sparql_query(
-                    compile_sparql(g),
+                    compile_sparql(g, self.registry),
                     include_dependencies=include_dependencies,
                 )
         return self.cache[cache_key]
@@ -969,6 +1141,8 @@ class Query:
                 return {str(k): safe(x) for k, x in v.items()}
             if v is None or isinstance(v, (str, int, float, bool)):
                 return v
+            if isinstance(v, Expr):
+                return safe(v.to_data())
             return str(v)
 
         g = self.query_graph
@@ -1006,6 +1180,7 @@ class Query:
                     "id": nid,
                     "alias": g.aliases_reverse.get(nid, f"v{nid}"),
                     "filters": safe(dict(info.filters or {})),
+                    "exprs": safe(list(info.exprs or ())),
                 }
                 for nid, info in g.data_nodes.items()
             ],
@@ -1170,6 +1345,11 @@ class Query:
             except ValueError:
                 return col_name
             base_alias = self.query_graph.aliases_reverse.get(node_id, f"v{node_id}")
+            # a user attribute's variable is an encoding of its path; the
+            # select entry that produced it holds the path itself
+            for snid, name, _ in self.query_graph.selects:
+                if snid == node_id and attr_var(snid, name) == f"?{col_name}":
+                    return f"{base_alias}.{name}"
             return f"{base_alias}.{attr_name}"
         if col_name.startswith("lbl"):
             try:

@@ -70,6 +70,9 @@ two.
 | data node | a node holding measurements | `measurement()` |
 | alias | the name of a node, used as its column name and as its handle in `frm=`, `target=` and `of=` | `entity("pump", alias="p1")` |
 | attribute | a property of a node the interface exposes by name instead of by predicate | `unit`, `medium`, `substance`, `quantity_kind`, `process`, `type`, `cp_type`, `enumeration_kind`, `data_source`, `app`, `label` |
+| user attribute | an attribute written with `insert_metadata()`, named by its key or its dotted path into a nested value; a predicate under `urn:acquirium:attr#` | `last_cleaned`, `product_info.year`, `tags` |
+| attribute expression | a comparison on an `acq.attr` path, or a combination of comparisons with `&`, `\|`, `~`, passed to `where()` | `acq.attr.product_info.year >= 2015` |
+| metadata graph | the reserved `metadata` source graph that `insert_metadata()` writes to; pruned of triples about nodes that no other graph mentions | `urn:acquirium:graph:data:source:metadata` |
 | pointer | the node the chain is currently on, which is what a bare `where()` or `measurement()` applies to | moved by `refocus()` |
 | hidden predicate | an edge that generic traversal never follows, because it describes a node rather than connects the plant | `rdf:type`, `s223:hasProperty`, `s223:hasConnectionPoint`, `s223:cnx` |
 | `max_depth` | how many hops a traversal may take | `related("tank", max_depth=1)` |

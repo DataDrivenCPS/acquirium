@@ -51,6 +51,7 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 |---|---|
 | `query() -> Query` | Create a new empty `Query` bound to this instance. |
 | `explore() -> Query` | Alias of `query()`. |
+| `attr` | Property: the root of attribute paths for `where()`, `include()` and `options()`; see [Attribute expressions](#attribute-expressions). |
 
 ### Graph
 
@@ -58,6 +59,7 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 |---|---|
 | `insert_graph(rdf_graph: str, format="turtle", replace=True, *, source_id: str) -> None` | Insert RDF into the graph owned by `source_id`; `replace=True` clears that graph first. |
 | `insert_graph_file(path, format=None, replace=True, *, source_id: str) -> None` | Read RDF from a file and insert it into the graph owned by `source_id`; the format is taken from the extension when omitted. |
+| `insert_metadata(uri: str \| URIRef, values: Mapping[str, Any]) -> dict` | Attach a value map to one node by URI or CURIE; see [Metadata values](#metadata-values). Returns the update result with `nodes`, the number of nodes written. |
 | `sparql_update(update: str, *, source_id: str) -> dict` | Execute a SPARQL UPDATE against one owned data graph. |
 | `validate_graph() -> dict` | Validate all deployment data against the ontology shapes. |
 | `graph_version() -> int` | The server's current source-data generation. |
@@ -68,7 +70,7 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 | method | description |
 |---|---|
 | `register_datasource(source_id: str) -> str` | Register a datasource in the graph; idempotent. |
-| `register_streams(streams: Iterable[dict]) -> None` | Declare one or more streams' identity and semantic metadata in one graph insert; see the [lifecycle guide](../explanation/stream-lifecycle.md). |
+| `register_streams(streams: Iterable[dict]) -> None` | Declare one or more streams' identity and semantic metadata in one graph insert; see the [lifecycle guide](../explanation/stream-lifecycle.md). A stream's optional `metadata` key holds a [value map](#metadata-values) written on its point. |
 | `reference_uri(source_id: str, ref_name: str) -> URIRef` | The canonical stream URI for a `(source_id, ref_name)` pair. |
 | `resolve_point_metadata(fields: dict, min_score=0.6) -> dict[str, str \| None]` | Resolve `unit`, `quantity_kind`, `medium`, `substance` text to URIs jointly. |
 | `insert_timeseries(source_id, ref_name, rows: list[tuple[datetime, Any]], *, point_uri=None, replace=False) -> dict` | Insert or correct rows for one stream. Register point metadata separately; `replace=True` makes the stream contain exactly the supplied rows; an empty list clears it. Downstream apps fully rebuild after replacement. |
@@ -121,16 +123,24 @@ See the [querying tutorial](../tutorials/querying.md) and
 | `related(cls=None, *, uri=None, alias=None, frm=None, via="any", direction=None, max_depth=None, nearest=None, **attrs) -> Query` | Add an entity connected to `frm` (default: the current node); `via=` restricts predicates, `direction=` walks the piping topology; `max_depth` defaults to 3 (1 for predicate lists), `nearest` to `True` for plain `via="any"`. |
 | `measurement(*, frm=None, alias=None, direction=None, max_depth=3, nearest=None, include_connection_points=True, **attrs) -> Query` | Attach the measurement points of `frm` (default: the current node; `"*"` for every entity, or a list of aliases); on an empty query, every registered stream. With `direction=`, `nearest` defaults to `True` and each source keeps the first place along the flow (own connection points, pipe, next entity with its connection points, ...) holding a match; `nearest=False` returns everything within `max_depth`. |
 | `context(cls=None, *, uri=None, alias=None, frm=None, via="entity", **attrs) -> Query` | From a measurement node, add the entity it is about and point at it; `via=` names a relation (`"entity"`, `"upstream"`, `"downstream"`, or one registered with `register_relation`) or gives explicit predicates or step chains. One fixed step, compiled to SPARQL. |
-| `where(target=None, **attrs) -> Query` | Filter a node (`target=` by alias, default the current node) by attribute; values are URIs, free text, lists (OR) or `Not(value)`. |
-| `include(*names, of=None, required=False) -> Query` | Add `alias.attr` columns for a node, or un-drop a node; `required=True` drops rows lacking the attribute. `"all"` adds the node's attributes except `type` and `cp_type`, and on measurements `app` and `label`. |
+| `where(target=None, *exprs, **attrs) -> Query` | Filter a node (`target=` by alias, default the current node). Keyword values are URIs, free text, lists (OR) or `Not(value)`; positional arguments are [attribute expressions](#attribute-expressions). Everything in one call is AND. |
+| `include(*names, of=None, required=False) -> Query` | Add `alias.attr` columns for a node, or un-drop a node; names are strings or `acq.attr` paths; `required=True` drops rows lacking the attribute. `"all"` adds the node's attributes except `type` and `cp_type`, and on measurements `app` and `label`; a list attribute appears once, under its collapsed name. |
+| `insert_metadata(values: dict, *, of=None, include_dependencies=True) -> dict` | Run the pattern and attach the same [value map](#metadata-values) to every node matched at `of=` (default: the current node), in one update. |
 | `drop(*names) -> Query` | Hide a node's column or un-include an attribute; with no arguments, drop the current node. |
 | `with_columns(*specs, of=None, required=False) -> Query` | `include()` and `drop()` in one call: plain specs include, `"-"`-prefixed specs drop, `"alias.attr"` targets any node. |
 | `alias(name) -> Query` | Name the current node; `all` is reserved. |
 | `refocus(alias) -> Query` | Move the pointer back to an existing node. |
 
 Attributes accepted by `where()`, `include()`, `options()` and the inline
-keywords: `type`, `process`, `cp_type`, `medium`, `substance`,
-`quantity_kind`, `unit`, `enumeration_kind`, `data_source`, `app`, `label`.
+keywords: the built-ins `type`, `process`, `cp_type`, `medium`, `substance`,
+`quantity_kind`, `unit`, `enumeration_kind`, `data_source`, `app`, `label`,
+and every user attribute the graph holds (see [Metadata values](#metadata-values)),
+named by its dotted path: `last_cleaned`, `product_info.year`, `tags`.
+A path with dots is passed as a string or as an `acq.attr` path, since it is
+not a keyword.
+User attributes are discovered from the graph once per graph version, the
+first time a query names one; a `Query` without a client knows the built-ins
+only.
 
 ### Terminals
 
@@ -139,21 +149,108 @@ keywords: `type`, `process`, `cp_type`, `medium`, `substance`,
 | `metadata(*, include_internals=False, include_dependencies=True) -> pl.DataFrame` | The pattern matches, one column per node plus `alias.attr` and `alias.label` columns. |
 | `data(*, start=None, end=None, limit=None, order="asc", include_dependencies=True, cast_value="float", value_mode="default") -> DataObject` | A lazy `DataObject` over the matched streams. |
 | `dataframe(shape="wide", *, start=None, end=None, limit=None, order="asc", include_dependencies=True, cast_value="str", value_mode="default", include_ref=False, compact=True) -> pl.DataFrame` | `data(...).dataframe(...)` in one call. |
-| `options(attr_name, *, of=None, include_dependencies=True) -> pl.DataFrame` | Distinct values of one attribute across the matches, with counts. |
-| `facets(*, of=None, include_dependencies=True) -> FacetSummary` | Value counts for every attribute that applies to a node; prints compactly, indexes like a dict, `attrs()` lists the attributes. |
+| `options(attr_name, *, of=None, include_dependencies=True) -> pl.DataFrame` | Distinct values of one attribute (a name or an `acq.attr` path) across the matches, with counts. |
+| `facets(*, of=None, include_dependencies=True) -> FacetSummary` | Value counts for every attribute that applies to a node, user attributes included, a list attribute once; prints compactly, indexes like a dict, `attrs()` lists the attributes. |
 | `resolved_nodes(*, alias=None, only_data_nodes=False, include_dependencies=True) -> list[str]` | The URIs the pattern currently matches. |
 | `execute(include_dependencies=True) -> dict` | Run the compiled SPARQL and return raw `{"columns", "rows"}`. |
 | `to_sparql() -> str` | The SPARQL the query compiles to, without running it. |
 | `to_dict() -> dict` | A JSON-serializable form of the query graph. |
+
+### Attribute expressions
+
+`acq.attr` is the root of attribute paths.
+Attribute access names an attribute or descends into a nested key, `[i]`
+selects a list index, and `acq.attr("last-cleaned")` spells a path that is
+not a Python identifier.
+It is bound to the connected server: `dir(acq.attr)` lists the built-in
+attributes and the user attributes the graph holds, `dir(acq.attr.product_info)`
+lists the keys under it, and a name the graph does not have raises
+`AttributeError` at that line.
+
+| on a path | gives |
+|---|---|
+| `== v`, `!= v`, `< v`, `<= v`, `> v`, `>= v` | a comparison; `v` is a literal, a URI, or free text for a URI-valued built-in (resolved as `where()` kwargs are) |
+| `.is_in([v, ...])` | some value of the attribute is one of the list |
+| `.exists()` | the node carries the attribute at all |
+
+| on expressions | gives |
+|---|---|
+| `a & b`, `a \| b`, `~a` | and, or, not; each side in parentheses, as in polars |
+| `bool(a)`, `a and b`, `a or b`, `not a` | `TypeError`; Python cannot overload these |
+
+`where(*exprs)` takes any number of expressions.
+A bare `==`, `!=` or `is_in` on an attribute not also given as a keyword is
+the same filter as the keyword form and compiles to the same pattern.
+Every other expression compiles to a `FILTER` in which each comparison is an
+`EXISTS` over the attribute's predicates, so a comparison holds when some
+value of the attribute satisfies it, and `!=` is the negation of `==`, as
+`Not()` is.
+The ordering operators apply to literal-valued attributes only; `type`,
+`process` and `cp_type` accept a bare `==` and nothing else, since they match
+through the class hierarchy.
+A comparison on a list attribute (`acq.attr.tags == "lab"`) holds when any
+element matches; `acq.attr.tags[0]` addresses one element.
+`Query.to_dict()` serializes expressions as nested `{"attr", "op", "value"}`
+and `{"op", "operands"}` objects.
+
+The same property exists on the object an app's `build_query` receives, so
+app queries can use expressions.
+
+### Metadata values
+
+`Acquirium.insert_metadata()`, `Query.insert_metadata()` and the `metadata`
+key of `register_streams()` take one value map per node, a plain `dict`.
+Keys are handled by name:
+
+| key | written as |
+|---|---|
+| a built-in attribute (`unit`, `medium`, `label`, `type`, `process`, `substance`, `quantity_kind`, `enumeration_kind`, `data_source`, `app`) | that attribute's own predicate; free text is resolved to a URI first. `medium` is `s223:ofMedium` on a measurement and `s223:hasMedium` on an entity. `cp_type` cannot be written. |
+| a relation name (`entity`, `measurement`, `upstream`, `downstream`) | refused: edges of the plant model are not written here |
+| any other key | a user attribute, `urn:acquirium:attr#<key>` (prefix `attr:`) |
+
+A user attribute's value is a scalar, a `dict`, or a list, nested to any
+depth.
+It is flattened to one predicate per leaf: `{"product_info": {"year": 2019}}`
+writes `attr:product_info.year`, `{"tags": ["lab", "scada"]}` writes
+`attr:tags.0` and `attr:tags.1`, so a list keeps its order and its
+duplicates.
+`str`, `int`, `float`, `bool`, `date` and `datetime` become typed literals; a
+string that looks like a URI (`urn:`, `http://`, `https://`) becomes a URI.
+A key is one or more of letters, digits, underscore and hyphen, starting with
+a letter or underscore; anything else raises `ValueError`.
+
+Writing a key replaces it: the node's triples under that key, and under
+`key.` for a nested value, are deleted and the new leaves are inserted, in
+one SPARQL update.
+Keys not mentioned stay.
+`None` removes a key.
+Every node named must already exist in a data graph, or the call raises
+before writing; a node is treated as a measurement when it carries an
+external reference.
+The update runs in the reserved `metadata` source graph and touches nothing
+outside it, so it cannot retract a value the plant model or a driver graph
+asserts.
+The `metadata` key of `register_streams()` differs in two ways: the leaves
+are written together with the stream, into the stream's own graph, and a key
+that is also a stream field (`unit`, `quantity_kind`, `medium`, `substance`,
+`data_source`, `label`) is merged into the stream, or raises when the two
+disagree.
+
+Metadata lives as long as the node it describes: after a `replace=True`
+graph insert or a SPARQL update, the server removes metadata whose subject,
+or whose URI value, no longer appears in any other graph.
+See [Attach metadata to a node](../how-to/attach-metadata.md).
 
 ### Helpers
 
 ```python
 from acquirium.Client.explore import (
     Not,                                     # where(medium=Not("brine"))
-    hidden_predicates, hide, unhide,         # the set via="any" never follows
+    hidden_predicates, hidden_prefixes,      # what via="any" never follows
+    hide, unhide,                            # a URI, or a namespace ending in # or /
     UPSTREAM_EQUIPMENT, DOWNSTREAM_EQUIPMENT,
     UPSTREAM_PROPERTY, DOWNSTREAM_PROPERTY,  # the step patterns behind direction=
+    REGISTRY, Registry,                      # built-in attributes; built-ins plus discovered
 )
 ```
 
@@ -221,9 +318,12 @@ and are listed once above.
 | `sparql_query(sparql, include_dependencies=True, *, wait_for_fresh=False) -> dict` | Run a SPARQL query; `{"columns", "rows"}`. |
 | `sparql_update(update, *, source_id) -> dict` | Run a SPARQL UPDATE against one owned graph. |
 | `insert_graph(...)`, `insert_graph_file(...)` | As on `Acquirium`. |
+| `insert_metadata(records: Mapping[str, Mapping]) -> dict` | `{node_uri: value_map}` for several nodes in one update; the form behind `Acquirium.insert_metadata` and `Query.insert_metadata`. |
+| `node_roles(uris) -> dict[str, str]` | `"data"` or `"entity"` per URI the data graphs know; unknown URIs are left out. |
 | `namespace_manager() -> NamespaceManager` | The prefix table bound on the server, cached. |
 | `compact_uri(item) -> str` | URI to `prefix:local`. |
-| `expand_uri(text) -> str` | `prefix:local` to URI; full URIs pass through. |
+| `expand_uri(text) -> str` | `prefix:local` to URI; a full URI or an unbound prefix raises. |
+| `node_uri(text) -> str` | A node as a full URI or a bound CURIE, returned as a full URI. |
 
 ### Resolution
 

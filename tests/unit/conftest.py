@@ -30,3 +30,18 @@ def mock_http_response():
         return resp
 
     return _make
+
+
+@pytest.fixture(autouse=True)
+def _clear_explore_caches():
+    """The explore layer caches per server key, and the fake clients derive
+    that key from an object id, which a later test's object can reuse. Start
+    every test with empty caches so results never leak between tests."""
+    from acquirium.Client.explore.attributes import clear_registry_cache
+    from acquirium.Client.explore.facets import clear_facet_cache
+    from acquirium.Client.explore.traverse import clear_segment_cache
+
+    clear_registry_cache()
+    clear_facet_cache()
+    clear_segment_cache()
+    yield

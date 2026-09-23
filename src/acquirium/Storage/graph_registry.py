@@ -22,6 +22,10 @@ PLANT_GRAPH_URI = "urn:acquirium#MainGraph"
 PLANT_SOURCE_ID = "plant"
 ACQUIRIUM_GRAPH_URI = "urn:acquirium:graph:data:acquirium"
 SOURCE_GRAPH_PREFIX = "urn:acquirium:graph:data:source:"
+# The source that owns metadata written with ``insert_metadata``. An
+# ordinary source graph by shape, so it needs no registration; pruned by the
+# store when the nodes it describes disappear from the other graphs.
+METADATA_SOURCE_ID = "metadata"
 
 
 def source_graph_uri(source_id: str, *, plant_graph_uri: str = PLANT_GRAPH_URI) -> URIRef:
