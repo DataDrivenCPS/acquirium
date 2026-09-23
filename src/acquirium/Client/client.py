@@ -952,8 +952,8 @@ class AcquiriumClient:
             existing = self._point_metadata(str(point_uri)) if point_uri is not None else {}
             subj = _build_stream_triples(graph, stream, resolved, existing, self._units_compatible)
             if extra:
-                # Same map insert_metadata takes; a stream is born with its
-                # equipment link and annotations, in its own graph.
+                # Same map insert_metadata takes; the stream's equipment link
+                # and annotations land with it, in its own graph.
                 write = plan_write(str(subj), extra, role="data",
                                    resolve=self._resolve_one, expand_uri=self.node_uri)
                 for triple in write.triples:

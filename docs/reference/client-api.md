@@ -221,9 +221,9 @@ string that looks like a URI (`urn:`, `http://`, `https://`) becomes a URI.
 A key is one or more of letters, digits, underscore and hyphen, starting with
 a letter or underscore; anything else raises `ValueError`.
 
-Writing a key replaces it: whatever the node carried under that key, or under
-`key.` in the case of a nested value, is deleted and the new leaves are
-inserted, in one SPARQL update.
+Writing a key replaces it: the node's triples under that key, and under
+`key.` for a nested value, are deleted and the new leaves are inserted, in
+one SPARQL update.
 Keys not mentioned stay.
 `None` removes a key.
 Every node named must already exist in a data graph; a node is treated as a

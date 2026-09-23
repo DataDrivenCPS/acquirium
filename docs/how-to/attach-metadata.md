@@ -36,7 +36,7 @@ The first argument is the node, as a URI or a CURIE the server knows.
 The node must already exist in the model; a URI no graph mentions raises
 `ValueError`.
 Values may be strings, numbers, booleans, dates, datetimes, dicts and lists,
-nested as deep as you like.
+nested to any depth.
 A nested dict becomes dotted attributes, `product_info.manufacturer` and
 `product_info.year`; a list keeps its order, `tags.0` and `tags.1`, and is
 also addressable as a whole under `tags`.
@@ -172,8 +172,8 @@ After a write, build a new query to see the change.
 
 ## Change and remove values
 
-Writing a key replaces whatever the node had under it, including everything
-under a nested key.
+Writing a key replaces the node's previous value for it, including every
+leaf under a nested key.
 Keys you do not mention stay as they are:
 
 ```python
@@ -248,8 +248,8 @@ shape: (2, 3)
 
 This is useful for a stream that was registered without a place in the
 model.
-A stream can also be born linked: `register_streams()` takes the same map
-under a `metadata` key, written together with the stream:
+A stream can also be linked at registration: `register_streams()` takes the
+same map under a `metadata` key, written together with the stream:
 
 ```python
 acq.register_streams([{
