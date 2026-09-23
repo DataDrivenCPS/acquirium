@@ -5,6 +5,9 @@ title: Attach metadata to a node
 Any node of the plant model, a piece of equipment or a measurement point,
 can carry values of your own: a maintenance date, a manufacturer, a set of
 tags, a service contract number.
+Edges of the plant model, which equipment a point belongs to for instance,
+are not written this way; they come from the model or from
+`sparql_update()`.
 `insert_metadata()` writes them as a plain `dict`, and from then on they are
 attributes like `unit` or `medium`: `where()` filters on them, `include()`
 returns them as columns, `options()` and `facets()` count them, and
@@ -224,45 +227,19 @@ node matched at the current pointer, or at `of=alias`:
 This is the form for bulk annotation: match the nodes with the query
 vocabulary you already use, then tag them in one update.
 
-## Link a measurement to its equipment
+## Annotate a stream at registration
 
-Two keys write edges of the plant model instead of attributes.
-`entity` on a measurement point links it to the equipment it belongs to,
-and `measurement` on a piece of equipment does the same from the other
-side.
-Values are node URIs or CURIEs, one or a list, and must name nodes the
-model has:
-
-```python
-acq.insert_metadata("swro:P2-out-pressure", {"entity": "swro:P1"})
-acq.query().entity(uri="swro:P1", alias="p1").measurement(alias="m").metadata()
-```
-```text
-shape: (2, 3)
-┌─────────┬──────────────────────┬────────────────────┐
-│ p1      ┆ m                    ┆ m.label            │
-╞═════════╪══════════════════════╪════════════════════╡
-│ swro:P1 ┆ swro:P1-out-pressure ┆ P1 outlet pressure │
-│ swro:P1 ┆ swro:P2-out-pressure ┆ P2 outlet pressure │
-└─────────┴──────────────────────┴────────────────────┘
-```
-
-This is useful for a stream that was registered without a place in the
-model.
-A stream can also be linked at registration: `register_streams()` takes the
-same map under a `metadata` key, written together with the stream:
+`register_streams()` takes the same map under a `metadata` key, written on
+the point together with the stream, into the stream's own graph:
 
 ```python
 acq.register_streams([{
     "source_id": "scada",
     "ref_name": "FT-101",
     "unit": "gal/min",
-    "metadata": {"entity": "swro:P1", "tags": ["scada"]},
+    "metadata": {"tags": ["scada"], "loop": "FIC-101"},
 }])
 ```
-
-`upstream` and `downstream` are relations of several steps and cannot be
-written this way.
 
 ## Built-in attributes
 

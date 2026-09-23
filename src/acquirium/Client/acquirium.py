@@ -159,17 +159,16 @@ class Acquirium:
 
         ``values`` is a plain map. A key that names a built-in attribute
         (``unit``, ``medium``, ``label``, ``type``, ...) is written with that
-        attribute's predicate, text resolved to a URI. ``entity`` on a
-        measurement links it to its equipment; ``measurement`` on an entity
-        does the reverse. Any other key is a user attribute, nested dicts
-        and lists flattened to dotted paths, that ``where``/``include``/
-        ``options``/``facets`` then accept, and ``aq.attr`` completes::
+        attribute's predicate, text resolved to a URI. Any other key is a
+        user attribute, nested dicts and lists flattened to dotted paths,
+        that ``where``/``include``/``options``/``facets`` then accept, and
+        ``aq.attr`` completes. Relations of the plant model (``entity``,
+        ``measurement``, ...) are not written here::
 
             aq.insert_metadata("dpr:valve-1", {
                 "last_cleaned": "03-12-1999",
                 "product_info": {"manufacturer": "Siemens", "year": 2019},
                 "tags": ["lab", "critical"],
-                "entity": "dpr:ozone-generator",
             })
             aq.query().measurement().where(aq.attr.product_info.year >= 2015)
 

@@ -205,9 +205,7 @@ Keys are handled by name:
 | key | written as |
 |---|---|
 | a built-in attribute (`unit`, `medium`, `label`, `type`, `process`, `substance`, `quantity_kind`, `enumeration_kind`, `data_source`, `app`) | that attribute's own predicate; free text is resolved to a URI first. `medium` is `s223:ofMedium` on a measurement and `s223:hasMedium` on an entity. `cp_type` cannot be written. |
-| `entity` (on a measurement) | `<value> s223:hasProperty <node>`; the value is a node URI or CURIE, or a list of them |
-| `measurement` (on an entity) | `<node> s223:hasProperty <value>` |
-| `upstream`, `downstream` | refused: these relations have no single edge to write |
+| a relation name (`entity`, `measurement`, `upstream`, `downstream`) | refused: edges of the plant model are not written here |
 | any other key | a user attribute, `urn:acquirium:attr#<key>` (prefix `attr:`) |
 
 A user attribute's value is a scalar, a `dict`, or a list, nested to any
@@ -226,9 +224,9 @@ Writing a key replaces it: the node's triples under that key, and under
 one SPARQL update.
 Keys not mentioned stay.
 `None` removes a key.
-Every node named, as a subject or as a relation value, must already exist
-in a data graph, or the call raises before writing; a node is treated as a
-measurement when it carries an external reference.
+Every node named must already exist in a data graph, or the call raises
+before writing; a node is treated as a measurement when it carries an
+external reference.
 The update runs in the reserved `metadata` source graph and touches nothing
 outside it, so it cannot retract a value the plant model or a driver graph
 asserts.

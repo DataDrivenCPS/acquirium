@@ -14,8 +14,7 @@ change in any release.
 - `insert_metadata()` attaches a value map to a node: on `Acquirium` for one
   node, on a `Query` for every matched node, and as the `metadata` key of a
   stream in `register_streams()`. Built-in keys write their own predicate
-  after text resolution, `entity`/`measurement` write the `hasProperty`
-  edge, and any other key becomes a user attribute under
+  after text resolution, and any other key becomes a user attribute under
   `urn:acquirium:attr#`, nested values and lists flattened to one predicate
   per leaf path. Writing a key replaces it; `None` removes it. The update
   runs in the reserved `metadata` source graph, which the server prunes of

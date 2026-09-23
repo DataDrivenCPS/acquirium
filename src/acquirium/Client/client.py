@@ -18,7 +18,6 @@ from acquirium.internals.models import (
 )
 from acquirium.internals.internals_namespaces import *
 from acquirium.Storage.values import normalize_value_kind
-from acquirium.Client.explore.attributes import REGISTRY
 from acquirium.Grafana.grafana_dashboard_creator import GrafanaDashboardCreator
 from rdflib import Graph, URIRef, Literal
 from rdflib.namespace import NamespaceManager, RDF, RDFS
@@ -226,8 +225,7 @@ def _split_stream_metadata(stream: dict) -> tuple[dict, dict]:
     A ``metadata`` key naming a top-level stream field (``unit``, ``label``,
     ...) is the same declaration and merges into the stream; giving both
     with different values is an error. Everything else (user attributes,
-    relations, other built-ins) is written on the point by the metadata
-    builder.
+    other built-ins) is written on the point by the metadata builder.
     """
     from acquirium.Client.metadata import STREAM_FIELDS
 
@@ -953,10 +951,9 @@ class AcquiriumClient:
             existing = self._point_metadata(str(point_uri)) if point_uri is not None else {}
             subj = _build_stream_triples(graph, stream, resolved, existing, self._units_compatible)
             if extra:
-                # Same map insert_metadata takes; the stream's equipment link
-                # and annotations land with it, in its own graph.
-                write = plan_write(str(subj), extra, role="data",
-                                   resolve=self._resolve_one, expand_uri=self.node_uri)
+                # Same map insert_metadata takes; the annotations land with
+                # the stream, in its own graph.
+                write = plan_write(str(subj), extra, role="data", resolve=self._resolve_one)
                 for triple in write.triples:
                     graph.add(triple)
         for source_id, graph in graphs.items():
@@ -1012,30 +1009,15 @@ class AcquiriumClient:
         from acquirium.Client.metadata import plan_write, update_text
         from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
 
-        from acquirium.Client.explore.relations import writable_edge
-
         subjects = {self.node_uri(uri): values for uri, values in records.items()}
         if not subjects:
             return {"ok": True, "nodes": 0}
-        # A relation value names another node; it must exist too, since an
-        # edge to a node no graph mentions would be pruned in the same write.
-        targets: set[str] = set()
-        for values in subjects.values():
-            for key, value in values.items():
-                if key in REGISTRY or writable_edge(key) is None or value is None:
-                    continue
-                items = value if isinstance(value, (list, tuple)) else [value]
-                targets.update(self.node_uri(v) for v in items if isinstance(v, (str, URIRef)))
-        roles = self.node_roles(set(subjects) | targets)
+        roles = self.node_roles(subjects)
         missing = sorted(set(subjects) - set(roles))
         if missing:
             raise ValueError(f"unknown node(s), not in any data graph: {missing}")
-        missing = sorted(targets - set(roles))
-        if missing:
-            raise ValueError(f"relation value(s) name node(s) not in any data graph: {missing}")
         writes = [
-            plan_write(uri, values, role=roles[uri],
-                       resolve=self._resolve_one, expand_uri=self.node_uri)
+            plan_write(uri, values, role=roles[uri], resolve=self._resolve_one)
             for uri, values in subjects.items()
         ]
         update = update_text(writes)

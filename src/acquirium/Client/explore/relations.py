@@ -49,29 +49,6 @@ def _invert(pred: str) -> str:
     return pred[1:] if pred.startswith("^") else f"^{pred}"
 
 
-def writable_edge(name: str) -> "tuple[str, bool] | None":
-    """The one triple ``insert_metadata`` writes for a relation key, or None.
-
-    A relation is writable when one of its chains is a single unconstrained
-    step: ``entity`` writes ``<value> hasProperty <node>`` (the step is
-    inverted, so the value is the subject). ``measurement`` is the inverse
-    of ``entity``: ``<node> hasProperty <value>``. Multi-step relations
-    (``upstream``, ``downstream``) have no single edge to write. Returns
-    ``(predicate_uri, inverted)``.
-    """
-    if name == "measurement":
-        edge = writable_edge("entity")
-        return None if edge is None else (edge[0], not edge[1])
-    chains = RELATIONS.get(name)
-    if not chains:
-        return None
-    for chain in chains:
-        if len(chain) == 1 and chain[0][1] is None:
-            pred = chain[0][0]
-            return (pred[1:], True) if pred.startswith("^") else (pred, False)
-    return None
-
-
 def reverse_chains(chains: Chains) -> Chains:
     """Read every chain backwards: from its end node to its start node.
 

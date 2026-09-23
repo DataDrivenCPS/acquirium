@@ -5,10 +5,11 @@ A value map is ``{key: value}`` on one node. Keys fall into three kinds:
 - a built-in attribute of the explore registry (``unit``, ``medium``,
   ``label``, ``type``, ...): written with that attribute's own predicate,
   text resolved to a URI first;
-- a writable relation (``entity``, ``measurement``): written as the edge,
-  values being node URIs or CURIEs;
 - anything else: a user attribute, ``urn:acquirium:attr#<leaf path>``, one
   predicate per leaf of the (possibly nested) value.
+
+A relation name (``entity``, ``measurement``, ``upstream``, ``downstream``)
+is refused: edges of the plant model are not written here.
 
 Nested dicts and lists flatten to dotted leaf paths, ``product_info.year``,
 ``tags.0``; order and duplicates of a list survive as indices. Scalars are
@@ -37,7 +38,7 @@ from acquirium.Client.explore.attributes import (
     Attr,
     check_key,
 )
-from acquirium.Client.explore.relations import RELATIONS, writable_edge
+from acquirium.Client.explore.relations import RELATIONS
 from acquirium.internals.internals_namespaces import (
     HAS_MEDIUM,
     OF_MEDIUM,
@@ -114,17 +115,15 @@ class Write:
     """The triples and replacements one node's value map produces."""
 
     subject: URIRef
-    # predicates replaced on the subject (built-ins, forward relations)
+    # predicates replaced on the subject (built-ins)
     replace_forward: List[str] = field(default_factory=list)
-    # predicates replaced with the subject as object (inverted relations)
-    replace_inverse: List[str] = field(default_factory=list)
     # user attribute keys replaced (leaf and everything under ``key.``)
     replace_keys: List[str] = field(default_factory=list)
     triples: List[tuple] = field(default_factory=list)
 
     @property
     def signature(self) -> tuple:
-        return (tuple(self.replace_forward), tuple(self.replace_inverse), tuple(self.replace_keys))
+        return (tuple(self.replace_forward), tuple(self.replace_keys))
 
 
 def _builtin_predicate(attr: Attr, role: str) -> str:
@@ -140,36 +139,22 @@ def plan_write(
     *,
     role: str,
     resolve: Callable[[str, str], Optional[str]],
-    expand_uri: Callable[[str], str],
 ) -> Write:
     """Build the :class:`Write` for one node.
 
     ``role`` is ``"data"`` or ``"entity"`` (which predicate a built-in
     takes, and whether it applies). ``resolve(text, kind)`` turns text on a
-    URI-valued built-in into a URI, or ``None``; ``expand_uri`` expands a
-    CURIE in a relation value.
+    URI-valued built-in into a URI, or ``None``.
     """
     w = Write(subject=URIRef(subject))
     leaves, removed = flatten(values)
 
-    def relation_values(key: str, value: Any) -> List[URIRef]:
-        items = value if isinstance(value, (list, tuple)) else [value]
-        out = []
-        for v in items:
-            if v is None:
-                continue
-            if isinstance(v, (Mapping, list, tuple)) or not isinstance(v, (str, URIRef)):
-                raise ValueError(f"relation {key!r} takes node URIs, got {v!r}")
-            out.append(URIRef(expand_uri(str(v))))
-        return out
-
     for key, value in values.items():
         attr = REGISTRY.get(key)
-        edge = writable_edge(key) if attr is None else None
-        if attr is None and edge is None and (key in RELATIONS or key == "measurement"):
+        if attr is None and (key in RELATIONS or key == "measurement"):
             raise ValueError(
-                f"relation {key!r} has no single edge to write; only relations with a "
-                "direct step (entity, measurement) can be set")
+                f"{key!r} names a relation of the plant model; insert_metadata writes "
+                "attributes only")
         if attr is not None:
             if key in NOT_WRITABLE:
                 raise ValueError(f"attribute {key!r} cannot be written: it describes another node")
@@ -195,18 +180,10 @@ def plan_write(
                         raise ValueError(f"Could not resolve {v!r} as {attr.kind} for attribute {key!r}")
                     term = URIRef(uri)
                 w.triples.append((w.subject, URIRef(pred), term))
-        elif edge is not None:
-            pred, inverted = edge
-            (w.replace_inverse if inverted else w.replace_forward).append(pred)
-            for node in relation_values(key, value):
-                w.triples.append((node, URIRef(pred), w.subject) if inverted
-                                 else (w.subject, URIRef(pred), node))
-        elif key in removed:
-            w.replace_keys.append(key)
         else:
             w.replace_keys.append(key)
     for path, scalar in leaves.items():
-        if path.split(".", 1)[0] in REGISTRY or writable_edge(path.split(".", 1)[0]):
+        if path.split(".", 1)[0] in REGISTRY:
             continue
         w.triples.append((w.subject, URIRef(ATTR_NS + path), to_term(scalar)))
     return w
@@ -223,9 +200,8 @@ def update_text(writes: Iterable[Write]) -> str:
     for w in writes:
         groups.setdefault(w.signature, []).append(w)
     ops: List[str] = []
-    for (forward, inverse, keys), members in groups.items():
+    for (forward, keys), members in groups.items():
         values = " ".join(w.subject.n3() for w in members)
-        conditions: List[str] = []
         if forward or keys:
             terms = [f"?p = <{p}>" for p in forward]
             terms += [f"?p = <{ATTR_NS}{k}>" for k in keys]
@@ -233,12 +209,6 @@ def update_text(writes: Iterable[Write]) -> str:
             ops.append(
                 f"DELETE {{ ?s ?p ?o }}\nWHERE {{\n  VALUES ?s {{ {values} }}\n"
                 f"  ?s ?p ?o .\n  FILTER({' || '.join(terms)})\n}}"
-            )
-        if inverse:
-            terms = [f"?p = <{p}>" for p in inverse]
-            ops.append(
-                f"DELETE {{ ?o ?p ?s }}\nWHERE {{\n  VALUES ?s {{ {values} }}\n"
-                f"  ?o ?p ?s .\n  FILTER({' || '.join(terms)})\n}}"
             )
     triples = [t for w in writes for t in w.triples]
     if triples:

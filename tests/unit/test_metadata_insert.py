@@ -15,7 +15,6 @@ from acquirium.Client.explore.attributes import ATTR_NS, clear_registry_cache
 from acquirium.Client.explore.compile import _term
 from acquirium.Client.explore.core import Query
 from acquirium.Client.metadata import Write, flatten, plan_write, to_term, update_text
-from acquirium.Client.explore.relations import writable_edge
 from acquirium.internals.internals_namespaces import (
     HAS_EXTERNAL_REFERENCE, HAS_MEDIUM, HAS_UNIT, OF_MEDIUM, S223, WATR,
 )
@@ -36,7 +35,7 @@ def expand(text):
 
 
 def plan(values, role="data"):
-    return plan_write(NODE, values, role=role, resolve=noop_resolve, expand_uri=expand)
+    return plan_write(NODE, values, role=role, resolve=noop_resolve)
 
 
 class TestFlatten:
@@ -108,44 +107,32 @@ class TestPlanWrite:
         with pytest.raises(ValueError, match="cannot be written"):
             plan({"cp_type": "urn:w#Inlet"}, role="entity")
 
-    def test_entity_relation_is_inverted(self):
-        w = plan({"entity": "x:ozone"})
-        assert w.replace_inverse == [HAS_PROP]
-        assert w.triples == [(URIRef("urn:x#ozone"), URIRef(HAS_PROP), URIRef(NODE))]
-
-    def test_measurement_relation_is_forward_and_accepts_lists(self):
-        w = plan({"measurement": ["x:p1", "x:p2"]}, role="entity")
-        assert w.replace_forward == [HAS_PROP]
-        assert [t[2] for t in w.triples] == [URIRef("urn:x#p1"), URIRef("urn:x#p2")]
-
-    def test_multi_step_relation_rejected(self):
-        with pytest.raises(ValueError, match="no single edge"):
-            plan({"upstream": "x:pump"})
-        assert writable_edge("upstream") is None and writable_edge("nope") is None
-
-    def test_relation_value_must_be_a_node(self):
-        with pytest.raises(ValueError, match="takes node URIs"):
-            plan({"entity": {"a": 1}})
-
     def test_none_removes(self):
-        w = plan({"tags": None, "unit": None, "entity": None})
+        w = plan({"tags": None, "unit": None})
         assert w.replace_keys == ["tags"] and w.replace_forward == [str(HAS_UNIT)]
-        assert w.replace_inverse == [HAS_PROP] and w.triples == []
+        assert w.triples == []
+
+    @pytest.mark.parametrize("key", ["entity", "measurement", "upstream", "downstream"])
+    def test_relation_names_are_refused(self, key):
+        with pytest.raises(ValueError, match="names a relation"):
+            plan({key: "x:e"})
 
 
 class TestUpdateText:
     def test_groups_by_signature_and_inserts_once(self):
-        a = plan({"tags": ["x"], "unit": UNIT, "entity": "x:e"})
+        a = plan({"tags": ["x"], "unit": UNIT})
         b = Write(subject=URIRef("urn:x#other"))
-        b.replace_keys, b.replace_forward, b.replace_inverse = ["tags"], [str(HAS_UNIT)], [HAS_PROP]
+        b.replace_keys, b.replace_forward = ["tags"], [str(HAS_UNIT)]
         b.triples = [(b.subject, URIRef(f"{ATTR_NS}tags.0"), Literal("y"))]
-        text = update_text([a, b])
+        c = plan({"other": 1})
+        c.subject = URIRef("urn:x#third")
+        text = update_text([a, b, c])
         ops = text.split(" ;\n")
         assert len(ops) == 3
         assert ops[0].startswith("DELETE { ?s ?p ?o }") and f"VALUES ?s {{ <{NODE}> <urn:x#other> }}" in ops[0]
         assert f'STRSTARTS(STR(?p), "{ATTR_NS}tags.")' in ops[0] and f"?p = <{ATTR_NS}tags>" in ops[0]
         assert f"?p = <{HAS_UNIT}>" in ops[0]
-        assert ops[1].startswith("DELETE { ?o ?p ?s }") and f"?p = <{HAS_PROP}>" in ops[1]
+        assert ops[1].startswith("DELETE { ?s ?p ?o }") and "VALUES ?s { <urn:x#third> }" in ops[1]
         assert ops[2].startswith("INSERT DATA {") and '"y"' in ops[2] and f"<{UNIT}>" in ops[2]
 
     def test_delete_only(self):
@@ -178,33 +165,20 @@ class TestClientInsert:
         assert client.sparql_query.call_args[1] == {"include_dependencies": False}
 
     def test_insert_builds_update_in_metadata_graph(self):
-        client = make_client([[NODE, "urn:x#ref"], ["urn:x#e", None]], resolved={"mg/L": UNIT})
-        out = client.insert_metadata({"x:valve-1": {"unit": "mg/L", "tags": ["a"], "entity": "x:e"}})
+        client = make_client([[NODE, "urn:x#ref"]], resolved={"mg/L": UNIT})
+        out = client.insert_metadata({"x:valve-1": {"unit": "mg/L", "tags": ["a"]}})
         assert out == {"ok": True, "message": "update applied", "nodes": 1}
         update, kwargs = client.sparql_update.call_args[0][0], client.sparql_update.call_args[1]
         assert kwargs == {"source_id": METADATA_SOURCE_ID}
         assert f"<{NODE}> <{HAS_UNIT}> <{UNIT}>" in update
-        assert f"<urn:x#e> <{HAS_PROP}> <{NODE}>" in update
         assert f'<{NODE}> <{ATTR_NS}tags.0> "a"' in update
 
-    def test_full_uris_bypass_curie_expansion(self):
-        # expand_uri accepts CURIEs only (an integration test pins that); the
-        # URIs a query matched, and relation values, must still be accepted.
-        client = make_client([[NODE, "urn:x#ref"], ["urn:x#e", None], ["urn:x#e2", None]])
+    def test_full_uri_and_curie_subjects(self):
+        client = make_client([[NODE, "urn:x#ref"]])
         client.expand_uri = MagicMock(side_effect=lambda s: (_ for _ in ()).throw(ValueError(s))
                                       if "://" in s or s.startswith("urn:") else expand(s))
-        client.insert_metadata({NODE: {"entity": ["urn:x#e", "x:e2"]}})
-        update = client.sparql_update.call_args[0][0]
-        assert f"<urn:x#e> <{HAS_PROP}> <{NODE}>" in update and f"<urn:x#e2> <{HAS_PROP}> <{NODE}>" in update
-        assert client.node_uri("x:e2") == "urn:x#e2" and client.node_uri(NODE) == NODE
-
-    def test_unknown_relation_target_raises(self):
-        client = make_client([[NODE, "urn:x#ref"]])  # the subject exists, x:e does not
-        with pytest.raises(ValueError, match="relation value.*urn:x#e"):
-            client.insert_metadata({NODE: {"entity": "x:e", "tags": ["a"]}})
-        client.sparql_update.assert_not_called()
-        sparql = client.sparql_query.call_args[0][0]
-        assert "<urn:x#e>" in sparql and f"<{NODE}>" in sparql  # one existence query
+        client.insert_metadata({NODE: {"a": 1}, "x:valve-1": {"b": 2}})
+        assert client.node_uri("x:valve-1") == NODE and client.node_uri(NODE) == NODE
 
     def test_unknown_subject_raises(self):
         client = make_client([])
@@ -251,9 +225,9 @@ class TestRegisterStreamsMetadata:
     def test_split_merges_stream_fields_and_keeps_the_rest(self):
         stream, rest = _split_stream_metadata({
             "source_id": "s", "ref_name": "r", "unit": UNIT,
-            "metadata": {"label": "Flow", "unit": UNIT, "entity": "x:e", "tags": ["a"]}})
+            "metadata": {"label": "Flow", "unit": UNIT, "tags": ["a"]}})
         assert stream == {"source_id": "s", "ref_name": "r", "unit": UNIT, "label": "Flow"}
-        assert rest == {"entity": "x:e", "tags": ["a"]}
+        assert rest == {"tags": ["a"]}
 
     def test_conflict_raises(self):
         with pytest.raises(ValueError, match="stream gives unit"):
@@ -267,11 +241,10 @@ class TestRegisterStreamsMetadata:
         client._units_compatible = MagicMock(return_value=True)
         client.register_streams([{
             "source_id": "src", "ref_name": "flow", "point_uri": NODE,
-            "metadata": {"unit": UNIT, "entity": "x:e", "product_info": {"year": 2019}},
+            "metadata": {"unit": UNIT, "product_info": {"year": 2019}},
         }])
         turtle, kwargs = client.insert_graph.call_args[0][0], client.insert_graph.call_args[1]
         g = Graph().parse(data=turtle, format="turtle")
-        assert (URIRef("urn:x#e"), URIRef(HAS_PROP), URIRef(NODE)) in g
         assert (URIRef(NODE), URIRef(f"{ATTR_NS}product_info.year"), Literal(2019)) in g
         assert (URIRef(NODE), HAS_UNIT, URIRef(UNIT)) in g
         assert kwargs["source_id"] == "src" and kwargs["replace"] is False
