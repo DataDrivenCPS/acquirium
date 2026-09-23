@@ -18,6 +18,7 @@ from acquirium.internals.models import (
 )
 from acquirium.internals.internals_namespaces import *
 from acquirium.Storage.values import normalize_value_kind
+from acquirium.Client.explore.attributes import REGISTRY
 from acquirium.Grafana.grafana_dashboard_creator import GrafanaDashboardCreator
 from rdflib import Graph, URIRef, Literal
 from rdflib.namespace import NamespaceManager, RDF, RDFS
@@ -1011,13 +1012,27 @@ class AcquiriumClient:
         from acquirium.Client.metadata import plan_write, update_text
         from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
 
+        from acquirium.Client.explore.relations import writable_edge
+
         subjects = {self.node_uri(uri): values for uri, values in records.items()}
         if not subjects:
             return {"ok": True, "nodes": 0}
-        roles = self.node_roles(subjects)
+        # A relation value names another node; it must exist too, since an
+        # edge to a node no graph mentions would be pruned in the same write.
+        targets: set[str] = set()
+        for values in subjects.values():
+            for key, value in values.items():
+                if key in REGISTRY or writable_edge(key) is None or value is None:
+                    continue
+                items = value if isinstance(value, (list, tuple)) else [value]
+                targets.update(self.node_uri(v) for v in items if isinstance(v, (str, URIRef)))
+        roles = self.node_roles(set(subjects) | targets)
         missing = sorted(set(subjects) - set(roles))
         if missing:
             raise ValueError(f"unknown node(s), not in any data graph: {missing}")
+        missing = sorted(targets - set(roles))
+        if missing:
+            raise ValueError(f"relation value(s) name node(s) not in any data graph: {missing}")
         writes = [
             plan_write(uri, values, role=roles[uri],
                        resolve=self._resolve_one, expand_uri=self.node_uri)

@@ -230,7 +230,8 @@ Two keys write edges of the plant model instead of attributes.
 `entity` on a measurement point links it to the equipment it belongs to,
 and `measurement` on a piece of equipment does the same from the other
 side.
-Values are node URIs or CURIEs, one or a list:
+Values are node URIs or CURIEs, one or a list, and must name nodes the
+model has:
 
 ```python
 acq.insert_metadata("swro:P2-out-pressure", {"entity": "swro:P1"})

@@ -178,7 +178,7 @@ class TestClientInsert:
         assert client.sparql_query.call_args[1] == {"include_dependencies": False}
 
     def test_insert_builds_update_in_metadata_graph(self):
-        client = make_client([[NODE, "urn:x#ref"]], resolved={"mg/L": UNIT})
+        client = make_client([[NODE, "urn:x#ref"], ["urn:x#e", None]], resolved={"mg/L": UNIT})
         out = client.insert_metadata({"x:valve-1": {"unit": "mg/L", "tags": ["a"], "entity": "x:e"}})
         assert out == {"ok": True, "message": "update applied", "nodes": 1}
         update, kwargs = client.sparql_update.call_args[0][0], client.sparql_update.call_args[1]
@@ -190,13 +190,21 @@ class TestClientInsert:
     def test_full_uris_bypass_curie_expansion(self):
         # expand_uri accepts CURIEs only (an integration test pins that); the
         # URIs a query matched, and relation values, must still be accepted.
-        client = make_client([[NODE, "urn:x#ref"]])
+        client = make_client([[NODE, "urn:x#ref"], ["urn:x#e", None], ["urn:x#e2", None]])
         client.expand_uri = MagicMock(side_effect=lambda s: (_ for _ in ()).throw(ValueError(s))
                                       if "://" in s or s.startswith("urn:") else expand(s))
         client.insert_metadata({NODE: {"entity": ["urn:x#e", "x:e2"]}})
         update = client.sparql_update.call_args[0][0]
         assert f"<urn:x#e> <{HAS_PROP}> <{NODE}>" in update and f"<urn:x#e2> <{HAS_PROP}> <{NODE}>" in update
         assert client.node_uri("x:e2") == "urn:x#e2" and client.node_uri(NODE) == NODE
+
+    def test_unknown_relation_target_raises(self):
+        client = make_client([[NODE, "urn:x#ref"]])  # the subject exists, x:e does not
+        with pytest.raises(ValueError, match="relation value.*urn:x#e"):
+            client.insert_metadata({NODE: {"entity": "x:e", "tags": ["a"]}})
+        client.sparql_update.assert_not_called()
+        sparql = client.sparql_query.call_args[0][0]
+        assert "<urn:x#e>" in sparql and f"<{NODE}>" in sparql  # one existence query
 
     def test_unknown_subject_raises(self):
         client = make_client([])

@@ -226,7 +226,8 @@ Writing a key replaces it: the node's triples under that key, and under
 one SPARQL update.
 Keys not mentioned stay.
 `None` removes a key.
-Every node named must already exist in a data graph; a node is treated as a
+Every node named, as a subject or as a relation value, must already exist
+in a data graph, or the call raises before writing; a node is treated as a
 measurement when it carries an external reference.
 The update runs in the reserved `metadata` source graph and touches nothing
 outside it, so it cannot retract a value the plant model or a driver graph
