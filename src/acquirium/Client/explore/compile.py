@@ -12,6 +12,7 @@ used a private ``_Exclude`` wrapper with identical SPARQL output).
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from datetime import date, datetime
 from typing import Any, List
@@ -547,10 +548,24 @@ def _data_node_clauses(v: str, nid: int, info, registry: Mapping = REGISTRY) -> 
     return clauses
 
 
+def attr_var(nid: int, name: str) -> str:
+    """The projected variable for attribute ``name`` of node ``nid``.
+
+    Built-in names are SPARQL-safe and appear as-is (``?attr1_unit``); a
+    user attribute path carries dots and may carry hyphens, which a variable
+    name cannot, so those characters are written as ``_<codepoint>_``
+    (``?attr0_product_info_46_year``). ``Query._col_name_to_alias`` maps a
+    column back to its attribute through the query's selects, not by
+    decoding.
+    """
+    safe = re.sub(r"[^A-Za-z0-9_]", lambda m: f"_{ord(m.group())}_", name)
+    return f"?attr{nid}_{safe}"
+
+
 def _attr_select_clause(v: str, nid: int, name: str, required: bool,
                         registry: Mapping = REGISTRY) -> tuple:
     attr = registry[name]
-    avar = f"?attr{nid}_{name}"
+    avar = attr_var(nid, name)
     pred_path = "|".join(f"<{p}>" for p in attr.predicates)
     clause = f"{v} ({pred_path}) {avar} ."
     return (clause if required else f"OPTIONAL {{ {clause} }}"), avar
@@ -681,7 +696,7 @@ def compile_parts(graph: QueryGraph, registry: Mapping = REGISTRY) -> tuple:
     attr_var_pairs: List[tuple] = []  # (node_id, var) in selects order
     for nid, name, required in getattr(graph, "selects", ()):
         attr = registry[name]
-        avar = f"?attr{nid}_{name}"
+        avar = attr_var(nid, name)
         pred_path = "|".join(f"<{p}>" for p in attr.predicates)
         clause = f"{var_map[nid]} ({pred_path}) {avar} ."
         where_clauses.append(clause if required else f"OPTIONAL {{ {clause} }}")

@@ -252,8 +252,17 @@ class Registry(Mapping):
     def __len__(self) -> int:
         return len(REGISTRY) + len(self._discovered())
 
-    def for_role(self, role: str) -> "list[Attr]":
-        return [a for a in self.values() if role in a.roles]
+    def for_role(self, role: str, *, summary: bool = False) -> "list[Attr]":
+        """Attributes applicable to ``role``.
+
+        ``summary=True`` leaves out the per-index leaves of a list
+        (``tags.0``, ``tags.1``) and keeps the collapsed name (``tags``), so
+        ``include("all")`` and ``facets()`` show a list once.
+        """
+        out = [a for a in self.values() if role in a.roles]
+        if summary:
+            out = [a for a in out if not any(seg.isdigit() for seg in a.name.split("."))]
+        return out
 
 
 def normalize_value(v: Any) -> tuple[list[Any], bool]:

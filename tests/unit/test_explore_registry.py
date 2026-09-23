@@ -17,6 +17,8 @@ from acquirium.Client.explore.attributes import (
     clear_registry_cache,
     user_attributes,
 )
+from rdflib.plugins.sparql import prepareQuery
+
 from acquirium.Client.explore.core import Query
 from acquirium.Client.explore.facets import clear_facet_cache
 from acquirium.Client.explore.hidden import hidden_filter, hidden_prefixes, hide, unhide
@@ -154,18 +156,39 @@ class TestQueryUsesRegistry:
         q = (Query(client=make_client()).entity(CLS_A, alias="ro")
              .include("product_info.year"))
         assert q.query_graph.selects == ((0, "product_info.year", False),)
-        assert f"OPTIONAL {{ ?v0 (<{ATTR_NS}product_info.year>) ?attr0_product_info.year . }}" \
+        assert f"OPTIONAL {{ ?v0 (<{ATTR_NS}product_info.year>) ?attr0_product_info_46_year . }}" \
             in q.to_sparql()
+        assert q._col_name_to_alias("attr0_product_info_46_year") == "ro.product_info.year"
+        prepareQuery(q.to_sparql())  # a dot in a variable name would not parse
 
     def test_include_alias_dot_user_path(self):
         q = (Query(client=make_client()).entity(CLS_A, alias="ro").measurement(alias="m")
              .include("ro.product_info.year"))
         assert q.query_graph.selects == ((0, "product_info.year", False),)
 
-    def test_include_all_expands_discovered(self):
+    def test_include_all_expands_discovered_without_index_leaves(self):
         q = Query(client=make_client()).entity(CLS_A, alias="ro").include("all")
         names = {n for _, n, _ in q.query_graph.selects}
-        assert {"medium", "process", "last_cleaned", "product_info.year", "tags"} <= names
+        assert {"medium", "process", "last_cleaned", "product_info.year", "tags",
+                "product_list.manufacturer"} <= names
+        assert not any(n.startswith("tags.") or ".0." in n for n in names)
+        prepareQuery(q.to_sparql())
+
+    def test_hyphenated_key_column(self):
+        client = make_client(predicates=[f"{ATTR_NS}last-cleaned"])
+        q = Query(client=client).entity(CLS_A, alias="ro").include("last-cleaned")
+        assert "?attr0_last_45_cleaned" in q.to_sparql()
+        assert q._col_name_to_alias("attr0_last_45_cleaned") == "ro.last-cleaned"
+        prepareQuery(q.to_sparql())
+
+    def test_full_query_with_user_attributes_parses(self):
+        from acquirium.Client.explore.expr import AttrProxy
+        client = make_client()
+        a = AttrProxy(client)
+        q = (Query(client=client).entity(CLS_A, alias="ro").measurement(alias="m")
+             .where("ro", (a.product_info.year >= 2015) | ~(a.tags == "lab"), last_cleaned="x")
+             .include("product_info.year", "tags").include("all", of="ro"))
+        prepareQuery(q.to_sparql())
 
     def test_include_all_without_client_is_builtins(self):
         q = Query(client=None).entity(CLS_A, alias="ro").include("all")
@@ -188,6 +211,7 @@ class TestQueryUsesRegistry:
             return {"columns": ["uri"], "rows": []}
         f = Query(client=make_client(responder=responder)).entity(CLS_A, alias="ro").facets()
         assert {"last_cleaned", "tags", "product_info.manufacturer"} <= set(f.attrs())
+        assert "tags.0" not in f.attrs()
 
 
 class TestHiddenNamespace:

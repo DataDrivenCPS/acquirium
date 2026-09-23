@@ -187,6 +187,15 @@ class TestClientInsert:
         assert f"<urn:x#e> <{HAS_PROP}> <{NODE}>" in update
         assert f'<{NODE}> <{ATTR_NS}tags.0> "a"' in update
 
+    def test_full_uri_subjects_pass_expand_uri(self):
+        client = AcquiriumClient.__new__(AcquiriumClient)
+        client.base_url = "http://test:8000"
+        client._namespaces_cache = Graph()  # no prefixes bound at all
+        for uri in ("urn:x#a", "http://example.org/a", "https://example.org/a"):
+            assert client.expand_uri(uri) == uri
+        with pytest.raises(ValueError, match="Cannot expand"):
+            client.expand_uri("nope:a")
+
     def test_unknown_subject_raises(self):
         client = make_client([])
         with pytest.raises(ValueError, match="unknown node"):

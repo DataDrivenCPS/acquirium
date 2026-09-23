@@ -529,6 +529,8 @@ class AcquiriumClient:
         the input unchanged if the prefix is not bound.
         """
         s = str(text)
+        if s.startswith(("urn:", "http://", "https://")):
+            return s
         nm = self.namespace_manager()
         try:
             return str(nm.expand_curie(s))

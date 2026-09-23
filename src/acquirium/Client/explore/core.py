@@ -26,7 +26,7 @@ import polars as pl
 from rdflib import URIRef
 
 from acquirium.Client.explore.attributes import NOT_IN_ALL, Not, Registry, attributes_doc, normalize_value
-from acquirium.Client.explore.compile import compile_sparql
+from acquirium.Client.explore.compile import attr_var, compile_sparql
 from acquirium.Client.explore.directions import EQUIPMENT_STEPS, PROPERTY_STEPS
 from acquirium.Client.explore.expr import ORDERING, BoolOp, Compare, Expr
 from acquirium.Client.explore.expr import attr_name as _path_name
@@ -863,7 +863,7 @@ class Query:
                     else "include: no current node (start with entity())"
                 )
             role = "data" if nid in g.data_nodes else "entity"
-            expanded = [a.name for a in self.registry.for_role(role)
+            expanded = [a.name for a in self.registry.for_role(role, summary=True)
                         if a.name not in NOT_IN_ALL[role]]
             names = tuple(n for name in names
                           for n in (expanded if name == "all" else [name]))
@@ -1076,7 +1076,7 @@ class Query:
         version = self.client.graph_version()
 
         summary = FacetSummary(node_alias=alias)
-        for attr in self.registry.for_role(role):
+        for attr in self.registry.for_role(role, summary=True):
             name = attr.name
             df = self.options(name, of=alias, include_dependencies=include_dependencies)
             scope = "matched"
@@ -1345,6 +1345,11 @@ class Query:
             except ValueError:
                 return col_name
             base_alias = self.query_graph.aliases_reverse.get(node_id, f"v{node_id}")
+            # a user attribute's variable is an encoding of its path; the
+            # select entry that produced it holds the path itself
+            for snid, name, _ in self.query_graph.selects:
+                if snid == node_id and attr_var(snid, name) == f"?{col_name}":
+                    return f"{base_alias}.{name}"
             return f"{base_alias}.{attr_name}"
         if col_name.startswith("lbl"):
             try:
