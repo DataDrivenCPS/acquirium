@@ -11,12 +11,34 @@ change in any release.
 ## [Unreleased]
 
 ### Added
+- `insert_metadata()` attaches a value map to a node: on `Acquirium` for one
+  node, on a `Query` for every matched node, and as the `metadata` key of a
+  stream in `register_streams()`. Built-in keys write their own predicate
+  after text resolution, `entity`/`measurement` write the `hasProperty`
+  edge, and any other key becomes a user attribute under
+  `urn:acquirium:attr#`, nested values and lists flattened to one predicate
+  per leaf path. Writing a key replaces it; `None` removes it. The update
+  runs in the reserved `metadata` source graph, which the server prunes of
+  triples about nodes no other graph mentions.
+- User attributes are discovered from the graph and accepted wherever an
+  attribute name is: `where()`, `include()` (including `"all"`), `options()`
+  and `facets()`, by key or dotted path (`product_info.year`).
+- `acq.attr` builds attribute expressions for `where()`: the six comparison
+  operators, `.is_in()` and `.exists()` on a path, combined with `&`, `|`
+  and `~`. Bound to the server, so `dir(acq.attr)` lists the attributes and
+  an unknown name raises where it is written.
+- `hide()` and `unhide()` accept a namespace (a string ending in `#` or `/`);
+  `urn:acquirium:attr#` is hidden from `via="any"` traversal by default.
 - Text resolution has a `role` kind: the s223 role enumeration, the NAWI roles
   that extend it, and whatever a loaded model uses with `s223:hasRole`. A role
   is found by its bare name, so `resolve_text("backwash", kind="role")` returns
   `nawi:Role-Backwash`.
 
 ### Changed
+- A SPARQL update no longer forces the ontology closure to be recomputed
+  unless it changed the graph's `owl:imports` or `owl:Ontology` triples.
+- The query compiler renders `int`, `float`, `bool`, `date` and `datetime`
+  filter values as typed literals, so a numeric attribute compares as a number.
 - Roles are no longer part of `kind="class"`. `resolve_text("condenser",
   kind="class")` returns the equipment class only; the role needs
   `kind="role"`.
