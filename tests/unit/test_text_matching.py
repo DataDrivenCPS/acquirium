@@ -24,6 +24,7 @@ import numpy as np
 import pytest
 
 from acquirium.Server.manager import Manager
+from acquirium.TextMatch.graph_concepts import GraphConcepts
 from acquirium.TextMatch.embedding_matcher import (
     DEFAULT_MODEL,
     EmbeddingMatcher,
@@ -32,6 +33,7 @@ from acquirium.TextMatch.embedding_matcher import (
     load_embedding_model,
 )
 from acquirium.TextMatch.qudt_store import QUDTStore
+from acquirium.TextMatch.unit_key import UnitKeyIndex, unit_key
 from acquirium.TextMatch.resolver import ConceptResolver
 from acquirium.internals.qudt_units import UnitNotFound
 
@@ -80,6 +82,29 @@ class TestSplitLocalName:
     def test_empty_string(self):
         result = _split_local_name("")
         assert result == []
+
+
+    @pytest.mark.parametrize("local, tokens", [
+        ("BACnetExternalReference", ["bacnet", "external", "reference"]),
+        ("pHAdjuster", ["ph", "adjuster"]),
+        ("Process-pHAdjustment", ["process", "ph", "adjustment"]),
+        ("PowerAndSignal-PoE", ["power", "and", "signal", "poe"]),
+        ("PoE-802.3af-1", ["poe", "802.3af", "1"]),
+        ("ISMBand-LoRaWAN", ["ism", "band", "lorawan"]),
+        ("Salt-NaCl", ["salt", "nacl"]),
+        ("Modulated-4-20mA", ["modulated", "4", "20", "ma"]),
+    ])
+    def test_mixed_case_words_stay_whole(self, local, tokens):
+        assert _split_local_name("urn:x#" + local) == tokens
+
+    @pytest.mark.parametrize("local, tokens", [
+        ("StepHeight", ["step", "height"]),       # "pH" sits inside two words
+        ("GraphHandle", ["graph", "handle"]),
+        ("PoEmitter", ["po", "emitter"]),         # runs on into lower case: not "PoE"
+        ("HTTPServer", ["http", "server"]),
+    ])
+    def test_whole_words_do_not_match_inside_other_words(self, local, tokens):
+        assert _split_local_name("urn:x#" + local) == tokens
 
 
 # ── EmbeddingMatcher._concepts_hash ───────────────────────
@@ -462,6 +487,229 @@ def test_semantic_matcher_still_runs_both_stages(
     )
 
 
+# ── exact stage: which concept leads when several share a surface ─────
+
+_QK = "http://qudt.org/vocab/quantitykind/"
+
+
+def _shared_surface_matcher(tmp_path: Path, concepts: list[dict[str, Any]]) -> EmbeddingMatcher:
+    m = EmbeddingMatcher(cache_dir=tmp_path / "cache", exact_only=True)
+    m.build_index(concepts)
+    return m
+
+
+def test_the_concept_named_by_the_text_leads(tmp_path: Path) -> None:
+    # CartesianVolume sorts first by URI and carries "volume" as an alternative label.
+    m = _shared_surface_matcher(tmp_path, [
+        {"uri": _QK + "CartesianVolume", "kind": "quantity_kind", "label": "Cartesian Volume",
+         "surfaces": ["cartesian volume", "volume"]},
+        {"uri": _QK + "Volume", "kind": "quantity_kind", "label": "Volume", "surfaces": ["volume"]},
+    ])
+    assert [h.uri for h in m.query("volume", kind="quantity_kind")] == [_QK + "Volume", _QK + "CartesianVolume"]
+    assert [h.uri for h in m.query("VOLUME", kind="quantity_kind")][0] == _QK + "Volume"
+
+
+def test_primary_label_leads_over_an_alternative_label(tmp_path: Path) -> None:
+    m = _shared_surface_matcher(tmp_path, [
+        {"uri": "urn:t:A-Tank", "kind": "class", "label": "Basin", "surfaces": ["basin", "clarifier"]},
+        {"uri": "urn:t:SedimentationTank", "kind": "class", "label": "Clarifier", "surfaces": ["clarifier"]},
+    ])
+    assert m.query("clarifier", kind="class", top_k=1)[0].uri == "urn:t:SedimentationTank"
+
+
+def test_case_exact_reading_still_leads_over_naming(tmp_path: Path) -> None:
+    # "kG" is kilogauss even though "kg" names nothing better
+    m = _shared_surface_matcher(tmp_path, [
+        {"uri": "urn:u:KiloGAUSS", "kind": "unit", "label": "Kilogauss", "surfaces": ["kilogauss"], "exact_surfaces": ["kG"]},
+        {"uri": "urn:u:KiloGM", "kind": "unit", "label": "Kilogram", "surfaces": ["kilogram"], "exact_surfaces": ["kg"]},
+    ])
+    assert [h.uri for h in m.query("kG", kind="unit")] == ["urn:u:KiloGAUSS", "urn:u:KiloGM"]
+    assert [h.uri for h in m.query("kg", kind="unit")] == ["urn:u:KiloGM", "urn:u:KiloGAUSS"]
+
+
+# ── exact_surfaces: looked up, never embedded ─────────────────────────
+
+def _abbr_concepts() -> list[dict[str, Any]]:
+    return [
+        {"uri": "urn:t:RO", "kind": "process", "label": "Reverse Osmosis",
+         "surfaces": ["reverse osmosis"], "exact_surfaces": ["ro"]},
+        {"uri": "urn:t:VFD", "kind": "class", "label": "Variable Frequency Drive",
+         "surfaces": ["variable frequency drive", "motor drive"], "exact_surfaces": ["vfd"]},
+    ]
+
+
+def test_exact_surfaces_come_after_the_embedded_rows() -> None:
+    surfaces, meta = EmbeddingMatcher._build_surfaces_and_meta(_abbr_concepts())
+    assert surfaces == ["reverse osmosis", "variable frequency drive", "motor drive"]
+    assert [m["surface"] for m in meta] == surfaces + ["ro", "vfd"]
+    assert meta[-1]["uri"] == "urn:t:VFD" and meta[-1]["label"] == "Variable Frequency Drive"
+
+
+def test_exact_surfaces_are_looked_up_but_not_embedded(stub_embed: dict[str, int]) -> None:
+    m = EmbeddingMatcher()
+    m.build_index(_abbr_concepts())
+    assert stub_embed["last_n"] == 3
+    assert m._vectors.shape[0] == 3 and len(m._meta) == 5
+
+    hit = m.query("VFD", kind="class", top_k=1)[0]
+    assert (hit.uri, hit.score, hit.match_stage) == ("urn:t:VFD", 1.0, "exact")
+    assert hit.matched_surface == "vfd"
+
+
+def test_semantic_stage_never_answers_from_an_exact_surface(stub_embed: dict[str, int]) -> None:
+    m = EmbeddingMatcher()
+    m.build_index(_abbr_concepts())
+    hits = m.query("something else entirely", top_k=5, min_score=-1.0)
+    assert hits and all(h.match_stage == "semantic" for h in hits)
+    assert not {h.matched_surface for h in hits} & {"ro", "vfd"}
+
+
+def test_exact_surfaces_survive_the_disk_cache(tmp_path: Path, stub_embed: dict[str, int]) -> None:
+    _cache_matcher(tmp_path / "cache").build_index(_abbr_concepts())
+    calls = stub_embed["calls"]
+
+    warm = _cache_matcher(tmp_path / "cache")
+    warm.build_index(_abbr_concepts())
+    assert stub_embed["calls"] == calls, "warm start must load from the cache"
+    assert warm.query("ro", kind="process", top_k=1)[0].uri == "urn:t:RO"
+    assert warm.query("anything", top_k=5, min_score=-1.0)  # rows still line up with vectors
+
+
+def test_update_index_keeps_embedded_rows_aligned_with_vectors(stub_embed: dict[str, int]) -> None:
+    m = EmbeddingMatcher()
+    m.build_index(_abbr_concepts())
+    added = [{"uri": "urn:t:UF", "kind": "process", "label": "Ultrafiltration",
+              "surfaces": ["ultrafiltration"], "exact_surfaces": ["uf"]}]
+    m.update_index(added, removed_uris=["urn:t:RO"], all_concepts=_abbr_concepts()[1:] + added)
+
+    n = m._vectors.shape[0]
+    assert [r["surface"] for r in m._meta[:n]] == ["variable frequency drive", "motor drive", "ultrafiltration"]
+    assert [r["surface"] for r in m._meta[n:]] == ["vfd", "uf"]
+    assert m.query("uf", kind="process", top_k=1)[0].uri == "urn:t:UF"
+    assert m.query("ro", kind="process") == [] or m.query("ro", kind="process")[0].match_stage == "semantic"
+
+
+def test_exact_only_matcher_indexes_exact_surfaces_too(tmp_path: Path) -> None:
+    m = EmbeddingMatcher(cache_dir=tmp_path / "cache", exact_only=True)
+    m.build_index(_abbr_concepts())
+    assert m.query("ro", kind="process", top_k=1)[0].uri == "urn:t:RO"
+
+
+# ── GraphConcepts: roles are a kind of their own ──────────────────────
+
+_ROLE_TTL = """
+@prefix s223: <http://data.ashrae.org/standard223#> .
+@prefix watr: <urn:nawi-water-ontology#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix ex:   <urn:ex#> .
+
+s223:Condenser a s223:Class ; rdfs:subClassOf s223:Equipment ; rdfs:label "Condenser" .
+s223:Role-Condenser a s223:EnumerationKind-Role ; rdfs:subClassOf s223:EnumerationKind-Role ;
+    rdfs:label "Condenser Role" .
+watr:Role-Backwash rdfs:subClassOf s223:EnumerationKind-Role ; rdfs:label "Role-Backwash" .
+# typed as a role, but its superclass is a URI nobody declares
+watr:Role-NitrogenRemoval a s223:EnumerationKind-Role ; rdfs:subClassOf s223:Role-Missing .
+# a model using something as a role makes it one
+ex:pump1 s223:hasRole ex:Role-Standby .
+ex:Role-Standby rdfs:subClassOf ex:SomethingElse .
+"""
+
+
+def _graph_concepts(kind: str) -> dict[str, dict[str, Any]]:
+    from rdflib import Graph
+
+    g = Graph().parse(data=_ROLE_TTL, format="turtle")
+    rows = [tuple(None if cell is None else str(cell) for cell in row)
+            for row in g.query(GraphConcepts.concept_query(kind))]
+    return {c["uri"].split("#")[1]: c for c in GraphConcepts.extract_concepts(rows, kind)}
+
+
+def test_role_kind_holds_the_roles() -> None:
+    assert set(_graph_concepts("role")) == {
+        "EnumerationKind-Role", "Role-Condenser", "Role-Backwash", "Role-NitrogenRemoval", "Role-Standby",
+    }
+
+
+def test_roles_are_left_out_of_class() -> None:
+    classes = set(_graph_concepts("class"))
+    assert "Condenser" in classes
+    assert not {c for c in classes if c.startswith("Role-")} - {"Role-Missing"}
+    assert "EnumerationKind-Role" not in classes
+
+
+def test_role_is_found_by_its_bare_name() -> None:
+    roles = _graph_concepts("role")
+    assert roles["Role-Condenser"]["surfaces"] == ["condenser role", "condenser", "role condenser"]
+    assert roles["Role-Backwash"]["surfaces"] == ["role-backwash", "backwash", "role backwash"]
+    # only the role kind gets it: a class named Role-Missing keeps its full name
+    assert _graph_concepts("class")["Role-Missing"]["surfaces"] == ["role missing"]
+
+
+# ── initialisms of long labels ────────────────────────────────────────
+
+W, S = "urn:nawi-water-ontology#", "http://data.ashrae.org/standard223#"
+
+
+def _concept(uri: str, kind: str, *surfaces: str) -> dict[str, Any]:
+    return {"uri": uri, "kind": kind, "label": surfaces[0], "surfaces": list(surfaces), "related": []}
+
+
+def _initialisms_of(concepts: list[dict[str, Any]]) -> dict[str, list[str]]:
+    GraphConcepts.add_initialisms(concepts)
+    return {c["uri"].split("#")[1]: c.get("exact_surfaces", []) for c in concepts}
+
+
+def test_initialism_of_a_label_with_three_or_more_words() -> None:
+    got = _initialisms_of([
+        _concept(W + "VariableFrequencyDrive", "class", "variable frequency drive"),
+        _concept(W + "MembraneBioreactor", "class", "membrane bioreactor"),
+        _concept(W + "Pump", "class", "pump"),
+    ])
+    assert got == {"VariableFrequencyDrive": ["vfd"], "MembraneBioreactor": [], "Pump": []}
+
+
+def test_same_local_name_in_two_ontologies_is_one_owner() -> None:
+    got = _initialisms_of([
+        _concept(W + "VariableFrequencyDrive", "class", "variable frequency drive"),
+        _concept(S + "VariableFrequencyDrive", "class", "variable frequency drive"),
+    ])
+    assert got == {"VariableFrequencyDrive": ["vfd"]}
+
+
+def test_initialism_shared_by_two_concepts_of_a_kind_is_dropped() -> None:
+    got = _initialisms_of([
+        _concept(W + "RapidSandFilter", "class", "rapid sand filter"),
+        _concept(W + "RotarySludgeFeeder", "class", "rotary sludge feeder"),
+    ])
+    assert got == {"RapidSandFilter": [], "RotarySludgeFeeder": []}
+
+
+def test_initialism_is_scoped_to_its_kind() -> None:
+    got = _initialisms_of([
+        _concept(W + "RapidSandFilter", "class", "rapid sand filter"),
+        _concept(W + "Process-RapidSandFiltration", "process", "rapid sand filtration"),
+    ])
+    assert got == {"RapidSandFilter": ["rsf"], "Process-RapidSandFiltration": ["rsf"]}
+
+
+def test_no_initialism_from_a_prefixed_local_name_a_predicate_or_a_parenthetical() -> None:
+    got = _initialisms_of([
+        # "constituent dissolved oxygen" would give "cdo": the prefix is not part of the name
+        _concept(W + "Constituent-DissolvedOxygen", "substance", "dissolved oxygen", "constituent dissolved oxygen"),
+        _concept(W + "hasProcessedData", "predicate", "has processed data"),
+        _concept(W + "Process-GAC", "process", "granular activated carbon (gac)"),
+    ])
+    assert got == {"Constituent-DissolvedOxygen": [], "hasProcessedData": [], "Process-GAC": []}
+
+
+def test_initialism_never_shadows_an_existing_surface() -> None:
+    got = _initialisms_of([
+        _concept(W + "PressureExchangerUnit", "class", "pressure exchanger unit"),
+        _concept(W + "Peu", "class", "peu"),
+    ])
+    assert got["PressureExchangerUnit"] == []
+
+
 def _make_manager(data_dir: Path, *, exact_only: bool) -> Manager:
     return Manager(
         data_dir=data_dir,
@@ -568,7 +816,7 @@ class FakeConverter:
             return self._mapping[text]
         raise UnitNotFound(text)
 
-    def infer_unit(self, text):
+    def infer_unit(self, text, *, fuzzy=True):
         self.calls.append(f"infer:{text}")
         if text in self._mapping:
             return self._mapping[text]
@@ -681,6 +929,163 @@ class TestProcessKindRouting:
         ])
         out = r.resolve("reverse osmosis", kind="process", min_score=0.4)
         assert out and out[0].uri == "urn:nawi-water-ontology#Process-ReverseOsmosis"
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 5b. Unit expressions: unit_key and the unit_key source
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestUnitKey:
+    @pytest.mark.parametrize("spellings", [
+        ["m3/h", "m^3/h", "m³/h", "m3 / h", "m3.h-1", "m³·h⁻¹", "m3 per h", "m**3/h"],
+        ["mg/L", "mg / L", "mg L-1", "mg·L⁻¹", "mg.L-1", "mg per L"],
+        ["Btu{IT}/(ft²·s)", "Btu/(ft2.s)", "Btu.ft-2.s-1"],
+        ["°C", "deg C", "degC", "Deg. C", "° C", "ºC"],
+        ["J/(kg·K)", "J.kg-1.K-1", "J/kg/K"],
+        ["kW·h", "kW.h", "kW h", "kW-h"],
+        ["µS/cm", "μS/cm"],
+    ])
+    def test_spellings_of_one_expression_share_a_key(self, spellings):
+        assert len({unit_key(s) for s in spellings}) == 1
+        assert unit_key(spellings[0]) is not None
+
+    def test_key_is_sorted_atoms_with_exponents(self):
+        assert unit_key("m3/h") == "h^-1|m^3"
+        assert unit_key("m/s2") == unit_key("m.s-2") == "m^1|s^-2"
+
+    def test_case_is_kept_unless_folded(self):
+        assert unit_key("mW") != unit_key("MW")
+        assert unit_key("mW", fold_case=True) == unit_key("MW", fold_case=True)
+
+    def test_atoms_with_inner_digits(self):
+        assert unit_key("inH2O") == "inH2O^1"
+
+    @pytest.mark.parametrize("text", ["", "   ", "10*3/uL", "m3/(h", "x" * 60])
+    def test_not_an_expression(self, text):
+        assert unit_key(text) is None
+
+
+def _unit(local, symbol=None, ucum=None, related=()):
+    return {"uri": f"http://qudt.org/vocab/unit/{local}", "kind": "unit", "label": local,
+            "symbol": symbol, "ucum": ucum, "related": list(related)}
+
+
+_UNITS = [
+    _unit("M3-PER-HR", "m³/h", "m3.h-1"),
+    _unit("GAL_UK-PER-MIN", "gal{UK}/min", "[gal_br].min-1"),
+    _unit("GAL_US-PER-MIN", "gal{US}/min", "[gal_us].min-1"),
+    _unit("KiloGAUSS", "kG", "kG"),
+    _unit("KiloGM", "kg", "kg", related=["urn:qk:Mass", "urn:qk:Weight"]),
+    _unit("MicroS-PER-CentiM", "µS/cm", "uS.cm-1"),
+    _unit("FT", "ft", "[ft_i]"),
+    _unit("FT_US", "ft{US Survey}", "[ft_us]"),
+    _unit("HR", "h", "h"),
+    _unit("H", "H", "H"),
+    _unit("MilliSEC", "ms", "ms"),
+    _unit("LB", "lbm", "[lb_av]"),
+    _unit("A-PER-A-HR", "A/(A·h)", "A.A-1.h-1"),
+    _unit("DAY", "d", "d"),
+    _unit("DAY_Sidereal", "day{sidereal}", "d"),
+    _unit("NoCodes"),
+]
+
+
+def _locals(hits):
+    return [c["uri"].rsplit("/", 1)[-1] for c, _matched in hits]
+
+
+class TestUnitKeyIndex:
+    def test_any_spelling_finds_the_unit(self):
+        idx = UnitKeyIndex(_UNITS)
+        for text in ("m3/h", "m^3/h", "m³·h⁻¹", "m3 per h", "M3/H"):
+            assert _locals(idx.lookup(text)) == ["M3-PER-HR"], text
+
+    def test_symbol_and_ucum_spellings_both_work(self):
+        idx = UnitKeyIndex(_UNITS)
+        assert _locals(idx.lookup("µS/cm")) == _locals(idx.lookup("uS/cm")) == ["MicroS-PER-CentiM"]
+
+    def test_us_customary_first_among_units_sharing_a_key(self):
+        assert _locals(UnitKeyIndex(_UNITS).lookup("gal/min")) == ["GAL_US-PER-MIN", "GAL_UK-PER-MIN"]
+
+    def test_us_survey_units_are_not_preferred(self):
+        assert _locals(UnitKeyIndex(_UNITS).lookup("ft")) == ["FT", "FT_US"]
+
+    def test_case_exact_reading_first(self):
+        idx = UnitKeyIndex(_UNITS)
+        assert _locals(idx.lookup("kG")) == ["KiloGAUSS", "KiloGM"]
+        assert _locals(idx.lookup("kg")) == ["KiloGM", "KiloGAUSS"]
+        # neither reading is case-exact: the unit with more quantity kinds leads
+        assert _locals(idx.lookup("KG")) == ["KiloGM", "KiloGAUSS"]
+
+    def test_reports_the_symbol_or_code_that_matched(self):
+        assert UnitKeyIndex(_UNITS).lookup("m3.h-1")[0][1] == "m³/h"
+
+    def test_local_name_finds_the_unit(self):
+        idx = UnitKeyIndex(_UNITS)
+        assert _locals(idx.lookup("hr")) == ["HR"]
+        assert _locals(idx.lookup("lb")) == ["LB"]
+        assert _locals(idx.lookup("m3/hr")) == ["M3-PER-HR"]
+
+    def test_symbol_leads_over_a_local_name(self):
+        # "h" is the symbol of the hour and the (folded) local name of the henry
+        assert _locals(UnitKeyIndex(_UNITS).lookup("h")) == ["HR", "H"]
+
+    @pytest.mark.parametrize("text, local", [
+        ("hrs", "HR"), ("Hrs", "HR"), ("hr.", "HR"), ("lbs", "LB"), ("gals/min", "GAL_US-PER-MIN"),
+    ])
+    def test_plural_and_trailing_period(self, text, local):
+        assert _locals(UnitKeyIndex(_UNITS).lookup(text))[0] == local
+
+    def test_a_unit_whose_atoms_cancel_is_not_filed_under_what_is_left(self):
+        idx = UnitKeyIndex(_UNITS)
+        assert _locals(idx.lookup("hr")) == ["HR"]
+        assert "A-PER-A-HR" not in _locals(idx.lookup("h-1"))
+        # "m²/m" reduces to "m" without losing an atom outright
+        assert _locals(UnitKeyIndex([_unit("M", "m", "m"), _unit("M2-PER-M", "m²/m", "m2.m-1")]).lookup("m")) == ["M"]
+
+    def test_unqualified_spelling_leads_over_an_annotated_one(self):
+        assert _locals(UnitKeyIndex(_UNITS).lookup("days"))[0] == "DAY"
+
+    def test_case_exact_annotated_spelling_leads_over_a_case_folded_plain_one(self):
+        # "gal" is the gallon ("gal{US}"), not the galileo ("Gal")
+        units = _UNITS + [_unit("GALILEO", "Gal", "Gal")]
+        assert _locals(UnitKeyIndex(units).lookup("gal/min"))[0] == "GAL_US-PER-MIN"
+        idx = UnitKeyIndex([_unit("GALILEO", "Gal", "Gal"), _unit("GAL_US", "gal{US}", "[gal_us]")])
+        assert _locals(idx.lookup("gal")) == ["GAL_US", "GALILEO"]
+        assert _locals(idx.lookup("Gal")) == ["GALILEO", "GAL_US"]
+
+    def test_a_unit_as_written_is_never_made_singular(self):
+        # "ms" is the millisecond, not a plural of "m"
+        assert _locals(UnitKeyIndex(_UNITS).lookup("ms")) == ["MilliSEC"]
+
+    def test_words_are_not_units(self):
+        assert UnitKeyIndex(_UNITS).lookup("sedimentation tank") == []
+
+
+class TestUnitKeySource:
+    def _resolver(self, conv=None):
+        idx = UnitKeyIndex(_UNITS)
+        return ConceptResolver(
+            graph_matcher=FakeMatcher([]), qudt_matcher=FakeMatcher([]),
+            converter_provider=(lambda: conv) if conv is not None else _no_converter,
+            unit_keys_provider=lambda: idx,
+        )
+
+    def test_expression_is_answered_before_the_converter(self):
+        # converter_provider raises if invoked: the early exit must stop first.
+        hit = self._resolver().resolve("m3/h", kind="unit", top_k=1)[0]
+        assert hit.uri.endswith("/M3-PER-HR")
+        assert (hit.score, hit.match_stage, hit.matched_surface) == (1.0, "exact", "m³/h")
+
+    def test_only_units_use_it(self):
+        assert self._resolver().resolve("m3/h", kind="quantity_kind") == []
+
+    def test_no_index_yet_falls_through(self):
+        conv = FakeConverter({})
+        r = ConceptResolver(FakeMatcher([]), FakeMatcher([]), lambda: conv, unit_keys_provider=lambda: None)
+        assert r.resolve("m3/h", kind="unit") == []
+        assert conv.calls, "the converter tier still runs"
 
 
 # ══════════════════════════════════════════════════════════════════════

@@ -12,7 +12,7 @@ This is a reference for the vocabulary of the other guides.
 |---|---|---|
 | URI | the full, globally unique name of a thing; every class, predicate, entity, point and unit has one | `urn:swro/RO`, `http://qudt.org/vocab/unit/PSI` |
 | CURIE | a compact URI, written `prefix:local` | `wbs:RO` is `urn:swro/` + `RO` |
-| free text | a plain phrase the server resolves to a URI, against one vocabulary (its *kind*: class, predicate, substance, process, unit or quantity kind) | `"ro membrane"` resolves to `nawi:ReverseOsmosisMembrane` |
+| free text | a plain phrase the server resolves to a URI, against one vocabulary (its *kind*: class, predicate, substance, process, role, unit or quantity kind) | `"ro membrane"` resolves to `nawi:ReverseOsmosisMembrane` |
 | literal | a plain value in a triple rather than a name for something; matched verbatim, never resolved | `"SCADA"`, `42.0` |
 | prefix | the short name standing in for a namespace | `wbs` |
 | namespace | the URI a prefix expands to | `urn:swro/` |

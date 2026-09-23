@@ -1,0 +1,239 @@
+{
+  "group": "label",
+  "kind": "role",
+  "cases": [
+    {
+      "text": "backwash",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Backwash"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "permeate",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Permeate"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "feed",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Feed"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "drain",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Drain"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "storage",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Storage"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "equalization",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Equalization"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "pretreatment",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Pretreatment"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "posttreatment",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Posttreatment"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "aerobic",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Aerobic"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "anaerobic",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Anaerobic"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "anoxic",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Anoxic"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "primary",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Primary",
+        "http://data.ashrae.org/standard223#Role-Primary"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "secondary",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Secondary",
+        "http://data.ashrae.org/standard223#Role-Secondary"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "tertiary",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Tertiary"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "supply",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-Supply"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "return",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-Return"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "exhaust",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-Exhaust"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "heating",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-Heating"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "cooling",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-Cooling"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "condenser",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-Condenser"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "condenser role",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-Condenser"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "evaporator",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-Evaporator"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "heat recovery",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-HeatRecovery"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "nitrogen removal",
+      "expected": [
+        "urn:nawi-water-ontology#Role-NitrogenRemoval"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "phosphorus removal",
+      "expected": [
+        "urn:nawi-water-ontology#Role-PhosphorusRemoval"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "nutrient removal",
+      "expected": [
+        "urn:nawi-water-ontology#Role-NutrientRemoval"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "solids handling",
+      "expected": [
+        "urn:nawi-water-ontology#Role-SolidsHandling"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "make up",
+      "expected": [
+        "urn:nawi-water-ontology#Role-MakeUp"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "makeup",
+      "expected": [
+        "urn:nawi-water-ontology#Role-MakeUp"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "relief",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-Relief"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "discharge",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-Discharge"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "recirculating",
+      "expected": [
+        "http://data.ashrae.org/standard223#Role-Recirculating"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "stepfeed",
+      "expected": [
+        "urn:nawi-water-ontology#Role-Stepfeed"
+      ],
+      "stage": "exact"
+    }
+  ]
+}

@@ -29,13 +29,11 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     import pyarrow as pa
 import shutil
-from acquirium.TextMatch.embedding_matcher import (
-    DEFAULT_MODEL,
-    EmbeddingMatcher,
-    _split_local_name,
-)
+from acquirium.TextMatch.embedding_matcher import DEFAULT_MODEL, EmbeddingMatcher
+from acquirium.TextMatch.graph_concepts import GraphConcepts
 from acquirium.TextMatch.qudt_store import QUDTStore
 from acquirium.TextMatch.resolver import ConceptResolver
+from acquirium.TextMatch.unit_key import UnitKeyIndex
 
 from acquirium.internals._log import timed_debug
 
@@ -47,54 +45,6 @@ RECREATE_WARNING = (
     "SERVER STARTED WITH recreate=True. Existing Acquirium data will be erased now. "
     "Restarting this server with recreate=True will erase data again."
 )
-
-
-def _aggregate_uri_label_rows(
-    rows: list,
-    seen: set[str],
-    kind: str,
-    concepts: list[dict[str, Any]],
-) -> None:
-    """Aggregate SPARQL (uri, label) rows into *concepts*, skipping already-seen URIs.
-
-    SPARQL row order is not stable across processes; sort labels and iterate
-    URIs in sorted order so the resulting concept dicts hash identically run
-    to run (otherwise the embedding cache misses every restart).
-    """
-    uri_labels: dict[str, set[str]] = {}
-    uri_first_label: dict[str, str | None] = {}
-    for row in rows:
-        uri = str(row[0]) if row[0] else None
-        label = str(row[1]).strip('"') if row[1] else None
-        if not uri:
-            continue
-        bucket = uri_labels.setdefault(uri, set())
-        if label:
-            bucket.add(label)
-
-    for uri in sorted(uri_labels):
-        if uri in seen:
-            continue
-        seen.add(uri)
-        labels = sorted(uri_labels[uri])
-        surfaces: list[str] = []
-        for lbl in labels:
-            lbl_lower = lbl.lower()
-            if lbl_lower not in surfaces:
-                surfaces.append(lbl_lower)
-        tokens = _split_local_name(uri)
-        if tokens:
-            joined = " ".join(tokens)
-            if joined not in surfaces:
-                surfaces.append(joined)
-        display_label = labels[0] if labels else (" ".join(tokens) if tokens else uri)
-        concepts.append({
-            "uri": uri,
-            "kind": kind,
-            "label": display_label,
-            "surfaces": surfaces,
-            "related": [],
-        })
 
 
 def pick_convertible_pair(from_candidates, to_candidates, are_compatible):
@@ -247,11 +197,15 @@ class Manager:
             name="qudt",
         )
 
+        # Units by typed expression; built with the QUDT index, no model needed.
+        self._unit_key_index: UnitKeyIndex | None = None
+
         # Single normalization façade, sharing the lazily-built converter.
         self._concept_resolver = ConceptResolver(
             graph_matcher=self._graph_matcher,
             qudt_matcher=self._qudt_matcher,
             converter_provider=self._ensure_qudt_converter,
+            unit_keys_provider=lambda: self._unit_key_index,
         )
 
         # Kept for backward compat — points to graph matcher
@@ -365,90 +319,27 @@ class Manager:
     # ----- Embedding index methods -----
 
     def _extract_concepts_for_embedding(self, iris: list[str]) -> list[dict[str, Any]]:
-        """Extract class / predicate / substance / process concepts.
+        """Extract class / predicate / substance / process / role concepts.
 
         The queries run over an in-memory Oxigraph copy of the union of the
         ontology graphs named by *iris* (water + s223; imports not followed).
+        :class:`GraphConcepts` holds the queries and builds the concept dicts.
         Unit / quantity_kind concepts come separately via :class:`QUDTStore`.
         """
         concepts: list[dict[str, Any]] = []
         with timed_debug(logger, "graph embedding: copy %s", iris):
             vocabulary = self.graph_store.copy_graphs(iris)
 
-        label_block_basic = f"""
-          OPTIONAL {{
-            {{ ?uri <{RDFS.label}> ?label . }}
-            UNION {{ ?uri <{SKOS.prefLabel}> ?label . }}
-            UNION {{ ?uri <{SKOS.altLabel}> ?label . }}
-            FILTER(LANG(?label) = "" || LANGMATCHES(LANG(?label), "en"))
-          }}
-        """
-
-        class_where = f"""
-          {{ ?uri a <{RDFS.Class}> . }}
-          UNION {{ ?uri a <{OWL_CLASS}> . }}
-          UNION {{ ?x <{RDFS.subClassOf}> ?uri . }}
-          UNION {{ ?x a ?uri . }}
-          UNION {{ ?uri a <{WATR.Class}> . }}
-          UNION {{ ?uri <{RDFS.subClassOf}> ?x . }}
-          UNION {{ ?x <{HAS_ENUMERATION_KIND}> ?uri . }}
-          UNION {{ ?x <{OF_SUBSTANCE}> ?uri . }}
-          UNION {{ ?x <{HAS_MEDIUM}> ?uri . }}
-          FILTER NOT EXISTS {{ ?uri (<{RDFS.subClassOf}>)* <{WATR.Process}> . }}
-          FILTER(!STRSTARTS(STR(?uri), "{WATR}Process"))
-        """
-        pred_where = f"""
-          {{ ?uri a <{RDF_PROP}> . }}
-          UNION {{ ?uri a <{OWL_OBJ_PROP}> . }}
-          UNION {{ ?uri a <{OWL_DATA_PROP}> . }}
-          UNION {{ ?s ?uri ?o . }}
-        """
-        # Constrained medium/substance space: the s223 substance enumeration
-        # and the NAWI water medium taxonomy, plus whatever the loaded model
-        # actually uses as a medium/substance (self-grounding so it's correct
-        # regardless of the imported s223 closure).
-        substance_where = f"""
-          {{ ?uri (<{RDFS.subClassOf}>)* <{S223['EnumerationKind-Substance']}> . }}
-          UNION {{ ?uri (<{RDFS.subClassOf}>)* <{WATR['Medium-Constituent']}> . }}
-          UNION {{ ?x <{S223.ofMedium}> ?uri . }}
-          UNION {{ ?x <{HAS_MEDIUM}> ?uri . }}
-          UNION {{ ?x <{OF_SUBSTANCE}> ?uri . }}
-        """
-        # Constrained process space: the NAWI process taxonomy plus whatever
-        # the loaded model actually uses as a process (self-grounding, like
-        # substances). Its own kind so process filters never rank equipment
-        # classes ("reverse osmosis" must hit Process-ReverseOsmosis, not
-        # ReverseOsmosisMembrane).
-        process_where = f"""
-          {{ ?uri (<{RDFS.subClassOf}>)* <{WATR.Process}> . }}
-          UNION {{ ?x <{WATR.hasProcess}> ?uri . }}
-          UNION {{ ?uri a <{WATR.Class}> . FILTER(STRSTARTS(STR(?uri), "{WATR}Process")) }}
-        """
-
-        extractions: list[tuple[str, str, str]] = [
-            ("class", class_where, label_block_basic),
-            ("predicate", pred_where, label_block_basic),
-            ("substance", substance_where, label_block_basic),
-            ("process", process_where, label_block_basic),
-        ]
-
-        for kind, where, label_block in extractions:
-            query = f"""
-            SELECT DISTINCT ?uri ?label WHERE {{
-              {where}
-              {label_block}
-              FILTER(isIRI(?uri))
-            }}
-            """
-            seen: set[str] = set()
+        for kind in GraphConcepts.KINDS:
             try:
                 with timed_debug(logger, "extract %s concepts (SPARQL)", kind):
-                    rows = select_values(vocabulary, query, iris)
+                    rows = select_values(vocabulary, GraphConcepts.concept_query(kind), iris)
                 logger.debug("extract %s: %d raw rows", kind, len(rows))
-                _aggregate_uri_label_rows(rows, seen, kind, concepts)
+                concepts += GraphConcepts.extract_concepts(rows, kind)
             except Exception:
                 logger.warning("Failed to extract %s concepts", kind, exc_info=True)
 
+        GraphConcepts.add_initialisms(concepts)
         logger.debug("_extract_concepts_for_embedding: %d total concepts", len(concepts))
         return concepts
 
@@ -472,7 +363,7 @@ class Manager:
         """Build both embedding indexes once from the static ontoenv graphs.
 
         graph matcher <- water + s223 vocabularies (class / predicate /
-        substance / process); qudt matcher <- the QUDT unit + quantity_kind
+        substance / process / role); qudt matcher <- the QUDT unit + quantity_kind
         vocabularies. Both are queried in Oxigraph by graph IRI (owl:imports
         not followed); no inserted data is embedded.
 
@@ -512,6 +403,7 @@ class Manager:
                     )
                     qc += QUDTStore.extract_concepts(rows, rdf_type)
             logger.debug("qudt embedding: %d total concepts", len(qc))
+            self._unit_key_index = UnitKeyIndex([c for c in qc if c["kind"] == "unit"])
             if qc:
                 with timed_debug(logger, "qudt embedding: build_index n=%d", len(qc)):
                     self._qudt_matcher.build_index(qc)

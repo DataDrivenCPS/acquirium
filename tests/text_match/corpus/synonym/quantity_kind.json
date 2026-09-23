@@ -1,0 +1,841 @@
+{
+  "group": "synonym",
+  "kind": "quantity_kind",
+  "cases": [
+    {
+      "text": "flowrate",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/VolumeFlowRate",
+        "http://qudt.org/vocab/quantitykind/VolumePerTime"
+      ]
+    },
+    {
+      "text": "volumetric flow",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/VolumeFlowRate",
+        "http://qudt.org/vocab/quantitykind/VolumePerTime"
+      ]
+    },
+    {
+      "text": "volumetric flow rate",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/VolumeFlowRate",
+        "http://qudt.org/vocab/quantitykind/VolumePerTime"
+      ]
+    },
+    {
+      "text": "water flow",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/VolumeFlowRate",
+        "http://qudt.org/vocab/quantitykind/VolumePerTime"
+      ]
+    },
+    {
+      "text": "mass flow",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/MassFlowRate",
+        "http://qudt.org/vocab/quantitykind/MassPerTime"
+      ]
+    },
+    {
+      "text": "water level",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Height",
+        "http://qudt.org/vocab/quantitykind/Depth"
+      ]
+    },
+    {
+      "text": "tank level",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Height",
+        "http://qudt.org/vocab/quantitykind/Depth"
+      ]
+    },
+    {
+      "text": "electrical conductivity",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/ElectricConductivity",
+        "http://qudt.org/vocab/quantitykind/Conductivity"
+      ]
+    },
+    {
+      "text": "specific conductance",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/ElectricConductivity",
+        "http://qudt.org/vocab/quantitykind/Conductivity"
+      ]
+    },
+    {
+      "text": "rotational speed",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/RotationalVelocity",
+        "http://qudt.org/vocab/quantitykind/RotationalFrequency",
+        "http://qudt.org/vocab/quantitykind/AngularVelocity"
+      ]
+    },
+    {
+      "text": "motor speed",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/RotationalVelocity",
+        "http://qudt.org/vocab/quantitykind/RotationalFrequency",
+        "http://qudt.org/vocab/quantitykind/AngularVelocity",
+        "http://qudt.org/vocab/quantitykind/Speed"
+      ]
+    },
+    {
+      "text": "power consumption",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/ElectricPower",
+        "http://qudt.org/vocab/quantitykind/Power",
+        "http://qudt.org/vocab/quantitykind/ActivePower"
+      ]
+    },
+    {
+      "text": "energy consumption",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Energy",
+        "http://qudt.org/vocab/quantitykind/ElectricEnergy"
+      ]
+    },
+    {
+      "text": "amperage",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/ElectricCurrent"
+      ]
+    },
+    {
+      "text": "amps",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/ElectricCurrent"
+      ]
+    },
+    {
+      "text": "volts",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Voltage"
+      ]
+    },
+    {
+      "text": "weight",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Weight",
+        "http://qudt.org/vocab/quantitykind/Mass"
+      ]
+    },
+    {
+      "text": "duration",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Time"
+      ]
+    },
+    {
+      "text": "elapsed time",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Time"
+      ]
+    },
+    {
+      "text": "run time",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Time"
+      ]
+    },
+    {
+      "text": "cloudiness",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Turbidity"
+      ]
+    },
+    {
+      "text": "differential pressure",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Pressure"
+      ]
+    },
+    {
+      "text": "pressure drop",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Pressure"
+      ]
+    },
+    {
+      "text": "transmembrane pressure",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Pressure",
+        "http://qudt.org/vocab/quantitykind/OsmoticPressure"
+      ]
+    },
+    {
+      "text": "water temperature",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Temperature"
+      ]
+    },
+    {
+      "text": "air temperature",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Temperature"
+      ]
+    },
+    {
+      "text": "ambient temperature",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Temperature"
+      ]
+    },
+    {
+      "text": "molar concentration",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/AmountOfSubstanceConcentration"
+      ]
+    },
+    {
+      "text": "molarity",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/AmountOfSubstanceConcentration"
+      ]
+    },
+    {
+      "text": "chlorine concentration",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/MassConcentration",
+        "http://qudt.org/vocab/quantitykind/Concentration"
+      ]
+    },
+    {
+      "text": "chlorine residual",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/MassConcentration",
+        "http://qudt.org/vocab/quantitykind/Concentration"
+      ]
+    },
+    {
+      "text": "water flux",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/VolumetricFlux",
+        "http://qudt.org/vocab/quantitykind/Flux"
+      ]
+    },
+    {
+      "text": "permeate flux",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/VolumetricFlux",
+        "http://qudt.org/vocab/quantitykind/Flux"
+      ]
+    },
+    {
+      "text": "specific energy consumption",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/SpecificEnergy"
+      ]
+    },
+    {
+      "text": "pipe diameter",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Diameter"
+      ]
+    },
+    {
+      "text": "battery charge level",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/StateOfCharge"
+      ]
+    },
+    {
+      "text": "fluid pressure",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Pressure"
+      ]
+    },
+    {
+      "text": "line pressure",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Pressure"
+      ]
+    },
+    {
+      "text": "water pressure",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Pressure"
+      ]
+    },
+    {
+      "text": "operating pressure",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Pressure"
+      ]
+    },
+    {
+      "text": "hydraulic pressure",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Pressure"
+      ]
+    },
+    {
+      "text": "static pressure",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/StaticPressure",
+        "http://qudt.org/vocab/quantitykind/Pressure"
+      ]
+    },
+    {
+      "text": "thermodynamic temperature",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/ThermodynamicTemperature",
+        "http://qudt.org/vocab/quantitykind/Temperature"
+      ]
+    },
+    {
+      "text": "fluid temperature",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Temperature"
+      ]
+    },
+    {
+      "text": "process temperature",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Temperature"
+      ]
+    },
+    {
+      "text": "temperature reading",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Temperature"
+      ]
+    },
+    {
+      "text": "liquid flow rate",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/VolumeFlowRate",
+        "http://qudt.org/vocab/quantitykind/VolumePerTime"
+      ]
+    },
+    {
+      "text": "volumetric rate of flow",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/VolumeFlowRate",
+        "http://qudt.org/vocab/quantitykind/VolumePerTime"
+      ]
+    },
+    {
+      "text": "flow volume per time",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/VolumeFlowRate",
+        "http://qudt.org/vocab/quantitykind/VolumePerTime"
+      ]
+    },
+    {
+      "text": "volume per unit time",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/VolumeFlowRate",
+        "http://qudt.org/vocab/quantitykind/VolumePerTime"
+      ]
+    },
+    {
+      "text": "mass rate of flow",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/MassFlowRate",
+        "http://qudt.org/vocab/quantitykind/MassPerTime"
+      ]
+    },
+    {
+      "text": "mass per time",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/MassFlowRate",
+        "http://qudt.org/vocab/quantitykind/MassPerTime"
+      ]
+    },
+    {
+      "text": "mass flow per unit time",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/MassFlowRate",
+        "http://qudt.org/vocab/quantitykind/MassPerTime"
+      ]
+    },
+    {
+      "text": "liquid level",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Height",
+        "http://qudt.org/vocab/quantitykind/Depth"
+      ]
+    },
+    {
+      "text": "fluid level",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Height",
+        "http://qudt.org/vocab/quantitykind/Depth"
+      ]
+    },
+    {
+      "text": "water depth",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Height",
+        "http://qudt.org/vocab/quantitykind/Depth"
+      ]
+    },
+    {
+      "text": "fill height",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Height",
+        "http://qudt.org/vocab/quantitykind/Depth"
+      ]
+    },
+    {
+      "text": "electrical power",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/ElectricPower",
+        "http://qudt.org/vocab/quantitykind/Power"
+      ]
+    },
+    {
+      "text": "real power",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/ActivePower",
+        "http://qudt.org/vocab/quantitykind/Power",
+        "http://qudt.org/vocab/quantitykind/ElectricPower"
+      ]
+    },
+    {
+      "text": "power draw",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/ActivePower",
+        "http://qudt.org/vocab/quantitykind/Power",
+        "http://qudt.org/vocab/quantitykind/ElectricPower"
+      ]
+    },
+    {
+      "text": "energy use",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Energy",
+        "http://qudt.org/vocab/quantitykind/ElectricEnergy"
+      ]
+    },
+    {
+      "text": "electrical energy",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Energy",
+        "http://qudt.org/vocab/quantitykind/ElectricEnergy"
+      ]
+    },
+    {
+      "text": "electricity consumption",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Energy",
+        "http://qudt.org/vocab/quantitykind/ElectricEnergy",
+        "http://qudt.org/vocab/quantitykind/ElectricPower"
+      ]
+    },
+    {
+      "text": "electrical current",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/ElectricCurrent"
+      ]
+    },
+    {
+      "text": "current draw",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/ElectricCurrent"
+      ]
+    },
+    {
+      "text": "electric potential",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/ElectricPotential",
+        "http://qudt.org/vocab/quantitykind/Voltage"
+      ]
+    },
+    {
+      "text": "potential difference",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/ElectricPotentialDifference",
+        "http://qudt.org/vocab/quantitykind/Voltage"
+      ]
+    },
+    {
+      "text": "line voltage",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Voltage"
+      ]
+    },
+    {
+      "text": "supply voltage",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Voltage"
+      ]
+    },
+    {
+      "text": "mass density",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/MassDensity",
+        "http://qudt.org/vocab/quantitykind/Density"
+      ]
+    },
+    {
+      "text": "fluid density",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/MassDensity",
+        "http://qudt.org/vocab/quantitykind/Density"
+      ]
+    },
+    {
+      "text": "volume of liquid",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/LiquidVolume",
+        "http://qudt.org/vocab/quantitykind/Volume"
+      ]
+    },
+    {
+      "text": "tank volume",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/LiquidVolume",
+        "http://qudt.org/vocab/quantitykind/Volume"
+      ]
+    },
+    {
+      "text": "rotation speed",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/RotationalVelocity",
+        "http://qudt.org/vocab/quantitykind/RotationalFrequency",
+        "http://qudt.org/vocab/quantitykind/AngularVelocity"
+      ]
+    },
+    {
+      "text": "shaft speed",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/RotationalVelocity",
+        "http://qudt.org/vocab/quantitykind/RotationalFrequency",
+        "http://qudt.org/vocab/quantitykind/AngularVelocity"
+      ]
+    },
+    {
+      "text": "angular speed",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/AngularVelocity"
+      ]
+    },
+    {
+      "text": "flow velocity",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Velocity",
+        "http://qudt.org/vocab/quantitykind/LinearVelocity",
+        "http://qudt.org/vocab/quantitykind/Speed"
+      ]
+    },
+    {
+      "text": "fluid velocity",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Velocity",
+        "http://qudt.org/vocab/quantitykind/LinearVelocity",
+        "http://qudt.org/vocab/quantitykind/Speed"
+      ]
+    },
+    {
+      "text": "AC frequency",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Frequency"
+      ]
+    },
+    {
+      "text": "drive frequency",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Frequency"
+      ]
+    },
+    {
+      "text": "time interval",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Time"
+      ]
+    },
+    {
+      "text": "time duration",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Time"
+      ]
+    },
+    {
+      "text": "operating hours",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Time"
+      ]
+    },
+    {
+      "text": "distance travelled",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Distance",
+        "http://qudt.org/vocab/quantitykind/Length"
+      ]
+    },
+    {
+      "text": "pipe length",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Length"
+      ]
+    },
+    {
+      "text": "surface area",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Area"
+      ]
+    },
+    {
+      "text": "membrane area",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Area"
+      ]
+    },
+    {
+      "text": "concentration by mass",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/MassConcentration"
+      ]
+    },
+    {
+      "text": "mass per volume",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/MassConcentration",
+        "http://qudt.org/vocab/quantitykind/Density",
+        "http://qudt.org/vocab/quantitykind/MassDensity"
+      ]
+    },
+    {
+      "text": "solute concentration",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Concentration",
+        "http://qudt.org/vocab/quantitykind/MassConcentration",
+        "http://qudt.org/vocab/quantitykind/AmountOfSubstanceConcentration"
+      ]
+    },
+    {
+      "text": "amount concentration",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/AmountOfSubstanceConcentration"
+      ]
+    },
+    {
+      "text": "mole concentration",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/AmountOfSubstanceConcentration"
+      ]
+    },
+    {
+      "text": "water turbidity",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Turbidity"
+      ]
+    },
+    {
+      "text": "turbidity level",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Turbidity"
+      ]
+    },
+    {
+      "text": "electrolytic conductivity",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/ElectricConductivity",
+        "http://qudt.org/vocab/quantitykind/Conductivity",
+        "http://qudt.org/vocab/quantitykind/ElectrolyticConductivity"
+      ]
+    },
+    {
+      "text": "ionic conductivity",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/ElectricConductivity",
+        "http://qudt.org/vocab/quantitykind/Conductivity",
+        "http://qudt.org/vocab/quantitykind/ElectrolyticConductivity"
+      ]
+    },
+    {
+      "text": "conductivity of water",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/ElectricConductivity",
+        "http://qudt.org/vocab/quantitykind/Conductivity",
+        "http://qudt.org/vocab/quantitykind/ElectrolyticConductivity"
+      ]
+    },
+    {
+      "text": "acidity level",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Acidity"
+      ]
+    },
+    {
+      "text": "pH value",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Acidity"
+      ]
+    },
+    {
+      "text": "pH level",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Acidity"
+      ]
+    },
+    {
+      "text": "air humidity",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/RelativeHumidity",
+        "http://qudt.org/vocab/quantitykind/AbsoluteHumidity"
+      ]
+    },
+    {
+      "text": "pump efficiency",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Efficiency"
+      ]
+    },
+    {
+      "text": "energy efficiency",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Efficiency"
+      ]
+    },
+    {
+      "text": "recovery ratio",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Ratio",
+        "http://qudt.org/vocab/quantitykind/DimensionlessRatio"
+      ]
+    },
+    {
+      "text": "percent by volume",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/VolumeFraction"
+      ]
+    },
+    {
+      "text": "fraction by volume",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/VolumeFraction"
+      ]
+    },
+    {
+      "text": "percent by mass",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/MassFraction"
+      ]
+    },
+    {
+      "text": "fraction by mass",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/MassFraction"
+      ]
+    },
+    {
+      "text": "twisting force",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Torque"
+      ]
+    },
+    {
+      "text": "motor torque",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Torque"
+      ]
+    },
+    {
+      "text": "heat energy",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Heat",
+        "http://qudt.org/vocab/quantitykind/ThermalEnergy",
+        "http://qudt.org/vocab/quantitykind/Energy"
+      ]
+    },
+    {
+      "text": "thermal energy",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Heat",
+        "http://qudt.org/vocab/quantitykind/ThermalEnergy",
+        "http://qudt.org/vocab/quantitykind/Energy"
+      ]
+    },
+    {
+      "text": "heat flow",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/HeatFlowRate"
+      ]
+    },
+    {
+      "text": "heat transfer rate",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/HeatFlowRate"
+      ]
+    },
+    {
+      "text": "fluid viscosity",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Viscosity",
+        "http://qudt.org/vocab/quantitykind/DynamicViscosity"
+      ]
+    },
+    {
+      "text": "battery state of charge",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/StateOfCharge"
+      ]
+    },
+    {
+      "text": "osmotic pressure of solution",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/OsmoticPressure"
+      ]
+    },
+    {
+      "text": "pressure gauge reading",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/GaugePressure",
+        "http://qudt.org/vocab/quantitykind/Pressure"
+      ]
+    },
+    {
+      "text": "barometric pressure",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/AtmosphericPressure"
+      ]
+    },
+    {
+      "text": "air pressure",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/AtmosphericPressure"
+      ]
+    },
+    {
+      "text": "vapour pressure",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/VaporPressure",
+        "http://qudt.org/vocab/quantitykind/VapourPressure"
+      ]
+    },
+    {
+      "text": "pushing force",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Force"
+      ]
+    },
+    {
+      "text": "mass of solids",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Mass"
+      ]
+    },
+    {
+      "text": "mechanical power",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Power"
+      ]
+    },
+    {
+      "text": "inner diameter",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Diameter"
+      ]
+    },
+    {
+      "text": "wall thickness",
+      "expected": [
+        "http://qudt.org/vocab/quantitykind/Thickness"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,180 @@
+{
+  "group": "abbr",
+  "kind": "process",
+  "cases": [
+    {
+      "text": "RO",
+      "expected": [
+        "urn:nawi-water-ontology#Process-ReverseOsmosis"
+      ]
+    },
+    {
+      "text": "UF",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Ultrafiltration"
+      ]
+    },
+    {
+      "text": "MF",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Microfiltration"
+      ]
+    },
+    {
+      "text": "AOP",
+      "expected": [
+        "urn:nawi-water-ontology#Process-AdvancedOxidation"
+      ]
+    },
+    {
+      "text": "GAC",
+      "expected": [
+        "urn:nawi-water-ontology#Process-GranularActivatedCarbon"
+      ]
+    },
+    {
+      "text": "BAF",
+      "expected": [
+        "urn:nawi-water-ontology#Process-BiologicallyActiveFiltration"
+      ]
+    },
+    {
+      "text": "CCRO",
+      "expected": [
+        "urn:nawi-water-ontology#Process-ClosedCircuitReverseOsmosis"
+      ]
+    },
+    {
+      "text": "FRRO",
+      "expected": [
+        "urn:nawi-water-ontology#Process-FeedReversalReverseOsmosis"
+      ]
+    },
+    {
+      "text": "OARO",
+      "expected": [
+        "urn:nawi-water-ontology#Process-OsmoticallyAssistedReverseOsmosis"
+      ]
+    },
+    {
+      "text": "MD",
+      "expected": [
+        "urn:nawi-water-ontology#Process-MembraneDistillation"
+      ]
+    },
+    {
+      "text": "EC",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Electrocoagulation"
+      ]
+    },
+    {
+      "text": "EO",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Electrooxidation"
+      ]
+    },
+    {
+      "text": "EDC",
+      "expected": [
+        "urn:nawi-water-ontology#Process-ElectroDialyticCrystallization"
+      ]
+    },
+    {
+      "text": "HDS",
+      "expected": [
+        "urn:nawi-water-ontology#Process-HighDensitySludge"
+      ]
+    },
+    {
+      "text": "MHI",
+      "expected": [
+        "urn:nawi-water-ontology#Process-MultipleHearthIncineration"
+      ]
+    },
+    {
+      "text": "MLE",
+      "expected": [
+        "urn:nawi-water-ontology#Process-MLE"
+      ]
+    },
+    {
+      "text": "UCT",
+      "expected": [
+        "urn:nawi-water-ontology#Process-UCT"
+      ]
+    },
+    {
+      "text": "A2O",
+      "expected": [
+        "urn:nawi-water-ontology#Process-A2O"
+      ]
+    },
+    {
+      "text": "A/O",
+      "expected": [
+        "urn:nawi-water-ontology#Process-AO"
+      ]
+    },
+    {
+      "text": "UV",
+      "expected": [
+        "urn:nawi-water-ontology#Process-UVDisinfection"
+      ]
+    },
+    {
+      "text": "ED",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Electrodialysis"
+      ]
+    },
+    {
+      "text": "IX",
+      "expected": [
+        "urn:nawi-water-ontology#Process-IonExchange"
+      ]
+    },
+    {
+      "text": "DAF",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Flotation"
+      ]
+    },
+    {
+      "text": "CHP",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Cogeneration"
+      ]
+    },
+    {
+      "text": "CIP",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Cleaning"
+      ]
+    },
+    {
+      "text": "RO process",
+      "expected": [
+        "urn:nawi-water-ontology#Process-ReverseOsmosis"
+      ]
+    },
+    {
+      "text": "UF filtration",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Ultrafiltration"
+      ]
+    },
+    {
+      "text": "UV treatment",
+      "expected": [
+        "urn:nawi-water-ontology#Process-UVDisinfection"
+      ]
+    },
+    {
+      "text": "GAC adsorption",
+      "expected": [
+        "urn:nawi-water-ontology#Process-GranularActivatedCarbon"
+      ]
+    }
+  ]
+}

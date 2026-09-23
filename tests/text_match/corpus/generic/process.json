@@ -1,0 +1,70 @@
+{
+  "group": "generic",
+  "kind": "process",
+  "cases": [
+    {
+      "text": "filtration",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Filtration"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "digestion",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Digestion"
+      ]
+    },
+    {
+      "text": "oxidation",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Oxidation"
+      ]
+    },
+    {
+      "text": "disinfection",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Disinfection"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "incineration",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Incineration"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "filtration process",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Filtration"
+      ]
+    },
+    {
+      "text": "oxidation process",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Oxidation",
+        "urn:nawi-water-ontology#Process-AdvancedOxidation"
+      ]
+    },
+    {
+      "text": "separation process",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Separation"
+      ]
+    },
+    {
+      "text": "digestion process",
+      "expected": [
+        "urn:nawi-water-ontology#Process-Digestion"
+      ]
+    },
+    {
+      "text": "osmosis",
+      "expected": [
+        "urn:nawi-water-ontology#Process-ReverseOsmosis"
+      ]
+    }
+  ]
+}

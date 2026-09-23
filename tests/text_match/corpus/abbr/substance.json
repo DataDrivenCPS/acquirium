@@ -1,0 +1,212 @@
+{
+  "group": "abbr",
+  "kind": "substance",
+  "cases": [
+    {
+      "text": "DO",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-DissolvedOxygen"
+      ]
+    },
+    {
+      "text": "TSS",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-SuspendedSolids"
+      ]
+    },
+    {
+      "text": "SS",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-SuspendedSolids"
+      ]
+    },
+    {
+      "text": "TOC",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-OrganicCarbon"
+      ]
+    },
+    {
+      "text": "DOC",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-OrganicCarbon"
+      ]
+    },
+    {
+      "text": "TIC",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-InorganicCarbon"
+      ]
+    },
+    {
+      "text": "NH3",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-NH3",
+        "urn:nawi-water-ontology#Constituent-Ammonia"
+      ]
+    },
+    {
+      "text": "NO3",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Nitrate"
+      ]
+    },
+    {
+      "text": "NO2",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Nitrite",
+        "http://data.ashrae.org/standard223#NOX-NO2"
+      ]
+    },
+    {
+      "text": "NOx",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-NOX",
+        "urn:nawi-water-ontology#Constituent-NitrogenOxides"
+      ]
+    },
+    {
+      "text": "H2O2",
+      "expected": [
+        "urn:nawi-water-ontology#OxidizingAgent-HydrogenPeroxide"
+      ]
+    },
+    {
+      "text": "H2SO4",
+      "expected": [
+        "urn:nawi-water-ontology#pHAdjuster-SulfuricAcid"
+      ]
+    },
+    {
+      "text": "NaCl",
+      "expected": [
+        "urn:nawi-water-ontology#Salt-NaCl"
+      ]
+    },
+    {
+      "text": "PAC",
+      "expected": [
+        "urn:nawi-water-ontology#Coagulant-PolyaluminumChloride",
+        "urn:nawi-water-ontology#OdorControlAgent-ActivatedCarbon"
+      ]
+    },
+    {
+      "text": "PACl",
+      "expected": [
+        "urn:nawi-water-ontology#Coagulant-PolyaluminumChloride"
+      ]
+    },
+    {
+      "text": "PAM",
+      "expected": [
+        "urn:nawi-water-ontology#Flocculant-Polyacrylamide"
+      ]
+    },
+    {
+      "text": "FeCl3",
+      "expected": [
+        "urn:nawi-water-ontology#Coagulant-FerricChloride"
+      ]
+    },
+    {
+      "text": "Cl2",
+      "expected": [
+        "urn:nawi-water-ontology#Disinfectant-Chlorine"
+      ]
+    },
+    {
+      "text": "O3",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-O3",
+        "urn:nawi-water-ontology#Disinfectant-Ozone"
+      ]
+    },
+    {
+      "text": "O2",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-O2"
+      ]
+    },
+    {
+      "text": "CO2",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-CO2"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "CH4",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-CH4"
+      ]
+    },
+    {
+      "text": "H2S",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-H2S"
+      ]
+    },
+    {
+      "text": "VOC",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-VolatileOrganicCompounds"
+      ]
+    },
+    {
+      "text": "VOCs",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-VolatileOrganicCompounds"
+      ]
+    },
+    {
+      "text": "HPO",
+      "expected": [
+        "urn:nawi-water-ontology#HighPurityOxygen"
+      ]
+    },
+    {
+      "text": "CN",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Cyanide"
+      ]
+    },
+    {
+      "text": "GAC",
+      "expected": [
+        "urn:nawi-water-ontology#OdorControlAgent-ActivatedCarbon"
+      ]
+    },
+    {
+      "text": "Na2S",
+      "expected": [
+        "urn:nawi-water-ontology#HeavyMetalRemovalAgent-SodiumSulfide"
+      ]
+    },
+    {
+      "text": "N2",
+      "expected": [
+        "http://data.ashrae.org/standard223#Constituent-N2"
+      ]
+    },
+    {
+      "text": "TDS",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Solids",
+        "urn:nawi-water-ontology#Constituent-Salt"
+      ]
+    },
+    {
+      "text": "NH3-N",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Ammonia",
+        "http://data.ashrae.org/standard223#Constituent-NH3"
+      ]
+    },
+    {
+      "text": "NO3-N",
+      "expected": [
+        "urn:nawi-water-ontology#Constituent-Nitrate"
+      ]
+    }
+  ]
+}

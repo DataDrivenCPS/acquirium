@@ -8,8 +8,10 @@ multiplier/offset/compatibility) is a separate concern handled by
 Sources, in authority order:
 
 1. graph     — embedding index over the union (data) graph; all kinds.
-2. converter — `QUDTUnitConverter` deterministic resolution; units only.
-3. qudt      — embedding index over the broad QUDT vocabulary; unit /
+2. unit_key  — `UnitKeyIndex`: the typed unit expression ("m3/h", "mg·L⁻¹")
+               matched against QUDT symbols and UCUM codes; units only.
+3. converter — `QUDTUnitConverter` deterministic resolution; units only.
+4. qudt      — embedding index over the broad QUDT vocabulary; unit /
                quantity_kind / untyped.
 
 A source declares which ``kind`` values it serves and an optional per-source
@@ -37,6 +39,7 @@ from acquirium.internals.qudt_units import UnitNotFound
 
 if TYPE_CHECKING:
     from acquirium.internals.qudt_units import QUDTUnitConverter
+    from acquirium.TextMatch.unit_key import UnitKeyIndex
 
 logger = logging.getLogger("acquirium.concept_resolver")
 
@@ -110,6 +113,9 @@ class ConceptResolver:
             ``QUDTUnitConverter``. It may raise if no QUDT graph is available;
             the converter source then yields nothing and the cascade falls
             through to the matchers.
+        unit_keys_provider: zero-arg callable returning the current
+            ``UnitKeyIndex``, or ``None`` while it is not built. Omitted, the
+            unit_key source yields nothing.
     """
 
     # Over-fetch this many candidates when context is present so the rerank
@@ -121,10 +127,12 @@ class ConceptResolver:
         graph_matcher: EmbeddingMatcher,
         qudt_matcher: EmbeddingMatcher,
         converter_provider: Callable[[], "QUDTUnitConverter"],
+        unit_keys_provider: Callable[[], "UnitKeyIndex | None"] | None = None,
     ) -> None:
         self._graph_matcher = graph_matcher
         self._qudt_matcher = qudt_matcher
         self._converter_provider = converter_provider
+        self._unit_keys_provider = unit_keys_provider
 
         def _matcher(m: EmbeddingMatcher):
             return lambda text, kind, k, ms: m.query(
@@ -138,11 +146,18 @@ class ConceptResolver:
                 "graph",
                 kinds=frozenset(
                     {None, "class", "predicate", "unit", "quantity_kind",
-                     "substance", "process"}
+                     "substance", "process", "role"}
                 ),
                 produce=_matcher(graph_matcher),
                 floor=0.8,
                 floor_kinds=frozenset({"unit", "quantity_kind"}),
+            ),
+            # Ahead of the converter: it reads the whole expression, where
+            # the converter resolves a bare "h" to henry by local name.
+            Source(
+                "unit_key",
+                kinds=frozenset({"unit"}),
+                produce=lambda text, kind, k, ms: self._unit_key_hits(text, k),
             ),
             Source(
                 "converter",
@@ -313,6 +328,24 @@ class ConceptResolver:
         return self._rank(candidates, limit=limit)
 
     # -------------------- tiers --------------------
+    def _unit_key_hits(self, text: str, limit: int) -> list[ResolveResult]:
+        """Units whose symbol or UCUM code spells the same expression as *text*."""
+        index = self._unit_keys_provider() if self._unit_keys_provider else None
+        if index is None:
+            return []
+        return [
+            ResolveResult(
+                uri=concept["uri"],
+                kind="unit",
+                label=concept.get("label") or matched,
+                score=1.0,
+                matched_surface=matched,
+                match_stage="exact",
+                related=tuple(concept.get("related", ())),
+            )
+            for concept, matched in index.lookup(text)[:limit]
+        ]
+
     def _deterministic_unit(self, text: str) -> list[ResolveResult]:
         """Authoritative QUDT unit resolution via the converter.
 
@@ -330,7 +363,8 @@ class ConceptResolver:
             unit_def = conv.resolve_unit(text)
         except UnitNotFound:
             try:
-                unit_def = conv.infer_unit(text)
+                # No substring guesses: this tier reports score 1.0.
+                unit_def = conv.infer_unit(text, fuzzy=False)
             except UnitNotFound:
                 return []
             except Exception:
@@ -405,7 +439,7 @@ class ConceptResolver:
           quantity kind's ``qudt:applicableUnit`` (see ``QUDTStore``; the
           converter source carries ``unit_def.quantity_kinds``).
           Graph-matcher concepts always have ``related == ()``
-          (``_aggregate_uri_label_rows``), so context can never move a
+          (``GraphConcepts.extract_concepts``), so context can never move a
           class/predicate or a graph-defined unit/QK.
 
         Consequences (the narrowness is deliberate, but real):

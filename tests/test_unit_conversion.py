@@ -54,6 +54,57 @@ class TestResolveUnit:
 
 
 # ---------------------------------------------------------------------------
+# QUDTUnitConverter.infer_unit
+# ---------------------------------------------------------------------------
+
+class TestInferUnit:
+    @pytest.mark.parametrize("text, local", [
+        ("gal/min", "GAL_US-PER-MIN"),
+        ("kg/m3", "KiloGM-PER-M3"),
+    ])
+    def test_slash_is_a_division_not_a_path(self, converter, text, local):
+        # "gal/min" used to resolve its last path segment, "min".
+        assert str(converter.infer_unit(text).uri).endswith("/" + local)
+
+    def test_ratio_is_never_reduced_to_its_denominator(self, converter):
+        # No M3-PER-H unit exists, so this composes a ratio of both parts.
+        uri = str(converter.infer_unit("m3/h").uri)
+        assert "unit/M3" in uri and uri != "http://qudt.org/vocab/unit/H"
+
+    def test_last_segment_of_a_uri_still_resolves(self, converter):
+        u = converter.infer_unit("https://example.org/some/path/L-PER-MIN")
+        assert str(u.uri).endswith("/L-PER-MIN")
+
+    @pytest.mark.parametrize("text, local", [
+        ("h", "HR"), ("s", "SEC"), ("hrs", "HR"), ("m3/h", "M3-PER-HR"), ("m³·h⁻¹", "M3-PER-HR"),
+        ("mg/L", "MilliGM-PER-L"), ("gal", "GAL_US"), ("gal/min", "GAL_US-PER-MIN"), ("ft", "FT"),
+        ("kg", "KiloGM"), ("kG", "KiloGAUSS"), ("°C", "DEG_C"), ("deg C", "DEG_C"),
+        ("l-per-min", "L-PER-MIN"), ("L-PER-MIN", "L-PER-MIN"), ("Kilogram", "KiloGM"), ("kilogram", "KiloGM"),
+        ("celsius", "DEG_C"),
+    ])
+    def test_resolve_unit_reads_the_typed_expression(self, converter, text, local):
+        assert str(converter.resolve_unit(text).uri).endswith("/" + local)
+
+    def test_convert_reads_typed_units(self, converter):
+        assert converter.convert(1.0, "m3/h", "L/min") == pytest.approx(1000 / 60, rel=1e-6)
+        assert converter.convert(2.0, "hrs", "min") == pytest.approx(120.0)
+        assert converter.convert(1.0, "gal", "L") == pytest.approx(3.785411784, rel=1e-6)
+
+    def test_convert_never_guesses_a_unit(self, converter):
+        # "watts" is only a substring of other units' labels
+        with pytest.raises(UnitNotFound):
+            converter.convert(1.0, "watts", "kW")
+        with pytest.raises(UnitNotFound):
+            converter.are_compatible("watts", "kW")
+
+    def test_substring_guess_is_off_without_fuzzy(self, converter):
+        # "watts" is only a substring of other units' labels.
+        with pytest.raises(UnitNotFound):
+            converter.infer_unit("watts")
+        assert converter.infer_unit("watts", fuzzy=True) is not None
+
+
+# ---------------------------------------------------------------------------
 # QUDTUnitConverter.convert — compatibility and correctness
 # ---------------------------------------------------------------------------
 
