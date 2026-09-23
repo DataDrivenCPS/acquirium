@@ -5,15 +5,26 @@ Each :class:`Attr` maps a user-facing attribute name (``medium``,
 resolver kind used to turn free text into URIs, and the node roles it
 applies to. The registry is the single source of truth consumed by the
 explore compiler (``compile.py``) and the ``where()`` resolution layer.
+
+Built-in attributes live in :data:`REGISTRY`. User attributes written by
+``insert_metadata`` are discovered from the graph: every predicate under
+``urn:acquirium:attr#`` is one, named by its local part (the flattened leaf
+path, ``product_info.year``). A list index segment (``tags.0``) is also
+offered collapsed (``tags``: every index at once), which is how a bare
+comparison on a list means "some element". :class:`Registry` is the view a
+``Query`` reads: the built-ins plus what the connected server holds, cached
+per graph version.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Dict, Iterator, Optional
 
 from rdflib.namespace import RDF, RDFS
 
 from acquirium.internals.internals_namespaces import (
+    ACQUIRIUM_ATTR_NS,
     CONNECTION_POINT,
     DATA_SOURCE,
     HAS_ENUMERATION_KIND,
@@ -112,6 +123,114 @@ NOT_IN_ALL = {
     "entity": frozenset({"type", "cp_type"}),
     "data": frozenset({"type", "app", "label"}),
 }
+
+
+ATTR_NS = str(ACQUIRIUM_ATTR_NS)
+
+# Data graphs only: the ``attr:`` namespace never appears in an ontology, and
+# the union with dependencies is orders of magnitude larger to scan.
+DISCOVERY_SPARQL = (
+    "SELECT DISTINCT ?p\nWHERE {\n  ?s ?p ?o .\n"
+    f"  FILTER(STRSTARTS(STR(?p), \"{ATTR_NS}\"))\n}}"
+)
+
+# (server_key, graph_version) -> {name: Attr}
+_DISCOVERED_CACHE: Dict[tuple, Dict[str, Attr]] = {}
+
+
+def clear_registry_cache() -> None:
+    _DISCOVERED_CACHE.clear()
+
+
+def _server_key(client) -> str:
+    return str(getattr(client, "base_url", id(client)))
+
+
+def _collapse_indices(path: str) -> Optional[str]:
+    """``a.0.b`` -> ``a.b``; ``None`` when the path has no index segment."""
+    parts = path.split(".")
+    kept = [seg for seg in parts if not seg.isdigit()]
+    return ".".join(kept) if len(kept) != len(parts) and kept else None
+
+
+def _index_key(predicate: str) -> tuple:
+    """Sort key placing ``tags.2`` after ``tags.10`` numerically, not lexically."""
+    return tuple(
+        (0, int(seg)) if seg.isdigit() else (1, seg)
+        for seg in predicate[len(ATTR_NS):].split(".")
+    )
+
+
+def user_attributes(predicates: "list[str] | tuple[str, ...]") -> Dict[str, Attr]:
+    """Build the discovered-attribute map from the ``attr:`` predicates in use.
+
+    Every predicate yields its exact leaf path; paths with list indices also
+    yield the collapsed name, whose predicates are all indices found.
+    """
+    groups: Dict[str, list] = {}
+    for pred in predicates:
+        pred = str(pred)
+        if not pred.startswith(ATTR_NS):
+            continue
+        path = pred[len(ATTR_NS):]
+        if not path:
+            continue
+        groups.setdefault(path, []).append(pred)
+        collapsed = _collapse_indices(path)
+        if collapsed is not None:
+            groups.setdefault(collapsed, []).append(pred)
+    return {
+        name: Attr(name, tuple(sorted(set(preds), key=_index_key)), "any", BOTH,
+                   literal=True, doc="user attribute")
+        for name, preds in groups.items()
+        if name not in REGISTRY
+    }
+
+
+class Registry(Mapping):
+    """Built-in attributes plus those discovered from the connected server.
+
+    Built-ins answer without a server round trip; anything else triggers one
+    discovery query, cached per ``(server, graph_version)`` until the graph
+    changes. With no client only the built-ins exist.
+    """
+
+    def __init__(self, client=None):
+        self.client = client
+
+    def _discovered(self) -> Dict[str, Attr]:
+        if self.client is None:
+            return {}
+        key = (_server_key(self.client), self.client.graph_version())
+        found = _DISCOVERED_CACHE.get(key)
+        if found is None:
+            res = self.client.sparql_query(DISCOVERY_SPARQL, include_dependencies=False)
+            cols = res.get("columns", [])
+            pi = cols.index("p") if "p" in cols else 0
+            found = user_attributes(
+                [str(r[pi]) for r in res.get("rows", []) if r and r[pi] is not None]
+            )
+            _DISCOVERED_CACHE[key] = found
+        return found
+
+    def __getitem__(self, name: str) -> Attr:
+        attr = REGISTRY.get(name)
+        if attr is not None:
+            return attr
+        return self._discovered()[name]
+
+    def __contains__(self, name: object) -> bool:
+        return name in REGISTRY or name in self._discovered()
+
+    def __iter__(self) -> Iterator[str]:
+        yield from REGISTRY
+        yield from self._discovered()
+
+    def __len__(self) -> int:
+        return len(REGISTRY) + len(self._discovered())
+
+    def for_role(self, role: str) -> "list[Attr]":
+        return [a for a in self.values() if role in a.roles]
 
 
 def normalize_value(v: Any) -> tuple[list[Any], bool]:

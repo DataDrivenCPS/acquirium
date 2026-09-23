@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 import polars as pl
 from rdflib import URIRef
 
-from acquirium.Client.explore.attributes import NOT_IN_ALL, REGISTRY, Not, attributes_doc, normalize_value
+from acquirium.Client.explore.attributes import NOT_IN_ALL, Not, Registry, attributes_doc, normalize_value
 from acquirium.Client.explore.compile import compile_sparql
 from acquirium.Client.explore.directions import EQUIPMENT_STEPS, PROPERTY_STEPS
 from acquirium.Client.explore.relations import RELATIONS
@@ -57,6 +57,12 @@ class Query:
     cache: Dict[str, Any] = field(default_factory=dict, compare=False)
 
     # ---------- internal helpers ----------
+
+    @property
+    def registry(self) -> Registry:
+        """Attributes this query can name: built-ins plus those discovered
+        from the connected server (see ``explore.attributes.Registry``)."""
+        return Registry(self.client)
 
     def _next_id(self) -> int:
         return max(self.query_graph.nodes, default=-1) + 1
@@ -167,13 +173,14 @@ class Query:
         ``client.resolve`` so siblings disambiguate each other.
         ``Not`` markers are preserved around the resolved value.
         """
-        unknown = [k for k in attrs if k not in REGISTRY]
+        registry = self.registry
+        unknown = [k for k in attrs if k not in registry]
         if unknown:
-            raise ValueError(f"unknown attribute(s) {unknown}; known: {sorted(REGISTRY)}")
+            raise ValueError(f"unknown attribute(s) {unknown}; known: {sorted(registry)}")
 
         record: Dict[str, Any] = {}
         for name, raw in attrs.items():
-            attr = REGISTRY[name]
+            attr = registry[name]
             values, _ = normalize_value(raw)
             for i, v in enumerate(values):
                 if attr.literal or isinstance(v, URIRef) or _is_uri(v):
@@ -183,7 +190,7 @@ class Query:
 
         out: Dict[str, Any] = {}
         for name, raw in attrs.items():
-            attr = REGISTRY[name]
+            attr = registry[name]
             values, negated = normalize_value(raw)
             if not values:
                 continue
@@ -205,11 +212,12 @@ class Query:
     def _apply_attrs(self, g: QueryGraph, node_ids: List[int], resolved: Dict[str, Any]) -> QueryGraph:
         """Store resolved attribute constraints on the given nodes (role-checked)."""
         ptr = g.current_pointer
+        registry = self.registry
         for nid in node_ids:
             is_data = nid in g.data_nodes
             role = "data" if is_data else "entity"
             for name in resolved:
-                if role not in REGISTRY[name].roles:
+                if role not in registry[name].roles:
                     alias = g.aliases_reverse.get(nid, str(nid))
                     raise ValueError(f"attribute {name!r} does not apply to {role} node {alias!r}")
             if is_data:
@@ -658,11 +666,12 @@ class Query:
         Bare registry attribute names win over aliases; ``"alias.attr"``
         targets an attribute of a specific node.
         """
+        registry = self.registry
         if "." in name:
-            alias, _, attr_name = name.rpartition(".")
-            if attr_name in REGISTRY and alias in g.aliases:
+            alias, _, attr_name = name.partition(".")
+            if alias in g.aliases and attr_name in registry:
                 return ("attr", g.aliases[alias], attr_name)
-        if name in REGISTRY:
+        if name in registry:
             nid = g.resolve_alias(of)
             if nid is None:
                 raise ValueError(
@@ -673,7 +682,7 @@ class Query:
         if name in g.aliases:
             return ("node", g.aliases[name])
         raise ValueError(
-            f"unknown column {name!r}: not an attribute ({sorted(REGISTRY)}) "
+            f"unknown column {name!r}: not an attribute ({sorted(registry)}) "
             f"or a node alias ({sorted(g.aliases)})"
         )
 
@@ -720,8 +729,8 @@ class Query:
                     else "include: no current node (start with entity())"
                 )
             role = "data" if nid in g.data_nodes else "entity"
-            expanded = [a.name for a in REGISTRY.values()
-                        if role in a.roles and a.name not in NOT_IN_ALL[role]]
+            expanded = [a.name for a in self.registry.for_role(role)
+                        if a.name not in NOT_IN_ALL[role]]
             names = tuple(n for name in names
                           for n in (expanded if name == "all" else [name]))
         for name in names:
@@ -734,7 +743,7 @@ class Query:
                 continue
             _, nid, attr_name = target
             role = "data" if nid in g.data_nodes else "entity"
-            if role not in REGISTRY[attr_name].roles:
+            if role not in self.registry[attr_name].roles:
                 alias = g.aliases_reverse.get(nid, str(nid))
                 raise ValueError(
                     f"include: attribute {attr_name!r} does not apply to {role} node {alias!r}")
@@ -812,8 +821,9 @@ class Query:
 
             aq.query().entity("Equipment").measurement(frm="*").options("quantity_kind")
         """
-        if attr_name not in REGISTRY:
-            raise ValueError(f"unknown attribute {attr_name!r}; known: {sorted(REGISTRY)}")
+        registry = self.registry
+        if attr_name not in registry:
+            raise ValueError(f"unknown attribute {attr_name!r}; known: {sorted(registry)}")
         g = self.query_graph
         nid = g.resolve_alias(of)
         if nid is None:
@@ -821,7 +831,7 @@ class Query:
                 f"options: unknown alias {of!r}" if of is not None
                 else "options: no current node (start with entity())"
             )
-        attr = REGISTRY[attr_name]
+        attr = registry[attr_name]
         role = "data" if nid in g.data_nodes else "entity"
         if role not in attr.roles:
             alias = g.aliases_reverse.get(nid, str(nid))
@@ -903,9 +913,8 @@ class Query:
         version = self.client.graph_version()
 
         summary = FacetSummary(node_alias=alias)
-        for name, attr in REGISTRY.items():
-            if role not in attr.roles:
-                continue
+        for attr in self.registry.for_role(role):
+            name = attr.name
             df = self.options(name, of=alias, include_dependencies=include_dependencies)
             scope = "matched"
             if df.height == 0:
@@ -926,7 +935,7 @@ class Query:
     # ---------- terminals ----------
 
     def to_sparql(self) -> str:
-        return compile_sparql(self.query_graph)
+        return compile_sparql(self.query_graph, self.registry)
 
     def execute(self, include_dependencies: bool = True) -> dict:
         """Execute the compiled SPARQL against the metadata graph (cached).
@@ -948,7 +957,7 @@ class Query:
                 self.cache[cache_key] = execute_placed(g, self.client, include_dependencies)
             else:
                 self.cache[cache_key] = self.client.sparql_query(
-                    compile_sparql(g),
+                    compile_sparql(g, self.registry),
                     include_dependencies=include_dependencies,
                 )
         return self.cache[cache_key]

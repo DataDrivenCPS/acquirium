@@ -12,6 +12,7 @@ used a private ``_Exclude`` wrapper with identical SPARQL output).
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, List
 
 from rdflib.namespace import RDF, RDFS
@@ -19,7 +20,7 @@ from rdflib.namespace import RDF, RDFS
 import itertools
 
 from acquirium.Client.explore.attributes import REGISTRY, Attr, Not, normalize_value
-from acquirium.Client.explore.hidden import hidden_predicates
+from acquirium.Client.explore.hidden import hidden_filter
 from acquirium.Client.query_graph import QueryEdge, QueryGraph
 from acquirium.internals.internals_namespaces import (
     CONNECTED_THROUGH,
@@ -71,9 +72,9 @@ def render_alternatives(alts, prev: str, obj: str, uid: str) -> str:
             if pred == "*":
                 pvar = f"?p_{uid}_a{ai}_{si}"
                 clauses.append(f"{p} {pvar} {o} .")
-                hidden = sorted(hidden_predicates())
+                hidden = hidden_filter(pvar)
                 if hidden:
-                    clauses.append(f"FILTER({pvar} NOT IN (" + ", ".join(f"<{h}>" for h in hidden) + "))")
+                    clauses.append(hidden)
                 clauses.append(f"FILTER(isIRI({o}))")
             else:
                 clauses.append(f"{p} {_format_pred(pred)} {o} .")
@@ -390,11 +391,7 @@ def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int,
     # Case B: unconstrained predicates -> UNION of explicit k-step chains.
     # Hidden predicates (hidden.hide) are excluded from every hop, except
     # on data-node edges.
-    hidden = [] if is_data_edge else sorted(hidden_predicates())
-    hidden_filter = (
-        "FILTER({pvar} NOT IN (" + ", ".join(f"<{h}>" for h in hidden) + "))"
-        if hidden else None
-    )
+    hidden = None if is_data_edge else hidden_filter("{pvar}")
     union_blocks: List[str] = []
     for k in range(1, hops + 1):
         mids = [f"?x_e{edge_idx}_{i}" for i in range(1, k)]  # k-1 intermediates
@@ -422,8 +419,8 @@ def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int,
         if k > 1:
             triples_cp.extend(triples_normal[1:])
 
-        if hidden_filter:
-            filters = [hidden_filter.format(pvar=pvar) for pvar in ps]
+        if hidden:
+            filters = [hidden.format(pvar=pvar) for pvar in ps]
             triples_normal.extend(filters)
             triples_cp.extend(filters)
 
@@ -437,7 +434,7 @@ def _edge_pattern(src_var: str, tgt_var: str, edge: QueryEdge, edge_idx: int,
     return " UNION ".join(union_blocks)
 
 
-def _node_constraint_clauses(v: str, node) -> List[str]:
+def _node_constraint_clauses(v: str, node, registry: Mapping = REGISTRY) -> List[str]:
     """VALUES / class-fence / attribute clauses for one node."""
     clauses: List[str] = []
     instance_uri = (node.constraints or {}).get("instance_uri")
@@ -458,11 +455,11 @@ def _node_constraint_clauses(v: str, node) -> List[str]:
             f"}} }}"
         )
     for name, aval in ((node.constraints or {}).get("attrs") or {}).items():
-        clauses.extend(_attr_clauses(v, REGISTRY[name], aval))
+        clauses.extend(_attr_clauses(v, registry[name], aval))
     return clauses
 
 
-def _data_node_clauses(v: str, nid: int, info) -> List[str]:
+def _data_node_clauses(v: str, nid: int, info, registry: Mapping = REGISTRY) -> List[str]:
     """ext-ref triple, unit/label OPTIONALs, and filters for one data node."""
     clauses: List[str] = [f"{v} <{HAS_EXTERNAL_REFERENCE}> ?ext{nid} ."]
     clauses.append(f"OPTIONAL {{ {v} <{HAS_UNIT}> ?unit{nid} . }}")
@@ -472,8 +469,8 @@ def _data_node_clauses(v: str, nid: int, info) -> List[str]:
     for pred, val in (info.filters or {}).items():
         if val is None:
             continue
-        if isinstance(pred, str) and pred in REGISTRY:
-            clauses.extend(_attr_clauses(v, REGISTRY[pred], val))
+        if isinstance(pred, str) and pred in registry:
+            clauses.extend(_attr_clauses(v, registry[pred], val))
             continue
         negate = isinstance(val, Not)
         if negate:
@@ -502,15 +499,16 @@ def _data_node_clauses(v: str, nid: int, info) -> List[str]:
     return clauses
 
 
-def _attr_select_clause(v: str, nid: int, name: str, required: bool) -> tuple:
-    attr = REGISTRY[name]
+def _attr_select_clause(v: str, nid: int, name: str, required: bool,
+                        registry: Mapping = REGISTRY) -> tuple:
+    attr = registry[name]
     avar = f"?attr{nid}_{name}"
     pred_path = "|".join(f"<{p}>" for p in attr.predicates)
     clause = f"{v} ({pred_path}) {avar} ."
     return (clause if required else f"OPTIONAL {{ {clause} }}"), avar
 
 
-def compile_parts(graph: QueryGraph) -> tuple:
+def compile_parts(graph: QueryGraph, registry: Mapping = REGISTRY) -> tuple:
     """Compile a query graph into ``(var_map, select_parts, where_clauses)``.
 
     ``compile_sparql`` assembles these into the standard SELECT; facet
@@ -521,7 +519,7 @@ def compile_parts(graph: QueryGraph) -> tuple:
     empty nodes contribute None columns) instead of a cross-product join.
     """
     if len(graph.data_nodes) > 1:
-        return _compile_parts_multi(graph)
+        return _compile_parts_multi(graph, registry)
     # node id -> ?v{id}
     var_map = {nid: f"?v{nid}" for nid in graph.nodes}
     ext_vars = {}
@@ -554,7 +552,7 @@ def compile_parts(graph: QueryGraph) -> tuple:
                 f"}} }}"
             )
         for name, aval in ((node.constraints or {}).get("attrs") or {}).items():
-            where_clauses.extend(_attr_clauses(v, REGISTRY[name], aval))
+            where_clauses.extend(_attr_clauses(v, registry[name], aval))
 
     # edge constraints
     for edge_idx, edge in enumerate(graph.edges):
@@ -592,8 +590,8 @@ def compile_parts(graph: QueryGraph) -> tuple:
 
             # Registry-attribute keys expand via the attribute definition;
             # anything else is a raw predicate URI (legacy-shaped filters).
-            if isinstance(pred, str) and pred in REGISTRY:
-                where_clauses.extend(_attr_clauses(v, REGISTRY[pred], val))
+            if isinstance(pred, str) and pred in registry:
+                where_clauses.extend(_attr_clauses(v, registry[pred], val))
                 continue
 
             # Unwrap negation marker
@@ -632,7 +630,7 @@ def compile_parts(graph: QueryGraph) -> tuple:
     # so DataObject's column parsing ignores them)
     attr_var_pairs: List[tuple] = []  # (node_id, var) in selects order
     for nid, name, required in getattr(graph, "selects", ()):
-        attr = REGISTRY[name]
+        attr = registry[name]
         avar = f"?attr{nid}_{name}"
         pred_path = "|".join(f"<{p}>" for p in attr.predicates)
         clause = f"{var_map[nid]} ({pred_path}) {avar} ."
@@ -699,7 +697,7 @@ def _branch_closures(graph: QueryGraph) -> dict:
     }
 
 
-def _compile_parts_multi(graph: QueryGraph) -> tuple:
+def _compile_parts_multi(graph: QueryGraph, registry: Mapping = REGISTRY) -> tuple:
     """compile_parts for graphs with 2+ measurement nodes.
 
     The shared entity pattern compiles once; each data node's block (its
@@ -722,7 +720,7 @@ def _compile_parts_multi(graph: QueryGraph) -> tuple:
     for nid, node in graph.nodes.items():
         if nid in data_ids or nid in branch_only:
             continue
-        where_clauses.extend(_node_constraint_clauses(var_map[nid], node))
+        where_clauses.extend(_node_constraint_clauses(var_map[nid], node, registry))
 
     for edge_idx, edge in enumerate(graph.edges):
         if (edge.target_id in data_ids or edge.source_id in data_ids
@@ -737,7 +735,7 @@ def _compile_parts_multi(graph: QueryGraph) -> tuple:
     for nid, name, required in getattr(graph, "selects", ()):
         if nid in data_ids or nid in branch_only:
             continue
-        clause, avar = _attr_select_clause(var_map[nid], nid, name, required)
+        clause, avar = _attr_select_clause(var_map[nid], nid, name, required, registry)
         where_clauses.append(clause)
         attr_var_pairs.append((nid, avar))
 
@@ -745,14 +743,14 @@ def _compile_parts_multi(graph: QueryGraph) -> tuple:
     for nid, info in graph.data_nodes.items():
         v = var_map[nid]
         members = {nid} | branch_nodes.get(nid, set())
-        b: List[str] = list(_node_constraint_clauses(v, graph.nodes[nid]))
+        b: List[str] = list(_node_constraint_clauses(v, graph.nodes[nid], registry))
         for edge_idx, edge in enumerate(graph.edges):
             if edge.target_id == nid:
                 b.append(_edge_pattern(
                     var_map[edge.source_id], v, edge, edge_idx, is_data_edge=True))
-        b.extend(_data_node_clauses(v, nid, info))
+        b.extend(_data_node_clauses(v, nid, info, registry))
         for mid in sorted(branch_nodes.get(nid, ())):
-            b.extend(_node_constraint_clauses(var_map[mid], graph.nodes[mid]))
+            b.extend(_node_constraint_clauses(var_map[mid], graph.nodes[mid], registry))
         for edge_idx, edge in enumerate(graph.edges):
             if edge.source_id in members and edge.target_id in members and edge.target_id != nid:
                 b.append(_edge_pattern(
@@ -762,7 +760,7 @@ def _compile_parts_multi(graph: QueryGraph) -> tuple:
         # the unbound variable would turn the binding into an open pattern
         for snid, name, required in getattr(graph, "selects", ()):
             if snid in members:
-                clause, avar = _attr_select_clause(var_map[snid], snid, name, required)
+                clause, avar = _attr_select_clause(var_map[snid], snid, name, required, registry)
                 b.append(clause)
                 attr_var_pairs.append((snid, avar))
         branches.append("{ " + " ".join(b) + " }")
@@ -786,9 +784,14 @@ def _compile_parts_multi(graph: QueryGraph) -> tuple:
     return var_map, select_parts, where_clauses
 
 
-def compile_sparql(graph: QueryGraph) -> str:
-    """Compile a query graph to a SPARQL SELECT string."""
-    _, select_parts, where_clauses = compile_parts(graph)
+def compile_sparql(graph: QueryGraph, registry: Mapping = REGISTRY) -> str:
+    """Compile a query graph to a SPARQL SELECT string.
+
+    ``registry`` resolves attribute names; the built-in ``REGISTRY`` by
+    default, or a ``Query``'s :class:`~attributes.Registry` so discovered
+    user attributes compile too.
+    """
+    _, select_parts, where_clauses = compile_parts(graph, registry)
     select_vars = " ".join(select_parts)
     where_block = "\n  ".join(where_clauses) if where_clauses else ""
     return f"SELECT DISTINCT {select_vars}\nWHERE {{\n  {where_block}\n}}"

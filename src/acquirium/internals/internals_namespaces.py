@@ -4,6 +4,9 @@ from rdflib import Graph, URIRef, RDF, RDFS
 ### ACQUIRIUM INTERNAL NAMESPACES
 ACQUIRIUM_NS = Namespace("urn:acquirium#")
 ACQUIRIUM_POINT_NS = Namespace("urn:acquirium:point#")
+# User metadata attributes (``insert_metadata``): one predicate per leaf path,
+# ``attr:product_info.year``. Whole namespace is hidden from generic traversal.
+ACQUIRIUM_ATTR_NS = Namespace("urn:acquirium:attr#")
 
 ### External Namespaces
 QUDT = Namespace("http://qudt.org/schema/qudt/")
@@ -139,6 +142,7 @@ def _canonical_namespace_manager() -> NamespaceManager:
     for prefix, namespace in (
         ("acq", ACQUIRIUM_NS),
         ("point", ACQUIRIUM_POINT_NS),
+        ("attr", ACQUIRIUM_ATTR_NS),
         ("qudt", QUDT),
         ("unit", QUDT_UNIT),
         ("quantitykind", QUDT_QUANTITY_KIND),
