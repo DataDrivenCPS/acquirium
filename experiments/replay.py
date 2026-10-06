@@ -78,6 +78,11 @@ class Replay:
             self._names = {self.replica.ref_uri(c): c for c in self.columns}
         return self._names[ref_uri]
 
+    def register_name(self, ref_uri: str, name: str) -> None:
+        """Make a stream added after construction correctable and deletable."""
+        self._name_of(next(iter(self._names)) if hasattr(self, "_names") else self.replica.ref_uri(self.columns[0]))
+        self._names[ref_uri] = name
+
     def run(self, *, rows: int | None = None, pace: bool = True) -> None:
         """Send rows from the cursor up to row ``rows`` at ``rate``, holding back late readings."""
         interval = None

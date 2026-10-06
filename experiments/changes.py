@@ -46,10 +46,8 @@ def add_point(client: Any, world: World, replica: Replica, replay: Replay, *, qu
                               "value_kind": "numeric", "label": f"{replica.source_id} {name}"}])
     point = Point(uri, name, unit, quantity_kind, False)
     world.points[replica.ref_uri(name)] = point
+    replay.register_name(replica.ref_uri(name), name)
     if rows is not None and not rows.is_empty():
-        replay.columns.append(name)
-        if hasattr(replay, "_names"):
-            replay._names[replica.ref_uri(name)] = name
         replay._send([(ts, name, float(value)) for ts, value in rows.select("time", "value").iter_rows()],
                      "fresh", rows["time"].max())
     return point
