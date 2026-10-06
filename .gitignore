@@ -220,3 +220,6 @@ scripts/benchmark/scalability/*.csv
 dpr-trailer-data/
 
 .run_logs
+
+# Experiment run directories (servers, event logs, results)
+experiments/runs/
