@@ -31,6 +31,8 @@ from typing import Mapping, Any, Iterable, Protocol
 import polars as pl
 import pyarrow as pa
 
+from acquirium.Materialization.events import emit
+
 KINDS = ("readings", "replace")
 
 
@@ -183,12 +185,16 @@ class Engine:
             committing = perf_counter()
         timings["commit"] = perf_counter() - committing
         report = StepReport(step_no, revision, seq_from, seq_to, len(entries), rows, published, perf_counter() - started, timings)
+        emit(self.store, "step", step_no=step_no, revision=revision, seq_from=seq_from, seq_to=seq_to,
+             entries=len(entries), rows=rows, published=published, seconds=report.seconds, **{f"t_{k}": v for k, v in timings.items()})
         if self.evaluator is not None and plan is not None:
             self.evaluator.committed(report)
         return report
 
     def _apply(self, conn: Any, kind: str, meta: dict[str, Any], table: pa.Table, revision: int) -> int:
         frame = self.store._prepare_frame(pl.from_arrow(table))
+        emit(self.store, "ingest", revision=revision, rows=frame.height, entry=kind,
+             streams=frame["ref_uri"].n_unique() if frame.height else 0, publication_id=meta.get("publication_id"))
         if kind == "readings":
             if frame.height:
                 self.store._insert_frame(conn, frame, revision)

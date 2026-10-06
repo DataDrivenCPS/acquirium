@@ -330,6 +330,15 @@ async def lifespan(app: FastAPI):
     m.materializer.configure_workers(worker_count)
     # Ingestion is acknowledged on the inbox write; the loop below applies it.
     m.engine.deferred = True
+    event_log = server_cfg.get("materialization_event_log") or os.environ.get("ACQUIRIUM_EVENT_LOG")
+    if event_log:
+        # Experiments measure the runtime from this log; see Materialization/events.py.
+        from acquirium.Materialization.events import EventLog
+        event_path = Path(event_log)
+        if not event_path.is_absolute():
+            event_path = Path(config_dir) / event_path
+        m.timeseries_store.events = EventLog(event_path)
+        log.info("Materialization event log: %s", event_path)
     app.state.manager = m
     app.state.read_batch_size = int(server_cfg.get("read_batch_size", 50_000))
 
@@ -411,6 +420,9 @@ async def lifespan(app: FastAPI):
             m.close()
         except Exception:
             log.exception("Error during shutdown")
+        events = getattr(m.timeseries_store, "events", None)
+        if events is not None:
+            events.close()
 
 
 app = FastAPI(title="Acquirium API", version="0.1", lifespan=lifespan)

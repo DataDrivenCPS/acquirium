@@ -11,6 +11,7 @@ from psycopg import sql
 
 from acquirium.internals.models import Order, TimeseriesInfo, TimeInterval, LogEntry, TimeIntervalModel, compute_ref_uri
 from acquirium.Storage.base import TimeseriesStore
+from acquirium.Materialization.events import emit
 import logging
 import pyarrow as pa
 import polars as pl
@@ -310,6 +311,7 @@ class TimescaleStore(TimeseriesStore):
                 "ON CONFLICT (ref_uri) DO UPDATE SET last_revision=EXCLUDED.last_revision",
                 [ref_uri, revision],
             )
+        emit(self, "ingest", revision=revision, rows=frame.height, streams=1, replace=True, ref_uri=ref_uri)
         return frame.height
 
     def bulk_insert_polars(self, df: pl.DataFrame) -> int:

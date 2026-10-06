@@ -13,6 +13,7 @@ repairs before acknowledging changed query context in stored lineage.
 from __future__ import annotations
 
 from acquirium.Materialization.checks import check_entry, check_outputs
+from acquirium.Materialization.events import emit
 
 import re
 import json
@@ -23,7 +24,7 @@ from uuid import uuid4
 from hashlib import sha256
 from datetime import datetime, timezone
 from typing import Any
-from time import monotonic
+from time import monotonic, perf_counter
 from threading import Lock, RLock
 from rdflib import Graph, Literal, RDF, RDFS, URIRef
 
@@ -421,6 +422,7 @@ class Materializer:
         with self._plan_lock:
             revision = int(self._graph.graph_status().get("published_version", 0))
             if revision == self._graph_revision: return
+            started = perf_counter()
             bindings, applications, self._plan_errors = [], {}, {}
             deployments = {d.name: d for d in self._deployments()}
             with self._store._own_conn() as conn:
@@ -571,6 +573,7 @@ class Materializer:
             # current plan. Publish it only when the projection actually changed:
             # lineage writes advance the graph's published_version, so publishing
             # on every refresh would self-trigger a perpetual recompile loop.
+            compiled = perf_counter()
             # Closed bindings are published too: their derived streams exist,
             # and a view deployed later binds them over the interval their
             # producer held (see _producer_keep). A binding that closes
@@ -586,6 +589,7 @@ class Materializer:
                 # with its upstream view, or matching nothing yet) is
                 # planned against history again when it next appears.
                 self._history_planned.clear()
+            lineage_seconds = perf_counter() - compiled
             # Schedule repair before recording the new context fingerprint.
             # A crash can repeat a repair, but cannot forget that it is needed.
             with self._store._lock:
@@ -669,6 +673,10 @@ class Materializer:
                     else:
                         conn.executemany("INSERT OR REPLACE INTO materialization_lineage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
             self._dag, self._applications, self._graph_revision = dag, applications, revision
+            emit(self._store, "plan", graph_revision=revision, bindings=len(dag.bindings),
+                 repairs=len(repair), errors=len(self._plan_errors),
+                 compile_seconds=compiled - started, lineage_seconds=lineage_seconds,
+                 seconds=perf_counter() - started)
 
     # ---- bindings as data ----
 
