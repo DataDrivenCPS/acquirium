@@ -11,6 +11,8 @@ from threading import Lock
 from datetime import datetime, timezone
 from typing import Iterable, Mapping, Protocol
 import pyarrow as pa
+from time import perf_counter
+from acquirium.Materialization.events import emit
 from acquirium.Materialization.models import App, ApplicationGraph, Batch, Binding, OutputBuilder, OutputPort
 from acquirium.Materialization.revision_store import RevisionStore
 
@@ -49,12 +51,24 @@ class Scheduler:
     def close(self) -> None:
         self._pool.shutdown(wait=True)
 
+    def _execute(self, application: App, batch: Batch, binding: Binding) -> Mapping[str, pa.Table]:
+        """Run one transform and log how long it took and how much it read."""
+        started = perf_counter()
+        try:
+            return self.executor.execute(application, batch, binding.outputs)
+        finally:
+            emit(self.store.store, "invocation", binding=binding.signature,
+                 app=binding.application_name, from_revision=batch.context.from_revision,
+                 to_revision=batch.context.to_revision, seconds=perf_counter() - started,
+                 rows_read={alias: value.collect().num_rows for alias, value in batch.inputs.items()},
+                 work_id=batch.context.work_id, full_reset=batch.context.full_reset)
+
     def run_once(self, binding: Binding, application: App) -> bool:
         self.store.initialise(binding, application.backfill)
         batch = self.store.next_batch(binding)
         if batch is None:
             return False
-        results = self.executor.execute(application, batch, binding.outputs)
+        results = self._execute(application, batch, binding)
         return self.store.commit(binding, batch, results)
 
     def run_layer(self, bindings: Iterable[Binding], applications: Mapping[str, App], *, max_workers: int | None = None) -> bool:
@@ -77,7 +91,7 @@ class Scheduler:
                         batch = self.store.next_batch(binding)
                         if batch is not None:
                             self.running.add(binding.signature)
-                            future = self._pool.submit(self.executor.execute, applications[binding.signature], batch, binding.outputs)
+                            future = self._pool.submit(self._execute, applications[binding.signature], batch, binding)
                             pending.append((binding, batch, future))
                     except Exception as error:
                         self.errors[binding.signature] = f"{type(error).__name__}: {error}"
@@ -87,6 +101,8 @@ class Scheduler:
                         completed.append((binding, batch, future.result()))
                     except Exception as error:
                         self.errors[binding.signature] = f"{type(error).__name__}: {error}"
+                        emit(self.store.store, "failure", binding=binding.signature,
+                             app=binding.application_name, error=self.errors[binding.signature])
                     finally:
                         self.running.discard(binding.signature)
                 # A transform failure omits only that binding from publication.

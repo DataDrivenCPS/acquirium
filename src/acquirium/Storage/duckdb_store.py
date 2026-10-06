@@ -58,6 +58,7 @@ from acquirium.Storage.values import (
     typed_value_series,
 )
 from acquirium.internals._log import timed_debug
+from acquirium.Materialization.events import emit
 
 logger = logging.getLogger(__name__)
 
@@ -312,6 +313,7 @@ class DuckDBStore:
                 "ON CONFLICT (ref_uri) DO UPDATE SET last_revision=EXCLUDED.last_revision",
                 [ref_uri, revision],
             )
+        emit(self, "ingest", revision=revision, rows=frame.height, streams=1, replace=True, ref_uri=ref_uri)
         return frame.height
 
     def bulk_insert_polars(self, df: pl.DataFrame) -> int:

@@ -37,6 +37,7 @@ timeseries_backend = "duckdb"        # or "timescale" (requires pg_dsn)
 | `materialization_workers` | `2` | maximum app transformations that run concurrently in the in-process pool |
 | `materialization_poll_seconds` | `0.25` | idle delay between checks for durable materialization work; must be positive |
 | `materialization_error_log_seconds` | `30.0` | minimum delay between repeated materialization failure logs; must be positive |
+| `materialization_event_log` | unset | path of a JSON-lines file (relative to the config file) that records every ingestion commit, transform invocation, publication and replan with timestamps; for measuring the runtime, off by default. `ACQUIRIUM_EVENT_LOG` overrides it |
 | `workers` | `1` | must stay 1 |
 | `enabled` | `true` | `false` skips the HTTP server and pushes `[[drivers]]` to a remote server |
 

@@ -18,6 +18,7 @@ from typing import Any, ContextManager, Iterable, Mapping, Protocol
 from uuid import uuid4
 import pyarrow as pa
 import pyarrow.compute as pc
+from acquirium.Materialization.events import emit
 from acquirium.Materialization.models import (
     UTC, Batch, Binding, InputBatch, StreamDescriptor, StreamSet, TimeWindow,
 )
@@ -348,6 +349,8 @@ class RevisionStore:
         completed = tuple(commits)
         if not completed:
             return {}
+        written: dict[str, dict[str, int]] = {}
+        revision = None
         with self.store._lock, self.store._write_conn() as conn:
             # Check authorization and progress while holding the same write
             # lock used by deployment revocation. Checking before entering this
@@ -377,7 +380,6 @@ class RevisionStore:
             # Allocate a revision for nonempty output or removal of existing
             # rows, or a propagated reset. An ordinary empty interval with
             # nothing to remove needs only a progress update.
-            revision = None
             for binding, batch, results in accepted:
                 window = batch.context.output_window
                 for name, table in results.items():
@@ -402,6 +404,7 @@ class RevisionStore:
                     self._execute(conn, """INSERT INTO streams (ref_uri, point_uri, source_id, ref_name, value_kind)
                         VALUES (?, ?, ?, ?, ?) ON CONFLICT (ref_uri) DO NOTHING""",
                         [port.ref_uri, port.point_uri, f"derived:{binding.application_name}", port.ref_name, port.spec.value_kind])
+                    written.setdefault(binding.signature, {})[name] = table.num_rows
                     if table.num_rows:
                         frame = pl.from_arrow(table).rename({"time": "ts"})
                         if not self._postgres:
@@ -426,4 +429,14 @@ class RevisionStore:
                         continue
                     self._execute(conn, "DELETE FROM materialization_work WHERE progress_key=?", [binding.progress_key])
                 self._execute(conn, "UPDATE binding_progress SET consumed_revision=? WHERE progress_key=?", [batch.context.to_revision, binding.progress_key])
-            return {binding.signature: True for binding, _, _ in accepted}
+        accepted_signatures = {binding.signature for binding, _, _ in accepted}
+        for binding, batch, _ in completed:
+            window = batch.context.output_window
+            emit(self.store, "commit" if binding.signature in accepted_signatures else "rejected",
+                 binding=binding.signature, app=binding.application_name,
+                 from_revision=batch.context.from_revision, to_revision=batch.context.to_revision,
+                 revision=revision if binding.signature in written else None,
+                 rows_written=written.get(binding.signature, {}),
+                 output_window=[window.start.isoformat(), window.end.isoformat()],
+                 work_id=batch.context.work_id, full_reset=batch.context.full_reset)
+        return {signature: True for signature in accepted_signatures}

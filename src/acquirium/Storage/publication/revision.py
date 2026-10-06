@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import polars as pl
 
+from acquirium.Materialization.events import emit
 from acquirium.Storage.publication import ids
 from acquirium.Storage.publication.types import PublicationReceipt, PublicationRequest
 
@@ -30,6 +31,8 @@ class RevisionPublisher:
         with self._store._lock, self._store._write_conn() as conn:
             revision = self._store._next_revision(conn)
             self._store._insert_frame(conn, writes, revision)
+        emit(self._store, "ingest", revision=revision, rows=writes.height,
+             streams=writes["ref_uri"].n_unique(), publication_id=request.publication_id)
         return PublicationReceipt(request.publication_id, ids.payload_hash(mutations), writes.height, {})
 
     def replace(self, request: PublicationRequest, ref_uri: str) -> PublicationReceipt:
