@@ -100,5 +100,20 @@ def reparameterize(client: Any, world: World, view: type, parameters: dict) -> N
     client.reprocess_app(view.name, EPOCH, FAR)
 
 
-def reprocess(client: Any, view: type, start: datetime, end: datetime) -> None:
-    client.reprocess_app(view.name, start, end)
+def reprocess(client: Any, view: type, start: datetime, end: datetime, *, retries: int = 20) -> None:
+    """Request a repair of ``[start, end]``, waiting out work the view still has pending.
+
+    A redeployment leaves the view's bindings catching up, and the runtime
+    rejects a second durable interval for a binding that already has one.
+    """
+    import time
+    from experiments.common import wait_quiescent
+    for attempt in range(retries):
+        try:
+            client.reprocess_app(view.name, start, end)
+            return
+        except Exception as error:
+            if "pending work" not in str(error) or attempt == retries - 1:
+                raise
+            wait_quiescent(client, timeout=600)
+            time.sleep(0.5)
