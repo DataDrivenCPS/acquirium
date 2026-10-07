@@ -22,7 +22,7 @@ from rdflib.namespace import RDF, RDFS
 
 import itertools
 
-from acquirium.Client.explore.attributes import REGISTRY, Attr, Not, normalize_value
+from acquirium.Client.explore.attributes import REGISTRY, Attr, Not, is_list_attr, normalize_value
 from acquirium.Client.explore.expr import BoolOp
 from acquirium.Client.explore.hidden import hidden_filter
 from acquirium.Client.query_graph import QueryEdge, QueryGraph
@@ -548,7 +548,7 @@ def _data_node_clauses(v: str, nid: int, info, registry: Mapping = REGISTRY) -> 
     return clauses
 
 
-def attr_var(nid: int, name: str) -> str:
+def attr_var(nid: int, name: str, *, pred: bool = False) -> str:
     """The projected variable for attribute ``name`` of node ``nid``.
 
     Built-in names are SPARQL-safe and appear as-is (``?attr1_unit``); a
@@ -556,19 +556,33 @@ def attr_var(nid: int, name: str) -> str:
     name cannot, so those characters are written as ``_<codepoint>_``
     (``?attr0_product_info_46_year``). ``Query._col_name_to_alias`` maps a
     column back to its attribute through the query's selects, not by
-    decoding.
+    decoding. ``pred=True`` names the companion variable holding the
+    predicate of a list element (``?attrp0_tags``).
     """
     safe = re.sub(r"[^A-Za-z0-9_]", lambda m: f"_{ord(m.group())}_", name)
-    return f"?attr{nid}_{safe}"
+    return f"?attr{'p' if pred else ''}{nid}_{safe}"
 
 
 def _attr_select_clause(v: str, nid: int, name: str, required: bool,
                         registry: Mapping = REGISTRY) -> tuple:
+    """The WHERE clause projecting attribute ``name`` of node ``nid`` and the
+    variables it binds.
+
+    A scalar attribute binds one variable over the OR-union of its
+    predicates. A list attribute (see ``attributes.is_list_attr``) also
+    binds the predicate, ``?attrp<N>_<name>``, so the client can put the
+    elements back in index order when it assembles the list cell.
+    """
     attr = registry[name]
     avar = attr_var(nid, name)
+    if is_list_attr(attr):
+        pvar = attr_var(nid, name, pred=True)
+        values = " ".join(f"<{p}>" for p in attr.predicates)
+        clause = f"VALUES {pvar} {{ {values} }} {v} {pvar} {avar} ."
+        return (clause if required else f"OPTIONAL {{ {clause} }}"), [avar, pvar]
     pred_path = "|".join(f"<{p}>" for p in attr.predicates)
     clause = f"{v} ({pred_path}) {avar} ."
-    return (clause if required else f"OPTIONAL {{ {clause} }}"), avar
+    return (clause if required else f"OPTIONAL {{ {clause} }}"), [avar]
 
 
 def compile_parts(graph: QueryGraph, registry: Mapping = REGISTRY) -> tuple:
@@ -695,12 +709,9 @@ def compile_parts(graph: QueryGraph, registry: Mapping = REGISTRY) -> tuple:
     # so DataObject's column parsing ignores them)
     attr_var_pairs: List[tuple] = []  # (node_id, var) in selects order
     for nid, name, required in getattr(graph, "selects", ()):
-        attr = registry[name]
-        avar = attr_var(nid, name)
-        pred_path = "|".join(f"<{p}>" for p in attr.predicates)
-        clause = f"{var_map[nid]} ({pred_path}) {avar} ."
-        where_clauses.append(clause if required else f"OPTIONAL {{ {clause} }}")
-        attr_var_pairs.append((nid, avar))
+        clause, avars = _attr_select_clause(var_map[nid], nid, name, required, registry)
+        where_clauses.append(clause)
+        attr_var_pairs.extend((nid, avar) for avar in avars)
 
     # drop(): nodes stay in the pattern (WHERE) but leave the projection —
     # which also collapses DISTINCT rows that differed only in them.
@@ -800,9 +811,9 @@ def _compile_parts_multi(graph: QueryGraph, registry: Mapping = REGISTRY) -> tup
     for nid, name, required in getattr(graph, "selects", ()):
         if nid in data_ids or nid in branch_only:
             continue
-        clause, avar = _attr_select_clause(var_map[nid], nid, name, required, registry)
+        clause, avars = _attr_select_clause(var_map[nid], nid, name, required, registry)
         where_clauses.append(clause)
-        attr_var_pairs.append((nid, avar))
+        attr_var_pairs.extend((nid, avar) for avar in avars)
 
     branches: List[str] = []
     for nid, info in graph.data_nodes.items():
@@ -825,9 +836,9 @@ def _compile_parts_multi(graph: QueryGraph, registry: Mapping = REGISTRY) -> tup
         # the unbound variable would turn the binding into an open pattern
         for snid, name, required in getattr(graph, "selects", ()):
             if snid in members:
-                clause, avar = _attr_select_clause(var_map[snid], snid, name, required, registry)
+                clause, avars = _attr_select_clause(var_map[snid], snid, name, required, registry)
                 b.append(clause)
-                attr_var_pairs.append((snid, avar))
+                attr_var_pairs.extend((snid, avar) for avar in avars)
         branches.append("{ " + " ".join(b) + " }")
     where_clauses.append(" UNION ".join(branches))
 

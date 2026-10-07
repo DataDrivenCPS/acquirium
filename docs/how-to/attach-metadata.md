@@ -142,8 +142,11 @@ shape: (2, 3)
 ```
 
 `include("all")` adds every attribute of the node, yours included.
-A list gives one row per element, as a node with two media does.
-`options()` and `facets()` count values the same way:
+A list comes back as one `List` cell per node, elements in the order you
+wrote them; a node that holds a single value under the same key gets a
+one-element list, and `tags[0]` or `"tags.0"` picks one element as a plain
+column.
+`options()` and `facets()` count elements across nodes:
 
 ```python
 pumps.options("tags")

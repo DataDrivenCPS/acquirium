@@ -25,13 +25,15 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 import polars as pl
 from rdflib import URIRef
 
-from acquirium.Client.explore.attributes import NOT_IN_ALL, Not, Registry, attributes_doc, normalize_value
+from acquirium.Client.explore.attributes import (
+    NOT_IN_ALL, Not, Registry, attributes_doc, is_list_attr, list_index, normalize_value,
+)
 from acquirium.Client.explore.compile import attr_var, compile_sparql
 from acquirium.Client.explore.directions import EQUIPMENT_STEPS, PROPERTY_STEPS
 from acquirium.Client.explore.expr import ORDERING, BoolOp, Compare, Expr
 from acquirium.Client.explore.expr import attr_name as _path_name
 from acquirium.Client.explore.relations import RELATIONS
-from acquirium.Client.explore.typed import IRI, typed_column
+from acquirium.Client.explore.typed import IRI, coerce, column_dtype, parse_cell, typed_column
 from acquirium.Client.query_graph import DataNodeInfo, QueryEdge, QueryGraph, QueryNode
 from acquirium.internals.internals_namespaces import S223
 
@@ -1234,6 +1236,13 @@ class Query:
         mixture is ``String``. A server that sends no datatypes (older
         servers, test doubles) yields string columns, as before.
 
+        A list attribute (``tags`` written as a list) is one ``pl.List``
+        cell per node, elements in the order they were written; a node that
+        holds a scalar under the same key gets a one-element list, a node
+        without the key ``null``. ``tags[0]`` and ``"tags.0"`` address one
+        element and stay scalar columns. A built-in with several values
+        (``medium``) keeps one row per value.
+
         The internal SPARQL columns driving ``data()`` (``ext<nid>``,
         ``unit<nid>``, ``extunit<nid>``) are hidden unless
         ``include_internals=True``.
@@ -1244,12 +1253,17 @@ class Query:
             cols = res.get("columns", [])
             rows = res.get("rows", [])
             datatypes = res.get("datatypes") or [[None] * len(cols) for _ in rows]
-            keep_idx = list(range(len(cols)))
-            if not include_internals:
-                keep_idx = [
-                    i for i, c in enumerate(cols)
-                    if not (isinstance(c, str) and (c.startswith("ext") or c.startswith("unit")))
-                ]
+            # list attributes: value column -> column holding each element's predicate
+            registry = self.registry
+            list_cols: Dict[str, str] = {}
+            for nid, name, _ in self.query_graph.selects:
+                if name in registry and is_list_attr(registry[name]):
+                    list_cols[attr_var(nid, name)[1:]] = attr_var(nid, name, pred=True)[1:]
+            keep_idx = [
+                i for i, c in enumerate(cols)
+                if include_internals or not (isinstance(c, str) and (
+                    c.startswith("ext") or c.startswith("unit") or c.startswith("attrp")))
+            ]
             cols_w_alias = [self._col_name_to_alias(cols[i]) for i in keep_idx]
 
             def cell(value: Any, datatype: Optional[str]) -> Any:
@@ -1260,12 +1274,43 @@ class Query:
                     return self._compact_uri_safe(str(value))
                 return value
 
-            columns: Dict[str, pl.Series] = {}
+            parsed: Dict[str, list] = {}
             for name, i in zip(cols_w_alias, keep_idx):
-                values = [cell(r[i], d[i]) for r, d in zip(rows, datatypes)]
-                dtypes = [None if (d[i] == IRI) else d[i] for d in datatypes]
-                typed, dtype = typed_column(values, dtypes)
-                columns[name] = pl.Series(name, typed, dtype=dtype)
+                parsed[name] = [parse_cell(cell(r[i], d[i]), None if d[i] == IRI else d[i])
+                                for r, d in zip(rows, datatypes)]
+            list_names = {self._col_name_to_alias(c): p for c, p in list_cols.items() if c in cols}
+            scalar_names = [n for n in cols_w_alias if n not in list_names]
+            if list_names and rows:
+                # one row per combination of the scalar columns; every list
+                # column collects its elements by index across the rows that
+                # combination produced (two lists in one query cross-multiply
+                # in SPARQL, the index map undoes that)
+                groups: Dict[tuple, Dict[str, dict]] = {}
+                for r_i, r in enumerate(rows):
+                    key = tuple(parsed[n][r_i] for n in scalar_names)
+                    bucket = groups.setdefault(key, {n: {} for n in list_names})
+                    for n, pcol in list_names.items():
+                        v = parsed[n][r_i]
+                        if v is None:
+                            continue
+                        pred = r[cols.index(pcol)] if pcol in cols else None
+                        bucket[n][list_index(pred) if pred else (r_i,)] = v
+                keys = list(groups)
+                parsed = {n: [k[j] for k in keys] for j, n in enumerate(scalar_names)}
+                for n in list_names:
+                    parsed[n] = [
+                        [groups[k][n][ix] for ix in sorted(groups[k][n])] or None for k in keys
+                    ]
+            columns: Dict[str, pl.Series] = {}
+            for name in cols_w_alias:
+                if name in list_names:
+                    elements = [v for lst in parsed[name] if lst for v in lst]
+                    inner = column_dtype(elements)
+                    lists = [None if lst is None else coerce(lst, inner) for lst in parsed[name]]
+                    columns[name] = pl.Series(name, lists, dtype=pl.List(inner))
+                else:
+                    dtype = column_dtype(parsed[name])
+                    columns[name] = pl.Series(name, coerce(parsed[name], dtype), dtype=dtype)
             pl_table = pl.DataFrame(columns) if columns else pl.DataFrame()
             # point labels: drop all-null ``*.label`` columns and show the
             # rest right after their node's column
@@ -1277,7 +1322,9 @@ class Query:
                 lbl = f"{c}.label"
                 if lbl in pl_table.columns and pl_table[lbl].is_not_null().any():
                     keep.append(lbl)
-            pl_table = pl_table.select(keep).unique(maintain_order=True)
+            pl_table = pl_table.select(keep)
+            if not list_names:
+                pl_table = pl_table.unique(maintain_order=True)
             self.cache[cache_key] = pl_table
         return self.cache[cache_key]
 

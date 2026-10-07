@@ -184,6 +184,28 @@ def _index_key(predicate: str) -> tuple:
     )
 
 
+def list_index(predicate: str) -> tuple:
+    """The list position(s) a leaf predicate encodes: ``attr:tags.3`` is
+    ``(3,)``, ``attr:items.1.n`` is ``(1,)``, a scalar ``attr:tags`` is
+    ``(-1,)`` so it sorts first when a key is a list on one node and a
+    scalar on another."""
+    digits = tuple(int(seg) for seg in str(predicate)[len(ATTR_NS):].split(".") if seg.isdigit())
+    return digits or (-1,)
+
+
+def is_list_attr(attr: Attr) -> bool:
+    """A collapsed list attribute: its name has no index segment but one of
+    its predicates does (``tags`` over ``tags.0``, ``tags.1``). ``metadata()``
+    returns it as one ``pl.List`` cell per node instead of one row per
+    element. A built-in with several values (``medium``) is not a list."""
+    if any(seg.isdigit() for seg in attr.name.split(".")):
+        return False
+    return any(
+        str(p).startswith(ATTR_NS) and any(seg.isdigit() for seg in str(p)[len(ATTR_NS):].split("."))
+        for p in attr.predicates
+    )
+
+
 def user_attributes(predicates: "list[str] | tuple[str, ...]") -> Dict[str, Attr]:
     """Build the discovered-attribute map from the ``attr:`` predicates in use.
 
