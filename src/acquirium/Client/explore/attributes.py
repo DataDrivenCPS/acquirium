@@ -274,6 +274,32 @@ class Registry(Mapping):
     def __len__(self) -> int:
         return len(REGISTRY) + len(self._discovered())
 
+    def children(self, prefix: str) -> "list[Attr]":
+        """The leaf attributes under ``prefix.``, list leaves collapsed.
+
+        ``children("product_info")`` is ``[product_info.manufacturer,
+        product_info.year]``, sorted by name so a struct's fields have a
+        stable order; ``children("calibration")`` includes a nested
+        ``calibration.limits.max``. Per-index leaves (``items.0.n``) are left
+        out in favour of the collapsed ``items.n``.
+        """
+        head = prefix + "."
+        return sorted(
+            (a for a in self.values()
+             if a.name.startswith(head) and not any(seg.isdigit() for seg in a.name.split("."))),
+            key=lambda a: a.name,
+        )
+
+    def is_group(self, name: str) -> bool:
+        """``name`` is a parent key: some attribute lives under ``name.``.
+
+        A group is what ``include("product_info")`` returns as one struct
+        cell. A name can be a group and an attribute at once when one node
+        holds a scalar under the key and another a dict; ``include`` refuses
+        that mixture unless told how to read it.
+        """
+        return bool(self.children(name))
+
     def for_role(self, role: str, *, summary: bool = False) -> "list[Attr]":
         """Attributes applicable to ``role``.
 

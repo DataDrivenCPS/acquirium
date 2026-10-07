@@ -141,6 +141,34 @@ shape: (2, 3)
 └─────────┴────────────────────────────────┴───────────────────┘
 ```
 
+A parent key comes back as one struct cell holding every sub-key any
+matched node has, `null` where a node lacks one, fields sorted by name.
+Nested dicts nest the struct, and a list inside stays a list:
+
+```python
+pumps.include("product_info").metadata()
+```
+```text
+shape: (2, 2)
+┌──────────────────────────┬──────────────────────────────────┐
+│ pump                     ┆ pump.product_info                │
+│ str                      ┆ struct[4]                        │
+╞══════════════════════════╪══════════════════════════════════╡
+│ dpr:backwash-dosing-pump ┆ {null,"Grundfos","DDA 7.5",2019} │
+│ dpr:chlorine-pump        ┆ {2015,"ProMinent",null,null}     │
+└──────────────────────────┴──────────────────────────────────┘
+```
+
+Here the first pump has `manufacturer`, `model` and `year`, the second
+`build_year` and `manufacturer`, so the struct has the four fields
+`{build_year, manufacturer, model, year}`.
+Reach a field with polars, `pl.col("pump.product_info").struct.field("year")`,
+or include the leaf next to the struct, `include("product_info", "product_info.year")`.
+`where()` filters leaves, not parent keys.
+When a key holds a plain value on one node and a dict on another,
+`include` of the parent raises and names the leaves, since one column
+cannot hold both.
+
 `include("all")` adds every attribute of the node, yours included.
 A list comes back as one `List` cell per node, elements in the order you
 wrote them; a node that holds a single value under the same key gets a

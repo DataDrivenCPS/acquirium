@@ -180,6 +180,11 @@ class Query:
         """
         registry = self.registry
         unknown = [k for k in attrs if k not in registry]
+        groups = [k for k in unknown if registry.is_group(k)]
+        if groups:
+            raise ValueError(
+                f"{groups[0]!r} is a group of keys; filter one of its leaves: "
+                f"{[a.name for a in registry.children(groups[0])]}")
         if unknown:
             raise ValueError(f"unknown attribute(s) {unknown}; known: {sorted(registry)}")
 
@@ -805,9 +810,9 @@ class Query:
         registry = self.registry
         if "." in name:
             alias, _, attr_name = name.partition(".")
-            if alias in g.aliases and attr_name in registry:
+            if alias in g.aliases and (attr_name in registry or registry.is_group(attr_name)):
                 return ("attr", g.aliases[alias], attr_name)
-        if name in registry:
+        if name in registry or registry.is_group(name):
             nid = g.resolve_alias(of)
             if nid is None:
                 raise ValueError(
@@ -880,7 +885,15 @@ class Query:
                 continue
             _, nid, attr_name = target
             role = "data" if nid in g.data_nodes else "entity"
-            if role not in self.registry[attr_name].roles:
+            registry = self.registry
+            if registry.is_group(attr_name):
+                if attr_name in registry:
+                    leaves = [a.name for a in registry.children(attr_name)]
+                    raise ValueError(
+                        f"include: {attr_name!r} is a value on some nodes and a group of keys "
+                        f"({leaves}) on others; include the leaves you want, or the key as "
+                        f"a plain value with include({attr_name!r}, type=\"object\") once that lands")
+            elif role not in registry[attr_name].roles:
                 alias = g.aliases_reverse.get(nid, str(nid))
                 raise ValueError(
                     f"include: attribute {attr_name!r} does not apply to {role} node {alias!r}")
@@ -1255,8 +1268,10 @@ class Query:
             datatypes = res.get("datatypes") or [[None] * len(cols) for _ in rows]
             # list attributes: value column -> column holding each element's predicate
             registry = self.registry
+            selects = list(self.query_graph.selects)
+            leaf_selects, group_selects = self._expanded_selects()
             list_cols: Dict[str, str] = {}
-            for nid, name, _ in self.query_graph.selects:
+            for nid, name, _ in leaf_selects:
                 if name in registry and is_list_attr(registry[name]):
                     list_cols[attr_var(nid, name)[1:]] = attr_var(nid, name, pred=True)[1:]
             keep_idx = [
@@ -1311,6 +1326,26 @@ class Query:
                 else:
                     dtype = column_dtype(parsed[name])
                     columns[name] = pl.Series(name, coerce(parsed[name], dtype), dtype=dtype)
+            # parent keys: fold the child columns into one struct column,
+            # keeping a child only when it was also included on its own
+            explicit = {(nid, name) for nid, name, _ in selects}
+            for nid, gname, children in group_selects:
+                alias = self.query_graph.aliases_reverse.get(nid, f"v{nid}")
+                prefix = f"{alias}.{gname}."
+                members = {n[len(prefix):]: columns[n] for n in list(columns) if n.startswith(prefix)}
+                if not members:
+                    continue
+                struct_name = f"{alias}.{gname}"
+                first = min(list(columns).index(f"{prefix}{k}") for k in members)
+                columns[struct_name] = _struct_series(struct_name, members)
+                for rel in members:
+                    if (nid, f"{gname}.{rel}") not in explicit:
+                        del columns[f"{prefix}{rel}"]
+                # put the struct where its first child was
+                order = list(columns)
+                order.remove(struct_name)
+                order.insert(min(first, len(order)), struct_name)
+                columns = {n: columns[n] for n in order}
             pl_table = pl.DataFrame(columns) if columns else pl.DataFrame()
             # point labels: drop all-null ``*.label`` columns and show the
             # rest right after their node's column
@@ -1323,7 +1358,7 @@ class Query:
                 if lbl in pl_table.columns and pl_table[lbl].is_not_null().any():
                     keep.append(lbl)
             pl_table = pl_table.select(keep)
-            if not list_names:
+            if not list_names and not group_selects:
                 pl_table = pl_table.unique(maintain_order=True)
             self.cache[cache_key] = pl_table
         return self.cache[cache_key]
@@ -1389,6 +1424,22 @@ class Query:
 
     # ---------- display helpers ----------
 
+    def _expanded_selects(self) -> tuple:
+        """``(leaf_selects, group_selects)``: the query's selects with every
+        parent key replaced by its child leaves, and the parent keys listed
+        as ``(nid, name, [children])`` so ``metadata()`` can fold them back."""
+        registry = self.registry
+        leaves: List[tuple] = []
+        groups: List[tuple] = []
+        for nid, name, req in self.query_graph.selects:
+            if name not in registry and registry.is_group(name):
+                children = [a.name for a in registry.children(name)]
+                groups.append((nid, name, children))
+                leaves.extend((nid, c, req) for c in children)
+            else:
+                leaves.append((nid, name, req))
+        return leaves, groups
+
     def _col_name_to_alias(self, col_name: str) -> str:
         if col_name.startswith("attr"):
             head, _, attr_name = col_name[4:].partition("_")
@@ -1398,8 +1449,9 @@ class Query:
                 return col_name
             base_alias = self.query_graph.aliases_reverse.get(node_id, f"v{node_id}")
             # a user attribute's variable is an encoding of its path; the
-            # select entry that produced it holds the path itself
-            for snid, name, _ in self.query_graph.selects:
+            # select entry (or the parent key's child) that produced it
+            # holds the path itself
+            for snid, name, _ in self._expanded_selects()[0]:
                 if snid == node_id and attr_var(snid, name) == f"?{col_name}":
                     return f"{base_alias}.{name}"
             return f"{base_alias}.{attr_name}"
@@ -1430,6 +1482,33 @@ class Query:
             return self.client.compact_uri(uri)
         except Exception:
             return str(uri)
+
+
+def _struct_series(name: str, members: Dict[str, pl.Series]) -> pl.Series:
+    """One struct column from child columns keyed by their path under the
+    parent (``"year"``, ``"limits.max"``); nested paths nest the struct. A
+    row with every member null is a null struct."""
+    tree: Dict[str, Any] = {}
+    for rel, series in sorted(members.items()):   # field order is by name, like Registry.children
+        node = tree
+        parts = rel.split(".")
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})
+        node[parts[-1]] = series
+
+    def dtype_of(sub: Any) -> pl.DataType:
+        if isinstance(sub, pl.Series):
+            return sub.dtype
+        return pl.Struct([pl.Field(k, dtype_of(v)) for k, v in sub.items()])
+
+    def value_of(sub: Any, i: int) -> Any:
+        if isinstance(sub, pl.Series):
+            return sub[i]
+        out = {k: value_of(v, i) for k, v in sub.items()}
+        return None if all(v is None for v in out.values()) else out
+
+    height = next(iter(members.values())).len()
+    return pl.Series(name, [value_of(tree, i) for i in range(height)], dtype=dtype_of(tree))
 
 
 # Append the attribute registry (single source of truth) to every method

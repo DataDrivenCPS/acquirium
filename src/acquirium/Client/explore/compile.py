@@ -563,6 +563,32 @@ def attr_var(nid: int, name: str, *, pred: bool = False) -> str:
     return f"?attr{'p' if pred else ''}{nid}_{safe}"
 
 
+def _leaf_selects(graph: QueryGraph, registry: Mapping) -> List[tuple]:
+    """The projections to compile: ``(nid, leaf name, required)``.
+
+    A parent key (``include("product_info")``) stands for every leaf under
+    it, which ``metadata()`` folds back into one struct cell. A leaf asked
+    for twice, on its own and through its parent, is projected once; the
+    first mention decides ``required``.
+    """
+    children = getattr(registry, "children", lambda _n: [])
+    seen: set = set()
+    out: List[tuple] = []
+    for nid, name, required in getattr(graph, "selects", ()):
+        names = [name]
+        if name not in registry:
+            kids = children(name)
+            if not kids:
+                raise KeyError(name)
+            names = [a.name for a in kids]
+        for leaf in names:
+            if (nid, leaf) in seen:
+                continue
+            seen.add((nid, leaf))
+            out.append((nid, leaf, required))
+    return out
+
+
 def _attr_select_clause(v: str, nid: int, name: str, required: bool,
                         registry: Mapping = REGISTRY) -> tuple:
     """The WHERE clause projecting attribute ``name`` of node ``nid`` and the
@@ -708,7 +734,7 @@ def compile_parts(graph: QueryGraph, registry: Mapping = REGISTRY) -> tuple:
     # the attribute survive; the prefix is disjoint from v/ext/unit/extunit
     # so DataObject's column parsing ignores them)
     attr_var_pairs: List[tuple] = []  # (node_id, var) in selects order
-    for nid, name, required in getattr(graph, "selects", ()):
+    for nid, name, required in _leaf_selects(graph, registry):
         clause, avars = _attr_select_clause(var_map[nid], nid, name, required, registry)
         where_clauses.append(clause)
         attr_var_pairs.extend((nid, avar) for avar in avars)
@@ -808,7 +834,8 @@ def _compile_parts_multi(graph: QueryGraph, registry: Mapping = REGISTRY) -> tup
         ))
 
     attr_var_pairs: List[tuple] = []  # (node_id, var) in selects order
-    for nid, name, required in getattr(graph, "selects", ()):
+    leaf_selects = _leaf_selects(graph, registry)
+    for nid, name, required in leaf_selects:
         if nid in data_ids or nid in branch_only:
             continue
         clause, avars = _attr_select_clause(var_map[nid], nid, name, required, registry)
@@ -834,7 +861,7 @@ def _compile_parts_multi(graph: QueryGraph, registry: Mapping = REGISTRY) -> tup
                     is_data_edge=False))
         # this node's projected attributes live inside its branch: outside it
         # the unbound variable would turn the binding into an open pattern
-        for snid, name, required in getattr(graph, "selects", ()):
+        for snid, name, required in leaf_selects:
             if snid in members:
                 clause, avars = _attr_select_clause(var_map[snid], snid, name, required, registry)
                 b.append(clause)
