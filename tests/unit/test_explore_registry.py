@@ -131,6 +131,17 @@ class TestRegistry:
         Registry(client)["tags.0"]
         assert client.sparql_query.call_count == 2
 
+    def test_one_version_check_per_registry_instance(self):
+        client = make_client()
+        r = Registry(client)
+        for _ in range(5):
+            r["last_cleaned"]; "tags" in r; list(r)
+        assert client.graph_version.call_count == 1
+        q = Query(client=client).entity(CLS_A, alias="ro")
+        q.include("last_cleaned", "tags").to_sparql()
+        q.schema()
+        assert client.graph_version.call_count <= 4   # one per Query object, not per lookup
+
     def test_for_role_includes_discovered(self):
         names = {a.name for a in Registry(make_client()).for_role("entity")}
         assert {"type", "process", "last_cleaned", "tags"} <= names

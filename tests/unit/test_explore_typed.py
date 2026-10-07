@@ -38,7 +38,7 @@ class TestColumnDtype:
         assert column_dtype([1.5]) == pl.Float64
         assert column_dtype([True]) == pl.Boolean
         assert column_dtype([date(2020, 1, 1)]) == pl.Date
-        assert column_dtype([datetime(2020, 1, 1)]) == pl.Datetime("us")
+        assert column_dtype([datetime(2020, 1, 1)]) == pl.Datetime("us", "UTC")
         assert column_dtype(["a"]) == pl.String
         assert column_dtype([None, None]) == pl.String
 

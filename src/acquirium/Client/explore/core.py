@@ -28,12 +28,14 @@ from rdflib import URIRef
 from acquirium.Client.explore.attributes import (
     NOT_IN_ALL, Not, Registry, attributes_doc, is_list_attr, list_index, normalize_value,
 )
-from acquirium.Client.explore.compile import attr_var, compile_sparql
+from acquirium.Client.explore.compile import attr_var, compile_parts, compile_sparql
 from acquirium.Client.explore.directions import EQUIPMENT_STEPS, PROPERTY_STEPS
 from acquirium.Client.explore.expr import ORDERING, BoolOp, Compare, Expr
 from acquirium.Client.explore.expr import attr_name as _path_name
 from acquirium.Client.explore.relations import RELATIONS
-from acquirium.Client.explore.typed import IRI, cast_values, coerce, column_dtype, parse_cell, typed_column
+from acquirium.Client.explore.typed import (
+    IRI, cast_values, coerce, column_dtype, dtype_for_datatypes, normalize_type, parse_cell, typed_column,
+)
 from acquirium.Client.query_graph import DataNodeInfo, QueryEdge, QueryGraph, QueryNode
 from acquirium.internals.internals_namespaces import S223
 
@@ -66,8 +68,16 @@ class Query:
     @property
     def registry(self) -> Registry:
         """Attributes this query can name: built-ins plus those discovered
-        from the connected server (see ``explore.attributes.Registry``)."""
-        return Registry(self.client)
+        from the connected server (see ``explore.attributes.Registry``).
+
+        One instance per ``Query``, kept in its cache: every verb returns a
+        new ``Query`` and so re-checks the graph version once, while the
+        many lookups inside one ``metadata()`` or ``schema()`` share it."""
+        reg = self.cache.get("_registry")
+        if reg is None:
+            reg = Registry(self.client)
+            self.cache["_registry"] = reg
+        return reg
 
     def _next_id(self) -> int:
         return max(self.query_graph.nodes, default=-1) + 1
@@ -1125,6 +1135,113 @@ class Query:
 
     # ---------- terminals ----------
 
+    def schema(self) -> pl.Schema:
+        """The polars schema ``metadata()`` will return, without running the query.
+
+        Node columns are ``String`` (CURIEs); a measurement node also has an
+        ``alias.label`` column. Attribute columns are typed from what the
+        graph holds for the attribute: one datatype gives its dtype,
+        integer and float give ``Float64``, any other mixture ``Object``; a
+        list attribute is a ``List`` of that, a parent key a ``Struct`` of
+        its children, and a key that is both a value and a group ``Object``.
+        A cast asked for with ``include(type=)`` shows as the cast dtype.
+        Built-in attributes are ``String``.
+
+        ``metadata()`` agrees with it, with one exception: an
+        ``alias.label`` column that is null on every row is dropped.
+        """
+        registry = self.registry
+        g = self.query_graph
+        _, select_parts, _ = compile_parts(g, registry)
+        leaf_selects, group_selects = self._expanded_selects()
+        casts = {(nid, name): (type_, strict) for nid, name, type_, strict in g.casts}
+
+        def leaf_dtype(name: str) -> pl.DataType:
+            attr = registry[name]
+            if not attr.datatypes:
+                return pl.String   # a built-in, or nothing discovered yet
+            base = dtype_for_datatypes(attr.datatypes) or pl.String
+            if is_list_attr(attr):
+                return pl.Object if base == pl.Object else pl.List(base)
+            return base
+
+        def group_dtype(gname: str, children: List[str]) -> pl.DataType:
+            if gname in registry:
+                return pl.Object   # a plain value on some nodes, a dict on others
+            tree: Dict[str, Any] = {}
+            for child in children:
+                node = tree
+                parts = child[len(gname) + 1:].split(".")
+                for part in parts[:-1]:
+                    node = node.setdefault(part, {})
+                node[parts[-1]] = leaf_dtype(child)
+
+            def build(sub: Any) -> pl.DataType:
+                if not isinstance(sub, dict):
+                    return sub
+                fields = [pl.Field(k, build(v)) for k, v in sorted(sub.items())]
+                if any(f.dtype == pl.Object for f in fields):
+                    return pl.Object
+                return pl.Struct(fields)
+
+            return build(tree)
+
+        def cast_dtype(dtype: pl.DataType, type_: Any) -> pl.DataType:
+            target = normalize_type(type_)
+            scalar = {"string": pl.String, "int": pl.Int64, "float": pl.Float64, "bool": pl.Boolean,
+                      "date": pl.Date, "datetime": pl.Datetime("us", "UTC"), "object": pl.Object}
+            if target == "struct":
+                return dtype if isinstance(dtype, pl.Struct) else pl.Object
+            if target in ("string", "object"):
+                return scalar[target]
+            return pl.List(scalar[target]) if isinstance(dtype, pl.List) else scalar[target]
+
+        out: Dict[str, pl.DataType] = {}
+        explicit = {(nid, name) for nid, name, _ in g.selects}
+        for var in select_parts:
+            col = var.lstrip("?")
+            if col.startswith(("ext", "unit", "attrp")):
+                continue
+            alias = self._col_name_to_alias(col)
+            if col.startswith("lbl"):
+                continue   # placed right after its node below
+            if col.startswith("v"):
+                out[alias] = pl.String
+                nid = int(col[1:])
+                if nid in g.data_nodes:
+                    out[f"{alias}.label"] = pl.String
+                continue
+            # an attribute column: which select produced it?
+            nid, lname = next(((n, l) for n, l, _ in leaf_selects
+                               if self._col_name_to_alias(attr_var(n, l)[1:]) == alias), (None, None))
+            if lname is None:
+                out[alias] = pl.String
+                continue
+            node_alias = g.aliases_reverse.get(nid, f"v{nid}")
+            # a child of a parent key: the struct stands where its first child is
+            for gnid, gname, children in group_selects:
+                if gnid == nid and lname in children or (gnid == nid and lname == gname):
+                    struct_col = f"{node_alias}.{gname}"
+                    if struct_col not in out:
+                        dtype = group_dtype(gname, children)
+                        if (gnid, gname) in casts:
+                            dtype = cast_dtype(dtype, casts[(gnid, gname)][0])
+                        out[struct_col] = dtype
+                    if (nid, lname) not in explicit or lname == gname:
+                        break
+            else:
+                dtype = leaf_dtype(lname)
+                if (nid, lname) in casts:
+                    dtype = cast_dtype(dtype, casts[(nid, lname)][0])
+                out[alias] = dtype
+                continue
+            if (nid, lname) in explicit and lname != gname:
+                dtype = leaf_dtype(lname)
+                if (nid, lname) in casts:
+                    dtype = cast_dtype(dtype, casts[(nid, lname)][0])
+                out[alias] = dtype
+        return pl.Schema(out)
+
     def to_sparql(self) -> str:
         return compile_sparql(self.query_graph, self.registry)
 
@@ -1330,18 +1447,31 @@ class Query:
                     parsed[n] = [
                         [groups[k][n][ix] for ix in sorted(groups[k][n])] or None for k in keys
                     ]
+            known: Dict[str, Optional[pl.DataType]] = {}   # column -> dtype the graph implies
+            for nid, lname, _ in leaf_selects:
+                if lname in registry:
+                    alias = self.query_graph.aliases_reverse.get(nid, f"v{nid}")
+                    known[f"{alias}.{lname}"] = dtype_for_datatypes(registry[lname].datatypes)
+
+            def dtype_of(name: str, values: list) -> pl.DataType:
+                # a column with no value at all takes the type the graph holds
+                # for the attribute (schema() says the same), String otherwise
+                if all(v is None for v in values) and known.get(name) is not None:
+                    return known[name]
+                return column_dtype(values)
+
             columns: Dict[str, pl.Series] = {}
             for name in cols_w_alias:
                 if name in list_names:
                     elements = [v for lst in parsed[name] if lst for v in lst]
-                    inner = column_dtype(elements)
+                    inner = dtype_of(name, elements)
                     lists = [None if lst is None else coerce(lst, inner) for lst in parsed[name]]
                     # polars has no List(Object): mixed element kinds make the
                     # column Object, each cell a Python list
                     columns[name] = (pl.Series(name, lists, dtype=pl.Object) if inner == pl.Object
                                      else pl.Series(name, lists, dtype=pl.List(inner)))
                 else:
-                    dtype = column_dtype(parsed[name])
+                    dtype = dtype_of(name, parsed[name])
                     columns[name] = pl.Series(name, coerce(parsed[name], dtype), dtype=dtype)
             # parent keys: fold the child columns into one struct column,
             # keeping a child only when it was also included on its own

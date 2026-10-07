@@ -146,6 +146,7 @@ only.
 
 | method | description |
 |---|---|
+| `schema() -> pl.Schema` | The schema `metadata()` will return, without running the query: node columns `String`, a measurement's `alias.label`, attribute columns typed from what the graph holds for each attribute (lists as `List`, parent keys as `Struct`, mixtures as `Object`, casts as their target). The one difference from `metadata().schema`: an `alias.label` column that is null on every row is dropped there. |
 | `metadata(*, include_internals=False, include_dependencies=True) -> pl.DataFrame` | The pattern matches, one column per node plus `alias.attr` and `alias.label` columns. Node columns are CURIE strings; attribute columns are typed from the graph (`Int64`, `Float64`, `Boolean`, `Date`, `Datetime`, `String`). A column mixing integers and floats is `Float64`; any other mixture is `pl.Object`, cells as written. A user attribute written as a list is one `pl.List` cell per node in written order (a scalar under the same key becomes a one-element list); built-ins with several values keep one row per value. |
 | `data(*, start=None, end=None, limit=None, order="asc", include_dependencies=True, cast_value="float", value_mode="default") -> DataObject` | A lazy `DataObject` over the matched streams. |
 | `dataframe(shape="wide", *, start=None, end=None, limit=None, order="asc", include_dependencies=True, cast_value="str", value_mode="default", include_ref=False, compact=True) -> pl.DataFrame` | `data(...).dataframe(...)` in one call. |
@@ -236,6 +237,11 @@ are written together with the stream, into the stream's own graph, and a key
 that is also a stream field (`unit`, `quantity_kind`, `medium`, `substance`,
 `data_source`, `label`) is merged into the stream, or raises when the two
 disagree.
+
+A column that is null on every matched row is still typed from the
+datatypes the graph holds for the attribute elsewhere (discovery collects
+them with the names), so a frame's schema does not depend on which nodes
+matched; `schema()` reports the same types in advance.
 
 Metadata lives as long as the node it describes: after a `replace=True`
 graph insert or a SPARQL update, the server removes metadata whose subject,

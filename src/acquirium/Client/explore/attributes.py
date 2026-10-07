@@ -76,6 +76,10 @@ class Attr:
     via_subclass: bool = False
     literal: bool = False
     doc: str = ""  # one-liner for generated docstrings / facet displays
+    # The datatypes the graph holds for a user attribute: XSD IRIs,
+    # ``"iri"`` for node values, ``xsd:string`` for plain strings. Empty for
+    # built-ins (not discovered). ``Query.schema()`` types columns from it.
+    datatypes: frozenset = frozenset()
 
 
 REGISTRY: dict[str, Attr] = {
@@ -152,9 +156,12 @@ def valid_path(path: str) -> bool:
 
 # Data graphs only: the ``attr:`` namespace never appears in an ontology, and
 # the union with dependencies is orders of magnitude larger to scan.
+# Every attr: predicate in use, with the datatype of each value kind it holds
+# (DATATYPE errors on an IRI, so COALESCE falls through to the "iri" marker).
 DISCOVERY_SPARQL = (
-    "SELECT DISTINCT ?p\nWHERE {\n  ?s ?p ?o .\n"
-    f"  FILTER(STRSTARTS(STR(?p), \"{ATTR_NS}\"))\n}}"
+    "SELECT DISTINCT ?p ?dt\nWHERE {\n  ?s ?p ?o .\n"
+    f"  FILTER(STRSTARTS(STR(?p), \"{ATTR_NS}\"))\n"
+    "  BIND(COALESCE(STR(DATATYPE(?o)), IF(isIRI(?o), \"iri\", \"\")) AS ?dt)\n}"
 )
 
 # (server_key, graph_version) -> {name: Attr}
@@ -206,27 +213,36 @@ def is_list_attr(attr: Attr) -> bool:
     )
 
 
-def user_attributes(predicates: "list[str] | tuple[str, ...]") -> Dict[str, Attr]:
+def user_attributes(predicates: "list[str] | tuple[str, ...]",
+                    datatypes: "list[str | None] | None" = None) -> Dict[str, Attr]:
     """Build the discovered-attribute map from the ``attr:`` predicates in use.
 
     Every predicate yields its exact leaf path; paths with list indices also
     yield the collapsed name, whose predicates are all indices found.
+    ``datatypes``, one per predicate (the same predicate may appear with
+    several), is collected per attribute; a collapsed list attribute holds
+    the union over its elements.
     """
     groups: Dict[str, list] = {}
-    for pred in predicates:
+    types: Dict[str, set] = {}
+    for i, pred in enumerate(predicates):
         pred = str(pred)
         if not pred.startswith(ATTR_NS):
             continue
         path = pred[len(ATTR_NS):]
         if not valid_path(path):
             continue
-        groups.setdefault(path, []).append(pred)
-        collapsed = _collapse_indices(path)
-        if collapsed is not None:
-            groups.setdefault(collapsed, []).append(pred)
+        dt = datatypes[i] if datatypes is not None and i < len(datatypes) else None
+        for name in (path, _collapse_indices(path)):
+            if name is None:
+                continue
+            groups.setdefault(name, []).append(pred)
+            if dt:
+                types.setdefault(name, set()).add(str(dt))
     return {
         name: Attr(name, tuple(sorted(set(preds), key=_index_key)), "any", BOTH,
-                   literal=True, doc="user attribute")
+                   literal=True, doc="user attribute",
+                   datatypes=frozenset(types.get(name, ())))
         for name, preds in groups.items()
         if name not in REGISTRY
     }
@@ -242,20 +258,30 @@ class Registry(Mapping):
 
     def __init__(self, client=None):
         self.client = client
+        # One version check per Registry instance: a Query holds one
+        # instance, so a metadata()/schema() pass with many lookups costs
+        # one GET /graph_version, not one per attribute.
+        self._found: Optional[Dict[str, Attr]] = None
 
     def _discovered(self) -> Dict[str, Attr]:
         if self.client is None:
             return {}
+        if self._found is not None:
+            return self._found
         key = (_server_key(self.client), self.client.graph_version())
         found = _DISCOVERED_CACHE.get(key)
         if found is None:
             res = self.client.sparql_query(DISCOVERY_SPARQL, include_dependencies=False)
             cols = res.get("columns", [])
             pi = cols.index("p") if "p" in cols else 0
+            di = cols.index("dt") if "dt" in cols else None
+            rows = [r for r in res.get("rows", []) if r and r[pi] is not None]
             found = user_attributes(
-                [str(r[pi]) for r in res.get("rows", []) if r and r[pi] is not None]
+                [str(r[pi]) for r in rows],
+                [r[di] if di is not None and di < len(r) else None for r in rows],
             )
             _DISCOVERED_CACHE[key] = found
+        self._found = found
         return found
 
     def __getitem__(self, name: str) -> Attr:

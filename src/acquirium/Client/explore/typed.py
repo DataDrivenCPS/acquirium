@@ -18,7 +18,7 @@ reports the mixture before a query runs.
 from __future__ import annotations
 
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any, Callable, Iterable, List, Optional, Tuple
 
 import polars as pl
@@ -100,9 +100,43 @@ def column_dtype(values: Iterable[Any]) -> pl.DataType:
     if kinds == {date}:
         return pl.Date
     if kinds == {datetime}:
-        return pl.Datetime("us", "UTC") if all(
-            getattr(v, "tzinfo", None) is not None for v in values if isinstance(v, datetime)
-        ) else pl.Datetime("us")
+        return pl.Datetime("us", "UTC")
+    return pl.Object
+
+
+def dtype_for_datatypes(datatypes: Iterable[str]) -> Optional[pl.DataType]:
+    """The polars dtype a column of these RDF datatypes takes, before any
+    value is seen: what ``metadata()`` will produce, so ``schema()`` can say
+    so in advance and an all-null column is still typed. ``None`` when the
+    set is empty (nothing discovered)."""
+    kinds = set()
+    for dt in datatypes:
+        if dt in _INTEGER_TYPES:
+            kinds.add(int)
+        elif dt in _FLOAT_TYPES:
+            kinds.add(float)
+        elif dt == XSD + "boolean":
+            kinds.add(bool)
+        elif dt == XSD + "date":
+            kinds.add(date)
+        elif dt == XSD + "dateTime":
+            kinds.add(datetime)
+        else:
+            kinds.add(str)   # xsd:string, a plain literal, an IRI (CURIE text), an unknown type
+    if not kinds:
+        return None
+    if kinds == {int}:
+        return pl.Int64
+    if kinds <= {int, float}:
+        return pl.Float64
+    if kinds == {bool}:
+        return pl.Boolean
+    if kinds == {date}:
+        return pl.Date
+    if kinds == {datetime}:
+        return pl.Datetime("us", "UTC")
+    if kinds == {str}:
+        return pl.String
     return pl.Object
 
 
@@ -113,6 +147,9 @@ def coerce(values: List[Any], dtype: pl.DataType) -> List[Any]:
         return [None if v is None else (v if isinstance(v, str) else _text(v)) for v in values]
     if dtype == pl.Float64:
         return [None if v is None else float(v) for v in values]
+    if dtype == pl.Datetime("us", "UTC"):
+        # the project reads a naive timestamp as UTC
+        return [None if v is None else (v if v.tzinfo else v.replace(tzinfo=timezone.utc)) for v in values]
     return values
 
 

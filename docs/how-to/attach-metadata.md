@@ -166,6 +166,27 @@ Reach a field with polars, `pl.col("pump.product_info").struct.field("year")`,
 or include the leaf next to the struct, `include("product_info", "product_info.year")`.
 `where()` filters leaves, not parent keys.
 
+## Know the schema before you run
+
+`schema()` returns the polars schema `metadata()` will produce, computed
+from what the graph holds for each attribute, without running the query:
+
+```python
+pumps.include("tags", "product_info", "year").schema()
+```
+```text
+Schema({'pump': String, 'pump.tags': List(String),
+        'pump.product_info': Struct({'build_year': Int64, 'manufacturer': String, 'model': String, 'year': Int64}),
+        'pump.year': Object})
+```
+
+An `Object` entry tells you a column's values do not agree before you see
+them (`year` above is an integer on one pump and a string on another), and
+a cast asked for with `type=` shows as the type it produces.
+A column no matched node has a value for is still typed, from the values
+other nodes hold under that key, so the schema does not change with the
+filter.
+
 ## When values do not agree
 
 Nothing stops two nodes from holding different kinds of value under one
