@@ -123,7 +123,7 @@ def install(client: Any, replica: Replica) -> None:
 def insert(client: Any, replica: Replica, long: pl.DataFrame, *, publication_id: str | None = None) -> int:
     if long.is_empty():
         return 0
-    table = pa.Table.from_pandas(long.select("ts", "ref_name", "value").to_pandas(), preserve_index=False)
+    table = long.select("ts", "ref_name", pl.col("value").cast(pl.Float64)).to_arrow()
     result = client.insert_timeseries_arrow(replica.source_id, table, publication_id=publication_id)
     return int(result.get("rows_inserted", 0))
 
