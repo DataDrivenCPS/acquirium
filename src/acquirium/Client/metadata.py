@@ -83,8 +83,10 @@ def flatten(values: Mapping[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
     """``{key: value}`` -> ``({leaf path: scalar}, [keys to remove])``.
 
     Keys are validated with :func:`~explore.attributes.check_key`; list
-    indices are 0-based. A ``None`` at top level removes the key; a nested
-    ``None`` is skipped (the key is still replaced as a whole).
+    indices are 0-based. A ``None``, an empty dict or an empty list at top
+    level removes the key: nothing empty is ever stored, and a later
+    ``include`` of that key shows ``null``. A nested ``None`` or empty
+    container is skipped (the key is still replaced as a whole).
     """
     leaves: Dict[str, Any] = {}
     removed: List[str] = []
@@ -103,7 +105,7 @@ def flatten(values: Mapping[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
 
     for key, value in values.items():
         check_key(key)
-        if value is None:
+        if value is None or (isinstance(value, (Mapping, list, tuple)) and len(value) == 0):
             removed.append(key)
             continue
         walk(key, value)

@@ -48,6 +48,13 @@ class TestFlatten:
                           "tags.2": "p", "items.0.n": 1, "items.1.n": 2}
         assert removed == ["gone"]
 
+    def test_empty_containers_remove_the_key(self):
+        leaves, removed = flatten({"tags": [], "info": {}, "gone": None, "keep": {"a": [], "b": 1}})
+        assert leaves == {"keep.b": 1}
+        assert removed == ["tags", "info", "gone"]
+        w = plan({"tags": []})
+        assert w.replace_keys == ["tags"] and w.triples == []
+
     def test_bad_keys_raise(self):
         with pytest.raises(ValueError, match="invalid metadata key"):
             flatten({"a b": 1})
