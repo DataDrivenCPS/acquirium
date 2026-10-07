@@ -43,6 +43,10 @@ nested to any depth.
 A nested dict becomes dotted attributes, `product_info.manufacturer` and
 `product_info.year`; a list keeps its order, `tags.0` and `tags.1`, and is
 also addressable as a whole under `tags`.
+An empty list or dict, like `None`, removes the key; nothing empty is stored.
+Values keep their type: `metadata()` returns `year` as an `Int64` column
+and `last_cleaned` as a `Date` column, because that is how they were
+written.
 
 Keys are letters, digits, underscore and hyphen, starting with a letter or
 underscore.

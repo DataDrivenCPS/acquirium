@@ -128,6 +128,7 @@ def execute_placed(graph: QueryGraph, client, include_dependencies: bool = True)
 
     columns: Optional[List[str]] = None
     rows_out: List[list] = []
+    datatypes_out: List[list] = []
 
     def run_place(candidates: Dict[str, Set[str]]) -> None:
         nonlocal columns
@@ -147,6 +148,7 @@ def execute_placed(graph: QueryGraph, client, include_dependencies: bool = True)
             hit = {r[si] for r in rows if r[si] is not None}
             pending.difference_update(hit)
         rows_out.extend(rows)
+        datatypes_out.extend(res.get("datatypes") or [[None] * len(cols) for _ in rows])
 
     # place: the source's own connection points
     if own_map:
@@ -179,4 +181,5 @@ def execute_placed(graph: QueryGraph, client, include_dependencies: bool = True)
         si = columns.index(src_col)
         columns = [c for i, c in enumerate(columns) if i != si]
         rows_out = [[v for i, v in enumerate(r) if i != si] for r in rows_out]
-    return {"columns": columns, "rows": rows_out}
+        datatypes_out = [[v for i, v in enumerate(r) if i != si] for r in datatypes_out]
+    return {"columns": columns, "rows": rows_out, "datatypes": datatypes_out}

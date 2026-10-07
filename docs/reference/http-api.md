@@ -161,7 +161,9 @@ Term types: `uri`, `literal`, `bnode`. Literals may include `"xml:lang"` or `"da
 
 ### `GET /sparql_json`
 
-Legacy endpoint. Executes a SPARQL SELECT query and returns results in an internal `{columns, rows}` format. Prefer `/sparql` for new code.
+Legacy endpoint. Executes a SPARQL SELECT query and returns results in an internal `{columns, rows, datatypes}` format. Prefer `/sparql` for new code.
+
+`rows` holds every cell as text. `datatypes` is a matrix of the same shape naming what each cell is: `"iri"` for a node, the XSD datatype IRI of a typed literal (`http://www.w3.org/2001/XMLSchema#integer`, `...#date`, ...), `null` for a plain string or an unbound cell. The Python client's `metadata()` parses typed values from it.
 
 | Parameter | Default | Description |
 | --- | --- | --- |

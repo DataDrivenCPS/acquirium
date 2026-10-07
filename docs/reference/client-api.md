@@ -146,7 +146,7 @@ only.
 
 | method | description |
 |---|---|
-| `metadata(*, include_internals=False, include_dependencies=True) -> pl.DataFrame` | The pattern matches, one column per node plus `alias.attr` and `alias.label` columns. |
+| `metadata(*, include_internals=False, include_dependencies=True) -> pl.DataFrame` | The pattern matches, one column per node plus `alias.attr` and `alias.label` columns. Node columns are CURIE strings; attribute columns are typed from the graph (`Int64`, `Float64`, `Boolean`, `Date`, `Datetime`, `String`). A column mixing integers and floats is `Float64`; any other mixture is `String`. |
 | `data(*, start=None, end=None, limit=None, order="asc", include_dependencies=True, cast_value="float", value_mode="default") -> DataObject` | A lazy `DataObject` over the matched streams. |
 | `dataframe(shape="wide", *, start=None, end=None, limit=None, order="asc", include_dependencies=True, cast_value="str", value_mode="default", include_ref=False, compact=True) -> pl.DataFrame` | `data(...).dataframe(...)` in one call. |
 | `options(attr_name, *, of=None, include_dependencies=True) -> pl.DataFrame` | Distinct values of one attribute (a name or an `acq.attr` path) across the matches, with counts. |
@@ -223,7 +223,8 @@ Writing a key replaces it: the node's triples under that key, and under
 `key.` for a nested value, are deleted and the new leaves are inserted, in
 one SPARQL update.
 Keys not mentioned stay.
-`None` removes a key.
+`None`, an empty list or an empty dict removes a key; nothing empty is ever
+stored, and `include` of a removed key shows `null`.
 Every node named must already exist in a data graph, or the call raises
 before writing; a node is treated as a measurement when it carries an
 external reference.

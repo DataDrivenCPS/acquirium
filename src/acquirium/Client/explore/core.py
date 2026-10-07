@@ -31,6 +31,7 @@ from acquirium.Client.explore.directions import EQUIPMENT_STEPS, PROPERTY_STEPS
 from acquirium.Client.explore.expr import ORDERING, BoolOp, Compare, Expr
 from acquirium.Client.explore.expr import attr_name as _path_name
 from acquirium.Client.explore.relations import RELATIONS
+from acquirium.Client.explore.typed import IRI, typed_column
 from acquirium.Client.query_graph import DataNodeInfo, QueryEdge, QueryGraph, QueryNode
 from acquirium.internals.internals_namespaces import S223
 
@@ -1226,6 +1227,13 @@ class Query:
     ) -> pl.DataFrame:
         """Return the pattern matches as a polars table with alias column names.
 
+        Node columns hold CURIEs. Attribute columns are typed from the
+        datatype each value carries in the graph: an integer is ``Int64``,
+        a date ``Date``, a boolean ``Boolean``, a plain string ``String``.
+        A column mixing integers and floats is ``Float64``; any other
+        mixture is ``String``. A server that sends no datatypes (older
+        servers, test doubles) yields string columns, as before.
+
         The internal SPARQL columns driving ``data()`` (``ext<nid>``,
         ``unit<nid>``, ``extunit<nid>``) are hidden unless
         ``include_internals=True``.
@@ -1235,22 +1243,30 @@ class Query:
             res = self.execute(include_dependencies=include_dependencies)
             cols = res.get("columns", [])
             rows = res.get("rows", [])
+            datatypes = res.get("datatypes") or [[None] * len(cols) for _ in rows]
             keep_idx = list(range(len(cols)))
             if not include_internals:
                 keep_idx = [
                     i for i, c in enumerate(cols)
                     if not (isinstance(c, str) and (c.startswith("ext") or c.startswith("unit")))
                 ]
-            cols_kept = [cols[i] for i in keep_idx]
-            rows_kept = [[r[i] for i in keep_idx] for r in rows]
-            cols_w_alias = [self._col_name_to_alias(c) for c in cols_kept]
+            cols_w_alias = [self._col_name_to_alias(cols[i]) for i in keep_idx]
 
-            # Scan every row for the column types: a sparse column (e.g. a point
-            # label bound on few rows) is otherwise typed Null from the first
-            # rows and the first real value fails the build.
-            pl_table = pl.DataFrame(
-                rows_kept, schema=cols_w_alias, orient="row", infer_schema_length=None,
-            )
+            def cell(value: Any, datatype: Optional[str]) -> Any:
+                # a node, or a cell whose kind is unknown and looks like one
+                if value is None:
+                    return None
+                if datatype == IRI or (datatype is None and isinstance(value, str) and _is_uri(value)):
+                    return self._compact_uri_safe(str(value))
+                return value
+
+            columns: Dict[str, pl.Series] = {}
+            for name, i in zip(cols_w_alias, keep_idx):
+                values = [cell(r[i], d[i]) for r, d in zip(rows, datatypes)]
+                dtypes = [None if (d[i] == IRI) else d[i] for d in datatypes]
+                typed, dtype = typed_column(values, dtypes)
+                columns[name] = pl.Series(name, typed, dtype=dtype)
+            pl_table = pl.DataFrame(columns) if columns else pl.DataFrame()
             # point labels: drop all-null ``*.label`` columns and show the
             # rest right after their node's column
             keep: list[str] = []
@@ -1261,18 +1277,7 @@ class Query:
                 lbl = f"{c}.label"
                 if lbl in pl_table.columns and pl_table[lbl].is_not_null().any():
                     keep.append(lbl)
-            pl_table = pl_table.select(keep)
-            pl_table = pl_table.with_columns([
-                pl.col(c)
-                .map_elements(
-                    lambda x: self._compact_uri_safe(x) if isinstance(x, str)
-                    else (None if x is None else str(x)),
-                    return_dtype=pl.String,
-                    skip_nulls=False,
-                )
-                .alias(c)
-                for c in pl_table.columns
-            ]).unique()
+            pl_table = pl_table.select(keep).unique(maintain_order=True)
             self.cache[cache_key] = pl_table
         return self.cache[cache_key]
 
