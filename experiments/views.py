@@ -117,6 +117,9 @@ class AlarmCountHour(aq.App):
 
     def transform(self, inputs, output, context):
         wide = aq.align(inputs, aggregate="count")
+        if wide.width == 1:  # no alarm stream has any row: nothing to count
+            output["count"] = EMPTY
+            return
         output["count"] = wide.select(
             "time", pl.sum_horizontal(pl.exclude("time")).cast(pl.Float64).alias("value"))
 
@@ -142,6 +145,9 @@ class FlowTotalFiveMinute(aq.App):
 
     def transform(self, inputs, output, context):
         wide = aq.align(inputs)
+        if wide.width == 1:  # no flow stream has any row in the window
+            output["total"] = EMPTY
+            return
         output["total"] = wide.select("time", pl.sum_horizontal(pl.exclude("time")).alias("value"))
 
     @staticmethod
