@@ -46,10 +46,10 @@ class TestColumnDtype:
         values, dtype = typed_column(["1", "2.5"], [XSD + "integer", XSD + "double"])
         assert dtype == pl.Float64 and values == [1.0, 2.5]
 
-    def test_other_mixtures_widen_to_string(self):
+    def test_other_mixtures_are_object_with_values_as_written(self):
         values, dtype = typed_column(["2019", "2019", "true", "2024-03-12"],
                                      [XSD + "integer", None, XSD + "boolean", XSD + "date"])
-        assert dtype == pl.String and values == ["2019", "2019", "true", "2024-03-12"]
+        assert dtype == pl.Object and values == [2019, "2019", True, date(2024, 3, 12)]
 
 
 def make_client(result):
@@ -86,11 +86,11 @@ class TestMetadataTyping:
         assert df.schema == {"e": pl.String, "e.year": pl.String}
         assert df["e"].to_list() == ["p:a"]
 
-    def test_mixed_int_and_string_column_is_string(self):
+    def test_mixed_int_and_string_column_is_object(self):
         res = {"columns": ["v0", "attr0_year"], "rows": [["urn:p#a", "2019"], ["urn:p#b", "2015"]],
                "datatypes": [["iri", XSD + "integer"], ["iri", None]]}
         df = Query(client=make_client(res)).entity(CLS_A, alias="e").metadata()
-        assert df.schema["e.year"] == pl.String and df["e.year"].to_list() == ["2019", "2015"]
+        assert df.schema["e.year"] == pl.Object and df["e.year"].to_list() == [2019, "2015"]
 
     def test_duplicate_rows_collapse(self):
         res = {"columns": ["v0"], "rows": [["urn:p#a"], ["urn:p#a"]], "datatypes": [["iri"], ["iri"]]}

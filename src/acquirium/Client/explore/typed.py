@@ -8,14 +8,18 @@ names, and :func:`column_dtype` picks the polars dtype a column of such
 values can hold. ``Query.metadata()`` uses both so a value written as an
 integer, a date or a boolean comes back as one, not as its spelling.
 
-When a column mixes datatypes, integer and float widen to ``Float64``;
-anything else widens to ``String`` here. ``include(..., type=...)`` and
-``schema()`` (later steps) make a mixed column explicit instead of silent.
+When a column mixes kinds, integer and float widen to ``Float64``; any
+other mixture is a ``pl.Object`` column whose cells keep the Python values
+as written (``2019`` here, ``"2019"`` there, a ``dict`` next to a ``str``).
+Nothing is dropped or re-spelled; ``include(..., type=...)`` casts such a
+column to one dtype on request (:func:`cast_values`), and ``schema()``
+reports the mixture before a query runs.
 """
 from __future__ import annotations
 
+import json
 from datetime import date, datetime
-from typing import Any, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Iterable, List, Optional, Tuple
 
 import polars as pl
 
@@ -62,7 +66,8 @@ def column_dtype(values: Iterable[Any]) -> pl.DataType:
     """The polars dtype for a column of parsed cells.
 
     One Python type gives its dtype; ``int`` and ``float`` together give
-    ``Float64``; any other mixture, or no values at all, gives ``String``.
+    ``Float64``; no values at all gives ``String``; any other mixture gives
+    ``Object``.
     """
     kinds = set()
     for v in values:
@@ -78,8 +83,14 @@ def column_dtype(values: Iterable[Any]) -> pl.DataType:
             kinds.add(datetime)
         elif isinstance(v, date):
             kinds.add(date)
-        else:
+        elif isinstance(v, str):
             kinds.add(str)
+        else:
+            kinds.add(object)
+    if not kinds:
+        return pl.String
+    if kinds == {str}:
+        return pl.String
     if kinds == {int}:
         return pl.Int64
     if kinds <= {int, float} and kinds:
@@ -92,7 +103,7 @@ def column_dtype(values: Iterable[Any]) -> pl.DataType:
         return pl.Datetime("us", "UTC") if all(
             getattr(v, "tzinfo", None) is not None for v in values if isinstance(v, datetime)
         ) else pl.Datetime("us")
-    return pl.String
+    return pl.Object
 
 
 def coerce(values: List[Any], dtype: pl.DataType) -> List[Any]:
@@ -118,3 +129,124 @@ def typed_column(values: List[Any], datatypes: List[Optional[str]]) -> Tuple[Lis
     parsed = [parse_cell(v, d) for v, d in zip(values, datatypes)]
     dtype = column_dtype(parsed)
     return coerce(parsed, dtype), dtype
+
+
+# ---- casts asked for with include(type=...) -------------------------------
+
+_TYPE_NAMES = {
+    "string": "string", "str": "string", str: "string", pl.String: "string", pl.Utf8: "string",
+    "int": "int", "integer": "int", int: "int", pl.Int64: "int",
+    "float": "float", "double": "float", float: "float", pl.Float64: "float",
+    "bool": "bool", "boolean": "bool", bool: "bool", pl.Boolean: "bool",
+    "date": "date", date: "date", pl.Date: "date",
+    "datetime": "datetime", datetime: "datetime",
+    "struct": "struct", dict: "struct",
+    "object": "object", object: "object", pl.Object: "object",
+}
+_TARGET_DTYPE = {"string": pl.String, "int": pl.Int64, "float": pl.Float64, "bool": pl.Boolean,
+                 "date": pl.Date, "datetime": pl.Datetime("us"), "object": pl.Object}
+
+
+class CastError(ValueError):
+    """A value could not be cast to the type ``include(type=...)`` asked for."""
+
+
+def normalize_type(type_: Any) -> str:
+    """``include(type=...)`` accepts a name (``"int"``), a Python type or a
+    polars dtype; returns the canonical name."""
+    if isinstance(type_, pl.Datetime):
+        return "datetime"
+    try:
+        return _TYPE_NAMES[type_]
+    except (KeyError, TypeError):
+        raise ValueError(
+            f"unknown type {type_!r}; use one of string, int, float, bool, date, datetime, "
+            "struct, object (or the Python type / polars dtype)") from None
+
+
+def _cast_scalar(v: Any, target: str) -> Any:
+    if v is None:
+        return None
+    if target == "string":
+        if isinstance(v, (dict, list)):
+            return json.dumps(v, default=_text, sort_keys=True)
+        return _text(v) if not isinstance(v, str) else v
+    if target == "int":
+        if isinstance(v, bool):
+            return int(v)
+        if isinstance(v, int):
+            return v
+        if isinstance(v, float):
+            if v.is_integer():
+                return int(v)
+            raise ValueError(v)
+        if isinstance(v, str):
+            return int(v.strip())
+        raise ValueError(v)
+    if target == "float":
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return float(v)
+        if isinstance(v, bool):
+            return float(v)
+        if isinstance(v, str):
+            return float(v.strip())
+        raise ValueError(v)
+    if target == "bool":
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, int) and v in (0, 1):
+            return bool(v)
+        if isinstance(v, str) and v.strip().lower() in ("true", "false", "1", "0"):
+            return v.strip().lower() in ("true", "1")
+        raise ValueError(v)
+    if target == "date":
+        if isinstance(v, datetime):
+            return v.date()
+        if isinstance(v, date):
+            return v
+        if isinstance(v, str):
+            return date.fromisoformat(v.strip())
+        raise ValueError(v)
+    if target == "datetime":
+        if isinstance(v, datetime):
+            return v
+        if isinstance(v, date):
+            return datetime(v.year, v.month, v.day)
+        if isinstance(v, str):
+            return datetime.fromisoformat(v.strip().replace("Z", "+00:00"))
+        raise ValueError(v)
+    if target == "struct":
+        return v if isinstance(v, dict) else None   # a plain value under a dict key: null
+    return v  # object
+
+
+def cast_values(values: List[Any], type_: Any, *, strict: bool = True,
+                labels: Optional[List[Any]] = None, column: str = "") -> Tuple[List[Any], str]:
+    """Cast a column's Python cells to ``type_``; returns ``(values, target)``.
+
+    A list cell is cast element by element. With ``strict=True`` (the
+    default, as in polars' ``cast``) a value that does not convert raises
+    :class:`CastError` naming the value and the node; with ``strict=False``
+    it becomes ``null``. ``labels`` are the node identifiers per row for
+    the message.
+    """
+    target = normalize_type(type_)
+
+    def one(v: Any, i: int) -> Any:
+        try:
+            return _cast_scalar(v, target)
+        except (ValueError, TypeError, AttributeError):
+            if not strict:
+                return None
+            where = f" on {labels[i]}" if labels and i < len(labels) else ""
+            raise CastError(
+                f"include({column!r}, type={target!r}): cannot cast {v!r}{where}; "
+                "pass strict=False to get null instead") from None
+
+    out: List[Any] = []
+    for i, v in enumerate(values):
+        if isinstance(v, list) and target not in ("string", "object"):
+            out.append([one(e, i) for e in v])
+        else:
+            out.append(one(v, i))
+    return out, target

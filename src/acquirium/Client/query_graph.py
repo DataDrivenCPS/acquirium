@@ -81,6 +81,8 @@ class QueryGraph:
     # Projected attribute columns: (node_id, attr_name, required) triples,
     # in order. required=True filters rows lacking the attribute.
     selects: tuple = ()
+    # Casts asked for with include(type=...): (node_id, attr_name, type, strict).
+    casts: tuple = ()
 
     def with_data_node(self, info: DataNodeInfo) -> "QueryGraph":
         dn = dict(self.data_nodes)
@@ -93,6 +95,7 @@ class QueryGraph:
             current_pointer=self.current_pointer,
             data_nodes=dn,
             selects=self.selects,
+            casts=self.casts,
         )
 
     def with_node(self, node: QueryNode) -> "QueryGraph":
@@ -117,6 +120,7 @@ class QueryGraph:
             current_pointer=node.id,
             data_nodes=dict(self.data_nodes),
             selects=self.selects,
+            casts=self.casts,
         )
 
     def with_edge(self, edge: QueryEdge, *, new_pointer: Optional[int] = None) -> "QueryGraph":
@@ -131,27 +135,29 @@ class QueryGraph:
             current_pointer=new_pointer if new_pointer is not None else self.current_pointer,
             data_nodes=dict(self.data_nodes),
             selects=self.selects,
+            casts=self.casts,
         )
 
-    def with_select(self, node_id: int, attr_name: str, required: bool = False) -> "QueryGraph":
+    def with_select(self, node_id: int, attr_name: str, required: bool = False, *,
+                    type: Any = None, strict: bool = True) -> "QueryGraph":
         """Return a new graph with an added (node, attr) projection.
 
         Deduplicated on (node, attr); re-adding with a different ``required``
-        replaces the entry."""
+        replaces the entry. ``type`` records a cast for the column
+        (``include(type=...)``); re-adding without one keeps the cast."""
         entry = (node_id, attr_name, required)
-        if entry in self.selects:
+        casts = tuple(c for c in self.casts if not (c[0] == node_id and c[1] == attr_name))
+        if type is not None:
+            casts = casts + ((node_id, attr_name, type, strict),)
+        else:
+            casts = self.casts
+        if entry in self.selects and casts == self.casts:
             return self
         if any(n == node_id and a == attr_name for n, a, _ in self.selects):
-            return QueryGraph(
-                nodes=dict(self.nodes),
-                edges=list(self.edges),
-                aliases=dict(self.aliases),
-                aliases_reverse=dict(self.aliases_reverse),
-                current_pointer=self.current_pointer,
-                data_nodes=dict(self.data_nodes),
-                selects=tuple(entry if (n == node_id and a == attr_name) else (n, a, r)
-                              for n, a, r in self.selects),
-            )
+            selects = tuple(entry if (n == node_id and a == attr_name) else (n, a, r)
+                            for n, a, r in self.selects)
+        else:
+            selects = self.selects + (entry,)
         return QueryGraph(
             nodes=dict(self.nodes),
             edges=list(self.edges),
@@ -159,7 +165,8 @@ class QueryGraph:
             aliases_reverse=dict(self.aliases_reverse),
             current_pointer=self.current_pointer,
             data_nodes=dict(self.data_nodes),
-            selects=self.selects + (entry,),
+            selects=selects,
+            casts=casts,
         )
 
     def resolve_alias(self, alias_or_none: Optional[str]) -> Optional[int]:

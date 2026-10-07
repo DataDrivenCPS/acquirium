@@ -165,9 +165,36 @@ Here the first pump has `manufacturer`, `model` and `year`, the second
 Reach a field with polars, `pl.col("pump.product_info").struct.field("year")`,
 or include the leaf next to the struct, `include("product_info", "product_info.year")`.
 `where()` filters leaves, not parent keys.
-When a key holds a plain value on one node and a dict on another,
-`include` of the parent raises and names the leaves, since one column
-cannot hold both.
+
+## When values do not agree
+
+Nothing stops two nodes from holding different kinds of value under one
+key: `year` as the integer `2019` here and the string `"2019"` there, or
+`product_info` as a dict on one pump and `"Grundfos CR32"` on another.
+A polars column has one dtype, so such a column comes back as `Object`,
+each cell the Python value exactly as written: `2019`, `"2019"`, a `dict`,
+a `str`.
+Nothing is dropped or re-spelled, and `metadata().schema` shows `Object`
+where it happened.
+An `Object` column is for looking and for `to_list()`; polars expressions,
+sorting, joins and Parquet do not work on it.
+
+`type=` on `include()` casts the named columns to one dtype instead:
+
+```python
+pumps.include("product_info.year", type="int")           # "2019" -> 2019
+pumps.include("product_info", type="struct")              # the string becomes null
+pumps.include("product_info", type="string")              # the dict becomes JSON text
+pumps.include("tags", type="float", strict=False)         # "abc" -> null inside the list
+```
+
+The types are `"string"`, `"int"`, `"float"`, `"bool"`, `"date"`,
+`"datetime"`, `"struct"` and `"object"`, or the matching Python type or
+polars dtype.
+List cells are cast element by element.
+`strict=True`, the default, raises on a value that does not convert and
+names the node it sits on; `strict=False` turns it into `null`, the same
+pair polars' `cast` has.
 
 `include("all")` adds every attribute of the node, yours included.
 A list comes back as one `List` cell per node, elements in the order you

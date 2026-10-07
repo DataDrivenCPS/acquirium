@@ -98,10 +98,31 @@ class TestMetadataStructs:
         assert df.columns == ["e", "e.product_info", "e.product_info.year"]
         assert df["e.product_info.year"].to_list() == [2019]
 
-    def test_mixed_value_and_group_is_refused(self):
-        client = make_client(preds=PREDS + [f"{ATTR_NS}product_info"])
-        with pytest.raises(ValueError, match="value on some nodes and a group of keys"):
-            Query(client=client).entity(CLS_A, alias="e").include("product_info")
+    def test_mixed_value_and_group_is_object_by_default(self):
+        res = result(["v0", "attr0_product_info", "attr0_product_info_46_manufacturer",
+                      "attr0_product_info_46_year", "attr0_product_info_46_build_year"],
+                     [["urn:p#a", None, "Grundfos", "2019", None], ["urn:p#b", "Grundfos CR32", None, None, None],
+                      ["urn:p#c", None, None, None, None]],
+                     [["iri", None, None, XSD + "integer", None], ["iri", None, None, None, None],
+                      ["iri", None, None, None, None]])
+        client = make_client(res, preds=PREDS + [f"{ATTR_NS}product_info"])
+        q = Query(client=client).entity(CLS_A, alias="e").include("product_info")
+        s = q.to_sparql().splitlines()[0]
+        assert "?attr0_product_info " in s + " " and "?attr0_product_info_46_year" in s
+        df = q.metadata()
+        assert df.columns == ["e", "e.product_info"] and df.schema["e.product_info"] == pl.Object
+        assert df["e.product_info"].to_list() == [
+            {"build_year": None, "manufacturer": "Grundfos", "year": 2019}, "Grundfos CR32", None]
+        # the explicit alternatives
+        st = (Query(client=client).entity(CLS_A, alias="e").include("product_info", type="struct").metadata())
+        # build_year is null on every row here, so it types as String until
+        # the registry supplies datatypes (schema() step)
+        assert st.schema["e.product_info"] == pl.Struct({"build_year": pl.String, "manufacturer": pl.String, "year": pl.Int64})
+        assert st["e.product_info"].to_list()[1] is None
+        text = (Query(client=client).entity(CLS_A, alias="e").include("product_info", type="string").metadata())
+        assert text.schema["e.product_info"] == pl.String
+        assert text["e.product_info"].to_list()[0] == '{"build_year": null, "manufacturer": "Grundfos", "year": 2019}'
+        assert text["e.product_info"].to_list()[1] == "Grundfos CR32"
 
     def test_where_on_group_points_at_leaves(self):
         with pytest.raises(ValueError, match="group of keys; filter one of its leaves"):

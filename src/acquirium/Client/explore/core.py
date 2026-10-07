@@ -33,7 +33,7 @@ from acquirium.Client.explore.directions import EQUIPMENT_STEPS, PROPERTY_STEPS
 from acquirium.Client.explore.expr import ORDERING, BoolOp, Compare, Expr
 from acquirium.Client.explore.expr import attr_name as _path_name
 from acquirium.Client.explore.relations import RELATIONS
-from acquirium.Client.explore.typed import IRI, coerce, column_dtype, parse_cell, typed_column
+from acquirium.Client.explore.typed import IRI, cast_values, coerce, column_dtype, parse_cell, typed_column
 from acquirium.Client.query_graph import DataNodeInfo, QueryEdge, QueryGraph, QueryNode
 from acquirium.internals.internals_namespaces import S223
 
@@ -839,13 +839,27 @@ class Query:
                        current_pointer=ptr)
 
     def include(self, *names: str, of: Optional[str] = None,
-                required: bool = False) -> "Query":
+                required: bool = False, type: Any = None, strict: bool = True) -> "Query":
         """Include columns: attribute values (``alias.attr`` columns) or a
         previously ``drop()``ed node's column (un-drop).
 
         ``of`` targets a node by alias (default: current pointer); dotted
         ``"alias.attr"`` targets explicitly. Attribute values bind OPTIONALly
         (``None`` where absent) unless ``required=True``.
+
+        Columns are typed from the graph: an integer is ``Int64``, a date
+        ``Date``, a list one ``pl.List`` cell per node, a parent key one
+        ``pl.Struct`` cell. A column whose values do not fit one dtype
+        (``2019`` on one node and ``"2019"`` on another, a dict here and a
+        string there) is ``pl.Object`` by default, every cell the value as
+        written. ``type=`` casts the named columns instead: ``"string"``,
+        ``"int"``, ``"float"``, ``"bool"``, ``"date"``, ``"datetime"``,
+        ``"struct"`` (non-dict cells become null) or ``"object"``; list
+        cells are cast element by element. ``strict=True`` raises on a value
+        that does not convert, ``strict=False`` makes it null, as in polars::
+
+            q.include("product_info.year", type="int")
+            q.include("tags", type="float", strict=False)
 
         ``"all"`` expands to the node's usual metadata attributes. ``type``,
         ``cp_type`` and ``app`` are left out, and so is ``label`` on
@@ -859,6 +873,9 @@ class Query:
             q.include("all")                        # every attr of the current node
             q.include("all", of="ro")               # every attr of another node
         """
+        if type is not None:
+            from acquirium.Client.explore.typed import normalize_type
+            normalize_type(type)  # fail here, not at metadata()
         if not names:
             raise ValueError('include: provide at least one column name, e.g. include("medium")')
         names = tuple(_path_name(n) for n in names)
@@ -886,18 +903,11 @@ class Query:
             _, nid, attr_name = target
             role = "data" if nid in g.data_nodes else "entity"
             registry = self.registry
-            if registry.is_group(attr_name):
-                if attr_name in registry:
-                    leaves = [a.name for a in registry.children(attr_name)]
-                    raise ValueError(
-                        f"include: {attr_name!r} is a value on some nodes and a group of keys "
-                        f"({leaves}) on others; include the leaves you want, or the key as "
-                        f"a plain value with include({attr_name!r}, type=\"object\") once that lands")
-            elif role not in registry[attr_name].roles:
+            if not registry.is_group(attr_name) and role not in registry[attr_name].roles:
                 alias = g.aliases_reverse.get(nid, str(nid))
                 raise ValueError(
                     f"include: attribute {attr_name!r} does not apply to {role} node {alias!r}")
-            g = g.with_select(nid, attr_name, required)
+            g = g.with_select(nid, attr_name, required, type=type, strict=strict)
         return self._with_graph(g)
 
     def drop(self, *names: str) -> "Query":
@@ -927,13 +937,15 @@ class Query:
                 g = self._set_dropped(g, target[1], True)
             else:
                 _, nid, attr_name = target
-                g = replace(g, selects=tuple(
-                    entry for entry in g.selects
-                    if not (entry[0] == nid and entry[1] == attr_name)))
+                g = replace(
+                    g,
+                    selects=tuple(e for e in g.selects if not (e[0] == nid and e[1] == attr_name)),
+                    casts=tuple(c for c in g.casts if not (c[0] == nid and c[1] == attr_name)),
+                )
         return self._with_graph(g)
 
     def with_columns(self, *specs: str, of: Optional[str] = None,
-                     required: bool = False) -> "Query":
+                     required: bool = False, type: Any = None, strict: bool = True) -> "Query":
         """Unified column control: plain names include, ``"-"``-prefixed drop.
 
         Each spec is an attribute name, a node alias, or ``"alias.attr"`` —
@@ -950,7 +962,7 @@ class Query:
             if spec.startswith("-"):
                 q = q.drop(spec[1:])
             else:
-                q = q.include(spec, of=of, required=required)
+                q = q.include(spec, of=of, required=required, type=type, strict=strict)
         return q
 
     def refocus(self, alias: str) -> "Query":
@@ -1191,6 +1203,8 @@ class Query:
             "aliases_reverse": dict(g.aliases_reverse),
             "current_pointer": g.current_pointer,
             "selects": safe(g.selects),
+            "casts": [{"node": c[0], "attr": c[1], "type": str(getattr(c[2], "__name__", c[2])),
+                       "strict": c[3]} for c in g.casts],
             "data_nodes": [
                 {
                     "id": nid,
@@ -1322,7 +1336,10 @@ class Query:
                     elements = [v for lst in parsed[name] if lst for v in lst]
                     inner = column_dtype(elements)
                     lists = [None if lst is None else coerce(lst, inner) for lst in parsed[name]]
-                    columns[name] = pl.Series(name, lists, dtype=pl.List(inner))
+                    # polars has no List(Object): mixed element kinds make the
+                    # column Object, each cell a Python list
+                    columns[name] = (pl.Series(name, lists, dtype=pl.Object) if inner == pl.Object
+                                     else pl.Series(name, lists, dtype=pl.List(inner)))
                 else:
                     dtype = column_dtype(parsed[name])
                     columns[name] = pl.Series(name, coerce(parsed[name], dtype), dtype=dtype)
@@ -1337,7 +1354,10 @@ class Query:
                     continue
                 struct_name = f"{alias}.{gname}"
                 first = min(list(columns).index(f"{prefix}{k}") for k in members)
-                columns[struct_name] = _struct_series(struct_name, members)
+                # the same key as a plain value on other nodes: the column
+                # holds a dict or that value per row, so it is Object
+                scalar = columns.pop(struct_name, None)
+                columns[struct_name] = _struct_series(struct_name, members, scalar=scalar)
                 for rel in members:
                     if (nid, f"{gname}.{rel}") not in explicit:
                         del columns[f"{prefix}{rel}"]
@@ -1346,6 +1366,34 @@ class Query:
                 order.remove(struct_name)
                 order.insert(min(first, len(order)), struct_name)
                 columns = {n: columns[n] for n in order}
+            # casts asked for with include(type=...)
+            for nid, name, type_, strict in self.query_graph.casts:
+                alias = self.query_graph.aliases_reverse.get(nid, f"v{nid}")
+                col = f"{alias}.{name}"
+                if col not in columns:
+                    continue
+                values = columns[col].to_list()
+                if columns[col].dtype == pl.Struct:
+                    values = [None if v is None else dict(v) for v in values]
+                cast, target = cast_values(values, type_, strict=strict,
+                                           labels=columns[alias].to_list() if alias in columns else None,
+                                           column=name)
+                if target == "struct":
+                    keys = sorted({k for v in cast if isinstance(v, dict) for k in v})
+                    members = {}
+                    for k in keys:
+                        vals = [v.get(k) if isinstance(v, dict) else None for v in cast]
+                        members[k] = pl.Series(k, coerce(vals, column_dtype(vals)), dtype=column_dtype(vals))
+                    columns[col] = (_struct_series(col, members) if members
+                                    else pl.Series(col, [None] * len(cast), dtype=pl.Null))
+                else:
+                    dtype = column_dtype(cast if not any(isinstance(v, list) for v in cast)
+                                         else [e for v in cast if v for e in v])
+                    if target == "object":
+                        dtype = pl.Object
+                    elif target != "object" and any(isinstance(v, list) for v in cast):
+                        dtype = pl.List(dtype)
+                    columns[col] = pl.Series(col, cast, dtype=dtype)
             pl_table = pl.DataFrame(columns) if columns else pl.DataFrame()
             # point labels: drop all-null ``*.label`` columns and show the
             # rest right after their node's column
@@ -1358,7 +1406,7 @@ class Query:
                 if lbl in pl_table.columns and pl_table[lbl].is_not_null().any():
                     keep.append(lbl)
             pl_table = pl_table.select(keep)
-            if not list_names and not group_selects:
+            if not list_names and not group_selects and pl.Object not in pl_table.dtypes:
                 pl_table = pl_table.unique(maintain_order=True)
             self.cache[cache_key] = pl_table
         return self.cache[cache_key]
@@ -1432,9 +1480,11 @@ class Query:
         leaves: List[tuple] = []
         groups: List[tuple] = []
         for nid, name, req in self.query_graph.selects:
-            if name not in registry and registry.is_group(name):
+            if registry.is_group(name):
                 children = [a.name for a in registry.children(name)]
                 groups.append((nid, name, children))
+                if name in registry:          # a plain value on some nodes as well
+                    leaves.append((nid, name, req))
                 leaves.extend((nid, c, req) for c in children)
             else:
                 leaves.append((nid, name, req))
@@ -1484,10 +1534,15 @@ class Query:
             return str(uri)
 
 
-def _struct_series(name: str, members: Dict[str, pl.Series]) -> pl.Series:
+def _struct_series(name: str, members: Dict[str, pl.Series], *,
+                   scalar: Optional[pl.Series] = None) -> pl.Series:
     """One struct column from child columns keyed by their path under the
     parent (``"year"``, ``"limits.max"``); nested paths nest the struct. A
-    row with every member null is a null struct."""
+    row with every member null is a null struct.
+
+    When a member is itself ``Object`` (mixed element kinds), or ``scalar``
+    holds the same key as a plain value on other nodes, no struct dtype
+    fits: the column is ``Object`` and each cell is a dict or that value."""
     tree: Dict[str, Any] = {}
     for rel, series in sorted(members.items()):   # field order is by name, like Registry.children
         node = tree
@@ -1508,7 +1563,13 @@ def _struct_series(name: str, members: Dict[str, pl.Series]) -> pl.Series:
         return None if all(v is None for v in out.values()) else out
 
     height = next(iter(members.values())).len()
-    return pl.Series(name, [value_of(tree, i) for i in range(height)], dtype=dtype_of(tree))
+    rows = [value_of(tree, i) for i in range(height)]
+    mixed = scalar is not None or any(s.dtype == pl.Object for s in members.values())
+    if mixed:
+        if scalar is not None:
+            rows = [r if r is not None else scalar[i] for i, r in enumerate(rows)]
+        return pl.Series(name, rows, dtype=pl.Object)
+    return pl.Series(name, rows, dtype=dtype_of(tree))
 
 
 # Append the attribute registry (single source of truth) to every method
