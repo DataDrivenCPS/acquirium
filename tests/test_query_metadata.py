@@ -31,7 +31,7 @@ def test_find_entity(acquirium_client:Acquirium):
     result_A = entity_A.execute()
 
     assert result_A is not None
-    assert len(result_A) == 2  
+    assert set(result_A) == {"columns", "rows", "datatypes"}
     assert len(result_A['rows']) == 4
 
     entity_B : Q = acq.find_entity(_class=ACQUIRIUM_NS.B, alias="b")
@@ -43,7 +43,7 @@ def test_find_entity(acquirium_client:Acquirium):
     result_B = entity_B.execute()
 
     assert result_B is not None
-    assert len(result_B) == 2
+    assert set(result_B) == {"columns", "rows", "datatypes"}
     assert len(result_B['rows']) == 2
 
     result_B_df = entity_B.metadata()
@@ -62,7 +62,7 @@ def test_find_entity(acquirium_client:Acquirium):
     result_AC = entity_A.execute()
 
     assert result_AC is not None
-    assert len(result_AC) == 2
+    assert set(result_AC) == {"columns", "rows", "datatypes"}
     assert len(result_AC['rows']) == 3*4
 
     result_AC_df = entity_A.metadata()

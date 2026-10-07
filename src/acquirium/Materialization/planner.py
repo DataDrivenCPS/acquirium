@@ -15,6 +15,7 @@ import json
 from typing import Any, Callable, Iterable, Mapping
 
 from acquirium.Client.explore.core import Query
+from acquirium.Client.explore.expr import AttrProxy
 from acquirium.Materialization.models import (
     App, ApplicationGraph, Binding, OutputPort, OutputSpec, StreamDescriptor,
     _duration, parse_lookback,
@@ -60,6 +61,8 @@ class _GraphQueryClient:
 class _QueryFacade:
     client: _GraphQueryClient
     def query(self) -> Query: return Query(client=self.client)
+    @property
+    def attr(self) -> AttrProxy: return AttrProxy(self.client)
 
 
 def output_port(application_name: str, port: str,

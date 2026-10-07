@@ -30,7 +30,7 @@ from acquirium._ontologies import (
     rename_ontology_iri,
 )
 from acquirium.Server.config import OntologySource
-from acquirium.Storage.graph_registry import ACQUIRIUM_GRAPH_URI, SOURCE_GRAPH_PREFIX
+from acquirium.Storage.graph_registry import ACQUIRIUM_GRAPH_URI, METADATA_SOURCE_ID, SOURCE_GRAPH_PREFIX
 from acquirium.Storage.graph_registry import source_graph_uri as _compute_source_graph_uri
 
 _logger = logging.getLogger("acquirium.graph_store")
@@ -81,6 +81,32 @@ def _graph_affects_closure(graph: Graph) -> bool:
     """Return True if *graph* can change owl:imports-driven closure."""
     return any(graph.triples((None, OWL.imports, None))) or any(
         graph.triples((None, RDF.type, OWL.Ontology))
+    )
+
+
+def _closure_triples(graph: Graph) -> frozenset:
+    """The triples of *graph* that drive the import closure."""
+    return frozenset(graph.triples((None, OWL.imports, None))) | frozenset(
+        graph.triples((None, RDF.type, OWL.Ontology))
+    )
+
+
+def prune_orphan_metadata(dataset: Dataset, metadata_graph_uri: URIRef) -> None:
+    """Drop metadata about nodes no other graph mentions any more.
+
+    A metadata triple stays while its subject, and its object when that is
+    a URI, appear (as subject or object) in some graph other than the
+    metadata graph. Ontology graphs count, so unit and class URIs used as
+    values never trigger a prune. Run after a write that removed triples
+    from a source graph, so metadata never outlives the node it describes.
+    """
+    m = f"<{metadata_graph_uri}>"
+    dataset.update(
+        f"DELETE {{ GRAPH {m} {{ ?s ?p ?o }} }}\n"
+        f"WHERE {{\n  GRAPH {m} {{ ?s ?p ?o }}\n  FILTER(\n"
+        f"    NOT EXISTS {{ GRAPH ?g1 {{ {{ ?s ?a ?b }} UNION {{ ?c ?d ?s }} }} FILTER(?g1 != {m}) }}\n"
+        f"    || (isIRI(?o) && NOT EXISTS {{ GRAPH ?g2 {{ {{ ?o ?e ?f }} UNION {{ ?h ?i ?o }} }} FILTER(?g2 != {m}) }})\n"
+        f"  )\n}}"
     )
 
 
@@ -880,9 +906,23 @@ class OxigraphGraphStore:
     def sparql_update(self, update: str, *, graph_uri: URIRef | None = None) -> dict:
         _logger.debug("sparql_update: %s", update.replace("\n", " ")[:200])
         with self._lock, timed_debug(_logger, "sparql_update"):
-            self._registered_data_graph(graph_uri).update(update)
-            self._finalize_source_write(affects_closure=True)
+            target = self._registered_data_graph(graph_uri)
+            # Update text does not say what it touches; compare the triples
+            # that drive the closure instead, so an instance-data update does
+            # not force the ontology closure to be recomputed.
+            before = _closure_triples(target)
+            target.update(update)
+            affects_closure = _closure_triples(target) != before
+            self._prune_orphan_metadata()
+            self._finalize_source_write(affects_closure=affects_closure)
         return {"message": "update applied", "changed": True}
+
+    def _prune_orphan_metadata(self) -> None:
+        """Cascade: metadata lives as long as the node it describes."""
+        try:
+            prune_orphan_metadata(self.source_dataset, self.source_graph_uri(METADATA_SOURCE_ID))
+        except Exception:
+            _logger.warning("metadata pruning failed", exc_info=True)
 
     def validate(self) -> dict[str, str | bool]:
         """Validate the full data union against the ontology shape closure.
@@ -952,6 +992,8 @@ class OxigraphGraphStore:
                 self._apply_graph_write(
                     incoming, target=target, replace=replace,
                 )
+                if replace:
+                    self._prune_orphan_metadata()
                 self._finalize_source_write(affects_closure=affects_closure)
         return {
             "replaced": replace,

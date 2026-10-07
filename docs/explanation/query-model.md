@@ -124,7 +124,9 @@ the attributes (`rdf:type`, `hasUnit`, `hasQuantityKind`, `ofMedium`,
 `hasMedium`, `ofSubstance`, `hasEnumerationKind`, `hasProcess`, `dataSource`,
 `producedBy`),
 plus `rdfs:subClassOf`, `s223:hasProperty`, `s223:hasConnectionPoint`,
-`s223:cnx` and `ref:hasExternalReference`.
+`s223:cnx` and `ref:hasExternalReference`, and the whole
+`urn:acquirium:attr#` namespace, which holds the attributes written with
+`insert_metadata()`.
 
 ```python
 from acquirium.Client.explore import hidden_predicates, hide, unhide
