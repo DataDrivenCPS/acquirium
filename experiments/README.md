@@ -63,3 +63,12 @@ point changes their bindings and everything downstream.
 - Views must not declare on their outputs the quantity kind they select by,
   or they match their own output ("an application binding cannot consume its
   own output").
+- `aq.align` over inputs with no rows returns only a `time` column, so an
+  aggregate must handle the empty case itself before `sum_horizontal`.
+- A reprocess request is refused while the binding still has pending work
+  ("binding already has pending work"); `changes.reprocess` waits and retries.
+- A deployment revokes the running generation. A binding caught mid-tick
+  records "binding is no longer active" and keeps that flag until its next
+  run, so `wait_quiescent` treats that message as a stale diagnostic.
+- Removing one point from a per-match view's matches repairs every sibling
+  binding, because each binding fingerprints the whole match table.

@@ -110,13 +110,18 @@ def wait_quiescent(client: Any, *, timeout: float = 600.0, settle: float = 1.0) 
         status = client.graph_status()
         apps = client.list_apps()["apps"]
         graph = dag(client)
-        errors = {node["application_name"]: node["error"] for node in graph["nodes"] if node.get("error")}
+        # A deployment revokes the running generation; a binding caught mid-tick
+        # records "binding is no longer active" and keeps that flag until it next
+        # runs. It is a stale diagnostic, not a failed calculation.
+        stale = lambda node: "binding is no longer active" in (node.get("error") or "")
+        errors = {node["application_name"]: node["error"]
+                  for node in graph["nodes"] if node.get("error") and not stale(node)}
         errors.update(graph.get("errors") or {})
         if errors:
             raise RuntimeError(f"materialization failed: {errors}")
         current = status.get("is_current", False) and all(app["plan_current"] for app in apps)
         idle = all(
-            node["status"] == "idle" and node["consumed_revision"] is not None
+            (node["status"] == "idle" or stale(node)) and node["consumed_revision"] is not None
             and node["consumed_revision"] >= node["current_revision"]
             for node in graph["nodes"]
         )
