@@ -102,6 +102,52 @@ class RevisionStore:
         with self.store._own_conn() as conn:
             return {row[0] for row in self._execute(conn, "SELECT progress_key FROM materialization_work").fetchall()}
 
+    def change_index(self, floor: int) -> tuple[int, dict[str, int], dict[str, int]]:
+        """Which streams changed above ``floor``, from one snapshot.
+
+        Returns the snapshot's current revision, each written stream's latest
+        revision (tombstones included, since a removal is a change), and each
+        reset stream's reset revision. One indexed scan answers readiness for
+        every binding in a tick; ``next_batch`` then reads only for the
+        bindings whose inputs appear here.
+        """
+        conn = self.store._connect()
+        try:
+            if self._postgres:
+                conn.execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            else:
+                conn.begin()
+            current = int(self._execute(conn, "SELECT current_revision FROM system_state").fetchone()[0])
+            changed = {row[0]: int(row[1]) for row in self._execute(
+                conn, f"SELECT {self._ref}, max(t.last_revision) FROM {self._timeseries_source} "
+                      f"WHERE t.last_revision>? GROUP BY {self._ref}", [floor]).fetchall()}
+            resets = {row[0]: int(row[1]) for row in self._execute(
+                conn, "SELECT ref_uri, last_revision FROM stream_resets WHERE last_revision>?", [floor]).fetchall()}
+            conn.commit()
+            return current, changed, resets
+        except BaseException:
+            conn.rollback(); raise
+        finally:
+            conn.close()
+
+    def advance_idle(self, items: Iterable[tuple[Binding, int, int]]) -> None:
+        """Move frontiers past revisions that touched none of a binding's inputs.
+
+        ``items`` are ``(binding, previous, target)`` where ``target`` is the
+        current revision of the snapshot that showed no change for the
+        binding. One write transaction, one compare-and-swap per binding, so a
+        batch that is already running cannot be overtaken.
+        """
+        items = tuple(items)
+        if not items:
+            return
+        with self.store._lock, self.store._write_conn() as conn:
+            for binding, previous, target in items:
+                if self.active_bindings is not None and self.active_bindings.get(binding.progress_key) != binding.generation:
+                    continue
+                self._execute(conn, "UPDATE binding_progress SET consumed_revision=? WHERE progress_key=? AND consumed_revision=?",
+                              [target, binding.progress_key, previous])
+
     def retained_window(self, binding: Binding) -> TimeWindow | None:
         # Include outputs: after input membership shrinks, obsolete results may
         # extend beyond the remaining inputs and still need to be removed.

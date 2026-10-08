@@ -63,12 +63,23 @@ class Scheduler:
                  rows_read={alias: value.collect().num_rows for alias, value in batch.inputs.items()},
                  work_id=batch.context.work_id, full_reset=batch.context.full_reset)
 
-    def run_once(self, binding: Binding, application: App) -> bool:
+    def _prepare_and_execute(self, binding: Binding, application: App) -> tuple[Batch, Mapping[str, pa.Table]] | None:
+        """Read one binding's batch and transform it, on a worker thread.
+
+        The read is here rather than on the coordinator so that a wave's
+        snapshot reads run in parallel; each worker uses its own connection.
+        """
         self.store.initialise(binding, application.backfill)
         batch = self.store.next_batch(binding)
         if batch is None:
+            return None
+        return batch, self._execute(application, batch, binding)
+
+    def run_once(self, binding: Binding, application: App) -> bool:
+        prepared = self._prepare_and_execute(binding, application)
+        if prepared is None:
             return False
-        results = self._execute(application, batch, binding)
+        batch, results = prepared
         return self.store.commit(binding, batch, results)
 
     def run_layer(self, bindings: Iterable[Binding], applications: Mapping[str, App], *, max_workers: int | None = None) -> bool:
@@ -86,19 +97,15 @@ class Scheduler:
                 pending = []
                 for binding in wave[offset:offset + capacity]:
                     self.errors.pop(binding.signature, None)
-                    try:
-                        self.store.initialise(binding, applications[binding.signature].backfill)
-                        batch = self.store.next_batch(binding)
-                        if batch is not None:
-                            self.running.add(binding.signature)
-                            future = self._pool.submit(self._execute, applications[binding.signature], batch, binding)
-                            pending.append((binding, batch, future))
-                    except Exception as error:
-                        self.errors[binding.signature] = f"{type(error).__name__}: {error}"
+                    self.running.add(binding.signature)
+                    pending.append((binding, self._pool.submit(
+                        self._prepare_and_execute, binding, applications[binding.signature])))
                 completed = []
-                for binding, batch, future in pending:
+                for binding, future in pending:
                     try:
-                        completed.append((binding, batch, future.result()))
+                        prepared = future.result()
+                        if prepared is not None:
+                            completed.append((binding, *prepared))
                     except Exception as error:
                         self.errors[binding.signature] = f"{type(error).__name__}: {error}"
                         emit(self.store.store, "failure", binding=binding.signature,

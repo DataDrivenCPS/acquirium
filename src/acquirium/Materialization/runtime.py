@@ -235,11 +235,11 @@ class Materializer:
             for deployment in self._deployments():
                 try:
                     partial, loaded = self._planner.compile((deployment,), revision)
-                    # Signature covers code and policy; the result fingerprint
-                    # also covers context visible to a per-match app about other
-                    # matches. Either changing must invalidate old publications.
+                    # Signature covers code and policy; the context hash covers
+                    # the match row (or the whole table for an aggregate).
+                    # Either changing must invalidate old publications.
                     generation = self._generations.setdefault(deployment.name, uuid4().hex)
-                    bindings.extend(replace(b, generation=f"{generation}:{b.signature}:{sha256(repr(b.result).encode()).hexdigest()}") for b in partial.bindings)
+                    bindings.extend(replace(b, generation=f"{generation}:{b.signature}:{b.context_hash}") for b in partial.bindings)
                     applications.update(loaded)
                 except Exception as error:
                     self._plan_errors[deployment.name] = f"{type(error).__name__}: {error}"
@@ -258,13 +258,14 @@ class Materializer:
             with self._store._own_conn() as conn:
                 prior_outputs = dict(self._execute(conn, "SELECT output_ref_uri, progress_key FROM materialization_lineage").fetchall())
                 prior_context = dict(self._execute(conn, "SELECT progress_key, context_hash FROM materialization_lineage").fetchall())
-            # A stable named output may now have different inputs; a per-match
-            # output may have unchanged inputs but different fleet context.
-            # Both can alter historical results. Compare with persisted lineage
-            # rather than the old in-memory plan so restart detects this too.
+            # A stable named output may now have different inputs; a binding's
+            # own match row may have changed while its inputs did not. Both can
+            # alter historical results. Compare with persisted lineage rather
+            # than the old in-memory plan so restart detects this too. A change
+            # to other rows of the fleet leaves a per-match binding alone.
             repair = [b for b in dag.bindings if
                       any(p.ref_uri in prior_outputs and prior_outputs[p.ref_uri] != b.progress_key for p in b.outputs.values())
-                      or (prior_context.get(b.progress_key) and prior_context[b.progress_key] != sha256(repr(b.result).encode()).hexdigest())]
+                      or (prior_context.get(b.progress_key) and prior_context[b.progress_key] != b.context_hash)]
             # Materialization-owned provenance is a complete projection of the
             # current DAG. Publish it only when the projection actually changed:
             # lineage writes advance the graph's published_version, so publishing
@@ -299,7 +300,7 @@ class Materializer:
                     self._execute(conn, "DELETE FROM materialization_lineage")
                 for binding in dag.bindings:
                     rows = [(binding.signature, binding.progress_key, binding.application_name, binding.executable_digest,
-                        alias, stream.ref_uri, output_name, output_ref, sha256(repr(binding.result).encode()).hexdigest())
+                        alias, stream.ref_uri, output_name, output_ref, binding.context_hash)
                         for alias, streams in binding.inputs.items() for stream in streams
                         for output_name, output in binding.outputs.items()
                         for output_ref in (output.ref_uri,)]
@@ -308,7 +309,7 @@ class Materializer:
                         # Empty alias/ref fields represent no input edge in SQL.
                         rows = [(binding.signature, binding.progress_key, binding.application_name,
                                  binding.executable_digest, "", "", name, port.ref_uri,
-                                 sha256(repr(binding.result).encode()).hexdigest())
+                                 binding.context_hash)
                                 for name, port in binding.outputs.items()]
                     if getattr(self._store, "materialization_backend", None) == "postgres":
                         with conn.cursor() as cur:
@@ -391,24 +392,37 @@ class Materializer:
         pending_work = self._revisions.pending_keys()
         # A completed wave publishes before a dependent wave reads its next
         # revision, preserving DAG semantics across this scheduler tick.
+        index, index_floor = None, 0
         for wave in dag.layers():
             blocked.update(target for source, target, _ in dag.edges if source in blocked)
             now = monotonic()
             current, progress = self._revisions.progress_snapshot()
-            ready, previous = [], {}
+            for binding in wave:
+                if progress.get(binding.progress_key) is None:
+                    progress[binding.progress_key] = self._revisions.initialise(
+                        binding, applications[binding.signature].backfill)
+            # One indexed scan tells which streams changed since the oldest
+            # frontier in this wave. A binding whose inputs are absent from it
+            # has nothing to read: its frontier moves in one batched update
+            # instead of a snapshot read and a write per binding. The index
+            # is rebuilt after a wave publishes, so a dependent wave sees it.
+            floor = min((progress[b.progress_key] for b in wave), default=current)
+            if index is None or floor < index_floor or index[0] < current:
+                index, index_floor = self._revisions.change_index(floor), floor
+            target, changed, resets = index
+            ready, previous, idle = [], {}, []
             for binding in wave:
                 if binding.signature in blocked:
                     continue
                 app = applications[binding.signature]
-                consumed = progress.get(binding.progress_key)
-                if consumed is None:
-                    consumed = self._revisions.initialise(binding, app.backfill)
-                if current <= consumed and binding.progress_key not in pending_work:
+                consumed = progress[binding.progress_key]
+                refs = [d.ref_uri for values in binding.inputs.values() for d in values]
+                touched = any(changed.get(ref, 0) > consumed or resets.get(ref, 0) > consumed for ref in refs)
+                if not touched and binding.progress_key not in pending_work:
+                    if consumed < target:
+                        idle.append((binding, consumed, target))
                     self._pending_since.pop(binding.signature, None)
                     continue
-                # Global revisions are only a cheap readiness hint: they may
-                # belong to unrelated streams. next_batch performs the precise
-                # input check and can advance progress without running the app.
                 first = self._pending_since.setdefault(binding.signature, now)
                 # Delay from the first pending change, then enforce the rate cap.
                 min_interval = _duration(app.min_interval) if app.min_interval is not None else None
@@ -418,11 +432,15 @@ class Materializer:
                     continue
                 ready.append(binding)
                 previous[binding.signature] = consumed
+            self._revisions.advance_idle(idle)
             if not ready:
                 blocked.update(b.signature for b in wave if b.signature in self._scheduler.errors)
                 continue
             successes = {b.signature: self._scheduler.last_success.get(b.signature) for b in ready}
-            ran = self._scheduler.run_layer(ready, applications) or ran
+            published = self._scheduler.run_layer(ready, applications)
+            ran = published or ran
+            if published:
+                index = None
             blocked.update(b.signature for b in ready if b.signature in self._scheduler.errors)
             _, progressed = self._revisions.progress_snapshot()
             for binding in ready:
