@@ -233,11 +233,11 @@ class Materializer:
             for deployment in self._deployments():
                 try:
                     partial, loaded = self._planner.compile((deployment,), revision)
-                    # Signature covers code and policy; the result fingerprint
-                    # also covers context visible to a per-match app about other
-                    # matches. Either changing must invalidate old publications.
+                    # Signature covers code and policy; the context hash covers
+                    # the match row (or the whole table for an aggregate).
+                    # Either changing must invalidate old publications.
                     generation = self._generations.setdefault(deployment.name, uuid4().hex)
-                    bindings.extend(replace(b, generation=f"{generation}:{b.signature}:{sha256(repr(b.result).encode()).hexdigest()}") for b in partial.bindings)
+                    bindings.extend(replace(b, generation=f"{generation}:{b.signature}:{b.context_hash}") for b in partial.bindings)
                     applications.update(loaded)
                 except Exception as error:
                     self._plan_errors[deployment.name] = f"{type(error).__name__}: {error}"
@@ -256,13 +256,14 @@ class Materializer:
             with self._store._own_conn() as conn:
                 prior_outputs = dict(self._execute(conn, "SELECT output_ref_uri, progress_key FROM materialization_lineage").fetchall())
                 prior_context = dict(self._execute(conn, "SELECT progress_key, context_hash FROM materialization_lineage").fetchall())
-            # A stable named output may now have different inputs; a per-match
-            # output may have unchanged inputs but different fleet context.
-            # Both can alter historical results. Compare with persisted lineage
-            # rather than the old in-memory plan so restart detects this too.
+            # A stable named output may now have different inputs; a binding's
+            # own match row may have changed while its inputs did not. Both can
+            # alter historical results. Compare with persisted lineage rather
+            # than the old in-memory plan so restart detects this too. A change
+            # to other rows of the fleet leaves a per-match binding alone.
             repair = [b for b in dag.bindings if
                       any(p.ref_uri in prior_outputs and prior_outputs[p.ref_uri] != b.progress_key for p in b.outputs.values())
-                      or (prior_context.get(b.progress_key) and prior_context[b.progress_key] != sha256(repr(b.result).encode()).hexdigest())]
+                      or (prior_context.get(b.progress_key) and prior_context[b.progress_key] != b.context_hash)]
             # Materialization-owned provenance is a complete projection of the
             # current DAG. Publish it only when the projection actually changed:
             # lineage writes advance the graph's published_version, so publishing
@@ -295,7 +296,7 @@ class Materializer:
                     self._execute(conn, "DELETE FROM materialization_lineage")
                 for binding in dag.bindings:
                     rows = [(binding.signature, binding.progress_key, binding.application_name, binding.executable_digest,
-                        alias, stream.ref_uri, output_name, output_ref, sha256(repr(binding.result).encode()).hexdigest())
+                        alias, stream.ref_uri, output_name, output_ref, binding.context_hash)
                         for alias, streams in binding.inputs.items() for stream in streams
                         for output_name, output in binding.outputs.items()
                         for output_ref in (output.ref_uri,)]
@@ -304,7 +305,7 @@ class Materializer:
                         # Empty alias/ref fields represent no input edge in SQL.
                         rows = [(binding.signature, binding.progress_key, binding.application_name,
                                  binding.executable_digest, "", "", name, port.ref_uri,
-                                 sha256(repr(binding.result).encode()).hexdigest())
+                                 binding.context_hash)
                                 for name, port in binding.outputs.items()]
                     if getattr(self._store, "materialization_backend", None) == "postgres":
                         with conn.cursor() as cur:
