@@ -383,24 +383,37 @@ class Materializer:
         pending_work = self._revisions.pending_keys()
         # A completed wave publishes before a dependent wave reads its next
         # revision, preserving DAG semantics across this scheduler tick.
+        index, index_floor = None, 0
         for wave in dag.layers():
             blocked.update(target for source, target, _ in dag.edges if source in blocked)
             now = monotonic()
             current, progress = self._revisions.progress_snapshot()
-            ready, previous = [], {}
+            for binding in wave:
+                if progress.get(binding.progress_key) is None:
+                    progress[binding.progress_key] = self._revisions.initialise(
+                        binding, applications[binding.signature].backfill)
+            # One indexed scan tells which streams changed since the oldest
+            # frontier in this wave. A binding whose inputs are absent from it
+            # has nothing to read: its frontier moves in one batched update
+            # instead of a snapshot read and a write per binding. The index
+            # is rebuilt after a wave publishes, so a dependent wave sees it.
+            floor = min((progress[b.progress_key] for b in wave), default=current)
+            if index is None or floor < index_floor or index[0] < current:
+                index, index_floor = self._revisions.change_index(floor), floor
+            target, changed, resets = index
+            ready, previous, idle = [], {}, []
             for binding in wave:
                 if binding.signature in blocked:
                     continue
                 app = applications[binding.signature]
-                consumed = progress.get(binding.progress_key)
-                if consumed is None:
-                    consumed = self._revisions.initialise(binding, app.backfill)
-                if current <= consumed and binding.progress_key not in pending_work:
+                consumed = progress[binding.progress_key]
+                refs = [d.ref_uri for values in binding.inputs.values() for d in values]
+                touched = any(changed.get(ref, 0) > consumed or resets.get(ref, 0) > consumed for ref in refs)
+                if not touched and binding.progress_key not in pending_work:
+                    if consumed < target:
+                        idle.append((binding, consumed, target))
                     self._pending_since.pop(binding.signature, None)
                     continue
-                # Global revisions are only a cheap readiness hint: they may
-                # belong to unrelated streams. next_batch performs the precise
-                # input check and can advance progress without running the app.
                 first = self._pending_since.setdefault(binding.signature, now)
                 # Delay from the first pending change, then enforce the rate cap.
                 min_interval = _duration(app.min_interval) if app.min_interval is not None else None
@@ -410,11 +423,15 @@ class Materializer:
                     continue
                 ready.append(binding)
                 previous[binding.signature] = consumed
+            self._revisions.advance_idle(idle)
             if not ready:
                 blocked.update(b.signature for b in wave if b.signature in self._scheduler.errors)
                 continue
             successes = {b.signature: self._scheduler.last_success.get(b.signature) for b in ready}
-            ran = self._scheduler.run_layer(ready, applications) or ran
+            published = self._scheduler.run_layer(ready, applications)
+            ran = published or ran
+            if published:
+                index = None
             blocked.update(b.signature for b in ready if b.signature in self._scheduler.errors)
             _, progressed = self._revisions.progress_snapshot()
             for binding in ready:
