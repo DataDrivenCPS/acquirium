@@ -423,6 +423,19 @@ class Binding:
                     "outputs": {k: v.ref_uri for k,v in sorted(self.outputs.items())}}
         object.__setattr__(self, "progress_key", sha256(_canonical(progress).encode()).hexdigest())
 
+    @property
+    def context_hash(self) -> str:
+        """Fingerprint of the query context this binding's results depend on.
+
+        A per-match binding computes from its own row, so only an edit to
+        that row (its entity, streams, labels or units) changes the hash; a
+        change elsewhere in the fleet does not re-run it. An aggregate over
+        every row depends on the whole table, so its hash covers all of it.
+        The runtime compares this against stored lineage to decide repairs.
+        """
+        payload = self.row if self.row is not None else self.result
+        return sha256(_canonical(payload).encode()).hexdigest()
+
 
 class ApplicationGraph:
     """Resolve dependencies through output ownership, then validate the graph.
