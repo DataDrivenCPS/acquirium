@@ -365,6 +365,8 @@ class FelderaPipelineSink:
             status = self._status()
             if status and all(v.get("subscribed") for v in status.values()):
                 return
+            if any(v.get("error") for v in status.values()):
+                raise RuntimeError("feldera writer failed: " + next(v["error"] for v in status.values() if v.get("error")))
             if self.writer.poll() is not None:
                 raise RuntimeError(f"feldera writer exited with {self.writer.returncode}")
             time.sleep(0.2)
@@ -395,7 +397,8 @@ class FelderaPipelineSink:
             if self._table_counts() == engine:
                 return
             time.sleep(0.5)
-        raise TimeoutError(f"feldera writer did not catch up: db {self._table_counts()} engine {engine}")
+        errors = {view: v["error"] for view, v in self._status().items() if v.get("error")}
+        raise TimeoutError(f"feldera writer did not catch up: db {self._table_counts()} engine {engine} errors {errors}")
 
     def outputs(self) -> dict[str, dict[str | None, pl.DataFrame]]:
         out = {}

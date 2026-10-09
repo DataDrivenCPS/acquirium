@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import threading
+import traceback
 import time
 import urllib.request
 from datetime import datetime, timezone
@@ -35,7 +37,7 @@ class Writer:
         self.schema = schema
         self.status_path = status_path
         self.lock = threading.Lock()
-        self.status = {view: {"subscribed": False, "chunks": 0, "inserted": 0, "deleted": 0, "sequence": -1}
+        self.status = {view: {"subscribed": False, "chunks": 0, "inserted": 0, "deleted": 0, "sequence": -1, "error": None}
                        for view in KEYS}
 
     def _write_status(self) -> None:
@@ -43,8 +45,7 @@ class Writer:
             tmp = self.status_path + ".tmp"
             with open(tmp, "w") as f:
                 json.dump(self.status, f)
-        import os
-        os.replace(tmp, self.status_path)
+            os.replace(tmp, self.status_path)
 
     def apply(self, conn, view: str, changes: list[dict]) -> tuple[int, int]:
         key = KEYS[view]
@@ -70,10 +71,19 @@ class Writer:
         return len(inserts), len(deletes)
 
     def follow(self, view: str) -> None:
+        try:
+            self._follow(view)
+        except BaseException:
+            self.status[view]["error"] = traceback.format_exc()[-2000:]
+            self._write_status()
+            raise
+
+    def _follow(self, view: str) -> None:
         import psycopg
         conn = psycopg.connect(self.dsn, autocommit=True, options="-c timezone=UTC")
-        request = urllib.request.Request(f"{self.base}/pipelines/{self.pipeline}/egress/{view}?format=json",
-                                         data=b"", method="POST")
+        # backpressure=true: the pipeline waits for this reader instead of dropping chunks it cannot deliver.
+        request = urllib.request.Request(
+            f"{self.base}/pipelines/{self.pipeline}/egress/{view}?format=json&backpressure=true", data=b"", method="POST")
         with urllib.request.urlopen(request) as response:
             for raw in response:
                 line = raw.decode().strip()
