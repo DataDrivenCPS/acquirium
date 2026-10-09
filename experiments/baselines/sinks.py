@@ -300,6 +300,143 @@ class FelderaSink:
 
 
 # ---------------------------------------------------------------------------
+# Feldera as a pipeline: base data and views durable in TimescaleDB
+# ---------------------------------------------------------------------------
+
+PIPELINE_SCHEMA = """
+DROP SCHEMA IF EXISTS {schema} CASCADE; CREATE SCHEMA {schema}; SET search_path = {schema}, public;
+CREATE TABLE readings (ts timestamptz NOT NULL, sid text NOT NULL, kind text NOT NULL, val double precision, PRIMARY KEY (sid, ts));
+SELECT create_hypertable('readings', 'ts');
+CREATE TABLE v1 (sid text NOT NULL, ts timestamptz NOT NULL, val double precision, PRIMARY KEY (sid, ts));
+CREATE TABLE v2 (sid text NOT NULL, ts timestamptz NOT NULL, val double precision, PRIMARY KEY (sid, ts));
+CREATE TABLE v3 (sid text NOT NULL, ts timestamptz NOT NULL, val text, PRIMARY KEY (sid, ts));
+CREATE TABLE v4 (ts timestamptz NOT NULL, val double precision, PRIMARY KEY (ts));
+CREATE TABLE v5 (ts timestamptz NOT NULL, val double precision, PRIMARY KEY (ts));
+CREATE TABLE v6 (sid text NOT NULL, ts timestamptz NOT NULL, val double precision, PRIMARY KEY (sid, ts));
+"""
+
+
+class FelderaPipelineSink:
+    """Feldera the way it is deployed: readings land in a database, Feldera
+    computes the view deltas, a writer applies them back to the database, and
+    users read the views from the database. Each batch is written to the
+    TimescaleDB base table and to Feldera's ingress; a separate writer
+    process (`feldera_writer.py`) follows the egress of every view and
+    applies inserts and deletes to the view tables. Cost is the engine, the
+    database container and the writer process."""
+    name = "feldera"
+    container = "siv-feldera"
+    db_container = "siv-timescale"
+
+    def __init__(self, base: str, dsn: str, kinds: dict[str, str], *, schema: str = "siv_fp",
+                 pipeline: str = "siv", workers: int = 4, status_dir: Path | None = None) -> None:
+        import psycopg
+        self.engine = FelderaSink(base, kinds, pipeline=pipeline, workers=workers)
+        self.base = base
+        self.dsn = dsn
+        self.conn = psycopg.connect(dsn, autocommit=True)
+        self.kinds = kinds
+        self.schema = schema
+        self.status_path = str((status_dir or Path("/tmp")) / f"feldera-writer-{os.getpid()}.json")
+        self.writer: subprocess.Popen | None = None
+
+    def _status(self) -> dict:
+        try:
+            with open(self.status_path) as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
+
+    def reset(self) -> None:
+        self.stop()
+        self.engine.reset()
+        with self.conn.cursor() as cur:
+            for statement in PIPELINE_SCHEMA.format(schema=self.schema).split(";"):
+                if statement.strip():
+                    cur.execute(statement)
+        if os.path.exists(self.status_path):
+            os.remove(self.status_path)
+        import sys
+        self.writer = subprocess.Popen(
+            [sys.executable, "-m", "experiments.baselines.feldera_writer", "--feldera", self.base,
+             "--pipeline", self.engine.pipeline, "--dsn", self.dsn, "--schema", self.schema, "--status", self.status_path])
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            status = self._status()
+            if status and all(v.get("subscribed") for v in status.values()):
+                return
+            if self.writer.poll() is not None:
+                raise RuntimeError(f"feldera writer exited with {self.writer.returncode}")
+            time.sleep(0.2)
+        raise TimeoutError("feldera writer did not subscribe to every view within 60 s")
+
+    def write(self, rows: Rows, kind: str) -> None:
+        with self.conn.cursor() as cur:
+            cur.executemany(
+                f"INSERT INTO {self.schema}.readings (ts, sid, kind, val) VALUES (%s, %s, %s, %s) "
+                "ON CONFLICT (sid, ts) DO UPDATE SET val = EXCLUDED.val",
+                [(ts, sid, self.kinds.get(sid, "other"), val) for ts, sid, val, _ in rows])
+        self.engine.write(rows, kind)
+
+    def _table_counts(self) -> dict[str, int]:
+        with self.conn.cursor() as cur:
+            counts = {}
+            for view in VIEWS:
+                cur.execute(f"SELECT count(*) FROM {self.schema}.{view}")
+                counts[view] = int(cur.fetchone()[0])
+        return counts
+
+    def finish(self, timeout: float = 180) -> None:
+        """Wait for the engine to drain, then for the writer to catch up with it."""
+        self.engine.finish()
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            engine = {view: int(self.engine.query(f"SELECT COUNT(*) AS n FROM {view}")[0]["n"]) for view in VIEWS}
+            if self._table_counts() == engine:
+                return
+            time.sleep(0.5)
+        raise TimeoutError(f"feldera writer did not catch up: db {self._table_counts()} engine {engine}")
+
+    def outputs(self) -> dict[str, dict[str | None, pl.DataFrame]]:
+        out = {}
+        with self.conn.cursor() as cur:
+            for view in VIEWS:
+                if view in PER_STREAM:
+                    cur.execute(f"SELECT sid, ts, val FROM {self.schema}.{view} ORDER BY sid, ts")
+                    out[view] = _group(view, cur.fetchall())
+                else:
+                    cur.execute(f"SELECT ts, val FROM {self.schema}.{view} ORDER BY ts")
+                    out[view] = _group(view, [(None, ts, val) for ts, val in cur.fetchall()])
+        return out
+
+    def counters(self) -> dict[str, float]:
+        engine = self.engine.counters()
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT coalesce(sum(n_tup_ins + n_tup_upd + n_tup_del), 0) FROM pg_stat_all_tables "
+                        "WHERE schemaname = %s AND relname <> 'readings'", (self.schema,))
+            written = float(cur.fetchone()[0])
+        writer = process_cpu_seconds(self.writer.pid) if self.writer and self.writer.poll() is None else 0.0
+        db = cgroup_cpu_seconds(self.db_container)
+        return {"rows_written": written, "cpu_engine_seconds": engine["cpu_engine_seconds"],
+                "cpu_feldera_container_seconds": engine["cpu_container_seconds"], "cpu_writer_seconds": writer,
+                "cpu_db_seconds": db, "cpu_process_seconds": engine["cpu_engine_seconds"] + writer,
+                "cpu_seconds": engine["cpu_engine_seconds"] + writer + db,
+                "records_processed": engine["records_processed"]}
+
+    def output_rows(self) -> int:
+        return sum(self._table_counts().values())
+
+    def stop(self) -> None:
+        if self.writer and self.writer.poll() is None:
+            self.writer.terminate()
+            try:
+                self.writer.wait(10)
+            except subprocess.TimeoutExpired:
+                self.writer.kill()
+        self.writer = None
+
+
+# ---------------------------------------------------------------------------
 # Flink SQL: filesystem source and sinks shared through a mounted directory
 # ---------------------------------------------------------------------------
 

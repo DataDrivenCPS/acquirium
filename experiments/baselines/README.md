@@ -9,7 +9,7 @@ cadence and measures what each one spends.
 | System | Role | Endpoint on the experiment host |
 |---|---|---|
 | Apache Flink 1.20 | stream processor: event-time windows, allowed lateness; corrections need replay | REST 127.0.0.1:8081, SQL Gateway 127.0.0.1:8083 |
-| Feldera | incremental view maintenance (DBSP): SQL views over insert/delete streams, corrections are retractions | REST and console 127.0.0.1:8085 |
+| Feldera | incremental view maintenance (DBSP): SQL views over insert/delete streams, corrections are retractions. Measured as a pipeline: base rows in TimescaleDB, view deltas applied back to TimescaleDB tables by `feldera_writer.py`, views read from TimescaleDB (`feldera`); the engine alone, state in memory, is `feldera-memory` | REST and console 127.0.0.1:8085 |
 | TimescaleDB 2.30 | continuous aggregates with a refresh policy at a chosen interval | 127.0.0.1:5435, container `siv-timescale`, user/password/db `acquirium` |
 
 Flink and Feldera come from `compose.yaml`; TimescaleDB is the container the
@@ -37,6 +37,10 @@ What the adapters had to work around, so the next person does not rediscover it:
 
 - `stream` and `value` are reserved words in Calcite SQL (Flink and
   Feldera); readings are `(ts, sid, kind, val)`.
+- Feldera: egress streams carry no snapshot, so the writer subscribes to
+  every view before the first batch (`reset()` waits for it). Open-source
+  Feldera has no checkpoints (fault tolerance is enterprise), so the
+  engine's state is not durable; the pipeline makes the views durable.
 - Feldera: compilation of the six views takes about a minute; community
   edition stops only with `stop?force=true`; a correction is sent as a
   delete of the previous row plus an insert; `cpu_msecs` in the pipeline

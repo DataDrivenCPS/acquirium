@@ -2,7 +2,9 @@
 
 Every system receives the identical sequence of batches (fresh readings,
 late arrivals, corrections) from the replay driver, builds the six views
-in its own SQL, and is read back into the oracle's shape. Cost is CPU
+in its own SQL, and is read back into the oracle's shape. Feldera runs as
+it would be deployed: base rows in TimescaleDB, view deltas applied back to
+TimescaleDB tables by a writer process, views read from TimescaleDB. Cost is CPU
 seconds from the container's cgroup (for the incremental runtime: the
 server process plus its share of the TimescaleDB container), wall time of
 the replay, and output rows. All
@@ -22,7 +24,8 @@ import polars as pl
 
 from experiments import benicia, metrics, plots, views as V
 from experiments.baselines import sinks
-from experiments.baselines.sinks import EMPTY, VIEWS, PER_STREAM, FelderaSink, FlinkSink, TimescaleSink
+from experiments.baselines.sinks import (EMPTY, VIEWS, PER_STREAM, FelderaPipelineSink, FelderaSink, FlinkSink,
+                                         TimescaleSink)
 from experiments.common import BACKEND, TIMESCALE_CONTAINER, Run, wait_quiescent
 from experiments.oracle import World, _same, compare, expected
 from experiments.replay import Replay
@@ -98,7 +101,10 @@ def run_baseline(name: str, sink, replica, wide, args) -> dict:
               "compared_streams": sum(r["streams"] for r in report.values()), "per_view": report}
     for key in after:
         record[key] = after[key] - before.get(key, 0.0)
-    record["cpu_seconds"] = record.get("cpu_engine_seconds") or record.get("cpu_container_seconds")
+    if "cpu_seconds" not in after:
+        record["cpu_seconds"] = record.get("cpu_engine_seconds") or record.get("cpu_container_seconds")
+    if hasattr(sink, "stop"):
+        sink.stop()
     print(f"   wall {wall:.1f}s cpu {record['cpu_seconds']:.1f}s rows {record['output_rows']} "
           f"mismatched {record['mismatched_streams']}/{record['compared_streams']}")
     return record
@@ -144,7 +150,8 @@ def run_acquirium(replica, wide, args) -> dict:
           f"rows {record['output_rows']} mismatched {len(problems)}")
     return record
 
-LABELS = {"acquirium": "ours", "timescale": "Timescale\ncont. agg.", "feldera": "Feldera", "flink": "Flink SQL"}
+LABELS = {"acquirium": "ours", "timescale": "Timescale\ncont. agg.", "feldera": "Feldera +\nTimescale",
+          "feldera-memory": "Feldera\n(in memory)", "flink": "Flink SQL"}
 
 
 def figure(records: list[dict], path: Path) -> Path:
@@ -175,7 +182,9 @@ def main(argv=None) -> None:
     parser.add_argument("--late", type=float, default=0.05)
     parser.add_argument("--corrections", type=float, default=0.01)
     parser.add_argument("--seed", type=int, default=1)
-    parser.add_argument("--systems", default="acquirium,timescale,feldera,flink")
+    parser.add_argument("--systems", default="acquirium,timescale,feldera,flink",
+                        help="feldera is the pipeline (Timescale base table, egress applied to Timescale view "
+                             "tables by a writer process); feldera-memory is the engine alone")
     parser.add_argument("--timescale-dsn", default="postgresql://acquirium:acquirium@127.0.0.1:5435/acquirium")
     parser.add_argument("--feldera", default="http://127.0.0.1:8085")
     parser.add_argument("--flink-gateway", default="http://127.0.0.1:8083")
@@ -202,6 +211,9 @@ def main(argv=None) -> None:
         elif name == "timescale":
             records.append(run_baseline(name, TimescaleSink(args.timescale_dsn, kinds), replica, wide, args))
         elif name == "feldera":
+            records.append(run_baseline(name, FelderaPipelineSink(args.feldera, args.timescale_dsn, kinds,
+                                                                  status_dir=summary.directory), replica, wide, args))
+        elif name == "feldera-memory":
             records.append(run_baseline(name, FelderaSink(args.feldera, kinds), replica, wide, args))
         elif name == "flink":
             records.append(run_baseline(name, FlinkSink(args.flink_gateway, args.flink_rest, Path(args.flink_data), kinds,
