@@ -3,8 +3,9 @@
 Every system receives the identical sequence of batches (fresh readings,
 late arrivals, corrections) from the replay driver, builds the six views
 in its own SQL, and is read back into the oracle's shape. Cost is CPU
-seconds from the container's cgroup (or the server process for the
-incremental runtime), wall time of the replay, and output rows. All
+seconds from the container's cgroup (for the incremental runtime: the
+server process plus its share of the TimescaleDB container), wall time of
+the replay, and output rows. All
 systems run at per-batch cadence: TimescaleDB refreshes its aggregates
 after every batch, Feldera and Flink are continuous, and the incremental
 runtime polls at 0.1 s.
@@ -22,7 +23,7 @@ import polars as pl
 from experiments import benicia, metrics, plots, views as V
 from experiments.baselines import sinks
 from experiments.baselines.sinks import EMPTY, VIEWS, PER_STREAM, FelderaSink, FlinkSink, TimescaleSink
-from experiments.common import Run, wait_quiescent
+from experiments.common import BACKEND, TIMESCALE_CONTAINER, Run, wait_quiescent
 from experiments.oracle import World, _same, compare, expected
 from experiments.replay import Replay
 
@@ -117,14 +118,16 @@ def run_acquirium(replica, wide, args) -> dict:
             changes.deploy_view(client, world, view, {"threshold": sinks.THRESHOLD} if view is V.ConcentrationHigh else None)
         wait_quiescent(client, timeout=600)
         marker = len(run.events())
-        cpu0 = sinks.process_cpu_seconds(pid)
+        db_cpu = (lambda: sinks.cgroup_cpu_seconds(TIMESCALE_CONTAINER)) if BACKEND == "timescale" else (lambda: 0.0)
+        cpu0, db0 = sinks.process_cpu_seconds(pid), db_cpu()
         replay = Replay(client, replica, wide, late_fraction=args.late, correction_fraction=args.corrections, seed=args.seed)
         started = time.monotonic()
         replay.run(pace=False)
         replay.flush_late(wide["timestamp"][-1])
         wait_quiescent(client, timeout=900)
         wall = time.monotonic() - started
-        cpu = sinks.process_cpu_seconds(pid) - cpu0
+        cpu_process, cpu_db = sinks.process_cpu_seconds(pid) - cpu0, db_cpu() - db0
+        cpu = cpu_process + cpu_db
         problems = compare(client, expected(world, replay.truth_frames()))
         events = run.events().slice(marker)
         totals = metrics.totals(events)
@@ -134,9 +137,11 @@ def run_acquirium(replica, wide, args) -> dict:
     record = {"system": "acquirium", "setup_seconds": 0.0, "wall_seconds": wall, "batches": len(replay.sent),
               "output_rows": int(totals["rows_written"]), "mismatched_streams": len(problems),
               "compared_streams": len(expected(world, replay.truth_frames())), "per_view": {},
-              "cpu_seconds": cpu, "cpu_process_seconds": cpu, "transform_seconds": totals["transform_seconds"],
+              "cpu_seconds": cpu, "cpu_process_seconds": cpu_process, "cpu_db_seconds": cpu_db,
+              "transform_seconds": totals["transform_seconds"],
               "plan_seconds": totals["plan_seconds"], "rows_written": totals["rows_written"]}
-    print(f"   wall {wall:.1f}s cpu {cpu:.1f}s rows {record['output_rows']} mismatched {len(problems)}")
+    print(f"   wall {wall:.1f}s cpu {cpu:.1f}s (server {cpu_process:.1f} + database {cpu_db:.1f}) "
+          f"rows {record['output_rows']} mismatched {len(problems)}")
     return record
 
 

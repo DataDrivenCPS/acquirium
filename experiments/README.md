@@ -19,6 +19,17 @@ uv run python -m experiments.rq4_cost --hours 4                         # cost v
 Each script prints its summary table and the run directory. Defaults are
 sized to finish in minutes on a laptop; the paper runs raise the sizes.
 
+## Storage
+
+Every server runs on the TimescaleDB backend, in a database created for the
+run (`siv_<name>_<timestamp>`) and dropped with the run's data. The database
+server is the experiment host's `siv-timescale` container on 127.0.0.1:5435;
+`SIV_PG_DSN` points at an administrative database on another server, and
+`SIV_BACKEND=duckdb` falls back to the embedded store for a quick local check.
+The incremental runtime and the continuous-aggregate baseline therefore share
+one storage engine, and the runtime's cost in `rq4_baselines` is its server
+process plus the CPU the container spent on its behalf.
+
 ## Pieces
 
 | Module | Role |
