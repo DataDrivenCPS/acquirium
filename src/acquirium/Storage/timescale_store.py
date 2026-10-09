@@ -871,3 +871,16 @@ class TimescaleStore(TimeseriesStore):
             )
             row = cur.fetchone()
         return row[0] if row else None
+
+    def stream_value_kinds(self, ref_uris: Iterable[str]) -> dict[str, str]:
+        """Value kinds of the registered streams among *ref_uris*, in one query."""
+        uris = list(dict.fromkeys(ref_uris))
+        if not uris:
+            return {}
+        with self.conn.cursor() as cur:
+            cur.execute(
+                f"SELECT ref_uri, value_kind FROM {STREAMS_TABLE} WHERE ref_uri = ANY(%s)",
+                (uris,),
+            )
+            rows = cur.fetchall()
+        return {uri: kind for uri, kind in rows}
