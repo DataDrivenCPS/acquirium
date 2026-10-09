@@ -144,6 +144,30 @@ def run_acquirium(replica, wide, args) -> dict:
           f"rows {record['output_rows']} mismatched {len(problems)}")
     return record
 
+LABELS = {"acquirium": "ours", "timescale": "Timescale\ncont. agg.", "feldera": "Feldera", "flink": "Flink SQL"}
+
+
+def figure(records: list[dict], path: Path) -> Path:
+    """CPU (server and database stacked where both are known), wall time and rows written per system."""
+    names = [LABELS.get(r["system"], r["system"]) for r in records]
+    fig, axes = plots.plt.subplots(1, 3, figsize=(9, 2.6))
+    x = range(len(records))
+    process = [r.get("cpu_process_seconds", r["cpu_seconds"]) for r in records]
+    database = [r.get("cpu_db_seconds", 0.0) for r in records]
+    axes[0].bar(x, process, color="#4c72b0", label="server / engine")
+    axes[0].bar(x, database, bottom=process, color="#9ecae1", label="database")
+    for i, r in enumerate(records):
+        axes[0].text(i, r["cpu_seconds"], "exact" if r["mismatched_streams"] == 0
+                     else f"{r['mismatched_streams']}/{r['compared_streams']} wrong", ha="center", va="bottom", fontsize=6)
+    axes[0].set_title("CPU seconds", fontsize=9); axes[0].legend(fontsize=6, frameon=False)
+    axes[1].bar(x, [r["wall_seconds"] for r in records], color="#4c72b0"); axes[1].set_title("wall seconds", fontsize=9)
+    rows = [r.get("rows_written") or r["output_rows"] for r in records]
+    axes[2].bar(x, rows, color="#4c72b0"); axes[2].set_yscale("log"); axes[2].set_title("rows written (log)", fontsize=9)
+    axes[2].axhline(min(r["output_rows"] for r in records), color="grey", lw=0.8, ls="--")
+    for ax in axes:
+        ax.set_xticks(list(x)); ax.set_xticklabels(names, fontsize=7)
+    return plots.save(fig, path)
+
 
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -158,7 +182,13 @@ def main(argv=None) -> None:
     parser.add_argument("--flink-rest", default="http://127.0.0.1:8081")
     parser.add_argument("--flink-lateness", type=int, default=10, help="watermark delay in minutes")
     parser.add_argument("--flink-data", default=str(BASELINES / "data"))
+    parser.add_argument("--replot", help="redraw the figure from a records.json of an earlier run and exit")
     args = parser.parse_args(argv)
+    if args.replot:
+        import json
+        source = Path(args.replot)
+        print("figure:", figure(json.loads(source.read_text()), source.parent / "rq4_baselines.png"))
+        return
 
     summary = Run("rq4-baselines")
     args.run = summary
@@ -185,16 +215,7 @@ def main(argv=None) -> None:
     summary.save("config.json", vars(args))
     print(table.select("system", "cpu_seconds", "wall_seconds", "output_rows", "mismatched_streams", "compared_streams"))
 
-    fig, axes = plots.plt.subplots(1, 3, figsize=(9, 2.6))
-    colors = ["#4c72b0", "#dd8452", "#55a868", "#c44e52"][:len(records)]
-    for ax, column, title in zip(axes, ["cpu_seconds", "wall_seconds", "output_rows"],
-                                 ["CPU seconds", "wall seconds", "output rows"]):
-        ax.bar(table["system"], table[column], color=colors)
-        ax.set_title(title, fontsize=9); ax.tick_params(axis="x", labelsize=8)
-    for i, r in enumerate(records):
-        axes[0].text(i, table["cpu_seconds"][i], f"{r['mismatched_streams']}/{r['compared_streams']} off",
-                     ha="center", va="bottom", fontsize=6)
-    print("figure:", plots.save(fig, summary.directory / "rq4_baselines.png"))
+    print("figure:", figure(records, summary.directory / "rq4_baselines.png"))
     print("run directory:", summary.directory)
 
 
