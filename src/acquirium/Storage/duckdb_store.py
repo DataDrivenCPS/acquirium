@@ -829,6 +829,24 @@ class DuckDBStore:
         with self._own_conn() as conn:
             return self._stream_value_kind(conn, ref_uri)
 
+    def stream_value_kinds(self, ref_uris: Iterable[str]) -> dict[str, str]:
+        """Value kinds of the registered streams among *ref_uris*, in one query.
+
+        One connection and one statement for the whole batch: a lookup per
+        stream costs a connection attach plus a parameterised execute each,
+        which dominated ingest when a batch carried a hundred streams.
+        """
+        uris = list(dict.fromkeys(ref_uris))
+        if not uris:
+            return {}
+        with self._own_conn() as conn:
+            rows = conn.execute(
+                f"SELECT ref_uri, value_kind FROM {STREAMS_TABLE} "
+                "WHERE ref_uri IN (SELECT unnest(?::VARCHAR[]))",
+                [uris],
+            ).fetchall()
+        return {uri: kind for uri, kind in rows}
+
     def _stream_value_kind(self, conn, ref_uri: str) -> str | None:
         """Look up a stream's value kind on *conn* — the caller's connection, so
         a streaming read can resolve it without opening a second connection."""
