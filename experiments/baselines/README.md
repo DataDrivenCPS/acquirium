@@ -21,7 +21,40 @@ experiments/baselines/check.sh        # reachability + a continuous-aggregate sm
 docker compose -f experiments/baselines/compose.yaml down   # keeps the Feldera volume
 ```
 
-## Measurement protocol (to implement next)
+## Running the comparison
+
+```bash
+uv run python -m experiments.rq4_baselines --hours 3 --systems acquirium,timescale,feldera,flink
+```
+
+`sinks.py` holds one adapter per system (schema, per-system SQL for the six
+views, ingestion, read-back, CPU counters); `rq4_baselines.py` replays the
+same batches through each adapter in turn and compares every view with the
+oracle. Each system's expected and actual rows are saved as parquet in the
+run directory.
+
+What the adapters had to work around, so the next person does not rediscover it:
+
+- `stream` and `value` are reserved words in Calcite SQL (Flink and
+  Feldera); readings are `(ts, sid, kind, val)`.
+- Feldera: compilation of the six views takes about a minute; community
+  edition stops only with `stop?force=true`; a correction is sent as a
+  delete of the previous row plus an insert; `cpu_msecs` in the pipeline
+  stats is the engine's CPU.
+- TimescaleDB: continuous aggregates cannot contain window functions, so the
+  rolling mean and the alarm count are plain materialized views that are
+  fully recomputed on every refresh; `search_path` must include `public`
+  for `create_hypertable`.
+- Flink: the window TVF adds its own `window_time`, so a view that feeds
+  another TVF must alias it. The filesystem source discovers new files in
+  no particular order; with several readers, or several files per scan, the
+  watermark runs ahead of unread batches and their rows are dropped as late.
+  The adapter uses one reader, a 100 ms scan and 250 ms between batch files,
+  which costs wall time but keeps delivery ordered. CSV output fields are
+  quoted. Old jobs must be cancelled and awaited, or they keep writing into
+  the sink directories.
+
+## Measurement protocol
 
 1. **Same input.** The replay in `experiments/replay.py` writes each batch to
    the server and, through a sink adapter, to each baseline: Flink and

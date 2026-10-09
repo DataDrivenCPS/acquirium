@@ -28,6 +28,10 @@ class Replay:
     late_max: timedelta = timedelta(hours=2) # maximum simulated lateness
     correction_fraction: float = 0.0         # corrections per reading sent
     seed: int = 0
+    # Where batches go. None means the Acquirium client; a baseline passes a
+    # callable taking (rows, kind) with rows of (ts, ref_name, value, previous),
+    # ``previous`` being the value this row replaces or None.
+    sink: Any = None
     truth: dict[str, dict[datetime, float]] = field(default_factory=dict)
     sent: list[dict[str, Any]] = field(default_factory=list)
     _rng: random.Random = field(init=False)
@@ -44,15 +48,20 @@ class Replay:
     def _send(self, rows: list[tuple[datetime, str, float]], kind: str, sim_now: datetime) -> None:
         if not rows:
             return
-        long = pl.DataFrame({"ts": [r[0] for r in rows], "ref_name": [r[1] for r in rows],
-                             "value": [r[2] for r in rows]}).with_columns(
-            pl.col("ts").cast(pl.Datetime("us", "UTC")))
+        with_previous = [(ts, name, value, self.truth.get(self.replica.ref_uri(name), {}).get(ts))
+                         for ts, name, value in rows]
         for ts, name, value in rows:
             self._remember(name, ts, value)
         started = time.time()
-        # The publication id reaches the server's ingest event, so cost can
-        # be attributed to fresh, late and corrected readings separately.
-        benicia.insert(self.client, self.replica, long, publication_id=f"{kind}:{len(self.sent)}")
+        if self.sink is not None:
+            self.sink(with_previous, kind)
+        else:
+            long = pl.DataFrame({"ts": [r[0] for r in rows], "ref_name": [r[1] for r in rows],
+                                 "value": [r[2] for r in rows]}).with_columns(
+                pl.col("ts").cast(pl.Datetime("us", "UTC")))
+            # The publication id reaches the server's ingest event, so cost can
+            # be attributed to fresh, late and corrected readings separately.
+            benicia.insert(self.client, self.replica, long, publication_id=f"{kind}:{len(self.sent)}")
         self.sent.append({"kind": kind, "t": started, "t_done": time.time(), "sim_now": sim_now,
                           "rows": len(rows), "min_ts": min(r[0] for r in rows), "max_ts": max(r[0] for r in rows)})
 

@@ -16,6 +16,8 @@ services:
     command: jobmanager
     ports:
       - "127.0.0.1:8081:8081"       # Flink REST API and web UI
+    volumes:
+      - ./data:/data                # shared with the harness: /data/in (source), /data/out (sinks)
     environment:
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
@@ -28,6 +30,8 @@ services:
     container_name: siv-flink-taskmanager
     command: taskmanager
     depends_on: [flink-jobmanager]
+    volumes:
+      - ./data:/data
     environment:
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
@@ -45,6 +49,8 @@ services:
     depends_on: [flink-jobmanager]
     ports:
       - "127.0.0.1:8083:8083"       # Flink SQL Gateway REST API
+    volumes:
+      - ./data:/data
     environment:
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
