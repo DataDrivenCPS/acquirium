@@ -79,6 +79,14 @@ def mismatches(want: dict, got: dict) -> dict[str, dict[str, int]]:
 
 def run_baseline(name: str, sink, replica, wide, args) -> dict:
     print(f"== {name}: reset")
+    try:
+        return _run_baseline(name, sink, replica, wide, args)
+    finally:
+        if hasattr(sink, "stop"):
+            sink.stop()
+
+
+def _run_baseline(name: str, sink, replica, wide, args) -> dict:
     started = time.monotonic()
     sink.reset()
     setup_seconds = time.monotonic() - started
@@ -103,8 +111,6 @@ def run_baseline(name: str, sink, replica, wide, args) -> dict:
         record[key] = after[key] - before.get(key, 0.0)
     if "cpu_seconds" not in after:
         record["cpu_seconds"] = record.get("cpu_engine_seconds") or record.get("cpu_container_seconds")
-    if hasattr(sink, "stop"):
-        sink.stop()
     print(f"   wall {wall:.1f}s cpu {record['cpu_seconds']:.1f}s rows {record['output_rows']} "
           f"mismatched {record['mismatched_streams']}/{record['compared_streams']}")
     return record
