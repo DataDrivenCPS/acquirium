@@ -24,7 +24,7 @@ from acquirium.Server.config import OntologySource
 from acquirium.internals.models import LogEntry, Order, TimeIntervalModel, compute_ref_uri
 from acquirium.internals.internals_namespaces import *
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Iterable
 
 if TYPE_CHECKING:
     import pyarrow as pa
@@ -771,12 +771,11 @@ class Manager:
             stream_count,
             source_id,
         )
-        ref_uri_map: dict[str, str] = {}
-        value_kind_map: dict[str, str] = {}
-        for name in df["ref_name"].unique().to_list():
-            ref_uri = str(compute_ref_uri(source_id, name))
-            ref_uri_map[name] = ref_uri
-            value_kind_map[name] = self._registered_value_kind(ref_uri)
+        ref_uri_map = {
+            name: str(compute_ref_uri(source_id, name)) for name in df["ref_name"].unique().to_list()
+        }
+        kinds = self._registered_value_kinds(ref_uri_map.values())
+        value_kind_map = {name: kinds[ref_uri] for name, ref_uri in ref_uri_map.items()}
         logger.debug("insert_timeseries_arrow source=%s unique_streams=%d", source_id, len(ref_uri_map))
         df = (
             df.with_columns([
@@ -811,22 +810,31 @@ class Manager:
         raise ValueError("deletion is not supported by incremental materialization")
 
     def _registered_value_kind(self, ref_uri: str) -> str:
-        value_kind = self.timeseries_store.stream_value_kind(ref_uri)
-        # Graph writes and Arrow ingestion may be issued back-to-back by a
-        # client. Ensure the derived stream registry has observed the graph
-        # write before rejecting the first data batch. The resync rebuilds the
-        # inferred graph, so only run it when the graph actually advanced since
-        # the last sync; otherwise repeated writes to an unregistered ref would
-        # each pay the full rebuild cost.
-        if value_kind is None:
+        return self._registered_value_kinds([ref_uri])[ref_uri]
+
+    def _registered_value_kinds(self, ref_uris: Iterable[str]) -> dict[str, str]:
+        """Normalised value kind of every stream in *ref_uris*; one store query per call.
+
+        Graph writes and Arrow ingestion may be issued back-to-back by a
+        client. Ensure the derived stream registry has observed the graph
+        write before rejecting the first data batch. The resync rebuilds the
+        inferred graph, so only run it when the graph actually advanced since
+        the last sync; otherwise repeated writes to an unregistered ref would
+        each pay the full rebuild cost.
+        """
+        wanted = list(dict.fromkeys(ref_uris))
+        kinds = self.timeseries_store.stream_value_kinds(wanted)
+        missing = [uri for uri in wanted if uri not in kinds]
+        if missing:
             published = int(self.graph_store.graph_status()["published_version"])
             if published != self._refs_synced_revision:
                 self._sync_stream_refs_from_graph()
                 self._refs_synced_revision = published
-            value_kind = self.timeseries_store.stream_value_kind(ref_uri)
-        if value_kind is None:
-            raise ValueError(f"stream {ref_uri} is not registered")
-        return normalize_value_kind(value_kind)
+            kinds.update(self.timeseries_store.stream_value_kinds(missing))
+            missing = [uri for uri in wanted if uri not in kinds]
+        if missing:
+            raise ValueError(f"stream {missing[0]} is not registered")
+        return {uri: normalize_value_kind(kinds[uri]) for uri in wanted}
 
     def insert_log(self, log_message: LogEntry):
         logger.debug("insert_log point_uri=%s ts=%s", log_message.point_uri, log_message.timestamp)
