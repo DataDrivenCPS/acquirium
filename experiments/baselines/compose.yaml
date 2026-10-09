@@ -1,0 +1,66 @@
+# Baseline systems for RQ4, all bound to loopback on the experiment host.
+#
+#   docker compose -f experiments/baselines/compose.yaml up -d
+#   experiments/baselines/check.sh
+#
+# TimescaleDB is not here: the experiment host already runs it as the
+# `siv-timescale` container on 127.0.0.1:5435 (continuous aggregates are
+# built in). See README.md for endpoints and the measurement protocol.
+
+name: siv-baselines
+
+services:
+  flink-jobmanager:
+    image: flink:1.20-scala_2.12-java17
+    container_name: siv-flink-jobmanager
+    command: jobmanager
+    ports:
+      - "127.0.0.1:8081:8081"       # Flink REST API and web UI
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        jobmanager.memory.process.size: 1600m
+        rest.flamegraph.enabled: true
+    restart: unless-stopped
+
+  flink-taskmanager:
+    image: flink:1.20-scala_2.12-java17
+    container_name: siv-flink-taskmanager
+    command: taskmanager
+    depends_on: [flink-jobmanager]
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.numberOfTaskSlots: 8
+        taskmanager.memory.process.size: 4g
+    restart: unless-stopped
+
+  flink-sql-gateway:
+    image: flink:1.20-scala_2.12-java17
+    container_name: siv-flink-sql-gateway
+    command: >
+      bin/sql-gateway.sh start-foreground
+      -Dsql-gateway.endpoint.rest.address=0.0.0.0
+      -Dsql-gateway.endpoint.rest.port=8083
+    depends_on: [flink-jobmanager]
+    ports:
+      - "127.0.0.1:8083:8083"       # Flink SQL Gateway REST API
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        rest.address: flink-jobmanager
+    restart: unless-stopped
+
+  feldera:
+    image: ghcr.io/feldera/pipeline-manager:latest
+    container_name: siv-feldera
+    ports:
+      - "127.0.0.1:8085:8080"       # Feldera REST API and web console
+    environment:
+      RUST_LOG: info
+    volumes:
+      - siv-feldera:/working-dir
+    restart: unless-stopped
+
+volumes:
+  siv-feldera:
