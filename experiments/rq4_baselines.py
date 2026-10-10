@@ -12,7 +12,7 @@ systems run at per-batch cadence: TimescaleDB refreshes its aggregates
 after every batch, Feldera and Flink are continuous, and the incremental
 runtime polls at 0.1 s.
 
-    python -m experiments.rq4_baselines --hours 3 --systems acquirium,timescale,feldera,flink
+    python -m experiments.rq4_baselines --hours 3 --systems acquirium,timescale
 """
 from __future__ import annotations
 
@@ -188,7 +188,7 @@ def main(argv=None) -> None:
     parser.add_argument("--late", type=float, default=0.05)
     parser.add_argument("--corrections", type=float, default=0.01)
     parser.add_argument("--seed", type=int, default=1)
-    parser.add_argument("--systems", default="acquirium,timescale,feldera,flink",
+    parser.add_argument("--systems", default="acquirium,timescale",
                         help="feldera is the pipeline (Timescale base table, egress applied to Timescale view "
                              "tables by a writer process); feldera-memory is the engine alone")
     parser.add_argument("--timescale-dsn", default="postgresql://acquirium:acquirium@127.0.0.1:5435/acquirium")
