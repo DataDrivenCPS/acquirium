@@ -5,6 +5,7 @@ from urllib.parse import quote
 from unittest.mock import Mock
 import warnings
 
+import polars as pl
 import pytest
 
 from acquirium.Experiments import ExperimentStore, Study, StudyService, timestamp
@@ -43,6 +44,32 @@ def test_file_attachment_is_content_addressed(tmp_path):
         second = experiments.attach_file(run["run_id"], variable["variable_id"], "b.json", "application/json", b"{}")
         assert first["digest"] == second["digest"]
         assert (tmp_path / "artifacts" / first["digest"]).read_bytes() == b"{}"
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("attachment", [False, True])
+@pytest.mark.parametrize("foreign", [False, True])
+def test_observation_rejects_unknown_or_foreign_variable(tmp_path, attachment, foreign):
+    store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
+    try:
+        ledger = ExperimentStore(store, tmp_path / "artifacts")
+        study = ledger.define("owner")
+        other = ledger.define("other")
+        variable = ledger.declare(other["template_id"], "result", "output", "file" if attachment else "scalar", {})
+        run = ledger.start(study["template_id"], {})
+        variable_id = variable["variable_id"] if foreign else "missing"
+        with pytest.raises(ValueError if foreign else KeyError):
+            if attachment:
+                ledger.attach_file(run["run_id"], variable_id, "result.txt", "text/plain", b"result")
+            else:
+                ledger.observe(run["run_id"], variable_id, value=12.5)
+        with store._own_conn() as conn:
+            assert conn.execute("SELECT count(*) FROM experiment_observations").fetchone()[0] == 0
+            assert conn.execute("SELECT count(*) FROM experiment_artifacts").fetchone()[0] == 0
+        assert list(ledger.artifact_dir.iterdir()) == []
+        owned = ledger.declare(study["template_id"], "valid", "output", "scalar", {})
+        assert ledger.observe(run["run_id"], owned["variable_id"], value=42)["sequence"] == 1
     finally:
         store.close()
 
@@ -296,6 +323,60 @@ def test_variable_catalog_expands_non_null_metadata_without_overwriting_columns(
     assert frame["created_at"].dtype.is_temporal()
 
 
+@pytest.mark.parametrize("values", [
+    [12.5, {"event": "done"}],
+    [{"event": "done"}, 12.5],
+    [{"x": 1}, {"y": [2, 3]}],
+    [[1, 2], ["three", {"x": 4}]],
+    [None, True, 42, "note", {"nested": [1, None]}],
+    [*range(101), {"after_inference_window": True}],
+])
+def test_observation_frame_preserves_heterogeneous_values(study_api, values):
+    result = study_api.study.output("result").json()
+    run = study_api.study.start()
+    for value in values:
+        result.record(value)
+    observations = run.observations()
+    assert [item.value for item in observations.all()] == values
+    assert observations.frame()["value"].to_list() == values
+
+
+def test_scalar_observation_frame_supports_numeric_analysis(study_api):
+    result = study_api.study.output("cost").scalar()
+    run = study_api.study.start()
+    result.record(12.5)
+    result.record(7.5)
+    assert run.observations().frame().select(pl.col("value").sum()).item() == 20.0
+
+
+@pytest.mark.parametrize("accessor", ["all", "frame", "latest"])
+def test_observations_refresh_variables_declared_in_another_session(study_api, accessor):
+    study = study_api.study
+    known = study.output("known").scalar()
+    reader = StudyService(study_api.ac).get("study")
+    known_handle = reader.output["known"]
+    added = study.output("added later").scalar(unit="kW")
+    run = study.start()
+    known.record(1)
+    added.record(2)
+    study_api.client.list_experiment_variables.reset_mock()
+
+    result = getattr(reader.experiments.get(run.run_id).observations(), accessor)()
+
+    if accessor == "all":
+        assert [item.value for item in result] == [1, 2]
+        assert result[-1].variable is reader.output["added later"]
+    elif accessor == "frame":
+        assert result["value"].to_list() == [1, 2]
+    else:
+        assert result.value == 2
+    assert reader.output["known"] is known_handle
+    assert reader.output["added later"].metadata == {"unit": "kW"}
+    assert reader.output["added later"].created_at is not None
+    reader.experiments.get(run.run_id).observations().all()
+    study_api.client.list_experiment_variables.assert_called_once_with(reader.study_id)
+
+
 def test_only_new_active_run_declarations_warn(study_api):
     study = study_api.study
     study.output("cost").scalar(unit="USD")
@@ -400,6 +481,14 @@ def test_http_routes_accept_reference_uri_variable_ids_and_stream_annotations(tm
             json={"value": 42.0},
         )
         assert observed.status_code == 200
+        other = ledger.define("other")
+        foreign = ledger.declare(other["template_id"], "foreign", "output", "scalar", {})
+        for invalid_id, expected_status in (("missing", 404), (foreign["variable_id"], 400)):
+            path = f"/experiments/runs/{run['run_id']}/variables/{quote(invalid_id, safe='')}"
+            assert http.post(f"{path}/observations", json={"value": 99}).status_code == expected_status
+            assert http.post(f"{path}/file", content=b"invalid").status_code == expected_status
+        assert len(ledger.observations(study["template_id"])) == 1
+        assert list(ledger.artifact_dir.iterdir()) == []
         tagged = http.post(
             f"/experiments/runs/{run['run_id']}/stream-annotations",
             json={"ref_uri": "urn:plant:flow", "start": "2026-01-01T00:00:00Z", "metadata": {"phase": "trial"}},

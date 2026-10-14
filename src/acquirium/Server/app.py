@@ -170,7 +170,7 @@ def observe_experiment_variable(run_id: str, variable_id: str, request: Experime
         # leave it null, so one append-only ledger covers every variable kind.
         interval = (request.start, request.end) if request.start and request.end else None
         return app.state.manager.experiments.observe(run_id, variable_id, value=request.value, occurred_at=request.occurred_at, ref_uri=request.ref_uri, interval=interval)
-    except KeyError: raise HTTPException(status_code=404, detail="unknown experiment run")
+    except KeyError: raise HTTPException(status_code=404, detail="unknown experiment run or variable")
     except Exception as error: raise HTTPException(status_code=400, detail=str(error))
 
 def annotate_experiment_stream(run_id: str, request: ExperimentStreamAnnotationRequest):
@@ -199,6 +199,7 @@ async def attach_experiment_file(run_id: str, variable_id: str, request: Request
         # The body is raw file bytes to avoid forcing script users through a
         # multipart/form-data API for a single artifact.
         return app.state.manager.experiments.attach_file(run_id, variable_id, request.headers.get("X-Filename", "attachment"), request.headers.get("Content-Type"), await request.body())
+    except KeyError: raise HTTPException(status_code=404, detail="unknown experiment run or variable")
     except Exception as error: raise HTTPException(status_code=400, detail=str(error))
 
 def finish_experiment(run_id: str, request: ExperimentFinishRequest):

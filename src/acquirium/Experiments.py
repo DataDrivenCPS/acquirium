@@ -59,12 +59,22 @@ class ExperimentStore:
             statement = statement.replace("?", "%s")
         return conn.execute(statement, parameters or [])
 
-    def _active(self, conn: Any, run_id: str) -> None:
+    def _active(self, conn: Any, run_id: str) -> str:
         # All observations are append-only while running.  A terminal run is a
         # durable scientific record, not a mutable dashboard row.
-        row = self._execute(conn, "SELECT status FROM experiment_runs WHERE run_id=?", [run_id]).fetchone()
+        row = self._execute(conn, "SELECT status, template_id FROM experiment_runs WHERE run_id=?", [run_id]).fetchone()
         if row is None: raise KeyError(run_id)
         if row[0] != "running": raise ValueError("experiment run is terminal")
+        return row[1]
+
+    def _validate_observation(self, conn: Any, run_id: str, variable_id: str) -> None:
+        template_id = self._active(conn, run_id)
+        row = self._execute(conn, "SELECT template_id FROM experiment_variables WHERE variable_id=?", [variable_id]).fetchone()
+        if row is None:
+            raise KeyError(variable_id)
+        if row[0] != template_id:
+            raise ValueError("variable belongs to a different study")
+
     def _next_observation(self, conn: Any, run_id: str) -> tuple[int, datetime]:
         # Values and stream annotations share one run-local recording order.
         sequence = int(self._execute(conn, "SELECT coalesce(max(sequence),0)+1 FROM experiment_observations WHERE run_id=?", [run_id]).fetchone()[0])
@@ -101,7 +111,7 @@ class ExperimentStore:
         return run
     def observe(self, run_id: str, variable_id: str, *, value: Any = None, occurred_at: datetime | None = None, artifact_digest: str | None = None, ref_uri: str | None = None, interval: tuple[datetime,datetime] | None = None) -> dict[str, Any]:
         with self.store._lock, self.store._write_conn() as conn:
-            self._active(conn, run_id)
+            self._validate_observation(conn, run_id, variable_id)
             # Wall clocks can collide or arrive out of order. Sequence is the
             # authoritative order of observations within one experiment.
             seq, recorded = self._next_observation(conn, run_id)
@@ -115,11 +125,11 @@ class ExperimentStore:
         return {"run_id": run_id, "status": status, "finished_at": finished}
     def attach_file(self, run_id: str, variable_id: str, filename: str, media_type: str | None, data: bytes) -> dict[str, Any]:
         digest = sha256(data).hexdigest(); target = self.artifact_dir / digest
-        # The digest is both an integrity check and deduplication key. Never
-        # overwrite an existing artifact: identical bytes are the same object.
-        if not target.exists(): target.write_bytes(data)
         with self.store._lock, self.store._write_conn() as conn:
-            self._active(conn, run_id)
+            self._validate_observation(conn, run_id, variable_id)
+            # Validate ownership before storing any artifact bytes or metadata.
+            # Identical bytes share one content-addressed artifact.
+            if not target.exists(): target.write_bytes(data)
             self._execute(conn, "INSERT INTO experiment_artifacts VALUES (?, ?, ?, ?, ?) ON CONFLICT(digest) DO NOTHING", [digest, filename, media_type, len(data), _database_timestamp(_now())])
         self.observe(run_id, variable_id, artifact_digest=digest)
         return {"digest": digest, "filename": filename, "byte_length": len(data)}
@@ -924,7 +934,14 @@ class ObservationCollection:
 
     def all(self) -> list[Observation]:
         observations = []
-        for item in self._rows():
+        rows = self._rows()
+        if any(item["variable_id"] not in self.study.variables for item in rows):
+            # Another session may have extended the Study since it was opened.
+            # Preserve existing handles while hydrating missing declarations.
+            for declaration in self.study.client.list_experiment_variables(self.study.study_id):
+                if declaration["variable_id"] not in self.study.variables:
+                    self.study._collections[declaration["role"]]._add(declaration)
+        for item in rows:
             variable = self.study.variables[item["variable_id"]]
             observations.append(Observation(
                 experiment_id=item["experiment_id"],
@@ -950,7 +967,17 @@ class ObservationCollection:
 
     def frame(self) -> pl.DataFrame:
         items = [observation.as_dict() for observation in self.all()]
-        return pl.from_dicts(items, strict=False) if items else pl.DataFrame()
+        if not items:
+            return pl.DataFrame()
+        columns = list(items[0])
+        values = [item.pop("value") for item in items]
+        value_types = {type(value) for value in values if value is not None}
+        # Inference can coerce scalars into structs or discard fields. Keep
+        # structured/mixed values intact, and retain native scalar columns for
+        # selections on which Polars arithmetic and string operations are useful.
+        native_scalar = len(value_types) <= 1 and value_types <= {bool, int, float, str}
+        value_column = pl.Series("value", values) if native_scalar else pl.Series("value", values, dtype=pl.Object)
+        return pl.from_dicts(items, strict=False, infer_schema_length=None).with_columns(value_column).select(columns)
 
     def latest(self) -> Observation:
         observations = self.all()

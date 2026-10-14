@@ -242,6 +242,13 @@ one_run = experiment.observations().frame()
 latest_cost = experiment.observations(cost).latest().value
 ```
 
+The `value` column preserves the Python values returned by `.all()`. Selections
+containing structured values or mixed scalar types use Polars `Object` dtype.
+Uniform scalar types retain native columns for calculations; normalize mixed
+numeric values to a common type before recording if you need numeric operations.
+Observation reads refresh missing variable declarations when another session
+has added them, preserving existing variable handles.
+
 These are retrieval primitives, not an analysis language. Sort, group, join,
 plot, or calculate extrema with Polars and the plotting library of your choice.
 
