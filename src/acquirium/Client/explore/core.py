@@ -314,18 +314,43 @@ class Query:
 
         return tuple(rebuild(e) for e in exprs)
 
+    def _node_attrs(self, g: QueryGraph, nid: int) -> list:
+        """The attributes ``include("all")`` and ``facets()`` cover for a node:
+        every attribute on an entity node, the measurement ones on a
+        measurement node; a list attribute once, under its collapsed name."""
+        if nid in g.data_nodes:
+            return self.registry.for_role("data", summary=True)
+        return [a for a in self.registry.for_role("entity", summary=True)] + [
+            a for a in self.registry.for_role("data", summary=True) if "entity" not in a.roles]
+
+    def _check_applies(self, g: QueryGraph, nid: int, name: str, verb: str = "") -> None:
+        """Refuse an attribute a measurement node cannot carry.
+
+        Only measurement nodes are gated: ``process`` or ``cp_type`` on a
+        measurement is a mistake worth an error. An entity node accepts every
+        attribute, since a measurement point is an entity too and a class can
+        match equipment and points alike; the column is null where a node
+        lacks the attribute.
+        """
+        if nid not in g.data_nodes:
+            return
+        registry = self.registry
+        if name not in registry:      # built-ins answer without asking the server
+            return                    # a parent key: its leaves are user attributes
+        if "data" not in registry[name].roles:
+            alias = g.aliases_reverse.get(nid, str(nid))
+            prefix = f"{verb}: " if verb else ""
+            raise ValueError(f"{prefix}attribute {name!r} does not apply to data node {alias!r}")
+
     def _apply_exprs(self, g: QueryGraph, node_ids: List[int], exprs: "tuple[Expr, ...]") -> QueryGraph:
         """Store expressions on the given nodes (role-checked)."""
         ptr = g.current_pointer
         registry = self.registry
         for nid in node_ids:
             is_data = nid in g.data_nodes
-            role = "data" if is_data else "entity"
             for e in exprs:
                 for name in e.attributes():
-                    if role not in registry[name].roles:
-                        alias = g.aliases_reverse.get(nid, str(nid))
-                        raise ValueError(f"attribute {name!r} does not apply to {role} node {alias!r}")
+                    self._check_applies(g, nid, name)
             if is_data:
                 info = g.data_nodes[nid]
                 g = g.with_data_node(replace(info, exprs=tuple(info.exprs) + exprs))
@@ -342,11 +367,8 @@ class Query:
         registry = self.registry
         for nid in node_ids:
             is_data = nid in g.data_nodes
-            role = "data" if is_data else "entity"
             for name in resolved:
-                if role not in registry[name].roles:
-                    alias = g.aliases_reverse.get(nid, str(nid))
-                    raise ValueError(f"attribute {name!r} does not apply to {role} node {alias!r}")
+                self._check_applies(g, nid, name)
             if is_data:
                 info = g.data_nodes[nid]
                 filters = dict(info.filters)
@@ -912,9 +934,11 @@ class Query:
                     f"include: unknown alias {of!r}" if of is not None
                     else "include: no current node (start with entity())"
                 )
-            role = "data" if nid in g.data_nodes else "entity"
-            expanded = [a.name for a in self.registry.for_role(role, summary=True)
-                        if a.name not in NOT_IN_ALL[role]]
+            # an entity node takes every attribute; a measurement node the
+            # measurement ones
+            kind = "data" if nid in g.data_nodes else "entity"
+            expanded = [a.name for a in self._node_attrs(g, nid)
+                        if a.name not in NOT_IN_ALL[kind]]
             names = tuple(n for name in names
                           for n in (expanded if name == "all" else [name]))
         for name in names:
@@ -926,12 +950,7 @@ class Query:
                 g = self._set_dropped(g, target[1], False)
                 continue
             _, nid, attr_name = target
-            role = "data" if nid in g.data_nodes else "entity"
-            registry = self.registry
-            if not registry.is_group(attr_name) and role not in registry[attr_name].roles:
-                alias = g.aliases_reverse.get(nid, str(nid))
-                raise ValueError(
-                    f"include: attribute {attr_name!r} does not apply to {role} node {alias!r}")
+            self._check_applies(g, nid, attr_name, "include")
             g = g.with_select(nid, attr_name, required, type=type, strict=strict)
         return self._with_graph(g)
 
@@ -1048,10 +1067,7 @@ class Query:
                 else "options: no current node (start with entity())"
             )
         attr = registry[attr_name]
-        role = "data" if nid in g.data_nodes else "entity"
-        if role not in attr.roles:
-            alias = g.aliases_reverse.get(nid, str(nid))
-            raise ValueError(f"options: attribute {attr_name!r} does not apply to {role} node {alias!r}")
+        self._check_applies(g, nid, attr_name, "options")
 
         cache_key = f"options:{attr_name}:{nid}:{include_dependencies}"
         if self.cache.get(cache_key) is None:
@@ -1124,12 +1140,11 @@ class Query:
                 f"facets: unknown alias {of!r}" if of is not None
                 else "facets: no current node (start with entity())"
             )
-        role = "data" if nid in g.data_nodes else "entity"
         alias = g.aliases_reverse.get(nid, str(nid))
         version = self.client.graph_version()
 
         summary = FacetSummary(node_alias=alias)
-        for attr in self.registry.for_role(role, summary=True):
+        for attr in self._node_attrs(g, nid):
             name = attr.name
             df = self.options(name, of=alias, include_dependencies=include_dependencies)
             scope = "matched"
