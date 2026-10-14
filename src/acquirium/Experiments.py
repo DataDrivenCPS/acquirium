@@ -702,14 +702,16 @@ class Experiment:
         result = self.study.client.finish_experiment(self.run_id)
         self.status = result["status"]
         self.finished_at = timestamp(result["finished_at"])
-        self.study._experiment = None
+        if self.study._experiment is not None and self.study._experiment.run_id == self.run_id:
+            self.study._experiment = None
         return result
 
     def fail(self, error: BaseException | Any):
         result = self.study.client.finish_experiment(self.run_id, failed=True, error={"type": type(error).__name__, "message": str(error)})
         self.status = result["status"]
         self.finished_at = timestamp(result["finished_at"])
-        self.study._experiment = None
+        if self.study._experiment is not None and self.study._experiment.run_id == self.run_id:
+            self.study._experiment = None
         return result
 
 class VariableCollection:

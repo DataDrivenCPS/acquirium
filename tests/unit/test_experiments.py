@@ -98,7 +98,7 @@ def study_api(tmp_path):
             **body,
         )
     client.observe_experiment.side_effect = observe
-    client.finish_experiment.side_effect = lambda run_id: ledger.finish(run_id, "succeeded")
+    client.finish_experiment.side_effect = lambda run_id, failed=False, error=None: ledger.finish(run_id, "failed" if failed else "succeeded", error)
     client.annotate_experiment_stream.side_effect = lambda run_id, ref_uri, *, start, end=None, metadata=None: ledger.annotate_stream(run_id, ref_uri, start, end, metadata)
     client.close_experiment_stream_annotation.side_effect = lambda annotation_id, *, end: ledger.close_stream_annotation(annotation_id, end)
     client.list_experiment_stream_annotations.side_effect = ledger.stream_annotations
@@ -209,6 +209,35 @@ def test_long_running_experiment_resumes_in_another_session(study_api):
     with pytest.raises(ValueError, match="running"):
         resumed_study.resume(started.run_id)
     assert result.variable_id == resumed_study.output["efficiency"].variable_id
+
+
+@pytest.mark.parametrize("failed", [False, True])
+@pytest.mark.parametrize("complete_active", [False, True])
+def test_completing_retrieved_run_only_clears_matching_active_binding(study_api, failed, complete_active):
+    study = study_api.study
+    output = study.output("result").scalar()
+    active = study.start()
+    other_study = StudyService(study_api.ac).get("study")
+    other = other_study.start()
+    selected = study.experiments.get(active.run_id if complete_active else other.run_id)
+
+    result = selected.fail(RuntimeError("failed")) if failed else selected.finish()
+
+    assert result["status"] == ("failed" if failed else "succeeded")
+    assert selected.finished_at is not None
+    if complete_active:
+        assert study._experiment is None
+        with pytest.raises(RuntimeError, match="start an experiment"):
+            output.record(42)
+        assert study.start().run_id != active.run_id
+    else:
+        assert study._experiment is active
+        output.record(42)
+        assert active.observations(output).latest().value == 42
+        with pytest.raises(RuntimeError, match="finish the active experiment"):
+            study.start()
+        active.finish()
+        assert study._experiment is None
 
 
 def test_reopened_study_hydrates_variables_and_reads_experiments(study_api):

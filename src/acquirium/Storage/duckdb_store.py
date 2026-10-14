@@ -106,6 +106,11 @@ class DuckDBStore:
             with self._lock, self._own_conn() as conn:
                 conn.execute(f"DROP VIEW IF EXISTS {TIMESERIES_STREAMS_VIEW}")
                 for tbl in (
+                    "experiment_observations",
+                    "experiment_artifacts",
+                    "experiment_runs",
+                    "experiment_variables",
+                    "experiment_templates",
                     "materialization_work",
                     "materialization_lineage",
                     "materialization_deployments",
