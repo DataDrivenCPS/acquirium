@@ -24,15 +24,20 @@ TREATMENT_FLOW = 10.0  # m^3/h
 ac = aq.init(data_dir=HERE / ".data")
 study = ac.study.define("flexpse-api-freeze")
 
+# File input: save the configuration bytes used by each run.
 model_inputs = study.input("model input files").file(
     media_type="application/json"
 )
+# Scalar input: the operating condition supplied to the model.
 treatment_flow = study.input("treatment flow").scalar(unit="M3-PER-HR")
+# Scalar output: the cost computed by the solve.
 operating_cost = study.output("aggregate operating cost").scalar(unit="USD")
+# Time-series output: one power value at each simulation timestamp.
 electrical_power = study.output("aggregate electrical power").timeseries(
     observed="urn:flex-pse:api-freeze:aggregate-electrical-power",
     unit="KiloW",
 )
+# Log: solver status saved with the run.
 solver_events = study.log("solver events")
 
 # --- Acquirium: start this experiment and snapshot its inputs ----------------
@@ -40,12 +45,9 @@ experiment = study.start(
     metadata={"model": "api-freeze", "scenario": "baseline"}
 )
 try:
-    for path in (
-        INPUTS / "model.json",
-        INPUTS / "tariff.json",
-        INPUTS / "dr_events.json",
-    ):
-        model_inputs.record(path)
+    model_inputs.record(INPUTS / "model.json")
+    model_inputs.record(INPUTS / "tariff.json")
+    model_inputs.record(INPUTS / "dr_events.json")
     treatment_flow.record(TREATMENT_FLOW)
 
     # --- FlexPSE: build and solve the model ----------------------------------
@@ -62,26 +64,19 @@ try:
         model.waterfacility.plant.flow_out[t].fix(TREATMENT_FLOW)
 
     pyo.TransformationFactory("network.expand_arcs").apply_to(model)
-    results = get_solver(model=model, prefer="highs").solve(model)
+    solver = get_solver(model=model, prefer="highs")
+    results = solver.solve(model)
     assert_optimal_termination(results)
 
     objective = float(pyo.value(model.objective))
-    power_rows = [
-        (
-            timestamp,
-            pyo.value(
-                pyo.units.convert(
-                    model.costing.aggregate_electrical_power[t],
-                    to_units=pyo.units.kW,
-                )
-            ),
-        )
-        for timestamp, t in zip(
-            model.time_block.datetime_index,
-            model.time_block.time_index,
-            strict=True,
-        )
-    ]
+    timestamps = model.time_block.datetime_index
+    model_times = model.time_block.time_index
+    sample_times = zip(timestamps, model_times, strict=True)
+    power_rows = []
+    for timestamp, time in sample_times:
+        power_expression = model.costing.aggregate_electrical_power[time]
+        power_kw = pyo.units.convert(power_expression, to_units=pyo.units.kW)
+        power_rows.append((timestamp, pyo.value(power_kw)))
 
     # --- Acquirium: save the results and complete the experiment -------------
     operating_cost.record(objective)

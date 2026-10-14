@@ -1,76 +1,52 @@
 # FlexPSE experiment
 
-This example tracks a FlexPSE optimization with Acquirium's experiment
-interface. It is based on FlexPSE's
-[`api_freeze` fixture](https://github.com/flex-pse/flex-pse/tree/main/src/flexops/tests/fixtures/api_freeze):
-a tank feeds a constant-energy-intensity treatment plant, and a battery can
-shift the combined electrical load against a time-varying tariff. The upstream
-fixture deliberately leaves operating conditions free; this example adds and
-records a constant 10 m³/h treatment demand so the solve has a nonzero load.
+Record a FlexPSE optimization with Acquirium. The model uses the
+[`api_freeze` fixture](https://github.com/flex-pse/flex-pse/tree/v0.1.0/src/flexops/tests/fixtures/api_freeze):
+a tank, a treatment plant, and a battery on a time-varying tariff. This example
+sets treatment demand to 10 m³/h; the upstream fixture leaves it free.
 
-The derived `pyproject.toml` installs this Acquirium checkout as an editable
-path dependency. FlexPSE documents `flex-pse[solvers]` as the way to install
-HiGHS for LP/MILP models. Because that project name is not yet published on
-PyPI, the uv source table maps it to FlexPSE's official `v0.1.0` tag; the lock
-file pins the tag's commit. This example does not require the separately
-installed IPOPT extensions.
+The environment installs this Acquirium checkout, FlexPSE `v0.1.0`, and HiGHS
+through `flex-pse[solvers]`. The lock file pins the FlexPSE commit.
 
-From this directory, create the environment:
+## Notebook
+
+From this directory:
 
 ```bash
 uv sync
-```
-
-Open the guided notebook:
-
-```bash
 uv run marimo edit ../../docs/tutorials/first-experiment.py
 ```
 
-The notebook loads `flexpse-watr-model.ttl`, which represents the facility,
-tank, plant, battery, and their properties in the plant graph. It runs three
-scenarios, reopens their Study without redeclaring variables, and compares the
-baseline tank trajectory with an explicitly synthetic deployment stream. Both
-streams point at the model's `tank-volume` property but retain separate
-simulation and deployment provenance.
+The notebook records one baseline in separate cells, then two more scenarios
+in a loop. It reopens the Study to compare costs and trajectories.
 
-The synthetic rows demonstrate where data from a real driver would enter. They
-are generated only because this example does not ship measurements from an
-actual facility.
+It also shows how to find a site stream and compare it with saved tank-volume
+results. The notebook supplies synthetic measurements for this example.
+At your site, use the stream collected by your driver.
 
-Run the model and record its Experiment:
+`flexpse-watr-model.ttl` describes the facility, tank, plant, battery, and their
+properties.
+
+## Script
 
 ```bash
 uv run python record_experiment.py
 ```
 
-The script calls `aq.init(data_dir=".data")`, which starts an exact-only local
-Acquirium runtime on an available loopback port. No separate server or config
-file is required. It shuts the runtime down after printing the result; normal
-interpreter exit also cleans it up after an error.
+The script starts a local Acquirium server and records:
 
-The script records:
+- model, tariff, and demand-response files;
+- treatment flow;
+- solver completion;
+- operating cost;
+- electrical-power samples.
 
-- the model configuration, tariff, and demand-response files;
-- the scenario's treatment flow;
-- a structured solver-completion event;
-- the aggregate operating cost;
-- the optimized aggregate electrical-power trajectory.
+It prints the Experiment ID, objective, stream URI, and first five samples,
+then stops the server. Data stays in `.data/`. Each execution reuses the Study
+and creates a new run.
 
-Section comments in `record_experiment.py` separate the ordinary FlexPSE model
-build and solve from the Acquirium calls that declare variables, record inputs
-and outputs, and finish the Experiment.
+## Input files
 
-It prints the Experiment ID, objective value, time-series reference URI, and
-the first five stored power samples. Run it again to reuse the Study definition
-and create a separate Experiment and result stream.
-
-The local runtime keeps its data under `.data/`, so subsequent executions reuse
-the Study and stored results.
-
-The files under `inputs/` match FlexPSE's `v0.1.0` API-freeze fixtures and are
-redistributed under FlexPSE's
+The files under `inputs/` match FlexPSE's `v0.1.0` API-freeze fixtures. They are
+redistributed under its
 [Apache-2.0 license](https://github.com/flex-pse/flex-pse/blob/v0.1.0/LICENSE).
-
-For a guided walkthrough, see
-[`docs/tutorials/first-experiment.py`](../../docs/tutorials/first-experiment.py).

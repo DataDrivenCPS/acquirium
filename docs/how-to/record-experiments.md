@@ -1,12 +1,13 @@
 # Record experiments
 
-Use experiments to record the inputs, outputs, and events produced by a script
-or notebook without changing how the calculation itself runs. For a complete
-example, start with [Your first experiment](../tutorials/first-experiment.py).
+Record a script's inputs, outputs, and events as an Experiment. For a runnable
+example, see [Your first experiment](../tutorials/first-experiment.py).
 
 ## Wrap an analysis in an experiment
 
-Define a reusable Study and declare its variables before starting a run:
+Connect to your Acquirium server, then declare the values you want to record.
+Inputs describe what goes into the calculation; outputs hold its results.
+The type specifies how Acquirium stores each value.
 
 ```python
 import acquirium as aq
@@ -14,36 +15,48 @@ import acquirium as aq
 ac = aq.Acquirium()
 study = ac.study.define("operating-scenarios")
 
+# A structured input used by your calculation.
 configuration = study.input("configuration").json()
+# One numeric result per record, with its unit.
 cost = study.output("total operating cost").scalar(unit="USD")
+# Events and diagnostics saved with each run.
 solver_log = study.log("solver events")
 ```
 
-Start one Experiment for each execution of the analysis. Finish successful
-runs and mark unsuccessful runs as failed:
+Start an Experiment for each run. Replace `solve_model(config)` with your
+existing calculation; this example reads its `total_cost` result.
 
 ```python
+configurations = [
+    {"name": "baseline", "flow_m3_per_hour": 10.0},
+    {"name": "higher throughput", "flow_m3_per_hour": 12.0},
+]
+
 for config in configurations:
+    # Acquirium: start a run and save its inputs.
     experiment = study.start(metadata={"scenario": config["name"]})
     try:
         configuration.record(config)
+
+        # Your model: run the calculation as usual.
         result = solve_model(config)
+
+        # Acquirium: save the results and end the run.
         cost.record(result.total_cost)
         solver_log.record({"event": "solve-complete"})
         experiment.finish()
     except Exception as error:
+        # Keep the recorded inputs and mark this run failed.
         experiment.fail(error)
         raise
 ```
 
-The same handles write to whichever Experiment is active on the Study. A Study
-allows one active Experiment at a time, and a finished or failed Experiment
-accepts no more observations.
+Variable handles write to the Study object's active Experiment. Each object
+allows one active run. Finished and failed runs reject further variable writes.
 
 ## Choose what to record
 
-All handles provide `record(value)`. The declaration determines the accepted
-value and how Acquirium stores it:
+Use `record(value)` for every variable type:
 
 | Declaration | Value passed to `record()` |
 |---|---|
@@ -60,6 +73,7 @@ and unique across all inputs, outputs, and logs in a Study.
 A file handle copies the file into Acquirium when `record()` is called:
 
 ```python
+# File input: retain the bytes used by this run.
 configuration_file = study.input("configuration file").file(
     media_type="application/json"
 )
@@ -69,31 +83,34 @@ configuration_file.record("config.json")
 experiment.finish()
 ```
 
-The copy is content-addressed by its SHA-256 digest. Editing the local file
-later does not change the recorded artifact.
+Files are stored by SHA-256 digest. Later edits to the local file leave the
+recorded copy unchanged.
 
-The type-specific methods `set()`, `append()`, `attach()`, and `add()` remain
-available for values, logs, files, and time-series rows, respectively.
+You can also use `set()` for values, `append()` for logs, `attach()` for files,
+and `add()` for time-series rows.
 
 ## Record progress and event times
 
-Repeated calls add observations to the run. This is useful for solver progress,
-intermediate objectives, and diagnostic events:
+Each call adds an observation. Record progress and intermediate results as they
+occur:
 
 ```python
+experiment = study.start()
 solver_log.record({"event": "presolve-complete"})
 cost.record(1240.0)
 cost.record(1195.0)
 ```
 
-The server assigns every observation a UTC receipt time and a sequence number
-within the run. If an event occurred earlier, record that time separately:
+The server assigns a UTC receipt time and sequence number. Use `occurred_at`
+to record when an event happened:
 
 ```python
+event_time = aq.timestamp("2026-08-01T12:00:00Z")
 solver_log.record(
     {"event": "converged"},
-    occurred_at=aq.timestamp("2026-08-01T12:00:00Z"),
+    occurred_at=event_time,
 )
+experiment.finish()
 ```
 
 `occurred_at` applies to JSON, text, scalar, and log records. Time-series rows
@@ -108,50 +125,49 @@ experiment = study.start()
 result = solve_model(config)
 
 cost.record(result.total_cost)
+# Declare a new result discovered while working on the model.
 peak_load = study.output("peak load").scalar(unit="KiloW")
 peak_load.record(result.peak_load)
 
 experiment.finish()
 ```
 
-Acquirium emits a `UserWarning` when this creates a new variable. The variable
-becomes part of the reusable Study, so earlier Experiments may not contain it.
-Redeclaring an existing variable with matching metadata does not warn.
+New declarations during a run emit `UserWarning` and become part of the Study.
+Earlier runs may lack those variables. Matching redeclarations do not warn.
 
 For quick exploratory values, assign through the active Experiment:
 
 ```python
 experiment = study.start()
 experiment.output["total operating cost"] = result.total_cost
+# A new label creates a unitless scalar variable.
 experiment.output["exploratory score"] = 0.95
 experiment.finish()
 ```
 
-For a new label, integers and floats infer a unitless scalar, strings infer
-text, and booleans, lists, dictionaries, and `None` infer JSON. Declare files
-and time series explicitly because their required metadata cannot be inferred
-from the value. Prefer a declared handle in reusable analysis code.
+New labels infer a unitless scalar for numbers, text for strings, and JSON for
+booleans, lists, dictionaries, and `None`. Declare files and time series
+explicitly. Use declared handles in reusable code.
 
 ## Reuse a Study in another session
 
-Study definitions persist. Calling `define()` again with the same name reuses
-the stored Study and loads its previous variable handles. Use `get()` when the
-process is only reading existing experiments:
+`define(name)` reopens an existing Study or creates it. `get(name)` requires
+an existing Study. Both load its saved declarations:
 
 ```python
+# Reuse the Study when running more calculations.
 study = ac.study.define("operating-scenarios")
 cost = study.output["total operating cost"]
 
+# Load saved declarations for analysis.
 historical = ac.study.get("operating-scenarios")
 historical.variables.frame()
 ```
 
-Calling the declaration syntax remains idempotent. The role, type, unit, and
-other metadata must match the stored declaration; Acquirium rejects conflicts
-rather than changing how earlier runs should be interpreted.
+Repeating a declaration returns the existing variable. Its role, type, unit,
+and metadata must match; conflicts raise an error.
 
-Collections can also retrieve or enumerate the handles declared through the
-current Study object:
+Index collections by label or iterate over their variables:
 
 ```python
 assert study.output["total operating cost"] is cost
@@ -159,19 +175,21 @@ assert study.output["total operating cost"] is cost
 for output in study.output:
     print(output.label, output.kind)
 
-for label, output in study.output.items():
+outputs_by_label = study.output.items()
+for label, output in outputs_by_label:
     print(label, output)
 ```
 
 `study.input` and `study.log` support the same collection operations.
 
-For all declarations together, including their persisted metadata:
+Use `study.variables` for all declarations and their metadata:
 
 ```python
 for variable in historical.variables:
     print(variable.label, variable.role, variable.kind, variable.metadata)
 
-timeseries_variables = historical.variables.where(kind="timeseries").frame()
+timeseries_variables = historical.variables.where(kind="timeseries")
+timeseries_table = timeseries_variables.frame()
 ```
 
 ## Connect a time-series result to the facility
@@ -182,53 +200,60 @@ For example, this lists the properties on the seawater RO model's outlet:
 
 ```python
 S223 = "http://data.ashrae.org/standard223#"
-outlet_properties = (
-    ac.query()
-    .entity(uri="urn:swro/RO-out", alias="outlet")
-    .related(
-        S223 + "QuantifiableObservableProperty",
-        via=[S223 + "hasProperty"],
-        max_depth=1,
-        alias="property",
-    )
+property_class = S223 + "QuantifiableObservableProperty"
+property_links = [S223 + "hasProperty"]
+
+# Start at the outlet in the plant model.
+plant_query = ac.query()
+outlet = plant_query.entity(uri="urn:swro/RO-out", alias="outlet")
+
+# Follow its property links.
+outlet_properties = outlet.related(
+    property_class,
+    via=property_links,
+    max_depth=1,
+    alias="property",
 )
-outlet_properties.metadata()
+property_table = outlet_properties.metadata()
+property_table
+
+# Get full URIs to use in variable declarations.
 property_uris = outlet_properties.resolved_nodes(alias="property")
 print(property_uris)
 ```
 
-This query finds modeled properties even before streams are registered against
-them. `metadata()` displays the matches; `resolved_nodes()` returns their full
-URIs. Inspect the results and select the property that describes your output.
-The water mass-flow property at this outlet is
-`urn:swro/RO-out-flow-mass-water`:
+This works before any streams are registered. `metadata()` displays matches;
+`resolved_nodes()` returns full URIs. Select the property for your output.
+Here, water mass flow is `urn:swro/RO-out-flow-mass-water`:
 
 ```python
+permeate_property_uri = "urn:swro/RO-out-flow-mass-water"
+# A computed trajectory linked to the modeled flow property.
 permeate_flow = study.output("permeate flow").timeseries(
-    observed=ac.point("urn:swro/RO-out-flow-mass-water"),
+    observed=permeate_property_uri,
     unit="KiloGM-PER-SEC",
 )
 
-experiment = study.start(metadata={"scenario": "baseline"})
-recorded_flow = permeate_flow.record([
+# These rows would come from your calculation.
+flow_rows = [
     ("2026-08-01T12:00:00Z", 55.2),
     ("2026-08-01T12:15:00Z", 55.0),
-])
+]
+
+experiment = study.start(metadata={"scenario": "baseline"})
+recorded_flow = permeate_flow.record(flow_rows)
 experiment.finish()
 
+# Read this run's saved samples.
 frame = recorded_flow.dataframe()
 ```
 
-Use the property URI, not the equipment URI. Passing the URI string directly
-is equivalent to `ac.point(uri)`. Free-text calls to `ac.resolve(text)` search
-ontology concepts, such as classes and quantity kinds. Use plant queries to
-find the deployment's property instances, then persist the chosen full URI in
-reusable analysis code.
+`observed` takes a property URI, either as a string or `ac.point(uri)`.
+`ac.resolve(text)` searches ontology concepts such as classes and quantity
+kinds. Use plant queries to find property instances.
 
-Every run writes to a distinct source named `experiment/<run_id>`, so two
-scenarios can record the same timestamps for the same property without
-overwriting each other. The result is an ordinary Acquirium time series and is
-available through the usual query and stream APIs.
+Each run writes under `experiment/<run_id>`, keeping scenario results separate.
+Read them through Acquirium's query and stream APIs.
 
 If there is no plant model or known property URI, omit `observed`:
 
@@ -236,27 +261,28 @@ If there is no plant model or known property URI, omit `observed`:
 simulated_power = study.output("simulated power").timeseries(unit="kW")
 ```
 
-Its source and label still give the result a stable stream identity within
-the run. You can add a property link when the model is available.
-
-`record()` returns the `RecordedSeries` used above, so fetching that run's
-samples does not require constructing the internal source name.
+The run source and variable label identify the stream. `record()` returns a
+`RecordedSeries`; call `.dataframe()` to read its samples.
 
 For example, this finds mass-flow streams connected to the RO stage, including
 the recorded output:
 
 ```python
-(ac.query()
- .entity(uri="urn:swro/RO", alias="ro")
- .measurement(
-     quantity_kind="http://qudt.org/vocab/quantitykind/MassFlowRate",
-     alias="flow",
- )
- .metadata())
+mass_flow_kind = "http://qudt.org/vocab/quantitykind/MassFlowRate"
+
+# Find mass-flow measurements on the RO stage.
+equipment_query = ac.query()
+ro = equipment_query.entity(uri="urn:swro/RO", alias="ro")
+flow_query = ro.measurement(quantity_kind=mass_flow_kind, alias="flow")
+
+# Include references to distinguish streams on the same property.
+flow_data = flow_query.data()
+flow_streams = flow_data.metadata(include_ref_uris=True)
+flow_streams
 ```
 
-Linking streams to the same property makes them discoverable together; it does
-not automatically select scenarios, align timestamps, or normalize units.
+A shared property lets queries find related streams. Select scenarios, align
+timestamps, and convert units yourself when comparing them.
 
 See [Load a plant model](load-a-plant-model.md) and
 [A driver against an existing plant model](../tutorials/driver-with-a-plant-model.md)
@@ -267,85 +293,92 @@ for ways to find the available properties.
 Use `use()` when an Experiment consumes a stream that is already in Acquirium:
 
 ```python
-source_data = study.input("source data").json()
+# Replace these names with the ones from your driver configuration.
+stream_source = "site-driver"
+stream_name = "biogas-flow"
+stream_ref_uri = str(ac.reference_uri(stream_source, stream_name))
+
+# Time-series input: reference samples already collected at the site.
+source_data = study.input("source data").timeseries()
+input_start = aq.timestamp("2026-08-01T12:00:00Z")
+input_end = aq.timestamp("2026-08-02T12:00:00Z")
+input_interval = (input_start, input_end)
 
 experiment = study.start()
-source_data.use(
-    stream_ref_uri,
-    interval=(
-        aq.timestamp("2026-08-01T12:00:00Z"),
-        aq.timestamp("2026-08-02T12:00:00Z"),
-    ),
-)
+source_data.use(stream_ref_uri, interval=input_interval)
 experiment.finish()
 ```
 
-This records the stream reference and optional interval, not a copy of the
-rows. Later corrections to the stream can therefore change the data returned
-by that reference. Record a file artifact when the analysis needs an unchanged
-snapshot.
+`use()` stores the stream reference and interval. Reads include later
+corrections to the source data. Record a file for a fixed snapshot.
 
 ## Tag an existing live stream
 
-Use a stream annotation when a time range of continuous plant data was part of
-an experiment. You can tag a past interval or leave its end open while the
-experiment continues. The reference URI comes from stream discovery, for
-example a row in `.measurements`, or from `ac.reference_uri(source, name)`.
+Use `annotate_stream()` to associate an existing stream interval with a run.
+Set both bounds for past data, or omit the end for an ongoing trial. Find the
+stream URI through discovery or `ac.reference_uri(source, name)`.
 
 ```python
 study = ac.study.define("membrane trials")
+# Declare a trial result now so another session can record it later.
+biogas_efficiency = study.output("biogas efficiency").scalar()
 experiment = study.start(metadata={"digester": "A"})
+# Keep this ID to resume the trial in another session.
+saved_run_id = experiment.run_id
 
+# Associate the existing stream with this trial from its start time onward.
+trial_start = aq.timestamp("2026-08-01T00:00:00Z")
 annotation = experiment.annotate_stream(
     stream_ref_uri,
-    start=aq.timestamp("2026-08-01T00:00:00Z"),
+    start=trial_start,
     metadata={"membrane": "candidate 2"},
 )
 
-# Later, after the treatment ends:
-annotation.close(aq.timestamp("2026-08-12T18:00:00Z"))
-experiment.finish()
 ```
 
-An interval with both bounds can be added retrospectively by passing `end=`
-at creation, even when the Experiment has already finished. Both bounds are
-inclusive when reading samples. An annotation
-stores a reference, so it does not freeze or copy the underlying values.
-`annotation.dataframe()` reads the current values in its interval.
+Pass `end=` to add a closed interval, including after the Experiment finishes.
+`annotation.dataframe()` reads current samples with inclusive bounds.
 
-Find all experiments that tagged a stream during a time window, even across
-Studies:
+Find annotations across Studies by stream and overlapping time window:
 
 ```python
+search_start = aq.timestamp("2026-08-05T00:00:00Z")
+search_end = aq.timestamp("2026-08-06T00:00:00Z")
 matches = ac.study.stream_annotations(
     ref_uri=stream_ref_uri,
-    start=aq.timestamp("2026-08-05T00:00:00Z"),
-    end=aq.timestamp("2026-08-06T00:00:00Z"),
+    start=search_start,
+    end=search_end,
 )
 for match in matches:
     print(match.template_id, match.run_id, match.metadata)
 ```
 
-`study.stream_annotations(...)` limits the search to one Study, and
-`experiment.stream_annotations(...)` limits it to one Experiment. Separate
-Study objects may run experiments concurrently against the same live stream.
-You can close an open annotation after finishing its Experiment when the
-effective end time becomes known.
+Use `study.stream_annotations(...)` or `experiment.stream_annotations(...)`
+to narrow the search. Concurrent runs can annotate the same stream. You can
+close an interval after its Experiment finishes.
 
-For a trial that spans script sessions, reopen its Study and resume the running
-Experiment. Its variable handles then record into the same run:
+To continue a running trial in another session, reopen its Study and resume it:
 
 ```python
+# Reopen the Study and bind its handles to the saved running trial.
 study = ac.study.get("membrane trials")
 experiment = study.resume(saved_run_id)
-study.output["biogas efficiency"].record(0.82)
+biogas_efficiency = study.output["biogas efficiency"]
+biogas_efficiency.record(0.82)
+```
+
+When the trial ends, retrieve its annotation, close the interval, and finish:
+
+```python
+trial_annotations = experiment.stream_annotations()
+annotation = trial_annotations[0]
+trial_end = aq.timestamp("2026-08-12T18:00:00Z")
+annotation.close(trial_end)
 experiment.finish()
 ```
 
-Declare `biogas efficiency` before recording it, as with any other Study
-variable. A separate Study object can resume a different run of the same Study
-when parallel treatment trains are active.
+`resume()` requires a running trial. Use separate Study objects for concurrent
+runs.
 
-For interface details, see the [Experiment reference](../reference/experiments.md).
-[How experiments preserve context](../explanation/experiments.md) explains the
-relationship between the run ledger, files, and time-series storage.
+See the [reference](../reference/experiments.md) for the API and
+[explanation](../explanation/experiments.md) for storage and run behavior.

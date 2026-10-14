@@ -13,7 +13,7 @@ app = marimo.App(width="medium")
 
 @app.cell
 def _():
-    import os
+    from contextlib import chdir
     from pathlib import Path
     from uuid import uuid4
 
@@ -34,11 +34,11 @@ def _():
         aq,
         assert_optimal_termination,
         build_model,
+        chdir,
         get_solver,
         load_model_config,
         mo,
         np,
-        os,
         pl,
         plt,
         pyo,
@@ -51,17 +51,12 @@ def _(mo):
     mo.md(r"""
     # Your first experiment
 
-    This notebook runs several variants of FlexPSE's
+    Run three scenarios from FlexPSE's
     [`api_freeze`](https://github.com/flex-pse/flex-pse/tree/main/src/flexops/tests/fixtures/api_freeze)
-    model and records them as Acquirium Experiments.
+    model. Save each run's inputs and results, then compare scenarios and
+    explore the saved data.
 
-    The FlexPSE calculation remains an ordinary model build and solve. The
-    Experiment interface adds a durable account of its inputs, outputs,
-    events, and their meaning. After producing several runs, we will reopen
-    the Study from SQL, discover its variables, compare the results, and
-    retrieve one Experiment without relying on the declaration cells.
-
-    Run this notebook from its derived environment:
+    Run from the example directory:
 
     ```bash
     cd examples/flexpse
@@ -83,9 +78,7 @@ def _(Path):
 
 @app.cell
 def _(EXAMPLE, PLANT_MODEL, aq, uuid4):
-    # aq.init starts an embedded server and keeps its SQL/time-series data in
-    # examples/flexpse/.data. A unique session tag lets the analysis below
-    # select only the Experiments created by this execution of the notebook.
+    # Keep data in examples/flexpse/.data. Tag runs from this notebook session.
     ac = aq.init(data_dir=EXAMPLE / ".data")
     ac.insert_graph_file(PLANT_MODEL, source_id="plant")
     notebook_session = str(uuid4())
@@ -95,27 +88,23 @@ def _(EXAMPLE, PLANT_MODEL, aq, uuid4):
 @app.cell
 def _(mo):
     mo.md(r"""
-    ## Describe the Study before recording values
+    ## Declare variables
 
-    A **Study** describes a reusable family of comparable calculations.
-    Variables declare what will be recorded and how it should be stored;
-    they do not contain results themselves.
+    A **Study** declares the variables shared by its runs.
 
-    - `.scalar()` stores a single value with metadata such as its unit.
-    - `.file()` snapshots the bytes of an input file.
-    - `.timeseries()` creates a normal Acquirium stream and records its URI.
-    - `study.log()` stores ordered events from a run.
+    - `.scalar()` records a number and optional unit.
+    - `.file()` saves a file copy.
+    - `.timeseries()` records samples in an Acquirium stream.
+    - `study.log()` records events.
 
-    The `observed` URI on tank volume and electrical power is the durable
-    connection to the plant model. It says what physical property the
-    simulated values describe, rather than merely attaching a display
-    label to a column.
+    `observed` identifies the plant property the values describe.
     """)
     return
 
 
 @app.cell
 def _(ac):
+    # Plant URIs link the recorded values to the facility model.
     TANK_URI = "urn:flex-pse:api-freeze:tank"
     TANK_VOLUME_URI = "urn:flex-pse:api-freeze:tank-volume"
     TREATMENT_FLOW_URI = "urn:flex-pse:api-freeze:treatment-flow"
@@ -123,11 +112,16 @@ def _(ac):
         "urn:flex-pse:api-freeze:aggregate-electrical-power"
     )
 
+    # Declare reusable recording handles; record() supplies their values.
+    # input/output describe the role; file/scalar/timeseries select storage.
     study = ac.study.define("flexpse-watr-model")
 
+    # File input: keep a copy of each configuration used by the model.
     model_inputs = study.input("model input files").file(
         media_type="application/json"
     )
+    # Scalar inputs: one chosen flow and starting volume per run.
+    # unit describes the value; observed identifies its plant property.
     treatment_flow = study.input("treatment flow").scalar(
         unit="M3-PER-HR",
         observed=TREATMENT_FLOW_URI,
@@ -137,7 +131,9 @@ def _(ac):
         observed=TANK_VOLUME_URI,
     )
 
+    # Scalar output: one operating cost computed by the solver.
     operating_cost = study.output("aggregate operating cost").scalar(unit="USD")
+    # Time-series outputs: results at each simulation timestamp.
     tank_volume = study.output("tank volume").timeseries(
         observed=TANK_VOLUME_URI,
         unit="M3",
@@ -146,6 +142,7 @@ def _(ac):
         observed=ELECTRICAL_POWER_URI,
         unit="KiloW",
     )
+    # Log: solver status and diagnostic events for each run.
     solver_events = study.log("solver events")
     return (
         TANK_URI,
@@ -164,18 +161,234 @@ def _(ac):
 @app.cell
 def _(mo):
     mo.md(r"""
-    ## Keep the model calculation and the experiment record distinct
+    ## Run the baseline
 
-    The function below repeats one calculation for each set of initial
-    conditions. Its middle block is the FlexPSE model code: build the model,
-    set its operating conditions, solve it, and turn results into ordinary
-    Python values.
+    Set the treatment flow and initial tank volume. Start an Experiment
+    and record these inputs before building the model.
+    """)
+    return
 
-    The Acquirium blocks around it have a narrower job. Before the solve,
-    they record the inputs that the model consumes. Afterwards, they record
-    the resulting scalar and trajectories. `record()` always targets the
-    currently active Experiment and dispatches according to the variable's
-    declaration above.
+
+@app.cell
+def _():
+    baseline_flow_m3_per_hour = 10.0
+    baseline_tank_volume_m3 = 500.0
+    return baseline_flow_m3_per_hour, baseline_tank_volume_m3
+
+
+@app.cell
+def _(
+    INPUTS,
+    baseline_flow_m3_per_hour,
+    baseline_tank_volume_m3,
+    initial_tank_volume,
+    model_inputs,
+    notebook_session,
+    study,
+    treatment_flow,
+):
+    # Start a run; the declared handles now record into this Experiment.
+    baseline_experiment = study.start(
+        metadata={
+            "model": "api-freeze",
+            "scenario": "baseline",
+            "notebook_session": notebook_session,
+        }
+    )
+    # Snapshot the files before solving; later edits leave these copies intact.
+    model_inputs.record(INPUTS / "model.json")
+    model_inputs.record(INPUTS / "tariff.json")
+    model_inputs.record(INPUTS / "dr_events.json")
+    treatment_flow.record(baseline_flow_m3_per_hour)
+    initial_tank_volume.record(baseline_tank_volume_m3)
+    baseline_experiment.as_dict()
+    return (baseline_experiment,)
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    ### Build the model and set operating conditions
+
+    Equal inflow and treatment throughput keep the tank volume constant.
+    Build from the inputs directory to resolve the tariff and demand-response
+    filenames.
+
+    The setup below uses FlexPSE and Pyomo. The `except` block uses Acquirium
+    to mark the Experiment failed if setup raises an error.
+    """)
+    return
+
+
+@app.cell
+def _(
+    INPUTS,
+    baseline_experiment,
+    baseline_flow_m3_per_hour,
+    baseline_tank_volume_m3,
+    build_model,
+    chdir,
+    load_model_config,
+):
+    try:
+        # FlexPSE: load the configuration and build the model.
+        with chdir(INPUTS):
+            baseline_model = build_model(load_model_config(INPUTS / "model.json"))
+
+        # Pyomo: set the tank's starting volume.
+        baseline_model.waterfacility.tank.initial_volume.set_value(
+            baseline_tank_volume_m3
+        )
+
+        # Pyomo: fix inflow and treatment flow at every time step.
+        for baseline_time in baseline_model.time_block.time_index:
+            baseline_model.waterfacility.tank.flow_in[baseline_time].fix(
+                baseline_flow_m3_per_hour
+            )
+            baseline_model.waterfacility.plant.flow_out[baseline_time].fix(
+                baseline_flow_m3_per_hour
+            )
+    except Exception as setup_error:
+        # Acquirium: save the failure, then raise the original exception.
+        baseline_experiment.fail(setup_error)
+        raise
+    return (baseline_model,)
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ### Solve the model
+
+    Expand the connections between model units into equations, then solve
+    with HiGHS. Check that the solver found an optimal solution before
+    extracting results.
+    """)
+    return
+
+
+@app.cell
+def _(
+    assert_optimal_termination,
+    baseline_experiment,
+    baseline_model,
+    get_solver,
+    pyo,
+):
+    try:
+        # Pyomo: turn network arcs into constraints between connected units.
+        pyo.TransformationFactory("network.expand_arcs").apply_to(baseline_model)
+
+        # FlexPSE: select HiGHS and solve the model.
+        baseline_solver = get_solver(model=baseline_model, prefer="highs")
+        baseline_solver_results = baseline_solver.solve(baseline_model)
+
+        # Pyomo: require an optimal solution.
+        assert_optimal_termination(baseline_solver_results)
+        solved_baseline_model = baseline_model
+    except Exception as solve_error:
+        # Acquirium: mark the Experiment failed if solving fails.
+        baseline_experiment.fail(solve_error)
+        raise
+    return baseline_solver_results, solved_baseline_model
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ### Inspect the results
+
+    Extract the objective as a number and the trajectories as a Polars table.
+    """)
+    return
+
+
+@app.cell
+def _(pl, pyo, solved_baseline_model):
+    # Extract numbers from the solved Pyomo expressions.
+    baseline_cost_usd = float(pyo.value(solved_baseline_model.objective))
+    baseline_timestamps = list(solved_baseline_model.time_block.datetime_index)
+    baseline_power_values = []
+    baseline_volume_values = []
+    baseline_power_output = solved_baseline_model.costing.aggregate_electrical_power
+    baseline_tank_output = solved_baseline_model.waterfacility.tank.volume
+
+    for baseline_result_time in solved_baseline_model.time_block.time_index:
+        # Convert power to the unit declared for electrical_power.
+        baseline_power_expression = baseline_power_output[baseline_result_time]
+        baseline_power_kw = pyo.units.convert(
+            baseline_power_expression, to_units=pyo.units.kW
+        )
+        baseline_power_values.append(pyo.value(baseline_power_kw))
+
+        baseline_volume_expression = baseline_tank_output[baseline_result_time]
+        baseline_volume_values.append(pyo.value(baseline_volume_expression))
+
+    baseline_trajectories = pl.DataFrame({
+        "ts": baseline_timestamps,
+        "power_kw": baseline_power_values,
+        "volume_m3": baseline_volume_values,
+    })
+    baseline_trajectories
+    return baseline_cost_usd, baseline_trajectories
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ### Record the outputs and finish the Experiment
+
+    Record the cost, trajectories, and solver event, then call `finish()`.
+    The handles write to the active baseline Experiment.
+
+    To repeat the baseline, rerun from its `study.start()` cell or change its
+    inputs. Finished runs reject further writes.
+    """)
+    return
+
+
+@app.cell
+def _(
+    baseline_cost_usd,
+    baseline_experiment,
+    baseline_solver_results,
+    baseline_trajectories,
+    electrical_power,
+    operating_cost,
+    solver_events,
+    tank_volume,
+):
+    operating_cost.record(baseline_cost_usd)
+    # record() accepts tables with ts and value columns.
+    electrical_power.record(
+        baseline_trajectories.select("ts", "power_kw").rename({"power_kw": "value"})
+    )
+    tank_volume.record(
+        baseline_trajectories.select("ts", "volume_m3").rename({"volume_m3": "value"})
+    )
+    solver_events.record({
+        "event": "solve-complete",
+        "status": str(baseline_solver_results.solver.status),
+        "termination_condition": str(
+            baseline_solver_results.solver.termination_condition
+        ),
+    })
+    # Values are already saved; finish() marks the run successful.
+    baseline_record = baseline_experiment.finish()
+    baseline_record
+    return (baseline_record,)
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ## Repeat the calculation for two more scenarios
+
+    Put the model setup, solve, and extraction in functions for reuse.
+    These functions contain only model code.
+
+    The loop starts one Experiment per scenario and records its inputs and
+    results. All runs share the Study declarations.
     """)
     return
 
@@ -185,181 +398,147 @@ def _(
     INPUTS,
     assert_optimal_termination,
     build_model,
-    electrical_power,
+    chdir,
     get_solver,
-    initial_tank_volume,
     load_model_config,
+    pyo,
+):
+    def solve_scenario(flow_m3_per_hour, tank_volume_m3):
+        with chdir(INPUTS):
+            model = build_model(load_model_config(INPUTS / "model.json"))
+        model.waterfacility.tank.initial_volume.set_value(tank_volume_m3)
+        for time in model.time_block.time_index:
+            model.waterfacility.tank.flow_in[time].fix(flow_m3_per_hour)
+            model.waterfacility.plant.flow_out[time].fix(flow_m3_per_hour)
+        pyo.TransformationFactory("network.expand_arcs").apply_to(model)
+        results = get_solver(model=model, prefer="highs").solve(model)
+        assert_optimal_termination(results)
+        return model, results
+
+    return (solve_scenario,)
+
+
+@app.cell
+def _(pl, pyo):
+    def extract_trajectories(model):
+        timestamps = list(model.time_block.datetime_index)
+        power_values = []
+        volume_values = []
+
+        for time in model.time_block.time_index:
+            power_expression = model.costing.aggregate_electrical_power[time]
+            power_kw = pyo.units.convert(power_expression, to_units=pyo.units.kW)
+            power_values.append(pyo.value(power_kw))
+
+            volume_expression = model.waterfacility.tank.volume[time]
+            volume_values.append(pyo.value(volume_expression))
+
+        trajectory_columns = {
+            "ts": timestamps,
+            "power_kw": power_values,
+            "volume_m3": volume_values,
+        }
+        return pl.DataFrame(trajectory_columns)
+
+    return (extract_trajectories,)
+
+
+@app.cell
+def _(
+    INPUTS,
+    baseline_record,
+    electrical_power,
+    extract_trajectories,
+    initial_tank_volume,
     model_inputs,
     notebook_session,
     operating_cost,
-    os,
+    pl,
     pyo,
+    solve_scenario,
     solver_events,
     study,
     tank_volume,
     treatment_flow,
 ):
-    def solve_and_record(*, scenario, flow_m3_per_hour, tank_volume_m3):
-        # --- Acquirium: identify this run and record the model inputs --------
-        experiment = study.start(
-            metadata={
-                "model": "api-freeze",
-                "scenario": scenario,
-                "notebook_session": notebook_session,
-            }
-        )
+    completed_experiments = [study.experiments.get(baseline_record["run_id"])]
+    scenarios = [
+        ("low throughput / low initial volume", 8.0, 250.0),
+        ("high throughput / high initial volume", 12.0, 750.0),
+    ]
+    for scenario, flow_m3_per_hour, tank_volume_m3 in scenarios:
+        scenario_experiment = study.start(metadata={
+            "model": "api-freeze",
+            "scenario": scenario,
+            "notebook_session": notebook_session,
+        })
         try:
-            for path in (
-                INPUTS / "model.json",
-                INPUTS / "tariff.json",
-                INPUTS / "dr_events.json",
-            ):
-                model_inputs.record(path)
+            model_inputs.record(INPUTS / "model.json")
+            model_inputs.record(INPUTS / "tariff.json")
+            model_inputs.record(INPUTS / "dr_events.json")
             treatment_flow.record(flow_m3_per_hour)
             initial_tank_volume.record(tank_volume_m3)
 
-            # --- FlexPSE: the model calculation -----------------------------
-            # The config refers to its other inputs by bare filename, matching
-            # the upstream fixture, so build it from the inputs directory.
-            os.chdir(INPUTS)
-            model = build_model(load_model_config(INPUTS / "model.json"))
-            model.waterfacility.tank.initial_volume.set_value(tank_volume_m3)
-
-            # Equal inflow and treatment throughput preserve the chosen tank
-            # volume while changing the facility load between scenarios.
-            for time in model.time_block.time_index:
-                model.waterfacility.tank.flow_in[time].fix(flow_m3_per_hour)
-                model.waterfacility.plant.flow_out[time].fix(flow_m3_per_hour)
-
-            pyo.TransformationFactory("network.expand_arcs").apply_to(model)
-            results = get_solver(model=model, prefer="highs").solve(model)
-            assert_optimal_termination(results)
-
-            objective = float(pyo.value(model.objective))
-            power_rows = [
-                (
-                    timestamp,
-                    pyo.value(
-                        pyo.units.convert(
-                            model.costing.aggregate_electrical_power[time],
-                            to_units=pyo.units.kW,
-                        )
-                    ),
-                )
-                for timestamp, time in zip(
-                    model.time_block.datetime_index,
-                    model.time_block.time_index,
-                    strict=True,
-                )
-            ]
-            volume_rows = [
-                (timestamp, pyo.value(model.waterfacility.tank.volume[time]))
-                for timestamp, time in zip(
-                    model.time_block.datetime_index,
-                    model.time_block.time_index,
-                    strict=True,
-                )
-            ]
-
-            # --- Acquirium: associate outputs with the same Experiment ------
-            operating_cost.record(objective)
-            electrical_power.record(power_rows)
-            tank_volume.record(volume_rows)
-            solver_events.record(
-                {
-                    "event": "solve-complete",
-                    "status": str(results.solver.status),
-                    "termination_condition": str(
-                        results.solver.termination_condition
-                    ),
-                }
+            scenario_model, scenario_solver_results = solve_scenario(
+                flow_m3_per_hour, tank_volume_m3
             )
-            experiment.finish()
-        except Exception as error:
-            experiment.fail(error)
+            trajectories = extract_trajectories(scenario_model)
+
+            operating_cost.record(float(pyo.value(scenario_model.objective)))
+            electrical_power.record(
+                trajectories.select("ts", "power_kw").rename({"power_kw": "value"})
+            )
+            tank_volume.record(
+                trajectories.select("ts", "volume_m3").rename({"volume_m3": "value"})
+            )
+            solver_events.record({
+                "event": "solve-complete",
+                "status": str(scenario_solver_results.solver.status),
+                "termination_condition": str(
+                    scenario_solver_results.solver.termination_condition
+                ),
+            })
+            scenario_experiment.finish()
+        except Exception as scenario_error:
+            scenario_experiment.fail(scenario_error)
             raise
-
-        return {
-            "experiment_id": experiment.experiment_id,
-            "scenario": scenario,
-            "treatment_flow_m3_per_hour": flow_m3_per_hour,
-            "initial_tank_volume_m3": tank_volume_m3,
-            "operating_cost_usd": objective,
-        }
-
-    return (solve_and_record,)
-
-
-@app.cell
-def _(mo):
-    mo.md("""
-    ## Try several initial settings
-
-    Each call starts a separate Experiment but reuses the Study's variable
-    definitions. The variations are intentionally ordinary function
-    arguments: Acquirium does not require a configuration framework around
-    the simulation.
-    """)
-    return
-
-
-@app.cell
-def _(solve_and_record):
-    low_throughput = solve_and_record(
-        scenario="low throughput / low initial volume",
-        flow_m3_per_hour=8.0,
-        tank_volume_m3=250.0,
-    )
-    low_throughput
-    return
-
-
-@app.cell
-def _(solve_and_record):
-    baseline = solve_and_record(
-        scenario="baseline",
-        flow_m3_per_hour=10.0,
-        tank_volume_m3=500.0,
-    )
-    baseline
-    return
-
-
-@app.cell
-def _(solve_and_record):
-    high_throughput = solve_and_record(
-        scenario="high throughput / high initial volume",
-        flow_m3_per_hour=12.0,
-        tank_volume_m3=750.0,
-    )
-    high_throughput
-    return
+        completed_experiments.append(scenario_experiment)
+    run_summaries = []
+    for completed_run in completed_experiments:
+        run_summaries.append(completed_run.as_dict())
+    completed_runs_table = pl.from_dicts(run_summaries)
+    completed_runs_table
+    return (completed_experiments,)
 
 
 @app.cell
 def _(mo):
     mo.md(r"""
-    ## Reopen and discover the Study post-hoc
+    ## Read saved experiments
 
-    From here on, pretend this is a new analysis session. We reopen the
-    Study by its persistent name. No variable is redeclared: Acquirium
-    loads the stored schema, including roles, kinds, units, and plant URIs.
-    That is important for analyses written by someone other than the model
-    author—or simply written six months later.
+    Reopen the Study by name to load its saved variables, units, and metadata.
+    These queries also work from a new client session.
     """)
     return
 
 
 @app.cell
-def _(ac):
+def _(ac, completed_experiments, mo):
+    # Load saved variable declarations for analysis.
     recorded_study = ac.study.get("flexpse-watr-model")
     variable_catalog = recorded_study.variables.frame()
-    variable_catalog
+    mo.vstack([
+        mo.md(
+            f"{len(completed_experiments)} runs completed. Saved variables:"
+        ),
+        variable_catalog,
+    ])
     return (recorded_study,)
 
 
 @app.cell
 def _(notebook_session, recorded_study):
+    # Compare only successful runs from this notebook execution.
     current_experiments = recorded_study.experiments.where(
         status="succeeded",
         metadata={"notebook_session": notebook_session},
@@ -371,7 +550,7 @@ def _(notebook_session, recorded_study):
 
 @app.cell
 def _(current_experiments, pl, recorded_study):
-    # These handles came from persisted declarations, not the recording cells.
+    # Load variable handles from the saved Study.
     stored_cost = recorded_study.variables["aggregate operating cost"]
     stored_flow = recorded_study.variables["treatment flow"]
     stored_initial_volume = recorded_study.variables["initial tank volume"]
@@ -391,6 +570,7 @@ def _(current_experiments, pl, recorded_study):
         pl.col("value").alias("initial_tank_volume_m3"),
     )
 
+    # Pair each cost with the inputs recorded under the same run ID.
     result_history = (
         costs.join(flows, on="experiment_id")
         .join(initial_volumes, on="experiment_id")
@@ -420,7 +600,7 @@ def _(plt, result_history):
 
 @app.cell
 def _(mo, recorded_study, result_history):
-    # Argmax is ordinary dataframe analysis, not a special Experiment method.
+    # Find the highest cost with Polars.
     highest_result = result_history.sort(
         "operating_cost_usd", descending=True
     ).row(0, named=True)
@@ -435,11 +615,6 @@ def _(mo, recorded_study, result_history):
         Experiment `{highest_experiment.experiment_id}` had the highest
         optimized operating cost: **${highest_result['operating_cost_usd']:.2f}**
         at **{highest_result['treatment_flow_m3_per_hour']:.1f} m³/h**.
-
-        The same table could just as easily be grouped, filtered, joined to
-        another dataset, or sorted ascending to find the minimum. Acquirium's
-        job here is to provide a trustworthy history, not prescribe the
-        analysis.
         """
     )
     return (highest_experiment,)
@@ -458,12 +633,11 @@ def _(ac, current_experiments, plt, recorded_study):
     stored_power = recorded_study.variables["aggregate electrical power"]
     power_figure, power_axis = plt.subplots()
 
-    for experiment in current_experiments.all():
+    experiments_to_plot = current_experiments.all()
+    for experiment in experiments_to_plot:
         observation = experiment.observations(stored_power).latest()
 
-        # Experiment storage tells us which ordinary Acquirium stream and
-        # interval belong to the result. The normal time-series interface does
-        # the actual read; there is no experiment-specific sample store.
+        # Read the stream and interval saved in the observation.
         samples = ac.client.timeseries_df(
             observation.ref_uri,
             start=observation.range_start.isoformat(),
@@ -489,21 +663,20 @@ def _(ac, current_experiments, plt, recorded_study):
 
 @app.cell
 def _(TANK_VOLUME_URI, pl, recorded_study):
-    # A scalar initial condition and a trajectory can describe the same plant
-    # property. Their different kinds remain explicit in the Study schema.
-    tank_variable_links = pl.DataFrame(
-        [
-            {
-                "variable": variable.label,
-                "role": variable.role,
-                "kind": variable.kind,
-                "plant_property": variable.metadata.get("observed"),
-                "unit": variable.metadata.get("unit"),
+    # Find variables linked to the tank-volume property.
+    declared_variables = recorded_study.variables.all()
+    tank_variable_rows = []
+    for declared_variable in declared_variables:
+        if declared_variable.metadata.get("observed") == TANK_VOLUME_URI:
+            tank_variable_row = {
+                "variable": declared_variable.label,
+                "role": declared_variable.role,
+                "kind": declared_variable.kind,
+                "plant_property": declared_variable.metadata.get("observed"),
+                "unit": declared_variable.metadata.get("unit"),
             }
-            for variable in recorded_study.variables
-            if variable.metadata.get("observed") == TANK_VOLUME_URI
-        ]
-    )
+            tank_variable_rows.append(tank_variable_row)
+    tank_variable_links = pl.DataFrame(tank_variable_rows)
     tank_variable_links
     return
 
@@ -511,171 +684,239 @@ def _(TANK_VOLUME_URI, pl, recorded_study):
 @app.cell
 def _(mo):
     mo.md(r"""
-    ## Compare a simulation with synthetic deployment history
+    ## Compare a saved run with site data
 
-    We do not have measurements from a real installation, so the next cell
-    creates a deterministic, visibly labeled **synthetic deployment stream**.
-    It stands in for rows that would normally arrive through a driver. This is
-    deliberately outside the Experiment: it has deployment provenance, not
-    simulation provenance.
+    Once Acquirium is collecting site data, you can compare a measured
+    stream with an experiment result. Find the stream, read the same time
+    range, and compare the values.
 
-    Both streams are registered against the model's same `tank-volume`
-    property. The graph can therefore tell us they describe the same physical
-    quantity even though their source systems, storage references, and
-    provenance differ.
+    This notebook adds a synthetic site stream automatically so you can
+    try these steps. At your site, use the stream already collected by
+    your driver and skip the example setup.
     """)
     return
 
 
 @app.cell
-def _(ac, np, recorded_study, result_history):
-    baseline_id = result_history.filter(
-        result_history["treatment_flow_m3_per_hour"] == 10.0
-    )["experiment_id"][0]
-    baseline_experiment = recorded_study.experiments.get(baseline_id)
-    stored_tank_volume = recorded_study.variables["tank volume"]
-    baseline_volume_observation = baseline_experiment.observations(
-        stored_tank_volume
-    ).latest()
+def _(mo):
+    mo.md(r"""
+    ### Read the saved simulation
 
-    simulated_volume = ac.client.timeseries_df(
-        baseline_volume_observation.ref_uri,
-        start=baseline_volume_observation.range_start.isoformat(),
-        end=baseline_volume_observation.range_end.isoformat(),
-    )
-
-    sample_number = np.arange(simulated_volume.height)
-    synthetic_volume = (
-        simulated_volume["value"].to_numpy()
-        + 22.0 * np.sin(2.0 * np.pi * sample_number / 96.0)
-        + 0.015 * sample_number
-    )
-    synthetic_deployment_rows = list(
-        zip(
-            simulated_volume["ts"].to_list(),
-            synthetic_volume.tolist(),
-            strict=True,
-        )
-    )
-    return (
-        baseline_volume_observation,
-        simulated_volume,
-        synthetic_deployment_rows,
-    )
-
-
-@app.cell
-def _(TANK_VOLUME_URI, ac, synthetic_deployment_rows):
-    deployment_source = "synthetic-flexpse-deployment"
-    deployment_ref_name = "tank-volume-sensor"
-
-    # This is the same registration + insertion path a real driver uses.
-    ac.register_streams(
-        [
-            {
-                "source_id": deployment_source,
-                "ref_name": deployment_ref_name,
-                "point_uri": TANK_VOLUME_URI,
-                "label": "tank volume",
-                "unit": "http://qudt.org/vocab/unit/M3",
-                "value_kind": "numeric",
-            }
-        ]
-    )
-    ac.insert_timeseries(
-        deployment_source,
-        deployment_ref_name,
-        synthetic_deployment_rows,
-        point_uri=TANK_VOLUME_URI,
-        replace=True,
-    )
-    deployment_ref_uri = str(
-        ac.reference_uri(deployment_source, deployment_ref_name)
-    )
-    return (deployment_ref_uri,)
-
-
-@app.cell
-def _(TANK_URI, ac):
-    # Start from the tank in the plant model, then discover measurements
-    # attached to it. include_ref_uris=True keeps simulation and deployment
-    # streams separate instead of folding them into one property row.
-    tank_measurements = (
-        ac.query()
-        .entity(uri=TANK_URI, alias="tank")
-        .measurement(alias="measurement", include_connection_points=False)
-    )
-    tank_stream_catalog = tank_measurements.data().metadata(
-        include_ref_uris=True
-    )
-    tank_stream_catalog
+    Select the baseline run, then find its recorded tank-volume output.
+    The observation contains the result's stream URI and time range.
+    """)
     return
 
 
 @app.cell
-def _(
-    ac,
-    baseline_volume_observation,
-    deployment_ref_uri,
-    pl,
-    simulated_volume,
-):
-    deployed_volume = ac.client.timeseries_df(
-        deployment_ref_uri,
-        start=baseline_volume_observation.range_start.isoformat(),
-        end=baseline_volume_observation.range_end.isoformat(),
+def _(current_experiments):
+    # Find the baseline among this session's successful runs.
+    baseline_runs = current_experiments.where(metadata={"scenario": "baseline"})
+    saved_baseline = baseline_runs.all()[0]
+
+    # Retrieve the tank-volume output recorded for that run.
+    baseline_volume_observation = saved_baseline.observations("tank volume").latest()
+    baseline_volume_observation.as_dict()
+    return (baseline_volume_observation,)
+
+
+@app.cell
+def _(ac, baseline_volume_observation):
+    # Use this same interval when reading the site measurements.
+    comparison_start = baseline_volume_observation.range_start.isoformat()
+    comparison_end = baseline_volume_observation.range_end.isoformat()
+
+    # Fetch samples from the simulation's saved stream.
+    simulated_volume = ac.client.timeseries_df(
+        baseline_volume_observation.ref_uri,
+        start=comparison_start,
+        end=comparison_end,
+    )
+    simulated_volume.head()
+    return comparison_end, comparison_start, simulated_volume
+
+
+@app.cell(hide_code=True)
+def _(TANK_VOLUME_URI, ac, mo, np, simulated_volume):
+    # Example setup only: emulate measurements arriving from a site driver.
+    sample_number = np.arange(simulated_volume.height)
+    daily_cycle = 22.0 * np.sin(2.0 * np.pi * sample_number / 96.0)
+    slow_drift = 0.015 * sample_number
+    example_values = simulated_volume["value"].to_numpy() + daily_cycle + slow_drift
+    example_timestamps = simulated_volume["ts"].to_list()
+    example_measurements = example_values.tolist()
+    example_pairs = zip(example_timestamps, example_measurements, strict=True)
+    example_rows = list(example_pairs)
+
+    # A real driver's configuration supplies its source ID and stream name.
+    site_source = "synthetic-flexpse-deployment"
+    site_stream_name = "tank-volume-sensor"
+    example_stream = {
+        "source_id": site_source,
+        "ref_name": site_stream_name,
+        "point_uri": TANK_VOLUME_URI,
+        "label": "tank volume",
+        "unit": "http://qudt.org/vocab/unit/M3",
+        "value_kind": "numeric",
+    }
+    ac.register_streams([example_stream])
+    ac.insert_timeseries(
+        site_source,
+        site_stream_name,
+        example_rows,
+        point_uri=TANK_VOLUME_URI,
+        replace=True,
+    )
+    mo.md("**Example setup:** synthetic site measurements are ready.")
+    return site_source, site_stream_name
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ### Find the site stream
+
+    Query the tank's measurements and display their stream references.
+    For your site, replace `TANK_URI` with your tank's URI in the plant model.
+    The `point_label` column gives the measurement label; `ref_uri`
+    identifies a specific stream. Several streams can share a label or
+    plant property.
+
+    If you know the source ID and stream name from the driver configuration,
+    `ac.reference_uri(source_id, stream_name)` gives its reference URI.
+    Otherwise, inspect the table and copy the `ref_uri` you want to read.
+    """)
+    return
+
+
+@app.cell
+def _(TANK_URI, ac, site_source, site_stream_name):
+    # Start at the tank in the plant model.
+    tank_query = ac.query().entity(uri=TANK_URI, alias="tank")
+
+    # Find measurements on the tank itself.
+    tank_measurements = tank_query.measurement(
+        alias="measurement",
+        include_connection_points=False,
     )
 
-    tank_comparison = (
-        simulated_volume.select(
-            "ts",
-            pl.col("value").alias("simulated_volume_m3"),
-        )
-        .join(
-            deployed_volume.select(
-                "ts",
-                pl.col("value").alias("synthetic_deployment_volume_m3"),
-            ),
-            on="ts",
-        )
-        .with_columns(
-            (
-                pl.col("synthetic_deployment_volume_m3")
-                - pl.col("simulated_volume_m3")
-            ).alias("residual_m3")
-        )
-    )
+    # List each stream separately, including its reference URI.
+    tank_data = tank_measurements.data()
+    tank_stream_catalog = tank_data.metadata(include_ref_uris=True)
 
-    comparison_summary = tank_comparison.select(
+    # This example knows the source and name from its setup cell.
+    site_ref_uri = str(ac.reference_uri(site_source, site_stream_name))
+    tank_stream_catalog
+    return site_ref_uri, tank_stream_catalog
+
+
+@app.cell
+def _(pl, site_ref_uri, tank_stream_catalog):
+    # Select the site stream from the catalog before reading its samples.
+    site_stream = tank_stream_catalog.filter(pl.col("ref_uri") == site_ref_uri)
+    site_stream
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ### Read the site measurements
+
+    Pass the selected stream URI and the simulation's time range to the
+    time-series client. Both streams in this example use cubic metres.
+    Convert units first if your site stream uses a different unit.
+    """)
+    return
+
+
+@app.cell
+def _(ac, comparison_end, comparison_start, site_ref_uri):
+    # Read only the interval covered by the experiment result.
+    site_volume = ac.client.timeseries_df(
+        site_ref_uri,
+        start=comparison_start,
+        end=comparison_end,
+    )
+    site_volume.head()
+    return (site_volume,)
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ### Match timestamps and compare values
+
+    Give the two value columns distinct names, then join on timestamp.
+    This keeps timestamps present in both streams. If your site samples
+    arrive at different times, resample both streams to a common interval
+    before joining.
+    """)
+    return
+
+
+@app.cell
+def _(simulated_volume, site_volume):
+    # Keep the timestamp and give the simulation values a clear name.
+    simulation_values = simulated_volume.select("ts", "value")
+    simulation_values = simulation_values.rename({"value": "simulated_volume_m3"})
+
+    # Do the same for the site measurements.
+    site_values = site_volume.select("ts", "value")
+    site_values = site_values.rename({"value": "site_volume_m3"})
+
+    # Compare values measured at the same timestamp.
+    tank_comparison = simulation_values.join(site_values, on="ts", how="inner")
+    tank_comparison.head()
+    return (tank_comparison,)
+
+
+@app.cell
+def _(pl, tank_comparison):
+    # A positive residual means the site reading is above the simulation.
+    residual = pl.col("site_volume_m3") - pl.col("simulated_volume_m3")
+    tank_residuals = tank_comparison.with_columns(residual.alias("residual_m3"))
+    tank_residuals.head()
+    return (tank_residuals,)
+
+
+@app.cell
+def _(pl, tank_residuals):
+    # Summarize average bias, average absolute error, and largest error.
+    comparison_summary = tank_residuals.select(
         pl.col("residual_m3").mean().alias("mean_bias_m3"),
         pl.col("residual_m3").abs().mean().alias("mean_absolute_error_m3"),
         pl.col("residual_m3").abs().max().alias("maximum_absolute_error_m3"),
     )
     comparison_summary
-    return (tank_comparison,)
+    return
 
 
 @app.cell
 def _(plt, tank_comparison):
-    # A week is enough to see the invented daily cycle without hiding the
-    # comparison in a month of dense points.
-    comparison_window = tank_comparison.head(7 * 24 * 4)
+    # These samples are 15 minutes apart. Show the first week.
+    samples_per_day = 24 * 4
+    comparison_window = tank_comparison.head(7 * samples_per_day)
     comparison_figure, comparison_axis = plt.subplots()
+
+    # Plot the saved simulation.
     comparison_axis.plot(
         comparison_window["ts"],
         comparison_window["simulated_volume_m3"],
         label="FlexPSE simulation",
     )
+
+    # Plot the site stream. This notebook uses synthetic measurements.
     comparison_axis.plot(
         comparison_window["ts"],
-        comparison_window["synthetic_deployment_volume_m3"],
-        label="Synthetic deployment",
+        comparison_window["site_volume_m3"],
+        label="Site measurements (synthetic)",
         alpha=0.8,
     )
     comparison_axis.set(
         xlabel="Time",
         ylabel="Tank volume (m³)",
-        title="Same plant property, different provenance",
+        title="Simulation and site tank volume",
     )
     comparison_axis.legend()
     comparison_axis.grid(alpha=0.25)
@@ -687,21 +928,9 @@ def _(plt, tank_comparison):
 @app.cell
 def _(mo):
     mo.md(r"""
-    The comparison does not assert that synthetic measurements are part of an
-    Experiment. Instead, it composes three existing modules:
-
-    - the **Experiment ledger** selects the baseline run and identifies its
-      simulated tank-volume stream;
-    - the **plant graph** establishes that both streams describe the tank's
-      volume property;
-    - the normal **time-series interface** retrieves both sets of samples.
-
-    In a real deployment, a driver would replace the synthetic insertion cell.
-    The discovery and comparison cells would remain the same. Scalar Study
-    values work the same way: the baseline's `initial tank volume` observation
-    links to the tank-volume property, while its numeric value remains scoped
-    to that particular Experiment rather than becoming a global fact about the
-    plant.
+    For your own experiment, select its saved output and your driver's
+    stream, then use the same read, join, and comparison steps. The synthetic
+    setup is only needed to supply example data for this notebook.
     """)
     return
 
