@@ -36,6 +36,9 @@ class _BulkStore:
             return "text"
         return "numeric"
 
+    def stream_value_kinds(self, ref_uris):
+        return {uri: self.stream_value_kind(uri) for uri in ref_uris}
+
 
 class _FailingBulkStore(_BulkStore):
     def bulk_insert_polars(self, df):

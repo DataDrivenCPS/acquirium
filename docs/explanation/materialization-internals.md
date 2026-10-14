@@ -46,9 +46,16 @@ intended for infrequent reloads: full input loading and recomputation can consum
 substantially more memory and time than incremental work.
 
 One coordinator schedules independent bindings through a bounded thread pool.
-The next dependency layer reads its inputs after predecessor work has completed.
-A failed binding keeps its previous frontier and blocks its descendants, while
-unrelated branches can continue processing.
+Each tick starts with one change index: a single snapshot read of the streams
+written or reset above the oldest consumed frontier in the layer, with their
+latest revisions. A binding whose inputs are absent from the index has
+nothing to read, so its frontier advances to the snapshot's revision in one
+batched update. Only bindings with a changed input, pending work, or a reset
+read a batch, and that read runs on the worker thread together with the
+transform. The index is rebuilt after a layer publishes, so the next
+dependency layer sees its predecessors' outputs. A failed binding keeps its
+previous frontier and blocks its descendants, while unrelated branches can
+continue processing.
 
 Long, finite work ranges are divided into output intervals of approximately one
 day, rounded to complete buckets where necessary. A durable cursor records which

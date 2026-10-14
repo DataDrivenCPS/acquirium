@@ -56,10 +56,12 @@ which allows a calculation to combine readings from several sensors. Every app
 must explicitly choose one of these values; a missing or invalid grouping is
 rejected when the app is instantiated.
 
-When the plant model changes, the runtime compiles the queries again. If the
-matched inputs or their query context have changed, it schedules a repair of
-the retained output. For example, adding a sensor to an aggregate may require
-recalculating that aggregate's earlier results.
+When the plant model changes, the runtime compiles the queries again and
+compares each binding's match context with what it stored. A per-match
+binding is repaired only when its own row changed; an aggregate is repaired
+when any of its rows did. For example, adding a sensor to an aggregate may
+require recalculating that aggregate's earlier results, while the other
+sensors' per-match outputs are left as they are.
 
 ## Two output identities
 
