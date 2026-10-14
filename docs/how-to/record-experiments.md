@@ -177,8 +177,31 @@ timeseries_variables = historical.variables.where(kind="timeseries").frame()
 ## Connect a time-series result to the facility
 
 Set `observed` to the URI of the observable property that the values describe.
-For example, the seawater RO model identifies the water mass flow at its outlet
-as `urn:swro/RO-out-flow-mass-water`:
+To find properties in a loaded plant model, query the model's property links.
+For example, this lists the properties on the seawater RO model's outlet:
+
+```python
+S223 = "http://data.ashrae.org/standard223#"
+outlet_properties = (
+    ac.query()
+    .entity(uri="urn:swro/RO-out", alias="outlet")
+    .related(
+        S223 + "QuantifiableObservableProperty",
+        via=[S223 + "hasProperty"],
+        max_depth=1,
+        alias="property",
+    )
+)
+outlet_properties.metadata()
+property_uris = outlet_properties.resolved_nodes(alias="property")
+print(property_uris)
+```
+
+This query finds modeled properties even before streams are registered against
+them. `metadata()` displays the matches; `resolved_nodes()` returns their full
+URIs. Inspect the results and select the property that describes your output.
+The water mass-flow property at this outlet is
+`urn:swro/RO-out-flow-mass-water`:
 
 ```python
 permeate_flow = study.output("permeate flow").timeseries(
@@ -197,9 +220,10 @@ frame = recorded_flow.dataframe()
 ```
 
 Use the property URI, not the equipment URI. Passing the URI string directly
-is equivalent to `ac.point(uri)`. When exploring a loaded plant model,
-`ac.resolve(text)` can help find a property; verify the result before putting
-it into reusable code.
+is equivalent to `ac.point(uri)`. Free-text calls to `ac.resolve(text)` search
+ontology concepts, such as classes and quantity kinds. Use plant queries to
+find the deployment's property instances, then persist the chosen full URI in
+reusable analysis code.
 
 Every run writes to a distinct source named `experiment/<run_id>`, so two
 scenarios can record the same timestamps for the same property without

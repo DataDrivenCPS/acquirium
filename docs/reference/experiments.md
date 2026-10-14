@@ -12,11 +12,16 @@ the observations produced by individual executions.
 | `ac.study.all()` | `list[Study]` | List persisted Studies |
 | `ac.study.stream_annotations(ref_uri=None, start=None, end=None)` | `list[StreamAnnotation]` | Find stream intervals across Studies |
 | `ac.point(uri)` | `Point` | Wrap a property URI for a time-series declaration |
-| `ac.resolve(text, kind=None, min_score=0.6)` | `Point` | Resolve text to one graph resource |
+| `ac.resolve(text, kind=None, min_score=0.6)` | `Point` | Resolve vocabulary text to an ontology concept |
 | `aq.timestamp(value)` | `datetime` | Parse a string or normalize a datetime to UTC |
 
 Study names must contain a non-whitespace character. `define()` is idempotent
 by name.
+
+Free-text `ac.resolve()` calls search ontology concepts rather than property
+instances in a loaded plant model. To select a modeled property for `observed`,
+use [plant-query discovery](../how-to/record-experiments.md#connect-a-time-series-result-to-the-facility)
+and pass the chosen full URI to `ac.point()` or directly to `.timeseries()`.
 
 ## Study
 

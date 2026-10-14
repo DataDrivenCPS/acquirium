@@ -395,7 +395,11 @@ class Acquirium:
         return Point(uri)
 
     def resolve(self, text: str, *, kind: str | None = None, min_score: float = 0.6) -> Point:
-        """Resolve a human description to one graph resource for experiment use."""
+        """Resolve vocabulary text to an ontology concept for experiment metadata.
+
+        Free text searches the ontology indexes. Use plant queries to discover
+        modeled property instances, then pass their URIs to ``point()``.
+        """
         # Keep text matching at the boundary. Persisted variable metadata is
         # always the resolved URI, never an ambiguous natural-language string.
         uri = self.client.resolve(text, kind=kind, top_k=1, min_score=min_score)
