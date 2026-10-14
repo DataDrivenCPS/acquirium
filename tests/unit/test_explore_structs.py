@@ -130,3 +130,17 @@ class TestMetadataStructs:
         from acquirium.Client.explore.expr import AttrProxy
         a = AttrProxy(make_client())
         assert a.product_info.year.name == "product_info.year"  # the proxy still descends through a group
+        with pytest.raises(ValueError, match="group of keys; (compare|filter) one of its leaves"):
+            Query(client=make_client()).entity(CLS_A, alias="e").where(a.product_info == "x")
+
+    def test_exists_on_group_means_any_leaf(self):
+        from acquirium.Client.explore.expr import AttrProxy
+        a = AttrProxy(make_client())
+        q = Query(client=make_client()).entity(CLS_A, alias="e").where(a.product_info.exists())
+        s = q.to_sparql()
+        for leaf in ("build_year", "manufacturer", "year"):
+            assert f"EXISTS {{ ?v0 (<{ATTR_NS}product_info.{leaf}>) ?_x . }}" in s
+        assert " || " in s
+        prepareQuery(s)
+        q2 = Query(client=make_client()).entity(CLS_A, alias="e").where(~a.calibration.exists())
+        assert "!((EXISTS" in q2.to_sparql()

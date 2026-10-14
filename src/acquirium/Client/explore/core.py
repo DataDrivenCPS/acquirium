@@ -241,6 +241,21 @@ class Query:
         FILTER, which the compiler does not do.
         """
         registry = self.registry
+
+        def expand_groups(e: Expr) -> Expr:
+            # exists() on a parent key: the node has some leaf under it
+            if isinstance(e, BoolOp):
+                return BoolOp(e.op, tuple(expand_groups(o) for o in e.operands))
+            if e.attr not in registry and registry.is_group(e.attr):
+                children = [a.name for a in registry.children(e.attr)]
+                if e.op != "exists":
+                    raise ValueError(
+                        f"{e.attr!r} is a group of keys; compare one of its leaves: {children}")
+                parts = tuple(Compare(c, "exists") for c in children)
+                return parts[0] if len(parts) == 1 else BoolOp("or", parts)
+            return e
+
+        exprs = tuple(expand_groups(e) for e in exprs)
         leaves: List[Compare] = []
 
         def walk(e: Expr, nested: bool) -> None:
@@ -1602,6 +1617,42 @@ class Query:
 
     # ---------- display helpers ----------
 
+    def metadata_dict(self, *, include_dependencies: bool = True) -> List[Dict[str, Any]]:
+        """The pattern matches as Python dicts, attributes nested by their path.
+
+        One dict per row of :meth:`metadata` (a node can appear in several
+        rows when the pattern joins it to several others). Each node alias
+        maps to a dict holding the node's CURIE under ``"id"``, its label
+        under ``"label"`` when it has one, and every included attribute
+        nested along its dotted path::
+
+            [{"pump": {"id": "dpr:backwash-dosing-pump",
+                       "product_info": {"manufacturer": "Grundfos", "year": 2019},
+                       "tags": ["lab", "critical"]}}]
+
+        Values are the Python values of the frame: ``int``, ``date``,
+        ``list``, ``dict`` for a struct, and the value as written for an
+        ``Object`` column. An attribute a node lacks is ``None``. A leaf
+        included next to its parent key (``"product_info"`` and
+        ``"product_info.year"``) appears once, inside the parent's dict.
+        """
+        df = self.metadata(include_dependencies=include_dependencies)
+        aliases = set(self.query_graph.aliases_reverse.values())
+        out: List[Dict[str, Any]] = []
+        for row in df.to_dicts():
+            record: Dict[str, Any] = {}
+            for col, value in row.items():
+                if col in aliases:
+                    record.setdefault(col, {})["id"] = value
+                    continue
+                alias, _, path = col.partition(".")
+                if alias not in aliases or not path:
+                    record[col] = value
+                    continue
+                _nest(record.setdefault(alias, {}), path.split("."), value)
+            out.append(record)
+        return out
+
     def _expanded_selects(self) -> tuple:
         """``(leaf_selects, group_selects)``: the query's selects with every
         parent key replaced by its child leaves, and the parent keys listed
@@ -1662,6 +1713,31 @@ class Query:
             return self.client.compact_uri(uri)
         except Exception:
             return str(uri)
+
+
+def _nest(target: Dict[str, Any], parts: List[str], value: Any) -> None:
+    """Set ``value`` at ``parts`` inside ``target``, merging dicts.
+
+    A struct value (a dict) merges with keys already there; ``None`` never
+    overwrites a value or a dict already set, so a leaf included next to its
+    parent key adds nothing it does not know."""
+    node = target
+    for part in parts[:-1]:
+        nxt = node.get(part)
+        if not isinstance(nxt, dict):
+            if nxt is not None:
+                return          # a plain value already holds this key
+            if part in node and value is None:
+                return          # a null parent stays null
+            nxt = node[part] = {}
+        node = nxt
+    key = parts[-1]
+    current = node.get(key)
+    if isinstance(current, dict) and isinstance(value, dict):
+        for k, v in value.items():
+            _nest(current, [k], v)
+    elif value is not None or key not in node:
+        node[key] = value
 
 
 def _struct_series(name: str, members: Dict[str, pl.Series], *,

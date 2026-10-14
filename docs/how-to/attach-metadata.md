@@ -166,6 +166,19 @@ Reach a field with polars, `pl.col("pump.product_info").struct.field("year")`,
 or include the leaf next to the struct, `include("product_info", "product_info.year")`.
 `where()` filters leaves, not parent keys.
 
+For code that wants plain Python values rather than a frame,
+`metadata_dict()` returns the same rows as nested dicts:
+
+```python
+pumps.include("product_info", "tags").metadata_dict()
+```
+```text
+[{'pump': {'id': 'dpr:backwash-dosing-pump',
+           'product_info': {'build_year': None, 'manufacturer': 'Grundfos', 'model': 'DDA 7.5', 'year': 2019},
+           'tags': ['lab', 'critical', 'spare-available']}},
+ ...]
+```
+
 ## Know the schema before you run
 
 `schema()` returns the polars schema `metadata()` will produce, computed
