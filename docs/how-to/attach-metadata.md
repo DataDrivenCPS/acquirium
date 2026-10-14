@@ -167,10 +167,10 @@ or include the leaf next to the struct, `include("product_info", "product_info.y
 `where()` filters leaves, not parent keys.
 
 For code that wants plain Python values rather than a frame,
-`metadata_dict()` returns the same rows as nested dicts:
+`metadata_objects()` returns the same rows as nested dicts:
 
 ```python
-pumps.include("product_info", "tags").metadata_dict()
+pumps.include("product_info", "tags").metadata_objects()
 ```
 ```text
 [{'pump': {'id': 'dpr:backwash-dosing-pump',

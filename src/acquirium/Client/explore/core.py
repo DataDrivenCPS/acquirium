@@ -1617,7 +1617,7 @@ class Query:
 
     # ---------- display helpers ----------
 
-    def metadata_dict(self, *, include_dependencies: bool = True) -> List[Dict[str, Any]]:
+    def metadata_objects(self, *, include_dependencies: bool = True) -> List[Dict[str, Any]]:
         """The pattern matches as Python dicts, attributes nested by their path.
 
         One dict per row of :meth:`metadata` (a node can appear in several

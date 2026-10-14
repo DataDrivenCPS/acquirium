@@ -1,4 +1,4 @@
-"""Query.metadata_dict(): rows as nested Python dicts."""
+"""Query.metadata_objects(): rows as nested Python dicts."""
 from datetime import date
 from unittest.mock import MagicMock
 
@@ -49,7 +49,7 @@ class TestMetadataDict:
                              ["iri", None, None, None, None, None, "iri", None]]}
         q = (Query(client=make_client(res)).entity(CLS_A, alias="e").measurement(alias="m")
              .include("product_info", "product_info.year", "tags", "cleaned", of="e"))
-        assert q.metadata_dict() == [
+        assert q.metadata_objects() == [
             {"e": {"id": "p:a", "product_info": {"maker": "Grundfos", "year": 2019},
                    "tags": ["lab", "crit"], "cleaned": date(2024, 3, 12)},
              "m": {"id": "p:m", "label": "Flow"}},
