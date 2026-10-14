@@ -206,6 +206,15 @@ scenarios can record the same timestamps for the same property without
 overwriting each other. The result is an ordinary Acquirium time series and is
 available through the usual query and stream APIs.
 
+If there is no plant model or known property URI, omit `observed`:
+
+```python
+simulated_power = study.output("simulated power").timeseries(unit="kW")
+```
+
+Its source and label still give the result a stable stream identity within
+the run. You can add a property link when the model is available.
+
 `record()` returns the `RecordedSeries` used above, so fetching that run's
 samples does not require constructing the internal source name.
 
@@ -251,6 +260,67 @@ This records the stream reference and optional interval, not a copy of the
 rows. Later corrections to the stream can therefore change the data returned
 by that reference. Record a file artifact when the analysis needs an unchanged
 snapshot.
+
+## Tag an existing live stream
+
+Use a stream annotation when a time range of continuous plant data was part of
+an experiment. You can tag a past interval or leave its end open while the
+experiment continues. The reference URI comes from stream discovery, for
+example a row in `.measurements`, or from `ac.reference_uri(source, name)`.
+
+```python
+study = ac.study.define("membrane trials")
+experiment = study.start(metadata={"digester": "A"})
+
+annotation = experiment.annotate_stream(
+    stream_ref_uri,
+    start=aq.timestamp("2026-08-01T00:00:00Z"),
+    metadata={"membrane": "candidate 2"},
+)
+
+# Later, after the treatment ends:
+annotation.close(aq.timestamp("2026-08-12T18:00:00Z"))
+experiment.finish()
+```
+
+An interval with both bounds can be added retrospectively by passing `end=`
+at creation, even when the Experiment has already finished. Both bounds are
+inclusive when reading samples. An annotation
+stores a reference, so it does not freeze or copy the underlying values.
+`annotation.dataframe()` reads the current values in its interval.
+
+Find all experiments that tagged a stream during a time window, even across
+Studies:
+
+```python
+matches = ac.study.stream_annotations(
+    ref_uri=stream_ref_uri,
+    start=aq.timestamp("2026-08-05T00:00:00Z"),
+    end=aq.timestamp("2026-08-06T00:00:00Z"),
+)
+for match in matches:
+    print(match.template_id, match.run_id, match.metadata)
+```
+
+`study.stream_annotations(...)` limits the search to one Study, and
+`experiment.stream_annotations(...)` limits it to one Experiment. Separate
+Study objects may run experiments concurrently against the same live stream.
+You can close an open annotation after finishing its Experiment when the
+effective end time becomes known.
+
+For a trial that spans script sessions, reopen its Study and resume the running
+Experiment. Its variable handles then record into the same run:
+
+```python
+study = ac.study.get("membrane trials")
+experiment = study.resume(saved_run_id)
+study.output["biogas efficiency"].record(0.82)
+experiment.finish()
+```
+
+Declare `biogas efficiency` before recording it, as with any other Study
+variable. A separate Study object can resume a different run of the same Study
+when parallel treatment trains are active.
 
 For interface details, see the [Experiment reference](../reference/experiments.md).
 [How experiments preserve context](../explanation/experiments.md) explains the

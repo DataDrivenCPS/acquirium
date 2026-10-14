@@ -5,6 +5,7 @@ import re
 import requests
 from requests import HTTPError
 from pathlib import Path
+from urllib.parse import quote
 import warnings
 import polars as pl
 import pyarrow.ipc as ipc
@@ -283,14 +284,20 @@ class AcquiriumClient:
         return self._experiment_get(f"/experiments/templates/{template_id}/runs", self._experiment_params(filters))
     def get_experiment(self, run_id: str) -> dict:
         return self._experiment_get(f"/experiments/runs/{run_id}")
-    def observe_experiment(self, run_id: str, variable_id: str, **body: Any) -> dict: return self._experiment_post(f"/experiments/runs/{run_id}/variables/{variable_id}/observations", body)
+    def observe_experiment(self, run_id: str, variable_id: str, **body: Any) -> dict: return self._experiment_post(f"/experiments/runs/{run_id}/variables/{quote(variable_id, safe='')}/observations", body)
+    def annotate_experiment_stream(self, run_id: str, ref_uri: str, *, start: str, end: str | None = None, metadata: dict | None = None) -> dict:
+        return self._experiment_post(f"/experiments/runs/{run_id}/stream-annotations", {"ref_uri": ref_uri, "start": start, "end": end, "metadata": {} if metadata is None else metadata})
+    def close_experiment_stream_annotation(self, annotation_id: str, *, end: str) -> dict:
+        return self._experiment_post(f"/experiments/stream-annotations/{annotation_id}/close", {"end": end})
+    def list_experiment_stream_annotations(self, **filters: Any) -> list[dict]:
+        return self._experiment_get("/experiments/stream-annotations", self._experiment_params(filters))
     def list_experiment_observations(self, template_id: str, **filters: Any) -> list[dict]:
         return self._experiment_get(f"/experiments/templates/{template_id}/observations", self._experiment_params(filters))
     def finish_experiment(self, run_id: str, failed: bool = False, error: Any = None) -> dict: return self._experiment_post(f"/experiments/runs/{run_id}/{'fail' if failed else 'finish'}", {"error": error})
     def attach_experiment_file(self, run_id: str, variable_id: str, path: str | Path, media_type: str | None = None) -> dict:
         # Send bytes, not a client-local filename. The server owns the durable
         # artifact copy so experiments survive the originating machine.
-        source = Path(path); response = requests.post(f"{self.base_url}/experiments/runs/{run_id}/variables/{variable_id}/file", data=source.read_bytes(), headers={"X-Filename": source.name, "Content-Type": media_type or "application/octet-stream"}); _raise_for_status(response); return response.json()
+        source = Path(path); response = requests.post(f"{self.base_url}/experiments/runs/{run_id}/variables/{quote(variable_id, safe='')}/file", data=source.read_bytes(), headers={"X-Filename": source.name, "Content-Type": media_type or "application/octet-stream"}); _raise_for_status(response); return response.json()
     def _experiment_post(self, path: str, body: dict) -> dict:
         response = requests.post(f"{self.base_url}{path}", json=body); _raise_for_status(response); return response.json()
     def _experiment_get(self, path: str, params: dict[str, Any] | None = None):

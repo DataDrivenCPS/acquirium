@@ -73,7 +73,7 @@ The notebooks under [`notebooks/watertap/`](https://github.com/DataDrivenCPS/acq
 
 - [Calculate derived streams](how-to/calculate-derived-streams.md) — water-temperature conversion, averages, and alarms
 - [Check, deploy, and repair an app](how-to/check-deploy-apps.md) — dry runs, deployment, reprocessing, and execution controls
-- [Record experiments](how-to/record-experiments.md) — capture inputs, results, artifacts, events, and time series
+- [Record experiments](how-to/record-experiments.md) — capture inputs, results, events, and tagged ranges of existing streams
 - [Run the server](how-to/run-the-server.md) — the server command, startup, Docker
 - [Start from a script](how-to/local-runtime.md) — `aq.init()`, config discovery, and local server ownership
 - [Debugging queries for an unexpected result](how-to/debug-an-empty-query.md) — the five usual causes
@@ -93,7 +93,7 @@ The reference guides contain complete interface of each module:
 - [Acquirium Client API](reference/client-api.md) — every method of `Acquirium`, `Query`, `DataObject`, `AcquiriumClient`
 - [Driver reference](reference/drivers.md) — class hierarchy, hooks, state, config keys, built-in drivers, CLI
 - [App reference](reference/apps.md) — the app API, output requirements, and processing rules
-- [Experiment reference](reference/experiments.md) — Studies, variables, runs, observations, and endpoints
+- [Experiment reference](reference/experiments.md) — Studies, variables, runs, stream annotations, and endpoints
 - [Server configuration](reference/server-config.md) — `[server]`, environment variables, `[ontologies]`, the endpoint table
 - [HTTP API](reference/http-api.md) — the raw endpoints
 - [Glossary](reference/glossary.md) — URIs, CURIEs, free text, the plant model, querying and data terms
@@ -107,7 +107,7 @@ These contain explanation behind the motivation of key design choices we made wh
 - [Units](explanation/units.md) — point units, storage units, compatibility, automatic and requested conversion
 - [Drivers](explanation/drivers.md) — why drivers, and the sMAP inspiration
 - [Apps](explanation/apps.md) — how apps keep derived streams current as readings arrive and are corrected
-- [Experiments](explanation/experiments.md) — how Studies, runs, artifacts, and streams preserve analysis context
+- [Experiments](explanation/experiments.md) — how Studies, runs, stream intervals, and artifacts preserve analysis context
 - [The data stream lifecycle](explanation/stream-lifecycle.md) — how streams are identified, stored and found again
 - [Text resolution](explanation/text-resolution.md) — how matching works
 - [Materialization internals](explanation/materialization-internals.md) — app scheduling, recovery, storage backends, and tests

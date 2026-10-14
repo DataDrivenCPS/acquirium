@@ -78,6 +78,13 @@ class ExperimentObservationRequest(BaseModel):
     end: datetime | None = None
 class ExperimentFinishRequest(BaseModel):
     error: Any = None
+class ExperimentStreamAnnotationRequest(BaseModel):
+    ref_uri: str
+    start: datetime
+    end: datetime | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+class ExperimentStreamAnnotationCloseRequest(BaseModel):
+    end: datetime
 
 def define_experiment(request: ExperimentTemplateRequest):
     try: return app.state.manager.experiments.define(request.name)
@@ -164,6 +171,27 @@ def observe_experiment_variable(run_id: str, variable_id: str, request: Experime
         interval = (request.start, request.end) if request.start and request.end else None
         return app.state.manager.experiments.observe(run_id, variable_id, value=request.value, occurred_at=request.occurred_at, ref_uri=request.ref_uri, interval=interval)
     except KeyError: raise HTTPException(status_code=404, detail="unknown experiment run")
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def annotate_experiment_stream(run_id: str, request: ExperimentStreamAnnotationRequest):
+    try:
+        return app.state.manager.experiments.annotate_stream(
+            run_id, request.ref_uri, request.start, request.end, request.metadata)
+    except KeyError: raise HTTPException(status_code=404, detail="unknown experiment run")
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def close_experiment_stream_annotation(annotation_id: str, request: ExperimentStreamAnnotationCloseRequest):
+    try: return app.state.manager.experiments.close_stream_annotation(annotation_id, request.end)
+    except KeyError: raise HTTPException(status_code=404, detail="unknown stream annotation")
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def list_experiment_stream_annotations(
+    run_id: str | None = None, template_id: str | None = None, ref_uri: str | None = None,
+    start: datetime | None = None, end: datetime | None = None,
+):
+    try:
+        return app.state.manager.experiments.stream_annotations(
+            run_id=run_id, template_id=template_id, ref_uri=ref_uri, start=start, end=end)
     except Exception as error: raise HTTPException(status_code=400, detail=str(error))
 
 async def attach_experiment_file(run_id: str, variable_id: str, request: Request):
@@ -552,6 +580,9 @@ app.get("/experiments/templates/{template_id}/runs")(list_experiments)
 app.get("/experiments/templates/{template_id}/observations")(list_experiment_observations)
 app.get("/experiments/runs/{run_id}")(get_experiment)
 app.post("/experiments/runs/{run_id}/variables/{variable_id}/observations")(observe_experiment_variable)
+app.post("/experiments/runs/{run_id}/stream-annotations")(annotate_experiment_stream)
+app.get("/experiments/stream-annotations")(list_experiment_stream_annotations)
+app.post("/experiments/stream-annotations/{annotation_id}/close")(close_experiment_stream_annotation)
 app.post("/experiments/runs/{run_id}/variables/{variable_id}/file")(attach_experiment_file)
 app.post("/experiments/runs/{run_id}/finish")(finish_experiment)
 app.post("/experiments/runs/{run_id}/fail")(fail_experiment)

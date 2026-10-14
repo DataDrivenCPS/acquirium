@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
+from importlib import import_module
 from types import SimpleNamespace
+from urllib.parse import quote
 from unittest.mock import Mock
 import warnings
 
@@ -7,6 +9,7 @@ import pytest
 
 from acquirium.Experiments import ExperimentStore, Study, StudyService, timestamp
 from acquirium.Storage.duckdb_store import DuckDBStore
+from acquirium.internals.models import compute_ref_uri
 
 
 def test_reusable_template_variables_are_isolated_and_timestamped(tmp_path):
@@ -69,6 +72,9 @@ def study_api(tmp_path):
         )
     client.observe_experiment.side_effect = observe
     client.finish_experiment.side_effect = lambda run_id: ledger.finish(run_id, "succeeded")
+    client.annotate_experiment_stream.side_effect = lambda run_id, ref_uri, *, start, end=None, metadata=None: ledger.annotate_stream(run_id, ref_uri, start, end, metadata)
+    client.close_experiment_stream_annotation.side_effect = lambda annotation_id, *, end: ledger.close_stream_annotation(annotation_id, end)
+    client.list_experiment_stream_annotations.side_effect = ledger.stream_annotations
     ac = Mock(client=client)
     item = ledger.define("study")
     try:
@@ -84,6 +90,7 @@ def test_collections_preserve_handles_and_roles(study_api):
     log = study.log("events")
     assert study.output("cost").scalar(unit="USD") is cost
     assert study.output["cost"] is cost
+    assert cost.variable_id == str(compute_ref_uri(f"study/{study.study_id}", "cost"))
     assert list(study.output) == [cost]
     assert list(study.output.items()) == [("cost", cost)]
     assert list(study.output.keys()) == ["cost"]
@@ -100,6 +107,81 @@ def test_collections_preserve_handles_and_roles(study_api):
     with pytest.raises(ValueError, match="declared differently"):
         study.input("cost").scalar(unit="USD")
     assert study.output["cost"] is cost
+
+
+def test_stream_annotations_support_historical_and_live_intervals(study_api):
+    study, ac = study_api.study, study_api.ac
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    end = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    run = study.start({"digester": "A"})
+    historical = run.annotate_stream("urn:plant:gas-flow", start=start, end=end,
+                                     metadata={"treatment": "new membrane"})
+    live = run.annotate_stream("urn:plant:gas-flow", start=end)
+    run.finish()
+
+    reopened = StudyService(ac).get("study")
+    matches = reopened.stream_annotations(ref_uri="urn:plant:gas-flow", start=end)
+    assert [annotation.annotation_id for annotation in matches] == [historical.annotation_id, live.annotation_id]
+    assert reopened.experiments.get(run.run_id).observations().all() == []
+    assert reopened.experiments.get(run.run_id).stream_annotations()[0].metadata == {"treatment": "new membrane"}
+    assert StudyService(ac).stream_annotations(ref_uri="urn:plant:gas-flow", end=start)[0].run_id == run.run_id
+    assert not reopened.stream_annotations(ref_uri="urn:another-stream")
+
+    expected = object()
+    study_api.client.timeseries_df.return_value = expected
+    assert historical.dataframe() is expected
+    study_api.client.timeseries_df.assert_called_once_with(
+        "urn:plant:gas-flow", start=start.isoformat(), end=end.isoformat())
+
+    live.close(datetime(2026, 1, 3, tzinfo=timezone.utc))
+    assert live.range_end == datetime(2026, 1, 3, tzinfo=timezone.utc)
+    with pytest.raises(ValueError, match="already closed"):
+        live.close(datetime(2026, 1, 4, tzinfo=timezone.utc))
+    assert len(reopened.stream_annotations(start=datetime(2026, 1, 4, tzinfo=timezone.utc))) == 0
+    retrospective = reopened.experiments.get(run.run_id).annotate_stream(
+        "urn:plant:gas-flow", start=start, end=end,
+        metadata={"identified_later": True},
+    )
+    assert retrospective.created_at > retrospective.range_end
+    assert retrospective.metadata == {"identified_later": True}
+
+
+def test_stream_annotation_rejects_invalid_range_and_keeps_parallel_runs(study_api):
+    study = study_api.study
+    start = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    before = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    first = study.start()
+    with pytest.raises(ValueError, match="at or after start"):
+        first.annotate_stream("urn:plant:flow", start=start, end=before)
+    with pytest.raises(ValueError, match="reference URI"):
+        first.annotate_stream(" ", start=start)
+    annotation = first.annotate_stream("urn:plant:flow", start=start)
+    with pytest.raises(ValueError, match="at or after start"):
+        annotation.close(before)
+    second_study = StudyService(study_api.ac).get("study")
+    second = second_study.start()
+    other = second.annotate_stream("urn:plant:flow", start=start)
+    assert other.run_id != annotation.run_id
+    assert len(StudyService(study_api.ac).stream_annotations(ref_uri="urn:plant:flow")) == 2
+
+
+def test_long_running_experiment_resumes_in_another_session(study_api):
+    original = study_api.study
+    result = original.output("efficiency").scalar()
+    started = original.start(metadata={"train": "A"})
+    opened = started.annotate_stream("urn:plant:gas-flow", start="2026-01-01T00:00:00Z")
+
+    resumed_study = StudyService(study_api.ac).get("study")
+    resumed = resumed_study.resume(started.run_id)
+    assert resumed.run_id == opened.run_id
+    resumed_study.output["efficiency"].record(0.82)
+    assert resumed.observations("efficiency").latest().value == 0.82
+    assert resumed.stream_annotations()[0].range_end is None
+    resumed.stream_annotations()[0].close("2026-01-31T00:00:00Z")
+    resumed.finish()
+    with pytest.raises(ValueError, match="running"):
+        resumed_study.resume(started.run_id)
+    assert result.variable_id == resumed_study.output["efficiency"].variable_id
 
 
 def test_reopened_study_hydrates_variables_and_reads_experiments(study_api):
@@ -285,6 +367,53 @@ def test_record_files_and_streams(study_api, tmp_path):
     run.finish()
     with pytest.raises(RuntimeError):
         file.record(path)
+
+
+def test_timeseries_result_does_not_require_plant_model(study_api):
+    study, ac = study_api.study, study_api.ac
+    simulated_power = study.output("simulated power").timeseries(unit="kW")
+    run = study.start()
+    simulated_power.record([("2026-01-01T00:00:00Z", 42.0)])
+    assert ac.register_streams.call_args.args[0][0]["point_uri"] is None
+    assert ac.insert_timeseries.call_args.kwargs["point_uri"] is None
+    assert run.observations("simulated power").latest().ref_uri is not None
+
+
+def test_http_routes_accept_reference_uri_variable_ids_and_stream_annotations(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    store = DuckDBStore(tmp_path / "http.duckdb", recreate=True)
+    try:
+        ledger = ExperimentStore(store, tmp_path / "artifacts")
+        module = import_module("acquirium.Server.app")
+        monkeypatch.setattr(module.app.state, "manager", SimpleNamespace(experiments=ledger), raising=False)
+        http = TestClient(module.app)
+        study = http.post("/experiments/templates", json={"name": "http"}).json()
+        variable = http.post(
+            f"/experiments/templates/{study['template_id']}/variables",
+            json={"label": "power (kW)", "role": "output", "kind": "scalar", "metadata": {}},
+        ).json()
+        assert variable["variable_id"].startswith("urn:acquirium#")
+        run = http.post(f"/experiments/templates/{study['template_id']}/runs", json={"metadata": {}}).json()
+        observed = http.post(
+            f"/experiments/runs/{run['run_id']}/variables/{quote(variable['variable_id'], safe='')}/observations",
+            json={"value": 42.0},
+        )
+        assert observed.status_code == 200
+        tagged = http.post(
+            f"/experiments/runs/{run['run_id']}/stream-annotations",
+            json={"ref_uri": "urn:plant:flow", "start": "2026-01-01T00:00:00Z", "metadata": {"phase": "trial"}},
+        )
+        assert tagged.status_code == 200
+        listed = http.get("/experiments/stream-annotations", params={"ref_uri": "urn:plant:flow"})
+        assert listed.status_code == 200
+        assert listed.json()[0]["metadata"] == {"phase": "trial"}
+        assert http.post(
+            f"/experiments/stream-annotations/{tagged.json()['annotation_id']}/close",
+            json={"end": "2026-01-02T00:00:00Z"},
+        ).status_code == 200
+    finally:
+        store.close()
 
 
 def test_output_assignment_reuses_handles_and_preserves_run_boundary(study_api):

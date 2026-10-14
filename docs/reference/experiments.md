@@ -10,6 +10,7 @@ the observations produced by individual executions.
 | `ac.study.define(name)` | `Study` | Define or reuse a Study by name |
 | `ac.study.get(name_or_id)` | `Study` | Reopen a persisted Study and hydrate its variables |
 | `ac.study.all()` | `list[Study]` | List persisted Studies |
+| `ac.study.stream_annotations(ref_uri=None, start=None, end=None)` | `list[StreamAnnotation]` | Find stream intervals across Studies |
 | `ac.point(uri)` | `Point` | Wrap a property URI for a time-series declaration |
 | `ac.resolve(text, kind=None, min_score=0.6)` | `Point` | Resolve text to one graph resource |
 | `aq.timestamp(value)` | `datetime` | Parse a string or normalize a datetime to UTC |
@@ -23,7 +24,7 @@ A `Study` exposes:
 
 | Member | Meaning |
 |---|---|
-| `study_id` | Persistent template identifier |
+| `study_id` | Persistent Study identifier |
 | `name` | Persistent Study name |
 | `input` | Callable collection of input variables |
 | `output` | Callable collection of output variables |
@@ -31,9 +32,13 @@ A `Study` exposes:
 | `variables` | All persisted declarations, across roles |
 | `experiments` | Queryable collection of current and historical Experiments |
 | `start(metadata=None)` | Start and return an `Experiment` |
+| `resume(run_id)` | Rebind this Study's handles to a persisted running Experiment |
+| `stream_annotations(run_id=None, ref_uri=None, start=None, end=None)` | Find this Study's stream intervals |
 
 One Study object can have only one active Experiment. Calling `start()` before
 the active Experiment is finished or failed raises `RuntimeError`.
+`resume()` requires a run from this Study with status `running` and also rejects
+an already active Study object.
 
 ### Variable collections
 
@@ -46,7 +51,7 @@ the value type with one of these methods:
 | `.text(**metadata)` | `text` | Arbitrary keyword metadata |
 | `.scalar(unit=None, **metadata)` | `scalar` | Optional unit plus arbitrary metadata |
 | `.file(media_type=None, **metadata)` | `file` | Optional media type plus arbitrary metadata |
-| `.timeseries(observed=..., unit=None, **metadata)` | `timeseries` | Required property URI and optional unit; registered as numeric |
+| `.timeseries(observed=None, unit=None, **metadata)` | `timeseries` | Optional property URI and unit; registered as numeric |
 
 `study.log(label, **metadata)` declares a `log` variable directly.
 
@@ -61,8 +66,10 @@ handles in declaration order. Both `define()` and `get()` load declarations
 that were persisted by earlier processes, so post-hoc analysis does not need
 to repeat the declarations.
 
-`study.variables` combines the three roles. Index it by label or persistent
-variable ID, call `.all()` for handles, `.where(role=..., kind=...)` to select
+`study.variables` combines the three roles. Variable IDs are reference URIs
+derived from the Study ID and the variable label using the same source/name
+mechanism as streams. Index by label or variable ID, call `.all()` for handles,
+`.where(role=..., kind=...)` to select
 them, or `.frame()` for a Polars table containing IDs, labels, roles, kinds,
 creation times, and complete metadata. The frame also exposes metadata keys
 with at least one non-null value as columns, with nulls for variables that do
@@ -129,11 +136,37 @@ Mutation requires an active Experiment on the variable's Study.
 | `status`, `metadata`, timestamps, `error` | Persisted execution context |
 | `output` | Run-bound output mapping |
 | `observations(variable=None)` | Select all observations or those for one variable |
+| `annotate_stream(ref_uri, start=..., end=None, metadata=None)` | Tag an existing stream interval |
+| `stream_annotations(ref_uri=None, start=None, end=None)` | Find this Experiment's stream intervals |
 | `finish()` | Set status to `succeeded` and make the run terminal |
 | `fail(error)` | Set status to `failed`, store its type and message, and make the run terminal |
 
 Each observation is written immediately. `finish()` is not a transaction that
-commits all observations at once. A terminal run rejects further observations.
+commits all observations at once. A terminal run rejects further variable
+observations; stream annotations may still be added to document earlier data.
+
+### Stream annotations
+
+`annotate_stream()` requires a stream reference URI and a start time. Its
+optional end time must be at or after the start. Datetime objects and ISO 8601
+strings are accepted; timezone-less values are treated as UTC. The optional
+metadata is a JSON object stored on the annotation, separate from Experiment
+and stream metadata. Annotations can overlap and do not copy stream samples.
+
+The returned `StreamAnnotation` has `annotation_id`, `run_id`, `template_id`,
+`ref_uri`, `range_start`, `range_end`, `metadata`, and `created_at`. Its
+`.dataframe(**kwargs)` reads the referenced stream with inclusive range bounds;
+additional time-series query options are forwarded to the client. An open
+annotation has `range_end=None`. `.close(end)` sets its end exactly once.
+Annotations may be added or closed after the Experiment becomes terminal;
+`created_at` preserves when the attribution was made. Recorded variable values
+remain terminal and cannot be appended after `finish()` or `fail()`.
+
+The three `stream_annotations()` search methods accept a stream URI and an
+overlapping time window. A missing query bound means unbounded time. The
+returned list is ordered by annotation start, run ID, and recording sequence. These
+methods return annotations for the requested scope, including those attached
+to failed or running Experiments.
 
 ### Output assignment
 
@@ -257,6 +290,9 @@ The HTTP API calls a Study a `template`. `template_id`, `variable_id`, and
 | `GET` | `/experiments/runs/{run_id}` | Retrieve one Experiment |
 | `GET` | `/experiments/templates/{template_id}/observations` | Filter and list observations |
 | `POST` | `/experiments/runs/{run_id}/variables/{variable_id}/observations` | Record a value or reference |
+| `POST` | `/experiments/runs/{run_id}/stream-annotations` | Tag a stream interval |
+| `GET` | `/experiments/stream-annotations` | Find annotations by Study, run, stream, and overlapping time |
+| `POST` | `/experiments/stream-annotations/{annotation_id}/close` | Close an open interval |
 | `POST` | `/experiments/runs/{run_id}/variables/{variable_id}/file` | Attach a file |
 | `POST` | `/experiments/runs/{run_id}/finish` | Mark the run succeeded |
 | `POST` | `/experiments/runs/{run_id}/fail` | Mark the run failed |

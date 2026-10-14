@@ -12,6 +12,7 @@ from typing import Any
 from uuid import uuid4
 from dateutil import parser as dtparser
 import polars as pl
+from acquirium.internals.models import compute_ref_uri
 
 UTC = timezone.utc
 
@@ -44,11 +45,12 @@ class ExperimentStore:
             self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_templates (template_id VARCHAR PRIMARY KEY, name VARCHAR UNIQUE NOT NULL, created_at TIMESTAMP NOT NULL)")
             self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_variables (variable_id VARCHAR PRIMARY KEY, template_id VARCHAR NOT NULL, label VARCHAR NOT NULL, role VARCHAR NOT NULL, kind VARCHAR NOT NULL, metadata_json VARCHAR NOT NULL, created_at TIMESTAMP NOT NULL, UNIQUE(template_id, label))")
             self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_runs (run_id VARCHAR PRIMARY KEY, template_id VARCHAR NOT NULL, status VARCHAR NOT NULL, metadata_json VARCHAR NOT NULL, started_at TIMESTAMP NOT NULL, finished_at TIMESTAMP, error_json VARCHAR)")
-            self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_observations (run_id VARCHAR NOT NULL, variable_id VARCHAR NOT NULL, sequence BIGINT NOT NULL, recorded_at TIMESTAMP NOT NULL, occurred_at TIMESTAMP, value_json VARCHAR, artifact_digest VARCHAR, ref_uri VARCHAR, range_start TIMESTAMP, range_end TIMESTAMP, PRIMARY KEY(run_id, sequence))")
+            self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_observations (run_id VARCHAR NOT NULL, variable_id VARCHAR, sequence BIGINT NOT NULL, recorded_at TIMESTAMP NOT NULL, occurred_at TIMESTAMP, value_json VARCHAR, artifact_digest VARCHAR, ref_uri VARCHAR, range_start TIMESTAMP, range_end TIMESTAMP, PRIMARY KEY(run_id, sequence))")
             self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_artifacts (digest VARCHAR PRIMARY KEY, filename VARCHAR NOT NULL, media_type VARCHAR, byte_length BIGINT NOT NULL, created_at TIMESTAMP NOT NULL)")
             self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_variables_template_idx ON experiment_variables(template_id)")
             self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_runs_template_idx ON experiment_runs(template_id, status, started_at)")
             self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_observations_variable_idx ON experiment_observations(variable_id, run_id, sequence)")
+            self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_observations_ref_idx ON experiment_observations(ref_uri, range_start, range_end)")
 
     @staticmethod
     def _execute(conn: Any, statement: str, parameters: list[Any] | None = None):
@@ -63,6 +65,10 @@ class ExperimentStore:
         row = self._execute(conn, "SELECT status FROM experiment_runs WHERE run_id=?", [run_id]).fetchone()
         if row is None: raise KeyError(run_id)
         if row[0] != "running": raise ValueError("experiment run is terminal")
+    def _next_observation(self, conn: Any, run_id: str) -> tuple[int, datetime]:
+        # Values and stream annotations share one run-local recording order.
+        sequence = int(self._execute(conn, "SELECT coalesce(max(sequence),0)+1 FROM experiment_observations WHERE run_id=?", [run_id]).fetchone()[0])
+        return sequence, _now()
     def define(self, name: str) -> dict[str, Any]:
         if not name.strip(): raise ValueError("experiment name is required")
         with self.store._lock, self.store._write_conn() as conn:
@@ -82,7 +88,8 @@ class ExperimentStore:
                 # remain interpretable after the script evolves.
                 if (row[1], row[2], row[3]) != (role, kind, _json(metadata)): raise ValueError(f"variable {label!r} was already declared differently")
                 return {"variable_id": row[0], "label": label, "role": role, "kind": kind, "metadata": metadata, "created_at": timestamp(row[4]), "created": False}
-            variable_id, created_at = str(uuid4()), _now()
+            # Study variables use the same source/name identity as streams.
+            variable_id, created_at = str(compute_ref_uri(f"study/{template_id}", label)), _now()
             self._execute(conn, "INSERT INTO experiment_variables VALUES (?, ?, ?, ?, ?, ?, ?)", [variable_id, template_id, label, role, kind, _json(metadata), _database_timestamp(created_at)])
             return {"variable_id": variable_id, "label": label, "role": role, "kind": kind, "metadata": metadata, "created_at": created_at, "created": True}
     def start(self, template_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
@@ -97,8 +104,7 @@ class ExperimentStore:
             self._active(conn, run_id)
             # Wall clocks can collide or arrive out of order. Sequence is the
             # authoritative order of observations within one experiment.
-            seq = int(self._execute(conn, "SELECT coalesce(max(sequence),0)+1 FROM experiment_observations WHERE run_id=?", [run_id]).fetchone()[0])
-            recorded = _now()
+            seq, recorded = self._next_observation(conn, run_id)
             self._execute(conn, "INSERT INTO experiment_observations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [run_id, variable_id, seq, _database_timestamp(recorded), _database_timestamp(occurred_at) if occurred_at else None, _json(value) if value is not None else None, artifact_digest, ref_uri, _database_timestamp(interval[0]) if interval else None, _database_timestamp(interval[1]) if interval else None])
         return {"sequence": seq, "recorded_at": recorded}
     def finish(self, run_id: str, status: str, error: Any = None) -> dict[str, Any]:
@@ -117,6 +123,86 @@ class ExperimentStore:
             self._execute(conn, "INSERT INTO experiment_artifacts VALUES (?, ?, ?, ?, ?) ON CONFLICT(digest) DO NOTHING", [digest, filename, media_type, len(data), _database_timestamp(_now())])
         self.observe(run_id, variable_id, artifact_digest=digest)
         return {"digest": digest, "filename": filename, "byte_length": len(data)}
+
+    def annotate_stream(self, run_id: str, ref_uri: str, start: datetime | str, end: datetime | str | None = None, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Associate a live stream interval with a run without copying samples."""
+        if not ref_uri or not ref_uri.strip():
+            raise ValueError("a stream reference URI is required")
+        start_at = timestamp(start)
+        end_at = timestamp(end) if end is not None else None
+        if end_at is not None and end_at < start_at:
+            raise ValueError("annotation end must be at or after start")
+        metadata = {} if metadata is None else metadata
+        if not isinstance(metadata, dict):
+            raise ValueError("annotation metadata must be a JSON object")
+        metadata_json = json.dumps(metadata, sort_keys=True, allow_nan=False)
+        with self.store._lock, self.store._write_conn() as conn:
+            # An annotation can document a trial after its run has ended. It
+            # is dated separately and never changes previously recorded values.
+            row = self._execute(conn, "SELECT template_id FROM experiment_runs WHERE run_id=?", [run_id]).fetchone()
+            if row is None:
+                raise KeyError(run_id)
+            sequence, recorded = self._next_observation(conn, run_id)
+            self._execute(conn, """
+                INSERT INTO experiment_observations
+                (run_id, variable_id, sequence, recorded_at, value_json, ref_uri, range_start, range_end)
+                VALUES (?, NULL, ?, ?, ?, ?, ?, ?)
+                """, [run_id, sequence, _database_timestamp(recorded), metadata_json, ref_uri,
+                      _database_timestamp(start_at),
+                      _database_timestamp(end_at) if end_at is not None else None])
+        return {"annotation_id": f"{run_id}:{sequence}", "run_id": run_id,
+                "template_id": row[0], "ref_uri": ref_uri, "range_start": start_at,
+                "range_end": end_at, "metadata": metadata, "created_at": recorded}
+
+    def close_stream_annotation(self, annotation_id: str, end: datetime | str) -> dict[str, Any]:
+        """Set the end of an open interval, including after a run finishes."""
+        end_at = timestamp(end)
+        run_id, separator, sequence_text = annotation_id.rpartition(":")
+        if not separator or not sequence_text.isdecimal():
+            raise KeyError(annotation_id)
+        with self.store._lock, self.store._write_conn() as conn:
+            row = self._execute(conn, """
+                SELECT range_start, range_end FROM experiment_observations
+                WHERE run_id=? AND sequence=? AND variable_id IS NULL AND ref_uri IS NOT NULL
+                """, [run_id, int(sequence_text)]).fetchone()
+            if row is None:
+                raise KeyError(annotation_id)
+            if row[1] is not None:
+                raise ValueError("stream annotation is already closed")
+            if end_at < timestamp(row[0]):
+                raise ValueError("annotation end must be at or after start")
+            self._execute(conn, "UPDATE experiment_observations SET range_end=? WHERE run_id=? AND sequence=?", [_database_timestamp(end_at), run_id, int(sequence_text)])
+        return {"annotation_id": annotation_id, "range_end": end_at}
+
+    def stream_annotations(self, *, run_id: str | None = None, template_id: str | None = None,
+                           ref_uri: str | None = None, start: datetime | str | None = None,
+                           end: datetime | str | None = None) -> list[dict[str, Any]]:
+        """Find annotations by experiment, Study, stream, or overlapping time."""
+        if start is not None and end is not None and timestamp(end) < timestamp(start):
+            raise ValueError("query end must be at or after start")
+        clauses, parameters = ["o.variable_id IS NULL", "o.ref_uri IS NOT NULL"], []
+        for clause, value in (("o.run_id=?", run_id), ("r.template_id=?", template_id), ("o.ref_uri=?", ref_uri)):
+            if value is not None:
+                clauses.append(clause); parameters.append(value)
+        if start is not None:
+            clauses.append("(o.range_end IS NULL OR o.range_end>=?)")
+            parameters.append(_database_timestamp(start))
+        if end is not None:
+            clauses.append("o.range_start<=?")
+            parameters.append(_database_timestamp(end))
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self.store._own_conn() as conn:
+            rows = self._execute(conn, f"""
+                SELECT o.run_id, o.sequence, r.template_id, o.ref_uri,
+                       o.range_start, o.range_end, o.value_json, o.recorded_at
+                FROM experiment_observations AS o
+                JOIN experiment_runs AS r ON r.run_id=o.run_id
+                {where}
+                ORDER BY o.range_start, o.run_id, o.sequence
+                """, parameters).fetchall()
+        return [{"annotation_id": f"{row[0]}:{row[1]}", "run_id": row[0], "template_id": row[2], "ref_uri": row[3],
+                 "range_start": timestamp(row[4]), "range_end": timestamp(row[5]) if row[5] is not None else None,
+                 "metadata": json.loads(row[6]), "created_at": timestamp(row[7])} for row in rows]
 
     def studies(self, name: str | None = None) -> list[dict[str, Any]]:
         statement = "SELECT template_id, name, created_at FROM experiment_templates"
@@ -325,6 +411,38 @@ class RecordedSeries:
     def __str__(self) -> str:
         return self.ref_uri
 
+@dataclass
+class StreamAnnotation:
+    """A run's claim on a time interval of an existing stream."""
+    annotation_id: str
+    run_id: str
+    template_id: str
+    ref_uri: str
+    range_start: datetime
+    range_end: datetime | None
+    metadata: dict[str, Any]
+    created_at: datetime
+    _client: Any = field(repr=False, compare=False)
+
+    @classmethod
+    def from_item(cls, item: dict[str, Any], client: Any) -> "StreamAnnotation":
+        return cls(item["annotation_id"], item["run_id"], item["template_id"], item["ref_uri"],
+                   timestamp(item["range_start"]),
+                   timestamp(item["range_end"]) if item.get("range_end") else None,
+                   dict(item["metadata"]), timestamp(item["created_at"]), client)
+
+    def close(self, end: datetime | str) -> None:
+        result = self._client.close_experiment_stream_annotation(self.annotation_id, end=timestamp(end).isoformat())
+        self.range_end = timestamp(result["range_end"])
+
+    def dataframe(self, **kwargs: Any):
+        """Read the current stream values within the claimed interval."""
+        options = dict(kwargs)
+        options.setdefault("start", self.range_start.isoformat())
+        if self.range_end is not None:
+            options.setdefault("end", self.range_end.isoformat())
+        return self._client.timeseries_df(self.ref_uri, **options)
+
 @dataclass(frozen=True)
 class Observation:
     """One persisted value recorded for a variable in an Experiment."""
@@ -404,7 +522,9 @@ class _Builder:
     def text(self, **metadata: Any): return self._make("text", **metadata)
     def scalar(self, *, unit: str | None = None, **metadata: Any): return self._make("scalar", unit=unit, **metadata)
     def file(self, *, media_type: str | None = None, **metadata: Any): return self._make("file", media_type=media_type, **metadata)
-    def timeseries(self, *, observed: str | Point, unit: str | None = None, **metadata: Any): return self._make("timeseries", observed=str(observed.uri if isinstance(observed, Point) else observed), unit=unit, **metadata)
+    def timeseries(self, *, observed: str | Point | None = None, unit: str | None = None, **metadata: Any):
+        uri = observed.uri if isinstance(observed, Point) else observed
+        return self._make("timeseries", observed=str(uri) if uri is not None else None, unit=unit, **metadata)
 
 class ExperimentVariable:
     def __init__(
@@ -552,6 +672,21 @@ class Experiment:
 
     def observations(self, variable: ExperimentVariable | str | None = None) -> "ObservationCollection":
         return ObservationCollection(self.study, run_id=self.run_id, variable=variable)
+
+    def annotate_stream(self, ref_uri: str, *, start: datetime | str, end: datetime | str | None = None,
+                        metadata: dict[str, Any] | None = None) -> StreamAnnotation:
+        """Tag historical or live samples from an existing stream as part of this run."""
+        item = self.study.client.annotate_experiment_stream(
+            self.run_id, ref_uri, start=timestamp(start).isoformat(),
+            end=timestamp(end).isoformat() if end is not None else None,
+            metadata={} if metadata is None else metadata,
+        )
+        return StreamAnnotation.from_item(item, self.study.client)
+
+    def stream_annotations(self, *, ref_uri: str | None = None,
+                           start: datetime | str | None = None,
+                           end: datetime | str | None = None) -> list[StreamAnnotation]:
+        return self.study.stream_annotations(run_id=self.run_id, ref_uri=ref_uri, start=start, end=end)
 
     def finish(self):
         result = self.study.client.finish_experiment(self.run_id)
@@ -843,6 +978,28 @@ class Study:
         if self._experiment is not None: raise RuntimeError("finish the active experiment before starting another")
         self._experiment = Experiment(self, self.client.start_experiment(self.study_id, metadata)); return self._experiment
 
+    def resume(self, run_id: str) -> Experiment:
+        """Bind a persisted running Experiment to this Study's variable handles."""
+        if self._experiment is not None:
+            raise RuntimeError("finish the active experiment before resuming another")
+        item = self.client.get_experiment(run_id)
+        if item["template_id"] != self.study_id:
+            raise ValueError("experiment belongs to a different study")
+        if item["status"] != "running":
+            raise ValueError("only a running experiment can be resumed")
+        self._experiment = Experiment(self, item)
+        return self._experiment
+
+    def stream_annotations(self, *, run_id: str | None = None, ref_uri: str | None = None,
+                           start: datetime | str | None = None,
+                           end: datetime | str | None = None) -> list[StreamAnnotation]:
+        items = self.client.list_experiment_stream_annotations(
+            template_id=self.study_id, run_id=run_id, ref_uri=ref_uri,
+            start=timestamp(start).isoformat() if start is not None else None,
+            end=timestamp(end).isoformat() if end is not None else None,
+        )
+        return [StreamAnnotation.from_item(item, self.client) for item in items]
+
 class StudyService:
     """Top-level `ac.study` entry point; `define` is idempotent by study name."""
     def __init__(self, ac: Any): self.ac = ac
@@ -855,3 +1012,12 @@ class StudyService:
         return self._hydrate(self.ac.client.get_experiment_study(name_or_id))
     def all(self) -> list[Study]:
         return [self._hydrate(item) for item in self.ac.client.list_experiment_studies()]
+    def stream_annotations(self, *, ref_uri: str | None = None,
+                           start: datetime | str | None = None,
+                           end: datetime | str | None = None) -> list[StreamAnnotation]:
+        items = self.ac.client.list_experiment_stream_annotations(
+            ref_uri=ref_uri,
+            start=timestamp(start).isoformat() if start is not None else None,
+            end=timestamp(end).isoformat() if end is not None else None,
+        )
+        return [StreamAnnotation.from_item(item, self.ac.client) for item in items]

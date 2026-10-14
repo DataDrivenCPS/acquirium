@@ -148,15 +148,14 @@ def _(ac):
     )
     solver_events = study.log("solver events")
     return (
+        TANK_URI,
+        TANK_VOLUME_URI,
         electrical_power,
-        ELECTRICAL_POWER_URI,
         initial_tank_volume,
         model_inputs,
         operating_cost,
         solver_events,
         study,
-        TANK_URI,
-        TANK_VOLUME_URI,
         tank_volume,
         treatment_flow,
     )
@@ -558,8 +557,11 @@ def _(ac, np, recorded_study, result_history):
             strict=True,
         )
     )
-
-    return baseline_volume_observation, simulated_volume, synthetic_deployment_rows
+    return (
+        baseline_volume_observation,
+        simulated_volume,
+        synthetic_deployment_rows,
+    )
 
 
 @app.cell
