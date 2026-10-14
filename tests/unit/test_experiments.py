@@ -489,6 +489,79 @@ def test_timeseries_result_does_not_require_plant_model(study_api):
     assert run.observations("simulated power").latest().ref_uri is not None
 
 
+def test_timeseries_registration_is_reused_per_run_and_variable(study_api):
+    study, ac = study_api.study, study_api.ac
+    power = study.output("power").timeseries(unit="kW")
+    volume = study.output("volume").timeseries(unit="M3")
+    ac.reference_uri.side_effect = compute_ref_uri
+    first = study.start()
+    assert power.record([]) is None
+    ac.register_streams.assert_not_called()
+
+    recorded = power.record([("2026-01-01T00:00:00Z", 10)])
+    appended = power.add([("2026-01-01T01:00:00Z", 20)])
+
+    ac.register_streams.assert_called_once()
+    assert ac.insert_timeseries.call_count == 2
+    assert recorded.ref_uri == appended.ref_uri
+    observations = first.observations(power).all()
+    assert [item.sequence for item in observations] == [1, 2]
+    assert [item.range_start.hour for item in observations] == [0, 1]
+    volume.record([("2026-01-01T00:00:00Z", 30)])
+    volume.record([("2026-01-01T01:00:00Z", 40)])
+    assert ac.register_streams.call_count == 2
+    assert ac.insert_timeseries.call_count == 4
+
+    first.finish()
+    second = study.start()
+    new_recording = power.record([("2026-01-01T00:00:00Z", 50)])
+    power.record([("2026-01-01T01:00:00Z", 60)])
+    assert ac.register_streams.call_count == 3
+    assert ac.insert_timeseries.call_count == 6
+    assert new_recording.ref_uri != recorded.ref_uri
+    assert ac.register_streams.call_args.args[0][0]["source_id"] == f"experiment/{second.run_id}"
+    assert len(second.observations(power).all()) == 2
+
+
+@pytest.mark.parametrize("failure_phase", ["registration", "insertion"])
+def test_timeseries_registration_cache_handles_retries(study_api, failure_phase):
+    study, ac = study_api.study, study_api.ac
+    power = study.output("power").timeseries(unit="kW")
+    ac.reference_uri.side_effect = compute_ref_uri
+    run = study.start()
+    operation = ac.register_streams if failure_phase == "registration" else ac.insert_timeseries
+    operation.side_effect = [RuntimeError("temporary failure"), None, None]
+    rows = [("2026-01-01T00:00:00Z", 10)]
+
+    with pytest.raises(RuntimeError, match="temporary failure"):
+        power.record(rows)
+    assert run.observations(power).all() == []
+    power.record(rows)
+    power.record(rows)
+
+    assert ac.register_streams.call_count == (2 if failure_phase == "registration" else 1)
+    assert ac.insert_timeseries.call_count == (2 if failure_phase == "registration" else 3)
+    assert len(run.observations(power).all()) == 2
+
+
+def test_resumed_run_registers_stream_once_in_new_session(study_api):
+    study, ac = study_api.study, study_api.ac
+    power = study.output("power").timeseries(unit="kW")
+    ac.reference_uri.side_effect = compute_ref_uri
+    run = study.start()
+    original = power.record([("2026-01-01T00:00:00Z", 10)])
+    ac.register_streams.reset_mock()
+
+    reopened = StudyService(ac).get("study")
+    resumed = reopened.resume(run.run_id)
+    recorded = reopened.output["power"].record([("2026-01-01T01:00:00Z", 20)])
+    reopened.output["power"].record([("2026-01-01T02:00:00Z", 30)])
+
+    ac.register_streams.assert_called_once()
+    assert recorded.ref_uri == original.ref_uri
+    assert [item.range_start.hour for item in resumed.observations("power").all()] == [0, 1, 2]
+
+
 def test_http_routes_accept_reference_uri_variable_ids_and_stream_annotations(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 

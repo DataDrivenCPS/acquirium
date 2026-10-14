@@ -586,7 +586,10 @@ class ExperimentVariable:
         metadata = self.study._metadata[self.variable_id]; observed = metadata.get("observed")
         # A run-scoped source keeps scenarios from overwriting each other's
         # output while still producing ordinary Acquirium stream references.
-        source = f"experiment/{self.run_id}"; ref_name = self.label
+        experiment = self.study._experiment
+        if experiment is None:
+            raise RuntimeError("start an experiment before mutating variables")
+        source = f"experiment/{experiment.run_id}"; ref_name = self.label
         if hasattr(rows, "to_pylist"):
             rows = [(item.get("time", item.get("ts")), item["value"]) for item in rows.to_pylist()]
         elif hasattr(rows, "to_dicts"):
@@ -595,14 +598,18 @@ class ExperimentVariable:
         if not rows: return None
         # Register graph metadata before writing data. This makes the output
         # discoverable by its observed plant property immediately.
-        self.study.ac.register_streams([{
-            "source_id": source,
-            "ref_name": ref_name,
-            "point_uri": observed,
-            "unit": metadata.get("unit"),
-            "label": self.label,
-            "value_kind": "numeric",
-        }])
+        if self.variable_id not in experiment._registered_streams:
+            self.study.ac.register_streams([{
+                "source_id": source,
+                "ref_name": ref_name,
+                "point_uri": observed,
+                "unit": metadata.get("unit"),
+                "label": self.label,
+                "value_kind": "numeric",
+            }])
+            # Registration succeeded even if the following sample write fails.
+            # Cache on the run so later runs get their own stream metadata.
+            experiment._registered_streams.add(self.variable_id)
         self.study.ac.insert_timeseries(source, ref_name, rows, point_uri=observed)
         ref_uri = self.study.ac.reference_uri(source, ref_name)
         self.use(ref_uri, interval=(min(x[0] for x in rows), max(x[0] for x in rows)))
@@ -664,6 +671,7 @@ class Experiment:
         self.started_at = timestamp(item["started_at"]) if item.get("started_at") else None
         self.finished_at = timestamp(item["finished_at"]) if item.get("finished_at") else None
         self.error = item.get("error")
+        self._registered_streams: set[str] = set()
         self.output = ExperimentOutputs(self)
 
     @property
