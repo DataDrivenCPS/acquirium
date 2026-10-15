@@ -370,8 +370,9 @@ class Materializer:
             # has no interval to maintain and is dropped.
             closing = {key: boundary(row["app"]) for key, row in open_rows.items()
                        if pending and key not in current and row["app"] not in failed_apps}
-            dataflow_dropped = self._dataflow_dropped(closing, open_rows, table, current, deployments)
+            dataflow_dropped = self._dataflow_dropped(closing, table, current, deployments)
             closing = {key: until for key, until in closing.items() if key not in dataflow_dropped}
+            table = [row for row in table if row["key"] not in dataflow_dropped or row["valid_to"] is None]
             historical = self._historical(table, closing, current, deployments, failed_apps,
                                           applications, revision)
             for b in historical:
@@ -450,6 +451,8 @@ class Materializer:
                                        b.valid_from.isoformat() if b.valid_from else None, self._definition(b)])
                 for until, refs in retired.items():
                     self._revisions.retire(refs, until, conn=conn)
+                for key in dataflow_dropped:
+                    self._execute(conn, "DELETE FROM materialization_bindings WHERE progress_key=? AND valid_to IS NOT NULL", [key])
                 self._execute(conn, "DELETE FROM materialization_graph_changes WHERE graph_revision<=?", [revision])
                 if cascade and republished:
                     # The derived points just published are what a downstream
@@ -505,15 +508,23 @@ class Materializer:
                  "valid_to": when(until), "definition": json.loads(definition)}
                 for key, sig, app, ctx, since, until, definition in rows]
 
-    def _dataflow_dropped(self, closing, open_rows, table, current, deployments) -> set[str]:
-        """Disappearing bindings whose input is a derived stream nothing produces any more.
+    def _dataflow_dropped(self, closing, table, current, deployments) -> set[str]:
+        """Bindings, closing now or closed before, whose input nothing produces any more.
 
-        Such a binding vanished because a view upstream was removed, not
-        because the model changed, even when a model change is planned in
-        the same refresh. It has no interval to maintain. Applied to a fixed
-        point, so dropping one binding drops its consumers too.
+        A binding whose input is a derived stream with no owner left exists
+        only because a view upstream was removed, not because the model
+        changed, even when a model change is planned in the same refresh. It
+        has no interval to maintain. Applied to a fixed point over closing
+        and closed bindings together, so a chain below a removed view goes.
         """
-        if not closing:
+        rows = {}
+        for row in table:
+            key = row["key"]
+            if key in current or row["app"] not in deployments:
+                continue
+            if (row["valid_to"] is None and key in closing) or row["valid_to"] is not None:
+                rows.setdefault(key, row)
+        if not rows:
             return set()
         with self._store._own_conn() as conn:
             derived = {row[0] for row in self._execute(
@@ -521,14 +532,12 @@ class Materializer:
         refs = lambda row, side: ({d["ref_uri"] for ds in row["definition"]["inputs"].values() for d in ds}
                                   if side == "in" else {ref for ref, _, _ in row["definition"]["outputs"].values()})
         owned = {p.ref_uri for b in current.values() for p in b.outputs.values()}
-        owned |= {ref for row in table if row["valid_to"] is not None and row["app"] in deployments
-                  and row["key"] not in current for ref in refs(row, "out")}
-        kept = set(closing)
+        kept = set(rows)
         while True:
-            alive = owned | {ref for key in kept for ref in refs(open_rows[key], "out")}
-            drop = {key for key in kept if any(ref in derived and ref not in alive for ref in refs(open_rows[key], "in"))}
+            alive = owned | {ref for key in kept for ref in refs(rows[key], "out")}
+            drop = {key for key in kept if any(ref in derived and ref not in alive for ref in refs(rows[key], "in"))}
             if not drop:
-                return set(closing) - kept
+                return set(rows) - kept
             kept -= drop
 
     def _instance(self, app_name: str, applications: dict[str, Any], deployments: dict[str, Deployment]):

@@ -336,11 +336,16 @@ def test_a_consumer_orphaned_by_a_view_removal_is_dropped_even_alongside_a_model
     store, graph, runtime = _runtime(tmp_path, ["urn:a", "urn:b"])
     try:
         derived = list(_outputs(runtime).values())
-        open_rows = {"k1": {"app": "copy-of-copies", "definition": {
-            "inputs": {"input": [{"ref_uri": derived[0]}]}, "outputs": {"out": ["urn:d1", "d1", "urn:p1"]}}},
-                     "k2": {"app": "copy-each", "definition": {
-            "inputs": {"input": [{"ref_uri": "urn:b"}]}, "outputs": {"out": [derived[1], "x", "urn:p"]}}}}
-        dropped = runtime._dataflow_dropped({"k1": T[3], "k2": T[3]}, open_rows, [], {}, {"copy-each": None})
-        assert dropped == {"k1"}
+        row = lambda key, app, src, out, until=None: {"key": key, "app": app, "valid_to": until, "definition": {
+            "inputs": {"input": [{"ref_uri": src}]}, "outputs": {"out": [out, "x", "urn:p"]}}}
+        table = [row("k1", "copy-of-copies", derived[0], "urn:d1"),      # closing now, orphaned
+                 row("k2", "copy-each", "urn:b", derived[1]),             # closing now, a sensor change
+                 row("k3", "copy-of-copies", derived[1], "urn:d3", T[2]), # closed before, still fed by k2
+                 row("k4", "copy-of-copies", "urn:d1", "urn:d4", T[2])]   # closed before, below k1
+        deployments = {"copy-each": None, "copy-of-copies": None}
+        with store._lock, store._write_conn() as conn:
+            conn.execute("INSERT INTO streams VALUES ('urn:d1', NULL, 'derived:copy-of-copies', 'd1', 'numeric')")
+        dropped = runtime._dataflow_dropped({"k1": T[3], "k2": T[3]}, table, {}, deployments)
+        assert dropped == {"k1", "k4"}
     finally:
         runtime.close(); store.close()
