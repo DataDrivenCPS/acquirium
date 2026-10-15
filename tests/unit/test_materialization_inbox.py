@@ -121,3 +121,14 @@ def test_an_empty_publication_is_not_recorded(setup):
     receipt = publisher.publish(PublicationRequest("p1", empty))
 
     assert receipt.row_count == 0 and receipt.versions == {} and engine.pending() == 0
+
+
+def test_a_step_reports_where_its_time_went(setup):
+    store, engine, publisher = setup
+    publisher.publish(PublicationRequest("p1", mutations("urn:a", [1.0, 2.0])))
+
+    report = engine.step()
+
+    assert set(report.timings) == {"apply", "evaluate", "commit"}
+    assert all(t >= 0 for t in report.timings.values())
+    assert sum(report.timings.values()) <= report.seconds

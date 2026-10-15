@@ -24,9 +24,9 @@ submission, so a read after a write sees the write.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Iterable, Protocol
+from typing import Mapping, Any, Iterable, Protocol
 
 import polars as pl
 import pyarrow as pa
@@ -54,6 +54,9 @@ class StepReport:
     rows: int
     published: bool
     seconds: float
+    # Where the time went: applying the inbox, evaluating the plan (its
+    # reads, transforms and publication, from the evaluator), and the commit.
+    timings: Mapping[str, float] = field(default_factory=dict)
 
 
 def encode(table: pa.Table) -> bytes:
@@ -154,6 +157,7 @@ class Engine:
                 params.append(int(limit))
             entries = self._execute(conn, query, params).fetchall()
             rows, seq_from, seq_to, revision = 0, 0, 0, None
+            timings: dict[str, float] = {}
             if entries:
                 revision = self.store._next_revision(conn)
                 for seq, kind, meta, payload in entries:
@@ -161,7 +165,11 @@ class Engine:
                     rows += self._apply(conn, kind, json.loads(meta), table, revision)
                 seq_from, seq_to = int(entries[0][0]), int(entries[-1][0])
                 self._execute(conn, "DELETE FROM materialization_inbox WHERE seq>=? AND seq<=?", [seq_from, seq_to])
+            timings["apply"] = perf_counter() - started
+            evaluated = perf_counter()
             published = bool(self.evaluator.evaluate(conn, plan)) if plan is not None else False
+            timings["evaluate"] = perf_counter() - evaluated
+            timings.update(getattr(self.evaluator, "timings", None) or {})
             if not entries and not published:
                 return None
             if revision is None:
@@ -170,7 +178,9 @@ class Engine:
             self._execute(conn, "INSERT INTO materialization_steps VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                           [step_no, revision, seq_from, seq_to, len(entries), rows, published,
                            datetime.now(timezone.utc).isoformat()])
-        report = StepReport(step_no, revision, seq_from, seq_to, len(entries), rows, published, perf_counter() - started)
+            committing = perf_counter()
+        timings["commit"] = perf_counter() - committing
+        report = StepReport(step_no, revision, seq_from, seq_to, len(entries), rows, published, perf_counter() - started, timings)
         if self.evaluator is not None and plan is not None:
             self.evaluator.committed(report)
         return report

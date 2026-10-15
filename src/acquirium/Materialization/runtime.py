@@ -246,6 +246,11 @@ class Materializer:
             self._scheduler.close()
             self._scheduler = Scheduler(self._revisions, max_workers=count)
 
+    @property
+    def timings(self) -> dict[str, float]:
+        """Where the last step's evaluation spent its time: reads, transforms, publication."""
+        return dict(getattr(self._scheduler, "timings", {}) or {})
+
     def failures(self) -> dict[str, str]:
         errors = dict(self._plan_errors)
         errors.update({f"trigger[{ref}]": error for ref, error in self.changes.trigger_errors.items()})

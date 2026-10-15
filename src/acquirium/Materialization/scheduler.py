@@ -89,6 +89,7 @@ class Scheduler:
         policy = policy or RunWhenTouched()
         store = self.store
         ran, blocked = False, set()
+        self.timings = {"read": 0.0, "transform": 0.0, "publish": 0.0}
         # Explicit repairs can be pending even when their input frontier is
         # current. Readiness must account for durable work as well as revisions.
         pending_work = store.pending_keys(conn)
@@ -157,8 +158,10 @@ class Scheduler:
         if capacity < 1:
             raise ValueError("max_workers must be positive")
         wave, ran = tuple(bindings), False
+        timings = self.timings
         for offset in range(0, len(wave), capacity):
             loaded = []
+            reading = monotonic()
             for binding in wave[offset:offset + capacity]:
                 self.errors.pop(binding.signature, None)
                 try:
@@ -168,6 +171,8 @@ class Scheduler:
                     continue
                 if batch is not None:
                     loaded.append((binding, batch))
+            timings["read"] += monotonic() - reading
+            transforming = monotonic()
             pending = []
             for binding, batch in loaded:
                 self.running.add(binding.signature)
@@ -181,10 +186,13 @@ class Scheduler:
                     self.errors[binding.signature] = f"{type(error).__name__}: {error}"
                 finally:
                     self.running.discard(binding.signature)
+            timings["transform"] += monotonic() - transforming
+            publishing = monotonic()
             # A transform failure omits only that binding from publication.
             # A database failure propagates: the caller's transaction, and
             # with it this whole step, rolls back.
             accepted = self.store.commit_wave(completed, conn=conn)
+            timings["publish"] += monotonic() - publishing
             for signature in accepted:
                 self.last_success[signature] = datetime.now(timezone.utc).isoformat()
             ran = any(accepted.values()) or ran
