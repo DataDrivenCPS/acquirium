@@ -6,6 +6,7 @@ import logging
 import os
 import re
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Condition, RLock, Thread
@@ -82,6 +83,44 @@ def _graph_affects_closure(graph: Graph) -> bool:
     return any(graph.triples((None, OWL.imports, None))) or any(
         graph.triples((None, RDF.type, OWL.Ontology))
     )
+
+
+@dataclass(frozen=True)
+class GraphDelta:
+    """The exact triples one write adds to and removes from a data graph.
+
+    A write is computed as a delta before it is applied, so it can be logged
+    first (see ``Materialization.graph_history``) and the applied change is
+    exactly the logged one.
+    """
+
+    graph_uri: str
+    added: frozenset
+    removed: frozenset
+    prefixes: tuple[tuple[str, str], ...] = ()
+    affects_closure: bool = False
+
+    def is_empty(self) -> bool:
+        return not self.added and not self.removed
+
+
+def _triples_affect_closure(triples: Iterable) -> bool:
+    return any(p == OWL.imports or (p == RDF.type and o == OWL.Ontology) for _, p, o in triples)
+
+
+def query_result_to_dict(result) -> dict:
+    """Convert a pyoxigraph query result to ``{"columns", "rows"}`` with rdflib terms."""
+    if isinstance(result, ox.QueryBoolean):
+        return {"columns": [], "rows": [[bool(result)]]}
+    if isinstance(result, ox.QuerySolutions):
+        cols = [str(v.value) for v in result.variables]
+        rows = [[from_ox(cell) for cell in row] for row in result]
+        return {"columns": cols, "rows": rows}
+    if isinstance(result, ox.QueryTriples):
+        triples = Graph()
+        triples += (from_ox(t) for t in result)
+        return {"columns": ["triple"], "rows": [[triple] for triple in triples]}
+    raise ValueError(f"Unexpected query result: {result!r}")
 
 
 # Kept at the old cache IRI so a warm start overwrites the former materialized
@@ -802,18 +841,7 @@ class OxigraphGraphStore:
                         default_graph=default_graphs,
                     )
             with timed_debug(_logger,"sparql_query--output processing:"):
-                if isinstance(result, ox.QueryBoolean):
-                    out = {"columns": [], "rows": [[bool(result)]]}
-                elif isinstance(result, ox.QuerySolutions):
-                    cols = [str(v.value) for v in result.variables]
-                    rows = [[from_ox(cell) for cell in row] for row in result]
-                    out = {"columns": cols, "rows": rows}
-                elif isinstance(result, ox.QueryTriples):
-                    triples = Graph()
-                    triples += (from_ox(t) for t in result)
-                    out = {"columns": ["triple"], "rows": [[triple] for triple in triples]}
-                else:
-                    raise ValueError(f"Unexpected query result: {result!r}")
+                out = query_result_to_dict(result)
         _logger.debug("sparql_query: %d rows", len(out["rows"]))
         return out
 
@@ -957,6 +985,53 @@ class OxigraphGraphStore:
             "replaced": replace,
             "changed": True,
         }
+
+    # -------------------- writes as deltas --------------------
+    def prepare_write(self, content: str | bytes | Graph, *, format: str = "turtle", replace: bool = False,
+                      graph_uri: URIRef | None = None) -> GraphDelta:
+        """Compute what ``insert_graph`` with these arguments would change, without applying it."""
+        fmt = (format or "turtle").lower()
+        incoming = content if isinstance(content, Graph) else Graph()
+        if not isinstance(content, Graph):
+            with timed_debug(_logger, "prepare_write parse fmt=%s", fmt):
+                incoming.parse(data=content, format=fmt)
+        new = frozenset(incoming)
+        with self._lock:
+            target = self._registered_data_graph(graph_uri)
+            current = frozenset(target)
+        added = new - current
+        removed = (current - new) if replace else frozenset()
+        return GraphDelta(
+            str(target.identifier), added, removed,
+            tuple((str(p), str(ns)) for p, ns in incoming.namespaces()),
+            affects_closure=replace or _graph_affects_closure(incoming),
+        )
+
+    def prepare_update(self, update: str, *, graph_uri: URIRef | None = None) -> GraphDelta:
+        """Compute what a SPARQL UPDATE would change, by running it on a copy of the graph."""
+        with self._lock:
+            target = self._registered_data_graph(graph_uri)
+            current = frozenset(target)
+        scratch = Graph()
+        scratch += current
+        with timed_debug(_logger, "prepare_update on %d triples", len(current)):
+            scratch.update(update)
+        new = frozenset(scratch)
+        added, removed = new - current, current - new
+        return GraphDelta(str(target.identifier), added, removed,
+                          affects_closure=_triples_affect_closure([*added, *removed]))
+
+    def apply_delta(self, delta: GraphDelta) -> None:
+        """Apply a prepared delta to its data graph. Idempotent: sets, not counts."""
+        with self._lock:
+            target = self._registered_data_graph(URIRef(delta.graph_uri))
+            with timed_debug(_logger, "apply_delta +%d -%d on %s", len(delta.added), len(delta.removed), delta.graph_uri):
+                for triple in delta.removed:
+                    target.remove(triple)
+                for triple in delta.added:
+                    target.add(triple)
+                self._bind_prefixes(((p, URIRef(ns)) for p, ns in delta.prefixes), override=False, target=target)
+                self._finalize_source_write(affects_closure=delta.affects_closure)
 
     def namespace_manager(self) -> NamespaceManager :
         return self.query_dataset.namespace_manager

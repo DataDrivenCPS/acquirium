@@ -31,6 +31,7 @@ from acquirium.Server.config import load_active_config
 from acquirium.Server.manager import Manager
 from acquirium.Materialization import App as MaterializationApp
 from acquirium.Materialization.planner import Deployment
+from acquirium.Materialization.graph_history import GraphHistoryConflict
 
 from acquirium.internals.models import (
     LogEntry,
@@ -472,6 +473,8 @@ def insert_graph(req: InsertGraphRequest) -> dict[str, Any]:
             effective_at=req.effective_at,
         )
         return {"ok": True, "embedding_ready": True}
+    except GraphHistoryConflict as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -951,6 +954,8 @@ def sparql_update(req: SparqlUpdateRequest) -> dict[str, Any]:
             "ok": True,
             **app.state.manager.sparql_update(req.update, source_id=req.source_id, effective_at=req.effective_at),
         }
+    except GraphHistoryConflict as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

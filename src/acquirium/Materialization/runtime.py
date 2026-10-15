@@ -16,6 +16,7 @@ from acquirium.Materialization.checks import check_entry, check_outputs
 
 import re
 import json
+import logging
 from dataclasses import replace
 from contextlib import contextmanager
 from uuid import uuid4
@@ -28,6 +29,7 @@ from rdflib import Graph, Literal, RDF, RDFS, URIRef
 
 from acquirium.Materialization.changes import ChangeFeed, StepChanges
 from acquirium.Materialization.engine import Engine
+from acquirium.Materialization.graph_history import GraphHistory
 from acquirium.Materialization.models import App, ApplicationGraph, OutputBuilder, TimeWindow, _duration
 from acquirium.Materialization.revision_store import RevisionStore
 from acquirium.Materialization.scheduler import InProcessExecutor, Scheduler
@@ -39,6 +41,8 @@ from acquirium.internals.internals_namespaces import (
     IS_CALCULATED_FROM, OF_SUBSTANCE, PRODUCED_BY, PRODUCES,
     TIMESERIES_REFERENCE,
 )
+
+_logger = logging.getLogger("acquirium.materialization")
 
 
 def _default_label(binding, port: str, spec) -> str:
@@ -106,6 +110,7 @@ class Materializer:
         self._cadence = _Cadence()
         self.changes = ChangeFeed()
         self.engine = Engine(store, evaluator=self)
+        self.history = GraphHistory(store, graph)
         self._coordinator_lock = Lock()
         self._generations: dict[str, str] = {}
         self._plan_errors: dict[str, str] = {}
@@ -275,16 +280,46 @@ class Materializer:
     def graph_change(self, effective_at: datetime | None = None):
         """Wrap a graph write so its effective time is recorded before any plan sees it.
 
+        Yields a ``GraphWrite``. A caller that prepared its write as a delta
+        passes it to ``apply``: the delta is logged in the history, applied to
+        the graph, then marked applied together with the planner's pending
+        change, in that order. A caller that wrote the graph directly gets
+        the pending change recorded on exit.
+
         The plan lock is held across the write and the record. Without it the
         query cache can publish the write and a refresh can plan the bindings
         it creates before their effective time exists, and they would default
         to covering all retained history. Nothing is recorded if the write
         raises.
         """
+        effective = (effective_at or datetime.now(timezone.utc)).astimezone(timezone.utc)
         with self._plan_lock:
-            yield
-            revision = int(self._graph.graph_status().get("source_version", 0))
-            self.note_graph_change(revision, effective_at)
+            write = GraphWrite(self, effective)
+            yield write
+            if not write.applied:
+                revision = int(self._graph.graph_status().get("source_version", 0))
+                self.note_graph_change(revision, effective)
+
+    def _apply_recorded(self, change_id: int, delta, effective: datetime) -> None:
+        """Apply a logged delta to the graph and mark it, with the planner's pending change, in one transaction."""
+        self._graph.apply_delta(delta)
+        revision = int(self._graph.graph_status().get("source_version", 0))
+        with self._store._lock, self._store._write_conn() as conn:
+            self.history.mark_applied(conn, change_id, revision)
+            self._execute(conn, "INSERT INTO materialization_graph_changes VALUES (?, ?, ?)",
+                          [revision, effective.isoformat(), datetime.now(timezone.utc).isoformat()])
+        self._graph_revision = -1
+
+    def recover_graph_writes(self) -> int:
+        """Apply recorded changes the graph does not have (a crash between the log and the graph write)."""
+        with self._plan_lock:
+            pending = self.history.unapplied()
+            for change in pending:
+                _logger.warning("graph history: applying recorded change %d (effective %s) the graph did not have",
+                                change.change_id, change.effective_at.isoformat())
+                self._apply_recorded(change.change_id, change.delta(), change.effective_at)
+            return len(pending)
+
 
     def _deployments(self) -> tuple[Deployment, ...]:
         with self._store._own_conn() as conn:
@@ -764,3 +799,20 @@ class Materializer:
                 "error": self._scheduler.errors.get(binding.signature)})
         return {"graph_revision": self._graph_revision, "nodes": nodes, "errors": dict(self._plan_errors),
                 "edges": [{"source": source, "target": target, "ref_uri": ref} for source,target,ref in dag.edges]}
+
+
+class GraphWrite:
+    """One graph write inside ``Materializer.graph_change``."""
+
+    def __init__(self, materializer: Materializer, effective: datetime) -> None:
+        self._materializer, self.effective, self.applied = materializer, effective, False
+
+    def apply(self, delta) -> None:
+        """Log the delta first, then apply it to the graph and mark it applied.
+
+        Raises ``GraphHistoryConflict`` without touching the graph if the
+        delta is dated before a recorded change to one of its triples.
+        """
+        change_id = self._materializer.history.record(delta, self.effective)
+        self._materializer._apply_recorded(change_id, delta, self.effective)
+        self.applied = True

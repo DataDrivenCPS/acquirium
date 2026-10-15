@@ -158,6 +158,9 @@ class Manager:
         # evaluates the plan in the same transaction.
         self.engine = self.materializer.engine
         self.publication: PublicationStore = RevisionPublisher(self.engine)
+        # A graph write is logged before it is applied; finish any the
+        # previous process logged but did not apply.
+        self.materializer.recover_graph_writes()
         # Published graph revision seen by the last stream-ref resync. It gates
         # the expensive rebuild in _registered_value_kind so repeated writes to
         # an unregistered ref do not each trigger a full inferred-graph rebuild.
@@ -528,15 +531,18 @@ class Manager:
                 pass
 
         try:
-            with self.materializer.graph_change(effective_at):
+            with self.materializer.graph_change(effective_at) as write:
                 with timed_debug(logger, "insert_graph format=%s replace=%s", format, replace):
                     graph_uri = self.graph_store.source_graph_uri(source_id)
-                    self.graph_store.insert_graph(
+                    # Computed as a delta and logged before it reaches the
+                    # graph, so the model's history has every change.
+                    delta = self.graph_store.prepare_write(
                         rdf_graph,
                         format=format,
                         replace=replace,
                         graph_uri=graph_uri,
                     )
+                    write.apply(delta)
                 logging.info("acquirium: inserted graph into store")
                 with timed_debug(logger, "insert_graph: _sync_stream_refs_from_graph"):
                     self._sync_stream_refs_from_graph()
@@ -912,10 +918,10 @@ class Manager:
         change took effect in the plant (default: now); see ``insert_graph``.
         """
         graph_uri = self.graph_store.source_graph_uri(source_id)
-        with self.materializer.graph_change(effective_at):
-            result = self.graph_store.sparql_update(update, graph_uri=graph_uri)
+        with self.materializer.graph_change(effective_at) as write:
+            write.apply(self.graph_store.prepare_update(update, graph_uri=graph_uri))
             self._sync_stream_refs_from_graph()
-        return result
+        return {"message": "update applied", "changed": True}
 
     def validate_graph(self) -> dict[str, str | bool]:
         """Validate all registered deployment data against ontology shapes."""
