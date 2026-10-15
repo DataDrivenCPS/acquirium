@@ -127,25 +127,41 @@ class ExperimentMetadataGraph:
         # Scalar declarations carry units without pretending to be live streams.
         return plan_write(uri, values, role="data" if variable else "entity", resolve=self.resolve)
 
+    def _triples(self, record):
+        uri, cls, fields, metadata = record
+        values = {**metadata_values(metadata), **fields}
+        write = self.validate(uri, values, variable=cls == EXPERIMENT.Variable)
+        return [(URIRef(uri), RDF.type, cls), *write.triples]
+
     def graph(self, records):
         graph = Graph()
         for cls in (EXPERIMENT.Study, EXPERIMENT.Run, EXPERIMENT.Variable, EXPERIMENT.StreamAnnotation):
             graph.add((cls, RDF.type, RDFS.Class))
-        for uri, cls, fields, metadata in records:
-            subject = URIRef(uri)
-            graph.add((subject, RDF.type, cls))
-            values = {**metadata_values(metadata), **fields}
-            write = self.validate(uri, values, variable=cls == EXPERIMENT.Variable)
-            for triple in write.triples:
+        for record in records:
+            for triple in self._triples(record):
                 graph.add(triple)
         return graph
 
     def replace(self, records):
-        graph = self.graph(records)
+        """Replace the graph with every record that converts; return the rest.
+
+        The result maps each left-out record's URI to its error, so one
+        invalid record cannot keep every other record out of the graph.
+        """
+        graph, failures = self.graph([]), {}
+        for record in records:
+            try:
+                triples = self._triples(record)
+            except Exception as error:
+                failures[record[0]] = error
+                continue
+            for triple in triples:
+                graph.add(triple)
         self.graph_store.insert_graph(
             graph, replace=True,
             graph_uri=self.graph_store.source_graph_uri(EXPERIMENT_SOURCE),
         )
+        return failures
 
     def upsert(self, record):
         graph = self.graph([record])
@@ -249,8 +265,21 @@ class ExperimentQuery(Query):
         return ExperimentQuery(self.client, graph)
 
 
+def sync_study(study):
+    """Bring the graph up to date before a query over one Study's nodes.
+
+    A graph filter cannot match a record the graph does not hold, so a left-out
+    record in this Study fails the query instead of silently going missing.
+    """
+    status = study.client.sync_experiment_metadata()
+    failed = [item for item in status.get("unpublished", []) if item["study_id"] == study.study_id]
+    if failed:
+        details = "; ".join(f"{item['kind'].lower()} {item['id']!r}: {item['error']}" for item in failed)
+        raise ValueError(f"cannot query study {study.study_id!r}: its metadata graph is missing {details}")
+
+
 def experiment_query(study, *, variable=False):
-    study.client.sync_experiment_metadata()
+    sync_study(study)
     client = _ExperimentClient(study.client)
     query = ExperimentQuery(client)
     cls = EXPERIMENT.Variable if variable else EXPERIMENT.Run

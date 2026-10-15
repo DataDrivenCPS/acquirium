@@ -1,5 +1,6 @@
 """Exercise the experiment adapter with the actual PR #120 writer/compiler."""
 import json
+import threading
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -399,15 +400,77 @@ def test_empty_study_native_queries_and_lifecycle_filter_override(metadata_api):
     assert [item.run_id for item in selected.where(status="succeeded").all()] == [run.run_id]
 
 
-def test_invalid_legacy_metadata_blocks_backfill_without_losing_sql_record(metadata_api):
+def test_invalid_legacy_record_is_left_out_without_blocking_other_reads(metadata_api):
     api = metadata_api
     study = api.service.define("legacy")
     run = study.start()
+    run.finish()
+    healthy = study.start({"scenario": "baseline"})
+    other = api.service.define("unrelated")
+    unrelated = other.start({"scenario": "baseline"})
     with api.store._lock, api.store._write_conn() as conn:
         conn.execute("UPDATE experiment_runs SET metadata_json=? WHERE run_id=?",
                      [json.dumps({"solver.options": 1}), run.run_id])
     api.ledger._graph_dirty = True
-    with pytest.raises(ValueError, match="invalid metadata key"):
-        api.ledger.sync_metadata_graph()
+    status = api.ledger.sync_metadata_graph()
+    assert [(item["id"], item["study_id"]) for item in status["unpublished"]] == [(run.run_id, study.study_id)]
     assert api.ledger.run(run.run_id)["metadata"] == {"solver.options": 1}
-    assert api.ledger._graph_dirty
+    # The bad record's own reads and its Study's graph queries still fail loudly.
+    with pytest.raises(ValueError, match="invalid metadata key"):
+        api.ledger.read_metadata([api.ledger.run(run.run_id)], EXPERIMENT.Run, "run_id")
+    with pytest.raises(ValueError, match="invalid metadata key"):
+        study.experiments.where(scenario="baseline").all()
+    # Everything else reads, including the same Study's other runs.
+    assert api.ledger.read_metadata([api.ledger.run(healthy.run_id)], EXPERIMENT.Run, "run_id")[0]["metadata"] == {"scenario": "baseline"}
+    assert [item.run_id for item in other.experiments.where(scenario="baseline").all()] == [unrelated.run_id]
+    # Repairing the SQL row publishes it on the next read.
+    with api.store._lock, api.store._write_conn() as conn:
+        conn.execute("UPDATE experiment_runs SET metadata_json=? WHERE run_id=?",
+                     [json.dumps({"solver": {"options": 1}}), run.run_id])
+    assert api.ledger.read_metadata([api.ledger.run(run.run_id)], EXPERIMENT.Run, "run_id")[0]["metadata"] == {"solver": {"options": 1}}
+    assert api.ledger.sync_metadata_graph()["unpublished"] == []
+
+
+def test_rebuild_reuses_first_unit_resolution(metadata_api):
+    api = metadata_api
+    study = api.service.define("pinned units")
+    pressure = study.output("pressure").scalar(unit="psi")
+    run = api.service.define("unrelated").start({"scenario": "baseline"})
+    # The resolver forgets "psi", e.g. while its index reloads after a restart.
+    api.ledger._live_resolve = lambda text, kind: None
+    graph = MemoryGraphStore()
+    reopened = ExperimentStore(api.store, api.ledger.artifact_dir, graph_store=graph, resolve=lambda text, kind: None)
+    assert reopened.sync_metadata_graph()["unpublished"] == []
+    assert (URIRef(pressure.variable_id), HAS_UNIT, URIRef(PSI)) in graph.dataset
+    assert reopened.read_metadata([reopened.run(run.run_id)], EXPERIMENT.Run, "run_id")[0]["metadata"] == {"scenario": "baseline"}
+
+
+def test_reads_wait_for_a_committed_record_to_reach_the_graph(metadata_api):
+    api = metadata_api
+    ledger = api.ledger
+    study = ledger.define("publication race")
+    committed, release = threading.Event(), threading.Event()
+    publish = ledger._publish_metadata
+
+    def slow_publish(record):
+        # Pause between the SQL commit and graph publication.
+        if record[1] == EXPERIMENT.Run:
+            committed.set()
+            assert release.wait(5)
+        return publish(record)
+
+    ledger._publish_metadata = slow_publish
+    writer = threading.Thread(target=ledger.start, args=(study["template_id"], {"scenario": "a"}))
+    writer.start()
+    assert committed.wait(5)
+    items = ledger.runs(study["template_id"])
+    assert len(items) == 1  # SQL has the run; its graph node is not written yet
+    result = []
+    reader = threading.Thread(target=lambda: result.extend(ledger.read_metadata(items, EXPERIMENT.Run, "run_id")))
+    reader.start()
+    reader.join(0.2)
+    assert reader.is_alive()  # the read waits rather than missing the node
+    release.set()
+    writer.join(5)
+    reader.join(5)
+    assert result[0]["metadata"] == {"scenario": "a"}

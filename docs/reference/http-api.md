@@ -556,10 +556,13 @@ Time-series observations contain stream references and recorded intervals.
 Fetch the sample values through `/timeseries`; they are not embedded in the
 observation response.
 
-`POST /experiments/metadata/sync` takes `{}` and returns `{"ok": true}` after
-backfilling or repairing the experiment graph view from the SQL ledger. The
-Python interface calls it automatically; applications need not create nodes or
-synchronize the graph themselves.
+`POST /experiments/metadata/sync` takes `{}` and returns
+`{"ok": true, "unpublished": [...]}` after backfilling or repairing the
+experiment graph view from the SQL ledger. `unpublished` lists records whose
+saved metadata the graph cannot hold, each with its `kind`, `id`, `study_id`
+and `error`; reads of those records fail with that error, and other records
+read normally. The Python interface calls it automatically; applications need
+not create nodes or synchronize the graph themselves.
 
 ## Apps
 

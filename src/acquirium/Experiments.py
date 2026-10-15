@@ -5,8 +5,10 @@ from dataclasses import dataclass, field
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from hashlib import sha256
+import functools
 import json
 import logging
+import threading
 import warnings
 from pathlib import Path
 from typing import Any
@@ -16,7 +18,7 @@ import polars as pl
 from acquirium.internals.models import compute_ref_uri
 from acquirium.ExperimentMetadata import (
     EXPERIMENT, ExperimentMetadataGraph, annotation_uri, experiment_query,
-    matched_ids, metadata_values, records_frame, run_uri, saved_metadata, study_uri, variable_uri,
+    matched_ids, metadata_values, records_frame, run_uri, saved_metadata, study_uri, sync_study, variable_uri,
 )
 
 UTC = timezone.utc
@@ -38,12 +40,29 @@ def _json(value: Any) -> str:
 def _metadata_matches(actual: dict[str, Any], expected: dict[str, Any] | None) -> bool:
     return expected is None or all(actual.get(key) == value for key, value in expected.items())
 
+def _publishes(method):
+    """Hold the graph lock across a write's SQL commit and its graph node."""
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._graph_lock:
+            return method(self, *args, **kwargs)
+    return wrapper
+
 class ExperimentStore:
     """SQL persistence behind the manager's intentionally small HTTP API."""
     def __init__(self, store: Any, artifact_dir: Path, *, graph_store=None, resolve=None) -> None:
         self.store, self.artifact_dir = store, artifact_dir
-        self.metadata_graph = ExperimentMetadataGraph(graph_store, resolve) if graph_store is not None else None
+        self._live_resolve = resolve
+        self.metadata_graph = ExperimentMetadataGraph(graph_store, self._resolve) if graph_store is not None else None
         self._graph_dirty = self.metadata_graph is not None
+        # Held across each SQL write and its graph publication, and by reads
+        # before they consult the graph, so a reader never sees a committed
+        # record whose graph node is still being written. It is separate from
+        # the store's writer lock so graph work does not stall ingestion.
+        self._graph_lock = threading.RLock()
+        # Records a rebuild could not convert to graph nodes, by (class, id).
+        # Reads of these records raise their error; other reads proceed.
+        self._unpublished: dict[tuple[Any, str], dict[str, Any]] = {}
         artifact_dir.mkdir(parents=True, exist_ok=True)
         # Keep the experiment ledger beside canonical time-series storage.  The
         # ledger stores small provenance records; time-series samples continue
@@ -58,6 +77,31 @@ class ExperimentStore:
             self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_runs_template_idx ON experiment_runs(template_id, status, started_at)")
             self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_observations_variable_idx ON experiment_observations(variable_id, run_id, sequence)")
             self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_observations_ref_idx ON experiment_observations(ref_uri, range_start, range_end)")
+            self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_metadata_resolutions (text VARCHAR NOT NULL, kind VARCHAR NOT NULL, uri VARCHAR NOT NULL, PRIMARY KEY(text, kind))")
+        with store._own_conn() as conn:
+            rows = self._execute(conn, "SELECT text, kind, uri FROM experiment_metadata_resolutions").fetchall()
+        self._resolutions = {(row[0], row[1]): row[2] for row in rows}
+
+    def _resolve(self, text, kind):
+        """Resolve metadata text once and reuse that answer from then on.
+
+        Rebuilding the graph from SQL must not depend on the resolver giving
+        the same answer later: its indexes may still be loading after a
+        restart, or a vocabulary change may move a match. Pinning also keeps
+        one spelling on one URI across every run of a sweep.
+        """
+        key = (text, kind)
+        if key in self._resolutions:
+            return self._resolutions[key]
+        uri = self._live_resolve(text, kind) if self._live_resolve is not None else None
+        if uri is None:
+            return None
+        with self.store._lock, self.store._write_conn() as conn:
+            self._execute(conn, "INSERT INTO experiment_metadata_resolutions VALUES (?, ?, ?) ON CONFLICT DO NOTHING", [text, kind, str(uri)])
+            # A concurrent first resolution may have won; keep its answer.
+            uri = self._execute(conn, "SELECT uri FROM experiment_metadata_resolutions WHERE text=? AND kind=?", [text, kind]).fetchone()[0]
+        self._resolutions[key] = uri
+        return uri
 
     def _prepare_metadata(self, uri, metadata, *, variable=False):
         metadata = metadata_values(metadata)
@@ -88,31 +132,66 @@ class ExperimentStore:
         fields["study_id"] = item["template_id"]
         return annotation_uri(item["annotation_id"]), EXPERIMENT.StreamAnnotation, fields, item["metadata"]
 
+    _ID_FIELDS = {
+        EXPERIMENT.Study: "study_id", EXPERIMENT.Run: "run_id",
+        EXPERIMENT.Variable: "variable_id", EXPERIMENT.StreamAnnotation: "annotation_id",
+    }
+
+    @classmethod
+    def _record_key(cls, record):
+        _, kind, fields, _ = record
+        return kind, fields[cls._ID_FIELDS[kind]]
+
+    def _current_record(self, kind, identifier, study_id):
+        """The node's record as SQL holds it now, or None if it is gone."""
+        try:
+            if kind == EXPERIMENT.Study:
+                return self._study_record(self.study(identifier))
+            if kind == EXPERIMENT.Run:
+                return self._run_record(self.run(identifier))
+            if kind == EXPERIMENT.Variable:
+                item = next((item for item in self.variables(study_id) if item["variable_id"] == identifier), None)
+                return self._variable_record(study_id, item) if item else None
+        except KeyError:
+            return None
+        run_id = identifier.rpartition(":")[0]
+        item = next((item for item in self.stream_annotations(run_id=run_id) if item["annotation_id"] == identifier), None)
+        return self._annotation_record(item) if item else None
+
     def _publish_metadata(self, record):
+        """Publish a node's current SQL state."""
         if self.metadata_graph is None:
             return
-        with self.store._lock:
+        with self._graph_lock:
             try:
                 if self._graph_dirty:
                     self._rebuild_metadata_graph()
                     return
-                # A concurrent finish/close can commit before this publisher
-                # acquires the lock. Publish the latest mutable lifecycle state.
-                if record[1] == EXPERIMENT.Run:
-                    record = self._run_record(self.run(record[2]["run_id"]))
-                elif record[1] == EXPERIMENT.StreamAnnotation:
-                    for item in self.stream_annotations(run_id=record[2]["run_id"]):
-                        if item["annotation_id"] == record[2]["annotation_id"]:
-                            record = self._annotation_record(item)
-                            break
+                key = self._record_key(record)
+                # Publish what SQL holds now, so a stale record passed in can
+                # never revert a later lifecycle change such as finish().
+                record = self._current_record(*key, record[2]["study_id"])
+                if record is None:
+                    return
                 self.metadata_graph.upsert(record)
+                self._unpublished.pop(key, None)
             except Exception:
                 # The SQL commit is durable. Repair before the next query.
                 self._graph_dirty = True
                 logging.getLogger(__name__).exception("Experiment graph update deferred; SQL record retained")
 
+    @staticmethod
+    def _failure(key, study_id, error):
+        kind, identifier = key
+        return {"kind": str(kind).rpartition(":")[2], "id": identifier, "study_id": study_id, "error": str(error)}
+
     def _rebuild_metadata_graph(self):
-        """Rebuild while the caller holds the SQL writer lock."""
+        """Rebuild while the caller holds the graph lock.
+
+        A record that cannot become a graph node (a key now reserved, a unit
+        that no longer resolves) is left out and remembered with its error.
+        Reads of that record raise; reads of every other record still work.
+        """
         records = []
         for study in self.studies():
             template_id = study["template_id"]
@@ -123,17 +202,58 @@ class ExperimentStore:
                 records.append(self._run_record(run))
         for annotation in self.stream_annotations():
             records.append(self._annotation_record(annotation))
-        self.metadata_graph.replace(records)
+        failures = self.metadata_graph.replace(records)
+        self._unpublished = {}
+        for record in records:
+            if record[0] in failures:
+                key = self._record_key(record)
+                self._unpublished[key] = self._failure(key, record[2]["study_id"], failures[record[0]])
+        for failure in self._unpublished.values():
+            logging.getLogger(__name__).warning(
+                "Experiment %s %s is not in the metadata graph: %s", failure["kind"], failure["id"], failure["error"])
         self._graph_dirty = False
 
+    def _retry_unpublished(self):
+        """Publish left-out records whose SQL row or resolution now works."""
+        for key, failure in list(self._unpublished.items()):
+            record = self._current_record(*key, failure["study_id"])
+            if record is None:
+                del self._unpublished[key]
+                continue
+            try:
+                self.metadata_graph.graph([record])
+            except Exception as error:
+                failure["error"] = str(error)
+                continue
+            self.metadata_graph.upsert(record)
+            del self._unpublished[key]
+
     def sync_metadata_graph(self):
-        """Backfill existing SQL records and repair interrupted graph updates."""
+        """Backfill existing SQL records and repair interrupted graph updates.
+
+        Waiting on the graph lock also waits out any write whose SQL row is
+        committed but whose graph node is not yet published.
+        """
         if self.metadata_graph is None:
             raise RuntimeError("experiment metadata queries require a graph backend")
-        with self.store._lock:
+        with self._graph_lock:
             if self._graph_dirty:
                 self._rebuild_metadata_graph()
-        return {"ok": True}
+            elif self._unpublished:
+                self._retry_unpublished()
+            return {"ok": True, "unpublished": list(self._unpublished.values())}
+
+    def _read_graph(self, kind, id_field, identifiers):
+        metadata = self.metadata_graph.read(kind, id_field, identifiers)
+        for identifier in identifiers:
+            if identifier in metadata:
+                continue
+            failure = self._unpublished.get((kind, identifier))
+            if failure is not None:
+                raise ValueError(f"experiment {failure['kind'].lower()} {identifier!r} has metadata "
+                                 f"the graph cannot hold: {failure['error']}")
+            raise RuntimeError(f"experiment metadata graph has no node for {identifier!r}")
+        return metadata
 
     def read_metadata(self, items, cls, id_field):
         """Hydrate HTTP records from shared graph objects in one batch per kind.
@@ -145,7 +265,7 @@ class ExperimentStore:
         if not items or self.metadata_graph is None:
             return items
         self.sync_metadata_graph()
-        metadata = self.metadata_graph.read(cls, id_field, [item[id_field] for item in items])
+        metadata = self._read_graph(cls, id_field, [item[id_field] for item in items])
         return [
             {**item, "metadata": saved_metadata(metadata[item[id_field]], item["metadata"])}
             for item in items
@@ -155,8 +275,8 @@ class ExperimentStore:
         if not items or self.metadata_graph is None:
             return items
         self.sync_metadata_graph()
-        runs = self.metadata_graph.read(EXPERIMENT.Run, "run_id", [item["experiment_id"] for item in items])
-        variables = self.metadata_graph.read(EXPERIMENT.Variable, "variable_id", [item["variable_id"] for item in items])
+        runs = self._read_graph(EXPERIMENT.Run, "run_id", [item["experiment_id"] for item in items])
+        variables = self._read_graph(EXPERIMENT.Variable, "variable_id", [item["variable_id"] for item in items])
         return [
             {**item, "experiment_metadata": saved_metadata(runs[item["experiment_id"]], item["experiment_metadata"]),
              "variable_metadata": saved_metadata(variables[item["variable_id"]], item["variable_metadata"])}
@@ -190,6 +310,7 @@ class ExperimentStore:
         # Values and stream annotations share one run-local recording order.
         sequence = int(self._execute(conn, "SELECT coalesce(max(sequence),0)+1 FROM experiment_observations WHERE run_id=?", [run_id]).fetchone()[0])
         return sequence, _now()
+    @_publishes
     def define(self, name: str) -> dict[str, Any]:
         if not name.strip(): raise ValueError("experiment name is required")
         with self.store._lock, self.store._write_conn() as conn:
@@ -201,24 +322,30 @@ class ExperimentStore:
             self._execute(conn, "INSERT INTO experiment_templates VALUES (?, ?, ?)", [item["template_id"], item["name"], _database_timestamp(item["created_at"])])
         self._publish_metadata(self._study_record(item))
         return item
+    @_publishes
     def declare(self, template_id: str, label: str, role: str, kind: str, metadata: dict[str, Any]) -> dict[str, Any]:
         if not label.strip() or role not in {"input", "output", "annotation"}: raise ValueError("a non-empty label and valid role are required")
         metadata = metadata_values(metadata)
-        with self.store._lock, self.store._write_conn() as conn:
+        # The graph lock serialises declarations, so the label check and the
+        # insert need not share a transaction. Resolution happens between them,
+        # outside the store's writer lock that ingestion also waits on.
+        with self.store._own_conn() as conn:
             row = self._execute(conn, "SELECT variable_id, role, kind, metadata_json, created_at FROM experiment_variables WHERE template_id=? AND label=?", [template_id, label]).fetchone()
-            if row:
-                # A label cannot silently change shape: an old experiment must
-                # remain interpretable after the script evolves.
-                previous = _json(metadata_values(json.loads(row[3])))
-                if (row[1], row[2], previous) != (role, kind, _json(metadata)): raise ValueError(f"variable {label!r} was already declared differently")
-                return {"variable_id": row[0], "label": label, "role": role, "kind": kind, "metadata": metadata, "created_at": timestamp(row[4]), "created": False}
-            # Study variables use the same source/name identity as streams.
-            variable_id, created_at = str(compute_ref_uri(f"study/{template_id}", label)), _now()
-            metadata = self._prepare_metadata(variable_id, metadata, variable=True)
+        if row:
+            # A label cannot silently change shape: an old experiment must
+            # remain interpretable after the script evolves.
+            previous = _json(metadata_values(json.loads(row[3])))
+            if (row[1], row[2], previous) != (role, kind, _json(metadata)): raise ValueError(f"variable {label!r} was already declared differently")
+            return {"variable_id": row[0], "label": label, "role": role, "kind": kind, "metadata": metadata, "created_at": timestamp(row[4]), "created": False}
+        # Study variables use the same source/name identity as streams.
+        variable_id, created_at = str(compute_ref_uri(f"study/{template_id}", label)), _now()
+        metadata = self._prepare_metadata(variable_id, metadata, variable=True)
+        with self.store._lock, self.store._write_conn() as conn:
             self._execute(conn, "INSERT INTO experiment_variables VALUES (?, ?, ?, ?, ?, ?, ?)", [variable_id, template_id, label, role, kind, _json(metadata), _database_timestamp(created_at)])
-            item = {"variable_id": variable_id, "label": label, "role": role, "kind": kind, "metadata": metadata, "created_at": created_at, "created": True}
+        item = {"variable_id": variable_id, "label": label, "role": role, "kind": kind, "metadata": metadata, "created_at": created_at, "created": True}
         self._publish_metadata(self._variable_record(template_id, item))
         return item
+    @_publishes
     def start(self, template_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
         # Metadata belongs to this execution, while declarations belong to the
         # reusable study. This is what lets a parameter sweep share variables.
@@ -238,6 +365,7 @@ class ExperimentStore:
             seq, recorded = self._next_observation(conn, run_id)
             self._execute(conn, "INSERT INTO experiment_observations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [run_id, variable_id, seq, _database_timestamp(recorded), _database_timestamp(occurred_at) if occurred_at else None, _json(value) if value is not None else None, artifact_digest, ref_uri, _database_timestamp(interval[0]) if interval else None, _database_timestamp(interval[1]) if interval else None])
         return {"sequence": seq, "recorded_at": recorded}
+    @_publishes
     def finish(self, run_id: str, status: str, error: Any = None) -> dict[str, Any]:
         if status not in {"succeeded", "failed"}: raise ValueError("status must be succeeded or failed")
         with self.store._lock, self.store._write_conn() as conn:
@@ -256,6 +384,7 @@ class ExperimentStore:
         self.observe(run_id, variable_id, artifact_digest=digest)
         return {"digest": digest, "filename": filename, "byte_length": len(data)}
 
+    @_publishes
     def annotate_stream(self, run_id: str, ref_uri: str, start: datetime | str, end: datetime | str | None = None, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
         """Associate a live stream interval with a run without copying samples."""
         if not ref_uri or not ref_uri.strip():
@@ -289,6 +418,7 @@ class ExperimentStore:
         self._publish_metadata(self._annotation_record(item))
         return item
 
+    @_publishes
     def close_stream_annotation(self, annotation_id: str, end: datetime | str) -> dict[str, Any]:
         """Set the end of an open interval, including after a run finishes."""
         end_at = timestamp(end)
@@ -992,7 +1122,7 @@ class VariableCatalog:
         if self._query is None:
             query = experiment_query(self.study, variable=True)
         else:
-            self.study.client.sync_experiment_metadata()
+            sync_study(self.study)
             query = self._query._with_graph(self._query.query_graph)
         if self._filters:
             query = query.where(**self._filters)
@@ -1011,7 +1141,7 @@ class VariableCatalog:
             if query is None:
                 query = experiment_query(self.study, variable=True)
             else:
-                self.study.client.sync_experiment_metadata()
+                sync_study(self.study)
                 query = query._with_graph(query.query_graph)
             query = query.where(*expressions, **attrs)
         return VariableCatalog(self.study, self._selection, query=query, filters=filters)
@@ -1048,7 +1178,7 @@ class ExperimentCollection:
         if self._query is None:
             query = experiment_query(self.study)
         else:
-            self.study.client.sync_experiment_metadata()
+            sync_study(self.study)
             query = self._query._with_graph(self._query.query_graph)
         attrs = {}
         if self._filters.get("status") is not None:
@@ -1089,7 +1219,7 @@ class ExperimentCollection:
             if query is None:
                 query = experiment_query(self.study)
             else:
-                self.study.client.sync_experiment_metadata()
+                sync_study(self.study)
                 query = query._with_graph(query.query_graph)
             query = query.where(*expressions, **attrs)
         return ExperimentCollection(self.study, query=query, **filters)

@@ -95,7 +95,15 @@ and sample batches does not republish experiment metadata.
 An interrupted graph update leaves the committed SQL record intact and marks
 the view for repair. The next experiment graph query rebuilds it before reading.
 Restart also triggers a backfill. Queries wait for fresh inference so a completed
-metadata write is visible immediately. Recreating the SQL ledger rebuilds an
+metadata write is visible immediately, and a read that finds a record in SQL
+waits until that record's graph node is written.
+
+A backfill reuses the URI each metadata string first resolved to, so a resolver
+that is still loading or has since changed cannot alter or fail saved records.
+A record the graph cannot hold, such as a legacy run with a now-reserved key,
+is left out. Reading it, or querying its Study through the graph, raises its
+error; every other record reads normally. Fixing the SQL row publishes it on
+the next read. Recreating the SQL ledger rebuilds an
 empty experiment view, including when storage is outside the server data directory.
 
 Older declarations with bare UUID IDs get absolute graph URIs under
