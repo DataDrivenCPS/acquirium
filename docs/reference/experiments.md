@@ -1,296 +1,335 @@
 # Experiment reference
 
-A Study declares variables. Its Experiments record values from individual runs.
+A **Study** holds variable declarations. An **Experiment** is one run of that
+Study. Each call to `record()` adds an **Observation** to the active run.
 
-## Entry points
+The tables below describe the implemented Python API. The
+[proposed read API](#proposed-read-api) is not implemented yet.
 
-| Interface | Returns | Meaning |
-|---|---|---|
-| `ac.study.define(name)` | `Study` | Define or reuse a Study by name |
-| `ac.study.get(name_or_id)` | `Study` | Reopen a Study and load its variables |
-| `ac.study.all()` | `list[Study]` | List saved Studies |
-| `ac.study.stream_annotations(ref_uri=None, start=None, end=None)` | `list[StreamAnnotation]` | Find stream intervals across Studies |
-| `ac.point(uri)` | `Point` | Wrap a property URI for a time-series declaration |
-| `ac.resolve(text, kind=None, min_score=0.6)` | `Point` | Resolve vocabulary text to an ontology concept |
-| `aq.timestamp(value)` | `datetime` | Parse a string or normalize a datetime to UTC |
+## Studies and run lifecycle
 
-Study names must contain a non-whitespace character. `define(name)` reuses an
+| Method | Returns / behavior |
+|---|---|
+| `ac.study.define(name)` | Create or reopen a `Study` and load its declarations |
+| `ac.study.get(name_or_id)` | Reopen a saved `Study` |
+| `ac.study.all()` | Return `list[Study]` |
+| `study.start(metadata=None)` | Start and return an `Experiment` |
+| `study.resume(run_id)` | Bind a saved running Experiment to this Study's variable handles |
+| `run.finish()` | Mark the run `succeeded` |
+| `run.fail(error)` | Mark it `failed` and save the error type and message |
+| `run.as_dict()` | Return the run's ID, status, metadata, timestamps, and error |
+
+Study names must contain a non-whitespace character. `define()` reuses an
 existing Study with that name.
 
-`ac.resolve()` searches ontology concepts. Find property instances with
-[plant queries](../how-to/record-experiments.md#connect-a-time-series-result-to-the-facility),
-then pass their full URIs to `observed`.
+Each Study object allows one active run. `start()` and `resume()` raise
+`RuntimeError` if a run is active. `resume()` requires a running Experiment
+from the same Study. Observations are saved immediately. Finished and failed
+runs reject further variable writes; their stream annotations can still change.
 
-## Study
-
-| Member | Meaning |
+| Object | Members |
 |---|---|
-| `study_id` | Persistent Study identifier |
-| `name` | Persistent Study name |
-| `input` | Callable collection of input variables |
-| `output` | Callable collection of output variables |
-| `log` | Callable collection of log variables |
-| `variables` | All persisted declarations, across roles |
-| `experiments` | Queryable collection of current and historical Experiments |
-| `start(metadata=None)` | Start and return an `Experiment` |
-| `resume(run_id)` | Continue recording a saved running Experiment |
-| `stream_annotations(run_id=None, ref_uri=None, start=None, end=None)` | Find this Study's stream intervals |
+| Study | `study_id`, `uri`, `name`, `created_at`, `input`, `output`, `log`, `variables`, `experiments` |
+| Experiment | `run_id`, `experiment_id`, `uri`, `study`, `status`, `metadata`, `started_at`, `finished_at`, `error`, `output` |
 
-Each Study object allows one active Experiment. `start()` and `resume()` raise
-`RuntimeError` if a run is active. `resume()` requires a run from this Study
-with status `running`.
+`experiment_id` is an alias for `run_id`, used in analysis tables.
 
-### Variable collections
+## Declaring variables
 
-Calling `study.input(label)` or `study.output(label)` returns a builder. Select
-the value type with one of these methods:
+Inputs and outputs support the same five value types. The role describes how
+the calculation uses a value; the type selects its storage.
 
-The role says whether a value is an input or result. The type selects its
-storage. Your calculation supplies the value through `record()`.
-
-| Builder method | Kind | Metadata |
-|---|---|---|
-| `.json(**metadata)` | `json` | Arbitrary keyword metadata |
-| `.text(**metadata)` | `text` | Arbitrary keyword metadata |
-| `.scalar(unit=None, **metadata)` | `scalar` | Optional unit plus arbitrary metadata |
-| `.file(media_type=None, **metadata)` | `file` | Optional media type plus arbitrary metadata |
-| `.timeseries(observed=None, unit=None, **metadata)` | `timeseries` | Optional property URI and unit; registered as numeric |
-
-`study.log(label, **metadata)` declares a `log` variable directly.
-
-Labels must be nonempty and unique within the Study. Matching redeclarations
-return the same variable handle on that Study object. Changes to its role,
-kind, or metadata raise `ValueError`.
-
-The role-specific collections support indexing by label, label membership,
-`len()`, iteration, `keys()`, `values()`, and `items()`. Iteration yields
-handles in declaration order. Both `define()` and `get()` load saved
-declarations.
-
-`study.variables` contains all three roles. IDs are reference URIs derived from
-the Study ID and label. Index by label or ID, use `.all()` for handles,
-`.where(role=..., kind=...)` to filter, or `.frame()` for a Polars table.
-
-The frame includes IDs, labels, roles, kinds, creation times, and metadata.
-Metadata keys with non-null values also appear as columns. Keys that conflict
-with built-in columns stay in `metadata`:
-
-```python
-# Load the saved declarations.
-study = ac.study.get("operating-scenarios")
-variable_table = study.variables.frame()
-
-# Retrieve one output by its label.
-cost = study.variables["total operating cost"]
-
-# Select the variables that record time-series samples.
-series_selection = study.variables.where(kind="timeseries")
-series_variables = series_selection.all()
-```
-
-Declaring a new variable during an active Experiment emits `UserWarning`.
-
-## ExperimentVariable
-
-Every variable handle exposes `variable_id`, `label`, `role`, `kind`,
-`metadata`, `created_at`, and these methods:
-
-| Method | Intended kinds | Behavior |
-|---|---|---|
-| `record(value, occurred_at=None)` | all | Record according to the declared type; time series return `RecordedSeries` |
-| `set(value, occurred_at=None)` | JSON, text, scalar | Record one value observation |
-| `append(value, occurred_at=None)` | log | Record one event |
-| `attach(path)` | file | Copy a file into artifact storage |
-| `add(rows)` | time series | Write timestamp/value rows to a run-scoped stream |
-| `use(ref_uri, interval=None)` | all | Record a reference and optional datetime interval |
-| `observations(experiments=None)` | all | Select persisted observations, optionally within an Experiment collection |
-
-`record()` uploads files, writes time-series samples, or stores other values.
-JSON, text, scalar, and log records accept `occurred_at`. Files use receipt time;
-time-series rows carry sample times.
-
-`record(path)` sends the file's declared `media_type`. `attach(path)` uses the
-client's default media type.
-
-Time-series rows may be an iterable of `(timestamp, value)` pairs or an Arrow
-or Polars table containing `time` (or `ts`) and `value`. Timestamp strings must
-be ISO 8601. Naive datetimes are interpreted as UTC. A successful write returns
-a `RecordedSeries` with `.dataframe()` and `.ref_uri`. Empty input returns
-`None` and writes nothing.
-
-`use()` accepts a reference URI string or `Point` and an optional pair of
-datetimes. It stores the reference without copying samples.
-
-Writing requires an active Experiment on the variable's Study object.
-
-## Experiment
-
-`study.start(metadata=None)` returns an Experiment with:
-
-| Member | Meaning |
+| Declaration | Records |
 |---|---|
-| `run_id` | Persistent identifier for this execution |
-| `experiment_id` | Alias for `run_id` used by analysis tables |
-| `study` | Owning Study |
-| `status`, `metadata`, timestamps, `error` | Saved run details |
-| `output` | Run-bound output mapping |
-| `observations(variable=None)` | Select all observations or those for one variable |
-| `annotate_stream(ref_uri, start=..., end=None, metadata=None)` | Tag an existing stream interval |
-| `stream_annotations(ref_uri=None, start=None, end=None)` | Find this Experiment's stream intervals |
-| `finish()` | End the run with status `succeeded` |
-| `fail(error)` | End the run with status `failed` and save the error type and message |
+| `study.input("configuration").json(**metadata)` | Structured JSON |
+| `study.input("note").text(**metadata)` | Text |
+| `study.output("cost").scalar(unit=None, **metadata)` | Scalar values with an optional unit |
+| `study.input("model").file(media_type=None, **metadata)` | File copies |
+| `study.output("power").timeseries(observed=None, unit=None, **metadata)` | Numeric timestamp/value samples |
+| `study.log("solver events", **metadata)` | Events and diagnostics |
 
-Observations are saved immediately. Finished and failed runs reject further
-variable writes. Stream annotations can still be added or closed.
+Calling `study.input(label)` or `study.output(label)` returns a builder;
+choosing a type returns an `ExperimentVariable`. `study.log()` declares a log
+variable directly.
 
-### Stream annotations
+Labels must be nonempty and unique across the Study. Matching redeclarations
+reuse the handle on that Study object. Changing its role, kind, or metadata
+raises `ValueError`. New declarations during an active run emit `UserWarning`
+and remain available to future runs.
 
-`annotate_stream()` requires a stream reference URI and a start time. Its
-optional end must be at or after the start. Both accept datetimes or ISO 8601
-strings; timezone-less values use UTC. Metadata is a JSON object stored on the
-annotation. Intervals can overlap; samples are not copied.
+Unit strings must resolve to known units; full unit URIs also work. For example,
+`"kW"` and `"KiloW"` match the same unit. Saved metadata retains the supplied
+string. A scalar can carry a unit without registering a stream. `observed`
+accepts a plant property URI or a `Point` wrapper.
 
-The returned `StreamAnnotation` has `annotation_id`, `run_id`, `template_id`,
-`ref_uri`, `range_start`, `range_end`, `metadata`, and `created_at`. Its
-`.dataframe(**kwargs)` reads current samples with inclusive bounds and forwards
-query options to the client. Open intervals have `range_end=None`. `.close(end)`
-sets the end once, including after the Experiment finishes. `created_at` records
-when the annotation was added.
+Variable handles expose `variable_id`, `uri`, `label`, `role`, `kind`, `metadata`,
+and `created_at`. New IDs are reference URIs derived from the Study ID and label.
+Older UUID IDs remain unchanged; `uri` provides their absolute graph URI.
 
-The Study service, Study, and Experiment each provide `stream_annotations()`.
-Filter by stream URI and overlapping time window. Omitted bounds are unbounded.
-Results include all run statuses and are ordered by start time, run ID, and
-recording sequence.
+## Recording
+
+Use `record()` for every variable type. Writes go to the Study object's active run.
+
+| Method | Behavior |
+|---|---|
+| `variable.record(value)` | Store a value or event, upload a file, or write samples according to the declared type |
+| `variable.record(value, occurred_at=...)` | Supply an event time for JSON, text, scalar, or log data |
+| `variable.use(ref_uri, interval=None)` | Record an existing stream reference and optional pair of datetimes without copying samples |
+| `run.output[label] = value` | Record an output on this active run; infer a declaration if the label is new |
+
+The type-specific write methods remain available:
+
+| Method | Intended kind | Behavior |
+|---|---|---|
+| `variable.set(value, occurred_at=None)` | JSON, text, scalar | Add a value observation |
+| `variable.append(event, occurred_at=None)` | Log | Add an event observation |
+| `variable.attach(path)` | File | Copy a file into artifact storage |
+| `variable.add(rows)` | Time series | Write samples to the run's stream |
+
+`record(path)` sends the file's declared `media_type`; `attach(path)` uses the
+client's default. Time-series rows may be `(timestamp, value)` pairs or an
+Arrow or Polars table with `time` (or `ts`) and `value` columns. Strings must be
+ISO 8601 timestamps; naive datetimes use UTC. A sample write returns
+`RecordedSeries`, or `None` for empty input. Files use server receipt time;
+time-series rows carry sample times and do not accept `occurred_at`.
 
 ### Output assignment
 
-`experiment.output[label]` returns a declared Study output. Assignment records
-a value:
+Assignment requires that Experiment to be active on its Study:
 
 ```python
-# Store another observation for the active run's cost output.
-experiment.output["cost"] = 12.5
+run.output["cost"] = 12.5
 ```
 
-If the label is new, assignment infers these declarations:
-
-| Python value | Inferred kind |
+| New Python value | Inferred declaration |
 |---|---|
-| `int` or `float`, excluding `bool` | Scalar without a unit |
+| `int` or `float`, excluding `bool` | Unitless scalar |
 | `str` | Text |
-| Any other JSON-compatible value, including `bool`, `list`, `dict`, and `None` | JSON |
+| Other JSON-compatible values, including `bool`, `list`, `dict`, and `None` | JSON |
 
 Other values and non-finite floats are rejected. Declare files and time series
-explicitly. Assignment requires this Experiment to be active on its Study.
+explicitly. `run.output[label]` returns the Study's variable handle; it does
+not read that run's recorded value. The mapping iterates over labels.
 
-The mapping iterates over labels. Its values are Study variable handles;
-direct `record()` calls write to the Study's active run.
+## Finding variables and runs
 
-## Observation identity and timestamps
+| Operation | Variables | Experiments |
+|---|---|---|
+| Filter | `study.variables.where(*expressions, role=None, kind=None, **metadata)` | `study.experiments.where(*expressions, status=None, started_after=None, started_before=None, **metadata)` |
+| Get objects | `selection.all()` → `list[ExperimentVariable]` | `selection.all()` → `list[Experiment]` |
+| Get a table | `selection.frame()` — one row per declaration | `selection.frame()` — one row per run |
+| Look up one | `selection[label_or_id]` or `selection.get(label_or_id, default=None)` | `study.experiments.get(run_id)` |
+| Shared metadata query | `selection.query()` | `selection.query()` |
 
-The server assigns observations an increasing sequence number
-within each run and a UTC `recorded_at` receipt time. Caller-provided
-`occurred_at` is stored separately.
+Variable indexing respects the selection; a missing indexed variable raises
+`KeyError`. Experiment `.get()` looks up an ID within the Study, independent of
+collection filters. Study-specific variable handles and selections must come
+from the same Study object.
 
-A time-series variable writes under source `experiment/<run_id>` with the
-variable label as its reference name. The ledger observation contains the
-resulting reference URI and the minimum and maximum sample times.
+The role collections support `study.input[label]`, `study.output[label]`, and
+`study.log[label]`, plus membership, `len()`, iteration, `keys()`, `values()`,
+and `items()`. Iteration yields handles in declaration order. `study.variables`
+includes every role and supports iteration, membership, and `len()` too.
 
-Files are identified by SHA-256 digest and deduplicated by content. Artifact
-metadata uses the filename and media type from the first attachment with that
-digest.
+```python
+power_variables = study.variables.where(role="output", unit="kW")
+power = power_variables["electrical power"]
+
+baseline_runs = study.experiments.where(status="succeeded", scenario="baseline")
+baseline_history = baseline_runs.frame()
+```
+
+Metadata keywords in one call are combined with AND. List metadata matches
+any element. Nested fields use attribute paths:
+
+```python
+high_flow_runs = study.experiments.where(ac.attr.settings.flow_m3_per_hour >= 10)
+```
+
+Expressions support comparisons and `&`, `|`, and `~`. The older
+`where(metadata={...})` run filter remains available for exact-match compatibility.
 
 ## Reading recorded data
 
-Reopen a Study without repeating its declarations:
+`.frame()` lists declarations, runs, or recordings. `.dataframe()` fetches
+time-series samples.
+
+### Observations
+
+| Method / member | Returns |
+|---|---|
+| `run.observations(variable=None)` | An `ObservationCollection` for one run; omit the variable to include every variable |
+| `runs.observations(variable=None)` | An `ObservationCollection` across selected runs |
+| `variable.observations(experiments=None)` | The variable's observations across the given run collection, or the whole Study |
+| `observations.all()` | `list[Observation]` |
+| `observations.frame()` | A Polars table with one row per recording |
+| `observations.latest()` | The last matching recording; raises `LookupError` if none match |
+| `observation.value` | The recorded JSON, text, scalar, or event value |
+| `observation.dataframe(**kwargs)` | Samples within a time-series recording's interval |
+| `observation.as_dict()` | The observation's value, metadata, identifiers, timestamps, and references |
+
+Run observation selectors accept a variable handle, label, or ID. They return
+recordings in run-start, run-ID, and recording-sequence order. `.latest()` picks
+the last recording in that order. For incremental time-series writes, it reads
+only the last batch's interval, not every batch in the run.
 
 ```python
-# Reopen a Study to inspect its recorded variables.
-study = ac.study.get("operating-scenarios")
-variables = study.variables.frame()
-```
-
-`study.experiments` is a lazy selection. `.where()` accepts `status`,
-`started_after`, `started_before`, and an exact-match subset of run metadata.
-Use `.all()` for `Experiment` objects, `.frame()` for one Polars row per
-Experiment, and `.get(experiment_id)` for an individual Experiment:
-
-```python
-# Filter runs by status and metadata.
-runs = study.experiments.where(
-    status="succeeded",
-    metadata={"batch": "september-sweep"},
-)
-run_table = runs.frame()
-
-# Select one run from that table.
-selected_run_id = run_table["experiment_id"][0]
-experiment = study.experiments.get(selected_run_id)
-```
-
-Select observations from a run collection, Experiment, or variable. `.all()`
-returns `Observation` objects, `.frame()` a Polars table, and `.latest()` the
-last matching observation:
-
-```python
-cost = study.variables["total operating cost"]
-
-# Read this output across the selected runs.
-cost_observations = runs.observations(cost)
+# Read a scalar's recorded history across selected runs.
+cost = study.variables["cost"]
+cost_observations = baseline_runs.observations(cost)
 cost_history = cost_observations.frame()
 
-# Read all inputs, outputs, and events for one run.
-run_observations = experiment.observations()
-one_run = run_observations.frame()
-
-# Read the last cost recorded within that run.
-run_costs = experiment.observations(cost)
-latest_cost_observation = run_costs.latest()
-latest_cost = latest_cost_observation.value
+# Read one run's last power recording.
+power_observations = run.observations(power)
+power_recording = power_observations.latest()
+power_samples = power_recording.dataframe()
 ```
 
-`cost.observations(runs)` also selects that output across the given runs.
+An Observation exposes `experiment_id`, `variable`, `sequence`, `recorded_at`,
+`occurred_at`, `status`, `experiment_metadata`, `started_at`, and `finished_at`.
+Time-series records also carry `ref_uri`, `range_start`, and `range_end`.
+Files carry `artifact_digest`, `filename`, `media_type`, and `byte_length`.
 
-The `value` column preserves the Python values returned by `.all()`. Selections
-containing structured values or mixed scalar types use Polars `Object` dtype.
-Uniform scalar types retain native columns for calculations; normalize mixed
-numeric values to a common type before recording if you need numeric operations.
-Observation reads refresh missing variable declarations when another session
-has added them, preserving existing variable handles.
+Observation tables preserve structured and mixed values with Polars `Object`
+columns. Uniform scalar types retain native columns; integers mixed with floats
+widen to `Float64`. Reads hydrate missing declarations added by another session
+while preserving existing handles.
 
-Use Polars to sort, group, join, and analyze the returned tables.
+### RecordedSeries
 
-Read samples from the `RecordedSeries` returned by `record()`:
+| Member | Behavior |
+|---|---|
+| `recorded_series.ref_uri` | Persistent reference to the stream returned by a sample write |
+| `recorded_series.dataframe(**kwargs)` | Read the stream's samples |
 
 ```python
-# Record the rows produced by your calculation.
-recorded_power = electrical_power.record(power_rows)
-# Fetch the samples from this result's stream.
-frame = recorded_power.dataframe()
+recorded_power = power.record(power_rows)
+power_samples = recorded_power.dataframe()
 ```
 
-`RecordedSeries.dataframe()` accepts the same `start`, `end`, `limit`, `order`,
-`timeout`, and `value_mode` keyword arguments as the low-level time-series
-client. Its `ref_uri` attribute is the persistent stream reference.
+Sample reads accept the low-level time-series client's `start`, `end`, `limit`,
+`order`, `timeout`, and `value_mode` options. `Observation.dataframe()` defaults
+to its recorded range; `RecordedSeries.dataframe()` reads its stream without
+those default bounds.
 
-A saved time-series observation contains the stream URI and recorded range:
+## Metadata
+
+### Saved objects and metadata tables
+
+| Method / member | Returns |
+|---|---|
+| `variable.metadata` | Saved declaration metadata |
+| `run.metadata` | Saved run metadata |
+| `annotation.metadata` | Saved annotation metadata |
+| `selection.query().include(...).metadata()` | A Polars graph metadata table |
+| `selection.query().include(...).metadata_objects()` | Python dictionaries grouped by query alias |
+| `query.schema()` | Metadata column types |
+| `query.options(attribute)` | Available values and counts |
+| `query.facets()` | Attribute summaries |
+
+Queries stay within the Study and collection filters. Graph table columns use
+`experiment.*` or `variable.*` names. See the [query reference](client-api.md#query).
+
+Saved metadata retains supplied semantic strings. Native queries expose the
+resolved value and supplied text separately: `unit="unit:PSI"` and
+`unit.raw="PSI"`. Objects contain each node's own fields, with its CURIE under
+`id`. Tables use a shared schema, so missing struct fields appear as nulls.
+Collection `.frame()` methods keep saved metadata dictionaries in `Object` columns;
+variable frames also expose descriptive metadata keys as columns.
+
+Saved metadata reads use the shared object API, with lifecycle fields removed
+and supplied strings restored from `.raw`. SQL snapshots cover recovery and
+shapes the shared reader cannot yet reproduce. See the
+[integration plan](../plans/experiment-metadata-integration.md).
+
+### Metadata rules
+
+Keys contain letters, digits, underscores, and hyphens, starting with a letter
+or underscore. Nested objects and lists use dotted paths and list indices.
+`None`, `[]`, and `{}` remove metadata; an empty string is retained. Recorded
+JSON and log data retain nulls and empty containers.
+
+Built-in keys such as `unit`, `quantity_kind`, and `type` have semantic meanings.
+Relation keys such as `entity` and `upstream` are rejected. These lifecycle keys
+are reserved at the top level:
+
+`study_id`, `run_id`, `variable_id`, `annotation_id`, `role`, `kind`, `status`,
+`created_at`, `started_at`, `finished_at`, `range_start`, `range_end`, `ref_uri`,
+and `label`.
+
+Put similarly named descriptive fields inside a context object, such as
+`{"context": {"type": "baseline"}}`. See the
+[shared metadata rules](../how-to/attach-metadata.md) for details.
+
+## Stream annotations and file artifacts
+
+### Stream annotations
+
+| Method | Behavior |
+|---|---|
+| `run.annotate_stream(ref_uri, start=..., end=None, metadata=None)` | Associate an existing stream interval with a run; return `StreamAnnotation` |
+| `run.stream_annotations(ref_uri=None, start=None, end=None)` | Find that run's annotations |
+| `study.stream_annotations(run_id=None, ref_uri=None, start=None, end=None)` | Find annotations within the Study |
+| `ac.study.stream_annotations(ref_uri=None, start=None, end=None)` | Find annotations across Studies |
+| `annotation.dataframe(**kwargs)` | Read current samples within the interval, with inclusive bounds |
+| `annotation.close(end)` | Set the end of an open interval once |
+
+Annotations require a stream reference URI and start time. The end must be at
+or after the start; omitted ends stay open. Times accept datetimes or ISO 8601
+strings, with naive values treated as UTC. Metadata is a JSON object.
+Intervals may overlap. Samples remain live; annotating does not copy them.
+
+Annotations expose `annotation_id`, `run_id`, `template_id`, `ref_uri`,
+`range_start`, `range_end`, `metadata`, and `created_at`. Annotation searches
+match overlapping intervals across all run statuses. Results are ordered by
+start time, run ID, and sequence; omitted search bounds are unbounded.
+
+### File artifacts
+
+File bytes are copied into artifact storage and deduplicated by SHA-256 digest.
+Later local edits do not change the saved copy. Filename and media type come
+from the first attachment with that digest. File observations identify the
+artifact; there is currently no high-level method for downloading its bytes.
+
+## Identity, timestamps, and shared helpers
+
+| Helper | Returns / behavior |
+|---|---|
+| `ac.point(uri)` | Wrap a property URI as a `Point` for declarations |
+| `ac.resolve(text, kind=None, min_score=0.6)` | Resolve an ontology concept to a `Point` |
+| `aq.timestamp(value)` | Parse or normalize a datetime to UTC |
+
+`ac.resolve()` searches vocabulary concepts. Find deployment property instances
+with [plant queries](../how-to/record-experiments.md#connect-a-time-series-result-to-the-facility),
+then pass their URIs as `observed`.
+
+The server assigns each observation a run-local sequence and UTC `recorded_at`
+receipt time. Caller-supplied `occurred_at` is separate. Time-series writes use
+source `experiment/<run_id>` and the variable label as the reference name.
+Each observation records the stream URI and minimum and maximum sample times.
+
+## Proposed read API
+
+These methods are proposed and are **not implemented**:
+
+| Proposed method | Contract |
+|---|---|
+| `variables.one()` | Return exactly one variable; error on zero or multiple matches |
+| `runs.one()` | Return exactly one Experiment; error on zero or multiple matches |
+| `run.dataframe(variable)` | Read all recorded sample intervals for that variable in that run |
+
+The intended workflow is:
 
 ```python
-# Find the saved stream reference for this run's output.
-power_observations = experiment.observations("electrical power")
-power = power_observations.latest()
-range_start = power.range_start.isoformat()
-range_end = power.range_end.isoformat()
+# Proposed API; this code does not run on the current branch.
+power_variables = study.variables.where(role="output", unit="kW")
+power = power_variables.one()
 
-# Read only the interval recorded by this observation.
-frame = ac.client.timeseries_df(
-    power.ref_uri,
-    start=range_start,
-    end=range_end,
-)
+baseline_runs = study.experiments.where(scenario="baseline")
+baseline = baseline_runs.one()
+
+power_samples = baseline.dataframe(power)
 ```
-
-`Observation.dataframe()` makes the same call using the recorded range.
 
 ## HTTP API
 
@@ -306,8 +345,11 @@ The HTTP API calls a Study a `template`. `template_id`, `variable_id`, and
 | `GET` | `/experiments/templates/{template_id}/variables` | List declarations and metadata |
 | `POST` | `/experiments/templates/{template_id}/runs` | Start an Experiment |
 | `GET` | `/experiments/templates/{template_id}/runs` | Filter and list Experiments |
+| `POST` | `/experiments/templates/{template_id}/runs/query` | Retrieve runs selected by graph IDs |
 | `GET` | `/experiments/runs/{run_id}` | Retrieve one Experiment |
 | `GET` | `/experiments/templates/{template_id}/observations` | Filter and list observations |
+| `POST` | `/experiments/templates/{template_id}/observations/query` | Retrieve observations for graph-selected runs |
+| `POST` | `/experiments/metadata/sync` | Backfill or repair the experiment metadata graph |
 | `POST` | `/experiments/runs/{run_id}/variables/{variable_id}/observations` | Record a value or reference |
 | `POST` | `/experiments/runs/{run_id}/stream-annotations` | Tag a stream interval |
 | `GET` | `/experiments/stream-annotations` | Find annotations by Study, run, stream, and overlapping time |
