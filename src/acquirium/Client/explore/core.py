@@ -928,7 +928,7 @@ class Query:
     def to_sparql(self) -> str:
         return compile_sparql(self.query_graph)
 
-    def execute(self, include_dependencies: bool = True) -> dict:
+    def execute(self, include_dependencies: bool = True, *, as_of: datetime | None = None) -> dict:
         """Execute the compiled SPARQL against the metadata graph (cached).
 
         Traversal-program edges (via expressions / ``via="any"``) are
@@ -936,8 +936,11 @@ class Query:
         nearest edges keep only the closest matches, others all reachable
         matches. The final result always comes from one SPARQL query with
         the matches injected as paired VALUES.
+
+        ``as_of`` runs the final query against the model as it was at that
+        time. Traversal and placement resolution still read the live model.
         """
-        cache_key = f"execute_{include_dependencies}"
+        cache_key = f"execute_{include_dependencies}_{as_of.isoformat() if as_of else ''}"
         if self.cache.get(cache_key) is None:
             g = self.query_graph
             if any(getattr(e, "patterns", None) and e.value_pairs is None for e in g.edges):
@@ -946,6 +949,10 @@ class Query:
             if any(e.direction is not None and e.nearest for e in g.edges):
                 from acquirium.Client.explore.places import execute_placed
                 self.cache[cache_key] = execute_placed(g, self.client, include_dependencies)
+            elif as_of is not None:
+                self.cache[cache_key] = self.client.sparql_query(
+                    compile_sparql(g), include_dependencies=include_dependencies, as_of=as_of,
+                )
             else:
                 self.cache[cache_key] = self.client.sparql_query(
                     compile_sparql(g),

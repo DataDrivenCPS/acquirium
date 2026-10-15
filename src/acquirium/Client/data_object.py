@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterator, TYPE_CHECKING
 import polars as pl
 import logging
@@ -18,6 +18,7 @@ def _parse_sparql_bindings(
     query: Query,
     *,
     include_dependencies: bool,
+    as_of: datetime | None = None,
 ) -> tuple[
     list[tuple[int, str, str]],          # (nid, point_uri, ref_uri) — unique data bindings
     dict[tuple[int, str, str], list[dict[str, str]]],  # data_key -> list of entity context dicts
@@ -35,7 +36,7 @@ def _parse_sparql_bindings(
         ref_units: mapping from data key to external reference unit URI (or None)
         point_labels: mapping from data key to the point's rdfs:label (or None)
     """
-    res = query.execute(include_dependencies=include_dependencies)
+    res = query.execute(include_dependencies=include_dependencies, as_of=as_of)
     cols: list[str] = res.get("columns", [])
     rows: list[list[Any]] = res.get("rows", [])
 
@@ -272,6 +273,43 @@ class BindingInfo:
     property_unit: str | None = None    # unit URI from qudt:hasUnit on the property
     ref_unit: str | None = None         # unit URI from qudt:hasUnit on the ext reference
     point_label: str | None = None      # rdfs:label on the property (display name)
+    # Half-open [since, until) ranges, within the requested window, over which
+    # the model gave this binding; None is the window's own bound. One
+    # (None, None) entry means the whole window.
+    intervals: list[tuple[datetime | None, datetime | None]] = field(default_factory=lambda: [(None, None)])
+
+
+def _as_datetime(value) -> datetime | None:
+    if value is None or isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(str(value))
+
+
+def _resolve_versions(query: Query, *, start, end, include_dependencies: bool):
+    """Resolve the query once per version of the model inside the window.
+
+    Returns ``(resolutions, boundaries)``: one parsed resolution per version,
+    ascending, and the change points that separate them. The model is one
+    version between consecutive change points. A window with no change point
+    inside it needs one resolution: of the live model when nothing changed
+    after the window starts, which is today's query exactly, otherwise of
+    the model as of the window's start. A reading by stream id never goes
+    through this.
+    """
+    start_dt, end_dt = _as_datetime(start), _as_datetime(end)
+    points: list[datetime] = []
+    if hasattr(query.client, "graph_change_points"):
+        points = sorted(query.client.graph_change_points())
+    inside = [p for p in points if (start_dt is None or p > start_dt) and (end_dt is None or p < end_dt)]
+    if not points or (not inside and (start_dt is None or start_dt >= points[-1])):
+        return [_parse_sparql_bindings(query, include_dependencies=include_dependencies)], []
+    # The model at a version's start, or at any instant before the first
+    # change when the window has no start. The model at or after the last
+    # change point is the live model.
+    starts = [start_dt if start_dt is not None else points[0] - timedelta(microseconds=1), *inside]
+    resolutions = [_parse_sparql_bindings(query, include_dependencies=include_dependencies,
+                                          as_of=None if t >= points[-1] else t) for t in starts]
+    return resolutions, inside
 
 
 @dataclass
@@ -348,46 +386,63 @@ class DataObject:
         if not getattr(qg, "data_nodes", None):
             return cls._empty(qg, cast_value=cast_value, client=query.client)
 
-        point_ref_uris, entity_context, prop_units, ext_ref_units, point_labels = _parse_sparql_bindings(
-            query,
-            include_dependencies=include_dependencies,
-        )
+        resolutions, points = _resolve_versions(query, start=start, end=end, include_dependencies=include_dependencies)
 
-        if not point_ref_uris:
+        if not any(res[0] for res in resolutions):
             return cls._empty(qg, cast_value=cast_value, client=query.client)
 
         # Determine all entity column names across every context dict
         all_entity_cols: set[str] = set()
-        for ctx_list in entity_context.values():
-            for ctx in ctx_list:
-                all_entity_cols.update(ctx.keys())
+        for _, entity_context, *_ in resolutions:
+            for ctx_list in entity_context.values():
+                for ctx in ctx_list:
+                    all_entity_cols.update(ctx.keys())
         entity_columns = sorted(all_entity_cols)
 
         # Fetch stats for all ref_uris in one batch request
-        ref_uris = list({ref_uri for _, _, ref_uri in point_ref_uris})
+        ref_uris = list({ref_uri for res in resolutions for _, _, ref_uri in res[0]})
         stats = query.client.timeseries_info_batch(ref_uris)
 
-        # Build BindingInfo for each binding
-        bindings: list[BindingInfo] = []
-        for nid, point_uri, ref_uri in point_ref_uris:
-            alias = qg.aliases_reverse.get(nid, str(nid))
-            key = (nid, point_uri, ref_uri)
-            contexts = entity_context.get(key, [{}])
-            unique_contexts = _deduplicate_contexts(contexts)
-            info = stats.get(ref_uri)
-            bindings.append(BindingInfo(
-                nid=nid,
-                point_uri=point_uri,
-                ref_uri=ref_uri,
-                alias=alias,
-                entity_contexts=unique_contexts,
-                row_count=info.row_count if info else 0,
-                earliest=info.earliest if info else None,
-                latest=info.latest if info else None,
-                property_unit=prop_units.get(key),
-                ref_unit=ext_ref_units.get(key),
-                point_label=point_labels.get(key),
-            ))
+        # One BindingInfo per binding and context the model gave at some
+        # version, with the intervals over which it gave it: consecutive
+        # versions that agree extend the interval, one that differs ends it
+        # (a stream whose equipment changed role in July is one binding
+        # until July and another after).
+        version_starts: list[datetime | None] = [None, *points]
+        bindings: dict[tuple, BindingInfo] = {}
+        open_since: dict[tuple, datetime | None] = {}
+        for index, (point_ref_uris, entity_context, prop_units, ext_ref_units, point_labels) in enumerate(resolutions):
+            present: dict[tuple, BindingInfo] = {}
+            for nid, point_uri, ref_uri in point_ref_uris:
+                alias = qg.aliases_reverse.get(nid, str(nid))
+                key = (nid, point_uri, ref_uri)
+                unique_contexts = _deduplicate_contexts(entity_context.get(key, [{}]))
+                identity = (key, tuple(tuple(sorted(c.items())) for c in unique_contexts),
+                            prop_units.get(key), ext_ref_units.get(key), point_labels.get(key))
+                info = stats.get(ref_uri)
+                present[identity] = BindingInfo(
+                    nid=nid,
+                    point_uri=point_uri,
+                    ref_uri=ref_uri,
+                    alias=alias,
+                    entity_contexts=unique_contexts,
+                    row_count=info.row_count if info else 0,
+                    earliest=info.earliest if info else None,
+                    latest=info.latest if info else None,
+                    property_unit=prop_units.get(key),
+                    ref_unit=ext_ref_units.get(key),
+                    point_label=point_labels.get(key),
+                    intervals=[],
+                )
+            for identity in list(open_since):
+                if identity not in present:
+                    bindings[identity].intervals.append((open_since.pop(identity), version_starts[index]))
+            for identity, binding in present.items():
+                bindings.setdefault(identity, binding)
+                open_since.setdefault(identity, version_starts[index])
+        for identity, since in open_since.items():
+            bindings[identity].intervals.append((since, None))
+        bindings: list[BindingInfo] = list(bindings.values())
 
         return cls(
             _bindings=bindings,
@@ -409,6 +464,29 @@ class DataObject:
     # ------------------------------------------------------------------
     # Materialization
     # ------------------------------------------------------------------
+
+    def _fetch(self, binding: BindingInfo, *, start, end, limit, order, value_mode) -> pl.DataFrame:
+        """Fetch a binding's rows over each interval the model gave it, inside the window.
+
+        The server's ``end`` is inclusive; an interval that ends at a change
+        point excludes the reading at that instant, which belongs to the
+        next version's binding.
+        """
+        pieces = []
+        for since, until in binding.intervals:
+            df = self._client.timeseries_df(
+                binding.ref_uri,
+                start=since.isoformat() if since is not None else start,
+                end=until.isoformat() if until is not None else end,
+                limit=limit,
+                order=order,
+                value_mode=value_mode,
+            )
+            if until is not None and not df.is_empty() and "ts" in df.columns:
+                df = df.filter(pl.col("ts") < pl.lit(until))
+            if not df.is_empty():
+                pieces.append(df)
+        return pl.concat(pieces, how="vertical") if pieces else pl.DataFrame()
 
     @staticmethod
     def _apply_conversion(df: pl.DataFrame, factors: dict) -> pl.DataFrame:
@@ -494,14 +572,7 @@ class DataObject:
 
         frames: list[pl.DataFrame] = []
         for binding in self._bindings:
-            df = self._client.timeseries_df(
-                binding.ref_uri,
-                start=start,
-                end=end,
-                limit=limit,
-                order=order,
-                value_mode=value_mode,
-            )
+            df = self._fetch(binding, start=start, end=end, limit=limit, order=order, value_mode=value_mode)
             if df.is_empty():
                 continue
 

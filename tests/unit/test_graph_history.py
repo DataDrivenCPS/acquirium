@@ -178,3 +178,19 @@ def test_a_direct_graph_write_still_records_the_pending_change(runtime):
     with store._own_conn() as conn:
         assert conn.execute("SELECT effective_at FROM materialization_graph_changes").fetchall() == [(T[4].isoformat(),)]
     assert m.history.change_points() == []
+
+
+def test_http_sparql_with_as_of_goes_to_the_history_and_change_points_are_served(monkeypatch):
+    from types import SimpleNamespace
+    from acquirium.Server import app as server
+    calls = []
+    manager = SimpleNamespace(
+        sparql_json=lambda *a, **k: calls.append(("json", k)) or b"{}",
+        sparql_dict=lambda q, **k: calls.append(("dict", k)) or {"columns": [], "rows": []},
+        graph_change_points=lambda *, start, end: [T[3]] if start is None or start < T[3] else [],
+    )
+    monkeypatch.setattr(server.app.state, "manager", manager, raising=False)
+    server.sparql_json_post(server.SparqlQueryRequest(query="SELECT * WHERE { ?s ?p ?o }", as_of=T[2]))
+    assert calls == [("dict", {"include_dependencies": True, "wait_for_fresh": False, "as_of": T[2]})]
+    assert server.graph_change_points(start=T[1]) == {"change_points": [T[3].isoformat()]}
+    assert server.graph_change_points(start=T[5]) == {"change_points": []}

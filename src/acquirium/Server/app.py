@@ -912,6 +912,9 @@ class SparqlQueryRequest(BaseModel):
         False,
         description="Wait for pending inference; default returns the last complete graph",
     )
+    as_of: Optional[datetime] = Field(
+        None, description="Query the model as it was at this time instead of the live model",
+    )
 
 
 @app.post("/sparql_json")
@@ -919,20 +922,33 @@ def sparql_json_post(req: SparqlQueryRequest):
     """POST form of /sparql_json: VALUES-heavy queries (e.g. resolved
     traversal edges) exceed URL length limits, so the client posts."""
     try:
-        serialized = app.state.manager.sparql_json(
-            req.query,
-            include_dependencies=req.include_dependencies,
-            wait_for_fresh=req.wait_for_fresh,
-        )
-        if serialized is not None:
-            return _sparql_results_to_rows(serialized)
+        if req.as_of is None:
+            serialized = app.state.manager.sparql_json(
+                req.query,
+                include_dependencies=req.include_dependencies,
+                wait_for_fresh=req.wait_for_fresh,
+            )
+            if serialized is not None:
+                return _sparql_results_to_rows(serialized)
         return app.state.manager.sparql_dict(
             req.query,
             include_dependencies=req.include_dependencies,
             wait_for_fresh=req.wait_for_fresh,
+            as_of=req.as_of,
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/graph_change_points")
+def graph_change_points(start: Optional[datetime] = None, end: Optional[datetime] = None) -> dict[str, list[str]]:
+    """Effective times at which the model changed, within (start, end), ascending.
+
+    The model is one version between two consecutive change points; a
+    query over a time range needs one resolution per version it overlaps.
+    """
+    points = app.state.manager.graph_change_points(start=start, end=end)
+    return {"change_points": [p.isoformat() for p in points]}
 
 
 class SparqlUpdateRequest(BaseModel):

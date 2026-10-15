@@ -108,7 +108,18 @@ class TestSparqlQuery:
             "query": "SELECT * WHERE { ?s ?p ?o }",
             "include_dependencies": True,
             "wait_for_fresh": False,
+            "as_of": None,
         }
+
+    def test_as_of_is_sent_as_iso_time(self, http, client):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"columns": [], "rows": []}
+        mock_resp.raise_for_status = MagicMock()
+        http.post.return_value = mock_resp
+
+        client.sparql_query("SELECT * WHERE { ?s ?p ?o }", as_of=datetime(2026, 7, 1, tzinfo=timezone.utc))
+
+        assert http.post.call_args.kwargs["json"]["as_of"] == "2026-07-01T00:00:00+00:00"
 
     def test_wait_for_fresh_is_sent_when_requested(self, http, client):
         mock_resp = MagicMock()
@@ -155,6 +166,17 @@ class TestGraphStatus:
         assert status["published_version"] == 6
         assert client.graph_version() == 7
         assert http.get.call_args.args[0].endswith("/graph_version")
+
+
+class TestGraphChangePoints:
+    def test_points_are_parsed_and_the_window_is_sent(self, http, client):
+        http.get.return_value = _get_resp({"change_points": ["2026-07-01T00:00:00+00:00"]})
+
+        points = client.graph_change_points(start=datetime(2026, 1, 1, tzinfo=timezone.utc))
+
+        assert points == [datetime(2026, 7, 1, tzinfo=timezone.utc)]
+        assert http.get.call_args.args[0].endswith("/graph_change_points")
+        assert http.get.call_args.kwargs["params"] == {"start": "2026-01-01T00:00:00+00:00"}
 
 
 # ── resolve ────────────────────────────────────────────────

@@ -418,6 +418,7 @@ class AcquiriumClient:
         include_dependencies: bool = True,
         *,
         wait_for_fresh: bool = False,
+        as_of: datetime | None = None,
     ) -> dict:
         """
         Execute a SPARQL query against the graph store.
@@ -427,6 +428,8 @@ class AcquiriumClient:
             include_dependencies: Whether to include ontology/shape triples.
             wait_for_fresh: Wait for pending inference instead of using the
                 last complete published graph.
+            as_of: Query the model as it was at this time. The default is
+                the live model.
 
         Returns:
             The SPARQL query result as a dictionary.
@@ -441,6 +444,7 @@ class AcquiriumClient:
                 "query": sparql,
                 "include_dependencies": include_dependencies,
                 "wait_for_fresh": wait_for_fresh,
+                "as_of": as_of.isoformat() if as_of is not None else None,
             },
         )
         _raise_for_status(response)
@@ -702,6 +706,14 @@ class AcquiriumClient:
         response = self._http.get(url)
         response.raise_for_status()
         return response.json()
+
+    def graph_change_points(self, start: datetime | None = None, end: datetime | None = None) -> list[datetime]:
+        """Effective times at which the model changed, strictly inside (start, end), ascending."""
+        url = f"{self.base_url}/graph_change_points"
+        params = {k: v.isoformat() for k, v in (("start", start), ("end", end)) if v is not None}
+        response = self._http.get(url, params=params)
+        _raise_for_status(response)
+        return [datetime.fromisoformat(p) for p in response.json()["change_points"]]
 
     # -------------------- Unit conversion --------------------
 

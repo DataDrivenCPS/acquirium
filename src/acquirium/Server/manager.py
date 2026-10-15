@@ -933,6 +933,7 @@ class Manager:
         include_dependencies: bool = True,
         *,
         wait_for_fresh: bool = False,
+        as_of: datetime | None = None,
     ) -> dict[str, Any]:
         """
         Execute a SPARQL query against the graph store and return results in dict format.
@@ -949,12 +950,19 @@ class Manager:
             A dictionary containing the query results.
             {"cols": [...], "rows": [...]}
         """
-        logger.debug("sparql_dict dependencies=%s len=%d", include_dependencies, len(query))
+        logger.debug("sparql_dict dependencies=%s len=%d as_of=%s", include_dependencies, len(query), as_of)
+        if as_of is not None:
+            return self.materializer.history.as_of(as_of).sparql_query(query, include_dependencies=include_dependencies)
         return self.graph_store.sparql_query(
             query,
             include_dependencies=include_dependencies,
             wait_for_fresh=wait_for_fresh,
         )
+
+    def graph_change_points(self, *, start: datetime | None = None, end: datetime | None = None) -> list[datetime]:
+        """Effective times of model changes strictly inside (start, end), ascending."""
+        return [p for p in self.materializer.history.change_points()
+                if (start is None or p > start) and (end is None or p < end)]
 
     def sparql_json(
         self,
