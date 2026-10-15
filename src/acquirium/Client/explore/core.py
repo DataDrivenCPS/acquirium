@@ -1093,7 +1093,9 @@ class Query:
                         uris.append(s)
 
             pred_path = "|".join(f"<{p}>" for p in attr.predicates)
-            counts_by_value: Dict[str, set] = {}
+            # keyed by (value, its Python type): the date 2024-03-12 and the
+            # string "2024-03-12" are two values, as they are in the graph
+            counts_by_value: Dict[tuple, set] = {}
             for i in range(0, len(uris), 500):
                 chunk = " ".join(f"<{u}>" for u in uris[i:i + 500])
                 sparql = (
@@ -1107,15 +1109,23 @@ class Query:
                 lcols = lookup.get("columns", [])
                 vi = lcols.index("v") if "v" in lcols else 0
                 oi = lcols.index("opt") if "opt" in lcols else 1
-                for r in lookup.get("rows", []):
-                    if r[oi] is not None and r[vi] is not None:
-                        counts_by_value.setdefault(str(r[oi]), set()).add(str(r[vi]))
+                ldts = lookup.get("datatypes") or [[None] * len(lcols) for _ in lookup.get("rows", [])]
+                for r, d in zip(lookup.get("rows", []), ldts):
+                    if r[oi] is None or r[vi] is None:
+                        continue
+                    dt = d[oi] if oi < len(d) else None
+                    if dt == IRI or (dt is None and _is_uri(str(r[oi]))):
+                        value: Any = self._compact_uri_safe(str(r[oi]))
+                    else:
+                        value = parse_cell(r[oi], dt)
+                    counts_by_value.setdefault((value, type(value).__name__), set()).add(str(r[vi]))
 
-            ranked = sorted(counts_by_value.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+            ranked = sorted(counts_by_value.items(), key=lambda kv: (-len(kv[1]), str(kv[0][0]), kv[0][1]))
+            values = [v for (v, _), _ in ranked]
+            dtype = column_dtype(values)
             self.cache[cache_key] = pl.DataFrame(
-                {attr_name: [self._compact_uri_safe(v) for v, _ in ranked],
-                 "count": [len(nodes) for _, nodes in ranked]},
-                schema={attr_name: pl.String, "count": pl.Int64},
+                {attr_name: pl.Series(attr_name, coerce(values, dtype), dtype=dtype),
+                 "count": pl.Series("count", [len(nodes) for _, nodes in ranked], dtype=pl.Int64)},
             )
         return self.cache[cache_key]
 
@@ -1146,6 +1156,8 @@ class Query:
         summary = FacetSummary(node_alias=alias)
         for attr in self._node_attrs(g, nid):
             name = attr.name
+            if attr.datatypes:          # a user attribute: show its type
+                summary.dtypes[name] = str(self._leaf_dtype(name))
             df = self.options(name, of=alias, include_dependencies=include_dependencies)
             scope = "matched"
             if df.height == 0:
@@ -1164,6 +1176,18 @@ class Query:
         return summary
 
     # ---------- terminals ----------
+
+    def _leaf_dtype(self, name: str) -> pl.DataType:
+        """The column dtype an attribute takes, from the datatypes the graph
+        holds for it: a list attribute is a ``List`` of that, a mixture
+        ``Object``; a built-in (nothing discovered) is ``String``."""
+        attr = self.registry[name]
+        if not attr.datatypes:
+            return pl.String
+        base = dtype_for_datatypes(attr.datatypes) or pl.String
+        if is_list_attr(attr):
+            return pl.Object if base == pl.Object else pl.List(base)
+        return base
 
     def schema(self) -> pl.Schema:
         """The polars schema ``metadata()`` will return, without running the query.
@@ -1186,14 +1210,7 @@ class Query:
         leaf_selects, group_selects = self._expanded_selects()
         casts = {(nid, name): (type_, strict) for nid, name, type_, strict in g.casts}
 
-        def leaf_dtype(name: str) -> pl.DataType:
-            attr = registry[name]
-            if not attr.datatypes:
-                return pl.String   # a built-in, or nothing discovered yet
-            base = dtype_for_datatypes(attr.datatypes) or pl.String
-            if is_list_attr(attr):
-                return pl.Object if base == pl.Object else pl.List(base)
-            return base
+        leaf_dtype = self._leaf_dtype
 
         def group_dtype(gname: str, children: List[str]) -> pl.DataType:
             if gname in registry:
