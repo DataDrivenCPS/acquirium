@@ -98,7 +98,10 @@ class Scheduler:
                 blocked.update(target for source, target, _ in graph.edges if source in blocked)
                 now = monotonic()
                 current, progress = store.progress_snapshot(conn)
-                for binding in wave:
+                # A binding behind a failed producer is not initialised: it
+                # has no frontier to advance until its producer recovers.
+                live = [b for b in wave if b.signature not in blocked]
+                for binding in live:
                     if progress.get(binding.progress_key) is None:
                         progress[binding.progress_key] = store.initialise(
                             binding, applications[binding.signature].backfill, conn=conn)
@@ -107,14 +110,12 @@ class Scheduler:
                 # it has nothing to read: its frontier moves in one batched
                 # update. The index is rebuilt after a wave publishes, so a
                 # dependent wave sees its predecessors' outputs.
-                floor = min((progress[b.progress_key] for b in wave), default=current)
+                floor = min((progress[b.progress_key] for b in live), default=current)
                 if index is None or floor < index_floor or index[0] < current:
                     index, index_floor = store.change_index(floor, conn=conn), floor
                 target, changed, resets = index
                 ready, previous, idle = [], {}, []
-                for binding in wave:
-                    if binding.signature in blocked:
-                        continue
+                for binding in live:
                     consumed = progress[binding.progress_key]
                     refs = [d.ref_uri for values in binding.inputs.values() for d in values]
                     touched = any(changed.get(ref, 0) > consumed or resets.get(ref, 0) > consumed for ref in refs)
