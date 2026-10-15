@@ -377,15 +377,15 @@ class Materializer:
             dataflow_dropped = self._dataflow_dropped(closing, table, current, deployments)
             closing = {key: until for key, until in closing.items() if key not in dataflow_dropped}
             table = [row for row in table if row["key"] not in dataflow_dropped or row["valid_to"] is None]
-            historical = self._historical(table, closing, current, deployments, failed_apps,
-                                          applications, revision)
+            historical, source = self._historical(table, closing, current, deployments, failed_apps,
+                                                  applications, revision)
             # A current binding whose interval overlaps a historical owner of
             # the same output appeared through a dataflow change and covers
             # that history itself, as it is repaired over it: it supersedes.
             superseded = {b.progress_key for b in historical for c in current_bindings
                           if b.overlaps(c) and {p.ref_uri for p in b.outputs.values()} & {p.ref_uri for p in c.outputs.values()}}
             historical = [b for b in historical if b.progress_key not in superseded]
-            dataflow_dropped = dataflow_dropped | superseded
+            dataflow_dropped = dataflow_dropped | {source[key] for key in superseded}
             for b in historical:
                 applications.setdefault(b.signature, self._instance(b.application_name, applications, deployments))
             try:
@@ -557,43 +557,53 @@ class Materializer:
                 return applications[binding.signature]
         return self._planner.instantiate(deployments[app_name])
 
-    def _historical(self, table, closing, current, deployments, failed_apps, applications, revision) -> list:
-        """Closed bindings of deployed apps, each over its own interval of validity.
+    def _historical(self, table, closing, current, deployments, failed_apps, applications, revision):
+        """Closed bindings of deployed apps, one instance per interval of validity.
 
-        A progress key that is current again is not rebuilt: the current
-        binding covers it. A key closed more than once keeps its latest
-        interval. A failed app keeps whatever its last plan held.
+        Returns the instances and, for each, the progress key of the row it
+        came from. A key's latest interval keeps the key, so its frontier
+        carries on, unless the key is current again; every other interval
+        is tagged and gets a frontier of its own. A failed app keeps
+        whatever its last plan held.
         """
         from acquirium.Materialization.models import Binding, OutputPort, StreamDescriptor
-        latest: dict[str, dict[str, Any]] = {}
+        intervals: dict[str, list[dict[str, Any]]] = {}
         for row in table:
             until = row["valid_to"] if row["valid_to"] is not None else closing.get(row["key"])
-            if until is None or row["key"] in current or row["app"] not in deployments or row["app"] in failed_apps:
+            if until is None or row["app"] not in deployments or row["app"] in failed_apps:
                 continue
             if row["valid_from"] is not None and row["valid_from"] >= until:
                 continue
-            if row["key"] not in latest or until > latest[row["key"]]["until"]:
-                latest[row["key"]] = {**row, "until": until}
-        rebuilt = []
-        for key, row in latest.items():
-            deployment, definition = deployments[row["app"]], row["definition"]
-            app = self._instance(row["app"], applications, deployments)
-            inputs = {alias: tuple(StreamDescriptor(**{**d, "properties": {k: tuple(v) for k, v in d.get("properties", {}).items()}})
-                                   for d in streams) for alias, streams in definition["inputs"].items()}
-            outputs = {name: OutputPort(ref, ref_name, point, deployment.outputs[name])
-                       for name, (ref, ref_name, point) in definition["outputs"].items() if name in deployment.outputs}
-            if not inputs or not outputs:
-                continue
-            binding = Binding(row["app"], deployment.executable_digest, inputs, outputs,
-                              deployment.lookback, deployment.lookahead, revision, deployment.parameters,
-                              definition["row"], tuple(definition["result"]), every=deployment.every,
-                              custom_window=app.output_window if type(app).output_window is not App.output_window else None,
-                              valid_from=row["valid_from"], valid_to=row["until"])
-            generation = self._generations.setdefault(row["app"], uuid4().hex)
-            rebuilt.append(replace(binding, generation=f"{generation}:{binding.signature}:{binding.context_hash}"))
+            intervals.setdefault(row["key"], []).append({**row, "until": until})
+        rebuilt, source = [], {}
+        for key, rows in intervals.items():
+            rows.sort(key=lambda r: r["until"])
+            for index, row in enumerate(rows):
+                last = index == len(rows) - 1 and key not in current
+                tag = "" if last else (row["valid_from"].isoformat() if row["valid_from"] else "start")
+                deployment, definition = deployments[row["app"]], row["definition"]
+                app = self._instance(row["app"], applications, deployments)
+                inputs = {alias: tuple(StreamDescriptor(**{**d, "properties": {k: tuple(v) for k, v in d.get("properties", {}).items()}})
+                                       for d in streams) for alias, streams in definition["inputs"].items()}
+                outputs = {name: OutputPort(ref, ref_name, point, deployment.outputs[name])
+                           for name, (ref, ref_name, point) in definition["outputs"].items() if name in deployment.outputs}
+                if not inputs or not outputs:
+                    continue
+                binding = Binding(row["app"], deployment.executable_digest, inputs, outputs,
+                                  deployment.lookback, deployment.lookahead, revision, deployment.parameters,
+                                  definition["row"], tuple(definition["result"]), every=deployment.every,
+                                  custom_window=app.output_window if type(app).output_window is not App.output_window else None,
+                                  valid_from=row["valid_from"], valid_to=row["until"], interval_tag=tag)
+                generation = self._generations.setdefault(row["app"], uuid4().hex)
+                binding = replace(binding, generation=f"{generation}:{binding.signature}:{binding.context_hash}")
+                rebuilt.append(binding)
+                source[binding.progress_key] = key
         for failed in failed_apps:
-            rebuilt.extend(b for b in self._dag.bindings if b.application_name == failed and b.valid_to is not None)
-        return rebuilt
+            for binding in self._dag.bindings:
+                if binding.application_name == failed and binding.valid_to is not None:
+                    rebuilt.append(binding)
+                    source[binding.progress_key] = binding.progress_key
+        return rebuilt, source
 
     def _plan_snapshot(self) -> tuple[ApplicationGraph, dict[str, Any]]:
         """Return a coherent plan without serializing transformation execution."""

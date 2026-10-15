@@ -376,3 +376,50 @@ def test_a_dataflow_change_supersedes_the_history_of_a_named_output(tmp_path):
         assert frame(store, fleet_ref)["value"].to_list() == [5.0] * 6
     finally:
         runtime.close(); store.close()
+
+
+def test_a_stream_replacement_rebuilds_each_interval_of_a_split_aggregate(tmp_path):
+    store, graph, runtime = _runtime(tmp_path, ["urn:a", "urn:b"])
+    try:
+        runtime.deploy(Deployment.from_class(SumFleet))
+        while runtime.run_once():
+            pass
+        fleet_ref = next(b for b in runtime._dag.bindings if b.application_name == "sum-fleet").outputs["out"].ref_uri
+        graph.refs = ["urn:a"]
+        runtime.note_graph_change(1, effective_at=T[3])
+        while runtime.run_once():
+            pass
+        assert frame(store, fleet_ref)["value"].to_list() == [2.0, 2.0, 2.0, 1.0, 1.0, 1.0]
+        # Replace urn:a without T[1] and T[4]: both intervals rebuild, each over its own members.
+        store.replace_rows("urn:a", [(t, 1.0) for i, t in enumerate(T) if i not in (1, 4)], value_kind="numeric")
+        while runtime.run_once():
+            pass
+        f = frame(store, fleet_ref)
+        assert dict(zip(rows(store, fleet_ref), f["value"].to_list())) == {T[0]: 2.0, T[1]: 1.0, T[2]: 2.0, T[3]: 1.0, T[5]: 1.0}
+    finally:
+        runtime.close(); store.close()
+
+
+def test_a_membership_that_comes_back_keeps_maintaining_its_earlier_interval(tmp_path):
+    store, graph, runtime = _runtime(tmp_path, ["urn:a", "urn:b"])
+    try:
+        runtime.deploy(Deployment.from_class(SumFleet))
+        while runtime.run_once():
+            pass
+        fleet_ref = next(b for b in runtime._dag.bindings if b.application_name == "sum-fleet").outputs["out"].ref_uri
+        graph.refs = ["urn:a"]
+        runtime.note_graph_change(1, effective_at=T[2])
+        while runtime.run_once():
+            pass
+        graph.refs = ["urn:a", "urn:b"]          # the same fleet again: the same binding identity
+        runtime.note_graph_change(1, effective_at=T[4])
+        while runtime.run_once():
+            pass
+        assert frame(store, fleet_ref)["value"].to_list() == [2.0, 2.0, 1.0, 1.0, 2.0, 2.0]
+        store.upsert_rows("urn:b", [(T[1], 5.0)], value_kind="numeric")   # before the first change
+        store.upsert_rows("urn:b", [(T[5], 5.0)], value_kind="numeric")   # after the second
+        while runtime.run_once():
+            pass
+        assert frame(store, fleet_ref)["value"].to_list() == [2.0, 6.0, 1.0, 1.0, 2.0, 6.0]
+    finally:
+        runtime.close(); store.close()

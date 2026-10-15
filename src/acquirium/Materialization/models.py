@@ -422,6 +422,11 @@ class Binding:
     # interval: a late reading before a membership change still reaches
     # the aggregate as it was then.
     valid_to: datetime | None = field(default=None, compare=False)
+    # A binding whose inputs come back after a gap owns several intervals.
+    # The current one keeps the plain identities; each older interval is
+    # its own instance, told apart by this tag in both identities so it
+    # keeps its own frontier.
+    interval_tag: str = field(default="", compare=False)
     signature: str = field(init=False)
     progress_key: str = field(init=False)
     def __post_init__(self):
@@ -435,6 +440,8 @@ class Binding:
                    "lookahead": self.lookahead.total_seconds(),
                    "every": self.every.total_seconds() if self.every else None}
         payload["parameters"] = dict(self.parameters)
+        if self.interval_tag:
+            payload["interval"] = self.interval_tag
         object.__setattr__(self, "signature", sha256(_canonical(payload).encode()).hexdigest())
         # Durable progress deliberately survives code and parameter edits: it is
         # keyed by what the binding reads and writes, not by how it computes.
@@ -443,6 +450,8 @@ class Binding:
         progress = {"v": 1, "application": self.application_name,
                     "inputs": {k: sorted(x.ref_uri for x in v) for k,v in sorted(self.inputs.items())},
                     "outputs": {k: v.ref_uri for k,v in sorted(self.outputs.items())}}
+        if self.interval_tag:
+            progress["interval"] = self.interval_tag
         object.__setattr__(self, "progress_key", sha256(_canonical(progress).encode()).hexdigest())
 
     @property
