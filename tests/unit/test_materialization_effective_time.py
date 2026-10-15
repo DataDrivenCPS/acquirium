@@ -46,7 +46,7 @@ def test_a_removed_sensor_keeps_its_derived_rows_before_the_effective_time(tmp_p
         out_b = _outputs(runtime)["urn:b"]
         assert rows(store, out_b) == T
         graph.refs = ["urn:a"]
-        runtime.note_graph_change(2, effective_at=T[3])
+        runtime.note_graph_change(1, effective_at=T[3])
         while runtime.run_once():
             pass
         assert rows(store, out_b) == T[:3]
@@ -76,7 +76,7 @@ def test_an_added_sensor_is_computed_from_the_effective_time_only(tmp_path):
     try:
         store.upsert_rows("urn:c", [(t, 2.0) for t in T], value_kind="numeric")   # history exists before the model knew it
         graph.refs = ["urn:a", "urn:c"]
-        runtime.note_graph_change(2, effective_at=T[3])
+        runtime.note_graph_change(1, effective_at=T[3])
         while runtime.run_once():
             pass
         assert rows(store, _outputs(runtime)["urn:c"]) == T[3:]
@@ -114,7 +114,7 @@ def test_an_aggregate_moves_to_its_new_membership_at_the_effective_time(tmp_path
             pass
         fleet_ref = next(b for b in runtime._dag.bindings if b.application_name == "sum-fleet").outputs["out"].ref_uri
         graph.refs = ["urn:a"]
-        runtime.note_graph_change(2, effective_at=T[3])
+        runtime.note_graph_change(1, effective_at=T[3])
         while runtime.run_once():
             pass
         assert rows(store, fleet_ref) == T
@@ -138,7 +138,7 @@ def test_a_context_change_repairs_from_the_effective_time(tmp_path):
         while runtime.run_once():
             pass
         graph.labels["urn:a"] = "renamed"
-        runtime.note_graph_change(2, effective_at=T[3])
+        runtime.note_graph_change(1, effective_at=T[3])
         runtime.refresh()
         with store._own_conn() as conn:
             cursor = conn.execute("SELECT cursor_ts FROM materialization_work").fetchone()[0]
@@ -151,7 +151,7 @@ def test_validity_survives_restart(tmp_path):
     store, graph, runtime = _runtime(tmp_path, ["urn:a"])
     store.upsert_rows("urn:c", [(t, 2.0) for t in T], value_kind="numeric")
     graph.refs = ["urn:a", "urn:c"]
-    runtime.note_graph_change(2, effective_at=T[3])
+    runtime.note_graph_change(1, effective_at=T[3])
     while runtime.run_once():
         pass
     runtime.close()
@@ -186,7 +186,7 @@ def test_a_bucketed_view_switches_at_the_start_of_the_bucket(tmp_path):
         assert rows(store, out_b) == [T[0], T[2], T[4]]
         # Effective at T[3], inside the bucket [T[2], T[4]): that whole bucket goes.
         graph.refs = ["urn:a"]
-        runtime.note_graph_change(2, effective_at=T[3])
+        runtime.note_graph_change(1, effective_at=T[3])
         while runtime.run_once():
             pass
         assert rows(store, out_b) == [T[0]]
@@ -198,15 +198,59 @@ def test_a_bucketed_view_switches_at_the_start_of_the_bucket(tmp_path):
 
 
 def test_a_dated_change_carries_through_the_lineage_it_publishes(tmp_path):
-    """Retiring a binding republishes lineage; the bindings that disappear downstream
-    at the next refresh belong to the same change, so its effective time is kept."""
+    """Retiring a binding republishes lineage, which advances the graph; the
+    bindings that disappear downstream at the refresh that sees it belong to
+    the same change, so its effective time is kept for that revision."""
     store, graph, runtime = _runtime(tmp_path, ["urn:a", "urn:b"])
     try:
         graph.refs = ["urn:a"]
-        runtime.note_graph_change(2, effective_at=T[3])
+        graph.graph_status = lambda: {"published_version": 1, "source_version": 1 + len(graph.published)}
+        runtime.note_graph_change(1, effective_at=T[3])
         runtime.refresh()
         with store._own_conn() as conn:
             queued = conn.execute("SELECT effective_at FROM materialization_graph_changes").fetchall()
         assert [row[0] for row in queued] == [T[3].isoformat()]
+    finally:
+        runtime.close(); store.close()
+
+
+def test_a_change_the_plan_cannot_see_yet_keeps_its_effective_time(tmp_path):
+    """The query cache lags a graph write. A refresh that compiled against the
+    older cache must not consume the change, or the binding that appears at
+    the next refresh would have no effective time."""
+    class LaggingGraph(FleetGraph):
+        def __init__(self, refs):
+            super().__init__(refs)
+            self.version = 1
+            self.pending_refs = None
+
+        def graph_status(self):
+            return {"published_version": self.version, "source_version": self.version}
+
+        def catch_up(self):
+            self.refs, self.pending_refs, self.version = self.pending_refs, None, self.version + 1
+
+    store = DuckDBStore(tmp_path / "lag.duckdb")
+    graph = LaggingGraph(["urn:a"])
+    runtime = Materializer(store, graph)
+    try:
+        store.upsert_rows("urn:a", [(t, 1.0) for t in T], value_kind="numeric")
+        store.upsert_rows("urn:c", [(t, 2.0) for t in T], value_kind="numeric")
+        runtime.deploy(Deployment.from_class(CopyEach))
+        while runtime.run_once():
+            pass
+        # The write lands at source version 2; the cache still shows version 1.
+        graph.pending_refs = ["urn:a", "urn:c"]
+        runtime.note_graph_change(2, effective_at=T[3])
+        while runtime.run_once():
+            pass
+        with store._own_conn() as conn:
+            assert conn.execute("SELECT count(*) FROM materialization_graph_changes").fetchone()[0] == 1
+        graph.catch_up()
+        while runtime.run_once():
+            pass
+        assert rows(store, _outputs(runtime)["urn:c"]) == T[3:]
+        with store._own_conn() as conn:
+            assert conn.execute("SELECT count(*) FROM materialization_graph_changes").fetchone()[0] == 0
     finally:
         runtime.close(); store.close()

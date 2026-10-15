@@ -313,8 +313,12 @@ class Materializer:
                 prior_outputs = dict(self._execute(conn, "SELECT output_ref_uri, progress_key FROM materialization_lineage").fetchall())
                 prior_context = dict(self._execute(conn, "SELECT progress_key, context_hash FROM materialization_lineage").fetchall())
                 open_rows = self._open_bindings(conn)
+                # Only changes this plan can see: the query cache that the
+                # plan compiled against covers graph revisions up to
+                # ``revision``. A change written after that waits for the
+                # refresh that sees it, or its effective time would be lost.
                 pending = [datetime.fromisoformat(row[0]) for row in self._execute(
-                    conn, "SELECT effective_at FROM materialization_graph_changes").fetchall()]
+                    conn, "SELECT effective_at FROM materialization_graph_changes WHERE graph_revision<=?", [revision]).fetchall()]
             # When the model changed, the author said when. Bindings that
             # appear or disappear because of it exist from, or until, that
             # time; the earliest pending time covers every change planned now.
@@ -413,13 +417,15 @@ class Materializer:
                                        b.valid_from.isoformat() if b.valid_from else None])
                 for until, refs in retired.items():
                     self._revisions.retire(refs, until, conn=conn)
-                self._execute(conn, "DELETE FROM materialization_graph_changes")
+                self._execute(conn, "DELETE FROM materialization_graph_changes WHERE graph_revision<=?", [revision])
                 if cascade and republished:
                     # The derived points just published are what a downstream
                     # query matches, so the bindings that appear or disappear
-                    # at the next refresh belong to this same model change.
-                    self._execute(conn, "INSERT INTO materialization_graph_changes VALUES (?, ?, ?)",
-                                  [revision, effective.isoformat(), datetime.now(timezone.utc).isoformat()])
+                    # at the refresh that sees them belong to this same change.
+                    published_source = int(self._graph.graph_status().get("source_version", revision))
+                    if published_source > revision:
+                        self._execute(conn, "INSERT INTO materialization_graph_changes VALUES (?, ?, ?)",
+                                      [published_source, effective.isoformat(), datetime.now(timezone.utc).isoformat()])
                 failed = list(self._plan_errors)
                 if failed:
                     marks = ','.join('?' for _ in failed)
