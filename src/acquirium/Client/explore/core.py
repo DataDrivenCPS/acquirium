@@ -1400,6 +1400,7 @@ class Query:
         *,
         include_internals: bool = False,
         include_dependencies: bool = True,
+        drop_empty_cols: bool = False,
     ) -> pl.DataFrame:
         """Return the pattern matches as a polars table with alias column names.
 
@@ -1420,6 +1421,10 @@ class Query:
         The internal SPARQL columns driving ``data()`` (``ext<nid>``,
         ``unit<nid>``, ``extunit<nid>``) are hidden unless
         ``include_internals=True``.
+
+        ``drop_empty_cols=True`` leaves out columns that are null on every
+        row; the result then has fewer columns than ``schema()`` lists. An
+        empty result keeps all its columns.
         """
         cache_key = f"metadata_table:{include_internals}:{include_dependencies}"
         if self.cache.get(cache_key) is None:
@@ -1569,7 +1574,10 @@ class Query:
             if not list_names and not group_selects and pl.Object not in pl_table.dtypes:
                 pl_table = pl_table.unique(maintain_order=True)
             self.cache[cache_key] = pl_table
-        return self.cache[cache_key]
+        df = self.cache[cache_key]
+        if drop_empty_cols and df.height:
+            return df.select([c for c in df.columns if df[c].null_count() < df.height])
+        return df
 
     def data(
         self,
