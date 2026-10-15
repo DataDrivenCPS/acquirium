@@ -190,6 +190,21 @@ def test_the_initial_load_of_an_empty_graph_is_not_a_change_point(tmp_path):
         m.close(); store.close()
 
 
+def test_a_dated_write_may_touch_what_the_initial_load_or_a_timeless_write_put_there(tmp_path):
+    store = DuckDBStore(tmp_path / "initial-conflict.duckdb")
+    graph = MemoryGraph()
+    m = Materializer(store, graph)
+    try:
+        write(m, graph, T[8], add=[meter("A"), meter("B")])          # the load, dated today
+        with m.graph_change(T[8]) as w:
+            w.apply(graph.prepare(add=[(EX.B, EX.storedAt, Literal("ref"))]), versioned=False)
+        write(m, graph, T[2], remove=[meter("B"), (EX.B, EX.storedAt, Literal("ref"))])   # B left the plant long ago
+        assert m.history.change_points() == [T[2]]
+        assert members(m.history.as_of(T[1])) == ["A", "B"] and members(m.history.as_of(T[2])) == ["A"]
+    finally:
+        m.close(); store.close()
+
+
 def test_a_timeless_write_is_logged_but_makes_no_version(runtime):
     store, graph, m = runtime
     write(m, graph, T[1], add=[meter("A")])

@@ -119,7 +119,8 @@ class GraphHistory:
         """Log a prepared delta as taking effect at ``effective_at``; committed on return.
 
         Raises ``GraphHistoryConflict`` before writing anything if a later-dated
-        recorded change touches one of the same triples. A ``timeless`` write,
+        recorded change touches one of the same triples; a load or timeless
+        write holds for all time, so it never conflicts. A ``timeless`` write,
         like a graph's initial load, is logged but makes no version: it is
         bookkeeping about the model (a stream registration), not a change to
         it, and holds for all time.
@@ -142,7 +143,7 @@ class GraphHistory:
             marks = ",".join("?" for _ in chunk)
             row = self._execute(conn, f"""SELECT h.effective_at, t.triple FROM graph_history_triples t
                 JOIN graph_history h ON h.change_id = t.change_id
-                WHERE h.graph_uri = ? AND h.effective_at > ? AND t.triple IN ({marks})
+                WHERE h.graph_uri = ? AND NOT h.initial AND h.effective_at > ? AND t.triple IN ({marks})
                 ORDER BY h.effective_at DESC LIMIT 1""", [graph_uri, _iso(effective), *chunk]).fetchone()
             if row is not None:
                 raise GraphHistoryConflict(
