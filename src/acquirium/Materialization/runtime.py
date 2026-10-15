@@ -532,7 +532,7 @@ class Materializer:
             return set()
         with self._store._own_conn() as conn:
             derived = {row[0] for row in self._execute(
-                conn, "SELECT ref_uri FROM streams WHERE source_id LIKE 'derived:%'").fetchall()}
+                conn, "SELECT ref_uri FROM streams WHERE source_id LIKE ?", ["derived:%"]).fetchall()}
         refs = lambda row, side: ({d["ref_uri"] for ds in row["definition"]["inputs"].values() for d in ds}
                                   if side == "in" else {ref for ref, _, _ in row["definition"]["outputs"].values()})
         owned = {p.ref_uri for b in current.values() for p in b.outputs.values()}
