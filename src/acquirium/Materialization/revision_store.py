@@ -49,6 +49,9 @@ class RevisionStore:
         # standalone scheduler use; an empty mapping permits no publications.
         # Do not conflate those two cases in the validation below.
         self.active_bindings: dict[str, str] | None = None
+        # Set to a list by a step's evaluator to collect what the step
+        # writes per derived stream; None collects nothing.
+        self.capture: list | None = None
         with store._lock, store._write_conn() as conn:
             self._execute(conn, """CREATE TABLE IF NOT EXISTS materialization_work (
                 progress_key VARCHAR PRIMARY KEY, work_id VARCHAR NOT NULL,
@@ -551,6 +554,11 @@ class RevisionStore:
                 self._execute(conn, """INSERT INTO streams (ref_uri, point_uri, source_id, ref_name, value_kind)
                     VALUES (?, ?, ?, ?, ?) ON CONFLICT (ref_uri) DO NOTHING""",
                     [port.ref_uri, port.point_uri, f"derived:{binding.application_name}", port.ref_name, port.spec.value_kind])
+                if self.capture is not None:
+                    from acquirium.Materialization.changes import StreamChange
+                    self.capture.append(StreamChange(port.ref_uri, binding.application_name, name,
+                                                     (window.start.isoformat(), window.end.isoformat()),
+                                                     table.select(["time", "value"]), port.spec.trigger))
                 if table.num_rows:
                     frame = pl.from_arrow(table).rename({"time": "ts"})
                     if not self._postgres:

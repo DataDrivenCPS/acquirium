@@ -26,6 +26,7 @@ from time import monotonic
 from threading import Lock, RLock
 from rdflib import Graph, Literal, RDF, RDFS, URIRef
 
+from acquirium.Materialization.changes import ChangeFeed, StepChanges
 from acquirium.Materialization.engine import Engine
 from acquirium.Materialization.models import App, ApplicationGraph, OutputBuilder, TimeWindow, _duration
 from acquirium.Materialization.revision_store import RevisionStore
@@ -103,6 +104,7 @@ class Materializer:
         self._revisions = RevisionStore(store, unit_converter=unit_converter)
         self._scheduler = Scheduler(self._revisions, InProcessExecutor(), max_workers=max_workers)
         self._cadence = _Cadence()
+        self.changes = ChangeFeed()
         self.engine = Engine(store, evaluator=self)
         self._coordinator_lock = Lock()
         self._generations: dict[str, str] = {}
@@ -184,6 +186,7 @@ class Materializer:
     def close(self) -> None:
         with self._coordinator_lock:
             self._scheduler.close()
+            self.changes.close()
 
     def configure_workers(self, count: int) -> None:
         with self._coordinator_lock:
@@ -192,6 +195,7 @@ class Materializer:
 
     def failures(self) -> dict[str, str]:
         errors = dict(self._plan_errors)
+        errors.update({f"trigger[{ref}]": error for ref, error in self.changes.trigger_errors.items()})
         for binding in self._dag.bindings:
             error = self._scheduler.errors.get(binding.signature)
             if error:
@@ -649,11 +653,17 @@ class Materializer:
     # Evaluator protocol for Engine.step().
 
     def prepare(self) -> tuple[ApplicationGraph, dict[str, Any]]:
+        self._revisions.capture = []
         return self._plan_snapshot()
 
     def evaluate(self, conn: Any, plan: tuple[ApplicationGraph, dict[str, Any]]) -> bool:
         dag, applications = plan
         return self._scheduler.evaluate(conn, dag, applications, policy=self._cadence)
+
+    def committed(self, report) -> None:
+        captured, self._revisions.capture = self._revisions.capture or [], None
+        if captured:
+            self.changes.publish(StepChanges(report.step_no, report.revision, tuple(captured)))
 
     def dag(self) -> dict[str, Any]:
         """Combine durable progress and process-local diagnostics for display.

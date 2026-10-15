@@ -594,6 +594,17 @@ def materialization_dag() -> dict[str, Any]:
     return {"ok": True, **app.state.manager.materializer.dag()}
 
 
+@app.get("/materialization/changes")
+async def materialization_changes(after: int = 0, wait: float = 0.0) -> dict[str, Any]:
+    """Derived-stream changes of the steps committed after step ``after``.
+
+    Waits up to ``wait`` seconds (at most 60) for a step to commit. ``gap``
+    means changes after ``after`` are no longer held, so reread the streams.
+    """
+    wait = max(0.0, min(wait, 60.0))
+    return {"ok": True, **await asyncio.to_thread(app.state.manager.materializer.changes.since, after, wait=wait)}
+
+
 @app.post("/materialization/step")
 def materialization_step() -> dict[str, Any]:
     """Apply everything in the inbox now, as one step, and report it."""

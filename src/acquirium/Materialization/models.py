@@ -263,7 +263,12 @@ class OutputSpec:
     # ``stream_name`` makes an output absolute: the derived stream keeps this
     # exact reference name instead of one derived from the bound inputs.
     stream_name: str | None = None
+    # ``trigger`` is a URL that receives the stream's change after every
+    # step that writes it, as a JSON POST. The rows are stored as usual.
+    trigger: str | None = None
     def __post_init__(self):
+        if self.trigger is not None and not self.trigger.startswith(("http://", "https://")):
+            raise ValueError("a trigger must be an http(s) URL")
         if self.value_kind not in ("numeric", "text"):
             raise ValueError("value_kind must be 'numeric' or 'text'")
         if self.stream_name is not None and not self.stream_name:
@@ -299,6 +304,13 @@ class _OutputAPI:
         return OutputSpec(**kwargs)
     def named(self, stream_name: str, **kwargs: Any) -> OutputSpec:
         return OutputSpec(stream_name=stream_name, **kwargs)
+    def trigger(self, url: str, **kwargs: Any) -> OutputSpec:
+        """A generated stream that is also POSTed to ``url`` after every step that changes it.
+
+        ``named(..., trigger=url)`` does the same for a named stream.
+        """
+        if "stream_name" in kwargs: raise TypeError("use output.named(name, trigger=url) for a named stream")
+        return OutputSpec(trigger=url, **kwargs)
 output = _OutputAPI()
 
 

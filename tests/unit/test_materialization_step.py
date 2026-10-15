@@ -41,6 +41,9 @@ class GraphEvaluator:
     def evaluate(self, conn, plan) -> bool:
         return self.scheduler.evaluate(conn, plan, self.applications)
 
+    def committed(self, report) -> None:
+        self.last_committed = report
+
 
 @pytest.fixture
 def chain(tmp_path):

@@ -32,8 +32,9 @@ from acquirium.Materialization.models import (
     OutputPort, OutputSpec, StreamDescriptor,
     StreamSet, TimeWindow, align, output,
 )
+from acquirium.Materialization.changes import ChangeFeed, StepChanges, StreamChange
 from acquirium.Materialization.engine import Engine, StepReport
 from acquirium.Materialization.revision_store import RevisionStore
 from acquirium.Materialization.scheduler import InProcessExecutor, Scheduler
 
-__all__ = ["App", "ApplicationGraph", "Batch", "Binding", "Engine", "InProcessExecutor", "InputBatch", "OutputBuilder", "OutputPort", "OutputSpec", "RevisionStore", "Scheduler", "StepReport", "StreamDescriptor", "StreamSet", "TimeWindow", "align", "output"]
+__all__ = ["App", "ApplicationGraph", "Batch", "Binding", "ChangeFeed", "Engine", "InProcessExecutor", "InputBatch", "OutputBuilder", "OutputPort", "OutputSpec", "RevisionStore", "Scheduler", "StepChanges", "StepReport", "StreamChange", "StreamDescriptor", "StreamSet", "TimeWindow", "align", "output"]

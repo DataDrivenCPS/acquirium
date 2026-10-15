@@ -37,6 +37,16 @@ every frontier the step advanced, so the next step sees it. Transforms run
 in a bounded pool on data already loaded; reads and writes stay on the
 step's single connection.
 
+## Change feed and triggers
+
+After a step commits, what it wrote to each derived stream (the replaced
+output window and its new rows) goes to an in-memory, bounded feed read with
+`GET /materialization/changes`, and to the URL of every output declared with
+`aq.output.trigger(url)`. Nothing is published for a step that rolls back,
+so a reader never sees a value that was not committed. The feed is
+process-local; a reader that falls behind it, or a restart, is told so and
+rereads the committed streams.
+
 ## Model changes and effective times
 
 A graph write (`insert_graph`, `sparql_update`) records the time the author
@@ -243,6 +253,7 @@ recovery:
 | `Materialization/models.py` | App declarations, stream sets, windows, resolved bindings, DAG validation, and dataframe helpers |
 | `Materialization/planner.py` | Deployment serialization and query compilation into bindings |
 | `Materialization/engine.py` | The inbox and the step that applies it at one revision |
+| `Materialization/changes.py` | The change feed and trigger posts of committed steps |
 | `Materialization/revision_store.py` | Snapshot reads, durable work cursors, and atomic replacement/progress writes |
 | `Materialization/scheduler.py` | Layer-by-layer evaluation of a plan on a step's connection, bounded transform execution, per-binding failure tracking |
 | `Materialization/runtime.py` | Deployment activation, graph refresh, readiness cadence, and status; the engine's evaluator |

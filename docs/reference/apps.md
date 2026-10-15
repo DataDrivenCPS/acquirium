@@ -83,6 +83,13 @@ from the app, port, and bound input references.
 `aq.output.named(stream_name, value_kind=..., **metadata)` uses the exact
 reference name under source `derived:<app>`.
 
+`aq.output.trigger(url, value_kind=..., **metadata)` is a generated stream
+that is also POSTed to `url` as JSON after every step that changes it: the
+step number, the replaced output window, and the rows now in it. The rows are
+stored as usual. `aq.output.named(stream_name, trigger=url, ...)` does the
+same for a named stream. The post is sent once, after the step commits; a
+failed post appears in the app's failures and is not retried.
+
 Set `App.grouping` explicitly to control which query matches each call receives.
 The output declaration only controls naming. A named stream must have a single
 owning binding, so multiple per-match bindings cannot publish to it.

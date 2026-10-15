@@ -40,6 +40,8 @@ class Evaluator(Protocol):
         """Build whatever evaluation needs, outside the step's transaction; None means nothing to run."""
     def evaluate(self, conn: Any, plan: Any) -> bool:
         """Run the plan on the step's connection; True when something published."""
+    def committed(self, report: "StepReport") -> None:
+        """The step's transaction committed; publish what it changed."""
 
 
 @dataclass(frozen=True)
@@ -168,7 +170,10 @@ class Engine:
             self._execute(conn, "INSERT INTO materialization_steps VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                           [step_no, revision, seq_from, seq_to, len(entries), rows, published,
                            datetime.now(timezone.utc).isoformat()])
-        return StepReport(step_no, revision, seq_from, seq_to, len(entries), rows, published, perf_counter() - started)
+        report = StepReport(step_no, revision, seq_from, seq_to, len(entries), rows, published, perf_counter() - started)
+        if self.evaluator is not None and plan is not None:
+            self.evaluator.committed(report)
+        return report
 
     def _apply(self, conn: Any, kind: str, meta: dict[str, Any], table: pa.Table, revision: int) -> int:
         frame = self.store._prepare_frame(pl.from_arrow(table))

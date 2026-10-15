@@ -578,6 +578,16 @@ returns 400.
 
 **Response** `{"ok": true, "name": "...", "status": "reprocessing", "bindings": 3}`
 
+### `GET /materialization/changes`
+
+Return the derived-stream changes of the steps committed after step `after`
+(query parameter, default `0`), oldest first. Each step lists, per derived
+stream it wrote, the output window it replaced and the rows now in it.
+`wait` (seconds, at most 60) holds the request until a step commits. The
+feed is in memory and bounded: `gap: true` means steps after `after` are no
+longer held, or were committed before the server started, so reread the
+streams. Use `last_step` as the next `after`.
+
 ### `GET /materialization/dag`
 
 Return the active materialization graph as nodes and links, including the
