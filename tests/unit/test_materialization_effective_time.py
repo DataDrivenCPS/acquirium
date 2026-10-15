@@ -445,3 +445,31 @@ def test_an_explicit_reprocess_stays_inside_each_bindings_interval(tmp_path):
         assert rows(store, out_c) == [T[2], T[4]]
     finally:
         runtime.close(); store.close()
+
+
+def test_a_consumer_left_without_inputs_by_a_view_removal_retracts_all_its_history_even_alongside_a_dated_change(tmp_path):
+    """The upstream view goes (dataflow) in the same refresh as an unrelated dated
+    model change: the consumer's replacement binding, now with no inputs, is
+    dataflow fallout and covers all history, so every stale row is retracted,
+    not only those after the change."""
+    store = DuckDBStore(tmp_path / "fallout.duckdb")
+    graph = FleetGraph(["urn:d1"])
+    runtime = Materializer(store, graph)
+    try:
+        with store._lock, store._write_conn() as conn:
+            conn.execute("INSERT INTO streams VALUES ('urn:d1', NULL, 'derived:other-view', 'd1', 'numeric')")
+        store.upsert_rows("urn:d1", [(t, 1.0) for t in T], value_kind="numeric")
+        runtime.deploy(Deployment.from_class(SumFleet))
+        while runtime.run_once():
+            pass
+        fleet_ref = next(b for b in runtime._dag.bindings if b.application_name == "sum-fleet").outputs["out"].ref_uri
+        assert rows(store, fleet_ref) == T
+        graph.refs = []                                   # the view that produced urn:d1 was removed...
+        runtime.note_graph_change(1, effective_at=T[3])   # ...and an unrelated model change is dated T[3]
+        while runtime.run_once():
+            pass
+        fleet = [b for b in runtime._dag.bindings if b.application_name == "sum-fleet"]
+        assert len(fleet) == 1 and fleet[0].valid_from is None
+        assert rows(store, fleet_ref) == []
+    finally:
+        runtime.close(); store.close()

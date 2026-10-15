@@ -465,6 +465,17 @@ class Materializer:
             dataflow_dropped = self._dataflow_dropped(closing, table, current, deployments)
             closing = {key: until for key, until in closing.items() if key not in dataflow_dropped}
             table = [row for row in table if row["key"] not in dataflow_dropped or row["valid_to"] is None]
+            # A binding that takes over the outputs of one dropped as dataflow
+            # fallout is fallout itself, even when a dated model change is
+            # planned in the same refresh: it covers all history and is
+            # repaired over it, so an aggregate left without inputs retracts
+            # every stale row, not only those after the change.
+            fallout = {b.progress_key for b in current_bindings
+                       if b.valid_from is not None and b.progress_key not in open_rows
+                       and any(prior_outputs.get(p.ref_uri) in dataflow_dropped for p in b.outputs.values())}
+            if fallout:
+                current_bindings = [replace(b, valid_from=None) if b.progress_key in fallout else b for b in current_bindings]
+                current = {b.progress_key: b for b in current_bindings}
             historical, source = self._historical(table, closing, current, deployments, failed_apps,
                                                   applications, revision)
             # A current binding whose interval overlaps a historical owner of
@@ -509,7 +520,7 @@ class Materializer:
                 self._revisions.active_bindings = {b.progress_key: b.generation for b in dag.bindings}
             for binding in repair:
                 window = self._revisions.retained_window(binding)
-                if window is not None and repair_since is not None and binding.valid_from is None:
+                if window is not None and repair_since is not None and binding.valid_from is None and binding.progress_key not in fallout:
                     since = boundary(binding.application_name)
                     window = TimeWindow(max(window.start, since), window.end) if window.end >= since else None
                 if window is None:
