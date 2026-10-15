@@ -497,6 +497,7 @@ class Manager:
         *,
         source_id: str,
         effective_at: datetime | None = None,
+        versioned: bool = True,
     ) -> None:
         """
         Insert RDF graph into one explicitly owned deployment data graph.
@@ -504,6 +505,9 @@ class Manager:
         ``effective_at`` is when the change took effect in the plant; it
         defaults to now. Derived streams whose bindings appear or disappear
         because of this write are recomputed, or retired, from that time.
+        ``versioned=False`` marks bookkeeping about the model, such as a
+        stream registration: logged, but timeless, so it is no version of
+        the model and a view planned against the past still sees it.
 
         The embedding index is refreshed synchronously before returning, so
         once this call completes the just-inserted concepts are resolvable.
@@ -542,7 +546,7 @@ class Manager:
                         replace=replace,
                         graph_uri=graph_uri,
                     )
-                    write.apply(delta)
+                    write.apply(delta, versioned=versioned)
                 logging.info("acquirium: inserted graph into store")
                 with timed_debug(logger, "insert_graph: _sync_stream_refs_from_graph"):
                     self._sync_stream_refs_from_graph()

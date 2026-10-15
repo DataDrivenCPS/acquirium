@@ -250,6 +250,7 @@ class AcquiriumClient:
         *,
         source_id: str,
         effective_at: datetime | None = None,
+        versioned: bool = True,
     ) -> None:
         """
         Insert RDF graph into an explicitly owned deployment data graph.
@@ -266,6 +267,9 @@ class AcquiriumClient:
             effective_at: When the change took effect in the plant. Defaults
                 to now. Derived streams that the change creates or retires are
                 recomputed, or retired, from this time.
+            versioned: False marks a write that is not a change to the model
+                but bookkeeping about it (where a stream's data lives): it
+                holds for all time and makes no version of the model.
         """
         if not isinstance(rdf_graph, str):
             raise TypeError(
@@ -281,6 +285,8 @@ class AcquiriumClient:
         data["source_id"] = source_id
         if effective_at is not None:
             data["effective_at"] = effective_at.isoformat()
+        if not versioned:
+            data["versioned"] = False
         response = self._http.post(url, json=data)
         _raise_for_status(response)
 
@@ -945,6 +951,7 @@ class AcquiriumClient:
                     format="turtle",
                     replace=False,
                     source_id=source_id,
+                    versioned=False,   # where data lives, not a model change: timeless
                 )
 
     def insert_timeseries(

@@ -860,12 +860,13 @@ class GraphWrite:
     def __init__(self, materializer: Materializer, effective: datetime) -> None:
         self._materializer, self.effective, self.applied = materializer, effective, False
 
-    def apply(self, delta) -> None:
+    def apply(self, delta, *, versioned: bool = True) -> None:
         """Log the delta first, then apply it to the graph and mark it applied.
 
         Raises ``GraphHistoryConflict`` without touching the graph if the
         delta is dated before a recorded change to one of its triples.
+        ``versioned=False`` logs it as timeless (see ``GraphHistory.record``).
         """
-        change_id = self._materializer.history.record(delta, self.effective)
+        change_id = self._materializer.history.record(delta, self.effective, timeless=not versioned)
         self._materializer._apply_recorded(change_id, delta, self.effective)
         self.applied = True

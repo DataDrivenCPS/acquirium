@@ -168,6 +168,19 @@ class TestGraphStatus:
         assert http.get.call_args.args[0].endswith("/graph_version")
 
 
+class TestRegisterStreams:
+    def test_registration_is_an_unversioned_graph_write(self, http, client):
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        http.post.return_value = mock_resp
+
+        client.register_streams([{"source_id": "src", "ref_name": "flow"}])
+
+        call = http.post.call_args
+        assert call.args[0].endswith("/insert_graph")
+        assert call.kwargs["json"]["versioned"] is False and call.kwargs["json"]["replace"] is False
+
+
 class TestGraphChangePoints:
     def test_points_are_parsed_and_the_window_is_sent(self, http, client):
         http.get.return_value = _get_resp({"change_points": ["2026-07-01T00:00:00+00:00"]})

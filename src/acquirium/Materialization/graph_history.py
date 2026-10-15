@@ -115,11 +115,14 @@ class GraphHistory:
 
     # ---- recording ----
 
-    def record(self, delta, effective_at: datetime) -> int:
+    def record(self, delta, effective_at: datetime, *, timeless: bool = False) -> int:
         """Log a prepared delta as taking effect at ``effective_at``; committed on return.
 
         Raises ``GraphHistoryConflict`` before writing anything if a later-dated
-        recorded change touches one of the same triples.
+        recorded change touches one of the same triples. A ``timeless`` write,
+        like a graph's initial load, is logged but makes no version: it is
+        bookkeeping about the model (a stream registration), not a change to
+        it, and holds for all time.
         """
         effective = effective_at.astimezone(timezone.utc)
         lines = [("+", _nt(t)) for t in sorted(delta.added, key=_nt)] + [("-", _nt(t)) for t in sorted(delta.removed, key=_nt)]
@@ -128,7 +131,7 @@ class GraphHistory:
             change_id = int(self._execute(conn, "SELECT COALESCE(MAX(change_id), 0) + 1 FROM graph_history").fetchone()[0])
             self._execute(conn, "INSERT INTO graph_history VALUES (?, ?, ?, ?, ?, NULL, ?)",
                           [change_id, delta.graph_uri, _iso(effective), _iso(datetime.now(timezone.utc)), False,
-                           bool(getattr(delta, "initial", False))])
+                           bool(timeless or getattr(delta, "initial", False))])
             self._executemany(conn, "INSERT INTO graph_history_triples VALUES (?, ?, ?)",
                               [(change_id, op, line) for op, line in lines])
         return change_id

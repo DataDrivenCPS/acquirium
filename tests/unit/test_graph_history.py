@@ -190,6 +190,17 @@ def test_the_initial_load_of_an_empty_graph_is_not_a_change_point(tmp_path):
         m.close(); store.close()
 
 
+def test_a_timeless_write_is_logged_but_makes_no_version(runtime):
+    store, graph, m = runtime
+    write(m, graph, T[1], add=[meter("A")])
+    with m.graph_change(T[5]) as w:                                 # a stream registration, dated by default
+        w.apply(graph.prepare(add=[(EX.A, EX.storedAt, Literal("ref"))]), versioned=False)
+    assert m.history.change_points() == [T[1]]
+    rows = m.history.as_of(T[1]).sparql_query(f"SELECT ?r WHERE {{ <{EX.A}> <{EX.storedAt}> ?r }}")["rows"]
+    assert [str(r[0]) for r in rows] == ["ref"]                     # visible in versions before its own time
+    assert len(m.history.unapplied()) == 0
+
+
 def test_a_direct_graph_write_still_records_the_pending_change(runtime):
     store, graph, m = runtime
     with m.graph_change(T[4]):

@@ -285,6 +285,9 @@ class InsertGraphRequest(BaseModel):
     effective_at: Optional[datetime] = Field(
         None, description="When the change took effect in the plant; defaults to now",
     )
+    versioned: bool = Field(
+        True, description="False: bookkeeping about the model (stream registration), timeless, not a model version",
+    )
 
 
 class TimeseriesInfoRequest(BaseModel):
@@ -471,6 +474,7 @@ def insert_graph(req: InsertGraphRequest) -> dict[str, Any]:
             replace=req.replace,
             source_id=req.source_id,
             effective_at=req.effective_at,
+            versioned=req.versioned,
         )
         return {"ok": True, "embedding_ready": True}
     except GraphHistoryConflict as e:
