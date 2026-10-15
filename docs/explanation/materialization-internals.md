@@ -12,6 +12,20 @@ settings affect server operation. For an introduction to writing an app, see
 [Your first app](../tutorials/first-app.md). For the calculation model and
 processing guarantees, see [Apps](apps.md).
 
+## Ingestion and steps
+
+A write request does not reach `timeseries` directly. The server appends it
+to `materialization_inbox` in its own transaction and acknowledges it then;
+the entry carries the request's canonical mutations as an Arrow stream and
+its kind, `readings` or `replace`. The materialization loop applies the
+inbox as a *step*: every pending entry in sequence order, inside one write
+transaction, at one revision, recorded in `materialization_steps`. A step
+commits as a whole or not at all, so a reading is visible with everything
+that arrived alongside it, and a crash during a step leaves the inbox for
+the next attempt. `POST /materialization/step` forces a step. An embedder
+that constructs the engine without marking it deferred gets a step on every
+submission.
+
 ## Scheduling and recovery
 
 The timeseries database stores current values and assigns each write a
@@ -78,7 +92,9 @@ and plan-freshness semantics.
 
 The timeseries backend stores `system_state` (one global `current_revision`)
 and `binding_progress` (`progress_key` → `consumed_revision`), plus
-`stream_resets` (`ref_uri` → latest reset `last_revision`). Opening a store creates
+`stream_resets` (`ref_uri` → latest reset `last_revision`). The engine owns
+`materialization_inbox` (pending write requests) and `materialization_steps`
+(one row per applied step: revision, sequence range, entries, rows). Opening a store creates
 the reset table if it is absent; no existing timeseries columns change. The materializer
 owns `materialization_deployments`, `materialization_lineage`, and
 `materialization_work`. Lineage records output ownership, input references,
@@ -180,6 +196,7 @@ recovery:
 |---|---|
 | `Materialization/models.py` | App declarations, stream sets, windows, resolved bindings, DAG validation, and dataframe helpers |
 | `Materialization/planner.py` | Deployment serialization and query compilation into bindings |
+| `Materialization/engine.py` | The inbox and the step that applies it at one revision |
 | `Materialization/revision_store.py` | Snapshot reads, durable work cursors, and atomic replacement/progress writes |
 | `Materialization/scheduler.py` | Bounded execution and per-binding failure tracking |
 | `Materialization/runtime.py` | Deployment activation, graph refresh, scheduling cadence, and status |

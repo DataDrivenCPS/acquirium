@@ -321,6 +321,8 @@ async def lifespan(app: FastAPI):
     # Materialization runs through one coordinator and a bounded local pool.
     m = Manager.from_env()
     m.materializer.configure_workers(worker_count)
+    # Ingestion is acknowledged on the inbox write; the loop below applies it.
+    m.engine.deferred = True
     app.state.manager = m
     app.state.read_batch_size = int(server_cfg.get("read_batch_size", 50_000))
 
@@ -586,6 +588,16 @@ def reprocess_app(name: str, start: datetime, end: datetime) -> dict[str, Any]:
 def materialization_dag() -> dict[str, Any]:
     """Observational node-link representation of the active compiled DAG."""
     return {"ok": True, **app.state.manager.materializer.dag()}
+
+
+@app.post("/materialization/step")
+def materialization_step() -> dict[str, Any]:
+    """Apply everything in the inbox now, as one step, and report it."""
+    report = app.state.manager.engine.step()
+    if report is None:
+        return {"ok": True, "stepped": False, "step_no": app.state.manager.engine.last_step()}
+    return {"ok": True, "stepped": True, "step_no": report.step_no, "revision": report.revision,
+            "entries": report.entries, "rows": report.rows, "seconds": report.seconds}
 
 
 #### DRIVERS API ENDPOINTS ####

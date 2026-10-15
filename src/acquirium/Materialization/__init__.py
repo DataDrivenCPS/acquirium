@@ -4,7 +4,11 @@ The authoring surface (``App``, ``output``, ``align``) is re-exported from
 the top-level ``acquirium`` package. This package also exports the binding,
 storage, and scheduling types used by embedders.
 
-A normal invocation follows this path:
+Ingestion follows this path:
+
+    publish -> Engine.submit() (inbox) -> Engine.step() -> timeseries at one revision
+
+and a normal invocation this one:
 
     Deployment -> BindingPlanner -> Binding -> RevisionStore.next_batch()
                -> Scheduler / App.transform() -> RevisionStore.commit_wave()
@@ -28,7 +32,8 @@ from acquirium.Materialization.models import (
     OutputPort, OutputSpec, StreamDescriptor,
     StreamSet, TimeWindow, align, output,
 )
+from acquirium.Materialization.engine import Engine, StepReport
 from acquirium.Materialization.revision_store import RevisionStore
 from acquirium.Materialization.scheduler import InProcessExecutor, Scheduler
 
-__all__ = ["App", "ApplicationGraph", "Batch", "Binding", "InProcessExecutor", "InputBatch", "OutputBuilder", "OutputPort", "OutputSpec", "RevisionStore", "Scheduler", "StreamDescriptor", "StreamSet", "TimeWindow", "align", "output"]
+__all__ = ["App", "ApplicationGraph", "Batch", "Binding", "Engine", "InProcessExecutor", "InputBatch", "OutputBuilder", "OutputPort", "OutputSpec", "RevisionStore", "Scheduler", "StepReport", "StreamDescriptor", "StreamSet", "TimeWindow", "align", "output"]

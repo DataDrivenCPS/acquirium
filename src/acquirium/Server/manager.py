@@ -130,8 +130,10 @@ class Manager:
                 )
             else:
                 raise ValueError("timeseries_backend must be 'duckdb' or 'timescale'")
+            from acquirium.Materialization.engine import Engine
             from acquirium.Storage.publication.revision import RevisionPublisher
-            publication: PublicationStore = RevisionPublisher(timeseries_store)
+            engine = Engine(timeseries_store)
+            publication: PublicationStore = RevisionPublisher(engine)
 
         # Caller-supplied converter or graph wins; otherwise the converter
         # is built lazily in _ensure_qudt_converter from the QUDT unit
@@ -151,6 +153,7 @@ class Manager:
         self.timeseries_store = timeseries_store
         self.timescale = timeseries_store
         self.graph_store = graph
+        self.engine = engine
         self.publication = publication
         from acquirium.Materialization.runtime import Materializer
         self.materializer = Materializer(timeseries_store, graph,
@@ -565,8 +568,9 @@ class Manager:
         return self.materializer.check(deployment, limit=limit, search_path=search_path)
 
     def run_materialization_once(self) -> bool:
-        """Run at most one coherent batch for every currently compiled binding."""
-        return self.materializer.run_once()
+        """Apply the inbox as one step, then run one coherent materialization tick."""
+        stepped = self.engine.step() is not None
+        return self.materializer.run_once() or stepped
 
     def timeseries_batch(
         self,
@@ -649,7 +653,7 @@ class Manager:
         return self._after_canonical_publish(receipt)
 
     def _after_canonical_publish(self, receipt: PublicationReceipt) -> PublicationReceipt:
-        """Writes need no durable notification: revisions are scanned by workers."""
+        """The inbox is durable; the next step applies the entry."""
         return receipt
 
     @staticmethod
