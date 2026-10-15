@@ -122,6 +122,9 @@ class Materializer:
         self._dag = ApplicationGraph(())
         self._applications: dict[str, Any] = {}
         self._lineage_signatures: frozenset[str] = frozenset()
+        # Views planned against the model's history already; a view with no
+        # binding rows is planned that way once, at its first refresh.
+        self._history_planned: set[str] = set()
         with store._lock, store._write_conn() as conn:
             self._execute(conn, "CREATE TABLE IF NOT EXISTS materialization_deployments (name VARCHAR PRIMARY KEY, deployment_json VARCHAR NOT NULL)")
             self._execute(conn, """CREATE TABLE IF NOT EXISTS materialization_lineage (
@@ -158,13 +161,6 @@ class Materializer:
             # Persist and revoke only after this succeeds, leaving the active
             # definition intact if import, query, or graph validation fails.
             self._planner.compile(deployments, revision)
-            with self._store._own_conn() as conn:
-                first = not self._execute(conn, "SELECT 1 FROM materialization_bindings WHERE application_name=? LIMIT 1", [deployment.name]).fetchone()
-            # A view's first deployment is planned against every past version
-            # of the model, so it covers the fleet as it was then. Without
-            # this it would know only the live model and apply it to all
-            # history. A redeploy keeps its rows; a later change is a delta.
-            intervals = self._historical_intervals(deployment, revision) if first else []
             with self._store._lock, self._store._write_conn() as conn:
                 self._execute(conn, "INSERT INTO materialization_deployments VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET deployment_json=EXCLUDED.deployment_json", [deployment.name, deployment.to_json()])
                 # Renew even if the definition is identical. Redeploying must
@@ -172,13 +168,42 @@ class Materializer:
                 # durable progress or changing its derived stream identities.
                 self._generations[deployment.name] = uuid4().hex
                 self._revoke(deployment.name)
-                for binding, since, until in intervals:
-                    self._execute(conn, "INSERT INTO materialization_bindings VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                                  [binding.progress_key, binding.signature, binding.application_name, binding.context_hash, revision,
-                                   since.isoformat() if since else None, until.isoformat() if until else None, self._definition(binding)])
+            # A view's first plan is made against every past version of the
+            # model (see refresh); a redeploy keeps its rows and a later
+            # change is a delta against them.
+            self._history_planned.discard(deployment.name)
             self._graph_revision = -1
 
-    def _historical_intervals(self, deployment: Deployment, revision: int) -> list[tuple[Any, datetime | None, datetime | None]]:
+    @staticmethod
+    def _producer_keep(rows: list[dict[str, Any]], at: datetime | None = None, *, live: bool = False):
+        """Which streams a plan may bind at one time: raw ones, and derived ones whose producer holds then.
+
+        A derived stream is one some binding row produces. Its producer
+        holds at ``at`` when a row's interval contains it; before the first
+        change point (``at`` None) when a row is open at the start; ``live``
+        when a row is still open. A plan made with this never binds a
+        consumer to a producer that had already closed, so a consumer's
+        interval follows its producer's, in the consumer's own terms.
+        """
+        produced: dict[str, list[tuple[datetime | None, datetime | None]]] = {}
+        for row in rows:
+            for ref, _, _ in row["definition"]["outputs"].values():
+                produced.setdefault(ref, []).append((row["valid_from"], row["valid_to"]))
+
+        def holds(since, until) -> bool:
+            if live:
+                return until is None
+            if at is None:
+                return since is None
+            return (since is None or since <= at) and (until is None or at < until)
+
+        def keep(ref: str) -> bool:
+            intervals = produced.get(ref)
+            return intervals is None or any(holds(since, until) for since, until in intervals)
+        return keep
+
+    def _historical_intervals(self, deployment: Deployment, revision: int,
+                              rows: list[dict[str, Any]]) -> list[tuple[Any, datetime | None, datetime | None]]:
         """Plan one deployment against each version of the model; return its bindings with their intervals.
 
         Version ``i`` holds between change points ``i`` and ``i + 1``; the
@@ -186,12 +211,15 @@ class Materializer:
         last one is the live model. A binding's interval is the run of
         consecutive versions that produce it, closed at the first that does
         not. A bucketed view owns whole buckets, so boundaries are floored to
-        its ``every``. No change points: nothing to plan, the live plan covers
-        all history as before.
+        its ``every``. ``rows`` are the other views' binding rows: a derived
+        stream counts in a version only while its producer holds there. No
+        change points: nothing to plan, the live plan covers all history as
+        before.
         """
         points = self.history.change_points()
         if not points:
             return []
+        rows = [row for row in rows if row["app"] != deployment.name]
         epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
         floor = lambda t: t if not deployment.every else epoch + ((t - epoch) // deployment.every) * deployment.every
         starts: list[datetime | None] = [None, *points]
@@ -199,8 +227,11 @@ class Materializer:
         for start in starts:
             version = self.history.as_of(start)
             planner = BindingPlanner(version, query_resolver=self._planner.query_resolver, record_resolver=self._planner.record_resolver)
-            dag, _ = planner.compile((deployment,), int(version.graph_status().get("published_version", 0)))
-            per_version.append({b.progress_key: replace(b, graph_revision=revision) for b in dag.bindings})
+            dag, _ = planner.compile((deployment,), int(version.graph_status().get("published_version", 0)),
+                                     keep=self._producer_keep(rows, start))
+            # An aggregate matching nothing in a version is no binding there.
+            per_version.append({b.progress_key: replace(b, graph_revision=revision) for b in dag.bindings
+                                if any(b.inputs.values())})
         intervals, open_since = [], {}
         for index, bindings in enumerate(per_version):
             start = starts[index]
@@ -234,6 +265,7 @@ class Materializer:
             self._execute(conn, "DELETE FROM materialization_bindings WHERE application_name=?", [name])
             self._revoke(name)
             self._generations.pop(name, None)
+            self._history_planned.discard(name)
             self._graph_revision = -1
 
     def close(self) -> None:
@@ -390,9 +422,16 @@ class Materializer:
             revision = int(self._graph.graph_status().get("published_version", 0))
             if revision == self._graph_revision: return
             bindings, applications, self._plan_errors = [], {}, {}
-            for deployment in self._deployments():
+            deployments = {d.name: d for d in self._deployments()}
+            with self._store._own_conn() as conn:
+                table = self._binding_rows(conn)
+            # The lineage graph lists the derived streams of closed bindings
+            # too, so a view deployed later can cover them over their time; a
+            # live plan binds only what is produced now.
+            keep_now = self._producer_keep(table, live=True)
+            for deployment in deployments.values():
                 try:
-                    partial, loaded = self._planner.compile((deployment,), revision)
+                    partial, loaded = self._planner.compile((deployment,), revision, keep=keep_now)
                     # Signature covers code and policy; the context hash covers
                     # the match row (or the whole table for an aggregate).
                     # Either changing must invalidate old publications.
@@ -413,10 +452,34 @@ class Materializer:
             except ValueError as error:
                 self._plan_errors["graph"] = str(error)
                 return
+            # A view planned for the first time (deployed, or bound again
+            # after the view upstream of it was) is planned against every
+            # past version of the model, so it covers the fleet as it was
+            # then, not the live model applied to all history. Producers
+            # first, so a consumer sees their rows.
+            order = [b.application_name for layer in dag.layers() for b in layer]
+            order += sorted(deployments)
+            # An aggregate whose inputs are not in the graph yet holds a row
+            # with no streams, so it can retract a retained output; that is
+            # not a plan, and the view is still to be planned when they are.
+            planned = {r["app"] for r in table if any(r["definition"]["inputs"].values())}
+            first_plans = [app for index, app in enumerate(order) if app not in order[:index]
+                           and app in deployments and app not in self._plan_errors
+                           and app not in self._history_planned and app not in planned]
+            for app in first_plans:
+                intervals = self._historical_intervals(deployments[app], revision, table)
+                self._history_planned.add(app)
+                if not intervals:
+                    continue
+                with self._store._lock, self._store._write_conn() as conn:
+                    for binding, since, until in intervals:
+                        self._execute(conn, "INSERT INTO materialization_bindings VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                      [binding.progress_key, binding.signature, binding.application_name, binding.context_hash, revision,
+                                       since.isoformat() if since else None, until.isoformat() if until else None, self._definition(binding)])
+                    table = self._binding_rows(conn)
             with self._store._own_conn() as conn:
                 prior_outputs = dict(self._execute(conn, "SELECT output_ref_uri, progress_key FROM materialization_lineage").fetchall())
                 prior_context = dict(self._execute(conn, "SELECT progress_key, context_hash FROM materialization_lineage").fetchall())
-                table = self._binding_rows(conn)
                 # Only changes this plan can see: the query cache that the
                 # plan compiled against covers graph revisions up to
                 # ``revision``. A change written after that waits for the
@@ -430,7 +493,6 @@ class Materializer:
             # A bucketed view owns whole buckets, so its boundary is the start
             # of the bucket containing the effective time.
             effective = min(pending) if pending else datetime.now(timezone.utc)
-            deployments = {d.name: d for d in self._deployments()}
             epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
             def boundary(app: str) -> datetime:
                 every = deployments[app].every if app in deployments else None
@@ -509,11 +571,21 @@ class Materializer:
             # current plan. Publish it only when the projection actually changed:
             # lineage writes advance the graph's published_version, so publishing
             # on every refresh would self-trigger a perpetual recompile loop.
-            signatures = frozenset(binding.signature for binding in current_bindings)
+            # Closed bindings are published too: their derived streams exist,
+            # and a view deployed later binds them over the interval their
+            # producer held (see _producer_keep). A binding that closes
+            # changes nothing in the graph but republishes all the same: the
+            # write advances the graph version, and the refresh that sees it
+            # re-plans the consumers of what closed.
+            signatures = frozenset((binding.signature, binding.valid_to is None) for binding in (*current_bindings, *historical))
             republished = signatures != self._lineage_signatures
             if republished:
-                self._publish_graph_lineage(current_bindings)
+                self._publish_graph_lineage([*current_bindings, *historical])
                 self._lineage_signatures = signatures
+                # What a view can bind changed; one with no rows (dropped
+                # with its upstream view, or matching nothing yet) is
+                # planned against history again when it next appears.
+                self._history_planned.clear()
             # Schedule repair before recording the new context fingerprint.
             # A crash can repeat a repair, but cannot forget that it is needed.
             with self._store._lock:

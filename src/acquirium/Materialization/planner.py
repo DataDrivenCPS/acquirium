@@ -277,7 +277,16 @@ class BindingPlanner:
         return app
 
     def compile(self, deployments: Iterable[Deployment], graph_revision: int,
-                *, search_path: str | None = None) -> tuple[ApplicationGraph, dict[str, App]]:
+                *, search_path: str | None = None,
+                keep: Callable[[str], bool] | None = None) -> tuple[ApplicationGraph, dict[str, App]]:
+        """Plan ``deployments`` against the graph; ``keep`` says which matched streams may be bound.
+
+        The graph lists every derived stream a deployed view has ever
+        produced, whatever the model said at the time. ``keep`` restricts a
+        plan to the streams whose producer holds at the time being planned;
+        a match row with any other stream is left out, so an aggregate loses
+        that member and a per-match view that binding.
+        """
         before = int(self.graph.graph_status().get("published_version", 0))
         if before != graph_revision:
             raise RuntimeError("graph changed before materialization planning began")
@@ -286,6 +295,9 @@ class BindingPlanner:
             app = self.instantiate(deployment, search_path=search_path)
             query = app.build_query(_QueryFacade(_GraphQueryClient(self.graph, self.query_resolver, self.record_resolver)))
             rows = _query_rows(query)
+            if keep is not None:
+                rows = tuple(row for row in rows
+                             if all(keep(str(item["ref_uri"])) for items in row.streams.values() for item in items))
             # Choose which matches share a call before assigning output names.
             # Inferring grouping from named outputs would silently change the
             # calculation when an author only intended to rename its result.
