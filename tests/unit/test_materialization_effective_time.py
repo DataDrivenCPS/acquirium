@@ -349,3 +349,30 @@ def test_a_consumer_orphaned_by_a_view_removal_is_dropped_even_alongside_a_model
         assert dropped == {"k1", "k4"}
     finally:
         runtime.close(); store.close()
+
+
+def test_a_dataflow_change_supersedes_the_history_of_a_named_output(tmp_path):
+    """After a dated change left a historical fleet binding, an unrecorded
+    change gives the fleet a binding over all history; it supersedes the
+    historical owner instead of conflicting with it."""
+    store, graph, runtime = _runtime(tmp_path, ["urn:a", "urn:b"])
+    try:
+        store.upsert_rows("urn:c", [(t, 4.0) for t in T], value_kind="numeric")
+        runtime.deploy(Deployment.from_class(SumFleet))
+        while runtime.run_once():
+            pass
+        fleet_ref = next(b for b in runtime._dag.bindings if b.application_name == "sum-fleet").outputs["out"].ref_uri
+        graph.refs = ["urn:a"]
+        runtime.note_graph_change(1, effective_at=T[3])
+        while runtime.run_once():
+            pass
+        graph.refs = ["urn:a", "urn:c"]
+        runtime._graph_revision = -1          # changed with no model change recorded
+        while runtime.run_once():
+            pass
+        assert "graph" not in runtime.failures()
+        fleets = [b for b in runtime._dag.bindings if b.application_name == "sum-fleet"]
+        assert len(fleets) == 1 and fleets[0].valid_from is None
+        assert frame(store, fleet_ref)["value"].to_list() == [5.0] * 6
+    finally:
+        runtime.close(); store.close()

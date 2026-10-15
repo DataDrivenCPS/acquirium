@@ -379,6 +379,13 @@ class Materializer:
             table = [row for row in table if row["key"] not in dataflow_dropped or row["valid_to"] is None]
             historical = self._historical(table, closing, current, deployments, failed_apps,
                                           applications, revision)
+            # A current binding whose interval overlaps a historical owner of
+            # the same output appeared through a dataflow change and covers
+            # that history itself, as it is repaired over it: it supersedes.
+            superseded = {b.progress_key for b in historical for c in current_bindings
+                          if b.overlaps(c) and {p.ref_uri for p in b.outputs.values()} & {p.ref_uri for p in c.outputs.values()}}
+            historical = [b for b in historical if b.progress_key not in superseded]
+            dataflow_dropped = dataflow_dropped | superseded
             for b in historical:
                 applications.setdefault(b.signature, self._instance(b.application_name, applications, deployments))
             try:
