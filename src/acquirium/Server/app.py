@@ -597,7 +597,8 @@ def materialization_step() -> dict[str, Any]:
     if report is None:
         return {"ok": True, "stepped": False, "step_no": app.state.manager.engine.last_step()}
     return {"ok": True, "stepped": True, "step_no": report.step_no, "revision": report.revision,
-            "entries": report.entries, "rows": report.rows, "seconds": report.seconds}
+            "entries": report.entries, "rows": report.rows, "published": report.published,
+            "seconds": report.seconds}
 
 
 #### DRIVERS API ENDPOINTS ####

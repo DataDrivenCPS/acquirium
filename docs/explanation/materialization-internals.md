@@ -19,12 +19,23 @@ to `materialization_inbox` in its own transaction and acknowledges it then;
 the entry carries the request's canonical mutations as an Arrow stream and
 its kind, `readings` or `replace`. The materialization loop applies the
 inbox as a *step*: every pending entry in sequence order, inside one write
-transaction, at one revision, recorded in `materialization_steps`. A step
-commits as a whole or not at all, so a reading is visible with everything
-that arrived alongside it, and a crash during a step leaves the inbox for
-the next attempt. `POST /materialization/step` forces a step. An embedder
-that constructs the engine without marking it deferred gets a step on every
-submission.
+transaction, at one revision, and then every compiled binding, layer by
+layer, on the same connection. Derived rows therefore commit together with
+the raw rows that caused them, and a dependent layer reads its producers'
+outputs from the step's own transaction instead of waiting for a later
+tick. The step is recorded in `materialization_steps`. A step commits as a
+whole or not at all: a database failure anywhere rolls back raw rows,
+derived rows and progress together and leaves the inbox for the next
+attempt, while a failing transform only skips that binding and its
+descendants for the step. `POST /materialization/step` forces a step. An
+embedder that constructs the engine without marking it deferred gets a step
+on every submission.
+
+The step holds the backend's write lock for its whole transaction. A write
+that arrives meanwhile waits in the inbox or on the lock and lands above
+every frontier the step advanced, so the next step sees it. Transforms run
+in a bounded pool on data already loaded; reads and writes stay on the
+step's single connection.
 
 ## Scheduling and recovery
 
@@ -59,17 +70,15 @@ publication, preventing old work from restoring removed values. Replacement is
 intended for infrequent reloads: full input loading and recomputation can consume
 substantially more memory and time than incremental work.
 
-One coordinator schedules independent bindings through a bounded thread pool.
-Each tick starts with one change index: a single snapshot read of the streams
-written or reset above the oldest consumed frontier in the layer, with their
-latest revisions. A binding whose inputs are absent from the index has
-nothing to read, so its frontier advances to the snapshot's revision in one
-batched update. Only bindings with a changed input, pending work, or a reset
-read a batch, and that read runs on the worker thread together with the
-transform. The index is rebuilt after a layer publishes, so the next
-dependency layer sees its predecessors' outputs. A failed binding keeps its
-previous frontier and blocks its descendants, while unrelated branches can
-continue processing.
+Each layer of a step starts with one change index: a single read of the
+streams written or reset above the oldest consumed frontier in the layer,
+with their latest revisions, on the step's connection. A binding whose
+inputs are absent from the index has nothing to read, so its frontier
+advances to the current revision in one batched update. Only bindings with
+a changed input, pending work, or a reset read a batch. The index is
+rebuilt after a layer publishes, so the next dependency layer sees its
+predecessors' outputs. A failed binding keeps its previous frontier and
+blocks its descendants, while unrelated branches continue in the same step.
 
 Long, finite work ranges are divided into output intervals of approximately one
 day, rounded to complete buckets where necessary. A durable cursor records which
@@ -144,8 +153,8 @@ creates the materialization tables if needed and restores deployments,
 frontiers, work cursors, and query-context fingerprints.
 
 The `[server]` settings control execution and diagnostics.
-`materialization_poll_seconds` (default `0.25`) sets how often an idle runtime
-checks for work. `materialization_workers` (default `2`) limits concurrent
+`materialization_poll_seconds` (default `0.25`) sets how long an idle runtime
+waits before the next step. `materialization_workers` (default `2`) limits concurrent
 execution, and `materialization_error_log_seconds` (default `30`) limits how
 frequently repeated failures are logged. A failing deployment does not prevent
 ingestion or independent apps from progressing.
@@ -198,8 +207,8 @@ recovery:
 | `Materialization/planner.py` | Deployment serialization and query compilation into bindings |
 | `Materialization/engine.py` | The inbox and the step that applies it at one revision |
 | `Materialization/revision_store.py` | Snapshot reads, durable work cursors, and atomic replacement/progress writes |
-| `Materialization/scheduler.py` | Bounded execution and per-binding failure tracking |
-| `Materialization/runtime.py` | Deployment activation, graph refresh, scheduling cadence, and status |
+| `Materialization/scheduler.py` | Layer-by-layer evaluation of a plan on a step's connection, bounded transform execution, per-binding failure tracking |
+| `Materialization/runtime.py` | Deployment activation, graph refresh, readiness cadence, and status; the engine's evaluator |
 | `Materialization/checks.py` | Shared dry-run result rendering and window clipping |
 | `Materialization/local.py` | Caller-process checks using data fetched from the server |
 | `Materialization/worker.py` | Importing and verifying application entrypoints |

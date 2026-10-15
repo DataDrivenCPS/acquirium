@@ -8,10 +8,10 @@ Ingestion follows this path:
 
     publish -> Engine.submit() (inbox) -> Engine.step() -> timeseries at one revision
 
-and a normal invocation this one:
+and, inside the same step and transaction, a normal invocation this one:
 
-    Deployment -> BindingPlanner -> Binding -> RevisionStore.next_batch()
-               -> Scheduler / App.transform() -> RevisionStore.commit_wave()
+    Deployment -> BindingPlanner -> Binding -> RevisionStore.next_batch(conn)
+               -> Scheduler / App.transform() -> RevisionStore.commit_wave(conn)
 
 ``runtime.Materializer`` coordinates this path with deployment changes and
 changes to the plant graph. The planner resolves stream ownership and validates

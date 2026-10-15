@@ -35,7 +35,7 @@ timeseries_backend = "duckdb"        # or "timescale" (requires pg_dsn)
 | `recreate` | `false` | wipe the data directory and start fresh; see below |
 | `read_batch_size` | `50000` | rows per Arrow batch on timeseries reads |
 | `materialization_workers` | `2` | maximum app transformations that run concurrently in the in-process pool |
-| `materialization_poll_seconds` | `0.25` | idle delay between checks for durable materialization work; must be positive |
+| `materialization_poll_seconds` | `0.25` | idle delay between steps (each step applies the inbox and evaluates every binding in one transaction); must be positive |
 | `materialization_error_log_seconds` | `30.0` | minimum delay between repeated materialization failure logs; must be positive |
 | `workers` | `1` | must stay 1 |
 | `enabled` | `true` | `false` skips the HTTP server and pushes `[[drivers]]` to a remote server |

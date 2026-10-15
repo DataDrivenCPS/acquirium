@@ -25,6 +25,7 @@ from time import monotonic
 from threading import Lock, RLock
 from rdflib import Graph, Literal, RDF, RDFS, URIRef
 
+from acquirium.Materialization.engine import Engine
 from acquirium.Materialization.models import ApplicationGraph, OutputBuilder, TimeWindow, _duration
 from acquirium.Materialization.revision_store import RevisionStore
 from acquirium.Materialization.scheduler import InProcessExecutor, Scheduler
@@ -59,18 +60,40 @@ def _default_label(binding, port: str, spec) -> str:
     return tag
 
 
+class _Cadence:
+    """batch_delay and min_interval, as the scheduler's readiness policy."""
+    def __init__(self) -> None:
+        self._pending_since: dict[str, float] = {}
+        self._last_run: dict[str, float] = {}
+
+    def ready(self, binding, application, now: float) -> bool:
+        first = self._pending_since.setdefault(binding.signature, now)
+        # Delay from the first pending change, then enforce the rate cap.
+        min_interval = _duration(application.min_interval) if application.min_interval is not None else None
+        if min_interval is not None and now - self._last_run.get(binding.signature, 0) < min_interval.total_seconds():
+            return False
+        return now - first >= _duration(application.batch_delay).total_seconds()
+
+    def ran(self, binding, executed: bool, progressed: bool, now: float) -> None:
+        # Skipping unrelated writes must not start the rate-limit timer.
+        if executed:
+            self._last_run[binding.signature] = now
+        if executed or progressed:
+            self._pending_since.pop(binding.signature, None)
+
+
 class Materializer:
-    """Manage a plan while allowing already-started transforms to finish.
+    """Manage a plan and evaluate it inside the engine's steps.
 
     Lock order, when combined, is coordinator -> plan -> backend write lock.
-    The coordinator lock serializes ticks, reprocessing requests, and executor
+    The coordinator lock serializes steps, reprocessing requests, and executor
     replacement. The reentrant plan lock protects compilation and plan swaps;
-    a tick releases it before running transforms. Deployment updates only need
-    the plan and backend locks, so they can revoke a generation during execution.
+    a step takes its plan snapshot before opening the backend transaction.
+    Deployment updates only need the plan and backend locks.
 
-    Publication uses the backend lock to check active generations and progress
-    in the same critical section as its writes. A worker finishing after removal
-    or replacement is discarded there rather than cancelled mid-transform.
+    A step holds the backend lock for its whole transaction, so a generation
+    cannot be revoked while its transforms run; publication still checks
+    active generations and progress in the same transaction as its writes.
     """
     def __init__(self, store: Any, graph: Any, *, query_resolver=None, record_resolver=None,
                  unit_converter=None, max_workers: int = 2) -> None:
@@ -78,6 +101,8 @@ class Materializer:
         self._planner = BindingPlanner(graph, query_resolver=query_resolver, record_resolver=record_resolver)
         self._revisions = RevisionStore(store, unit_converter=unit_converter)
         self._scheduler = Scheduler(self._revisions, InProcessExecutor(), max_workers=max_workers)
+        self._cadence = _Cadence()
+        self.engine = Engine(store, evaluator=self)
         self._coordinator_lock = Lock()
         self._generations: dict[str, str] = {}
         self._plan_errors: dict[str, str] = {}
@@ -89,8 +114,6 @@ class Materializer:
         self._dag = ApplicationGraph(())
         self._applications: dict[str, Any] = {}
         self._lineage_signatures: frozenset[str] = frozenset()
-        self._pending_since: dict[str, float] = {}
-        self._last_run: dict[str, float] = {}
         with store._lock, store._write_conn() as conn:
             self._execute(conn, "CREATE TABLE IF NOT EXISTS materialization_deployments (name VARCHAR PRIMARY KEY, deployment_json VARCHAR NOT NULL)")
             self._execute(conn, """CREATE TABLE IF NOT EXISTS materialization_lineage (
@@ -368,84 +391,22 @@ class Materializer:
         )
 
     def run_once(self) -> bool:
+        """Run one step: apply the inbox and evaluate the plan in one transaction."""
         if not self._coordinator_lock.acquire(blocking=False):
             return False
         try:
-            return self._run_once()
+            return self.engine.step() is not None
         finally:
             self._coordinator_lock.release()
 
-    def _run_once(self) -> bool:
-        dag, applications = self._plan_snapshot()
-        ran = False
-        blocked = set()
-        # Explicit repairs can be pending even when their input frontier is
-        # current. Readiness must account for durable work as well as revisions.
-        pending_work = self._revisions.pending_keys()
-        # A completed wave publishes before a dependent wave reads its next
-        # revision, preserving DAG semantics across this scheduler tick.
-        index, index_floor = None, 0
-        for wave in dag.layers():
-            blocked.update(target for source, target, _ in dag.edges if source in blocked)
-            now = monotonic()
-            current, progress = self._revisions.progress_snapshot()
-            for binding in wave:
-                if progress.get(binding.progress_key) is None:
-                    progress[binding.progress_key] = self._revisions.initialise(
-                        binding, applications[binding.signature].backfill)
-            # One indexed scan tells which streams changed since the oldest
-            # frontier in this wave. A binding whose inputs are absent from it
-            # has nothing to read: its frontier moves in one batched update
-            # instead of a snapshot read and a write per binding. The index
-            # is rebuilt after a wave publishes, so a dependent wave sees it.
-            floor = min((progress[b.progress_key] for b in wave), default=current)
-            if index is None or floor < index_floor or index[0] < current:
-                index, index_floor = self._revisions.change_index(floor), floor
-            target, changed, resets = index
-            ready, previous, idle = [], {}, []
-            for binding in wave:
-                if binding.signature in blocked:
-                    continue
-                app = applications[binding.signature]
-                consumed = progress[binding.progress_key]
-                refs = [d.ref_uri for values in binding.inputs.values() for d in values]
-                touched = any(changed.get(ref, 0) > consumed or resets.get(ref, 0) > consumed for ref in refs)
-                if not touched and binding.progress_key not in pending_work:
-                    if consumed < target:
-                        idle.append((binding, consumed, target))
-                    self._pending_since.pop(binding.signature, None)
-                    continue
-                first = self._pending_since.setdefault(binding.signature, now)
-                # Delay from the first pending change, then enforce the rate cap.
-                min_interval = _duration(app.min_interval) if app.min_interval is not None else None
-                if min_interval is not None and now - self._last_run.get(binding.signature, 0) < min_interval.total_seconds():
-                    continue
-                if now - first < _duration(app.batch_delay).total_seconds():
-                    continue
-                ready.append(binding)
-                previous[binding.signature] = consumed
-            self._revisions.advance_idle(idle)
-            if not ready:
-                blocked.update(b.signature for b in wave if b.signature in self._scheduler.errors)
-                continue
-            successes = {b.signature: self._scheduler.last_success.get(b.signature) for b in ready}
-            published = self._scheduler.run_layer(ready, applications)
-            ran = published or ran
-            if published:
-                index = None
-            blocked.update(b.signature for b in ready if b.signature in self._scheduler.errors)
-            _, progressed = self._revisions.progress_snapshot()
-            for binding in ready:
-                # A frontier advance alone is not a successful calculation:
-                # skipping unrelated writes must not start the rate-limit timer.
-                # A committed chunk can also succeed without advancing its
-                # frontier, so use the scheduler's publication record here.
-                executed = successes[binding.signature] != self._scheduler.last_success.get(binding.signature)
-                if executed:
-                    self._last_run[binding.signature] = now
-                if executed or progressed.get(binding.progress_key, 0) > previous[binding.signature]:
-                    self._pending_since.pop(binding.signature, None)
-        return ran
+    # Evaluator protocol for Engine.step().
+
+    def prepare(self) -> tuple[ApplicationGraph, dict[str, Any]]:
+        return self._plan_snapshot()
+
+    def evaluate(self, conn: Any, plan: tuple[ApplicationGraph, dict[str, Any]]) -> bool:
+        dag, applications = plan
+        return self._scheduler.evaluate(conn, dag, applications, policy=self._cadence)
 
     def dag(self) -> dict[str, Any]:
         """Combine durable progress and process-local diagnostics for display.

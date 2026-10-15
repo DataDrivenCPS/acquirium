@@ -130,10 +130,7 @@ class Manager:
                 )
             else:
                 raise ValueError("timeseries_backend must be 'duckdb' or 'timescale'")
-            from acquirium.Materialization.engine import Engine
             from acquirium.Storage.publication.revision import RevisionPublisher
-            engine = Engine(timeseries_store)
-            publication: PublicationStore = RevisionPublisher(engine)
 
         # Caller-supplied converter or graph wins; otherwise the converter
         # is built lazily in _ensure_qudt_converter from the QUDT unit
@@ -153,12 +150,14 @@ class Manager:
         self.timeseries_store = timeseries_store
         self.timescale = timeseries_store
         self.graph_store = graph
-        self.engine = engine
-        self.publication = publication
         from acquirium.Materialization.runtime import Materializer
         self.materializer = Materializer(timeseries_store, graph,
             query_resolver=self.resolve_text, record_resolver=self.resolve_record,
             unit_converter=self._ensure_qudt_converter)
+        # Ingestion submits to the engine's inbox; a step applies it and
+        # evaluates the plan in the same transaction.
+        self.engine = self.materializer.engine
+        self.publication: PublicationStore = RevisionPublisher(self.engine)
         # Published graph revision seen by the last stream-ref resync. It gates
         # the expensive rebuild in _registered_value_kind so repeated writes to
         # an unregistered ref do not each trigger a full inferred-graph rebuild.
@@ -568,9 +567,8 @@ class Manager:
         return self.materializer.check(deployment, limit=limit, search_path=search_path)
 
     def run_materialization_once(self) -> bool:
-        """Apply the inbox as one step, then run one coherent materialization tick."""
-        stepped = self.engine.step() is not None
-        return self.materializer.run_once() or stepped
+        """Run one step: apply the inbox and evaluate every compiled binding, atomically."""
+        return self.materializer.run_once()
 
     def timeseries_batch(
         self,

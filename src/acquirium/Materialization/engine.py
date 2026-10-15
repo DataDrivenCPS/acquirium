@@ -12,6 +12,11 @@ An entry is a canonical mutations table (see ``Storage.publication.types``)
 serialized as an Arrow IPC stream, plus its kind: ``readings`` upserts rows,
 ``replace`` physically replaces one stream and records its reset marker.
 
+After the inbox, a step evaluates the materialization plan on the same
+connection through its ``evaluator``: the plan is prepared outside the
+transaction (that may compile queries and write lineage) and evaluated
+inside it, so derived rows commit with the raw rows that caused them.
+
 ``Engine.deferred`` says who runs steps. A server sets it and steps from its
 materialization loop; an embedder that leaves it unset gets a step on every
 submission, so a read after a write sees the write.
@@ -21,12 +26,20 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Iterable
+from typing import Any, Iterable, Protocol
 
 import polars as pl
 import pyarrow as pa
 
 KINDS = ("readings", "replace")
+
+
+class Evaluator(Protocol):
+    """What a step runs after applying the inbox."""
+    def prepare(self) -> Any:
+        """Build whatever evaluation needs, outside the step's transaction; None means nothing to run."""
+    def evaluate(self, conn: Any, plan: Any) -> bool:
+        """Run the plan on the step's connection; True when something published."""
 
 
 @dataclass(frozen=True)
@@ -37,6 +50,7 @@ class StepReport:
     seq_to: int
     entries: int
     rows: int
+    published: bool
     seconds: float
 
 
@@ -54,8 +68,9 @@ def decode(payload: bytes) -> pa.Table:
 class Engine:
     """Own the inbox and run steps against one timeseries backend."""
 
-    def __init__(self, store: Any) -> None:
+    def __init__(self, store: Any, evaluator: Evaluator | None = None) -> None:
         self.store = store
+        self.evaluator = evaluator
         self.deferred = False
         with store._lock, store._write_conn() as conn:
             if self._postgres:
@@ -72,7 +87,7 @@ class Engine:
                 step_no BIGINT PRIMARY KEY, revision BIGINT NOT NULL,
                 seq_from BIGINT NOT NULL, seq_to BIGINT NOT NULL,
                 entries BIGINT NOT NULL, rows_in BIGINT NOT NULL,
-                committed_at VARCHAR NOT NULL)""")
+                published BOOLEAN NOT NULL, committed_at VARCHAR NOT NULL)""")
 
     @property
     def _postgres(self) -> bool:
@@ -118,14 +133,17 @@ class Engine:
     # ---- step ----
 
     def step(self, limit: int | None = None) -> StepReport | None:
-        """Apply the oldest ``limit`` inbox entries (all when None) in one transaction.
+        """Apply the oldest ``limit`` inbox entries (all when None), then evaluate, in one transaction.
 
-        Returns None when the inbox is empty. Entries are applied in sequence
-        order, so a replacement after a reading supersedes it exactly as it
-        would have had both been applied as they arrived.
+        Returns None when the inbox was empty and nothing published. Entries
+        are applied in sequence order, so a replacement after a reading
+        supersedes it exactly as it would have had both been applied as they
+        arrived. The evaluator then runs on the same connection, so derived
+        rows for this step's readings commit with them.
         """
         from time import perf_counter
         started = perf_counter()
+        plan = self.evaluator.prepare() if self.evaluator is not None else None
         with self.store._lock, self.store._write_conn() as conn:
             query = "SELECT seq, kind, meta, payload FROM materialization_inbox ORDER BY seq"
             params: list[Any] = []
@@ -133,20 +151,24 @@ class Engine:
                 query += " LIMIT ?"
                 params.append(int(limit))
             entries = self._execute(conn, query, params).fetchall()
-            if not entries:
+            rows, seq_from, seq_to, revision = 0, 0, 0, None
+            if entries:
+                revision = self.store._next_revision(conn)
+                for seq, kind, meta, payload in entries:
+                    table = decode(bytes(payload))
+                    rows += self._apply(conn, kind, json.loads(meta), table, revision)
+                seq_from, seq_to = int(entries[0][0]), int(entries[-1][0])
+                self._execute(conn, "DELETE FROM materialization_inbox WHERE seq>=? AND seq<=?", [seq_from, seq_to])
+            published = bool(self.evaluator.evaluate(conn, plan)) if plan is not None else False
+            if not entries and not published:
                 return None
-            revision = self.store._next_revision(conn)
-            rows = 0
-            for seq, kind, meta, payload in entries:
-                table = decode(bytes(payload))
-                rows += self._apply(conn, kind, json.loads(meta), table, revision)
-            seq_from, seq_to = int(entries[0][0]), int(entries[-1][0])
-            self._execute(conn, "DELETE FROM materialization_inbox WHERE seq>=? AND seq<=?", [seq_from, seq_to])
+            if revision is None:
+                revision = int(self._execute(conn, "SELECT current_revision FROM system_state").fetchone()[0])
             step_no = int(self._execute(conn, "SELECT coalesce(max(step_no), 0) + 1 FROM materialization_steps").fetchone()[0])
-            self._execute(conn, "INSERT INTO materialization_steps VALUES (?, ?, ?, ?, ?, ?, ?)",
-                          [step_no, revision, seq_from, seq_to, len(entries), rows,
+            self._execute(conn, "INSERT INTO materialization_steps VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                          [step_no, revision, seq_from, seq_to, len(entries), rows, published,
                            datetime.now(timezone.utc).isoformat()])
-        return StepReport(step_no, revision, seq_from, seq_to, len(entries), rows, perf_counter() - started)
+        return StepReport(step_no, revision, seq_from, seq_to, len(entries), rows, published, perf_counter() - started)
 
     def _apply(self, conn: Any, kind: str, meta: dict[str, Any], table: pa.Table, revision: int) -> int:
         frame = self.store._prepare_frame(pl.from_arrow(table))
