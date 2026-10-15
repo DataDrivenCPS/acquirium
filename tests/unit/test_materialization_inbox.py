@@ -129,6 +129,6 @@ def test_a_step_reports_where_its_time_went(setup):
 
     report = engine.step()
 
-    assert set(report.timings) == {"apply", "evaluate", "commit"}
+    assert set(report.timings) == {"prepare", "apply", "evaluate", "commit"}
     assert all(t >= 0 for t in report.timings.values())
     assert sum(report.timings.values()) <= report.seconds

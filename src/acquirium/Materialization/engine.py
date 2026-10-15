@@ -54,8 +54,9 @@ class StepReport:
     rows: int
     published: bool
     seconds: float
-    # Where the time went: applying the inbox, evaluating the plan (its
-    # reads, transforms and publication, from the evaluator), and the commit.
+    # Where the time went: preparing the plan (a refresh when the graph
+    # changed), applying the inbox, evaluating the plan (its reads,
+    # transforms and publication, from the evaluator), and the commit.
     timings: Mapping[str, float] = field(default_factory=dict)
 
 
@@ -149,6 +150,8 @@ class Engine:
         from time import perf_counter
         started = perf_counter()
         plan = self.evaluator.prepare() if self.evaluator is not None else None
+        timings: dict[str, float] = {"prepare": perf_counter() - started}
+        applying = perf_counter()
         with self.store._lock, self.store._write_conn() as conn:
             query = "SELECT seq, kind, meta, payload FROM materialization_inbox ORDER BY seq"
             params: list[Any] = []
@@ -157,7 +160,6 @@ class Engine:
                 params.append(int(limit))
             entries = self._execute(conn, query, params).fetchall()
             rows, seq_from, seq_to, revision = 0, 0, 0, None
-            timings: dict[str, float] = {}
             if entries:
                 revision = self.store._next_revision(conn)
                 for seq, kind, meta, payload in entries:
@@ -165,7 +167,7 @@ class Engine:
                     rows += self._apply(conn, kind, json.loads(meta), table, revision)
                 seq_from, seq_to = int(entries[0][0]), int(entries[-1][0])
                 self._execute(conn, "DELETE FROM materialization_inbox WHERE seq>=? AND seq<=?", [seq_from, seq_to])
-            timings["apply"] = perf_counter() - started
+            timings["apply"] = perf_counter() - applying
             evaluated = perf_counter()
             published = bool(self.evaluator.evaluate(conn, plan)) if plan is not None else False
             timings["evaluate"] = perf_counter() - evaluated
