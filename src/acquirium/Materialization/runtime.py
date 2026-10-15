@@ -158,6 +158,13 @@ class Materializer:
             # Persist and revoke only after this succeeds, leaving the active
             # definition intact if import, query, or graph validation fails.
             self._planner.compile(deployments, revision)
+            with self._store._own_conn() as conn:
+                first = not self._execute(conn, "SELECT 1 FROM materialization_bindings WHERE application_name=? LIMIT 1", [deployment.name]).fetchone()
+            # A view's first deployment is planned against every past version
+            # of the model, so it covers the fleet as it was then. Without
+            # this it would know only the live model and apply it to all
+            # history. A redeploy keeps its rows; a later change is a delta.
+            intervals = self._historical_intervals(deployment, revision) if first else []
             with self._store._lock, self._store._write_conn() as conn:
                 self._execute(conn, "INSERT INTO materialization_deployments VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET deployment_json=EXCLUDED.deployment_json", [deployment.name, deployment.to_json()])
                 # Renew even if the definition is identical. Redeploying must
@@ -165,7 +172,48 @@ class Materializer:
                 # durable progress or changing its derived stream identities.
                 self._generations[deployment.name] = uuid4().hex
                 self._revoke(deployment.name)
+                for binding, since, until in intervals:
+                    self._execute(conn, "INSERT INTO materialization_bindings VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                  [binding.progress_key, binding.signature, binding.application_name, binding.context_hash, revision,
+                                   since.isoformat() if since else None, until.isoformat() if until else None, self._definition(binding)])
             self._graph_revision = -1
+
+    def _historical_intervals(self, deployment: Deployment, revision: int) -> list[tuple[Any, datetime | None, datetime | None]]:
+        """Plan one deployment against each version of the model; return its bindings with their intervals.
+
+        Version ``i`` holds between change points ``i`` and ``i + 1``; the
+        version before the first change covers everything earlier, and the
+        last one is the live model. A binding's interval is the run of
+        consecutive versions that produce it, closed at the first that does
+        not. A bucketed view owns whole buckets, so boundaries are floored to
+        its ``every``. No change points: nothing to plan, the live plan covers
+        all history as before.
+        """
+        points = self.history.change_points()
+        if not points:
+            return []
+        epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        floor = lambda t: t if not deployment.every else epoch + ((t - epoch) // deployment.every) * deployment.every
+        starts: list[datetime | None] = [None, *points]
+        per_version: list[dict[str, Any]] = []
+        for start in starts:
+            version = self.history.as_of(start)
+            planner = BindingPlanner(version, query_resolver=self._planner.query_resolver, record_resolver=self._planner.record_resolver)
+            dag, _ = planner.compile((deployment,), int(version.graph_status().get("published_version", 0)))
+            per_version.append({b.progress_key: replace(b, graph_revision=revision) for b in dag.bindings})
+        intervals, open_since = [], {}
+        for index, bindings in enumerate(per_version):
+            start = starts[index]
+            for key in list(open_since):
+                if key not in bindings:
+                    binding, since = open_since.pop(key)
+                    intervals.append((binding, since, floor(start)))
+            for key, binding in bindings.items():
+                if key not in open_since:
+                    open_since[key] = (binding, floor(start) if start is not None else None)
+        intervals.extend((binding, since, None) for binding, since in open_since.values())
+        # Membership changes do not start or end at the same bucket boundary.
+        return [(b, since, until) for b, since, until in intervals if since is None or until is None or since < until]
 
     def _revoke(self, name: str) -> None:
         if self._revisions.active_bindings is not None:
