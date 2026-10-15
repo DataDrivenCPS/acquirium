@@ -575,8 +575,11 @@ def _leaf_selects(graph: QueryGraph, registry: Mapping) -> List[tuple]:
     seen: set = set()
     out: List[tuple] = []
     for nid, name, required in getattr(graph, "selects", ()):
-        names = [name] if name in registry else []
-        names += [a.name for a in children(name)]
+        if name in REGISTRY:          # a built-in is never a parent key: no discovery
+            names = [name]
+        else:
+            names = [name] if name in registry else []
+            names += [a.name for a in children(name)]
         if not names:
             raise KeyError(name)
         for leaf in names:

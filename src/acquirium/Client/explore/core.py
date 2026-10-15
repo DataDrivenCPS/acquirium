@@ -241,6 +241,21 @@ class Query:
         FILTER, which the compiler does not do.
         """
         registry = self.registry
+
+        def expand_groups(e: Expr) -> Expr:
+            # exists() on a parent key: the node has some leaf under it
+            if isinstance(e, BoolOp):
+                return BoolOp(e.op, tuple(expand_groups(o) for o in e.operands))
+            if e.attr not in registry and registry.is_group(e.attr):
+                children = [a.name for a in registry.children(e.attr)]
+                if e.op != "exists":
+                    raise ValueError(
+                        f"{e.attr!r} is a group of keys; compare one of its leaves: {children}")
+                parts = tuple(Compare(c, "exists") for c in children)
+                return parts[0] if len(parts) == 1 else BoolOp("or", parts)
+            return e
+
+        exprs = tuple(expand_groups(e) for e in exprs)
         leaves: List[Compare] = []
 
         def walk(e: Expr, nested: bool) -> None:
@@ -299,18 +314,43 @@ class Query:
 
         return tuple(rebuild(e) for e in exprs)
 
+    def _node_attrs(self, g: QueryGraph, nid: int) -> list:
+        """The attributes ``include("all")`` and ``facets()`` cover for a node:
+        every attribute on an entity node, the measurement ones on a
+        measurement node; a list attribute once, under its collapsed name."""
+        if nid in g.data_nodes:
+            return self.registry.for_role("data", summary=True)
+        return [a for a in self.registry.for_role("entity", summary=True)] + [
+            a for a in self.registry.for_role("data", summary=True) if "entity" not in a.roles]
+
+    def _check_applies(self, g: QueryGraph, nid: int, name: str, verb: str = "") -> None:
+        """Refuse an attribute a measurement node cannot carry.
+
+        Only measurement nodes are gated: ``process`` or ``cp_type`` on a
+        measurement is a mistake worth an error. An entity node accepts every
+        attribute, since a measurement point is an entity too and a class can
+        match equipment and points alike; the column is null where a node
+        lacks the attribute.
+        """
+        if nid not in g.data_nodes:
+            return
+        registry = self.registry
+        if name not in registry:      # built-ins answer without asking the server
+            return                    # a parent key: its leaves are user attributes
+        if "data" not in registry[name].roles:
+            alias = g.aliases_reverse.get(nid, str(nid))
+            prefix = f"{verb}: " if verb else ""
+            raise ValueError(f"{prefix}attribute {name!r} does not apply to data node {alias!r}")
+
     def _apply_exprs(self, g: QueryGraph, node_ids: List[int], exprs: "tuple[Expr, ...]") -> QueryGraph:
         """Store expressions on the given nodes (role-checked)."""
         ptr = g.current_pointer
         registry = self.registry
         for nid in node_ids:
             is_data = nid in g.data_nodes
-            role = "data" if is_data else "entity"
             for e in exprs:
                 for name in e.attributes():
-                    if role not in registry[name].roles:
-                        alias = g.aliases_reverse.get(nid, str(nid))
-                        raise ValueError(f"attribute {name!r} does not apply to {role} node {alias!r}")
+                    self._check_applies(g, nid, name)
             if is_data:
                 info = g.data_nodes[nid]
                 g = g.with_data_node(replace(info, exprs=tuple(info.exprs) + exprs))
@@ -327,11 +367,8 @@ class Query:
         registry = self.registry
         for nid in node_ids:
             is_data = nid in g.data_nodes
-            role = "data" if is_data else "entity"
             for name in resolved:
-                if role not in registry[name].roles:
-                    alias = g.aliases_reverse.get(nid, str(nid))
-                    raise ValueError(f"attribute {name!r} does not apply to {role} node {alias!r}")
+                self._check_applies(g, nid, name)
             if is_data:
                 info = g.data_nodes[nid]
                 filters = dict(info.filters)
@@ -897,9 +934,11 @@ class Query:
                     f"include: unknown alias {of!r}" if of is not None
                     else "include: no current node (start with entity())"
                 )
-            role = "data" if nid in g.data_nodes else "entity"
-            expanded = [a.name for a in self.registry.for_role(role, summary=True)
-                        if a.name not in NOT_IN_ALL[role]]
+            # an entity node takes every attribute; a measurement node the
+            # measurement ones
+            kind = "data" if nid in g.data_nodes else "entity"
+            expanded = [a.name for a in self._node_attrs(g, nid)
+                        if a.name not in NOT_IN_ALL[kind]]
             names = tuple(n for name in names
                           for n in (expanded if name == "all" else [name]))
         for name in names:
@@ -911,12 +950,7 @@ class Query:
                 g = self._set_dropped(g, target[1], False)
                 continue
             _, nid, attr_name = target
-            role = "data" if nid in g.data_nodes else "entity"
-            registry = self.registry
-            if not registry.is_group(attr_name) and role not in registry[attr_name].roles:
-                alias = g.aliases_reverse.get(nid, str(nid))
-                raise ValueError(
-                    f"include: attribute {attr_name!r} does not apply to {role} node {alias!r}")
+            self._check_applies(g, nid, attr_name, "include")
             g = g.with_select(nid, attr_name, required, type=type, strict=strict)
         return self._with_graph(g)
 
@@ -1033,10 +1067,7 @@ class Query:
                 else "options: no current node (start with entity())"
             )
         attr = registry[attr_name]
-        role = "data" if nid in g.data_nodes else "entity"
-        if role not in attr.roles:
-            alias = g.aliases_reverse.get(nid, str(nid))
-            raise ValueError(f"options: attribute {attr_name!r} does not apply to {role} node {alias!r}")
+        self._check_applies(g, nid, attr_name, "options")
 
         cache_key = f"options:{attr_name}:{nid}:{include_dependencies}"
         if self.cache.get(cache_key) is None:
@@ -1062,7 +1093,9 @@ class Query:
                         uris.append(s)
 
             pred_path = "|".join(f"<{p}>" for p in attr.predicates)
-            counts_by_value: Dict[str, set] = {}
+            # keyed by (value, its Python type): the date 2024-03-12 and the
+            # string "2024-03-12" are two values, as they are in the graph
+            counts_by_value: Dict[tuple, set] = {}
             for i in range(0, len(uris), 500):
                 chunk = " ".join(f"<{u}>" for u in uris[i:i + 500])
                 sparql = (
@@ -1076,15 +1109,23 @@ class Query:
                 lcols = lookup.get("columns", [])
                 vi = lcols.index("v") if "v" in lcols else 0
                 oi = lcols.index("opt") if "opt" in lcols else 1
-                for r in lookup.get("rows", []):
-                    if r[oi] is not None and r[vi] is not None:
-                        counts_by_value.setdefault(str(r[oi]), set()).add(str(r[vi]))
+                ldts = lookup.get("datatypes") or [[None] * len(lcols) for _ in lookup.get("rows", [])]
+                for r, d in zip(lookup.get("rows", []), ldts):
+                    if r[oi] is None or r[vi] is None:
+                        continue
+                    dt = d[oi] if oi < len(d) else None
+                    if dt == IRI or (dt is None and _is_uri(str(r[oi]))):
+                        value: Any = self._compact_uri_safe(str(r[oi]))
+                    else:
+                        value = parse_cell(r[oi], dt)
+                    counts_by_value.setdefault((value, type(value).__name__), set()).add(str(r[vi]))
 
-            ranked = sorted(counts_by_value.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+            ranked = sorted(counts_by_value.items(), key=lambda kv: (-len(kv[1]), str(kv[0][0]), kv[0][1]))
+            values = [v for (v, _), _ in ranked]
+            dtype = column_dtype(values)
             self.cache[cache_key] = pl.DataFrame(
-                {attr_name: [self._compact_uri_safe(v) for v, _ in ranked],
-                 "count": [len(nodes) for _, nodes in ranked]},
-                schema={attr_name: pl.String, "count": pl.Int64},
+                {attr_name: pl.Series(attr_name, coerce(values, dtype), dtype=dtype),
+                 "count": pl.Series("count", [len(nodes) for _, nodes in ranked], dtype=pl.Int64)},
             )
         return self.cache[cache_key]
 
@@ -1109,13 +1150,14 @@ class Query:
                 f"facets: unknown alias {of!r}" if of is not None
                 else "facets: no current node (start with entity())"
             )
-        role = "data" if nid in g.data_nodes else "entity"
         alias = g.aliases_reverse.get(nid, str(nid))
         version = self.client.graph_version()
 
         summary = FacetSummary(node_alias=alias)
-        for attr in self.registry.for_role(role, summary=True):
+        for attr in self._node_attrs(g, nid):
             name = attr.name
+            if attr.datatypes:          # a user attribute: show its type
+                summary.dtypes[name] = str(self._leaf_dtype(name))
             df = self.options(name, of=alias, include_dependencies=include_dependencies)
             scope = "matched"
             if df.height == 0:
@@ -1134,6 +1176,18 @@ class Query:
         return summary
 
     # ---------- terminals ----------
+
+    def _leaf_dtype(self, name: str) -> pl.DataType:
+        """The column dtype an attribute takes, from the datatypes the graph
+        holds for it: a list attribute is a ``List`` of that, a mixture
+        ``Object``; a built-in (nothing discovered) is ``String``."""
+        attr = self.registry[name]
+        if not attr.datatypes:
+            return pl.String
+        base = dtype_for_datatypes(attr.datatypes) or pl.String
+        if is_list_attr(attr):
+            return pl.Object if base == pl.Object else pl.List(base)
+        return base
 
     def schema(self) -> pl.Schema:
         """The polars schema ``metadata()`` will return, without running the query.
@@ -1156,14 +1210,7 @@ class Query:
         leaf_selects, group_selects = self._expanded_selects()
         casts = {(nid, name): (type_, strict) for nid, name, type_, strict in g.casts}
 
-        def leaf_dtype(name: str) -> pl.DataType:
-            attr = registry[name]
-            if not attr.datatypes:
-                return pl.String   # a built-in, or nothing discovered yet
-            base = dtype_for_datatypes(attr.datatypes) or pl.String
-            if is_list_attr(attr):
-                return pl.Object if base == pl.Object else pl.List(base)
-            return base
+        leaf_dtype = self._leaf_dtype
 
         def group_dtype(gname: str, children: List[str]) -> pl.DataType:
             if gname in registry:
@@ -1370,6 +1417,7 @@ class Query:
         *,
         include_internals: bool = False,
         include_dependencies: bool = True,
+        drop_empty_cols: bool = False,
     ) -> pl.DataFrame:
         """Return the pattern matches as a polars table with alias column names.
 
@@ -1390,6 +1438,10 @@ class Query:
         The internal SPARQL columns driving ``data()`` (``ext<nid>``,
         ``unit<nid>``, ``extunit<nid>``) are hidden unless
         ``include_internals=True``.
+
+        ``drop_empty_cols=True`` leaves out columns that are null on every
+        row; the result then has fewer columns than ``schema()`` lists. An
+        empty result keeps all its columns.
         """
         cache_key = f"metadata_table:{include_internals}:{include_dependencies}"
         if self.cache.get(cache_key) is None:
@@ -1539,7 +1591,10 @@ class Query:
             if not list_names and not group_selects and pl.Object not in pl_table.dtypes:
                 pl_table = pl_table.unique(maintain_order=True)
             self.cache[cache_key] = pl_table
-        return self.cache[cache_key]
+        df = self.cache[cache_key]
+        if drop_empty_cols and df.height:
+            return df.select([c for c in df.columns if df[c].null_count() < df.height])
+        return df
 
     def data(
         self,
@@ -1602,6 +1657,42 @@ class Query:
 
     # ---------- display helpers ----------
 
+    def metadata_objects(self, *, include_dependencies: bool = True) -> List[Dict[str, Any]]:
+        """The pattern matches as Python dicts, attributes nested by their path.
+
+        One dict per row of :meth:`metadata` (a node can appear in several
+        rows when the pattern joins it to several others). Each node alias
+        maps to a dict holding the node's CURIE under ``"id"``, its label
+        under ``"label"`` when it has one, and every included attribute
+        nested along its dotted path::
+
+            [{"pump": {"id": "dpr:backwash-dosing-pump",
+                       "product_info": {"manufacturer": "Grundfos", "year": 2019},
+                       "tags": ["lab", "critical"]}}]
+
+        Values are the Python values of the frame: ``int``, ``date``,
+        ``list``, ``dict`` for a struct, and the value as written for an
+        ``Object`` column. An attribute a node lacks is ``None``. A leaf
+        included next to its parent key (``"product_info"`` and
+        ``"product_info.year"``) appears once, inside the parent's dict.
+        """
+        df = self.metadata(include_dependencies=include_dependencies)
+        aliases = set(self.query_graph.aliases_reverse.values())
+        out: List[Dict[str, Any]] = []
+        for row in df.to_dicts():
+            record: Dict[str, Any] = {}
+            for col, value in row.items():
+                if col in aliases:
+                    record.setdefault(col, {})["id"] = value
+                    continue
+                alias, _, path = col.partition(".")
+                if alias not in aliases or not path:
+                    record[col] = value
+                    continue
+                _nest(record.setdefault(alias, {}), path.split("."), value)
+            out.append(record)
+        return out
+
     def _expanded_selects(self) -> tuple:
         """``(leaf_selects, group_selects)``: the query's selects with every
         parent key replaced by its child leaves, and the parent keys listed
@@ -1662,6 +1753,40 @@ class Query:
             return self.client.compact_uri(uri)
         except Exception:
             return str(uri)
+
+
+def _nest(target: Dict[str, Any], parts: List[str], value: Any) -> None:
+    """Set ``value`` at ``parts`` inside ``target``, merging dicts.
+
+    A struct value (a dict) merges with keys already there; ``None`` never
+    overwrites a value or a dict already set, so a leaf included next to its
+    parent key adds nothing it does not know. A path that runs into a plain
+    value (``unit.raw`` under the built-in ``unit``) is kept under its dotted
+    name at that level, ``"unit.raw"``, so nothing is lost."""
+    node = target
+    for i, part in enumerate(parts[:-1]):
+        nxt = node.get(part)
+        if not isinstance(nxt, dict):
+            if nxt is not None:
+                _nest(node, [".".join(parts[i:])], value)
+                return
+            if part in node and value is None:
+                return          # a null parent stays null
+            nxt = node[part] = {}
+        node = nxt
+    key = parts[-1]
+    current = node.get(key)
+    if isinstance(current, dict) and isinstance(value, dict):
+        for k, v in value.items():
+            _nest(current, [k], v)
+    elif isinstance(current, dict) and value is not None:
+        # a plain value arrives where leaves were nested first: the leaves
+        # move to their dotted names beside it
+        for k, v in current.items():
+            node[f"{key}.{k}"] = v
+        node[key] = value
+    elif value is not None or key not in node:
+        node[key] = value
 
 
 def _struct_series(name: str, members: Dict[str, pl.Series], *,

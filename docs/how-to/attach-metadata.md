@@ -166,6 +166,19 @@ Reach a field with polars, `pl.col("pump.product_info").struct.field("year")`,
 or include the leaf next to the struct, `include("product_info", "product_info.year")`.
 `where()` filters leaves, not parent keys.
 
+For code that wants plain Python values rather than a frame,
+`metadata_objects()` returns the same rows as nested dicts:
+
+```python
+pumps.include("product_info", "tags").metadata_objects()
+```
+```text
+[{'pump': {'id': 'dpr:backwash-dosing-pump',
+           'product_info': {'build_year': None, 'manufacturer': 'Grundfos', 'model': 'DDA 7.5', 'year': 2019},
+           'tags': ['lab', 'critical', 'spare-available']}},
+ ...]
+```
+
 ## Know the schema before you run
 
 `schema()` returns the polars schema `metadata()` will produce, computed
@@ -333,6 +346,26 @@ and free text is resolved to a URI first, as it is in `where()`:
 ```python
 acq.insert_metadata("swro:P2-out-pressure", {"unit": "PSI", "label": "P2 discharge pressure"})
 ```
+
+The text you wrote is kept next to the resolved URI, so you can see what a
+value was matched from:
+
+```python
+acq.query().measurement(alias="m").include("unit", "unit.raw").metadata()
+```
+```text
+┌──────────────────────┬──────────┬────────────┐
+│ m                    ┆ m.unit   ┆ m.unit.raw │
+╞══════════════════════╪══════════╪════════════╡
+│ swro:P2-out-pressure ┆ unit:PSI ┆ PSI        │
+└──────────────────────┴──────────┴────────────┘
+```
+
+`register_streams()` does the same for `unit`, `quantity_kind`, `medium`
+and `substance`, and keeps the text even when it did not resolve, so a
+failed match stays visible. A value given as a URI has no raw text, and
+rewriting the key replaces both. In `metadata_objects()` the text sits
+next to the value as `"unit.raw"`.
 
 Be aware that the write lands in its own graph and cannot retract a value the
 plant model asserts.

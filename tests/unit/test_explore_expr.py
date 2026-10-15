@@ -204,8 +204,10 @@ class TestWhereWithExpressions:
 
     def test_role_check(self):
         client = make_client()
-        with pytest.raises(ValueError, match="does not apply to entity"):
-            Query(client=client).entity(CLS_A).where(attr(client).unit.exists())
+        # an entity node accepts any attribute; a measurement node is gated
+        Query(client=client).entity(CLS_A).where(attr(client).unit.exists())
+        with pytest.raises(ValueError, match="does not apply to data"):
+            Query(client=client).entity(CLS_A).measurement().where(attr(client).process == "urn:x#P")
 
     def test_non_expression_positional_rejected(self):
         with pytest.raises(TypeError, match="expected an attribute expression"):
