@@ -93,7 +93,8 @@ class GraphHistory:
         with store._lock, store._write_conn() as conn:
             self._execute(conn, """CREATE TABLE IF NOT EXISTS graph_history (
                 change_id BIGINT PRIMARY KEY, graph_uri VARCHAR NOT NULL, effective_at VARCHAR NOT NULL,
-                recorded_at VARCHAR NOT NULL, applied BOOLEAN NOT NULL, source_version BIGINT)""")
+                recorded_at VARCHAR NOT NULL, applied BOOLEAN NOT NULL, source_version BIGINT,
+                initial BOOLEAN NOT NULL)""")
             self._execute(conn, """CREATE TABLE IF NOT EXISTS graph_history_triples (
                 change_id BIGINT NOT NULL, op VARCHAR NOT NULL, triple VARCHAR NOT NULL)""")
             self._execute(conn, "CREATE INDEX IF NOT EXISTS graph_history_triples_triple ON graph_history_triples (triple)")
@@ -125,8 +126,9 @@ class GraphHistory:
         with self._store._lock, self._store._write_conn() as conn:
             self._check_conflicts(conn, delta.graph_uri, effective, [line for _, line in lines])
             change_id = int(self._execute(conn, "SELECT COALESCE(MAX(change_id), 0) + 1 FROM graph_history").fetchone()[0])
-            self._execute(conn, "INSERT INTO graph_history VALUES (?, ?, ?, ?, ?, NULL)",
-                          [change_id, delta.graph_uri, _iso(effective), _iso(datetime.now(timezone.utc)), False])
+            self._execute(conn, "INSERT INTO graph_history VALUES (?, ?, ?, ?, ?, NULL, ?)",
+                          [change_id, delta.graph_uri, _iso(effective), _iso(datetime.now(timezone.utc)), False,
+                           bool(getattr(delta, "initial", False))])
             self._executemany(conn, "INSERT INTO graph_history_triples VALUES (?, ?, ?)",
                               [(change_id, op, line) for op, line in lines])
         return change_id
@@ -165,17 +167,24 @@ class GraphHistory:
     # ---- versions ----
 
     def change_points(self) -> list[datetime]:
-        """Effective times at which the model changed, ascending. Empty changes do not count."""
+        """Effective times at which the model changed, ascending.
+
+        An empty change does not count, nor does a graph's initial load: the
+        model before it is not "nothing", it is unknown, and the load stands
+        for all time.
+        """
         with self._store._own_conn() as conn:
             rows = self._execute(conn, """SELECT DISTINCT h.effective_at FROM graph_history h
-                WHERE h.applied AND EXISTS (SELECT 1 FROM graph_history_triples t WHERE t.change_id = h.change_id)
+                WHERE h.applied AND NOT h.initial
+                AND EXISTS (SELECT 1 FROM graph_history_triples t WHERE t.change_id = h.change_id)
                 ORDER BY h.effective_at""").fetchall()
         return [_when(row[0]) for row in rows]
 
     def changes_after(self, when: datetime) -> list[RecordedChange]:
         """Applied changes effective after ``when``, newest recorded first (undo order)."""
         with self._store._own_conn() as conn:
-            heads = self._execute(conn, "SELECT change_id, graph_uri, effective_at FROM graph_history WHERE applied AND effective_at > ? ORDER BY change_id DESC",
+            heads = self._execute(conn, "SELECT change_id, graph_uri, effective_at FROM graph_history "
+                                        "WHERE applied AND NOT initial AND effective_at > ? ORDER BY change_id DESC",
                                   [_iso(when)]).fetchall()
             return [self._change(conn, change_id, graph_uri, _when(effective)) for change_id, graph_uri, effective in heads]
 

@@ -41,7 +41,7 @@ class MemoryGraph:
         return Graph()
 
     def prepare(self, add=(), remove=()):
-        return GraphDelta("urn:g", frozenset(add), frozenset(remove))
+        return GraphDelta("urn:g", frozenset(add), frozenset(remove), initial=not len(self.graph) and not remove)
 
     def apply_delta(self, delta):
         if self.fail_next_apply:
@@ -67,6 +67,7 @@ def members(version):
 def runtime(tmp_path):
     store = DuckDBStore(tmp_path / "history.duckdb")
     graph = MemoryGraph()
+    graph.graph.add((EX.plant, RDF.type, EX.Plant))   # a loaded model; the first write below is a change
     m = Materializer(store, graph)
     try:
         yield store, graph, m
@@ -82,7 +83,7 @@ def write(m, graph, effective, add=(), remove=()):
 def test_a_write_is_logged_then_applied_and_the_planner_sees_its_effective_time(runtime):
     store, graph, m = runtime
     write(m, graph, T[1], add=[meter("A"), meter("B")])
-    assert set(graph.graph) == {meter("A"), meter("B")} and graph.version == 1
+    assert set(graph.graph) == {(EX.plant, RDF.type, EX.Plant), meter("A"), meter("B")} and graph.version == 1
     with store._own_conn() as conn:
         heads = conn.execute("SELECT applied, source_version FROM graph_history").fetchall()
         ops = conn.execute("SELECT op, count(*) FROM graph_history_triples GROUP BY op").fetchall()
@@ -97,13 +98,13 @@ def test_a_change_logged_but_not_applied_is_applied_on_recovery(runtime):
     graph.fail_next_apply = True
     with pytest.raises(RuntimeError):
         write(m, graph, T[2], add=[meter("B")])
-    assert set(graph.graph) == {meter("A")}        # the graph missed it
+    assert meter("B") not in graph.graph           # the graph missed it
     assert len(m.history.unapplied()) == 1          # the log did not
     with store._own_conn() as conn:
         assert conn.execute("SELECT count(*) FROM materialization_graph_changes").fetchone()[0] == 1
 
     assert m.recover_graph_writes() == 1
-    assert set(graph.graph) == {meter("A"), meter("B")} and m.history.unapplied() == []
+    assert {meter("A"), meter("B")} <= set(graph.graph) and m.history.unapplied() == []
     with store._own_conn() as conn:
         assert conn.execute("SELECT count(*) FROM materialization_graph_changes").fetchone()[0] == 2
     assert m.history.change_points() == [T[1], T[2]]
@@ -114,7 +115,7 @@ def test_recovery_is_idempotent_and_applying_twice_changes_nothing(runtime):
     write(m, graph, T[1], add=[meter("A")])
     assert m.recover_graph_writes() == 0
     graph.apply_delta(graph.prepare(add=[meter("A")]))
-    assert set(graph.graph) == {meter("A")}
+    assert set(graph.graph) == {(EX.plant, RDF.type, EX.Plant), meter("A")}
 
 
 def test_a_write_dated_before_a_later_change_to_the_same_triple_is_rejected(runtime):
@@ -123,7 +124,7 @@ def test_a_write_dated_before_a_later_change_to_the_same_triple_is_rejected(runt
     write(m, graph, T[5], remove=[meter("B")])
     with pytest.raises(GraphHistoryConflict, match="cannot be dated before"):
         write(m, graph, T[3], add=[meter("B")])
-    assert set(graph.graph) == {meter("A")}                       # nothing reached the graph
+    assert meter("B") not in graph.graph                          # nothing reached the graph
     assert len(m.history.change_points()) == 2                    # nor the log
     write(m, graph, T[3], add=[meter("C")])                       # other triples may be backdated
     assert m.history.change_points() == [T[1], T[3], T[5]]
@@ -169,6 +170,24 @@ def test_a_backdated_write_shows_in_versions_after_its_time(runtime):
     h = m.history
     assert members(h.as_of(T[2])) == ["B"]
     assert members(h.as_of(T[5])) == ["A", "B"]
+
+
+def test_the_initial_load_of_an_empty_graph_is_not_a_change_point(tmp_path):
+    store = DuckDBStore(tmp_path / "initial.duckdb")
+    graph = MemoryGraph()
+    m = Materializer(store, graph)
+    try:
+        write(m, graph, T[5], add=[meter("A"), meter("B")])          # the model arrives, dated or not
+        assert m.history.change_points() == []
+        assert members(m.history.as_of(None)) == ["A", "B"]          # it holds before its own time
+        assert members(m.history.as_of(T[0])) == ["A", "B"]
+        write(m, graph, T[7], remove=[meter("B")])                   # the first real change
+        assert m.history.change_points() == [T[7]]
+        assert members(m.history.as_of(T[6])) == ["A", "B"] and members(m.history.as_of(T[7])) == ["A"]
+        with store._own_conn() as conn:
+            assert conn.execute("SELECT count(*) FROM materialization_graph_changes").fetchone()[0] == 2
+    finally:
+        m.close(); store.close()
 
 
 def test_a_direct_graph_write_still_records_the_pending_change(runtime):

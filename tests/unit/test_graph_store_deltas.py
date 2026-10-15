@@ -40,6 +40,7 @@ def meters(graph):
 def test_prepare_write_then_apply_matches_insert_graph(store):
     delta = store.prepare_write(TTL, format="turtle", replace=True)
     assert {s for s, _, _ in delta.added} == {EX.A, EX.B} and delta.removed == frozenset()
+    assert delta.initial                         # the plant graph was empty: this is its load, not a change
     assert ("ex", "urn:ex:") in delta.prefixes
     assert plant(store) == set()                 # preparing changed nothing
     store.apply_delta(delta)
@@ -47,7 +48,7 @@ def test_prepare_write_then_apply_matches_insert_graph(store):
 
     # Append: only the new triple is a change.
     more = store.prepare_write("@prefix ex: <urn:ex:> . ex:A a ex:FlowMeter . ex:C a ex:FlowMeter .", format="turtle")
-    assert more.added == {(EX.C, RDF.type, EX.FlowMeter)} and more.removed == frozenset()
+    assert more.added == {(EX.C, RDF.type, EX.FlowMeter)} and more.removed == frozenset() and not more.initial
     store.apply_delta(more)
     assert meters(store) == ["A", "B", "C"]
 

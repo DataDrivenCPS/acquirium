@@ -99,6 +99,10 @@ class GraphDelta:
     removed: frozenset
     prefixes: tuple[tuple[str, str], ...] = ()
     affects_closure: bool = False
+    # A write that removes nothing from a graph that was empty is the
+    # graph's initial load, not a change to the model: it holds for all
+    # time, however the write is dated.
+    initial: bool = False
 
     def is_empty(self) -> bool:
         return not self.added and not self.removed
@@ -1005,6 +1009,7 @@ class OxigraphGraphStore:
             str(target.identifier), added, removed,
             tuple((str(p), str(ns)) for p, ns in incoming.namespaces()),
             affects_closure=replace or _graph_affects_closure(incoming),
+            initial=not current,
         )
 
     def prepare_update(self, update: str, *, graph_uri: URIRef | None = None) -> GraphDelta:
@@ -1019,7 +1024,7 @@ class OxigraphGraphStore:
         new = frozenset(scratch)
         added, removed = new - current, current - new
         return GraphDelta(str(target.identifier), added, removed,
-                          affects_closure=_triples_affect_closure([*added, *removed]))
+                          affects_closure=_triples_affect_closure([*added, *removed]), initial=not current)
 
     def apply_delta(self, delta: GraphDelta) -> None:
         """Apply a prepared delta to its data graph. Idempotent: sets, not counts."""
