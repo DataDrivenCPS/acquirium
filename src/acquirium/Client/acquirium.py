@@ -17,6 +17,7 @@ from rdflib import URIRef
 import warnings
 
 from acquirium.Client.explore.core import Query
+from acquirium.Client.explore.expr import AttrProxy
 from acquirium.Client.query import Q
 from acquirium.Materialization.api import App
 from acquirium.Materialization.planner import Deployment
@@ -153,6 +154,29 @@ class Acquirium:
             source_id=source_id,
         )
 
+    def insert_metadata(self, uri: str | URIRef, values: Mapping[str, Any]) -> dict[str, Any]:
+        """Attach metadata to one node (entity or measurement) by URI or CURIE.
+
+        ``values`` is a plain map. A key that names a built-in attribute
+        (``unit``, ``medium``, ``label``, ``type``, ...) is written with that
+        attribute's predicate, text resolved to a URI. Any other key is a
+        user attribute, nested dicts and lists flattened to dotted paths,
+        that ``where``/``include``/``options``/``facets`` then accept, and
+        ``aq.attr`` completes. Relations of the plant model (``entity``,
+        ``measurement``, ...) are not written here::
+
+            aq.insert_metadata("dpr:valve-1", {
+                "last_cleaned": "03-12-1999",
+                "product_info": {"manufacturer": "Siemens", "year": 2019},
+                "tags": ["lab", "critical"],
+            })
+            aq.query().measurement().where(aq.attr.product_info.year >= 2015)
+
+        Writing a key replaces its previous value; ``None`` removes it. Keys
+        not mentioned stay. Metadata lives as long as the node does.
+        """
+        return self.client.insert_metadata({str(uri): values})
+
     def sparql_update(self, update: str, *, source_id: str) -> dict[str, Any]:
         """Execute a SPARQL update against one explicitly owned data graph.
 
@@ -164,6 +188,17 @@ class Acquirium:
     def query(self) -> Query:
         """Create a new empty Query (the explore builder) bound to this instance."""
         return Query(client=self.client)
+
+    @property
+    def attr(self) -> AttrProxy:
+        """Attribute paths for ``where``: ``aq.attr.unit``, ``aq.attr.product_info.year``.
+
+        Bound to this server, so ``aq.attr.<TAB>`` lists the built-in
+        attributes and those written with ``insert_metadata``, and an
+        unknown name fails here rather than inside the query. Comparisons
+        and ``&``/``|``/``~`` build the expressions ``Query.where`` takes.
+        """
+        return AttrProxy(self.client)
 
     def explore(self) -> Query:
         """Alias of :meth:`query`."""

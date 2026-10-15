@@ -537,6 +537,10 @@ The attribute vocabulary is one shared registry:
 
 The same table is generated into the docstring of every attribute-taking
 method, so `help(q.where)` has it too.
+Metadata attached with `insert_metadata()` extends the table: a key such as
+`last_cleaned` or a nested `product_info.year` is an attribute like the
+others once the graph holds it; see
+[Attach metadata to a node](../how-to/attach-metadata.md).
 Values may be URIs (used as-is) or free text (resolved by the server against
 the right vocabulary for that attribute).
 A list means "any of these".
@@ -578,6 +582,28 @@ shape: (5, 1)
 │ wbs:RO-in-temperature           │
 └─────────────────────────────────┘
 ```
+
+Keyword arguments express equality.
+For a comparison, or for `or` and `not` across attributes, pass expressions
+built on `acq.attr`:
+
+```python
+(acq.query().measurement(alias="m")
+ .where((acq.attr.product_info.year >= 2015) | (acq.attr.product_info.manufacturer == "Siemens"))
+ .where(~acq.attr.last_cleaned.exists(), unit="mg/L"))
+```
+
+`acq.attr.<name>` is an attribute, `.<key>` descends into a nested one,
+`[i]` picks a list element, and the comparison operators, `.is_in([...])` and
+`.exists()` make a condition.
+Conditions combine with `&`, `|` and `~`, each side in parentheses; `and`,
+`or` and `not` raise, since Python cannot overload them.
+Everything given to one `where()` call, keywords and expressions alike, must
+hold.
+`acq.attr` knows the attributes of the connected server, so a mistyped name
+fails on that line and `dir(acq.attr)` lists what there is.
+The [client reference](../reference/client-api.md#attribute-expressions) has
+the full table.
 
 `target=` reaches back to an earlier node without moving the pointer.
 Here the pointer is on `m`, but the filter applies to the equipment.

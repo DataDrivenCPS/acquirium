@@ -220,3 +220,4 @@ scripts/benchmark/scalability/*.csv
 dpr-trailer-data/
 
 .run_logs
+scripts/dev/
