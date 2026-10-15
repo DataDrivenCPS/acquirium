@@ -224,13 +224,16 @@ class RevisionStore:
     def request_reprocess(self, bindings: Iterable[Binding], window: TimeWindow) -> None:
         with self.store._lock, self.store._write_conn() as conn:
             for binding in bindings:
-                owned = binding.clip(window)
-                if owned is None:
-                    continue
+                owned = window
                 if binding.every:
                     epoch = datetime(1970, 1, 1, tzinfo=UTC)
                     floor = lambda t: epoch + ((t - epoch) // binding.every) * binding.every
                     owned = TimeWindow(floor(window.start), floor(window.end) + binding.every - timedelta(microseconds=1))
+                # Round to whole buckets first, then keep to the binding's
+                # validity (its boundaries are bucket starts already).
+                owned = binding.clip(owned)
+                if owned is None:
+                    continue
                 progress = self._execute(conn, "SELECT consumed_revision FROM binding_progress WHERE progress_key=?", [binding.progress_key]).fetchone()
                 if progress is None:
                     raise ValueError("binding must be initialized before reprocessing")

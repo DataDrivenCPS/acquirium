@@ -423,3 +423,25 @@ def test_a_membership_that_comes_back_keeps_maintaining_its_earlier_interval(tmp
         assert frame(store, fleet_ref)["value"].to_list() == [2.0, 6.0, 1.0, 1.0, 2.0, 6.0]
     finally:
         runtime.close(); store.close()
+
+
+def test_an_explicit_reprocess_stays_inside_each_bindings_interval(tmp_path):
+    store, graph, runtime = _runtime(tmp_path, ["urn:a"])
+    try:
+        runtime.deploy(Deployment.from_class(HourlyEach))
+        while runtime.run_once():
+            pass
+        store.upsert_rows("urn:c", [(t, 2.0) for t in T], value_kind="numeric")
+        graph.refs = ["urn:a", "urn:c"]
+        runtime.note_graph_change(1, effective_at=T[3])
+        while runtime.run_once():
+            pass
+        out_c = {b.inputs["input"][0].ref_uri: b.outputs["out"].ref_uri for b in runtime._dag.bindings
+                 if b.application_name == "hourly-each"}["urn:c"]
+        assert rows(store, out_c) == [T[2], T[4]]
+        runtime.reprocess("hourly-each", T[0], T[5])
+        while runtime.run_once():
+            pass
+        assert rows(store, out_c) == [T[2], T[4]]
+    finally:
+        runtime.close(); store.close()
