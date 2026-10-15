@@ -318,7 +318,13 @@ class Materializer:
             # When the model changed, the author said when. Bindings that
             # appear or disappear because of it exist from, or until, that
             # time; the earliest pending time covers every change planned now.
+            # A bucketed view owns whole buckets, so its boundary is the start
+            # of the bucket containing the effective time.
             effective = min(pending) if pending else datetime.now(timezone.utc)
+            every_by_app = {d.name: d.every for d in self._deployments()}
+            epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+            boundary = lambda app: (effective if not every_by_app.get(app) else
+                                    epoch + ((effective - epoch) // every_by_app[app]) * every_by_app[app])
             with self._store._own_conn() as conn:
                 apps_with_rows = {row[0] for row in self._execute(
                     conn, "SELECT DISTINCT application_name FROM materialization_bindings WHERE valid_to IS NULL").fetchall()}
@@ -332,7 +338,7 @@ class Materializer:
                 if b.progress_key in open_rows:
                     validity[b.progress_key] = open_rows[b.progress_key][2]
                 elif b.application_name in apps_with_rows and pending:
-                    validity[b.progress_key] = effective
+                    validity[b.progress_key] = boundary(b.application_name)
                 else:
                     validity[b.progress_key] = None
             dag = ApplicationGraph([replace(b, valid_from=validity[b.progress_key]) for b in dag.bindings])
@@ -348,12 +354,14 @@ class Materializer:
             # A context change repairs from the effective time on; results
             # before it stand as what the old model said.
             repair_since = effective if pending else None
+            cascade = bool(pending)
             # Materialization-owned provenance is a complete projection of the
             # current DAG. Publish it only when the projection actually changed:
             # lineage writes advance the graph's published_version, so publishing
             # on every refresh would self-trigger a perpetual recompile loop.
             signatures = frozenset(binding.signature for binding in dag.bindings)
-            if signatures != self._lineage_signatures:
+            republished = signatures != self._lineage_signatures
+            if republished:
                 self._publish_graph_lineage(dag.bindings)
                 self._lineage_signatures = signatures
             # Schedule repair before recording the new context fingerprint.
@@ -363,7 +371,8 @@ class Materializer:
             for binding in repair:
                 window = self._revisions.retained_window(binding)
                 if window is not None and repair_since is not None and binding.valid_from is None:
-                    window = TimeWindow(max(window.start, repair_since), window.end) if window.end >= repair_since else None
+                    since = boundary(binding.application_name)
+                    window = TimeWindow(max(window.start, since), window.end) if window.end >= since else None
                 if window is None:
                     continue
                 self._revisions.initialise(binding, applications[binding.signature].backfill)
@@ -379,8 +388,8 @@ class Materializer:
                 # keep a changed context as a closed-and-reopened row.
                 current = {b.progress_key: b for b in dag.bindings}
                 failed_apps = set(self._plan_errors)
-                stamp = effective.isoformat()
-                retired = []
+                retired: dict[datetime, list[str]] = {}
+                still_owned = {p.ref_uri for b in dag.bindings for p in b.outputs.values()}
                 for key, (sig, ctx, since) in open_rows.items():
                     if key in current and current[key].context_hash == ctx:
                         if current[key].signature != sig:
@@ -390,19 +399,27 @@ class Materializer:
                     app_name = self._execute(conn, "SELECT application_name FROM materialization_bindings WHERE progress_key=? AND valid_to IS NULL", [key]).fetchone()[0]
                     if key not in current and app_name in failed_apps:
                         continue   # its app failed to compile; keep its bindings open until it recovers
-                    self._execute(conn, "UPDATE materialization_bindings SET valid_to=? WHERE progress_key=? AND valid_to IS NULL", [stamp, key])
+                    until = boundary(app_name)
+                    self._execute(conn, "UPDATE materialization_bindings SET valid_to=? WHERE progress_key=? AND valid_to IS NULL", [until.isoformat(), key])
                     if key not in current:
                         # Its outputs, from durable lineage, so a restart retires them too.
-                        retired.extend(ref for ref, owner in prior_outputs.items() if owner == key and ref not in
-                                       {p.ref_uri for b in dag.bindings for p in b.outputs.values()})
+                        retired.setdefault(until, []).extend(
+                            ref for ref, owner in prior_outputs.items() if owner == key and ref not in still_owned)
                 for b in dag.bindings:
                     row = open_rows.get(b.progress_key)
                     if row is None or row[1] != b.context_hash:
                         self._execute(conn, "INSERT INTO materialization_bindings VALUES (?, ?, ?, ?, ?, ?, NULL)",
                                       [b.progress_key, b.signature, b.application_name, b.context_hash, revision,
                                        b.valid_from.isoformat() if b.valid_from else None])
-                self._revisions.retire(retired, effective, conn=conn)
+                for until, refs in retired.items():
+                    self._revisions.retire(refs, until, conn=conn)
                 self._execute(conn, "DELETE FROM materialization_graph_changes")
+                if cascade and republished:
+                    # The derived points just published are what a downstream
+                    # query matches, so the bindings that appear or disappear
+                    # at the next refresh belong to this same model change.
+                    self._execute(conn, "INSERT INTO materialization_graph_changes VALUES (?, ?, ?)",
+                                  [revision, effective.isoformat(), datetime.now(timezone.utc).isoformat()])
                 failed = list(self._plan_errors)
                 if failed:
                     marks = ','.join('?' for _ in failed)

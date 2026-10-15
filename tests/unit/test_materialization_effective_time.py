@@ -4,6 +4,7 @@ from datetime import timedelta
 import polars as pl
 import pytest
 
+from acquirium.Materialization import align
 from acquirium.Materialization.planner import Deployment
 from acquirium.Materialization.runtime import Materializer
 from acquirium.Storage.duckdb_store import DuckDBStore
@@ -161,3 +162,51 @@ def test_validity_survives_restart(tmp_path):
         assert valid == {"urn:a": None, "urn:c": T[3]}
     finally:
         reborn.close(); store.close()
+
+
+class HourlyEach(CopyEach):
+    name = "hourly-each"
+    every = "2h"
+
+    def transform(self, inputs, output, context):
+        output["out"] = align(inputs, "2h").rename({"input": "value"})
+
+
+def test_a_bucketed_view_switches_at_the_start_of_the_bucket(tmp_path):
+    store = DuckDBStore(tmp_path / "bucket.duckdb")
+    graph = FleetGraph(["urn:a", "urn:b"])
+    runtime = Materializer(store, graph)
+    try:
+        for ref in graph.refs:
+            store.upsert_rows(ref, [(t, 1.0) for t in T], value_kind="numeric")
+        runtime.deploy(Deployment.from_class(HourlyEach))
+        while runtime.run_once():
+            pass
+        out_b = {b.inputs["input"][0].ref_uri: b.outputs["out"].ref_uri for b in runtime._dag.bindings}["urn:b"]
+        assert rows(store, out_b) == [T[0], T[2], T[4]]
+        # Effective at T[3], inside the bucket [T[2], T[4]): that whole bucket goes.
+        graph.refs = ["urn:a"]
+        runtime.note_graph_change(2, effective_at=T[3])
+        while runtime.run_once():
+            pass
+        assert rows(store, out_b) == [T[0]]
+        with store._own_conn() as conn:
+            closed = conn.execute("SELECT valid_to FROM materialization_bindings WHERE valid_to IS NOT NULL").fetchone()[0]
+        assert closed == T[2].isoformat()
+    finally:
+        runtime.close(); store.close()
+
+
+def test_a_dated_change_carries_through_the_lineage_it_publishes(tmp_path):
+    """Retiring a binding republishes lineage; the bindings that disappear downstream
+    at the next refresh belong to the same change, so its effective time is kept."""
+    store, graph, runtime = _runtime(tmp_path, ["urn:a", "urn:b"])
+    try:
+        graph.refs = ["urn:a"]
+        runtime.note_graph_change(2, effective_at=T[3])
+        runtime.refresh()
+        with store._own_conn() as conn:
+            queued = conn.execute("SELECT effective_at FROM materialization_graph_changes").fetchall()
+        assert [row[0] for row in queued] == [T[3].isoformat()]
+    finally:
+        runtime.close(); store.close()
