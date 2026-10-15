@@ -60,6 +60,25 @@ class TestMetadataDict:
             {"e": {"id": "p:a", "product_info": {"maker": "Grundfos", "year": 2019},
                    "tags": ["lab", "crit"], "cleaned": date(2024, 3, 12)},
              "m": {"id": "p:m", "label": "Flow"}},
-            {"e": {"id": "p:b", "product_info": None, "tags": None, "cleaned": None},
-             "m": {"id": "p:n", "label": None}},
+            {"e": {"id": "p:b"}, "m": {"id": "p:n"}},     # nothing saved: only the ids
         ]
+
+    def test_struct_fields_from_other_nodes_are_left_out(self):
+        res = {"columns": ["v0", "attr0_settings_46_duration", "attr0_settings_46_mode"],
+               "rows": [["urn:p#a", None, "baseline"], ["urn:p#b", "60", "trial"]],
+               "datatypes": [["iri", None, None], ["iri", XSD + "integer", None]]}
+        preds = [[f"{ATTR_NS}settings.mode", XSD + "string"], [f"{ATTR_NS}settings.duration", XSD + "integer"]]
+        client = make_client(res)
+        client.sparql_query.side_effect = lambda sparql, include_dependencies=True: (
+            {"columns": ["p", "dt"], "rows": preds} if sparql == DISCOVERY_SPARQL else res)
+        q = Query(client=client).entity(CLS_A, alias="point").include("settings")
+        assert q.metadata()["point.settings"].to_list()[0] == {"duration": None, "mode": "baseline"}  # table: shared schema
+        assert q.metadata_objects() == [
+            {"point": {"id": "p:a", "settings": {"mode": "baseline"}}},
+            {"point": {"id": "p:b", "settings": {"duration": 60, "mode": "trial"}}},
+        ]
+
+    def test_saved_keeps_lists_as_they_are(self):
+        from acquirium.Client.explore.core import _saved
+        assert _saved({"a": None, "b": {"c": None}, "d": [1, None], "e": {"f": {"g": None}, "h": 0}}) == {
+            "d": [1, None], "e": {"h": 0}}

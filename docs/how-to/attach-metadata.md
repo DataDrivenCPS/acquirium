@@ -167,17 +167,24 @@ or include the leaf next to the struct, `include("product_info", "product_info.y
 `where()` filters leaves, not parent keys.
 
 For code that wants plain Python values rather than a frame,
-`metadata_objects()` returns the same rows as nested dicts:
+`metadata_objects()` returns the same rows as nested dicts, each holding
+only what was saved on that node:
 
 ```python
 pumps.include("product_info", "tags").metadata_objects()
 ```
 ```text
 [{'pump': {'id': 'dpr:backwash-dosing-pump',
-           'product_info': {'build_year': None, 'manufacturer': 'Grundfos', 'model': 'DDA 7.5', 'year': 2019},
+           'product_info': {'manufacturer': 'Grundfos', 'model': 'DDA 7.5', 'year': 2019},
            'tags': ['lab', 'critical', 'spare-available']}},
+ {'pump': {'id': 'dpr:chlorine-pump',
+           'product_info': {'build_year': 2015, 'manufacturer': 'ProMinent'},
+           'tags': ['lab']}},
  ...]
 ```
+
+The table from `metadata()` gives both pumps the same four `product_info`
+fields, with nulls; the objects leave out the fields a pump never had.
 
 ## Know the schema before you run
 
