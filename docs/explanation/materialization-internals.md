@@ -52,9 +52,22 @@ an unbounded row and covers retained history as backfill allows. A binding
 that disappears closes its row at the effective time and its derived
 streams are tombstoned from that time on at a new revision, so a consumer
 retracts its own results while rows before the time stay as the record of
-what the model said then. A binding whose match context changed is closed
-and reopened, and its repair starts at the effective time. The lineage
-table remains the projection of the current plan.
+what the model said then. A closed binding stays in the plan over its own
+interval: a late reading or correction before the change still reaches the
+result as the model was then, for instance a fleet total over the members
+it had. A named output can therefore have several owners, one per interval,
+and the intervals never overlap. A bucketed view switches at the start of
+the bucket containing the effective time. A change without an effective
+time takes effect when it is written. A binding whose match context changed
+is closed and reopened, and its repair starts at the effective time.
+Removing an app deletes its rows, so a later deployment under the same name
+starts without history. The lineage table remains the projection of the
+current plan.
+
+The effective time is recorded under the plan lock together with the graph
+write, so no refresh can plan the bindings a write creates before their
+time is known, and a change is consumed only by a plan whose graph revision
+includes it.
 
 ## Scheduling and recovery
 

@@ -405,6 +405,11 @@ class Binding:
     # brought the binding into the plan; None means the whole retained
     # history. Not part of either identity.
     valid_from: datetime | None = field(default=None, compare=False)
+    # The model said this binding stopped existing here (exclusive). A
+    # closed binding stays in the plan and keeps maintaining its own
+    # interval: a late reading before a membership change still reaches
+    # the aggregate as it was then.
+    valid_to: datetime | None = field(default=None, compare=False)
     signature: str = field(init=False)
     progress_key: str = field(init=False)
     def __post_init__(self):
@@ -428,13 +433,25 @@ class Binding:
                     "outputs": {k: v.ref_uri for k,v in sorted(self.outputs.items())}}
         object.__setattr__(self, "progress_key", sha256(_canonical(progress).encode()).hexdigest())
 
+    @property
+    def bounded(self) -> bool:
+        return self.valid_from is not None or self.valid_to is not None
+
     def clip(self, window: TimeWindow | None) -> TimeWindow | None:
         """``window`` restricted to this binding's validity; None when nothing remains."""
-        if window is None or self.valid_from is None or window.start >= self.valid_from:
+        if window is None or not self.bounded:
             return window
-        if window.end < self.valid_from:
-            return None
-        return TimeWindow(self.valid_from, window.end)
+        start, end = window.start, window.end
+        if self.valid_from is not None and start < self.valid_from:
+            start = self.valid_from
+        if self.valid_to is not None and end >= self.valid_to:
+            end = self.valid_to - timedelta(microseconds=1)
+        return TimeWindow(start, end) if start <= end else None
+
+    def overlaps(self, other: "Binding") -> bool:
+        lo = max((t for t in (self.valid_from, other.valid_from) if t is not None), default=None)
+        hi = min((t for t in (self.valid_to, other.valid_to) if t is not None), default=None)
+        return lo is None or hi is None or lo < hi
 
     @property
     def context_hash(self) -> str:
@@ -461,14 +478,18 @@ class ApplicationGraph:
     """
     def __init__(self, bindings: Iterable[Binding]):
         self.bindings = tuple(bindings)
-        owners: dict[str, str] = {}
+        # An output can have several owners only over disjoint intervals of
+        # validity: a named aggregate before and after a membership change.
+        owners: dict[str, list[Binding]] = {}
         for binding in self.bindings:
             for port in binding.outputs.values():
-                if port.ref_uri in owners: raise ValueError(f"multiple bindings own {port.ref_uri!r}")
-                owners[port.ref_uri] = binding.signature
-        self.edges = tuple(sorted((owners[d.ref_uri], binding.signature, d.ref_uri)
+                for other in owners.get(port.ref_uri, ()):
+                    if binding.overlaps(other):
+                        raise ValueError(f"multiple bindings own {port.ref_uri!r}")
+                owners.setdefault(port.ref_uri, []).append(binding)
+        self.edges = tuple(sorted({(owner.signature, binding.signature, d.ref_uri)
             for binding in self.bindings for streams in binding.inputs.values() for d in streams
-            if d.ref_uri in owners))
+            for owner in owners.get(d.ref_uri, ())}))
         # A binding never reads its own output in the same revision frontier.
         if any(source == target for source, target, _ in self.edges):
             raise ValueError("an application binding cannot consume its own output")

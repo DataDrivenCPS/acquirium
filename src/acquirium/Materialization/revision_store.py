@@ -325,7 +325,9 @@ class RevisionStore:
         extent = self._execute(conn, f"SELECT min(t.ts), max(t.ts) FROM {self._timeseries_source} WHERE {self._ref} IN ({marks})", refs).fetchone()
         epoch = datetime(1970, 1, 1, tzinfo=UTC)
         retained = TimeWindow(*(self._utc(t) for t in extent)) if extent[0] is not None else TimeWindow(epoch, epoch)
-        retained = binding.clip(retained) or TimeWindow(binding.valid_from, binding.valid_from)
+        if binding.bounded:
+            edge = binding.valid_from or binding.valid_to - timedelta(microseconds=1)
+            retained = binding.clip(retained) or TimeWindow(edge, edge)
         expanded = self._output_window(binding, retained) or retained
         window = TimeWindow(min(retained.start, expanded.start), max(retained.end, expanded.end))
         # All retained rows are changes for a full rebuild, including unchanged
@@ -365,8 +367,9 @@ class RevisionStore:
         # would hide removals from consumers, even though _stream_set correctly
         # excludes those rows from the values delivered to the transform.
         # Changes before the binding's validity are not its concern.
-        since = "" if binding.valid_from is None else " AND t.ts>=?"
-        params = [*refs, previous, target] + ([] if binding.valid_from is None else [self._time(binding.valid_from)])
+        since = ("" if binding.valid_from is None else " AND t.ts>=?") + ("" if binding.valid_to is None else " AND t.ts<?")
+        params = ([*refs, previous, target] + ([] if binding.valid_from is None else [self._time(binding.valid_from)])
+                  + ([] if binding.valid_to is None else [self._time(binding.valid_to)]))
         changed = self._execute(conn, f"SELECT min(t.ts), max(t.ts) FROM {self._timeseries_source} WHERE {self._ref} IN ({marks}) AND t.last_revision>? AND t.last_revision<=?{since}", params).fetchone()
         if changed[0] is None: return None
         changed_window = TimeWindow(self._utc(changed[0]), self._utc(changed[1]))
@@ -531,7 +534,14 @@ class RevisionStore:
                     continue
                 if revision is None:
                     revision = self.store._next_revision(conn)
-                if batch.context.full_reset:
+                if batch.context.full_reset and binding.bounded:
+                    # A bounded binding shares its output with the owners of
+                    # other intervals: rebuild only its own.
+                    self._execute(conn, f"DELETE FROM timeseries WHERE {ref_filter} AND ts>=? AND ts<=?",
+                                  [port.ref_uri, self._time(window.start), self._time(window.end)])
+                    self._execute(conn, "INSERT INTO stream_resets (ref_uri, last_revision) VALUES (?, ?) ON CONFLICT (ref_uri) DO UPDATE SET last_revision=EXCLUDED.last_revision",
+                                  [port.ref_uri, revision])
+                elif batch.context.full_reset:
                     self._execute(conn, f"DELETE FROM timeseries WHERE {ref_filter}", [port.ref_uri])
                     self._execute(conn, "INSERT INTO stream_resets (ref_uri, last_revision) VALUES (?, ?) ON CONFLICT (ref_uri) DO UPDATE SET last_revision=EXCLUDED.last_revision",
                                   [port.ref_uri, revision])

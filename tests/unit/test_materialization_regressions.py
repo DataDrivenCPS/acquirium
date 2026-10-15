@@ -62,7 +62,12 @@ class FleetGraph(LineageGraph):
                 'rows': [[ref + ':point', ref] for ref in self.refs]}
 
 
-def test_membership_removal_repairs_named_history_after_restart(tmp_path):
+def test_membership_removal_after_restart_honours_its_effective_time(tmp_path):
+    """A model change recorded before a restart is planned after it, at its own time.
+
+    Undated, a change takes effect now and leaves the aggregate's history as
+    the old membership computed it; dated, it rewrites from that time on.
+    """
     path = tmp_path / 'membership.duckdb'
     store = DuckDBStore(path)
     runtime = Materializer(store, FleetGraph(['urn:a', 'urn:b']))
@@ -72,7 +77,8 @@ def test_membership_removal_repairs_named_history_after_restart(tmp_path):
     while runtime.run_once():
         pass
     ref = runtime._dag.bindings[0].outputs['out'].ref_uri
-    assert len(stored(store, ref)) == 2
+    assert [r['value'] for r in stored(store, ref)] == [2., 6.]
+    runtime.note_graph_change(1, effective_at=NOW + timedelta(minutes=30))
     runtime.close()
     store.close()
     store = DuckDBStore(path)
@@ -82,10 +88,10 @@ def test_membership_removal_repairs_named_history_after_restart(tmp_path):
             pass
         assert [r['value'] for r in stored(store, ref)] == [2.]
         runtime.close()
-        runtime = Materializer(store, FleetGraph([]))
+        runtime = Materializer(store, FleetGraph([]))     # undated: takes effect now
         while runtime.run_once():
             pass
-        assert not stored(store, ref)
+        assert [r['value'] for r in stored(store, ref)] == [2.]
     finally:
         runtime.close()
         store.close()

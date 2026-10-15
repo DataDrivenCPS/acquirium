@@ -276,3 +276,40 @@ def test_a_graph_write_records_its_effective_time_before_any_plan_sees_it(tmp_pa
         assert rows(store, _outputs(runtime)["urn:c"]) == T[3:]
     finally:
         runtime.close(); store.close()
+
+
+def test_a_late_reading_before_a_membership_change_reaches_the_aggregate_as_it_was(tmp_path):
+    """The closed fleet binding keeps maintaining its own interval."""
+    store, graph, runtime = _runtime(tmp_path, ["urn:a", "urn:b"])
+    try:
+        runtime.deploy(Deployment.from_class(SumFleet))
+        while runtime.run_once():
+            pass
+        fleet_ref = next(b for b in runtime._dag.bindings if b.application_name == "sum-fleet").outputs["out"].ref_uri
+        graph.refs = ["urn:a"]
+        runtime.note_graph_change(1, effective_at=T[3])
+        while runtime.run_once():
+            pass
+        store.upsert_rows("urn:b", [(T[1], 5.0)], value_kind="numeric")   # a correction before the change
+        store.upsert_rows("urn:a", [(T[4], 3.0)], value_kind="numeric")   # and one after
+        while runtime.run_once():
+            pass
+        assert rows(store, fleet_ref) == T
+        assert frame(store, fleet_ref)["value"].to_list() == [2.0, 6.0, 2.0, 1.0, 3.0, 1.0]
+    finally:
+        runtime.close(); store.close()
+
+
+def test_a_removed_app_leaves_no_history_for_a_later_one(tmp_path):
+    store, graph, runtime = _runtime(tmp_path, ["urn:a", "urn:b"])
+    try:
+        graph.refs = ["urn:a"]
+        runtime.note_graph_change(1, effective_at=T[3])
+        while runtime.run_once():
+            pass
+        runtime.remove("copy-each")
+        runtime.deploy(Deployment.from_class(CopyEach))
+        runtime.refresh()
+        assert all(b.valid_to is None for b in runtime._dag.bindings)
+    finally:
+        runtime.close(); store.close()

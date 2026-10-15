@@ -266,6 +266,16 @@ class BindingPlanner:
                  record_resolver: Callable[..., Any] | None = None) -> None:
         self.graph, self.query_resolver, self.record_resolver = graph, query_resolver, record_resolver
 
+    @staticmethod
+    def instantiate(deployment: Deployment, *, search_path: str | None = None) -> App:
+        """Load a deployment's verified code and build its App with the stored policy."""
+        target = load_entrypoint(deployment.entrypoint, deployment.executable_digest, search_path)
+        if not isinstance(target, type) or not issubclass(target, App):
+            raise TypeError(f"{deployment.entrypoint!r} is not an App")
+        app = target(**deployment.parameters)
+        app.backfill, app.batch_delay, app.min_interval = deployment.backfill, deployment.batch_delay, deployment.min_interval
+        return app
+
     def compile(self, deployments: Iterable[Deployment], graph_revision: int,
                 *, search_path: str | None = None) -> tuple[ApplicationGraph, dict[str, App]]:
         before = int(self.graph.graph_status().get("published_version", 0))
@@ -273,11 +283,7 @@ class BindingPlanner:
             raise RuntimeError("graph changed before materialization planning began")
         bindings, applications = [], {}
         for deployment in deployments:
-            target = load_entrypoint(deployment.entrypoint, deployment.executable_digest, search_path)
-            if not isinstance(target, type) or not issubclass(target, App):
-                raise TypeError(f"{deployment.entrypoint!r} is not an App")
-            app = target(**deployment.parameters)
-            app.backfill, app.batch_delay, app.min_interval = deployment.backfill, deployment.batch_delay, deployment.min_interval
+            app = self.instantiate(deployment, search_path=search_path)
             query = app.build_query(_QueryFacade(_GraphQueryClient(self.graph, self.query_resolver, self.record_resolver)))
             rows = _query_rows(query)
             # Choose which matches share a call before assigning output names.

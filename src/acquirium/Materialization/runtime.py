@@ -27,7 +27,7 @@ from threading import Lock, RLock
 from rdflib import Graph, Literal, RDF, RDFS, URIRef
 
 from acquirium.Materialization.engine import Engine
-from acquirium.Materialization.models import ApplicationGraph, OutputBuilder, TimeWindow, _duration
+from acquirium.Materialization.models import App, ApplicationGraph, OutputBuilder, TimeWindow, _duration
 from acquirium.Materialization.revision_store import RevisionStore
 from acquirium.Materialization.scheduler import InProcessExecutor, Scheduler
 from acquirium.Materialization.planner import BindingPlanner, Deployment
@@ -129,7 +129,8 @@ class Materializer:
             self._execute(conn, """CREATE TABLE IF NOT EXISTS materialization_bindings (
                 progress_key VARCHAR NOT NULL, binding_signature VARCHAR NOT NULL,
                 application_name VARCHAR NOT NULL, context_hash VARCHAR NOT NULL,
-                graph_revision BIGINT NOT NULL, valid_from VARCHAR, valid_to VARCHAR)""")
+                graph_revision BIGINT NOT NULL, valid_from VARCHAR, valid_to VARCHAR,
+                definition VARCHAR NOT NULL)""")
             # Graph writes waiting to be planned, with the time the author
             # said the change took effect.
             self._execute(conn, """CREATE TABLE IF NOT EXISTS materialization_graph_changes (
@@ -173,8 +174,9 @@ class Materializer:
                 (SELECT progress_key FROM materialization_lineage WHERE application_name=?)""", [name])
             self._execute(conn, """DELETE FROM materialization_work WHERE progress_key IN
                 (SELECT progress_key FROM materialization_lineage WHERE application_name=?)""", [name])
-            self._execute(conn, "UPDATE materialization_bindings SET valid_to=? WHERE application_name=? AND valid_to IS NULL",
-                          [datetime.now(timezone.utc).isoformat(), name])
+            # A removed app has no history to maintain; a later deployment
+            # under the same name starts over.
+            self._execute(conn, "DELETE FROM materialization_bindings WHERE application_name=?", [name])
             self._revoke(name)
             self._generations.pop(name, None)
             self._graph_revision = -1
@@ -280,12 +282,6 @@ class Materializer:
             revision = int(self._graph.graph_status().get("source_version", 0))
             self.note_graph_change(revision, effective_at)
 
-    def _open_bindings(self, conn) -> dict[str, tuple[str, str, datetime | None]]:
-        """Current rows of the bindings table: progress_key -> (signature, context_hash, valid_from)."""
-        rows = self._execute(conn, "SELECT progress_key, binding_signature, context_hash, valid_from "
-                                   "FROM materialization_bindings WHERE valid_to IS NULL").fetchall()
-        return {key: (sig, ctx, datetime.fromisoformat(since) if since else None) for key, sig, ctx, since in rows}
-
     def _deployments(self) -> tuple[Deployment, ...]:
         with self._store._own_conn() as conn:
             return tuple(Deployment.from_json(row[0]) for row in self._execute(conn, "SELECT deployment_json FROM materialization_deployments ORDER BY name").fetchall())
@@ -328,47 +324,65 @@ class Materializer:
             with self._store._own_conn() as conn:
                 prior_outputs = dict(self._execute(conn, "SELECT output_ref_uri, progress_key FROM materialization_lineage").fetchall())
                 prior_context = dict(self._execute(conn, "SELECT progress_key, context_hash FROM materialization_lineage").fetchall())
-                open_rows = self._open_bindings(conn)
+                table = self._binding_rows(conn)
                 # Only changes this plan can see: the query cache that the
                 # plan compiled against covers graph revisions up to
                 # ``revision``. A change written after that waits for the
                 # refresh that sees it, or its effective time would be lost.
                 pending = [datetime.fromisoformat(row[0]) for row in self._execute(
                     conn, "SELECT effective_at FROM materialization_graph_changes WHERE graph_revision<=?", [revision]).fetchall()]
-            # When the model changed, the author said when. Bindings that
-            # appear or disappear because of it exist from, or until, that
+            open_rows = {r["key"]: r for r in table if r["valid_to"] is None}
+            # When the model changed, the author said when (default: now).
+            # Bindings that appear or disappear exist from, or until, that
             # time; the earliest pending time covers every change planned now.
             # A bucketed view owns whole buckets, so its boundary is the start
             # of the bucket containing the effective time.
             effective = min(pending) if pending else datetime.now(timezone.utc)
-            every_by_app = {d.name: d.every for d in self._deployments()}
+            deployments = {d.name: d for d in self._deployments()}
             epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
-            boundary = lambda app: (effective if not every_by_app.get(app) else
-                                    epoch + ((effective - epoch) // every_by_app[app]) * every_by_app[app])
-            with self._store._own_conn() as conn:
-                apps_with_rows = {row[0] for row in self._execute(
-                    conn, "SELECT DISTINCT application_name FROM materialization_bindings WHERE valid_to IS NULL").fetchall()}
+            def boundary(app: str) -> datetime:
+                every = deployments[app].every if app in deployments else None
+                return effective if not every else epoch + ((effective - epoch) // every) * every
+            apps_with_rows = {r["app"] for r in open_rows.values()}
             # A binding of an app that already had bindings, appearing now, is
             # a model change: it exists from the effective time. A binding of
             # an app that had none is a deployment: it covers retained history
             # (subject to backfill). A binding that is still here keeps the
             # validity it was given when it appeared.
-            validity = {}
+            current_bindings = []
             for b in dag.bindings:
+                if b.valid_to is not None:
+                    continue   # a failed app's retained historical binding; rebuilt below
                 if b.progress_key in open_rows:
-                    validity[b.progress_key] = open_rows[b.progress_key][2]
-                elif b.application_name in apps_with_rows and pending:
-                    validity[b.progress_key] = boundary(b.application_name)
+                    since = open_rows[b.progress_key]["valid_from"]
+                elif b.application_name in apps_with_rows:
+                    since = boundary(b.application_name)
                 else:
-                    validity[b.progress_key] = None
-            dag = ApplicationGraph([replace(b, valid_from=validity[b.progress_key]) for b in dag.bindings])
+                    since = None
+                current_bindings.append(replace(b, valid_from=since))
+            current = {b.progress_key: b for b in current_bindings}
+            failed_apps = set(self._plan_errors)
+            # Closed bindings stay in the plan over their own interval, so a
+            # late reading before a model change still reaches the result as
+            # the model was then. Those closing now close at the boundary.
+            closing = {key: boundary(row["app"]) for key, row in open_rows.items()
+                       if key not in current and row["app"] not in failed_apps}
+            historical = self._historical(table, closing, current, deployments, failed_apps,
+                                          applications, revision)
+            for b in historical:
+                applications.setdefault(b.signature, self._instance(b.application_name, applications, deployments))
+            try:
+                dag = ApplicationGraph([*current_bindings, *historical])
+            except ValueError as error:
+                self._plan_errors["graph"] = str(error)
+                return
             applications = {b.signature: applications[b.signature] for b in dag.bindings}
             # A stable named output may now have different inputs; a binding's
             # own match row may have changed while its inputs did not. Both can
             # alter historical results. Compare with persisted lineage rather
             # than the old in-memory plan so restart detects this too. A change
             # to other rows of the fleet leaves a per-match binding alone.
-            repair = [b for b in dag.bindings if
+            repair = [b for b in current_bindings if
                       any(p.ref_uri in prior_outputs and prior_outputs[p.ref_uri] != b.progress_key for p in b.outputs.values())
                       or (prior_context.get(b.progress_key) and prior_context[b.progress_key] != b.context_hash)]
             # A context change repairs from the effective time on; results
@@ -376,13 +390,13 @@ class Materializer:
             repair_since = effective if pending else None
             cascade = bool(pending)
             # Materialization-owned provenance is a complete projection of the
-            # current DAG. Publish it only when the projection actually changed:
+            # current plan. Publish it only when the projection actually changed:
             # lineage writes advance the graph's published_version, so publishing
             # on every refresh would self-trigger a perpetual recompile loop.
-            signatures = frozenset(binding.signature for binding in dag.bindings)
+            signatures = frozenset(binding.signature for binding in current_bindings)
             republished = signatures != self._lineage_signatures
             if republished:
-                self._publish_graph_lineage(dag.bindings)
+                self._publish_graph_lineage(current_bindings)
                 self._lineage_signatures = signatures
             # Schedule repair before recording the new context fingerprint.
             # A crash can repeat a repair, but cannot forget that it is needed.
@@ -397,40 +411,35 @@ class Materializer:
                     continue
                 self._revisions.initialise(binding, applications[binding.signature].backfill)
                 with self._store._lock, self._store._write_conn() as conn:
-                    keys = {binding.progress_key} | {prior_outputs[p.ref_uri] for p in binding.outputs.values() if p.ref_uri in prior_outputs}
-                    for key in keys:
-                        self._execute(conn, "DELETE FROM materialization_work WHERE progress_key=?", [key])
+                    self._execute(conn, "DELETE FROM materialization_work WHERE progress_key=?", [binding.progress_key])
                 self._revisions.request_reprocess([binding], window)
             with self._store._lock, self._store._write_conn() as conn:
                 self._revisions.active_bindings = {b.progress_key: b.generation for b in dag.bindings}
                 # Bindings table: close what disappeared (and tombstone its
                 # outputs from the effective time), open what appeared, and
                 # keep a changed context as a closed-and-reopened row.
-                current = {b.progress_key: b for b in dag.bindings}
-                failed_apps = set(self._plan_errors)
                 retired: dict[datetime, list[str]] = {}
-                still_owned = {p.ref_uri for b in dag.bindings for p in b.outputs.values()}
-                for key, (sig, ctx, since) in open_rows.items():
-                    if key in current and current[key].context_hash == ctx:
-                        if current[key].signature != sig:
+                still_owned = {p.ref_uri for b in current_bindings for p in b.outputs.values()}
+                for key, row in open_rows.items():
+                    if key in current and current[key].context_hash == row["context"]:
+                        if current[key].signature != row["signature"]:
                             self._execute(conn, "UPDATE materialization_bindings SET binding_signature=? WHERE progress_key=? AND valid_to IS NULL",
                                           [current[key].signature, key])
                         continue
-                    app_name = self._execute(conn, "SELECT application_name FROM materialization_bindings WHERE progress_key=? AND valid_to IS NULL", [key]).fetchone()[0]
-                    if key not in current and app_name in failed_apps:
+                    if key not in current and row["app"] in failed_apps:
                         continue   # its app failed to compile; keep its bindings open until it recovers
-                    until = boundary(app_name)
+                    until = boundary(row["app"])
                     self._execute(conn, "UPDATE materialization_bindings SET valid_to=? WHERE progress_key=? AND valid_to IS NULL", [until.isoformat(), key])
                     if key not in current:
-                        # Its outputs, from durable lineage, so a restart retires them too.
+                        # Its outputs, from the stored definition, so a restart retires them too.
                         retired.setdefault(until, []).extend(
-                            ref for ref, owner in prior_outputs.items() if owner == key and ref not in still_owned)
-                for b in dag.bindings:
+                            ref for ref, _, _ in row["definition"]["outputs"].values() if ref not in still_owned)
+                for b in current_bindings:
                     row = open_rows.get(b.progress_key)
-                    if row is None or row[1] != b.context_hash:
-                        self._execute(conn, "INSERT INTO materialization_bindings VALUES (?, ?, ?, ?, ?, ?, NULL)",
+                    if row is None or row["context"] != b.context_hash:
+                        self._execute(conn, "INSERT INTO materialization_bindings VALUES (?, ?, ?, ?, ?, ?, NULL, ?)",
                                       [b.progress_key, b.signature, b.application_name, b.context_hash, revision,
-                                       b.valid_from.isoformat() if b.valid_from else None])
+                                       b.valid_from.isoformat() if b.valid_from else None, self._definition(b)])
                 for until, refs in retired.items():
                     self._revisions.retire(refs, until, conn=conn)
                 self._execute(conn, "DELETE FROM materialization_graph_changes WHERE graph_revision<=?", [revision])
@@ -448,7 +457,7 @@ class Materializer:
                     self._execute(conn, f"DELETE FROM materialization_lineage WHERE application_name NOT IN ({marks})", failed)
                 else:
                     self._execute(conn, "DELETE FROM materialization_lineage")
-                for binding in dag.bindings:
+                for binding in current_bindings:
                     rows = [(binding.signature, binding.progress_key, binding.application_name, binding.executable_digest,
                         alias, stream.ref_uri, output_name, output_ref, binding.context_hash)
                         for alias, streams in binding.inputs.items() for stream in streams
@@ -467,6 +476,70 @@ class Materializer:
                     else:
                         conn.executemany("INSERT OR REPLACE INTO materialization_lineage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
             self._dag, self._applications, self._graph_revision = dag, applications, revision
+
+    # ---- bindings as data ----
+
+    @staticmethod
+    def _definition(binding) -> str:
+        """What is needed to rebuild a binding after it leaves the current plan."""
+        return json.dumps({
+            "inputs": {alias: [{**d.__dict__, "properties": {k: list(v) for k, v in d.properties.items()}}
+                               for d in streams] for alias, streams in binding.inputs.items()},
+            "outputs": {name: [port.ref_uri, port.ref_name, port.point_uri] for name, port in binding.outputs.items()},
+            "row": binding.row, "result": list(binding.result),
+        }, sort_keys=True, default=str)
+
+    def _binding_rows(self, conn) -> list[dict[str, Any]]:
+        rows = self._execute(conn, "SELECT progress_key, binding_signature, application_name, context_hash, "
+                                   "valid_from, valid_to, definition FROM materialization_bindings").fetchall()
+        when = lambda text: datetime.fromisoformat(text) if text else None
+        return [{"key": key, "signature": sig, "app": app, "context": ctx, "valid_from": when(since),
+                 "valid_to": when(until), "definition": json.loads(definition)}
+                for key, sig, app, ctx, since, until, definition in rows]
+
+    def _instance(self, app_name: str, applications: dict[str, Any], deployments: dict[str, Deployment]):
+        for binding in self._dag.bindings:
+            if binding.application_name == app_name and binding.signature in applications:
+                return applications[binding.signature]
+        return self._planner.instantiate(deployments[app_name])
+
+    def _historical(self, table, closing, current, deployments, failed_apps, applications, revision) -> list:
+        """Closed bindings of deployed apps, each over its own interval of validity.
+
+        A progress key that is current again is not rebuilt: the current
+        binding covers it. A key closed more than once keeps its latest
+        interval. A failed app keeps whatever its last plan held.
+        """
+        from acquirium.Materialization.models import Binding, OutputPort, StreamDescriptor
+        latest: dict[str, dict[str, Any]] = {}
+        for row in table:
+            until = row["valid_to"] if row["valid_to"] is not None else closing.get(row["key"])
+            if until is None or row["key"] in current or row["app"] not in deployments or row["app"] in failed_apps:
+                continue
+            if row["valid_from"] is not None and row["valid_from"] >= until:
+                continue
+            if row["key"] not in latest or until > latest[row["key"]]["until"]:
+                latest[row["key"]] = {**row, "until": until}
+        rebuilt = []
+        for key, row in latest.items():
+            deployment, definition = deployments[row["app"]], row["definition"]
+            app = self._instance(row["app"], applications, deployments)
+            inputs = {alias: tuple(StreamDescriptor(**{**d, "properties": {k: tuple(v) for k, v in d.get("properties", {}).items()}})
+                                   for d in streams) for alias, streams in definition["inputs"].items()}
+            outputs = {name: OutputPort(ref, ref_name, point, deployment.outputs[name])
+                       for name, (ref, ref_name, point) in definition["outputs"].items() if name in deployment.outputs}
+            if not inputs or not outputs:
+                continue
+            binding = Binding(row["app"], deployment.executable_digest, inputs, outputs,
+                              deployment.lookback, deployment.lookahead, revision, deployment.parameters,
+                              definition["row"], tuple(definition["result"]), every=deployment.every,
+                              custom_window=app.output_window if type(app).output_window is not App.output_window else None,
+                              valid_from=row["valid_from"], valid_to=row["until"])
+            generation = self._generations.setdefault(row["app"], uuid4().hex)
+            rebuilt.append(replace(binding, generation=f"{generation}:{binding.signature}:{binding.context_hash}"))
+        for failed in failed_apps:
+            rebuilt.extend(b for b in self._dag.bindings if b.application_name == failed and b.valid_to is not None)
+        return rebuilt
 
     def _plan_snapshot(self) -> tuple[ApplicationGraph, dict[str, Any]]:
         """Return a coherent plan without serializing transformation execution."""
