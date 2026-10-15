@@ -155,7 +155,10 @@ class Manager:
         self.publication = publication
         # Artifact bytes live under the server data directory; DuckDB stores
         # their digest and experiment provenance, not a second blob copy.
-        self.experiments = ExperimentStore(timeseries_store, base / "experiment_artifacts")
+        self.experiments = ExperimentStore(
+            timeseries_store, base / "experiment_artifacts",
+            graph_store=graph, resolve=self._resolve_experiment_metadata,
+        )
         from acquirium.Materialization.runtime import Materializer
         self.materializer = Materializer(timeseries_store, graph,
             query_resolver=self.resolve_text, record_resolver=self.resolve_record,
@@ -416,6 +419,10 @@ class Manager:
         except Exception as exc:
             self._update_embedding_status("qudt", state="error", error=str(exc))
             logger.warning("Failed to build QUDT embedding index", exc_info=True)
+
+    def _resolve_experiment_metadata(self, text: str, kind: str) -> str | None:
+        hits = self.resolve_text(text, kind=kind, top_k=1, min_score=0.4)
+        return hits[0]["uri"] if hits else None
 
     def resolve_text(
         self,

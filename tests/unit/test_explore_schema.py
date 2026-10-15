@@ -26,7 +26,7 @@ def make_client(result=None):
     client.base_url = "http://test:8000"
     client.graph_version.return_value = 1
     client.compact_uri.side_effect = lambda x: str(x).replace("urn:p#", "p:")
-    client.sparql_query.side_effect = lambda sparql, include_dependencies=True: (
+    client.sparql_query.side_effect = lambda sparql, include_dependencies=True, wait_for_fresh=False: (
         {"columns": ["p", "dt"], "rows": DISCOVERED} if sparql == DISCOVERY_SPARQL
         else (result or {"columns": [], "rows": []}))
     return client

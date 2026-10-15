@@ -8,8 +8,8 @@ The Python client covers all of these; use the raw endpoints when scripting
 against the server directly.
 
 Timestamps are ISO 8601 strings (e.g. `2026-01-01T00:00:00Z`). Errors return
-HTTP 400 with a JSON body `{"detail": "<message>"}`. Unknown drivers and apps
-return 404.
+HTTP 400 with a JSON body `{"detail": "<message>"}`. Unknown drivers, apps,
+and experiment runs return 404.
 
 ---
 
@@ -519,6 +519,47 @@ List the drivers running on this server. Takes no parameters.
 `status` is `running`, `stopped`, or `failed: <error>`.
 
 ---
+
+## Experiments
+
+The experiment endpoints create Studies, declare variables, start runs, and
+record values or stream references. The HTTP API calls a Study a `template`.
+See the [experiment endpoint table](experiments.md#http-api) for the full list
+and the [recording guide](../how-to/record-experiments.md) for Python examples.
+
+`GET /experiments/templates/{template_id}/runs` and
+`GET /experiments/templates/{template_id}/observations` accept `status`,
+`started_after`, `started_before`, and a legacy `metadata` filter encoded as a
+JSON object string. Observation reads also accept `run_id` and `variable_id`.
+
+The shared query builder selects graph nodes first. The Python client passes
+the selected run IDs to these endpoints:
+
+- `POST /experiments/templates/{template_id}/runs/query`
+- `POST /experiments/templates/{template_id}/observations/query`
+
+Example request body:
+
+```json
+{
+  "run_ids": ["saved-run-id"],
+  "status": "succeeded"
+}
+```
+
+Both accept the same lifecycle and legacy metadata filters as their GET forms.
+Observation selection bodies can also include `run_id` and `variable_id`.
+Responses are the corresponding lists of run or observation objects. An empty
+ID list returns an empty list. IDs are scoped to the specified Study.
+
+Time-series observations contain stream references and recorded intervals.
+Fetch the sample values through `/timeseries`; they are not embedded in the
+observation response.
+
+`POST /experiments/metadata/sync` takes `{}` and returns `{"ok": true}` after
+backfilling or repairing the experiment graph view from the SQL ledger. The
+Python interface calls it automatically; applications need not create nodes or
+synchronize the graph themselves.
 
 ## Apps
 

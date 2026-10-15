@@ -29,6 +29,7 @@ from datetime import datetime
 
 from acquirium.Server.config import load_active_config
 from acquirium.Server.manager import Manager
+from acquirium.ExperimentMetadata import EXPERIMENT
 from acquirium.Materialization import App as MaterializationApp
 from acquirium.Materialization.planner import Deployment
 
@@ -85,9 +86,22 @@ class ExperimentStreamAnnotationRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 class ExperimentStreamAnnotationCloseRequest(BaseModel):
     end: datetime
+class ExperimentSelectionRequest(BaseModel):
+    run_ids: list[str]
+    status: str | None = None
+    started_after: datetime | None = None
+    started_before: datetime | None = None
+    metadata: str | None = None
+class ExperimentObservationSelectionRequest(ExperimentSelectionRequest):
+    run_id: str | None = None
+    variable_id: str | None = None
 
 def define_experiment(request: ExperimentTemplateRequest):
     try: return app.state.manager.experiments.define(request.name)
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def sync_experiment_metadata():
+    try: return app.state.manager.experiments.sync_metadata_graph()
     except Exception as error: raise HTTPException(status_code=400, detail=str(error))
 
 def declare_experiment_variable(template_id: str, request: ExperimentVariableRequest):
@@ -102,7 +116,9 @@ def get_experiment_study(identifier: str):
     except KeyError: raise HTTPException(status_code=404, detail="unknown study")
 
 def list_experiment_variables(template_id: str):
-    try: return app.state.manager.experiments.variables(template_id)
+    try:
+        ledger = app.state.manager.experiments
+        return ledger.read_metadata(ledger.variables(template_id), EXPERIMENT.Variable, "variable_id")
     except KeyError: raise HTTPException(status_code=404, detail="unknown study")
 
 def _experiment_metadata_filter(value: str | None) -> dict[str, Any] | None:
@@ -128,19 +144,41 @@ def list_experiments(
     metadata: str | None = None,
 ):
     try:
-        return app.state.manager.experiments.runs(
+        ledger = app.state.manager.experiments
+        items = ledger.runs(
             template_id,
             status=status,
             started_after=started_after,
             started_before=started_before,
             metadata=_experiment_metadata_filter(metadata),
         )
+        return ledger.read_metadata(items, EXPERIMENT.Run, "run_id")
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error))
 
 def get_experiment(run_id: str):
-    try: return app.state.manager.experiments.run(run_id)
+    try:
+        ledger = app.state.manager.experiments
+        return ledger.read_metadata([ledger.run(run_id)], EXPERIMENT.Run, "run_id")[0]
     except KeyError: raise HTTPException(status_code=404, detail="unknown experiment")
+
+def query_experiments(template_id: str, request: ExperimentSelectionRequest):
+    filters = request.model_dump(exclude_none=True)
+    if "metadata" in filters:
+        filters["metadata"] = _experiment_metadata_filter(filters["metadata"])
+    try:
+        ledger = app.state.manager.experiments
+        return ledger.read_metadata(ledger.runs(template_id, **filters), EXPERIMENT.Run, "run_id")
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def query_experiment_observations(template_id: str, request: ExperimentObservationSelectionRequest):
+    filters = request.model_dump(exclude_none=True)
+    if "metadata" in filters:
+        filters["metadata"] = _experiment_metadata_filter(filters["metadata"])
+    try:
+        ledger = app.state.manager.experiments
+        return ledger.read_observation_metadata(ledger.observations(template_id, **filters))
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
 
 def list_experiment_observations(
     template_id: str,
@@ -152,7 +190,8 @@ def list_experiment_observations(
     metadata: str | None = None,
 ):
     try:
-        return app.state.manager.experiments.observations(
+        ledger = app.state.manager.experiments
+        items = ledger.observations(
             template_id,
             run_id=run_id,
             variable_id=variable_id,
@@ -161,6 +200,7 @@ def list_experiment_observations(
             started_before=started_before,
             metadata=_experiment_metadata_filter(metadata),
         )
+        return ledger.read_observation_metadata(items)
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error))
 
@@ -190,8 +230,10 @@ def list_experiment_stream_annotations(
     start: datetime | None = None, end: datetime | None = None,
 ):
     try:
-        return app.state.manager.experiments.stream_annotations(
+        ledger = app.state.manager.experiments
+        items = ledger.stream_annotations(
             run_id=run_id, template_id=template_id, ref_uri=ref_uri, start=start, end=end)
+        return ledger.read_metadata(items, EXPERIMENT.StreamAnnotation, "annotation_id")
     except Exception as error: raise HTTPException(status_code=400, detail=str(error))
 
 async def attach_experiment_file(run_id: str, variable_id: str, request: Request):
@@ -572,13 +614,16 @@ app = FastAPI(title="Acquirium API", version="0.1", lifespan=lifespan)
 # The client facade owns the pleasant Study/Experiment vocabulary. These
 # stable endpoint names stay deliberately storage-oriented and small.
 app.post("/experiments/templates")(define_experiment)
+app.post("/experiments/metadata/sync")(sync_experiment_metadata)
 app.get("/experiments/templates")(list_experiment_studies)
 app.get("/experiments/templates/lookup")(get_experiment_study)
 app.post("/experiments/templates/{template_id}/variables")(declare_experiment_variable)
 app.get("/experiments/templates/{template_id}/variables")(list_experiment_variables)
 app.post("/experiments/templates/{template_id}/runs")(start_experiment)
 app.get("/experiments/templates/{template_id}/runs")(list_experiments)
+app.post("/experiments/templates/{template_id}/runs/query")(query_experiments)
 app.get("/experiments/templates/{template_id}/observations")(list_experiment_observations)
+app.post("/experiments/templates/{template_id}/observations/query")(query_experiment_observations)
 app.get("/experiments/runs/{run_id}")(get_experiment)
 app.post("/experiments/runs/{run_id}/variables/{variable_id}/observations")(observe_experiment_variable)
 app.post("/experiments/runs/{run_id}/stream-annotations")(annotate_experiment_stream)

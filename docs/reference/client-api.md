@@ -99,6 +99,26 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 
 See the [app reference](apps.md) for the transformation class contract.
 
+### Experiments
+
+`acq.study` creates and reopens Studies. Recording creates their graph nodes
+automatically; experiment selections use the same attribute filters as plant
+queries.
+
+| interface | description |
+|---|---|
+| `study.define(name) -> Study` | Create or reopen a Study and load its variable declarations. |
+| `study.get(name_or_id) -> Study` | Reopen an existing Study. |
+| `study.all() -> list[Study]` | List saved Studies with their declarations. |
+| `study.stream_annotations(ref_uri=None, start=None, end=None)` | Find annotated stream intervals across Studies. |
+| `point(uri) -> Point` | Wrap a full plant property URI for a variable declaration. |
+| `resolve(text, *, kind=None, min_score=0.6) -> Point` | Resolve vocabulary text; use plant queries to find property instances. |
+
+Declare variables on a Study, start an Experiment, and save values with
+`record()`. Select saved runs before reading their observations. See the
+[experiment reference](experiments.md) for grouped method tables, return types,
+and metadata rules.
+
 ### Deprecated
 
 | method | description |

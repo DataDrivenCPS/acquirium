@@ -17,8 +17,13 @@ uv sync
 uv run marimo edit ../../docs/tutorials/first-experiment.py
 ```
 
-The notebook records one baseline in separate cells, then two more scenarios
-in a loop. It reopens the Study to compare costs and trajectories.
+A running server keeps the code it started with. After updating Acquirium,
+stop the old server and restart the notebook kernel. A 404 for
+`/experiments/metadata/sync` means the notebook connected to an older server.
+
+The notebook declares variables, records a baseline in separate cells, then
+runs two more scenarios. It reopens the Study, selects saved runs and variables,
+reads power samples, and compares costs and trajectories.
 
 It also shows how to find a site stream and compare it with saved tank-volume
 results. The notebook supplies synthetic measurements for this example.
@@ -41,9 +46,13 @@ The script starts a local Acquirium server and records:
 - operating cost;
 - electrical-power samples.
 
-It prints the Experiment ID, objective, stream URI, and first five samples,
-then stops the server. Data stays in `.data/`. Each execution reuses the Study
-and creates a new run.
+It prints the Experiment ID, objective, stream URI, first five samples, and
+tables of saved baseline runs and power-output variables, then stops the server.
+Data stays in `.data/`. Each execution reuses the Study and creates a new run.
+
+- [Recording guide](../../docs/how-to/record-experiments.md): recipes for saving and reading results.
+- [API reference](../../docs/reference/experiments.md): methods grouped by task.
+- [Experiments explained](../../docs/explanation/experiments.md): Studies, runs, variables, and recordings.
 
 ## Input files
 

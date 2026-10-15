@@ -13,6 +13,25 @@ from acquirium.Storage.duckdb_store import DuckDBStore
 from acquirium.internals.models import compute_ref_uri
 
 
+@pytest.mark.parametrize("status", [404, 400])
+def test_metadata_sync_reports_old_servers_without_hiding_other_errors(status):
+    from requests import HTTPError, Response
+    from acquirium.Client.client import AcquiriumClient
+
+    client = AcquiriumClient()
+    response = Response()
+    response.status_code = status
+    error = HTTPError("metadata sync failed", response=response)
+    client._http.post = Mock(side_effect=error)
+    expected = RuntimeError if status == 404 else HTTPError
+    with pytest.raises(expected) as caught:
+        client.sync_experiment_metadata()
+    if status == 404:
+        assert "Restart the Acquirium server" in str(caught.value)
+    else:
+        assert caught.value is error
+
+
 def test_reusable_template_variables_are_isolated_and_timestamped(tmp_path):
     store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
     try:
@@ -275,13 +294,13 @@ def test_reopened_study_hydrates_variables_and_reads_experiments(study_api):
             "label": "operating cost",
             "role": "output",
             "kind": "scalar",
-            "metadata": {"objective": "minimize", "unit": "USD", "observed": None},
+            "metadata": {"objective": "minimize", "unit": "USD"},
         },
         {
             "label": "electrical power",
             "role": "output",
             "kind": "timeseries",
-            "metadata": {"objective": None, "observed": "urn:plant:tank", "unit": "kW"},
+            "metadata": {"observed": "urn:plant:tank", "unit": "kW"},
         },
     ]
 
@@ -314,14 +333,12 @@ def test_reopened_study_hydrates_variables_and_reads_experiments(study_api):
     )
 
 
-def test_variable_catalog_expands_non_null_metadata_without_overwriting_columns(study_api):
+def test_variable_catalog_expands_metadata_and_omits_deleted_keys(study_api):
     study = study_api.study
     study.input("configuration").json(
         category="simulation",
         objective=None,
         only_null=None,
-        label="metadata label",
-        created_at="metadata timestamp",
     )
     study.output("cost").scalar(unit="USD", objective="minimize")
 
@@ -345,9 +362,7 @@ def test_variable_catalog_expands_non_null_metadata_without_overwriting_columns(
             "unit": "USD",
         },
     ]
-    assert frame["metadata"].to_list()[0]["label"] == "metadata label"
-    assert frame["metadata"].to_list()[0]["created_at"] == "metadata timestamp"
-    assert frame["metadata"].to_list()[0]["only_null"] is None
+    assert "only_null" not in frame["metadata"].to_list()[0]
     assert frame["metadata"].to_list()[1]["objective"] == "minimize"
     assert frame["created_at"].dtype.is_temporal()
 
@@ -583,6 +598,26 @@ def test_http_routes_accept_reference_uri_variable_ids_and_stream_annotations(tm
             json={"value": 42.0},
         )
         assert observed.status_code == 200
+        selected_runs = http.post(
+            f"/experiments/templates/{study['template_id']}/runs/query",
+            json={"run_ids": [run["run_id"]]},
+        )
+        assert selected_runs.status_code == 200
+        assert [item["run_id"] for item in selected_runs.json()] == [run["run_id"]]
+        selected_observations = http.post(
+            f"/experiments/templates/{study['template_id']}/observations/query",
+            json={"run_ids": [run["run_id"]], "variable_id": variable["variable_id"]},
+        )
+        assert selected_observations.status_code == 200
+        assert selected_observations.json()[0]["value"] == 42.0
+        assert http.post(
+            f"/experiments/templates/{study['template_id']}/runs/query",
+            json={"run_ids": []},
+        ).json() == []
+        assert http.post(
+            f"/experiments/templates/{study['template_id']}/observations/query",
+            json={"run_ids": ["missing"]},
+        ).json() == []
         other = ledger.define("other")
         foreign = ledger.declare(other["template_id"], "foreign", "output", "scalar", {})
         for invalid_id, expected_status in (("missing", 404), (foreign["variable_id"], 400)):

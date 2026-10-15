@@ -7,7 +7,7 @@ From examples/flexpse, run:
 
 import marimo
 
-__generated_with = "0.24.2"
+__generated_with = "0.25.1"
 app = marimo.App(width="medium")
 
 
@@ -105,6 +105,7 @@ def _(mo):
 @app.cell
 def _(ac):
     # Plant URIs link the recorded values to the facility model.
+    # Assume we know these for now; we'll discuss how to find these later
     TANK_URI = "urn:flex-pse:api-freeze:tank"
     TANK_VOLUME_URI = "urn:flex-pse:api-freeze:tank-volume"
     TREATMENT_FLOW_URI = "urn:flex-pse:api-freeze:treatment-flow"
@@ -121,7 +122,7 @@ def _(ac):
         media_type="application/json"
     )
     # Scalar inputs: one chosen flow and starting volume per run.
-    # unit describes the value; observed identifies its plant property.
+    # unit resolves to the shared vocabulary; observed identifies a plant property.
     treatment_flow = study.input("treatment flow").scalar(
         unit="M3-PER-HR",
         observed=TREATMENT_FLOW_URI,
@@ -187,14 +188,14 @@ def _(
     study,
     treatment_flow,
 ):
-    # Start a run; the declared handles now record into this Experiment.
-    baseline_experiment = study.start(
-        metadata={
-            "model": "api-freeze",
-            "scenario": "baseline",
-            "notebook_session": notebook_session,
-        }
-    )
+    # Metadata labels help us find this run later.
+    baseline_metadata = {
+        "model": "api-freeze",
+        "scenario": "baseline",
+        "notebook_session": notebook_session,
+    }
+    # The declared handles now record into this Experiment.
+    baseline_experiment = study.start(metadata=baseline_metadata)
     # Snapshot the files before solving; later edits leave these copies intact.
     model_inputs.record(INPUTS / "model.json")
     model_inputs.record(INPUTS / "tariff.json")
@@ -467,11 +468,12 @@ def _(
         ("high throughput / high initial volume", 12.0, 750.0),
     ]
     for scenario, flow_m3_per_hour, tank_volume_m3 in scenarios:
-        scenario_experiment = study.start(metadata={
+        scenario_metadata = {
             "model": "api-freeze",
             "scenario": scenario,
             "notebook_session": notebook_session,
-        })
+        }
+        scenario_experiment = study.start(metadata=scenario_metadata)
         try:
             model_inputs.record(INPUTS / "model.json")
             model_inputs.record(INPUTS / "tariff.json")
@@ -518,6 +520,9 @@ def _(mo):
 
     Reopen the Study by name to load its saved variables, units, and metadata.
     These queries also work from a new client session.
+
+    Use `.where()` to filter runs and variables by metadata. The syntax is
+    the same as plant queries; these selections stay within this Study.
     """)
     return
 
@@ -538,14 +543,109 @@ def _(ac, completed_experiments, mo):
 
 @app.cell
 def _(notebook_session, recorded_study):
-    # Compare only successful runs from this notebook execution.
+    # Select successful runs from this notebook execution.
     current_experiments = recorded_study.experiments.where(
         status="succeeded",
-        metadata={"notebook_session": notebook_session},
+        notebook_session=notebook_session,
     )
     experiment_history = current_experiments.frame()
     experiment_history
     return (current_experiments,)
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    ### Find outputs by unit
+
+    Select the power output with `unit="kW"`. It matches our declaration's
+    `"KiloW"` because both resolve to the same unit. The saved-variable table
+    keeps the unit string used in the declaration.
+    """)
+    return
+
+
+@app.cell
+def _(recorded_study):
+    # Find output declarations by their semantic unit.
+    power_variables = recorded_study.variables.where(role="output", unit="kW")
+    power_variable_table = power_variables.frame()
+    power_variable_table.select("label", "role", "kind", "unit")
+    return (power_variables,)
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    The table above lists variable declarations. Select the baseline run,
+    then its power recordings. Their `.frame()` shows stream references and
+    recorded intervals. `.dataframe()` fetches the samples for one recording.
+
+    This example records one power batch per run. `.latest()` selects that
+    recording; with several batches it would select only the last one.
+    """)
+    return
+
+
+@app.cell
+def _(current_experiments, power_variables):
+    # Choose a variable handle from the filtered declarations.
+    saved_power = power_variables["aggregate electrical power"]
+
+    # Select this notebook's baseline run.
+    baseline_power_runs = current_experiments.where(scenario="baseline")
+    baseline_power_recordings = baseline_power_runs.observations(saved_power)
+    baseline_power_recordings.frame().select(
+        "experiment_id", "ref_uri", "range_start", "range_end"
+    )
+    return (baseline_power_recordings,)
+
+
+@app.cell
+def _(baseline_power_recordings):
+    # Fetch samples within the recording's time range.
+    baseline_power_recording = baseline_power_recordings.latest()
+    baseline_power_samples = baseline_power_recording.dataframe()
+    baseline_power_samples.head()
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    ### Inspect declaration metadata
+
+    Use `.query().include(...).metadata()` to choose graph metadata columns.
+    That table shows the resolved unit URI. Use `.metadata_objects()` for Python
+    dictionaries; include `unit.raw` to read the original unit string too.
+    """)
+    return
+
+
+@app.cell
+def _(power_variables):
+    # A graph metadata table displays the resolved unit URI.
+    power_variable_query = power_variables.query()
+    power_unit_table = power_variable_query.include("unit").metadata()
+    power_unit_table
+    return (power_variable_query,)
+
+
+@app.cell
+def _(power_variable_query):
+    # Read the resolved unit and original string as Python objects.
+    power_unit_objects = power_variable_query.include("unit", "unit.raw").metadata_objects()
+    power_unit_objects
+    return
+
+
+@app.cell
+def _(current_experiments):
+    # Choose descriptive metadata columns from the same run selection.
+    selected_run_query = current_experiments.query()
+    selected_run_metadata = selected_run_query.include("scenario", "model").metadata()
+    selected_run_metadata
+    return
 
 
 @app.cell
@@ -629,20 +729,16 @@ def _(highest_experiment):
 
 
 @app.cell
-def _(ac, current_experiments, plt, recorded_study):
+def _(current_experiments, plt, recorded_study):
     stored_power = recorded_study.variables["aggregate electrical power"]
     power_figure, power_axis = plt.subplots()
 
     experiments_to_plot = current_experiments.all()
     for experiment in experiments_to_plot:
-        observation = experiment.observations(stored_power).latest()
+        power_recording = experiment.observations(stored_power).latest()
 
-        # Read the stream and interval saved in the observation.
-        samples = ac.client.timeseries_df(
-            observation.ref_uri,
-            start=observation.range_start.isoformat(),
-            end=observation.range_end.isoformat(),
-        )
+        # Each run saved one power batch. Read that batch's samples.
+        samples = power_recording.dataframe()
         power_axis.plot(
             samples["ts"],
             samples["value"],
@@ -662,21 +758,13 @@ def _(ac, current_experiments, plt, recorded_study):
 
 
 @app.cell
-def _(TANK_VOLUME_URI, pl, recorded_study):
+def _(TANK_VOLUME_URI, recorded_study):
     # Find variables linked to the tank-volume property.
-    declared_variables = recorded_study.variables.all()
-    tank_variable_rows = []
-    for declared_variable in declared_variables:
-        if declared_variable.metadata.get("observed") == TANK_VOLUME_URI:
-            tank_variable_row = {
-                "variable": declared_variable.label,
-                "role": declared_variable.role,
-                "kind": declared_variable.kind,
-                "plant_property": declared_variable.metadata.get("observed"),
-                "unit": declared_variable.metadata.get("unit"),
-            }
-            tank_variable_rows.append(tank_variable_row)
-    tank_variable_links = pl.DataFrame(tank_variable_rows)
+    tank_variables = recorded_study.variables.where(observed=TANK_VOLUME_URI)
+    tank_variable_table = tank_variables.frame()
+    tank_variable_links = tank_variable_table.select(
+        "label", "role", "kind", "observed", "unit"
+    )
     tank_variable_links
     return
 
@@ -711,27 +799,22 @@ def _(mo):
 @app.cell
 def _(current_experiments):
     # Find the baseline among this session's successful runs.
-    baseline_runs = current_experiments.where(metadata={"scenario": "baseline"})
-    saved_baseline = baseline_runs.all()[0]
+    baseline_runs = current_experiments.where(scenario="baseline")
 
     # Retrieve the tank-volume output recorded for that run.
-    baseline_volume_observation = saved_baseline.observations("tank volume").latest()
+    baseline_volume_observation = baseline_runs.observations("tank volume").latest()
     baseline_volume_observation.as_dict()
     return (baseline_volume_observation,)
 
 
 @app.cell
-def _(ac, baseline_volume_observation):
+def _(baseline_volume_observation):
     # Use this same interval when reading the site measurements.
     comparison_start = baseline_volume_observation.range_start.isoformat()
     comparison_end = baseline_volume_observation.range_end.isoformat()
 
     # Fetch samples from the simulation's saved stream.
-    simulated_volume = ac.client.timeseries_df(
-        baseline_volume_observation.ref_uri,
-        start=comparison_start,
-        end=comparison_end,
-    )
+    simulated_volume = baseline_volume_observation.dataframe()
     simulated_volume.head()
     return comparison_end, comparison_start, simulated_volume
 

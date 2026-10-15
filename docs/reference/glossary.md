@@ -91,6 +91,19 @@ two.
 | narrow | one row per reading, with its point in its own column | `data_alias, point_id, time, value_numeric, ...` |
 
 
+## Experiments
+
+| term | meaning | example |
+|---|---|---|
+| Study | reusable declarations of inputs, outputs, and logs | `acq.study.define("operating-scenarios")` |
+| Experiment | one execution of a Study, with metadata and lifecycle state | `study.start(metadata={"scenario": "baseline"})` |
+| experiment variable | a named recording handle with a role, value type, and metadata | `study.output("cost").scalar(unit="USD")` |
+| experiment observation | one saved value, event, artifact, or stream reference, ordered within its run | `cost.record(12.5)` |
+| stream annotation | an association between a run and an existing stream's time interval | `experiment.annotate_stream(ref_uri, start=t0)` |
+
+Experiment metadata uses the shared attribute registry and `.where()` syntax.
+See the [experiment reference](experiments.md) for the interface and read formats.
+
 ## The platform
 
 | term | meaning | example |

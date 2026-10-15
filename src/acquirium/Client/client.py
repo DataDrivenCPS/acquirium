@@ -279,6 +279,17 @@ class AcquiriumClient:
     # These intentionally thin methods are transport only. The public client
     # turns them into Study/Experiment/Variable objects in Experiments.py.
     def define_experiment(self, name: str) -> dict: return self._experiment_post("/experiments/templates", {"name": name})
+    def sync_experiment_metadata(self) -> dict:
+        try:
+            return self._experiment_post("/experiments/metadata/sync", {})
+        except HTTPError as error:
+            if error.response is not None and error.response.status_code == 404:
+                raise RuntimeError(
+                    f"The server at {self.base_url} does not support experiment metadata. "
+                    "Restart the Acquirium server with the current checkout. "
+                    "Then restart the notebook kernel and rerun its cells."
+                ) from error
+            raise
     def declare_experiment_variable(self, template_id: str, **body: Any) -> dict: return self._experiment_post(f"/experiments/templates/{template_id}/variables", body)
     def list_experiment_studies(self, name: str | None = None) -> list[dict]:
         return self._experiment_get("/experiments/templates", {"name": name})
@@ -288,6 +299,8 @@ class AcquiriumClient:
         return self._experiment_get(f"/experiments/templates/{template_id}/variables")
     def start_experiment(self, template_id: str, metadata: dict | None = None) -> dict: return self._experiment_post(f"/experiments/templates/{template_id}/runs", {"metadata": metadata or {}})
     def list_experiments(self, template_id: str, **filters: Any) -> list[dict]:
+        if "run_ids" in filters:
+            return self._experiment_post(f"/experiments/templates/{template_id}/runs/query", self._experiment_params(filters))
         return self._experiment_get(f"/experiments/templates/{template_id}/runs", self._experiment_params(filters))
     def get_experiment(self, run_id: str) -> dict:
         return self._experiment_get(f"/experiments/runs/{run_id}")
@@ -299,6 +312,8 @@ class AcquiriumClient:
     def list_experiment_stream_annotations(self, **filters: Any) -> list[dict]:
         return self._experiment_get("/experiments/stream-annotations", self._experiment_params(filters))
     def list_experiment_observations(self, template_id: str, **filters: Any) -> list[dict]:
+        if "run_ids" in filters:
+            return self._experiment_post(f"/experiments/templates/{template_id}/observations/query", self._experiment_params(filters))
         return self._experiment_get(f"/experiments/templates/{template_id}/observations", self._experiment_params(filters))
     def finish_experiment(self, run_id: str, failed: bool = False, error: Any = None) -> dict: return self._experiment_post(f"/experiments/runs/{run_id}/{'fail' if failed else 'finish'}", {"error": error})
     def attach_experiment_file(self, run_id: str, variable_id: str, path: str | Path, media_type: str | None = None) -> dict:

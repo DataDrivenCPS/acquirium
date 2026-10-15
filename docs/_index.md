@@ -62,7 +62,7 @@ Tutorials walk through the capabilities of Acquirium. We recommend starting here
 - [Your first driver](tutorials/first-driver.md) — authoring a CSV driver step by step without a plant model
 - [A driver against an existing plant model](tutorials/driver-with-a-plant-model.md) — the same driver with a plant model, binding its streams to the model's points
 - [Your first app](tutorials/first-app.md) — derive a new stream from stored data and watch it stay current
-- [Your first experiment](tutorials/first-experiment.py) — run a notebook that records and compares FlexPSE optimization results
+- [Your first experiment](tutorials/first-experiment.py) — record FlexPSE runs, filter saved metadata, and compare results
 
 The notebooks under [`notebooks/watertap/`](https://github.com/DataDrivenCPS/acquirium/tree/main/notebooks/watertap) are runnable tutorials too: a quick start, the query interface feature by feature, a regulatory-compliance check and a soft sensor.
 
@@ -73,7 +73,7 @@ The notebooks under [`notebooks/watertap/`](https://github.com/DataDrivenCPS/acq
 
 - [Calculate derived streams](how-to/calculate-derived-streams.md) — water-temperature conversion, averages, and alarms
 - [Check, deploy, and repair an app](how-to/check-deploy-apps.md) — dry runs, deployment, reprocessing, and execution controls
-- [Record experiments](how-to/record-experiments.md) — capture inputs, results, events, and tagged ranges of existing streams
+- [Record experiments](how-to/record-experiments.md) — record inputs and results, find runs by metadata, and annotate stream intervals
 - [Run the server](how-to/run-the-server.md) — the server command, startup, Docker
 - [Start from a script](how-to/local-runtime.md) — `aq.init()`, config discovery, and local server ownership
 - [Debugging queries for an unexpected result](how-to/debug-an-empty-query.md) — the five usual causes

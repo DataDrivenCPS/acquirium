@@ -28,7 +28,7 @@ def make_client(resolved=None):
     client = MagicMock()
     client.base_url = "http://test:8000"
     client.graph_version.return_value = 1
-    client.sparql_query.side_effect = lambda sparql, include_dependencies=True: (
+    client.sparql_query.side_effect = lambda sparql, include_dependencies=True, wait_for_fresh=False: (
         {"columns": ["p"], "rows": [[p] for p in PREDS]} if sparql == DISCOVERY_SPARQL
         else {"columns": [], "rows": []})
     client.resolve.side_effect = lambda record, min_score=0.4: {
@@ -234,7 +234,7 @@ class TestPathsAsColumnNames:
         q = Query(client=client).entity(CLS_A, alias="ro").include(a.product_info.year, a.tags)
         assert [n for _, n, _ in q.query_graph.selects] == ["product_info.year", "tags"]
         assert q.drop(a.tags).query_graph.selects == ((0, "product_info.year", False),)
-        client.sparql_query.side_effect = lambda sparql, include_dependencies=True: (
+        client.sparql_query.side_effect = lambda sparql, include_dependencies=True, wait_for_fresh=False: (
             {"columns": ["p"], "rows": [[p] for p in PREDS]} if sparql == DISCOVERY_SPARQL
             else {"columns": ["v0"], "rows": []})
         assert q.options(a.last_cleaned).columns == ["last_cleaned", "count"]

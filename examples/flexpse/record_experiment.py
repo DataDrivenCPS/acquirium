@@ -41,9 +41,8 @@ electrical_power = study.output("aggregate electrical power").timeseries(
 solver_events = study.log("solver events")
 
 # --- Acquirium: start this experiment and snapshot its inputs ----------------
-experiment = study.start(
-    metadata={"model": "api-freeze", "scenario": "baseline"}
-)
+run_metadata = {"model": "api-freeze", "scenario": "baseline"}
+experiment = study.start(metadata=run_metadata)
 try:
     model_inputs.record(INPUTS / "model.json")
     model_inputs.record(INPUTS / "tariff.json")
@@ -96,9 +95,18 @@ except Exception as error:
 # --- Acquirium: read back the time-series result -----------------------------
 stored_power = recorded_power.dataframe()
 
+# --- Acquirium: find saved runs and output declarations ----------------------
+baseline_runs = study.experiments.where(status="succeeded", scenario="baseline")
+baseline_history = baseline_runs.frame()
+# kW matches the KiloW declaration through the shared unit resolver.
+power_variables = study.variables.where(role="output", unit="kW")
+power_variable_table = power_variables.frame()
+
 print(f"experiment: {experiment.run_id}")
 print(f"aggregate operating cost: {objective:.2f} USD")
 print(f"electrical power: {recorded_power.ref_uri}")
 print(stored_power.head())
+print(baseline_history.select("experiment_id", "status"))
+print(power_variable_table.select("label", "unit"))
 
 aq.shutdown()

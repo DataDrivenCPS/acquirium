@@ -52,7 +52,7 @@ def make_client(predicates=PREDS, responder=None):
     client.graph_version.return_value = 7
     client.compact_uri.side_effect = lambda x: str(x).rsplit("#", 1)[-1]
 
-    def default(sparql, include_dependencies=True):
+    def default(sparql, include_dependencies=True, wait_for_fresh=False):
         if sparql == DISCOVERY_SPARQL:
             return {"columns": ["p"], "rows": [[p] for p in predicates]}
         if responder is not None:
@@ -126,7 +126,7 @@ class TestRegistry:
         assert "last_cleaned" in r and "tags" in r and "product_info.year" in r
         Registry(client)["tags.0"]
         assert client.sparql_query.call_count == 1
-        client.sparql_query.assert_called_with(DISCOVERY_SPARQL, include_dependencies=False)
+        client.sparql_query.assert_called_with(DISCOVERY_SPARQL, include_dependencies=False, wait_for_fresh=True)
         client.graph_version.return_value = 8
         Registry(client)["tags.0"]
         assert client.sparql_query.call_count == 2

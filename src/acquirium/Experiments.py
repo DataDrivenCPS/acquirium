@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
+import logging
 import warnings
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,10 @@ from uuid import uuid4
 from dateutil import parser as dtparser
 import polars as pl
 from acquirium.internals.models import compute_ref_uri
+from acquirium.ExperimentMetadata import (
+    EXPERIMENT, ExperimentMetadataGraph, annotation_uri, experiment_query,
+    matched_ids, metadata_values, records_frame, run_uri, saved_metadata, study_uri, variable_uri,
+)
 
 UTC = timezone.utc
 
@@ -35,8 +40,10 @@ def _metadata_matches(actual: dict[str, Any], expected: dict[str, Any] | None) -
 
 class ExperimentStore:
     """SQL persistence behind the manager's intentionally small HTTP API."""
-    def __init__(self, store: Any, artifact_dir: Path) -> None:
+    def __init__(self, store: Any, artifact_dir: Path, *, graph_store=None, resolve=None) -> None:
         self.store, self.artifact_dir = store, artifact_dir
+        self.metadata_graph = ExperimentMetadataGraph(graph_store, resolve) if graph_store is not None else None
+        self._graph_dirty = self.metadata_graph is not None
         artifact_dir.mkdir(parents=True, exist_ok=True)
         # Keep the experiment ledger beside canonical time-series storage.  The
         # ledger stores small provenance records; time-series samples continue
@@ -51,6 +58,110 @@ class ExperimentStore:
             self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_runs_template_idx ON experiment_runs(template_id, status, started_at)")
             self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_observations_variable_idx ON experiment_observations(variable_id, run_id, sequence)")
             self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_observations_ref_idx ON experiment_observations(ref_uri, range_start, range_end)")
+
+    def _prepare_metadata(self, uri, metadata, *, variable=False):
+        metadata = metadata_values(metadata)
+        if self.metadata_graph is not None:
+            self.metadata_graph.validate(uri, metadata, variable=variable)
+        return metadata
+
+    @staticmethod
+    def _study_record(item):
+        return (study_uri(item["template_id"]), EXPERIMENT.Study,
+                {"study_id": item["template_id"], "label": item["name"], "created_at": item["created_at"]}, {})
+
+    @staticmethod
+    def _variable_record(template_id, item):
+        fields = {key: item[key] for key in ("variable_id", "label", "role", "kind", "created_at")}
+        fields["study_id"] = template_id
+        return variable_uri(item["variable_id"]), EXPERIMENT.Variable, fields, item["metadata"]
+
+    @staticmethod
+    def _run_record(item):
+        fields = {key: item.get(key) for key in ("run_id", "status", "started_at", "finished_at")}
+        fields["study_id"] = item["template_id"]
+        return run_uri(item["run_id"]), EXPERIMENT.Run, fields, item["metadata"]
+
+    @staticmethod
+    def _annotation_record(item):
+        fields = {key: item.get(key) for key in ("annotation_id", "run_id", "ref_uri", "range_start", "range_end", "created_at")}
+        fields["study_id"] = item["template_id"]
+        return annotation_uri(item["annotation_id"]), EXPERIMENT.StreamAnnotation, fields, item["metadata"]
+
+    def _publish_metadata(self, record):
+        if self.metadata_graph is None:
+            return
+        with self.store._lock:
+            try:
+                if self._graph_dirty:
+                    self._rebuild_metadata_graph()
+                    return
+                # A concurrent finish/close can commit before this publisher
+                # acquires the lock. Publish the latest mutable lifecycle state.
+                if record[1] == EXPERIMENT.Run:
+                    record = self._run_record(self.run(record[2]["run_id"]))
+                elif record[1] == EXPERIMENT.StreamAnnotation:
+                    for item in self.stream_annotations(run_id=record[2]["run_id"]):
+                        if item["annotation_id"] == record[2]["annotation_id"]:
+                            record = self._annotation_record(item)
+                            break
+                self.metadata_graph.upsert(record)
+            except Exception:
+                # The SQL commit is durable. Repair before the next query.
+                self._graph_dirty = True
+                logging.getLogger(__name__).exception("Experiment graph update deferred; SQL record retained")
+
+    def _rebuild_metadata_graph(self):
+        """Rebuild while the caller holds the SQL writer lock."""
+        records = []
+        for study in self.studies():
+            template_id = study["template_id"]
+            records.append(self._study_record(study))
+            for variable in self.variables(template_id):
+                records.append(self._variable_record(template_id, variable))
+            for run in self.runs(template_id):
+                records.append(self._run_record(run))
+        for annotation in self.stream_annotations():
+            records.append(self._annotation_record(annotation))
+        self.metadata_graph.replace(records)
+        self._graph_dirty = False
+
+    def sync_metadata_graph(self):
+        """Backfill existing SQL records and repair interrupted graph updates."""
+        if self.metadata_graph is None:
+            raise RuntimeError("experiment metadata queries require a graph backend")
+        with self.store._lock:
+            if self._graph_dirty:
+                self._rebuild_metadata_graph()
+        return {"ok": True}
+
+    def read_metadata(self, items, cls, id_field):
+        """Hydrate HTTP records from shared graph objects in one batch per kind.
+
+        Storage-only callers can still inspect SQL snapshots. A configured
+        graph backend must be repaired before reads; failures are not hidden by
+        returning an older SQL metadata snapshot.
+        """
+        if not items or self.metadata_graph is None:
+            return items
+        self.sync_metadata_graph()
+        metadata = self.metadata_graph.read(cls, id_field, [item[id_field] for item in items])
+        return [
+            {**item, "metadata": saved_metadata(metadata[item[id_field]], item["metadata"])}
+            for item in items
+        ]
+
+    def read_observation_metadata(self, items):
+        if not items or self.metadata_graph is None:
+            return items
+        self.sync_metadata_graph()
+        runs = self.metadata_graph.read(EXPERIMENT.Run, "run_id", [item["experiment_id"] for item in items])
+        variables = self.metadata_graph.read(EXPERIMENT.Variable, "variable_id", [item["variable_id"] for item in items])
+        return [
+            {**item, "experiment_metadata": saved_metadata(runs[item["experiment_id"]], item["experiment_metadata"]),
+             "variable_metadata": saved_metadata(variables[item["variable_id"]], item["variable_metadata"])}
+            for item in items
+        ]
 
     @staticmethod
     def _execute(conn: Any, statement: str, parameters: list[Any] | None = None):
@@ -88,26 +199,36 @@ class ExperimentStore:
             if row: return {"template_id": row[0], "name": name, "created_at": row[1]}
             item = {"template_id": str(uuid4()), "name": name, "created_at": _now()}
             self._execute(conn, "INSERT INTO experiment_templates VALUES (?, ?, ?)", [item["template_id"], item["name"], _database_timestamp(item["created_at"])])
-            return item
+        self._publish_metadata(self._study_record(item))
+        return item
     def declare(self, template_id: str, label: str, role: str, kind: str, metadata: dict[str, Any]) -> dict[str, Any]:
         if not label.strip() or role not in {"input", "output", "annotation"}: raise ValueError("a non-empty label and valid role are required")
+        metadata = metadata_values(metadata)
         with self.store._lock, self.store._write_conn() as conn:
             row = self._execute(conn, "SELECT variable_id, role, kind, metadata_json, created_at FROM experiment_variables WHERE template_id=? AND label=?", [template_id, label]).fetchone()
             if row:
                 # A label cannot silently change shape: an old experiment must
                 # remain interpretable after the script evolves.
-                if (row[1], row[2], row[3]) != (role, kind, _json(metadata)): raise ValueError(f"variable {label!r} was already declared differently")
+                previous = _json(metadata_values(json.loads(row[3])))
+                if (row[1], row[2], previous) != (role, kind, _json(metadata)): raise ValueError(f"variable {label!r} was already declared differently")
                 return {"variable_id": row[0], "label": label, "role": role, "kind": kind, "metadata": metadata, "created_at": timestamp(row[4]), "created": False}
             # Study variables use the same source/name identity as streams.
             variable_id, created_at = str(compute_ref_uri(f"study/{template_id}", label)), _now()
+            metadata = self._prepare_metadata(variable_id, metadata, variable=True)
             self._execute(conn, "INSERT INTO experiment_variables VALUES (?, ?, ?, ?, ?, ?, ?)", [variable_id, template_id, label, role, kind, _json(metadata), _database_timestamp(created_at)])
-            return {"variable_id": variable_id, "label": label, "role": role, "kind": kind, "metadata": metadata, "created_at": created_at, "created": True}
+            item = {"variable_id": variable_id, "label": label, "role": role, "kind": kind, "metadata": metadata, "created_at": created_at, "created": True}
+        self._publish_metadata(self._variable_record(template_id, item))
+        return item
     def start(self, template_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
         # Metadata belongs to this execution, while declarations belong to the
         # reusable study. This is what lets a parameter sweep share variables.
         run = {"run_id": str(uuid4()), "template_id": template_id, "status": "running", "metadata": metadata, "started_at": _now()}
+        run["metadata"] = self._prepare_metadata(run_uri(run["run_id"]), metadata)
         with self.store._lock, self.store._write_conn() as conn:
-            self._execute(conn, "INSERT INTO experiment_runs (run_id,template_id,status,metadata_json,started_at) VALUES (?,?,?,?,?)", [run["run_id"], template_id, "running", _json(metadata), _database_timestamp(run["started_at"])])
+            if self._execute(conn, "SELECT 1 FROM experiment_templates WHERE template_id=?", [template_id]).fetchone() is None:
+                raise KeyError(template_id)
+            self._execute(conn, "INSERT INTO experiment_runs (run_id,template_id,status,metadata_json,started_at) VALUES (?,?,?,?,?)", [run["run_id"], template_id, "running", _json(run["metadata"]), _database_timestamp(run["started_at"])])
+        self._publish_metadata(self._run_record(run))
         return run
     def observe(self, run_id: str, variable_id: str, *, value: Any = None, occurred_at: datetime | None = None, artifact_digest: str | None = None, ref_uri: str | None = None, interval: tuple[datetime,datetime] | None = None) -> dict[str, Any]:
         with self.store._lock, self.store._write_conn() as conn:
@@ -122,6 +243,7 @@ class ExperimentStore:
         with self.store._lock, self.store._write_conn() as conn:
             self._active(conn, run_id)
             finished = _now(); self._execute(conn, "UPDATE experiment_runs SET status=?, finished_at=?, error_json=? WHERE run_id=?", [status, _database_timestamp(finished), _json(error) if error else None, run_id])
+        self._publish_metadata(self._run_record(self.run(run_id)))
         return {"run_id": run_id, "status": status, "finished_at": finished}
     def attach_file(self, run_id: str, variable_id: str, filename: str, media_type: str | None, data: bytes) -> dict[str, Any]:
         digest = sha256(data).hexdigest(); target = self.artifact_dir / digest
@@ -145,6 +267,7 @@ class ExperimentStore:
         metadata = {} if metadata is None else metadata
         if not isinstance(metadata, dict):
             raise ValueError("annotation metadata must be a JSON object")
+        metadata = self._prepare_metadata(annotation_uri(run_id), metadata)
         metadata_json = json.dumps(metadata, sort_keys=True, allow_nan=False)
         with self.store._lock, self.store._write_conn() as conn:
             # An annotation can document a trial after its run has ended. It
@@ -160,9 +283,11 @@ class ExperimentStore:
                 """, [run_id, sequence, _database_timestamp(recorded), metadata_json, ref_uri,
                       _database_timestamp(start_at),
                       _database_timestamp(end_at) if end_at is not None else None])
-        return {"annotation_id": f"{run_id}:{sequence}", "run_id": run_id,
+        item = {"annotation_id": f"{run_id}:{sequence}", "run_id": run_id,
                 "template_id": row[0], "ref_uri": ref_uri, "range_start": start_at,
                 "range_end": end_at, "metadata": metadata, "created_at": recorded}
+        self._publish_metadata(self._annotation_record(item))
+        return item
 
     def close_stream_annotation(self, annotation_id: str, end: datetime | str) -> dict[str, Any]:
         """Set the end of an open interval, including after a run finishes."""
@@ -182,6 +307,10 @@ class ExperimentStore:
             if end_at < timestamp(row[0]):
                 raise ValueError("annotation end must be at or after start")
             self._execute(conn, "UPDATE experiment_observations SET range_end=? WHERE run_id=? AND sequence=?", [_database_timestamp(end_at), run_id, int(sequence_text)])
+        for item in self.stream_annotations(run_id=run_id):
+            if item["annotation_id"] == annotation_id:
+                self._publish_metadata(self._annotation_record(item))
+                break
         return {"annotation_id": annotation_id, "range_end": end_at}
 
     def stream_annotations(self, *, run_id: str | None = None, template_id: str | None = None,
@@ -282,9 +411,15 @@ class ExperimentStore:
         started_after: datetime | None = None,
         started_before: datetime | None = None,
         metadata: dict[str, Any] | None = None,
+        run_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
+        if run_ids == []:
+            return []
         clauses = ["template_id=?"]
         parameters: list[Any] = [template_id]
+        if run_ids is not None:
+            clauses.append(f"run_id IN ({','.join('?' for _ in run_ids)})")
+            parameters.extend(run_ids)
         for condition, value in (
             ("status=?", status),
             ("started_at>=?", started_after),
@@ -343,9 +478,15 @@ class ExperimentStore:
         started_after: datetime | None = None,
         started_before: datetime | None = None,
         metadata: dict[str, Any] | None = None,
+        run_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
+        if run_ids == []:
+            return []
         clauses = ["r.template_id=?"]
         parameters: list[Any] = [template_id]
+        if run_ids is not None:
+            clauses.append(f"r.run_id IN ({','.join('?' for _ in run_ids)})")
+            parameters.extend(run_ids)
         for condition, value in (
             ("r.run_id=?", run_id),
             ("o.variable_id=?", variable_id),
@@ -555,6 +696,10 @@ class ExperimentVariable:
         self.metadata = dict(metadata or {})
         self.created_at = timestamp(created_at) if created_at is not None else None
     @property
+    def uri(self) -> str:
+        return variable_uri(self.variable_id)
+
+    @property
     def run_id(self) -> str:
         if self.study._experiment is None: raise RuntimeError("start an experiment before mutating variables")
         return self.study._experiment.run_id
@@ -675,6 +820,10 @@ class Experiment:
         self.output = ExperimentOutputs(self)
 
     @property
+    def uri(self) -> str:
+        return run_uri(self.run_id)
+
+    @property
     def experiment_id(self) -> str:
         return self.run_id
 
@@ -777,17 +926,29 @@ class VariableCollection:
 
 class VariableCatalog:
     """All persisted variable declarations for a Study, including metadata."""
-    def __init__(self, study: "Study", variables: list[ExperimentVariable] | None = None):
+    def __init__(self, study: "Study", variables: list[ExperimentVariable] | None = None, *, query=None, filters=None):
         self.study = study
         self._selection = variables
+        self._query = query
+        self._filters = filters or {}
 
     def _items(self) -> list[ExperimentVariable]:
-        if self._selection is not None:
-            return list(self._selection)
-        variables = [
+        selected_ids = None
+        if self._query is not None:
+            selected_ids = matched_ids(self.query())
+            for item in self.study.client.list_experiment_variables(self.study.study_id):
+                if item["label"] not in self.study._collections[item["role"]]:
+                    self.study._collections[item["role"]]._add(item)
+        variables = self._selection if self._selection is not None else [
             variable
             for collection in self.study._collections.values()
             for variable in collection.values()
+        ]
+        if selected_ids is not None:
+            variables = [variable for variable in variables if variable.uri in selected_ids]
+        variables = [
+            variable for variable in variables
+            if all(getattr(variable, key) == value for key, value in self._filters.items())
         ]
         return sorted(
             variables,
@@ -826,62 +987,92 @@ class VariableCatalog:
     def all(self) -> list[ExperimentVariable]:
         return self._items()
 
-    def where(self, *, role: str | None = None, kind: str | None = None) -> "VariableCatalog":
-        return VariableCatalog(
-            self.study,
-            [
-                variable
-                for variable in self._items()
-                if (role is None or variable.role == role)
-                and (kind is None or variable.kind == kind)
-            ],
-        )
+    def query(self):
+        """Return PR #120's query builder for this Study's variable nodes."""
+        if self._query is None:
+            query = experiment_query(self.study, variable=True)
+        else:
+            self.study.client.sync_experiment_metadata()
+            query = self._query._with_graph(self._query.query_graph)
+        if self._filters:
+            query = query.where(**self._filters)
+        if self._selection:
+            query = query.where(variable_id=[variable.variable_id for variable in self._selection])
+        return query
+
+    def where(self, *expressions, role: str | None = None, kind: str | None = None, **attrs) -> "VariableCatalog":
+        filters = dict(self._filters)
+        if role is not None:
+            filters["role"] = role
+        if kind is not None:
+            filters["kind"] = kind
+        query = self._query
+        if expressions or attrs:
+            if query is None:
+                query = experiment_query(self.study, variable=True)
+            else:
+                self.study.client.sync_experiment_metadata()
+                query = query._with_graph(query.query_graph)
+            query = query.where(*expressions, **attrs)
+        return VariableCatalog(self.study, self._selection, query=query, filters=filters)
 
     def frame(self) -> pl.DataFrame:
         variables = self._items()
-        if not variables:
-            return pl.DataFrame()
-
-        base_columns = {
-            "variable_id", "label", "role", "kind", "metadata", "created_at",
-        }
+        base_columns = {"variable_id", "label", "role", "kind", "metadata", "created_at"}
         metadata_columns = sorted({
-            key
-            for variable in variables
-            for key, value in variable.metadata.items()
-            if value is not None and key not in base_columns
+            key for variable in variables for key in variable.metadata
+            if key not in base_columns
         })
-        return pl.from_dicts(
-            [
-                {
-                    "variable_id": variable.variable_id,
-                    "label": variable.label,
-                    "role": variable.role,
-                    "kind": variable.kind,
-                    "metadata": variable.metadata,
-                    "created_at": variable.created_at,
-                    **{key: variable.metadata.get(key) for key in metadata_columns},
-                }
-                for variable in variables
-            ],
-            strict=False,
-            infer_schema_length=None,
-        )
+        items = []
+        for variable in variables:
+            item = {
+                "variable_id": variable.variable_id, "label": variable.label,
+                "role": variable.role, "kind": variable.kind,
+                "metadata": variable.metadata, "created_at": variable.created_at,
+            }
+            for key in metadata_columns:
+                item[key] = variable.metadata.get(key)
+            items.append(item)
+        return records_frame(items)
 
 
 class ExperimentCollection:
     """A lazily filtered selection of a Study's Experiments."""
-    def __init__(self, study: "Study", **filters: Any):
+    def __init__(self, study: "Study", *, query=None, **filters: Any):
         self.study = study
         self._filters = filters
+        self._query = query
+
+    def query(self):
+        """Return a native metadata query, scoped to this Study and selection."""
+        if self._query is None:
+            query = experiment_query(self.study)
+        else:
+            self.study.client.sync_experiment_metadata()
+            query = self._query._with_graph(self._query.query_graph)
+        attrs = {}
+        if self._filters.get("status") is not None:
+            attrs["status"] = self._filters["status"]
+        if self._filters.get("metadata"):
+            attrs.update(self._filters["metadata"])
+        if attrs:
+            query = query.where(**attrs)
+        from acquirium.Client.explore.expr import AttrProxy
+        attr = AttrProxy()
+        if self._filters.get("started_after") is not None:
+            query = query.where(attr.started_at >= timestamp(self._filters["started_after"]))
+        if self._filters.get("started_before") is not None:
+            query = query.where(attr.started_at < timestamp(self._filters["started_before"]))
+        return query
 
     def where(
         self,
-        *,
+        *expressions,
         status: str | None = None,
         started_after: datetime | None = None,
         started_before: datetime | None = None,
         metadata: dict[str, Any] | None = None,
+        **attrs: Any,
     ) -> "ExperimentCollection":
         filters = dict(self._filters)
         for key, value in {
@@ -893,17 +1084,36 @@ class ExperimentCollection:
                 filters[key] = value
         if metadata is not None:
             filters["metadata"] = {**filters.get("metadata", {}), **metadata}
-        return ExperimentCollection(self.study, **filters)
+        query = self._query
+        if expressions or attrs:
+            if query is None:
+                query = experiment_query(self.study)
+            else:
+                self.study.client.sync_experiment_metadata()
+                query = query._with_graph(query.query_graph)
+            query = query.where(*expressions, **attrs)
+        return ExperimentCollection(self.study, query=query, **filters)
+
+    def _selected_run_ids(self):
+        if self._query is None:
+            return None
+        uris = matched_ids(self.query())
+        prefix = str(EXPERIMENT["run/"])
+        return {uri[len(prefix):] for uri in uris if uri.startswith(prefix)}
 
     def all(self) -> list[Experiment]:
+        selected_ids = self._selected_run_ids()
+        filters = dict(self._filters)
+        if selected_ids is not None:
+            filters["run_ids"] = sorted(selected_ids)
         return [
             Experiment(self.study, item)
-            for item in self.study.client.list_experiments(self.study.study_id, **self._filters)
+            for item in self.study.client.list_experiments(self.study.study_id, **filters)
         ]
 
     def frame(self) -> pl.DataFrame:
         items = [experiment.as_dict() for experiment in self.all()]
-        return pl.from_dicts(items, strict=False) if items else pl.DataFrame()
+        return records_frame(items)
 
     def get(self, experiment_id: str) -> Experiment:
         item = self.study.client.get_experiment(experiment_id)
@@ -912,7 +1122,7 @@ class ExperimentCollection:
         return Experiment(self.study, item)
 
     def observations(self, variable: ExperimentVariable | str | None = None) -> "ObservationCollection":
-        return ObservationCollection(self.study, variable=variable, **self._filters)
+        return ObservationCollection(self.study, variable=variable, selection=self, **self._filters)
 
 
 class ObservationCollection:
@@ -923,6 +1133,7 @@ class ObservationCollection:
         *,
         run_id: str | None = None,
         variable: ExperimentVariable | str | None = None,
+        selection: ExperimentCollection | None = None,
         **experiment_filters: Any,
     ):
         self.study = study
@@ -933,13 +1144,20 @@ class ObservationCollection:
             raise ValueError("variable belongs to a different study")
         self.variable = variable
         self.experiment_filters = experiment_filters
+        self.selection = selection
 
     def _rows(self) -> list[dict[str, Any]]:
+        selected_ids = self.selection._selected_run_ids() if self.selection is not None else None
+        if selected_ids == set():
+            return []
+        filters = dict(self.experiment_filters)
+        if selected_ids is not None:
+            filters["run_ids"] = sorted(selected_ids)
         return self.study.client.list_experiment_observations(
             self.study.study_id,
             run_id=self.run_id,
             variable_id=self.variable.variable_id if self.variable else None,
-            **self.experiment_filters,
+            **filters,
         )
 
     def all(self) -> list[Observation]:
@@ -976,18 +1194,7 @@ class ObservationCollection:
         return observations
 
     def frame(self) -> pl.DataFrame:
-        items = [observation.as_dict() for observation in self.all()]
-        if not items:
-            return pl.DataFrame()
-        columns = list(items[0])
-        values = [item.pop("value") for item in items]
-        value_types = {type(value) for value in values if value is not None}
-        # Inference can coerce scalars into structs or discard fields. Keep
-        # structured/mixed values intact, and retain native scalar columns for
-        # selections on which Polars arithmetic and string operations are useful.
-        native_scalar = len(value_types) <= 1 and value_types <= {bool, int, float, str}
-        value_column = pl.Series("value", values) if native_scalar else pl.Series("value", values, dtype=pl.Object)
-        return pl.from_dicts(items, strict=False, infer_schema_length=None).with_columns(value_column).select(columns)
+        return records_frame([observation.as_dict() for observation in self.all()])
 
     def latest(self) -> Observation:
         observations = self.all()
@@ -1009,6 +1216,10 @@ class Study:
             self._collections[variable["role"]]._add(variable)
         self.variables = VariableCatalog(self)
         self.experiments = ExperimentCollection(self)
+    @property
+    def uri(self) -> str:
+        return study_uri(self.study_id)
+
     def start(self, metadata: dict | None = None) -> Experiment:
         # Variable objects deliberately route through one active experiment;
         # nested/concurrent experiments on the same Study are not ambiguous.
@@ -1041,6 +1252,7 @@ class StudyService:
     """Top-level `ac.study` entry point; `define` is idempotent by study name."""
     def __init__(self, ac: Any): self.ac = ac
     def _hydrate(self, item: dict[str, Any]) -> Study:
+        self.ac.client.sync_experiment_metadata()
         variables = self.ac.client.list_experiment_variables(item["template_id"])
         return Study(self.ac, item, variables)
     def define(self, name: str) -> Study:

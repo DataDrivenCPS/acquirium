@@ -14,7 +14,8 @@ uv run python record_experiment.py
 ```
 
 For a guided notebook that records and compares several scenarios, run from
-the same directory:
+the same directory. It also shows how to find saved runs and variables with
+the shared metadata filters:
 
 ```bash
 uv run marimo edit ../../docs/tutorials/first-experiment.py

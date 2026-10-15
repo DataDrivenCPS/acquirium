@@ -17,7 +17,7 @@ def make_client(result):
     client.base_url = "http://test:8000"
     client.graph_version.return_value = 1
     client.compact_uri.side_effect = lambda x: str(x).replace("urn:p#", "p:")
-    client.sparql_query.side_effect = lambda sparql, include_dependencies=True: (
+    client.sparql_query.side_effect = lambda sparql, include_dependencies=True, wait_for_fresh=False: (
         {"columns": ["p", "dt"], "rows": PREDS} if sparql == DISCOVERY_SPARQL else result)
     return client
 
@@ -69,7 +69,7 @@ class TestMetadataDict:
                "datatypes": [["iri", None, None], ["iri", XSD + "integer", None]]}
         preds = [[f"{ATTR_NS}settings.mode", XSD + "string"], [f"{ATTR_NS}settings.duration", XSD + "integer"]]
         client = make_client(res)
-        client.sparql_query.side_effect = lambda sparql, include_dependencies=True: (
+        client.sparql_query.side_effect = lambda sparql, include_dependencies=True, wait_for_fresh=False: (
             {"columns": ["p", "dt"], "rows": preds} if sparql == DISCOVERY_SPARQL else res)
         q = Query(client=client).entity(CLS_A, alias="point").include("settings")
         assert q.metadata()["point.settings"].to_list()[0] == {"duration": None, "mode": "baseline"}  # table: shared schema

@@ -19,7 +19,7 @@ def make_client(lookup):
     client.graph_version.return_value = 1
     client.compact_uri.side_effect = lambda x: str(x).replace("urn:p#", "p:")
 
-    def responder(sparql, include_dependencies=True):
+    def responder(sparql, include_dependencies=True, wait_for_fresh=False):
         if sparql == DISCOVERY_SPARQL:
             return {"columns": ["p", "dt"], "rows": PREDS}
         if sparql.startswith("SELECT ?v ?opt"):

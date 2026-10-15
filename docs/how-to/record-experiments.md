@@ -3,6 +3,9 @@
 Record a script's inputs, outputs, and events as an Experiment. For a runnable
 example, see [Your first experiment](../tutorials/first-experiment.py).
 
+Declare variables, record a run, then select saved runs and read their results.
+The [API reference](../reference/experiments.md) groups the available methods by task.
+
 ## Wrap an analysis in an experiment
 
 Connect to your Acquirium server, then declare the values you want to record.
@@ -33,8 +36,12 @@ configurations = [
 ]
 
 for config in configurations:
-    # Acquirium: start a run and save its inputs.
-    experiment = study.start(metadata={"scenario": config["name"]})
+    # Metadata makes runs searchable; record() saves the calculation's inputs.
+    run_metadata = {
+        "scenario": config["name"],
+        "settings": {"flow_m3_per_hour": config["flow_m3_per_hour"]},
+    }
+    experiment = study.start(metadata=run_metadata)
     try:
         configuration.record(config)
 
@@ -53,6 +60,12 @@ for config in configurations:
 
 Variable handles write to the Study object's active Experiment. Each object
 allows one active run. Finished and failed runs reject further variable writes.
+
+Descriptive metadata uses the same attributes as plant queries. Unit strings
+such as `"USD"` or `"kW"` must resolve to known units; full unit URIs also work.
+Use simple metadata key names such as `scenario` or `settings`. Nulls and empty
+containers omit metadata values. Values passed to `.json().record()` or a log's
+`record()` remain data, including their nulls and empty containers.
 
 ## Choose what to record
 
@@ -86,8 +99,8 @@ experiment.finish()
 Files are stored by SHA-256 digest. Later edits to the local file leave the
 recorded copy unchanged.
 
-You can also use `set()` for values, `append()` for logs, `attach()` for files,
-and `add()` for time-series rows.
+Use `record()` throughout your script. The
+[reference](../reference/experiments.md#recording) lists the type-specific alternatives.
 
 ## Record progress and event times
 
@@ -192,6 +205,77 @@ timeseries_variables = historical.variables.where(kind="timeseries")
 timeseries_table = timeseries_variables.frame()
 ```
 
+## Find runs and variables by metadata
+
+Filter saved runs with the same `.where()` syntax used by plant queries:
+
+```python
+baseline_runs = historical.experiments.where(scenario="baseline")
+baseline_results = baseline_runs.observations().frame()
+```
+
+Filter on a nested field to compare higher-flow runs:
+
+```python
+# The settings metadata was saved when each run started.
+high_flow_runs = historical.experiments.where(
+    ac.attr.settings.flow_m3_per_hour > 10
+)
+# Use a variable handle from the reopened Study.
+historical_cost = historical.variables["total operating cost"]
+high_flow_results = high_flow_runs.observations(historical_cost).frame()
+```
+
+Find the output declaration by its unit:
+
+```python
+# Select numeric outputs by their semantic unit.
+cost_variables = historical.variables.where(role="output", unit="USD")
+cost_variable_table = cost_variables.frame()
+```
+
+Filters stay within the selected Study. Unit filters match equivalent spellings:
+`unit="kW"` also matches a variable declared with `unit="KiloW"`.
+
+## Read saved scalar results
+
+Choose the runs first, then the variable. A recording table has one row per
+`record()` call, including the value and receipt time:
+
+```python
+saved_cost = cost_variables["total operating cost"]
+baseline_cost_recordings = baseline_runs.observations(saved_cost)
+baseline_cost_history = baseline_cost_recordings.frame()
+baseline_cost_history.select("experiment_id", "recorded_at", "value")
+```
+
+Use `.frame()` for declarations, runs, and recordings. Use `.dataframe()` to
+fetch time-series samples, as shown below.
+
+## Inspect saved metadata
+
+Use `.query()` when you want to choose metadata columns:
+
+```python
+variable_query = historical.variables.query()
+variable_metadata = variable_query.include("unit").metadata()
+
+run_query = baseline_runs.query()
+run_metadata_table = run_query.include("scenario", "settings").metadata()
+```
+
+For Python dictionaries, use the separate object method:
+
+```python
+unit_objects = variable_query.include("unit", "unit.raw").metadata_objects()
+```
+
+`.frame()` includes saved metadata objects. The graph metadata table displays
+semantic units as URIs and nested values as typed structs or lists. An object's
+`.metadata` keeps its saved fields and supplied unit string. See the
+[reference](../reference/experiments.md#saved-objects-and-metadata-tables) for the
+read formats and [metadata rules](../reference/experiments.md#metadata-rules).
+
 ## Connect a time-series result to the facility
 
 Set `observed` to the URI of the observable property that the values describe.
@@ -247,6 +331,20 @@ experiment.finish()
 # Read this run's saved samples.
 frame = recorded_flow.dataframe()
 ```
+
+To read this result later, reopen the Study and retrieve the run by its saved ID:
+
+```python
+flow_study = ac.study.get("operating-scenarios")
+saved_flow = flow_study.variables["permeate flow"]
+saved_flow_run = flow_study.experiments.get(experiment.run_id)
+flow_recordings = saved_flow_run.observations(saved_flow)
+flow_recording = flow_recordings.latest()
+saved_flow_samples = flow_recording.dataframe()
+```
+
+This example saves one flow batch. `.latest()` selects that recording; with
+incremental writes it selects only the last batch's interval.
 
 `observed` takes a property URI, either as a string or `ac.point(uri)`.
 `ac.resolve(text)` searches ontology concepts such as classes and quantity

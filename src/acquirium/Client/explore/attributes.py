@@ -281,7 +281,9 @@ class Registry(Mapping):
         key = (_server_key(self.client), self.client.graph_version())
         found = _DISCOVERED_CACHE.get(key)
         if found is None:
-            res = self.client.sparql_query(DISCOVERY_SPARQL, include_dependencies=False)
+            res = self.client.sparql_query(
+                DISCOVERY_SPARQL, include_dependencies=False, wait_for_fresh=True,
+            )
             cols = res.get("columns", [])
             pi = cols.index("p") if "p" in cols else 0
             di = cols.index("dt") if "dt" in cols else None

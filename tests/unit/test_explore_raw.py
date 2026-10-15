@@ -12,7 +12,7 @@ def make_client():
     client = MagicMock()
     client.base_url = "http://test:8000"
     client.graph_version.return_value = 1
-    client.sparql_query.side_effect = lambda sparql, include_dependencies=True: (
+    client.sparql_query.side_effect = lambda sparql, include_dependencies=True, wait_for_fresh=False: (
         {"columns": ["p", "dt"], "rows": [[f"{ATTR_NS}unit.raw", XSD + "string"]]}
         if sparql == DISCOVERY_SPARQL else {"columns": [], "rows": []})
     return client

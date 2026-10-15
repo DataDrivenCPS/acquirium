@@ -16,6 +16,10 @@ returns them as columns, `options()` and `facets()` count them, and
 This page uses two pumps, `swro:P1` and `swro:P2`, each with one outlet
 pressure point.
 
+Experiment declarations and run metadata use these same attribute rules.
+Create them through the [experiment interface](record-experiments.md), which
+creates their nodes and handles their lifecycle.
+
 ## Attach values
 
 ```python
