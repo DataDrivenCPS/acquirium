@@ -206,7 +206,7 @@ Keys are handled by name:
 
 | key | written as |
 |---|---|
-| a built-in attribute (`unit`, `medium`, `label`, `type`, `process`, `substance`, `quantity_kind`, `enumeration_kind`, `data_source`, `app`) | that attribute's own predicate; free text is resolved to a URI first. `medium` is `s223:ofMedium` on a measurement and `s223:hasMedium` on an entity. `cp_type` cannot be written. |
+| a built-in attribute (`unit`, `medium`, `label`, `type`, `process`, `substance`, `quantity_kind`, `enumeration_kind`, `data_source`, `app`) | that attribute's own predicate; free text is resolved to a URI first, and the text itself is kept as `attr:<key>.raw`, readable with `include("unit.raw")`. `medium` is `s223:ofMedium` on a measurement and `s223:hasMedium` on an entity. `cp_type` cannot be written. |
 | a relation name (`entity`, `measurement`, `upstream`, `downstream`) | refused: edges of the plant model are not written here |
 | any other key | a user attribute, `urn:acquirium:attr#<key>` (prefix `attr:`) |
 

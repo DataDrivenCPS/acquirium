@@ -169,8 +169,15 @@ def _build_stream_triples(
     if label is not None:
         g.add((subj, RDFS.label, Literal(label)))
 
+    from acquirium.Client.explore.attributes import raw_predicate
+
     for field, pred in POINT_FIELD_PREDICATES.items():
-        provided = _coerce_resolved(resolved, field, stream.get(field))
+        raw = stream.get(field)
+        if isinstance(raw, str) and not isinstance(raw, URIRef) and not (
+                "://" in raw or raw.startswith("urn:")):
+            # the free text as written, kept even when it did not resolve
+            g.add((subj, URIRef(raw_predicate(field)), Literal(raw)))
+        provided = _coerce_resolved(resolved, field, raw)
         if provided is None:
             continue
         current = existing.get(field)

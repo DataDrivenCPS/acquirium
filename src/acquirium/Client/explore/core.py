@@ -1743,13 +1743,16 @@ def _nest(target: Dict[str, Any], parts: List[str], value: Any) -> None:
 
     A struct value (a dict) merges with keys already there; ``None`` never
     overwrites a value or a dict already set, so a leaf included next to its
-    parent key adds nothing it does not know."""
+    parent key adds nothing it does not know. A path that runs into a plain
+    value (``unit.raw`` under the built-in ``unit``) is kept under its dotted
+    name at that level, ``"unit.raw"``, so nothing is lost."""
     node = target
-    for part in parts[:-1]:
+    for i, part in enumerate(parts[:-1]):
         nxt = node.get(part)
         if not isinstance(nxt, dict):
             if nxt is not None:
-                return          # a plain value already holds this key
+                _nest(node, [".".join(parts[i:])], value)
+                return
             if part in node and value is None:
                 return          # a null parent stays null
             nxt = node[part] = {}
@@ -1759,6 +1762,12 @@ def _nest(target: Dict[str, Any], parts: List[str], value: Any) -> None:
     if isinstance(current, dict) and isinstance(value, dict):
         for k, v in value.items():
             _nest(current, [k], v)
+    elif isinstance(current, dict) and value is not None:
+        # a plain value arrives where leaves were nested first: the leaves
+        # move to their dotted names beside it
+        for k, v in current.items():
+            node[f"{key}.{k}"] = v
+        node[key] = value
     elif value is not None or key not in node:
         node[key] = value
 

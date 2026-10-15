@@ -37,6 +37,7 @@ from acquirium.Client.explore.attributes import (
     REGISTRY,
     Attr,
     check_key,
+    raw_predicate,
 )
 from acquirium.Client.explore.relations import RELATIONS
 from acquirium.internals.internals_namespaces import (
@@ -164,6 +165,10 @@ def plan_write(
                 raise ValueError(f"attribute {key!r} does not apply to a {role} node")
             pred = _builtin_predicate(attr, role)
             w.replace_forward.append(pred)
+            if not attr.literal:
+                # also replaces the text a previous value was resolved from
+                # (attr:<key>.raw), even when the new value is a URI
+                w.replace_keys.append(key)
             if value is None:
                 continue
             items = value if isinstance(value, (list, tuple)) else [value]
@@ -181,6 +186,8 @@ def plan_write(
                     if uri is None:
                         raise ValueError(f"Could not resolve {v!r} as {attr.kind} for attribute {key!r}")
                     term = URIRef(uri)
+                    # keep the text the resolver matched; include("<key>.raw") reads it
+                    w.triples.append((w.subject, URIRef(raw_predicate(key)), Literal(str(v))))
                 w.triples.append((w.subject, URIRef(pred), term))
         else:
             w.replace_keys.append(key)

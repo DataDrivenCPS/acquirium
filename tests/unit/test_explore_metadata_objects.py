@@ -29,12 +29,19 @@ class TestNest:
         _nest(d, ["a"], {"b": None, "c": 2})       # struct merges, None does not overwrite
         _nest(d, ["a", "b"], None)
         _nest(d, ["x"], "plain")
-        _nest(d, ["x", "y"], 3)                    # a plain value holds the key
-        assert d == {"a": {"b": 1, "c": 2}, "x": "plain"}
+        _nest(d, ["x", "y"], 3)                    # a plain value holds the key; the leaf goes beside it
+        assert d == {"a": {"b": 1, "c": 2}, "x": "plain", "x.y": 3}
         n = {"p": None}
         _nest(n, ["p", "y"], None)                 # null parent stays null
         _nest(n, ["q", "y"], None)                 # an absent parent gets its leaf
         assert n == {"p": None, "q": {"y": None}}
+        u = {"unit": "unit:PSI"}
+        _nest(u, ["unit", "raw"], "PSI")           # a plain value keeps the leaf under its dotted name
+        assert u == {"unit": "unit:PSI", "unit.raw": "PSI"}
+        v = {}
+        _nest(v, ["unit", "raw"], "PSI")           # the leaf first, the plain value second
+        _nest(v, ["unit"], "unit:PSI")
+        assert v == {"unit": "unit:PSI", "unit.raw": "PSI"}
 
 
 class TestMetadataDict:

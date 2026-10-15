@@ -89,11 +89,20 @@ class TestPlanWrite:
         w = plan({"datasheet": "https://example.org/ds.pdf"})
         assert w.triples[0][2] == URIRef("https://example.org/ds.pdf")
 
-    def test_builtin_resolves_text(self):
+    def test_builtin_resolves_text_and_keeps_it(self):
         w = plan({"unit": "mg/L"})
         assert w.replace_forward == [str(HAS_UNIT)]
-        assert w.triples == [(URIRef(NODE), HAS_UNIT, URIRef(UNIT))]
-        assert w.replace_keys == []
+        assert w.triples == [(URIRef(NODE), URIRef(f"{ATTR_NS}unit.raw"), Literal("mg/L")),
+                             (URIRef(NODE), HAS_UNIT, URIRef(UNIT))]
+        assert w.replace_keys == ["unit"]          # deletes a previous unit.raw too
+
+    def test_uri_value_stores_no_raw_text(self):
+        w = plan({"unit": UNIT})
+        assert w.triples == [(URIRef(NODE), HAS_UNIT, URIRef(UNIT))] and w.replace_keys == ["unit"]
+
+    def test_literal_builtin_has_no_raw_text(self):
+        w = plan({"label": "Influent"})
+        assert w.triples == [(URIRef(NODE), RDFS.label, Literal("Influent"))] and w.replace_keys == []
 
     def test_builtin_unresolvable_raises(self):
         with pytest.raises(ValueError, match="Could not resolve"):
@@ -116,7 +125,7 @@ class TestPlanWrite:
 
     def test_none_removes(self):
         w = plan({"tags": None, "unit": None})
-        assert w.replace_keys == ["tags"] and w.replace_forward == [str(HAS_UNIT)]
+        assert sorted(w.replace_keys) == ["tags", "unit"] and w.replace_forward == [str(HAS_UNIT)]
         assert w.triples == []
 
     @pytest.mark.parametrize("key", ["entity", "measurement", "upstream", "downstream"])
@@ -129,7 +138,7 @@ class TestUpdateText:
     def test_groups_by_signature_and_inserts_once(self):
         a = plan({"tags": ["x"], "unit": UNIT})
         b = Write(subject=URIRef("urn:x#other"))
-        b.replace_keys, b.replace_forward = ["tags"], [str(HAS_UNIT)]
+        b.replace_keys, b.replace_forward = ["tags", "unit"], [str(HAS_UNIT)]
         b.triples = [(b.subject, URIRef(f"{ATTR_NS}tags.0"), Literal("y"))]
         c = plan({"other": 1})
         c.subject = URIRef("urn:x#third")
@@ -239,6 +248,29 @@ class TestRegisterStreamsMetadata:
     def test_conflict_raises(self):
         with pytest.raises(ValueError, match="stream gives unit"):
             _split_stream_metadata({"unit": UNIT, "metadata": {"unit": "urn:other"}})
+
+    def test_register_streams_keeps_resolved_text(self):
+        client = make_client([])
+        client.insert_graph = MagicMock()
+        client.resolve_point_metadata = MagicMock(return_value={"unit": UNIT})
+        client._point_metadata = MagicMock(return_value={})
+        client._units_compatible = MagicMock(return_value=True)
+        client.register_streams([{"source_id": "src", "ref_name": "flow", "point_uri": NODE, "unit": "mg/L"},
+                                 {"source_id": "src", "ref_name": "f2", "point_uri": "urn:x#p2", "unit": UNIT}])
+        g = Graph().parse(data=client.insert_graph.call_args[0][0], format="turtle")
+        assert (URIRef(NODE), URIRef(f"{ATTR_NS}unit.raw"), Literal("mg/L")) in g
+        assert not list(g.triples((URIRef("urn:x#p2"), URIRef(f"{ATTR_NS}unit.raw"), None)))  # a URI has no text
+
+    def test_register_streams_keeps_text_that_did_not_resolve(self):
+        client = make_client([])
+        client.insert_graph = MagicMock()
+        client.resolve_point_metadata = MagicMock(return_value={"quantity_kind": None})
+        client._point_metadata = MagicMock(return_value={})
+        with pytest.warns(UserWarning, match="Could not resolve"):
+            client.register_streams([{"source_id": "src", "ref_name": "f", "point_uri": NODE,
+                                      "quantity_kind": "VolumeFlowRate"}])
+        g = Graph().parse(data=client.insert_graph.call_args[0][0], format="turtle")
+        assert (URIRef(NODE), URIRef(f"{ATTR_NS}quantity_kind.raw"), Literal("VolumeFlowRate")) in g
 
     def test_register_streams_writes_the_extra_triples(self):
         client = make_client([])

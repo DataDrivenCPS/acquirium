@@ -347,6 +347,26 @@ and free text is resolved to a URI first, as it is in `where()`:
 acq.insert_metadata("swro:P2-out-pressure", {"unit": "PSI", "label": "P2 discharge pressure"})
 ```
 
+The text you wrote is kept next to the resolved URI, so you can see what a
+value was matched from:
+
+```python
+acq.query().measurement(alias="m").include("unit", "unit.raw").metadata()
+```
+```text
+┌──────────────────────┬──────────┬────────────┐
+│ m                    ┆ m.unit   ┆ m.unit.raw │
+╞══════════════════════╪══════════╪════════════╡
+│ swro:P2-out-pressure ┆ unit:PSI ┆ PSI        │
+└──────────────────────┴──────────┴────────────┘
+```
+
+`register_streams()` does the same for `unit`, `quantity_kind`, `medium`
+and `substance`, and keeps the text even when it did not resolve, so a
+failed match stays visible. A value given as a URI has no raw text, and
+rewriting the key replaces both. In `metadata_objects()` the text sits
+next to the value as `"unit.raw"`.
+
 Be aware that the write lands in its own graph and cannot retract a value the
 plant model asserts.
 Writing a `unit` on a point that already has one from the model leaves the

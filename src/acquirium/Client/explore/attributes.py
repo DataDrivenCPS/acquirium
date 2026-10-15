@@ -132,6 +132,16 @@ NOT_IN_ALL = {
 
 ATTR_NS = str(ACQUIRIUM_ATTR_NS)
 
+RAW_SUFFIX = "raw"
+
+
+def raw_predicate(key: str) -> str:
+    """Where the free text a built-in value was resolved from is kept:
+    ``attr:unit.raw`` next to ``qudt:hasUnit``. ``include("unit.raw")``
+    reads it back like any user attribute."""
+    return f"{ATTR_NS}{key}.{RAW_SUFFIX}"
+
+
 # One segment of a user attribute path: a key of the value map, or a list
 # index. Keys are identifier-like so the predicate stays a readable IRI and
 # the dot stays the separator; an all-digit segment is a list index.
@@ -322,8 +332,12 @@ class Registry(Mapping):
         A group is what ``include("product_info")`` returns as one struct
         cell. A name can be a group and an attribute at once when one node
         holds a scalar under the key and another a dict; ``include`` refuses
-        that mixture unless told how to read it.
+        that mixture unless told how to read it. A built-in is never a group:
+        ``unit.raw`` (the text a unit was resolved from) is a leaf of its
+        own, and ``include("unit")`` stays the unit.
         """
+        if name in REGISTRY:
+            return False
         return bool(self.children(name))
 
     def for_role(self, role: str, *, summary: bool = False) -> "list[Attr]":
