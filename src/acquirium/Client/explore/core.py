@@ -1672,9 +1672,13 @@ class Query:
 
         Values are the Python values of the frame: ``int``, ``date``,
         ``list``, ``dict`` for a struct, and the value as written for an
-        ``Object`` column. An attribute a node lacks is ``None``. A leaf
-        included next to its parent key (``"product_info"`` and
-        ``"product_info.year"``) appears once, inside the parent's dict.
+        ``Object`` column. Each object holds only what was saved on that
+        node: a key it lacks is left out, including the struct fields other
+        nodes introduced (``{"mode": "baseline"}``, not ``{"duration": None,
+        "mode": "baseline"}``). The table from :meth:`metadata` keeps its
+        shared schema. A leaf included next to its parent key
+        (``"product_info"`` and ``"product_info.year"``) appears once,
+        inside the parent's dict.
         """
         df = self.metadata(include_dependencies=include_dependencies)
         aliases = set(self.query_graph.aliases_reverse.values())
@@ -1690,7 +1694,7 @@ class Query:
                     record[col] = value
                     continue
                 _nest(record.setdefault(alias, {}), path.split("."), value)
-            out.append(record)
+            out.append({k: _saved(v) if isinstance(v, dict) else v for k, v in record.items()})
         return out
 
     def _expanded_selects(self) -> tuple:
@@ -1753,6 +1757,24 @@ class Query:
             return self.client.compact_uri(uri)
         except Exception:
             return str(uri)
+
+
+def _saved(node: Dict[str, Any]) -> Dict[str, Any]:
+    """``node`` without the keys its node never saved.
+
+    Nothing empty is ever stored, so a ``None`` or a dict left empty means
+    the attribute is absent on this node (a frame column, or a struct field,
+    another node introduced). Lists are kept as they are."""
+    out: Dict[str, Any] = {}
+    for k, v in node.items():
+        if isinstance(v, dict):
+            v = _saved(v)
+            if not v:
+                continue
+        elif v is None:
+            continue
+        out[k] = v
+    return out
 
 
 def _nest(target: Dict[str, Any], parts: List[str], value: Any) -> None:
