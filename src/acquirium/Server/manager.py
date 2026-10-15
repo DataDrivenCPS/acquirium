@@ -528,30 +528,25 @@ class Manager:
                 pass
 
         try:
-            with timed_debug(logger, "insert_graph format=%s replace=%s", format, replace):
-                graph_uri = self.graph_store.source_graph_uri(source_id)
-                self.graph_store.insert_graph(
-                    rdf_graph,
-                    format=format,
-                    replace=replace,
-                    graph_uri=graph_uri,
-                )
-            logging.info("acquirium: inserted graph into store")
-            with timed_debug(logger, "insert_graph: _sync_stream_refs_from_graph"):
-                self._sync_stream_refs_from_graph()
-            self._record_materialization_graph_revision(effective_at)
+            with self.materializer.graph_change(effective_at):
+                with timed_debug(logger, "insert_graph format=%s replace=%s", format, replace):
+                    graph_uri = self.graph_store.source_graph_uri(source_id)
+                    self.graph_store.insert_graph(
+                        rdf_graph,
+                        format=format,
+                        replace=replace,
+                        graph_uri=graph_uri,
+                    )
+                logging.info("acquirium: inserted graph into store")
+                with timed_debug(logger, "insert_graph: _sync_stream_refs_from_graph"):
+                    self._sync_stream_refs_from_graph()
             # Embedding corpus is the static ontoenv vocabularies, not
             # inserted data — no per-insert reindex. Stream-reference sync
-            # below requires a fresh inferred view; concurrent callers share
+            # above requires a fresh inferred view; concurrent callers share
             # its single-flight rebuild.
         except Exception as e:
             logging.error("acquirium: failed to insert graph: %s", e)
             raise
-
-    def _record_materialization_graph_revision(self, effective_at: datetime | None = None) -> None:
-        """Record the model change, with its effective time, for the next plan refresh."""
-        revision = int(self.graph_store.graph_status().get("source_version", 0))
-        self.materializer.note_graph_change(revision, effective_at)
 
     def recover_materialization_state(self) -> None:
         """Recompile deployed bindings; pending rows are rediscovered by revision."""
@@ -917,9 +912,9 @@ class Manager:
         change took effect in the plant (default: now); see ``insert_graph``.
         """
         graph_uri = self.graph_store.source_graph_uri(source_id)
-        result = self.graph_store.sparql_update(update, graph_uri=graph_uri)
-        self._sync_stream_refs_from_graph()
-        self._record_materialization_graph_revision(effective_at)
+        with self.materializer.graph_change(effective_at):
+            result = self.graph_store.sparql_update(update, graph_uri=graph_uri)
+            self._sync_stream_refs_from_graph()
         return result
 
     def validate_graph(self) -> dict[str, str | bool]:

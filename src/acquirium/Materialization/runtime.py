@@ -17,6 +17,7 @@ from acquirium.Materialization.checks import check_entry, check_outputs
 import re
 import json
 from dataclasses import replace
+from contextlib import contextmanager
 from uuid import uuid4
 from hashlib import sha256
 from datetime import datetime, timezone
@@ -263,6 +264,21 @@ class Materializer:
                           [int(graph_revision), effective.isoformat(), datetime.now(timezone.utc).isoformat()])
         self._graph_revision = -1
         return effective
+
+    @contextmanager
+    def graph_change(self, effective_at: datetime | None = None):
+        """Wrap a graph write so its effective time is recorded before any plan sees it.
+
+        The plan lock is held across the write and the record. Without it the
+        query cache can publish the write and a refresh can plan the bindings
+        it creates before their effective time exists, and they would default
+        to covering all retained history. Nothing is recorded if the write
+        raises.
+        """
+        with self._plan_lock:
+            yield
+            revision = int(self._graph.graph_status().get("source_version", 0))
+            self.note_graph_change(revision, effective_at)
 
     def _open_bindings(self, conn) -> dict[str, tuple[str, str, datetime | None]]:
         """Current rows of the bindings table: progress_key -> (signature, context_hash, valid_from)."""

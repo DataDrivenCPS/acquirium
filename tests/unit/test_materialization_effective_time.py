@@ -254,3 +254,25 @@ def test_a_change_the_plan_cannot_see_yet_keeps_its_effective_time(tmp_path):
             assert conn.execute("SELECT count(*) FROM materialization_graph_changes").fetchone()[0] == 0
     finally:
         runtime.close(); store.close()
+
+
+def test_a_graph_write_records_its_effective_time_before_any_plan_sees_it(tmp_path):
+    """A refresh racing the write must wait: it may not plan the new binding
+    until the change's effective time is recorded."""
+    from threading import Thread
+    store, graph, runtime = _runtime(tmp_path, ["urn:a"])
+    try:
+        store.upsert_rows("urn:c", [(t, 2.0) for t in T], value_kind="numeric")
+        racer = Thread(target=runtime.refresh)
+        with runtime.graph_change(effective_at=T[3]):
+            graph.refs = ["urn:a", "urn:c"]
+            runtime._graph_revision = -1
+            racer.start()
+            racer.join(0.3)
+            assert racer.is_alive(), "a refresh must not plan during a graph write"
+        racer.join()
+        while runtime.run_once():
+            pass
+        assert rows(store, _outputs(runtime)["urn:c"]) == T[3:]
+    finally:
+        runtime.close(); store.close()
