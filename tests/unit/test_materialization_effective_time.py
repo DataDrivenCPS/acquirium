@@ -327,3 +327,20 @@ def test_bindings_that_disappear_with_an_upstream_view_are_not_kept(tmp_path):
             assert conn.execute("SELECT count(*) FROM materialization_bindings").fetchone()[0] == 0
     finally:
         runtime.close(); store.close()
+
+
+def test_a_consumer_orphaned_by_a_view_removal_is_dropped_even_alongside_a_model_change(tmp_path):
+    """Removing an upstream view and dating a model change in the same refresh:
+    the consumer of the removed view is dropped, the sensor's own bindings
+    are kept over their interval."""
+    store, graph, runtime = _runtime(tmp_path, ["urn:a", "urn:b"])
+    try:
+        derived = list(_outputs(runtime).values())
+        open_rows = {"k1": {"app": "copy-of-copies", "definition": {
+            "inputs": {"input": [{"ref_uri": derived[0]}]}, "outputs": {"out": ["urn:d1", "d1", "urn:p1"]}}},
+                     "k2": {"app": "copy-each", "definition": {
+            "inputs": {"input": [{"ref_uri": "urn:b"}]}, "outputs": {"out": [derived[1], "x", "urn:p"]}}}}
+        dropped = runtime._dataflow_dropped({"k1": T[3], "k2": T[3]}, open_rows, [], {}, {"copy-each": None})
+        assert dropped == {"k1"}
+    finally:
+        runtime.close(); store.close()

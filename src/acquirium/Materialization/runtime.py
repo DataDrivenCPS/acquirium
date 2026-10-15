@@ -370,6 +370,8 @@ class Materializer:
             # has no interval to maintain and is dropped.
             closing = {key: boundary(row["app"]) for key, row in open_rows.items()
                        if pending and key not in current and row["app"] not in failed_apps}
+            dataflow_dropped = self._dataflow_dropped(closing, open_rows, table, current, deployments)
+            closing = {key: until for key, until in closing.items() if key not in dataflow_dropped}
             historical = self._historical(table, closing, current, deployments, failed_apps,
                                           applications, revision)
             for b in historical:
@@ -432,7 +434,7 @@ class Materializer:
                     if key not in current and row["app"] in failed_apps:
                         continue   # its app failed to compile; keep its bindings open until it recovers
                     until = boundary(row["app"])
-                    if key not in current and not pending:
+                    if key not in current and (not pending or key in dataflow_dropped):
                         self._execute(conn, "DELETE FROM materialization_bindings WHERE progress_key=?", [key])
                         continue
                     self._execute(conn, "UPDATE materialization_bindings SET valid_to=? WHERE progress_key=? AND valid_to IS NULL", [until.isoformat(), key])
@@ -502,6 +504,32 @@ class Materializer:
         return [{"key": key, "signature": sig, "app": app, "context": ctx, "valid_from": when(since),
                  "valid_to": when(until), "definition": json.loads(definition)}
                 for key, sig, app, ctx, since, until, definition in rows]
+
+    def _dataflow_dropped(self, closing, open_rows, table, current, deployments) -> set[str]:
+        """Disappearing bindings whose input is a derived stream nothing produces any more.
+
+        Such a binding vanished because a view upstream was removed, not
+        because the model changed, even when a model change is planned in
+        the same refresh. It has no interval to maintain. Applied to a fixed
+        point, so dropping one binding drops its consumers too.
+        """
+        if not closing:
+            return set()
+        with self._store._own_conn() as conn:
+            derived = {row[0] for row in self._execute(
+                conn, "SELECT ref_uri FROM streams WHERE source_id LIKE 'derived:%'").fetchall()}
+        refs = lambda row, side: ({d["ref_uri"] for ds in row["definition"]["inputs"].values() for d in ds}
+                                  if side == "in" else {ref for ref, _, _ in row["definition"]["outputs"].values()})
+        owned = {p.ref_uri for b in current.values() for p in b.outputs.values()}
+        owned |= {ref for row in table if row["valid_to"] is not None and row["app"] in deployments
+                  and row["key"] not in current for ref in refs(row, "out")}
+        kept = set(closing)
+        while True:
+            alive = owned | {ref for key in kept for ref in refs(open_rows[key], "out")}
+            drop = {key for key in kept if any(ref in derived and ref not in alive for ref in refs(open_rows[key], "in"))}
+            if not drop:
+                return set(closing) - kept
+            kept -= drop
 
     def _instance(self, app_name: str, applications: dict[str, Any], deployments: dict[str, Deployment]):
         for binding in self._dag.bindings:
