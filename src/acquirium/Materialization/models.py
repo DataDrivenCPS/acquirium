@@ -400,6 +400,11 @@ class Binding:
     generation: str = ""
     every: timedelta | None = None
     custom_window: Callable[[TimeWindow], TimeWindow] | None = field(default=None, repr=False, compare=False)
+    # The model said this binding exists from here on. Set by the runtime
+    # from the bindings table when a graph change with an effective time
+    # brought the binding into the plan; None means the whole retained
+    # history. Not part of either identity.
+    valid_from: datetime | None = field(default=None, compare=False)
     signature: str = field(init=False)
     progress_key: str = field(init=False)
     def __post_init__(self):
@@ -422,6 +427,14 @@ class Binding:
                     "inputs": {k: sorted(x.ref_uri for x in v) for k,v in sorted(self.inputs.items())},
                     "outputs": {k: v.ref_uri for k,v in sorted(self.outputs.items())}}
         object.__setattr__(self, "progress_key", sha256(_canonical(progress).encode()).hexdigest())
+
+    def clip(self, window: TimeWindow | None) -> TimeWindow | None:
+        """``window`` restricted to this binding's validity; None when nothing remains."""
+        if window is None or self.valid_from is None or window.start >= self.valid_from:
+            return window
+        if window.end < self.valid_from:
+            return None
+        return TimeWindow(self.valid_from, window.end)
 
     @property
     def context_hash(self) -> str:

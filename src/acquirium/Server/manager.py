@@ -493,9 +493,14 @@ class Manager:
         replace: bool = True,
         *,
         source_id: str,
+        effective_at: datetime | None = None,
     ) -> None:
         """
         Insert RDF graph into one explicitly owned deployment data graph.
+
+        ``effective_at`` is when the change took effect in the plant; it
+        defaults to now. Derived streams whose bindings appear or disappear
+        because of this write are recomputed, or retired, from that time.
 
         The embedding index is refreshed synchronously before returning, so
         once this call completes the just-inserted concepts are resolvable.
@@ -534,7 +539,7 @@ class Manager:
             logging.info("acquirium: inserted graph into store")
             with timed_debug(logger, "insert_graph: _sync_stream_refs_from_graph"):
                 self._sync_stream_refs_from_graph()
-            self._record_materialization_graph_revision()
+            self._record_materialization_graph_revision(effective_at)
             # Embedding corpus is the static ontoenv vocabularies, not
             # inserted data — no per-insert reindex. Stream-reference sync
             # below requires a fresh inferred view; concurrent callers share
@@ -543,9 +548,10 @@ class Manager:
             logging.error("acquirium: failed to insert graph: %s", e)
             raise
 
-    def _record_materialization_graph_revision(self) -> None:
-        """A graph change invalidates only the compiled in-memory plan."""
-        self.materializer._graph_revision = -1
+    def _record_materialization_graph_revision(self, effective_at: datetime | None = None) -> None:
+        """Record the model change, with its effective time, for the next plan refresh."""
+        revision = int(self.graph_store.graph_status().get("source_version", 0))
+        self.materializer.note_graph_change(revision, effective_at)
 
     def recover_materialization_state(self) -> None:
         """Recompile deployed bindings; pending rows are rediscovered by revision."""
@@ -903,16 +909,17 @@ class Manager:
         logger.info("Deleted all log references for point %s from graph", point_uri)
         return True
 
-    def sparql_update(self, update: str, source_id: str) -> dict[str, Any]:
+    def sparql_update(self, update: str, source_id: str, effective_at: datetime | None = None) -> dict[str, Any]:
         """Execute a SPARQL UPDATE against one explicitly owned data graph.
 
         It lets a component remove exactly the triples it registered without
-        granting updates to ontology graphs.
+        granting updates to ontology graphs. ``effective_at`` is when the
+        change took effect in the plant (default: now); see ``insert_graph``.
         """
         graph_uri = self.graph_store.source_graph_uri(source_id)
         result = self.graph_store.sparql_update(update, graph_uri=graph_uri)
         self._sync_stream_refs_from_graph()
-        self._record_materialization_graph_revision()
+        self._record_materialization_graph_revision(effective_at)
         return result
 
     def validate_graph(self) -> dict[str, str | bool]:

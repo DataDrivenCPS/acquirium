@@ -186,12 +186,44 @@ class RevisionStore:
         with self.store._own_conn() as conn:
             marks = ','.join('?' for _ in refs)
             extent = self._execute(conn, f"SELECT min(t.ts), max(t.ts) FROM {self._timeseries_source} WHERE {self._ref} IN ({marks})", refs).fetchone()
-        return TimeWindow(*extent) if extent[0] is not None else None
+        return binding.clip(TimeWindow(*(self._utc(t) for t in extent))) if extent[0] is not None else None
+
+    @staticmethod
+    def _utc(value: datetime) -> datetime:
+        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+    def retire(self, output_refs: Iterable[str], since: datetime, conn: Any = None) -> None:
+        """Tombstone the derived streams ``output_refs`` from ``since`` on, at one revision.
+
+        The model says their bindings stopped existing at ``since``; rows
+        before it stay as the record of what the model said then. The
+        tombstones carry a new revision so downstream bindings see the
+        removal and retract their own results.
+        """
+        refs = sorted(set(output_refs))
+        if not refs:
+            return
+        if conn is None:
+            with self.store._lock, self.store._write_conn() as own:
+                return self.retire(refs, since, conn=own)
+        revision = None
+        for ref in refs:
+            exists = self._execute(conn, "SELECT 1 FROM timeseries WHERE ref_id IN (SELECT ref_id FROM ref_ids WHERE ref_uri=?) "
+                                         "AND ts>=? AND NOT deleted LIMIT 1", [ref, self._time(since)]).fetchone()
+            if exists is None:
+                continue
+            if revision is None:
+                revision = self.store._next_revision(conn)
+            self._execute(conn, "UPDATE timeseries SET deleted=TRUE, last_revision=? WHERE ref_id IN "
+                                "(SELECT ref_id FROM ref_ids WHERE ref_uri=?) AND ts>=? AND NOT deleted",
+                          [revision, ref, self._time(since)])
 
     def request_reprocess(self, bindings: Iterable[Binding], window: TimeWindow) -> None:
         with self.store._lock, self.store._write_conn() as conn:
             for binding in bindings:
-                owned = window
+                owned = binding.clip(window)
+                if owned is None:
+                    continue
                 if binding.every:
                     epoch = datetime(1970, 1, 1, tzinfo=UTC)
                     floor = lambda t: epoch + ((t - epoch) // binding.every) * binding.every
@@ -292,8 +324,9 @@ class RevisionStore:
         marks = ','.join('?' for _ in refs)
         extent = self._execute(conn, f"SELECT min(t.ts), max(t.ts) FROM {self._timeseries_source} WHERE {self._ref} IN ({marks})", refs).fetchone()
         epoch = datetime(1970, 1, 1, tzinfo=UTC)
-        retained = TimeWindow(*extent) if extent[0] is not None else TimeWindow(epoch, epoch)
-        expanded = self._output_window(binding, retained)
+        retained = TimeWindow(*(self._utc(t) for t in extent)) if extent[0] is not None else TimeWindow(epoch, epoch)
+        retained = binding.clip(retained) or TimeWindow(binding.valid_from, binding.valid_from)
+        expanded = self._output_window(binding, retained) or retained
         window = TimeWindow(min(retained.start, expanded.start), max(retained.end, expanded.end))
         # All retained rows are changes for a full rebuild, including unchanged
         # sibling inputs in a multi-input app.
@@ -331,14 +364,18 @@ class RevisionStore:
         # Include tombstones in the changed extent. Filtering deleted rows here
         # would hide removals from consumers, even though _stream_set correctly
         # excludes those rows from the values delivered to the transform.
-        changed = self._execute(conn, f"SELECT min(t.ts), max(t.ts) FROM {self._timeseries_source} WHERE {self._ref} IN ({marks}) AND t.last_revision>? AND t.last_revision<=?", [*refs, previous, target]).fetchone()
+        # Changes before the binding's validity are not its concern.
+        since = "" if binding.valid_from is None else " AND t.ts>=?"
+        params = [*refs, previous, target] + ([] if binding.valid_from is None else [self._time(binding.valid_from)])
+        changed = self._execute(conn, f"SELECT min(t.ts), max(t.ts) FROM {self._timeseries_source} WHERE {self._ref} IN ({marks}) AND t.last_revision>? AND t.last_revision<=?{since}", params).fetchone()
         if changed[0] is None: return None
-        changed_window = TimeWindow(changed[0].replace(tzinfo=UTC) if changed[0].tzinfo is None else changed[0], changed[1].replace(tzinfo=UTC) if changed[1].tzinfo is None else changed[1])
+        changed_window = TimeWindow(self._utc(changed[0]), self._utc(changed[1]))
         # Persist a cursor before executing a long range so a restart can resume
         # its unfinished intervals. Whole-history apps cannot be partitioned this
         # way: each invocation explicitly depends on the full retained extent.
         if partition and binding.lookback is not None and changed_window.end - changed_window.start > timedelta(days=1):
             window = self._output_window(binding, changed_window)
+            if window is None: return None
             work = (uuid4().hex, window.start.isoformat(), window.end.isoformat(), previous, target)
             if self.active_bindings is not None and self.active_bindings.get(binding.progress_key) != binding.generation:
                 return None
@@ -362,12 +399,13 @@ class RevisionStore:
                           | {p.ref_uri for p in binding.outputs.values()})
             marks = ",".join("?" for _ in refs)
             extent = self._execute(conn, f"SELECT min(t.ts), max(t.ts) FROM {self._timeseries_source} WHERE {self._ref} IN ({marks})", refs).fetchone()
-            window = TimeWindow(extent[0], extent[1]) if extent[0] is not None else changed_window
+            window = TimeWindow(self._utc(extent[0]), self._utc(extent[1])) if extent[0] is not None else changed_window
+            window = binding.clip(window) or changed_window
             read = window
             if binding.custom_window is not None:
-                window = self._output_window(binding, changed_window)
+                window = self._output_window(binding, changed_window) or window
         else:
-            window = output_window or self._output_window(binding, changed_window)
+            window = output_window or self._output_window(binding, changed_window) or changed_window
             read = TimeWindow(window.start - binding.lookback, window.end + binding.lookahead)
         if output_window is not None and binding.lookback is None:
             window = output_window
@@ -378,19 +416,20 @@ class RevisionStore:
                                         target, changed_window, read, binding.row, binding.result, output_window=window))
 
     @staticmethod
-    def _output_window(binding: Binding, changed: TimeWindow) -> TimeWindow:
+    def _output_window(binding: Binding, changed: TimeWindow) -> TimeWindow | None:
+        """The outputs a change can affect, within the binding's validity."""
         if binding.custom_window is not None:
             window = binding.custom_window(changed)
             if not isinstance(window, TimeWindow):
                 raise TypeError("output_window must return a TimeWindow")
-            return window
+            return binding.clip(window)
         window = TimeWindow(changed.start - binding.lookahead,
                             changed.end + (binding.lookback or timedelta()))
         if binding.every is not None:
             epoch = datetime(1970, 1, 1, tzinfo=UTC)
             floor = lambda t: epoch + ((t - epoch) // binding.every) * binding.every
             window = TimeWindow(floor(window.start), floor(window.end) + binding.every - timedelta(microseconds=1))
-        return window
+        return binding.clip(window)
 
     def _stream_set(self, conn: Any, alias: str, descriptors: tuple[StreamDescriptor,...], window: TimeWindow, previous: int, target: int) -> StreamSet:
         refs = [x.ref_uri for x in descriptors]

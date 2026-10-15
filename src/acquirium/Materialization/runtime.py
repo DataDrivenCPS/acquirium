@@ -19,7 +19,7 @@ import json
 from dataclasses import replace
 from uuid import uuid4
 from hashlib import sha256
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from time import monotonic
 from threading import Lock, RLock
@@ -123,6 +123,16 @@ class Materializer:
                 input_ref_uri VARCHAR NOT NULL, output_name VARCHAR NOT NULL,
                 output_ref_uri VARCHAR NOT NULL, context_hash VARCHAR NOT NULL,
                 PRIMARY KEY (binding_signature, input_alias, input_ref_uri, output_name))""")
+            # Bindings as data: one row per interval in which the model said a
+            # binding existed. An open row (valid_to NULL) is a current binding.
+            self._execute(conn, """CREATE TABLE IF NOT EXISTS materialization_bindings (
+                progress_key VARCHAR NOT NULL, binding_signature VARCHAR NOT NULL,
+                application_name VARCHAR NOT NULL, context_hash VARCHAR NOT NULL,
+                graph_revision BIGINT NOT NULL, valid_from VARCHAR, valid_to VARCHAR)""")
+            # Graph writes waiting to be planned, with the time the author
+            # said the change took effect.
+            self._execute(conn, """CREATE TABLE IF NOT EXISTS materialization_graph_changes (
+                graph_revision BIGINT NOT NULL, effective_at VARCHAR NOT NULL, recorded_at VARCHAR NOT NULL)""")
 
     def _execute(self, conn: Any, query: str, params=()):
         if getattr(self._store, "materialization_backend", None) == "postgres":
@@ -162,6 +172,8 @@ class Materializer:
                 (SELECT progress_key FROM materialization_lineage WHERE application_name=?)""", [name])
             self._execute(conn, """DELETE FROM materialization_work WHERE progress_key IN
                 (SELECT progress_key FROM materialization_lineage WHERE application_name=?)""", [name])
+            self._execute(conn, "UPDATE materialization_bindings SET valid_to=? WHERE application_name=? AND valid_to IS NULL",
+                          [datetime.now(timezone.utc).isoformat(), name])
             self._revoke(name)
             self._generations.pop(name, None)
             self._graph_revision = -1
@@ -237,6 +249,27 @@ class Materializer:
             entry["outputs"] = check_outputs(binding, batch.context, builder.values, limit)
         return {"app": deployment.name, "graph_revision": revision, "bindings": bindings}
 
+    def note_graph_change(self, graph_revision: int, effective_at: datetime | None = None) -> datetime:
+        """Record that the model changed, effective at ``effective_at`` (default: now).
+
+        The next plan refresh consumes every recorded change and applies the
+        earliest effective time to the bindings that appear or disappear.
+        Durable, so a crash between the graph write and the refresh keeps
+        the author's time.
+        """
+        effective = (effective_at or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        with self._store._lock, self._store._write_conn() as conn:
+            self._execute(conn, "INSERT INTO materialization_graph_changes VALUES (?, ?, ?)",
+                          [int(graph_revision), effective.isoformat(), datetime.now(timezone.utc).isoformat()])
+        self._graph_revision = -1
+        return effective
+
+    def _open_bindings(self, conn) -> dict[str, tuple[str, str, datetime | None]]:
+        """Current rows of the bindings table: progress_key -> (signature, context_hash, valid_from)."""
+        rows = self._execute(conn, "SELECT progress_key, binding_signature, context_hash, valid_from "
+                                   "FROM materialization_bindings WHERE valid_to IS NULL").fetchall()
+        return {key: (sig, ctx, datetime.fromisoformat(since) if since else None) for key, sig, ctx, since in rows}
+
     def _deployments(self) -> tuple[Deployment, ...]:
         with self._store._own_conn() as conn:
             return tuple(Deployment.from_json(row[0]) for row in self._execute(conn, "SELECT deployment_json FROM materialization_deployments ORDER BY name").fetchall())
@@ -279,6 +312,31 @@ class Materializer:
             with self._store._own_conn() as conn:
                 prior_outputs = dict(self._execute(conn, "SELECT output_ref_uri, progress_key FROM materialization_lineage").fetchall())
                 prior_context = dict(self._execute(conn, "SELECT progress_key, context_hash FROM materialization_lineage").fetchall())
+                open_rows = self._open_bindings(conn)
+                pending = [datetime.fromisoformat(row[0]) for row in self._execute(
+                    conn, "SELECT effective_at FROM materialization_graph_changes").fetchall()]
+            # When the model changed, the author said when. Bindings that
+            # appear or disappear because of it exist from, or until, that
+            # time; the earliest pending time covers every change planned now.
+            effective = min(pending) if pending else datetime.now(timezone.utc)
+            with self._store._own_conn() as conn:
+                apps_with_rows = {row[0] for row in self._execute(
+                    conn, "SELECT DISTINCT application_name FROM materialization_bindings WHERE valid_to IS NULL").fetchall()}
+            # A binding of an app that already had bindings, appearing now, is
+            # a model change: it exists from the effective time. A binding of
+            # an app that had none is a deployment: it covers retained history
+            # (subject to backfill). A binding that is still here keeps the
+            # validity it was given when it appeared.
+            validity = {}
+            for b in dag.bindings:
+                if b.progress_key in open_rows:
+                    validity[b.progress_key] = open_rows[b.progress_key][2]
+                elif b.application_name in apps_with_rows and pending:
+                    validity[b.progress_key] = effective
+                else:
+                    validity[b.progress_key] = None
+            dag = ApplicationGraph([replace(b, valid_from=validity[b.progress_key]) for b in dag.bindings])
+            applications = {b.signature: applications[b.signature] for b in dag.bindings}
             # A stable named output may now have different inputs; a binding's
             # own match row may have changed while its inputs did not. Both can
             # alter historical results. Compare with persisted lineage rather
@@ -287,6 +345,9 @@ class Materializer:
             repair = [b for b in dag.bindings if
                       any(p.ref_uri in prior_outputs and prior_outputs[p.ref_uri] != b.progress_key for p in b.outputs.values())
                       or (prior_context.get(b.progress_key) and prior_context[b.progress_key] != b.context_hash)]
+            # A context change repairs from the effective time on; results
+            # before it stand as what the old model said.
+            repair_since = effective if pending else None
             # Materialization-owned provenance is a complete projection of the
             # current DAG. Publish it only when the projection actually changed:
             # lineage writes advance the graph's published_version, so publishing
@@ -301,6 +362,8 @@ class Materializer:
                 self._revisions.active_bindings = {b.progress_key: b.generation for b in dag.bindings}
             for binding in repair:
                 window = self._revisions.retained_window(binding)
+                if window is not None and repair_since is not None and binding.valid_from is None:
+                    window = TimeWindow(max(window.start, repair_since), window.end) if window.end >= repair_since else None
                 if window is None:
                     continue
                 self._revisions.initialise(binding, applications[binding.signature].backfill)
@@ -311,6 +374,35 @@ class Materializer:
                 self._revisions.request_reprocess([binding], window)
             with self._store._lock, self._store._write_conn() as conn:
                 self._revisions.active_bindings = {b.progress_key: b.generation for b in dag.bindings}
+                # Bindings table: close what disappeared (and tombstone its
+                # outputs from the effective time), open what appeared, and
+                # keep a changed context as a closed-and-reopened row.
+                current = {b.progress_key: b for b in dag.bindings}
+                failed_apps = set(self._plan_errors)
+                stamp = effective.isoformat()
+                retired = []
+                for key, (sig, ctx, since) in open_rows.items():
+                    if key in current and current[key].context_hash == ctx:
+                        if current[key].signature != sig:
+                            self._execute(conn, "UPDATE materialization_bindings SET binding_signature=? WHERE progress_key=? AND valid_to IS NULL",
+                                          [current[key].signature, key])
+                        continue
+                    app_name = self._execute(conn, "SELECT application_name FROM materialization_bindings WHERE progress_key=? AND valid_to IS NULL", [key]).fetchone()[0]
+                    if key not in current and app_name in failed_apps:
+                        continue   # its app failed to compile; keep its bindings open until it recovers
+                    self._execute(conn, "UPDATE materialization_bindings SET valid_to=? WHERE progress_key=? AND valid_to IS NULL", [stamp, key])
+                    if key not in current:
+                        # Its outputs, from durable lineage, so a restart retires them too.
+                        retired.extend(ref for ref, owner in prior_outputs.items() if owner == key and ref not in
+                                       {p.ref_uri for b in dag.bindings for p in b.outputs.values()})
+                for b in dag.bindings:
+                    row = open_rows.get(b.progress_key)
+                    if row is None or row[1] != b.context_hash:
+                        self._execute(conn, "INSERT INTO materialization_bindings VALUES (?, ?, ?, ?, ?, ?, NULL)",
+                                      [b.progress_key, b.signature, b.application_name, b.context_hash, revision,
+                                       b.valid_from.isoformat() if b.valid_from else None])
+                self._revisions.retire(retired, effective, conn=conn)
+                self._execute(conn, "DELETE FROM materialization_graph_changes")
                 failed = list(self._plan_errors)
                 if failed:
                     marks = ','.join('?' for _ in failed)

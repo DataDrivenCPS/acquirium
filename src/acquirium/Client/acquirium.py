@@ -116,6 +116,7 @@ class Acquirium:
         replace=True,
         *,
         source_id: str,
+        effective_at: datetime | None = None,
     ) -> None:
         """
         Insert RDF graph into an explicitly owned deployment data graph.
@@ -129,12 +130,16 @@ class Acquirium:
             replace: If True, replaces the selected graph. If False, appends to it.
             source_id: Data-graph owner. Use ``"plant"`` for the shared plant
                 model, or a component's stable source ID.
+            effective_at: When the change took effect in the plant; defaults to
+                now. Derived streams the change creates or retires are
+                recomputed, or retired, from this time.
         """
         self.client.insert_graph(
             rdf_graph,
             format=format,
             replace=replace,
             source_id=source_id,
+            effective_at=effective_at,
         )
 
     def insert_graph_file(
@@ -153,13 +158,14 @@ class Acquirium:
             source_id=source_id,
         )
 
-    def sparql_update(self, update: str, *, source_id: str) -> dict[str, Any]:
+    def sparql_update(self, update: str, *, source_id: str, effective_at: datetime | None = None) -> dict[str, Any]:
         """Execute a SPARQL update against one explicitly owned data graph.
 
         Components with a fixed owner use their ``self.sparql_update`` helper
-        instead of passing ``source_id`` themselves.
+        instead of passing ``source_id`` themselves. ``effective_at`` is when
+        the change took effect in the plant (default: now).
         """
-        return self.client.sparql_update(update, source_id=source_id)
+        return self.client.sparql_update(update, source_id=source_id, effective_at=effective_at)
 
     def query(self) -> Query:
         """Create a new empty Query (the explore builder) bound to this instance."""

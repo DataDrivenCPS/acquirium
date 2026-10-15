@@ -1,0 +1,163 @@
+"""A model change takes effect at the time its author gives, not when it is written."""
+from datetime import timedelta
+
+import polars as pl
+import pytest
+
+from acquirium.Materialization.planner import Deployment
+from acquirium.Materialization.runtime import Materializer
+from acquirium.Storage.duckdb_store import DuckDBStore
+from tests.unit.test_incremental_materialization import NOW
+from tests.unit.test_materialization_readiness import CopyEach, FleetGraph
+from tests.unit.test_materialization_repair import SumFleet
+
+T = [NOW + timedelta(hours=h) for h in range(6)]   # six hourly samples, change effective at T[3]
+
+
+def frame(store, ref):
+    batches = list(store.timeseries(ref, value_mode="numeric"))
+    return pl.from_arrow(batches[0]).rename({"ts": "time"}) if batches else pl.DataFrame({"time": [], "value": []})
+
+
+def rows(store, ref):
+    return [t.replace(tzinfo=NOW.tzinfo) if t.tzinfo is None else t for t in frame(store, ref)["time"].to_list()]
+
+
+def _runtime(tmp_path, refs):
+    store = DuckDBStore(tmp_path / "effective.duckdb")
+    graph = FleetGraph(refs)
+    runtime = Materializer(store, graph)
+    for ref in refs:
+        store.upsert_rows(ref, [(t, 1.0) for t in T], value_kind="numeric")
+    runtime.deploy(Deployment.from_class(CopyEach))
+    while runtime.run_once():
+        pass
+    return store, graph, runtime
+
+
+def _outputs(runtime):
+    return {b.inputs["input"][0].ref_uri: b.outputs["out"].ref_uri for b in runtime._dag.bindings if b.application_name == "copy-each"}
+
+
+def test_a_removed_sensor_keeps_its_derived_rows_before_the_effective_time(tmp_path):
+    store, graph, runtime = _runtime(tmp_path, ["urn:a", "urn:b"])
+    try:
+        out_b = _outputs(runtime)["urn:b"]
+        assert rows(store, out_b) == T
+        graph.refs = ["urn:a"]
+        runtime.note_graph_change(2, effective_at=T[3])
+        while runtime.run_once():
+            pass
+        assert rows(store, out_b) == T[:3]
+        assert rows(store, _outputs(runtime)["urn:a"]) == T
+        with store._own_conn() as conn:
+            closed = conn.execute("SELECT valid_to FROM materialization_bindings WHERE valid_to IS NOT NULL").fetchall()
+        assert len(closed) == 1 and closed[0][0].startswith(T[3].isoformat()[:19])
+    finally:
+        runtime.close(); store.close()
+
+
+def test_a_removal_defaults_to_now_and_keeps_history(tmp_path):
+    store, graph, runtime = _runtime(tmp_path, ["urn:a", "urn:b"])
+    try:
+        out_b = _outputs(runtime)["urn:b"]
+        graph.refs = ["urn:a"]
+        runtime.note_graph_change(2)
+        while runtime.run_once():
+            pass
+        assert rows(store, out_b) == T   # all of it is before now
+    finally:
+        runtime.close(); store.close()
+
+
+def test_an_added_sensor_is_computed_from_the_effective_time_only(tmp_path):
+    store, graph, runtime = _runtime(tmp_path, ["urn:a"])
+    try:
+        store.upsert_rows("urn:c", [(t, 2.0) for t in T], value_kind="numeric")   # history exists before the model knew it
+        graph.refs = ["urn:a", "urn:c"]
+        runtime.note_graph_change(2, effective_at=T[3])
+        while runtime.run_once():
+            pass
+        assert rows(store, _outputs(runtime)["urn:c"]) == T[3:]
+        # A later correction before the effective time is not this binding's concern.
+        store.upsert_rows("urn:c", [(T[0], 9.0)], value_kind="numeric")
+        while runtime.run_once():
+            pass
+        assert rows(store, _outputs(runtime)["urn:c"]) == T[3:]
+        # One after it is.
+        store.upsert_rows("urn:c", [(T[5] + timedelta(hours=1), 9.0)], value_kind="numeric")
+        while runtime.run_once():
+            pass
+        assert rows(store, _outputs(runtime)["urn:c"]) == T[3:] + [T[5] + timedelta(hours=1)]
+    finally:
+        runtime.close(); store.close()
+
+
+def test_a_new_deployment_still_covers_retained_history(tmp_path):
+    store, graph, runtime = _runtime(tmp_path, ["urn:a", "urn:b"])
+    try:
+        runtime.deploy(Deployment.from_class(SumFleet))
+        while runtime.run_once():
+            pass
+        fleet = next(b for b in runtime._dag.bindings if b.application_name == "sum-fleet")
+        assert fleet.valid_from is None and rows(store, fleet.outputs["out"].ref_uri) == T
+    finally:
+        runtime.close(); store.close()
+
+
+def test_an_aggregate_moves_to_its_new_membership_at_the_effective_time(tmp_path):
+    store, graph, runtime = _runtime(tmp_path, ["urn:a", "urn:b"])
+    try:
+        runtime.deploy(Deployment.from_class(SumFleet))
+        while runtime.run_once():
+            pass
+        fleet_ref = next(b for b in runtime._dag.bindings if b.application_name == "sum-fleet").outputs["out"].ref_uri
+        graph.refs = ["urn:a"]
+        runtime.note_graph_change(2, effective_at=T[3])
+        while runtime.run_once():
+            pass
+        assert rows(store, fleet_ref) == T
+        assert frame(store, fleet_ref)["value"].to_list() == [2.0, 2.0, 2.0, 1.0, 1.0, 1.0]
+    finally:
+        runtime.close(); store.close()
+
+
+def test_a_context_change_repairs_from_the_effective_time(tmp_path):
+    class RelabelGraph(FleetGraph):
+        labels: dict = {}
+        def sparql_query(self, query, **kwargs):
+            return {"columns": ["v0", "ext0", "lbl0"], "rows": [[ref + ":point", ref, self.labels.get(ref)] for ref in self.refs]}
+
+    store = DuckDBStore(tmp_path / "relabel.duckdb")
+    graph = RelabelGraph(["urn:a"])
+    runtime = Materializer(store, graph)
+    try:
+        store.upsert_rows("urn:a", [(t, 1.0) for t in T], value_kind="numeric")
+        runtime.deploy(Deployment.from_class(CopyEach))
+        while runtime.run_once():
+            pass
+        graph.labels["urn:a"] = "renamed"
+        runtime.note_graph_change(2, effective_at=T[3])
+        runtime.refresh()
+        with store._own_conn() as conn:
+            cursor = conn.execute("SELECT cursor_ts FROM materialization_work").fetchone()[0]
+        assert cursor == T[3].isoformat()
+    finally:
+        runtime.close(); store.close()
+
+
+def test_validity_survives_restart(tmp_path):
+    store, graph, runtime = _runtime(tmp_path, ["urn:a"])
+    store.upsert_rows("urn:c", [(t, 2.0) for t in T], value_kind="numeric")
+    graph.refs = ["urn:a", "urn:c"]
+    runtime.note_graph_change(2, effective_at=T[3])
+    while runtime.run_once():
+        pass
+    runtime.close()
+    reborn = Materializer(store, graph)
+    try:
+        reborn.refresh()
+        valid = {b.inputs["input"][0].ref_uri: b.valid_from for b in reborn._dag.bindings}
+        assert valid == {"urn:a": None, "urn:c": T[3]}
+    finally:
+        reborn.close(); store.close()

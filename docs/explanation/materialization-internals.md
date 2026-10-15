@@ -37,6 +37,25 @@ every frontier the step advanced, so the next step sees it. Transforms run
 in a bounded pool on data already loaded; reads and writes stay on the
 step's single connection.
 
+## Model changes and effective times
+
+A graph write (`insert_graph`, `sparql_update`) records the time the author
+says the change took effect, `effective_at`, default now, in
+`materialization_graph_changes`. The next plan refresh consumes those rows
+and applies the earliest time to the bindings the change created or
+retired. `materialization_bindings` keeps one row per interval in which the
+model said a binding existed: a binding that appears for an app that
+already had bindings opens a row at the effective time and carries that
+time as its validity, so it reads and writes nothing before it, even for
+later corrections to earlier data; a binding of a newly deployed app opens
+an unbounded row and covers retained history as backfill allows. A binding
+that disappears closes its row at the effective time and its derived
+streams are tombstoned from that time on at a new revision, so a consumer
+retracts its own results while rows before the time stay as the record of
+what the model said then. A binding whose match context changed is closed
+and reopened, and its repair starts at the effective time. The lineage
+table remains the projection of the current plan.
+
 ## Scheduling and recovery
 
 The timeseries database stores current values and assigns each write a
@@ -103,7 +122,9 @@ The timeseries backend stores `system_state` (one global `current_revision`)
 and `binding_progress` (`progress_key` → `consumed_revision`), plus
 `stream_resets` (`ref_uri` → latest reset `last_revision`). The engine owns
 `materialization_inbox` (pending write requests) and `materialization_steps`
-(one row per applied step: revision, sequence range, entries, rows). Opening a store creates
+(one row per applied step: revision, sequence range, entries, rows). The
+materializer owns `materialization_bindings` (binding validity intervals)
+and `materialization_graph_changes` (effective times awaiting a refresh). Opening a store creates
 the reset table if it is absent; no existing timeseries columns change. The materializer
 owns `materialization_deployments`, `materialization_lineage`, and
 `materialization_work`. Lineage records output ownership, input references,

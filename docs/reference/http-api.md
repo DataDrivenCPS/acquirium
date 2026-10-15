@@ -78,6 +78,7 @@ Insert or replace an RDF graph.
 ```
 
 `format` accepts `turtle`, `n3`, `xml`, `trig`, `nquads`. `source_id` is required: use the reserved `plant` source for the shared plant model, otherwise use the owning driver or app source ID. `replace: true` replaces only that owner's graph.
+- `effective_at` (optional ISO 8601 timestamp): when the change took effect in the plant; defaults to now. Derived streams whose bindings appear or disappear because of this write are recomputed, or retired, from that time.
 
 **Response** `{"ok": true, "embedding_ready": true}`
 
@@ -188,6 +189,7 @@ Execute a SPARQL UPDATE against one owned data graph. `/sparql` is read-only; th
 | --- | --- | --- |
 | `update` | yes | SPARQL UPDATE (`INSERT`/`DELETE`) statement |
 | `source_id` | yes | Owner of the data graph to update; use the reserved `plant` for the shared plant model |
+| `effective_at` | ISO 8601 timestamp, optional | When the change took effect in the plant; defaults to now. Derived streams whose bindings appear or disappear because of this write are recomputed, or retired, from that time. |
 
 The update is scoped to that owner's graph, so it cannot touch the plant model or another source's triples unless `source_id` names it. Drivers and apps use their own `sparql_update()` helper, which supplies the owner for them.
 

@@ -281,6 +281,9 @@ class InsertGraphRequest(BaseModel):
         min_length=1,
         description="Deployment data-graph owner; use 'plant' for the shared plant model",
     )
+    effective_at: Optional[datetime] = Field(
+        None, description="When the change took effect in the plant; defaults to now",
+    )
 
 
 class TimeseriesInfoRequest(BaseModel):
@@ -466,6 +469,7 @@ def insert_graph(req: InsertGraphRequest) -> dict[str, Any]:
             format=req.format,
             replace=req.replace,
             source_id=req.source_id,
+            effective_at=req.effective_at,
         )
         return {"ok": True, "embedding_ready": True}
     except Exception as e:
@@ -923,6 +927,9 @@ class SparqlUpdateRequest(BaseModel):
         min_length=1,
         description="Owner of the data graph to update; use 'plant' for the shared plant model",
     )
+    effective_at: Optional[datetime] = Field(
+        None, description="When the change took effect in the plant; defaults to now",
+    )
 
 
 @app.post("/sparql_update")
@@ -931,7 +938,7 @@ def sparql_update(req: SparqlUpdateRequest) -> dict[str, Any]:
     try:
         return {
             "ok": True,
-            **app.state.manager.sparql_update(req.update, source_id=req.source_id),
+            **app.state.manager.sparql_update(req.update, source_id=req.source_id, effective_at=req.effective_at),
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

@@ -56,9 +56,9 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 
 | method | description |
 |---|---|
-| `insert_graph(rdf_graph: str, format="turtle", replace=True, *, source_id: str) -> None` | Insert RDF into the graph owned by `source_id`; `replace=True` clears that graph first. |
+| `insert_graph(rdf_graph: str, format="turtle", replace=True, *, source_id: str, effective_at=None) -> None` | Insert RDF into the graph owned by `source_id`; `replace=True` clears that graph first. `effective_at` is when the change took effect in the plant (default: now); derived streams the change creates or retires are recomputed, or retired, from that time. |
 | `insert_graph_file(path, format=None, replace=True, *, source_id: str) -> None` | Read RDF from a file and insert it into the graph owned by `source_id`; the format is taken from the extension when omitted. |
-| `sparql_update(update: str, *, source_id: str) -> dict` | Execute a SPARQL UPDATE against one owned data graph. |
+| `sparql_update(update: str, *, source_id: str, effective_at=None) -> dict` | Execute a SPARQL UPDATE against one owned data graph; `effective_at` as for `insert_graph`. |
 | `validate_graph() -> dict` | Validate all deployment data against the ontology shapes. |
 | `graph_version() -> int` | The server's current source-data generation. |
 | `graph_status() -> dict` | Source and derived-query cache generations (`source_version`, `published_version`, `is_current`, `rebuild_in_progress`). |
