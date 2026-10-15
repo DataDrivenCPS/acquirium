@@ -87,8 +87,9 @@ def test_membership_removal_after_restart_honours_its_effective_time(tmp_path):
         while runtime.run_once():
             pass
         assert [r['value'] for r in stored(store, ref)] == [2.]
+        runtime.note_graph_change(1)                       # undated: takes effect now
         runtime.close()
-        runtime = Materializer(store, FleetGraph([]))     # undated: takes effect now
+        runtime = Materializer(store, FleetGraph([]))
         while runtime.run_once():
             pass
         assert [r['value'] for r in stored(store, ref)] == [2.]

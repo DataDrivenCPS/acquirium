@@ -58,7 +58,10 @@ result as the model was then, for instance a fleet total over the members
 it had. A named output can therefore have several owners, one per interval,
 and the intervals never overlap. A bucketed view switches at the start of
 the bucket containing the effective time. A change without an effective
-time takes effect when it is written. A binding whose match context changed
+time takes effect when it is written. Only a recorded model change does
+this: bindings that appear because the dataflow changed (a view deployed,
+an upstream view removed) cover retained history, and bindings that
+disappear for that reason are dropped. A binding whose match context changed
 is closed and reopened, and its repair starts at the effective time.
 Removing an app deletes its rows, so a later deployment under the same name
 starts without history. The lineage table remains the projection of the

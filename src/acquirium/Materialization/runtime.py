@@ -344,10 +344,11 @@ class Materializer:
                 every = deployments[app].every if app in deployments else None
                 return effective if not every else epoch + ((effective - epoch) // every) * every
             apps_with_rows = {r["app"] for r in open_rows.values()}
-            # A binding of an app that already had bindings, appearing now, is
-            # a model change: it exists from the effective time. A binding of
-            # an app that had none is a deployment: it covers retained history
-            # (subject to backfill). A binding that is still here keeps the
+            # A binding that appears because the model changed exists from the
+            # effective time. One that appears because the dataflow changed
+            # (a view deployed, an upstream view removed or redeployed) covers
+            # retained history, subject to backfill, as does every binding of
+            # a newly deployed app. A binding that is still here keeps the
             # validity it was given when it appeared.
             current_bindings = []
             for b in dag.bindings:
@@ -355,18 +356,20 @@ class Materializer:
                     continue   # a failed app's retained historical binding; rebuilt below
                 if b.progress_key in open_rows:
                     since = open_rows[b.progress_key]["valid_from"]
-                elif b.application_name in apps_with_rows:
+                elif b.application_name in apps_with_rows and pending:
                     since = boundary(b.application_name)
                 else:
                     since = None
                 current_bindings.append(replace(b, valid_from=since))
             current = {b.progress_key: b for b in current_bindings}
             failed_apps = set(self._plan_errors)
-            # Closed bindings stay in the plan over their own interval, so a
-            # late reading before a model change still reaches the result as
-            # the model was then. Those closing now close at the boundary.
+            # Bindings closed by a model change stay in the plan over their own
+            # interval, so a late reading before the change still reaches the
+            # result as the model was then. Those closing now close at the
+            # boundary. A binding that disappears because the dataflow changed
+            # has no interval to maintain and is dropped.
             closing = {key: boundary(row["app"]) for key, row in open_rows.items()
-                       if key not in current and row["app"] not in failed_apps}
+                       if pending and key not in current and row["app"] not in failed_apps}
             historical = self._historical(table, closing, current, deployments, failed_apps,
                                           applications, revision)
             for b in historical:
@@ -429,6 +432,9 @@ class Materializer:
                     if key not in current and row["app"] in failed_apps:
                         continue   # its app failed to compile; keep its bindings open until it recovers
                     until = boundary(row["app"])
+                    if key not in current and not pending:
+                        self._execute(conn, "DELETE FROM materialization_bindings WHERE progress_key=?", [key])
+                        continue
                     self._execute(conn, "UPDATE materialization_bindings SET valid_to=? WHERE progress_key=? AND valid_to IS NULL", [until.isoformat(), key])
                     if key not in current:
                         # Its outputs, from the stored definition, so a restart retires them too.

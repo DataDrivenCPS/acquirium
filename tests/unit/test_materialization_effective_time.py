@@ -313,3 +313,17 @@ def test_a_removed_app_leaves_no_history_for_a_later_one(tmp_path):
         assert all(b.valid_to is None for b in runtime._dag.bindings)
     finally:
         runtime.close(); store.close()
+
+
+def test_bindings_that_disappear_with_an_upstream_view_are_not_kept(tmp_path):
+    """Removing a view is a dataflow change: its consumers have no interval to keep."""
+    from tests.unit.test_incremental_materialization import LineageGraph
+    store, graph, runtime = _runtime(tmp_path, ["urn:a"])
+    try:
+        runtime.remove("copy-each")
+        runtime.refresh()
+        assert not runtime._dag.bindings
+        with store._own_conn() as conn:
+            assert conn.execute("SELECT count(*) FROM materialization_bindings").fetchone()[0] == 0
+    finally:
+        runtime.close(); store.close()

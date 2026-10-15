@@ -55,15 +55,12 @@ def test_removing_one_match_leaves_sibling_per_match_bindings_alone(tmp_path):
             key = by_input[ref].progress_key
             assert after[key] == before[key]
         assert by_input["urn:b"].progress_key not in after
-        # The aggregate's inputs changed, with no effective time given, so the
-        # change takes effect now: a new binding owns the named output from
-        # now on, the old one keeps owning the past, and nothing is repaired.
-        fleets = [b for b in runtime._dag.bindings if b.application_name == "sum-fleet"]
-        new_fleet = next(b for b in fleets if b.valid_to is None)
-        old_fleet = next(b for b in fleets if b.valid_to is not None)
-        assert new_fleet.progress_key != fleet.progress_key == old_fleet.progress_key
-        assert new_fleet.valid_from == old_fleet.valid_to
-        assert not _work(store)
+        # The aggregate's inputs changed with no model change recorded (the
+        # fake graph is edited directly): its named output moves to a new
+        # binding over all history, and that binding alone is repaired.
+        new_fleet = next(b for b in runtime._dag.bindings if b.application_name == "sum-fleet")
+        assert new_fleet.progress_key != fleet.progress_key and new_fleet.valid_from is None
+        assert _work(store) == {new_fleet.progress_key}
     finally:
         runtime.close()
         store.close()
