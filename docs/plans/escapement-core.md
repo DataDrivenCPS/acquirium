@@ -1,343 +1,295 @@
 # Make Escapement the core of Acquirium
 
-Status: proposed implementation plan; runtime behavior is unchanged.
-Explored on 2026-10-16 on branch `plan/escapement-core`.
+Status: proposed replacement architecture; runtime behavior is unchanged.
+Updated on 2026-10-16 on branch `plan/escapement-core`.
 
-## Recommendation
+## Mandatory direction
 
-Make Escapement the authoritative engine for observation changes, numeric
-history, derived computations, and their publication. Keep Acquirium responsible
-for semantic modeling, ontology inference, query authoring, stream registration,
-units, drivers, and the HTTP/Python interfaces. Start with an opt-in numeric
-vertical slice; expand after closing the compatibility gaps below.
+Escapement becomes Acquirium's **only timeseries engine and store**. Its embedded
+DuckDB database owns raw observations, corrections, deletions, derived values,
+history, computation progress, and atomic publication. Escapement is a required
+dependency, used by every server and local runtime.
 
-The goal is to replace the revision-based materialization engine, rather than
-permanently run two engines that independently own the same streams. Existing
-DuckDB/Timescale stores can remain migration sources and optional projections.
-Text/null observations need an explicit compatibility stage before Escapement
-can become the default for all existing workloads. Logs and control-plane
-records can remain in an Acquirium-owned database.
+Acquirium becomes the semantic and application layer: graph modeling/inference,
+semantic queries, stream metadata, unit resolution, drivers, deployment intent,
+and HTTP/Python access. Keep these capabilities where they add value; remove
+Acquirium's duplicate storage, scheduling, and publication machinery.
 
-Use the existing Python bridge, not a Rust rewrite of Acquirium. One native
-processor belongs to the existing single server process. Ray remains the driver
-supervisor; it is not the Escapement executor.
+There is no backward-compatibility requirement. Remove Timescale support and the
+existing Acquirium DuckDB timeseries implementation. Change public APIs,
+configuration, app authoring, schemas, and tests to fit Escapement. No alternate
+backend, opt-in mode, legacy scheduler, dual writes, migration outbox, or SQL
+projection is part of this replacement. Start new deployments with a fresh core
+database. Existing data is not deleted automatically; importing it is a separate,
+optional future task rather than a release prerequisite.
 
-## Evidence and current boundaries
+This is a mandatory architecture change delivered in implementation increments,
+not a gradual rollout that keeps the old implementation available.
 
-This plan examines the local `escapement -> ../escapement` checkout. That symlink
-is an existing, untracked development aid, not a distributable dependency.
+## What the replacement simplifies
+
+| Responsibility | Result |
+| --- | --- |
+| Observation persistence and version history | Escapement alone |
+| Durable admission, receipts, retry policy | Native Escapement contract |
+| DAG validation, dependency execution, affected-group repair | Escapement alone |
+| Atomic source/derived publication and restart progress | Escapement epochs and inbox |
+| Semantic discovery, ontology inference, stream descriptions | Acquirium/Oxigraph |
+| Query results to explicit operator inputs | A small Acquirium compiler |
+| Multiple app declarations to one complete active plan | A small serialized Acquirium controller |
+| Arrow/HTTP transport and semantic query results | Thin Acquirium adapters |
+
+The simplification is measured by deleted responsibilities and code. An
+`EscapementStore` that recreates `TimeseriesStore`, an `EscapementPublisher` that
+retains a second receipt model, or an adapter that emulates the old materializer
+would defeat the purpose.
+
+## Evidence from the explored code
 
 | Repository | Examined revision |
 | --- | --- |
 | Acquirium | `ef083dc23e667c1ab65381f2b547ce97136c1815` |
 | Escapement | `fe7e50f483a07088a682935e83b6d7095760e1cb` |
 
-Important Acquirium implementation seams:
+The local `escapement -> ../escapement` symlink is an existing untracked development
+aid, not a package dependency. Escapement's
+[`AcquiriumProcessor`](../../escapement/python/escapement/acquirium.py) already
+provides numeric ingestion, background execution, snapshots, Arrow reads,
+receipts, and provenance. Its [API contracts](../../escapement/docs/reference/api.md)
+and [bridge reference](../../escapement/docs/reference/acquirium.md) describe
+limits. The bridge's references to `Apps/runner.py` predate this Acquirium checkout,
+which uses `Materialization/*` and `App.transform(inputs, output, context)`.
 
-- [`Manager`](../../src/acquirium/Server/manager.py) resolves canonical references
-  and registered value kinds for individual, batch, and Arrow ingestion. Writes
-  converge on `PublicationStore`; whole-stream replacement has a separate method.
-- [`PublicationStore`](../../src/acquirium/Storage/publication/types.py) already
-  defines canonical Arrow mutations. Its current
-  [`RevisionPublisher`](../../src/acquirium/Storage/publication/revision.py)
-  does not persist publication identities or deduplicate retries.
-- [`BindingPlanner`](../../src/acquirium/Materialization/planner.py) compiles
-  deployed queries into explicit reference inputs, metadata context, grouping,
-  and stable output identities. Reuse this semantic compilation work.
-- [`Materializer`](../../src/acquirium/Materialization/runtime.py),
-  [`RevisionStore`](../../src/acquirium/Materialization/revision_store.py), and
-  [`scheduler`](../../src/acquirium/Materialization/scheduler.py) currently own
-  durable progress, repair windows, output publication, and execution. These are
-  the eventual replacement boundary.
-- [`TimeseriesStore`](../../src/acquirium/Storage/base.py) also includes stream
-  registration, logs, SQL, and transaction hooks. Escapement's bridge is not a
-  drop-in implementation of this entire protocol.
-- [`Server/app.py`](../../src/acquirium/Server/app.py) owns startup/shutdown and
-  the materialization polling task. `aq.init()` starts this same server, so both
-  invocation modes should acquire the engine through the same Manager path.
+Useful code to extract rather than preserve wholesale:
 
-Escapement already implements durable admission, a background processor,
-immutable complete plans, affected-group scheduling, atomic source-plus-derived
-epochs, correction/deletion history, snapshots, retry receipts, and provenance.
-Its [`AcquiriumProcessor`](../../escapement/python/escapement/acquirium.py)
-normalizes numeric frames and exports Arrow ranges. The
-[bridge reference](../../escapement/docs/reference/acquirium.md) and
-[API contracts](../../escapement/docs/reference/api.md) document the boundaries.
-The bridge reference mentions an older `Apps/runner.py`; this checkout instead
-uses `Materialization/*` and `App.transform(inputs, output, context)`.
+- [`BindingPlanner`](../../src/acquirium/Materialization/planner.py): semantic query
+  resolution, grouping, and stream descriptors. Keep the query-to-input logic;
+  replace the legacy Binding/Deployment execution model.
+- [`Manager`](../../src/acquirium/Server/manager.py): registration, reference
+  resolution, graph operations, and units. Reduce it to coordinating the graph,
+  one core owner, and the semantic plan controller.
+- [`Server/app.py`](../../src/acquirium/Server/app.py): lifecycle and transport.
+  Replace materialization polling with the native background processor.
 
-## Target ownership
+## Target architecture
 
 ```mermaid
 flowchart TD
-    D[Drivers and imports] --> M[Acquirium validation and reference resolution]
-    M --> E[Escapement durable inbox]
-    G[Oxigraph and ontologies] --> Q[Acquirium BindingPlanner]
-    R[Durable deployment registry] --> Q
-    Q --> C[Complete-plan controller]
-    C --> E
-    E --> P[Atomic epoch: source changes and derived DAG]
-    P --> H[Escapement history and snapshots]
-    H --> A[Acquirium Arrow and Python query adapters]
-    P --> F[Committed change and provenance feeds]
-    F --> S[Optional SQL projections and notification consumers]
+    D[Drivers and imports] --> A[Acquirium reference and unit validation]
+    A --> E[Escapement inbox and background processor]
+    G[Oxigraph: plant, ontologies, stream metadata] --> C[Semantic plan compiler]
+    R[App declarations] --> C
+    C --> P[Complete-plan controller]
+    P --> E
+    E --> S[Escapement DuckDB: observations, history, plans, epochs]
+    S --> Q[Snapshot and Arrow query adapters]
+    Q --> U[Acquirium Python and HTTP clients]
+    S --> X[Committed provenance and change consumers]
 ```
 
-Acquirium retains the graph as the authority for semantic discovery and
-`compute_ref_uri(source_id, ref_name)` as the identity rule. Escapement keys are
-external `ref_uri`s, never point URIs: one point can have multiple references.
-Keep `BindingPlanner.output_port()` identities, including the current
-`derived:<application_name>` source convention. Do not copy the older bridge
-example's different app-source naming convention.
+One server process owns one Escapement database and the embedded graph. Drivers
+submit observations through Acquirium; they do not open the core database.
+`aq.init()` uses the same server lifecycle. Ray may continue supervising existing
+drivers during this work; it has no role in computation scheduling. Replacing
+Ray is independent of replacing the timeseries core.
 
-An epoch makes source and derived **observations** atomic. It does not make an
-Oxigraph transaction and a DuckDB transaction atomic together. Record the graph
-generation associated with a plan, and report desired/accepted/active plan state
-separately. A coherent graph-plus-data client view requires a corresponding
-graph-view mechanism; an epoch token alone cannot provide it.
+Keep `compute_ref_uri(source_id, ref_name)` as a useful canonical identity helper,
+not as a compatibility obligation. Use external references as core stream keys;
+a point URI can describe several references. Keep stream descriptions in RDF
+with a rebuildable in-memory lookup, rather than a second SQL streams/ref_ids
+registry. Design output identities around stable app/group/port identities so a
+group's membership can change without unnecessarily renaming its output.
 
-## Compatibility decisions to implement explicitly
+Acquirium needs durable **deployment intent**, not another execution database.
+Start with a small atomically replaced declaration manifest under `data_dir`,
+containing the app registry and pending complete-plan declaration/identity. The
+engine owns accepted/active plans and progress. Reconcile pending intent with
+native receipts and the committed plan after restart. Do not persist independent
+consumed frontiers, binding generations, work queues, or shadow epoch counters.
+Use durable file replacement semantics for the manifest, including synchronization
+and crash recovery; an in-memory registry or an unprotected JSON overwrite is
+insufficient.
 
-| Concern | Current Acquirium | Escapement today | Migration policy |
-| --- | --- | --- | --- |
-| Values | Numeric and text; numeric streams can contain text fallbacks and null rows | Finite non-null Float64 | Initially opt in eligible streams; preserve legacy streams. Typed values/null semantics gate general cutover. |
-| Observation key | `(ref_uri, UTC microsecond)` | `(stream, UTC nanosecond, sample_key)` | Use sample key zero and microsecond-aligned times at the public compatibility boundary. |
-| Query ranges | Timeseries HTTP reads use an exclusive end; app `TimeWindow` ends are inclusive | Half-open ranges | Distinguish app windows from fetch ranges. Translate inclusive app ends by one microsecond with overflow checks. |
-| Arrow reads | `ts: timestamp[us, UTC], value, uri`; batch iterator; no default row limit | `ref_uri, ts: timestamp[ns, UTC], value`; materialized table; default limit 10,000 | Rename/reorder/cast safely; implement complete bounded paging and statistics. Never silently truncate a client fetch. |
-| Replacement | Atomic exact stream contents, including empty replacement | Explicit per-key mutations, no transactional replacement request | Add a serialized native replacement request before moving this feature. |
-| Computations | Pointwise, fixed buckets, rolling/context windows, arbitrary output intervals, full history | Pointwise and fixed buckets anchored at group time | Support a declared subset first; add window contracts before migrating the rest. |
-| Outputs | Unassigned port preserves data; assigned empty port clears its interval | Every declared port must be returned; empty port retracts old group rows | Require every port in the initial adapter; reject incompatible apps. |
-| First deployment | `backfill=False` can skip old observations | Activation can evaluate retained historical groups | Define and persist an initial event-time boundary; never assume equivalent defaults. |
-| Metadata changes | Retained-context repairs; inferred graph selection | New complete plan, input event-time validity | Default to historical repair; support prospective interval changes as an explicit policy. |
-| Code upgrades | Code changes need explicit reprocessing of old results | Redefined operator activation rebuilds history | Document the changed policy; use shadow generations if upgrades need gradual cutover. |
-| App deletion | Removes deployment/progress and retains derived history | Removing operators clears their outputs; output names stay reserved | Separate undeploy, purge, and archive semantics. A compatible archive requires a core ownership/history extension. |
-| Failures | Failed binding blocks descendants; healthy branches continue | Failed operator prevents the entire epoch and pauses processing | Expose global pause in experimental mode; independent publication domains require core work before claiming parity. |
-| Reprocess/check | Durable interval reprocessing and dry-run API | No equivalent bounded reprocess request in the current bridge | Add explicit reprocess support; dry runs use an isolated temporary engine with no live writes. |
-| SQL/Timescale/Grafana | Direct SQL sees the canonical rows | Engine owns a separate embedded DuckDB schema | Provide an optional transactional projection; do not promise direct SQL access to private engine tables. |
+An observation epoch does not atomically commit Oxigraph metadata. Record the
+graph generation used to compile a plan and expose desired versus active state.
+Initially promise coherent timeseries snapshots with identified plan/graph
+provenance, not a cross-database transaction over graph and data.
 
-Additional contracts:
+## Adopt the native model; reduce the initial feature set
 
-- Stable request IDs must originate at the client/import job and survive retry.
-  `X-Acquirium-Publication-Id` exists for Arrow ingestion; carry identities through
-  every transport. Generating a new server UUID after a timeout loses retry safety.
-  The Rust retry ledger is bounded (`retry_window` defaults to 100,000 requests),
-  so unlimited idempotency needs a durable integration ledger or a documented
-  expiration policy. A payload hash alone is not a request identity.
-- Admission and publication differ. Preserve existing synchronous visibility
-  for compatibility endpoints by waiting on the returned receipt. An explicit
-  asynchronous API can return accepted state and a receipt. A timeout after
-  admission must report pending status rather than imply that nothing happened.
-- The bridge caps a batch at 10,000 input rows; the core also has request-byte,
-  selected-row, group, and output bounds. Chunking cannot preserve whole-request
-  atomicity. Initially reject oversized atomic batches before admission; add
-  staged bulk requests if large atomic imports are required. The existing HTTP
-  Arrow handler already commits different sources separately: document that
-  boundary rather than imply cross-source atomicity.
-- Do not independently commit the numeric and text portions of a batch that
-  currently commits together. Keep mixed batches on the legacy route until
-  typed admission exists, or offer an explicitly different batch contract.
-  A text/null correction at a formerly numeric key must also retract the old
-  numeric contribution; dropping nonnumeric rows leaves incorrect derived data.
-- The bridge does not convert units. Freeze point/storage units and conversion
-  factors into versioned input context/artifacts, validate compatibility before
-  activation, and apply the same conversion as current `StreamSet.in_unit()`.
-- `source_digest()` and `PythonFunction.from_file()` use different digest
-  conventions. Keep deployment identity and native module digest separate.
-  Pin adapter code and its imports/environment as well as the user module; a
-  wrapper's digest alone does not identify the calculation.
+No legacy behavior must be emulated. The first complete replacement supports the
+following deliberately smaller contract:
+
+| Area | Required new behavior |
+| --- | --- |
+| Values | Finite non-null numeric observations. Reject text, booleans, nulls, and nonfinite values before admission. No text fallback store. |
+| Time | UTC nanoseconds; half-open ranges throughout. No microsecond compatibility casts or inclusive-window adapters. |
+| Keys | One value per stream and timestamp initially: sample key zero. Require operator outputs to follow this restriction. |
+| Ingestion | Explicit upserts/deletes with stable source/request IDs. Use native receipts and the documented bounded retry window. |
+| Publication | Durable acceptance and committed visibility are separate. Return a receipt; expose wait/read-after. Timeout after acceptance means pending, not rejected. |
+| Bulk writes | Reject requests outside native row/byte bounds. Explicit chunked imports have per-chunk admission, not whole-import atomicity. |
+| Reads | Native snapshots/epoch tokens, Arrow ranges, and version history. Complete paging with explicit limits; never silently truncate at the bridge's 10,000-row default. |
+| Operators | Pointwise and fixed buckets with native timestamp anchoring. Every port is returned; empty outputs retract old group results. |
+| Activation | Complete plans; normal native historical recomputation. No legacy `backfill=False`, `batch_delay`, or `min_interval` behavior. |
+| Metadata | Recompile explicit input/context lists on relevant graph changes. Historical repair by default; prospective validity intervals can be added explicitly later. |
+| Code changes | Immutable operator versions; native rebuild on redefinition. No old progress-key or explicit-reprocess compatibility. |
+| Removal | Native operator removal clears current outputs while retaining historical versions. Respect permanent stream ownership reservations; use versioned identities when necessary. |
+| Failure | One failed operator blocks the whole epoch and pauses the processor. Expose that state and explicit retry; do not add a parallel failure scheduler. |
+| Inspection | Active plan, snapshots, frontiers, backlog, paused error, provenance, and explain. No SQL progress tables. |
+
+Text/null support, rolling windows, full-history/custom-timestamp computation,
+clock-driven outputs, atomic whole-stream replacement, and independent failure
+domains are optional **Escapement extensions** if product requirements demand
+them. They are not compatibility gates for the initial replacement. Do not
+implement missing engine features in an Acquirium side engine. Retire unsupported
+examples and clearly reject unsupported declarations/observations.
+
+Remove `replace=True` initially. Explicit bounded mutations are sufficient for
+the initial API. If atomic replacement becomes necessary, implement a serialized
+native replacement request; snapshot enumeration followed by a later delete batch
+is not safe under concurrent ingestion.
+
+Remove the SQL logbook/SQL-query APIs and direct Timescale/Grafana integrations
+from the initial supported surface. Operational logging uses normal application
+logs. A future persistent domain-event/logbook feature needs its own deliberate
+contract; it must not silently keep the old timeseries store alive.
+
+Unit correctness remains required for scientific calculations. Resolve/validate
+units in Acquirium and freeze conversion factors into versioned function/input
+context before execution. A transform cannot query the live graph or fetch
+undeclared history. Start with explicit functions and frozen context; add a native
+immutable parameter contract if necessary rather than hidden mutable configuration.
+
+Python functions use Escapement's versioned `(frame, context) -> {port: frame}`
+interface and subprocess executor. Acquirium adds semantic selection and output
+metadata declarations, not `InputBatch`, `StreamSet`, `OutputBuilder`, or
+`TimeWindow` emulation. Pin the user artifact and required helpers/environment;
+the digest of a generic adapter alone does not identify its imported calculation.
 
 ## Implementation sequence
 
-### 1. Package and embed an opt-in engine
+### 1. Replace persistence and server lifecycle
 
-Add the `escapement-db` dependency behind an experimental extra initially. Pin a
-reviewed release or exact Git revision for development and lock it; do not commit
-the local symlink or make installed wheels depend on `../escapement`. Check
-Python/Polars/PyArrow compatibility and the native wheel matrix in CI. Escapement
-bundles Rust DuckDB 1.4.4 while Acquirium independently imports Python DuckDB;
-test coexistence on supported platforms rather than assume they share a library.
+Make `escapement-db` a normal required dependency, pinned to a reviewed release or
+exact Git revision in development and locked. Do not distribute a dependency on
+the sibling symlink. Check the native build/wheel matrix for supported platforms.
 
-Add an Acquirium engine owner and explicit configuration for engine path, worker
-count, epoch capacity, and pending-request bounds. Use a separate engine file
-from the legacy timeseries/control database. Wire it through Manager and server
-lifespan; expose backlog/frontiers/active plan/paused error. Stop producers and
-concurrent API callers before draining/closing. Do not run both the legacy
-polling scheduler and the native processor for the same output references.
+Open one native processor in Manager/server lifespan. Route all supported
+observation writes and reads directly to it. Add receipt/wait/status and coherent
+snapshot access. Resolve metadata from the graph; keep the bridge thin and extend
+its paging/statistics APIs in Escapement where appropriate. Keep one canonical
+observation schema in the transport and core adapter.
 
-**Acceptance:** embedded open/close/reopen through the server and `aq.init()`,
-single-owner enforcement, configuration validation, and recovery of pending work.
+Change config to one engine path plus native worker/admission limits. Remove
+backend selection, PostgreSQL DSNs, old materialization polling, and alternate
+storage initialization. Stop producers and in-flight API callers before closing
+the native processor. Pending accepted work must survive restart.
 
-### 2. Compile semantic bindings into complete native plans
+**Acceptance:** mandatory native engine in both server and `aq.init()`; raw
+upserts/deletes, receipts, historical reads, and restart work without creating any
+legacy timeseries database or starting the legacy materializer.
 
-Reuse `Deployment`, query resolution, grouping, descriptors, output declarations,
-and DAG validation. Add a translation layer from `Binding` to `Operator`: input
-aliases become roles; references become stream IDs; per-match/all-matches binding
-sets determine operator instances. Preserve entity/label/unit context without
-making a per-match operator depend on unrelated fleet rows.
+### 2. Replace app execution with semantic native-plan declarations
 
-Create a durable controller holding the complete desired declaration, immutable
-plan ID/digest, graph generation, activation request ID, receipt, and active
-state. Serialize deploy/remove/replan requests. Persist intent before submission,
-reconcile after restart, and publish active status only after receipt application.
-Never treat `activate()` as per-app registration: each activation replaces the
-whole plan. Retain last-good definitions when a proposed plan fails validation.
-An operator version identifies function/window/outputs/parameters; an input-only
-change gets a new plan ID, not an unnecessary definition version.
+Define a small app declaration: semantic input query, grouping, native window,
+versioned function, and output metadata. Extract only the reusable query-to-stream
+resolution from `BindingPlanner`. Do not preserve the old App transform API.
+Compile aliases to roles, references to stream keys, and semantic groups to
+operator instances. Keep code/window/output definition versions distinct from
+input membership and complete-plan identity.
 
-Resolve against a fresh coherent inferred graph generation, validate source and
-published generations before/after compilation, and retry stale work. Derived
-output metadata must remain discoverable so downstream queries can bind it;
-stage output registrations and re-resolve until the declaration stabilizes, then
-validate the complete DAG and activate it. Handle empty input groups explicitly
-so the last-member removal clears old outputs.
+Use one serialized controller to combine all app declarations into complete
+plans. Persist pending intent before admission, reconcile it after restart, and
+mark activation complete only after its receipt is published. A deployment must
+not accidentally remove operators from other apps. Native validation owns cycles
+and output ownership; semantic validation owns selection and units.
 
-Separate structural output registration from execution provenance. Structural
-metadata legitimately changes discovery; an epoch-provenance mirror must not
-invalidate semantic selection on every epoch. Add graph-generation filtering or
-an excluded provenance dataset; a separately named graph alone is insufficient
-if all writes still increment the same watched generation.
+Compile against a fresh coherent inferred graph generation; retry if source or
+published generations change during compilation. Register structural derived
+metadata so downstream semantic queries can discover outputs, then re-resolve
+with a bounded stabilization check before activation. Reject declarations that
+cannot stabilize. Preserve empty groups or remove their operators deliberately,
+so last-member removal retracts current results.
 
-**Acceptance:** two independently deployed apps survive each other's updates;
-derived-to-derived selection works; restart reproduces the declaration; graph
-changes cannot install mixed-generation inputs or create a refresh loop.
+Separate structural output registration from epoch provenance. Structural changes
+legitimately affect selection; provenance events must not retrigger planning.
+Use an excluded provenance dataset or filtered generation tracking: a separately
+named graph alone does not help when every write increments the watched version.
 
-### 3. Prove one complete calculation through Acquirium
+**Acceptance:** two apps and a derived-to-derived chain work; updating one retains
+the others; metadata moves repair historical groups; restart restores intent and
+active state without another progress mechanism or a graph-refresh loop.
 
-Use [`FahrenheitToCelsius`](../../examples/transformation/temperature_conversion.py)
-as the first candidate: one numeric pointwise input, explicit arithmetic, stable
-per-match outputs, and backfill enabled. Adapt the pure transform to the native
-`(frame, context) -> {port: dataframe}` contract. Provide loaded StreamSets and
-validated output assignments only if retaining the existing authoring surface;
-never give the transform an unrestricted live Manager/client capability.
+### 3. Prove the smaller system end to end and delete the old core
 
-Feed test observations through Acquirium registration and ingestion, resolve a
-real semantic query, activate the operator, and fetch results through the normal
-DataObject/Arrow path. Implement numeric read routing and `timeseries_info_batch`
-for this slice. Add an epoch token to grouped/multi-stream reads so one DataObject
-can use a pinned snapshot across requests; independent HTTP fetches otherwise
-can observe different epochs even though each native snapshot is coherent.
+Rewrite the Fahrenheit-to-Celsius example as a native pointwise function plus
+semantic declaration. Add a fixed-bucket aggregate and a downstream function.
+Test normal Acquirium registration/query/Arrow paths against independent full
+recomputation under corrections, late input, deletions, metadata changes, and
+restart. Use explicit epoch tokens for reads across streams.
 
-Initially compare separate output references with the legacy calculation.
-Include fixed-bucket aggregation as the second case. Do not silently adapt
-`FillShortTemperatureGaps`: its full-history interpolation emits new timestamps
-and needs a different core window/replay contract.
+Delete these old responsibilities, adjusting imports/callers rather than leaving
+unused compatibility layers:
 
-**Acceptance:** end-to-end query and data retrieval agree with independent full
-recomputation after late arrivals, corrections, last-row deletion, and restart.
-Unsupported window/value/port policies fail during deployment validation.
+- `Storage/duckdb_store.py`, `Storage/timescale_store.py`, the `TimeseriesStore`
+  protocol/backend factory, and `Storage/publication/*`.
+- `Materialization/revision_store.py`, `scheduler.py`, legacy runtime execution,
+  revision/frontier/tombstone/reset tables, and durable repair queues.
+- Legacy execution declarations/helpers not needed by the new semantic compiler.
+  Replace app checks with isolated native execution if checks remain useful.
+- Backend-specific configuration, environment variables, SQL initialization,
+  Docker services, and Timescale test fixtures.
+- Direct Python `duckdb` and `psycopg` runtime dependencies once their callers are
+  removed. DuckDB persistence is supplied by Escapement's bundled Rust dependency.
+- SQL logbook, SQL-query, and direct SQL dashboard endpoints/integrations removed
+  from the new supported surface.
 
-### 4. Migrate authoritative numeric ingestion
+Update remaining drivers, public APIs, examples, docs, and Docker builds to the
+new contract. Numeric observations use the sole ingestion path; drivers producing
+unsupported values must reject/configure those streams, never discard them
+silently. Retire full-history interpolation until the core supports that workload.
 
-Implement an `EscapementPublisher` at the existing publication seam, with source
-scope and receipt state represented explicitly. The current canonical table has
-split values and no source column: resolve source ownership in the registry and
-restore registered value kinds before calling the numeric bridge. Validate the
-whole request before committing, including direct writes to owned outputs.
+**Acceptance:** no application imports or executes the old stores/scheduler; no
+backend flag or fallback path remains; integration tests use temporary native
+engine databases. Compare correctness with independent recomputation, not a
+permanent second runtime. The PR explicitly accounts for deleted code and reduced
+responsibilities as well as added code.
 
-For a live comparison period, commit normalized mutations and a durable outbox
-in the **same legacy-store transaction**. Relay recorded IDs/payloads and
-acknowledge durable core admission; do not rely on `_after_canonical_publish()`
-or polling current values to discover corrections. Test crash gaps. Bound replay
-and ledger retention so an old redelivery cannot resurrect a stale correction.
+### 4. Establish operating bounds and extend only where needed
 
-At numeric cutover, accept numeric changes in the core inbox first and route
-reads to its committed snapshots. Any legacy numeric copy becomes a feed
-projection, not another writer. Add native atomic replacement before enabling
-`replace=True`; computing deletes from a snapshot and submitting later races
-concurrent writes. Preserve empty replacements and downstream retractions.
+Measure expected history, startup/restart memory, correction/backfill cost,
+Python worker overhead, and queue latency. The current core keeps all current
+relations in RAM and has an unpruned change feed; DuckDB persistence alone does
+not make those limits disappear. Set supported workload/admission bounds and
+surface capacity failures. Exercise paused-prefix recovery and shutdown, including
+failure to drain. Do not promise independent app progress on a global failure.
 
-**Acceptance:** crash/retry before admission, after admission, after publication,
-and before HTTP response neither loses an acknowledged change nor reapplies an
-old correction. No uncoordinated dual writes; replacements serialize correctly.
+Prioritize any subsequent typed values, rolling windows, replacement, retention,
+schema upgrades, or failure-domain work in Escapement. Acquirium consumes those
+capabilities through the same small adapter. No requirement to reimplement all
+old features before this mandatory architecture ships.
 
-### 5. Close the gaps needed by current deployments
+**Acceptance:** documented and measured workload envelope; visible pending/failed
+state; restart/retry correctness and supported native packaging. Additional
+features have native contracts and correctness tests before being exposed.
 
-Implement rolling support with explicit output grids, lookback/lookahead,
-affected-group propagation, boundary closure, and deletion of old output groups.
-Add full-history/custom-output replay only under an explicit bounded-resource
-policy. Port gap filling after that contract exists. Define legacy `backfill`,
-`batch_delay`, `min_interval`, reprocess, code-upgrade, omitted-port, and undeploy
-behavior; reject unsupported declarations until each has a tested translation.
+## Validation and first deliverable
 
-Extend the core value/schema model for text/null observations if it is to own all
-Acquirium timeseries. Preserve value-mode projections and mixed-stream corrections.
-Keeping text in a separate store remains a supported transitional mode, but
-does not provide one atomic publication across numeric/text observations.
+During the initial exploration, all 7 Escapement bridge tests and 4 binding tests
+passed using its existing installed release extension (0.1.0, macOS aarch64).
+These tests cover corrections/retractions, retries, snapshots/history, background
+processing, restart, pending work, Python execution, and failure reporting. Rust
+sources were inspected but not rebuilt; there is not yet a full-stack integration.
 
-Independent failure domains, controlled recovery of poison work, bounded memory,
-history retention, and schema migrations also need core contracts before a broad
-default cutover. The current engine keeps all current relations in RAM and its
-change feed is unpruned. A queued replacement plan cannot reliably bypass an
-already failed prefix.
+The targeted Acquirium baseline failed before collection because its existing
+environment lacks `shifty` (`pyshifty`). Restore the locked environment when
+extracting useful semantic/driver tests. Remove tests specific to the discarded
+execution model; retain domain invariants and write integration coverage against
+the native engine. Passing every old API test is not an objective.
 
-**Acceptance:** run the relevant existing materialization/value contracts against
-the new implementation; document every intentional API change. Measured history,
-burst/backfill load, restart memory/time, repair cost, and stalled-queue behavior
-must fit real deployment budgets before changing the default.
-
-### 6. Import existing history and retire duplicate machinery
-
-Create a resumable migration command that inventories references, units, value
-kinds, deployments, and unsupported apps before writing a new core database.
-Import current source state at a pinned cut with deterministic chunk IDs; retain
-outbox events after that cut, catch up, and activate the complete plan. Existing
-Acquirium rows contain current values, not historical correction versions: do
-not manufacture earlier epochs or copy SQL revision frontiers as engine epochs.
-Recompute derived values under the selected backfill/upgrade policy and compare
-them before transferring output ownership.
-
-Fence legacy writers before the final catch-up/ownership switch. Keep the old
-database as a read-only recovery artifact. A rollback after core writes requires
-replaying its committed source feed into the old system and reconciling ownership;
-changing a configuration flag alone is not a lossless rollback.
-
-Optional Timescale/Grafana projections consume complete signed epochs, apply
-retractions and inserts, and commit the feed cursor with sink changes. Pages may
-split epochs or retract/insert pairs; stage until an epoch is complete. Report
-projection lag and avoid claiming core atomic visibility for a lagging sink.
-Notifications consume committed changes outside transforms with consumer-specific
-delivery/idempotency rules.
-
-Once migrated workloads pass, remove their legacy `RevisionStore`, scheduling,
-frontier/tombstone/reset, and worker publication paths. Retain public query/app
-authoring helpers that still add value. Update docs, config, Docker builds, and
-integration fixtures around a single authoritative observation engine.
-
-**Acceptance:** resumable import, snapshot comparison, fenced cutover, and a
-tested rollback replay on both legacy source backends; no stream has two owners.
-
-## Validation performed during exploration
-
-Using the existing Escapement virtual environment and its installed native
-extension (version 0.1.0, release build, macOS aarch64):
-
-```sh
-PYTHONDONTWRITEBYTECODE=1 escapement/.venv/bin/python -m unittest discover -s escapement/python -p test_acquirium.py -v
-PYTHONDONTWRITEBYTECODE=1 escapement/.venv/bin/python -m unittest discover -s escapement/python -p test_bindings.py -v
-```
-
-All 7 bridge tests and 4 binding tests passed, including background processing,
-corrections/retractions, normalized retries, pinned/historical reads, restart,
-pending work, failure reporting, Python execution, and GIL release. These runs
-exercise the installed extension; the Rust code was inspected but not rebuilt,
-and no full-stack Acquirium/Escapement integration exists yet.
-
-The targeted Acquirium baseline command was:
-
-```sh
-PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest tests/unit/test_incremental_materialization.py tests/unit/test_storage_values.py tests/unit/test_manager_value_kinds.py -q -p no:cacheprovider
-```
-
-It failed before collection because the existing environment lacks `shifty`
-(the `pyshifty` dependency). Restore the locked Acquirium environment before
-using its suite as the migration baseline. No dependencies, existing data,
-runtime code, or sibling Escapement source were changed for this exploration.
-
-## First implementation milestone
-
-Deliver steps 1–3 as one reviewable experimental slice: one server-owned native
-processor, complete-plan translation, explicit receipts, and a real
-Fahrenheit-to-Celsius semantic-query demonstration with correction and restart
-coverage. Then land durable source migration and native replacement in step 4.
-Keep the default runtime unchanged until the deployment-specific gaps in step 5
-are closed and the migration path in step 6 is validated.
+The first implementation deliverable combines steps 1–3 for numeric pointwise and
+fixed-bucket workloads: Escapement is required, raw and derived observations live
+only in its DuckDB store, semantic apps compile into native plans, and the old
+stores/scheduler are deleted. Step 4 validates operating bounds before broader
+use. This plan revision changes documentation only and does not delete code,
+existing databases, or user files.
