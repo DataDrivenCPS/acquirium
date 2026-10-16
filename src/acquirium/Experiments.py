@@ -1293,14 +1293,18 @@ class ObservationCollection:
     def all(self) -> list[Observation]:
         observations = []
         rows = self._rows()
-        if any(item["variable_id"] not in self.study.variables for item in rows):
+        # Each catalog lookup rebuilds and sorts the Study's variables; index
+        # them once per call instead of once per row.
+        variables = {variable.variable_id: variable for variable in self.study.variables}
+        if any(item["variable_id"] not in variables for item in rows):
             # Another session may have extended the Study since it was opened.
             # Preserve existing handles while hydrating missing declarations.
             for declaration in self.study.client.list_experiment_variables(self.study.study_id):
-                if declaration["variable_id"] not in self.study.variables:
+                if declaration["variable_id"] not in variables:
                     self.study._collections[declaration["role"]]._add(declaration)
+            variables = {variable.variable_id: variable for variable in self.study.variables}
         for item in rows:
-            variable = self.study.variables[item["variable_id"]]
+            variable = variables[item["variable_id"]]
             observations.append(Observation(
                 experiment_id=item["experiment_id"],
                 variable=variable,
