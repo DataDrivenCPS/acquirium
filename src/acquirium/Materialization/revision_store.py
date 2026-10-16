@@ -17,6 +17,8 @@ A revision range selects what needs recalculation; the input window supplies cur
 the read snapshot, including context outside that range.
 """
 from __future__ import annotations
+
+import re
 from datetime import datetime, timedelta
 from typing import Any, ContextManager, Iterable, Mapping, Protocol
 from uuid import uuid4
@@ -24,7 +26,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 from acquirium.Materialization.events import emit
 from acquirium.Materialization.models import (
-    UTC, Batch, Binding, InputBatch, StreamDescriptor, StreamSet, TimeWindow,
+    UTC, Batch, Binding, InputBatch, OutputBuilder, StreamDescriptor, StreamSet, TimeWindow,
 )
 
 
@@ -251,7 +253,7 @@ class RevisionStore:
                 self._execute(conn, "INSERT INTO materialization_work VALUES (?, ?, ?, ?, ?, ?)",
                               [binding.progress_key, uuid4().hex, owned.start.isoformat(), owned.end.isoformat(), progress[0], progress[0]])
 
-    def _work_batch(self, conn: Any, binding: Binding, work) -> Batch:
+    def _work_batch(self, conn: Any, binding: Binding, work, *, writer: Any = None) -> Batch | None:
         from dataclasses import replace
         work_id, cursor, end, previous, target = work
         start, finish = datetime.fromisoformat(cursor), datetime.fromisoformat(end)
@@ -262,9 +264,21 @@ class RevisionStore:
         if binding.every:
             epoch = datetime(1970, 1, 1, tzinfo=UTC)
             stop = min(finish, epoch + (((stop - epoch) // binding.every) + 1) * binding.every - timedelta(microseconds=1))
-        window = TimeWindow(start, stop)
-        batch = self._window_batch(conn, binding, previous, target, window, output_window=window)
         following = (stop + timedelta(microseconds=1)).isoformat() if stop < finish else None
+        # The work was requested within the validity the binding had then; a
+        # model change since may have closed it earlier. Its outputs after
+        # that belong to another binding, so the chunk is clipped to what the
+        # binding owns now, and work entirely outside it is dropped.
+        window = binding.clip(TimeWindow(start, stop))
+        if window is None:
+            if following is not None and binding.valid_to is not None and datetime.fromisoformat(following) >= binding.valid_to:
+                following = None
+            if following is None:
+                self._execute(writer or conn, "DELETE FROM materialization_work WHERE progress_key=? AND work_id=?", [binding.progress_key, work_id])
+            else:
+                self._execute(writer or conn, "UPDATE materialization_work SET cursor_ts=? WHERE progress_key=? AND work_id=?", [following, binding.progress_key, work_id])
+            return None
+        batch = self._window_batch(conn, binding, previous, target, window, output_window=window)
         return replace(batch, context=replace(batch.context, work_id=work_id, work_cursor=cursor, work_next=following))
 
     def next_batch(self, binding: Binding, conn: Any = None) -> Batch | None:
@@ -311,7 +325,7 @@ class RevisionStore:
         if self._has_reset(conn, binding, previous, target):
             batch = self._reset_batch(conn, binding, previous, target, work)
         else:
-            batch = self._work_batch(conn, binding, work) if work else self._build_batch(conn, binding, previous, target, partition=True, writer=writer)
+            batch = self._work_batch(conn, binding, work, writer=writer) if work else self._build_batch(conn, binding, previous, target, partition=True, writer=writer)
         skipped = (binding, previous, target) if batch is None and previous != target else None
         return batch, skipped
 
@@ -515,98 +529,174 @@ class RevisionStore:
         with self.store._lock, self.store._write_conn() as own:
             return self._commit_wave_on(own, completed)
 
+    def _values(self, rows: list[tuple], types: tuple[str, ...], *, offset: int = 0) -> tuple[str, list]:
+        """A VALUES list with typed, numbered parameters: ``(CAST($1 AS T), ...), (...)``.
+
+        Numbered so the binding order is the textual order on every backend
+        (DuckDB binds ``?`` in plan order, which puts a FROM clause before
+        SET); cast so an untyped literal never decides a column's type.
+        """
+        params: list = []
+        pieces = []
+        for row in rows:
+            cells = []
+            for value, kind in zip(row, types):
+                params.append(value)
+                cells.append(f"CAST(${offset + len(params)} AS {kind})")
+            pieces.append("(" + ", ".join(cells) + ")")
+        return ", ".join(pieces), params
+
+    def _numbered(self, conn: Any, query: str, params: list) -> Any:
+        """Execute a query written with ``$n`` parameters."""
+        if self._postgres:
+            query = re.sub(r"\$\d+", "%s", query)
+        return conn.execute(query, params)
+
+    @property
+    def _timestamp_type(self) -> str:
+        return "TIMESTAMPTZ" if self._postgres else "TIMESTAMP"
+
     def _commit_wave_on(self, conn: Any, completed: tuple) -> Mapping[str, bool]:
-        # Check authorization and progress under the same write lock used
-        # by deployment revocation. Checking outside it would leave a gap
-        # in which an obsolete result could become authorized to overwrite
-        # the replacement deployment's data.
+        """Publish a layer's results with one statement per kind, not per binding.
+
+        Validity is checked for every binding from one read each of progress,
+        work rows and resets, under the same write lock as deployment
+        revocation. Then the layer's output windows are tombstoned in one
+        statement, its derived streams registered in one, its rows inserted
+        as one frame, and progress advanced in one. Full rebuilds, which
+        physically replace a stream, stay per output; they are rare.
+        """
         written: dict[str, dict[str, int]] = {}
-        accepted = []
         current = int(self._execute(conn, "SELECT current_revision FROM system_state").fetchone()[0])
+        keys = sorted({binding.progress_key for binding, _, _ in completed})
+        marks = ",".join("?" for _ in keys)
+        progress = dict(self._execute(conn, f"SELECT progress_key, consumed_revision FROM binding_progress WHERE progress_key IN ({marks})", keys).fetchall())
+        work_rows = {key: (work_id, cursor) for key, work_id, cursor in self._execute(
+            conn, f"SELECT progress_key, work_id, cursor_ts FROM materialization_work WHERE progress_key IN ({marks})", keys).fetchall()}
+        # A physical reset after a batch's snapshot invalidates it, pending
+        # backfill chunks included; one read covers the whole wave.
+        floor = min(batch.context.to_revision for _, batch, _ in completed)
+        resets = {ref: int(rev) for ref, rev in self._execute(
+            conn, "SELECT ref_uri, last_revision FROM stream_resets WHERE last_revision>? AND last_revision<=?", [floor, current]).fetchall()}
+        accepted = []
         for binding, batch, results in completed:
-            row = self._execute(conn, "SELECT consumed_revision FROM binding_progress WHERE progress_key=?", [binding.progress_key]).fetchone()
+            if isinstance(results, OutputBuilder):
+                results = results.values   # a builder handed in directly: collect what is still lazy
             active = self.active_bindings
             valid = active is None or active.get(binding.progress_key) == binding.generation
-            # A physical reset invalidates any snapshot prepared before it,
-            # including a pending backfill chunk. Retry against the reset.
-            valid = valid and not self._has_reset(conn, binding, batch.context.to_revision, current)
+            inputs = {d.ref_uri for values in binding.inputs.values() for d in values}
+            valid = valid and not any(resets.get(ref, 0) > batch.context.to_revision for ref in inputs)
             # Intermediate chunks share the same frontier. The work ID and
             # cursor provide the additional compare-and-swap condition that
             # prevents a duplicate chunk or cancelled repair from publishing.
             if batch.context.work_id:
-                work = self._execute(conn, "SELECT work_id, cursor_ts FROM materialization_work WHERE progress_key=?", [binding.progress_key]).fetchone()
-                valid = valid and work == (batch.context.work_id, batch.context.work_cursor)
-            if valid and row is not None and int(row[0]) == batch.context.from_revision:
+                valid = valid and work_rows.get(binding.progress_key) == (batch.context.work_id, batch.context.work_cursor)
+            if valid and binding.progress_key in progress and int(progress[binding.progress_key]) == batch.context.from_revision:
                 accepted.append((binding, batch, results))
-        # Incremental writes replace an owned interval using tombstones.
-        # Full rebuilds physically replace assigned streams and propagate
-        # reset markers, including when both old and new streams are empty.
         import polars as pl
-        # Allocate a revision for nonempty output or removal of existing
-        # rows, or a propagated reset. An ordinary empty interval with
-        # nothing to remove needs only a progress update.
-        revision = None
+        # Every output the wave may write: its rows clipped to the output window.
+        items = []
         for binding, batch, results in accepted:
             window = batch.context.output_window
             for name, table in results.items():
-                port = binding.outputs[name]
                 mask = pc.and_(pc.greater_equal(table["time"], pa.scalar(window.start)),
                                pc.less_equal(table["time"], pa.scalar(window.end)))
-                table = table.filter(mask)
+                items.append((binding, batch, name, binding.outputs[name], table.filter(mask)))
+        # An empty result over a window that holds nothing changes nothing;
+        # one probe over every such window says which do hold rows.
+        probes = [(index, port.ref_uri, self._time(batch.context.output_window.start), self._time(batch.context.output_window.end))
+                  for index, (binding, batch, name, port, table) in enumerate(items)
+                  if not batch.context.full_reset and not table.num_rows]
+        occupied: set[int] = set()
+        ts = self._timestamp_type
+        for chunk in (probes[i:i + 500] for i in range(0, len(probes), 500)):
+            values, params = self._values(chunk, ("INTEGER", "VARCHAR", ts, ts))
+            occupied.update(row[0] for row in self._numbered(conn, f"""SELECT v.i FROM (VALUES {values}) v(i, ref_uri, s, e)
+                WHERE EXISTS (SELECT 1 FROM timeseries t JOIN ref_ids r ON r.ref_id=t.ref_id
+                              WHERE r.ref_uri=v.ref_uri AND t.ts>=v.s AND t.ts<=v.e AND NOT t.deleted)""", params).fetchall())
+        publishing = [(index, item) for index, item in enumerate(items)
+                      if item[1].context.full_reset or item[4].num_rows or index in occupied]
+        # Allocate a revision for nonempty output or removal of existing
+        # rows, or a propagated reset. An ordinary empty interval with
+        # nothing to remove needs only a progress update.
+        revision = self.store._next_revision(conn) if publishing else None
+        tombstones, registrations, frames = [], [], []
+        for index, (binding, batch, name, port, table) in publishing:
+            window = batch.context.output_window
+            if batch.context.full_reset:
+                # Full rebuilds physically replace assigned streams and propagate
+                # reset markers, including when both old and new streams are empty.
+                # A bounded binding shares its output with the owners of other
+                # intervals: rebuild only its own.
                 ref_filter = "ref_id IN (SELECT ref_id FROM ref_ids WHERE ref_uri=?)"
-                existing = self._execute(conn, f"SELECT 1 FROM timeseries WHERE {ref_filter} AND ts>=? AND ts<=? AND NOT deleted LIMIT 1",
-                                         [port.ref_uri, self._time(window.start), self._time(window.end)]).fetchone()
-                if not batch.context.full_reset and not table.num_rows and existing is None:
-                    continue
-                if revision is None:
-                    revision = self.store._next_revision(conn)
-                if batch.context.full_reset and binding.bounded:
-                    # A bounded binding shares its output with the owners of
-                    # other intervals: rebuild only its own.
+                if binding.bounded:
                     self._execute(conn, f"DELETE FROM timeseries WHERE {ref_filter} AND ts>=? AND ts<=?",
                                   [port.ref_uri, self._time(window.start), self._time(window.end)])
-                    self._execute(conn, "INSERT INTO stream_resets (ref_uri, last_revision) VALUES (?, ?) ON CONFLICT (ref_uri) DO UPDATE SET last_revision=EXCLUDED.last_revision",
-                                  [port.ref_uri, revision])
-                elif batch.context.full_reset:
-                    self._execute(conn, f"DELETE FROM timeseries WHERE {ref_filter}", [port.ref_uri])
-                    self._execute(conn, "INSERT INTO stream_resets (ref_uri, last_revision) VALUES (?, ?) ON CONFLICT (ref_uri) DO UPDATE SET last_revision=EXCLUDED.last_revision",
-                                  [port.ref_uri, revision])
                 else:
-                    self._execute(conn, f"UPDATE timeseries SET deleted=TRUE, last_revision=? WHERE {ref_filter} AND ts>=? AND ts<=? AND NOT deleted",
-                                  [revision, port.ref_uri, self._time(window.start), self._time(window.end)])
-                self._execute(conn, """INSERT INTO streams (ref_uri, point_uri, source_id, ref_name, value_kind)
-                    VALUES (?, ?, ?, ?, ?) ON CONFLICT (ref_uri) DO NOTHING""",
-                    [port.ref_uri, port.point_uri, f"derived:{binding.application_name}", port.ref_name, port.spec.value_kind])
-                written.setdefault(binding.signature, {})[name] = table.num_rows
-                if self.capture is not None:
-                    from acquirium.Materialization.changes import StreamChange
-                    self.capture.append(StreamChange(port.ref_uri, binding.application_name, name,
-                                                     (window.start.isoformat(), window.end.isoformat()),
-                                                     table.select(["time", "value"]), port.spec.trigger))
-                if table.num_rows:
-                    frame = pl.from_arrow(table).rename({"time": "ts"})
-                    if not self._postgres:
-                        frame = frame.with_columns(pl.col("ts").dt.replace_time_zone(None))
-                    numeric = port.spec.value_kind == "numeric"
-                    frame = frame.select(
-                        pl.lit(port.ref_uri).alias("ref_uri"), "ts",
-                        (pl.col("value") if numeric else pl.lit(None, dtype=pl.Float64)).alias("numeric_value"),
-                        (pl.lit(None, dtype=pl.String) if numeric else pl.col("value")).alias("text_value"))
-                    self.store._insert_frame(conn, frame, revision)
+                    self._execute(conn, f"DELETE FROM timeseries WHERE {ref_filter}", [port.ref_uri])
+                self._execute(conn, "INSERT INTO stream_resets (ref_uri, last_revision) VALUES (?, ?) ON CONFLICT (ref_uri) DO UPDATE SET last_revision=EXCLUDED.last_revision",
+                              [port.ref_uri, revision])
+            else:
+                # Incremental writes replace an owned interval using tombstones.
+                tombstones.append((port.ref_uri, self._time(window.start), self._time(window.end)))
+            registrations.append((port.ref_uri, port.point_uri, f"derived:{binding.application_name}", port.ref_name, port.spec.value_kind))
+            written.setdefault(binding.signature, {})[name] = table.num_rows
+            if self.capture is not None:
+                from acquirium.Materialization.changes import StreamChange
+                self.capture.append(StreamChange(port.ref_uri, binding.application_name, name,
+                                                 (window.start.isoformat(), window.end.isoformat()),
+                                                 table.select(["time", "value"]), port.spec.trigger))
+            if table.num_rows:
+                frame = pl.from_arrow(table).rename({"time": "ts"})
+                if not self._postgres:
+                    frame = frame.with_columns(pl.col("ts").dt.replace_time_zone(None))
+                numeric = port.spec.value_kind == "numeric"
+                frames.append(frame.select(
+                    pl.lit(port.ref_uri).alias("ref_uri"), "ts",
+                    (pl.col("value").cast(pl.Float64) if numeric else pl.lit(None, dtype=pl.Float64)).alias("numeric_value"),
+                    (pl.lit(None, dtype=pl.String) if numeric else pl.col("value").cast(pl.String)).alias("text_value")))
+        for chunk in (tombstones[i:i + 500] for i in range(0, len(tombstones), 500)):
+            values, params = self._values(chunk, ("VARCHAR", ts, ts), offset=1)
+            # A semi-join: a row matched by two windows is still updated once
+            # (DuckDB rewrites an update of an indexed column as delete and
+            # insert, and two matches would insert the key twice).
+            self._numbered(conn, f"""UPDATE timeseries SET deleted=TRUE, last_revision=CAST($1 AS BIGINT)
+                WHERE NOT timeseries.deleted AND EXISTS (
+                    SELECT 1 FROM (VALUES {values}) v(ref_uri, s, e) JOIN ref_ids r ON r.ref_uri=v.ref_uri
+                    WHERE timeseries.ref_id=r.ref_id AND timeseries.ts>=v.s AND timeseries.ts<=v.e)""",
+                [revision, *params])
+        for chunk in (registrations[i:i + 500] for i in range(0, len(registrations), 500)):
+            values, params = self._values(chunk, ("VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR"))
+            self._numbered(conn, f"INSERT INTO streams (ref_uri, point_uri, source_id, ref_name, value_kind) VALUES {values} ON CONFLICT (ref_uri) DO NOTHING", params)
+        if frames:
+            frame = pl.concat(frames)
+            clash = frame.filter(frame.select("ref_uri", "ts").is_duplicated())
+            if clash.height:
+                raise ValueError(f"two bindings wrote {clash['ref_uri'][0]} at {clash['ts'][0]} in one wave; their intervals overlap")
+            self.store._insert_frame(conn, frame, revision)
         # Cursor movement is atomic with this chunk's output. Keep the input
         # frontier fixed until the final chunk, otherwise restart would skip
         # unfinished portions of the captured revision range.
+        finished_work, cursors, advances = [], [], []
         for binding, batch, _ in accepted:
             if batch.context.full_reset:
                 # The full rebuild supersedes every older interval, even
                 # work queued after its read snapshot was prepared.
-                self._execute(conn, "DELETE FROM materialization_work WHERE progress_key=?", [binding.progress_key])
+                finished_work.append(binding.progress_key)
             elif batch.context.work_id:
                 if batch.context.work_next:
-                    self._execute(conn, "UPDATE materialization_work SET cursor_ts=? WHERE progress_key=?", [batch.context.work_next, binding.progress_key])
+                    cursors.append((binding.progress_key, batch.context.work_next))
                     continue
-                self._execute(conn, "DELETE FROM materialization_work WHERE progress_key=?", [binding.progress_key])
-            self._execute(conn, "UPDATE binding_progress SET consumed_revision=? WHERE progress_key=?", [batch.context.to_revision, binding.progress_key])
+                finished_work.append(binding.progress_key)
+            advances.append((binding.progress_key, batch.context.to_revision))
+        for chunk in (finished_work[i:i + 500] for i in range(0, len(finished_work), 500)):
+            self._execute(conn, f"DELETE FROM materialization_work WHERE progress_key IN ({','.join('?' for _ in chunk)})", chunk)
+        for chunk in (cursors[i:i + 500] for i in range(0, len(cursors), 500)):
+            values, params = self._values(chunk, ("VARCHAR", "VARCHAR"))
+            self._numbered(conn, f"UPDATE materialization_work SET cursor_ts=v.cursor_ts FROM (VALUES {values}) v(progress_key, cursor_ts) WHERE materialization_work.progress_key=v.progress_key", params)
+        for chunk in (advances[i:i + 500] for i in range(0, len(advances), 500)):
+            values, params = self._values(chunk, ("VARCHAR", "BIGINT"))
+            self._numbered(conn, f"UPDATE binding_progress SET consumed_revision=v.consumed_revision FROM (VALUES {values}) v(progress_key, consumed_revision) WHERE binding_progress.progress_key=v.progress_key", params)
         accepted_signatures = {binding.signature for binding, _, _ in accepted}
         for binding, batch, _ in completed:
             window = batch.context.output_window

@@ -473,3 +473,31 @@ def test_a_consumer_left_without_inputs_by_a_view_removal_retracts_all_its_histo
         assert rows(store, fleet_ref) == []
     finally:
         runtime.close(); store.close()
+
+
+def test_pending_work_is_clipped_to_the_validity_the_binding_has_now(tmp_path):
+    """A reprocess is requested while b is in the model; before it runs, b
+    leaves at T[3]. The closed binding owns [start, T[2]) only: the chunk must
+    not write the buckets after that, which now belong to nobody, and the work
+    must still finish."""
+    store = DuckDBStore(tmp_path / "clipped-work.duckdb")
+    graph = FleetGraph(["urn:a", "urn:b"])
+    runtime = Materializer(store, graph)
+    try:
+        for ref in graph.refs:
+            store.upsert_rows(ref, [(t, 1.0) for t in T], value_kind="numeric")
+        runtime.deploy(Deployment.from_class(HourlyEach))
+        while runtime.run_once():
+            pass
+        out_b = {b.inputs["input"][0].ref_uri: b.outputs["out"].ref_uri for b in runtime._dag.bindings}["urn:b"]
+        assert rows(store, out_b) == [T[0], T[2], T[4]]
+        runtime.reprocess("hourly-each", T[0], T[5])          # work rows over every bucket, b included
+        graph.refs = ["urn:a"]
+        runtime.note_graph_change(1, effective_at=T[3])      # b closes at T[2], before the work ran
+        while runtime.run_once():
+            pass
+        assert rows(store, out_b) == [T[0]]
+        with store._own_conn() as conn:
+            assert conn.execute("SELECT count(*) FROM materialization_work").fetchone()[0] == 0
+    finally:
+        runtime.close(); store.close()
