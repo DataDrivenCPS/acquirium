@@ -41,7 +41,7 @@ def _metadata_matches(actual: dict[str, Any], expected: dict[str, Any] | None) -
     return expected is None or all(actual.get(key) == value for key, value in expected.items())
 
 def _publishes(method):
-    """Hold the graph lock across a write's SQL commit and its graph node."""
+    """Hold the graph lock across a write's SQL commit and queuing its node."""
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
         with self._graph_lock:
@@ -55,11 +55,17 @@ class ExperimentStore:
         self._live_resolve = resolve
         self.metadata_graph = ExperimentMetadataGraph(graph_store, self._resolve) if graph_store is not None else None
         self._graph_dirty = self.metadata_graph is not None
-        # Held across each SQL write and its graph publication, and by reads
-        # before they consult the graph, so a reader never sees a committed
-        # record whose graph node is still being written. It is separate from
-        # the store's writer lock so graph work does not stall ingestion.
+        # Held across each SQL write and queuing its node, and by reads while
+        # they publish the queue, so a reader never sees a committed record
+        # whose graph node is not yet published. It is separate from the
+        # store's writer lock so graph work does not stall ingestion.
         self._graph_lock = threading.RLock()
+        # Nodes written since the last publication, by (class, id) -> study.
+        # Every graph update rebuilds inference over the whole plant model, so
+        # writes only queue their node and the next read publishes the queue
+        # in one update: a sweep of many runs costs one rebuild, not one per
+        # start and finish.
+        self._pending: dict[tuple[Any, str], str] = {}
         # Records a rebuild could not convert to graph nodes, by (class, id).
         # Reads of these records raise their error; other reads proceed.
         self._unpublished: dict[tuple[Any, str], dict[str, Any]] = {}
@@ -159,26 +165,11 @@ class ExperimentStore:
         return self._annotation_record(item) if item else None
 
     def _publish_metadata(self, record):
-        """Publish a node's current SQL state."""
+        """Queue a written node; the next read publishes its current state."""
         if self.metadata_graph is None:
             return
         with self._graph_lock:
-            try:
-                if self._graph_dirty:
-                    self._rebuild_metadata_graph()
-                    return
-                key = self._record_key(record)
-                # Publish what SQL holds now, so a stale record passed in can
-                # never revert a later lifecycle change such as finish().
-                record = self._current_record(*key, record[2]["study_id"])
-                if record is None:
-                    return
-                self.metadata_graph.upsert(record)
-                self._unpublished.pop(key, None)
-            except Exception:
-                # The SQL commit is durable. Repair before the next query.
-                self._graph_dirty = True
-                logging.getLogger(__name__).exception("Experiment graph update deferred; SQL record retained")
+            self._pending[self._record_key(record)] = record[2]["study_id"]
 
     @staticmethod
     def _failure(key, study_id, error):
@@ -192,6 +183,8 @@ class ExperimentStore:
         that no longer resolves) is left out and remembered with its error.
         Reads of that record raise; reads of every other record still work.
         """
+        # The rebuild reads every record from SQL, queued ones included.
+        self._pending = {}
         records = []
         for study in self.studies():
             template_id = study["template_id"]
@@ -213,35 +206,88 @@ class ExperimentStore:
                 "Experiment %s %s is not in the metadata graph: %s", failure["kind"], failure["id"], failure["error"])
         self._graph_dirty = False
 
-    def _retry_unpublished(self):
-        """Publish left-out records whose SQL row or resolution now works."""
-        for key, failure in list(self._unpublished.items()):
-            record = self._current_record(*key, failure["study_id"])
+    def _publish_pending(self, *, retry=True):
+        """Publish queued nodes, and retry left-out ones, in one graph update.
+
+        Each node is published as SQL holds it now, so a run started and
+        finished since the last read is written once, in its final state.
+        Call with the graph lock held.
+        """
+        try:
+            self._publish_queue(retry)
+        except Exception:
+            # SQL holds every queued record. Rebuild from it on the next read.
+            self._graph_dirty = True
+            raise
+
+    def _publish_queue(self, retry):
+        written, self._pending = self._pending, {}
+        retried = {key: failure["study_id"] for key, failure in self._unpublished.items()
+                   if retry and key not in written}
+        removed, records = [], []
+        for key, study_id in {**retried, **written}.items():
+            record = self._current_record(*key, study_id)
             if record is None:
-                del self._unpublished[key]
-                continue
+                removed.append(key)
+            else:
+                records.append((key, study_id, record))
+        # Replace every written node, but touch a left-out node only once it
+        # converts; otherwise each read would rewrite and re-infer the graph.
+        deleted = [self._node_uri(*key) for key in written]
+        triples = []
+        for key, study_id, record in records:
             try:
-                self.metadata_graph.graph([record])
+                converted = self.metadata_graph.triples(record)
             except Exception as error:
-                failure["error"] = str(error)
+                self._unpublished[key] = self._failure(key, study_id, error)
                 continue
-            self.metadata_graph.upsert(record)
-            del self._unpublished[key]
+            if key in retried:
+                deleted.append(record[0])
+            triples.extend(converted)
+            self._unpublished.pop(key, None)
+        for key in removed:
+            self._unpublished.pop(key, None)
+        self.metadata_graph.update(deleted, triples)
+
+    @staticmethod
+    def _node_uri(kind, identifier):
+        return {EXPERIMENT.Study: study_uri, EXPERIMENT.Run: run_uri, EXPERIMENT.Variable: variable_uri,
+                EXPERIMENT.StreamAnnotation: annotation_uri}[kind](identifier)
 
     def sync_metadata_graph(self):
-        """Backfill existing SQL records and repair interrupted graph updates.
+        """Publish queued writes, then backfill or repair from SQL as needed.
 
-        Waiting on the graph lock also waits out any write whose SQL row is
-        committed but whose graph node is not yet published.
+        Every experiment graph read calls this first. Holding the graph lock
+        also waits out any write whose SQL row is committed but whose node is
+        not yet queued.
         """
         if self.metadata_graph is None:
             raise RuntimeError("experiment metadata queries require a graph backend")
         with self._graph_lock:
             if self._graph_dirty:
                 self._rebuild_metadata_graph()
-            elif self._unpublished:
-                self._retry_unpublished()
+            elif self._pending or self._unpublished:
+                self._publish_pending()
             return {"ok": True, "unpublished": list(self._unpublished.values())}
+
+    def publish_queued_metadata(self):
+        """Publish queued writes before a general graph query reads the graph.
+
+        Attribute discovery and plant queries can see experiment nodes, so
+        they must not miss a write that no experiment read has published yet.
+        A failure is logged, not raised: the experiment graph is repaired on
+        the next experiment read and must never fail an unrelated query.
+        """
+        if self.metadata_graph is None or not self._pending:
+            return
+        with self._graph_lock:
+            try:
+                if self._graph_dirty:
+                    self._rebuild_metadata_graph()
+                elif self._pending:
+                    self._publish_pending(retry=False)
+            except Exception:
+                logging.getLogger(__name__).exception("Experiment graph update deferred; SQL record retained")
 
     def _read_graph(self, kind, id_field, identifiers):
         metadata = self.metadata_graph.read(kind, id_field, identifiers)

@@ -87,24 +87,29 @@ Next steps:
 
 ## Recovery and existing data
 
-The first experiment mutation or graph query backfills existing SQL records.
+The first experiment graph read backfills existing SQL records.
 Opening a Study also ensures that its metadata is available to attribute
-discovery. Later metadata writes update their own node; recording scalar values
-and sample batches does not republish experiment metadata.
+discovery. Later metadata writes queue their node, and the next graph read publishes
+the queue in one update: each graph update re-runs inference over the whole
+plant model, so a sweep of many runs costs one rebuild rather than one per
+start and finish. Experiment reads and the server's SPARQL queries, including
+attribute discovery, publish the queue first, so neither misses a write.
+Recording scalar values and sample batches queues nothing.
 
 An interrupted graph update leaves the committed SQL record intact and marks
 the view for repair. The next experiment graph query rebuilds it before reading.
 Restart also triggers a backfill. Queries wait for fresh inference so a completed
 metadata write is visible immediately, and a read that finds a record in SQL
-waits until that record's graph node is written.
+waits until that record's graph node is written. Recreating the SQL ledger
+rebuilds an empty experiment view, including when storage is outside the server
+data directory.
 
 A backfill reuses the URI each metadata string first resolved to, so a resolver
 that is still loading or has since changed cannot alter or fail saved records.
 A record the graph cannot hold, such as a legacy run with a now-reserved key,
 is left out. Reading it, or querying its Study through the graph, raises its
 error; every other record reads normally. Fixing the SQL row publishes it on
-the next read. Recreating the SQL ledger rebuilds an
-empty experiment view, including when storage is outside the server data directory.
+the next read.
 
 Older declarations with bare UUID IDs get absolute graph URIs under
 `urn:acquirium:experiment:variable/`. Their SQL IDs and observation associations

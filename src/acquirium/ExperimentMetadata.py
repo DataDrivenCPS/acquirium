@@ -127,7 +127,7 @@ class ExperimentMetadataGraph:
         # Scalar declarations carry units without pretending to be live streams.
         return plan_write(uri, values, role="data" if variable else "entity", resolve=self.resolve)
 
-    def _triples(self, record):
+    def triples(self, record):
         uri, cls, fields, metadata = record
         values = {**metadata_values(metadata), **fields}
         write = self.validate(uri, values, variable=cls == EXPERIMENT.Variable)
@@ -138,7 +138,7 @@ class ExperimentMetadataGraph:
         for cls in (EXPERIMENT.Study, EXPERIMENT.Run, EXPERIMENT.Variable, EXPERIMENT.StreamAnnotation):
             graph.add((cls, RDF.type, RDFS.Class))
         for record in records:
-            for triple in self._triples(record):
+            for triple in self.triples(record):
                 graph.add(triple)
         return graph
 
@@ -151,7 +151,7 @@ class ExperimentMetadataGraph:
         graph, failures = self.graph([]), {}
         for record in records:
             try:
-                triples = self._triples(record)
+                triples = self.triples(record)
             except Exception as error:
                 failures[record[0]] = error
                 continue
@@ -163,13 +163,19 @@ class ExperimentMetadataGraph:
         )
         return failures
 
-    def upsert(self, record):
-        graph = self.graph([record])
-        subject = URIRef(record[0])
-        triples = "\n".join(f"{s.n3()} {p.n3()} {o.n3()} ." for s, p, o in graph)
-        update = f"DELETE WHERE {{ {subject.n3()} ?p ?o }}; INSERT DATA {{ {triples} }}"
+    def update(self, subjects, triples):
+        """Replace the given nodes with ``triples`` in one SPARQL update."""
+        if not subjects and not triples:
+            return
+        operations = [f"DELETE WHERE {{ {URIRef(subject).n3()} ?p ?o }}" for subject in subjects]
+        if triples:
+            graph = self.graph([])
+            for triple in triples:
+                graph.add(triple)
+            data = "\n".join(f"{s.n3()} {p.n3()} {o.n3()} ." for s, p, o in graph)
+            operations.append(f"INSERT DATA {{ {data} }}")
         self.graph_store.sparql_update(
-            update, graph_uri=self.graph_store.source_graph_uri(EXPERIMENT_SOURCE),
+            "; ".join(operations), graph_uri=self.graph_store.source_graph_uri(EXPERIMENT_SOURCE),
         )
 
     def read(self, cls, id_field, identifiers):

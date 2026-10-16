@@ -951,6 +951,7 @@ class Manager:
             {"cols": [...], "rows": [...]}
         """
         logger.debug("sparql_dict dependencies=%s len=%d", include_dependencies, len(query))
+        self.experiments.publish_queued_metadata()
         return self.graph_store.sparql_query(
             query,
             include_dependencies=include_dependencies,
@@ -966,6 +967,7 @@ class Manager:
     ) -> bytes | None:
         """Return native SPARQL JSON for SELECT queries when available."""
         logger.debug("sparql_json dependencies=%s len=%d", include_dependencies, len(query))
+        self.experiments.publish_queued_metadata()
         return self.graph_store.sparql_query_json(
             query,
             include_dependencies=include_dependencies,
@@ -982,6 +984,7 @@ class Manager:
         graph_format: ox.RdfFormat,
     ) -> tuple[bytes, str]:
         """Return a SPARQL Protocol response body from the derived query view."""
+        self.experiments.publish_queued_metadata()
         return self.graph_store.sparql_query_serialized(
             query,
             include_dependencies=include_dependencies,

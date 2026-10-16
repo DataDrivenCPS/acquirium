@@ -87,7 +87,13 @@ def metadata_api(tmp_path):
     client.list_experiment_observations.side_effect = ledger.observations
     client.sync_experiment_metadata.side_effect = ledger.sync_metadata_graph
     client.graph_version.side_effect = lambda: graph.version
-    client.sparql_query.side_effect = graph.query
+
+    def sparql_query(*args, **kwargs):
+        # The server publishes queued experiment writes before graph queries.
+        ledger.publish_queued_metadata()
+        return graph.query(*args, **kwargs)
+
+    client.sparql_query.side_effect = sparql_query
     client.compact_uri.side_effect = str
 
     def resolve_query(fields, min_score=0.4):
@@ -248,9 +254,11 @@ def test_legacy_uuid_declarations_backfill_without_changing_observation_ids(meta
 def test_object_reads_repair_failed_publication_and_do_not_hide_read_errors(metadata_api, monkeypatch):
     api = metadata_api
     study = api.service.define("read recovery")
+    run = study.start({"scenario": "baseline"})
     with monkeypatch.context() as patch:
-        patch.setattr(api.ledger.metadata_graph, "upsert", Mock(side_effect=OSError("graph unavailable")))
-        run = study.start({"scenario": "baseline"})
+        patch.setattr(api.ledger.metadata_graph, "update", Mock(side_effect=OSError("graph unavailable")))
+        with pytest.raises(OSError, match="graph unavailable"):
+            api.ledger.read_metadata([api.ledger.run(run.run_id)], EXPERIMENT.Run, "run_id")
     assert api.ledger._graph_dirty
     result = api.ledger.read_metadata([api.ledger.run(run.run_id)], EXPERIMENT.Run, "run_id")
     assert result[0]["metadata"] == {"scenario": "baseline"}
@@ -331,9 +339,11 @@ def test_lazy_selection_refreshes_after_writes_and_graph_failure(metadata_api, m
     selected = study.experiments.where(scenario="trial")
     assert selected.all() == []
     publisher = api.ledger.metadata_graph
+    saved = study.start({"scenario": "trial"})
     with monkeypatch.context() as patch:
-        patch.setattr(publisher, "upsert", Mock(side_effect=OSError("graph unavailable")))
-        saved = study.start({"scenario": "trial"})
+        patch.setattr(publisher, "update", Mock(side_effect=OSError("graph unavailable")))
+        with pytest.raises(OSError, match="graph unavailable"):
+            selected.all()
     assert api.ledger._graph_dirty
     assert [run.run_id for run in selected.all()] == [saved.run_id]
     assert not api.ledger._graph_dirty
@@ -474,3 +484,35 @@ def test_reads_wait_for_a_committed_record_to_reach_the_graph(metadata_api):
     writer.join(5)
     reader.join(5)
     assert result[0]["metadata"] == {"scenario": "a"}
+
+
+def test_writes_between_reads_publish_in_one_graph_update(metadata_api):
+    api = metadata_api
+    study = api.service.define("sweep")
+    pressure = study.output("pressure").scalar(unit="psi")
+    api.ledger.sync_metadata_graph()
+    before = api.graph.updates
+    runs = []
+    for flow in range(20):
+        run = study.start({"settings": {"flow": flow}})
+        pressure.record(flow)
+        run.finish()
+        runs.append(run)
+    assert api.graph.updates == before  # writes only queue their nodes
+    selected = study.experiments.where(api.ac.attr.settings.flow >= 15, status="succeeded")
+    assert [run.run_id for run in selected.all()] == [run.run_id for run in runs[15:]]
+    assert api.graph.updates == before + 1
+    # Each run is published once, in its final state.
+    statuses = {str(o) for o in api.graph.dataset.objects(None, URIRef(ATTR_NS + "status"))}
+    assert statuses == {"succeeded"}
+
+
+def test_general_graph_queries_see_queued_writes(metadata_api):
+    api = metadata_api
+    study = api.service.define("discovery")
+    api.ledger.sync_metadata_graph()
+    run = study.start({"operator": "ana"})
+    assert api.ledger._pending
+    api.ledger.publish_queued_metadata()
+    assert not api.ledger._pending
+    assert (URIRef(run.uri), URIRef(ATTR_NS + "operator"), Literal("ana")) in api.graph.dataset
