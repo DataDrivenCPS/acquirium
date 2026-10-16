@@ -132,3 +132,23 @@ def test_a_step_reports_where_its_time_went(setup):
     assert set(report.timings) == {"prepare", "apply", "evaluate", "commit"}
     assert all(t >= 0 for t in report.timings.values())
     assert sum(report.timings.values()) <= report.seconds
+
+
+def test_the_ingest_event_carries_the_inbox_receipt_time(setup, tmp_path):
+    import json
+    import time
+    from acquirium.Materialization.events import EventLog
+    _, engine, publisher = setup
+    engine.store.events = EventLog(tmp_path / "events.jsonl")
+    try:
+        publisher.publish(PublicationRequest("p1", mutations("urn:a", [1.0])))
+        time.sleep(0.2)
+        engine.step()
+    finally:
+        engine.store.events.close()
+        engine.store.events = None
+    ingest = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text().splitlines()
+              if json.loads(line)["kind"] == "ingest"]
+    assert len(ingest) == 1
+    # Received when it entered the inbox, applied by the step that followed.
+    assert ingest[0]["received"] <= ingest[0]["t"] and ingest[0]["t"] - ingest[0]["received"] >= 0.2

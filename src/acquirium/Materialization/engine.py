@@ -119,11 +119,19 @@ class Engine:
             raise ValueError(f"unknown inbox kind {kind!r}")
         now = datetime.now(timezone.utc)
         received = now if self._postgres else now.replace(tzinfo=None)
-        with self.store._lock, self.store._write_conn() as conn:
-            row = self._execute(
-                conn, "INSERT INTO materialization_inbox (kind, meta, payload, received_at) "
-                      "VALUES (?, ?, ?, ?) RETURNING seq",
-                [kind, json.dumps(meta, sort_keys=True), encode(mutations), received]).fetchone()
+        insert = ("INSERT INTO materialization_inbox (kind, meta, payload, received_at) "
+                  "VALUES (?, ?, ?, ?) RETURNING seq")
+        params = [kind, json.dumps(meta, sort_keys=True), encode(mutations), received]
+        if self._postgres:
+            # The append must not queue behind a running step. The store's
+            # write lock guards its one shared connection; an append on a
+            # connection of its own is a transaction of its own, and the
+            # step deletes only entries it has read.
+            with self.store._own_conn() as conn:
+                row = self._execute(conn, insert, params).fetchone()
+        else:
+            with self.store._lock, self.store._write_conn() as conn:
+                row = self._execute(conn, insert, params).fetchone()
         seq = int(row[0])
         if not self.deferred:
             self.step()
@@ -155,7 +163,7 @@ class Engine:
         timings: dict[str, float] = {"prepare": perf_counter() - started}
         applying = perf_counter()
         with self.store._lock, self.store._write_conn() as conn:
-            query = "SELECT seq, kind, meta, payload FROM materialization_inbox ORDER BY seq"
+            query = "SELECT seq, kind, meta, payload, received_at FROM materialization_inbox ORDER BY seq"
             params: list[Any] = []
             if limit is not None:
                 query += " LIMIT ?"
@@ -164,9 +172,9 @@ class Engine:
             rows, seq_from, seq_to, revision = 0, 0, 0, None
             if entries:
                 revision = self.store._next_revision(conn)
-                for seq, kind, meta, payload in entries:
+                for seq, kind, meta, payload, received_at in entries:
                     table = decode(bytes(payload))
-                    rows += self._apply(conn, kind, json.loads(meta), table, revision)
+                    rows += self._apply(conn, kind, json.loads(meta), table, revision, received=received_at)
                 seq_from, seq_to = int(entries[0][0]), int(entries[-1][0])
                 self._execute(conn, "DELETE FROM materialization_inbox WHERE seq>=? AND seq<=?", [seq_from, seq_to])
             timings["apply"] = perf_counter() - applying
@@ -191,10 +199,16 @@ class Engine:
             self.evaluator.committed(report)
         return report
 
-    def _apply(self, conn: Any, kind: str, meta: dict[str, Any], table: pa.Table, revision: int) -> int:
+    def _apply(self, conn: Any, kind: str, meta: dict[str, Any], table: pa.Table, revision: int,
+               received: datetime | None = None) -> int:
         frame = self.store._prepare_frame(pl.from_arrow(table))
+        if received is not None and received.tzinfo is None:
+            received = received.replace(tzinfo=timezone.utc)
+        # ``received`` is when the entry reached the inbox; ``t`` is when this
+        # step applied it. Latency measured from ``received`` includes the wait.
         emit(self.store, "ingest", revision=revision, rows=frame.height, entry=kind,
-             streams=frame["ref_uri"].n_unique() if frame.height else 0, publication_id=meta.get("publication_id"))
+             streams=frame["ref_uri"].n_unique() if frame.height else 0, publication_id=meta.get("publication_id"),
+             received=received.timestamp() if received is not None else None)
         if kind == "readings":
             if frame.height:
                 self.store._insert_frame(conn, frame, revision)
