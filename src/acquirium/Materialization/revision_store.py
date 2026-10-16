@@ -53,6 +53,11 @@ class RevisionStore:
         # Set to a list by a step's evaluator to collect what the step
         # writes per derived stream; None collects nothing.
         self.capture: list | None = None
+        # Set by the scheduler for one layer: the rows read for (streams,
+        # window) and their polars frame, shared by every binding of the layer
+        # that reads the same, and the layer's plan memo (see align).
+        self.layer_reads: dict | None = None
+        self.plan_memo: Any = None
         with store._lock, store._write_conn() as conn:
             self._execute(conn, """CREATE TABLE IF NOT EXISTS materialization_work (
                 progress_key VARCHAR PRIMARY KEY, work_id VARCHAR NOT NULL,
@@ -443,7 +448,14 @@ class RevisionStore:
 
     def _stream_set(self, conn: Any, alias: str, descriptors: tuple[StreamDescriptor,...], window: TimeWindow, previous: int, target: int) -> StreamSet:
         refs = [x.ref_uri for x in descriptors]
-        if not refs: return StreamSet(alias, window, descriptors, converter=self.unit_converter)
+        if not refs: return StreamSet(alias, window, descriptors, converter=self.unit_converter, memo=self.plan_memo)
+        key = (tuple(refs), window.start, window.end)
+        cached = self.layer_reads.get(key) if self.layer_reads is not None else None
+        if cached is not None:
+            revision, table, frame = cached
+            changed = table.filter(pc.and_(pc.greater(revision, previous), pc.less_equal(revision, target)))
+            return StreamSet(alias, window, descriptors, table, changed, converter=self.unit_converter,
+                             _frame=frame, memo=self.plan_memo)
         marks = ",".join("?" for _ in refs)
         # Read current context, not only rows written in (previous, target].
         # Durable work retains its original target across chunks, but later
@@ -475,7 +487,13 @@ class RevisionStore:
                           "time": pc.cast(raw["time"], pa.timestamp("us", tz="UTC")),
                           "value": values})
         changed = table.filter(pc.and_(pc.greater(raw["revision"], previous), pc.less_equal(raw["revision"], target)))
-        return StreamSet(alias, window, descriptors, table, changed, converter=self.unit_converter)
+        frame = None
+        if self.layer_reads is not None:
+            import polars as pl
+            frame = pl.from_arrow(table)
+            self.layer_reads[key] = (raw["revision"], table, frame)
+        return StreamSet(alias, window, descriptors, table, changed, converter=self.unit_converter,
+                         _frame=frame, memo=self.plan_memo)
     def commit(self, binding: Binding, batch: Batch, results: Mapping[str, pa.Table], conn: Any = None) -> bool:
         return self.commit_wave(((binding, batch, results),), conn=conn).get(binding.signature, False)
 

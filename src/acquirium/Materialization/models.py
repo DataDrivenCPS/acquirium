@@ -104,6 +104,13 @@ class StreamSet:
     converter: Any = field(default=None, repr=False)
     every: timedelta | None = None
     _scheduled: bool = field(default=False, repr=False)
+    # The loaded table as one polars frame. Bindings of one layer that read
+    # the same streams over the same window share this object, and polars
+    # recognises a shared plan by the frame object it starts from, so sharing
+    # it is what lets two views' lazy plans be computed once.
+    _frame: Any = field(default=None, repr=False, compare=False)
+    # The layer's PlanMemo, or None outside a scheduled layer.
+    memo: Any = field(default=None, repr=False, compare=False)
 
     @property
     def stream(self) -> StreamDescriptor:
@@ -130,11 +137,31 @@ class StreamSet:
         yield from self._table.to_batches(self.batch_size)
     def collect(self) -> pa.Table: return self._table
     def df(self, library: str = "polars") -> Any:
+        """The loaded rows as an eager dataframe (``ref_uri``, ``time``, ``value``)."""
         if library == "polars":
-            import polars as pl
-            return pl.from_arrow(self._table)
+            return self._polars()
         if library == "pandas": return self._table.to_pandas()
         raise ValueError("library must be 'polars' or 'pandas'")
+
+    def lazy(self) -> Any:
+        """The loaded rows as a polars LazyFrame.
+
+        A transform that builds its result lazily and assigns the LazyFrame to
+        an output leaves the computation to the runtime, which collects every
+        lazy output of a layer in one call. Plans that share a prefix, such
+        as the same ``align`` over the same streams, are then computed once.
+        ``lazyframe()`` is the same thing under its longer name.
+        """
+        return self._polars().lazy()
+
+    def lazyframe(self) -> Any:
+        return self.lazy()
+
+    def _polars(self) -> Any:
+        if self._frame is None:
+            import polars as pl
+            object.__setattr__(self, "_frame", pl.from_arrow(self._table))
+        return self._frame
 
     def in_unit(self, unit: str) -> "StreamSet":
         """Return this stream set with every value converted into ``unit``.
@@ -165,7 +192,36 @@ class StreamSet:
         from dataclasses import replace as _replace
         streams = tuple(_replace(d, unit=unit) for d in self.streams)
         return StreamSet(self.alias, self.window, streams, convert(self._table), convert(self.changes),
-                         self.batch_size, self.converter, self.every, self._scheduled)
+                         self.batch_size, self.converter, self.every, self._scheduled, memo=self.memo)
+
+
+class PlanMemo:
+    """Lazy plans shared by the bindings of one layer.
+
+    ``share(key, build)`` hands out one LazyFrame per key, so every binding
+    that asks for the same plan over the same loaded frames gets the same
+    object, marked as a cache point. When the layer's lazy outputs are
+    collected together, polars computes that plan once and reads the cache
+    for every dependent. Two structurally equal plans built separately are
+    not shared; the object is what polars recognises, hence this memo.
+    """
+    def __init__(self) -> None:
+        from threading import Lock
+        self._plans: dict[Any, Any] = {}
+        self._lock = Lock()
+        self.hits = 0
+
+    def share(self, key: Any, build: Callable[[], Any]) -> Any:
+        with self._lock:
+            plan = self._plans.get(key)
+            if plan is None:
+                plan = self._plans[key] = build().cache()
+            else:
+                self.hits += 1
+            return plan
+
+    def __len__(self) -> int:
+        return len(self._plans)
 
 
 def _rows_to_frame(rows: tuple[Mapping[str, Any], ...]) -> Any:
@@ -324,7 +380,7 @@ class OutputBuilder:
     collector only knows port schemas, not the invocation's output interval.
     """
     def __init__(self, ports: Mapping[str, OutputPort]):
-        self._ports, self._values = dict(ports), {}
+        self._ports, self._values, self._deferred = dict(ports), {}, {}
     def __setitem__(self, name: str, value: Any) -> None:
         if name not in self._ports:
             # Every published stream is declared up front, so an unknown port
@@ -333,15 +389,48 @@ class OutputBuilder:
             raise KeyError(
                 f"output {name!r} is not declared in this app's outputs (declared: {declared})"
             )
-        if name in self._values: raise ValueError(f"output {name!r} assigned twice")
+        if name in self._values or name in self._deferred: raise ValueError(f"output {name!r} assigned twice")
+        if _is_lazy(value):
+            # A lazy output is a plan. The runtime collects every lazy output
+            # of a layer together, so shared plans run once; validation of
+            # the result happens then, under the same port name.
+            self._deferred[name] = value
+            return
+        self._values[name] = self._validated(name, value)
+    def _validated(self, name: str, value: Any) -> pa.Table:
         try:
-            self._values[name] = _normalise_output(value, self._ports[name].spec)
+            return _normalise_output(value, self._ports[name].spec)
         except (TypeError, ValueError) as error:
             # Schema violations surface inside transform(); the port name is
             # the author's handle on which assignment broke.
             raise type(error)(f"output {name!r}: {error}") from None
     @property
-    def values(self) -> Mapping[str, pa.Table]: return self._values
+    def deferred(self) -> Mapping[str, Any]:
+        """Lazy outputs not collected yet, by port."""
+        return self._deferred
+    def resolve(self, name: str, frame: Any) -> None:
+        """Accept the collected result of a deferred output."""
+        self._values[name] = self._validated(name, frame)
+        del self._deferred[name]
+    def collect(self) -> None:
+        """Collect this builder's lazy outputs on their own (the runtime collects a layer's together)."""
+        if self._deferred:
+            import polars as pl
+            names = list(self._deferred)
+            for name, frame in zip(names, pl.collect_all([self._deferred[n] for n in names])):
+                self.resolve(name, frame)
+    @property
+    def values(self) -> Mapping[str, pa.Table]:
+        self.collect()
+        return self._values
+
+
+def _is_lazy(value: Any) -> bool:
+    try:
+        import polars as pl
+    except ImportError:
+        return False
+    return isinstance(value, pl.LazyFrame)
 
 
 def _normalise_output(value: Any, spec: OutputSpec) -> pa.Table:
@@ -617,7 +706,8 @@ class App(metaclass=_AppMeta):
         return None
 
 
-def align(inputs: Mapping[str, StreamSet], every: timedelta | str | None = None, *, aggregate: str = "mean") -> Any:
+def align(inputs: Mapping[str, StreamSet], every: timedelta | str | None = None, *, aggregate: str = "mean",
+          lazy: bool = False) -> Any:
     """Resample every input onto one shared clock and return a wide dataframe.
 
     The result has a ``time`` column plus one column per stream: an alias with
@@ -625,6 +715,13 @@ def align(inputs: Mapping[str, StreamSet], every: timedelta | str | None = None,
     alias with several contributes ``alias[label-or-ref]`` columns. Buckets a
     stream never reported in hold nulls; combining differently sampled sensors
     is then one join instead of a hand-rolled resample per stream.
+
+    With ``lazy=True`` the result is a LazyFrame and nothing is computed
+    here. Each stream's resample is registered with the layer's plan memo,
+    so two views that align the same stream with the same bucket and
+    aggregate share one computation when the layer is collected. A stream
+    with no rows in the window still gets its column, all null, so the
+    schema does not depend on the data.
     """
     import polars as pl
     # Resampling needs every input bucket in full. Choosing a different size
@@ -646,9 +743,11 @@ def align(inputs: Mapping[str, StreamSet], every: timedelta | str | None = None,
                   "sum": pl.col("value").sum(), "first": pl.col("value").first(), "last": pl.col("value").last(),
                   "median": pl.col("value").median(), "count": pl.col("value").count()}
     if aggregate not in aggregates: raise ValueError(f"aggregate must be one of {sorted(aggregates)}")
+    if lazy:
+        return _align_lazy(inputs, step, aggregate, aggregates[aggregate])
     columns: list[pl.DataFrame] = []
     for alias, stream_set in sorted(inputs.items()):
-        frame = pl.from_arrow(stream_set.collect())
+        frame = stream_set._polars()
         labels = {d.ref_uri: d.label or d.ref_uri for d in stream_set.streams}
         for ref, group in sorted(frame.group_by("ref_uri"), key=lambda item: str(item[0][0])):
             name = alias if len(stream_set.streams) <= 1 else f"{alias}[{labels.get(str(ref[0]), str(ref[0]))}]"
@@ -659,6 +758,31 @@ def align(inputs: Mapping[str, StreamSet], every: timedelta | str | None = None,
     result = columns[0]
     # Keep timestamps present in any stream. An inner join would discard data
     # when sensors report at different times; callers decide how to handle nulls.
+    for column in columns[1:]:
+        result = result.join(column, on="time", how="full", coalesce=True)
+    return result.sort("time")
+
+
+def _align_lazy(inputs: Mapping[str, StreamSet], step: timedelta, aggregate: str, expression: Any) -> Any:
+    import polars as pl
+    columns = []
+    for alias, stream_set in sorted(inputs.items()):
+        frame = stream_set._polars()
+        labels = {d.ref_uri: d.label or d.ref_uri for d in stream_set.streams}
+        for descriptor in sorted(stream_set.streams, key=lambda d: d.ref_uri):
+            ref = descriptor.ref_uri
+            name = alias if len(stream_set.streams) <= 1 else f"{alias}[{labels.get(ref, ref)}]"
+            # The shared part is the resample of one stream; it carries a
+            # neutral column name so views that alias it differently still
+            # share it. Keyed by the frame object: the same loaded rows.
+            build = lambda frame=frame, ref=ref: (frame.lazy().filter(pl.col("ref_uri") == ref).sort("time")
+                                                  .group_by_dynamic("time", every=step).agg(expression.alias("value")))
+            key = ("align", id(frame), ref, step, aggregate)
+            plan = stream_set.memo.share(key, build) if stream_set.memo is not None else build()
+            columns.append(plan.rename({"value": name}))
+    if not columns:
+        return pl.LazyFrame({"time": pl.Series([], dtype=pl.Datetime("us", "UTC"))})
+    result = columns[0]
     for column in columns[1:]:
         result = result.join(column, on="time", how="full", coalesce=True)
     return result.sort("time")

@@ -6,7 +6,7 @@ def test_an_evaluated_step_reports_reads_transforms_and_publication(tmp_path):
     store, graph, runtime = _runtime(tmp_path, ["urn:a", "urn:b"])
     try:
         timings = runtime.timings
-        assert set(timings) == {"read", "transform", "publish"} and all(t >= 0 for t in timings.values())
+        assert set(timings) == {"read", "transform", "collect", "publish"} and all(t >= 0 for t in timings.values())
         store.upsert_rows("urn:a", [(t, 2.0) for t in T], value_kind="numeric")
         report = runtime.engine.step()
         assert report is not None and {"prepare", "apply", "evaluate", "commit", "read", "transform", "publish"} <= set(report.timings)

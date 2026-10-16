@@ -25,13 +25,13 @@ from typing import Any, Iterable, Mapping, Protocol
 import pyarrow as pa
 from time import perf_counter
 from acquirium.Materialization.events import emit
-from acquirium.Materialization.models import App, ApplicationGraph, Batch, Binding, OutputBuilder, OutputPort
+from acquirium.Materialization.models import App, ApplicationGraph, Batch, Binding, OutputBuilder, OutputPort, PlanMemo
 from acquirium.Materialization.revision_store import RevisionStore
 
 
 class Executor(Protocol):
     def execute(self, application: App, batch: Batch,
-                ports: Mapping[str, OutputPort]) -> Mapping[str, pa.Table]: ...
+                ports: Mapping[str, OutputPort]) -> OutputBuilder | Mapping[str, pa.Table]: ...
 
 
 class InProcessExecutor:
@@ -39,13 +39,15 @@ class InProcessExecutor:
 
     This is the production in-process execution boundary as well as the default
     for standalone schedulers. Determinism is the app's responsibility; the
-    executor neither retries side effects nor enforces purity.
+    executor neither retries side effects nor enforces purity. The builder is
+    returned as is: lazy outputs stay plans until the scheduler collects the
+    layer's together.
     """
     def execute(self, application: App, batch: Batch,
-                ports: Mapping[str, OutputPort]) -> Mapping[str, pa.Table]:
+                ports: Mapping[str, OutputPort]) -> OutputBuilder:
         output = OutputBuilder(ports)
         application.transform(batch.inputs, output, batch.context)
-        return output.values
+        return output
 
 
 class Policy(Protocol):
@@ -103,7 +105,7 @@ class Scheduler:
         policy = policy or RunWhenTouched()
         store = self.store
         ran, blocked = False, set()
-        self.timings = {"read": 0.0, "transform": 0.0, "publish": 0.0}
+        self.timings = {"read": 0.0, "transform": 0.0, "collect": 0.0, "publish": 0.0}
         # Explicit repairs can be pending even when their input frontier is
         # current. Readiness must account for durable work as well as revisions.
         pending_work = store.pending_keys(conn)
@@ -164,57 +166,100 @@ class Scheduler:
 
     def _run_layer(self, conn: Any, bindings: Iterable[Binding], applications: Mapping[str, App],
                    max_workers: int | None) -> bool:
-        # The pool bounds running transforms; chunking before the reads bounds
-        # the number of loaded Arrow batches held at once. Reads run on the
-        # step's single connection, so they are sequential; transforms run in
-        # parallel on loaded data.
+        # The pool bounds running transforms. Reads run on the step's single
+        # connection, so they are sequential, and rows read for the same
+        # streams and window are read once for the layer; transforms run in
+        # parallel on loaded data. Lazy outputs are collected together once
+        # the whole layer has run, so plans shared across bindings are
+        # computed once, and the layer publishes in one wave.
         capacity = self.capacity if max_workers is None else min(self.capacity, max_workers)
         if capacity < 1:
             raise ValueError("max_workers must be positive")
         wave, ran = tuple(bindings), False
         timings = self.timings
-        for offset in range(0, len(wave), capacity):
-            loaded = []
-            reading = monotonic()
-            for binding in wave[offset:offset + capacity]:
-                self.errors.pop(binding.signature, None)
-                try:
-                    batch = self.store.next_batch(binding, conn=conn)
-                except Exception as error:
-                    self.errors[binding.signature] = f"{type(error).__name__}: {error}"
-                    emit(self.store.store, "failure", binding=binding.signature,
-                         app=binding.application_name, error=self.errors[binding.signature])
-                    continue
-                if batch is not None:
-                    loaded.append((binding, batch))
-            timings["read"] += monotonic() - reading
-            transforming = monotonic()
-            pending = []
-            for binding, batch in loaded:
-                self.running.add(binding.signature)
-                pending.append((binding, batch, self._pool.submit(
-                    self._execute, applications[binding.signature], batch, binding)))
+        self.store.layer_reads, self.store.plan_memo = {}, PlanMemo()
+        try:
             completed = []
-            for binding, batch, future in pending:
-                try:
-                    completed.append((binding, batch, future.result()))
-                except Exception as error:
-                    self.errors[binding.signature] = f"{type(error).__name__}: {error}"
-                    emit(self.store.store, "failure", binding=binding.signature,
-                         app=binding.application_name, error=self.errors[binding.signature])
-                finally:
-                    self.running.discard(binding.signature)
-            timings["transform"] += monotonic() - transforming
+            for offset in range(0, len(wave), capacity):
+                loaded = []
+                reading = monotonic()
+                for binding in wave[offset:offset + capacity]:
+                    self.errors.pop(binding.signature, None)
+                    try:
+                        batch = self.store.next_batch(binding, conn=conn)
+                    except Exception as error:
+                        self._fail(binding, error)
+                        continue
+                    if batch is not None:
+                        loaded.append((binding, batch))
+                timings["read"] += monotonic() - reading
+                transforming = monotonic()
+                pending = []
+                for binding, batch in loaded:
+                    self.running.add(binding.signature)
+                    pending.append((binding, batch, self._pool.submit(
+                        self._execute, applications[binding.signature], batch, binding)))
+                for binding, batch, future in pending:
+                    try:
+                        completed.append((binding, batch, future.result()))
+                    except Exception as error:
+                        self._fail(binding, error)
+                    finally:
+                        self.running.discard(binding.signature)
+                timings["transform"] += monotonic() - transforming
+            collecting = monotonic()
+            completed = self._collect(completed)
+            timings["collect"] += monotonic() - collecting
             publishing = monotonic()
             # A transform failure omits only that binding from publication.
             # A database failure propagates: the caller's transaction, and
             # with it this whole step, rolls back.
-            accepted = self.store.commit_wave(completed, conn=conn)
+            accepted = self.store.commit_wave(
+                [(binding, batch, output.values if isinstance(output, OutputBuilder) else output)
+                 for binding, batch, output in completed], conn=conn)
             timings["publish"] += monotonic() - publishing
             for signature in accepted:
                 self.last_success[signature] = datetime.now(timezone.utc).isoformat()
             ran = any(accepted.values()) or ran
+        finally:
+            self.store.layer_reads, self.store.plan_memo = None, None
         return ran
+
+    def _fail(self, binding: Binding, error: Exception) -> None:
+        self.errors[binding.signature] = f"{type(error).__name__}: {error}"
+        emit(self.store.store, "failure", binding=binding.signature,
+             app=binding.application_name, error=self.errors[binding.signature])
+
+    def _collect(self, completed: list) -> list:
+        """Collect every lazy output of the layer in one call; a failing plan removes only its binding."""
+        import polars as pl
+        deferred = [(binding, output, name) for binding, _, output in completed
+                    if isinstance(output, OutputBuilder) for name in list(output.deferred)]
+        if not deferred:
+            return completed
+        plans = [output.deferred[name] for _, output, name in deferred]
+        failed: set[str] = set()
+        try:
+            frames = dict(enumerate(pl.collect_all(
+                plans, optimizations=pl.QueryOptFlags(comm_subplan_elim=True, comm_subexpr_elim=True))))
+        except Exception:
+            # One plan failing fails the call; collect one by one to find whose.
+            frames = {}
+            for index, (binding, output, name) in enumerate(deferred):
+                try:
+                    frames[index] = plans[index].collect()
+                except Exception as error:
+                    self._fail(binding, error)
+                    failed.add(binding.signature)
+        for index, (binding, output, name) in enumerate(deferred):
+            if index not in frames or binding.signature in failed:
+                continue
+            try:
+                output.resolve(name, frames[index])
+            except Exception as error:
+                self._fail(binding, error)
+                failed.add(binding.signature)
+        return [item for item in completed if item[0].signature not in failed]
 
     def run_graph_once(self, graph: ApplicationGraph, applications: Mapping[str, App], *,
                        max_workers: int | None = None, policy: Policy | None = None) -> bool:
